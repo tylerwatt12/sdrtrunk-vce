@@ -28,8 +28,6 @@ import io.github.dsheirer.channel.metadata.activity.ChannelActivityModel;
 import io.github.dsheirer.channel.state.State;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.Channel.ChannelType;
-import io.github.dsheirer.controller.channel.map.ChannelMap;
-import io.github.dsheirer.controller.channel.map.ChannelMapModel;
 import io.github.dsheirer.filter.AllPassFilter;
 import io.github.dsheirer.filter.FilterSet;
 import io.github.dsheirer.filter.IFilter;
@@ -74,12 +72,6 @@ import io.github.dsheirer.module.decode.ltrstandard.LTRStandardMessageFilter;
 import io.github.dsheirer.module.decode.mdc1200.MDCDecoder;
 import io.github.dsheirer.module.decode.mdc1200.MDCDecoderState;
 import io.github.dsheirer.module.decode.mdc1200.MDCMessageFilter;
-import io.github.dsheirer.module.decode.mpt1327.DecodeConfigMPT1327;
-import io.github.dsheirer.module.decode.mpt1327.MPT1327Decoder;
-import io.github.dsheirer.module.decode.mpt1327.MPT1327DecoderState;
-import io.github.dsheirer.module.decode.mpt1327.MPT1327MessageFilter;
-import io.github.dsheirer.module.decode.mpt1327.MPT1327TrafficChannelManager;
-import io.github.dsheirer.module.decode.mpt1327.Sync;
 import io.github.dsheirer.module.decode.nbfm.DecodeConfigNBFM;
 import io.github.dsheirer.module.decode.nbfm.NBFMDecoder;
 import io.github.dsheirer.module.decode.nbfm.NBFMDecoderState;
@@ -142,13 +134,13 @@ public class DecoderFactory
      *
      * @return list of configured decoders
      */
-    public static List<Module> getModules(ChannelMapModel channelMapModel, Channel channel, AliasModel aliasModel,
-                                          UserPreferences userPreferences, TrafficChannelManager trafficChannelManager,
+    public static List<Module> getModules(Channel channel, AliasModel aliasModel, UserPreferences userPreferences,
+                                          TrafficChannelManager trafficChannelManager,
                                           IChannelDescriptor channelDescriptor, double initialSourceSampleRate,
                                           ChannelActivityModel channelActivityModel)
     {
-        List<Module> modules = getPrimaryModules(channelMapModel, channel, aliasModel, userPreferences,
-                trafficChannelManager, channelDescriptor, initialSourceSampleRate, channelActivityModel);
+        List<Module> modules = getPrimaryModules(channel, aliasModel, userPreferences, trafficChannelManager,
+            channelDescriptor, initialSourceSampleRate, channelActivityModel);
         modules.addAll(getAuxiliaryDecoders(channel.getAuxDecodeConfiguration()));
         return modules;
     }
@@ -156,7 +148,6 @@ public class DecoderFactory
     /**
      * Constructs a primary decoder as specified in the decode configuration
      *
-     * @param channelMapModel for channel map lookups
      * @param channel configuration
      * @param aliasModel for alias lookups
      * @param userPreferences instance
@@ -164,8 +155,9 @@ public class DecoderFactory
      * @param channelDescriptor to preload into the decoder state as the current channel.
      * @return list of modules to use for a processing chain
      */
-    public static List<Module> getPrimaryModules(ChannelMapModel channelMapModel, Channel channel, AliasModel aliasModel,
-                                                 UserPreferences userPreferences, TrafficChannelManager trafficChannelManager,
+    public static List<Module> getPrimaryModules(Channel channel, AliasModel aliasModel,
+                                                 UserPreferences userPreferences,
+                                                 TrafficChannelManager trafficChannelManager,
                                                  IChannelDescriptor channelDescriptor, double initialSourceSampleRate,
                                                  ChannelActivityModel channelActivityModel)
     {
@@ -205,10 +197,6 @@ public class DecoderFactory
                 break;
             case LTR_NET:
                 processLTRNet(channel, modules, aliasList, (DecodeConfigLTRNet) decodeConfig);
-                break;
-            case MPT1327:
-                processMPT1327(channelMapModel, channel, modules, aliasList, channelType,
-                        (DecodeConfigMPT1327) decodeConfig, userPreferences);
                 break;
             case PASSPORT:
                 processPassport(channel, modules, aliasList, decodeConfig);
@@ -439,59 +427,6 @@ public class DecoderFactory
         else
         {
             throw new IllegalArgumentException("Can't create NXDN decoder - unrecognized config: " + decodeConfig);
-        }
-    }
-
-    /**
-     * Creates decoder modules for MPT-1327 decoder
-     * @param channelMapModel to use in calculating traffic channel frequencies
-     * @param channel configuration
-     * @param modules collection to add to
-     * @param aliasList for the channel
-     * @param channelType for control or traffic
-     * @param decodeConfig configuration
-     */
-    private static void processMPT1327(ChannelMapModel channelMapModel, Channel channel, List<Module> modules,
-                                       AliasList aliasList, ChannelType channelType, DecodeConfigMPT1327 decodeConfig,
-                                       UserPreferences userPreferences)
-    {
-        DecodeConfigMPT1327 mptConfig = decodeConfig;
-        ChannelMap channelMap = channelMapModel.getChannelMap(mptConfig.getChannelMapName());
-        Sync sync = mptConfig.getSync();
-        modules.add(new MPT1327Decoder(sync));
-
-        final int callTimeoutMilliseconds = mptConfig.getCallTimeoutSeconds() * 1000;
-
-        // Set max segment audio sample length slightly above call timeout to
-        // not create a new segment if the processing chain finishes a bit after
-        // actual call timeout.
-        long maxAudioSegmentLengthMillis = (callTimeoutMilliseconds + 5000);
-        modules.add(new AudioModule(aliasList, AbstractAudioModule.DEFAULT_TIMESLOT, maxAudioSegmentLengthMillis, AUDIO_FILTER_ENABLE));
-
-        SourceType sourceType = channel.getSourceConfiguration().getSourceType();
-        if(sourceType == SourceType.TUNER || sourceType == SourceType.TUNER_MULTIPLE_FREQUENCIES)
-        {
-            modules.add(new FMDemodulatorModule(FM_CHANNEL_BANDWIDTH));
-        }
-
-        if(channelType == ChannelType.STANDARD)
-        {
-            MPT1327TrafficChannelManager trafficChannelManager = new MPT1327TrafficChannelManager(channel, channelMap);
-            modules.add(trafficChannelManager);
-            modules.add(new MPT1327DecoderState(trafficChannelManager, channelType, callTimeoutMilliseconds));
-        }
-        else
-        {
-            modules.add(new MPT1327DecoderState(channelType, callTimeoutMilliseconds));
-        }
-
-        //Add a channel rotation monitor when we have multiple control channel frequencies specified
-        if(channel.getSourceConfiguration() instanceof SourceConfigTunerMultipleFrequency sctmf &&
-            sctmf.hasMultipleFrequencies())
-        {
-            List<State> activeStates = new ArrayList<>();
-            activeStates.add(State.CONTROL);
-            modules.add(new ChannelRotationMonitor(activeStates, sctmf.getFrequencyRotationDelay(), userPreferences));
         }
     }
 
@@ -779,9 +714,6 @@ public class DecoderFactory
             case MDC1200:
                 filters.add(new MDCMessageFilter());
                 break;
-            case MPT1327:
-                filters.add(new MPT1327MessageFilter());
-                break;
             case NXDN:
                 filters.add(new NXDNMessageFilterSet());
                 break;
@@ -822,8 +754,6 @@ public class DecoderFactory
                 return new DecodeConfigLTRStandard();
             case LTR_NET:
                 return new DecodeConfigLTRNet();
-            case MPT1327:
-                return new DecodeConfigMPT1327();
             case NBFM:
                 return new DecodeConfigNBFM();
             case NXDN:
@@ -879,14 +809,6 @@ public class DecoderFactory
                     DecodeConfigLTRStandard copyLTRStandard = new DecodeConfigLTRStandard();
                     copyLTRStandard.setMessageDirection(originalLTRStandard.getMessageDirection());
                     return copyLTRStandard;
-                case MPT1327:
-                    DecodeConfigMPT1327 originalMPT = (DecodeConfigMPT1327)config;
-                    DecodeConfigMPT1327 copyMPT = new DecodeConfigMPT1327();
-                    copyMPT.setCallTimeoutSeconds(originalMPT.getCallTimeoutSeconds());
-                    copyMPT.setChannelMapName(originalMPT.getChannelMapName());
-                    copyMPT.setSync(originalMPT.getSync());
-                    copyMPT.setTrafficChannelPoolSize(originalMPT.getTrafficChannelPoolSize());
-                    return copyMPT;
                 case NBFM:
                     DecodeConfigNBFM origNBFM = (DecodeConfigNBFM)config;
                     DecodeConfigNBFM copyNBFM = new DecodeConfigNBFM();

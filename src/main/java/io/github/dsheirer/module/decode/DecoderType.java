@@ -33,7 +33,7 @@ public enum DecoderType
     DMR("DMR","DMR", Protocol.DMR),
     LTR("LTR", "LTR", Protocol.LTR),
     LTR_NET("LTR-Net", "LTR-Net", Protocol.LTR_NET),
-    MPT1327("MPT1327", "MPT1327", Protocol.MPT1327),
+    MPT1327("MPT1327", "MPT1327", Protocol.MPT1327, Availability.RETIRED_COMPATIBILITY),
     NBFM("NBFM", "NBFM", Protocol.NBFM),
     NXDN("NXDN", "NXDN", Protocol.NXDN),
     PASSPORT("Passport", "Passport", Protocol.PASSPORT),

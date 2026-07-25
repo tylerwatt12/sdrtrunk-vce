@@ -20,8 +20,7 @@ package io.github.dsheirer.alias.action;
 public enum AliasActionType
 {
 	BEEP( "Beep" ),
-	CLIP( "Play Clip" ),
-	SCRIPT( "Run Script" );
+	CLIP( "Play Clip" );
 	
 	private String mLabel;
 	

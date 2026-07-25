@@ -20,9 +20,6 @@
 package io.github.dsheirer.audio;
 
 import javax.sound.sampled.AudioFormat;
-import javax.sound.sampled.DataLine;
-import javax.sound.sampled.Line;
-import javax.sound.sampled.SourceDataLine;
 
 /**
  * Audio formats
@@ -119,16 +116,4 @@ public class AudioFormats
 					PCM_FRAME_SIZE_BYTES_16_BIT_STEREO,
 					PCM_8_KHZ_RATE,
 					LITTLE_ENDIAN );
-
-	/**
-	 * Source Data Line Info for an 8 kHz, 16-bit signed PCM mono output.
-	 */
-	public static final Line.Info MONO_SOURCE_DATALINE_INFO =
-		new DataLine.Info( SourceDataLine.class, PCM_SIGNED_8000_HZ_16_BIT_MONO);
-
-	/**
-	 * Source Data Line Info for an 8 kHz, 16-bit signed PCM stereo output.
-	 */
-	public static final Line.Info STEREO_SOURCE_DATALINE_INFO =
-		new DataLine.Info( SourceDataLine.class, PCM_SIGNED_8000_HZ_16BITS_STEREO);
 }

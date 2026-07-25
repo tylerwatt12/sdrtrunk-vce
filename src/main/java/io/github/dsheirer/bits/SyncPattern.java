@@ -82,56 +82,6 @@ public enum SyncPattern
 		true, true, true, true     //1111 0xF
 	} ),
 
-	/* Revs (0xA) and Sync(0xA4D7) = 1010 1100010011010111 */
-	MPT1327_CONTROL( new boolean[]
-	{
-		true, false, true, false,   //Includes 4 of 16 rev bits
-		true, true, false, false,   //1100 0xA
-		false, true, false, false,  //0100 0x4
-		true, true, false, true,    //1101 0xD
-		false, true, true, true     //0111 0x7
-	}),
-
-	/**
-	 * French variant of MPT-1327.  This variant uses the following a different
-	 * sync pattern:
-	 *
-	 * SYNC: 1011 0100 0011 0011
-	 */
-	MPT1327_CONTROL_FRENCH( new boolean[]
-	{
-		true, false, true, false,   //Includes final 4 of 16 rev bits
-		true, false, true, true,    //1011 0xB
-		false, true, false, false,  //0100 0x4
-		false, false, true, true,   //0011 0x3
-		false, false, true, true    //0011 0x3
-	}),
-
-	/* Revs (0xA) and Sync(0x3B28) = 1010 0011101100101000 */
-	MPT1327_TRAFFIC( new boolean[]
-	{
-		true, false, true, false,   //1010 Includes 4 of 16 rev bits
-		false, false, true, true,   //0011 0x3
-		true, false, true, true,    //1011 0xB
-		false, false, true, false,  //0010 0x2
-		true, false, false, false   //1000 0x8
-	}),
-
-	/**
-	 * French variant of MPT-1327.  This variant uses the following a different
-	 * sync pattern:
-	 *
-	 * SYNT: 0100 1011 1100 1100
-	 */
-	MPT1327_TRAFFIC_FRENCH( new boolean[]
-	{
-		true, false, true, false,   //Includes final 4 of 16 rev bits
-		false, true, false, false,  //0100 0x4
-		true, false, true, true,    //1011 0xB
-		true, true, false, false,   //1100 0xC
-		true, true, false, false   //1100 0xC
-	}),
-
 	/* Sync (0x158) = 101011000 */
 	PASSPORT( new boolean[]
 	{

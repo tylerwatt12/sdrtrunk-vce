@@ -183,7 +183,7 @@ public class AddRecordingTunerDialog extends JFrame
                 config.setFrequency(frequency);
                 config.setPath(mSelectedRecording.getAbsolutePath());
                 mTunerConfigurationManager.addTunerConfiguration(config);
-                DiscoveredRecordingTuner discoveredRecordingTuner = new DiscoveredRecordingTuner(mUserPreferences, config);
+                DiscoveredRecordingTuner discoveredRecordingTuner = new DiscoveredRecordingTuner(config);
                 mDiscoveredTunerModel.addDiscoveredTuner(discoveredRecordingTuner);
             }
             catch(Exception ex)

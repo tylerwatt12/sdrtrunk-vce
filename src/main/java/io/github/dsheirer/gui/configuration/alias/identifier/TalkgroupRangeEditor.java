@@ -307,9 +307,6 @@ public class TalkgroupRangeEditor extends IdentifierEditor<TalkgroupRange>
         details.add(new TalkgroupDetail(Protocol.LTR, IntegerFormat.FORMATTED, new LtrFormatter(),
                 new LtrFormatter(), "Format: A-HH-TTT = Area (0-1), Home (0-31), Talkgroup (0-255)"));
         addNumericTalkgroupDetails(details, Protocol.MDC1200, 0, 0xFFFF);
-        details.add(new TalkgroupDetail(Protocol.MPT1327, IntegerFormat.FORMATTED,
-                new PrefixIdentFormatter(), new PrefixIdentFormatter(),
-                "Format: PPP-IIII = Prefix (0-127), Ident (1-8191)"));
         details.add(new TalkgroupDetail(Protocol.NBFM, IntegerFormat.DECIMAL, new IntegerFormatter(0,65535),
                 new IntegerFormatter(0,65535), "Format 0 - 65535"));
         details.add(new TalkgroupDetail(Protocol.NBFM, IntegerFormat.HEXADECIMAL, new IntegerFormatter(0,65535),

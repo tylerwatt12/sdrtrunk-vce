@@ -46,8 +46,6 @@ public enum TalkgroupFormat
         "<html>LTR valid ranges are 1-20(repeater) and 1-255(talkgroup) (ie. 01-001 to 20-255)"),
     MDC1200(1, 0xFFFF,
         "MDC-1200 valid value range is 1-65,535"),
-    MPT1327("###-####", 1, 0x7FFFFF, "000-0001 to 127-8192",
-        "<html>MPT-1327 valid ranges are 0-127(prefix)<br>and 1-8192(ident) (ie. 000-0001 to 127-8192)"),
     NBFM(1, 0xFFFF,
             "NBFM valid value range is 1-65,535"),
     NXDN(0, 0xFFFF,
@@ -158,8 +156,6 @@ public enum TalkgroupFormat
                 return LTR;
             case MDC1200:
                 return MDC1200;
-            case MPT1327:
-                return MPT1327;
             case NBFM:
                 return NBFM;
             case NXDN:

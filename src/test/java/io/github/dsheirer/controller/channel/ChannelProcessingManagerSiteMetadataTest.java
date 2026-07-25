@@ -35,8 +35,7 @@ public class ChannelProcessingManagerSiteMetadataTest
     @Test
     public void siteMetadataListenersDoNotBlockTheCallingThread() throws Exception
     {
-        ChannelProcessingManager manager = new ChannelProcessingManager(null, null, null, null,
-            new UserPreferences());
+        ChannelProcessingManager manager = new ChannelProcessingManager(null, null, null, new UserPreferences());
         CountDownLatch listenerStarted = new CountDownLatch(1);
         CountDownLatch releaseListener = new CountDownLatch(1);
         AtomicReference<Thread> listenerThread = new AtomicReference<>();
@@ -78,8 +77,7 @@ public class ChannelProcessingManagerSiteMetadataTest
     @Test
     public void protocolListenerReceivesDirectDmrAndBridgedLegacyP25Events() throws Exception
     {
-        ChannelProcessingManager manager = new ChannelProcessingManager(null, null, null, null,
-            new UserPreferences());
+        ChannelProcessingManager manager = new ChannelProcessingManager(null, null, null, new UserPreferences());
         CountDownLatch received = new CountDownLatch(2);
         List<Protocol> protocols = new java.util.concurrent.CopyOnWriteArrayList<>();
         manager.addProtocolSiteMetadataListener(event -> {

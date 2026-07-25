@@ -32,8 +32,6 @@ public enum TunerType
     FCI_FC2580("FC2580"),
     FITIPOWER_FC0012("FC0012"),
     FITIPOWER_FC0013("FC0013"),
-    FUNCUBE_DONGLE_PRO("Funcube Dongle Pro"),
-    FUNCUBE_DONGLE_PRO_PLUS("Funcube Dongle Pro Plus"),
     HACKRF_ONE("ONE"),
     HACKRF_JAWBREAKER("Jawbreaker"),
     HACKRF_RAD1O("RAD1O"),
@@ -78,25 +76,11 @@ public enum TunerType
             FITIPOWER_FC0012, HACKRF_JAWBREAKER, HACKRF_RAD1O, HACKRF_ONE, HYDRASDR_R828D, RAFAELMICRO_R820T));
 
     /**
-     * Supported sound card tuner types
-     */
-    public static final Set<TunerType> SUPPORTED_SOUND_CARD_TUNERS =
-            Set.copyOf(EnumSet.of(FUNCUBE_DONGLE_PRO, FUNCUBE_DONGLE_PRO_PLUS));
-
-    /**
      * Indicates if this tuner is supported as a USB tuner
      */
     public boolean isSupportedUsbTuner()
     {
         return SUPPORTED_USB_TUNERS.contains(this);
-    }
-
-    /**
-     * Indicates if this tuner type is supported as a sound card tuner
-     */
-    public boolean isSupportedSoundCardTuner()
-    {
-        return SUPPORTED_SOUND_CARD_TUNERS.contains(this);
     }
 
     @Override

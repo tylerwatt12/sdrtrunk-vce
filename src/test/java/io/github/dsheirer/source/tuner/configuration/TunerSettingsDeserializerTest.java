@@ -12,8 +12,6 @@ import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.dsheirer.source.tuner.TunerClass;
 import io.github.dsheirer.source.tuner.airspy.AirspyTunerConfiguration;
-import io.github.dsheirer.source.tuner.fcd.proV1.FCD1TunerConfiguration;
-import io.github.dsheirer.source.tuner.fcd.proplusV2.FCD2TunerConfiguration;
 import org.junit.jupiter.api.Test;
 
 class TunerSettingsDeserializerTest
@@ -77,29 +75,28 @@ class TunerSettingsDeserializerTest
     }
 
     @Test
-    void loadsFuncubeEntriesAlongsideOtherSupportedTuners() throws Exception
+    void preservesSupportedEntriesWhenRetiredFuncubeEntriesArePresent() throws Exception
     {
         TunerSettings settings = mObjectMapper.readValue("""
             {
               "disabledTuners": [
                 {"tunerClass": "RTL2832", "id": "rtl-current"},
-                {"tunerClass": "FUNCUBE_DONGLE_PRO", "id": "fcd-pro"},
-                {"tunerClass": "FUNCUBE_DONGLE_PRO_PLUS", "id": "fcd-pro-plus"}
+                {"tunerClass": "FUNCUBE_DONGLE_PRO", "id": "fcd-retired"},
+                {"tunerClass": "FUNCUBE_DONGLE_PRO_PLUS", "id": "fcd-plus-retired"}
               ],
               "tunerConfigurations": [
                 {"type": "airspyTunerConfiguration", "uniqueID": "airspy-current"},
-                {"type": "fcd1TunerConfiguration", "uniqueID": "fcd-pro"},
-                {"type": "fcd2TunerConfiguration", "uniqueID": "fcd-pro-plus"}
+                {"type": "fcd1TunerConfiguration", "uniqueID": "fcd-retired"},
+                {"type": "fcd2TunerConfiguration", "uniqueID": "fcd-plus-retired"}
               ]
             }
             """, TunerSettings.class);
 
-        assertEquals(3, settings.getDisabledTuners().size());
-        assertEquals(TunerClass.FUNCUBE_DONGLE_PRO, settings.getDisabledTuners().get(1).tunerClass());
-        assertEquals(TunerClass.FUNCUBE_DONGLE_PRO_PLUS, settings.getDisabledTuners().get(2).tunerClass());
-        assertEquals(FCD1TunerConfiguration.class, settings.getTunerConfigurations().get(1).getClass());
-        assertEquals(FCD2TunerConfiguration.class, settings.getTunerConfigurations().get(2).getClass());
-        assertEquals(0, settings.getIgnoredEntryCount());
+        assertEquals(1, settings.getDisabledTuners().size());
+        assertEquals(TunerClass.RTL2832, settings.getDisabledTuners().getFirst().tunerClass());
+        assertEquals(1, settings.getTunerConfigurations().size());
+        assertEquals("airspy-current", settings.getTunerConfigurations().getFirst().getUniqueID());
+        assertEquals(4, settings.getIgnoredEntryCount());
     }
 
     @Test

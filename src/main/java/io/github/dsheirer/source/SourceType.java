@@ -21,7 +21,11 @@ package io.github.dsheirer.source;
 public enum SourceType
 {
     NONE("No Source"),
-    MIXER("Sound Card"),
+    /**
+     * Compatibility value for saved channels that used a computer sound-card input.  These channels are retained in
+     * legacy storage but are not loaded, selectable, or runnable.
+     */
+    MIXER("Sound Card", Availability.RETIRED_COMPATIBILITY),
     TUNER("Tuner"),
     TUNER_MULTIPLE_FREQUENCIES("Tuner - Multiple Frequencies"),
     RECORDING("IQ Recording");
@@ -42,7 +46,7 @@ public enum SourceType
 
     public static SourceType[] getTypes()
     {
-        return java.util.stream.Stream.of(SourceType.TUNER, SourceType.TUNER_MULTIPLE_FREQUENCIES, SourceType.MIXER)
+        return java.util.stream.Stream.of(SourceType.TUNER, SourceType.TUNER_MULTIPLE_FREQUENCIES)
             .filter(SourceType::isActive)
             .toArray(SourceType[]::new);
     }

@@ -19,7 +19,6 @@ import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
 import io.github.dsheirer.configuration.ConfigurationState;
 import io.github.dsheirer.controller.channel.Channel;
-import io.github.dsheirer.controller.channel.map.ChannelMap;
 import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.module.decode.config.DecodeConfiguration;
 import io.github.dsheirer.module.log.config.EventLogConfiguration;
@@ -42,7 +41,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * SQLite persistence for channel, channel-map, and stream configuration.
+ * SQLite persistence for active channel and stream configuration. Retired channel rows and the legacy channel-map
+ * table remain untouched compatibility data.
  */
 public class ConfigurationDatabaseStore
 {
@@ -79,7 +79,6 @@ public class ConfigurationDatabaseStore
         {
             ConfigurationState state = new ConfigurationState();
             state.setChannels(loadChannels(connection));
-            state.setChannelMaps(loadChannelMaps(connection));
             state.setBroadcastConfigurations(loadBroadcastConfigurations(connection));
             return state;
         }
@@ -98,7 +97,6 @@ public class ConfigurationDatabaseStore
                 clearConfigurationState(connection);
                 restoreRetainedChannelRows(connection, retainedChannels);
                 insertChannels(connection, state.getChannels());
-                insertChannelMaps(connection, state.getChannelMaps());
                 insertBroadcastConfigurations(connection, state.getBroadcastConfigurations());
                 updateMetadata(connection, CONFIGURATION_STATE_INITIALIZED_KEY, TRUE);
                 connection.commit();
@@ -148,26 +146,6 @@ public class ConfigurationDatabaseStore
         }
 
         return channels;
-    }
-
-    private List<ChannelMap> loadChannelMaps(Connection connection) throws SQLException, IOException
-    {
-        List<ChannelMap> channelMaps = new ArrayList<>();
-
-        try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT config_json
-            FROM configuration_channel_map
-            ORDER BY sort_order, id
-            """);
-            ResultSet resultSet = statement.executeQuery())
-        {
-            while(resultSet.next())
-            {
-                channelMaps.add(mObjectMapper.readValue(resultSet.getString("config_json"), ChannelMap.class));
-            }
-        }
-
-        return channelMaps;
     }
 
     private List<RetainedChannelRow> loadRetainedChannelRows(Connection connection) throws SQLException
@@ -240,7 +218,6 @@ public class ConfigurationDatabaseStore
         try(Statement statement = connection.createStatement())
         {
             statement.executeUpdate("DELETE FROM configuration_broadcast_stream");
-            statement.executeUpdate("DELETE FROM configuration_channel_map");
             statement.executeUpdate("DELETE FROM configuration_channel");
         }
     }
@@ -313,25 +290,6 @@ public class ConfigurationDatabaseStore
                 statement.setInt(13, hasRecorders(channel) ? 1 : 0);
                 statement.setInt(14, hasEventLoggers(channel) ? 1 : 0);
                 statement.setString(15, mObjectMapper.writeValueAsString(channel));
-                statement.executeUpdate();
-            }
-        }
-    }
-
-    private void insertChannelMaps(Connection connection, List<ChannelMap> channelMaps) throws SQLException, IOException
-    {
-        int sortOrder = 0;
-
-        for(ChannelMap channelMap: channelMaps)
-        {
-            try(PreparedStatement statement = connection.prepareStatement("""
-                INSERT INTO configuration_channel_map (sort_order, name, config_json)
-                VALUES (?, ?, ?)
-                """))
-            {
-                statement.setInt(1, sortOrder++);
-                statement.setString(2, channelMap.getName());
-                statement.setString(3, mObjectMapper.writeValueAsString(channelMap));
                 statement.executeUpdate();
             }
         }

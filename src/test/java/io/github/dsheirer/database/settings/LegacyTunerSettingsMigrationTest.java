@@ -6,7 +6,7 @@
 package io.github.dsheirer.database.settings;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -28,14 +28,14 @@ class LegacyTunerSettingsMigrationTest
     Path mTemporaryFolder;
 
     @Test
-    void importsSupportedFuncubeEntriesIntoSQLite() throws Exception
+    void importsSupportedEntriesAndLeavesRetiredEntriesOutOfSQLite() throws Exception
     {
         Path legacySettings = mTemporaryFolder.resolve("tuner_configuration.json");
         Files.writeString(legacySettings, """
             {
               "disabledTuners": [
                 {"tunerClass": "AIRSPY", "id": "airspy-disabled"},
-                {"tunerClass": "FUNCUBE_DONGLE_PRO", "id": "fcd-pro"}
+                {"tunerClass": "FUNCUBE_DONGLE_PRO", "id": "fcd-retired"}
               ],
               "tunerConfigurations": [
                 {
@@ -45,7 +45,7 @@ class LegacyTunerSettingsMigrationTest
                 },
                 {
                   "type": "fcd1TunerConfiguration",
-                  "uniqueID": "fcd-pro"
+                  "uniqueID": "fcd-retired"
                 }
               ]
             }
@@ -59,12 +59,10 @@ class LegacyTunerSettingsMigrationTest
         store.save(ApplicationSettingsStore.TUNER_SETTINGS, imported);
 
         TunerSettings loaded = store.load(ApplicationSettingsStore.TUNER_SETTINGS, TunerSettings.class).orElseThrow();
-        assertEquals(2, loaded.getDisabledTuners().size());
+        assertEquals(1, loaded.getDisabledTuners().size());
         assertEquals(TunerClass.AIRSPY, loaded.getDisabledTuners().getFirst().tunerClass());
-        assertEquals(TunerClass.FUNCUBE_DONGLE_PRO, loaded.getDisabledTuners().get(1).tunerClass());
-        assertEquals(2, loaded.getTunerConfigurations().size());
+        assertEquals(1, loaded.getTunerConfigurations().size());
         assertEquals("airspy-current", loaded.getTunerConfigurations().getFirst().getUniqueID());
-        assertEquals("fcd-pro", loaded.getTunerConfigurations().get(1).getUniqueID());
         assertEquals(0, loaded.getIgnoredEntryCount());
 
         try(Connection connection = SdrTrunkDatabase.open(database);
@@ -76,8 +74,8 @@ class LegacyTunerSettingsMigrationTest
             try(ResultSet resultSet = statement.executeQuery())
             {
                 String storedJson = resultSet.next() ? resultSet.getString(1) : "";
-                assertTrue(storedJson.contains("FUNCUBE_DONGLE_PRO"));
-                assertTrue(storedJson.contains("fcd1TunerConfiguration"));
+                assertFalse(storedJson.contains("FUNCUBE"));
+                assertFalse(storedJson.contains("fcd1TunerConfiguration"));
             }
         }
     }

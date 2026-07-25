@@ -18,11 +18,11 @@
  */
 package io.github.dsheirer.source.tuner.rtl;
 
-import io.github.dsheirer.preference.source.ChannelizerType;
 import io.github.dsheirer.source.SourceException;
 import io.github.dsheirer.source.tuner.ITunerErrorListener;
 import io.github.dsheirer.source.tuner.Tuner;
 import io.github.dsheirer.source.tuner.TunerClass;
+import io.github.dsheirer.source.tuner.manager.PolyphaseChannelSourceManager;
 
 /**
  * RTL-2832 Tuner
@@ -33,14 +33,12 @@ public class RTL2832Tuner extends Tuner
     /**
      * Constructs an instance
      * @param controller tuner
-     * @param channelizerType for the channelizer
      * @param tunerErrorListener to listen for errors from this tuner
      * @throws SourceException if there is an issue
      */
-    public RTL2832Tuner(RTL2832TunerController controller, ITunerErrorListener tunerErrorListener,
-                        ChannelizerType channelizerType)
+    public RTL2832Tuner(RTL2832TunerController controller, ITunerErrorListener tunerErrorListener)
     {
-        super(controller, tunerErrorListener, channelizerType);
+        super(controller, tunerErrorListener, new PolyphaseChannelSourceManager(controller));
     }
 
     public RTL2832TunerController getController()

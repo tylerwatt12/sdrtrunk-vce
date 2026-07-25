@@ -18,10 +18,10 @@
  */
 package io.github.dsheirer.source.tuner.airspy.hf;
 
-import io.github.dsheirer.preference.source.ChannelizerType;
 import io.github.dsheirer.source.tuner.ITunerErrorListener;
 import io.github.dsheirer.source.tuner.Tuner;
 import io.github.dsheirer.source.tuner.TunerClass;
+import io.github.dsheirer.source.tuner.manager.PolyphaseChannelSourceManager;
 
 /**
  * Airspy HF+Tuner
@@ -33,12 +33,10 @@ public class AirspyHfTuner extends Tuner
      * Constructs an instance
      * @param controller for the Airspy HF
      * @param tunerErrorListener to listen for errors from this tuner
-     * @param channelizerType for the channelizer
      */
-    public AirspyHfTuner(AirspyHfTunerController controller, ITunerErrorListener tunerErrorListener,
-                         ChannelizerType channelizerType)
+    public AirspyHfTuner(AirspyHfTunerController controller, ITunerErrorListener tunerErrorListener)
     {
-        super(controller, tunerErrorListener, channelizerType);
+        super(controller, tunerErrorListener, new PolyphaseChannelSourceManager(controller));
     }
 
     @Override

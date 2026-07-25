@@ -29,7 +29,6 @@ import io.github.dsheirer.alias.action.AliasAction;
 import io.github.dsheirer.alias.action.AliasActionType;
 import io.github.dsheirer.alias.action.beep.BeepAction;
 import io.github.dsheirer.alias.action.clip.ClipAction;
-import io.github.dsheirer.alias.action.script.ScriptAction;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.AliasIDType;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
@@ -594,8 +593,7 @@ public class AliasItemEditor extends Editor<Alias>
             mAddActionButton = new MenuButton("Add Action");
             mAddActionButton.setDisable(true);
             mAddActionButton.setMaxWidth(Double.MAX_VALUE);
-            mAddActionButton.getItems().addAll(new AddAudioClipActionItem(), new AddBeepActionItem(),
-                new AddScriptActionItem());
+            mAddActionButton.getItems().addAll(new AddAudioClipActionItem(), new AddBeepActionItem());
         }
 
         return mAddActionButton;
@@ -769,10 +767,6 @@ public class AliasItemEditor extends Editor<Alias>
             mdcMenu.getItems().add(new AddTalkgroupItem(Protocol.MDC1200));
             mdcMenu.getItems().add(new AddTalkgroupRangeItem(Protocol.MDC1200));
 
-            Menu mptMenu = new ProtocolMenu(Protocol.MPT1327);
-            mptMenu.getItems().add(new AddTalkgroupItem(Protocol.MPT1327));
-            mptMenu.getItems().add(new AddTalkgroupRangeItem(Protocol.MPT1327));
-
             Menu nbfmMenu = new ProtocolMenu(Protocol.NBFM);
             nbfmMenu.getItems().add(new AddTalkgroupItem(Protocol.NBFM));
             nbfmMenu.getItems().add(new AddTalkgroupRangeItem(Protocol.NBFM));
@@ -797,7 +791,7 @@ public class AliasItemEditor extends Editor<Alias>
             Menu lojackMenu = new ProtocolMenu(Protocol.LOJACK);
             lojackMenu.getItems().add(new AddLojackItem());
 
-            mAddIdentifierButton.getItems().addAll(amMenu, p25Menu, dmrMenu, fleetsyncMenu, ltrMenu, mdcMenu, mptMenu,
+            mAddIdentifierButton.getItems().addAll(amMenu, p25Menu, dmrMenu, fleetsyncMenu, ltrMenu, mdcMenu,
                 nbfmMenu, nxdnMenu, passportMenu, taitMenu, new SeparatorMenuItem(), lojackMenu);
         }
 
@@ -1546,28 +1540,6 @@ public class AliasItemEditor extends Editor<Alias>
                     getActionsList().getItems().add(clipAction);
                     getActionsList().getSelectionModel().select(clipAction);
                     getActionsList().scrollTo(clipAction);
-                    modifiedProperty().set(true);
-                }
-            });
-        }
-    }
-
-    /**
-     * Menu item to add a new script alias action
-     */
-    public class AddScriptActionItem extends MenuItem
-    {
-        public AddScriptActionItem()
-        {
-            super("Script");
-
-            setOnAction(event -> {
-                if(getItem() != null)
-                {
-                    ScriptAction scriptAction = new ScriptAction();
-                    getActionsList().getItems().add(scriptAction);
-                    getActionsList().getSelectionModel().select(scriptAction);
-                    getActionsList().scrollTo(scriptAction);
                     modifiedProperty().set(true);
                 }
             });

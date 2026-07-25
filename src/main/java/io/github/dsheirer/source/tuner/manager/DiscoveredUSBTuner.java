@@ -19,7 +19,6 @@
 
 package io.github.dsheirer.source.tuner.manager;
 
-import io.github.dsheirer.preference.source.ChannelizerType;
 import io.github.dsheirer.source.SourceException;
 import io.github.dsheirer.source.tuner.TunerClass;
 import io.github.dsheirer.source.tuner.TunerFactory;
@@ -36,20 +35,17 @@ public class DiscoveredUSBTuner extends DiscoveredTuner
     private TunerClass mTunerClass;
     private int mBus;
     private String mPortAddress;
-    private ChannelizerType mChannelizerType;
 
     /**
      * Constructs an instance
      * @param bus (USB) number
      * @param portAddress (USB)
-     * @param channelizerType to use with the tuner
      */
-    public DiscoveredUSBTuner(TunerClass tunerClass, int bus, String portAddress, ChannelizerType channelizerType)
+    public DiscoveredUSBTuner(TunerClass tunerClass, int bus, String portAddress)
     {
         mTunerClass = tunerClass;
         mBus = bus;
         mPortAddress = portAddress;
-        mChannelizerType = channelizerType;
     }
 
     /**
@@ -104,7 +100,7 @@ public class DiscoveredUSBTuner extends DiscoveredTuner
         {
             try
             {
-                mTuner = TunerFactory.getUsbTuner(getTunerClass(), getPortAddress(), getBus(), this, mChannelizerType);
+                mTuner = TunerFactory.getUsbTuner(getTunerClass(), getPortAddress(), getBus(), this);
                 mTuner.start();
             }
             catch(SourceException se)

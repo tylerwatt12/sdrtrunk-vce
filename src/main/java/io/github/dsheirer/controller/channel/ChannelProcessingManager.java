@@ -26,15 +26,14 @@ import io.github.dsheirer.channel.metadata.ChannelAndMetadata;
 import io.github.dsheirer.channel.metadata.ChannelMetadata;
 import io.github.dsheirer.channel.metadata.ChannelMetadataModel;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivityModel;
+import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
 import io.github.dsheirer.channel.quality.ControlChannelQualityMonitor;
 import io.github.dsheirer.channel.quality.ControlChannelQualitySnapshot;
 import io.github.dsheirer.channel.state.AbstractChannelState;
-import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
 import io.github.dsheirer.controller.channel.event.ChannelStartProcessingRequest;
 import io.github.dsheirer.controller.channel.event.ChannelStopProcessingRequest;
 import io.github.dsheirer.controller.channel.event.PostChannelModuleEventRequest;
 import io.github.dsheirer.controller.channel.event.PreloadDataContent;
-import io.github.dsheirer.controller.channel.map.ChannelMapModel;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierClass;
@@ -108,7 +107,6 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     private List<ProtocolSiteMetadataListener> mProtocolSiteMetadataListeners = new CopyOnWriteArrayList<>();
     private Broadcaster<ChannelEvent> mChannelEventBroadcaster = new Broadcaster<>();
 
-    private ChannelMapModel mChannelMapModel;
     private ChannelMetadataModel mChannelMetadataModel;
     private ChannelActivityModel mChannelActivityModel;
     private final Set<String> mChannelActivityConsumers = ConcurrentHashMap.newKeySet();
@@ -123,16 +121,14 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     /**
      * Constructs the channel processing manager
      *
-     * @param channelMapModel containing channel maps defined by the user
      * @param eventLogManager for adding event loggers to channels
      * @param tunerManager for obtaining a tuner channel source for the channel
      * @param aliasModel for aliasing of identifiers produced by the channel
      * @param userPreferences for user defined behavior and settings
      */
-    public ChannelProcessingManager(ChannelMapModel channelMapModel, EventLogManager eventLogManager,
-                                    TunerManager tunerManager, AliasModel aliasModel, UserPreferences userPreferences)
+    public ChannelProcessingManager(EventLogManager eventLogManager, TunerManager tunerManager, AliasModel aliasModel,
+                                    UserPreferences userPreferences)
     {
-        mChannelMapModel = channelMapModel;
         mEventLogManager = eventLogManager;
         mTunerManager = tunerManager;
         mAliasModel = aliasModel;
@@ -611,7 +607,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         processingChain.addChannelEventListener(this);
 
         /* Processing Modules */
-        List<Module> modules = DecoderFactory.getModules(mChannelMapModel, channel, mAliasModel, mUserPreferences,
+        List<Module> modules = DecoderFactory.getModules(channel, mAliasModel, mUserPreferences,
             request.getTrafficChannelManager(), request.getChannelDescriptor(), source.getSampleRate(),
             mChannelActivityModel);
 
@@ -1054,8 +1050,8 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
 
     /**
      * Indicates whether a saved channel has a decoder and source that can safely enter the source-allocation path.
-     * This check is deliberately performed before requesting a source so that compatibility-only configurations
-     * cannot reserve resources or create a persistent retry loop.
+     * This check is deliberately performed before requesting a tuner source so that retired compatibility
+     * configurations cannot reserve tuner bandwidth or create a persistent retry loop.
      */
     static boolean isRunnable(Channel channel)
     {

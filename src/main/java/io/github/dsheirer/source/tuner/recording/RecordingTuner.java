@@ -18,14 +18,11 @@
  */
 package io.github.dsheirer.source.tuner.recording;
 
-import io.github.dsheirer.preference.UserPreferences;
-import io.github.dsheirer.preference.source.ChannelizerType;
 import io.github.dsheirer.source.SourceException;
 import io.github.dsheirer.source.tuner.ITunerErrorListener;
 import io.github.dsheirer.source.tuner.Tuner;
 import io.github.dsheirer.source.tuner.TunerClass;
 import io.github.dsheirer.source.tuner.TunerType;
-import io.github.dsheirer.source.tuner.manager.HeterodyneChannelSourceManager;
 import io.github.dsheirer.source.tuner.manager.PassThroughSourceManager;
 import io.github.dsheirer.source.tuner.manager.PolyphaseChannelSourceManager;
 
@@ -36,14 +33,9 @@ public class RecordingTuner extends Tuner
 {
     private static int mInstanceCounter = 1;
     private final int mInstanceID = mInstanceCounter++;
-    private UserPreferences mUserPreferences;
-
-    public RecordingTuner(UserPreferences userPreferences, ITunerErrorListener tunerErrorListener,
-                          RecordingTunerConfiguration config)
+    public RecordingTuner(ITunerErrorListener tunerErrorListener, RecordingTunerConfiguration config)
     {
         super(new RecordingTunerController(tunerErrorListener, config.getPath(), config.getFrequency()), tunerErrorListener);
-
-        mUserPreferences = userPreferences;
     }
 
     @Override
@@ -56,20 +48,7 @@ public class RecordingTuner extends Tuner
         }
         else
         {
-            ChannelizerType channelizerType = mUserPreferences.getTunerPreference().getChannelizerType();
-
-            if(channelizerType == ChannelizerType.POLYPHASE)
-            {
-                setChannelSourceManager(new PolyphaseChannelSourceManager(getTunerController()));
-            }
-            else if(channelizerType == ChannelizerType.HETERODYNE)
-            {
-                setChannelSourceManager(new HeterodyneChannelSourceManager(getTunerController()));
-            }
-            else
-            {
-                throw new IllegalArgumentException("Unrecognized channelizer type: " + channelizerType);
-            }
+            setChannelSourceManager(new PolyphaseChannelSourceManager(getTunerController()));
         }
     }
 

@@ -17,7 +17,6 @@ import io.github.dsheirer.alias.action.AliasActionType;
 import io.github.dsheirer.alias.action.RecurringAction;
 import io.github.dsheirer.alias.action.beep.BeepAction;
 import io.github.dsheirer.alias.action.clip.ClipAction;
-import io.github.dsheirer.alias.action.script.ScriptAction;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.AliasIDType;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
@@ -521,7 +520,6 @@ public class AliasDatabaseStore
         String interval = null;
         Integer period = null;
         String path = null;
-        String script = null;
 
         if(action instanceof RecurringAction recurringAction)
         {
@@ -533,11 +531,6 @@ public class AliasDatabaseStore
         {
             path = clipAction.getPath();
         }
-        else if(action instanceof ScriptAction scriptAction)
-        {
-            script = scriptAction.getScript();
-        }
-
         try(PreparedStatement statement = connection.prepareStatement("""
             INSERT INTO alias_action (
                 alias_id, sort_order, type, interval, period, path, script
@@ -550,7 +543,7 @@ public class AliasDatabaseStore
             statement.setString(4, interval);
             setInteger(statement, 5, period);
             statement.setString(6, path);
-            statement.setString(7, script);
+            statement.setNull(7, Types.VARCHAR);
             statement.executeUpdate();
         }
     }
@@ -865,11 +858,6 @@ public class AliasDatabaseStore
                 ClipAction clipAction = new ClipAction();
                 clipAction.setPath(resultSet.getString("path"));
                 yield clipAction;
-            }
-            case SCRIPT -> {
-                ScriptAction scriptAction = new ScriptAction();
-                scriptAction.setScript(resultSet.getString("script"));
-                yield scriptAction;
             }
         };
 

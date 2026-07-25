@@ -12,7 +12,7 @@
 package io.github.dsheirer.configuration;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.controller.channel.Channel;
@@ -30,45 +30,46 @@ import org.junit.jupiter.api.Test;
 class ChannelConfigurationPolicyTest
 {
     @Test
-    void classifiesRestoredMptAndSoundCardChannelsAsActive()
+    void classifiesActiveAndRetiredChannels()
     {
-        Channel dmr = channel(new DecodeConfigDMR());
-        Channel mpt = channel(new DecodeConfigMPT1327());
-        Channel soundCard = channel(new DecodeConfigDMR());
-        soundCard.setSourceConfiguration(new SourceConfigMixer());
+        Channel active = channel(new DecodeConfigDMR());
+        Channel retired = channel(new DecodeConfigMPT1327());
+        Channel retiredSource = channel(new DecodeConfigDMR());
+        retiredSource.setSourceConfiguration(new SourceConfigMixer());
 
-        assertTrue(ChannelConfigurationPolicy.isActive(dmr));
-        assertFalse(ChannelConfigurationPolicy.isRetired(dmr));
-        assertTrue(ChannelConfigurationPolicy.isActive(mpt));
-        assertFalse(ChannelConfigurationPolicy.isRetired(mpt));
-        assertTrue(ChannelConfigurationPolicy.isActive(soundCard));
-        assertFalse(ChannelConfigurationPolicy.isRetired(soundCard));
+        assertTrue(ChannelConfigurationPolicy.isActive(active));
+        assertFalse(ChannelConfigurationPolicy.isRetired(active));
+        assertFalse(ChannelConfigurationPolicy.isActive(retired));
+        assertTrue(ChannelConfigurationPolicy.isRetired(retired));
+        assertFalse(ChannelConfigurationPolicy.isActive(retiredSource));
+        assertTrue(ChannelConfigurationPolicy.isRetired(retiredSource));
     }
 
     @Test
     void classifiesPersistedTypesBeforeJsonBinding()
     {
         assertFalse(ChannelConfigurationPolicy.isRetiredPersisted("DMR", "TUNER"));
-        assertFalse(ChannelConfigurationPolicy.isRetiredPersisted("MPT1327", "TUNER"));
-        assertFalse(ChannelConfigurationPolicy.isRetiredPersisted("DMR", "MIXER"));
+        assertTrue(ChannelConfigurationPolicy.isRetiredPersisted("MPT1327", "TUNER"));
+        assertTrue(ChannelConfigurationPolicy.isRetiredPersisted("DMR", "MIXER"));
         assertTrue(ChannelConfigurationPolicy.isRetiredPersisted("DMR", "REMOVED_SOURCE"));
         assertTrue(ChannelConfigurationPolicy.isRetiredPersisted("FUTURE_DECODER", "TUNER"));
     }
 
     @Test
-    void restoredCompatibilityValuesAreSelectable()
+    void retiredCompatibilityValuesAreNotSelectable()
     {
-        assertTrue(DecoderType.MPT1327.isActive());
-        assertTrue(DecoderType.PRIMARY_DECODERS.contains(DecoderType.MPT1327));
-        assertTrue(DecoderType.BITSTREAM_DECODERS.contains(DecoderType.MPT1327));
-        assertTrue(Protocol.MPT1327.isActive());
-        assertTrue(Protocol.TALKGROUP_PROTOCOLS.contains(Protocol.MPT1327));
+        assertTrue(DecoderType.MPT1327.isRetiredCompatibility());
+        assertFalse(DecoderType.PRIMARY_DECODERS.contains(DecoderType.MPT1327));
+        assertFalse(DecoderType.BITSTREAM_DECODERS.contains(DecoderType.MPT1327));
+        assertTrue(Protocol.MPT1327.isRetiredCompatibility());
+        assertFalse(Protocol.TALKGROUP_PROTOCOLS.contains(Protocol.MPT1327));
         assertTrue(SourceType.TUNER.isActive());
-        assertTrue(SourceType.MIXER.isActive());
-        assertTrue(Arrays.asList(SourceType.getTypes()).contains(SourceType.MIXER));
-        assertInstanceOf(SourceConfigMixer.class,
-            SourceConfigFactory.getSourceConfiguration(SourceType.MIXER));
-        assertInstanceOf(SourceConfigMixer.class, SourceConfigFactory.copy(new SourceConfigMixer()));
+        assertTrue(SourceType.MIXER.isRetiredCompatibility());
+        assertFalse(Arrays.asList(SourceType.getTypes()).contains(SourceType.MIXER));
+        assertThrows(IllegalArgumentException.class,
+            () -> SourceConfigFactory.getSourceConfiguration(SourceType.MIXER));
+        assertThrows(IllegalArgumentException.class,
+            () -> SourceConfigFactory.copy(new SourceConfigMixer()));
     }
 
     private static Channel channel(io.github.dsheirer.module.decode.config.DecodeConfiguration decoder)

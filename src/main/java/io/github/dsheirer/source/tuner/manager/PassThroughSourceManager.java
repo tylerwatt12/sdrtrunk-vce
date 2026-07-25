@@ -39,7 +39,7 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Pass through source manager for relatively small bandwidth complex streams that don't warrant the overhead of
- * a polyphase or heterodyne channelizer.
+ * a polyphase channelizer.
  */
 public class PassThroughSourceManager extends ChannelSourceManager
 {
