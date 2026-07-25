@@ -21,6 +21,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.HttpTimeoutException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -106,8 +107,20 @@ final class SecureRadioReferenceSoapClient implements AutoCloseable
     <T extends ResponseBody> T execute(Function<AuthorizationInformation,RequestEnvelope> requestFactory,
                                        Class<T> responseType) throws RadioReferenceGatewayException
     {
+        return execute(requestFactory, responseType, mRequestTimeout);
+    }
+
+    /**
+     * Executes a request with an endpoint-specific total deadline.  The deadline covers both response headers and
+     * the complete bounded response body.
+     */
+    <T extends ResponseBody> T execute(Function<AuthorizationInformation,RequestEnvelope> requestFactory,
+                                       Class<T> responseType, Duration requestTimeout)
+        throws RadioReferenceGatewayException
+    {
         Objects.requireNonNull(requestFactory);
         Objects.requireNonNull(responseType);
+        Duration timeout = positive(requestTimeout);
         AuthorizationInformation authorization = authorization();
         AtomicBoolean responseTooLarge = new AtomicBoolean();
 
@@ -116,13 +129,13 @@ final class SecureRadioReferenceSoapClient implements AutoCloseable
             RequestEnvelope envelope = requestFactory.apply(authorization);
             String requestXml = envelope.toXmlString();
             HttpRequest request = HttpRequest.newBuilder(mEndpoint)
-                .timeout(mRequestTimeout)
+                .timeout(timeout)
                 .header("Content-Type", CONTENT_TYPE)
                 .header("Accept", "text/xml")
                 .header("User-Agent", USER_AGENT)
                 .POST(HttpRequest.BodyPublishers.ofString(requestXml, StandardCharsets.UTF_8))
                 .build();
-            HttpResponse<byte[]> response = send(request, responseTooLarge);
+            HttpResponse<byte[]> response = send(request, responseTooLarge, timeout);
 
             if(responseTooLarge.get())
             {
@@ -130,7 +143,19 @@ final class SecureRadioReferenceSoapClient implements AutoCloseable
                     RadioReferenceGatewayException.Kind.RESULT_SET_TOO_LARGE);
             }
 
-            ResponseEnvelope responseEnvelope = deserialize(response.body());
+            ResponseEnvelope responseEnvelope;
+
+            try
+            {
+                responseEnvelope = deserialize(response.body());
+            }
+            catch(IOException exception)
+            {
+                throw new RadioReferenceGatewayException(response.statusCode() == 200 ?
+                    RadioReferenceGatewayException.Kind.INVALID_RESPONSE :
+                    RadioReferenceGatewayException.Kind.HTTP_ERROR);
+            }
+
             ResponseBody responseBody = responseEnvelope != null ? responseEnvelope.getResponseBody() : null;
 
             if(responseBody instanceof Fault fault)
@@ -140,9 +165,14 @@ final class SecureRadioReferenceSoapClient implements AutoCloseable
                     RadioReferenceGatewayException.Kind.UNAVAILABLE);
             }
 
-            if(response.statusCode() != 200 || !responseType.isInstance(responseBody))
+            if(response.statusCode() != 200)
             {
-                throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.UNAVAILABLE);
+                throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.HTTP_ERROR);
+            }
+
+            if(!responseType.isInstance(responseBody))
+            {
+                throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.INVALID_RESPONSE);
             }
 
             return responseType.cast(responseBody);
@@ -154,9 +184,13 @@ final class SecureRadioReferenceSoapClient implements AutoCloseable
         catch(InterruptedException exception)
         {
             Thread.currentThread().interrupt();
-            throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.UNAVAILABLE);
+            throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.INTERRUPTED);
         }
-        catch(IOException | RuntimeException exception)
+        catch(IOException exception)
+        {
+            throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.REQUEST_ENCODING);
+        }
+        catch(RuntimeException exception)
         {
             if(responseTooLarge.get())
             {
@@ -164,7 +198,7 @@ final class SecureRadioReferenceSoapClient implements AutoCloseable
                     RadioReferenceGatewayException.Kind.RESULT_SET_TOO_LARGE);
             }
 
-            throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.UNAVAILABLE);
+            throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.INVALID_RESPONSE);
         }
         finally
         {
@@ -205,7 +239,7 @@ final class SecureRadioReferenceSoapClient implements AutoCloseable
      * HttpRequest's native timeout ends when response headers arrive for some body handlers.  Waiting on the
      * asynchronous response future places one deadline around headers and the complete bounded body.
      */
-    private HttpResponse<byte[]> send(HttpRequest request, AtomicBoolean responseTooLarge)
+    private HttpResponse<byte[]> send(HttpRequest request, AtomicBoolean responseTooLarge, Duration requestTimeout)
         throws InterruptedException, RadioReferenceGatewayException
     {
         CompletableFuture<HttpResponse<byte[]>> future =
@@ -213,12 +247,12 @@ final class SecureRadioReferenceSoapClient implements AutoCloseable
 
         try
         {
-            return future.get(mRequestTimeout.toNanos(), TimeUnit.NANOSECONDS);
+            return future.get(requestTimeout.toNanos(), TimeUnit.NANOSECONDS);
         }
         catch(TimeoutException exception)
         {
             future.cancel(true);
-            throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.UNAVAILABLE);
+            throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.TIMEOUT);
         }
         catch(ExecutionException exception)
         {
@@ -228,6 +262,11 @@ final class SecureRadioReferenceSoapClient implements AutoCloseable
                     RadioReferenceGatewayException.Kind.RESULT_SET_TOO_LARGE);
             }
 
+            if(hasCause(exception, HttpTimeoutException.class))
+            {
+                throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.TIMEOUT);
+            }
+
             throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.UNAVAILABLE);
         }
         catch(InterruptedException exception)
@@ -235,6 +274,23 @@ final class SecureRadioReferenceSoapClient implements AutoCloseable
             future.cancel(true);
             throw exception;
         }
+    }
+
+    private static boolean hasCause(Throwable throwable, Class<? extends Throwable> causeType)
+    {
+        Throwable current = throwable;
+
+        while(current != null)
+        {
+            if(causeType.isInstance(current))
+            {
+                return true;
+            }
+
+            current = current.getCause();
+        }
+
+        return false;
     }
 
     private ResponseEnvelope deserialize(byte[] xml) throws IOException

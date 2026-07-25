@@ -37,8 +37,12 @@ import io.github.dsheirer.util.ThreadPool;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicInteger;
 import javafx.application.Platform;
 import javafx.beans.binding.Bindings;
 import javafx.beans.property.IntegerProperty;
@@ -80,6 +84,7 @@ public class SystemEditor extends VBox
     private SystemTalkgroupSelectionEditor mSystemTalkgroupSelectionEditor;
     private RadioReferenceDecoder mRadioReferenceDecoder;
     private volatile int mSystemRequestSequence;
+    private int mAlertedRequestSequence = -1;
 
     /**
      * Constructs an instance
@@ -246,61 +251,21 @@ public class SystemEditor extends VBox
                         initRadioReferenceDecoder();
                     }
 
-                    //Query and load the system view editor first
-                    SystemInformation systemInformation = mRadioReference.getService().getSystemInformation(system.getSystemId());
-
-                    List<Site> sites = mRadioReference.getService().getSites(system.getSystemId());
-
-                    //The service api doesn't provide the county name, so we run a separate query to update each value
-                    List<EnrichedSite> enrichedSites = new ArrayList<>();
-                    for(Site site: sites)
-                    {
-                        CountyInfo countyInfo = null;
-
-                        int countyId = site.getCountyId();
-
-                        //Temporary sites that have been added to a system where the county/location is unknown, can
-                        //have a county ID of 99,999 as observed from API (undocumented).
-                        if(countyId > 0 && countyId != 99999)
-                        {
-                            countyInfo = mRadioReference.getService().getCountyInfo(site.getCountyId());
-                        }
-
-                        enrichedSites.add(new EnrichedSite(site, countyInfo));
-                    }
-
-                    Platform.runLater(() -> {
-                        if(isCurrentSystemRequest(system, requestSequence))
-                        {
-                            getSystemSiteSelectionEditor().setSystem(system, enrichedSites, mRadioReferenceDecoder,
-                                systemInformation);
-                        }
-                    });
-
-                    //Query and load the talkgroup view second
-                    List<Talkgroup> talkgroups = mRadioReference.getService().getTalkgroups(system.getSystemId());
-                    List<TalkgroupCategory> categories = mRadioReference.getService().getTalkgroupCategories(system.getSystemId());
-                    Platform.runLater(() -> {
-                        if(isCurrentSystemRequest(system, requestSequence))
-                        {
-                            getSystemTalkgroupSelectionEditor()
-                                .setSystem(system, talkgroups, categories, mRadioReferenceDecoder);
-                        }
-                    });
+                    //The two primary panes are independent.  A failure or slow optional enrichment in one pane must
+                    //not keep useful data out of the other.
+                    ThreadPool.CACHED.execute(() -> loadSites(system, requestSequence));
+                    ThreadPool.CACHED.execute(() -> loadTalkgroups(system, requestSequence));
                 }
-                catch(Throwable t)
+                catch(Exception t)
                 {
-                    mLog.error("Error retrieving system information", t);
-
-                    //We have to call setSystem() on both editors to clear the loading status spinny icon
+                    mLog.error("Error initializing RadioReference system metadata for system ID {}",
+                        system.getSystemId(), t);
                     Platform.runLater(() -> {
                         if(isCurrentSystemRequest(system, requestSequence))
                         {
-                            getSystemTalkgroupSelectionEditor().setSystem(null, Collections.emptyList(),
-                                Collections.emptyList(), mRadioReferenceDecoder);
-                            getSystemSiteSelectionEditor().setSystem(null, Collections.emptyList(),
-                                mRadioReferenceDecoder, null);
-                            new RadioReferenceUnavailableAlert(getSystemComboBox()).showAndWait();
+                            getSystemTalkgroupSelectionEditor().setLoadFailed();
+                            getSystemSiteSelectionEditor().setLoadFailed();
+                            showUnavailableAlert(requestSequence);
                         }
                     });
                 }
@@ -311,6 +276,198 @@ public class SystemEditor extends VBox
             mSystemRequestSequence++;
             getSystemSiteSelectionEditor().clear();
             getSystemTalkgroupSelectionEditor().clear();
+        }
+    }
+
+    private void loadSites(System system, int requestSequence)
+    {
+        try
+        {
+            List<Site> sites = mRadioReference.getService().getSites(system.getSystemId());
+            List<EnrichedSite> displaySites = enrich(sites, Map.of());
+            SystemInformation systemInformation = null;
+
+            try
+            {
+                systemInformation = mRadioReference.getService().getSystemInformation(system.getSystemId());
+            }
+            catch(Exception t)
+            {
+                //System information supplements site import.  Sites can still be browsed when it is unavailable.
+                mLog.warn("RadioReference system information enrichment failed for system ID {}",
+                    system.getSystemId(), t);
+            }
+
+            SystemInformation finalSystemInformation = systemInformation;
+            Platform.runLater(() -> {
+                if(isCurrentSystemRequest(system, requestSequence))
+                {
+                    getSystemSiteSelectionEditor().setSystem(system, displaySites, mRadioReferenceDecoder,
+                        finalSystemInformation);
+                }
+            });
+
+            enrichCountyNames(system, sites, requestSequence);
+        }
+        catch(Exception t)
+        {
+            mLog.error("Error retrieving RadioReference sites for system ID {}", system.getSystemId(), t);
+            Platform.runLater(() -> {
+                if(isCurrentSystemRequest(system, requestSequence))
+                {
+                    getSystemSiteSelectionEditor().setLoadFailed();
+                    showUnavailableAlert(requestSequence);
+                }
+            });
+        }
+    }
+
+    private void loadTalkgroups(System system, int requestSequence)
+    {
+        try
+        {
+            List<Talkgroup> talkgroups = mRadioReference.getService().getTalkgroups(system.getSystemId());
+            Platform.runLater(() -> {
+                if(isCurrentSystemRequest(system, requestSequence))
+                {
+                    getSystemTalkgroupSelectionEditor().setSystem(system, talkgroups, List.of(),
+                        mRadioReferenceDecoder);
+                }
+            });
+
+            //Categories are only labels and filters.  Fetch them after the talkgroups are available so a slow or
+            //failed category endpoint cannot delay or erase the talkgroup table.
+            ThreadPool.CACHED.execute(() -> loadTalkgroupCategories(system, requestSequence));
+        }
+        catch(Exception t)
+        {
+            mLog.error("Error retrieving RadioReference talkgroups for system ID {}", system.getSystemId(), t);
+            Platform.runLater(() -> {
+                if(isCurrentSystemRequest(system, requestSequence))
+                {
+                    getSystemTalkgroupSelectionEditor().setLoadFailed();
+                    showUnavailableAlert(requestSequence);
+                }
+            });
+        }
+    }
+
+    private void loadTalkgroupCategories(System system, int requestSequence)
+    {
+        try
+        {
+            List<TalkgroupCategory> categories =
+                mRadioReference.getService().getTalkgroupCategories(system.getSystemId());
+            Platform.runLater(() -> {
+                if(isCurrentSystemRequest(system, requestSequence))
+                {
+                    getSystemTalkgroupSelectionEditor().updateCategories(categories);
+                }
+            });
+        }
+        catch(Exception t)
+        {
+            mLog.warn("RadioReference category enrichment failed for system ID {}; talkgroups remain available",
+                system.getSystemId(), t);
+        }
+    }
+
+    /**
+     * Resolves distinct county names on four bounded workers.  The initial site table is already visible while this
+     * optional work runs, and any individual county failure leaves only that county name blank.
+     */
+    private void enrichCountyNames(System system, List<Site> sites, int requestSequence)
+    {
+        Set<Integer> distinctCountyIds = new LinkedHashSet<>();
+
+        for(Site site: sites)
+        {
+            int countyId = site.getCountyId();
+
+            //Temporary sites whose location is unknown can use this undocumented sentinel value.
+            if(countyId > 0 && countyId != 99999)
+            {
+                distinctCountyIds.add(countyId);
+            }
+        }
+
+        if(distinctCountyIds.isEmpty())
+        {
+            return;
+        }
+
+        List<Integer> countyIds = new ArrayList<>(distinctCountyIds);
+        Map<Integer,CountyInfo> counties = new java.util.concurrent.ConcurrentHashMap<>();
+        AtomicInteger failedCount = new AtomicInteger();
+        int workerCount = Math.min(4, countyIds.size());
+        List<CompletableFuture<Void>> workers = new ArrayList<>(workerCount);
+
+        for(int worker = 0; worker < workerCount; worker++)
+        {
+            int firstIndex = worker;
+            workers.add(CompletableFuture.runAsync(() -> {
+                for(int index = firstIndex; index < countyIds.size(); index += workerCount)
+                {
+                    if(requestSequence != mSystemRequestSequence)
+                    {
+                        return;
+                    }
+
+                    int countyId = countyIds.get(index);
+
+                    try
+                    {
+                        CountyInfo countyInfo = mRadioReference.getService().getCountyInfo(countyId);
+
+                        if(countyInfo != null)
+                        {
+                            counties.put(countyId, countyInfo);
+                        }
+                    }
+                    catch(Exception t)
+                    {
+                        failedCount.incrementAndGet();
+                        mLog.debug("Optional RadioReference county enrichment failed for county ID {}", countyId, t);
+                    }
+                }
+            }, ThreadPool.CACHED));
+        }
+
+        CompletableFuture.allOf(workers.toArray(CompletableFuture[]::new)).whenComplete((ignored, failure) -> {
+            if(failedCount.get() > 0)
+            {
+                mLog.warn("{} of {} optional RadioReference county lookups failed for system ID {}",
+                    failedCount.get(), countyIds.size(), system.getSystemId());
+            }
+
+            List<EnrichedSite> enrichedSites = enrich(sites, counties);
+            Platform.runLater(() -> {
+                if(isCurrentSystemRequest(system, requestSequence))
+                {
+                    getSystemSiteSelectionEditor().updateSites(enrichedSites);
+                }
+            });
+        });
+    }
+
+    private static List<EnrichedSite> enrich(List<Site> sites, Map<Integer,CountyInfo> counties)
+    {
+        List<EnrichedSite> enrichedSites = new ArrayList<>(sites.size());
+
+        for(Site site: sites)
+        {
+            enrichedSites.add(new EnrichedSite(site, counties.get(site.getCountyId())));
+        }
+
+        return enrichedSites;
+    }
+
+    private void showUnavailableAlert(int requestSequence)
+    {
+        if(mAlertedRequestSequence != requestSequence)
+        {
+            mAlertedRequestSequence = requestSequence;
+            new RadioReferenceUnavailableAlert(getSystemComboBox()).showAndWait();
         }
     }
 

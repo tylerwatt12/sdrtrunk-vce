@@ -35,7 +35,6 @@ import io.github.dsheirer.rrapi.type.System;
 import io.github.dsheirer.rrapi.type.Talkgroup;
 import io.github.dsheirer.rrapi.type.TalkgroupCategory;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
@@ -256,20 +255,15 @@ public class SystemTalkgroupSelectionEditor extends GridPane
 
         if(talkgroups != null && !talkgroups.isEmpty())
         {
-            Collections.sort(talkgroups, Comparator.comparingInt(Talkgroup::getDecimalValue));
+            List<Talkgroup> sortedTalkgroups = new ArrayList<>(talkgroups);
+            sortedTalkgroups.sort(Comparator.comparingInt(Talkgroup::getDecimalValue));
 
-            for(Talkgroup talkgroup: talkgroups)
+            for(Talkgroup talkgroup: sortedTalkgroups)
             {
                 mTalkgroupList.add(new AliasedTalkgroup(talkgroup, getAlias(talkgroup)));
             }
 
-            if(categories.size() > 0)
-            {
-                Collections.sort(categories, (o1, o2) -> o1.getName().compareTo(o2.getName()));
-                categories.add(0, ALL_TALKGROUPS);
-                getTalkgroupCategoryComboBox().getItems().addAll(categories);
-                getTalkgroupCategoryComboBox().getSelectionModel().select(ALL_TALKGROUPS);
-            }
+            updateCategories(categories);
         }
 
         //If the protocol is supported then enable the talkgroup import controls
@@ -277,6 +271,34 @@ public class SystemTalkgroupSelectionEditor extends GridPane
             getRadioReferenceDecoder().hasSupportedProtocol(getCurrentSystem());
         getImportAllTalkgroupsButton().setDisable(!supported);
         getEncryptedAsDoNotMonitorCheckBox().setDisable(!supported);
+        setLoading(false);
+    }
+
+    /**
+     * Adds optional category labels after talkgroups have loaded.  Talkgroups remain usable when this enrichment is
+     * unavailable.
+     */
+    public void updateCategories(List<TalkgroupCategory> categories)
+    {
+        getTalkgroupCategoryComboBox().getItems().clear();
+
+        if(!mTalkgroupList.isEmpty())
+        {
+            List<TalkgroupCategory> sortedCategories =
+                categories == null ? new ArrayList<>() : new ArrayList<>(categories);
+            sortedCategories.sort(Comparator.comparing(TalkgroupCategory::getName,
+                Comparator.nullsLast(String::compareToIgnoreCase)));
+            getTalkgroupCategoryComboBox().getItems().add(ALL_TALKGROUPS);
+            getTalkgroupCategoryComboBox().getItems().addAll(sortedCategories);
+            getTalkgroupCategoryComboBox().getSelectionModel().select(ALL_TALKGROUPS);
+        }
+    }
+
+    public void setLoadFailed()
+    {
+        mCurrentSystem = null;
+        clear();
+        getImportAllTalkgroupsButton().setDisable(true);
         setLoading(false);
     }
 

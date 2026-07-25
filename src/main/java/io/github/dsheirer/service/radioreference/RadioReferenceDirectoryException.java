@@ -23,6 +23,12 @@ public final class RadioReferenceDirectoryException extends Exception
         mCode = code;
     }
 
+    RadioReferenceDirectoryException(Code code, RadioReferenceGatewayException cause)
+    {
+        super(message(code), cause);
+        mCode = code;
+    }
+
     public Code code()
     {
         return mCode;

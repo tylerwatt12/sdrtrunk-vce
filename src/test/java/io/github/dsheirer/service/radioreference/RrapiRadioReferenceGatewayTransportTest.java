@@ -27,7 +27,11 @@ import io.github.dsheirer.rrapi.response.Fault;
 import io.github.dsheirer.rrapi.response.GetCountryInfoResponse;
 import io.github.dsheirer.rrapi.response.GetCountryListResponse;
 import io.github.dsheirer.rrapi.response.GetCountyInfoResponse;
+import io.github.dsheirer.rrapi.response.GetSitesResponse;
 import io.github.dsheirer.rrapi.response.GetStateInfoResponse;
+import io.github.dsheirer.rrapi.response.GetSystemInformationResponse;
+import io.github.dsheirer.rrapi.response.GetTalkgroupCategoriesResponse;
+import io.github.dsheirer.rrapi.response.GetTalkgroupsResponse;
 import io.github.dsheirer.rrapi.response.GetUserDataResponse;
 import io.github.dsheirer.rrapi.response.ResponseBody;
 import io.github.dsheirer.rrapi.response.ResponseEnvelope;
@@ -38,8 +42,13 @@ import io.github.dsheirer.rrapi.type.County;
 import io.github.dsheirer.rrapi.type.CountyInfo;
 import io.github.dsheirer.rrapi.type.State;
 import io.github.dsheirer.rrapi.type.StateInfo;
+import io.github.dsheirer.rrapi.type.Site;
+import io.github.dsheirer.rrapi.type.SystemInformation;
+import io.github.dsheirer.rrapi.type.Talkgroup;
+import io.github.dsheirer.rrapi.type.TalkgroupCategory;
 import io.github.dsheirer.rrapi.type.UserInfo;
 import java.io.ByteArrayInputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.net.InetSocketAddress;
 import java.net.URI;
@@ -51,6 +60,9 @@ import java.util.Base64;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLContext;
@@ -200,7 +212,7 @@ class RrapiRadioReferenceGatewayTransportTest
         byte[] faultResponse = response(fault).getBytes(StandardCharsets.UTF_8);
 
         try(TestHttpsServer server = new TestHttpsServer(exchange -> {
-            exchange.sendResponseHeaders(200, faultResponse.length);
+            exchange.sendResponseHeaders(500, faultResponse.length);
             exchange.getResponseBody().write(faultResponse);
             exchange.close();
         });
@@ -238,7 +250,7 @@ class RrapiRadioReferenceGatewayTransportTest
                 Duration.ofSeconds(1), 1024);
             RrapiRadioReferenceGateway gateway = new RrapiRadioReferenceGateway(client))
         {
-            assertEquals(RadioReferenceGatewayException.Kind.UNAVAILABLE,
+            assertEquals(RadioReferenceGatewayException.Kind.HTTP_ERROR,
                 assertThrows(RadioReferenceGatewayException.class, gateway::account).kind());
             assertEquals(0, plaintextRequests.get());
         }
@@ -268,7 +280,7 @@ class RrapiRadioReferenceGatewayTransportTest
                 Duration.ofMillis(50), 1024);
             RrapiRadioReferenceGateway gateway = new RrapiRadioReferenceGateway(client))
         {
-            assertEquals(RadioReferenceGatewayException.Kind.UNAVAILABLE,
+            assertEquals(RadioReferenceGatewayException.Kind.TIMEOUT,
                 assertThrows(RadioReferenceGatewayException.class, gateway::account).kind());
         }
 
@@ -296,7 +308,7 @@ class RrapiRadioReferenceGatewayTransportTest
             RrapiRadioReferenceGateway gateway = new RrapiRadioReferenceGateway(client))
         {
             assertTimeoutPreemptively(Duration.ofSeconds(1), () ->
-                assertEquals(RadioReferenceGatewayException.Kind.UNAVAILABLE,
+                assertEquals(RadioReferenceGatewayException.Kind.TIMEOUT,
                     assertThrows(RadioReferenceGatewayException.class, gateway::account).kind()));
         }
 
@@ -312,6 +324,200 @@ class RrapiRadioReferenceGatewayTransportTest
         {
             assertEquals(RadioReferenceGatewayException.Kind.RESULT_SET_TOO_LARGE,
                 assertThrows(RadioReferenceGatewayException.class, gateway::account).kind());
+        }
+    }
+
+    @Test
+    void largeSlowSystemEndpointsUseIndependentBoundedBudgets() throws Exception
+    {
+        UserInfo user = new UserInfo();
+        user.setUserName("test-user");
+        user.setExpirationDate("Never - Test");
+        GetUserDataResponse userBody = new GetUserDataResponse();
+        userBody.setUserInfo(user);
+
+        SystemInformation systemInformation = new SystemInformation();
+        systemInformation.setName("Large Statewide System");
+        systemInformation.setCounties(List.of());
+        systemInformation.setStates(List.of());
+        systemInformation.setRectangles(List.of());
+        systemInformation.setRadioNetworks(List.of());
+        systemInformation.setBandplans(List.of());
+        GetSystemInformationResponse systemBody = new GetSystemInformationResponse();
+        systemBody.setSystemInformation(systemInformation);
+
+        List<Site> sites = new ArrayList<>();
+
+        for(int index = 0; index < 222; index++)
+        {
+            Site site = new Site();
+            site.setSiteId(index + 1);
+            site.setSystemId(6643);
+            site.setSiteNumber(index + 1);
+            site.setDescription("Statewide Site " + index);
+            site.setCountyId(1_000 + index);
+            site.setRectangles(List.of());
+            site.setSiteLicenses(List.of());
+            site.setSiteFrequencies(List.of());
+            site.setBandplans(List.of());
+            sites.add(site);
+        }
+
+        GetSitesResponse sitesBody = new GetSitesResponse();
+        sitesBody.setSites(sites);
+        List<Talkgroup> talkgroups = new ArrayList<>();
+
+        for(int index = 0; index < 6_617; index++)
+        {
+            Talkgroup talkgroup = new Talkgroup();
+            talkgroup.setTalkgroupId(index + 1);
+            talkgroup.setDecimalValue(10_000 + index);
+            talkgroup.setAlphaTag("MARCS TG " + index);
+            talkgroup.setDescription("Large statewide talkgroup " + index);
+            talkgroup.setMode("D");
+            talkgroup.setTalkgroupCategoryId(index % 200);
+            talkgroup.setTags(new io.github.dsheirer.rrapi.type.Tag[0]);
+            talkgroups.add(talkgroup);
+        }
+
+        GetTalkgroupsResponse talkgroupsBody = new GetTalkgroupsResponse();
+        talkgroupsBody.setTalkgroups(talkgroups);
+        List<TalkgroupCategory> categories = new ArrayList<>();
+
+        for(int index = 0; index < 200; index++)
+        {
+            TalkgroupCategory category = new TalkgroupCategory();
+            category.setTalkgroupCategoryId(index);
+            category.setSystemId(6643);
+            category.setName("Category " + index);
+            category.setRectangles(List.of());
+            categories.add(category);
+        }
+
+        GetTalkgroupCategoriesResponse categoriesBody = new GetTalkgroupCategoriesResponse();
+        categoriesBody.setTalkgroupCategories(categories);
+        List<byte[]> responses = List.of(response(userBody).getBytes(StandardCharsets.UTF_8),
+            response(systemBody).getBytes(StandardCharsets.UTF_8),
+            response(sitesBody).getBytes(StandardCharsets.UTF_8),
+            response(talkgroupsBody).getBytes(StandardCharsets.UTF_8),
+            response(categoriesBody).getBytes(StandardCharsets.UTF_8));
+        AtomicInteger requestIndex = new AtomicInteger();
+
+        try(TestHttpsServer server = new TestHttpsServer(exchange -> {
+            int index = requestIndex.getAndIncrement();
+
+            try
+            {
+                Thread.sleep(150);
+                byte[] response = responses.get(index);
+                exchange.sendResponseHeaders(200, response.length);
+                exchange.getResponseBody().write(response);
+            }
+            catch(InterruptedException exception)
+            {
+                Thread.currentThread().interrupt();
+            }
+            catch(IOException ignored)
+            {
+                //The deliberately timed-out ordinary request can close its exchange before the fake server writes.
+            }
+            finally
+            {
+                exchange.close();
+            }
+        });
+            SecureRadioReferenceSoapClient client = client(server.endpoint(), server.sslContext(),
+                Duration.ofMillis(50), 8 * 1024 * 1024);
+            SecureRadioReferenceService service = new SecureRadioReferenceService(client))
+        {
+            RadioReferenceException timeout = assertThrows(RadioReferenceException.class, service::getUserInfo);
+            assertTrue(timeout.getCause() instanceof RadioReferenceGatewayException);
+            assertEquals(RadioReferenceGatewayException.Kind.TIMEOUT,
+                ((RadioReferenceGatewayException)timeout.getCause()).kind());
+            assertFalse(timeout.toString().contains("dummy-password"));
+
+            assertEquals("Large Statewide System", service.getSystemInformation(6643).getName());
+            assertEquals(222, service.getSites(6643).size());
+            assertEquals(6_617, service.getTalkgroups(6643).size());
+            assertEquals(200, service.getTalkgroupCategories(6643).size());
+        }
+
+        assertEquals(5, requestIndex.get());
+    }
+
+    @Test
+    void cacheFailureDoesNotImmediatelyRepeatTheRemoteRequest() throws Exception
+    {
+        AtomicInteger requests = new AtomicInteger();
+
+        try(TestHttpsServer server = new TestHttpsServer(exchange -> {
+            requests.incrementAndGet();
+            exchange.sendResponseHeaders(503, -1);
+            exchange.close();
+        });
+            SecureRadioReferenceSoapClient client = client(server.endpoint(), server.sslContext(),
+                Duration.ofSeconds(1), 1024);
+            CachingRadioReferenceService service = new CachingRadioReferenceService(client))
+        {
+            RadioReferenceException exception =
+                assertThrows(RadioReferenceException.class, () -> service.getSites(6643));
+            assertTrue(exception.getCause() instanceof RadioReferenceGatewayException);
+            assertEquals(RadioReferenceGatewayException.Kind.HTTP_ERROR,
+                ((RadioReferenceGatewayException)exception.getCause()).kind());
+            assertEquals(1, requests.get());
+        }
+    }
+
+    @Test
+    void closingAServiceDoesNotAbortAnInFlightRequest() throws Exception
+    {
+        UserInfo user = new UserInfo();
+        user.setUserName("in-flight-user");
+        GetUserDataResponse body = new GetUserDataResponse();
+        body.setUserInfo(user);
+        byte[] response = response(body).getBytes(StandardCharsets.UTF_8);
+        CountDownLatch requestEntered = new CountDownLatch(1);
+        CountDownLatch releaseResponse = new CountDownLatch(1);
+
+        try(TestHttpsServer server = new TestHttpsServer(exchange -> {
+            requestEntered.countDown();
+
+            try
+            {
+                releaseResponse.await(2, TimeUnit.SECONDS);
+                exchange.sendResponseHeaders(200, response.length);
+                exchange.getResponseBody().write(response);
+            }
+            catch(InterruptedException exception)
+            {
+                Thread.currentThread().interrupt();
+            }
+            finally
+            {
+                exchange.close();
+            }
+        });
+            SecureRadioReferenceSoapClient client = client(server.endpoint(), server.sslContext(),
+                Duration.ofSeconds(2), 1024 * 1024))
+        {
+            SecureRadioReferenceService service = new SecureRadioReferenceService(client);
+            ExecutorService executor = Executors.newSingleThreadExecutor();
+
+            try
+            {
+                Future<UserInfo> inFlight = executor.submit(service::getUserInfo);
+                assertTrue(requestEntered.await(1, TimeUnit.SECONDS));
+                service.close();
+                releaseResponse.countDown();
+                assertEquals("in-flight-user", inFlight.get(1, TimeUnit.SECONDS).getUserName());
+                assertThrows(RadioReferenceException.class, service::getUserInfo);
+            }
+            finally
+            {
+                releaseResponse.countDown();
+                service.close();
+                executor.shutdownNow();
+            }
         }
     }
 

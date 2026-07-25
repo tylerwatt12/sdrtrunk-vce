@@ -41,8 +41,8 @@ import javafx.scene.control.cell.PropertyValueFactory;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.Priority;
 
+import java.util.ArrayList;
 import java.util.Collections;
-import java.util.Comparator;
 import java.util.List;
 
 
@@ -126,8 +126,24 @@ public class SystemSiteSelectionEditor extends GridPane
         getFlavorLabel().setText(flavor != null ? flavor.getName() : null);
         Voice voice = decoder.getVoice(system);
         getVoiceLabel().setText(voice != null ? voice.getName() : null);
-        Collections.sort(sites, Ordering.natural());
-        getSiteTableView().getItems().addAll(sites);
+        updateSites(sites);
+        setLoading(false);
+    }
+
+    /**
+     * Replaces the displayed sites without resetting the selected system.  This is used when optional county names
+     * arrive after the sites themselves have already been rendered.
+     */
+    public void updateSites(List<EnrichedSite> sites)
+    {
+        List<EnrichedSite> sortedSites = sites == null ? new ArrayList<>() : new ArrayList<>(sites);
+        Collections.sort(sortedSites, Ordering.natural());
+        getSiteTableView().getItems().setAll(sortedSites);
+    }
+
+    public void setLoadFailed()
+    {
+        clear();
         setLoading(false);
     }
 

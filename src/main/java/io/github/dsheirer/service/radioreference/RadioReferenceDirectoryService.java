@@ -575,7 +575,7 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
         {
             if(exception.getCause() instanceof RadioReferenceGatewayException gatewayException)
             {
-                throw new RadioReferenceDirectoryException(directoryCode(gatewayException.kind()));
+                throw new RadioReferenceDirectoryException(directoryCode(gatewayException.kind()), gatewayException);
             }
 
             throw new RadioReferenceDirectoryException(RadioReferenceDirectoryException.Code.UNAVAILABLE);
@@ -616,7 +616,10 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
             case INVALID_LOCATION -> RadioReferenceDirectoryException.Code.INVALID_REQUEST;
             case RESULT_SET_TOO_LARGE -> RadioReferenceDirectoryException.Code.RESULT_SET_TOO_LARGE;
             case INSECURE_TRANSPORT -> RadioReferenceDirectoryException.Code.INSECURE_TRANSPORT;
-            case UNAVAILABLE -> RadioReferenceDirectoryException.Code.UNAVAILABLE;
+            case TIMEOUT -> RadioReferenceDirectoryException.Code.TIMEOUT;
+            case INTERRUPTED -> RadioReferenceDirectoryException.Code.INTERRUPTED;
+            case HTTP_ERROR, REQUEST_ENCODING, INVALID_RESPONSE, UNAVAILABLE ->
+                RadioReferenceDirectoryException.Code.UNAVAILABLE;
         };
     }
 

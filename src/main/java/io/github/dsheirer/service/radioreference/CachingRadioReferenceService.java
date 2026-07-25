@@ -36,6 +36,7 @@ import io.github.dsheirer.rrapi.type.SystemInformation;
 import io.github.dsheirer.rrapi.type.Talkgroup;
 
 import java.util.List;
+import java.util.concurrent.ExecutionException;
 
 /**
  * Provides local caching for frequently retrieved items from the radio reference service
@@ -59,7 +60,17 @@ public class CachingRadioReferenceService extends SecureRadioReferenceService
     public CachingRadioReferenceService(AuthorizationInformation authorizationInformation) throws RadioReferenceException
     {
         super(authorizationInformation);
+        initializeCaches();
+    }
 
+    CachingRadioReferenceService(SecureRadioReferenceSoapClient client)
+    {
+        super(client);
+        initializeCaches();
+    }
+
+    private void initializeCaches()
+    {
         mAgencyInfoCache = CacheBuilder.newBuilder()
             .maximumSize(1000)
             .build(new CacheLoader<Integer,AgencyInfo>()
@@ -141,92 +152,64 @@ public class CachingRadioReferenceService extends SecureRadioReferenceService
     @Override
     public AgencyInfo getAgencyInfo(int agencyId) throws RadioReferenceException
     {
-        try
-        {
-            return mAgencyInfoCache.get(agencyId);
-        }
-        catch(Exception e)
-        {
-            return CachingRadioReferenceService.super.getAgencyInfo(agencyId);
-        }
+        return cached(mAgencyInfoCache, agencyId);
     }
 
     @Override
     public CountyInfo getCountyInfo(final int countyId) throws RadioReferenceException
     {
-        try
-        {
-            return mCountyInfoCache.get(countyId);
-        }
-        catch(Exception e)
-        {
-            return CachingRadioReferenceService.super.getCountyInfo(countyId);
-        }
+        return cached(mCountyInfoCache, countyId);
     }
 
     @Override
     public StateInfo getStateInfo(final int stateId) throws RadioReferenceException
     {
-        try
-        {
-            return mStateInfoCache.get(stateId);
-        }
-        catch(Exception e)
-        {
-            return CachingRadioReferenceService.super.getStateInfo(stateId);
-        }
+        return cached(mStateInfoCache, stateId);
     }
 
     @Override
     public SystemInformation getSystemInformation(int systemId) throws RadioReferenceException
     {
-        try
-        {
-            return mSystemInfoCache.get(systemId);
-        }
-        catch(Exception e)
-        {
-            return CachingRadioReferenceService.super.getSystemInformation(systemId);
-        }
+        return cached(mSystemInfoCache, systemId);
     }
 
     @Override
     public List<Site> getSites(int systemId) throws RadioReferenceException
     {
-        try
-        {
-            return mSystemSitesCache.get(systemId);
-        }
-        catch(Exception e)
-        {
-            return CachingRadioReferenceService.super.getSites(systemId);
-        }
+        return cached(mSystemSitesCache, systemId);
     }
 
     @Override
     public List<Frequency> getSubCategoryFrequencies(int subCategoryId) throws RadioReferenceException
     {
-        try
-        {
-            return mSubCategoryFrequencyCache.get(subCategoryId);
-        }
-        catch(Exception e)
-        {
-            return CachingRadioReferenceService.super.getSubCategoryFrequencies(subCategoryId);
-        }
+        return cached(mSubCategoryFrequencyCache, subCategoryId);
     }
 
 
     @Override
     public List<Talkgroup> getTalkgroups(int systemId) throws RadioReferenceException
     {
+        return cached(mTalkgroupCache, systemId);
+    }
+
+    /**
+     * A failed cache load already represents the remote attempt.  Propagate that failure instead of immediately
+     * issuing the same remote request a second time.
+     */
+    private static <T> T cached(LoadingCache<Integer,T> cache, int key) throws RadioReferenceException
+    {
         try
         {
-            return mTalkgroupCache.get(systemId);
+            return cache.get(key);
         }
-        catch(Exception e)
+        catch(ExecutionException exception)
         {
-            return CachingRadioReferenceService.super.getTalkgroups(systemId);
+            if(exception.getCause() instanceof RadioReferenceException radioReferenceException)
+            {
+                throw radioReferenceException;
+            }
+
+            throw new RadioReferenceException("RadioReference cache lookup failed");
         }
     }
 }

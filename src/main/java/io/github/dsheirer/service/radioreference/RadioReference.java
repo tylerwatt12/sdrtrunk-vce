@@ -122,7 +122,7 @@ public class RadioReference
      * @return service
      * @throws RadioReferenceException if there is an issue creating the service (ie login credentials missing)
      */
-    public SecureRadioReferenceService getService() throws RadioReferenceException
+    public synchronized SecureRadioReferenceService getService() throws RadioReferenceException
     {
         if(mRadioReferenceService == null)
         {
@@ -344,7 +344,7 @@ public class RadioReference
      * Applies the credentials and attempts to login to the radio reference service
      * @param authorizationInformation
      */
-    public void setAuthorizationInformation(AuthorizationInformation authorizationInformation)
+    public synchronized void setAuthorizationInformation(AuthorizationInformation authorizationInformation)
     {
         mAuthorizationInformation = authorizationInformation;
         mUserName.setValue(authorizationInformation.getUserName());

@@ -68,6 +68,7 @@ import io.github.dsheirer.rrapi.type.Type;
 import io.github.dsheirer.rrapi.type.UserFeedBroadcast;
 import io.github.dsheirer.rrapi.type.UserInfo;
 import io.github.dsheirer.rrapi.type.Voice;
+import java.time.Duration;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -86,7 +87,18 @@ import java.util.function.ToIntFunction;
  */
 public class SecureRadioReferenceService implements AutoCloseable
 {
+    /*
+     * System detail responses vary substantially in size. These endpoint budgets remain finite, but allow large
+     * statewide systems to complete without weakening the short default used by account and directory requests.
+     */
+    static final Duration SYSTEM_INFORMATION_REQUEST_TIMEOUT = Duration.ofSeconds(20);
+    static final Duration SITES_REQUEST_TIMEOUT = Duration.ofSeconds(45);
+    static final Duration TALKGROUPS_REQUEST_TIMEOUT = Duration.ofSeconds(60);
+    static final Duration TALKGROUP_CATEGORIES_REQUEST_TIMEOUT = Duration.ofSeconds(30);
+
     private SecureRadioReferenceSoapClient mClient;
+    private SecureRadioReferenceSoapClient mRetiredClient;
+    private int mActiveRequests;
     private Map<Integer,Flavor> mFlavors;
     private Map<Integer,Mode> mModes;
     private Map<Integer,Tag> mTags;
@@ -194,19 +206,19 @@ public class SecureRadioReferenceService implements AutoCloseable
     public SystemInformation getSystemInformation(int systemId) throws RadioReferenceException
     {
         return execute(authorization -> GetSystemInformation.create(authorization, systemId),
-            GetSystemInformationResponse.class).getSystemInformation();
+            GetSystemInformationResponse.class, SYSTEM_INFORMATION_REQUEST_TIMEOUT).getSystemInformation();
     }
 
     public List<Site> getSites(int systemId) throws RadioReferenceException
     {
         return immutable(execute(authorization -> GetSites.create(authorization, systemId),
-            GetSitesResponse.class).getSites());
+            GetSitesResponse.class, SITES_REQUEST_TIMEOUT).getSites());
     }
 
     public List<Talkgroup> getTalkgroups(int systemId) throws RadioReferenceException
     {
         return immutable(execute(authorization -> GetTalkgroups.create(authorization, systemId),
-            GetTalkgroupsResponse.class).getTalkgroups());
+            GetTalkgroupsResponse.class, TALKGROUPS_REQUEST_TIMEOUT).getTalkgroups());
     }
 
     public List<Talkgroup> getTalkgroups(TalkgroupRequestFilter filter) throws RadioReferenceException
@@ -217,13 +229,13 @@ public class SecureRadioReferenceService implements AutoCloseable
         }
 
         return immutable(execute(authorization -> GetTalkgroups.create(authorization, filter),
-            GetTalkgroupsResponse.class).getTalkgroups());
+            GetTalkgroupsResponse.class, TALKGROUPS_REQUEST_TIMEOUT).getTalkgroups());
     }
 
     public List<TalkgroupCategory> getTalkgroupCategories(int systemId) throws RadioReferenceException
     {
         return immutable(execute(authorization -> GetTalkgroupCategories.create(authorization, systemId),
-            GetTalkgroupCategoriesResponse.class).getTalkgroupCategories());
+            GetTalkgroupCategoriesResponse.class, TALKGROUP_CATEGORIES_REQUEST_TIMEOUT).getTalkgroupCategories());
     }
 
     public synchronized Map<Integer,Flavor> getFlavorsMap() throws RadioReferenceException
@@ -317,25 +329,39 @@ public class SecureRadioReferenceService implements AutoCloseable
     private <T extends ResponseBody> T execute(Function<AuthorizationInformation,RequestEnvelope> requestFactory,
                                                Class<T> responseType) throws RadioReferenceException
     {
+        return execute(requestFactory, responseType, null);
+    }
+
+    private <T extends ResponseBody> T execute(Function<AuthorizationInformation,RequestEnvelope> requestFactory,
+                                               Class<T> responseType, Duration requestTimeout)
+        throws RadioReferenceException
+    {
         SecureRadioReferenceSoapClient client;
 
         synchronized(this)
         {
             client = mClient;
-        }
 
-        if(client == null)
-        {
-            throw new RadioReferenceException("RadioReference service is closed");
+            if(client == null)
+            {
+                throw new RadioReferenceException("RadioReference service is closed");
+            }
+
+            mActiveRequests++;
         }
 
         try
         {
-            return client.execute(requestFactory, responseType);
+            return requestTimeout == null ? client.execute(requestFactory, responseType) :
+                client.execute(requestFactory, responseType, requestTimeout);
         }
         catch(RadioReferenceGatewayException exception)
         {
             throw legacy(exception);
+        }
+        finally
+        {
+            releaseRequest();
         }
     }
 
@@ -348,7 +374,7 @@ public class SecureRadioReferenceService implements AutoCloseable
             return new RadioReferenceException("RadioReference rejected the credentials", 401, fault);
         }
 
-        return new RadioReferenceException(exception.getMessage());
+        return new RadioReferenceException(exception.getMessage(), exception);
     }
 
     private static <T> List<T> immutable(List<T> items)
@@ -374,20 +400,58 @@ public class SecureRadioReferenceService implements AutoCloseable
         return Collections.unmodifiableMap(indexed);
     }
 
-    @Override
-    public synchronized void close()
+    private void releaseRequest()
     {
-        SecureRadioReferenceSoapClient client = mClient;
-        mClient = null;
-        mFlavors = null;
-        mModes = null;
-        mTags = null;
-        mTypes = null;
-        mVoices = null;
+        SecureRadioReferenceSoapClient retiredClient = null;
 
-        if(client != null)
+        synchronized(this)
         {
-            client.close();
+            mActiveRequests--;
+
+            if(mActiveRequests == 0 && mRetiredClient != null)
+            {
+                retiredClient = mRetiredClient;
+                mRetiredClient = null;
+            }
+        }
+
+        if(retiredClient != null)
+        {
+            retiredClient.close();
+        }
+    }
+
+    @Override
+    public void close()
+    {
+        SecureRadioReferenceSoapClient clientToClose = null;
+
+        synchronized(this)
+        {
+            SecureRadioReferenceSoapClient client = mClient;
+            mClient = null;
+            mFlavors = null;
+            mModes = null;
+            mTags = null;
+            mTypes = null;
+            mVoices = null;
+
+            if(client != null)
+            {
+                if(mActiveRequests == 0)
+                {
+                    clientToClose = client;
+                }
+                else
+                {
+                    mRetiredClient = client;
+                }
+            }
+        }
+
+        if(clientToClose != null)
+        {
+            clientToClose.close();
         }
     }
 }
