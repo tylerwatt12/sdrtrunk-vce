@@ -401,24 +401,54 @@ Build output is written under `build/image`.
 
 ## Changelog
 
-### Unreleased
+### 0.6.2-alpha-7 - 2026-07-25
+
+> The user-facing What's New document was approved before this version was packaged or published.
+
+#### Added
+
+- Full DMR and NXDN participation in Live Systems, including trunked parent and traffic-channel activity rows with
+  channel numbers, frequencies, aliases, and decoder details.
+- Protocol-aware DMR and NXDN control-channel quality, with current signal and decode percentages and the same bounded
+  retained quality charts used for P25.
+- Bounded DMR and NXDN site summaries for the **Systems & Sites** directory and detail pages, including decoded
+  identities, channels or repeaters, neighbors, service details, and control frequency.
+- A coordinated startup window that sequences What's New, CPU calibration, vault unlock, and auto-start countdown work.
+- A persistent **Lock Center Frequency** tuner setting that prevents automatic retuning and accepts only channels inside
+  the current usable passband.
+- Editable Alias descriptions populated from RadioReference talkgroup descriptions.
+- Missing, Identical, and Different RadioReference comparison states, with explicit Add New and Update Selected actions.
+- One bundled Application Migrator for every supported database upgrade.
 
 #### Changed
 
-- Keep receiver-local desktop playback and its Hold, Avoid, Clear, persistent mute, output-device, queue-counter, and
-  bounded-backlog controls.
-- Keep standard per-call recording in the configured recording directory with a bounded asynchronous writer. The
-  unfinished managed recording catalog, manifests, replay queries, and automatic time/space retention are not included.
-- Preserve RadioReference talkgroup descriptions as editable Alias descriptions. The desktop Alias list displays and
-  searches the description alongside the Alias name and group.
-- Focus the browser Live page on the Live Systems workspace. System tabs wrap into multiple rows instead of scrolling,
-  and each trunked-system tab shows the current control-channel decode quality as a four-bar meter. Detailed decoded
-  site metadata remains available through **Systems & Sites** and each site's detail pages.
+- Resolve duplicate calls once across desktop playback, recording, browser delivery, and streaming. Receiver priority,
+  current decode quality, and a deterministic tie-break choose one winner after safe duplicate cohorts are sealed.
+- Publish immutable DMR and NXDN site snapshots from decoder threads and update stable site, channel, and neighbor facts
+  transactionally. Per-fact observation times keep cumulative snapshots and liveness heartbeats from refreshing stale
+  learned facts.
+- Give saved channels and streaming providers stable identities and validate generated and imported configuration
+  identities before runtime use.
+- Wrap browser Live Systems tabs into multiple rows instead of scrolling, and show fresh current-control decode quality
+  as a four-bar meter on each trunked-system tab.
 
 #### Fixed
 
+- Count DMR control slots and NXDN RF frames once per frame for decode-quality percentages instead of allowing multiple
+  messages from one frame to distort the result.
+- Keep DMR and NXDN traffic activity live with bounded progress snapshots rather than publishing one full update per
+  audio frame.
+- Seal duplicate cohorts before output, reject non-transitive duplicate groupings, and share one deterministic winner
+  across every output.
+- Prevent repeated broadcaster starts from creating competing workers and prevent a deleted broadcaster from restarting
+  during shutdown.
 - Load RadioReference sites and talkgroups independently for large trunked systems instead of blocking both on optional
   county and category enrichment. Directory calls now use bounded endpoint-specific timeouts and safer retry handling.
+- Compare RadioReference talkgroups against the stored Alias fields without mixing the selected Alias list's labels into
+  the directory data.
+- Reject incomplete P25 foreign-system band updates before they can overwrite a complete ISSI band definition.
+- Render 32,768-bin desktop waterfalls without overflowing the bin-to-screen conversion.
+- Wrap desktop Systems tabs correctly on macOS.
 
 #### Removed
 
@@ -427,17 +457,14 @@ Build output is written under `build/image`.
 - Legacy generic Channel Maps that existed for MPT-1327. DMR channel maps remain supported.
 - Standalone database migration and reset utilities, along with separate subsystem upgrade entry points. The bundled
   Application Migrator is the single supported path for every eligible existing database.
-- The redundant **Live Site Tracking** table below Live Systems. Its backend site metadata remains in use by the system
-  directory, site details, signal-quality views, and retention summaries.
 
 #### Upgrade Notes
 
-- This release advances the Alias schema from version 2 to version 3 by adding one optional description value per
-  configured Alias. On first launch, the bundled Application Migrator detects an eligible v2 database and offers the
-  migration before the receiver starts.
+- The bundled Application Migrator can upgrade Alias schema v2 to v3, P25 activity schema v19 or v20 to v21, and
+  install the first public trunked-site schema when that subsystem is absent.
 - The Application Migrator checkpoints WAL data, checks integrity, creates a timestamped backup, migrates a staged
-  copy, preserves every Alias row, and validates the complete result before atomically installing it. No standalone
-  migration script is required or included.
+  copy, preserves existing data, and validates every supported subsystem before atomically installing it. No standalone
+  migration script is included.
 
 ### 0.6.2-alpha-6 - 2026-07-21
 

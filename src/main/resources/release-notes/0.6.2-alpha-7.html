@@ -1,0 +1,63 @@
+<h1>What&rsquo;s New in Alpha 7</h1>
+
+<p><b>Alpha 7 expands DMR and NXDN trunked-site visibility, makes duplicate-call selection deterministic across every output, fixes large RadioReference imports, adds editable talkgroup descriptions, and simplifies the browser Live page.</b></p>
+
+<p>This is still alpha software. Stop sdrtrunk-vce and back up its complete portable <code>data</code> folder before replacing an earlier build.</p>
+
+<h2>Added</h2>
+
+<ul>
+  <li><b>DMR and NXDN now participate fully in Live Systems.</b> Started trunked parents and their traffic channels publish stable activity rows with current calls, channel numbers, frequencies, aliases, and decoder details.</li>
+  <li><b>DMR and NXDN control-channel quality is measured and retained.</b> Protocol-aware frame accounting supplies current signal and decode percentages and uses the same bounded quality-history charts already available for P25.</li>
+  <li><b>DMR and NXDN site facts are available under Systems &amp; Sites.</b> Compact summaries retain the latest decoded network or system identity, site, channels or repeaters, neighbors, service details, and control frequency. Repeated observations update existing facts, and the configured Statistics retention removes stale facts.</li>
+  <li><b>Startup work is coordinated in one window.</b> What&rsquo;s New, CPU calibration, vault unlock, and auto-start channel countdowns run as an ordered startup sequence instead of several competing dialogs.</li>
+  <li><b>Tuners can lock their center frequency.</b> A new tuner setting prevents automatic retuning and limits channel assignment to frequencies inside the tuner&rsquo;s current usable passband.</li>
+  <li><b>RadioReference talkgroup descriptions are now preserved.</b> Imported descriptions are stored with each Alias and can be displayed, searched, and edited in the desktop Alias editor.</li>
+  <li><b>Talkgroup import comparisons now explain what will happen.</b> Each RadioReference talkgroup is marked Missing, Identical, or Different. Missing rows can be added, while selected Different rows can explicitly update the existing Alias instead of creating a duplicate.</li>
+  <li><b>One bundled Application Migrator owns supported database upgrades.</b> It performs every eligible subsystem change against a backed-up staged copy before receiver startup continues.</li>
+</ul>
+
+<h2>Changed</h2>
+
+<ul>
+  <li><b>Duplicate calls are resolved once for every output.</b> Desktop playback, recording, browser audio, and streaming now share one completed-call decision. Receiver priority, current decode quality, and a deterministic tie-break select the winner; overlapping matches must form a safe duplicate cohort before streaming is released.</li>
+  <li><b>DMR and NXDN site facts have one bounded lifecycle.</b> Decoder threads publish immutable snapshots while the statistics writer updates stable site, channel, and neighbor summaries transactionally. Per-fact observation times prevent cumulative snapshots and liveness heartbeats from making old learned channels or neighbors appear current.</li>
+  <li><b>Saved channels and streaming providers use stable identities.</b> Generated and imported configurations are validated so runtime replacement and broadcaster lifecycle decisions do not depend on changing display names.</li>
+  <li><b>Browser Live Systems tabs are easier to monitor.</b> System tabs wrap across multiple rows instead of scrolling horizontally, and a four-bar indicator on each trunked-system tab shows fresh current-control decode quality.</li>
+</ul>
+
+<h2>Fixed</h2>
+
+<ul>
+  <li><b>DMR and NXDN quality values now represent RF frames consistently.</b> DMR control slots and NXDN frames contribute one validity result per frame instead of allowing multiple decoded messages from the same frame to distort the percentage.</li>
+  <li><b>DMR and NXDN traffic activity remains live during active calls.</b> Bounded progress updates refresh active traffic rows before their grant age-out without publishing a full snapshot for every audio frame.</li>
+  <li><b>Duplicate-call groups no longer change winners unpredictably.</b> Cohorts are sealed before output, non-transitive matches are not merged, and one deterministic result is shared by playback, files, web delivery, and streamers.</li>
+  <li><b>Broadcaster startup and deletion races are closed.</b> Repeated starts cannot create competing workers, and deleting a broadcaster cannot restart it while shutdown is in progress.</li>
+  <li><b>Large RadioReference trunked systems load more reliably.</b> Sites and talkgroups load independently instead of both waiting on optional county and category enrichment. Endpoint-specific timeouts, safer retry behavior, and credential-safe errors prevent one slow directory request from blocking the useful results.</li>
+  <li><b>RadioReference comparison no longer mixes Alias-list labels with directory data.</b> The importer compares the stored Alias fields that actually matter and offers an explicit update for changed rows.</li>
+  <li><b>Incomplete P25 foreign-system band updates are rejected.</b> Partial ISSI band advertisements cannot overwrite a previously complete band definition.</li>
+  <li><b>Large FFT waterfall displays no longer fail at 32,768 bins.</b> The desktop spectrum path handles that bin count without overflowing its rendering conversion.</li>
+  <li><b>Systems tabs remain usable when many receivers are active.</b> Desktop tabs wrap correctly on macOS, and browser Live tabs now form additional rows rather than requiring horizontal scrolling.</li>
+</ul>
+
+<h2>Removed</h2>
+
+<ul>
+  <li>Alias script actions, Funcube Dongle Pro and Pro+ tuners, MPT-1327, heterodyne channelization, and sound-card capture sources are no longer selectable or runnable. Compatibility parsing remains only where needed to reject older saved configuration safely.</li>
+  <li>Legacy generic Channel Maps that existed for MPT-1327 are removed. DMR channel maps, including editing, cloning, copy and paste, and legacy import, remain supported.</li>
+  <li>Standalone migration and reset assistants are removed. The bundled Application Migrator is the only supported upgrade path for eligible databases.</li>
+</ul>
+
+<h2>Before You Upgrade</h2>
+
+<ul>
+  <li><b>Stop the previous application and back up the complete portable data folder.</b> Do not copy two application releases together or point two running copies at the same data directory.</li>
+  <li><b>The Application Migrator may open before the receiver starts.</b> It can upgrade Alias schema v2 to v3, P25 activity schema v19 or v20 to v21, and install the first public trunked-site schema when that subsystem is absent.</li>
+  <li>The migrator checkpoints WAL data, checks integrity, creates a timestamped backup, updates a staged copy, preserves existing Alias rows, validates every supported subsystem, and only then installs the result atomically. Unsupported schema versions are refused without modifying the source database.</li>
+  <li>No standalone migration tool is included. A database older than the supported range must first be opened with an appropriate intermediate release.</li>
+  <li>Returning to Alpha 6 requires restoring its application and the complete pre-migration database backup.</li>
+  <li>After upgrading, verify tuner startup, desktop audio and its controls, recording and streaming, a large RadioReference site and talkgroup import, Alias descriptions, and the wrapped Live Systems tabs with decode-quality bars.</li>
+  <li>The experimental <code>webfirst</code> interface remains a separate development branch and is not included in this main release.</li>
+</ul>
+
+<p><b>Downloads:</b> Use the package that matches your operating system and processor. Java 25 is included. JMBE remains a separate setup under Preferences &gt; Decoder &gt; JMBE Audio Library. Verify the downloaded ZIP with <code>SHA256SUMS.txt</code> before installing.</p>
