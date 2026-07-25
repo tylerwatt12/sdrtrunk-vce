@@ -328,8 +328,9 @@ Select any screenshot to view it at full resolution.
 
 ### Portable Configuration And Packaging
 
-- Replaces playlist XML as the active configuration store with SQLite tables for channels, aliases, streams, channel
-  maps, icons, preferences, UI settings, and tuner settings.
+- Replaces playlist XML as the active configuration store with SQLite tables for channels, aliases, streams, icons,
+  preferences, UI settings, and tuner settings. DMR LCN and NXDN channel-number maps are stored with their channel
+  configurations rather than in the retired standalone MPT Channel Map subsystem.
 - On first launch, detects a normal SDRTrunk XML playlist and offers **Upgrade**, **Start Fresh**, or **Browse**.
 - Reads the old XML without modifying it and atomically installs the new database only after creation and validation
   succeed.
@@ -355,13 +356,17 @@ Select any screenshot to view it at full resolution.
   Streaming editor.
 - The legacy XML playlist manager, playlist updater, playlist preference, system-properties writer, and tuner JSON writer
   are removed from runtime operation.
+- Alias script actions, Funcube Dongle Pro/Pro+ tuners, MPT-1327, heterodyne channelization, and sound-card capture
+  sources are not included.
+- The named MPT Channel Map subsystem is not included. DMR LCN and NXDN channel-number maps remain supported in their
+  channel configurations.
 - Legacy diagnostic monitors and temporary network/file debug feeds are not included in release behavior.
 - Schema repair and schema migration are not performed from normal application services.
 
 ## Installation And First Launch
 
 1. Extract the package to a writable folder. Do not merge it into a stock SDRTrunk installation.
-2. Start `bin/sdrtrunk-vce` on macOS/Linux or `bin\sdrtrunk-vce.bat` on Windows.
+2. Start `sdrtrunk-vce.app` on macOS, `bin/sdrtrunk-vce` on Linux, or `bin\sdrtrunk-vce.bat` on Windows.
 3. If no portable database exists, choose an automatically discovered XML playlist, browse to one, or start fresh.
 4. Configure JMBE through **Preferences > Decoder > JMBE Audio Library** when digital voice conversion is required.
 5. Configure Stats Server and Web Server separately under **Preferences > Stats & Web**.
@@ -375,6 +380,13 @@ Java 25 is required for development builds.
 ```bash
 ./gradlew test
 ./gradlew runtimeZipCurrent
+```
+
+On macOS, build the local application bundle or its distributable archive with:
+
+```bash
+./gradlew image
+./gradlew macAppZip
 ```
 
 Cross-platform package tasks:
