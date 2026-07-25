@@ -41,6 +41,8 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Predicate;
 import javafx.animation.RotateTransition;
+import javafx.beans.property.ObjectProperty;
+import javafx.beans.property.SimpleObjectProperty;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.beans.property.StringProperty;
 import javafx.collections.FXCollections;
@@ -54,6 +56,7 @@ import javafx.geometry.Orientation;
 import javafx.geometry.Pos;
 import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
+import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
@@ -329,7 +332,7 @@ public class SystemTalkgroupSelectionEditor extends GridPane
     {
         if(mImportAllTalkgroupsButton == null)
         {
-            mImportAllTalkgroupsButton = new Button("Import All Talkgroups");
+            mImportAllTalkgroupsButton = new Button("Import/Update Talkgroups");
             mImportAllTalkgroupsButton.setOnAction(event -> {
 
                 String aliasList = getAliasListNameComboBox().getSelectionModel().getSelectedItem();
@@ -347,18 +350,48 @@ public class SystemTalkgroupSelectionEditor extends GridPane
                 else
                 {
                     List<Talkgroup> aliasesToCreate = new ArrayList<>();
+                    List<AliasedTalkgroup> aliasesToUpdate = new ArrayList<>();
+                    int identical = 0;
 
                     for(AliasedTalkgroup aliasedTalkgroup : mTalkgroupFilteredList)
                     {
-                        if(!aliasedTalkgroup.hasAlias())
+                        if(aliasedTalkgroup.getImportStatus() == ImportStatus.NOT_PRESENT)
                         {
                             aliasesToCreate.add(aliasedTalkgroup.getTalkgroup());
                         }
+                        else if(aliasedTalkgroup.getImportStatus() == ImportStatus.DIFFERENT)
+                        {
+                            aliasesToUpdate.add(aliasedTalkgroup);
+                        }
+                        else
+                        {
+                            identical++;
+                        }
                     }
 
-                    if(!aliasesToCreate.isEmpty())
+                    ButtonType apply = new ButtonType("Apply", ButtonBar.ButtonData.OK_DONE);
+                    Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION,
+                        "Add " + aliasesToCreate.size() + " new aliases\n" +
+                            "Update " + aliasesToUpdate.size() + " different aliases\n" +
+                            "Leave " + identical + " identical aliases unchanged",
+                        apply, ButtonType.CANCEL);
+                    confirmation.setTitle("Import/Update Talkgroups");
+                    confirmation.setHeaderText("Apply RadioReference talkgroup changes?");
+                    confirmation.initOwner(getImportAllTalkgroupsButton().getScene().getWindow());
+
+                    if(confirmation.showAndWait().filter(apply::equals).isPresent())
                     {
-                        createAliases(aliasesToCreate);
+                        if(!aliasesToCreate.isEmpty())
+                        {
+                            createAliases(aliasesToCreate);
+                        }
+
+                        for(AliasedTalkgroup aliasedTalkgroup: aliasesToUpdate)
+                        {
+                            updateAliasFromRadioReference(aliasedTalkgroup.getAlias(),
+                                aliasedTalkgroup.getTalkgroup(),
+                                getTalkgroupCategory(aliasedTalkgroup.getTalkgroup()));
+                        }
                     }
                 }
             });
@@ -675,7 +708,7 @@ public class SystemTalkgroupSelectionEditor extends GridPane
             descriptionColumn.setPrefWidth(300);
             descriptionColumn.setCellValueFactory(new PropertyValueFactory<>("description"));
 
-            TableColumn<AliasedTalkgroup,String> importStatusColumn = new TableColumn<>("Import Status");
+            TableColumn<AliasedTalkgroup,ImportStatus> importStatusColumn = new TableColumn<>("Import Status");
             importStatusColumn.setPrefWidth(110);
             importStatusColumn.setCellValueFactory(new PropertyValueFactory<>("importStatus"));
 
@@ -691,8 +724,9 @@ public class SystemTalkgroupSelectionEditor extends GridPane
                     String aliasListName = getAliasListNameComboBox().getSelectionModel().getSelectedItem();
                     getTalkgroupEditor().setTalkgroup((selected != null ? selected.getTalkgroup() : null),
                         getCurrentSystem(), getRadioReferenceDecoder(), (selected != null ? selected.getAlias() : null),
-                        aliasListName, (talkgroupCategory != null ? talkgroupCategory.getName() : null),
-                        getEncryptedAsDoNotMonitorCheckBox().selectedProperty().get());
+                        aliasListName, talkgroupCategory,
+                        getEncryptedAsDoNotMonitorCheckBox().selectedProperty().get(),
+                        selected != null ? selected.getImportStatus() : ImportStatus.NOT_PRESENT);
                 });
             mTalkgroupFilteredList = new FilteredList<>(mTalkgroupList);
             SortedList<AliasedTalkgroup> sortedList = new SortedList<>(mTalkgroupFilteredList);
@@ -841,6 +875,60 @@ public class SystemTalkgroupSelectionEditor extends GridPane
         return identical ? ImportStatus.IDENTICAL : ImportStatus.DIFFERENT;
     }
 
+    static List<ImportedFieldChange> getImportedFieldChanges(Alias alias, Talkgroup talkgroup,
+                                                              TalkgroupCategory category)
+    {
+        List<ImportedFieldChange> changes = new ArrayList<>();
+
+        if(alias != null && talkgroup != null)
+        {
+            addChange(changes, "Name", alias.getName(), talkgroup.getAlphaTag());
+            addChange(changes, "Description", alias.getDescription(), talkgroup.getDescription());
+
+            if(category != null)
+            {
+                addChange(changes, "Group", alias.getGroup(), category.getName());
+            }
+        }
+
+        return List.copyOf(changes);
+    }
+
+    static void updateAliasFromRadioReference(Alias alias, Talkgroup talkgroup, TalkgroupCategory category)
+    {
+        if(alias != null && talkgroup != null)
+        {
+            alias.setName(talkgroup.getAlphaTag());
+            alias.setDescription(talkgroup.getDescription());
+
+            if(category != null)
+            {
+                alias.setGroup(category.getName());
+            }
+        }
+    }
+
+    private static void addChange(List<ImportedFieldChange> changes, String field, String oldValue, String newValue)
+    {
+        if(!normalizedEquals(oldValue, newValue))
+        {
+            changes.add(new ImportedFieldChange(field, normalize(oldValue), normalize(newValue)));
+        }
+    }
+
+    record ImportedFieldChange(String field, String oldValue, String newValue)
+    {
+        String display()
+        {
+            return field + ": " + displayValue(oldValue) + " \u2192 " + displayValue(newValue);
+        }
+
+        private static String displayValue(String value)
+        {
+            return value == null ? "(blank)" : value;
+        }
+    }
+
     private static boolean normalizedEquals(String first, String second)
     {
         return Objects.equals(normalize(first), normalize(second));
@@ -860,7 +948,7 @@ public class SystemTalkgroupSelectionEditor extends GridPane
         private Alias mAlias;
         private StringProperty mAlphaTagProperty = new SimpleStringProperty();
         private StringProperty mDescriptionProperty = new SimpleStringProperty();
-        private StringProperty mImportStatusProperty = new SimpleStringProperty();
+        private ObjectProperty<ImportStatus> mImportStatusProperty = new SimpleObjectProperty<>();
         private StringProperty mTalkgroupProperty = new SimpleStringProperty();
 
         public AliasedTalkgroup(Talkgroup talkgroup, Alias alias)
@@ -875,6 +963,11 @@ public class SystemTalkgroupSelectionEditor extends GridPane
         public boolean hasAlias()
         {
             return mAlias != null;
+        }
+
+        public ImportStatus getImportStatus()
+        {
+            return mImportStatusProperty.get();
         }
 
         public Alias getAlias()
@@ -902,7 +995,7 @@ public class SystemTalkgroupSelectionEditor extends GridPane
             return mDescriptionProperty;
         }
 
-        public StringProperty importStatusProperty()
+        public ObjectProperty<ImportStatus> importStatusProperty()
         {
             return mImportStatusProperty;
         }
@@ -920,8 +1013,8 @@ public class SystemTalkgroupSelectionEditor extends GridPane
         public void setAlias(Alias alias)
         {
             mAlias = alias;
-            mImportStatusProperty.setValue(getImportStatus(mAlias, mTalkgroup,
-                getTalkgroupCategory(mTalkgroup)).toString());
+            mImportStatusProperty.setValue(SystemTalkgroupSelectionEditor.getImportStatus(mAlias, mTalkgroup,
+                getTalkgroupCategory(mTalkgroup)));
         }
     }
 

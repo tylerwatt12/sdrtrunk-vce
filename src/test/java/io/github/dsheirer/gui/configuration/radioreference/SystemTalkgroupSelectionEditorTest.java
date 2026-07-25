@@ -20,6 +20,7 @@ import io.github.dsheirer.alias.id.talkgroup.TalkgroupRange;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.rrapi.type.Talkgroup;
 import io.github.dsheirer.rrapi.type.TalkgroupCategory;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 
 class SystemTalkgroupSelectionEditorTest
@@ -76,5 +77,34 @@ class SystemTalkgroupSelectionEditorTest
 
         alias.addAliasID(new io.github.dsheirer.alias.id.talkgroup.Talkgroup(Protocol.APCO25, 13501));
         assertTrue(SystemTalkgroupSelectionEditor.hasExactTalkgroup(alias, expected));
+    }
+
+    @Test
+    void reportsAndUpdatesOnlyRadioReferenceOwnedFields()
+    {
+        Talkgroup talkgroup = new Talkgroup();
+        talkgroup.setAlphaTag("NEW NAME");
+        talkgroup.setDescription("New description");
+        TalkgroupCategory category = new TalkgroupCategory();
+        category.setName("New group");
+
+        Alias alias = new Alias("Local name");
+        alias.setDescription("Local description");
+        alias.setGroup("Local group");
+        alias.setColor(0x123456);
+        alias.setRecordable(true);
+
+        List<SystemTalkgroupSelectionEditor.ImportedFieldChange> changes =
+            SystemTalkgroupSelectionEditor.getImportedFieldChanges(alias, talkgroup, category);
+        assertEquals(List.of("Name", "Description", "Group"),
+            changes.stream().map(SystemTalkgroupSelectionEditor.ImportedFieldChange::field).toList());
+
+        SystemTalkgroupSelectionEditor.updateAliasFromRadioReference(alias, talkgroup, category);
+
+        assertEquals("NEW NAME", alias.getName());
+        assertEquals("New description", alias.getDescription());
+        assertEquals("New group", alias.getGroup());
+        assertEquals(0x123456, alias.getColor());
+        assertTrue(alias.isRecordable());
     }
 }

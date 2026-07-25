@@ -25,10 +25,14 @@ import io.github.dsheirer.gui.configuration.alias.ViewAliasRequest;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.rrapi.type.System;
 import io.github.dsheirer.rrapi.type.Talkgroup;
+import io.github.dsheirer.rrapi.type.TalkgroupCategory;
+import java.util.List;
+import java.util.stream.Collectors;
 import javafx.geometry.HPos;
 import javafx.geometry.Orientation;
 import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
+import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.Label;
 import javafx.scene.control.Separator;
@@ -58,8 +62,10 @@ public class TalkgroupEditor extends GridPane
     private String mAliasListName;
     private System mSystem;
     private Talkgroup mTalkgroup;
+    private TalkgroupCategory mTalkgroupCategory;
     private Alias mAlias;
     private boolean mSetEncryptedDoNotMonitor;
+    private SystemTalkgroupSelectionEditor.ImportStatus mImportStatus;
 
     public TalkgroupEditor(ConfigurationManager configurationManager)
     {
@@ -155,14 +161,18 @@ public class TalkgroupEditor extends GridPane
 
 
     public void setTalkgroup(Talkgroup talkgroup, System system, RadioReferenceDecoder decoder, Alias alias,
-                             String aliasListName, String group, boolean setEncryptedDoNotMonitor)
+                             String aliasListName, TalkgroupCategory talkgroupCategory,
+                             boolean setEncryptedDoNotMonitor,
+                             SystemTalkgroupSelectionEditor.ImportStatus importStatus)
     {
         mRadioReferenceDecoder = decoder;
         mTalkgroup = talkgroup;
         mSystem = system;
         mAliasListName = aliasListName;
+        mTalkgroupCategory = talkgroupCategory;
         mAlias = alias;
         mSetEncryptedDoNotMonitor = setEncryptedDoNotMonitor;
+        mImportStatus = importStatus;
 
         if(talkgroup != null)
         {
@@ -189,6 +199,8 @@ public class TalkgroupEditor extends GridPane
 
         boolean supported = decoder.hasSupportedProtocol(system);
 
+        getEditAliasButton().setText(mImportStatus == SystemTalkgroupSelectionEditor.ImportStatus.DIFFERENT ?
+            "Update from RadioReference" : "View Alias");
         getEditAliasButton().setVisible(mAlias != null);
         getCreateAliasButton().setVisible(mTalkgroup != null && mAlias == null && supported);
         getNameLabel().setVisible(mTalkgroup != null && mAlias == null && supported);
@@ -196,7 +208,7 @@ public class TalkgroupEditor extends GridPane
         getAliasDescriptionLabel().setVisible(mTalkgroup != null && mAlias == null && supported);
         getAliasDescriptionTextField().setVisible(mTalkgroup != null && mAlias == null && supported);
         getGroupLabel().setVisible(mTalkgroup != null && mAlias == null && supported);
-        getAliasGroupTextField().setText(group);
+        getAliasGroupTextField().setText(mTalkgroupCategory != null ? mTalkgroupCategory.getName() : null);
         getAliasGroupTextField().setVisible(mTalkgroup != null && mAlias == null && supported);
         getCreateLabel().setVisible(mTalkgroup != null && mAlias == null && supported);
         getNotSupportedLabel().setVisible(mTalkgroup != null && !supported);
@@ -335,7 +347,30 @@ public class TalkgroupEditor extends GridPane
             mEditAliasButton.setOnAction(event -> {
                 if(mAlias != null)
                 {
-                    MyEventBus.getGlobalEventBus().post(new ViewAliasRequest(mAlias));
+                    if(mImportStatus == SystemTalkgroupSelectionEditor.ImportStatus.DIFFERENT)
+                    {
+                        List<SystemTalkgroupSelectionEditor.ImportedFieldChange> changes =
+                            SystemTalkgroupSelectionEditor.getImportedFieldChanges(mAlias, mTalkgroup,
+                                mTalkgroupCategory);
+                        ButtonType update = new ButtonType("Update", ButtonBar.ButtonData.OK_DONE);
+                        Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION,
+                            changes.stream().map(SystemTalkgroupSelectionEditor.ImportedFieldChange::display)
+                                .collect(Collectors.joining("\n")),
+                            update, ButtonType.CANCEL);
+                        confirmation.setTitle("Update Alias from RadioReference");
+                        confirmation.setHeaderText("Update imported Alias fields?");
+                        confirmation.initOwner(getEditAliasButton().getScene().getWindow());
+
+                        if(confirmation.showAndWait().filter(update::equals).isPresent())
+                        {
+                            SystemTalkgroupSelectionEditor.updateAliasFromRadioReference(mAlias, mTalkgroup,
+                                mTalkgroupCategory);
+                        }
+                    }
+                    else
+                    {
+                        MyEventBus.getGlobalEventBus().post(new ViewAliasRequest(mAlias));
+                    }
                 }
             });
         }
