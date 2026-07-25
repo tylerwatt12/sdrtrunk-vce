@@ -1,0 +1,80 @@
+/*
+ * *****************************************************************************
+ * Copyright (C) 2026 Dennis Sheirer
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ * ****************************************************************************
+ */
+
+package io.github.dsheirer.gui.configuration.radioreference;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import io.github.dsheirer.alias.Alias;
+import io.github.dsheirer.alias.id.talkgroup.TalkgroupRange;
+import io.github.dsheirer.protocol.Protocol;
+import io.github.dsheirer.rrapi.type.Talkgroup;
+import io.github.dsheirer.rrapi.type.TalkgroupCategory;
+import org.junit.jupiter.api.Test;
+
+class SystemTalkgroupSelectionEditorTest
+{
+    @Test
+    void identifiesMissingIdenticalAndDifferentImports()
+    {
+        Talkgroup talkgroup = new Talkgroup();
+        talkgroup.setAlphaTag("LORAIN DISP");
+        talkgroup.setDescription("Lorain County dispatch");
+
+        TalkgroupCategory category = new TalkgroupCategory();
+        category.setName("Law Dispatch");
+
+        assertEquals(SystemTalkgroupSelectionEditor.ImportStatus.NOT_PRESENT,
+            SystemTalkgroupSelectionEditor.getImportStatus(null, talkgroup, category));
+
+        Alias alias = new Alias("LORAIN DISP");
+        alias.setDescription("Lorain County dispatch");
+        alias.setGroup("Law Dispatch");
+        assertEquals(SystemTalkgroupSelectionEditor.ImportStatus.IDENTICAL,
+            SystemTalkgroupSelectionEditor.getImportStatus(alias, talkgroup, category));
+
+        alias.setDescription("Locally edited description");
+        assertEquals(SystemTalkgroupSelectionEditor.ImportStatus.DIFFERENT,
+            SystemTalkgroupSelectionEditor.getImportStatus(alias, talkgroup, category));
+    }
+
+    @Test
+    void ignoresLocalFieldsAndUnavailableCategoryEnrichment()
+    {
+        Talkgroup talkgroup = new Talkgroup();
+        talkgroup.setAlphaTag("FIRE TAC");
+        talkgroup.setDescription("Fire tactical");
+
+        Alias alias = new Alias(" FIRE TAC ");
+        alias.setDescription("Fire tactical");
+        alias.setGroup("Locally organized");
+        alias.setColor(0x123456);
+
+        assertEquals(SystemTalkgroupSelectionEditor.ImportStatus.IDENTICAL,
+            SystemTalkgroupSelectionEditor.getImportStatus(alias, talkgroup, null));
+    }
+
+    @Test
+    void requiresAnExactTalkgroupIdentifier()
+    {
+        io.github.dsheirer.alias.id.talkgroup.Talkgroup expected =
+            new io.github.dsheirer.alias.id.talkgroup.Talkgroup(Protocol.APCO25, 13501);
+        Alias alias = new Alias("LORAIN DISP");
+        alias.addAliasID(new TalkgroupRange(Protocol.APCO25, 13000, 14000));
+
+        assertFalse(SystemTalkgroupSelectionEditor.hasExactTalkgroup(alias, expected));
+
+        alias.addAliasID(new io.github.dsheirer.alias.id.talkgroup.Talkgroup(Protocol.APCO25, 13501));
+        assertTrue(SystemTalkgroupSelectionEditor.hasExactTalkgroup(alias, expected));
+    }
+}
