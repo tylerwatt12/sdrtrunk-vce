@@ -2474,14 +2474,39 @@ function liveSystemsSection() {
     if (!tab) {
       tab = node('button', 'systems-live-tab');
       tab.type = 'button';
-      tab.append(node('span', 'systems-tab-dot'), node('span', 'systems-tab-label'));
+      const quality = node('span', 'systems-tab-quality');
+      for (let index = 0; index < 4; index += 1) quality.append(node('span'));
+      tab.append(quality, node('span', 'systems-tab-label'));
       tab.addEventListener('click', () => showTable(value.table_id));
       tabNodes.set(value.table_id, tab);
       tabBar.append(tab);
     }
-    tab.querySelector('.systems-tab-label').textContent = value.title || value.channel_name || value.table_id;
-    tab.querySelector('.systems-tab-dot').className =
-      `systems-tab-dot ${value.table_id === 'conventional' ? 'neutral' : (value.control_active ? 'active' : 'stale')}`;
+    const label = value.title || value.channel_name || value.table_id;
+    tab.querySelector('.systems-tab-label').textContent = label;
+    const quality = tab.querySelector('.systems-tab-quality');
+    const currentControl = (value.rows || []).find((row) =>
+      channelTagSet(row.tags).has('CURRENT_CONTROL') && Number.isFinite(optionalNumber(row.decode_health_pct)));
+    const qualityObservedAt = Number(currentControl?.quality_observed_at_ms || 0);
+    const decodeQuality = currentControl && value.control_active && qualityObservedAt > 0 &&
+      Date.now() - qualityObservedAt <= SIGNAL_OFFLINE_MILLISECONDS ?
+      Math.max(0, Math.min(100, Number(currentControl.decode_health_pct))) : null;
+    if (value.table_id === 'conventional') {
+      quality.className = 'systems-tab-quality quality-neutral';
+      tab.title = label;
+      tab.setAttribute('aria-label', label);
+    } else if (decodeQuality === null) {
+      quality.className = 'systems-tab-quality quality-unavailable';
+      tab.title = `${label} · Decode quality unavailable`;
+      tab.setAttribute('aria-label', `${label}, decode quality unavailable`);
+    } else {
+      const level = decodeQuality === 0 ? 0 : Math.min(4, Math.ceil(decodeQuality / 25));
+      const state = decodeQuality >= DECODE_HEALTHY_MINIMUM_PERCENT ? 'healthy' :
+        (decodeQuality >= DECODE_DEGRADED_MINIMUM_PERCENT ? 'degraded' : 'poor');
+      quality.className = `systems-tab-quality quality-${state} quality-level-${level}`;
+      const qualityLabel = `${decodeQuality.toFixed(1)}% decode quality`;
+      tab.title = `${label} · ${qualityLabel}`;
+      tab.setAttribute('aria-label', `${label}, ${qualityLabel}`);
+    }
     if (!activeTableId) showTable(tables.has('conventional') ? 'conventional' : value.table_id);
     else updateVisibleRows(value);
   };
@@ -2519,111 +2544,8 @@ function liveSystemsSection() {
   return block;
 }
 
-function liveSiteMetadataSection() {
-  const sites = new Map();
-  const host = node('div', 'systems-live');
-  const connection = badge('Connecting', 'state-stale');
-  const block = section('Live Site Tracking', host);
-  block.querySelector('.section-title').append(' ', connection);
-  const identity = (row) => {
-    const metadata = row.metadata || {};
-    if (protocolFamily(row) === 'DMR') {
-      return [metadata.model || '', metadata.network == null ? '' : `Network ${number(metadata.network)}`,
-        metadata.site == null ? '' : `Site ${number(metadata.site)}`].filter(Boolean).join(' · ');
-    }
-    if (protocolFamily(row) === 'P25') {
-      const network = metadata.network || {};
-      const currentSite = metadata.currentSite || {};
-      return [network.wacn == null ? '' : `WACN ${hex(network.wacn, 5)}`,
-        (network.system ?? currentSite.system) == null ? '' :
-          `System ${hex(network.system ?? currentSite.system, 3)}`,
-        currentSite.rfss == null ? '' : `RFSS ${hex(currentSite.rfss, 2)}`,
-        currentSite.site == null ? '' : `Site ${hex(currentSite.site, 2)}`]
-        .filter(Boolean).join(' · ');
-    }
-    const location = metadata.currentLocation || {};
-    return [location.category || '', location.integrator == null ? '' : `Integrator ${number(location.integrator)}`,
-      location.system == null ? '' : `System ${number(location.system)}`,
-      (location.site ?? metadata.typeDSite) == null ? '' :
-        `Site ${number(location.site ?? metadata.typeDSite)}`,
-      metadata.ran == null ? '' : `RAN ${number(metadata.ran)}`].filter(Boolean).join(' · ');
-  };
-  const channelCount = (row) => {
-    const metadata = row.metadata || {};
-    if (protocolFamily(row) === 'NXDN') {
-      const values = new Set((metadata.controlChannels || []).map((channel) => {
-        const channelNumber = channel.channelNumber ?? channel.outboundChannelNumber;
-        return channelNumber == null ? `frequency:${channel.downlink ?? ''}` : `number:${channelNumber}`;
-      }));
-      (metadata.observedRepeaters || []).forEach((repeater) => values.add(`number:${repeater}`));
-      return values.size;
-    }
-    return (metadata.channels || []).length;
-  };
-  const neighborCount = (row) => (row.metadata?.neighborSites || []).length;
-  const renderRows = () => {
-    const rows = [...sites.values()].sort((left, right) =>
-      `${protocolFamily(left)}|${left.configured_system || ''}|${left.configured_site || ''}|${left.guid}`
-        .localeCompare(`${protocolFamily(right)}|${right.configured_system || ''}|` +
-          `${right.configured_site || ''}|${right.guid}`));
-    host.replaceChildren(table(rows, [
-      { label: 'Protocol', render: protocolFamily },
-      { id: 'name', label: 'System / Site', render: (row) =>
-        [row.configured_system, row.configured_site || row.channel_name].filter(Boolean).join(' / ') },
-      { label: 'Identity', render: identity },
-      { label: 'Variant', render: trunkedVariant },
-      { id: 'control-frequency', label: 'CC MHz', fullLabel: 'Control Frequency MHz',
-        render: (row) => frequency(row.frequency_hz), className: 'numeric' },
-      { label: 'Ch', fullLabel: 'Channels', render: channelCount, className: 'numeric' },
-      { label: 'Nbrs', fullLabel: 'Neighbors', render: neighborCount, className: 'numeric' },
-      { id: 'signal', label: 'dBFS', render: (row) => signalNumber(row.signal_dbfs), className: 'numeric' },
-      { id: 'decode-health', label: 'Decode %', render: (row) => percentNumber(row.decode_health_pct),
-        className: 'numeric' },
-      { id: 'last-seen', label: 'Seen', render: (row) => dateTime(row.observed_at_ms) }
-    ], 'No DMR, NXDN, or P25 site metadata observed', { type: 'live-site-metadata' }));
-  };
-  renderRows();
-  const upsert = (site) => {
-    if (!site?.guid) return;
-    sites.set(site.guid, site);
-    renderRows();
-  };
-  const source = liveConnection('/live/sites');
-  source.addEventListener('snapshot', (event) => {
-    const snapshot = JSON.parse(event.data);
-    sites.clear();
-    (snapshot.sites || []).forEach((site) => sites.set(site.guid, site));
-    renderRows();
-  });
-  source.addEventListener('site_metadata', (event) => upsert(JSON.parse(event.data)));
-  source.addEventListener('site_removed', (event) => {
-    const guid = JSON.parse(event.data)?.guid;
-    if (guid && sites.delete(guid)) renderRows();
-  });
-  source.onopen = () => {
-    connection.textContent = 'Live';
-    connection.className = 'badge state-current';
-  };
-  source.onerror = () => {
-    connection.textContent = 'Reconnecting';
-    connection.className = 'badge state-stale';
-  };
-  pageInterval(() => {
-    let changed = false;
-    sites.forEach((value, guid) => {
-      if (Date.now() - Number(value.live_received_at_ms || value.observed_at_ms || 0) >
-          SITE_METADATA_OFFLINE_MILLISECONDS) {
-        sites.delete(guid);
-        changed = true;
-      }
-    });
-    if (changed) renderRows();
-  }, 5_000);
-  return block;
-}
-
 async function renderLive() {
-  content.append(liveSystemsSection(), liveSiteMetadataSection());
+  content.append(liveSystemsSection());
 }
 
 async function renderSystems() {

@@ -411,6 +411,9 @@ Build output is written under `build/image`.
   unfinished managed recording catalog, manifests, replay queries, and automatic time/space retention are not included.
 - Preserve RadioReference talkgroup descriptions as editable Alias descriptions. The desktop Alias list displays and
   searches the description alongside the Alias name and group.
+- Focus the browser Live page on the Live Systems workspace. System tabs wrap into multiple rows instead of scrolling,
+  and each trunked-system tab shows the current control-channel decode quality as a four-bar meter. Detailed decoded
+  site metadata remains available through **Systems & Sites** and each site's detail pages.
 
 #### Fixed
 
@@ -424,6 +427,8 @@ Build output is written under `build/image`.
 - Legacy generic Channel Maps that existed for MPT-1327. DMR channel maps remain supported.
 - Standalone database migration and reset utilities, along with separate subsystem upgrade entry points. The bundled
   Application Migrator is the single supported path for every eligible existing database.
+- The redundant **Live Site Tracking** table below Live Systems. Its backend site metadata remains in use by the system
+  directory, site details, signal-quality views, and retention summaries.
 
 #### Upgrade Notes
 
