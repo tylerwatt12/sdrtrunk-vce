@@ -122,10 +122,12 @@ public final class LegacyPlaylistImportDialog
         return "Playlist contents:\n" +
             "  Aliases: " + preview.aliasCount() + '\n' +
             "  Channels: " + preview.channelCount() + '\n' +
+            "  Channel maps: " + preview.channelMapCount() + '\n' +
             "  Streaming configurations: " + preview.streamCount() + "\n\n" +
             "Existing-name conflicts:\n" +
             "  Alias lists: " + preview.aliasListConflicts() + '\n' +
             "  Channels (same system, site, and name): " + preview.channelConflicts() + '\n' +
+            "  Channel maps: " + preview.channelMapConflicts() + '\n' +
             "  Streaming configurations: " + preview.streamConflicts() + "\n\n" +
             "A backup will be created before the import. Applying the import reloads configuration and stops " +
             "currently running channels.";

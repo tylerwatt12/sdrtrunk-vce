@@ -19,10 +19,10 @@
 
 package io.github.dsheirer.source.tuner.sdrplay;
 
+import io.github.dsheirer.preference.source.ChannelizerType;
 import io.github.dsheirer.source.tuner.ITunerErrorListener;
 import io.github.dsheirer.source.tuner.Tuner;
 import io.github.dsheirer.source.tuner.TunerClass;
-import io.github.dsheirer.source.tuner.manager.PolyphaseChannelSourceManager;
 import io.github.dsheirer.source.tuner.sdrplay.rspDuo.IControlRspDuoTuner1;
 import io.github.dsheirer.source.tuner.sdrplay.rspDuo.IControlRspDuoTuner2;
 
@@ -35,10 +35,11 @@ public class RspTuner extends Tuner
      * Constructs an instance
      * @param tunerController for controlling the tuner
      * @param tunerErrorListener to process errors from this tuner
+     * @param channelizerType to use with this tuner
      */
-    public RspTuner(RspTunerController tunerController, ITunerErrorListener tunerErrorListener)
+    public RspTuner(RspTunerController tunerController, ITunerErrorListener tunerErrorListener, ChannelizerType channelizerType)
     {
-        super(tunerController, tunerErrorListener, new PolyphaseChannelSourceManager(tunerController));
+        super(tunerController, tunerErrorListener, channelizerType);
     }
 
     @Override

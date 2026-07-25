@@ -22,11 +22,6 @@ import com.fasterxml.jackson.annotation.JsonSubTypes;
 import io.github.dsheirer.source.SourceType;
 import io.github.dsheirer.source.mixer.MixerChannel;
 
-/**
- * Compatibility-only representation of a retired sound-card channel source.  It remains a Jackson subtype so a
- * legacy XML playlist can be parsed and filtered without changing the source file.  No runtime factory or source
- * manager constructs or executes this configuration.
- */
 @JsonSubTypes.Type(value = SourceConfigMixer.class, name = "sourceConfigMixer")
 public class SourceConfigMixer extends SourceConfiguration
 {

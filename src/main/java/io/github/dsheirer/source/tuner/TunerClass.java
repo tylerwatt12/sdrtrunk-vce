@@ -28,6 +28,8 @@ public enum TunerClass
 {
 	AIRSPY("Airspy"),
 	AIRSPY_HF("Airspy HF+"),
+	FUNCUBE_DONGLE_PRO("Funcube Dongle Pro" ),
+	FUNCUBE_DONGLE_PRO_PLUS("Funcube Dongle Pro+" ),
 	HACKRF("HackRF" ),
 	HYDRASDR("HydraSDR"),
 	RTL2832("RTL-2832"),
@@ -54,7 +56,10 @@ public enum TunerClass
 	}
 
 	public static final Set<TunerClass> SUPPORTED_USB_TUNERS = Set.copyOf(EnumSet.of(AIRSPY, AIRSPY_HF, HACKRF,
-			HYDRASDR, RTL2832));
+			HYDRASDR, RTL2832, FUNCUBE_DONGLE_PRO, FUNCUBE_DONGLE_PRO_PLUS));
+
+	public static final Set<TunerClass> FUNCUBE_TUNERS =
+			Set.copyOf(EnumSet.of(FUNCUBE_DONGLE_PRO, FUNCUBE_DONGLE_PRO_PLUS));
 
 	/**
 	 * Indicates if this tuner class entry is a supported USB tuner class.
@@ -62,6 +67,14 @@ public enum TunerClass
 	public boolean isSupportedUsbTuner()
 	{
 		return SUPPORTED_USB_TUNERS.contains(this);
+	}
+
+	/**
+	 * Indicates if the tuner class is a funcube dongle with a matching sound card interface
+	 */
+	public boolean isFuncubeTuner()
+	{
+		return FUNCUBE_TUNERS.contains(this);
 	}
 
 	/**
@@ -77,6 +90,10 @@ public enum TunerClass
 
 		switch(id)
 		{
+			case 0x04D8FB31:
+				return FUNCUBE_DONGLE_PRO_PLUS;
+			case 0x04D8FB56:
+				return FUNCUBE_DONGLE_PRO;
 			case 0x0BDA2832: //GENERIC RTL-2832
 			case 0x0BDA2838: //GENERIC RTL-2832/2838
 			case 0x185B0620: //COMPRO VIDEOMATE U620F

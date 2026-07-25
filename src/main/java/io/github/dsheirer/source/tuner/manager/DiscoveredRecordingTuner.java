@@ -19,6 +19,7 @@
 
 package io.github.dsheirer.source.tuner.manager;
 
+import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.source.SourceException;
 import io.github.dsheirer.source.tuner.TunerClass;
 import io.github.dsheirer.source.tuner.recording.RecordingTuner;
@@ -29,12 +30,17 @@ import io.github.dsheirer.source.tuner.recording.RecordingTunerConfiguration;
  */
 public class DiscoveredRecordingTuner extends DiscoveredTuner
 {
+    private UserPreferences mUserPreferences;
+
     /**
      * Constructs an instance
+     * @param userPreferences instance
      * @param recordingTunerConfiguration with recording path and frequency
      */
-    public DiscoveredRecordingTuner(RecordingTunerConfiguration recordingTunerConfiguration)
+    public DiscoveredRecordingTuner(UserPreferences userPreferences,
+                                    RecordingTunerConfiguration recordingTunerConfiguration)
     {
+        mUserPreferences = userPreferences;
         setTunerConfiguration(recordingTunerConfiguration);
 
         //Default all recordings to be disabled on startup
@@ -66,7 +72,7 @@ public class DiscoveredRecordingTuner extends DiscoveredTuner
     {
         if(!hasTuner())
         {
-            mTuner = new RecordingTuner(this, getRecordingTunerConfiguration());
+            mTuner = new RecordingTuner(mUserPreferences, this, getRecordingTunerConfiguration());
 
             try
             {

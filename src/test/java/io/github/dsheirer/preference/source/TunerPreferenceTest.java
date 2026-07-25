@@ -5,7 +5,7 @@
  */
 package io.github.dsheirer.preference.source;
 
-import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import java.util.UUID;
 import java.util.prefs.Preferences;
@@ -14,19 +14,21 @@ import org.junit.jupiter.api.Test;
 class TunerPreferenceTest
 {
     @Test
-    void staleChannelizerSelectionIsDiscarded() throws Exception
+    void channelizerSelectionRoundTripsThroughPreferences() throws Exception
     {
         Preferences preferences = Preferences.userRoot().node(
             "/io/github/dsheirer/test/" + UUID.randomUUID());
 
         try
         {
-            preferences.put(TunerPreference.RETIRED_PREFERENCE_KEY_CHANNELIZER_TYPE, "HETERODYNE");
+            preferences.put(TunerPreference.PREFERENCE_KEY_CHANNELIZER_TYPE, "HETERODYNE");
 
-            new TunerPreference(ignored -> {}, preferences);
+            TunerPreference tunerPreference = new TunerPreference(ignored -> {}, preferences);
+            assertEquals(ChannelizerType.HETERODYNE, tunerPreference.getChannelizerType());
 
-            assertNull(preferences.get(TunerPreference.RETIRED_PREFERENCE_KEY_CHANNELIZER_TYPE, null),
-                "A retired channelizer preference must not survive or influence tuner construction");
+            tunerPreference.setChannelizerType(ChannelizerType.POLYPHASE);
+            assertEquals("POLYPHASE",
+                preferences.get(TunerPreference.PREFERENCE_KEY_CHANNELIZER_TYPE, null));
         }
         finally
         {

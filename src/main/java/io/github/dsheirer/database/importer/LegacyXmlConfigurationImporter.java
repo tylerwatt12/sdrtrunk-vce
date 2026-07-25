@@ -12,25 +12,20 @@
 package io.github.dsheirer.database.importer;
 
 import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.fasterxml.jackson.databind.DeserializationContext;
-import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
-import com.fasterxml.jackson.databind.deser.DeserializationProblemHandler;
-import com.fasterxml.jackson.databind.jsontype.TypeIdResolver;
 import com.fasterxml.jackson.dataformat.xml.JacksonXmlModule;
 import com.fasterxml.jackson.dataformat.xml.XmlMapper;
 import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlRootElement;
 import io.github.dsheirer.alias.Alias;
-import io.github.dsheirer.alias.action.AliasAction;
-import io.github.dsheirer.alias.action.AliasActionType;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.configuration.ConfigurationState;
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.controller.channel.map.ChannelMap;
 import io.github.dsheirer.database.DatabaseFileInstaller;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.database.alias.AliasDatabaseStore;
@@ -38,7 +33,6 @@ import io.github.dsheirer.database.configuration.ConfigurationDatabaseStore;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.module.decode.p25.phase1.Modulation;
-import io.github.dsheirer.message.IMessage;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import java.io.IOException;
@@ -49,6 +43,7 @@ import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
@@ -118,7 +113,8 @@ public class LegacyXmlConfigurationImporter
         });
 
         return new ImportResult(normalizedXml, normalizedDatabase, state.getAliases().size(),
-            state.getBroadcastConfigurations().size(), state.getChannels().size(), p25ConventionalConversions);
+            state.getBroadcastConfigurations().size(), state.getChannelMaps().size(), state.getChannels().size(),
+            p25ConventionalConversions);
     }
 
     public static ConfigurationState readConfigurationState(Path sourceXml) throws IOException
@@ -130,10 +126,11 @@ public class LegacyXmlConfigurationImporter
             state.setVersion(ConfigurationManager.CONFIGURATION_CURRENT_VERSION);
             state.setAliases(nonNull(playlist.getAliases()));
             state.getAliases().forEach(alias ->
-                alias.setAliasActions(alias.getAliasActions().stream()
-                    .filter(action -> !(action instanceof RetiredAliasAction)).toList()));
+                alias.setAliasActions(alias.getAliasActions().stream().filter(Objects::nonNull).toList()));
             state.setBroadcastConfigurations(nonNull(playlist.getBroadcastConfigurations()));
+            state.setChannelMaps(nonNull(playlist.getChannelMaps()));
             state.setChannels(new ArrayList<>(nonNull(playlist.getChannels()).stream()
+                .filter(Objects::nonNull)
                 .filter(channel -> !ChannelConfigurationPolicy.isRetired(channel))
                 .toList()));
             return state;
@@ -146,21 +143,7 @@ public class LegacyXmlConfigurationImporter
         xmlModule.setDefaultUseWrapper(false);
         ObjectMapper objectMapper = new XmlMapper(xmlModule)
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
-            .addHandler(new DeserializationProblemHandler()
-            {
-                @Override
-                public JavaType handleUnknownTypeId(DeserializationContext context, JavaType baseType,
-                                                    String subTypeId, TypeIdResolver idResolver,
-                                                    String failureMessage)
-                {
-                    if(baseType.hasRawClass(AliasAction.class) && "scriptAction".equals(subTypeId))
-                    {
-                        return context.constructType(RetiredAliasAction.class);
-                    }
-
-                    return null;
-                }
-            });
+            .configure(DeserializationFeature.FAIL_ON_INVALID_SUBTYPE, false);
         objectMapper.setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
         return objectMapper;
     }
@@ -237,15 +220,16 @@ public class LegacyXmlConfigurationImporter
         if(aliases.size() != expected.getAliases().size() || actualIdentifierCount != expectedIdentifierCount ||
             actualActionCount != expectedActionCount ||
             actual.getBroadcastConfigurations().size() != expected.getBroadcastConfigurations().size() ||
+            actual.getChannelMaps().size() != expected.getChannelMaps().size() ||
             actual.getChannels().size() != expected.getChannels().size())
         {
             throw new IOException("Migrated SQLite validation failed: expected aliases=" + expected.getAliases().size() +
                 " aliasIdentifiers=" + expectedIdentifierCount + " aliasActions=" + expectedActionCount +
-                " streams=" + expected.getBroadcastConfigurations().size() + " channels=" +
-                expected.getChannels().size() +
+                " streams=" + expected.getBroadcastConfigurations().size() + " channelMaps=" +
+                expected.getChannelMaps().size() + " channels=" + expected.getChannels().size() +
                 " but loaded aliases=" + aliases.size() + " aliasIdentifiers=" + actualIdentifierCount +
-                " aliasActions=" + actualActionCount + " streams=" + actual.getBroadcastConfigurations().size() +
-                " channels=" + actual.getChannels().size());
+                " aliasActions=" + actualActionCount + " streams=" + actual.getBroadcastConfigurations().size() + " channelMaps=" +
+                actual.getChannelMaps().size() + " channels=" + actual.getChannels().size());
         }
     }
 
@@ -259,8 +243,8 @@ public class LegacyXmlConfigurationImporter
         return aliases.stream().mapToInt(alias -> alias.getAliasActions().size()).sum();
     }
 
-    public record ImportResult(Path sourceXml, Path database, int aliasCount, int streamCount, int channelCount,
-                               int p25ConventionalConversions)
+    public record ImportResult(Path sourceXml, Path database, int aliasCount, int streamCount, int channelMapCount,
+                               int channelCount, int p25ConventionalConversions)
     {
     }
 
@@ -270,6 +254,7 @@ public class LegacyXmlConfigurationImporter
         private int mVersion = ConfigurationManager.CONFIGURATION_CURRENT_VERSION;
         private List<Alias> mAliases = new ArrayList<>();
         private List<BroadcastConfiguration> mBroadcastConfigurations = new ArrayList<>();
+        private List<ChannelMap> mChannelMaps = new ArrayList<>();
         private List<Channel> mChannels = new ArrayList<>();
 
         @JacksonXmlProperty(isAttribute = true, localName = "version")
@@ -305,6 +290,17 @@ public class LegacyXmlConfigurationImporter
             mBroadcastConfigurations = broadcastConfigurations;
         }
 
+        @JacksonXmlProperty(isAttribute = false, localName = "channel_map")
+        public List<ChannelMap> getChannelMaps()
+        {
+            return mChannelMaps;
+        }
+
+        public void setChannelMaps(List<ChannelMap> channelMaps)
+        {
+            mChannelMaps = channelMaps;
+        }
+
         @JacksonXmlProperty(isAttribute = false, localName = "channel")
         public List<Channel> getChannels()
         {
@@ -314,29 +310,6 @@ public class LegacyXmlConfigurationImporter
         public void setChannels(List<Channel> channels)
         {
             mChannels = channels;
-        }
-    }
-
-    /**
-     * Import-only tombstone for retired script actions. It cannot retain a command or execute any behavior and is
-     * removed before the imported configuration reaches the database.
-     */
-    private static final class RetiredAliasAction extends AliasAction
-    {
-        @Override
-        public AliasActionType getType()
-        {
-            return null;
-        }
-
-        @Override
-        public void execute(Alias alias, IMessage message)
-        {
-        }
-
-        @Override
-        public void dismiss(boolean reset)
-        {
         }
     }
 }

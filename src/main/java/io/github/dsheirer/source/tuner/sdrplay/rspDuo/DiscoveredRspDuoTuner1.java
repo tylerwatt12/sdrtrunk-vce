@@ -19,6 +19,7 @@
 
 package io.github.dsheirer.source.tuner.sdrplay.rspDuo;
 
+import io.github.dsheirer.preference.source.ChannelizerType;
 import io.github.dsheirer.source.tuner.TunerFactory;
 import io.github.dsheirer.source.tuner.sdrplay.DiscoveredRspTuner;
 import io.github.dsheirer.source.tuner.sdrplay.RspTuner;
@@ -41,20 +42,22 @@ public class DiscoveredRspDuoTuner1 extends DiscoveredRspTuner<IControlRspDuoTun
     /**
      * Constructs an instance configured for a single-tuner
      * @param deviceInfo describing the tuner
+     * @param channelizerType to use for the tuner once started
      */
-    public DiscoveredRspDuoTuner1(DeviceInfo deviceInfo)
+    public DiscoveredRspDuoTuner1(DeviceInfo deviceInfo, ChannelizerType channelizerType)
     {
-        super(deviceInfo);
+        super(deviceInfo, channelizerType);
     }
 
     /**
      * Constructs an instance configured as Master Tuner 1.
      * @param deviceInfo describing the tuner
+     * @param channelizerType to use for the tuner once started
      * @param bridge for synchronizing with the slaved tuner 2.
      */
-    public DiscoveredRspDuoTuner1(DeviceInfo deviceInfo, MasterSlaveBridge bridge)
+    public DiscoveredRspDuoTuner1(DeviceInfo deviceInfo, ChannelizerType channelizerType, MasterSlaveBridge bridge)
     {
-        super(deviceInfo);
+        super(deviceInfo, channelizerType);
         mMasterSlaveBridge = bridge;
     }
 
@@ -70,7 +73,7 @@ public class DiscoveredRspDuoTuner1 extends DiscoveredRspTuner<IControlRspDuoTun
             {
                 if(mMasterSlaveBridge != null)
                 {
-                    mTuner = TunerFactory.getRspDuoTuner(getDeviceInfo(), this, mMasterSlaveBridge);
+                    mTuner = TunerFactory.getRspDuoTuner(getDeviceInfo(), getChannelizerType(), this, mMasterSlaveBridge);
 
                     if(mTuner instanceof RspTuner rspTuner &&
                        rspTuner.getRspTunerController() instanceof RspDuoTuner1Controller rspDuoTuner1Controller)
@@ -80,7 +83,7 @@ public class DiscoveredRspDuoTuner1 extends DiscoveredRspTuner<IControlRspDuoTun
                 }
                 else
                 {
-                    mTuner = TunerFactory.getRspTuner(getDeviceInfo(), this);
+                    mTuner = TunerFactory.getRspTuner(getDeviceInfo(), getChannelizerType(), this);
                 }
             }
             catch(Exception se)

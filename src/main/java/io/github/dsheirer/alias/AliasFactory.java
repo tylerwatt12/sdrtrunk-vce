@@ -21,6 +21,7 @@ package io.github.dsheirer.alias;
 import io.github.dsheirer.alias.action.AliasAction;
 import io.github.dsheirer.alias.action.beep.BeepAction;
 import io.github.dsheirer.alias.action.clip.ClipAction;
+import io.github.dsheirer.alias.action.script.ScriptAction;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.alias.id.dcs.Dcs;
@@ -181,6 +182,15 @@ public class AliasFactory
             copyClip.setPeriod(originalClip.getPeriod());
             return copyClip;
         }
+        else if(action instanceof ScriptAction originalScript)
+        {
+            ScriptAction copyScript = new ScriptAction();
+            copyScript.setInterval(originalScript.getInterval());
+            copyScript.setPeriod(originalScript.getPeriod());
+            copyScript.setScript(originalScript.getScript());
+            return copyScript;
+        }
+
         return null;
     }
 

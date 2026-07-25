@@ -26,12 +26,14 @@ import io.github.dsheirer.identifier.talkgroup.UnknownTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.dmr.channel.TimeslotFrequency;
 import io.github.dsheirer.module.decode.dmr.identifier.DMRTalkgroup;
+import io.github.dsheirer.module.decode.mpt1327.identifier.MPT1327Talkgroup;
 import io.github.dsheirer.module.decode.nxdn.channel.ChannelFrequency;
 import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.module.decode.passport.identifier.PassportTalkgroup;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.identifier.talkgroup.LTRTalkgroupFormatter;
+import io.github.dsheirer.preference.identifier.talkgroup.MPT1327TalkgroupFormatter;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.rrapi.type.Flavor;
 import io.github.dsheirer.rrapi.type.Site;
@@ -99,6 +101,11 @@ public class RadioReferenceDecoder
                 int home = ((value % 100000) / 1000);
                 int group = (value % 1000);
                 return LTRTalkgroup.create(area, home, group);
+            case MPT1327:
+                int mptValue = talkgroup.getDecimalValue();
+                int prefix = (mptValue / 10000);
+                int ident = (mptValue % 10000);
+                return MPT1327Talkgroup.encode(prefix, ident);
             default:
                 return talkgroup.getDecimalValue();
         }
@@ -119,6 +126,10 @@ public class RadioReferenceDecoder
                 int home = LTRTalkgroupFormatter.getLcn(value);
                 int group = LTRTalkgroupFormatter.getTalkgroup(value);
                 return (area * 100000) + (home * 1000) + group;
+            case MPT1327:
+                int prefix = MPT1327TalkgroupFormatter.getPrefix(value);
+                int ident = MPT1327TalkgroupFormatter.getIdent(value);
+                return (prefix * 10000) + ident;
             default:
                 return value;
         }
@@ -143,6 +154,8 @@ public class RadioReferenceDecoder
                 return DMRTalkgroup.create(value);
             case LTR:
                 return LTRTalkgroup.create(value);
+            case MPT1327:
+                return MPT1327Talkgroup.createTo(value);
             case NXDN:
                 return NXDNTalkgroupIdentifier.createTo(value);
             case PASSPORT:
@@ -445,6 +458,8 @@ public class RadioReferenceDecoder
                     }
                 }
                 return Protocol.LTR;
+            case "MPT-1327":
+                return Protocol.MPT1327;
             case TYPE_PROJECT_25:
                 return Protocol.APCO25;
             case TYPE_MOTOROLA:
@@ -499,6 +514,8 @@ public class RadioReferenceDecoder
                     {
                         return DecoderType.LTR;
                     }
+                case "MPT-1327":
+                    return DecoderType.MPT1327;
                 case TYPE_PROJECT_25:
                     if(flavor.getName().contentEquals("Phase II"))
                     {

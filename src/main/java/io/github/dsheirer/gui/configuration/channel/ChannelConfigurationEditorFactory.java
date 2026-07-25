@@ -67,6 +67,8 @@ public class ChannelConfigurationEditorFactory
                 return new LTRNetConfigurationEditor(configurationManager, tunerManager, userPreferences, filterProcessor);
             case LTR:
                 return new LTRConfigurationEditor(configurationManager, tunerManager, userPreferences, filterProcessor);
+            case MPT1327:
+                return new MPT1327ConfigurationEditor(configurationManager, tunerManager, userPreferences, filterProcessor);
             case PASSPORT:
                 return new PassportConfigurationEditor(configurationManager, tunerManager, userPreferences, filterProcessor);
             case P25_CONVENTIONAL:

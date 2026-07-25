@@ -45,6 +45,9 @@ public class SourceConfigFactory
             case TUNER_MULTIPLE_FREQUENCIES:
                 retVal = new SourceConfigTunerMultipleFrequency();
                 break;
+            case MIXER:
+                retVal = new SourceConfigMixer();
+                break;
             case NONE:
             default:
                 retVal = new SourceConfigNone();
@@ -68,6 +71,12 @@ public class SourceConfigFactory
 
             switch(config.getSourceType())
             {
+                case MIXER:
+                    SourceConfigMixer originalMixer = (SourceConfigMixer) config;
+                    SourceConfigMixer copyMixer = new SourceConfigMixer();
+                    copyMixer.setChannel(originalMixer.getChannel());
+                    copyMixer.setMixer(originalMixer.getMixer());
+                    return copyMixer;
                 case RECORDING:
                     SourceConfigRecording originalRec = (SourceConfigRecording) config;
                     SourceConfigRecording copyRec = new SourceConfigRecording();

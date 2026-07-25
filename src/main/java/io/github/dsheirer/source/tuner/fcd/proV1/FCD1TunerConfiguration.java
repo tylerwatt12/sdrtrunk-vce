@@ -1,0 +1,127 @@
+/*
+ * *****************************************************************************
+ * Copyright (C) 2014-2024 Dennis Sheirer
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>
+ * ****************************************************************************
+ */
+package io.github.dsheirer.source.tuner.fcd.proV1;
+
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import io.github.dsheirer.source.tuner.TunerType;
+import io.github.dsheirer.source.tuner.configuration.TunerConfiguration;
+import io.github.dsheirer.source.tuner.fcd.proV1.FCD1TunerController.LNAEnhance;
+import io.github.dsheirer.source.tuner.fcd.proV1.FCD1TunerController.LNAGain;
+import io.github.dsheirer.source.tuner.fcd.proV1.FCD1TunerController.MixerGain;
+
+public class FCD1TunerConfiguration extends TunerConfiguration
+{
+    private double mInphaseDCCorrection = 0.0d;
+    private double mQuadratureDCCorrection = 0.0d;
+    private double mPhaseCorrection = 0.0d;
+    private double mGainCorrection = 0.0d;
+    private LNAGain mLNAGain = LNAGain.LNA_GAIN_PLUS_20_0;
+    private LNAEnhance mLNAEnhance = LNAEnhance.LNA_ENHANCE_OFF;
+    private MixerGain mMixerGain = MixerGain.MIXER_GAIN_PLUS_12_0;
+
+    /**
+     * Default constructor for deserialization
+     */
+    public FCD1TunerConfiguration()
+    {
+        super(FCD1TunerController.MINIMUM_TUNABLE_FREQUENCY_HZ, FCD1TunerController.MAXIMUM_TUNABLE_FREQUENCY_HZ);
+    }
+
+    public FCD1TunerConfiguration(String uniqueID)
+    {
+        super(uniqueID);
+    }
+
+    @JsonIgnore
+    @Override
+    public TunerType getTunerType()
+    {
+        return TunerType.FUNCUBE_DONGLE_PRO;
+    }
+
+    public LNAGain getLNAGain()
+    {
+        return mLNAGain;
+    }
+
+    public void setLNAGain(LNAGain gain)
+    {
+        mLNAGain = gain;
+    }
+
+    public LNAEnhance getLNAEnhance()
+    {
+        return mLNAEnhance;
+    }
+
+    public void setLNAEnhance(LNAEnhance enhance)
+    {
+        mLNAEnhance = enhance;
+    }
+
+    public MixerGain getMixerGain()
+    {
+        return mMixerGain;
+    }
+
+    public void setMixerGain(MixerGain gain)
+    {
+        mMixerGain = gain;
+    }
+
+    public double getInphaseDCCorrection()
+    {
+        return mInphaseDCCorrection;
+    }
+
+    public void setInphaseDCCorrection(double value)
+    {
+        mInphaseDCCorrection = value;
+    }
+
+    public double getQuadratureDCCorrection()
+    {
+        return mQuadratureDCCorrection;
+    }
+
+    public void setQuadratureDCCorrection(double value)
+    {
+        mQuadratureDCCorrection = value;
+    }
+
+    public double getPhaseCorrection()
+    {
+        return mPhaseCorrection;
+    }
+
+    public void setPhaseCorrection(double value)
+    {
+        mPhaseCorrection = value;
+    }
+
+    public double getGainCorrection()
+    {
+        return mGainCorrection;
+    }
+
+    public void setGainCorrection(double value)
+    {
+        mGainCorrection = value;
+    }
+}

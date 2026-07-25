@@ -19,6 +19,7 @@
 
 package io.github.dsheirer.source.tuner.sdrplay;
 
+import io.github.dsheirer.preference.source.ChannelizerType;
 import io.github.dsheirer.source.tuner.TunerClass;
 import io.github.dsheirer.source.tuner.TunerFactory;
 import io.github.dsheirer.source.tuner.manager.DiscoveredTuner;
@@ -31,14 +32,16 @@ import io.github.dsheirer.source.tuner.sdrplay.api.device.DeviceType;
 public abstract class DiscoveredRspTuner<R extends IControlRsp> extends DiscoveredTuner
 {
     private final DeviceInfo mDeviceInfo;
+    private final ChannelizerType mChannelizerType;
 
     /**
      * Constructs an instance
      * @param deviceInfo to select the device from the API
      */
-    protected DiscoveredRspTuner(DeviceInfo deviceInfo)
+    protected DiscoveredRspTuner(DeviceInfo deviceInfo, ChannelizerType channelizerType)
     {
         mDeviceInfo = deviceInfo;
+        mChannelizerType = channelizerType;
     }
 
     /**
@@ -48,6 +51,14 @@ public abstract class DiscoveredRspTuner<R extends IControlRsp> extends Discover
     public DeviceInfo getDeviceInfo()
     {
         return mDeviceInfo;
+    }
+
+    /**
+     * Channelizer type to use for the tuner
+     */
+    protected ChannelizerType getChannelizerType()
+    {
+        return mChannelizerType;
     }
 
     @Override
@@ -74,7 +85,7 @@ public abstract class DiscoveredRspTuner<R extends IControlRsp> extends Discover
         {
             try
             {
-                mTuner = TunerFactory.getRspTuner(getDeviceInfo(), this);
+                mTuner = TunerFactory.getRspTuner(getDeviceInfo(), getChannelizerType(), this);
             }
             catch(Exception se)
             {

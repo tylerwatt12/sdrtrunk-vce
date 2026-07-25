@@ -18,11 +18,11 @@
  */
 package io.github.dsheirer.source.tuner.hackrf;
 
+import io.github.dsheirer.preference.source.ChannelizerType;
 import io.github.dsheirer.source.tuner.ITunerErrorListener;
 import io.github.dsheirer.source.tuner.Tuner;
 import io.github.dsheirer.source.tuner.TunerClass;
 import io.github.dsheirer.source.tuner.hackrf.HackRFTunerController.BoardID;
-import io.github.dsheirer.source.tuner.manager.PolyphaseChannelSourceManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -37,10 +37,12 @@ public class HackRFTuner extends Tuner
      * Constructs an instance
      * @param controller for the HackRF
      * @param tunerErrorListener to listen for errors from this tuner
+     * @param channelizerType for the channelizer
      */
-    public HackRFTuner(HackRFTunerController controller, ITunerErrorListener tunerErrorListener)
+    public HackRFTuner(HackRFTunerController controller, ITunerErrorListener tunerErrorListener,
+                       ChannelizerType channelizerType)
     {
-        super(controller, tunerErrorListener, new PolyphaseChannelSourceManager(controller));
+        super(controller, tunerErrorListener, channelizerType);
     }
 
     @Override

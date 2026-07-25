@@ -19,6 +19,7 @@
 
 package io.github.dsheirer.source.tuner.sdrplay.rspDx;
 
+import io.github.dsheirer.preference.source.ChannelizerType;
 import io.github.dsheirer.source.tuner.sdrplay.DiscoveredRspTuner;
 import io.github.dsheirer.source.tuner.sdrplay.api.device.DeviceInfo;
 
@@ -30,9 +31,10 @@ public class DiscoveredRspDxTuner extends DiscoveredRspTuner<IControlRspDx>
     /**
      * Constructs an instance
      * @param deviceInfo for the tuner
+     * @param channelizerType to use for the tuner once started
      */
-    public DiscoveredRspDxTuner(DeviceInfo deviceInfo)
+    public DiscoveredRspDxTuner(DeviceInfo deviceInfo, ChannelizerType channelizerType)
     {
-        super(deviceInfo);
+        super(deviceInfo, channelizerType);
     }
 }

@@ -22,12 +22,16 @@ package io.github.dsheirer.gui;
 import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.application.update.UpdateCheckResult;
+import io.github.dsheirer.controller.channel.map.ChannelMap;
+import io.github.dsheirer.controller.channel.map.ChannelRange;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.gui.icon.IconManager;
 import io.github.dsheirer.gui.icon.ViewIconManagerRequest;
 import io.github.dsheirer.gui.configuration.ConfigurationEditor;
 import io.github.dsheirer.gui.configuration.ConfigurationEditorRequest;
 import io.github.dsheirer.gui.configuration.ViewConfigurationRequest;
+import io.github.dsheirer.gui.configuration.channelMap.ChannelMapEditor;
+import io.github.dsheirer.gui.configuration.channelMap.ViewChannelMapEditorRequest;
 import io.github.dsheirer.gui.preference.PreferenceEditorType;
 import io.github.dsheirer.gui.preference.UserPreferencesEditor;
 import io.github.dsheirer.gui.preference.ViewUserPreferenceEditorRequest;
@@ -68,11 +72,13 @@ public class JavaFxWindowManager extends Application
 {
     private static final Logger mLog = LoggerFactory.getLogger(JavaFxWindowManager.class);
 
+    public static final String CHANNEL_MAP_EDITOR = "channelmap";
     public static final String ICON_MANAGER = "iconmanager";
     public static final String CONFIGURATION_EDITOR = "configuration";
     public static final String ENCRYPTION_KEY_EDITOR = "encryptionkeys";
     public static final String USER_PREFERENCES_EDITOR = "preferences";
     public static final String STAGE_MONITOR_KEY_CALIBRATION_DIALOG = "calibration.dialog";
+    public static final String STAGE_MONITOR_KEY_CHANNEL_MAP_EDITOR = "channel.map";
     public static final String STAGE_MONITOR_KEY_RECORDING_VIEWER = "recording.viewer";
     public static final String STAGE_MONITOR_KEY_ICON_MANAGER_EDITOR = "icon.manager";
     public static final String STAGE_MONITOR_KEY_JMBE_EDITOR = "jmbe.editor";
@@ -81,6 +87,7 @@ public class JavaFxWindowManager extends Application
     public static final String STAGE_MONITOR_KEY_USER_PREFERENCES_EDITOR = "user.preferences";
 
     private static final AtomicBoolean FX_TOOLKIT_STARTED = new AtomicBoolean();
+    private ChannelMapEditor mChannelMapEditor;
     private IconManager mIconManager;
     private JmbeEditor mJmbeEditor;
     private ConfigurationEditor mConfigurationEditor;
@@ -91,6 +98,7 @@ public class JavaFxWindowManager extends Application
     private UserPreferencesEditor mUserPreferencesEditor;
     private MessageRecordingViewer mMessageRecordingViewer;
 
+    private Stage mChannelMapStage;
     private Stage mIconManagerStage;
     private Stage mJmbeEditorStage;
     private Stage mConfigurationStage;
@@ -444,6 +452,37 @@ public class JavaFxWindowManager extends Application
         });
     }
 
+    /**
+     * Channel Map Editor
+     */
+    private ChannelMapEditor getChannelMapEditor()
+    {
+        if(mChannelMapEditor == null)
+        {
+            mChannelMapEditor = new ChannelMapEditor(mConfigurationManager.getChannelMapModel());
+        }
+
+        return mChannelMapEditor;
+    }
+
+    /**
+     * Channel Map Stage
+     */
+    private Stage getChannelMapStage()
+    {
+        if(mChannelMapStage == null)
+        {
+            Scene scene = new Scene(getChannelMapEditor(), 500, 500);
+            mChannelMapStage = new Stage();
+            mChannelMapStage.setTitle("sdrtrunk-vce - Channel Map Editor");
+            mChannelMapStage.setScene(scene);
+            ApplicationIcon.apply(mChannelMapStage);
+            mUserPreferences.getJavaFxPreferences().monitor(mChannelMapStage, STAGE_MONITOR_KEY_CHANNEL_MAP_EDITOR);
+        }
+
+        return mChannelMapStage;
+    }
+
     @Subscribe
     public void process(final ViewIconManagerRequest request)
     {
@@ -451,7 +490,19 @@ public class JavaFxWindowManager extends Application
     }
 
     /**
-     * Process a recording viewer request
+     * Process a channel map editor request
+     */
+    @Subscribe
+    public void process(final ViewChannelMapEditorRequest request)
+    {
+        execute(() -> {
+            restoreStage(getChannelMapStage());
+            getChannelMapEditor().process(request);
+        });
+    }
+
+    /**
+     * Process a channel map editor request
      */
     @Subscribe
     public void process(final ViewRecordingViewerRequest request)
@@ -488,6 +539,24 @@ public class JavaFxWindowManager extends Application
             {
                 switch(window)
                 {
+                    case CHANNEL_MAP_EDITOR:
+                        //Generate some test data for the editor
+                        ChannelMap channelMap1 = new ChannelMap("Test Map 1");
+                        channelMap1.addRange(new ChannelRange(1,199,150000000, 12500));
+                        channelMap1.addRange(new ChannelRange(200,299,160000000, 25000));
+                        channelMap1.addRange(new ChannelRange(300,399,170000000, 12500));
+                        channelMap1.addRange(new ChannelRange(400,499,180000000, 25000));
+                        mConfigurationManager.getChannelMapModel().addChannelMap(channelMap1);
+
+                        ChannelMap channelMap2 = new ChannelMap("Test Map 2");
+                        channelMap2.addRange(new ChannelRange(1,199,450000000, 12500));
+                        channelMap2.addRange(new ChannelRange(200,299,460000000, 25000));
+                        channelMap2.addRange(new ChannelRange(300,399,470000000, 12500));
+                        channelMap2.addRange(new ChannelRange(400,499,480000000, 25000));
+                        mConfigurationManager.getChannelMapModel().addChannelMap(channelMap2);
+                        valid = true;
+                        process(new ViewChannelMapEditorRequest());
+                        break;
                     case ICON_MANAGER:
                         valid = true;
                         process(new ViewIconManagerRequest());
@@ -514,7 +583,7 @@ public class JavaFxWindowManager extends Application
         {
             StringBuilder sb = new StringBuilder();
             sb.append("An argument is required to launch JavaFX windows from this window manager.  " +
-                "Valid options are:\n\ticonmanager\tIcon Manager\n\tconfiguration\tConfiguration Editor\n" +
+                "Valid options are:\n\tchannelmap\tChannel Map Editor\n\ticonmanager\tIcon Manager\n\tconfiguration\tConfiguration Editor\n" +
                 "\tencryptionkeys\tEncryption Keys\n\tpreferences\tUser Preferences Editor\n");
             sb.append("Supplied Argument(s): ").append(parameters.getRaw());
 

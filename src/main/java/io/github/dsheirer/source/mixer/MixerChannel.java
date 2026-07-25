@@ -17,10 +17,9 @@
  ******************************************************************************/
 package io.github.dsheirer.source.mixer;
 
-/**
- * Compatibility values retained only so legacy sound-card channel XML can be read and safely discarded.  There is no
- * active sound-card source implementation.
- */
+import java.util.EnumSet;
+import java.util.Set;
+
 public enum MixerChannel
 {
 	LEFT( "LEFT" ),
@@ -38,5 +37,21 @@ public enum MixerChannel
 	public String getLabel()
 	{
 		return mLabel;
+	}
+
+	/**
+	 * Mixer Target Data Line (ie sample source) channel options
+	 */
+	public static Set<MixerChannel> getTargetChannels()
+	{
+		return EnumSet.of( LEFT,RIGHT,MONO );
+	}
+
+	/**
+	 * Mixer Source Data Line (ie sound card output) channel options
+	 */
+	public static Set<MixerChannel> getSourceChannels()
+	{
+		return EnumSet.of( MONO,STEREO );
 	}
 }

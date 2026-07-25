@@ -19,6 +19,7 @@
 
 package io.github.dsheirer.source.tuner.sdrplay.rspDuo;
 
+import io.github.dsheirer.preference.source.ChannelizerType;
 import io.github.dsheirer.source.tuner.TunerFactory;
 import io.github.dsheirer.source.tuner.sdrplay.DiscoveredRspTuner;
 import io.github.dsheirer.source.tuner.sdrplay.api.device.DeviceInfo;
@@ -36,20 +37,22 @@ public class DiscoveredRspDuoTuner2 extends DiscoveredRspTuner<IControlRspDuoTun
     /**
      * Constructs an instance configured for a single-tuner
      * @param deviceInfo describing the tuner
+     * @param channelizerType to use for the tuner once started
      */
-    public DiscoveredRspDuoTuner2(DeviceInfo deviceInfo)
+    public DiscoveredRspDuoTuner2(DeviceInfo deviceInfo, ChannelizerType channelizerType)
     {
-        super(deviceInfo);
+        super(deviceInfo, channelizerType);
     }
 
     /**
      * Constructs an instance configured as Slave Tuner 2.
      * @param deviceInfo describing the tuner
+     * @param channelizerType to use for the tuner once started
      * @param bridge for synchronizing with the master tuner 1.
      */
-    public DiscoveredRspDuoTuner2(DeviceInfo deviceInfo, MasterSlaveBridge bridge)
+    public DiscoveredRspDuoTuner2(DeviceInfo deviceInfo, ChannelizerType channelizerType, MasterSlaveBridge bridge)
     {
-        super(deviceInfo);
+        super(deviceInfo, channelizerType);
         mMasterSlaveBridge = bridge;
     }
 
@@ -65,11 +68,11 @@ public class DiscoveredRspDuoTuner2 extends DiscoveredRspTuner<IControlRspDuoTun
             {
                 if(mMasterSlaveBridge != null)
                 {
-                    mTuner = TunerFactory.getRspDuoTuner(getDeviceInfo(), this, mMasterSlaveBridge);
+                    mTuner = TunerFactory.getRspDuoTuner(getDeviceInfo(), getChannelizerType(), this, mMasterSlaveBridge);
                 }
                 else
                 {
-                    mTuner = TunerFactory.getRspTuner(getDeviceInfo(), this);
+                    mTuner = TunerFactory.getRspTuner(getDeviceInfo(), getChannelizerType(), this);
                 }
             }
             catch(Exception se)

@@ -27,6 +27,7 @@ import io.github.dsheirer.preference.identifier.talkgroup.DMRTalkgroupFormatter;
 import io.github.dsheirer.preference.identifier.talkgroup.FleetsyncTalkgroupFormatter;
 import io.github.dsheirer.preference.identifier.talkgroup.LTRTalkgroupFormatter;
 import io.github.dsheirer.preference.identifier.talkgroup.MDC1200TalkgroupFormatter;
+import io.github.dsheirer.preference.identifier.talkgroup.MPT1327TalkgroupFormatter;
 import io.github.dsheirer.preference.identifier.talkgroup.PassportTalkgroupFormatter;
 import io.github.dsheirer.preference.identifier.talkgroup.UnknownTalkgroupFormatter;
 import io.github.dsheirer.protocol.Protocol;
@@ -54,6 +55,7 @@ public class TalkgroupFormatter
         mFormatterMap.put(Protocol.LTR, ltr);
         mFormatterMap.put(Protocol.LTR_NET, ltr);
         mFormatterMap.put(Protocol.MDC1200, new MDC1200TalkgroupFormatter());
+        mFormatterMap.put(Protocol.MPT1327, new MPT1327TalkgroupFormatter());
         mFormatterMap.put(Protocol.PASSPORT, new PassportTalkgroupFormatter());
         mFormatterMap.put(Protocol.UNKNOWN, new UnknownTalkgroupFormatter());
     }

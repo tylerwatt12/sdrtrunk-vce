@@ -24,6 +24,7 @@ import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.action.beep.BeepAction;
 import io.github.dsheirer.alias.action.clip.ClipAction;
+import io.github.dsheirer.alias.action.script.ScriptAction;
 import io.github.dsheirer.message.IMessage;
 import javafx.beans.Observable;
 import javafx.beans.property.SimpleStringProperty;
@@ -36,7 +37,8 @@ import javafx.util.Callback;
 @JsonSubTypes({
     @JsonSubTypes.Type(value = BeepAction.class, name="beepAction"),
     @JsonSubTypes.Type(value = ClipAction.class, name = "clipAction"),
-    @JsonSubTypes.Type(value = RecurringAction.class, name = "recurringAction")
+    @JsonSubTypes.Type(value = RecurringAction.class, name = "recurringAction"),
+    @JsonSubTypes.Type(value = ScriptAction.class, name = "scriptAction")
 })
 public abstract class AliasAction
 {

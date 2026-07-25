@@ -13,7 +13,6 @@ package io.github.dsheirer.gui.configuration.radioreference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
-import static org.junit.jupiter.api.Assertions.assertNull;
 
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.module.decode.DecoderType;
@@ -57,7 +56,7 @@ class RadioReferenceDecoderSelectionTest
     }
 
     @Test
-    void treatsMptSystemsAsUnsupported()
+    void selectsMptDecoderAndProtocolForMptSystems()
     {
         Type type = new Type();
         type.setTypeId(1);
@@ -76,8 +75,8 @@ class RadioReferenceDecoderSelectionTest
         RadioReferenceDecoder decoder = new RadioReferenceDecoder(null, Map.of(type.getTypeId(), type),
             Map.of(flavor.getFlavorId(), flavor), Map.of(voice.getVoiceId(), voice), Map.of());
 
-        assertNull(decoder.getDecoderType(system));
-        assertEquals(Protocol.UNKNOWN, decoder.getProtocol(system));
+        assertEquals(DecoderType.MPT1327, decoder.getDecoderType(system));
+        assertEquals(Protocol.MPT1327, decoder.getProtocol(system));
     }
 
     private static DecoderType trunkedDecoderType(String flavorName)

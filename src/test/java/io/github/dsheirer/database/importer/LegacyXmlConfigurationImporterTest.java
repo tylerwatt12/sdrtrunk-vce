@@ -11,13 +11,14 @@
 
 package io.github.dsheirer.database.importer;
 
-import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.alias.Alias;
+import io.github.dsheirer.alias.action.RecurringAction;
+import io.github.dsheirer.alias.action.script.ScriptAction;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.alias.id.priority.Priority;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
@@ -25,18 +26,22 @@ import io.github.dsheirer.alias.id.talkgroup.TalkgroupRange;
 import io.github.dsheirer.audio.broadcast.radioresolve.RadioResolveConfiguration;
 import io.github.dsheirer.configuration.ConfigurationState;
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.controller.channel.map.ChannelMap;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.database.alias.AliasDatabaseStore;
 import io.github.dsheirer.database.configuration.ConfigurationDatabaseStore;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
+import io.github.dsheirer.module.decode.mpt1327.DecodeConfigMPT1327;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.module.decode.p25.phase1.Modulation;
 import io.github.dsheirer.protocol.Protocol;
+import io.github.dsheirer.source.config.SourceConfigMixer;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
+import io.github.dsheirer.source.mixer.MixerChannel;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -60,6 +65,7 @@ class LegacyXmlConfigurationImporterTest
 
         assertEquals(1, result.aliasCount());
         assertEquals(1, result.streamCount());
+        assertEquals(1, result.channelMapCount());
         assertEquals(2, result.channelCount());
         assertEquals(1, result.p25ConventionalConversions());
 
@@ -77,6 +83,7 @@ class LegacyXmlConfigurationImporterTest
         ConfigurationState state = new ConfigurationDatabaseStore(database).loadConfigurationState();
         assertEquals(2, state.getChannels().size());
         assertEquals(1, state.getBroadcastConfigurations().size());
+        assertEquals(1, state.getChannelMaps().size());
 
         assertInstanceOf(RadioResolveConfiguration.class, state.getBroadcastConfigurations().get(0));
         RadioResolveConfiguration stream = (RadioResolveConfiguration)state.getBroadcastConfigurations().get(0);
@@ -153,78 +160,32 @@ class LegacyXmlConfigurationImporterTest
     }
 
     @Test
-    void skipsRetiredScriptActionsWhileImportingTheRestOfALegacyAlias() throws Exception
+    void importsRestoredScriptMptAndSoundCardConfiguration() throws Exception
     {
-        Path xml = mTemporaryFolder.resolve("retired-script.xml");
+        Path xml = mTemporaryFolder.resolve("restored-stock-features.xml");
         Files.writeString(xml, """
             <playlist version="4">
-              <alias name="Dispatch" list="County">
-                <id type="talkgroup" protocol="APCO25" value="1234"/>
-                <action type="scriptAction" interval="ONCE" period="0" script="/tmp/retired-script"/>
+              <alias name="Dispatch" list="Legacy">
+                <id type="talkgroup" protocol="MPT1327" value="8193"/>
+                <action type="scriptAction" interval="DELAYED_RESET" period="9"
+                    script="/opt/sdrtrunk/dispatch-alert"/>
               </alias>
-            </playlist>
-            """);
-
-        ConfigurationState state = LegacyXmlConfigurationImporter.readConfigurationState(xml);
-        assertEquals(1, state.getAliases().size());
-        assertTrue(state.getAliases().get(0).getAliasActions().isEmpty());
-        assertTrue(state.getAliases().get(0).getAliasIdentifiers().stream().anyMatch(Talkgroup.class::isInstance));
-    }
-
-    @Test
-    void skipsRetiredMptChannelsAndChannelMapsFromMixedLegacyXml() throws Exception
-    {
-        Path xml = mTemporaryFolder.resolve("mixed-mpt.xml");
-        Files.writeString(xml, """
-            <playlist version="4">
-              <channel_map name="Retired Map">
+              <channel_map name="County Map">
                 <range first="0" last="4095" base="451000000" size="12500"/>
               </channel_map>
-              <channel system="Legacy" site="MPT Site" name="Retired MPT" enabled="true" order="1">
+              <channel system="Legacy" site="MPT Site" name="MPT Control" enabled="true" order="1">
                 <alias_list_name>Legacy</alias_list_name>
                 <source_configuration type="sourceConfigTuner" source_type="TUNER" frequency="451000000"/>
                 <aux_decode_configuration/>
-                <decode_configuration type="decodeConfigMPT1327" channel_map_name="Retired Map"
+                <decode_configuration type="decodeConfigMPT1327" channel_map_name="County Map"
                     sync="FRENCH" traffic_channel_pool_size="8" call_timeout="30"/>
                 <event_log_configuration/>
                 <record_configuration/>
               </channel>
-              <channel system="Current" site="DMR Site" name="Supported DMR" enabled="true" order="2">
-                <alias_list_name>Current</alias_list_name>
-                <source_configuration type="sourceConfigTuner" source_type="TUNER" frequency="460000000"/>
-                <aux_decode_configuration/>
-                <decode_configuration type="decodeConfigDMR" ignore_data_calls="false"/>
-                <event_log_configuration/>
-                <record_configuration/>
-              </channel>
-            </playlist>
-            """);
-
-        ConfigurationState state = LegacyXmlConfigurationImporter.readConfigurationState(xml);
-
-        assertEquals(1, state.getChannels().size());
-        assertEquals("Supported DMR", state.getChannels().get(0).getName());
-        assertEquals(DecoderType.DMR, state.getChannels().get(0).getDecodeConfiguration().getDecoderType());
-    }
-
-    @Test
-    void skipsRetiredSoundCardChannelsWithoutChangingTheLegacyXml() throws Exception
-    {
-        Path xml = mTemporaryFolder.resolve("mixed-sound-card.xml");
-        Files.writeString(xml, """
-            <playlist version="4">
-              <channel system="Legacy" site="Audio Input" name="Retired Sound Card" enabled="true" order="1">
+              <channel system="Legacy" site="Audio Input" name="Sound Card DMR" enabled="true" order="2">
                 <alias_list_name>Legacy</alias_list_name>
                 <source_configuration type="sourceConfigMixer" source_type="MIXER"
-                    mixer="Legacy Line Input" channel="RIGHT"/>
-                <aux_decode_configuration/>
-                <decode_configuration type="decodeConfigDMR" ignore_data_calls="false"/>
-                <event_log_configuration/>
-                <record_configuration/>
-              </channel>
-              <channel system="Current" site="DMR Site" name="Supported DMR" enabled="true" order="2">
-                <alias_list_name>Current</alias_list_name>
-                <source_configuration type="sourceConfigTuner" source_type="TUNER" frequency="460000000"/>
+                    mixer="Line Input" channel="RIGHT"/>
                 <aux_decode_configuration/>
                 <decode_configuration type="decodeConfigDMR" ignore_data_calls="false"/>
                 <event_log_configuration/>
@@ -232,15 +193,37 @@ class LegacyXmlConfigurationImporterTest
               </channel>
             </playlist>
             """);
-        byte[] original = Files.readAllBytes(xml);
+        Path database = mTemporaryFolder.resolve("restored-stock-features.sqlite");
 
-        ConfigurationState state = LegacyXmlConfigurationImporter.readConfigurationState(xml);
+        LegacyXmlConfigurationImporter.ImportResult result =
+            LegacyXmlConfigurationImporter.importPlaylist(xml, database);
 
-        assertEquals(1, state.getChannels().size());
-        assertEquals("Supported DMR", state.getChannels().get(0).getName());
-        assertEquals(DecoderType.DMR, state.getChannels().get(0).getDecodeConfiguration().getDecoderType());
-        assertArrayEquals(original, Files.readAllBytes(xml),
-            "reading a legacy playlist must never rewrite or delete its retired sound-card channel");
+        assertEquals(1, result.aliasCount());
+        assertEquals(1, result.channelMapCount());
+        assertEquals(2, result.channelCount());
+
+        Alias alias = new AliasDatabaseStore(database).loadAliases().getFirst();
+        ScriptAction scriptAction = assertInstanceOf(ScriptAction.class, alias.getAliasActions().getFirst());
+        assertEquals("/opt/sdrtrunk/dispatch-alert", scriptAction.getScript());
+        assertEquals(RecurringAction.Interval.DELAYED_RESET, scriptAction.getInterval());
+        assertEquals(9, scriptAction.getPeriod());
+
+        ConfigurationState state = new ConfigurationDatabaseStore(database).loadConfigurationState();
+        ChannelMap channelMap = state.getChannelMaps().getFirst();
+        assertEquals("County Map", channelMap.getName());
+        assertEquals(451_000_000, channelMap.getRanges().getFirst().getBaseFrequency());
+
+        Channel mptChannel = state.getChannels().getFirst();
+        DecodeConfigMPT1327 mpt = assertInstanceOf(DecodeConfigMPT1327.class,
+            mptChannel.getDecodeConfiguration());
+        assertEquals(DecoderType.MPT1327, mpt.getDecoderType());
+        assertEquals("County Map", mpt.getChannelMapName());
+
+        Channel soundCardChannel = state.getChannels().get(1);
+        SourceConfigMixer mixer = assertInstanceOf(SourceConfigMixer.class,
+            soundCardChannel.getSourceConfiguration());
+        assertEquals("Line Input", mixer.getMixer());
+        assertEquals(MixerChannel.RIGHT, mixer.getChannel());
     }
 
     @Test

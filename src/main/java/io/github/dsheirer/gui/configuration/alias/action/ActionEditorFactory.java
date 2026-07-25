@@ -38,6 +38,8 @@ public class ActionEditorFactory
                 return new BeepEditor();
             case CLIP:
                 return new ClipEditor();
+            case SCRIPT:
+                return new ScriptEditor();
             default:
                 return new UnrecognizedActionEditor();
         }

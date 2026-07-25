@@ -20,10 +20,11 @@ import io.github.dsheirer.alias.AliasFactory;
 import io.github.dsheirer.alias.AliasIdentifierPolicy;
 import io.github.dsheirer.alias.action.RecurringAction;
 import io.github.dsheirer.alias.action.clip.ClipAction;
+import io.github.dsheirer.alias.action.script.ScriptAction;
 import io.github.dsheirer.alias.id.AliasID;
+import io.github.dsheirer.alias.id.AliasIDType;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.alias.id.dcs.Dcs;
-import io.github.dsheirer.alias.id.AliasIDType;
 import io.github.dsheirer.alias.id.legacy.mpt1327.MPT1327ID;
 import io.github.dsheirer.alias.id.legacy.nonrecordable.NonRecordable;
 import io.github.dsheirer.alias.id.priority.Priority;
@@ -90,6 +91,12 @@ class AliasDatabaseStoreTest
         clipAction.setPeriod(7);
         alias.addAliasAction(clipAction);
 
+        ScriptAction scriptAction = new ScriptAction();
+        scriptAction.setScript("/tmp/dispatch-alert");
+        scriptAction.setInterval(RecurringAction.Interval.UNTIL_DISMISSED);
+        scriptAction.setPeriod(11);
+        alias.addAliasAction(scriptAction);
+
         store.replaceAliases(List.of(alias));
         assertTrue(store.hasAliases());
 
@@ -114,11 +121,15 @@ class AliasDatabaseStoreTest
         assertTrue(hasIdentifier(loaded, Dcs.class));
         assertTrue(hasIdentifier(loaded, TonesID.class));
 
-        assertEquals(1, loaded.getAliasActions().size());
+        assertEquals(2, loaded.getAliasActions().size());
         ClipAction loadedClip = (ClipAction)loaded.getAliasActions().get(0);
         assertEquals("/tmp/alert.wav", loadedClip.getPath());
         assertEquals(RecurringAction.Interval.DELAYED_RESET, loadedClip.getInterval());
         assertEquals(7, loadedClip.getPeriod());
+        ScriptAction loadedScript = (ScriptAction)loaded.getAliasActions().get(1);
+        assertEquals("/tmp/dispatch-alert", loadedScript.getScript());
+        assertEquals(RecurringAction.Interval.UNTIL_DISMISSED, loadedScript.getInterval());
+        assertEquals(11, loadedScript.getPeriod());
 
         try(Connection connection = SdrTrunkDatabase.open(database);
             Statement statement = connection.createStatement())
@@ -128,7 +139,7 @@ class AliasDatabaseStoreTest
             assertEquals(1, countRows(connection, "alias_broadcast_channel"));
             assertEquals(1, countRows(connection, "alias_text_identifier"));
             assertEquals(1, countRows(connection, "alias_tone_sequence"));
-            assertEquals(1, countRows(connection, "alias_action"));
+            assertEquals(2, countRows(connection, "alias_action"));
 
             try(ResultSet resultSet = statement.executeQuery("""
                 SELECT record_enabled, non_recordable, priority
@@ -161,33 +172,6 @@ class AliasDatabaseStoreTest
 
         assertTrue(store.isInitialized());
         assertEquals(1, store.loadAliases().size());
-    }
-
-    @Test
-    void ignoresRetiredScriptActionsInExistingDatabases() throws Exception
-    {
-        Path database = mTemporaryFolder.resolve("retired-script-action.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
-        AliasDatabaseStore store = new AliasDatabaseStore(database);
-
-        try(Connection connection = SdrTrunkDatabase.open(database);
-            Statement statement = connection.createStatement())
-        {
-            statement.executeUpdate("""
-                INSERT INTO alias (sort_order, name, alias_list_name, group_name, color, icon_name,
-                    stream_as_talkgroup)
-                VALUES (0, 'Legacy Script Alias', 'Legacy List', NULL, 0, NULL, NULL)
-                """);
-            statement.executeUpdate("""
-                INSERT INTO alias_action (alias_id, sort_order, type, interval, period, path, script)
-                SELECT id, 0, 'SCRIPT', 'ONCE', 0, NULL, '/tmp/retired-script' FROM alias
-                """);
-        }
-
-        List<Alias> aliases = store.loadAliases();
-        assertEquals(1, aliases.size());
-        assertTrue(aliases.get(0).getAliasActions().isEmpty(),
-            "retired script rows must never be restored or executed");
     }
 
     @Test
@@ -243,37 +227,41 @@ class AliasDatabaseStoreTest
     }
 
     @Test
-    void preservesButHidesRetiredMptAliasIdentifiers() throws Exception
+    void preservesLegacyMptIdentifiersAlongsideActiveMptTalkgroups() throws Exception
     {
-        Path database = mTemporaryFolder.resolve("retired-mpt-alias.sqlite");
+        Path database = mTemporaryFolder.resolve("mpt-alias.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
         AliasDatabaseStore store = new AliasDatabaseStore(database);
 
-        Alias alias = new Alias("Legacy MPT Alias");
-        alias.setAliasListName("Legacy");
+        Alias alias = new Alias("MPT Dispatch");
+        alias.setAliasListName("MPT");
         MPT1327ID legacyIdentifier = new MPT1327ID();
         legacyIdentifier.setIdent("001-0001");
         alias.addAliasID(legacyIdentifier);
         alias.addAliasID(new Talkgroup(Protocol.MPT1327, 8_193));
 
         store.replaceAliases(List.of(alias));
-        Alias loaded = store.loadAliases().get(0);
+        Alias loaded = store.loadAliases().getFirst();
         assertEquals(2, loaded.getAliasIdentifiers().size());
-        assertTrue(loaded.getAliasIdentifiers().stream().noneMatch(AliasIdentifierPolicy::isUserVisible));
+        assertTrue(loaded.getAliasIdentifiers().stream()
+            .filter(MPT1327ID.class::isInstance)
+            .noneMatch(AliasIdentifierPolicy::isUserVisible));
+        assertTrue(loaded.getAliasIdentifiers().stream()
+            .filter(Talkgroup.class::isInstance)
+            .anyMatch(AliasIdentifierPolicy::isUserVisible));
         assertTrue(AliasIDType.MPT1327.isRetiredCompatibility());
+        assertTrue(Protocol.MPT1327.isActive());
+
         MPT1327ID loadedLegacy = loaded.getAliasIdentifiers().stream()
             .filter(MPT1327ID.class::isInstance)
             .map(MPT1327ID.class::cast)
             .findFirst()
             .orElseThrow();
-        assertEquals("001-0001", loadedLegacy.getIdent());
         MPT1327ID copiedLegacy = (MPT1327ID)AliasFactory.copyOf(loadedLegacy);
         assertEquals("001-0001", copiedLegacy.getIdent());
 
         store.replaceAliases(List.of(loaded));
-        Alias savedAgain = store.loadAliases().get(0);
-        assertEquals(2, savedAgain.getAliasIdentifiers().size());
-        assertTrue(savedAgain.getAliasIdentifiers().stream().noneMatch(AliasIdentifierPolicy::isUserVisible));
+        assertEquals(2, store.loadAliases().getFirst().getAliasIdentifiers().size());
     }
 
     private static boolean hasIdentifier(Alias alias, Class<? extends AliasID> type)

@@ -14,12 +14,13 @@ package io.github.dsheirer.database.configuration;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.audio.broadcast.radioresolve.RadioResolveConfiguration;
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.controller.channel.map.ChannelMap;
+import io.github.dsheirer.controller.channel.map.ChannelRange;
 import io.github.dsheirer.configuration.ConfigurationState;
 import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
@@ -64,6 +65,9 @@ class ConfigurationDatabaseStoreTest
         channel.setSourceConfiguration(sourceConfig);
         channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
 
+        ChannelMap channelMap = new ChannelMap("County Map");
+        channelMap.addRange(new ChannelRange(1, 10, 851_000_000, 12_500));
+
         RadioResolveConfiguration stream = new RadioResolveConfiguration();
         stream.setName("RadioResolve");
         stream.setHost("https://example.invalid/upload");
@@ -73,6 +77,7 @@ class ConfigurationDatabaseStoreTest
 
         ConfigurationState state = new ConfigurationState();
         state.setChannels(List.of(channel));
+        state.setChannelMaps(List.of(channelMap));
         state.setBroadcastConfigurations(List.of(stream));
 
         store.replaceConfigurationState(state);
@@ -80,6 +85,7 @@ class ConfigurationDatabaseStoreTest
 
         ConfigurationState loaded = store.loadConfigurationState();
         assertEquals(1, loaded.getChannels().size());
+        assertEquals(1, loaded.getChannelMaps().size());
         assertEquals(1, loaded.getBroadcastConfigurations().size());
 
         Channel loadedChannel = loaded.getChannels().get(0);
@@ -96,6 +102,11 @@ class ConfigurationDatabaseStoreTest
         SourceConfigTuner loadedSource = (SourceConfigTuner)loadedChannel.getSourceConfiguration();
         assertEquals(853_762_500L, loadedSource.getFrequency());
         assertEquals("Airspy", loadedSource.getPreferredTuner());
+
+        ChannelMap loadedMap = loaded.getChannelMaps().get(0);
+        assertEquals("County Map", loadedMap.getName());
+        assertEquals(1, loadedMap.getRanges().size());
+        assertEquals(851_000_000, loadedMap.getRanges().get(0).getBaseFrequency());
 
         BroadcastConfiguration loadedStream = loaded.getBroadcastConfigurations().get(0);
         assertInstanceOf(RadioResolveConfiguration.class, loadedStream);
@@ -143,51 +154,31 @@ class ConfigurationDatabaseStoreTest
     }
 
     @Test
-    void preservesRetiredDecoderAndSoundCardRowsWithoutLoadingThem() throws Exception
+    void preservesUnknownFutureChannelRowsWhenReplacingActiveConfiguration() throws Exception
     {
-        Path database = mTemporaryFolder.resolve("retired-configuration.sqlite");
+        Path database = mTemporaryFolder.resolve("future-configuration.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
         ConfigurationDatabaseStore store = new ConfigurationDatabaseStore(database);
-        String retainedJson = "{\"type\":\"retired-channel\",\"payload\":\"must remain byte-for-byte\"}";
-        String soundCardJson = "{\"type\":\"retired-sound-card\",\"payload\":\"must also remain byte-for-byte\"}";
-        String channelMapJson = "{\"name\":\"Retired Map\",\"ranges\":[{\"first\":1,\"last\":9}]}";
+        String futureJson = "{\"type\":\"future-channel\",\"payload\":\"retain-byte-for-byte\"}";
 
         try(Connection connection = SdrTrunkDatabase.open(database);
-            PreparedStatement channelStatement = connection.prepareStatement("""
+            PreparedStatement statement = connection.prepareStatement("""
                 INSERT INTO configuration_channel (
                     id, sort_order, system_name, site_name, name, alias_list_name, radres_guid, auto_start,
                     auto_start_order, decoder_type, source_type, primary_frequency_hz, frequency_count,
                     recording_enabled, event_logging_enabled, config_json
-                ) VALUES (77, 9, 'Legacy System', 'Legacy Site', 'Retired MPT', 'Legacy Aliases', 'legacy-guid',
-                    1, 4, 'MPT1327', 'TUNER', 451000000, 2, 1, 1, ?)
-                """);
-            PreparedStatement soundCardStatement = connection.prepareStatement("""
-                INSERT INTO configuration_channel (
-                    id, sort_order, system_name, site_name, name, alias_list_name, radres_guid, auto_start,
-                    auto_start_order, decoder_type, source_type, primary_frequency_hz, frequency_count,
-                    recording_enabled, event_logging_enabled, config_json
-                ) VALUES (78, 10, 'Legacy System', 'Audio Input', 'Retired Sound Card', 'Legacy Aliases',
-                    'legacy-sound-guid', 1, 5, 'DMR', 'MIXER', NULL, 0, 0, 1, ?)
-                """);
-            PreparedStatement mapStatement = connection.prepareStatement("""
-                INSERT INTO configuration_channel_map (id, sort_order, name, config_json)
-                VALUES (88, 3, 'Retired Map', ?)
+                ) VALUES (77, 9, 'Future System', 'Future Site', 'Future Decoder', 'Future Aliases',
+                    'future-guid', 1, 4, 'FUTURE_DECODER', 'FUTURE_SOURCE', 451000000, 2, 1, 1, ?)
                 """))
         {
-            channelStatement.setString(1, retainedJson);
-            channelStatement.executeUpdate();
-            soundCardStatement.setString(1, soundCardJson);
-            soundCardStatement.executeUpdate();
-            mapStatement.setString(1, channelMapJson);
-            mapStatement.executeUpdate();
+            statement.setString(1, futureJson);
+            statement.executeUpdate();
         }
 
-        assertTrue(store.loadConfigurationState().getChannels().isEmpty(),
-            "retired rows must be classified before attempting to bind their JSON");
+        assertTrue(store.loadConfigurationState().getChannels().isEmpty());
 
-        Channel active = new Channel("Supported DMR");
-        active.setSystem("Active System");
-        active.setDecodeConfiguration(new io.github.dsheirer.module.decode.dmr.DecodeConfigDMR());
+        Channel active = new Channel("Supported P25");
+        active.setDecodeConfiguration(new DecodeConfigP25Phase1());
         SourceConfigTuner source = new SourceConfigTuner();
         source.setFrequency(460_000_000L);
         active.setSourceConfiguration(source);
@@ -195,74 +186,20 @@ class ConfigurationDatabaseStoreTest
         replacement.setChannels(List.of(active));
         store.replaceConfigurationState(replacement);
 
-        ConfigurationState loaded = store.loadConfigurationState();
-        assertEquals(1, loaded.getChannels().size());
-        assertEquals("Supported DMR", loaded.getChannels().get(0).getName());
+        assertEquals(1, store.loadConfigurationState().getChannels().size());
 
         try(Connection connection = SdrTrunkDatabase.open(database);
-            PreparedStatement channelQuery = connection.prepareStatement("""
-                SELECT sort_order, system_name, site_name, name, alias_list_name, radres_guid, auto_start,
-                       auto_start_order, decoder_type, source_type, primary_frequency_hz, frequency_count,
-                       recording_enabled, event_logging_enabled, config_json
+            PreparedStatement statement = connection.prepareStatement("""
+                SELECT sort_order, decoder_type, source_type, config_json
                 FROM configuration_channel WHERE id = 77
                 """);
-            PreparedStatement soundCardQuery = connection.prepareStatement("""
-                SELECT sort_order, system_name, site_name, name, alias_list_name, radres_guid, auto_start,
-                       auto_start_order, decoder_type, source_type, primary_frequency_hz, frequency_count,
-                       recording_enabled, event_logging_enabled, config_json
-                FROM configuration_channel WHERE id = 78
-                """);
-            PreparedStatement mapQuery = connection.prepareStatement("""
-                SELECT sort_order, name, config_json FROM configuration_channel_map WHERE id = 88
-                """))
+            ResultSet resultSet = statement.executeQuery())
         {
-            try(ResultSet resultSet = channelQuery.executeQuery())
-            {
-                assertTrue(resultSet.next());
-                assertEquals(9, resultSet.getInt("sort_order"));
-                assertEquals("Legacy System", resultSet.getString("system_name"));
-                assertEquals("Legacy Site", resultSet.getString("site_name"));
-                assertEquals("Retired MPT", resultSet.getString("name"));
-                assertEquals("Legacy Aliases", resultSet.getString("alias_list_name"));
-                assertEquals("legacy-guid", resultSet.getString("radres_guid"));
-                assertEquals(1, resultSet.getInt("auto_start"));
-                assertEquals(4, resultSet.getInt("auto_start_order"));
-                assertEquals("MPT1327", resultSet.getString("decoder_type"));
-                assertEquals("TUNER", resultSet.getString("source_type"));
-                assertEquals(451_000_000L, resultSet.getLong("primary_frequency_hz"));
-                assertEquals(2, resultSet.getInt("frequency_count"));
-                assertEquals(1, resultSet.getInt("recording_enabled"));
-                assertEquals(1, resultSet.getInt("event_logging_enabled"));
-                assertEquals(retainedJson, resultSet.getString("config_json"));
-            }
-
-            try(ResultSet resultSet = soundCardQuery.executeQuery())
-            {
-                assertTrue(resultSet.next());
-                assertEquals(10, resultSet.getInt("sort_order"));
-                assertEquals("Legacy System", resultSet.getString("system_name"));
-                assertEquals("Audio Input", resultSet.getString("site_name"));
-                assertEquals("Retired Sound Card", resultSet.getString("name"));
-                assertEquals("Legacy Aliases", resultSet.getString("alias_list_name"));
-                assertEquals("legacy-sound-guid", resultSet.getString("radres_guid"));
-                assertEquals(1, resultSet.getInt("auto_start"));
-                assertEquals(5, resultSet.getInt("auto_start_order"));
-                assertEquals("DMR", resultSet.getString("decoder_type"));
-                assertEquals("MIXER", resultSet.getString("source_type"));
-                assertNull(resultSet.getObject("primary_frequency_hz"));
-                assertEquals(0, resultSet.getInt("frequency_count"));
-                assertEquals(0, resultSet.getInt("recording_enabled"));
-                assertEquals(1, resultSet.getInt("event_logging_enabled"));
-                assertEquals(soundCardJson, resultSet.getString("config_json"));
-            }
-
-            try(ResultSet resultSet = mapQuery.executeQuery())
-            {
-                assertTrue(resultSet.next());
-                assertEquals(3, resultSet.getInt("sort_order"));
-                assertEquals("Retired Map", resultSet.getString("name"));
-                assertEquals(channelMapJson, resultSet.getString("config_json"));
-            }
+            assertTrue(resultSet.next());
+            assertEquals(9, resultSet.getInt("sort_order"));
+            assertEquals("FUTURE_DECODER", resultSet.getString("decoder_type"));
+            assertEquals("FUTURE_SOURCE", resultSet.getString("source_type"));
+            assertEquals(futureJson, resultSet.getString("config_json"));
         }
     }
 

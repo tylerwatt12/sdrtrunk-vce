@@ -26,6 +26,8 @@ import io.github.dsheirer.controller.channel.Channel.ChannelType;
 import io.github.dsheirer.controller.channel.ChannelEvent;
 import io.github.dsheirer.controller.channel.ChannelModel;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
+import io.github.dsheirer.controller.channel.map.ChannelMap;
+import io.github.dsheirer.controller.channel.map.ChannelMapModel;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.alias.AliasDatabaseStore;
 import io.github.dsheirer.database.configuration.ConfigurationDatabaseStore;
@@ -60,6 +62,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     public static final int CONFIGURATION_CURRENT_VERSION = 4;
 
     private AliasModel mAliasModel;
+    private ChannelMapModel mChannelMapModel = new ChannelMapModel();
     private IconModel mIconModel;
 
     private BroadcastModel mBroadcastModel;
@@ -79,7 +82,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     private List<IAliasListRefreshListener> mAliasListRefreshListeners = new ArrayList<>();
 
     /**
-     * Manages channel configurations, streams, and alias lists backed by the global SQLite database.
+     * Manages channel configurations, channel maps, streams, and alias lists backed by the global SQLite database.
      *
      * Monitors configuration changes to automatically save them after they occur.
      *
@@ -103,8 +106,8 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         mRadioReference = new RadioReference();
 
         mChannelModel = new ChannelModel(mAliasModel);
-        mChannelProcessingManager = new ChannelProcessingManager(eventLogManager, mTunerManager, mAliasModel,
-            mUserPreferences);
+        mChannelProcessingManager = new ChannelProcessingManager(mChannelMapModel, eventLogManager, mTunerManager,
+            mAliasModel, mUserPreferences);
 
         //Register the channel processing manager to receive global channel stop processing requests so that it can
         //respond to tuner shutdown (ie error) events
@@ -113,10 +116,12 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         mChannelModel.addListener(mChannelProcessingManager);
         mChannelProcessingManager.addChannelEventListener(mChannelModel);
 
-        //Register for alias and channel events so that we can save configuration changes.
+        //Register for alias, channel and channel map events so that we can save configuration changes.
         mChannelModel.addListener(this);
 
         mAliasModel.aliasList().addListener((ListChangeListener.Change<? extends Alias> c) -> scheduleAliasSave());
+
+        mChannelMapModel.getChannelMaps().addListener((ListChangeListener.Change<? extends ChannelMap> c) -> scheduleConfigurationSave());
 
         mBroadcastModel.addListener(broadcastEvent -> {
             switch(broadcastEvent.getEvent())
@@ -267,6 +272,14 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     }
 
     /**
+     * Channel map model managed by this configuration manager.
+     */
+    public ChannelMapModel getChannelMapModel()
+    {
+        return mChannelMapModel;
+    }
+
+    /**
      * Loads configuration state from the global SDRTrunk database.
      */
     public void init()
@@ -299,6 +312,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         mChannelProcessingManager.shutdown();
 
         mChannelModel.clear();
+        mChannelMapModel.clear();
         mBroadcastModel.clear();
         mAliasModel.clear();
 
@@ -350,6 +364,8 @@ public class ConfigurationManager implements Listener<ChannelEvent>
 
 
             mBroadcastModel.addBroadcastConfigurations(configurationState.getBroadcastConfigurations());
+
+            mChannelMapModel.addChannelMaps(configurationState.getChannelMaps());
 
             //Channel model has to be loaded last since it will auto-start channels that are enabled
             mChannelModel.addChannels(configurationState.getChannels());
@@ -419,9 +435,9 @@ public class ConfigurationManager implements Listener<ChannelEvent>
             {
                 ConfigurationState loaded = mConfigurationDatabaseStore.loadConfigurationState();
                 persistGeneratedConfigurationIds(loaded);
-                mLog.debug("Loaded configuration channels [{}] and streams [{}] from SQLite [{}]",
-                    loaded.getChannels().size(), loaded.getBroadcastConfigurations().size(),
-                    mConfigurationDatabaseStore.getDatabasePath());
+                mLog.debug("Loaded configuration channels [{}], channel maps [{}], and streams [{}] from SQLite [{}]",
+                    loaded.getChannels().size(), loaded.getChannelMaps().size(),
+                    loaded.getBroadcastConfigurations().size(), mConfigurationDatabaseStore.getDatabasePath());
                 return loaded;
             }
 
@@ -432,9 +448,9 @@ public class ConfigurationManager implements Listener<ChannelEvent>
 
             mConfigurationDatabaseStore.replaceConfigurationState(databaseState);
 
-            mLog.debug("Initialized configuration channels [{}] and streams [{}] in SQLite [{}]",
-                databaseState.getChannels().size(), databaseState.getBroadcastConfigurations().size(),
-                mConfigurationDatabaseStore.getDatabasePath());
+            mLog.debug("Initialized configuration channels [{}], channel maps [{}], and streams [{}] in SQLite [{}]",
+                databaseState.getChannels().size(), databaseState.getChannelMaps().size(),
+                databaseState.getBroadcastConfigurations().size(), mConfigurationDatabaseStore.getDatabasePath());
 
             return mConfigurationDatabaseStore.loadConfigurationState();
         }
@@ -595,6 +611,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
             ConfigurationState databaseState = new ConfigurationState();
             databaseState.setBroadcastConfigurations(new ArrayList<>(mBroadcastModel.getBroadcastConfigurations()));
             databaseState.setChannels(new ArrayList<>(mChannelModel.getChannels()));
+            databaseState.setChannelMaps(new ArrayList<>(mChannelMapModel.getChannelMaps()));
             databaseState.setVersion(CONFIGURATION_CURRENT_VERSION);
             mConfigurationDatabaseStore.replaceConfigurationState(databaseState);
             return true;

@@ -31,6 +31,7 @@ import io.github.dsheirer.preference.identifier.talkgroup.DMRTalkgroupFormatter;
 import io.github.dsheirer.preference.identifier.talkgroup.FleetsyncTalkgroupFormatter;
 import io.github.dsheirer.preference.identifier.talkgroup.LTRTalkgroupFormatter;
 import io.github.dsheirer.preference.identifier.talkgroup.MDC1200TalkgroupFormatter;
+import io.github.dsheirer.preference.identifier.talkgroup.MPT1327TalkgroupFormatter;
 import io.github.dsheirer.preference.identifier.talkgroup.NXDNTalkgroupFormatter;
 import io.github.dsheirer.preference.identifier.talkgroup.PassportTalkgroupFormatter;
 import io.github.dsheirer.protocol.Protocol;
@@ -141,6 +142,7 @@ public class TalkgroupFormatPreference extends Preference
             case FLEETSYNC:
             case LTR:
             case LTR_NET:
+            case MPT1327:
                 return IntegerFormat.FORMATTED;
             case AM:
             case APCO25:
@@ -162,6 +164,7 @@ public class TalkgroupFormatPreference extends Preference
             case FLEETSYNC:
             case LTR:
             case LTR_NET:
+            case MPT1327:
                 return IntegerFormat.DECIMAL_FORMATTED;
             case AM:
             case APCO25:
@@ -189,6 +192,7 @@ public class TalkgroupFormatPreference extends Preference
             case FLEETSYNC:
             case LTR:
             case LTR_NET:
+            case MPT1327:
             case NBFM:
             case NXDN:
             case UNKNOWN:
@@ -329,6 +333,9 @@ public class TalkgroupFormatPreference extends Preference
             case MDC1200:
                 return MDC1200TalkgroupFormatter.format(talkgroupIdentifier, getTalkgroupFormat(Protocol.MDC1200),
                     isTalkgroupFixedWidth(Protocol.MDC1200));
+            case MPT1327:
+                return MPT1327TalkgroupFormatter.format(talkgroupIdentifier, getTalkgroupFormat(Protocol.MPT1327),
+                    isTalkgroupFixedWidth(Protocol.MPT1327));
             case NBFM:
                 return AnalogTalkgroupFormatter.format(talkgroupIdentifier, getTalkgroupFormat(Protocol.NBFM),
                         isTalkgroupFixedWidth(Protocol.NBFM));

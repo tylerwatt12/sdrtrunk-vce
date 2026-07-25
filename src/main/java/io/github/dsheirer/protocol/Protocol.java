@@ -42,7 +42,7 @@ public enum Protocol
     LTR_NET("LTR-Net", "LTRNET", 300),
     NBFM("NBFM", "NBFM", 0),
     MDC1200("MDC-1200", "MDC1200", 1200),
-    MPT1327("MPT-1327", "MPT1327", 0, Availability.RETIRED_COMPATIBILITY),
+    MPT1327("MPT-1327", "MPT1327", 1200),
     NXDN("NXDN", "NXDN", 9600),
     PASSPORT("Passport", "PASSPORT", 300),
     TAIT1200("Tait 1200", "TAIT1200", 1200),
