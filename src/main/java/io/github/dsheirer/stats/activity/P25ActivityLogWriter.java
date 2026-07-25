@@ -570,6 +570,11 @@ class P25ActivityLogWriter implements AutoCloseable
                     P25ActivityLogSchema.insertSite(connection, siteSnapshot);
                     writtenRecords++;
                 }
+                else if(record instanceof P25ActivityLogRecords.ChannelFact channelFact)
+                {
+                    P25ActivityLogSchema.upsertGrantedChannelSummary(connection, channelFact);
+                    writtenRecords++;
+                }
                 else if(record instanceof P25ActivityLogRecords.TalkerAliasUpdate talkerAliasUpdate)
                 {
                     P25ActivityLogSchema.updateTalkerAlias(connection, talkerAliasUpdate);

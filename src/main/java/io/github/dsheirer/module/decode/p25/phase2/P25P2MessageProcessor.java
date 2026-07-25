@@ -22,6 +22,7 @@ import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.message.IMessage;
 import io.github.dsheirer.message.SyncLossMessage;
 import io.github.dsheirer.module.decode.p25.P25FrequencyBandValidator;
+import io.github.dsheirer.module.decode.p25.P25FrequencyBandConfirmationTracker;
 import io.github.dsheirer.module.decode.p25.P25FrequencyBandPreloadDataContent;
 import io.github.dsheirer.module.decode.p25.phase1.message.IFrequencyBand;
 import io.github.dsheirer.module.decode.p25.phase1.message.IFrequencyBandReceiver;
@@ -63,6 +64,8 @@ public class P25P2MessageProcessor implements Listener<IMessage>
     //Map of up to 16 band identifiers per RFSS.  These identifier update messages are inserted into any message that
     // conveys channel information so that the uplink/downlink frequencies can be calculated
     private Map<Integer,IFrequencyBand> mFrequencyBandMap = new TreeMap<>();
+    private final P25FrequencyBandConfirmationTracker mFrequencyBandConfirmationTracker =
+        new P25FrequencyBandConfirmationTracker();
 
     /**
      * Preloads frequency band (ie identifier update) content from the control channel when this is a traffic channel.
@@ -294,6 +297,8 @@ public class P25P2MessageProcessor implements Listener<IMessage>
 
     public void dispose()
     {
+        mFrequencyBandMap.clear();
+        mFrequencyBandConfirmationTracker.reset();
         mMessageListener = null;
     }
 
@@ -309,8 +314,15 @@ public class P25P2MessageProcessor implements Listener<IMessage>
 
     private void processFrequencyBand(IFrequencyBand frequencyBand, String source)
     {
-        P25FrequencyBandValidator.RegistrationResult result =
-            P25FrequencyBandValidator.register(mFrequencyBandMap, frequencyBand);
+        P25FrequencyBandConfirmationTracker.ObservationResult observation =
+            mFrequencyBandConfirmationTracker.observe(mFrequencyBandMap, frequencyBand, "preload".equals(source));
+
+        if(observation.pending())
+        {
+            return;
+        }
+
+        P25FrequencyBandValidator.RegistrationResult result = observation.registration();
 
         if(result.replaced())
         {

@@ -112,6 +112,7 @@ public final class P25FrequencyBandValidator
             existing.getBaseFrequency() == candidate.getBaseFrequency() &&
             existing.getChannelSpacing() == candidate.getChannelSpacing() &&
             existing.getBandwidth() == candidate.getBandwidth() &&
+            existing.getTransmitOffset() == candidate.getTransmitOffset() &&
             existing.getTimeslotCount() == candidate.getTimeslotCount();
     }
 
@@ -194,7 +195,8 @@ public final class P25FrequencyBandValidator
 
         return "class:" + band.getClass().getSimpleName() + " id:" + band.getIdentifier() +
             " base:" + band.getBaseFrequency() + "Hz spacing:" + band.getChannelSpacing() +
-            "Hz bandwidth:" + band.getBandwidth() + "Hz slots:" + band.getTimeslotCount();
+            "Hz bandwidth:" + band.getBandwidth() + "Hz offset:" + band.getTransmitOffset() +
+            "Hz slots:" + band.getTimeslotCount();
     }
 
     public enum RejectReason

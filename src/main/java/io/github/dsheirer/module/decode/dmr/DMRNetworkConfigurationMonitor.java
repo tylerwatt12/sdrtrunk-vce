@@ -20,6 +20,8 @@
 package io.github.dsheirer.module.decode.dmr;
 
 import io.github.dsheirer.identifier.site.SiteIdentifier;
+import io.github.dsheirer.metadata.site.FactConfirmationPolicy;
+import io.github.dsheirer.metadata.site.StableFactTracker;
 import io.github.dsheirer.module.decode.dmr.channel.DMRAbsoluteChannel;
 import io.github.dsheirer.module.decode.dmr.channel.DMRChannel;
 import io.github.dsheirer.module.decode.dmr.channel.TimeslotFrequency;
@@ -69,6 +71,14 @@ import java.util.Set;
  */
 public class DMRNetworkConfigurationMonitor
 {
+    private static final FactConfirmationPolicy INITIAL_FAMILY_POLICY =
+        new FactConfirmationPolicy(1, 0L, 60_000L, true);
+    private static final FactConfirmationPolicy REPLACEMENT_FAMILY_POLICY =
+        new FactConfirmationPolicy(3, 10_000L, 60_000L, false);
+    private static final FactConfirmationPolicy OVER_THE_AIR_CHANNEL_POLICY =
+        new FactConfirmationPolicy(2, 5_000L, 30_000L, false);
+    private static final FactConfirmationPolicy UNRESOLVED_CHANNEL_POLICY =
+        new FactConfirmationPolicy(3, 10_000L, 30_000L, false);
     private static final String BRAND_MOTOROLA_CONNECT_PLUS = "Motorola Connect+";
     private static final String BRAND_MOTOROLA_CAPACITY_PLUS = "Motorola Capacity+";
     private static final String BRAND_TIER_3_TRUNKING = "Tier III Trunking";
@@ -82,6 +92,7 @@ public class DMRNetworkConfigurationMonitor
     private Map<Integer,ObservedValue<SiteIdentifier>> mNeighborSites = new HashMap<>();
     private Map<Integer,ObservedValue<AdjacentSiteInformation>> mTier3NeighborSites = new HashMap<>();
     private Map<ChannelKey,ObservedChannel> mObservedChannelMap = new HashMap<>();
+    private Map<ChannelKey,StableFactTracker<ObservedChannel,ChannelFactKey>> mChannelFactTrackers = new HashMap<>();
     private Map<Integer,LearnedFrequency> mOverTheAirFrequencyMap = new HashMap<>();
     private final List<TimeslotFrequency> mTimeslotFrequencies;
     private DMRNetwork mDMRNetwork;
@@ -92,6 +103,8 @@ public class DMRNetworkConfigurationMonitor
     private String mChannelType;
     private Integer mColorCodeTS1;
     private Integer mColorCodeTS2;
+    private final StableFactTracker<NetworkFamily,NetworkFamily> mNetworkFamilyTracker =
+        new StableFactTracker<>(family -> family);
 
     public DMRNetworkConfigurationMonitor()
     {
@@ -155,36 +168,8 @@ public class DMRNetworkConfigurationMonitor
 
     private String getVariant()
     {
-        if(BRAND_MOTOROLA_CONNECT_PLUS.equals(mBrand))
-        {
-            return "CONNECT_PLUS";
-        }
-        else if(BRAND_MOTOROLA_CAPACITY_PLUS.equals(mBrand))
-        {
-            return "CAPACITY_PLUS";
-        }
-        else if(BRAND_MOTOROLA_CAPACITY_MAX_TIER_3_TRUNKING.equals(mBrand))
-        {
-            return "CAPACITY_MAX";
-        }
-        else if(BRAND_HYTERA_TIER_3_TRUNKING.equals(mBrand))
-        {
-            return "HYTERA_TIER_III";
-        }
-        else if(!mNeighborSites.isEmpty())
-        {
-            return "CONNECT_PLUS";
-        }
-        else if(mBrand != null || mTier3Model != null || mDMRNetwork != null || mDMRSite != null)
-        {
-            return "TIER_III";
-        }
-        else if(!mTier3NeighborSites.isEmpty())
-        {
-            return "TIER_III";
-        }
-
-        return null;
+        NetworkFamily family = mNetworkFamilyTracker.getStableValue();
+        return family != null ? family.name() : null;
     }
 
     private static Integer value(io.github.dsheirer.identifier.integer.IntegerIdentifier identifier)
@@ -239,6 +224,11 @@ public class DMRNetworkConfigurationMonitor
      */
     public synchronized void process(LCMessage linkControl)
     {
+        if(!acceptFamily(classify(linkControl), linkControl.getTimestamp()))
+        {
+            return;
+        }
+
         if(linkControl instanceof CapacityPlusRestChannel restChannel)
         {
             mDMRSite = restChannel.getSite();
@@ -321,6 +311,11 @@ public class DMRNetworkConfigurationMonitor
      */
     public synchronized void process(CSBKMessage csbk)
     {
+        if(!acceptFamily(classify(csbk), csbk.getTimestamp()))
+        {
+            return;
+        }
+
         captureObservedChannels(csbk);
 
         switch(csbk.getOpcode())
@@ -565,17 +560,15 @@ public class DMRNetworkConfigurationMonitor
 
         boolean absolute = dmrChannel instanceof DMRAbsoluteChannel;
         boolean hasFrequency = dmrChannel.getDownlinkFrequency() > 0 || dmrChannel.getUplinkFrequency() > 0;
+        boolean confirmedLearnedFrequency = false;
 
-        if(absolute && hasFrequency)
-        {
-            learnOverTheAirFrequency(dmrChannel);
-        }
-        else if(mOverTheAirFrequencyMap.containsKey(dmrChannel.getChannelNumber()))
+        if(!absolute && mOverTheAirFrequencyMap.containsKey(dmrChannel.getChannelNumber()))
         {
             dmrChannel = mOverTheAirFrequencyMap.get(dmrChannel.getChannelNumber())
                 .channel(dmrChannel.getChannelNumber(), dmrChannel.getTimeslot());
             absolute = true;
             hasFrequency = true;
+            confirmedLearnedFrequency = true;
         }
         else if(!mTimeslotFrequencies.isEmpty())
         {
@@ -592,6 +585,30 @@ public class DMRNetworkConfigurationMonitor
         ChannelKey key = new ChannelKey(dmrChannel.getChannelNumber(), dmrChannel.getTimeslot());
         ObservedChannel candidate = new ObservedChannel(dmrChannel, EnumSet.of(role), frequencySource,
             observedAtEpochMilliseconds);
+
+        if(frequencySource != DMRNetworkConfigurationSnapshot.FrequencySource.CONFIGURED_MAP &&
+            !confirmedLearnedFrequency)
+        {
+            FactConfirmationPolicy policy =
+                frequencySource == DMRNetworkConfigurationSnapshot.FrequencySource.OVER_THE_AIR ?
+                    OVER_THE_AIR_CHANNEL_POLICY : UNRESOLVED_CHANNEL_POLICY;
+            StableFactTracker<ObservedChannel,ChannelFactKey> tracker = mChannelFactTrackers.computeIfAbsent(key,
+                ignored -> new StableFactTracker<>(ChannelFactKey::from));
+            tracker.observe(candidate, observedAtEpochMilliseconds, policy, ignored -> true);
+
+            if(!tracker.hasStableValue())
+            {
+                return;
+            }
+
+            candidate = tracker.getStableValue();
+        }
+
+        if(frequencySource == DMRNetworkConfigurationSnapshot.FrequencySource.OVER_THE_AIR && absolute && hasFrequency)
+        {
+            learnOverTheAirFrequency(candidate.channel());
+        }
+
         mObservedChannelMap.merge(key, candidate, ObservedChannel::merge);
     }
 
@@ -669,6 +686,123 @@ public class DMRNetworkConfigurationMonitor
         private ObservedValue<T> merge(ObservedValue<T> candidate)
         {
             return candidate.observedAtEpochMilliseconds() >= observedAtEpochMilliseconds ? candidate : this;
+        }
+    }
+
+    private boolean acceptFamily(NetworkFamily family, long timestamp)
+    {
+        if(family == null)
+        {
+            return true;
+        }
+
+        NetworkFamily previous = mNetworkFamilyTracker.getStableValue();
+
+        //Generic Tier III messages are also used by the more specific Capacity Max and Hytera variants. They are
+        //compatible evidence, not a reason to downgrade an established specific family or erase its challenger.
+        if(family == NetworkFamily.TIER_III &&
+            (previous == NetworkFamily.TIER_III || previous == NetworkFamily.CAPACITY_MAX ||
+                previous == NetworkFamily.HYTERA_TIER_III))
+        {
+            return true;
+        }
+
+        FactConfirmationPolicy policy = previous == null ? INITIAL_FAMILY_POLICY : REPLACEMENT_FAMILY_POLICY;
+        StableFactTracker.Result result = mNetworkFamilyTracker.observe(family, timestamp, policy, ignored -> true);
+        NetworkFamily current = mNetworkFamilyTracker.getStableValue();
+
+        if(result == StableFactTracker.Result.PROMOTED && previous != null && previous != current)
+        {
+            clearFamilySpecificFacts();
+        }
+
+        return current == family;
+    }
+
+    private void clearFamilySpecificFacts()
+    {
+        mNeighborSites.clear();
+        mTier3NeighborSites.clear();
+        mObservedChannelMap.clear();
+        mChannelFactTrackers.clear();
+        mOverTheAirFrequencyMap.clear();
+        mDMRNetwork = null;
+        mDMRSite = null;
+        mTier3Model = null;
+        mBrand = null;
+        mMode = null;
+        mChannelType = null;
+    }
+
+    private static NetworkFamily classify(LCMessage message)
+    {
+        if(message instanceof CapacityPlusRestChannel || message instanceof CapacityPlusWideAreaVoiceChannelUser)
+        {
+            return NetworkFamily.CAPACITY_PLUS;
+        }
+        else if(message instanceof ConnectPlusControlChannel || message instanceof ConnectPlusTrafficChannel)
+        {
+            return NetworkFamily.CONNECT_PLUS;
+        }
+
+        return switch(message.getOpcode())
+        {
+            case FULL_CAPACITY_MAX_GROUP_VOICE_CHANNEL_USER,
+                FULL_CAPACITY_MAX_TALKER_ALIAS,
+                FULL_CAPACITY_MAX_TALKER_ALIAS_CONTINUATION -> NetworkFamily.CAPACITY_MAX;
+            case SHORT_STANDARD_CONTROL_CHANNEL_SYSTEM_PARAMETERS,
+                SHORT_STANDARD_TRAFFIC_CHANNEL_SYSTEM_PARAMETERS -> NetworkFamily.TIER_III;
+            default -> null;
+        };
+    }
+
+    private static NetworkFamily classify(CSBKMessage message)
+    {
+        if(message instanceof HyteraAnnouncement || message instanceof HyteraAdjacentSiteInformation)
+        {
+            return NetworkFamily.HYTERA_TIER_III;
+        }
+        else if(message instanceof CapacityMaxAloha || message instanceof CapacityMaxOpenModeVoiceChannelUpdate ||
+            message instanceof CapacityMaxAdvantageModeVoiceChannelUpdate)
+        {
+            return NetworkFamily.CAPACITY_MAX;
+        }
+        else if(message instanceof CapacityPlusSiteStatus || message instanceof CapacityPlusNeighbors)
+        {
+            return NetworkFamily.CAPACITY_PLUS;
+        }
+        else if(message instanceof ConnectPlusNeighborReport || message instanceof ConnectPlusVoiceChannelUser ||
+            message instanceof ConnectPlusDataChannelGrant || message instanceof ConnectPlusOTAAnnouncement)
+        {
+            return NetworkFamily.CONNECT_PLUS;
+        }
+        else if(message instanceof Aloha || message instanceof AdjacentSiteInformation ||
+            message instanceof AnnounceChannelFrequency || message instanceof AnnounceWithdrawTSCC ||
+            message instanceof ChannelGrant || message instanceof Clear || message instanceof MoveTSCC)
+        {
+            return NetworkFamily.TIER_III;
+        }
+
+        return null;
+    }
+
+    private enum NetworkFamily
+    {
+        TIER_III,
+        CONNECT_PLUS,
+        CAPACITY_PLUS,
+        CAPACITY_MAX,
+        HYTERA_TIER_III
+    }
+
+    private record ChannelFactKey(int logicalChannelNumber, int timeslot, long downlink, long uplink,
+                                  DMRNetworkConfigurationSnapshot.FrequencySource source)
+    {
+        private static ChannelFactKey from(ObservedChannel observed)
+        {
+            return new ChannelFactKey(observed.channel().getChannelNumber(), observed.channel().getTimeslot(),
+                observed.channel().getDownlinkFrequency(), observed.channel().getUplinkFrequency(),
+                observed.frequencySource());
         }
     }
 

@@ -11,6 +11,7 @@
 
 package io.github.dsheirer.stats.activity;
 
+import io.github.dsheirer.channel.metadata.activity.ChannelTag;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.util.List;
@@ -78,6 +79,16 @@ final class P25ActivityLogRecords
                          Integer nac, Integer rfss, Integer site, String channelName, String decoder,
                          String talkerAlias, boolean countedCall, String dedupeKey,
                          RadioAffiliationUpdate affiliationUpdate)
+        implements P25ActivityLogRecord
+    {
+    }
+
+    /**
+     * Confirmed service use for the durable site-channel inventory.  Activity events remain independent so a
+     * candidate that is not yet confirmed never removes grant/call history.
+     */
+    record ChannelFact(long observedAtEpochMilliseconds, String guid, String lcn, long frequencyHertz,
+                       ChannelTag serviceTag, boolean tdma, int timeslots)
         implements P25ActivityLogRecord
     {
     }

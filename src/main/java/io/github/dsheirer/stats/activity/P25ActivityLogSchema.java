@@ -199,11 +199,6 @@ public class P25ActivityLogSchema
 
             upsertP25SiteMetrics(connection, activity, contextId);
 
-            if(isServiceGrant(activity))
-            {
-                upsertGrantedChannelSummary(connection, activity);
-            }
-
             if(systemKey != null)
             {
                 upsertP25SystemSummaries(connection, activity, systemKey);
@@ -1797,20 +1792,20 @@ public class P25ActivityLogSchema
      * RF/site snapshots intentionally contain only stable network facts, so grant observations are projected here
      * without feeding dynamic traffic back into the network stabilizer.
      */
-    private static void upsertGrantedChannelSummary(Connection connection,
-                                                    P25ActivityLogRecords.ActivityEvent activity) throws SQLException
+    static void upsertGrantedChannelSummary(Connection connection,
+                                            P25ActivityLogRecords.ChannelFact fact) throws SQLException
     {
-        Lcn lcn = Lcn.parse(activity.lcn());
-        ChannelTag serviceTag = serviceTag(activity);
+        Lcn lcn = Lcn.parse(fact.lcn());
+        ChannelTag serviceTag = fact.serviceTag();
 
-        if(activity.guid() == null || activity.guid().isBlank() || activity.frequencyHertz() == null ||
-            activity.frequencyHertz() <= 0 || lcn.band() == null || lcn.number() == null || serviceTag == null)
+        if(fact.guid() == null || fact.guid().isBlank() || fact.frequencyHertz() <= 0 ||
+            lcn.band() == null || lcn.number() == null || serviceTag == null)
         {
             return;
         }
 
         String channelKey = lcn.channelKey();
-        boolean tdma = isTdma(activity);
+        boolean tdma = fact.tdma();
 
         try(PreparedStatement statement = connection.prepareStatement("""
             INSERT INTO p25_site_channel_summary (
@@ -1826,19 +1821,19 @@ public class P25ActivityLogSchema
                 observation_count = p25_site_channel_summary.observation_count + 1
             """))
         {
-            statement.setString(1, activity.guid());
+            statement.setString(1, fact.guid());
             statement.setString(2, channelKey);
             statement.setString(3, channelKey);
-            statement.setLong(4, activity.frequencyHertz());
+            statement.setLong(4, fact.frequencyHertz());
             statement.setInt(5, tdma ? 1 : 0);
-            statement.setInt(6, tdma ? 2 : 1);
-            statement.setLong(7, activity.observedAtEpochMilliseconds());
-            statement.setLong(8, activity.observedAtEpochMilliseconds());
+            statement.setInt(6, Math.max(1, fact.timeslots()));
+            statement.setLong(7, fact.observedAtEpochMilliseconds());
+            statement.setLong(8, fact.observedAtEpochMilliseconds());
             statement.executeUpdate();
         }
 
-        upsertChannelTagSummary(connection, activity.guid(), channelKey, serviceTag,
-            activity.observedAtEpochMilliseconds(), 1);
+        upsertChannelTagSummary(connection, fact.guid(), channelKey, serviceTag,
+            fact.observedAtEpochMilliseconds(), 1);
     }
 
     private static void upsertChannelTagSummary(Connection connection, String guid, String channelKey,
@@ -2552,37 +2547,6 @@ public class P25ActivityLogSchema
         }
 
         return index;
-    }
-
-    private static boolean isServiceGrant(P25ActivityLogRecords.ActivityEvent activity)
-    {
-        return activity.action() == P25ActivityLogRecords.Action.GRANT && serviceTag(activity) != null;
-    }
-
-    private static ChannelTag serviceTag(P25ActivityLogRecords.ActivityEvent activity)
-    {
-        if(activity == null || activity.eventType() == null)
-        {
-            return null;
-        }
-
-        try
-        {
-            DecodeEventType eventType = DecodeEventType.valueOf(activity.eventType());
-
-            return ChannelTag.fromService(eventType);
-        }
-        catch(IllegalArgumentException e)
-        {
-            return null;
-        }
-    }
-
-    private static boolean isTdma(P25ActivityLogRecords.ActivityEvent activity)
-    {
-        return "APCO25_PHASE2".equals(activity.protocol()) ||
-            (activity.decoder() != null && activity.decoder().contains("PHASE2")) ||
-            (activity.lcn() != null && activity.lcn().contains("TS"));
     }
 
     private static boolean isConventional(P25ActivityLogRecords.ContextKind contextKind)

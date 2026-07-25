@@ -26,6 +26,7 @@ import io.github.dsheirer.module.decode.event.IDecodeEvent;
 import io.github.dsheirer.module.decode.p25.P25CallStartEvent;
 import io.github.dsheirer.module.decode.p25.P25GrantObservationEvent;
 import io.github.dsheirer.module.decode.p25.P25TalkerAliasEvent;
+import io.github.dsheirer.module.decode.p25.P25TrafficChannelConfirmationEvent;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.application.ApplicationPreference;
@@ -51,6 +52,8 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
 
     private final UserPreferences mUserPreferences;
     private final P25ActivityLogMapper mMapper = new P25ActivityLogMapper();
+    private final P25GrantFactConfirmationTracker mGrantFactConfirmationTracker =
+        new P25GrantFactConfirmationTracker();
     private final BiConsumer<Channel,IDecodeEvent> mDecodeEventListener = this::receiveDecodeEvent;
     private final Listener<ControlChannelQualitySnapshot> mQualityListener = this::receiveControlChannelQuality;
     private final Map<String,Long> mRecentDedupeKeys = new LinkedHashMap<>(256, 0.75f, true);
@@ -199,6 +202,7 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
     public void dispose()
     {
         MyEventBus.getGlobalEventBus().unregister(this);
+        mGrantFactConfirmationTracker.reset();
         stopWriter();
     }
 
@@ -312,6 +316,20 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
     }
 
     @Subscribe
+    public void receiveTrafficChannelConfirmation(P25TrafficChannelConfirmationEvent event)
+    {
+        P25ActivityLogWriter writer = getCollectionWriter();
+
+        if(writer != null)
+        {
+            for(P25ActivityLogRecords.ChannelFact channelFact: mGrantFactConfirmationTracker.confirm(event))
+            {
+                writer.enqueue(channelFact);
+            }
+        }
+    }
+
+    @Subscribe
     public void receiveGrantObservation(P25GrantObservationEvent event)
     {
         P25ActivityLogWriter writer = getCollectionWriter();
@@ -326,6 +344,13 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
         if(record != null)
         {
             writer.enqueue(record);
+            P25ActivityLogRecords.ChannelFact channelFact =
+                mGrantFactConfirmationTracker.observe(event, record);
+
+            if(channelFact != null)
+            {
+                writer.enqueue(channelFact);
+            }
         }
     }
 

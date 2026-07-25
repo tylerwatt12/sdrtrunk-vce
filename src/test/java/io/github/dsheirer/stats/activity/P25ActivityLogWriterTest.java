@@ -17,6 +17,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.channel.metadata.activity.ChannelTag;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.nio.file.Path;
@@ -112,8 +113,7 @@ class P25ActivityLogWriterTest
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            P25ActivityLogSchema.recordActivity(connection,
-                activity(1000L, P25ActivityLogRecords.Action.GRANT), true);
+            recordConfirmedActivity(connection, activity(1000L, P25ActivityLogRecords.Action.GRANT), true);
 
             try(Statement statement = connection.createStatement();
                 ResultSet resultSet = statement.executeQuery("""
@@ -140,11 +140,11 @@ class P25ActivityLogWriterTest
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            P25ActivityLogSchema.recordActivity(connection,
+            recordConfirmedActivity(connection,
                 serviceActivity(1000L, "CALL_GROUP", false, 854_187_500L, "00-0509"), true);
-            P25ActivityLogSchema.recordActivity(connection,
+            recordConfirmedActivity(connection,
                 serviceActivity(2000L, "DATA_CALL", false, 854_187_500L, "0-509"), true);
-            P25ActivityLogSchema.recordActivity(connection,
+            recordConfirmedActivity(connection,
                 serviceActivity(3000L, "DATA_CALL_ENCRYPTED", true, 854_187_500L, "0-509"), true);
 
             try(Statement statement = connection.createStatement();
@@ -215,7 +215,7 @@ class P25ActivityLogWriterTest
         {
             P25ActivityLogSchema.insertSite(connection, siteSnapshot(1000L));
             P25ActivityLogSchema.recordActivity(connection, activity(1000L, P25ActivityLogRecords.Action.CALL), true);
-            P25ActivityLogSchema.recordActivity(connection, activity(100000L, P25ActivityLogRecords.Action.GRANT), true);
+            recordConfirmedActivity(connection, activity(100000L, P25ActivityLogRecords.Action.GRANT), true);
             P25ActivityLogSchema.deleteOlderThan(connection, 50000L);
 
             try(Statement statement = connection.createStatement();
@@ -430,9 +430,9 @@ class P25ActivityLogWriterTest
         {
             P25ActivityLogSchema.insertSite(connection, siteSnapshot(1_000L, clearedGuid));
             P25ActivityLogSchema.insertSite(connection, siteSnapshot(1_100L, retainedGuid));
-            P25ActivityLogSchema.recordActivity(connection,
+            recordConfirmedActivity(connection,
                 activity(2_000L, P25ActivityLogRecords.Action.GRANT, clearedGuid), true);
-            P25ActivityLogSchema.recordActivity(connection,
+            recordConfirmedActivity(connection,
                 activity(3_000L, P25ActivityLogRecords.Action.GRANT, retainedGuid), true);
             P25ActivityLogSchema.insertControlChannelQuality(connection, quality(4_000L, -20.0, clearedGuid));
             P25ActivityLogSchema.insertControlChannelQuality(connection, quality(5_000L, -21.0, retainedGuid));
@@ -994,7 +994,7 @@ class P25ActivityLogWriterTest
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            P25ActivityLogSchema.recordActivity(connection,
+            recordConfirmedActivity(connection,
                 serviceActivity(2000L, "CALL_GROUP", false, 856_137_500L, "0-821"), false);
 
             try(Statement statement = connection.createStatement();
@@ -1575,6 +1575,21 @@ class P25ActivityLogWriterTest
     private static P25ActivityLogRecords.ActivityEvent activity(long timestamp, P25ActivityLogRecords.Action action)
     {
         return activity(timestamp, action, "123e4567-e89b-12d3-a456-426614174000");
+    }
+
+    private static void recordConfirmedActivity(Connection connection,
+                                                P25ActivityLogRecords.ActivityEvent activity,
+                                                boolean detailedHistory) throws Exception
+    {
+        P25ActivityLogSchema.recordActivity(connection, activity, detailedHistory);
+        ChannelTag tag = activity.eventType() != null && activity.eventType().contains("DATA") ?
+            ChannelTag.DATA : ChannelTag.VOICE;
+        boolean tdma = "APCO25_PHASE2".equals(activity.protocol()) ||
+            (activity.decoder() != null && activity.decoder().contains("PHASE2")) ||
+            (activity.lcn() != null && activity.lcn().contains("TS"));
+        P25ActivityLogSchema.upsertGrantedChannelSummary(connection,
+            new P25ActivityLogRecords.ChannelFact(activity.observedAtEpochMilliseconds(), activity.guid(),
+                activity.lcn(), activity.frequencyHertz(), tag, tdma, tdma ? 2 : 1));
     }
 
     private static P25ActivityLogRecords.ControlChannelQuality quality(long timestamp, double signalDbfs)

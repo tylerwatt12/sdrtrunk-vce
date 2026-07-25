@@ -22,6 +22,7 @@ package io.github.dsheirer.module.decode.p25.phase2;
 import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.p25.P25FrequencyBandValidator;
+import io.github.dsheirer.module.decode.p25.P25FrequencyBandConfirmationTracker;
 import io.github.dsheirer.module.decode.p25.phase1.message.IFrequencyBand;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.MacMessage;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.AdjacentStatusBroadcastExplicit;
@@ -66,6 +67,8 @@ public class P25P2NetworkConfigurationMonitor
     private final static Logger mLog = LoggerFactory.getLogger(P25P2NetworkConfigurationMonitor.class);
 
     private Map<Integer,IFrequencyBand> mFrequencyBandMap = new HashMap<>();
+    private final P25FrequencyBandConfirmationTracker mFrequencyBandConfirmationTracker =
+        new P25FrequencyBandConfirmationTracker();
 
     //Network Status Messages
     private NetworkStatusBroadcastImplicit mNetworkStatusBroadcastImplicit;
@@ -275,6 +278,7 @@ public class P25P2NetworkConfigurationMonitor
     public void reset()
     {
         mFrequencyBandMap.clear();
+        mFrequencyBandConfirmationTracker.reset();
         mNetworkStatusBroadcastImplicit = null;
         mNetworkStatusBroadcastExplicit = null;
         mSynchronizationBroadcastMessage = null;
@@ -589,8 +593,15 @@ public class P25P2NetworkConfigurationMonitor
 
     private P25NetworkConfigurationSnapshot processFrequencyBand(IFrequencyBand frequencyBand)
     {
-        P25FrequencyBandValidator.RegistrationResult result =
-            P25FrequencyBandValidator.register(mFrequencyBandMap, frequencyBand);
+        P25FrequencyBandConfirmationTracker.ObservationResult observation =
+            mFrequencyBandConfirmationTracker.observe(mFrequencyBandMap, frequencyBand, false);
+
+        if(observation.pending())
+        {
+            return null;
+        }
+
+        P25FrequencyBandValidator.RegistrationResult result = observation.registration();
 
         if(result.replaced())
         {
