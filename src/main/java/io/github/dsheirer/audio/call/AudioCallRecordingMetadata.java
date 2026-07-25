@@ -40,7 +40,8 @@ import java.util.List;
 public record AudioCallRecordingMetadata(String systemName, String systemIdentity, String siteName,
                                          String siteIdentity, String channelName, String channelIdentity,
                                          String aliasListName, String destinationProtocol, String destinationValue,
-                                         String destinationAlias, String destinationMatcherIdentity,
+                                         String destinationIdentity, String destinationAlias,
+                                         String destinationMatcherIdentity,
                                          boolean destinationTalkgroupRecordEnabled, String sourceProtocol,
                                          String sourceValue, String sourceAlias)
 {
@@ -71,8 +72,9 @@ public record AudioCallRecordingMetadata(String systemName, String systemIdentit
         SourceDecision safeSource = source != null ? source : SourceDecision.empty();
         return new AudioCallRecordingMetadata(label(system), nullSafe(system), label(site), stableSiteIdentity,
             label(channel), stableChannelIdentity, label(aliasList), safeDestination.protocol(),
-            safeDestination.value(), safeDestination.aliasName(), safeDestination.matcherIdentity(),
-            safeDestination.recordEnabled(), safeSource.protocol(), safeSource.value(), safeSource.aliasName());
+            safeDestination.value(), safeDestination.receivedIdentity(), safeDestination.aliasName(),
+            safeDestination.matcherIdentity(), safeDestination.recordEnabled(), safeSource.protocol(),
+            safeSource.value(), safeSource.aliasName());
     }
 
     public static boolean isDestination(Identifier<?> identifier)
@@ -95,7 +97,8 @@ public record AudioCallRecordingMetadata(String systemName, String systemIdentit
 
         if(aliasList == null || destination == null)
         {
-            return new DestinationDecision(protocol(destination), value, null, fallbackIdentity, false);
+            return new DestinationDecision(protocol(destination), value, fallbackIdentity, null, fallbackIdentity,
+                false);
         }
 
         List<TalkgroupIdentifier> candidates = new ArrayList<>();
@@ -112,7 +115,8 @@ public record AudioCallRecordingMetadata(String systemName, String systemIdentit
         }
         else
         {
-            return new DestinationDecision(protocol(destination), value, null, fallbackIdentity, false);
+            return new DestinationDecision(protocol(destination), value, fallbackIdentity, null, fallbackIdentity,
+                false);
         }
 
         DestinationDecision firstMatch = null;
@@ -129,7 +133,7 @@ public record AudioCallRecordingMetadata(String systemName, String systemIdentit
                 AliasID matcher = matchingTalkgroupAliasId(alias, candidate);
                 String matcherIdentity = matcher != null ? matcherIdentity(matcher) :
                     receivedDestinationIdentity(candidate);
-                DestinationDecision match = new DestinationDecision(protocol(destination), value,
+                DestinationDecision match = new DestinationDecision(protocol(destination), value, fallbackIdentity,
                     label(alias.getName()), matcherIdentity, alias.isRecordable());
 
                 if(match.recordEnabled())
@@ -145,7 +149,7 @@ public record AudioCallRecordingMetadata(String systemName, String systemIdentit
         }
 
         return firstMatch != null ? firstMatch :
-            new DestinationDecision(protocol(destination), value, null, fallbackIdentity, false);
+            new DestinationDecision(protocol(destination), value, fallbackIdentity, null, fallbackIdentity, false);
     }
 
     public static SourceDecision captureSource(AliasList aliasList, Identifier<?> source)
@@ -320,12 +324,12 @@ public record AudioCallRecordingMetadata(String systemName, String systemIdentit
         return value != null ? value : "";
     }
 
-    public record DestinationDecision(String protocol, String value, String aliasName, String matcherIdentity,
-                                      boolean recordEnabled)
+    public record DestinationDecision(String protocol, String value, String receivedIdentity, String aliasName,
+                                      String matcherIdentity, boolean recordEnabled)
     {
         static DestinationDecision empty()
         {
-            return new DestinationDecision(null, null, null, null, false);
+            return new DestinationDecision(null, null, null, null, null, false);
         }
     }
 

@@ -51,6 +51,7 @@ class MutableAudioCallBuilderRecordingMetadataTest
         sourceAlias.setName("Renamed Radio");
         AudioCallRecordingMetadata metadata = builder.getRecordingMetadata();
 
+        assertEquals("APCO25:TALKGROUP:56138", metadata.destinationIdentity());
         assertEquals("Fire Dispatch", metadata.destinationAlias());
         assertEquals("Engine 12", metadata.sourceAlias());
         assertTrue(metadata.destinationTalkgroupRecordEnabled());

@@ -61,6 +61,7 @@ class ResolvedCallPolicyTest
         AudioCallRecordingMetadata metadata = AudioCallRecordingMetadata.captureAtSnapshot(null,
             new IdentifierCollection(List.of(systemOne)));
         assertEquals("1200", metadata.destinationValue());
+        assertEquals("NXDN:fq:11:1200", metadata.destinationIdentity());
         assertEquals("NXDN:fq:11:1200", metadata.destinationMatcherIdentity());
     }
 

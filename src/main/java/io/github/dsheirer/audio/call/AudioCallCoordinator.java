@@ -1380,8 +1380,9 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
             winnerMetadata.siteName(), winnerMetadata.siteIdentity(), winnerMetadata.channelName(),
             winnerMetadata.channelIdentity(), selectedMetadata.aliasListName(),
             selectedMetadata.destinationProtocol(), selectedMetadata.destinationValue(),
-            selectedMetadata.destinationAlias(), selectedMetadata.destinationMatcherIdentity(), true,
-            winnerMetadata.sourceProtocol(), winnerMetadata.sourceValue(), winnerMetadata.sourceAlias());
+            selectedMetadata.destinationIdentity(), selectedMetadata.destinationAlias(),
+            selectedMetadata.destinationMatcherIdentity(), true, winnerMetadata.sourceProtocol(),
+            winnerMetadata.sourceValue(), winnerMetadata.sourceAlias());
     }
 
     /**
@@ -1436,6 +1437,12 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
         {
             comparison = compareNullableText(firstMetadata.destinationValue(),
                 secondMetadata.destinationValue(), false);
+        }
+
+        if(comparison == 0)
+        {
+            comparison = compareNullableText(firstMetadata.destinationIdentity(),
+                secondMetadata.destinationIdentity(), false);
         }
 
         if(comparison == 0)

@@ -1261,8 +1261,9 @@ class AudioCallCoordinatorTest
         AudioCallRecordingMetadata policyMetadata = new AudioCallRecordingMetadata(metadata.systemName(),
             metadata.systemIdentity(), metadata.siteName(), metadata.siteIdentity(), metadata.channelName(),
             metadata.channelIdentity(), metadata.aliasListName(), metadata.destinationProtocol(),
-            metadata.destinationValue(), metadata.destinationAlias(), metadata.destinationMatcherIdentity(),
-            destinationRecordEnabled, metadata.sourceProtocol(), metadata.sourceValue(), metadata.sourceAlias());
+            metadata.destinationValue(), metadata.destinationIdentity(), metadata.destinationAlias(),
+            metadata.destinationMatcherIdentity(), destinationRecordEnabled, metadata.sourceProtocol(),
+            metadata.sourceValue(), metadata.sourceAlias());
         return new AudioCallSnapshot(snapshot.callId(), snapshot.linkedCallId(), snapshot.aliasList(),
             snapshot.identifierCollection(), broadcastChannels, snapshot.startTimestamp(),
             snapshot.lastActivityTimestamp(), snapshot.burstCount(), snapshot.burstGeneration(),
@@ -1281,8 +1282,8 @@ class AudioCallCoordinatorTest
         AudioCallRecordingMetadata recordingMetadata = new AudioCallRecordingMetadata(metadata.systemName(),
             metadata.systemIdentity(), metadata.siteName(), metadata.siteIdentity(), metadata.channelName(),
             metadata.channelIdentity(), aliasListName, metadata.destinationProtocol(), metadata.destinationValue(),
-            destinationAlias, destinationMatcherIdentity, destinationRecordEnabled, metadata.sourceProtocol(),
-            metadata.sourceValue(), sourceAlias);
+            metadata.destinationIdentity(), destinationAlias, destinationMatcherIdentity, destinationRecordEnabled,
+            metadata.sourceProtocol(), metadata.sourceValue(), sourceAlias);
         return new AudioCallSnapshot(snapshot.callId(), snapshot.linkedCallId(), snapshot.aliasList(),
             snapshot.identifierCollection(), snapshot.broadcastChannels(), snapshot.startTimestamp(),
             snapshot.lastActivityTimestamp(), snapshot.burstCount(), snapshot.burstGeneration(),
