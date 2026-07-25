@@ -76,8 +76,8 @@ public final class TrunkedSiteSchema
     }
 
     /**
-     * Creates the current schema. This method is only called by the global new-database routine or the explicit
-     * staged-copy migration helper.
+     * Creates the current schema. This method is only called by the global new-database routine or the bundled
+     * Application Migrator while it owns a staged copy.
      */
     public static void create(Connection connection) throws SQLException
     {

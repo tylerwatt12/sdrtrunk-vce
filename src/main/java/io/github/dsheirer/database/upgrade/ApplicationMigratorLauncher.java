@@ -37,7 +37,7 @@ public final class ApplicationMigratorLauncher
     /**
      * Migrates and validates a staged database. The live database must never be passed to this method.
      *
-     * @return the helper's diagnostic output
+     * @return the Application Migrator's diagnostic output
      */
     public static String run(Path stagedDatabase) throws IOException, InterruptedException
     {
