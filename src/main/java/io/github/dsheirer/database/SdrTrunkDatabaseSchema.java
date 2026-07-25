@@ -21,15 +21,16 @@ import java.util.List;
  */
 public final class SdrTrunkDatabaseSchema
 {
-    public static final int ALIAS_SCHEMA_VERSION = 2;
+    public static final int ALIAS_SCHEMA_VERSION = 3;
     public static final int CONFIGURATION_SCHEMA_VERSION = 2;
     public static final int SETTINGS_SCHEMA_VERSION = 2;
     public static final int ICON_SCHEMA_VERSION = 2;
 
     private static final List<SqliteSchemaValidator.Table> TABLES = List.of(
         new SqliteSchemaValidator.Table("database_metadata", "key", "value", "updated_at_ms"),
-        new SqliteSchemaValidator.Table("alias", "id", "sort_order", "name", "alias_list_name", "group_name",
-            "color", "icon_name", "stream_as_talkgroup", "record_enabled", "non_recordable", "priority"),
+        new SqliteSchemaValidator.Table("alias", "id", "sort_order", "name", "description", "alias_list_name",
+            "group_name", "color", "icon_name", "stream_as_talkgroup", "record_enabled", "non_recordable",
+            "priority"),
         new SqliteSchemaValidator.Table("alias_broadcast_channel", "id", "alias_id", "sort_order",
             "channel_name"),
         new SqliteSchemaValidator.Table("alias_talkgroup", "id", "alias_id", "sort_order", "protocol", "value",
@@ -107,6 +108,7 @@ public final class SdrTrunkDatabaseSchema
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     sort_order INTEGER NOT NULL,
                     name TEXT,
+                    description TEXT,
                     alias_list_name TEXT,
                     group_name TEXT,
                     color INTEGER NOT NULL DEFAULT 0,

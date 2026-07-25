@@ -177,6 +177,7 @@ public class RadioReferenceDecoder
     {
         Alias alias = new Alias(talkgroup.getAlphaTag());
         alias.setAliasListName(aliasList);
+        alias.setDescription(talkgroup.getDescription());
         alias.setGroup(group);
         alias.addAliasID(getTalkgroupAliasId(talkgroup, system));
         return alias;

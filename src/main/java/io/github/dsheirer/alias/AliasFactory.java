@@ -188,6 +188,7 @@ public class AliasFactory
     {
         Alias copy = new Alias(original.getName());
         copy.setAliasListName(original.getAliasListName());
+        copy.setDescription(original.getDescription());
         copy.setGroup(original.getGroup());
         copy.setColor(original.getColor());
         copy.setIconName(original.getIconName());

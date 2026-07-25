@@ -97,6 +97,7 @@ import javafx.scene.control.MenuItem;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.control.TextField;
+import javafx.scene.control.TextArea;
 import javafx.scene.control.TextFormatter;
 import javafx.scene.control.TitledPane;
 import javafx.scene.control.Tooltip;
@@ -131,6 +132,7 @@ public class AliasItemEditor extends Editor<Alias>
     private ActionEditorModificationListener mActionEditorModificationListener = new ActionEditorModificationListener();
     private TextField mGroupField;
     private TextField mNameField;
+    private TextArea mDescriptionField;
     private GridPane mTextFieldPane;
     private Button mSaveButton;
     private Button mResetButton;
@@ -232,6 +234,7 @@ public class AliasItemEditor extends Editor<Alias>
         boolean disable = (alias == null);
         getGroupField().setDisable(disable);
         getNameField().setDisable(disable);
+        getDescriptionField().setDisable(disable);
         getRecordAudioToggleSwitch().setDisable(disable);
         getColorPicker().setDisable(disable);
         getMonitorAudioToggleSwitch().setDisable(disable);
@@ -252,6 +255,7 @@ public class AliasItemEditor extends Editor<Alias>
         {
             getGroupField().setText(alias.getGroup());
             getNameField().setText(alias.getName());
+            getDescriptionField().setText(alias.getDescription());
             getRecordAudioToggleSwitch().setSelected(alias.isRecordable());
 
             Icon icon = null;
@@ -322,6 +326,7 @@ public class AliasItemEditor extends Editor<Alias>
         {
             getGroupField().setText(null);
             getNameField().setText(null);
+            getDescriptionField().setText(null);
             getRecordAudioToggleSwitch().setSelected(false);
             getColorPicker().setValue(Color.BLACK);
             getMonitorPriorityComboBox().getSelectionModel().select(null);
@@ -416,6 +421,15 @@ public class AliasItemEditor extends Editor<Alias>
                 catch(Exception e)
                 {
                     mLog.error("Error while updating alias name.", e);
+                }
+
+                try
+                {
+                    alias.setDescription(getDescriptionField().getText());
+                }
+                catch(Exception e)
+                {
+                    mLog.error("Error while updating alias description.", e);
                 }
 
                 try
@@ -1093,6 +1107,14 @@ public class AliasItemEditor extends Editor<Alias>
             mTextFieldPane.getChildren().add(iconLabel);
             GridPane.setConstraints(getIconNodeComboBox(), 5, row, 3, 1);
             mTextFieldPane.getChildren().add(getIconNodeComboBox());
+
+            Label descriptionLabel = new Label("Description");
+            GridPane.setHalignment(descriptionLabel, HPos.RIGHT);
+            GridPane.setConstraints(descriptionLabel, 0, ++row);
+            mTextFieldPane.getChildren().add(descriptionLabel);
+            GridPane.setConstraints(getDescriptionField(), 1, row, 7, 1);
+            GridPane.setHgrow(getDescriptionField(), Priority.ALWAYS);
+            mTextFieldPane.getChildren().add(getDescriptionField());
         }
 
         return mTextFieldPane;
@@ -1213,6 +1235,22 @@ public class AliasItemEditor extends Editor<Alias>
         }
 
         return mNameField;
+    }
+
+    protected TextArea getDescriptionField()
+    {
+        if(mDescriptionField == null)
+        {
+            mDescriptionField = new TextArea();
+            mDescriptionField.setDisable(true);
+            mDescriptionField.setMaxWidth(Double.MAX_VALUE);
+            mDescriptionField.setPrefRowCount(2);
+            mDescriptionField.setWrapText(true);
+            mDescriptionField.setPromptText("Optional details, such as the RadioReference talkgroup description");
+            mDescriptionField.textProperty().addListener(mEditorModificationListener);
+        }
+
+        return mDescriptionField;
     }
 
     private VBox getButtonBox()

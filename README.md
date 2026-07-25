@@ -408,6 +408,8 @@ Build output is written under `build/image`.
   bounded-backlog controls.
 - Keep standard per-call recording in the configured recording directory with a bounded asynchronous writer. The
   unfinished managed recording catalog, manifests, replay queries, and automatic time/space retention are not included.
+- Preserve RadioReference talkgroup descriptions as editable Alias descriptions. The desktop Alias list displays and
+  searches the description alongside the Alias name and group.
 
 #### Fixed
 
@@ -419,6 +421,14 @@ Build output is written under `build/image`.
 - Alias script actions, Funcube Dongle Pro/Pro+ support, the MPT-1327 runtime and editor, heterodyne channelization, and
   sound-card capture sources.
 - Legacy generic Channel Maps that existed for MPT-1327. DMR channel maps remain supported.
+
+#### Upgrade Notes
+
+- This release advances the Alias schema from version 2 to version 3 by adding one optional description value per
+  configured Alias. Existing databases must use the supplied external `migrate-v2-to-v3-description` tool while
+  SDRTrunk is stopped.
+- The migration checkpoints WAL data, checks integrity, creates a timestamped backup, preserves every Alias row, and
+  validates the complete result. Normal application startup does not alter an existing schema.
 
 ### 0.6.2-alpha-6 - 2026-07-21
 

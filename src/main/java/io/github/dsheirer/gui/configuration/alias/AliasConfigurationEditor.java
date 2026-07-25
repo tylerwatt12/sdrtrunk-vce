@@ -438,6 +438,11 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
             nameColumn.setCellValueFactory(new PropertyValueFactory<>("name"));
             nameColumn.setPrefWidth(140);
 
+            TableColumn<Alias, String> descriptionColumn = new TableColumn<>();
+            descriptionColumn.setText("Description");
+            descriptionColumn.setCellValueFactory(new PropertyValueFactory<>("description"));
+            descriptionColumn.setPrefWidth(260);
+
             TableColumn<Alias, String> groupColumn = new TableColumn<>();
             groupColumn.setText("Group");
             groupColumn.setCellValueFactory(new PropertyValueFactory<>("group"));
@@ -493,6 +498,7 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
 
 
             mAliasTableView.getColumns().add(nameColumn);
+            mAliasTableView.getColumns().add(descriptionColumn);
             mAliasTableView.getColumns().add(groupColumn);
             mAliasTableView.getColumns().add(colorColumn);
             mAliasTableView.getColumns().add(iconColumn);
@@ -945,6 +951,8 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
             else if(mAliasListName.equals(alias.getAliasListName()))
             {
                 return (alias.getName() != null && alias.getName().toLowerCase().contains(mSearchText)) ||
+                        (alias.getDescription() != null &&
+                            alias.getDescription().toLowerCase().contains(mSearchText)) ||
                         (alias.getGroup() != null && alias.getGroup().toLowerCase().contains(mSearchText));
             }
 

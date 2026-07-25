@@ -45,10 +45,12 @@ public class TalkgroupEditor extends GridPane
     private TextField mModeTextField;
     private Button mEditAliasButton;
     private TextField mAliasNameTextField;
+    private TextField mAliasDescriptionTextField;
     private TextField mAliasGroupTextField;
     private Button mCreateAliasButton;
     private Label mCreateLabel;
     private Label mNameLabel;
+    private Label mAliasDescriptionLabel;
     private Label mGroupLabel;
     private Label mNotSupportedLabel;
 
@@ -91,7 +93,7 @@ public class TalkgroupEditor extends GridPane
         GridPane.setConstraints(getAlphaTagTextField(), 1, row);
         getChildren().add(getAlphaTagTextField());
 
-        Label descriptionLabel = new Label("Description");
+        Label descriptionLabel = new Label("RadioReference Description");
         GridPane.setConstraints(descriptionLabel, 0, ++row);
         GridPane.setHalignment(descriptionLabel, HPos.RIGHT);
         getChildren().add(descriptionLabel);
@@ -133,6 +135,13 @@ public class TalkgroupEditor extends GridPane
         GridPane.setConstraints(getAliasNameTextField(), 1, row);
         getChildren().add(getAliasNameTextField());
 
+        GridPane.setConstraints(getAliasDescriptionLabel(), 0, ++row);
+        GridPane.setHalignment(getAliasDescriptionLabel(), HPos.RIGHT);
+        getChildren().add(getAliasDescriptionLabel());
+
+        GridPane.setConstraints(getAliasDescriptionTextField(), 1, row);
+        getChildren().add(getAliasDescriptionTextField());
+
         GridPane.setConstraints(getGroupLabel(), 0, ++row);
         GridPane.setHalignment(getGroupLabel(), HPos.RIGHT);
         getChildren().add(getGroupLabel());
@@ -161,6 +170,7 @@ public class TalkgroupEditor extends GridPane
             getAlphaTagTextField().setText(talkgroup.getAlphaTag());
             getAliasNameTextField().setText(talkgroup.getAlphaTag());
             getDescriptionTextField().setText(talkgroup.getDescription());
+            getAliasDescriptionTextField().setText(talkgroup.getDescription());
 
             TalkgroupMode talkgroupMode = TalkgroupMode.lookup(talkgroup.getMode());
             TalkgroupEncryption talkgroupEncryption = TalkgroupEncryption.lookup(talkgroup.getEncryptionState());
@@ -172,6 +182,7 @@ public class TalkgroupEditor extends GridPane
             getTalkgroupTextField().setText(null);
             getAlphaTagTextField().setText(null);
             getDescriptionTextField().setText(null);
+            getAliasDescriptionTextField().setText(null);
             getModeTextField().setText(null);
             getAliasNameTextField().setText(null);
         }
@@ -182,6 +193,8 @@ public class TalkgroupEditor extends GridPane
         getCreateAliasButton().setVisible(mTalkgroup != null && mAlias == null && supported);
         getNameLabel().setVisible(mTalkgroup != null && mAlias == null && supported);
         getAliasNameTextField().setVisible(mTalkgroup != null && mAlias == null && supported);
+        getAliasDescriptionLabel().setVisible(mTalkgroup != null && mAlias == null && supported);
+        getAliasDescriptionTextField().setVisible(mTalkgroup != null && mAlias == null && supported);
         getGroupLabel().setVisible(mTalkgroup != null && mAlias == null && supported);
         getAliasGroupTextField().setText(group);
         getAliasGroupTextField().setVisible(mTalkgroup != null && mAlias == null && supported);
@@ -233,6 +246,17 @@ public class TalkgroupEditor extends GridPane
         return mGroupLabel;
     }
 
+    private Label getAliasDescriptionLabel()
+    {
+        if(mAliasDescriptionLabel == null)
+        {
+            mAliasDescriptionLabel = new Label("Saved Description");
+            mAliasDescriptionLabel.setVisible(false);
+        }
+
+        return mAliasDescriptionLabel;
+    }
+
     private TextField getAliasNameTextField()
     {
         if(mAliasNameTextField == null)
@@ -257,6 +281,18 @@ public class TalkgroupEditor extends GridPane
         return mAliasGroupTextField;
     }
 
+    private TextField getAliasDescriptionTextField()
+    {
+        if(mAliasDescriptionTextField == null)
+        {
+            mAliasDescriptionTextField = new TextField();
+            mAliasDescriptionTextField.setMaxWidth(Double.MAX_VALUE);
+            mAliasDescriptionTextField.setVisible(false);
+        }
+
+        return mAliasDescriptionTextField;
+    }
+
     private Button getCreateAliasButton()
     {
         if(mCreateAliasButton == null)
@@ -279,6 +315,7 @@ public class TalkgroupEditor extends GridPane
                     Alias alias = mRadioReferenceDecoder.createAlias(mTalkgroup, mSystem, mAliasListName,
                         getAliasGroupTextField().getText());
                     alias.setName(getAliasNameTextField().getText());
+                    alias.setDescription(getAliasDescriptionTextField().getText());
                     RadioReferenceAliasPlaybackPolicy.apply(alias, mTalkgroup, mSetEncryptedDoNotMonitor);
 
                     mConfigurationManager.getAliasModel().addAlias(alias);

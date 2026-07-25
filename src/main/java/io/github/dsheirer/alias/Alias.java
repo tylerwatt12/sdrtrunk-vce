@@ -64,6 +64,7 @@ public class Alias
     private IntegerProperty mPriority = new SimpleIntegerProperty(Priority.DEFAULT_PRIORITY);
     private IntegerProperty mNonAudioIdentifierCount = new SimpleIntegerProperty();
     private StringProperty mAliasListName = new SimpleStringProperty();
+    private StringProperty mDescription = new SimpleStringProperty();
     private StringProperty mGroup = new SimpleStringProperty();
     private StringProperty mIconName = new SimpleStringProperty();
     private StringProperty mName = new SimpleStringProperty();
@@ -145,6 +146,15 @@ public class Alias
     public StringProperty aliasListNameProperty()
     {
         return mAliasListName;
+    }
+
+    /**
+     * Optional descriptive text for this alias.
+     */
+    @JsonIgnore
+    public StringProperty descriptionProperty()
+    {
+        return mDescription;
     }
 
     /**
@@ -260,6 +270,20 @@ public class Alias
     public void setAliasListName(String aliasListName)
     {
         mAliasListName.set(aliasListName);
+    }
+
+    /**
+     * Optional descriptive text for this alias.
+     */
+    @JacksonXmlProperty(isAttribute = true, localName = "description")
+    public String getDescription()
+    {
+        return mDescription.get();
+    }
+
+    public void setDescription(String description)
+    {
+        mDescription.set(description);
     }
 
     @JsonIgnore
@@ -720,8 +744,8 @@ public class Alias
     public static Callback<Alias,Observable[]> extractor()
     {
         return (Alias a) -> new Observable[] {a.recordableProperty(), a.streamableProperty(), a.colorProperty(),
-            a.aliasListNameProperty(), a.groupProperty(), a.iconNameProperty(), a.nameProperty(), a.aliasIds(),
-            a.aliasActions(), a.nonAudioIdentifierCountProperty(), a.overlapProperty(), a.priorityProperty(),
-                a.streamTalkgroupAliasProperty()};
+            a.aliasListNameProperty(), a.descriptionProperty(), a.groupProperty(), a.iconNameProperty(),
+            a.nameProperty(), a.aliasIds(), a.aliasActions(), a.nonAudioIdentifierCountProperty(),
+            a.overlapProperty(), a.priorityProperty(), a.streamTalkgroupAliasProperty()};
     }
 }

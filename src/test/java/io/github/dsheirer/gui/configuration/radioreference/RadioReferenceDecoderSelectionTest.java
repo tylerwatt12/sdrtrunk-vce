@@ -16,12 +16,14 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.rrapi.type.Flavor;
 import io.github.dsheirer.rrapi.type.Mode;
 import io.github.dsheirer.rrapi.type.System;
+import io.github.dsheirer.rrapi.type.Talkgroup;
 import io.github.dsheirer.rrapi.type.Type;
 import io.github.dsheirer.rrapi.type.Voice;
 import io.github.dsheirer.source.config.SourceConfigTuner;
@@ -78,6 +80,37 @@ class RadioReferenceDecoderSelectionTest
 
         assertNull(decoder.getDecoderType(system));
         assertEquals(Protocol.UNKNOWN, decoder.getProtocol(system));
+    }
+
+    @Test
+    void copiesRadioReferenceDescriptionIntoAlias()
+    {
+        Type type = new Type();
+        type.setTypeId(1);
+        type.setName("Project 25");
+        Flavor flavor = new Flavor();
+        flavor.setFlavorId(2);
+        flavor.setName("Phase II");
+        Voice voice = new Voice();
+        voice.setVoiceId(3);
+        voice.setName("Digital");
+        System system = new System();
+        system.setTypeId(type.getTypeId());
+        system.setFlavorId(flavor.getFlavorId());
+        system.setVoiceId(voice.getVoiceId());
+        Talkgroup talkgroup = new Talkgroup();
+        talkgroup.setDecimalValue(13501);
+        talkgroup.setAlphaTag("LORAIN DISP");
+        talkgroup.setDescription("Lorain County dispatch");
+
+        RadioReferenceDecoder decoder = new RadioReferenceDecoder(null, Map.of(type.getTypeId(), type),
+            Map.of(flavor.getFlavorId(), flavor), Map.of(voice.getVoiceId(), voice), Map.of());
+        Alias alias = decoder.createAlias(talkgroup, system, "Ohio MARCS-IP", "Law Dispatch");
+
+        assertEquals("LORAIN DISP", alias.getName());
+        assertEquals("Lorain County dispatch", alias.getDescription());
+        assertEquals("Ohio MARCS-IP", alias.getAliasListName());
+        assertEquals("Law Dispatch", alias.getGroup());
     }
 
     private static DecoderType trunkedDecoderType(String flavorName)

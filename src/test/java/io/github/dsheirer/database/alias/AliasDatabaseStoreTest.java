@@ -63,6 +63,7 @@ class AliasDatabaseStoreTest
         assertFalse(store.hasAliases());
 
         Alias alias = new Alias("County Fire Dispatch");
+        alias.setDescription("Countywide fire dispatch, paging, and incident coordination");
         alias.setAliasListName("Lake County");
         alias.setGroup("Fire");
         alias.setColor(0x123456);
@@ -98,6 +99,7 @@ class AliasDatabaseStoreTest
 
         Alias loaded = aliases.get(0);
         assertEquals("County Fire Dispatch", loaded.getName());
+        assertEquals("Countywide fire dispatch, paging, and incident coordination", loaded.getDescription());
         assertEquals("Lake County", loaded.getAliasListName());
         assertEquals("Fire", loaded.getGroup());
         assertEquals(0x123456, loaded.getColor());

@@ -111,7 +111,7 @@ public class AliasDatabaseStore
 
         try(Connection connection = SdrTrunkDatabase.open(mDatabasePath);
             PreparedStatement statement = connection.prepareStatement("""
-                SELECT id, name, alias_list_name, group_name, color, icon_name, stream_as_talkgroup,
+                SELECT id, name, description, alias_list_name, group_name, color, icon_name, stream_as_talkgroup,
                        record_enabled, non_recordable, priority
                 FROM alias
                 ORDER BY sort_order, id
@@ -122,6 +122,7 @@ public class AliasDatabaseStore
             {
                 long aliasId = resultSet.getLong("id");
                 Alias alias = new Alias(resultSet.getString("name"));
+                alias.setDescription(resultSet.getString("description"));
                 alias.setAliasListName(resultSet.getString("alias_list_name"));
                 alias.setGroup(resultSet.getString("group_name"));
                 alias.setColor(resultSet.getInt("color"));
@@ -270,24 +271,25 @@ public class AliasDatabaseStore
     {
         try(PreparedStatement statement = connection.prepareStatement("""
             INSERT INTO alias (
-                sort_order, name, alias_list_name, group_name, color, icon_name, stream_as_talkgroup,
+                sort_order, name, description, alias_list_name, group_name, color, icon_name, stream_as_talkgroup,
                 record_enabled, non_recordable, priority
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, Statement.RETURN_GENERATED_KEYS))
         {
             List<AliasID> identifiers = alias.getAliasIdentifiers();
             statement.setInt(1, sortOrder);
             statement.setString(2, alias.getName());
-            statement.setString(3, alias.getAliasListName());
-            statement.setString(4, alias.getGroup());
-            statement.setInt(5, alias.getColor());
-            statement.setString(6, alias.getIconName());
+            statement.setString(3, alias.getDescription());
+            statement.setString(4, alias.getAliasListName());
+            statement.setString(5, alias.getGroup());
+            statement.setInt(6, alias.getColor());
+            statement.setString(7, alias.getIconName());
 
             StreamAsTalkgroup streamAsTalkgroup = alias.getStreamTalkgroupAlias();
-            setInteger(statement, 7, streamAsTalkgroup != null ? streamAsTalkgroup.getValue() : null);
-            statement.setInt(8, hasIdentifier(identifiers, Record.class) ? 1 : 0);
-            statement.setInt(9, hasIdentifier(identifiers, NonRecordable.class) ? 1 : 0);
-            setInteger(statement, 10, getPriority(identifiers));
+            setInteger(statement, 8, streamAsTalkgroup != null ? streamAsTalkgroup.getValue() : null);
+            statement.setInt(9, hasIdentifier(identifiers, Record.class) ? 1 : 0);
+            statement.setInt(10, hasIdentifier(identifiers, NonRecordable.class) ? 1 : 0);
+            setInteger(statement, 11, getPriority(identifiers));
             statement.executeUpdate();
 
             try(ResultSet keys = statement.getGeneratedKeys())

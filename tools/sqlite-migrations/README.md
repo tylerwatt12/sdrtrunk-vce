@@ -15,6 +15,28 @@ Packaged builds keep the global SDRTrunk database in their portable data directo
 
 ## Available Migrations
 
+### Alias schema v2 to v3
+
+Adds one optional `description` text value to each administrator-owned Alias. RadioReference talkgroup imports use this
+field to preserve the source talkgroup description, and both the desktop and web Alias editors can display, search,
+and update it. This does not add an append-only history table or index; storage remains bounded by the number of
+configured Aliases and follows each Alias's administrator-owned lifecycle.
+
+Stop SDRTrunk before running the migration. It checks database integrity, checkpoints WAL data, creates a timestamped
+backup, adds the column, updates `alias_schema_version` to `3`, validates the complete global schema, preserves the
+Alias row count, and runs a post-migration quick check. Existing Aliases begin with an empty description.
+
+```bash
+tools/sqlite-migrations/alias-description/migrate-v2-to-v3-description.sh \
+  /path/to/sdrtrunk.sqlite /path/to/sdrtrunk-app
+```
+
+```powershell
+tools\sqlite-migrations\alias-description\migrate-v2-to-v3-description.ps1 `
+  -DatabasePath C:\path\to\sdrtrunk.sqlite `
+  -AppHome C:\path\to\sdrtrunk-app
+```
+
 ### P25 history v19 to v20
 
 Adds bounded current and summary tables for foreign-system frequency bands advertised over a monitored P25 control
