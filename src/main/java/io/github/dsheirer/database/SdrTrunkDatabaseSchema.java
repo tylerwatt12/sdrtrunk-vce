@@ -22,13 +22,11 @@ import java.util.List;
 public final class SdrTrunkDatabaseSchema
 {
     public static final int ALIAS_SCHEMA_VERSION = 3;
-    public static final int PREVIOUS_ALIAS_SCHEMA_VERSION = 2;
     public static final int CONFIGURATION_SCHEMA_VERSION = 2;
     public static final int SETTINGS_SCHEMA_VERSION = 2;
     public static final int ICON_SCHEMA_VERSION = 2;
 
-    private static final List<SqliteSchemaValidator.Table> TABLES = tables(true);
-    private static final List<SqliteSchemaValidator.Table> ALIAS_V2_TABLES = tables(false);
+    private static final List<SqliteSchemaValidator.Table> TABLES = tables();
     private static final List<String> INDEXES = List.of(
         "idx_alias_sort",
         "idx_alias_list_name",
@@ -54,26 +52,19 @@ public final class SdrTrunkDatabaseSchema
         "idx_configuration_broadcast_sort",
         "idx_configuration_broadcast_type"
     );
-    private static final List<SqliteSchemaValidator.Metadata> METADATA = metadata(ALIAS_SCHEMA_VERSION);
-    private static final List<SqliteSchemaValidator.Metadata> ALIAS_V2_METADATA =
-        metadata(PREVIOUS_ALIAS_SCHEMA_VERSION);
+    private static final List<SqliteSchemaValidator.Metadata> METADATA = metadata();
 
     private SdrTrunkDatabaseSchema()
     {
     }
 
-    private static List<SqliteSchemaValidator.Table> tables(boolean includeAliasDescription)
+    private static List<SqliteSchemaValidator.Table> tables()
     {
-        SqliteSchemaValidator.Table aliasTable = includeAliasDescription ?
-            new SqliteSchemaValidator.Table("alias", "id", "sort_order", "name", "description", "alias_list_name",
-                "group_name", "color", "icon_name", "stream_as_talkgroup", "record_enabled", "non_recordable",
-                "priority") :
-            new SqliteSchemaValidator.Table("alias", "id", "sort_order", "name", "alias_list_name", "group_name",
-                "color", "icon_name", "stream_as_talkgroup", "record_enabled", "non_recordable", "priority");
-
         return List.of(
             new SqliteSchemaValidator.Table("database_metadata", "key", "value", "updated_at_ms"),
-            aliasTable,
+            new SqliteSchemaValidator.Table("alias", "id", "sort_order", "name", "description", "alias_list_name",
+                "group_name", "color", "icon_name", "stream_as_talkgroup", "record_enabled", "non_recordable",
+                "priority"),
             new SqliteSchemaValidator.Table("alias_broadcast_channel", "id", "alias_id", "sort_order",
                 "channel_name"),
             new SqliteSchemaValidator.Table("alias_talkgroup", "id", "alias_id", "sort_order", "protocol", "value",
@@ -98,10 +89,10 @@ public final class SdrTrunkDatabaseSchema
         );
     }
 
-    private static List<SqliteSchemaValidator.Metadata> metadata(int aliasSchemaVersion)
+    private static List<SqliteSchemaValidator.Metadata> metadata()
     {
         return List.of(
-            new SqliteSchemaValidator.Metadata("alias_schema_version", Integer.toString(aliasSchemaVersion)),
+            new SqliteSchemaValidator.Metadata("alias_schema_version", Integer.toString(ALIAS_SCHEMA_VERSION)),
             new SqliteSchemaValidator.Metadata("configuration_schema_version",
                 Integer.toString(CONFIGURATION_SCHEMA_VERSION)),
             new SqliteSchemaValidator.Metadata("settings_schema_version", Integer.toString(SETTINGS_SCHEMA_VERSION)),
@@ -320,13 +311,4 @@ public final class SdrTrunkDatabaseSchema
         SqliteSchemaValidator.validate(connection, TABLES, INDEXES, List.of(), METADATA);
     }
 
-    /**
-     * Validates the previous Alias v2 shape before the application migrator updates a staged database.
-     *
-     * <p>Normal startup must continue to call {@link #validate(Connection)} and accept only the current schema.</p>
-     */
-    public static void validateAliasV2ForUpgrade(Connection connection) throws SQLException
-    {
-        SqliteSchemaValidator.validate(connection, ALIAS_V2_TABLES, INDEXES, List.of(), ALIAS_V2_METADATA);
-    }
 }

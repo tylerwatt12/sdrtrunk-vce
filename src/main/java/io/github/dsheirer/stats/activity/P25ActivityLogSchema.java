@@ -164,26 +164,6 @@ public class P25ActivityLogSchema
             List.of("observed_at_ms", "guid", "frequency_hz", "bucket_start_ms"));
     }
 
-    /**
-     * Validates the v19 shape before the application migrator updates a staged database. Normal application startup
-     * validates only the current schema through {@link #validate(Connection)}.
-     */
-    public static void validateV19ForUpgrade(Connection connection) throws SQLException
-    {
-        SqliteSchemaValidator.validate(connection, V19_TABLES, V20_INDEXES, VIEWS,
-            List.of(new SqliteSchemaValidator.Metadata(SCHEMA_VERSION_KEY, "19")));
-    }
-
-    /**
-     * Validates the v20 shape before the application migrator updates a staged database. Normal application startup
-     * validates only the current schema through {@link #validate(Connection)}.
-     */
-    public static void validateV20ForUpgrade(Connection connection) throws SQLException
-    {
-        SqliteSchemaValidator.validate(connection, TABLES, V20_INDEXES, VIEWS,
-            List.of(new SqliteSchemaValidator.Metadata(SCHEMA_VERSION_KEY, "20")));
-    }
-
     static Long recordActivity(Connection connection, P25ActivityLogRecords.ActivityEvent activity,
                                boolean detailedEventHistoryEnabled) throws SQLException
     {
@@ -1074,12 +1054,7 @@ public class P25ActivityLogSchema
             "dropped_bits", "last_valid_decode_ms"),
         table("logger_status", "key", "value", "updated_at_ms")
     );
-    private static final List<SqliteSchemaValidator.Table> V19_TABLES = TABLES.stream()
-        .filter(table -> !"p25_foreign_system_band".equals(table.name()) &&
-            !"p25_foreign_system_band_summary".equals(table.name()))
-        .toList();
-
-    private static final List<String> V20_INDEXES = List.of(
+    private static final List<String> INDEXES = List.of(
         "idx_receiver_context_guid",
         "idx_p25_activity_event_context_time",
         "idx_p25_activity_event_target_time",
@@ -1100,18 +1075,11 @@ public class P25ActivityLogSchema
         "idx_p25_site_patch_radio",
         "idx_p25_site_channel_summary_guid_frequency",
         "idx_p25_site_neighbor_summary_guid_site",
-        "idx_p25_control_quality_guid_time"
+        "idx_p25_control_quality_guid_time",
+        "idx_p25_control_quality_retention"
     );
-    private static final List<String> INDEXES = currentIndexes();
 
     private static final List<String> VIEWS = List.of("p25_activity_event_resolved");
-
-    private static List<String> currentIndexes()
-    {
-        List<String> indexes = new ArrayList<>(V20_INDEXES);
-        indexes.add("idx_p25_control_quality_retention");
-        return List.copyOf(indexes);
-    }
 
     private static void upsertP25SystemSummaries(Connection connection, P25ActivityLogRecords.ActivityEvent activity,
                                                  int systemKey) throws SQLException

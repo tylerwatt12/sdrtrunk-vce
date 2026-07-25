@@ -42,15 +42,16 @@ import java.util.UUID;
 import org.sqlite.SQLiteConfig;
 
 /**
- * Stages, migrates, validates, and promotes portable data from an earlier sdrtrunk-vce build.
+ * Stages, validates, and promotes portable data accepted by the current sdrtrunk-vce build.
  *
  * <p>The Application Migrator always runs in a child process and only receives a staged database. Normal startup
- * services remain validation-only for an existing SQLite schema.</p>
+ * services remain validation-only for an existing SQLite schema. Numbered release preparation may temporarily add
+ * the immediately preceding public release as a supported schema source.</p>
  */
 public final class ApplicationMigrationService
 {
-    public static final Set<Integer> SUPPORTED_P25_VERSIONS = Set.of(19, 20, 21);
-    public static final Set<Integer> SUPPORTED_ALIAS_VERSIONS = Set.of(2, 3);
+    public static final Set<Integer> SUPPORTED_P25_VERSIONS = Set.of(21);
+    public static final Set<Integer> SUPPORTED_ALIAS_VERSIONS = Set.of(3);
     public static final int CURRENT_P25_VERSION = 21;
     public static final int CURRENT_ALIAS_VERSION = 3;
     public static final int CURRENT_DMR_VERSION = DmrActivitySchema.SCHEMA_VERSION;
@@ -253,9 +254,9 @@ public final class ApplicationMigrationService
 
         if(!state.supported())
         {
-            throw new IOException("The Application Migrator supports Alias schema v2 or v3, P25 activity schema " +
-                "v19, v20, or v21, an absent or v2 trunked-site schema, and an absent or v" +
-                CURRENT_DMR_VERSION + " DMR activity schema. Found " + state.description() + ".");
+            throw new IOException("This development build accepts only its current schemas: Alias v3, P25 activity " +
+                "v21, trunked-site v2, and DMR activity v" + CURRENT_DMR_VERSION + ". Found " +
+                state.description() + ".");
         }
 
         return state;
@@ -684,15 +685,13 @@ public final class ApplicationMigrationService
         {
             return SUPPORTED_ALIAS_VERSIONS.contains(aliasVersion) &&
                 SUPPORTED_P25_VERSIONS.contains(p25Version) &&
-                (trunkedSiteVersion == null || trunkedSiteVersion == TrunkedSiteSchema.SCHEMA_VERSION) &&
-                (dmrVersion == null || dmrVersion == CURRENT_DMR_VERSION);
+                Integer.valueOf(TrunkedSiteSchema.SCHEMA_VERSION).equals(trunkedSiteVersion) &&
+                Integer.valueOf(CURRENT_DMR_VERSION).equals(dmrVersion);
         }
 
         public boolean requiresMigration()
         {
-            return aliasVersion != CURRENT_ALIAS_VERSION || p25Version != CURRENT_P25_VERSION ||
-                !Integer.valueOf(TrunkedSiteSchema.SCHEMA_VERSION).equals(trunkedSiteVersion) ||
-                !Integer.valueOf(CURRENT_DMR_VERSION).equals(dmrVersion);
+            return !supported();
         }
 
         public String description()
@@ -704,38 +703,8 @@ public final class ApplicationMigrationService
 
         public String requiredChanges()
         {
-            List<String> changes = new java.util.ArrayList<>();
-
-            if(aliasVersion != CURRENT_ALIAS_VERSION)
-            {
-                changes.add("Alias v" + aliasVersion + " -> v" + CURRENT_ALIAS_VERSION);
-            }
-
-            if(p25Version != CURRENT_P25_VERSION)
-            {
-                changes.add("P25 activity v" + p25Version + " -> v" + CURRENT_P25_VERSION);
-            }
-
-            if(trunkedSiteVersion == null)
-            {
-                changes.add("trunked-site not installed -> v" + TrunkedSiteSchema.SCHEMA_VERSION);
-            }
-            else if(trunkedSiteVersion != TrunkedSiteSchema.SCHEMA_VERSION)
-            {
-                changes.add("trunked-site v" + trunkedSiteVersion + " -> v" +
-                    TrunkedSiteSchema.SCHEMA_VERSION);
-            }
-
-            if(dmrVersion == null)
-            {
-                changes.add("DMR activity not installed -> v" + CURRENT_DMR_VERSION);
-            }
-            else if(dmrVersion != CURRENT_DMR_VERSION)
-            {
-                changes.add("DMR activity v" + dmrVersion + " -> v" + CURRENT_DMR_VERSION);
-            }
-
-            return String.join(", ", changes);
+            return supported() ? "" :
+                "no bundled transition exists for this unreleased development schema";
         }
     }
 

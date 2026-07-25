@@ -341,8 +341,9 @@ Select any screenshot to view it at full resolution.
   - macOS: `sdrtrunk-vce-data` beside the application bundle
 - Keeps logs, recordings, event logs, screenshots, streaming files, JMBE, and application data under that portable data
   root.
-- Keeps normal runtime services validation-only for existing schemas. Supported version changes are owned exclusively
-  by the bundled Application Migrator, which works on a backed-up staged copy before startup continues.
+- Keeps normal runtime services validation-only for existing schemas. Numbered releases add one bundled,
+  safety-backed Application Migrator transition from the immediately preceding public release; unreleased
+  development schemas use external one-time test conversions instead of accumulating product migration code.
 - Builds self-contained Windows, Linux, and macOS packages for x86-64 and ARM64 with a curated Java 25 runtime.
 - Excludes development test frameworks from release packages.
 

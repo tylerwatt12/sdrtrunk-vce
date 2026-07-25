@@ -221,35 +221,6 @@ public final class DmrActivitySchema
             index("timeslot", false), index("radio_id", false)));
     }
 
-    /**
-     * Ensures a staged legacy database has no partial DMR schema before the migrator creates v1.
-     */
-    public static void validateAbsentForUpgrade(Connection connection) throws SQLException
-    {
-        for(String object: List.of(TALKGROUP_TABLE, RADIO_TABLE, TALKGROUP_RETENTION_INDEX, RADIO_RETENTION_INDEX,
-            TALKGROUP_CONTEXT_INDEX, RADIO_CONTEXT_INDEX))
-        {
-            if(objectExists(connection, object))
-            {
-                throw new SQLException("Legacy SQLite database already contains DMR activity object [" + object + "]");
-            }
-        }
-
-        try(PreparedStatement statement = connection.prepareStatement(
-            "SELECT 1 FROM database_metadata WHERE key = ?"))
-        {
-            statement.setString(1, SCHEMA_VERSION_KEY);
-
-            try(ResultSet resultSet = statement.executeQuery())
-            {
-                if(resultSet.next())
-                {
-                    throw new SQLException("Legacy SQLite database already contains DMR activity metadata");
-                }
-            }
-        }
-    }
-
     static void recordCompletedCall(Connection connection, int contextId,
                                     P25ActivityLogRecords.DmrConventionalCall call) throws SQLException
     {
@@ -550,20 +521,6 @@ public final class DmrActivitySchema
         }
 
         return total;
-    }
-
-    private static boolean objectExists(Connection connection, String name) throws SQLException
-    {
-        try(PreparedStatement statement = connection.prepareStatement(
-            "SELECT 1 FROM sqlite_master WHERE name = ?"))
-        {
-            statement.setString(1, name);
-
-            try(ResultSet resultSet = statement.executeQuery())
-            {
-                return resultSet.next();
-            }
-        }
     }
 
     private static void validateTableDefinition(Connection connection, String table,

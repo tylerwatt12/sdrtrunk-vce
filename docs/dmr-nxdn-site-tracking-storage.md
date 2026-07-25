@@ -174,12 +174,13 @@ immutable rows.
 
 No normal runtime path creates or repairs these tables or indexes. New databases create the independent
 `trunked_site_schema_version=2` subsystem in the single startup schema routine. The subsystem was introduced publicly
-at v2, so no public v1 migration is supported. The bundled Application Migrator adds v2 when the subsystem is absent,
-and it does so only in a backed-up staged copy before validation and atomic promotion. An existing active database is
-otherwise validation-only at startup. The P25 activity schema is v21; the same Application Migrator updates supported
-v19 or v20 databases. Conventional DMR summaries use the independent `dmr_activity_schema_version=1` subsystem. New
-databases create it in the same global routine; existing supported databases receive it only through the backed-up,
-staged Application Migrator.
+at v2, so no public v1 migration is supported. Conventional DMR summaries use the independent
+`dmr_activity_schema_version=1` subsystem, and the P25 activity schema is v21. New databases create every current
+subsystem in the same global routine; existing databases remain validation-only.
+
+These DMR changes are not yet a numbered public release boundary. Development and receiver test databases use a
+backed-up one-time conversion kept outside the repository. When the next `main` release is prepared, its bundled
+Application Migrator will receive one reviewed transition from the immediately preceding public `main` release.
 
 ## Retention
 

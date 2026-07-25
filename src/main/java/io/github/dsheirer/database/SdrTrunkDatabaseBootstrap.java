@@ -59,10 +59,9 @@ public final class SdrTrunkDatabaseBootstrap
 
             if(!state.supported())
             {
-                throw new IOException("The Application Migrator cannot update this database. Supported inputs " +
-                    "are Alias v2 or v3, P25 activity v19, v20, or v21, an absent or v2 trunked-site schema, " +
-                    "and an absent or v" + ApplicationMigrationService.CURRENT_DMR_VERSION +
-                    " DMR activity schema. Found " + state.description() + ".");
+                throw new IOException("This unreleased development build has no bundled transition for " +
+                    state.description() + ". Use a separately backed-up one-time development conversion, or wait " +
+                    "for the next numbered release migrator.");
             }
 
             if(state.requiresMigration())

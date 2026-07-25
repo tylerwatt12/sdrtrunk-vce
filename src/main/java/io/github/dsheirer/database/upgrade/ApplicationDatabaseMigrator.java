@@ -12,13 +12,9 @@
 package io.github.dsheirer.database.upgrade;
 
 import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
-import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
-import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.stats.activity.DmrActivitySchema;
 import io.github.dsheirer.stats.activity.P25ActivityLogSchema;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
@@ -33,7 +29,6 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -45,9 +40,10 @@ import java.util.regex.Pattern;
  * The single application-owned database migration entry point.
  *
  * <p>The application creates a safety backup, makes a staged copy, and launches this class in a child process. This
- * migrator accepts only supported, completely recognizable schema combinations; updates all required subsystems in
- * one transaction; and validates the staged database before the application can promote it. It must never be aimed
- * directly at a live database.</p>
+ * migrator accepts only a completely recognizable schema, rebases portable paths when importing an already-current
+ * profile, and validates the staged database before the application can promote it. Release-to-release schema
+ * transitions are added here only during preparation of a numbered public release. It must never be aimed directly
+ * at a live database.</p>
  */
 public final class ApplicationDatabaseMigrator
 {
@@ -59,15 +55,10 @@ public final class ApplicationDatabaseMigrator
 
     private static final String ALIAS_VERSION_KEY = "alias_schema_version";
     private static final String P25_VERSION_KEY = "p25_activity_schema_version";
-    private static final String ALIAS_SOURCE_VERSION = "2";
     private static final String ALIAS_TARGET_VERSION = "3";
-    private static final String P25_SOURCE_VERSION_19 = "19";
-    private static final String P25_SOURCE_VERSION_20 = "20";
     private static final String P25_TARGET_VERSION = "21";
     private static final String DMR_TARGET_VERSION = Integer.toString(DmrActivitySchema.SCHEMA_VERSION);
     private static final String TRUNKED_SITE_TARGET_VERSION = Integer.toString(TrunkedSiteSchema.SCHEMA_VERSION);
-    private static final List<String> TRUNKED_SITE_TABLES = List.of(
-        "trunked_site_snapshot", "trunked_site_channel_summary", "trunked_site_neighbor_summary");
     private static final String PORTABLE_PREFERENCES_KEY = "portable_java_preferences_v1";
     private static final Set<String> PORTABLE_DIRECTORY_KEYS = Set.of(
         "directory.application.logs",
@@ -176,9 +167,8 @@ public final class ApplicationDatabaseMigrator
             SchemaState state = SchemaState.read(connection);
             output.println("Detected " + state.description() + ".");
             state.requireSupported();
-            preflight(connection, state);
+            preflight(connection);
 
-            int aliasCount = ALIAS_SOURCE_VERSION.equals(state.aliasVersion()) ? count(connection, "alias") : -1;
             boolean relocationRequired = relocation != null && !relocation.source().equals(relocation.target());
 
             if(!state.requiresMigration() && !relocationRequired)
@@ -191,42 +181,13 @@ public final class ApplicationDatabaseMigrator
             }
 
             output.println("Pre-migration checks passed. Updating the staged database.");
-            MigrationWork migrationWork = migrateInTransaction(connection, state, relocation, aliasCount);
+            int rebased = migrateInTransaction(connection, relocation);
             validateCurrentDatabase(connection);
             requireForeignKeysValid(connection);
             requireIntegrity(connection, "PRAGMA quick_check", "Quick check");
             finalizeStagedDatabase(connection);
 
-            if(ALIAS_SOURCE_VERSION.equals(state.aliasVersion()))
-            {
-                output.println("RESULT: Alias schema migration complete: v2 -> v3 description storage.");
-            }
-
-            if(P25_SOURCE_VERSION_19.equals(state.p25Version()))
-            {
-                output.println("RESULT: P25 activity schema migration complete: v19 -> v21 foreign-system bands " +
-                    "and indexed quality retention.");
-            }
-            else if(P25_SOURCE_VERSION_20.equals(state.p25Version()))
-            {
-                output.println("RESULT: P25 activity schema migration complete: v20 -> v21 indexed quality " +
-                    "retention.");
-            }
-
-            if(state.trunkedSiteVersion() == null)
-            {
-                output.println("RESULT: Trunked-site schema migration complete: absent -> v2.");
-            }
-
-            if(state.dmrVersion() == null)
-            {
-                output.println("RESULT: DMR activity schema migration complete: absent -> v" +
-                    DmrActivitySchema.SCHEMA_VERSION + ". DMR channels classified: " +
-                    migrationWork.dmrModes().conventional() + " conventional, " +
-                    migrationWork.dmrModes().trunked() + " trunked.");
-            }
-
-            output.println("Portable directory preferences updated: " + migrationWork.rebasedPreferences() + ".");
+            output.println("Portable directory preferences updated: " + rebased + ".");
             output.println("RESULT: Application database migration and validation complete.");
         }
     }
@@ -256,68 +217,14 @@ public final class ApplicationDatabaseMigrator
             "Refusing direct database path: " + database);
     }
 
-    private static void preflight(Connection connection, SchemaState state)
-        throws SQLException
+    private static void preflight(Connection connection) throws SQLException
     {
-        if(ALIAS_SOURCE_VERSION.equals(state.aliasVersion()))
-        {
-            SdrTrunkDatabaseSchema.validateAliasV2ForUpgrade(connection);
-
-            if(columns(connection, "alias").contains("description"))
-            {
-                throw new SQLException("Alias description column already exists while schema metadata is v2. " +
-                    "Refusing a partial or previously modified schema.");
-            }
-        }
-        else
-        {
-            SdrTrunkDatabaseSchema.validate(connection);
-        }
-
-        switch(state.p25Version())
-        {
-            case P25_SOURCE_VERSION_19 ->
-            {
-                P25ActivityLogSchema.validateV19ForUpgrade(connection);
-                requireObjectAbsent(connection, "table", "p25_foreign_system_band", "P25 activity v19");
-                requireObjectAbsent(connection, "table", "p25_foreign_system_band_summary", "P25 activity v19");
-                requireObjectAbsent(connection, "index", "idx_p25_control_quality_retention", "P25 activity v19");
-            }
-            case P25_SOURCE_VERSION_20 ->
-            {
-                P25ActivityLogSchema.validateV20ForUpgrade(connection);
-                requireObjectAbsent(connection, "index", "idx_p25_control_quality_retention", "P25 activity v20");
-            }
-            case P25_TARGET_VERSION -> P25ActivityLogSchema.validate(connection);
-            default -> throw new IllegalStateException("Unsupported P25 version passed preflight");
-        }
-
-        if(state.trunkedSiteVersion() == null)
-        {
-            requireTrunkedSiteSubsystemAbsent(connection);
-        }
-        else
-        {
-            TrunkedSiteSchema.validate(connection);
-        }
-
-        if(state.dmrVersion() == null)
-        {
-            DmrActivitySchema.validateAbsentForUpgrade(connection);
-            validateDmrChannelModes(connection, true);
-        }
-        else
-        {
-            DmrActivitySchema.validate(connection);
-            validateDmrChannelModes(connection, false);
-        }
-
+        validateCurrentDatabase(connection);
         requireIntegrity(connection, "PRAGMA integrity_check", "Integrity check");
         requireForeignKeysValid(connection);
     }
 
-    private static MigrationWork migrateInTransaction(Connection connection, SchemaState state,
-                                                      DataRootRelocation relocation, int aliasCount)
+    private static int migrateInTransaction(Connection connection, DataRootRelocation relocation)
         throws IOException, SQLException
     {
         try(Statement statement = connection.createStatement())
@@ -329,53 +236,14 @@ public final class ApplicationDatabaseMigrator
                 statement.execute("BEGIN IMMEDIATE");
                 transactionOpen = true;
 
-                if(ALIAS_SOURCE_VERSION.equals(state.aliasVersion()))
-                {
-                    statement.executeUpdate("ALTER TABLE alias ADD COLUMN description TEXT");
-                    SdrTrunkDatabaseStartup.setMetadata(connection, ALIAS_VERSION_KEY, ALIAS_TARGET_VERSION);
-                }
-
-                if(P25_SOURCE_VERSION_19.equals(state.p25Version()))
-                {
-                    P25ActivityLogSchema.createForeignSystemBandTables(statement);
-                }
-
-                if(P25_SOURCE_VERSION_19.equals(state.p25Version()) ||
-                    P25_SOURCE_VERSION_20.equals(state.p25Version()))
-                {
-                    P25ActivityLogSchema.createControlChannelQualityRetentionIndex(statement);
-                    SdrTrunkDatabaseStartup.setMetadata(connection, P25_VERSION_KEY, P25_TARGET_VERSION);
-                }
-
                 int rebased = rebasePortableDirectoryPreferences(connection, relocation);
 
-                if(state.trunkedSiteVersion() == null)
-                {
-                    requireTrunkedSiteSubsystemAbsent(connection);
-                    TrunkedSiteSchema.create(connection);
-                }
-
-                DmrChannelModes dmrModes = DmrChannelModes.NONE;
-
-                if(state.dmrVersion() == null)
-                {
-                    dmrModes = migrateLegacyDmrChannelModes(connection);
-                    DmrActivitySchema.create(connection);
-                }
-
                 validateCurrentDatabase(connection);
-                validateDmrChannelModes(connection, false);
-
-                if(aliasCount >= 0 && aliasCount != count(connection, "alias"))
-                {
-                    throw new SQLException("Alias row count changed during migration.");
-                }
-
                 requireForeignKeysValid(connection);
                 requireIntegrity(connection, "PRAGMA quick_check", "Quick check");
                 statement.execute("COMMIT");
                 transactionOpen = false;
-                return new MigrationWork(rebased, dmrModes);
+                return rebased;
             }
             catch(IOException | SQLException | RuntimeException e)
             {
@@ -506,357 +374,6 @@ public final class ApplicationDatabaseMigrator
         TrunkedSiteSchema.validate(connection);
     }
 
-    /**
-     * Writes an explicit mode into each active legacy DMR channel. A usable LCN/frequency mapping is positive
-     * trunking evidence; channels without one are intentionally classified as conventional.
-     */
-    private static DmrChannelModes migrateLegacyDmrChannelModes(Connection connection) throws SQLException
-    {
-        int conventional = 0;
-        int trunked = 0;
-
-        try(PreparedStatement select = connection.prepareStatement("""
-                SELECT id, decoder_type, source_type, config_json
-                FROM configuration_channel
-                ORDER BY id
-                """);
-            PreparedStatement update = connection.prepareStatement("""
-                UPDATE configuration_channel
-                SET decoder_type='DMR', config_json=?
-                WHERE id=?
-                """);
-            ResultSet resultSet = select.executeQuery())
-        {
-            while(resultSet.next())
-            {
-                String decoderType = resultSet.getString("decoder_type");
-                String sourceType = resultSet.getString("source_type");
-
-                if(ChannelConfigurationPolicy.isRetiredPersisted(decoderType, sourceType))
-                {
-                    continue;
-                }
-
-                if(decoderType != null && !decoderType.isBlank() && !"DMR".equalsIgnoreCase(decoderType))
-                {
-                    continue;
-                }
-
-                long id = resultSet.getLong("id");
-                ObjectNode channel = parseChannelJson(id, resultSet.getString("config_json"));
-                ObjectNode decodeConfiguration = decodeConfiguration(id, channel,
-                    "DMR".equalsIgnoreCase(decoderType));
-
-                if(decodeConfiguration == null)
-                {
-                    continue;
-                }
-
-                boolean isDmr = isDmrConfiguration(decodeConfiguration);
-
-                if(!isDmr)
-                {
-                    if("DMR".equalsIgnoreCase(decoderType))
-                    {
-                        throw new SQLException("DMR channel row [" + id +
-                            "] does not contain a DMR decode configuration.");
-                    }
-
-                    continue;
-                }
-
-                JsonNode existingMode = decodeConfiguration.get("channelMode");
-                String mode;
-
-                if(existingMode == null || existingMode.isNull())
-                {
-                    mode = hasValidDmrFrequencyMap(decodeConfiguration) ? "TRUNKED" : "CONVENTIONAL";
-                    decodeConfiguration.put("channelMode", mode);
-                }
-                else
-                {
-                    mode = requireDmrMode(id, existingMode);
-                }
-
-                try
-                {
-                    update.setString(1, OBJECT_MAPPER.writeValueAsString(channel));
-                }
-                catch(IOException e)
-                {
-                    throw new SQLException("DMR channel row [" + id + "] could not be serialized safely.", e);
-                }
-
-                update.setLong(2, id);
-
-                if(update.executeUpdate() != 1)
-                {
-                    throw new SQLException("DMR channel row [" + id + "] changed while it was being migrated.");
-                }
-
-                if("TRUNKED".equals(mode))
-                {
-                    trunked++;
-                }
-                else
-                {
-                    conventional++;
-                }
-            }
-        }
-
-        return new DmrChannelModes(conventional, trunked);
-    }
-
-    /**
-     * Validates the DMR configuration semantic state without repairing it. Missing modes are accepted only during
-     * preflight for a database that has not installed the DMR activity schema.
-     */
-    private static void validateDmrChannelModes(Connection connection, boolean allowLegacyMissing)
-        throws SQLException
-    {
-        try(PreparedStatement statement = connection.prepareStatement("""
-                SELECT id, decoder_type, source_type, config_json
-                FROM configuration_channel
-                ORDER BY id
-                """);
-            ResultSet resultSet = statement.executeQuery())
-        {
-            while(resultSet.next())
-            {
-                String decoderType = resultSet.getString("decoder_type");
-                String sourceType = resultSet.getString("source_type");
-
-                if(ChannelConfigurationPolicy.isRetiredPersisted(decoderType, sourceType))
-                {
-                    continue;
-                }
-
-                if(decoderType != null && !decoderType.isBlank() && !"DMR".equalsIgnoreCase(decoderType))
-                {
-                    continue;
-                }
-
-                long id = resultSet.getLong("id");
-                ObjectNode channel = parseChannelJson(id, resultSet.getString("config_json"));
-                ObjectNode decodeConfiguration = decodeConfiguration(id, channel,
-                    "DMR".equalsIgnoreCase(decoderType));
-
-                if(decodeConfiguration == null)
-                {
-                    continue;
-                }
-
-                if(isDmrConfiguration(decodeConfiguration))
-                {
-                    if(!"DMR".equalsIgnoreCase(decoderType) && !allowLegacyMissing)
-                    {
-                        throw new SQLException("DMR channel row [" + id +
-                            "] does not identify DMR in its derived decoder_type field.");
-                    }
-
-                    JsonNode mode = decodeConfiguration.get("channelMode");
-
-                    if(mode == null || mode.isNull())
-                    {
-                        if(!allowLegacyMissing)
-                        {
-                            throw new SQLException("DMR channel row [" + id +
-                                "] does not have an explicit channelMode.");
-                        }
-                    }
-                    else
-                    {
-                        requireDmrMode(id, mode);
-                    }
-                }
-                else if("DMR".equalsIgnoreCase(decoderType))
-                {
-                    throw new SQLException("DMR channel row [" + id +
-                        "] does not contain a DMR decode configuration.");
-                }
-            }
-        }
-    }
-
-    private static ObjectNode parseChannelJson(long id, String json) throws SQLException
-    {
-        final JsonNode parsed;
-
-        try
-        {
-            parsed = OBJECT_MAPPER.readTree(json);
-        }
-        catch(IOException | RuntimeException e)
-        {
-            throw new SQLException("Channel row [" + id + "] contains invalid configuration JSON.", e);
-        }
-
-        if(!(parsed instanceof ObjectNode object))
-        {
-            throw new SQLException("Channel row [" + id + "] configuration JSON must be an object.");
-        }
-
-        return object;
-    }
-
-    private static ObjectNode decodeConfiguration(long id, ObjectNode channel, boolean required)
-        throws SQLException
-    {
-        JsonNode decodeConfiguration = channel.get("decodeConfiguration");
-
-        if(decodeConfiguration == null || decodeConfiguration.isNull())
-        {
-            if(!required)
-            {
-                return null;
-            }
-
-            throw new SQLException("DMR channel row [" + id +
-                "] does not contain a decodeConfiguration object.");
-        }
-
-        if(!(decodeConfiguration instanceof ObjectNode object))
-        {
-            throw new SQLException("Channel row [" + id +
-                "] configuration JSON does not contain a decodeConfiguration object.");
-        }
-
-        return object;
-    }
-
-    private static boolean isDmrConfiguration(ObjectNode decodeConfiguration)
-    {
-        return "decodeConfigDMR".equals(decodeConfiguration.path("type").asText());
-    }
-
-    private static String requireDmrMode(long id, JsonNode mode) throws SQLException
-    {
-        if(!mode.isTextual() ||
-            (!"CONVENTIONAL".equals(mode.textValue()) && !"TRUNKED".equals(mode.textValue())))
-        {
-            throw new SQLException("DMR channel row [" + id +
-                "] has invalid channelMode; expected CONVENTIONAL or TRUNKED.");
-        }
-
-        return mode.textValue();
-    }
-
-    private static boolean hasValidDmrFrequencyMap(ObjectNode decodeConfiguration)
-    {
-        JsonNode mappings = decodeConfiguration.get("timeslotMap");
-
-        if(mappings == null)
-        {
-            mappings = decodeConfiguration.get("timeslot");
-        }
-
-        if(mappings == null || !mappings.isArray())
-        {
-            return false;
-        }
-
-        for(JsonNode mapping : mappings)
-        {
-            if(positiveIntegral(mapping, "number", "lsn") &&
-                positiveIntegral(mapping, "downlinkFrequency", "downlink"))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private static boolean positiveIntegral(JsonNode object, String primaryName, String legacyName)
-    {
-        if(object == null || !object.isObject())
-        {
-            return false;
-        }
-
-        JsonNode value = object.get(primaryName);
-
-        if(value == null)
-        {
-            value = object.get(legacyName);
-        }
-
-        return value != null && value.isIntegralNumber() && value.canConvertToLong() && value.longValue() > 0;
-    }
-
-    private static void requireTrunkedSiteSubsystemAbsent(Connection connection) throws SQLException
-    {
-        for(String table : TRUNKED_SITE_TABLES)
-        {
-            if(tableExists(connection, table))
-            {
-                throw new SQLException("Trunked-site schema metadata is absent but table [" + table +
-                    "] already exists. Refusing to repair an ambiguous partial schema.");
-            }
-        }
-    }
-
-    private static boolean tableExists(Connection connection, String table) throws SQLException
-    {
-        return objectExists(connection, "table", table);
-    }
-
-    private static void requireObjectAbsent(Connection connection, String type, String name, String schema)
-        throws SQLException
-    {
-        if(objectExists(connection, type, name))
-        {
-            throw new SQLException(schema + " unexpectedly contains later-version " + type + " [" + name +
-                "]. Refusing to repair an ambiguous partial migration.");
-        }
-    }
-
-    private static boolean objectExists(Connection connection, String type, String name) throws SQLException
-    {
-        try(PreparedStatement statement = connection.prepareStatement(
-            "SELECT 1 FROM sqlite_master WHERE type=? AND name=?"))
-        {
-            statement.setString(1, type);
-            statement.setString(2, name);
-
-            try(ResultSet resultSet = statement.executeQuery())
-            {
-                return resultSet.next();
-            }
-        }
-    }
-
-    private static Set<String> columns(Connection connection, String table) throws SQLException
-    {
-        Set<String> columns = new HashSet<>();
-
-        try(Statement statement = connection.createStatement();
-            ResultSet resultSet = statement.executeQuery("PRAGMA table_info(" + table + ")"))
-        {
-            while(resultSet.next())
-            {
-                columns.add(resultSet.getString("name"));
-            }
-        }
-
-        return columns;
-    }
-
-    private static int count(Connection connection, String table) throws SQLException
-    {
-        try(Statement statement = connection.createStatement();
-            ResultSet resultSet = statement.executeQuery("SELECT COUNT(*) FROM " + table))
-        {
-            if(resultSet.next())
-            {
-                return resultSet.getInt(1);
-            }
-        }
-
-        throw new SQLException("Unable to count rows in table [" + table + "]");
-    }
-
     private static Connection open(Path database) throws SQLException
     {
         Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
@@ -968,31 +485,30 @@ public final class ApplicationDatabaseMigrator
 
         private void requireSupported() throws UnsupportedSchemaVersionException
         {
-            if(!ALIAS_SOURCE_VERSION.equals(aliasVersion) && !ALIAS_TARGET_VERSION.equals(aliasVersion))
+            if(!ALIAS_TARGET_VERSION.equals(aliasVersion))
             {
                 throw new UnsupportedSchemaVersionException(
-                    "Expected Alias schema v2 or v3, found [" + aliasVersion + "]. Refusing migration.");
+                    "Expected current Alias schema v3, found [" + aliasVersion + "]. Refusing migration.");
             }
 
-            if(!P25_SOURCE_VERSION_19.equals(p25Version) && !P25_SOURCE_VERSION_20.equals(p25Version) &&
-                !P25_TARGET_VERSION.equals(p25Version))
+            if(!P25_TARGET_VERSION.equals(p25Version))
             {
                 throw new UnsupportedSchemaVersionException(
-                    "Expected P25 activity schema v19, v20, or v21, found [" + p25Version +
+                    "Expected current P25 activity schema v21, found [" + p25Version +
                         "]. Refusing migration.");
             }
 
-            if(trunkedSiteVersion != null && !TRUNKED_SITE_TARGET_VERSION.equals(trunkedSiteVersion))
+            if(!TRUNKED_SITE_TARGET_VERSION.equals(trunkedSiteVersion))
             {
                 throw new UnsupportedSchemaVersionException(
-                    "Expected trunked-site schema to be absent or v2, found [" + trunkedSiteVersion +
+                    "Expected current trunked-site schema v2, found [" + trunkedSiteVersion +
                         "]. Refusing migration.");
             }
 
-            if(dmrVersion != null && !DMR_TARGET_VERSION.equals(dmrVersion))
+            if(!DMR_TARGET_VERSION.equals(dmrVersion))
             {
                 throw new UnsupportedSchemaVersionException(
-                    "Expected DMR activity schema to be absent or v" + DMR_TARGET_VERSION + ", found [" +
+                    "Expected current DMR activity schema v" + DMR_TARGET_VERSION + ", found [" +
                         dmrVersion + "]. Refusing migration.");
             }
         }
@@ -1006,15 +522,6 @@ public final class ApplicationDatabaseMigrator
                 ", and DMR activity schema " +
                 (dmrVersion == null ? "not installed" : "v" + dmrVersion);
         }
-    }
-
-    private record MigrationWork(int rebasedPreferences, DmrChannelModes dmrModes)
-    {
-    }
-
-    private record DmrChannelModes(int conventional, int trunked)
-    {
-        private static final DmrChannelModes NONE = new DmrChannelModes(0, 0);
     }
 
     private static final class UnsupportedSchemaVersionException extends Exception
