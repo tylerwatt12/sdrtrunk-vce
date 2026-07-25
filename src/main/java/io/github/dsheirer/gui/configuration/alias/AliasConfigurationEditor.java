@@ -451,6 +451,10 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
             iconColumn.setCellValueFactory(new PropertyValueFactory<>("iconName"));
             iconColumn.setCellFactory(new IconTableCellFactory());
 
+            TableColumn<Alias, Integer> priorityColumn = new TableColumn<>("Listen");
+            priorityColumn.setCellFactory(new PriorityCellFactory());
+            priorityColumn.setCellValueFactory(new PropertyValueFactory<>("priority"));
+
             TableColumn<Alias, Boolean> recordColumn = new TableColumn<>("Record");
             recordColumn.setCellValueFactory(new PropertyValueFactory<>("recordable"));
             recordColumn.setCellFactory(new IconCell(FontAwesome.SQUARE, Color.RED));
@@ -492,6 +496,7 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
             mAliasTableView.getColumns().add(groupColumn);
             mAliasTableView.getColumns().add(colorColumn);
             mAliasTableView.getColumns().add(iconColumn);
+            mAliasTableView.getColumns().add(priorityColumn);
             mAliasTableView.getColumns().add(recordColumn);
             mAliasTableView.getColumns().add(streamColumn);
             mAliasTableView.getColumns().add(idsColumn);
@@ -832,6 +837,50 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
         public CenteredCountCell()
         {
             setAlignment(Pos.CENTER);
+        }
+    }
+
+    public class PriorityCellFactory implements Callback<TableColumn<Alias, Integer>, TableCell<Alias, Integer>>
+    {
+        @Override
+        public TableCell<Alias, Integer> call(TableColumn<Alias, Integer> param)
+        {
+            return new TableCell<Alias, Integer>()
+            {
+                @Override
+                protected void updateItem(Integer item, boolean empty)
+                {
+                    if(empty)
+                    {
+                        setText(null);
+                        setGraphic(null);
+                    }
+                    else if(item == io.github.dsheirer.alias.id.priority.Priority.DO_NOT_MONITOR)
+                    {
+                        setText("Mute");
+                        final IconNode iconNode = new IconNode(FontAwesome.VOLUME_OFF);
+                        iconNode.setIconSize(20);
+                        iconNode.setFill(Color.RED);
+                        setGraphic(iconNode);
+                    }
+                    else if(item == io.github.dsheirer.alias.id.priority.Priority.DEFAULT_PRIORITY)
+                    {
+                        setText("Default");
+                        final IconNode iconNode = new IconNode(FontAwesome.VOLUME_UP);
+                        iconNode.setIconSize(20);
+                        iconNode.setFill(Color.GREEN);
+                        setGraphic(iconNode);
+                    }
+                    else
+                    {
+                        setText(item.toString());
+                        final IconNode iconNode = new IconNode(FontAwesome.VOLUME_UP);
+                        iconNode.setIconSize(20);
+                        iconNode.setFill(Color.GREEN);
+                        setGraphic(iconNode);
+                    }
+                }
+            };
         }
     }
 

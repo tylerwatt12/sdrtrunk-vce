@@ -12,6 +12,8 @@
 package io.github.dsheirer.source;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -39,20 +41,32 @@ class RetiredSoundCardSourceTest
     }
 
     @Test
-    void soundCardCaptureAndReceiverCallPlaybackImplementationsAreNotPackaged()
+    void soundCardCaptureImplementationsAreNotPackaged()
     {
         for(String removedClass : new String[]{
             "io.github.dsheirer.source.mixer.MixerManager",
             "io.github.dsheirer.source.mixer.MixerReader",
             "io.github.dsheirer.source.mixer.RealMixerSource",
             "io.github.dsheirer.source.mixer.MixerChannelConfiguration",
-            "io.github.dsheirer.sample.adapter.RealChannelShortAdapter",
+            "io.github.dsheirer.sample.adapter.RealChannelShortAdapter"})
+        {
+            assertThrows(ClassNotFoundException.class, () -> Class.forName(removedClass), removedClass);
+        }
+    }
+
+    @Test
+    void receiverCallPlaybackAndStereoOutputRemainPackaged()
+    {
+        for(String playbackClass : new String[]{
             "io.github.dsheirer.audio.playback.AudioPlaybackManager",
             "io.github.dsheirer.audio.playback.AudioOutput",
             "io.github.dsheirer.preference.playback.PlaybackPreference"})
         {
-            assertThrows(ClassNotFoundException.class, () -> Class.forName(removedClass), removedClass);
+            assertDoesNotThrow(() -> Class.forName(playbackClass), playbackClass);
         }
+
+        assertEquals(2, AudioFormats.PCM_SIGNED_8000_HZ_16BITS_STEREO.getChannels());
+        assertEquals(4, AudioFormats.PCM_SIGNED_8000_HZ_16BITS_STEREO.getFrameSize());
     }
 
     @Test
@@ -66,10 +80,9 @@ class RetiredSoundCardSourceTest
     }
 
     @Test
-    void audioFormatsDoNotExposeRetiredSpeakerDataLines()
+    void legacySpeakerDataLineConstantsRemainRetired()
     {
         assertThrows(NoSuchFieldException.class, () -> AudioFormats.class.getField("MONO_SOURCE_DATALINE_INFO"));
         assertThrows(NoSuchFieldException.class, () -> AudioFormats.class.getField("STEREO_SOURCE_DATALINE_INFO"));
-        assertThrows(NoSuchFieldException.class, () -> AudioFormats.class.getField("PCM_SIGNED_8000_HZ_16BITS_STEREO"));
     }
 }

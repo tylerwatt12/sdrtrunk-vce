@@ -59,6 +59,9 @@ public class AliasBulkEditor extends Editor<List<Alias>>
     private Button mResetColorButton;
     private ComboBox<Icon> mIconNodeComboBox;
     private Button mApplyIconButton;
+    private ToggleSwitch mMonitorAudioToggleSwitch;
+    private ComboBox<Integer> mMonitorPriorityComboBox;
+    private Button mApplyMonitorButton;
     private ToggleSwitch mRecordToggleSwitch;
     private Button mApplyRecordButton;
 
@@ -120,6 +123,25 @@ public class AliasBulkEditor extends Editor<List<Alias>>
 
         GridPane.setConstraints(getApplyIconButton(), 4, row);
         gridPane.getChildren().add(getApplyIconButton());
+
+        Label listenLabel = new Label("Listen");
+        GridPane.setHalignment(listenLabel, HPos.RIGHT);
+        GridPane.setConstraints(listenLabel, 0, ++row);
+        gridPane.getChildren().add(listenLabel);
+
+        GridPane.setConstraints(getMonitorAudioToggleSwitch(), 1, row);
+        gridPane.getChildren().add(getMonitorAudioToggleSwitch());
+
+        Label priorityLabel = new Label("Priority");
+        GridPane.setHalignment(priorityLabel, HPos.RIGHT);
+        GridPane.setConstraints(priorityLabel, 2, row);
+        gridPane.getChildren().add(priorityLabel);
+
+        GridPane.setConstraints(getMonitorPriorityComboBox(), 3, row);
+        gridPane.getChildren().add(getMonitorPriorityComboBox());
+
+        GridPane.setConstraints(getApplyMonitorButton(), 4, row);
+        gridPane.getChildren().add(getApplyMonitorButton());
 
         Label recordLabel = new Label("Record");
         GridPane.setHalignment(recordLabel, HPos.RIGHT);
@@ -295,6 +317,19 @@ public class AliasBulkEditor extends Editor<List<Alias>>
         return mApplyIconButton;
     }
 
+    private ToggleSwitch getMonitorAudioToggleSwitch()
+    {
+        if(mMonitorAudioToggleSwitch == null)
+        {
+            mMonitorAudioToggleSwitch = new ToggleSwitch();
+            mMonitorAudioToggleSwitch.setSelected(true);
+            mMonitorAudioToggleSwitch.selectedProperty()
+                    .addListener((observable, oldValue, newValue) -> modifiedProperty().set(true));
+        }
+
+        return mMonitorAudioToggleSwitch;
+    }
+
     private ToggleSwitch getRecordToggleSwitch()
     {
         if(mRecordToggleSwitch == null)
@@ -306,6 +341,62 @@ public class AliasBulkEditor extends Editor<List<Alias>>
         }
 
         return mRecordToggleSwitch;
+    }
+
+    private ComboBox<Integer> getMonitorPriorityComboBox()
+    {
+        if(mMonitorPriorityComboBox == null)
+        {
+            mMonitorPriorityComboBox = new ComboBox<>();
+            mMonitorPriorityComboBox.getItems().add(null);
+            for(int x = io.github.dsheirer.alias.id.priority.Priority.MIN_PRIORITY;
+                x < io.github.dsheirer.alias.id.priority.Priority.MAX_PRIORITY; x++)
+            {
+                mMonitorPriorityComboBox.getItems().add(x);
+            }
+
+            mMonitorPriorityComboBox.disableProperty().bind(getMonitorAudioToggleSwitch().selectedProperty().not());
+            mMonitorPriorityComboBox.getSelectionModel().selectedItemProperty()
+                    .addListener((observable, oldValue, newValue) -> modifiedProperty().set(true));
+        }
+
+        return mMonitorPriorityComboBox;
+    }
+
+    private Button getApplyMonitorButton()
+    {
+        if(mApplyMonitorButton == null)
+        {
+            mApplyMonitorButton = createApplyButton();
+            mApplyMonitorButton.setOnAction(event ->
+            {
+                startChange();
+
+                boolean canMonitor = getMonitorAudioToggleSwitch().isSelected();
+                Integer priority = getMonitorPriorityComboBox().getSelectionModel().getSelectedItem();
+                if(canMonitor)
+                {
+                    if(priority == null)
+                    {
+                        priority = io.github.dsheirer.alias.id.priority.Priority.DEFAULT_PRIORITY;
+                    }
+                }
+                else
+                {
+                    priority = io.github.dsheirer.alias.id.priority.Priority.DO_NOT_MONITOR;
+                }
+
+                final Integer pri = priority;
+                for(Alias alias : getItem())
+                {
+                    alias.setCallPriority(pri);
+                }
+
+                endChange();
+            });
+        }
+
+        return mApplyMonitorButton;
     }
 
     private Button getApplyRecordButton()

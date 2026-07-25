@@ -1,0 +1,337 @@
+/*
+ * *****************************************************************************
+ * Copyright (C) 2014-2026 Dennis Sheirer
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>
+ * ****************************************************************************
+ */
+
+package io.github.dsheirer.gui.preference.playback;
+
+import io.github.dsheirer.audio.playback.AudioPlaybackDeviceDescriptor;
+import io.github.dsheirer.audio.playback.AudioPlaybackDeviceManager;
+import io.github.dsheirer.eventbus.MyEventBus;
+import io.github.dsheirer.preference.UserPreferences;
+import io.github.dsheirer.preference.playback.PlayTestAudioRequest;
+import io.github.dsheirer.preference.playback.PlaybackPreference;
+import javafx.geometry.HPos;
+import javafx.geometry.Insets;
+import javafx.geometry.Orientation;
+import javafx.geometry.Pos;
+import javafx.scene.control.Button;
+import javafx.scene.control.ComboBox;
+import javafx.scene.control.Label;
+import javafx.scene.control.Separator;
+import javafx.scene.control.Spinner;
+import javafx.scene.control.Tooltip;
+import javafx.scene.layout.GridPane;
+import javafx.scene.layout.HBox;
+import javafx.scene.layout.Priority;
+import javafx.scene.paint.Color;
+import jiconfont.icons.font_awesome.FontAwesome;
+import jiconfont.javafx.IconNode;
+import org.controlsfx.control.ToggleSwitch;
+
+
+/**
+ * Preference settings for audio playback
+ */
+public class PlaybackPreferenceEditor extends HBox
+{
+    private final PlaybackPreference mPlaybackPreference;
+    private GridPane mEditorPane;
+    private ComboBox<AudioPlaybackDeviceDescriptor> mAudioPlaybackDevicesCombo;
+    private Button mPlaybackDeviceTestButton;
+    private Spinner<Integer> mMaximumBackloggedCallsSpinner;
+    private ToggleSwitch mUseAudioSegmentStartToneSwitch;
+    private Button mTestStartToneButton;
+    private ToggleSwitch mUseAudioSegmentDropToneSwitch;
+    private Button mTestDropToneButton;
+    private ComboBox<ToneFrequency> mStartToneFrequencyComboBox;
+    private ComboBox<ToneVolume> mStartToneVolumeComboBox;
+    private ComboBox<ToneFrequency> mDropToneFrequencyComboBox;
+    private ComboBox<ToneVolume> mDropToneVolumeComboBox;
+
+    public PlaybackPreferenceEditor(UserPreferences userPreferences)
+    {
+        mPlaybackPreference = userPreferences.getPlaybackPreference();
+
+        HBox.setHgrow(getEditorPane(), Priority.ALWAYS);
+        getChildren().add(getEditorPane());
+    }
+
+    private GridPane getEditorPane()
+    {
+        if(mEditorPane == null)
+        {
+            int row = 0;
+            mEditorPane = new GridPane();
+            mEditorPane.setPadding(new Insets(10, 10, 10, 10));
+            mEditorPane.setHgap(10);
+            mEditorPane.setVgap(10);
+            Label outputLabel = new Label("Audio Playback Device");
+            GridPane.setHalignment(outputLabel, HPos.RIGHT);
+            mEditorPane.add(outputLabel, 0, row, 2, 1);
+            mEditorPane.add(getAudioPlaybackDevicesCombo(), 2, row, 3, 1);
+            mEditorPane.add(getPlaybackDeviceTestButton(), 5, row);
+            mEditorPane.add(new Separator(Orientation.HORIZONTAL), 0, ++row, 6, 1);
+            mEditorPane.add(new Label("Audio Playback Backlog"), 0, ++row, 2, 1);
+            Label maximumBackloggedCallsLabel = new Label("Maximum Queued Calls:");
+            GridPane.setHalignment(maximumBackloggedCallsLabel, HPos.RIGHT);
+            mEditorPane.add(maximumBackloggedCallsLabel, 1, ++row);
+            mEditorPane.add(getMaximumBackloggedCallsSpinner(), 2, row);
+            mEditorPane.add(new Label("0 = unlimited"), 3, row, 2, 1);
+            mEditorPane.add(new Separator(Orientation.HORIZONTAL), 0, ++row, 6, 1);
+            mEditorPane.add(new Label("Audio Playback Insert Tones"), 0, ++row, 2, 1);
+
+            mEditorPane.add(getUseAudioSegmentStartToneSwitch(), 0, ++row);
+            mEditorPane.add(new Label("Start Tone"), 1, row, 3, 1);
+            Label startFrequencyLabel = new Label("Frequency:");
+            GridPane.setHalignment(startFrequencyLabel, HPos.RIGHT);
+            mEditorPane.add(startFrequencyLabel, 1, ++row);
+            mEditorPane.add(getStartToneFrequencyComboBox(), 2, row);
+            Label startVolumeLabel = new Label("Volume:");
+            GridPane.setHalignment(startVolumeLabel, HPos.RIGHT);
+            mEditorPane.add(startVolumeLabel, 3, row);
+            mEditorPane.add(getStartToneVolumeComboBox(), 4, row);
+            mEditorPane.add(getTestStartToneButton(), 5, row);
+
+            mEditorPane.add(getUseAudioSegmentDropToneSwitch(), 0, ++row);
+            mEditorPane.add(new Label("Drop Tone - Do Not Monitor"), 1, row, 3, 1);
+            Label dropFrequencyLabel = new Label("Frequency:");
+            GridPane.setHalignment(dropFrequencyLabel, HPos.RIGHT);
+            mEditorPane.add(dropFrequencyLabel, 1, ++row);
+            mEditorPane.add(getDropToneFrequencyComboBox(), 2, row);
+            Label dropVolumeLabel = new Label("Volume:");
+            GridPane.setHalignment(dropVolumeLabel, HPos.RIGHT);
+            mEditorPane.add(dropVolumeLabel, 3, row);
+            mEditorPane.add(getDropToneVolumeComboBox(), 4, row);
+            mEditorPane.add(getTestDropToneButton(), 5, row);
+        }
+
+        return mEditorPane;
+    }
+
+    private ComboBox<AudioPlaybackDeviceDescriptor> getAudioPlaybackDevicesCombo()
+    {
+        if(mAudioPlaybackDevicesCombo == null)
+        {
+            mAudioPlaybackDevicesCombo = new ComboBox<>();
+            mAudioPlaybackDevicesCombo.getItems().addAll(AudioPlaybackDeviceManager.getAudioPlaybackDevices());
+            mAudioPlaybackDevicesCombo.getSelectionModel().select(mPlaybackPreference.getAudioPlaybackDevice());
+            mAudioPlaybackDevicesCombo.getSelectionModel().selectedItemProperty()
+                .addListener((observable, oldValue,
+                              newValue) -> mPlaybackPreference.setAudioPlaybackDevice(newValue));
+        }
+
+        return mAudioPlaybackDevicesCombo;
+    }
+
+    public Button getPlaybackDeviceTestButton()
+    {
+        if(mPlaybackDeviceTestButton == null)
+        {
+            mPlaybackDeviceTestButton = new Button("Test");
+            IconNode iconNode = new IconNode(FontAwesome.PLAY);
+            iconNode.setFill(Color.CORNFLOWERBLUE);
+            mPlaybackDeviceTestButton.setGraphic(iconNode);
+            mPlaybackDeviceTestButton.setOnAction(event ->
+                        play(mPlaybackPreference.getAudioPlaybackTestTone(), PlayTestAudioRequest.ALL_CHANNELS));
+        }
+
+        return mPlaybackDeviceTestButton;
+    }
+
+    private Spinner<Integer> getMaximumBackloggedCallsSpinner()
+    {
+        if(mMaximumBackloggedCallsSpinner == null)
+        {
+            mMaximumBackloggedCallsSpinner = new Spinner<>(
+                PlaybackPreference.MINIMUM_BACKLOGGED_CALLS,
+                PlaybackPreference.MAXIMUM_BACKLOGGED_CALLS,
+                mPlaybackPreference.getMaximumBackloggedCalls(),
+                1);
+            mMaximumBackloggedCallsSpinner.setEditable(true);
+            mMaximumBackloggedCallsSpinner.setTooltip(new Tooltip(
+                "Drops oldest queued playback calls when this limit is exceeded. Set 0 for unlimited."));
+            mMaximumBackloggedCallsSpinner.valueProperty().addListener((observable, oldValue, maximum) ->
+            {
+                if(maximum != null)
+                {
+                    mPlaybackPreference.setMaximumBackloggedCalls(maximum);
+                }
+            });
+            mMaximumBackloggedCallsSpinner.focusedProperty().addListener((observable, oldValue, focused) ->
+            {
+                if(!focused)
+                {
+                    commitMaximumBackloggedCallsSpinner();
+                }
+            });
+        }
+
+        return mMaximumBackloggedCallsSpinner;
+    }
+
+    private void commitMaximumBackloggedCallsSpinner()
+    {
+        try
+        {
+            Integer value = mMaximumBackloggedCallsSpinner.getValueFactory().getConverter()
+                .fromString(mMaximumBackloggedCallsSpinner.getEditor().getText());
+
+            if(value != null)
+            {
+                int clampedValue = Math.min(PlaybackPreference.MAXIMUM_BACKLOGGED_CALLS,
+                    Math.max(PlaybackPreference.MINIMUM_BACKLOGGED_CALLS, value));
+                mMaximumBackloggedCallsSpinner.getValueFactory().setValue(clampedValue);
+            }
+        }
+        catch(Exception e)
+        {
+            mMaximumBackloggedCallsSpinner.getValueFactory().setValue(mPlaybackPreference.getMaximumBackloggedCalls());
+        }
+    }
+
+    private ToggleSwitch getUseAudioSegmentStartToneSwitch()
+    {
+        if(mUseAudioSegmentStartToneSwitch == null)
+        {
+            mUseAudioSegmentStartToneSwitch = new ToggleSwitch();
+            mUseAudioSegmentStartToneSwitch.setAlignment(Pos.BASELINE_RIGHT);
+            mUseAudioSegmentStartToneSwitch.setSelected(mPlaybackPreference.getUseAudioSegmentStartTone());
+            mUseAudioSegmentStartToneSwitch.selectedProperty().addListener((observable, oldValue, newValue) ->
+                    mPlaybackPreference.setUseAudioSegmentStartTone(newValue));
+        }
+
+        return mUseAudioSegmentStartToneSwitch;
+    }
+
+    private ToggleSwitch getUseAudioSegmentDropToneSwitch()
+    {
+        if(mUseAudioSegmentDropToneSwitch == null)
+        {
+            mUseAudioSegmentDropToneSwitch = new ToggleSwitch();
+            mUseAudioSegmentDropToneSwitch.setSelected(mPlaybackPreference.getUseAudioSegmentDropTone());
+            mUseAudioSegmentDropToneSwitch.selectedProperty().addListener((observable, oldValue, newValue) ->
+                    mPlaybackPreference.setUseAudioSegmentDropTone(newValue));
+        }
+
+        return mUseAudioSegmentDropToneSwitch;
+    }
+
+    public Button getTestStartToneButton()
+    {
+        if(mTestStartToneButton == null)
+        {
+            mTestStartToneButton = new Button("Test");
+            IconNode iconNode = new IconNode(FontAwesome.PLAY);
+            iconNode.setFill(Color.CORNFLOWERBLUE);
+            mTestStartToneButton.setGraphic(iconNode);
+            mTestStartToneButton.setOnAction(_ ->
+                play(mPlaybackPreference.getStartTone(PlaybackPreference.TONE_LENGTH_SAMPLES * 3),
+                        PlayTestAudioRequest.ALL_CHANNELS));
+            mTestStartToneButton.disableProperty().bind(getUseAudioSegmentStartToneSwitch().selectedProperty().not());
+        }
+
+        return mTestStartToneButton;
+    }
+
+    public Button getTestDropToneButton()
+    {
+        if(mTestDropToneButton == null)
+        {
+            mTestDropToneButton = new Button("Test");
+            IconNode iconNode = new IconNode(FontAwesome.PLAY);
+            iconNode.setFill(Color.CORNFLOWERBLUE);
+            mTestDropToneButton.setGraphic(iconNode);
+            mTestDropToneButton.setOnAction(_ ->
+                    play(mPlaybackPreference.getDropTone(PlaybackPreference.TONE_LENGTH_SAMPLES * 3),
+                            PlayTestAudioRequest.ALL_CHANNELS));
+            mTestDropToneButton.disableProperty().bind(getUseAudioSegmentDropToneSwitch().selectedProperty().not());
+        }
+
+        return mTestDropToneButton;
+    }
+
+    public ComboBox<ToneFrequency> getDropToneFrequencyComboBox()
+    {
+        if(mDropToneFrequencyComboBox == null)
+        {
+            mDropToneFrequencyComboBox = new ComboBox<>();
+            mDropToneFrequencyComboBox.getItems().addAll(ToneFrequency.values());
+            mDropToneFrequencyComboBox.getSelectionModel().select(mPlaybackPreference.getDropToneFrequency());
+            mDropToneFrequencyComboBox.getSelectionModel().selectedItemProperty()
+                .addListener((observable, oldValue, newValue) -> mPlaybackPreference.setDropToneFrequency(newValue));
+            mDropToneFrequencyComboBox.disableProperty().bind(getUseAudioSegmentDropToneSwitch().selectedProperty().not());
+        }
+
+        return mDropToneFrequencyComboBox;
+    }
+
+    public ComboBox<ToneVolume> getDropToneVolumeComboBox()
+    {
+        if(mDropToneVolumeComboBox == null)
+        {
+            mDropToneVolumeComboBox = new ComboBox<>();
+            mDropToneVolumeComboBox.getItems().addAll(ToneVolume.values());
+            mDropToneVolumeComboBox.getSelectionModel().select(mPlaybackPreference.getDropToneVolume());
+            mDropToneVolumeComboBox.getSelectionModel().selectedItemProperty()
+                .addListener((observable, oldValue, newValue) -> mPlaybackPreference.setDropToneVolume(newValue));
+            mDropToneVolumeComboBox.disableProperty().bind(getUseAudioSegmentDropToneSwitch().selectedProperty().not());
+        }
+
+        return mDropToneVolumeComboBox;
+    }
+
+    public ComboBox<ToneFrequency> getStartToneFrequencyComboBox()
+    {
+        if(mStartToneFrequencyComboBox == null)
+        {
+            mStartToneFrequencyComboBox = new ComboBox<>();
+            mStartToneFrequencyComboBox.getItems().addAll(ToneFrequency.values());
+            mStartToneFrequencyComboBox.getSelectionModel().select(mPlaybackPreference.getStartToneFrequency());
+            mStartToneFrequencyComboBox.getSelectionModel().selectedItemProperty()
+                .addListener((observable, oldValue, newValue) -> mPlaybackPreference.setStartToneFrequency(newValue));
+            mStartToneFrequencyComboBox.disableProperty().bind(getUseAudioSegmentStartToneSwitch().selectedProperty().not());
+        }
+
+        return mStartToneFrequencyComboBox;
+    }
+
+    public ComboBox<ToneVolume> getStartToneVolumeComboBox()
+    {
+        if(mStartToneVolumeComboBox == null)
+        {
+            mStartToneVolumeComboBox = new ComboBox<>();
+            mStartToneVolumeComboBox.getItems().addAll(ToneVolume.values());
+            mStartToneVolumeComboBox.getSelectionModel().select(mPlaybackPreference.getStartToneVolume());
+            mStartToneVolumeComboBox.getSelectionModel().selectedItemProperty()
+                .addListener((observable, oldValue, newValue) -> mPlaybackPreference.setStartToneVolume(newValue));
+            mStartToneVolumeComboBox.disableProperty().bind(getUseAudioSegmentStartToneSwitch().selectedProperty().not());
+        }
+
+        return mStartToneVolumeComboBox;
+    }
+
+    /**
+     * Sends a request to play the audio samples over the specified audio playback channel
+     * @param audioSamples with 8 kHz mono PCM samples
+     * @param channel number (0=mono/left, 1=right, etc.)
+     */
+    private void play(float[] audioSamples, int channel)
+    {
+        MyEventBus.getGlobalEventBus().post(new PlayTestAudioRequest(audioSamples, channel));
+    }
+}

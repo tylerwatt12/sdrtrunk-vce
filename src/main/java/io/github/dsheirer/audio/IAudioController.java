@@ -17,40 +17,25 @@
  * ****************************************************************************
  */
 
-package io.github.dsheirer.gui.preference;
+package io.github.dsheirer.audio;
+
+import io.github.dsheirer.audio.playback.AudioChannel;
+import io.github.dsheirer.audio.playback.AudioPlaybackDeviceDescriptor;
+import io.github.dsheirer.sample.Listener;
+import java.util.List;
 
 /**
- * Preference editor tree node enumeration.
+ * Interface for controlling one or more audio channels
  */
-public enum PreferenceEditorType
+public interface IAudioController
 {
-    APPLICATION("Application"),
-    CHANNEL_EVENT("Channel Events"),
-    NOW_PLAYING("Systems"),
-    DIRECTORY("Directories"),
-    JMBE_LIBRARY("JMBE Audio Library"),
-    VOICE_DECRYPTION_MODULE("Voice Decryption Module"),
-    AUDIO_MP3("MP3"),
-    AUDIO_RECORD("Record"),
-    AUDIO_OUTPUT("Playback/Tones"),
-    AUDIO_CALL_MANAGEMENT("Call Management"),
-    SOURCE_TUNERS("Tuners"),
-    STATS_SERVER("Stats Server"),
-    TALKGROUP_FORMAT("Talkgroup & Radio ID"),
-    VECTOR_CALIBRATION("Vector Calibration"),
-    WEB_SERVER("Web Server"),
-    DEFAULT("Default");
+	/* Current Mixer and MixerChannel configuration */
+	public void setAudioPlaybackDevice(AudioPlaybackDeviceDescriptor device ) throws AudioException;
+	public AudioPlaybackDeviceDescriptor getAudioPlaybackDevice() throws AudioException;
+	/* Audio Channel(s) */
+	public List<AudioChannel> getAudioChannels();
 
-    private String mLabel;
-
-    PreferenceEditorType(String label)
-    {
-        mLabel = label;
-    }
-
-    @Override
-    public String toString()
-    {
-        return mLabel;
-    }
+	/* Controller Audio Event Listener */
+	public void addAudioEventListener(Listener<AudioEvent> listener );
+	public void removeAudioEventListener(Listener<AudioEvent> listener );
 }

@@ -27,10 +27,10 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
-class RetiredLocalPlaybackUiContractTest
+class LocalPlaybackUiContractTest
 {
     private static final Path ALIAS_UI_DIRECTORY =
         Path.of("src/main/java/io/github/dsheirer/gui/configuration/alias");
@@ -38,37 +38,41 @@ class RetiredLocalPlaybackUiContractTest
         Path.of("src/main/java/io/github/dsheirer/gui/configuration/radioreference");
 
     @Test
-    void aliasEditorsCannotExposeOrModifyReceiverLocalPlaybackPriority() throws Exception
+    void aliasEditorsExposeReceiverLocalPlaybackPriority() throws Exception
     {
-        for(String fileName : List.of("AliasItemEditor.java", "AliasBulkEditor.java",
-            "AliasConfigurationEditor.java"))
-        {
-            String source = Files.readString(ALIAS_UI_DIRECTORY.resolve(fileName));
-            assertFalse(source.contains("getPlaybackPriority("), fileName);
-            assertFalse(source.contains("setCallPriority("), fileName);
-            assertFalse(source.contains("new Label(\"Listen\")"), fileName);
-            assertFalse(source.contains("new Label(\"Priority\")"), fileName);
-            assertFalse(source.contains("new TableColumn<>(\"Listen\")"), fileName);
-        }
+        String itemEditor = Files.readString(ALIAS_UI_DIRECTORY.resolve("AliasItemEditor.java"));
+        String bulkEditor = Files.readString(ALIAS_UI_DIRECTORY.resolve("AliasBulkEditor.java"));
+        String configurationEditor =
+            Files.readString(ALIAS_UI_DIRECTORY.resolve("AliasConfigurationEditor.java"));
+
+        assertTrue(itemEditor.contains("getPlaybackPriority()"));
+        assertTrue(itemEditor.contains("setCallPriority("));
+        assertTrue(itemEditor.contains("new Label(\"Listen\")"));
+        assertTrue(itemEditor.contains("new Label(\"Priority\")"));
+        assertTrue(bulkEditor.contains("setCallPriority("));
+        assertTrue(configurationEditor.contains("new TableColumn<>(\"Listen\")"));
     }
 
     @Test
-    void radioReferenceImportCannotCreateMutedAliases() throws Exception
+    void radioReferenceImportExposesEncryptedTalkgroupMutePolicy() throws Exception
     {
         for(String fileName : List.of("SystemTalkgroupSelectionEditor.java", "TalkgroupEditor.java"))
         {
             String source = Files.readString(RADIO_REFERENCE_UI_DIRECTORY.resolve(fileName));
-            assertFalse(source.contains("Set Encrypted Talkgroups To Muted"), fileName);
-            assertFalse(source.contains("EncryptedAsDoNotMonitor"), fileName);
-            assertFalse(source.contains("setEncryptedDoNotMonitor"), fileName);
-            assertFalse(source.contains("Priority.DO_NOT_MONITOR"), fileName);
+            assertTrue(source.contains("RadioReferenceAliasPlaybackPolicy.apply("), fileName);
         }
+
+        String selectionEditor =
+            Files.readString(RADIO_REFERENCE_UI_DIRECTORY.resolve("SystemTalkgroupSelectionEditor.java"));
+        assertTrue(selectionEditor.contains("Set Encrypted Talkgroups To Muted"));
+        assertTrue(selectionEditor.contains("isEncryptedTalkgroupDoNotMonitor()"));
+        assertTrue(selectionEditor.contains("setEncryptedTalkgroupDoNotMonitor("));
     }
 
     @Test
-    void legacyMonitorPriorityRemainsPartOfAliasData()
+    void monitorPriorityRemainsPartOfAliasAudioPolicy()
     {
-        Alias alias = new Alias("Legacy priority");
+        Alias alias = new Alias("Playback priority");
         Priority priority = new Priority(12);
         alias.addAliasID(priority);
 

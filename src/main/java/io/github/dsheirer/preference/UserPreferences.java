@@ -32,6 +32,7 @@ import io.github.dsheirer.preference.identifier.TalkgroupFormatPreference;
 import io.github.dsheirer.preference.javafx.JavaFxPreferences;
 import io.github.dsheirer.preference.mp3.MP3Preference;
 import io.github.dsheirer.preference.nowplaying.NowPlayingPreference;
+import io.github.dsheirer.preference.playback.PlaybackPreference;
 import io.github.dsheirer.preference.radioreference.RadioReferencePreference;
 import io.github.dsheirer.preference.record.RecordPreference;
 import io.github.dsheirer.preference.source.ChannelMultiFrequencyPreference;
@@ -68,6 +69,7 @@ public class UserPreferences implements Listener<PreferenceType>
     private VoiceDecryptionModulePreference mVoiceDecryptionModulePreference;
     private MP3Preference mMP3Preference;
     private NowPlayingPreference mNowPlayingPreference;
+    private PlaybackPreference mPlaybackPreference;
     private RadioReferencePreference mRadioReferencePreference;
     private RecordPreference mRecordPreference;
     private TalkgroupFormatPreference mTalkgroupFormatPreference;
@@ -161,6 +163,14 @@ public class UserPreferences implements Listener<PreferenceType>
     }
 
     /**
+     * Audio playback preferences
+     */
+    public PlaybackPreference getPlaybackPreference()
+    {
+        return mPlaybackPreference;
+    }
+
+    /**
      * Radio reference web services preferences
      */
     public RadioReferencePreference getRadioReferencePreference()
@@ -245,6 +255,7 @@ public class UserPreferences implements Listener<PreferenceType>
         mVoiceDecryptionModulePreference = new VoiceDecryptionModulePreference(this::receive);
         mMP3Preference = new MP3Preference(this::receive);
         mNowPlayingPreference = new NowPlayingPreference(this::receive);
+        mPlaybackPreference = new PlaybackPreference(this::receive);
         mRadioReferencePreference = new RadioReferencePreference(this::receive);
         mRecordPreference = new RecordPreference(this::receive);
         mTalkgroupFormatPreference = new TalkgroupFormatPreference(this::receive);

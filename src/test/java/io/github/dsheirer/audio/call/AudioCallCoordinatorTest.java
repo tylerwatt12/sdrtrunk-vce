@@ -20,6 +20,7 @@
 package io.github.dsheirer.audio.call;
 
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
+import io.github.dsheirer.audio.playback.ManagedPlayableAudioCall;
 import io.github.dsheirer.channel.quality.ControlChannelQualityProvider;
 import io.github.dsheirer.channel.quality.ControlChannelQualityRegistry;
 import io.github.dsheirer.channel.quality.ControlChannelQualitySnapshot;
@@ -50,15 +51,85 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class AudioCallCoordinatorTest
 {
     @Test
-    void coordinatorApiCannotReconnectDecodedCallSpeakerPlayback()
+    void liveSpeakerCallReceivesAudioAndCompletionWithoutChangingCompletedFanout() throws Exception
     {
-        for(var constructor : AudioCallCoordinator.class.getDeclaredConstructors())
+        List<ManagedPlayableAudioCall> playbackCalls = new CopyOnWriteArrayList<>();
+        List<CompletedAudioCall> completedCalls = new CopyOnWriteArrayList<>();
+        AudioCallCoordinator coordinator = new AudioCallCoordinator(
+            new TestCallManagementProvider(false, false), playbackCalls::add,
+            completedCalls::add, null, null);
+
+        try
         {
-            for(Class<?> parameterType : constructor.getParameterTypes())
-            {
-                assertFalse(parameterType.getPackageName().equals("io.github.dsheirer.audio.playback"),
-                    "The call coordinator must not accept a receiver-speaker playback dependency");
-            }
+            float[] audio = new float[] {0.25f, -0.5f};
+            AudioCallSnapshot active = snapshot(1, 1, 1200, false, false);
+            coordinator.receive(new AudioCallEvent(AudioCallEventType.AUDIO_FRAME, active,
+                System.currentTimeMillis(), audio));
+
+            awaitCondition(() -> playbackCalls.size() == 1 &&
+                playbackCalls.getFirst().getAudioBufferCount() == 1,
+                "Expected one live speaker call with its first audio frame");
+            ManagedPlayableAudioCall playbackCall = playbackCalls.getFirst();
+            assertEquals(active.callId(), playbackCall.callId());
+            assertArrayEquals(audio, playbackCall.getAudioBuffer(0));
+            assertFalse(playbackCall.isComplete());
+
+            coordinator.receive(completionEvent(active));
+            awaitCondition(() -> playbackCall.isComplete() && completedCalls.size() == 1,
+                "Expected the same live call to close and one completed call to fan out");
+            assertEquals(active.callId(), completedCalls.getFirst().snapshot().callId());
+            assertArrayEquals(audio, completedCalls.getFirst().audioBuffers().getFirst());
+        }
+        finally
+        {
+            coordinator.dispose();
+        }
+    }
+
+    @Test
+    void stickyLiveSpeakerWinnerRemainsIndependentFromFinalQualityElection() throws Exception
+    {
+        long now = System.currentTimeMillis();
+        String liveWinnerGuid = "00000000-0000-0000-0000-000000000201";
+        String finalWinnerGuid = "00000000-0000-0000-0000-000000000202";
+        ControlChannelQualityRegistry qualityRegistry = new ControlChannelQualityRegistry();
+        qualityRegistry.receive(quality(liveWinnerGuid, now, true, 55.0d));
+        qualityRegistry.receive(quality(finalWinnerGuid, now, true, 99.0d));
+        List<ManagedPlayableAudioCall> playbackCalls = new CopyOnWriteArrayList<>();
+        List<CompletedAudioCall> completedCalls = new CopyOnWriteArrayList<>();
+        AudioCallCoordinator coordinator = new AudioCallCoordinator(
+            new TestCallManagementProvider(true, false, true), playbackCalls::add,
+            completedCalls::add, null, null, DuplicateCallPriorityProvider.NONE, qualityRegistry,
+            100L, 1_000L, null);
+
+        try
+        {
+            AudioCallSnapshot liveWinner = snapshot(21, 1, 1200, 9001, "Test System", liveWinnerGuid,
+                1_000L, 2_000L, 1, false);
+            AudioCallSnapshot finalWinner = snapshot(22, 2, 1200, 9002, "Test System", finalWinnerGuid,
+                1_000L, 2_000L, 1, false);
+            coordinator.receive(audioEvent(liveWinner, 800));
+            coordinator.receive(audioEvent(finalWinner, 800));
+
+            awaitCondition(() -> playbackCalls.size() == 2 &&
+                playbackCalls.stream().anyMatch(ManagedPlayableAudioCall::isDuplicate),
+                "Expected duplicate state on the live speaker calls");
+            ManagedPlayableAudioCall livePlayback = playbackCalls.stream()
+                .filter(call -> call.callId().equals(liveWinner.callId())).findFirst().orElseThrow();
+            ManagedPlayableAudioCall suppressedPlayback = playbackCalls.stream()
+                .filter(call -> call.callId().equals(finalWinner.callId())).findFirst().orElseThrow();
+            assertFalse(livePlayback.isDuplicate(), "The first stable live candidate remains audible");
+            assertTrue(suppressedPlayback.isDuplicate(), "The other live candidate is suppressed at the speaker");
+
+            coordinator.receive(completionEvent(liveWinner));
+            coordinator.receive(completionEvent(finalWinner));
+            awaitCondition(() -> completedCalls.size() == 1, "Expected one final logical call");
+            assertEquals(finalWinner.callId(), completedCalls.getFirst().snapshot().callId(),
+                "Completed outputs still use the current quality election");
+        }
+        finally
+        {
+            coordinator.dispose();
         }
     }
 

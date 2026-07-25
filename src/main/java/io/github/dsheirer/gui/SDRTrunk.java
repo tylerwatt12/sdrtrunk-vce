@@ -29,6 +29,7 @@ import io.github.dsheirer.audio.call.DuplicateCallPriorityProvider;
 import io.github.dsheirer.audio.broadcast.AudioStreamingManager;
 import io.github.dsheirer.audio.broadcast.BroadcastFormat;
 import io.github.dsheirer.audio.broadcast.BroadcastStatusPanel;
+import io.github.dsheirer.audio.playback.AudioPlaybackManager;
 import io.github.dsheirer.channel.quality.ControlChannelQualityRegistry;
 import io.github.dsheirer.controller.ControllerPanel;
 import io.github.dsheirer.controller.channel.Channel;
@@ -153,6 +154,7 @@ public class SDRTrunk implements Listener<TunerEvent>
     private boolean mResourceStatusVisible;
     private boolean mNowPlayingLowerViewsVisible;
     private AudioCallCoordinator mAudioCallCoordinator;
+    private AudioPlaybackManager mAudioPlaybackManager;
     private P25ActivityLogService mP25ActivityLogService;
     private StatsWebServerService mStatsWebServerService;
     private AudioRecordingManager mAudioRecordingManager;
@@ -261,6 +263,8 @@ public class SDRTrunk implements Listener<TunerEvent>
 
         new ChannelSelectionManager(mConfigurationManager.getChannelModel());
 
+        mAudioPlaybackManager = new AudioPlaybackManager(mUserPreferences);
+
         mP25ActivityLogService = new P25ActivityLogService(mUserPreferences);
 
         mAudioRecordingManager = new AudioRecordingManager(mUserPreferences,
@@ -274,9 +278,8 @@ public class SDRTrunk implements Listener<TunerEvent>
         mStatsWebServerService = new StatsWebServerService(mUserPreferences,
             mConfigurationManager.getChannelProcessingManager(), mP25ActivityLogService);
         mControlChannelQualityRegistry = new ControlChannelQualityRegistry();
-        //Receiver-node speaker playback is retired.  Completed calls continue to flow independently to recording,
-        //streaming providers, and bounded browser Listen-list delivery.
-        mAudioCallCoordinator = new AudioCallCoordinator(mUserPreferences, mAudioRecordingManager,
+        mAudioCallCoordinator = new AudioCallCoordinator(mUserPreferences, mAudioPlaybackManager,
+            mAudioRecordingManager,
             mAudioStreamingManager, mStatsWebServerService::receive, DuplicateCallPriorityProvider.NONE,
             mControlChannelQualityRegistry);
 
@@ -301,7 +304,7 @@ public class SDRTrunk implements Listener<TunerEvent>
 
         if(!GraphicsEnvironment.isHeadless())
         {
-            mControllerPanel = new ControllerPanel(mConfigurationManager, mIconModel, mapService,
+            mControllerPanel = new ControllerPanel(mConfigurationManager, mAudioPlaybackManager, mIconModel, mapService,
                     mSettingsManager, mTunerManager, mUserPreferences, mStatsWebServerService, mSystemsVisible,
                     mNowPlayingLowerViewsVisible, visible -> {
                         mNowPlayingLowerViewsVisible = visible;
@@ -891,6 +894,11 @@ public class SDRTrunk implements Listener<TunerEvent>
         if(mAudioCallCoordinator != null)
         {
             mAudioCallCoordinator.dispose();
+        }
+        if(mAudioPlaybackManager != null)
+        {
+            mAudioPlaybackManager.dispose();
+            mAudioPlaybackManager = null;
         }
         mAudioRecordingManager.stop();
         if(mControlChannelQualityRegistry != null)

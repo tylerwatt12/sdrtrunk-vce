@@ -27,6 +27,7 @@ import io.github.dsheirer.gui.preference.decoder.VoiceDecryptionModulePreference
 import io.github.dsheirer.gui.preference.directory.DirectoryPreferenceEditor;
 import io.github.dsheirer.gui.preference.mp3.MP3PreferenceEditor;
 import io.github.dsheirer.gui.preference.nowplaying.NowPlayingPreferenceEditor;
+import io.github.dsheirer.gui.preference.playback.PlaybackPreferenceEditor;
 import io.github.dsheirer.gui.preference.record.RecordPreferenceEditor;
 import io.github.dsheirer.gui.preference.stats.StatsServerPreferenceEditor;
 import io.github.dsheirer.gui.preference.stats.WebServerPreferenceEditor;
@@ -53,6 +54,8 @@ public class PreferenceEditorFactory
                 return new CallManagementPreferenceEditor(userPreferences);
             case AUDIO_MP3:
                 return new MP3PreferenceEditor(userPreferences);
+            case AUDIO_OUTPUT:
+                return new PlaybackPreferenceEditor(userPreferences);
             case AUDIO_RECORD:
                 return new RecordPreferenceEditor(userPreferences);
             case CHANNEL_EVENT:
