@@ -143,6 +143,14 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
         return mConfigurationManager;
     }
 
+    /**
+     * Allows protocol editors to keep restart-sensitive settings immutable while a channel is running.
+     */
+    protected void channelProcessingStateChanged(boolean processing)
+    {
+        //Optional subclass hook.
+    }
+
     @Override
     public void dispose()
     {
@@ -175,6 +183,7 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
         {
             setPlayButtonState(getItem().processingProperty().get());
             getItem().processingProperty().addListener(mChannelProcessingMonitor);
+            channelProcessingStateChanged(getItem().isProcessing());
         }
 
         boolean disable = (channel == null);
@@ -950,6 +959,7 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
                 setPlayButtonState(newValue);
                 getRadresGuidField().setDisable(newValue);
                 updateClearSiteStatisticsButtonState();
+                channelProcessingStateChanged(newValue);
             }
         }
     }

@@ -15,7 +15,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
-import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.stats.activity.DmrActivitySchema;
 import io.github.dsheirer.stats.activity.P25ActivityLogSchema;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.io.IOException;
@@ -29,7 +29,6 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -41,9 +40,10 @@ import java.util.regex.Pattern;
  * The single application-owned database migration entry point.
  *
  * <p>The application creates a safety backup, makes a staged copy, and launches this class in a child process. This
- * migrator accepts only supported, completely recognizable schema combinations; updates all required subsystems in
- * one transaction; and validates the staged database before the application can promote it. It must never be aimed
- * directly at a live database.</p>
+ * migrator accepts only a completely recognizable schema, rebases portable paths when importing an already-current
+ * profile, and validates the staged database before the application can promote it. Release-to-release schema
+ * transitions are added here only during preparation of a numbered public release. It must never be aimed directly
+ * at a live database.</p>
  */
 public final class ApplicationDatabaseMigrator
 {
@@ -55,14 +55,10 @@ public final class ApplicationDatabaseMigrator
 
     private static final String ALIAS_VERSION_KEY = "alias_schema_version";
     private static final String P25_VERSION_KEY = "p25_activity_schema_version";
-    private static final String ALIAS_SOURCE_VERSION = "2";
     private static final String ALIAS_TARGET_VERSION = "3";
-    private static final String P25_SOURCE_VERSION_19 = "19";
-    private static final String P25_SOURCE_VERSION_20 = "20";
     private static final String P25_TARGET_VERSION = "21";
+    private static final String DMR_TARGET_VERSION = Integer.toString(DmrActivitySchema.SCHEMA_VERSION);
     private static final String TRUNKED_SITE_TARGET_VERSION = Integer.toString(TrunkedSiteSchema.SCHEMA_VERSION);
-    private static final List<String> TRUNKED_SITE_TABLES = List.of(
-        "trunked_site_snapshot", "trunked_site_channel_summary", "trunked_site_neighbor_summary");
     private static final String PORTABLE_PREFERENCES_KEY = "portable_java_preferences_v1";
     private static final Set<String> PORTABLE_DIRECTORY_KEYS = Set.of(
         "directory.application.logs",
@@ -171,9 +167,8 @@ public final class ApplicationDatabaseMigrator
             SchemaState state = SchemaState.read(connection);
             output.println("Detected " + state.description() + ".");
             state.requireSupported();
-            preflight(connection, state);
+            preflight(connection);
 
-            int aliasCount = ALIAS_SOURCE_VERSION.equals(state.aliasVersion()) ? count(connection, "alias") : -1;
             boolean relocationRequired = relocation != null && !relocation.source().equals(relocation.target());
 
             if(!state.requiresMigration() && !relocationRequired)
@@ -186,32 +181,11 @@ public final class ApplicationDatabaseMigrator
             }
 
             output.println("Pre-migration checks passed. Updating the staged database.");
-            int rebased = migrateInTransaction(connection, state, relocation, aliasCount);
+            int rebased = migrateInTransaction(connection, relocation);
             validateCurrentDatabase(connection);
             requireForeignKeysValid(connection);
             requireIntegrity(connection, "PRAGMA quick_check", "Quick check");
             finalizeStagedDatabase(connection);
-
-            if(ALIAS_SOURCE_VERSION.equals(state.aliasVersion()))
-            {
-                output.println("RESULT: Alias schema migration complete: v2 -> v3 description storage.");
-            }
-
-            if(P25_SOURCE_VERSION_19.equals(state.p25Version()))
-            {
-                output.println("RESULT: P25 activity schema migration complete: v19 -> v21 foreign-system bands " +
-                    "and indexed quality retention.");
-            }
-            else if(P25_SOURCE_VERSION_20.equals(state.p25Version()))
-            {
-                output.println("RESULT: P25 activity schema migration complete: v20 -> v21 indexed quality " +
-                    "retention.");
-            }
-
-            if(state.trunkedSiteVersion() == null)
-            {
-                output.println("RESULT: Trunked-site schema migration complete: absent -> v2.");
-            }
 
             output.println("Portable directory preferences updated: " + rebased + ".");
             output.println("RESULT: Application database migration and validation complete.");
@@ -243,57 +217,14 @@ public final class ApplicationDatabaseMigrator
             "Refusing direct database path: " + database);
     }
 
-    private static void preflight(Connection connection, SchemaState state)
-        throws SQLException
+    private static void preflight(Connection connection) throws SQLException
     {
-        if(ALIAS_SOURCE_VERSION.equals(state.aliasVersion()))
-        {
-            SdrTrunkDatabaseSchema.validateAliasV2ForUpgrade(connection);
-
-            if(columns(connection, "alias").contains("description"))
-            {
-                throw new SQLException("Alias description column already exists while schema metadata is v2. " +
-                    "Refusing a partial or previously modified schema.");
-            }
-        }
-        else
-        {
-            SdrTrunkDatabaseSchema.validate(connection);
-        }
-
-        switch(state.p25Version())
-        {
-            case P25_SOURCE_VERSION_19 ->
-            {
-                P25ActivityLogSchema.validateV19ForUpgrade(connection);
-                requireObjectAbsent(connection, "table", "p25_foreign_system_band", "P25 activity v19");
-                requireObjectAbsent(connection, "table", "p25_foreign_system_band_summary", "P25 activity v19");
-                requireObjectAbsent(connection, "index", "idx_p25_control_quality_retention", "P25 activity v19");
-            }
-            case P25_SOURCE_VERSION_20 ->
-            {
-                P25ActivityLogSchema.validateV20ForUpgrade(connection);
-                requireObjectAbsent(connection, "index", "idx_p25_control_quality_retention", "P25 activity v20");
-            }
-            case P25_TARGET_VERSION -> P25ActivityLogSchema.validate(connection);
-            default -> throw new IllegalStateException("Unsupported P25 version passed preflight");
-        }
-
-        if(state.trunkedSiteVersion() == null)
-        {
-            requireTrunkedSiteSubsystemAbsent(connection);
-        }
-        else
-        {
-            TrunkedSiteSchema.validate(connection);
-        }
-
+        validateCurrentDatabase(connection);
         requireIntegrity(connection, "PRAGMA integrity_check", "Integrity check");
         requireForeignKeysValid(connection);
     }
 
-    private static int migrateInTransaction(Connection connection, SchemaState state,
-                                            DataRootRelocation relocation, int aliasCount)
+    private static int migrateInTransaction(Connection connection, DataRootRelocation relocation)
         throws IOException, SQLException
     {
         try(Statement statement = connection.createStatement())
@@ -305,39 +236,9 @@ public final class ApplicationDatabaseMigrator
                 statement.execute("BEGIN IMMEDIATE");
                 transactionOpen = true;
 
-                if(ALIAS_SOURCE_VERSION.equals(state.aliasVersion()))
-                {
-                    statement.executeUpdate("ALTER TABLE alias ADD COLUMN description TEXT");
-                    SdrTrunkDatabaseStartup.setMetadata(connection, ALIAS_VERSION_KEY, ALIAS_TARGET_VERSION);
-                }
-
-                if(P25_SOURCE_VERSION_19.equals(state.p25Version()))
-                {
-                    P25ActivityLogSchema.createForeignSystemBandTables(statement);
-                }
-
-                if(P25_SOURCE_VERSION_19.equals(state.p25Version()) ||
-                    P25_SOURCE_VERSION_20.equals(state.p25Version()))
-                {
-                    P25ActivityLogSchema.createControlChannelQualityRetentionIndex(statement);
-                    SdrTrunkDatabaseStartup.setMetadata(connection, P25_VERSION_KEY, P25_TARGET_VERSION);
-                }
-
                 int rebased = rebasePortableDirectoryPreferences(connection, relocation);
 
-                if(state.trunkedSiteVersion() == null)
-                {
-                    requireTrunkedSiteSubsystemAbsent(connection);
-                    TrunkedSiteSchema.create(connection);
-                }
-
                 validateCurrentDatabase(connection);
-
-                if(aliasCount >= 0 && aliasCount != count(connection, "alias"))
-                {
-                    throw new SQLException("Alias row count changed during migration.");
-                }
-
                 requireForeignKeysValid(connection);
                 requireIntegrity(connection, "PRAGMA quick_check", "Quick check");
                 statement.execute("COMMIT");
@@ -469,79 +370,8 @@ public final class ApplicationDatabaseMigrator
     {
         SdrTrunkDatabaseSchema.validate(connection);
         P25ActivityLogSchema.validate(connection);
+        DmrActivitySchema.validate(connection);
         TrunkedSiteSchema.validate(connection);
-    }
-
-    private static void requireTrunkedSiteSubsystemAbsent(Connection connection) throws SQLException
-    {
-        for(String table : TRUNKED_SITE_TABLES)
-        {
-            if(tableExists(connection, table))
-            {
-                throw new SQLException("Trunked-site schema metadata is absent but table [" + table +
-                    "] already exists. Refusing to repair an ambiguous partial schema.");
-            }
-        }
-    }
-
-    private static boolean tableExists(Connection connection, String table) throws SQLException
-    {
-        return objectExists(connection, "table", table);
-    }
-
-    private static void requireObjectAbsent(Connection connection, String type, String name, String schema)
-        throws SQLException
-    {
-        if(objectExists(connection, type, name))
-        {
-            throw new SQLException(schema + " unexpectedly contains later-version " + type + " [" + name +
-                "]. Refusing to repair an ambiguous partial migration.");
-        }
-    }
-
-    private static boolean objectExists(Connection connection, String type, String name) throws SQLException
-    {
-        try(PreparedStatement statement = connection.prepareStatement(
-            "SELECT 1 FROM sqlite_master WHERE type=? AND name=?"))
-        {
-            statement.setString(1, type);
-            statement.setString(2, name);
-
-            try(ResultSet resultSet = statement.executeQuery())
-            {
-                return resultSet.next();
-            }
-        }
-    }
-
-    private static Set<String> columns(Connection connection, String table) throws SQLException
-    {
-        Set<String> columns = new HashSet<>();
-
-        try(Statement statement = connection.createStatement();
-            ResultSet resultSet = statement.executeQuery("PRAGMA table_info(" + table + ")"))
-        {
-            while(resultSet.next())
-            {
-                columns.add(resultSet.getString("name"));
-            }
-        }
-
-        return columns;
-    }
-
-    private static int count(Connection connection, String table) throws SQLException
-    {
-        try(Statement statement = connection.createStatement();
-            ResultSet resultSet = statement.executeQuery("SELECT COUNT(*) FROM " + table))
-        {
-            if(resultSet.next())
-            {
-                return resultSet.getInt(1);
-            }
-        }
-
-        throw new SQLException("Unable to count rows in table [" + table + "]");
     }
 
     private static Connection open(Path database) throws SQLException
@@ -637,41 +467,49 @@ public final class ApplicationDatabaseMigrator
         return message == null || message.isBlank() ? exception.getClass().getSimpleName() : message;
     }
 
-    private record SchemaState(String aliasVersion, String p25Version, String trunkedSiteVersion)
+    private record SchemaState(String aliasVersion, String p25Version, String trunkedSiteVersion, String dmrVersion)
     {
         private static SchemaState read(Connection connection) throws SQLException
         {
             return new SchemaState(metadata(connection, ALIAS_VERSION_KEY), metadata(connection, P25_VERSION_KEY),
-                metadata(connection, TrunkedSiteSchema.SCHEMA_VERSION_KEY));
+                metadata(connection, TrunkedSiteSchema.SCHEMA_VERSION_KEY),
+                metadata(connection, DmrActivitySchema.SCHEMA_VERSION_KEY));
         }
 
         private boolean requiresMigration()
         {
             return !ALIAS_TARGET_VERSION.equals(aliasVersion) || !P25_TARGET_VERSION.equals(p25Version) ||
-                !TRUNKED_SITE_TARGET_VERSION.equals(trunkedSiteVersion);
+                !TRUNKED_SITE_TARGET_VERSION.equals(trunkedSiteVersion) ||
+                !DMR_TARGET_VERSION.equals(dmrVersion);
         }
 
         private void requireSupported() throws UnsupportedSchemaVersionException
         {
-            if(!ALIAS_SOURCE_VERSION.equals(aliasVersion) && !ALIAS_TARGET_VERSION.equals(aliasVersion))
+            if(!ALIAS_TARGET_VERSION.equals(aliasVersion))
             {
                 throw new UnsupportedSchemaVersionException(
-                    "Expected Alias schema v2 or v3, found [" + aliasVersion + "]. Refusing migration.");
+                    "Expected current Alias schema v3, found [" + aliasVersion + "]. Refusing migration.");
             }
 
-            if(!P25_SOURCE_VERSION_19.equals(p25Version) && !P25_SOURCE_VERSION_20.equals(p25Version) &&
-                !P25_TARGET_VERSION.equals(p25Version))
+            if(!P25_TARGET_VERSION.equals(p25Version))
             {
                 throw new UnsupportedSchemaVersionException(
-                    "Expected P25 activity schema v19, v20, or v21, found [" + p25Version +
+                    "Expected current P25 activity schema v21, found [" + p25Version +
                         "]. Refusing migration.");
             }
 
-            if(trunkedSiteVersion != null && !TRUNKED_SITE_TARGET_VERSION.equals(trunkedSiteVersion))
+            if(!TRUNKED_SITE_TARGET_VERSION.equals(trunkedSiteVersion))
             {
                 throw new UnsupportedSchemaVersionException(
-                    "Expected trunked-site schema to be absent or v2, found [" + trunkedSiteVersion +
+                    "Expected current trunked-site schema v2, found [" + trunkedSiteVersion +
                         "]. Refusing migration.");
+            }
+
+            if(!DMR_TARGET_VERSION.equals(dmrVersion))
+            {
+                throw new UnsupportedSchemaVersionException(
+                    "Expected current DMR activity schema v" + DMR_TARGET_VERSION + ", found [" +
+                        dmrVersion + "]. Refusing migration.");
             }
         }
 
@@ -679,8 +517,10 @@ public final class ApplicationDatabaseMigrator
         {
             return "Alias schema v" + (aliasVersion == null ? "unknown" : aliasVersion) +
                 ", P25 activity schema v" + (p25Version == null ? "unknown" : p25Version) +
-                ", and trunked-site schema " +
-                (trunkedSiteVersion == null ? "not installed" : "v" + trunkedSiteVersion);
+                ", trunked-site schema " +
+                (trunkedSiteVersion == null ? "not installed" : "v" + trunkedSiteVersion) +
+                ", and DMR activity schema " +
+                (dmrVersion == null ? "not installed" : "v" + dmrVersion);
         }
     }
 

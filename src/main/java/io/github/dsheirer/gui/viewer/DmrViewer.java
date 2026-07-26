@@ -29,6 +29,7 @@ import io.github.dsheirer.module.decode.dmr.DMRMessageFramer;
 import io.github.dsheirer.module.decode.dmr.DMRMessageProcessor;
 import io.github.dsheirer.module.decode.dmr.DMRTrafficChannelManager;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
+import io.github.dsheirer.module.decode.dmr.DMRChannelMode;
 import io.github.dsheirer.module.decode.p25.phase1.message.P25P1Message;
 import io.github.dsheirer.record.binary.BinaryReader;
 import io.github.dsheirer.sample.Broadcaster;
@@ -177,6 +178,7 @@ public class DmrViewer extends VBox
                 messageFramer.start();
                 DMRHardSymbolProcessor symbolProcessor = new DMRHardSymbolProcessor(messageFramer);
                 DecodeConfigDMR config = new DecodeConfigDMR();
+                config.setChannelMode(DMRChannelMode.TRUNKED);
                 config.setUseCompressedTalkgroups(useCompressed);
                 DMRMessageProcessor messageProcessor = new DMRMessageProcessor(config, crcMaskManager);
                 messageFramer.setListener(messageProcessor);
@@ -186,7 +188,7 @@ public class DmrViewer extends VBox
                 EventBus eventBus = new EventBus("debug");
                 eventBus.register(messagePackager);
                 Channel empty = new Channel("Empty");
-                empty.setDecodeConfiguration(new DecodeConfigDMR());
+                empty.setDecodeConfiguration(config);
                 DMRTrafficChannelManager trafficChannelManager = new DMRTrafficChannelManager(empty);
                 trafficChannelManager.setInterModuleEventBus(eventBus);
 

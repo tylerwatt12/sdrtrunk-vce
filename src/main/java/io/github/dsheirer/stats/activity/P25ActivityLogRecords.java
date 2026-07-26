@@ -11,6 +11,7 @@
 
 package io.github.dsheirer.stats.activity;
 
+import io.github.dsheirer.channel.metadata.activity.ChannelTag;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.util.List;
@@ -28,6 +29,7 @@ final class P25ActivityLogRecords
     {
         TRUNKED_SITE,
         CONVENTIONAL_P25,
+        CONVENTIONAL_DMR,
         CONVENTIONAL_ANALOG
     }
 
@@ -83,6 +85,16 @@ final class P25ActivityLogRecords
     }
 
     /**
+     * Confirmed service use for the durable site-channel inventory.  Activity events remain independent so a
+     * candidate that is not yet confirmed never removes grant/call history.
+     */
+    record ChannelFact(long observedAtEpochMilliseconds, String guid, String lcn, long frequencyHertz,
+                       ChannelTag serviceTag, boolean tdma, int timeslots)
+        implements P25ActivityLogRecord
+    {
+    }
+
+    /**
      * Late over-the-air talker alias update for an already-counted call.
      */
     record TalkerAliasUpdate(long observedAtEpochMilliseconds, String contextKey, String guid, Integer wacn,
@@ -104,6 +116,30 @@ final class P25ActivityLogRecords
         {
             return callStartEpochMilliseconds;
         }
+    }
+
+    /**
+     * One completed conventional DMR call. This writer message updates compact lifetime summaries and existing
+     * conventional channel/hour totals; it is never stored as an immutable per-call row.
+     */
+    record DmrConventionalCall(long callStartEpochMilliseconds, long callEndEpochMilliseconds, String contextKey,
+                               String guid, String channelName, String aliasListName, long frequencyHertz,
+                               int timeslot, DmrTargetKind targetKind, Integer talkgroupId, Integer sourceRadioId,
+                               Integer targetRadioId, boolean encrypted)
+        implements P25ActivityLogRecord
+    {
+        @Override
+        public long observedAtEpochMilliseconds()
+        {
+            return callEndEpochMilliseconds;
+        }
+    }
+
+    enum DmrTargetKind
+    {
+        GROUP,
+        PRIVATE,
+        UNKNOWN
     }
 
     record SiteSnapshot(long observedAtEpochMilliseconds, String guid, ContextKind contextKind, String snapshotHash,

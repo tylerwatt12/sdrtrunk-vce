@@ -22,6 +22,7 @@ import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.message.AbstractMessage;
 import io.github.dsheirer.message.IMessage;
 import io.github.dsheirer.module.decode.p25.P25FrequencyBandValidator;
+import io.github.dsheirer.module.decode.p25.P25FrequencyBandConfirmationTracker;
 import io.github.dsheirer.module.decode.p25.P25FrequencyBandPreloadDataContent;
 import io.github.dsheirer.module.decode.p25.phase1.message.IFrequencyBand;
 import io.github.dsheirer.module.decode.p25.phase1.message.IFrequencyBandReceiver;
@@ -65,6 +66,8 @@ public class P25P1MessageProcessor implements Listener<IMessage>
      * conveys channel information so that the uplink/downlink frequencies can be calculated
      */
     private Map<Integer,IFrequencyBand> mFrequencyBandMap = new TreeMap<>();
+    private final P25FrequencyBandConfirmationTracker mFrequencyBandConfirmationTracker =
+        new P25FrequencyBandConfirmationTracker();
 
     /**
      * Temporary holding for an extended source link control message while it awaits the extension message to arrive.
@@ -329,6 +332,7 @@ public class P25P1MessageProcessor implements Listener<IMessage>
     public void dispose()
     {
         mFrequencyBandMap.clear();
+        mFrequencyBandConfirmationTracker.reset();
         mMessageListener = null;
     }
 
@@ -351,8 +355,15 @@ public class P25P1MessageProcessor implements Listener<IMessage>
 
     private void processFrequencyBand(IFrequencyBand frequencyBand, String source)
     {
-        P25FrequencyBandValidator.RegistrationResult result =
-            P25FrequencyBandValidator.register(mFrequencyBandMap, frequencyBand);
+        P25FrequencyBandConfirmationTracker.ObservationResult observation =
+            mFrequencyBandConfirmationTracker.observe(mFrequencyBandMap, frequencyBand, "preload".equals(source));
+
+        if(observation.pending())
+        {
+            return;
+        }
+
+        P25FrequencyBandValidator.RegistrationResult result = observation.registration();
 
         if(result.replaced())
         {

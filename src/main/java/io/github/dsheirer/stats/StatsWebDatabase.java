@@ -181,6 +181,40 @@ class StatsWebDatabase
         Map.entry("first_seen", "summary.first_seen_ms"),
         Map.entry("last_seen", "summary.last_seen_ms")
     );
+    private static final Map<String,String> DMR_CONVENTIONAL_TALKGROUP_SORT_COLUMNS = Map.ofEntries(
+        Map.entry("id", "summary.talkgroup_id"),
+        Map.entry("talkgroup", "summary.talkgroup_id"),
+        Map.entry("alias", dmrAliasSortExpression("alias_talkgroup", "summary.talkgroup_id", "name")),
+        Map.entry("name", dmrAliasSortExpression("alias_talkgroup", "summary.talkgroup_id", "name")),
+        Map.entry("frequency", "summary.frequency_hz"),
+        Map.entry("slot", "summary.timeslot"),
+        Map.entry("calls", "summary.call_count"),
+        Map.entry("encrypted", "summary.encrypted_count"),
+        Map.entry("last_source", "summary.last_source_radio_id"),
+        Map.entry("first_seen", "summary.first_seen_ms"),
+        Map.entry("last_seen", "summary.last_seen_ms")
+    );
+    private static final Map<String,String> DMR_CONVENTIONAL_RADIO_SORT_COLUMNS = Map.ofEntries(
+        Map.entry("id", "summary.radio_id"),
+        Map.entry("radio", "summary.radio_id"),
+        Map.entry("alias", dmrAliasSortExpression("alias_radio", "summary.radio_id", "name")),
+        Map.entry("name", dmrAliasSortExpression("alias_radio", "summary.radio_id", "name")),
+        Map.entry("frequency", "summary.frequency_hz"),
+        Map.entry("slot", "summary.timeslot"),
+        Map.entry("calls", "summary.call_count"),
+        Map.entry("source_calls", "summary.source_call_count"),
+        Map.entry("target_calls", "summary.target_call_count"),
+        Map.entry("group_calls", "summary.group_call_count"),
+        Map.entry("private_calls", "summary.private_call_count"),
+        Map.entry("encrypted", "summary.encrypted_count"),
+        Map.entry("last_talkgroup", "summary.last_talkgroup_id"),
+        Map.entry("last_talkgroup_name",
+            dmrAliasSortExpression("alias_talkgroup", "summary.last_talkgroup_id", "name")),
+        Map.entry("last_peer", "summary.last_peer_radio_id"),
+        Map.entry("last_peer_name", dmrAliasSortExpression("alias_radio", "summary.last_peer_radio_id", "name")),
+        Map.entry("first_seen", "summary.first_seen_ms"),
+        Map.entry("last_seen", "summary.last_seen_ms")
+    );
 
     private final UserPreferences mUserPreferences;
     private final Path mDatabasePath;
@@ -1531,11 +1565,14 @@ class StatsWebDatabase
         String contextKey = request.requiredText("context");
         return read(connection -> {
             Map<String,Object> response = new LinkedHashMap<>();
-            response.put("context", first(queryRows(connection, """
+            Map<String,Object> context = first(queryRows(connection, """
                 SELECT id AS context_id, context_key, guid, kind_code, protocol_code, channel_name,
                     alias_list_name, decoder, nac, primary_frequency_hz, first_seen_ms, last_seen_ms
                 FROM receiver_context WHERE context_key = ? AND kind_code <> 1
-                """, contextKey), "Conventional context not found"));
+                """, contextKey), "Conventional context not found");
+            boolean dmr = number(context.get("kind_code")) == 3 && number(context.get("protocol_code")) == 3;
+            context.put("capabilities", conventionalCapabilities(dmr));
+            response.put("context", context);
             response.put("summaries", queryRows(connection, """
                 SELECT summary.* FROM conventional_activity_summary summary
                 JOIN receiver_context context ON context.id = summary.context_id
@@ -1543,6 +1580,79 @@ class StatsWebDatabase
                 """, contextKey));
             return response;
         });
+    }
+
+    /**
+     * Bounded conventional DMR talkgroup summaries for exactly one receiver context.
+     */
+    Map<String,Object> conventionalTalkgroups(StatsRequest request)
+    {
+        String contextKey = request.requiredText("context");
+        return read(connection -> {
+            requireDmrConventionalContext(connection, contextKey);
+            StringBuilder sql = new StringBuilder("""
+                SELECT context.id AS context_id, context.context_key, context.alias_list_name,
+                    summary.frequency_hz, summary.timeslot, summary.talkgroup_id,
+                    summary.first_seen_ms, summary.last_seen_ms, summary.call_count,
+                    summary.encrypted_count, summary.last_source_radio_id
+                FROM dmr_conventional_talkgroup_summary summary
+                JOIN receiver_context context ON context.id = summary.context_id
+                WHERE context.context_key = ? AND context.kind_code = 3 AND context.protocol_code = 3
+                """);
+            List<Object> parameters = new ArrayList<>(List.of(contextKey));
+            addDmrAliasSearch(sql, parameters, request.search(), "alias_talkgroup", "summary.talkgroup_id");
+            sql.append(" ORDER BY ")
+                .append(order(request, DMR_CONVENTIONAL_TALKGROUP_SORT_COLUMNS, "calls"))
+                .append(", summary.last_seen_ms DESC, summary.frequency_hz ASC, summary.timeslot ASC, ")
+                .append("summary.talkgroup_id ASC LIMIT ? OFFSET ?");
+            addPageParameters(parameters, request);
+            List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
+            mAliasResolver.enrichDmrTalkgroups(connection, rows, "talkgroup_id", "alias_");
+            mAliasResolver.enrichDmrRadios(connection, rows, "last_source_radio_id", "last_source_alias_");
+            return page(rows, request);
+        });
+    }
+
+    /**
+     * Bounded conventional DMR radio summaries for exactly one receiver context.
+     */
+    Map<String,Object> conventionalRadios(StatsRequest request)
+    {
+        String contextKey = request.requiredText("context");
+        return read(connection -> {
+            requireDmrConventionalContext(connection, contextKey);
+            StringBuilder sql = new StringBuilder("""
+                SELECT context.id AS context_id, context.context_key, context.alias_list_name,
+                    summary.frequency_hz, summary.timeslot, summary.radio_id,
+                    summary.first_seen_ms, summary.last_seen_ms, summary.call_count,
+                    summary.source_call_count, summary.target_call_count, summary.group_call_count,
+                    summary.private_call_count, summary.encrypted_count, summary.last_talkgroup_id,
+                    summary.last_peer_radio_id
+                FROM dmr_conventional_radio_summary summary
+                JOIN receiver_context context ON context.id = summary.context_id
+                WHERE context.context_key = ? AND context.kind_code = 3 AND context.protocol_code = 3
+                """);
+            List<Object> parameters = new ArrayList<>(List.of(contextKey));
+            addDmrAliasSearch(sql, parameters, request.search(), "alias_radio", "summary.radio_id");
+            sql.append(" ORDER BY ")
+                .append(order(request, DMR_CONVENTIONAL_RADIO_SORT_COLUMNS, "calls"))
+                .append(", summary.last_seen_ms DESC, summary.frequency_hz ASC, summary.timeslot ASC, ")
+                .append("summary.radio_id ASC LIMIT ? OFFSET ?");
+            addPageParameters(parameters, request);
+            List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
+            mAliasResolver.enrichDmrRadios(connection, rows, "radio_id", "alias_");
+            mAliasResolver.enrichDmrTalkgroups(connection, rows, "last_talkgroup_id", "last_talkgroup_alias_");
+            mAliasResolver.enrichDmrRadios(connection, rows, "last_peer_radio_id", "last_peer_alias_");
+            return page(rows, request);
+        });
+    }
+
+    private static void requireDmrConventionalContext(Connection connection, String contextKey) throws SQLException
+    {
+        first(queryRows(connection, """
+            SELECT id FROM receiver_context
+            WHERE context_key = ? AND kind_code = 3 AND protocol_code = 3
+            """, contextKey), "Conventional DMR context not found");
     }
 
     private List<Map<String,Object>> querySites(Connection connection, StatsRequest request, Integer wacn,
@@ -1658,6 +1768,16 @@ class StatsWebDatabase
         capabilities.put("patches", p25);
         capabilities.put("activity", p25);
         capabilities.put("talkgroups", p25);
+        return Map.copyOf(capabilities);
+    }
+
+    private static Map<String,Boolean> conventionalCapabilities(boolean dmr)
+    {
+        Map<String,Boolean> capabilities = new LinkedHashMap<>();
+        capabilities.put("info", true);
+        capabilities.put("activity", !dmr);
+        capabilities.put("talkgroups", dmr);
+        capabilities.put("radios", dmr);
         return Map.copyOf(capabilities);
     }
 
@@ -1997,6 +2117,34 @@ class StatsWebDatabase
     }
 
     /**
+     * Produces an exact-alias-list DMR alias expression for conventional identity sorting.
+     */
+    private static String dmrAliasSortExpression(String identifierTable, String identifierColumn,
+                                                 String aliasColumn)
+    {
+        if(!"alias_talkgroup".equals(identifierTable) && !"alias_radio".equals(identifierTable) ||
+            !identifierColumn.matches(
+                "summary\\.(?:talkgroup_id|radio_id|last_talkgroup_id|last_peer_radio_id)") ||
+            !"name".equals(aliasColumn) && !"group_name".equals(aliasColumn))
+        {
+            throw new IllegalArgumentException("Unsupported conventional DMR alias sort expression");
+        }
+
+        return """
+            (SELECT lower(alias.%s)
+             FROM %s identifier
+             JOIN alias ON alias.id = identifier.alias_id
+             WHERE identifier.protocol = 'DMR'
+               AND alias.alias_list_name = context.alias_list_name
+               AND ((identifier.ranged <> 0 AND %s BETWEEN identifier.min_value AND identifier.max_value)
+                 OR (identifier.ranged = 0 AND identifier.value = %s))
+             ORDER BY CASE WHEN identifier.ranged = 0 THEN 1 ELSE 0 END DESC,
+                 alias.sort_order, alias.id
+             LIMIT 1)
+            """.formatted(aliasColumn, identifierTable, identifierColumn, identifierColumn).strip();
+    }
+
+    /**
      * Produces a correlated, allowlisted alias expression that follows the same system alias-list and rule
      * specificity rules as {@link StatsAliasResolver}.  All arguments are class-owned constants; validating them
      * here keeps future sort additions from accidentally turning an ORDER BY expression into SQL input.
@@ -2058,6 +2206,40 @@ class StatsWebDatabase
             sql.append(" AND CAST(").append(column).append(" AS TEXT) LIKE ?");
             parameters.add(like(search));
         }
+    }
+
+    private static void addDmrAliasSearch(StringBuilder sql, List<Object> parameters, String search,
+                                          String identifierTable, String identifierColumn)
+    {
+        if(search == null)
+        {
+            return;
+        }
+
+        if(!"alias_talkgroup".equals(identifierTable) && !"alias_radio".equals(identifierTable) ||
+            !identifierColumn.matches("summary\\.(?:talkgroup_id|radio_id)"))
+        {
+            throw new IllegalArgumentException("Unsupported conventional DMR alias search");
+        }
+
+        sql.append("""
+             AND (CAST(%s AS TEXT) LIKE ?
+               OR CAST(summary.frequency_hz AS TEXT) LIKE ?
+               OR EXISTS (
+                   SELECT 1 FROM %s identifier
+                   JOIN alias ON alias.id = identifier.alias_id
+                   WHERE identifier.protocol = 'DMR'
+                     AND alias.alias_list_name = context.alias_list_name
+                     AND ((identifier.ranged <> 0 AND %s BETWEEN identifier.min_value AND identifier.max_value)
+                       OR (identifier.ranged = 0 AND identifier.value = %s))
+                     AND (lower(coalesce(alias.name, '')) LIKE ?
+                       OR lower(coalesce(alias.group_name, '')) LIKE ?)))
+            """.formatted(identifierColumn, identifierTable, identifierColumn, identifierColumn));
+        String like = like(search);
+        parameters.add(like);
+        parameters.add(like);
+        parameters.add(like);
+        parameters.add(like);
     }
 
     private static String like(String value)

@@ -129,6 +129,8 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     private Map<Long,P25TrafficChannelEventTracker> mTS2ChannelGrantEventMap = new HashMap<>();
     private ReentrantLock mLock = new ReentrantLock();
     private Map<Integer, IFrequencyBand> mFrequencyBandMap = new ConcurrentHashMap<>();
+    private final P25FrequencyBandConfirmationTracker mFrequencyBandConfirmationTracker =
+        new P25FrequencyBandConfirmationTracker();
     private Listener<ChannelEvent> mChannelEventListener;
     private Listener<IDecodeEvent> mDecodeEventListener;
     private TrafficChannelTeardownMonitor mTrafficChannelTeardownMonitor = new TrafficChannelTeardownMonitor();
@@ -284,8 +286,15 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
      */
     public void processFrequencyBand(IFrequencyBand frequencyBand)
     {
-        P25FrequencyBandValidator.RegistrationResult result =
-            P25FrequencyBandValidator.register(mFrequencyBandMap, frequencyBand);
+        P25FrequencyBandConfirmationTracker.ObservationResult observation =
+            mFrequencyBandConfirmationTracker.observe(mFrequencyBandMap, frequencyBand, false);
+
+        if(observation.pending())
+        {
+            return;
+        }
+
+        P25FrequencyBandValidator.RegistrationResult result = observation.registration();
 
         if(result.replaced())
         {
@@ -337,6 +346,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             mTS2ChannelGrantEventMap.clear();
             //Band identifiers are scoped to the current control channel.  Wait for fresh IDEN updates after a switch.
             mFrequencyBandMap.clear();
+            mFrequencyBandConfirmationTracker.reset();
 
             //Remove the control channel from the previous frequency
             mAllocatedTrafficChannelMap.remove(previous);
@@ -856,6 +866,8 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
      */
     public void processP2TrafficVoice(long frequency, int timeslot, long timestamp)
     {
+        MyEventBus.getGlobalEventBus().post(
+            new P25TrafficChannelConfirmationEvent(mParentChannel, frequency, timeslot, timestamp));
         mLock.lock();
 
         try
@@ -1210,6 +1222,8 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
      */
     public void processP1TrafficLDU1(long frequency, List<Identifier> identifiers, long timestamp)
     {
+        MyEventBus.getGlobalEventBus().post(
+            new P25TrafficChannelConfirmationEvent(mParentChannel, frequency, TimeslotMessage.TIMESLOT_1, timestamp));
         mLock.lock();
 
         try
@@ -1414,7 +1428,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         if(channel != null)
         {
             MyEventBus.getGlobalEventBus().post(new P25GrantObservationEvent(mParentChannel, channel, identifiers,
-                eventType, timestamp, continuation));
+                eventType, timestamp, continuation, isConfirmedBand(channel)));
         }
 
         if(mChannelActivityModel != null && channel != null)
@@ -1423,6 +1437,18 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             mChannelActivityModel.p25TrafficGrant(mParentChannel, trafficChannel, channel,
                 identifiers, eventType);
         }
+    }
+
+    private boolean isConfirmedBand(APCO25Channel channel)
+    {
+        if(channel == null || channel.getValue() == null)
+        {
+            return false;
+        }
+
+        IFrequencyBand band = mFrequencyBandMap.get(channel.getValue().getDownlinkBandIdentifier());
+        return band != null && channel.getDownlinkFrequency() > 0 &&
+            band.getDownlinkFrequency(channel.getValue().getDownlinkChannelNumber()) == channel.getDownlinkFrequency();
     }
 
     private void notifyActivityEncryptionDetails(P25TrafficChannelEventTracker tracker)
@@ -2033,6 +2059,8 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         mAvailablePhase2TrafficChannelQueue.clear();
         mTS1ChannelGrantEventMap.clear();
         mTS2ChannelGrantEventMap.clear();
+        mFrequencyBandMap.clear();
+        mFrequencyBandConfirmationTracker.reset();
     }
 
     /**

@@ -108,6 +108,7 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
     private TalkerAliasManager mTalkerAliasManager = new TalkerAliasManager();
     private Channel mParentChannel;
     private boolean mIgnoreDataCalls;
+    private final boolean mTrunkingEnabled;
     private ChannelActivityModel mChannelActivityModel;
     private volatile boolean mTrunkedActivityObserved;
 
@@ -125,10 +126,13 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
     public DMRTrafficChannelManager(Channel parentChannel)
     {
         mParentChannel = parentChannel;
+        mTrunkingEnabled = parentChannel.getDecodeConfiguration() instanceof DecodeConfigDMR config &&
+            config.isTrunked();
+        mTrunkedActivityObserved = mTrunkingEnabled;
 
-        if(parentChannel.getDecodeConfiguration() instanceof DecodeConfigDMR)
+        if(parentChannel.getDecodeConfiguration() instanceof DecodeConfigDMR config)
         {
-            mIgnoreDataCalls = ((DecodeConfigDMR)parentChannel.getDecodeConfiguration()).getIgnoreDataCalls();
+            mIgnoreDataCalls = config.getIgnoreDataCalls();
         }
 
         createTrafficChannels();
@@ -159,7 +163,7 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
      */
     public void processControlFrequencyUpdate(long previous, long current, Channel channel)
     {
-        if(previous == current)
+        if(!mTrunkingEnabled || previous == current)
         {
             return;
         }
@@ -204,7 +208,7 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
             DecodeConfiguration decodeConfiguration = mParentChannel.getDecodeConfiguration();
             List<Channel> trafficChannelList = new ArrayList<>();
 
-            if(decodeConfiguration instanceof DecodeConfigDMR)
+            if(mTrunkingEnabled && decodeConfiguration instanceof DecodeConfigDMR)
             {
                 DecodeConfigDMR decodeConfig = (DecodeConfigDMR)decodeConfiguration;
 
@@ -246,6 +250,11 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
     public void convertToTrafficChannel(Channel channel, long currentFrequency, IChannelDescriptor restChannel,
                                         DMRNetworkConfigurationMonitor networkConfigurationMonitor)
     {
+        if(!mTrunkingEnabled)
+        {
+            return;
+        }
+
         mLock.lock();
 
         try
@@ -410,6 +419,11 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
     public void processChannelGrant(DMRChannel channel, IdentifierCollection identifierCollection,
                                     Opcode opcode, long timestamp, boolean encrypted)
     {
+        if(!mTrunkingEnabled)
+        {
+            return;
+        }
+
         mTrunkedActivityObserved = true;
         mLock.lock();
 

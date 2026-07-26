@@ -20,6 +20,12 @@ import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
  */
 public record P25GrantObservationEvent(Channel channel, APCO25Channel channelDescriptor,
                                        IdentifierCollection identifiers, DecodeEventType eventType, long timestamp,
-                                       boolean continuation)
+                                       boolean continuation, boolean confirmedBand)
 {
+    public P25GrantObservationEvent(Channel channel, APCO25Channel channelDescriptor,
+                                    IdentifierCollection identifiers, DecodeEventType eventType, long timestamp,
+                                    boolean continuation)
+    {
+        this(channel, channelDescriptor, identifiers, eventType, timestamp, continuation, false);
+    }
 }

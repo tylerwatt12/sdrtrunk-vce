@@ -14,6 +14,7 @@ package io.github.dsheirer.stats.activity;
 import io.github.dsheirer.channel.metadata.activity.ChannelTag;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.database.SqliteSchemaValidator;
+import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import java.sql.Connection;
@@ -51,6 +52,7 @@ public class P25ActivityLogSchema
 
     private static final int CONTEXT_TRUNKED_SITE = 1;
     private static final int CONTEXT_CONVENTIONAL_P25 = 2;
+    private static final int CONTEXT_CONVENTIONAL_DMR = 3;
     private static final int CONTEXT_CONVENTIONAL_ANALOG = 10;
 
     private static final int PROTOCOL_UNKNOWN = 0;
@@ -162,26 +164,6 @@ public class P25ActivityLogSchema
             List.of("observed_at_ms", "guid", "frequency_hz", "bucket_start_ms"));
     }
 
-    /**
-     * Validates the v19 shape before the application migrator updates a staged database. Normal application startup
-     * validates only the current schema through {@link #validate(Connection)}.
-     */
-    public static void validateV19ForUpgrade(Connection connection) throws SQLException
-    {
-        SqliteSchemaValidator.validate(connection, V19_TABLES, V20_INDEXES, VIEWS,
-            List.of(new SqliteSchemaValidator.Metadata(SCHEMA_VERSION_KEY, "19")));
-    }
-
-    /**
-     * Validates the v20 shape before the application migrator updates a staged database. Normal application startup
-     * validates only the current schema through {@link #validate(Connection)}.
-     */
-    public static void validateV20ForUpgrade(Connection connection) throws SQLException
-    {
-        SqliteSchemaValidator.validate(connection, TABLES, V20_INDEXES, VIEWS,
-            List.of(new SqliteSchemaValidator.Metadata(SCHEMA_VERSION_KEY, "20")));
-    }
-
     static Long recordActivity(Connection connection, P25ActivityLogRecords.ActivityEvent activity,
                                boolean detailedEventHistoryEnabled) throws SQLException
     {
@@ -198,11 +180,6 @@ public class P25ActivityLogSchema
             }
 
             upsertP25SiteMetrics(connection, activity, contextId);
-
-            if(isServiceGrant(activity))
-            {
-                upsertGrantedChannelSummary(connection, activity);
-            }
 
             if(systemKey != null)
             {
@@ -297,6 +274,42 @@ public class P25ActivityLogSchema
         }
 
         return true;
+    }
+
+    /**
+     * Aggregates one exactly-once completed DMR conventional call into the shared conventional channel totals and
+     * the compact DMR identity summaries.
+     */
+    static void recordDmrConventionalCall(Connection connection, P25ActivityLogRecords.DmrConventionalCall call)
+        throws SQLException
+    {
+        if(call == null)
+        {
+            return;
+        }
+
+        DmrActivitySchema.validateCompletedCall(call);
+        int contextId = upsertReceiverContext(connection, call);
+        String targetId = call.targetKind() == P25ActivityLogRecords.DmrTargetKind.GROUP &&
+            call.talkgroupId() != null ? call.talkgroupId().toString() :
+            call.targetKind() == P25ActivityLogRecords.DmrTargetKind.PRIVATE &&
+                call.targetRadioId() != null ? call.targetRadioId().toString() : null;
+        String targetKind = call.targetKind() == P25ActivityLogRecords.DmrTargetKind.GROUP ? Form.TALKGROUP.name() :
+            call.targetKind() == P25ActivityLogRecords.DmrTargetKind.PRIVATE ? Form.RADIO.name() : null;
+        String eventType = call.targetKind() == P25ActivityLogRecords.DmrTargetKind.GROUP ?
+            (call.encrypted() ? DecodeEventType.CALL_GROUP_ENCRYPTED.name() : DecodeEventType.CALL_GROUP.name()) :
+            call.targetKind() == P25ActivityLogRecords.DmrTargetKind.PRIVATE ?
+                (call.encrypted() ? DecodeEventType.CALL_UNIT_TO_UNIT_ENCRYPTED.name() :
+                    DecodeEventType.CALL_UNIT_TO_UNIT.name()) :
+                (call.encrypted() ? DecodeEventType.CALL_ENCRYPTED.name() : DecodeEventType.CALL.name());
+        P25ActivityLogRecords.ActivityEvent activity = new P25ActivityLogRecords.ActivityEvent(
+            call.callEndEpochMilliseconds(), call.contextKey(), call.guid(),
+            P25ActivityLogRecords.ContextKind.CONVENTIONAL_DMR, "DMR", P25ActivityLogRecords.Action.CALL,
+            eventType, call.sourceRadioId() != null ? call.sourceRadioId().toString() : null, targetId, targetKind,
+            call.frequencyHertz(), null, call.timeslot(), call.encrypted(), null, null, null, null, null, null, null,
+            call.channelName(), "DMR", null, true, null, null);
+        upsertConventionalSummary(connection, activity, contextId);
+        DmrActivitySchema.recordCompletedCall(connection, contextId, call);
     }
 
     static void updateTalkerAlias(Connection connection, P25ActivityLogRecords.TalkerAliasUpdate update)
@@ -1041,12 +1054,7 @@ public class P25ActivityLogSchema
             "dropped_bits", "last_valid_decode_ms"),
         table("logger_status", "key", "value", "updated_at_ms")
     );
-    private static final List<SqliteSchemaValidator.Table> V19_TABLES = TABLES.stream()
-        .filter(table -> !"p25_foreign_system_band".equals(table.name()) &&
-            !"p25_foreign_system_band_summary".equals(table.name()))
-        .toList();
-
-    private static final List<String> V20_INDEXES = List.of(
+    private static final List<String> INDEXES = List.of(
         "idx_receiver_context_guid",
         "idx_p25_activity_event_context_time",
         "idx_p25_activity_event_target_time",
@@ -1067,18 +1075,11 @@ public class P25ActivityLogSchema
         "idx_p25_site_patch_radio",
         "idx_p25_site_channel_summary_guid_frequency",
         "idx_p25_site_neighbor_summary_guid_site",
-        "idx_p25_control_quality_guid_time"
+        "idx_p25_control_quality_guid_time",
+        "idx_p25_control_quality_retention"
     );
-    private static final List<String> INDEXES = currentIndexes();
 
     private static final List<String> VIEWS = List.of("p25_activity_event_resolved");
-
-    private static List<String> currentIndexes()
-    {
-        List<String> indexes = new ArrayList<>(V20_INDEXES);
-        indexes.add("idx_p25_control_quality_retention");
-        return List.copyOf(indexes);
-    }
 
     private static void upsertP25SystemSummaries(Connection connection, P25ActivityLogRecords.ActivityEvent activity,
                                                  int systemKey) throws SQLException
@@ -1682,6 +1683,48 @@ public class P25ActivityLogSchema
         return selectContextId(connection, contextKey);
     }
 
+    private static int upsertReceiverContext(Connection connection, P25ActivityLogRecords.DmrConventionalCall call)
+        throws SQLException
+    {
+        try(PreparedStatement statement = connection.prepareStatement("""
+            INSERT INTO receiver_context (
+                context_key, guid, kind_code, protocol_code, channel_name, alias_list_name, decoder, first_seen_ms,
+                last_seen_ms, primary_frequency_hz
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(context_key) DO UPDATE SET
+                guid = coalesce(excluded.guid, receiver_context.guid),
+                kind_code = excluded.kind_code,
+                protocol_code = excluded.protocol_code,
+                channel_name = excluded.channel_name,
+                alias_list_name = excluded.alias_list_name,
+                decoder = excluded.decoder,
+                first_seen_ms = min(receiver_context.first_seen_ms, excluded.first_seen_ms),
+                last_seen_ms = max(receiver_context.last_seen_ms, excluded.last_seen_ms),
+                system_key = NULL,
+                nac = NULL,
+                rfss = NULL,
+                site = NULL,
+                primary_frequency_hz = coalesce(
+                    excluded.primary_frequency_hz, receiver_context.primary_frequency_hz),
+                current_control_hz = NULL
+            """))
+        {
+            statement.setString(1, call.contextKey());
+            statement.setString(2, call.guid());
+            statement.setInt(3, CONTEXT_CONVENTIONAL_DMR);
+            statement.setInt(4, PROTOCOL_DMR);
+            statement.setString(5, call.channelName());
+            statement.setString(6, call.aliasListName());
+            statement.setString(7, "DMR");
+            statement.setLong(8, call.callStartEpochMilliseconds());
+            statement.setLong(9, call.callEndEpochMilliseconds());
+            statement.setLong(10, call.frequencyHertz());
+            statement.executeUpdate();
+        }
+
+        return selectContextId(connection, call.contextKey());
+    }
+
     private static void upsertSiteSnapshot(Connection connection, P25ActivityLogRecords.SiteSnapshot snapshot,
                                            Integer systemKey) throws SQLException
     {
@@ -1797,20 +1840,20 @@ public class P25ActivityLogSchema
      * RF/site snapshots intentionally contain only stable network facts, so grant observations are projected here
      * without feeding dynamic traffic back into the network stabilizer.
      */
-    private static void upsertGrantedChannelSummary(Connection connection,
-                                                    P25ActivityLogRecords.ActivityEvent activity) throws SQLException
+    static void upsertGrantedChannelSummary(Connection connection,
+                                            P25ActivityLogRecords.ChannelFact fact) throws SQLException
     {
-        Lcn lcn = Lcn.parse(activity.lcn());
-        ChannelTag serviceTag = serviceTag(activity);
+        Lcn lcn = Lcn.parse(fact.lcn());
+        ChannelTag serviceTag = fact.serviceTag();
 
-        if(activity.guid() == null || activity.guid().isBlank() || activity.frequencyHertz() == null ||
-            activity.frequencyHertz() <= 0 || lcn.band() == null || lcn.number() == null || serviceTag == null)
+        if(fact.guid() == null || fact.guid().isBlank() || fact.frequencyHertz() <= 0 ||
+            lcn.band() == null || lcn.number() == null || serviceTag == null)
         {
             return;
         }
 
         String channelKey = lcn.channelKey();
-        boolean tdma = isTdma(activity);
+        boolean tdma = fact.tdma();
 
         try(PreparedStatement statement = connection.prepareStatement("""
             INSERT INTO p25_site_channel_summary (
@@ -1826,19 +1869,19 @@ public class P25ActivityLogSchema
                 observation_count = p25_site_channel_summary.observation_count + 1
             """))
         {
-            statement.setString(1, activity.guid());
+            statement.setString(1, fact.guid());
             statement.setString(2, channelKey);
             statement.setString(3, channelKey);
-            statement.setLong(4, activity.frequencyHertz());
+            statement.setLong(4, fact.frequencyHertz());
             statement.setInt(5, tdma ? 1 : 0);
-            statement.setInt(6, tdma ? 2 : 1);
-            statement.setLong(7, activity.observedAtEpochMilliseconds());
-            statement.setLong(8, activity.observedAtEpochMilliseconds());
+            statement.setInt(6, Math.max(1, fact.timeslots()));
+            statement.setLong(7, fact.observedAtEpochMilliseconds());
+            statement.setLong(8, fact.observedAtEpochMilliseconds());
             statement.executeUpdate();
         }
 
-        upsertChannelTagSummary(connection, activity.guid(), channelKey, serviceTag,
-            activity.observedAtEpochMilliseconds(), 1);
+        upsertChannelTagSummary(connection, fact.guid(), channelKey, serviceTag,
+            fact.observedAtEpochMilliseconds(), 1);
     }
 
     private static void upsertChannelTagSummary(Connection connection, String guid, String channelKey,
@@ -2554,40 +2597,10 @@ public class P25ActivityLogSchema
         return index;
     }
 
-    private static boolean isServiceGrant(P25ActivityLogRecords.ActivityEvent activity)
-    {
-        return activity.action() == P25ActivityLogRecords.Action.GRANT && serviceTag(activity) != null;
-    }
-
-    private static ChannelTag serviceTag(P25ActivityLogRecords.ActivityEvent activity)
-    {
-        if(activity == null || activity.eventType() == null)
-        {
-            return null;
-        }
-
-        try
-        {
-            DecodeEventType eventType = DecodeEventType.valueOf(activity.eventType());
-
-            return ChannelTag.fromService(eventType);
-        }
-        catch(IllegalArgumentException e)
-        {
-            return null;
-        }
-    }
-
-    private static boolean isTdma(P25ActivityLogRecords.ActivityEvent activity)
-    {
-        return "APCO25_PHASE2".equals(activity.protocol()) ||
-            (activity.decoder() != null && activity.decoder().contains("PHASE2")) ||
-            (activity.lcn() != null && activity.lcn().contains("TS"));
-    }
-
     private static boolean isConventional(P25ActivityLogRecords.ContextKind contextKind)
     {
         return contextKind == P25ActivityLogRecords.ContextKind.CONVENTIONAL_P25 ||
+            contextKind == P25ActivityLogRecords.ContextKind.CONVENTIONAL_DMR ||
             contextKind == P25ActivityLogRecords.ContextKind.CONVENTIONAL_ANALOG;
     }
 
@@ -2648,6 +2661,11 @@ public class P25ActivityLogSchema
         if(contextKind == P25ActivityLogRecords.ContextKind.CONVENTIONAL_ANALOG)
         {
             return CONTEXT_CONVENTIONAL_ANALOG;
+        }
+
+        if(contextKind == P25ActivityLogRecords.ContextKind.CONVENTIONAL_DMR)
+        {
+            return CONTEXT_CONVENTIONAL_DMR;
         }
 
         return CONTEXT_CONVENTIONAL_P25;

@@ -8,24 +8,18 @@
  * (at your option) any later version.
  * ****************************************************************************
  */
-
 package io.github.dsheirer.database.upgrade;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
-import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultPath;
-import io.github.dsheirer.stats.activity.P25ActivityLogSchema;
-import io.github.dsheirer.stats.site.TrunkedSiteSchema;
+import io.github.dsheirer.stats.activity.DmrActivitySchema;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -34,344 +28,132 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
-import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class ApplicationMigrationServiceTest
 {
-    private static final String VERSION_KEY = "p25_activity_schema_version";
-
     @TempDir
     Path mTemporaryFolder;
 
     @Test
-    void unsupportedTrunkedStateCannotBeMistakenForCurrent()
+    void onlyTheCurrentDevelopmentSchemaIsSupported()
     {
+        ApplicationMigrationService.MigrationState current =
+            new ApplicationMigrationService.MigrationState(3, 21, 2, 1);
+        assertTrue(current.supported());
+        assertFalse(current.requiresMigration());
+        assertEquals("", current.requiredChanges());
+
+        for(ApplicationMigrationService.MigrationState predecessor: List.of(
+            new ApplicationMigrationService.MigrationState(2, 21, 2, 1),
+            new ApplicationMigrationService.MigrationState(3, 20, 2, 1),
+            new ApplicationMigrationService.MigrationState(3, 21, null, 1),
+            new ApplicationMigrationService.MigrationState(3, 21, 2, null)))
+        {
+            assertFalse(predecessor.supported());
+            assertTrue(predecessor.requiresMigration());
+            assertTrue(predecessor.requiredChanges().contains("no bundled transition"));
+        }
+    }
+
+    @Test
+    void readsTheExactCurrentSchemaState() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("current-state");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+
         ApplicationMigrationService.MigrationState state =
-            new ApplicationMigrationService.MigrationState(3, 21, 3);
+            ApplicationMigrationService.readMigrationState(database);
 
-        assertFalse(state.supported());
-        assertTrue(state.requiresMigration());
+        assertEquals(new ApplicationMigrationService.MigrationState(3, 21, 2, 1), state);
+        assertTrue(state.supported());
     }
 
     @Test
-    void importsV19ProfileWithRealChildHelperAndLeavesSourceUnchanged() throws Exception
+    void importsAnAlreadyCurrentProfileAndRebasesPortablePaths() throws Exception
     {
-        Path sourceRoot = mTemporaryFolder.resolve("sdrtrunk-vce-alpha5-data");
-        Path sourceDatabase = createV19Database(sourceRoot);
-        insertAlias(sourceDatabase, "Dispatch");
-        Path sourceVault = createVault(sourceRoot);
-        Path jmbe = sourceRoot.resolve("jmbe").resolve("jmbe.jar");
-        Path module = sourceRoot.resolve("modules").resolve("optional.jar");
-        Files.createDirectories(jmbe.getParent());
-        Files.createDirectories(module.getParent());
-        Files.write(jmbe, new byte[] {1, 3, 5, 7});
-        Files.write(module, new byte[] {2, 4, 6, 8});
-        Path sourceRecordings = Files.createDirectories(sourceRoot.resolve("recordings"));
-        Path sourceLogs = Files.createDirectories(sourceRoot.resolve("logs"));
-        Path externalEventLogs = Files.createDirectories(mTemporaryFolder.resolve("shared-event-logs"));
-        storePortableDirectoryPreferences(sourceDatabase, Map.of(
-            "directory.recording", sourceRecordings.toString(),
-            "directory.application.logs", sourceLogs.toString(),
-            "directory.jmbe", sourceRoot.resolve("jmbe").toString(),
-            "directory.event.logs", externalEventLogs.toString()
-        ));
-
-        byte[] sourceDatabaseHash = sha256(sourceDatabase);
-        byte[] sourceVaultHash = sha256(sourceVault);
-        byte[] jmbeContents = Files.readAllBytes(jmbe);
-        byte[] moduleContents = Files.readAllBytes(module);
-        Path targetRoot = mTemporaryFolder.resolve("sdrtrunk-vce-alpha6-data");
-        List<String> progress = new ArrayList<>();
-
-        ApplicationMigrationService.MigrationResult result = new ApplicationMigrationService()
-            .importPrevious(sourceRoot, targetRoot, progress::add);
-
-        assertTrue(result.importedPreviousProfile());
-        assertEquals(19, result.sourceVersion());
-        assertNull(result.safetyBackup());
-        assertTrue(result.helperOutput().contains("v19 -> v21"));
-        assertTrue(result.helperOutput().contains("absent -> v2"));
-        assertEquals(List.of("Checking previous data", "Copying setup", "Creating safety backup",
-            "Updating database", "Checking updated data", "Finishing"), progress);
-
-        Path targetDatabase = SdrTrunkDatabasePath.getDatabasePath(targetRoot);
-        assertEquals(21, ApplicationMigrationService.readP25ActivitySchemaVersion(targetDatabase));
-        assertEquals(1, count(targetDatabase, "alias"));
-        assertTrue(tableExists(targetDatabase, "p25_foreign_system_band"));
-        assertTrue(tableExists(targetDatabase, "p25_foreign_system_band_summary"));
-        assertTrue(indexExists(targetDatabase, "idx_p25_control_quality_retention"));
-        validateTrunkedSiteSchema(targetDatabase);
-        assertEquals(1, count(EncryptionKeyVaultPath.getVaultPath(targetRoot), "vault_payload"));
-        assertArrayEquals(jmbeContents, Files.readAllBytes(targetRoot.resolve("jmbe/jmbe.jar")));
-        assertArrayEquals(moduleContents, Files.readAllBytes(targetRoot.resolve("modules/optional.jar")));
-        Map<String,String> importedDirectories = portableDirectoryPreferences(targetDatabase);
-        assertEquals(targetRoot.resolve("recordings").toString(), importedDirectories.get("directory.recording"));
-        assertEquals(targetRoot.resolve("logs").toString(), importedDirectories.get("directory.application.logs"));
-        assertEquals(targetRoot.resolve("jmbe").toString(), importedDirectories.get("directory.jmbe"));
-        assertEquals(externalEventLogs.toString(), importedDirectories.get("directory.event.logs"));
-
-        assertArrayEquals(sourceDatabaseHash, sha256(sourceDatabase));
-        assertArrayEquals(sourceVaultHash, sha256(sourceVault));
-        assertArrayEquals(jmbeContents, Files.readAllBytes(jmbe));
-        assertArrayEquals(moduleContents, Files.readAllBytes(module));
-        assertEquals(19, ApplicationMigrationService.readP25ActivitySchemaVersion(sourceDatabase));
-        assertFalse(tableExists(sourceDatabase, "p25_foreign_system_band"));
-        assertFalse(tableExists(sourceDatabase, "trunked_site_snapshot"));
-    }
-
-    @Test
-    void importsRealOldV20ProfileAndInstallsTrunkedSiteSchemaWithoutChangingSource() throws Exception
-    {
-        Path sourceRoot = mTemporaryFolder.resolve("sdrtrunk-vce-v20-data");
-        Path sourceDatabase = createV20DatabaseWithoutTrunkedSiteSchema(sourceRoot);
-        insertAlias(sourceDatabase, "Existing V20");
-        byte[] sourceDatabaseHash = sha256(sourceDatabase);
-        Path targetRoot = mTemporaryFolder.resolve("sdrtrunk-vce-current-data");
+        Path sourceRoot = mTemporaryFolder.resolve("source-data");
+        Path sourceDatabase = SdrTrunkDatabasePath.getDatabasePath(sourceRoot);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(sourceDatabase);
+        insertAlias(sourceDatabase, "Keep Me");
+        byte[] sourceHash = sha256(sourceDatabase);
+        Path targetRoot = mTemporaryFolder.resolve("target-data");
 
         ApplicationMigrationService.MigrationResult result = new ApplicationMigrationService()
             .importPrevious(sourceRoot, targetRoot, null);
 
         assertTrue(result.importedPreviousProfile());
-        assertEquals(20, result.sourceVersion());
-        assertTrue(result.helperOutput().contains("v20 -> v21 indexed quality retention"));
-        assertTrue(result.helperOutput().contains("absent -> v2"));
-
+        assertEquals(new ApplicationMigrationService.MigrationState(3, 21, 2, 1), result.sourceState());
+        assertTrue(result.helperOutput().contains("Application database migration and validation complete"));
         Path targetDatabase = SdrTrunkDatabasePath.getDatabasePath(targetRoot);
-        assertEquals(21, ApplicationMigrationService.readP25ActivitySchemaVersion(targetDatabase));
         assertEquals(1, count(targetDatabase, "alias"));
-        assertTrue(indexExists(targetDatabase, "idx_p25_control_quality_retention"));
-        validateTrunkedSiteSchema(targetDatabase);
-
-        assertArrayEquals(sourceDatabaseHash, sha256(sourceDatabase));
-        assertEquals(20, ApplicationMigrationService.readP25ActivitySchemaVersion(sourceDatabase));
-        assertFalse(tableExists(sourceDatabase, "trunked_site_snapshot"));
+        assertEquals(new ApplicationMigrationService.MigrationState(3, 21, 2, 1),
+            ApplicationMigrationService.readMigrationState(targetDatabase));
+        assertArrayEquals(sourceHash, sha256(sourceDatabase));
     }
 
     @Test
-    void migratesCurrentV19DatabaseAndRetainsV19SafetyBackup() throws Exception
+    void currentProfileRefreshRetainsSafetyBackup() throws Exception
     {
         Path dataRoot = mTemporaryFolder.resolve("current-data");
-        Path database = createV19Database(dataRoot);
-        insertAlias(database, "Fireground");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        insertAlias(database, "Retained");
 
-        ApplicationMigrationService.MigrationResult result = new ApplicationMigrationService()
-            .migrateCurrent(dataRoot, null);
+        ApplicationMigrationService.MigrationResult result =
+            new ApplicationMigrationService().migrateCurrent(dataRoot, null);
 
         assertFalse(result.importedPreviousProfile());
-        assertEquals(19, result.sourceVersion());
-        assertTrue(result.helperOutput().contains("v19 -> v21"));
-        assertTrue(result.helperOutput().contains("absent -> v2"));
         assertNotNull(result.safetyBackup());
         assertTrue(Files.isRegularFile(result.safetyBackup()));
-        assertTrue(result.safetyBackup().startsWith(database.getParent().resolve("backups")));
-        assertTrue(result.safetyBackup().getFileName().toString()
-            .startsWith("sdrtrunk-before-application-migration-"));
-
-        assertEquals(21, ApplicationMigrationService.readP25ActivitySchemaVersion(database));
-        assertEquals(1, count(database, "alias"));
-        try(Connection connection = open(database))
-        {
-            P25ActivityLogSchema.validate(connection);
-            TrunkedSiteSchema.validate(connection);
-        }
-
-        assertEquals(19, ApplicationMigrationService.readP25ActivitySchemaVersion(result.safetyBackup()));
         assertEquals(1, count(result.safetyBackup(), "alias"));
-        assertFalse(tableExists(result.safetyBackup(), "p25_foreign_system_band"));
-        assertFalse(tableExists(result.safetyBackup(), "trunked_site_snapshot"));
-        assertEquals("ok", scalar(result.safetyBackup(), "PRAGMA quick_check"));
+        assertEquals(new ApplicationMigrationService.MigrationState(3, 21, 2, 1),
+            ApplicationMigrationService.readMigrationState(result.safetyBackup()));
+        assertEquals(1, count(database, "alias"));
+        assertEquals(new ApplicationMigrationService.MigrationState(3, 21, 2, 1),
+            ApplicationMigrationService.readMigrationState(database));
     }
 
     @Test
-    void migratesCurrentAliasV2WhenOtherSchemasAreCurrent() throws Exception
+    void unreleasedPredecessorIsRefusedBeforeAnyBackupOrMutation() throws Exception
     {
-        Path dataRoot = mTemporaryFolder.resolve("alias-v2-current-data");
+        Path dataRoot = mTemporaryFolder.resolve("pre-release-data");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
-        makeAliasV2(database);
-        insertAlias(database, "Description Migration");
+        removeDmrActivitySchema(database);
+        byte[] before = sha256(database);
 
-        ApplicationMigrationService.MigrationState before =
-            ApplicationMigrationService.readMigrationState(database);
-        assertEquals(2, before.aliasVersion());
-        assertEquals(21, before.p25Version());
-        assertEquals(2, before.trunkedSiteVersion());
-        assertTrue(before.requiresMigration());
-        assertTrue(before.supported());
+        IOException exception = assertThrows(IOException.class,
+            () -> new ApplicationMigrationService().migrateCurrent(dataRoot, null));
 
-        ApplicationMigrationService.MigrationResult result = new ApplicationMigrationService()
-            .migrateCurrent(dataRoot, null);
-
-        assertFalse(result.importedPreviousProfile());
-        assertEquals(before, result.sourceState());
-        assertTrue(result.helperOutput().contains("Alias schema migration complete: v2 -> v3"));
-        assertNotNull(result.safetyBackup());
-
-        ApplicationMigrationService.MigrationState after =
-            ApplicationMigrationService.readMigrationState(database);
-        assertEquals(3, after.aliasVersion());
-        assertEquals(21, after.p25Version());
-        assertEquals(2, after.trunkedSiteVersion());
-        assertFalse(after.requiresMigration());
-        assertEquals(1, count(database, "alias"));
-        assertTrue(columnExists(database, "alias", "description"));
-        assertEquals(1, count(result.safetyBackup(), "alias"));
-        assertFalse(columnExists(result.safetyBackup(), "alias", "description"));
+        assertTrue(exception.getMessage().contains("accepts only its current schemas"));
+        assertArrayEquals(before, sha256(database));
+        assertFalse(Files.exists(database.getParent().resolve("backups")));
     }
 
     @Test
-    void realHelperFailureLeavesCurrentDatabaseUnchanged() throws Exception
+    void helperFailureLeavesTheCurrentDatabaseUntouched() throws Exception
     {
-        Path dataRoot = mTemporaryFolder.resolve("current-data");
-        Path database = createV19Database(dataRoot);
+        Path dataRoot = mTemporaryFolder.resolve("failure-data");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
         insertAlias(database, "Do Not Lose");
-
-        try(Connection connection = open(database); Statement statement = connection.createStatement())
-        {
-            statement.executeUpdate("DROP TABLE p25_site_neighbor");
-        }
-
         byte[] before = sha256(database);
-        IOException exception = assertThrows(IOException.class,
-            () -> new ApplicationMigrationService().migrateCurrent(dataRoot, null));
+        ApplicationMigrationService service = new ApplicationMigrationService(
+            (source, destination) -> Files.copy(source, destination),
+            (staged, source, target) ->
+            {
+                throw new IOException("forced helper failure");
+            });
 
-        assertTrue(exception.getMessage().contains("application database migrator failed"));
+        IOException exception = assertThrows(IOException.class, () -> service.migrateCurrent(dataRoot, null));
+
+        assertTrue(exception.getMessage().contains("forced helper failure"));
         assertArrayEquals(before, sha256(database));
-        assertEquals(19, ApplicationMigrationService.readP25ActivitySchemaVersion(database));
         assertEquals(1, count(database, "alias"));
-        assertFalse(tableExists(database, "p25_foreign_system_band"));
-
-        Path backupDirectory = database.getParent().resolve("backups");
-
-        try(var backups = Files.list(backupDirectory))
-        {
-            List<Path> paths = backups.toList();
-            assertEquals(1, paths.size());
-            assertEquals(19, ApplicationMigrationService.readP25ActivitySchemaVersion(paths.getFirst()));
-            assertEquals(1, count(paths.getFirst(), "alias"));
-        }
-    }
-
-    @Test
-    void partialTrunkedSiteSchemaFailureLeavesCurrentDatabaseUnchanged() throws Exception
-    {
-        Path dataRoot = mTemporaryFolder.resolve("current-data");
-        Path database = createV19Database(dataRoot);
-        insertAlias(database, "Keep Partial Source");
-
-        try(Connection connection = open(database); Statement statement = connection.createStatement())
-        {
-            statement.executeUpdate("CREATE TABLE trunked_site_snapshot (guid TEXT PRIMARY KEY)");
-        }
-
-        byte[] before = sha256(database);
-        IOException exception = assertThrows(IOException.class,
-            () -> new ApplicationMigrationService().migrateCurrent(dataRoot, null));
-
-        assertTrue(exception.getMessage().contains("application database migrator failed"));
-        assertTrue(exception.getMessage().contains("ambiguous partial schema"));
-        assertArrayEquals(before, sha256(database));
-        assertEquals(19, ApplicationMigrationService.readP25ActivitySchemaVersion(database));
-        assertEquals(1, count(database, "alias"));
-        assertFalse(tableExists(database, "p25_foreign_system_band"));
-        assertTrue(tableExists(database, "trunked_site_snapshot"));
-        assertFalse(tableExists(database, "trunked_site_channel_summary"));
-        assertFalse(tableExists(database, "trunked_site_neighbor_summary"));
-    }
-
-    @Test
-    void refusesToReplaceCurrentDatabaseWhileAnotherConnectionIsOpen() throws Exception
-    {
-        Path dataRoot = mTemporaryFolder.resolve("current-data");
-        Path database = createV19Database(dataRoot);
-        insertAlias(database, "Keep This");
-
-        try(Connection otherProcess = open(database); Statement statement = otherProcess.createStatement())
-        {
-            statement.execute("PRAGMA journal_mode=WAL");
-            statement.executeQuery("SELECT COUNT(*) FROM alias").close();
-
-            IOException exception = assertThrows(IOException.class,
-                () -> new ApplicationMigrationService().migrateCurrent(dataRoot, null));
-            assertTrue(exception.getMessage().contains("still active"));
-            assertEquals(19, ApplicationMigrationService.readP25ActivitySchemaVersion(database));
-            assertEquals(1, count(database, "alias"));
-        }
-    }
-
-    private Path createV19Database(Path dataRoot) throws Exception
-    {
-        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
-
-        try(Connection connection = open(database); Statement statement = connection.createStatement())
-        {
-            statement.executeUpdate("DROP TABLE p25_foreign_system_band");
-            statement.executeUpdate("DROP TABLE p25_foreign_system_band_summary");
-            statement.executeUpdate("DROP INDEX idx_p25_control_quality_retention");
-            SdrTrunkDatabaseStartup.setMetadata(connection, VERSION_KEY, "19");
-        }
-
-        removeTrunkedSiteSchema(database);
-        return database;
-    }
-
-    private Path createV20DatabaseWithoutTrunkedSiteSchema(Path dataRoot) throws Exception
-    {
-        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
-
-        try(Connection connection = open(database); Statement statement = connection.createStatement())
-        {
-            statement.executeUpdate("DROP INDEX idx_p25_control_quality_retention");
-            SdrTrunkDatabaseStartup.setMetadata(connection, VERSION_KEY, "20");
-        }
-
-        removeTrunkedSiteSchema(database);
-        return database;
-    }
-
-    private static void removeTrunkedSiteSchema(Path database) throws Exception
-    {
-        try(Connection connection = open(database); Statement statement = connection.createStatement())
-        {
-            statement.executeUpdate("DROP TABLE trunked_site_channel_summary");
-            statement.executeUpdate("DROP TABLE trunked_site_neighbor_summary");
-            statement.executeUpdate("DROP TABLE trunked_site_snapshot");
-            statement.executeUpdate("DELETE FROM database_metadata WHERE key='" +
-                TrunkedSiteSchema.SCHEMA_VERSION_KEY + "'");
-        }
-    }
-
-    private static void validateTrunkedSiteSchema(Path database) throws Exception
-    {
-        try(Connection connection = open(database))
-        {
-            TrunkedSiteSchema.validate(connection);
-        }
-    }
-
-    private static Path createVault(Path dataRoot) throws Exception
-    {
-        Path vault = EncryptionKeyVaultPath.getVaultPath(dataRoot);
-        SdrTrunkDatabaseStartup.createVaultDatabase(vault);
-
-        try(Connection connection = open(vault); var statement = connection.prepareStatement("""
-            INSERT INTO vault_payload(id, nonce, ciphertext, updated_at_ms)
-            VALUES (1, ?, ?, ?)
-            """))
-        {
-            statement.setBytes(1, new byte[] {11, 12, 13});
-            statement.setBytes(2, new byte[] {21, 22, 23, 24});
-            statement.setLong(3, 123456789L);
-            statement.executeUpdate();
-        }
-
-        return vault;
     }
 
     private static void insertAlias(Path database, String name) throws Exception
@@ -384,46 +166,18 @@ class ApplicationMigrationServiceTest
         }
     }
 
-    private static void makeAliasV2(Path database) throws Exception
+    private static void removeDmrActivitySchema(Path database) throws Exception
     {
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
-            statement.executeUpdate("ALTER TABLE alias DROP COLUMN description");
-            SdrTrunkDatabaseStartup.setMetadata(connection, "alias_schema_version", "2");
-        }
-    }
-
-    private static void storePortableDirectoryPreferences(Path database, Map<String,String> directories)
-        throws Exception
-    {
-        String json = new ObjectMapper().writeValueAsString(Map.of(
-            "user/io/github/dsheirer/preference/directory", directories));
-
-        try(Connection connection = open(database); var statement = connection.prepareStatement("""
-            INSERT INTO application_settings(key, settings_json, updated_at_ms) VALUES (?, ?, ?)
-            """))
-        {
-            statement.setString(1, "portable_java_preferences_v1");
-            statement.setString(2, json);
-            statement.setLong(3, 1L);
-            statement.executeUpdate();
-        }
-    }
-
-    private static Map<String,String> portableDirectoryPreferences(Path database) throws Exception
-    {
-        try(Connection connection = open(database); var statement = connection.prepareStatement(
-            "SELECT settings_json FROM application_settings WHERE key=?"))
-        {
-            statement.setString(1, "portable_java_preferences_v1");
-
-            try(ResultSet resultSet = statement.executeQuery())
-            {
-                assertTrue(resultSet.next());
-                Map<String,Map<String,String>> values = new ObjectMapper().readValue(resultSet.getString(1),
-                    new TypeReference<>() {});
-                return values.get("user/io/github/dsheirer/preference/directory");
-            }
+            statement.executeUpdate("DROP INDEX " + DmrActivitySchema.TALKGROUP_RETENTION_INDEX);
+            statement.executeUpdate("DROP INDEX " + DmrActivitySchema.RADIO_RETENTION_INDEX);
+            statement.executeUpdate("DROP INDEX " + DmrActivitySchema.TALKGROUP_CONTEXT_INDEX);
+            statement.executeUpdate("DROP INDEX " + DmrActivitySchema.RADIO_CONTEXT_INDEX);
+            statement.executeUpdate("DROP TABLE " + DmrActivitySchema.TALKGROUP_TABLE);
+            statement.executeUpdate("DROP TABLE " + DmrActivitySchema.RADIO_TABLE);
+            statement.executeUpdate("DELETE FROM database_metadata WHERE key='" +
+                DmrActivitySchema.SCHEMA_VERSION_KEY + "'");
         }
     }
 
@@ -443,65 +197,8 @@ class ApplicationMigrationServiceTest
         }
     }
 
-    private static boolean tableExists(Path database, String table) throws Exception
+    private static byte[] sha256(Path path) throws Exception
     {
-        try(Connection connection = open(database); var statement = connection.prepareStatement(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?"))
-        {
-            statement.setString(1, table);
-
-            try(ResultSet resultSet = statement.executeQuery())
-            {
-                return resultSet.next();
-            }
-        }
-    }
-
-    private static boolean indexExists(Path database, String index) throws Exception
-    {
-        try(Connection connection = open(database); var statement = connection.prepareStatement(
-            "SELECT 1 FROM sqlite_master WHERE type='index' AND name=?"))
-        {
-            statement.setString(1, index);
-
-            try(ResultSet resultSet = statement.executeQuery())
-            {
-                return resultSet.next();
-            }
-        }
-    }
-
-    private static boolean columnExists(Path database, String table, String column) throws Exception
-    {
-        try(Connection connection = open(database);
-            Statement statement = connection.createStatement();
-            ResultSet resultSet = statement.executeQuery("PRAGMA table_info(" + table + ")"))
-        {
-            while(resultSet.next())
-            {
-                if(column.equals(resultSet.getString("name")))
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-    }
-
-    private static String scalar(Path database, String sql) throws Exception
-    {
-        try(Connection connection = open(database);
-            Statement statement = connection.createStatement();
-            ResultSet resultSet = statement.executeQuery(sql))
-        {
-            assertTrue(resultSet.next());
-            return resultSet.getString(1);
-        }
-    }
-
-    private static byte[] sha256(Path file) throws Exception
-    {
-        return MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(file));
+        return MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(path));
     }
 }

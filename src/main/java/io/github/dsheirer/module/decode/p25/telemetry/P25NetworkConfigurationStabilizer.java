@@ -16,8 +16,11 @@ import io.github.dsheirer.identifier.patch.PatchGroup;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
+import io.github.dsheirer.metadata.site.FactConfirmationPolicy;
+import io.github.dsheirer.metadata.site.StableFactTracker;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -43,26 +46,44 @@ public class P25NetworkConfigurationStabilizer
     static final long CANDIDATE_EXPIRATION_MILLISECONDS = TimeUnit.MINUTES.toMillis(10);
     static final long STABLE_BROADCAST_FACT_EXPIRATION_MILLISECONDS = TimeUnit.MINUTES.toMillis(10);
     static final int MAXIMUM_STABLE_CONTROL_CHANNEL_FREQUENCIES = 8;
+    private static final int MAXIMUM_REJECTED_CONTROL_CHANNEL_FREQUENCIES = 64;
+    private static final FactConfirmationPolicy IMMEDIATE_DISCOVERY_POLICY =
+        new FactConfirmationPolicy(1, 0, CANDIDATE_EXPIRATION_MILLISECONDS, true);
+    private static final FactConfirmationPolicy GUARDED_STATIC_POLICY =
+        new FactConfirmationPolicy(GUARDED_STATIC_OBSERVATION_THRESHOLD,
+            GUARDED_STATIC_MINIMUM_AGE_MILLISECONDS, CANDIDATE_EXPIRATION_MILLISECONDS, false);
+    private static final FactConfirmationPolicy CURRENT_CONTROL_POLICY =
+        new FactConfirmationPolicy(CURRENT_CONTROL_OBSERVATION_THRESHOLD,
+            CURRENT_CONTROL_MINIMUM_AGE_MILLISECONDS, CANDIDATE_EXPIRATION_MILLISECONDS, false);
+    private static final FactConfirmationPolicy DYNAMIC_POLICY =
+        new FactConfirmationPolicy(DYNAMIC_OBSERVATION_THRESHOLD, DYNAMIC_MINIMUM_AGE_MILLISECONDS,
+            CANDIDATE_EXPIRATION_MILLISECONDS, false);
 
     private final String mDecoder;
-    private final P25StableFactTracker<P25NetworkConfigurationSnapshot.Network> mNetwork =
-        new P25StableFactTracker<>(P25NetworkConfigurationStabilizer::objectKey);
-    private final P25StableFactTracker<P25NetworkConfigurationSnapshot.CurrentSite> mCurrentSite =
-        new P25StableFactTracker<>(P25NetworkConfigurationStabilizer::objectKey);
-    private final P25StableFactTracker<P25NetworkConfigurationSnapshot.SiteStatus> mSiteStatus =
-        new P25StableFactTracker<>(P25NetworkConfigurationStabilizer::objectKey);
-    private final Map<String,P25StableFactTracker<P25NetworkConfigurationSnapshot.Channel>> mChannels = new TreeMap<>();
-    private final Map<String,P25StableFactTracker<P25NetworkConfigurationSnapshot.NeighborSite>> mNeighborSites =
+    private final StableFactTracker<P25NetworkConfigurationSnapshot.Network,
+        P25NetworkConfigurationSnapshot.Network> mNetwork = tracker();
+    private final StableFactTracker<P25NetworkConfigurationSnapshot.CurrentSite,
+        P25NetworkConfigurationSnapshot.CurrentSite> mCurrentSite = tracker();
+    private final StableFactTracker<P25NetworkConfigurationSnapshot.SiteStatus,
+        P25NetworkConfigurationSnapshot.SiteStatus> mSiteStatus = tracker();
+    private final Map<String,StableFactTracker<P25NetworkConfigurationSnapshot.Channel,
+        P25NetworkConfigurationSnapshot.Channel>> mChannels = new TreeMap<>();
+    private final Map<String,StableFactTracker<P25NetworkConfigurationSnapshot.NeighborSite,
+        P25NetworkConfigurationSnapshot.NeighborSite>> mNeighborSites =
         new TreeMap<>();
-    private final Map<String,P25StableFactTracker<P25NetworkConfigurationSnapshot.FrequencyBand>> mFrequencyBands =
+    private final Map<String,StableFactTracker<P25NetworkConfigurationSnapshot.FrequencyBand,
+        P25NetworkConfigurationSnapshot.FrequencyBand>> mFrequencyBands =
         new TreeMap<>();
-    private final Map<String,P25StableFactTracker<P25NetworkConfigurationSnapshot.ForeignSystemBand>>
+    private final Map<String,StableFactTracker<P25NetworkConfigurationSnapshot.ForeignSystemBand,
+        P25NetworkConfigurationSnapshot.ForeignSystemBand>>
         mForeignSystemBands = new TreeMap<>();
-    private final Map<String,P25StableFactTracker<P25NetworkConfigurationSnapshot.PatchGroup>> mPatchGroups =
+    private final Map<String,StableFactTracker<P25NetworkConfigurationSnapshot.PatchGroup,
+        P25NetworkConfigurationSnapshot.PatchGroup>> mPatchGroups =
         new TreeMap<>();
-    private final Map<String,P25StableFactTracker<P25NetworkConfigurationSnapshot.TalkerAlias>> mTalkerAliases =
+    private final Map<String,StableFactTracker<P25NetworkConfigurationSnapshot.TalkerAlias,
+        P25NetworkConfigurationSnapshot.TalkerAlias>> mTalkerAliases =
         new TreeMap<>();
-    private final Set<Long> mRejectedControlChannelFrequencies = new TreeSet<>();
+    private final Set<Long> mRejectedControlChannelFrequencies = new LinkedHashSet<>();
     private long mDiscoveryStartedAt;
 
     /**
@@ -125,15 +146,14 @@ public class P25NetworkConfigurationStabilizer
             return;
         }
 
-        observeStatic("network", mNetwork, observation.network(), timestamp);
-        observeStatic("current_site", mCurrentSite, observation.currentSite(), timestamp);
+        observeIdentity(mNetwork, observation.network(), timestamp);
+        observeIdentity(mCurrentSite, observation.currentSite(), timestamp);
 
         if(observation.siteStatus() != null)
         {
             //Site status is already a monitor-merged latest-value record; publish each change immediately.
             mSiteStatus.reset();
-            mSiteStatus.observe(observation.siteStatus(), timestamp, 1, 0, CANDIDATE_EXPIRATION_MILLISECONDS,
-                true, ignored -> true);
+            mSiteStatus.observe(observation.siteStatus(), timestamp, IMMEDIATE_DISCOVERY_POLICY, ignored -> true);
         }
 
         for(P25NetworkConfigurationSnapshot.Channel channel: list(observation.channels()))
@@ -143,20 +163,19 @@ public class P25NetworkConfigurationStabilizer
 
         for(P25NetworkConfigurationSnapshot.NeighborSite neighborSite: list(observation.neighborSites()))
         {
-            observeStatic("neighbor_site", mNeighborSites, neighborSiteKey(neighborSite), neighborSite, timestamp);
+            observeGuarded(mNeighborSites, neighborSiteKey(neighborSite), neighborSite, timestamp);
         }
 
         for(P25NetworkConfigurationSnapshot.FrequencyBand frequencyBand: list(observation.frequencyBands()))
         {
-            observeStatic("frequency_band", mFrequencyBands, frequencyBandKey(frequencyBand), frequencyBand,
-                timestamp);
+            observeGuarded(mFrequencyBands, frequencyBandKey(frequencyBand), frequencyBand, timestamp);
         }
 
         for(P25NetworkConfigurationSnapshot.ForeignSystemBand foreignSystemBand:
             list(observation.foreignSystemBands()))
         {
-            observeStatic("foreign_system_band", mForeignSystemBands, foreignSystemBandKey(foreignSystemBand),
-                foreignSystemBand, timestamp);
+            observeGuarded(mForeignSystemBands, foreignSystemBandKey(foreignSystemBand), foreignSystemBand,
+                timestamp);
         }
 
         observePatchGroups(observation.patchGroups(), timestamp);
@@ -178,7 +197,7 @@ public class P25NetworkConfigurationStabilizer
 
         for(P25NetworkConfigurationSnapshot.PatchGroup patchGroup: list(patchGroups))
         {
-            observeDynamic("patch_group", mPatchGroups, patchGroupKey(patchGroup), patchGroup, timestamp);
+            observeDynamic(mPatchGroups, patchGroupKey(patchGroup), patchGroup, timestamp);
         }
     }
 
@@ -267,7 +286,8 @@ public class P25NetworkConfigurationStabilizer
     {
         Set<Long> frequencies = new TreeSet<>();
 
-        for(P25StableFactTracker<P25NetworkConfigurationSnapshot.Channel> tracker: mChannels.values())
+        for(StableFactTracker<P25NetworkConfigurationSnapshot.Channel,
+            P25NetworkConfigurationSnapshot.Channel> tracker: mChannels.values())
         {
             P25NetworkConfigurationSnapshot.Channel channel = tracker.getStableValue();
 
@@ -291,36 +311,30 @@ public class P25NetworkConfigurationStabilizer
             stableValues(mForeignSystemBands));
     }
 
-    private <T> void observeStatic(String factType, P25StableFactTracker<T> tracker, T value, long timestamp)
+    private <T> void observeIdentity(StableFactTracker<T,T> tracker, T value, long timestamp)
     {
         if(value != null)
         {
-            boolean discovery = isDiscoveryMode(timestamp);
-            tracker.observe(value, timestamp, discovery ? 1 : GUARDED_STATIC_OBSERVATION_THRESHOLD,
-                discovery ? 0 : GUARDED_STATIC_MINIMUM_AGE_MILLISECONDS, CANDIDATE_EXPIRATION_MILLISECONDS,
-                discovery, ignored -> true);
+            tracker.observe(value, timestamp,
+                isDiscoveryMode(timestamp) ? IMMEDIATE_DISCOVERY_POLICY : GUARDED_STATIC_POLICY, ignored -> true);
         }
     }
 
-    private <T> void observeStatic(String factType, Map<String,P25StableFactTracker<T>> trackers, String key, T value,
-                                   long timestamp)
+    private <T> void observeGuarded(Map<String,StableFactTracker<T,T>> trackers, String key, T value, long timestamp)
     {
-        if(key != null)
+        if(key != null && value != null)
         {
-            observeStatic(factType, trackers.computeIfAbsent(key, ignored -> new P25StableFactTracker<>(
-                P25NetworkConfigurationStabilizer::objectKey)), value, timestamp);
+            trackers.computeIfAbsent(key, ignored -> tracker())
+                .observe(value, timestamp, GUARDED_STATIC_POLICY, ignored -> true);
         }
     }
 
-    private <T> void observeDynamic(String factType, Map<String,P25StableFactTracker<T>> trackers, String key, T value,
-                                    long timestamp)
+    private <T> void observeDynamic(Map<String,StableFactTracker<T,T>> trackers, String key, T value, long timestamp)
     {
-        if(key != null)
+        if(key != null && value != null)
         {
-            trackers.computeIfAbsent(key, ignored -> new P25StableFactTracker<>(
-                    P25NetworkConfigurationStabilizer::objectKey))
-                .observe(value, timestamp, DYNAMIC_OBSERVATION_THRESHOLD, DYNAMIC_MINIMUM_AGE_MILLISECONDS,
-                    CANDIDATE_EXPIRATION_MILLISECONDS, false, ignored -> true);
+            trackers.computeIfAbsent(key, ignored -> tracker())
+                .observe(value, timestamp, DYNAMIC_POLICY, ignored -> true);
         }
     }
 
@@ -333,32 +347,20 @@ public class P25NetworkConfigurationStabilizer
             return;
         }
 
-        P25StableFactTracker<P25NetworkConfigurationSnapshot.Channel> tracker =
-            mChannels.computeIfAbsent(key, ignored -> new P25StableFactTracker<>(
-                P25NetworkConfigurationStabilizer::objectKey));
-
-        if("base_station".equals(channel.role()))
-        {
-            tracker.reset();
-            tracker.observe(channel, timestamp, 1, 0, CANDIDATE_EXPIRATION_MILLISECONDS, true,
-                ignored -> true);
-            return;
-        }
+        StableFactTracker<P25NetworkConfigurationSnapshot.Channel,P25NetworkConfigurationSnapshot.Channel> tracker =
+            mChannels.computeIfAbsent(key, ignored -> tracker());
 
         boolean discovery = isDiscoveryMode(timestamp);
         boolean currentControl = isCurrentControlChannel(channel);
-        int observations = discovery ? 1 : currentControl ? CURRENT_CONTROL_OBSERVATION_THRESHOLD :
-            GUARDED_STATIC_OBSERVATION_THRESHOLD;
-        long minimumAge = discovery ? 0 : currentControl ? CURRENT_CONTROL_MINIMUM_AGE_MILLISECONDS :
-            GUARDED_STATIC_MINIMUM_AGE_MILLISECONDS;
+        FactConfirmationPolicy policy = discovery && currentControl ? IMMEDIATE_DISCOVERY_POLICY :
+            currentControl ? CURRENT_CONTROL_POLICY : GUARDED_STATIC_POLICY;
 
-        tracker.observe(channel, timestamp, observations, minimumAge, CANDIDATE_EXPIRATION_MILLISECONDS,
-            discovery, this::allowChannelPromotion);
+        tracker.observe(channel, timestamp, policy, this::allowChannelPromotion);
     }
 
     private void observeTalkerAlias(P25NetworkConfigurationSnapshot.TalkerAlias talkerAlias, long timestamp)
     {
-        observeDynamic("talker_alias", mTalkerAliases, talkerAliasKey(talkerAlias), talkerAlias, timestamp);
+        observeDynamic(mTalkerAliases, talkerAliasKey(talkerAlias), talkerAlias, timestamp);
     }
 
     private boolean allowChannelPromotion(P25NetworkConfigurationSnapshot.Channel channel)
@@ -392,6 +394,7 @@ public class P25NetworkConfigurationStabilizer
         {
             LOGGER.warn("Rejected P25 control channel candidate [{}]; stable control channel cap [{}] reached",
                 channel.downlink(), MAXIMUM_STABLE_CONTROL_CHANNEL_FREQUENCIES);
+            trimRejectedControlChannels();
         }
 
         return false;
@@ -399,7 +402,8 @@ public class P25NetworkConfigurationStabilizer
 
     private boolean hasStableControlFrequency(long frequency)
     {
-        for(P25StableFactTracker<P25NetworkConfigurationSnapshot.Channel> tracker: mChannels.values())
+        for(StableFactTracker<P25NetworkConfigurationSnapshot.Channel,
+            P25NetworkConfigurationSnapshot.Channel> tracker: mChannels.values())
         {
             P25NetworkConfigurationSnapshot.Channel stable = tracker.getStableValue();
 
@@ -436,31 +440,35 @@ public class P25NetworkConfigurationStabilizer
         expireStableBroadcastFacts(mForeignSystemBands, timestamp);
     }
 
-    private <T> void expireStableBroadcastFacts(Map<String,P25StableFactTracker<T>> trackers, long timestamp)
+    private <T> void expireStableBroadcastFacts(Map<String,StableFactTracker<T,T>> trackers, long timestamp)
     {
-        trackers.entrySet().removeIf(entry -> entry.getValue().expireStable(timestamp,
-            STABLE_BROADCAST_FACT_EXPIRATION_MILLISECONDS));
+        trackers.entrySet().removeIf(entry -> {
+            StableFactTracker<T,T> tracker = entry.getValue();
+            tracker.expireCandidate(timestamp, CANDIDATE_EXPIRATION_MILLISECONDS);
+            tracker.expireStable(timestamp, STABLE_BROADCAST_FACT_EXPIRATION_MILLISECONDS);
+            return tracker.isEmpty();
+        });
     }
 
-    private <T> void expireCandidates(Map<String,P25StableFactTracker<T>> trackers, long timestamp)
+    private <T> void expireCandidates(Map<String,StableFactTracker<T,T>> trackers, long timestamp)
     {
-        for(P25StableFactTracker<T> tracker: trackers.values())
-        {
-            expireCandidate(tracker, timestamp);
-        }
+        trackers.entrySet().removeIf(entry -> {
+            expireCandidate(entry.getValue(), timestamp);
+            return entry.getValue().isEmpty();
+        });
     }
 
-    private <T> void resetCandidates(Map<String,P25StableFactTracker<T>> trackers)
+    private <T> void resetCandidates(Map<String,StableFactTracker<T,T>> trackers)
     {
-        for(P25StableFactTracker<T> tracker: trackers.values())
+        for(StableFactTracker<T,T> tracker: trackers.values())
         {
             tracker.resetCandidate();
         }
     }
 
-    private <T> T expireCandidate(P25StableFactTracker<T> tracker, long timestamp)
+    private <T> void expireCandidate(StableFactTracker<T,T> tracker, long timestamp)
     {
-        return tracker.expireCandidate(timestamp, CANDIDATE_EXPIRATION_MILLISECONDS);
+        tracker.expireCandidate(timestamp, CANDIDATE_EXPIRATION_MILLISECONDS);
     }
 
     private static boolean isControlChannel(P25NetworkConfigurationSnapshot.Channel channel)
@@ -555,16 +563,24 @@ public class P25NetworkConfigurationStabilizer
         return value != null ? value.toString() : "";
     }
 
-    private static String objectKey(Object value)
+    private void trimRejectedControlChannels()
     {
-        return value != null ? value.toString() : null;
+        while(mRejectedControlChannelFrequencies.size() > MAXIMUM_REJECTED_CONTROL_CHANNEL_FREQUENCIES)
+        {
+            mRejectedControlChannelFrequencies.remove(mRejectedControlChannelFrequencies.iterator().next());
+        }
     }
 
-    private static <T> List<T> stableValues(Map<String,P25StableFactTracker<T>> trackers)
+    private static <T> StableFactTracker<T,T> tracker()
+    {
+        return new StableFactTracker<>(value -> value);
+    }
+
+    private static <T> List<T> stableValues(Map<String,StableFactTracker<T,T>> trackers)
     {
         List<T> values = new ArrayList<>();
 
-        for(P25StableFactTracker<T> tracker: trackers.values())
+        for(StableFactTracker<T,T> tracker: trackers.values())
         {
             T value = tracker.getStableValue();
 

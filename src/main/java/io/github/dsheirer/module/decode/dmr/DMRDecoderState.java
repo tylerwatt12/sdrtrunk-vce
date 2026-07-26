@@ -27,6 +27,7 @@ import io.github.dsheirer.channel.state.TimeslotDecoderState;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.Channel.ChannelType;
 import io.github.dsheirer.controller.channel.ChannelConfigurationChangeNotification;
+import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierClass;
@@ -131,7 +132,9 @@ public class DMRDecoderState extends TimeslotDecoderState
     private ProtocolSiteMetadataPublisher mSiteMetadataPublisher;
     private DMRTrafficChannelManager mTrafficChannelManager;
     private DecodeEvent mCurrentCallEvent;
+    private boolean mCurrentCallEncrypted;
     private boolean mIgnoreCRCChecksums;
+    private boolean mTrunkingEnabled;
     private DMRDecoderState mSisterDecoderState;
 
     /**
@@ -147,6 +150,7 @@ public class DMRDecoderState extends TimeslotDecoderState
         mTrafficChannelManager = trafficChannelManager;
         DecodeConfigDMR config = channel.getDecodeConfiguration() instanceof DecodeConfigDMR dmrConfig ?
             dmrConfig : null;
+        mTrunkingEnabled = config != null && config.isTrunked();
 
         //The decoder state passes all messages to the network configuration monitor, so we only construct
         //the monitor for timeslot 1.
@@ -154,9 +158,13 @@ public class DMRDecoderState extends TimeslotDecoderState
         {
             mNetworkConfigurationMonitor = new DMRNetworkConfigurationMonitor(
                 config != null ? config.getTimeslotMap() : List.of());
-            mSiteMetadataPublisher = new ProtocolSiteMetadataPublisher(mChannel,
-                () -> mNetworkConfigurationMonitor != null ? mNetworkConfigurationMonitor.getSnapshot() : null,
-                this::hasInterModuleEventBus, event -> getInterModuleEventBus().post(event));
+
+            if(mTrunkingEnabled)
+            {
+                mSiteMetadataPublisher = new ProtocolSiteMetadataPublisher(mChannel,
+                    () -> mNetworkConfigurationMonitor != null ? mNetworkConfigurationMonitor.getSnapshot() : null,
+                    this::hasInterModuleEventBus, event -> getInterModuleEventBus().post(event));
+            }
         }
 
         //For RAS protected systems, allows user to ignore CRC checksums and still decode the system
@@ -186,7 +194,7 @@ public class DMRDecoderState extends TimeslotDecoderState
      */
     public DMRChannel processActiveTalkgroups(Map<Integer, IntegerIdentifier> idMap, Map<Integer, DMRLsn> lsnMap)
     {
-        if(mCurrentCallEvent != null)
+        if(mTrunkingEnabled && mCurrentCallEvent != null)
         {
             List<Identifier> toIds = mCurrentCallEvent.getIdentifierCollection().getIdentifiers(Role.TO);
 
@@ -347,7 +355,11 @@ public class DMRDecoderState extends TimeslotDecoderState
         if(mNetworkConfigurationMonitor != null && isValid(message) && message instanceof DMRMessage dmrMessage)
         {
             mNetworkConfigurationMonitor.process(dmrMessage);
-            mSiteMetadataPublisher.publish(dmrMessage.getTimestamp());
+
+            if(mSiteMetadataPublisher != null)
+            {
+                mSiteMetadataPublisher.publish(dmrMessage.getTimestamp());
+            }
         }
     }
 
@@ -691,15 +703,16 @@ public class DMRDecoderState extends TimeslotDecoderState
      */
     private void processTerminator(Terminator terminator)
     {
-        closeCurrentCallEvent(terminator.getTimestamp());
-        broadcast(new DecoderStateEvent(this, Event.CONTINUATION, State.ACTIVE, getTimeslot()));
-
         LCMessage lcMessage = terminator.getLCMessage();
 
         if(isValid(lcMessage))
         {
             processLinkControl(lcMessage, true);
         }
+
+        closeCurrentCallEvent(terminator.getTimestamp());
+        getIdentifierCollection().remove(Role.FROM);
+        broadcast(new DecoderStateEvent(this, Event.CONTINUATION, State.ACTIVE, getTimeslot()));
     }
 
     /**
@@ -845,7 +858,7 @@ public class DMRDecoderState extends TimeslotDecoderState
 
                     //Channel rotation monitor normally uses only CONTROL state, so when we detect that we're a
                     //Capacity plus system, add ACTIVE as an active state to the monitor.  This can be requested repeatedly.
-                    if(getInterModuleEventBus() != null)
+                    if(mTrunkingEnabled && getInterModuleEventBus() != null)
                     {
                         getInterModuleEventBus().post(CAPACITY_PLUS_ACTIVE_STATE_REQUEST);
                     }
@@ -1120,8 +1133,6 @@ public class DMRDecoderState extends TimeslotDecoderState
                 {
                     if(isTerminator)
                     {
-                        closeCurrentCallEvent(message.getTimestamp());
-                        getIdentifierCollection().remove(Role.FROM);
                         getIdentifierCollection().update(cpgvcu.getTalkgroup());
                     }
                     else
@@ -1138,8 +1149,6 @@ public class DMRDecoderState extends TimeslotDecoderState
                 {
                     if(isTerminator)
                     {
-                        closeCurrentCallEvent(message.getTimestamp());
-                        getIdentifierCollection().remove(Role.FROM);
                         getIdentifierCollection().update(cpgvcu.getTalkgroup());
                     }
                     else
@@ -1156,8 +1165,6 @@ public class DMRDecoderState extends TimeslotDecoderState
                 {
                     if(isTerminator)
                     {
-                        closeCurrentCallEvent(message.getTimestamp());
-                        getIdentifierCollection().remove(Role.FROM);
                         getIdentifierCollection().update(cmvcu.getTalkgroup());
                     }
                     else
@@ -1243,8 +1250,6 @@ public class DMRDecoderState extends TimeslotDecoderState
 
                     if(isTerminator)
                     {
-                        closeCurrentCallEvent(message.getTimestamp());
-                        getIdentifierCollection().remove(Role.FROM);
                         getIdentifierCollection().update(cpwavcu.getTalkgroup());
                     }
                     else
@@ -1262,8 +1267,6 @@ public class DMRDecoderState extends TimeslotDecoderState
 
                     if(isTerminator)
                     {
-                        closeCurrentCallEvent(message.getTimestamp());
-                        getIdentifierCollection().remove(Role.FROM);
                         getIdentifierCollection().update(hgvcu.getTalkgroup());
                     }
                     else
@@ -1285,8 +1288,6 @@ public class DMRDecoderState extends TimeslotDecoderState
 
                     if(isTerminator)
                     {
-                        closeCurrentCallEvent(message.getTimestamp());
-                        getIdentifierCollection().remove(Role.FROM);
                         getIdentifierCollection().update(huuvcu.getTargetRadio());
                     }
                     else
@@ -1303,8 +1304,6 @@ public class DMRDecoderState extends TimeslotDecoderState
                 {
                     if(isTerminator)
                     {
-                        closeCurrentCallEvent(message.getTimestamp());
-                        getIdentifierCollection().remove(Role.FROM);
                         getIdentifierCollection().update(gvcu.getTalkgroup());
                     }
                     else
@@ -1322,8 +1321,6 @@ public class DMRDecoderState extends TimeslotDecoderState
 
                     if(isTerminator)
                     {
-                        closeCurrentCallEvent(message.getTimestamp());
-                        getIdentifierCollection().remove(Role.FROM);
                         getIdentifierCollection().update(uuvcu.getTargetRadio());
                     }
                     else
@@ -1367,6 +1364,8 @@ public class DMRDecoderState extends TimeslotDecoderState
      */
     private void updateEncryptedCall(EmbeddedEncryptionParameters embeddedEncryptionParameters, boolean isGroup, long timestamp)
     {
+        mCurrentCallEncrypted = true;
+
         if(mCurrentCallEvent != null)
         {
             String details = mCurrentCallEvent.getDetails();
@@ -1404,7 +1403,14 @@ public class DMRDecoderState extends TimeslotDecoderState
      */
     private void updateCurrentCall(DecodeEventType type, String details, long timestamp)
     {
-        Event event = (mCurrentCallEvent == null ? Event.START : Event.CONTINUATION);
+        if(mCurrentCallEvent != null &&
+            callIdentityChanged(mCurrentCallEvent.getIdentifierCollection(), getIdentifierCollection()))
+        {
+            closeCurrentCallEvent(timestamp, false);
+        }
+
+        Event event = mCurrentCallEvent == null ? Event.START : Event.CONTINUATION;
+        mCurrentCallEncrypted |= DecodeEventType.VOICE_CALLS_ENCRYPTED.contains(type);
 
         //Create a repeater channel descriptor if we don't have one
         if(mCurrentChannel == null && getCurrentFrequency() > 0)
@@ -1451,15 +1457,137 @@ public class DMRDecoderState extends TimeslotDecoderState
      */
     private void closeCurrentCallEvent(long timestamp)
     {
+        closeCurrentCallEvent(timestamp, true);
+    }
+
+    /**
+     * Ends the current call, optionally refreshing its identifiers from the latest link-control state. Identity-change
+     * rollover deliberately keeps the old snapshot while normal terminators can contribute late target identifiers.
+     */
+    private void closeCurrentCallEvent(long timestamp, boolean refreshIdentifiers)
+    {
         if(mCurrentCallEvent != null)
         {
+            if(refreshIdentifiers)
+            {
+                mCurrentCallEvent.setIdentifierCollection(completionIdentifiers(
+                    mCurrentCallEvent.getIdentifierCollection(), getIdentifierCollection()));
+            }
+
             mCurrentCallEvent.end(timestamp);
             broadcast(mCurrentCallEvent);
+            publishConventionalCall(mCurrentCallEvent, timestamp);
             mCurrentCallEvent = null;
         }
 
+        mCurrentCallEncrypted = false;
         getIdentifierCollection().remove(IdentifierClass.USER, Form.TALKER_ALIAS, Role.FROM);
         getIdentifierCollection().remove(IdentifierClass.USER, Form.TONE, Role.FROM);
+    }
+
+    /**
+     * Publishes exactly one immutable completed-call snapshot for explicitly conventional standard channels.
+     */
+    private void publishConventionalCall(DecodeEvent call, long timestamp)
+    {
+        if(call == null || mChannel == null || !mChannel.isStandardChannel() || mTrunkingEnabled)
+        {
+            return;
+        }
+
+        IdentifierCollection identifiers = call.getIdentifierCollection();
+        Identifier source = identifiers != null ? identifiers.getFromIdentifier() : null;
+        Identifier target = identifiers != null ? identifiers.getToIdentifier() : null;
+        Integer sourceRadio = source instanceof RadioIdentifier radio ? positive(radio.getValue()) : null;
+        Integer talkgroup = target instanceof TalkgroupIdentifier group ? positive(group.getValue()) : null;
+        Integer targetRadio = target instanceof RadioIdentifier radio ? positive(radio.getValue()) : null;
+        DMRConventionalCallEvent.TargetKind targetKind = talkgroup != null ?
+            DMRConventionalCallEvent.TargetKind.GROUP : targetRadio != null ?
+            DMRConventionalCallEvent.TargetKind.PRIVATE : targetKind(call.getEventType());
+        long frequency = call.getChannelDescriptor() != null ?
+            call.getChannelDescriptor().getDownlinkFrequency() : getCurrentFrequency();
+
+        if(frequency <= 0)
+        {
+            frequency = getCurrentFrequency();
+        }
+
+        long endTimestamp = Math.max(timestamp, call.getTimeEnd());
+
+        if(endTimestamp <= 0)
+        {
+            endTimestamp = System.currentTimeMillis();
+        }
+
+        long startTimestamp = call.getTimeStart() > 0 ? call.getTimeStart() : endTimestamp;
+        boolean encrypted = mCurrentCallEncrypted ||
+            DecodeEventType.VOICE_CALLS_ENCRYPTED.contains(call.getEventType());
+        MyEventBus.getGlobalEventBus().post(new DMRConventionalCallEvent(startTimestamp, endTimestamp,
+            mChannel.getConfigurationId(), mChannel.getRadresGuid(), mChannel.getName(), mChannel.getAliasListName(),
+            frequency, getTimeslot(), targetKind, talkgroup, sourceRadio, targetRadio, encrypted));
+    }
+
+    private static DMRConventionalCallEvent.TargetKind targetKind(DecodeEventType eventType)
+    {
+        if(eventType == DecodeEventType.CALL_GROUP || eventType == DecodeEventType.CALL_GROUP_ENCRYPTED)
+        {
+            return DMRConventionalCallEvent.TargetKind.GROUP;
+        }
+
+        if(eventType == DecodeEventType.CALL_UNIT_TO_UNIT ||
+            eventType == DecodeEventType.CALL_UNIT_TO_UNIT_ENCRYPTED)
+        {
+            return DMRConventionalCallEvent.TargetKind.PRIVATE;
+        }
+
+        return DMRConventionalCallEvent.TargetKind.UNKNOWN;
+    }
+
+    private static boolean callIdentityChanged(IdentifierCollection previous, IdentifierCollection current)
+    {
+        if(previous == null || current == null)
+        {
+            return false;
+        }
+
+        return identityChanged(previous.getFromIdentifier(), current.getFromIdentifier()) ||
+            identityChanged(previous.getToIdentifier(), current.getToIdentifier());
+    }
+
+    private static IdentifierCollection completionIdentifiers(IdentifierCollection call,
+                                                              IdentifierCollection latest)
+    {
+        if(call == null)
+        {
+            return latest != null ? new IdentifierCollection(latest.getIdentifiers()) : new IdentifierCollection();
+        }
+
+        MutableIdentifierCollection merged = new MutableIdentifierCollection(call.getIdentifiers());
+
+        if(latest != null)
+        {
+            if(call.getFromIdentifier() == null && latest.getFromIdentifier() != null)
+            {
+                merged.update(latest.getFromIdentifier());
+            }
+
+            if(call.getToIdentifier() == null && latest.getToIdentifier() != null)
+            {
+                merged.update(latest.getToIdentifier());
+            }
+        }
+
+        return merged.copyOf();
+    }
+
+    private static boolean identityChanged(Identifier previous, Identifier current)
+    {
+        return previous != null && current != null && !previous.equals(current);
+    }
+
+    private static Integer positive(Integer value)
+    {
+        return value != null && value > 0 && value <= 0xFFFFFF ? value : null;
     }
 
     @Override
@@ -1475,6 +1603,13 @@ public class DMRDecoderState extends TimeslotDecoderState
                 }
                 break;
             case NOTIFICATION_SOURCE_FREQUENCY:
+                if(!mTrunkingEnabled && mChannel.isStandardChannel() &&
+                    getCurrentFrequency() != event.getFrequency())
+                {
+                    closeCurrentCallEvent(System.currentTimeMillis());
+                    setCurrentChannel(null);
+                }
+
                 setCurrentFrequency(event.getFrequency());
 
                 //Only update the traffic channel manager if we're not a traffic channel.

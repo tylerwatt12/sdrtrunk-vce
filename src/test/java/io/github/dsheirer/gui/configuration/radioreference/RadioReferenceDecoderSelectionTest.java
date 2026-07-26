@@ -18,6 +18,8 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.module.decode.DecoderType;
+import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
+import io.github.dsheirer.module.decode.dmr.DMRChannelMode;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.rrapi.type.Flavor;
@@ -56,6 +58,20 @@ class RadioReferenceDecoderSelectionTest
     {
         assertEquals(DecoderType.P25_PHASE1, trunkedDecoderType("Phase I"));
         assertEquals(DecoderType.P25_PHASE2, trunkedDecoderType("Phase II"));
+    }
+
+    @Test
+    void createsConventionalDmrForAgencyFrequency()
+    {
+        Mode mode = new Mode();
+        mode.setName("dmr");
+
+        Channel channel = FrequencyEditor.createChannel(ModeDecoderType.get(mode), 451_012_500L,
+            "Public Safety", "Public Works", "Repeater");
+
+        DecodeConfigDMR configuration =
+            assertInstanceOf(DecodeConfigDMR.class, channel.getDecodeConfiguration());
+        assertEquals(DMRChannelMode.CONVENTIONAL, configuration.getChannelMode());
     }
 
     @Test

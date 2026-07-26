@@ -23,6 +23,7 @@ import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import io.github.dsheirer.metadata.site.SiteMetadataEvent;
 import io.github.dsheirer.module.decode.DecoderType;
+import io.github.dsheirer.module.decode.dmr.DMRConventionalCallEvent;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
 import io.github.dsheirer.module.decode.p25.P25ChannelGrantEvent;
@@ -45,6 +46,59 @@ import java.util.List;
  */
 class P25ActivityLogMapper
 {
+    P25ActivityLogRecords.DmrConventionalCall map(DMRConventionalCallEvent event)
+    {
+        if(event == null || event.startTimestamp() <= 0 || event.endTimestamp() < event.startTimestamp() ||
+            event.frequencyHertz() <= 0 || (event.timeslot() != 1 && event.timeslot() != 2) ||
+            event.targetKind() == null)
+        {
+            return null;
+        }
+
+        String guid = blankToNull(event.guid());
+        String configurationId = blankToNull(event.channelConfigurationId());
+        String channelName = blankToNull(event.channelName());
+        String contextKey;
+
+        if(guid != null)
+        {
+            contextKey = "GUID:" + guid;
+        }
+        else if(configurationId != null)
+        {
+            contextKey = "CONVENTIONAL_DMR:CONFIGURATION:" + configurationId;
+        }
+        else
+        {
+            contextKey = "CONVENTIONAL_DMR:DMR:" + event.frequencyHertz() +
+                (channelName != null ? ":" + channelName : "");
+        }
+
+        P25ActivityLogRecords.DmrTargetKind targetKind = switch(event.targetKind())
+        {
+            case GROUP -> P25ActivityLogRecords.DmrTargetKind.GROUP;
+            case PRIVATE -> P25ActivityLogRecords.DmrTargetKind.PRIVATE;
+            case UNKNOWN -> P25ActivityLogRecords.DmrTargetKind.UNKNOWN;
+        };
+        Integer talkgroup = positive(event.talkgroupId());
+        Integer sourceRadio = positive(event.sourceRadioId());
+        Integer targetRadio = positive(event.targetRadioId());
+
+        if(targetKind != P25ActivityLogRecords.DmrTargetKind.GROUP)
+        {
+            talkgroup = null;
+        }
+
+        if(targetKind != P25ActivityLogRecords.DmrTargetKind.PRIVATE)
+        {
+            targetRadio = null;
+        }
+
+        return new P25ActivityLogRecords.DmrConventionalCall(event.startTimestamp(), event.endTimestamp(),
+            contextKey, guid, channelName, blankToNull(event.aliasListName()), event.frequencyHertz(),
+            event.timeslot(), targetKind, talkgroup, sourceRadio, targetRadio, event.encrypted());
+    }
+
     P25ActivityLogRecords.TalkerAliasUpdate map(P25TalkerAliasEvent event)
     {
         if(event == null || event.channel() == null || event.radio() == null || event.alias() == null ||
@@ -482,6 +536,11 @@ class P25ActivityLogMapper
         }
 
         return null;
+    }
+
+    private static Integer positive(Integer value)
+    {
+        return value != null && value > 0 && value <= DmrActivitySchema.MAXIMUM_DMR_ID ? value : null;
     }
 
     private static String contextKey(String guid, Protocol protocol, IdentifierFacts facts, Long frequency,

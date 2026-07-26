@@ -184,7 +184,8 @@ public final class P25ActivityLogMaintenance
     {
         long cutoff = System.currentTimeMillis() - TimeUnit.DAYS.toMillis(Math.max(1, retentionDays));
         int deleted = P25ActivityLogSchema.deleteOlderThan(connection, cutoff) +
-            TrunkedSiteSchema.deleteOlderThan(connection, cutoff).total();
+            TrunkedSiteSchema.deleteOlderThan(connection, cutoff).total() +
+            DmrActivitySchema.deleteOlderThan(connection, cutoff).total();
 
         P25ActivityLogSchema.updateStatus(connection, "retention_days", Integer.toString(Math.max(1, retentionDays)));
         P25ActivityLogSchema.updateStatus(connection, "last_retention_cleanup_ms",
@@ -196,7 +197,8 @@ public final class P25ActivityLogMaintenance
     private static int resetStats(Connection connection) throws SQLException
     {
         return inTransaction(connection, () -> {
-            int deleted = P25ActivityLogSchema.resetStats(connection) + TrunkedSiteSchema.resetStats(connection);
+            int deleted = DmrActivitySchema.resetStats(connection) + P25ActivityLogSchema.resetStats(connection) +
+                TrunkedSiteSchema.resetStats(connection);
             updateStatus(connection, "last_stats_reset_ms");
             return deleted;
         });
@@ -205,7 +207,8 @@ public final class P25ActivityLogMaintenance
     private static int clearSiteStats(Connection connection, String guid) throws SQLException
     {
         return inTransaction(connection, () -> {
-            int deleted = P25ActivityLogSchema.clearSiteStats(connection, guid) +
+            int deleted = DmrActivitySchema.clearSiteStats(connection, guid) +
+                P25ActivityLogSchema.clearSiteStats(connection, guid) +
                 TrunkedSiteSchema.clearSiteStats(connection, guid);
             P25ActivityLogSchema.updateStatus(connection, "last_site_stats_clear_ms",
                 Long.toString(System.currentTimeMillis()));

@@ -30,9 +30,9 @@ key integers, four value/timestamp integers, and SQLite B-tree overhead, with no
 
 The decoder publishes message-scoped facts through the existing bounded statistics queue and single background writer.
 Ordinary runtime services never perform schema migration. Current rows use the standard `confirmed_at_ms` retention
-path; summaries use `last_seen_ms`. Site-specific clearing and full statistics reset delete both tables. The bundled
-Application Migrator upgrades supported v19 or v20 databases to v21 on a backed-up staged copy and validates the
-complete result before startup continues.
+path; summaries use `last_seen_ms`. Site-specific clearing and full statistics reset delete both tables. The Alpha 7
+release tag retains its backed-up predecessor migration. The current unreleased branch accepts only the current v21
+schema until the next numbered release transition is prepared.
 
 ## Query access path
 

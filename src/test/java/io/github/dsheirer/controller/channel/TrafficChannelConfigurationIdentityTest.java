@@ -14,6 +14,7 @@ package io.github.dsheirer.controller.channel;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
+import io.github.dsheirer.module.decode.dmr.DMRChannelMode;
 import io.github.dsheirer.module.decode.dmr.DMRTrafficChannelManager;
 import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
 import io.github.dsheirer.module.decode.nxdn.NXDNTrafficChannelManager;
@@ -46,6 +47,7 @@ class TrafficChannelConfigurationIdentityTest
     {
         Channel parent = parent();
         DecodeConfigDMR decode = new DecodeConfigDMR();
+        decode.setChannelMode(DMRChannelMode.TRUNKED);
         decode.setTrafficChannelPoolSize(1);
         parent.setDecodeConfiguration(decode);
 

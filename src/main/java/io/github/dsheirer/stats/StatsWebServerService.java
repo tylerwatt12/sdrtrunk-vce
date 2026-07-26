@@ -192,6 +192,10 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
                 () -> mDatabase.conventional(StatsRequest.from(exchange.getRequestURI()))));
             mServer.createContext("/api/conventional/detail", exchange -> handleJson(exchange,
                 () -> mDatabase.conventionalDetail(StatsRequest.from(exchange.getRequestURI()))));
+            mServer.createContext("/api/conventional/talkgroups", exchange -> handleJson(exchange,
+                () -> mDatabase.conventionalTalkgroups(StatsRequest.from(exchange.getRequestURI()))));
+            mServer.createContext("/api/conventional/radios", exchange -> handleJson(exchange,
+                () -> mDatabase.conventionalRadios(StatsRequest.from(exchange.getRequestURI()))));
             mServer.createContext("/live/systems", this::handleSystemsSse);
             mServer.createContext("/live/sites", this::handleSitesSse);
             mServer.createContext("/live/web-calls", this::handleWebCallsSse);

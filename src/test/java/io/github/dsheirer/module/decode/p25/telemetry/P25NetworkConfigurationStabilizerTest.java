@@ -22,7 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 public class P25NetworkConfigurationStabilizerTest
 {
     @Test
-    public void discoveryPromotesFirstStaticFactsImmediately()
+    public void discoveryPromotesOnlyIdentityAndCurrentControlImmediately()
     {
         P25NetworkConfigurationStabilizer stabilizer = new P25NetworkConfigurationStabilizer("P25_PHASE_1");
         P25NetworkConfigurationSnapshot snapshot = new P25NetworkConfigurationSnapshot("P25_PHASE_1",
@@ -40,6 +40,16 @@ public class P25NetworkConfigurationStabilizerTest
         assertNotNull(stable.network());
         assertEquals(0xBEE00, stable.network().wacn());
         assertNotNull(stable.currentSite());
+        assertEquals(1, stable.channels().size());
+        assertTrue(hasChannel(stable, "primary_control", 856137500L));
+        assertFalse(hasChannel(stable, "secondary_control", 855987500L));
+        assertTrue(stable.neighborSites().isEmpty());
+        assertTrue(stable.frequencyBands().isEmpty());
+
+        stabilizer.observe(snapshot, 31_000L);
+        stabilizer.observe(snapshot, 61_000L);
+        stable = stabilizer.getSnapshot();
+
         assertEquals(2, stable.channels().size());
         assertEquals(1, stable.neighborSites().size());
         assertEquals(1, stable.frequencyBands().size());
@@ -84,14 +94,14 @@ public class P25NetworkConfigurationStabilizerTest
     }
 
     @Test
-    public void resetStartsNewDiscoveryWindow()
+    public void resetStartsNewIdentityAndCurrentControlDiscoveryWindow()
     {
         P25NetworkConfigurationStabilizer stabilizer = seededStabilizer();
 
         stabilizer.reset();
-        stabilizer.observe(snapshot(secondary(851462500L)), 200000L);
+        stabilizer.observe(snapshot(primary(851462500L)), 200000L);
 
-        assertTrue(hasChannel(stabilizer.getSnapshot(), "secondary_control", 851462500L));
+        assertTrue(hasChannel(stabilizer.getSnapshot(), "primary_control", 851462500L));
     }
 
     @Test
@@ -105,6 +115,8 @@ public class P25NetworkConfigurationStabilizerTest
             List.of(new P25NetworkConfigurationSnapshot.FrequencyBand(0, false, 851006250L, 12500,
                 6250L, -45000000L, 1)), List.of(), List.of());
         stabilizer.observe(initial, 1_000L);
+        stabilizer.observe(initial, 31_000L);
+        stabilizer.observe(initial, 61_000L);
 
         stabilizer.resetCandidates();
         stabilizer.observe(snapshot(secondary(851462500L)), 200_000L);
@@ -128,6 +140,10 @@ public class P25NetworkConfigurationStabilizerTest
 
         stabilizer.observe(new P25NetworkConfigurationSnapshot("P25_PHASE_1", null, null, channels,
             List.of(), List.of(), List.of(), List.of()), 1000L);
+        stabilizer.observe(new P25NetworkConfigurationSnapshot("P25_PHASE_1", null, null, channels,
+            List.of(), List.of(), List.of(), List.of()), 31_000L);
+        stabilizer.observe(new P25NetworkConfigurationSnapshot("P25_PHASE_1", null, null, channels,
+            List.of(), List.of(), List.of(), List.of()), 61_000L);
 
         assertEquals(8, stabilizer.getStableCurrentSiteControlFrequencies().size());
     }
@@ -171,13 +187,15 @@ public class P25NetworkConfigurationStabilizerTest
         P25NetworkConfigurationSnapshot.NeighborSite resolved = neighbor(855237500L);
 
         stabilizer.observe(snapshot(unresolved), 1000L);
+        stabilizer.observe(snapshot(unresolved), 31_000L);
+        stabilizer.observe(snapshot(unresolved), 61_000L);
 
         assertEquals(1, stabilizer.getSnapshot().neighborSites().size());
         assertEquals(0L, stabilizer.getSnapshot().neighborSites().get(0).downlink());
 
-        stabilizer.observe(snapshot(resolved), 2000L);
-        stabilizer.observe(snapshot(resolved), 17000L);
-        stabilizer.observe(snapshot(resolved), 32000L);
+        stabilizer.observe(snapshot(resolved), 70_000L);
+        stabilizer.observe(snapshot(resolved), 100_000L);
+        stabilizer.observe(snapshot(resolved), 130_000L);
 
         assertEquals(1, stabilizer.getSnapshot().neighborSites().size());
         assertEquals(855237500L, stabilizer.getSnapshot().neighborSites().get(0).downlink());
@@ -198,6 +216,8 @@ public class P25NetworkConfigurationStabilizerTest
             null, List.of(), List.of(), List.of(), List.of(), List.of(), null, bands);
 
         stabilizer.observe(observation, 1_000L);
+        stabilizer.observe(observation, 31_000L);
+        stabilizer.observe(observation, 61_000L);
 
         assertEquals(3, stabilizer.getSnapshot().foreignSystemBands().size());
         assertTrue(stabilizer.getSnapshot().foreignSystemBands().containsAll(bands));

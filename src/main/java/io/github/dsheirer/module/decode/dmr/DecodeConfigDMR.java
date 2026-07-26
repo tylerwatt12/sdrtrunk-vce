@@ -42,6 +42,7 @@ public class DecodeConfigDMR extends DecodeConfiguration
     private boolean mIgnoreCRCChecksums = false;
     private boolean mUseCompressedTalkgroups = false;
     private List<TimeslotFrequency> mTimeslotMap = new ArrayList<>();
+    private DMRChannelMode mChannelMode;
 
     @JsonIgnore
     private DecodeEvent mChannelGrantEvent;
@@ -67,6 +68,58 @@ public class DecodeConfigDMR extends DecodeConfiguration
     public DecoderType getDecoderType()
     {
         return DecoderType.DMR;
+    }
+
+    /**
+     * Configured DMR channel mode. Legacy configurations that do not contain this setting are inferred as trunked
+     * only when they contain at least one usable LCN-to-frequency mapping. All other legacy and new configurations
+     * default to conventional.
+     */
+    @JacksonXmlProperty(isAttribute = true, localName = "channel_mode")
+    public DMRChannelMode getChannelMode()
+    {
+        if(mChannelMode != null)
+        {
+            return mChannelMode;
+        }
+
+        return hasValidTimeslotFrequencyMapping() ? DMRChannelMode.TRUNKED : DMRChannelMode.CONVENTIONAL;
+    }
+
+    /**
+     * Sets the DMR channel mode.
+     */
+    public void setChannelMode(DMRChannelMode channelMode)
+    {
+        mChannelMode = channelMode;
+    }
+
+    /**
+     * Indicates if this channel is explicitly or implicitly configured for conventional operation.
+     */
+    @JsonIgnore
+    public boolean isConventional()
+    {
+        return getChannelMode() == DMRChannelMode.CONVENTIONAL;
+    }
+
+    /**
+     * Indicates if this channel is explicitly or implicitly configured for trunked operation.
+     */
+    @JsonIgnore
+    public boolean isTrunked()
+    {
+        return getChannelMode() == DMRChannelMode.TRUNKED;
+    }
+
+    /**
+     * Indicates if a legacy configuration contains a usable LCN-to-frequency mapping.
+     */
+    @JsonIgnore
+    public boolean hasValidTimeslotFrequencyMapping()
+    {
+        return mTimeslotMap != null && mTimeslotMap.stream().anyMatch(mapping -> mapping != null &&
+            mapping.getNumber() > 0 && mapping.getDownlinkFrequency() > 0);
     }
 
     /**
@@ -177,7 +230,7 @@ public class DecodeConfigDMR extends DecodeConfiguration
      */
     public void setTimeslotMap(List<TimeslotFrequency> timeslots)
     {
-        mTimeslotMap = timeslots;
+        mTimeslotMap = timeslots != null ? timeslots : new ArrayList<>();
     }
 
     /**
@@ -186,7 +239,10 @@ public class DecodeConfigDMR extends DecodeConfiguration
     @JsonIgnore
     public void addTimeslotFrequency(TimeslotFrequency timeslotFrequency)
     {
-        mTimeslotMap.add(timeslotFrequency);
+        if(timeslotFrequency != null)
+        {
+            mTimeslotMap.add(timeslotFrequency);
+        }
     }
 
     @JsonIgnore

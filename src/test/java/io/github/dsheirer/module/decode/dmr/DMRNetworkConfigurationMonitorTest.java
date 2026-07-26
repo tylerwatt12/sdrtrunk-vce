@@ -18,6 +18,7 @@ import io.github.dsheirer.module.decode.dmr.message.data.csbk.standard.Clear;
 import io.github.dsheirer.module.decode.dmr.message.data.csbk.standard.announcement.AnnounceChannelFrequency;
 import io.github.dsheirer.module.decode.dmr.message.data.csbk.standard.grant.TalkgroupVoiceChannelGrant;
 import io.github.dsheirer.module.decode.dmr.message.data.lc.shorty.ControlChannelSystemParameters;
+import io.github.dsheirer.module.decode.dmr.message.data.lc.shorty.ConnectPlusControlChannel;
 import io.github.dsheirer.module.decode.dmr.message.data.mbc.MBCContinuationBlock;
 import io.github.dsheirer.module.decode.dmr.telemetry.DMRNetworkConfigurationSnapshot;
 import io.github.dsheirer.protocol.Protocol;
@@ -63,6 +64,29 @@ class DMRNetworkConfigurationMonitorTest
     }
 
     @Test
+    void ignoresOneConflictingNetworkFamilyDecode()
+    {
+        CorrectedBinaryMessage tierThreeBits = new CorrectedBinaryMessage(32);
+        tierThreeBits.load(0, 4, 2);
+        tierThreeBits.load(6, 9, 257);
+        tierThreeBits.load(15, 3, 5);
+        DMRNetworkConfigurationMonitor monitor = new DMRNetworkConfigurationMonitor();
+        monitor.process(new ControlChannelSystemParameters(tierThreeBits, 1_000L, 1));
+
+        CorrectedBinaryMessage connectPlusBits = new CorrectedBinaryMessage(32);
+        connectPlusBits.load(0, 4, 10);
+        connectPlusBits.load(4, 12, 12);
+        connectPlusBits.load(16, 8, 34);
+        monitor.process(new ConnectPlusControlChannel(connectPlusBits, 2_000L, 1));
+
+        DMRNetworkConfigurationSnapshot snapshot = monitor.getSnapshot();
+        assertEquals("TIER_III", snapshot.variant());
+        assertEquals(257, snapshot.network());
+        assertEquals(5, snapshot.site());
+        assertEquals("Tier III Trunking", snapshot.brand());
+    }
+
+    @Test
     void tracksBothTimeslotsAndResolvesTierThreeGrantsThroughConfiguredMap()
     {
         TimeslotFrequency mapping = mapping(802, 139_518_750L, 149_518_750L);
@@ -91,23 +115,27 @@ class DMRNetworkConfigurationMonitorTest
         DMRNetworkConfigurationMonitor monitor = new DMRNetworkConfigurationMonitor();
 
         monitor.process(grant(802, 1, 1_000L));
+        monitor.process(grant(802, 1, 6_000L));
+        monitor.process(grant(802, 1, 11_000L));
         monitor.process(grant(803, 1, 2_000L));
+        monitor.process(grant(803, 1, 7_000L));
+        monitor.process(grant(803, 1, 12_000L));
         DMRNetworkConfigurationSnapshot first = monitor.getSnapshot();
 
-        assertEquals(1_000L, first.channels().stream()
+        assertEquals(11_000L, first.channels().stream()
             .filter(channel -> channel.logicalChannelNumber() == 802)
             .findFirst().orElseThrow().observedAtEpochMilliseconds());
-        assertEquals(2_000L, first.channels().stream()
+        assertEquals(12_000L, first.channels().stream()
             .filter(channel -> channel.logicalChannelNumber() == 803)
             .findFirst().orElseThrow().observedAtEpochMilliseconds());
 
-        monitor.process(grant(802, 1, 3_000L));
+        monitor.process(grant(802, 1, 13_000L));
         DMRNetworkConfigurationSnapshot refreshed = monitor.getSnapshot();
 
-        assertEquals(3_000L, refreshed.channels().stream()
+        assertEquals(13_000L, refreshed.channels().stream()
             .filter(channel -> channel.logicalChannelNumber() == 802)
             .findFirst().orElseThrow().observedAtEpochMilliseconds());
-        assertEquals(2_000L, refreshed.channels().stream()
+        assertEquals(12_000L, refreshed.channels().stream()
             .filter(channel -> channel.logicalChannelNumber() == 803)
             .findFirst().orElseThrow().observedAtEpochMilliseconds());
         assertEquals(first, refreshed);
@@ -119,18 +147,8 @@ class DMRNetworkConfigurationMonitorTest
     {
         TimeslotFrequency mapping = mapping(844, 140_000_000L, 150_000_000L);
         DMRNetworkConfigurationMonitor monitor = new DMRNetworkConfigurationMonitor(List.of(mapping));
-        CorrectedBinaryMessage continuationBits = new CorrectedBinaryMessage(80);
-        continuationBits.load(22, 12, 844);
-        continuationBits.load(34, 10, 150);
-        continuationBits.load(44, 13, 350);
-        continuationBits.load(57, 10, 140);
-        continuationBits.load(67, 13, 350);
-        MBCContinuationBlock continuation = new MBCContinuationBlock(DMRSyncPattern.BASE_STATION_DATA,
-            continuationBits, null, slotType(), 1_000L, 1);
-        AnnounceChannelFrequency announcement = new AnnounceChannelFrequency(DMRSyncPattern.BASE_STATION_DATA,
-            new CorrectedBinaryMessage(80), null, slotType(), 1_000L, 1, continuation);
-
-        monitor.process(announcement);
+        monitor.process(announcement(844, 1_000L));
+        monitor.process(announcement(844, 6_000L));
         monitor.process(grant(844, 1));
         monitor.process(grant(844, 2));
         List<DMRNetworkConfigurationSnapshot.Channel> channels = monitor.getSnapshot().channels();
@@ -196,6 +214,20 @@ class DMRNetworkConfigurationMonitorTest
         CorrectedBinaryMessage bits = new CorrectedBinaryMessage(80);
         bits.load(16, 12, lcn);
         return new Clear(DMRSyncPattern.BASE_STATION_DATA, bits, null, slotType(), 1_000L, 1);
+    }
+
+    private static AnnounceChannelFrequency announcement(int lcn, long timestamp)
+    {
+        CorrectedBinaryMessage continuationBits = new CorrectedBinaryMessage(80);
+        continuationBits.load(22, 12, lcn);
+        continuationBits.load(34, 10, 150);
+        continuationBits.load(44, 13, 350);
+        continuationBits.load(57, 10, 140);
+        continuationBits.load(67, 13, 350);
+        MBCContinuationBlock continuation = new MBCContinuationBlock(DMRSyncPattern.BASE_STATION_DATA,
+            continuationBits, null, slotType(), timestamp, 1);
+        return new AnnounceChannelFrequency(DMRSyncPattern.BASE_STATION_DATA,
+            new CorrectedBinaryMessage(80), null, slotType(), timestamp, 1, continuation);
     }
 
     private static SlotType slotType()
