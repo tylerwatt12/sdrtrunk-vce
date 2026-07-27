@@ -36,6 +36,28 @@ release on the same product track. The Alpha 7 tag therefore retains the Alpha 6
 Alias descriptions, the P25 v21 changes, and the trunked-site schema. The current unreleased development branch does
 not carry those predecessor paths forward and accepts only its exact current schema.
 
+## Recording Storage By Release Track
+
+`main` and `webfirst` are separate product and database release tracks.
+
+`main` keeps classic call recording. Recorded audio remains administrator-owned in the configured recording
+directory. Main releases do not create or require the web recorded-call catalog and do not apply automatic time/space
+retention to recordings.
+
+`webfirst` keeps managed recordings under `<recording-directory>/calls/v1`, the recorded-call catalog, browser
+search/playback, and bounded age/space retention. Retention owns only files that validate against that managed layout.
+Existing classic recordings and unknown files remain untouched and are not automatically imported into the catalog or
+displayed by the web Recordings page.
+
+When the first public `webfirst` release is prepared from Alpha 7, its reviewed staged-copy transition must add DMR
+activity schema v1, store explicit Conventional/Trunked DMR modes, and create recorded-call catalog schema v3. The
+upgrade does not move, rename, index, or delete recordings from the earlier classic layout. Only new recordings written
+to the managed `calls/v1` layout enter the catalog unless a separate importer is designed later.
+
+Later migrations follow the immediately preceding public release on their own track. A database migrated to
+`webfirst` is not supported as a downgrade input to `main`. Keep separate portable data folders for the two release
+tracks, and never run both builds against the same database.
+
 During unreleased development, test databases are converted once with a backed-up utility kept outside the repository.
 The next public release will receive one reviewed transition from the preceding public release. Ordinary application
 services remain validation-only, and skip-release migration chains are not accumulated in the current source tree.
