@@ -20,6 +20,7 @@ import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
+import io.github.dsheirer.alias.id.talkgroup.TalkgroupRange;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.protocol.Protocol;
@@ -55,5 +56,29 @@ class MutableAudioCallBuilderRecordingMetadataTest
         assertTrue(metadata.destinationTalkgroupRecordEnabled());
         assertTrue(builder.isRecordAudio());
         assertSame(metadata, builder.getRecordingMetadata());
+    }
+
+    @Test
+    void phase2MatchersRetainTheirExactAndRangeIdentities()
+    {
+        Alias exactAlias = new Alias("Phase 2 Exact");
+        exactAlias.setMatchIdentifier(new Talkgroup(Protocol.APCO25_PHASE2, 101));
+        AliasList exactList = new AliasList(
+            new AliasListDefinition("Exact", "System", AliasListFamily.P25));
+        exactList.addAlias(exactAlias);
+
+        AudioCallRecordingMetadata.DestinationDecision exact =
+            AudioCallRecordingMetadata.captureDestination(exactList, APCO25Talkgroup.create(101));
+        assertEquals("exact:APCO-25 P2:101", exact.matcherIdentity());
+
+        Alias rangeAlias = new Alias("Phase 2 Range");
+        rangeAlias.setMatchIdentifier(new TalkgroupRange(Protocol.APCO25_PHASE2, 200, 299));
+        AliasList rangeList = new AliasList(
+            new AliasListDefinition("Range", "System", AliasListFamily.P25));
+        rangeList.addAlias(rangeAlias);
+
+        AudioCallRecordingMetadata.DestinationDecision range =
+            AudioCallRecordingMetadata.captureDestination(rangeList, APCO25Talkgroup.create(250));
+        assertEquals("range:APCO-25 P2:200:299", range.matcherIdentity());
     }
 }

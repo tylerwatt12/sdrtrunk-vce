@@ -26,6 +26,7 @@ import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import io.github.dsheirer.module.decode.nxdn.identifier.NXDNFullyQualifiedTalkgroupIdentifier;
+import io.github.dsheirer.protocol.Protocol;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -177,7 +178,7 @@ public record AudioCallRecordingMetadata(String systemName, String systemIdentit
         if(destination instanceof FullyQualifiedTalkgroupIdentifier fullyQualified &&
             aliasID instanceof P25FullyQualifiedTalkgroup matcher)
         {
-            if(matcher.getProtocol() == destination.getProtocol() &&
+            if(protocolsMatch(matcher.getProtocol(), destination.getProtocol()) &&
                 matcher.getWacn() == fullyQualified.getWacn() &&
                 matcher.getSystem() == fullyQualified.getSystem() &&
                 matcher.getValue() == fullyQualified.getTalkgroup())
@@ -187,18 +188,30 @@ public record AudioCallRecordingMetadata(String systemName, String systemIdentit
         }
 
         if(aliasID instanceof Talkgroup matcher && !(matcher instanceof P25FullyQualifiedTalkgroup) &&
-            matcher.getProtocol() == destination.getProtocol() && matcher.getValue() == destination.getValue())
+            protocolsMatch(matcher.getProtocol(), destination.getProtocol()) &&
+            matcher.getValue() == destination.getValue())
         {
             return matcher;
         }
 
-        if(aliasID instanceof TalkgroupRange matcher && matcher.getProtocol() == destination.getProtocol() &&
+        if(aliasID instanceof TalkgroupRange matcher &&
+            protocolsMatch(matcher.getProtocol(), destination.getProtocol()) &&
             matcher.contains(destination.getValue()))
         {
             return matcher;
         }
 
         return null;
+    }
+
+    private static boolean protocolsMatch(Protocol first, Protocol second)
+    {
+        return first != null && second != null && canonicalProtocol(first) == canonicalProtocol(second);
+    }
+
+    private static Protocol canonicalProtocol(Protocol protocol)
+    {
+        return protocol == Protocol.APCO25_PHASE2 ? Protocol.APCO25 : protocol;
     }
 
     private static String matcherIdentity(AliasID matcher)
