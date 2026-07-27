@@ -18,8 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.alias.Alias;
-import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
-import io.github.dsheirer.alias.id.priority.Priority;
+import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.alias.id.talkgroup.TalkgroupRange;
 import io.github.dsheirer.audio.broadcast.radioresolve.RadioResolveConfiguration;
@@ -56,24 +55,23 @@ class LegacyXmlConfigurationImporterTest
         Path xml = writePlaylistXml();
         Path database = mTemporaryFolder.resolve("sdrtrunk.sqlite");
 
-        LegacyXmlConfigurationImporter.ImportResult result =
-            LegacyXmlConfigurationImporter.importPlaylist(xml, database);
+        LegacyXmlConfigurationImporter.importPlaylist(xml, database);
 
-        assertEquals(1, result.aliasCount());
-        assertEquals(1, result.streamCount());
-        assertEquals(2, result.channelCount());
-        assertEquals(1, result.p25ConventionalConversions());
-
-        List<Alias> aliases = new AliasDatabaseStore(database).loadAliases();
-        assertEquals(1, aliases.size());
-        Alias alias = aliases.get(0);
-        assertEquals("Dispatch", alias.getName());
-        assertEquals("County", alias.getAliasListName());
-        assertEquals(4, alias.getAliasIdentifiers().size());
-        assertTrue(alias.getAliasIdentifiers().stream().anyMatch(Talkgroup.class::isInstance));
-        assertTrue(alias.getAliasIdentifiers().stream().anyMatch(BroadcastChannel.class::isInstance));
-        assertTrue(alias.getAliasIdentifiers().stream().anyMatch(Priority.class::isInstance));
-        assertTrue(alias.getAliasIdentifiers().stream().anyMatch(TalkgroupRange.class::isInstance));
+        AliasDatabaseStore aliasStore = new AliasDatabaseStore(database);
+        var definitions = aliasStore.loadAliasListDefinitions();
+        List<Alias> aliases = aliasStore.loadAliases(definitions);
+        assertEquals(1, definitions.size());
+        assertEquals("County", definitions.get(0).getName());
+        assertEquals("County", definitions.get(0).getSystemName());
+        assertEquals(AliasListFamily.P25, definitions.get(0).getFamily());
+        assertEquals(2, aliases.size());
+        assertTrue(aliases.stream().allMatch(alias -> alias.getId() > 0 && alias.getAliasListId() > 0));
+        assertTrue(aliases.stream().allMatch(alias -> "Dispatch".equals(alias.getName())));
+        assertTrue(aliases.stream().allMatch(alias -> "County".equals(alias.getAliasListName())));
+        assertTrue(aliases.stream().anyMatch(alias -> alias.getMatchIdentifier() instanceof Talkgroup));
+        assertTrue(aliases.stream().anyMatch(alias -> alias.getMatchIdentifier() instanceof TalkgroupRange));
+        assertTrue(aliases.stream().allMatch(alias -> alias.hasBroadcastChannel("RadioResolve")));
+        assertTrue(aliases.stream().allMatch(alias -> alias.getPlaybackPriority() == 50));
 
         ConfigurationState state = new ConfigurationDatabaseStore(database).loadConfigurationState();
         assertEquals(2, state.getChannels().size());
@@ -164,13 +162,61 @@ class LegacyXmlConfigurationImporterTest
                 <id type="talkgroup" protocol="APCO25" value="1234"/>
                 <action type="scriptAction" interval="ONCE" period="0" script="/tmp/retired-script"/>
               </alias>
+              <channel system="County" site="Site" name="Control">
+                <alias_list_name>County</alias_list_name>
+                <source_configuration type="sourceConfigTuner" source_type="TUNER" frequency="851000000"/>
+                <aux_decode_configuration/>
+                <decode_configuration type="decodeConfigP25Phase1" modulation="CQPSK"
+                    ignore_data_calls="false"/>
+                <event_log_configuration/>
+                <record_configuration/>
+              </channel>
             </playlist>
             """);
 
         ConfigurationState state = LegacyXmlConfigurationImporter.readConfigurationState(xml);
         assertEquals(1, state.getAliases().size());
         assertTrue(state.getAliases().get(0).getAliasActions().isEmpty());
-        assertTrue(state.getAliases().get(0).getAliasIdentifiers().stream().anyMatch(Talkgroup.class::isInstance));
+        assertInstanceOf(Talkgroup.class, state.getAliases().get(0).getMatchIdentifier());
+    }
+
+    @Test
+    void reportsAndOmitsMalformedOrUnownedLegacyMatchers() throws Exception
+    {
+        Path xml = mTemporaryFolder.resolve("strict-alias-import.xml");
+        Files.writeString(xml, """
+            <playlist version="4">
+              <alias name="Missing" list="County"/>
+              <alias name="Invalid" list="County">
+                <id type="talkgroup" protocol="APCO25" value="-1"/>
+              </alias>
+              <alias name="Retired" list="County">
+                <id type="mpt1327ID" ident="123"/>
+              </alias>
+              <alias name="Orphan" list="Old List">
+                <id type="talkgroup" protocol="APCO25" value="100"/>
+              </alias>
+              <alias name="Wrong Family" list="County">
+                <id type="talkgroup" protocol="DMR" value="200"/>
+              </alias>
+              <channel system="County" site="Site" name="Control">
+                <alias_list_name>County</alias_list_name>
+                <source_configuration type="sourceConfigTuner" source_type="TUNER" frequency="851000000"/>
+                <aux_decode_configuration/>
+                <decode_configuration type="decodeConfigP25Phase1" modulation="CQPSK"
+                    ignore_data_calls="false"/>
+                <event_log_configuration/>
+                <record_configuration/>
+              </channel>
+            </playlist>
+            """);
+
+        Path database = mTemporaryFolder.resolve("strict.sqlite");
+        LegacyXmlConfigurationImporter.importPlaylist(xml, database);
+        AliasDatabaseStore aliasStore = new AliasDatabaseStore(database);
+        var definitions = aliasStore.loadAliasListDefinitions();
+        assertEquals(1, definitions.size());
+        assertTrue(aliasStore.loadAliases(definitions).isEmpty());
     }
 
     @Test
@@ -290,7 +336,7 @@ class LegacyXmlConfigurationImporterTest
     {
         Alias alias = new Alias("Talkgroup " + talkgroup);
         alias.setAliasListName(aliasListName);
-        alias.addAliasID(new Talkgroup(Protocol.APCO25, talkgroup));
+        alias.setMatchIdentifier(new Talkgroup(Protocol.APCO25, talkgroup));
         return alias;
     }
 

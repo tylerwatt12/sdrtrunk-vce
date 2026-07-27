@@ -19,6 +19,8 @@
 package io.github.dsheirer.configuration;
 
 import io.github.dsheirer.alias.Alias;
+import io.github.dsheirer.alias.AliasListDefinition;
+import io.github.dsheirer.alias.AliasMatchRegistry;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.audio.broadcast.BroadcastModel;
 import io.github.dsheirer.controller.channel.Channel;
@@ -29,6 +31,7 @@ import io.github.dsheirer.controller.channel.ChannelProcessingManager;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.alias.AliasDatabaseStore;
 import io.github.dsheirer.database.configuration.ConfigurationDatabaseStore;
+import io.github.dsheirer.database.configuration.ConfigurationSnapshotDatabaseStore;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.gui.configuration.IAliasListRefreshListener;
 import io.github.dsheirer.icon.IconModel;
@@ -40,8 +43,11 @@ import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.util.ThreadPool;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ScheduledFuture;
@@ -57,8 +63,6 @@ import org.slf4j.LoggerFactory;
 public class ConfigurationManager implements Listener<ChannelEvent>
 {
     private static final Logger mLog = LoggerFactory.getLogger(ConfigurationManager.class);
-    public static final int CONFIGURATION_CURRENT_VERSION = 4;
-
     private AliasModel mAliasModel;
     private IconModel mIconModel;
 
@@ -71,8 +75,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     private AliasDatabaseStore mAliasDatabaseStore;
     private ConfigurationDatabaseStore mConfigurationDatabaseStore;
     private AtomicBoolean mConfigurationSavePending = new AtomicBoolean();
-    private AtomicBoolean mAliasesDirty = new AtomicBoolean();
-    private AtomicBoolean mConfigurationStateDirty = new AtomicBoolean();
+    private AtomicBoolean mConfigurationDirty = new AtomicBoolean();
     private final Object mHeadlessWebConfigurationLock = new Object();
     private ScheduledFuture<?> mConfigurationSaveFuture;
     private boolean mConfigurationLoading = false;
@@ -102,7 +105,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         mBroadcastModel = new BroadcastModel(mAliasModel, mIconModel, userPreferences);
         mRadioReference = new RadioReference();
 
-        mChannelModel = new ChannelModel(mAliasModel);
+        mChannelModel = new ChannelModel();
         mChannelProcessingManager = new ChannelProcessingManager(eventLogManager, mTunerManager, mAliasModel,
             mUserPreferences);
 
@@ -117,6 +120,8 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         mChannelModel.addListener(this);
 
         mAliasModel.aliasList().addListener((ListChangeListener.Change<? extends Alias> c) -> scheduleAliasSave());
+        mAliasModel.aliasListDefinitions().addListener(
+            (ListChangeListener.Change<? extends AliasListDefinition> c) -> scheduleAliasSave());
 
         mBroadcastModel.addListener(broadcastEvent -> {
             switch(broadcastEvent.getEvent())
@@ -171,32 +176,6 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     }
 
     /**
-     * Refresh the alias list names after a rename or delete operation.
-     */
-    private void refreshAliasListNames()
-    {
-        //Do a refresh from the aliases
-        getAliasModel().refreshAliasListNames();
-        //Add in the alias list names referred to by the channels.
-        getAliasModel().addAliasListNames(mChannelModel.getAliasListNames());
-    }
-
-    /**
-     * Renames alias list references across aliases and channels from the old name to the new name.
-     *
-     * Note: this method should be invoked on the JavaFX thread since it will touch observable alias and channel lists.
-     * @param oldName that is currently used by channels and aliases
-     * @param newName to apply to channels and aliases
-     */
-    public void renameAliasList(String oldName, String newName)
-    {
-        prepareForAliasListRefresh();
-        getAliasModel().renameAliasList(oldName, newName);
-        getChannelModel().renameAliasList(oldName, newName);
-        refreshAliasListNames();
-    }
-
-    /**
      * Deletes all aliases that have the alias list name and removes the alias list name from all channels.
      *
      * Note: this method should be invoked on the JavaFX thread since it will touch observable alias and channel lists.
@@ -207,7 +186,6 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         prepareForAliasListRefresh();
         getAliasModel().deleteAliasList(aliasListName);
         getChannelModel().deleteAliasList(aliasListName);
-        refreshAliasListNames();
     }
 
     /**
@@ -271,7 +249,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
      */
     public void init()
     {
-        transferStateToModels(load());
+        transferStateToModels();
     }
 
     /**
@@ -322,39 +300,91 @@ public class ConfigurationManager implements Listener<ChannelEvent>
             mConfigurationSaveFuture = null;
         }
 
-        if(mConfigurationSavePending.getAndSet(false) || mAliasesDirty.get() || mConfigurationStateDirty.get())
+        if(mConfigurationSavePending.getAndSet(false) || mConfigurationDirty.get())
         {
             save();
         }
 
         if(hasDirtyConfiguration())
         {
-            scheduleSave(false, false);
+            scheduleSave();
         }
     }
 
     /**
      * Transfers persisted configuration state into system models.
      */
-    private void transferStateToModels(ConfigurationState databaseState)
+    private void transferStateToModels()
     {
-        if(databaseState != null)
+        ConfigurationState configurationState = loadConfigurationState();
+        AliasSnapshot aliasSnapshot = loadAliases();
+        validateAliasListAssignments(configurationState, aliasSnapshot.definitions());
+
+        clearModels();
+
+        mConfigurationLoading = true;
+
+        try
         {
-            ConfigurationState configurationState = loadConfigurationState(databaseState);
-
-            clearModels();
-
-            mConfigurationLoading = true;
-
-            mAliasModel.addAliases(loadAliases(databaseState));
-
-
+            mAliasModel.setAliasListDefinitions(aliasSnapshot.definitions());
+            mAliasModel.addAliases(aliasSnapshot.aliases());
             mBroadcastModel.addBroadcastConfigurations(configurationState.getBroadcastConfigurations());
 
             //Channel model has to be loaded last since it will auto-start channels that are enabled
             mChannelModel.addChannels(configurationState.getChannels());
-
+        }
+        finally
+        {
             mConfigurationLoading = false;
+        }
+    }
+
+    /**
+     * Normal startup validates persisted channel/list references without repairing or synthesizing definitions.
+     */
+    static void validateAliasListAssignments(ConfigurationState state, List<AliasListDefinition> definitions)
+    {
+        Map<String,AliasListDefinition> definitionsByName = new HashMap<>();
+
+        if(definitions != null)
+        {
+            for(AliasListDefinition definition: definitions)
+            {
+                if(definition != null && definition.getName() != null)
+                {
+                    definitionsByName.put(definition.getName().trim().toLowerCase(Locale.US), definition);
+                }
+            }
+        }
+
+        if(state == null || state.getChannels() == null)
+        {
+            return;
+        }
+
+        for(Channel channel: state.getChannels())
+        {
+            String aliasListName = channel != null ? channel.getAliasListName() : null;
+
+            if(aliasListName == null || aliasListName.isBlank())
+            {
+                continue;
+            }
+
+            AliasListDefinition definition =
+                definitionsByName.get(aliasListName.trim().toLowerCase(Locale.US));
+
+            if(definition == null || !aliasListName.equals(definition.getName()) ||
+                channel.getSystem() == null || definition.getSystemName() == null ||
+                !channel.getSystem().trim().equalsIgnoreCase(definition.getSystemName().trim()) ||
+                channel.getDecodeConfiguration() == null ||
+                !AliasMatchRegistry.isChannelCompatible(definition,
+                    channel.getDecodeConfiguration().getDecoderType()))
+            {
+                throw new ConfigurationStateValidationException("Channel [" +
+                    (channel != null ? channel.getName() : null) + "] references incompatible alias list [" +
+                    aliasListName + "]");
+            }
         }
     }
 
@@ -383,237 +413,147 @@ public class ConfigurationManager implements Listener<ChannelEvent>
      */
     private synchronized void save()
     {
-        boolean saveAliases = mAliasesDirty.getAndSet(false);
-        boolean saveConfigurationState = mConfigurationStateDirty.getAndSet(false);
-
-        if(!saveAliases && !saveConfigurationState)
+        if(!mConfigurationDirty.getAndSet(false))
         {
             return;
         }
 
-        boolean aliasesSavedToDatabase = !saveAliases || saveAliasesToDatabase();
-        boolean configurationSavedToDatabase = !saveConfigurationState || saveConfigurationStateToDatabase();
-
-        if(!aliasesSavedToDatabase)
+        if(!saveConfigurationSnapshotToDatabase())
         {
-            mAliasesDirty.set(true);
-        }
-
-        if(!configurationSavedToDatabase)
-        {
-            mConfigurationStateDirty.set(true);
-        }
-
-        if(!aliasesSavedToDatabase || !configurationSavedToDatabase)
-        {
-            mLog.error("Configuration state was not fully saved to SQLite [{}]",
-                mConfigurationDatabaseStore.getDatabasePath());
+            mConfigurationDirty.set(true);
         }
     }
 
-    private ConfigurationState loadConfigurationState(ConfigurationState databaseState)
+    private ConfigurationState loadConfigurationState()
     {
         try
         {
-            if(mConfigurationDatabaseStore.isInitialized())
-            {
-                ConfigurationState loaded = mConfigurationDatabaseStore.loadConfigurationState();
-                persistGeneratedConfigurationIds(loaded);
-                mLog.debug("Loaded configuration channels [{}] and streams [{}] from SQLite [{}]",
-                    loaded.getChannels().size(), loaded.getBroadcastConfigurations().size(),
-                    mConfigurationDatabaseStore.getDatabasePath());
-                return loaded;
-            }
-
-            if(databaseState == null)
-            {
-                databaseState = new ConfigurationState();
-            }
-
-            mConfigurationDatabaseStore.replaceConfigurationState(databaseState);
-
-            mLog.debug("Initialized configuration channels [{}] and streams [{}] in SQLite [{}]",
-                databaseState.getChannels().size(), databaseState.getBroadcastConfigurations().size(),
+            ConfigurationState loaded = mConfigurationDatabaseStore.loadConfigurationState();
+            validateConfigurationIdentities(loaded);
+            mLog.debug("Loaded configuration channels [{}] and streams [{}] from SQLite [{}]",
+                loaded.getChannels().size(), loaded.getBroadcastConfigurations().size(),
                 mConfigurationDatabaseStore.getDatabasePath());
-
-            return mConfigurationDatabaseStore.loadConfigurationState();
-        }
-        catch(ConfigurationIdentityPersistenceException e)
-        {
-            throw e;
+            return loaded;
         }
         catch(Exception e)
         {
             mLog.error("Error loading configuration state from SQLite database [" +
                 mConfigurationDatabaseStore.getDatabasePath() + "]", e);
+            throw new ConfigurationLoadException("Unable to load validated configuration state from SQLite", e);
         }
-
-        return databaseState;
     }
 
     /**
-     * Persists identities generated while deserializing legacy channel JSON.  This one-time configuration-data upgrade
-     * runs before channels are added to the model or auto-started and does not change the database schema.
+     * Normal startup is validation-only. Missing, malformed, or duplicate persisted identities must be repaired by
+     * the staged Application Migrator (or assigned while a legacy import is still being constructed).
      */
-    private void persistGeneratedConfigurationIds(ConfigurationState state)
+    static void validateConfigurationIdentities(ConfigurationState state)
     {
-        boolean channelPersistenceRequired = ensureUniqueChannelConfigurationIds(state);
-        boolean providerPersistenceRequired = ensureUniqueBroadcastConfigurationIds(state);
+        Set<String> channelIdentities = new HashSet<>();
 
-        if(channelPersistenceRequired || providerPersistenceRequired)
+        if(state != null && state.getChannels() != null)
         {
-            try
+            for(Channel channel: state.getChannels())
             {
-                mConfigurationDatabaseStore.replaceConfigurationState(state);
-                mLog.info("Assigned persistent internal identities to legacy saved configurations");
+                if(channel != null)
+                {
+                    String identity = channel.getConfigurationId();
+
+                    if(channel.isConfigurationIdPersistenceRequired() || !channelIdentities.add(identity))
+                    {
+                        throw new ConfigurationIdentityValidationException(
+                            "Saved channel configuration identities require the Application Migrator");
+                    }
+                }
             }
-            catch(Exception e)
+        }
+
+        Set<String> providerIdentities = new HashSet<>();
+        if(state != null && state.getBroadcastConfigurations() != null)
+        {
+            for(io.github.dsheirer.audio.broadcast.BroadcastConfiguration configuration:
+                state.getBroadcastConfigurations())
             {
-                mLog.error("Unable to persist generated internal configuration identities in SQLite [{}]",
-                    mConfigurationDatabaseStore.getDatabasePath(), e);
-                throw new ConfigurationIdentityPersistenceException(
-                    "Stable configuration identities could not be saved before startup", e);
+                if(configuration != null)
+                {
+                    String identity = configuration.getConfigurationId();
+
+                    if(configuration.isConfigurationIdPersistenceRequired() ||
+                        !providerIdentities.add(identity))
+                    {
+                        throw new ConfigurationIdentityValidationException(
+                            "Saved broadcast configuration identities require the Application Migrator");
+                    }
+                }
             }
         }
     }
 
-    static boolean ensureUniqueChannelConfigurationIds(ConfigurationState state)
+    private static final class ConfigurationIdentityValidationException extends RuntimeException
     {
-        if(state == null || state.getChannels() == null)
+        private ConfigurationIdentityValidationException(String message)
         {
-            return false;
-        }
-
-        boolean persistenceRequired = false;
-        Set<String> identities = new HashSet<>();
-
-        for(Channel channel: state.getChannels())
-        {
-            if(channel == null)
-            {
-                continue;
-            }
-
-            String identity = channel.getConfigurationId();
-
-            while(!identities.add(identity))
-            {
-                channel.regenerateConfigurationId();
-                identity = channel.getConfigurationId();
-            }
-
-            persistenceRequired |= channel.isConfigurationIdPersistenceRequired();
-        }
-
-        return persistenceRequired;
-    }
-
-    static boolean ensureUniqueBroadcastConfigurationIds(ConfigurationState state)
-    {
-        if(state == null || state.getBroadcastConfigurations() == null)
-        {
-            return false;
-        }
-
-        boolean persistenceRequired = false;
-        Set<String> identities = new HashSet<>();
-
-        for(io.github.dsheirer.audio.broadcast.BroadcastConfiguration configuration:
-            state.getBroadcastConfigurations())
-        {
-            if(configuration == null)
-            {
-                continue;
-            }
-
-            String identity = configuration.getConfigurationId();
-
-            while(!identities.add(identity))
-            {
-                configuration.regenerateConfigurationId();
-                identity = configuration.getConfigurationId();
-            }
-
-            persistenceRequired |= configuration.isConfigurationIdPersistenceRequired();
-        }
-
-        return persistenceRequired;
-    }
-
-    private static final class ConfigurationIdentityPersistenceException extends RuntimeException
-    {
-        private ConfigurationIdentityPersistenceException(String message, Throwable cause)
-        {
-            super(message, cause);
+            super(message);
         }
     }
 
-    private List<Alias> loadAliases(ConfigurationState databaseState)
+    private static final class ConfigurationStateValidationException extends RuntimeException
+    {
+        private ConfigurationStateValidationException(String message)
+        {
+            super(message);
+        }
+    }
+
+    private AliasSnapshot loadAliases()
     {
         try
         {
-            if(mAliasDatabaseStore.isInitialized())
-            {
-                List<Alias> aliases = mAliasDatabaseStore.loadAliases();
-                mLog.debug("Loaded [{}] aliases from SQLite [{}]", aliases.size(),
-                    mAliasDatabaseStore.getDatabasePath());
-                return aliases;
-            }
-
-            List<Alias> aliases = databaseState != null && databaseState.getAliases() != null ?
-                databaseState.getAliases() : new ArrayList<>();
-            mAliasDatabaseStore.replaceAliases(aliases);
-            mLog.debug("Initialized [{}] aliases in SQLite [{}]", aliases.size(), mAliasDatabaseStore.getDatabasePath());
-            return aliases;
+            List<AliasListDefinition> definitions = mAliasDatabaseStore.loadAliasListDefinitions();
+            List<Alias> aliases = mAliasDatabaseStore.loadAliases(definitions);
+            mLog.debug("Loaded [{}] aliases from SQLite [{}]", aliases.size(),
+                mAliasDatabaseStore.getDatabasePath());
+            return new AliasSnapshot(definitions, aliases);
         }
         catch(Exception e)
         {
             mLog.error("Error loading aliases from SQLite database [" + mAliasDatabaseStore.getDatabasePath() + "]", e);
-            return databaseState != null && databaseState.getAliases() != null ? databaseState.getAliases() :
-                new ArrayList<>();
+            throw new ConfigurationLoadException("Unable to load validated alias configuration from SQLite", e);
         }
     }
 
-    private boolean saveAliasesToDatabase()
-    {
-        try
-        {
-            mAliasDatabaseStore.replaceAliases(new ArrayList<>(mAliasModel.getAliases()));
-            return true;
-        }
-        catch(Exception e)
-        {
-            mLog.error("Error saving aliases to SQLite database [" + mAliasDatabaseStore.getDatabasePath() + "]", e);
-            return false;
-        }
-    }
-
-    private boolean saveConfigurationStateToDatabase()
+    private boolean saveConfigurationSnapshotToDatabase()
     {
         try
         {
             ConfigurationState databaseState = new ConfigurationState();
+            databaseState.setAliases(new ArrayList<>(mAliasModel.getAliases()));
+            databaseState.setAliasListDefinitions(new ArrayList<>(mAliasModel.aliasListDefinitions()));
             databaseState.setBroadcastConfigurations(new ArrayList<>(mBroadcastModel.getBroadcastConfigurations()));
             databaseState.setChannels(new ArrayList<>(mChannelModel.getChannels()));
-            databaseState.setVersion(CONFIGURATION_CURRENT_VERSION);
-            mConfigurationDatabaseStore.replaceConfigurationState(databaseState);
+            validateAliasListAssignments(databaseState, databaseState.getAliasListDefinitions());
+            new ConfigurationSnapshotDatabaseStore(mConfigurationDatabaseStore.getDatabasePath())
+                .replace(databaseState);
             return true;
         }
         catch(Exception e)
         {
-            mLog.error("Error saving configuration state to SQLite database [" +
+            mLog.error("Error saving complete configuration snapshot to SQLite database [" +
                 mConfigurationDatabaseStore.getDatabasePath() + "]", e);
             return false;
         }
     }
 
-    /**
-     * Creates an empty configuration state shell; data is loaded from SQLite by the configuration database store.
-     */
-    public ConfigurationState load()
+    private record AliasSnapshot(List<AliasListDefinition> definitions, List<Alias> aliases)
     {
-        mLog.debug("Loading configuration state from SQLite [{}]", mConfigurationDatabaseStore.getDatabasePath());
-        return new ConfigurationState();
+    }
+
+    private static final class ConfigurationLoadException extends RuntimeException
+    {
+        private ConfigurationLoadException(String message, Throwable cause)
+        {
+            super(message, cause);
+        }
     }
 
     /**
@@ -621,7 +561,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
      */
     public void scheduleAliasSave()
     {
-        scheduleSave(true, false);
+        scheduleSave();
     }
 
     /**
@@ -629,25 +569,17 @@ public class ConfigurationManager implements Listener<ChannelEvent>
      */
     public void scheduleConfigurationSave()
     {
-        scheduleSave(false, true);
+        scheduleSave();
     }
 
-    private void scheduleSave(boolean aliasesDirty, boolean configurationStateDirty)
+    private void scheduleSave()
     {
         if(mConfigurationLoading)
         {
             return;
         }
 
-        if(aliasesDirty)
-        {
-            mAliasesDirty.set(true);
-        }
-
-        if(configurationStateDirty)
-        {
-            mConfigurationStateDirty.set(true);
-        }
+        mConfigurationDirty.set(true);
 
         if(mConfigurationSavePending.compareAndSet(false, true))
         {
@@ -657,7 +589,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
 
     private boolean hasDirtyConfiguration()
     {
-        return mAliasesDirty.get() || mConfigurationStateDirty.get();
+        return mConfigurationDirty.get();
     }
 
     /**
@@ -679,7 +611,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
 
                 if(hasDirtyConfiguration())
                 {
-                    scheduleSave(false, false);
+                    scheduleSave();
                 }
             }
         }

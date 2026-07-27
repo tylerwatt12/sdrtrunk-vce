@@ -20,6 +20,7 @@
 package io.github.dsheirer.gui.configuration.radioreference;
 
 import io.github.dsheirer.alias.Alias;
+import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.identifier.talkgroup.LTRTalkgroup;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import io.github.dsheirer.identifier.talkgroup.UnknownTalkgroupIdentifier;
@@ -173,13 +174,16 @@ public class RadioReferenceDecoder
      * @param group for the alias (optional null)
      * @return alias
      */
-    public Alias createAlias(Talkgroup talkgroup, System system, String aliasList, String group)
+    /**
+     * Creates an alias attached to the stable, system-owned alias-list definition.
+     */
+    public Alias createAlias(Talkgroup talkgroup, System system, AliasListDefinition aliasList, String group)
     {
         Alias alias = new Alias(talkgroup.getAlphaTag());
-        alias.setAliasListName(aliasList);
+        alias.setAliasListDefinition(aliasList);
         alias.setDescription(talkgroup.getDescription());
         alias.setGroup(group);
-        alias.addAliasID(getTalkgroupAliasId(talkgroup, system));
+        alias.setMatchIdentifier(getTalkgroupAliasId(talkgroup, system));
         return alias;
     }
 

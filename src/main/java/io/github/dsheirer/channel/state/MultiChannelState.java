@@ -88,6 +88,7 @@ public class MultiChannelState extends AbstractChannelState implements IDecoderS
     private int[] mTimeslots;
     private DecoderStateNotificationEventCache mStateNotificationCache = new DecoderStateNotificationEventCache();
     private Listener<IdentifierUpdateNotification> mIdentifierUpdateListener = new IdentifierUpdateListenerProxy();
+    private final AliasModel mAliasModel;
 
     /**
      * Constructs an instance
@@ -99,6 +100,7 @@ public class MultiChannelState extends AbstractChannelState implements IDecoderS
     {
         super(channel);
 
+        mAliasModel = aliasModel;
         mTimeslots = timeslots;
 
         for(int timeslot: timeslots)
@@ -294,9 +296,16 @@ public class MultiChannelState extends AbstractChannelState implements IDecoderS
             {
                 identifierCollection.update(SiteGuidConfigurationIdentifier.create(channel.getRadresGuid()));
             }
-            if(channel.getAliasListName() != null && !channel.getAliasListName().isEmpty())
+            AliasListConfigurationIdentifier existingAliasList =
+                identifierCollection.getAliasListConfiguration();
+
+            if(mAliasModel != null && mAliasModel.isAliasListCompatible(channel))
             {
                 identifierCollection.update(AliasListConfigurationIdentifier.create(channel.getAliasListName()));
+            }
+            else if(existingAliasList != null)
+            {
+                identifierCollection.remove(existingAliasList);
             }
             if(channel.getSourceConfiguration().getSourceType() == SourceType.TUNER)
             {

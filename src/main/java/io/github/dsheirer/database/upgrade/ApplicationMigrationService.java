@@ -51,9 +51,9 @@ import org.sqlite.SQLiteConfig;
 public final class ApplicationMigrationService
 {
     public static final Set<Integer> SUPPORTED_P25_VERSIONS = Set.of(21);
-    public static final Set<Integer> SUPPORTED_ALIAS_VERSIONS = Set.of(3);
+    public static final Set<Integer> SUPPORTED_ALIAS_VERSIONS = Set.of(4);
     public static final int CURRENT_P25_VERSION = 21;
-    public static final int CURRENT_ALIAS_VERSION = 3;
+    public static final int CURRENT_ALIAS_VERSION = 4;
     public static final int CURRENT_DMR_VERSION = DmrActivitySchema.SCHEMA_VERSION;
 
     private static final String P25_VERSION_KEY = "p25_activity_schema_version";
@@ -254,7 +254,7 @@ public final class ApplicationMigrationService
 
         if(!state.supported())
         {
-            throw new IOException("This development build accepts only its current schemas: Alias v3, P25 activity " +
+            throw new IOException("This development build accepts only its current schemas: Alias v4, P25 activity " +
                 "v21, trunked-site v2, and DMR activity v" + CURRENT_DMR_VERSION + ". Found " +
                 state.description() + ".");
         }

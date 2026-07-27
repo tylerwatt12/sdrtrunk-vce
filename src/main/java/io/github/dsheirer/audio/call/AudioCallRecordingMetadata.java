@@ -172,37 +172,30 @@ public record AudioCallRecordingMetadata(String systemName, String systemIdentit
 
     private static AliasID matchingTalkgroupAliasId(Alias alias, TalkgroupIdentifier destination)
     {
-        if(destination instanceof FullyQualifiedTalkgroupIdentifier fullyQualified)
-        {
-            for(AliasID aliasID: alias.getAliasIdentifiers())
-            {
-                if(aliasID instanceof P25FullyQualifiedTalkgroup matcher &&
-                    matcher.getProtocol() == destination.getProtocol() &&
-                    matcher.getWacn() == fullyQualified.getWacn() &&
-                    matcher.getSystem() == fullyQualified.getSystem() &&
-                    matcher.getValue() == fullyQualified.getTalkgroup())
-                {
-                    return matcher;
-                }
-            }
-        }
+        AliasID aliasID = alias != null ? alias.getMatchIdentifier() : null;
 
-        for(AliasID aliasID: alias.getAliasIdentifiers())
+        if(destination instanceof FullyQualifiedTalkgroupIdentifier fullyQualified &&
+            aliasID instanceof P25FullyQualifiedTalkgroup matcher)
         {
-            if(aliasID instanceof Talkgroup matcher && !(matcher instanceof P25FullyQualifiedTalkgroup) &&
-                matcher.getProtocol() == destination.getProtocol() && matcher.getValue() == destination.getValue())
+            if(matcher.getProtocol() == destination.getProtocol() &&
+                matcher.getWacn() == fullyQualified.getWacn() &&
+                matcher.getSystem() == fullyQualified.getSystem() &&
+                matcher.getValue() == fullyQualified.getTalkgroup())
             {
                 return matcher;
             }
         }
 
-        for(AliasID aliasID: alias.getAliasIdentifiers())
+        if(aliasID instanceof Talkgroup matcher && !(matcher instanceof P25FullyQualifiedTalkgroup) &&
+            matcher.getProtocol() == destination.getProtocol() && matcher.getValue() == destination.getValue())
         {
-            if(aliasID instanceof TalkgroupRange matcher && matcher.getProtocol() == destination.getProtocol() &&
-                matcher.contains(destination.getValue()))
-            {
-                return matcher;
-            }
+            return matcher;
+        }
+
+        if(aliasID instanceof TalkgroupRange matcher && matcher.getProtocol() == destination.getProtocol() &&
+            matcher.contains(destination.getValue()))
+        {
+            return matcher;
         }
 
         return null;

@@ -11,7 +11,6 @@
 
 package io.github.dsheirer.controller.channel;
 
-import io.github.dsheirer.alias.AliasModel;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -27,7 +26,7 @@ public class ChannelModelTest
 
         assertFalse(channel.hasRadresGuid());
 
-        ChannelModel model = new ChannelModel(new AliasModel());
+        ChannelModel model = new ChannelModel();
         model.addChannel(channel);
 
         assertTrue(channel.hasRadresGuid());
@@ -37,7 +36,7 @@ public class ChannelModelTest
     public void copiedChannelGetsNewSiteGuidWhenAdded()
     {
         Channel original = new Channel("Test");
-        ChannelModel model = new ChannelModel(new AliasModel());
+        ChannelModel model = new ChannelModel();
         model.addChannel(original);
 
         Channel copy = original.copyOf();

@@ -21,28 +21,155 @@ import java.util.List;
  */
 public final class SdrTrunkDatabaseSchema
 {
-    public static final int ALIAS_SCHEMA_VERSION = 3;
+    public static final int ALIAS_SCHEMA_VERSION = 4;
     public static final int CONFIGURATION_SCHEMA_VERSION = 2;
     public static final int SETTINGS_SCHEMA_VERSION = 2;
     public static final int ICON_SCHEMA_VERSION = 2;
 
+    private static final String ALIAS_LIST_TABLE_SQL = """
+        CREATE TABLE IF NOT EXISTS alias_list (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL COLLATE NOCASE,
+            system_name TEXT NOT NULL CHECK(length(trim(system_name)) > 0),
+            family TEXT NOT NULL CHECK(family IN (
+                'P25', 'DMR', 'NXDN', 'LTR', 'LTR_NET', 'PASSPORT', 'AM', 'NBFM'
+            )),
+            UNIQUE(name)
+        )
+        """;
+    private static final String ALIAS_TABLE_SQL = """
+        CREATE TABLE IF NOT EXISTS alias (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            alias_list_id INTEGER NOT NULL REFERENCES alias_list(id) ON DELETE RESTRICT,
+            name TEXT,
+            description TEXT,
+            group_name TEXT,
+            color INTEGER NOT NULL DEFAULT 0,
+            icon_name TEXT,
+            stream_as_talkgroup INTEGER,
+            record_enabled INTEGER NOT NULL DEFAULT 0,
+            priority INTEGER,
+            matcher_type TEXT NOT NULL CHECK(matcher_type IN (
+                'TALKGROUP',
+                'TALKGROUP_RANGE',
+                'P25_FULLY_QUALIFIED_TALKGROUP',
+                'RADIO_ID',
+                'RADIO_ID_RANGE',
+                'P25_FULLY_QUALIFIED_RADIO_ID',
+                'STATUS',
+                'UNIT_STATUS',
+                'TONES',
+                'DCS',
+                'ESN'
+            )),
+            protocol TEXT,
+            value INTEGER,
+            min_value INTEGER,
+            max_value INTEGER,
+            wacn INTEGER,
+            p25_system_id INTEGER,
+            text_value TEXT,
+            numeric_value INTEGER,
+            tone_sequence TEXT
+        )
+        """;
+    private static final String ALIAS_BROADCAST_CHANNEL_TABLE_SQL = """
+        CREATE TABLE IF NOT EXISTS alias_broadcast_channel (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            alias_id INTEGER NOT NULL REFERENCES alias(id) ON DELETE CASCADE,
+            channel_name TEXT NOT NULL CHECK(length(trim(channel_name)) > 0),
+            UNIQUE(alias_id, channel_name)
+        )
+        """;
+    private static final String ALIAS_ACTION_TABLE_SQL = """
+        CREATE TABLE IF NOT EXISTS alias_action (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            alias_id INTEGER NOT NULL REFERENCES alias(id) ON DELETE CASCADE,
+            type TEXT NOT NULL,
+            interval TEXT,
+            period INTEGER,
+            path TEXT
+        )
+        """;
+    private static final List<SqliteSchemaValidator.Definition> EXACT_ALIAS_OBJECTS = List.of(
+        new SqliteSchemaValidator.Definition("table", "alias_list", ALIAS_LIST_TABLE_SQL),
+        new SqliteSchemaValidator.Definition("table", "alias", ALIAS_TABLE_SQL),
+        new SqliteSchemaValidator.Definition("table", "alias_broadcast_channel",
+            ALIAS_BROADCAST_CHANNEL_TABLE_SQL),
+        new SqliteSchemaValidator.Definition("table", "alias_action", ALIAS_ACTION_TABLE_SQL),
+        new SqliteSchemaValidator.Definition("index", "idx_alias_talkgroup_value", """
+            CREATE INDEX IF NOT EXISTS idx_alias_talkgroup_value
+            ON alias(protocol, value, wacn, p25_system_id, alias_list_id, id)
+            WHERE matcher_type IN ('TALKGROUP', 'P25_FULLY_QUALIFIED_TALKGROUP')
+            """),
+        new SqliteSchemaValidator.Definition("index", "idx_alias_talkgroup_range", """
+            CREATE INDEX IF NOT EXISTS idx_alias_talkgroup_range
+            ON alias(protocol, min_value, max_value, alias_list_id, id)
+            WHERE matcher_type = 'TALKGROUP_RANGE'
+            """),
+        new SqliteSchemaValidator.Definition("index", "idx_alias_radio_value", """
+            CREATE INDEX IF NOT EXISTS idx_alias_radio_value
+            ON alias(protocol, value, wacn, p25_system_id, alias_list_id, id)
+            WHERE matcher_type IN ('RADIO_ID', 'P25_FULLY_QUALIFIED_RADIO_ID')
+            """),
+        new SqliteSchemaValidator.Definition("index", "idx_alias_radio_range", """
+            CREATE INDEX IF NOT EXISTS idx_alias_radio_range
+            ON alias(protocol, min_value, max_value, alias_list_id, id)
+            WHERE matcher_type = 'RADIO_ID_RANGE'
+            """),
+        new SqliteSchemaValidator.Definition("index", "idx_alias_broadcast_channel_name",
+            "CREATE INDEX IF NOT EXISTS idx_alias_broadcast_channel_name " +
+                "ON alias_broadcast_channel(channel_name)"),
+        new SqliteSchemaValidator.Definition("index", "idx_alias_action_alias",
+            "CREATE INDEX IF NOT EXISTS idx_alias_action_alias ON alias_action(alias_id, id)"),
+        new SqliteSchemaValidator.Definition("view", "alias_talkgroup", """
+            CREATE VIEW IF NOT EXISTS alias_talkgroup AS
+            SELECT alias.id AS alias_id,
+                   alias.protocol,
+                   alias.value,
+                   alias.min_value,
+                   alias.max_value,
+                   alias.wacn,
+                   alias.p25_system_id AS system_id,
+                   CASE WHEN alias.matcher_type = 'P25_FULLY_QUALIFIED_TALKGROUP' THEN 1 ELSE 0 END AS fully_qualified,
+                   CASE WHEN alias.matcher_type = 'TALKGROUP_RANGE' THEN 1 ELSE 0 END AS ranged,
+                   alias_list.name AS alias_list_name
+            FROM alias
+            JOIN alias_list ON alias_list.id = alias.alias_list_id
+            WHERE alias.matcher_type IN (
+                  'TALKGROUP',
+                  'TALKGROUP_RANGE',
+                  'P25_FULLY_QUALIFIED_TALKGROUP'
+              )
+            """),
+        new SqliteSchemaValidator.Definition("view", "alias_radio", """
+            CREATE VIEW IF NOT EXISTS alias_radio AS
+            SELECT alias.id AS alias_id,
+                   alias.protocol,
+                   alias.value,
+                   alias.min_value,
+                   alias.max_value,
+                   alias.wacn,
+                   alias.p25_system_id AS system_id,
+                   CASE WHEN alias.matcher_type = 'P25_FULLY_QUALIFIED_RADIO_ID' THEN 1 ELSE 0 END AS fully_qualified,
+                   CASE WHEN alias.matcher_type = 'RADIO_ID_RANGE' THEN 1 ELSE 0 END AS ranged,
+                   alias_list.name AS alias_list_name
+            FROM alias
+            JOIN alias_list ON alias_list.id = alias.alias_list_id
+            WHERE alias.matcher_type IN (
+                  'RADIO_ID',
+                  'RADIO_ID_RANGE',
+                  'P25_FULLY_QUALIFIED_RADIO_ID'
+              )
+            """)
+    );
     private static final List<SqliteSchemaValidator.Table> TABLES = tables();
     private static final List<String> INDEXES = List.of(
-        "idx_alias_sort",
-        "idx_alias_list_name",
-        "idx_alias_broadcast_channel_alias",
-        "idx_alias_broadcast_channel_name",
-        "idx_alias_talkgroup_alias",
         "idx_alias_talkgroup_value",
         "idx_alias_talkgroup_range",
-        "idx_alias_radio_alias",
         "idx_alias_radio_value",
         "idx_alias_radio_range",
-        "idx_alias_status_alias",
-        "idx_alias_status_lookup",
-        "idx_alias_tone_sequence_alias",
-        "idx_alias_text_identifier_alias",
-        "idx_alias_text_identifier_type",
+        "idx_alias_broadcast_channel_name",
         "idx_alias_action_alias",
         "idx_configuration_channel_sort",
         "idx_configuration_channel_alias_list",
@@ -52,6 +179,7 @@ public final class SdrTrunkDatabaseSchema
         "idx_configuration_broadcast_sort",
         "idx_configuration_broadcast_type"
     );
+    private static final List<String> VIEWS = List.of("alias_talkgroup", "alias_radio");
     private static final List<SqliteSchemaValidator.Metadata> METADATA = metadata();
 
     private SdrTrunkDatabaseSchema()
@@ -62,21 +190,15 @@ public final class SdrTrunkDatabaseSchema
     {
         return List.of(
             new SqliteSchemaValidator.Table("database_metadata", "key", "value", "updated_at_ms"),
-            new SqliteSchemaValidator.Table("alias", "id", "sort_order", "name", "description", "alias_list_name",
-                "group_name", "color", "icon_name", "stream_as_talkgroup", "record_enabled", "non_recordable",
-                "priority"),
-            new SqliteSchemaValidator.Table("alias_broadcast_channel", "id", "alias_id", "sort_order",
-                "channel_name"),
-            new SqliteSchemaValidator.Table("alias_talkgroup", "id", "alias_id", "sort_order", "protocol", "value",
-                "min_value", "max_value", "wacn", "system_id", "fully_qualified", "ranged"),
-            new SqliteSchemaValidator.Table("alias_radio", "id", "alias_id", "sort_order", "protocol", "value",
-                "min_value", "max_value", "wacn", "system_id", "fully_qualified", "ranged"),
-            new SqliteSchemaValidator.Table("alias_status", "id", "alias_id", "sort_order", "status_kind", "status"),
-            new SqliteSchemaValidator.Table("alias_tone_sequence", "id", "alias_id", "sort_order", "tone_sequence"),
-            new SqliteSchemaValidator.Table("alias_text_identifier", "id", "alias_id", "sort_order",
-                "identifier_type", "text_value", "text_value_2", "numeric_value"),
-            new SqliteSchemaValidator.Table("alias_action", "id", "alias_id", "sort_order", "type", "interval",
-                "period", "path", "script"),
+            new SqliteSchemaValidator.Table("alias_list", "id", "name", "system_name", "family"),
+            new SqliteSchemaValidator.Table("alias", "id", "alias_list_id", "name", "description",
+                "group_name", "color", "icon_name", "stream_as_talkgroup", "record_enabled",
+                "priority", "matcher_type", "protocol", "value", "min_value",
+                "max_value", "wacn", "p25_system_id", "text_value", "numeric_value",
+                "tone_sequence"),
+            new SqliteSchemaValidator.Table("alias_broadcast_channel", "id", "alias_id", "channel_name"),
+            new SqliteSchemaValidator.Table("alias_action", "id", "alias_id", "type", "interval",
+                "period", "path"),
             new SqliteSchemaValidator.Table("configuration_channel", "id", "sort_order", "system_name", "site_name",
                 "name", "alias_list_name", "radres_guid", "auto_start", "auto_start_order", "decoder_type",
                 "source_type", "primary_frequency_hz", "frequency_count", "recording_enabled",
@@ -111,100 +233,10 @@ public final class SdrTrunkDatabaseSchema
                     updated_at_ms INTEGER NOT NULL
                 )
                 """);
-            statement.executeUpdate("""
-                CREATE TABLE IF NOT EXISTS alias (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    sort_order INTEGER NOT NULL,
-                    name TEXT,
-                    description TEXT,
-                    alias_list_name TEXT,
-                    group_name TEXT,
-                    color INTEGER NOT NULL DEFAULT 0,
-                    icon_name TEXT,
-                    stream_as_talkgroup INTEGER,
-                    record_enabled INTEGER NOT NULL DEFAULT 0,
-                    non_recordable INTEGER NOT NULL DEFAULT 0,
-                    priority INTEGER
-                )
-                """);
-            statement.executeUpdate("""
-                CREATE TABLE IF NOT EXISTS alias_broadcast_channel (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    alias_id INTEGER NOT NULL REFERENCES alias(id) ON DELETE CASCADE,
-                    sort_order INTEGER NOT NULL,
-                    channel_name TEXT NOT NULL
-                )
-                """);
-            statement.executeUpdate("""
-                CREATE TABLE IF NOT EXISTS alias_talkgroup (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    alias_id INTEGER NOT NULL REFERENCES alias(id) ON DELETE CASCADE,
-                    sort_order INTEGER NOT NULL,
-                    protocol TEXT NOT NULL,
-                    value INTEGER,
-                    min_value INTEGER,
-                    max_value INTEGER,
-                    wacn INTEGER,
-                    system_id INTEGER,
-                    fully_qualified INTEGER NOT NULL DEFAULT 0,
-                    ranged INTEGER NOT NULL DEFAULT 0
-                )
-                """);
-            statement.executeUpdate("""
-                CREATE TABLE IF NOT EXISTS alias_radio (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    alias_id INTEGER NOT NULL REFERENCES alias(id) ON DELETE CASCADE,
-                    sort_order INTEGER NOT NULL,
-                    protocol TEXT NOT NULL,
-                    value INTEGER,
-                    min_value INTEGER,
-                    max_value INTEGER,
-                    wacn INTEGER,
-                    system_id INTEGER,
-                    fully_qualified INTEGER NOT NULL DEFAULT 0,
-                    ranged INTEGER NOT NULL DEFAULT 0
-                )
-                """);
-            statement.executeUpdate("""
-                CREATE TABLE IF NOT EXISTS alias_status (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    alias_id INTEGER NOT NULL REFERENCES alias(id) ON DELETE CASCADE,
-                    sort_order INTEGER NOT NULL,
-                    status_kind TEXT NOT NULL,
-                    status INTEGER NOT NULL
-                )
-                """);
-            statement.executeUpdate("""
-                CREATE TABLE IF NOT EXISTS alias_tone_sequence (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    alias_id INTEGER NOT NULL REFERENCES alias(id) ON DELETE CASCADE,
-                    sort_order INTEGER NOT NULL,
-                    tone_sequence TEXT
-                )
-                """);
-            statement.executeUpdate("""
-                CREATE TABLE IF NOT EXISTS alias_text_identifier (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    alias_id INTEGER NOT NULL REFERENCES alias(id) ON DELETE CASCADE,
-                    sort_order INTEGER NOT NULL,
-                    identifier_type TEXT NOT NULL,
-                    text_value TEXT,
-                    text_value_2 TEXT,
-                    numeric_value INTEGER
-                )
-                """);
-            statement.executeUpdate("""
-                CREATE TABLE IF NOT EXISTS alias_action (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    alias_id INTEGER NOT NULL REFERENCES alias(id) ON DELETE CASCADE,
-                    sort_order INTEGER NOT NULL,
-                    type TEXT NOT NULL,
-                    interval TEXT,
-                    period INTEGER,
-                    path TEXT,
-                    script TEXT
-                )
-                """);
+            for(SqliteSchemaValidator.Definition definition: EXACT_ALIAS_OBJECTS)
+            {
+                statement.executeUpdate(definition.sql());
+            }
             statement.executeUpdate("""
                 CREATE TABLE IF NOT EXISTS configuration_channel (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -261,34 +293,6 @@ public final class SdrTrunkDatabaseSchema
                     updated_at_ms INTEGER NOT NULL
                 )
                 """);
-            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_alias_sort ON alias(sort_order, id)");
-            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_alias_list_name ON alias(alias_list_name)");
-            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_alias_broadcast_channel_alias ON alias_broadcast_channel(alias_id, sort_order, id)");
-            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_alias_broadcast_channel_name ON alias_broadcast_channel(channel_name)");
-            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_alias_talkgroup_alias ON alias_talkgroup(alias_id, sort_order, id)");
-            statement.executeUpdate("""
-                CREATE INDEX IF NOT EXISTS idx_alias_talkgroup_value
-                ON alias_talkgroup(protocol, value, wacn, system_id)
-                """);
-            statement.executeUpdate("""
-                CREATE INDEX IF NOT EXISTS idx_alias_talkgroup_range
-                ON alias_talkgroup(protocol, min_value, max_value)
-                """);
-            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_alias_radio_alias ON alias_radio(alias_id, sort_order, id)");
-            statement.executeUpdate("""
-                CREATE INDEX IF NOT EXISTS idx_alias_radio_value
-                ON alias_radio(protocol, value, wacn, system_id)
-                """);
-            statement.executeUpdate("""
-                CREATE INDEX IF NOT EXISTS idx_alias_radio_range
-                ON alias_radio(protocol, min_value, max_value)
-                """);
-            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_alias_status_alias ON alias_status(alias_id, sort_order, id)");
-            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_alias_status_lookup ON alias_status(status_kind, status)");
-            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_alias_tone_sequence_alias ON alias_tone_sequence(alias_id, sort_order, id)");
-            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_alias_text_identifier_alias ON alias_text_identifier(alias_id, sort_order, id)");
-            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_alias_text_identifier_type ON alias_text_identifier(identifier_type)");
-            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_alias_action_alias ON alias_action(alias_id, sort_order, id)");
             statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_configuration_channel_sort ON configuration_channel(sort_order, id)");
             statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_configuration_channel_alias_list ON configuration_channel(alias_list_name)");
             statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_configuration_channel_decoder ON configuration_channel(decoder_type)");
@@ -308,7 +312,8 @@ public final class SdrTrunkDatabaseSchema
 
     public static void validate(Connection connection) throws SQLException
     {
-        SqliteSchemaValidator.validate(connection, TABLES, INDEXES, List.of(), METADATA);
+        SqliteSchemaValidator.validate(connection, TABLES, INDEXES, VIEWS, METADATA);
+        SqliteSchemaValidator.validateDefinitions(connection, EXACT_ALIAS_OBJECTS);
     }
 
 }

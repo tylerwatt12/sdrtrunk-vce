@@ -93,7 +93,7 @@ public class MBECallSequenceConverter
 
         if(P25P1CallSequenceRecorder.PROTOCOL.equals(callSequence.getProtocol()))
         {
-            P25P1AudioModule audioModule = new P25P1AudioModule(userPreferences, new AliasList("mbe generator"));
+            P25P1AudioModule audioModule = new P25P1AudioModule(userPreferences, AliasList.empty("mbe generator"));
             VoiceEncryptionKeyResolver keyResolver =
                 new VoiceEncryptionKeyResolver(userPreferences.getEncryptionKeyPreference());
             VoiceFrameDecryptorFactory decryptorFactory = new VoiceFrameDecryptorFactory(userPreferences
@@ -188,7 +188,7 @@ public class MBECallSequenceConverter
         }
         else if(DMRCallSequenceRecorder.PROTOCOL.equals(callSequence.getProtocol()))
         {
-            DMRAudioModule audioModule = new DMRAudioModule(userPreferences, new AliasList("mbe generator"), 1);
+            DMRAudioModule audioModule = new DMRAudioModule(userPreferences, AliasList.empty("mbe generator"), 1);
             VoiceEncryptionKeyResolver keyResolver =
                 new VoiceEncryptionKeyResolver(userPreferences.getEncryptionKeyPreference());
             VoiceFrameDecryptorFactory decryptorFactory = new VoiceFrameDecryptorFactory(userPreferences
@@ -256,7 +256,7 @@ public class MBECallSequenceConverter
                 throw new IllegalArgumentException("NXDN full-rate AMBE .mbe conversion is not supported");
             }
 
-            NXDNAudioModule audioModule = new NXDNAudioModule(userPreferences, new AliasList("mbe generator"));
+            NXDNAudioModule audioModule = new NXDNAudioModule(userPreferences, AliasList.empty("mbe generator"));
             VoiceEncryptionKeyResolver keyResolver =
                 new VoiceEncryptionKeyResolver(userPreferences.getEncryptionKeyPreference());
             VoiceFrameDecryptorFactory decryptorFactory = new VoiceFrameDecryptorFactory(userPreferences

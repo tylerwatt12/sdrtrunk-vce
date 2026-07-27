@@ -2136,11 +2136,11 @@ class StatsWebDatabase
              FROM %s identifier
              JOIN alias ON alias.id = identifier.alias_id
              WHERE identifier.protocol = 'DMR'
-               AND alias.alias_list_name = context.alias_list_name
+               AND identifier.alias_list_name = context.alias_list_name
                AND ((identifier.ranged <> 0 AND %s BETWEEN identifier.min_value AND identifier.max_value)
                  OR (identifier.ranged = 0 AND identifier.value = %s))
              ORDER BY CASE WHEN identifier.ranged = 0 THEN 1 ELSE 0 END DESC,
-                 alias.sort_order, alias.id
+                 alias.id
              LIMIT 1)
             """.formatted(aliasColumn, identifierTable, identifierColumn, identifierColumn).strip();
     }
@@ -2170,7 +2170,7 @@ class StatsWebDatabase
                  (identifier.wacn = system.wacn AND identifier.system_id = system.system_id))
                AND (EXISTS (SELECT 1 FROM p25_site_snapshot assigned
                      WHERE assigned.system_key = system.system_key
-                       AND assigned.alias_list_name = alias.alias_list_name
+                       AND assigned.alias_list_name = identifier.alias_list_name
                        AND trim(assigned.alias_list_name) <> '')
                  OR (identifier.fully_qualified <> 0 AND NOT EXISTS
                      (SELECT 1 FROM p25_site_snapshot assigned
@@ -2182,7 +2182,7 @@ class StatsWebDatabase
                  WHEN identifier.ranged = 0 THEN 2
                  WHEN identifier.fully_qualified <> 0 THEN 1
                  ELSE 0 END DESC,
-                 alias.sort_order, alias.id
+                 alias.id
              LIMIT 1)
             """.formatted(aliasColumn, identifierTable, identifierColumn, identifierColumn).strip();
     }
@@ -2230,7 +2230,7 @@ class StatsWebDatabase
                    SELECT 1 FROM %s identifier
                    JOIN alias ON alias.id = identifier.alias_id
                    WHERE identifier.protocol = 'DMR'
-                     AND alias.alias_list_name = context.alias_list_name
+                     AND identifier.alias_list_name = context.alias_list_name
                      AND ((identifier.ranged <> 0 AND %s BETWEEN identifier.min_value AND identifier.max_value)
                        OR (identifier.ranged = 0 AND identifier.value = %s))
                      AND (lower(coalesce(alias.name, '')) LIKE ?

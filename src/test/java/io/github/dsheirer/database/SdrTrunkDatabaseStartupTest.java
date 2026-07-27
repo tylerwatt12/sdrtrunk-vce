@@ -104,4 +104,36 @@ class SdrTrunkDatabaseStartupTest
             assertFalse(resultSet.next());
         }
     }
+
+    @Test
+    void rejectsChangedAliasTableDefinitionWithoutRepairingIt() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("changed-alias-definition.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            statement.execute("PRAGMA writable_schema=ON");
+            statement.executeUpdate("""
+                UPDATE sqlite_master
+                SET sql = replace(sql, 'alias_list_id INTEGER', 'alias_list_id TEXT')
+                WHERE type = 'table' AND name = 'alias'
+                """);
+            statement.execute("PRAGMA writable_schema=OFF");
+        }
+
+        assertThrows(java.sql.SQLException.class,
+            () -> SdrTrunkDatabaseStartup.validateGlobalDatabase(database));
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement();
+            ResultSet resultSet = statement.executeQuery("""
+                SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'alias'
+                """))
+        {
+            assertTrue(resultSet.next());
+            assertTrue(resultSet.getString(1).contains("alias_list_id TEXT"));
+        }
+    }
 }

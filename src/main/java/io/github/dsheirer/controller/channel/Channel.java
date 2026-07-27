@@ -492,7 +492,7 @@ public class Channel extends Configuration
 
     /**
      * Indicates that this identity was generated because the channel is new or its persisted legacy value was absent
-     * or malformed.  Configuration startup uses this signal to durably upgrade the existing JSON before channels run.
+     * or malformed. Import normalization may persist it; normal database startup treats this as a validation failure.
      */
     @JsonIgnore
     public boolean isConfigurationIdPersistenceRequired()

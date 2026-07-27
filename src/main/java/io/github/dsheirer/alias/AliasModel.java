@@ -21,9 +21,11 @@ package io.github.dsheirer.alias;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.AliasIDType;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
+import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.configuration.AliasListConfigurationIdentifier;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
@@ -33,6 +35,8 @@ import java.util.Set;
 import javafx.collections.FXCollections;
 import javafx.collections.ListChangeListener;
 import javafx.collections.ObservableList;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Alias Model contains all aliases and is responsible for creation and management of alias lists.  Alias lists are a
@@ -41,9 +45,10 @@ import javafx.collections.ObservableList;
  */
 public class AliasModel
 {
-    public static final String NO_ALIAS_LIST = "(No Alias List)";
+    private static final Logger mLog = LoggerFactory.getLogger(AliasModel.class);
     private ObservableList<Alias> mAliases = FXCollections.observableArrayList(Alias.extractor());
     private ObservableList<String> mAliasListNames = FXCollections.observableArrayList();
+    private ObservableList<AliasListDefinition> mAliasListDefinitions = FXCollections.observableArrayList();
     private Map<String,AliasList> mAliasListMap = new HashMap<>();
 
     public AliasModel()
@@ -63,36 +68,90 @@ public class AliasModel
     }
 
     /**
+     * Persisted alias-list definitions. Names remain available separately for existing UI bindings.
+     */
+    public ObservableList<AliasListDefinition> aliasListDefinitions()
+    {
+        return mAliasListDefinitions;
+    }
+
+    public void setAliasListDefinitions(Collection<AliasListDefinition> definitions)
+    {
+        mAliasListDefinitions.setAll(definitions != null ? definitions : List.of());
+        refreshAliasListNames();
+    }
+
+    public void addAliasListDefinition(AliasListDefinition definition)
+    {
+        if(definition == null)
+        {
+            return;
+        }
+
+        AliasListDefinition existing = definition.getId() > AliasListDefinition.UNASSIGNED_ID ?
+            getAliasListDefinition(definition.getId()) : getAliasListDefinition(definition.getName());
+
+        if(existing == null)
+        {
+            mAliasListDefinitions.add(definition);
+        }
+        else if(existing != definition)
+        {
+            throw new IllegalArgumentException("Alias list [" + definition.getName() + "] already exists");
+        }
+
+        refreshAliasListNames();
+    }
+
+    public AliasListDefinition getAliasListDefinition(long id)
+    {
+        if(id <= AliasListDefinition.UNASSIGNED_ID)
+        {
+            return null;
+        }
+
+        return mAliasListDefinitions.stream().filter(definition -> definition.getId() == id).findFirst().orElse(null);
+    }
+
+    public AliasListDefinition getAliasListDefinition(String name)
+    {
+        if(name == null || name.isEmpty())
+        {
+            return null;
+        }
+
+        return mAliasListDefinitions.stream().filter(definition ->
+            name.equalsIgnoreCase(definition.getName())).findFirst().orElse(null);
+    }
+
+    public AliasListDefinition getAliasListDefinition(Alias alias)
+    {
+        if(alias == null)
+        {
+            return null;
+        }
+
+        return alias.getAliasListId() > AliasListDefinition.UNASSIGNED_ID ?
+            getAliasListDefinition(alias.getAliasListId()) :
+            getAliasListDefinition(alias.getAliasListName());
+    }
+
+    /**
      * Clears and reloads the list of alias list names from the current set of aliases.
      */
     public void refreshAliasListNames()
     {
         mAliasListNames.clear();
 
-        for(Alias alias : mAliases)
+        for(AliasListDefinition definition: mAliasListDefinitions)
         {
-            String aliasListName = alias.getAliasListName();
-
-            if(aliasListName != null && !aliasListName.isEmpty() && !mAliasListNames.contains(aliasListName))
+            if(definition.getName() != null && !definition.getName().isEmpty() &&
+                !mAliasListNames.contains(definition.getName()))
             {
-                mAliasListNames.add(aliasListName);
+                mAliasListNames.add(definition.getName());
             }
         }
-    }
 
-    /**
-     * Renames the alias list across the set of aliases.
-     * @param oldName currently used by the alias
-     * @param newName to apply to the alias
-     */
-    public void renameAliasList(String oldName, String newName)
-    {
-        if(oldName == null || oldName.isEmpty() || newName == null || newName.isEmpty())
-        {
-            return;
-        }
-
-        mAliases.stream().filter(alias -> alias.getAliasListName().equals(oldName)).forEach(alias -> alias.setAliasListName(newName));
     }
 
     /**
@@ -106,23 +165,11 @@ public class AliasModel
             return;
         }
 
-        mAliases.removeIf(alias -> alias.getAliasListName().equals(aliasListName));
+        mAliases.removeIf(alias -> alias.getAliasListName() != null &&
+            aliasListName.equalsIgnoreCase(alias.getAliasListName()));
         mAliasListMap.remove(aliasListName);
-    }
-
-    /**
-     * Adds the list of alias list names to the currently managed set of alias list names.
-     * @param aliasListNames to add
-     */
-    public void addAliasListNames(List<String> aliasListNames)
-    {
-        for(String aliasListName : aliasListNames)
-        {
-            if(!mAliasListNames.contains(aliasListName))
-            {
-                mAliasListNames.add(aliasListName);
-            }
-        }
+        mAliasListDefinitions.removeIf(definition -> aliasListName.equalsIgnoreCase(definition.getName()));
+        refreshAliasListNames();
     }
 
     /**
@@ -146,6 +193,8 @@ public class AliasModel
         }
 
         mAliasListNames.clear();
+        mAliasListDefinitions.clear();
+        mAliasListMap.clear();
     }
 
     /**
@@ -188,38 +237,92 @@ public class AliasModel
     {
         if(name == null || name.isEmpty())
         {
-            return new AliasList(name);
+            return AliasList.empty(name);
         }
 
-        AliasList mapValue = mAliasListMap.get(name);
+        AliasListDefinition definition = getAliasListDefinition(name);
+        if(definition == null)
+        {
+            return AliasList.empty(name);
+        }
+
+        AliasList mapValue = mAliasListMap.get(definition.getName());
         if (mapValue != null)
         {
             return mapValue;
         }
 
-        AliasList aliasList = new AliasList(name);
+        AliasList aliasList = new AliasList(definition);
         List<Alias> matchingAliases = new ArrayList<>();
 
         for(Alias alias : mAliases)
         {
-            if(alias.hasList() && alias.getAliasListName().equalsIgnoreCase(name))
+            boolean persistedMatch = definition.getId() > AliasListDefinition.UNASSIGNED_ID &&
+                alias.getAliasListId() == definition.getId();
+            boolean newMatch = definition.getId() == AliasListDefinition.UNASSIGNED_ID &&
+                alias.getAliasListId() == Alias.UNASSIGNED_ALIAS_LIST_ID &&
+                definition.getName().equals(alias.getAliasListName());
+
+            if(persistedMatch || newMatch)
             {
                 matchingAliases.add(alias);
             }
         }
 
         aliasList.addAliases(matchingAliases);
-        mAliasListMap.put(name, aliasList);
+        mAliasListMap.put(definition.getName(), aliasList);
 
         return aliasList;
     }
 
-    /**
-     * Returns a list of unique alias list names from across the alias set
-     */
-    public List<String> getListNames()
+    public AliasList getAliasList(AliasListDefinition definition)
     {
-        return mAliasListNames;
+        return definition != null ? getAliasList(definition.getName()) : null;
+    }
+
+    /**
+     * Returns the configured list only when its durable ownership and decoder capabilities match the channel.
+     * Invalid/stale assignments receive an empty list so no aliases or actions can cross system boundaries.
+     */
+    public AliasList getAliasListForChannel(Channel channel)
+    {
+        if(channel == null || channel.getAliasListName() == null || channel.getAliasListName().isBlank())
+        {
+            return AliasList.empty(channel != null ? channel.getAliasListName() : null);
+        }
+
+        AliasListDefinition definition = getAliasListDefinition(channel.getAliasListName());
+
+        if(isAliasListCompatible(channel, definition))
+        {
+            return getAliasList(definition);
+        }
+
+        mLog.warn("Ignoring incompatible alias list [{}] for channel system [{}]",
+            channel.getAliasListName(), channel.getSystem());
+        return definition != null ? new AliasList(definition) : AliasList.empty(channel.getAliasListName());
+    }
+
+    /**
+     * Validates the complete persisted channel/list relationship: exact system ownership plus primary decoder family.
+     */
+    public boolean isAliasListCompatible(Channel channel)
+    {
+        return channel != null && isAliasListCompatible(channel,
+            getAliasListDefinition(channel.getAliasListName()));
+    }
+
+    private boolean isAliasListCompatible(Channel channel, AliasListDefinition definition)
+    {
+        if(channel == null || definition == null || channel.getSystem() == null ||
+            definition.getSystemName() == null || channel.getDecodeConfiguration() == null ||
+            !channel.getSystem().trim().equalsIgnoreCase(definition.getSystemName().trim()))
+        {
+            return false;
+        }
+
+        return AliasMatchRegistry.isChannelCompatible(definition,
+            channel.getDecodeConfiguration().getDecoderType());
     }
 
     /**
@@ -247,8 +350,15 @@ public class AliasModel
      */
     public void addAliases(List<Alias> aliases)
     {
-        removeAliases(aliases);
-        mAliases.addAll(aliases);
+        if(aliases == null || aliases.isEmpty())
+        {
+            return;
+        }
+
+        List<Alias> validated = new ArrayList<>(aliases.size());
+        aliases.forEach(alias -> validated.add(validateAndBind(alias)));
+        removeAliases(validated);
+        mAliases.addAll(validated);
     }
 
     /**
@@ -256,29 +366,19 @@ public class AliasModel
      */
     public void addAlias(Alias alias)
     {
+        if(alias == null)
+        {
+            return;
+        }
+
+        Alias validated = validateAndBind(alias);
+
         if(mAliases.contains(alias))
         {
             removeAlias(alias);
         }
 
-        mAliases.add(alias);
-    }
-
-    public void addAliasList(String aliasListName)
-    {
-        if(aliasListName != null && !aliasListName.isEmpty())
-        {
-            if(!mAliasListNames.contains(aliasListName))
-            {
-                mAliasListNames.add(aliasListName);
-            }
-        }
-        else if(!mAliasListNames.contains(NO_ALIAS_LIST))
-        {
-            //This list allows users to view unassigned aliases so that they can move them to a valid alias list, but
-            // it is not assignable to a channel
-            mAliasListNames.add(NO_ALIAS_LIST);
-        }
+        mAliases.add(validated);
     }
 
     /**
@@ -318,13 +418,11 @@ public class AliasModel
         {
             if(alias.hasList() && alias.getAliasListName().equalsIgnoreCase(aliasListName))
             {
-                for(AliasID aliasID: alias.getAliasIdentifiers())
+                AliasID aliasID = alias.getMatchIdentifier();
+
+                if(aliasID != null && aliasID.getType() == type)
                 {
-                    if(aliasID.getType() == type && AliasIdentifierPolicy.isUserVisible(aliasID))
-                    {
-                        aliases.add(alias);
-                        break;
-                    }
+                    aliases.add(alias);
                 }
             }
         }
@@ -377,16 +475,58 @@ public class AliasModel
                 {
                     if(broadcastChannel.getChannelName().contentEquals(previousStreamName))
                     {
-                        alias.removeAliasID(broadcastChannel);
+                        alias.removeBroadcastChannel(previousStreamName);
 
                         if(!alias.hasBroadcastChannel(updatedStreamName))
                         {
-                            alias.addAliasID(new BroadcastChannel(updatedStreamName));
+                            alias.addBroadcastChannel(updatedStreamName);
                         }
                     }
                 }
             }
         }
+    }
+
+    /**
+     * Runtime accepts only current aliases with one valid matcher supported by their system-owned list.
+     */
+    private Alias validateAndBind(Alias alias)
+    {
+        if(alias == null)
+        {
+            throw new IllegalArgumentException("Alias cannot be null");
+        }
+
+        AliasListDefinition definition = getAliasListDefinition(alias.getAliasListId());
+
+        if(definition == null && alias.getId() == Alias.UNASSIGNED_ID &&
+            alias.getAliasListId() == Alias.UNASSIGNED_ALIAS_LIST_ID)
+        {
+            definition = getAliasListDefinition(alias.getAliasListName());
+        }
+
+        if(definition == null)
+        {
+            throw new IllegalArgumentException("Alias [" + alias.getName() +
+                "] must reference an existing alias-list definition");
+        }
+
+        if(definition.getSystemName() == null || definition.getSystemName().isBlank() ||
+            definition.getFamily() == null)
+        {
+            throw new IllegalArgumentException("Alias list [" + definition.getName() +
+                "] must be owned by one active radio system");
+        }
+
+        AliasID matcher = alias.getMatchIdentifier();
+        if(!AliasMatchRegistry.isOperational(definition, matcher))
+        {
+            throw new IllegalArgumentException("Alias matcher [" + matcher + "] is not supported by alias list [" +
+                definition.getName() + "]");
+        }
+
+        alias.setAliasListDefinition(definition);
+        return alias;
     }
 
     /**
@@ -416,8 +556,6 @@ public class AliasModel
                             continue;
                         }
 
-                        String aliasListName = alias.getAliasListName();
-                        addAliasList(aliasListName);
                         changedAliases.add(alias);
                     }
                 }
@@ -430,7 +568,6 @@ public class AliasModel
 
                         if(alias != null)
                         {
-                            addAliasList(alias.getAliasListName());
                             changedAliases.add(alias);
                         }
                     }

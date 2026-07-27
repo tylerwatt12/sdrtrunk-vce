@@ -19,7 +19,6 @@
 package io.github.dsheirer.controller.channel;
 
 import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
-import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.controller.channel.Channel.ChannelType;
 import io.github.dsheirer.controller.channel.ChannelEvent.Event;
 import io.github.dsheirer.sample.Broadcaster;
@@ -39,53 +38,12 @@ public class ChannelModel implements Listener<ChannelEvent>
     private ObservableList<Channel> mChannels = FXCollections.observableArrayList(Channel.extractor());
     private ObservableList<Channel> mTrafficChannels = FXCollections.observableArrayList(Channel.extractor());
     private Broadcaster<ChannelEvent> mChannelEventBroadcaster = new Broadcaster<>();
-    private AliasModel mAliasModel;
-
-    public ChannelModel(AliasModel aliasModel)
+    public ChannelModel()
     {
-        mAliasModel = aliasModel;
-
         //Register a listener to detect channel changes and broadcast change events to cause configuration save requests
         ChannelListChangeListener changeListener = new ChannelListChangeListener();
         mChannels.addListener(changeListener);
         mTrafficChannels.addListener(changeListener);
-    }
-
-    /**
-     * Get a deduplicated list of alias list names from across the channel configurations.
-     * @return list of alias list names.
-     */
-    public List<String> getAliasListNames()
-    {
-        List<String> aliasListNames = new ArrayList<>();
-
-        for(Channel channel : mChannels)
-        {
-            String aliasListName = channel.getAliasListName();
-
-            if(aliasListName != null && !aliasListName.isEmpty() && !aliasListNames.contains(aliasListName))
-            {
-                aliasListNames.add(aliasListName);
-            }
-        }
-
-        return aliasListNames;
-    }
-
-    /**
-     * Renames the alias list across the set of aliases.
-     * @param oldName currently used by the alias
-     * @param newName to apply to the alias
-     */
-    public void renameAliasList(String oldName, String newName)
-    {
-        if(oldName == null || oldName.isEmpty() || newName == null || newName.isEmpty())
-        {
-            return;
-        }
-
-        mChannels.stream().filter(channel -> channel.getAliasListName().equals(oldName))
-                .forEach(channel -> channel.setAliasListName(newName));
     }
 
     /**
@@ -99,8 +57,9 @@ public class ChannelModel implements Listener<ChannelEvent>
             return;
         }
 
-        mChannels.stream().filter(channel -> channel.getAliasListName().equals(aliasListName))
-                .forEach(channel -> channel.setAliasListName(null));
+        mChannels.stream().filter(channel -> channel.getAliasListName() != null &&
+                channel.getAliasListName().equalsIgnoreCase(aliasListName))
+            .forEach(channel -> channel.setAliasListName(null));
     }
 
     /**
@@ -155,45 +114,6 @@ public class ChannelModel implements Listener<ChannelEvent>
         }
 
         return null;
-    }
-
-    /**
-     * Renames the alias list across all channels.
-     * @param existing alias list name
-     * @param renamed alias list name.
-     */
-    public void renameAliaslistForChannels(String existing, String renamed)
-    {
-        if(existing == null || existing.isEmpty() || renamed == null || renamed.isEmpty())
-        {
-            return;
-        }
-
-        mChannels.forEach(channel -> {
-            if(channel.getAliasListName() != null && channel.getAliasListName().equals(existing))
-            {
-                channel.setAliasListName(renamed);
-            }
-        });
-    }
-
-    /**
-     * Removes the alias list name from any channels.
-     * @param name to delete
-     */
-    public void deleteAliasListName(String name)
-    {
-        if(name == null || name.isEmpty())
-        {
-            return;
-        }
-
-        mChannels.forEach(channel -> {
-            if(channel.getAliasListName() != null && channel.getAliasListName().equals(name))
-            {
-                channel.setAliasListName(null);
-            }
-        });
     }
 
     /**
@@ -262,8 +182,6 @@ public class ChannelModel implements Listener<ChannelEvent>
             case STANDARD:
                 channel.getRadresGuid();
                 mChannels.add(channel);
-                //Make sure the alias model has the alias list referred to by the channel
-                mAliasModel.addAliasList(channel.getAliasListName());
                 break;
             case TRAFFIC:
                 mTrafficChannels.add(channel);

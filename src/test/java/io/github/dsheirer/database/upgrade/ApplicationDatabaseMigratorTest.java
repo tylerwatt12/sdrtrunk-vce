@@ -53,7 +53,7 @@ class ApplicationDatabaseMigratorTest
 
         try(Connection connection = open(database))
         {
-            assertEquals("3", metadata(connection, "alias_schema_version"));
+            assertEquals("4", metadata(connection, "alias_schema_version"));
             assertEquals("21", metadata(connection, "p25_activity_schema_version"));
             assertEquals("2", metadata(connection, "trunked_site_schema_version"));
             assertEquals("1", metadata(connection, DmrActivitySchema.SCHEMA_VERSION_KEY));

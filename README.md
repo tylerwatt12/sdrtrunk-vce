@@ -108,9 +108,9 @@ ${user.home}/SDRTrunk/playlist/default.xml
 ${user.home}/SDRTrunk/playlist/playlist_v2.xml
 ```
 
-You can also choose another XML file. Import copies channels, aliases, DMR channel maps, streaming settings, and
-related configuration into a new SQLite database. Your original XML remains unchanged and regular SDRTrunk can
-continue using it.
+You can also choose another XML file during first-launch setup. Import copies channels, aliases, DMR channel maps,
+streaming settings, and related configuration into a new SQLite database. Your original XML remains unchanged and
+regular SDRTrunk can continue using it.
 
 After importing:
 
@@ -119,9 +119,6 @@ After importing:
 - Set up JMBE under **Preferences > Decoder > JMBE Audio Library** if needed.
 - Check recording, event-log, screenshot, and streaming folders.
 - Back up the new VCE data folder.
-
-You can import more XML later with **File > Import Legacy Playlist XML**. VCE shows what will be imported, lets you
-handle name conflicts, and backs up the database before making changes.
 
 ## Updating VCE
 

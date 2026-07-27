@@ -16,7 +16,10 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.alias.Alias;
+import io.github.dsheirer.alias.AliasListDefinition;
+import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.alias.id.talkgroup.TalkgroupRange;
+import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.rrapi.type.Talkgroup;
 import io.github.dsheirer.rrapi.type.TalkgroupCategory;
@@ -25,6 +28,19 @@ import org.junit.jupiter.api.Test;
 
 class SystemTalkgroupSelectionEditorTest
 {
+    @Test
+    void radioReferenceRequiresExactSystemAndFamily()
+    {
+        AliasListDefinition p25 = new AliasListDefinition("County P25", "County", AliasListFamily.P25);
+
+        assertTrue(SystemTalkgroupSelectionEditor.isRadioReferenceListCompatible(
+            p25, " county ", DecoderType.P25_PHASE1));
+        assertFalse(SystemTalkgroupSelectionEditor.isRadioReferenceListCompatible(
+            p25, "Other", DecoderType.P25_PHASE1));
+        assertFalse(SystemTalkgroupSelectionEditor.isRadioReferenceListCompatible(
+            p25, "County", DecoderType.DMR));
+    }
+
     @Test
     void identifiesMissingIdenticalAndDifferentImports()
     {
@@ -71,11 +87,12 @@ class SystemTalkgroupSelectionEditorTest
         io.github.dsheirer.alias.id.talkgroup.Talkgroup expected =
             new io.github.dsheirer.alias.id.talkgroup.Talkgroup(Protocol.APCO25, 13501);
         Alias alias = new Alias("LORAIN DISP");
-        alias.addAliasID(new TalkgroupRange(Protocol.APCO25, 13000, 14000));
+        alias.setMatchIdentifier(new TalkgroupRange(Protocol.APCO25, 13000, 14000));
 
         assertFalse(SystemTalkgroupSelectionEditor.hasExactTalkgroup(alias, expected));
 
-        alias.addAliasID(new io.github.dsheirer.alias.id.talkgroup.Talkgroup(Protocol.APCO25, 13501));
+        alias.setMatchIdentifier(
+            new io.github.dsheirer.alias.id.talkgroup.Talkgroup(Protocol.APCO25, 13501));
         assertTrue(SystemTalkgroupSelectionEditor.hasExactTalkgroup(alias, expected));
     }
 

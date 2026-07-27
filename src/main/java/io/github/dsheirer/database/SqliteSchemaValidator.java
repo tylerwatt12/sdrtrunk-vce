@@ -16,10 +16,9 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.ArrayList;
 import java.util.Collection;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
 
 /**
  * Read-only SQLite schema validator.
@@ -54,17 +53,36 @@ public final class SqliteSchemaValidator
         }
     }
 
+    /**
+     * Validates the complete stored SQL definition for schema objects whose physical contract matters.  SQLite
+     * removes {@code IF NOT EXISTS} when it stores a definition, so that clause and insignificant whitespace are
+     * canonicalized before comparison.  No schema statements are executed.
+     */
+    public static void validateDefinitions(Connection connection, Collection<Definition> definitions)
+        throws SQLException
+    {
+        for(Definition definition: definitions)
+        {
+            String actual = objectSql(connection, definition.type(), definition.name());
+            String expected = canonicalSql(definition.sql());
+
+            if(!expected.equals(canonicalSql(actual)))
+            {
+                throw new SQLException("SQLite " + definition.type() + " [" + definition.name() +
+                    "] does not match its current-schema definition");
+            }
+        }
+    }
+
     private static void validateTable(Connection connection, Table table) throws SQLException
     {
         validateObject(connection, "table", table.name());
-        Set<String> columns = columns(connection, table.name());
+        List<String> columns = columns(connection, table.name());
 
-        for(String column: table.columns())
+        if(!columns.equals(table.columns()))
         {
-            if(!columns.contains(column))
-            {
-                throw new SQLException("SQLite schema is missing column [" + table.name() + "." + column + "]");
-            }
+            throw new SQLException("SQLite table [" + table.name() + "] has columns " + columns +
+                "; expected exactly " + table.columns());
         }
     }
 
@@ -89,9 +107,46 @@ public final class SqliteSchemaValidator
         throw new SQLException("SQLite schema is missing " + type + " [" + name + "]");
     }
 
-    private static Set<String> columns(Connection connection, String table) throws SQLException
+    private static String objectSql(Connection connection, String type, String name) throws SQLException
     {
-        Set<String> columns = new HashSet<>();
+        try(PreparedStatement statement = connection.prepareStatement("""
+            SELECT sql FROM sqlite_master WHERE type = ? AND name = ?
+            """))
+        {
+            statement.setString(1, type);
+            statement.setString(2, name);
+
+            try(ResultSet resultSet = statement.executeQuery())
+            {
+                if(resultSet.next() && resultSet.getString("sql") != null)
+                {
+                    return resultSet.getString("sql");
+                }
+            }
+        }
+
+        throw new SQLException("SQLite schema is missing " + type + " [" + name + "]");
+    }
+
+    private static String canonicalSql(String sql)
+    {
+        if(sql == null)
+        {
+            return "";
+        }
+
+        return sql.trim()
+            .replaceFirst(
+                "(?i)^CREATE\\s+((?:UNIQUE\\s+)?(?:TABLE|INDEX|VIEW|TRIGGER))\\s+IF\\s+NOT\\s+EXISTS\\s+",
+                "CREATE $1 ")
+            .replaceAll("\\s+", " ")
+            .replaceAll("\\s*([(),=])\\s*", "$1")
+            .replaceFirst(";\\s*$", "");
+    }
+
+    private static List<String> columns(Connection connection, String table) throws SQLException
+    {
+        List<String> columns = new ArrayList<>();
 
         try(Statement statement = connection.createStatement();
             ResultSet resultSet = statement.executeQuery("PRAGMA table_info(" + table + ")"))
@@ -135,5 +190,20 @@ public final class SqliteSchemaValidator
 
     public record Metadata(String key, String value)
     {
+    }
+
+    public record Definition(String type, String name, String sql)
+    {
+        public Definition
+        {
+            if(!List.of("table", "index", "view", "trigger").contains(type))
+            {
+                throw new IllegalArgumentException("Unsupported SQLite schema object type: " + type);
+            }
+            if(name == null || name.isBlank() || sql == null || sql.isBlank())
+            {
+                throw new IllegalArgumentException("SQLite schema definition requires a name and SQL");
+            }
+        }
     }
 }

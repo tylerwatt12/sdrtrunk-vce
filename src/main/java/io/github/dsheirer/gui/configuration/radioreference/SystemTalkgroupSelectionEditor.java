@@ -22,15 +22,15 @@ package io.github.dsheirer.gui.configuration.radioreference;
 import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasList;
-import io.github.dsheirer.alias.AliasModel;
+import io.github.dsheirer.alias.AliasListDefinition;
+import io.github.dsheirer.alias.AliasMatchRegistry;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.talkgroup.TalkgroupRange;
 import io.github.dsheirer.eventbus.MyEventBus;
-import io.github.dsheirer.gui.control.MaxLengthUnaryOperator;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import io.github.dsheirer.configuration.ConfigurationManager;
+import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.preference.UserPreferences;
-import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.rrapi.type.System;
 import io.github.dsheirer.rrapi.type.Talkgroup;
 import io.github.dsheirer.rrapi.type.TalkgroupCategory;
@@ -38,7 +38,6 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.function.Predicate;
 import javafx.animation.RotateTransition;
 import javafx.beans.property.ObjectProperty;
@@ -67,8 +66,6 @@ import javafx.scene.control.Separator;
 import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableView;
 import javafx.scene.control.TextField;
-import javafx.scene.control.TextFormatter;
-import javafx.scene.control.TextInputDialog;
 import javafx.scene.control.cell.PropertyValueFactory;
 import javafx.scene.layout.ColumnConstraints;
 import javafx.scene.layout.GridPane;
@@ -89,7 +86,7 @@ public class SystemTalkgroupSelectionEditor extends GridPane
     private TextField mSearchField;
     private TalkgroupEditor mTalkgroupEditor;
     private ComboBox<String> mAliasListNameComboBox;
-    private Button mNewAliasListButton;
+    private FilteredList<String> mCompatibleAliasLists;
     private TalkgroupFilter mTalkgroupFilter = new TalkgroupFilter();
     private FilteredList<AliasedTalkgroup> mTalkgroupFilteredList;
     private ObservableList<AliasedTalkgroup> mTalkgroupList = FXCollections.observableArrayList();
@@ -128,7 +125,7 @@ public class SystemTalkgroupSelectionEditor extends GridPane
         listBox.setSpacing(5);
         listBox.setAlignment(Pos.CENTER);
         Label importLabel = new Label("Import To Alias List:");
-        listBox.getChildren().addAll(importLabel, getAliasListNameComboBox(), getNewAliasListButton());
+        listBox.getChildren().addAll(importLabel, getAliasListNameComboBox());
         GridPane.setConstraints(listBox, 0, row);
         getChildren().add(listBox);
 
@@ -256,6 +253,7 @@ public class SystemTalkgroupSelectionEditor extends GridPane
         mRadioReferenceDecoder = decoder;
 
         clearAndSetLoading();
+        refreshCompatibleAliasLists();
 
         if(talkgroups != null && !talkgroups.isEmpty())
         {
@@ -273,7 +271,10 @@ public class SystemTalkgroupSelectionEditor extends GridPane
         //If the protocol is supported then enable the talkgroup import controls
         boolean supported = getRadioReferenceDecoder() != null &&
             getRadioReferenceDecoder().hasSupportedProtocol(getCurrentSystem());
-        getImportAllTalkgroupsButton().setDisable(!supported);
+        boolean hasSystemName = getCurrentSystem() != null && getCurrentSystem().getName() != null &&
+            !getCurrentSystem().getName().isBlank();
+        getAliasListNameComboBox().setDisable(!supported || !hasSystemName);
+        updateImportButtonState();
         getEncryptedAsDoNotMonitorCheckBox().setDisable(!supported);
         setLoading(false);
     }
@@ -406,6 +407,14 @@ public class SystemTalkgroupSelectionEditor extends GridPane
      */
     public void createAliases(List<Talkgroup> talkgroups)
     {
+        AliasListDefinition definition = getAliasListDefinition(
+            getAliasListNameComboBox().getSelectionModel().getSelectedItem());
+
+        if(!isCurrentSystemCompatible(definition))
+        {
+            throw new IllegalStateException("A compatible, system-owned alias list is required for bulk import");
+        }
+
         List<Alias> createdAliases = new ArrayList<>();
 
         for(Talkgroup talkgroup: talkgroups)
@@ -413,7 +422,7 @@ public class SystemTalkgroupSelectionEditor extends GridPane
             TalkgroupCategory talkgroupCategory = getTalkgroupCategory(talkgroup);
             String group = (talkgroupCategory != null ? talkgroupCategory.getName() : null);
             Alias alias = getRadioReferenceDecoder().createAlias(talkgroup, getCurrentSystem(),
-                    getAliasListNameComboBox().getSelectionModel().getSelectedItem(), group);
+                definition, group);
 
             RadioReferenceAliasPlaybackPolicy.apply(alias, talkgroup,
                 getEncryptedAsDoNotMonitorCheckBox().selectedProperty().get());
@@ -455,7 +464,7 @@ public class SystemTalkgroupSelectionEditor extends GridPane
     {
         if(mAliasList == null)
         {
-            mAliasList = new AliasList("empty");
+            mAliasList = AliasList.empty("empty");
         }
 
         return mAliasList;
@@ -490,14 +499,9 @@ public class SystemTalkgroupSelectionEditor extends GridPane
     {
         if(alias != null && expected != null)
         {
-            for(AliasID aliasID: alias.getAliasIdentifiers())
-            {
-                if(aliasID instanceof io.github.dsheirer.alias.id.talkgroup.Talkgroup exact &&
-                    exact.matches(expected))
-                {
-                    return true;
-                }
-            }
+            AliasID aliasID = alias.getMatchIdentifier();
+            return aliasID instanceof io.github.dsheirer.alias.id.talkgroup.Talkgroup exact &&
+                exact.matches(expected);
         }
 
         return false;
@@ -533,13 +537,14 @@ public class SystemTalkgroupSelectionEditor extends GridPane
     {
         if(mAliasListNameComboBox == null)
         {
-            Predicate<String> filterPredicate = s -> !s.contentEquals(AliasModel.NO_ALIAS_LIST);
-            FilteredList<String> filteredChannelList =
-                new FilteredList<>(mConfigurationManager.getAliasModel().aliasListNames(), filterPredicate);
-            mAliasListNameComboBox = new ComboBox<>(filteredChannelList);
+            mCompatibleAliasLists =
+                new FilteredList<>(mConfigurationManager.getAliasModel().aliasListNames());
+            mAliasListNameComboBox = new ComboBox<>(mCompatibleAliasLists);
             mAliasListNameComboBox.setPrefWidth(150);
-            mAliasListNameComboBox.setOnAction(event -> updateAliasList(getAliasListNameComboBox()
-                .getSelectionModel().getSelectedItem()));
+            mAliasListNameComboBox.setOnAction(event -> {
+                updateAliasList(getAliasListNameComboBox().getSelectionModel().getSelectedItem());
+                updateImportButtonState();
+            });
 
             if(mAliasListNameComboBox.getItems().size() > 0)
             {
@@ -550,6 +555,72 @@ public class SystemTalkgroupSelectionEditor extends GridPane
         }
 
         return mAliasListNameComboBox;
+    }
+
+    private void refreshCompatibleAliasLists()
+    {
+        if(mCompatibleAliasLists == null)
+        {
+            return;
+        }
+
+        mCompatibleAliasLists.setPredicate(name -> {
+            if(name == null)
+            {
+                return false;
+            }
+
+            return isCurrentSystemCompatible(getAliasListDefinition(name));
+        });
+
+        if(!mCompatibleAliasLists.contains(
+            getAliasListNameComboBox().getSelectionModel().getSelectedItem()))
+        {
+            getAliasListNameComboBox().getSelectionModel().clearSelection();
+            updateAliasList(null);
+        }
+
+        updateImportButtonState();
+    }
+
+    private void updateImportButtonState()
+    {
+        if(mImportAllTalkgroupsButton == null)
+        {
+            return;
+        }
+
+        boolean supported = mRadioReferenceDecoder != null && mCurrentSystem != null &&
+            mRadioReferenceDecoder.hasSupportedProtocol(mCurrentSystem);
+        AliasListDefinition definition = getAliasListDefinition(
+            mAliasListNameComboBox != null ?
+                mAliasListNameComboBox.getSelectionModel().getSelectedItem() : null);
+        mImportAllTalkgroupsButton.setDisable(!supported || !isCurrentSystemCompatible(definition));
+    }
+
+    private AliasListDefinition getAliasListDefinition(String name)
+    {
+        return name == null ? null : mConfigurationManager.getAliasModel().getAliasListDefinition(name);
+    }
+
+    private boolean isCurrentSystemCompatible(AliasListDefinition definition)
+    {
+        return isRadioReferenceListCompatible(definition,
+            mCurrentSystem != null ? mCurrentSystem.getName() : null,
+            mCurrentSystem != null && mRadioReferenceDecoder != null ?
+                mRadioReferenceDecoder.getDecoderType(mCurrentSystem) : null);
+    }
+
+    /**
+     * RadioReference creates channels without auxiliary decoders, so its alias-list capability profile must be the
+     * primary decoder family.
+     */
+    static boolean isRadioReferenceListCompatible(AliasListDefinition definition, String systemName,
+                                                  DecoderType decoderType)
+    {
+        return definition != null && systemName != null && definition.getSystemName() != null &&
+            systemName.trim().equalsIgnoreCase(definition.getSystemName().trim()) &&
+            AliasMatchRegistry.isChannelCompatible(definition, decoderType);
     }
 
     /**
@@ -583,6 +654,24 @@ public class SystemTalkgroupSelectionEditor extends GridPane
         {
             item.setAlias(getAlias(item.getTalkgroup()));
         }
+
+        refreshSelectedTalkgroupEditor();
+    }
+
+    /**
+     * Keeps the detail editor synchronized when the alias list changes without changing the selected table row.
+     */
+    private void refreshSelectedTalkgroupEditor()
+    {
+        AliasedTalkgroup selected = getTalkgroupTableView().getSelectionModel().getSelectedItem();
+        TalkgroupCategory talkgroupCategory =
+            getTalkgroupCategory(selected != null ? selected.getTalkgroup() : null);
+        String aliasListName = getAliasListNameComboBox().getSelectionModel().getSelectedItem();
+        getTalkgroupEditor().setTalkgroup(selected != null ? selected.getTalkgroup() : null,
+            getCurrentSystem(), getRadioReferenceDecoder(), selected != null ? selected.getAlias() : null,
+            aliasListName, talkgroupCategory,
+            getEncryptedAsDoNotMonitorCheckBox().selectedProperty().get(),
+            selected != null ? selected.getImportStatus() : ImportStatus.NOT_PRESENT);
     }
 
     /**
@@ -595,86 +684,51 @@ public class SystemTalkgroupSelectionEditor extends GridPane
 
         if(alias != null)
         {
-            for(AliasID aliasID: alias.getAliasIdentifiers())
+            AliasID aliasID = alias.getMatchIdentifier();
+
+            if(aliasID instanceof io.github.dsheirer.alias.id.talkgroup.Talkgroup talkgroup)
             {
-                if(aliasID instanceof io.github.dsheirer.alias.id.talkgroup.Talkgroup)
+                int value = talkgroup.getValue();
+
+                for(AliasedTalkgroup aliasedTalkgroup : mTalkgroupList)
                 {
-                    int value = ((io.github.dsheirer.alias.id.talkgroup.Talkgroup)aliasID).getValue();
-
-                    for(AliasedTalkgroup aliasedTalkgroup : mTalkgroupList)
+                    if(aliasedTalkgroup.getTalkgroupValue() == value)
                     {
-                        if(aliasedTalkgroup.getTalkgroupValue() == value)
-                        {
-                            //Even though the new alias is triggering the change, we still use the alias that the
-                            //alias list provides.  That way if there's duplicate aliases, the user will always see the
-                            //alias that will match the talkgroup during operation.
-                            aliasedTalkgroup.setAlias(getAlias(aliasedTalkgroup.getTalkgroup()));
+                        //Even though the new alias is triggering the change, we still use the alias that the
+                        //alias list provides.  That way if there's duplicate aliases, the user will always see the
+                        //alias that will match the talkgroup during operation.
+                        aliasedTalkgroup.setAlias(getAlias(aliasedTalkgroup.getTalkgroup()));
 
-                            //Re-select the current item to refresh the editor view.
-                            if(currentlySelected != null && currentlySelected == aliasedTalkgroup)
-                            {
-                                getTalkgroupTableView().getSelectionModel().select(null);
-                                getTalkgroupTableView().getSelectionModel().select(aliasedTalkgroup);
-                            }
+                        //Re-select the current item to refresh the editor view.
+                        if(currentlySelected != null && currentlySelected == aliasedTalkgroup)
+                        {
+                            getTalkgroupTableView().getSelectionModel().select(null);
+                            getTalkgroupTableView().getSelectionModel().select(aliasedTalkgroup);
                         }
                     }
                 }
-                else if(aliasID instanceof TalkgroupRange)
+            }
+            else if(aliasID instanceof TalkgroupRange range)
+            {
+                for(AliasedTalkgroup aliasedTalkgroup : mTalkgroupList)
                 {
-                    TalkgroupRange range = (TalkgroupRange)aliasID;
-
-                    for(int x = range.getMinTalkgroup(); x <= range.getMaxTalkgroup(); x++)
+                    if(range.contains(aliasedTalkgroup.getTalkgroupValue()))
                     {
-                        for(AliasedTalkgroup aliasedTalkgroup : mTalkgroupList)
-                        {
-                            if(aliasedTalkgroup.getTalkgroupValue() == x)
-                            {
-                                //Even though the new alias is triggering the change, we still use the alias that the
-                                //alias list provides.  That way if there's duplicate aliases, the user will always see the
-                                //alias that will match the talkgroup during operation.
-                                aliasedTalkgroup.setAlias(getAlias(aliasedTalkgroup.getTalkgroup()));
+                        //Even though the new alias is triggering the change, we still use the alias that the
+                        //alias list provides.  That way if there's duplicate aliases, the user will always see the
+                        //alias that will match the talkgroup during operation.
+                        aliasedTalkgroup.setAlias(getAlias(aliasedTalkgroup.getTalkgroup()));
 
-                                //Re-select the current item to refresh the editor view.
-                                if(currentlySelected != null && currentlySelected == aliasedTalkgroup)
-                                {
-                                    getTalkgroupTableView().getSelectionModel().select(null);
-                                    getTalkgroupTableView().getSelectionModel().select(aliasedTalkgroup);
-                                }
-                            }
+                        //Re-select the current item to refresh the editor view.
+                        if(currentlySelected != null && currentlySelected == aliasedTalkgroup)
+                        {
+                            getTalkgroupTableView().getSelectionModel().select(null);
+                            getTalkgroupTableView().getSelectionModel().select(aliasedTalkgroup);
                         }
                     }
                 }
             }
         }
-    }
-
-    private Button getNewAliasListButton()
-    {
-        if(mNewAliasListButton == null)
-        {
-            mNewAliasListButton = new Button("New Alias List");
-            mNewAliasListButton.setOnAction(event -> {
-                TextInputDialog dialog = new TextInputDialog();
-                dialog.setTitle("Create New Alias List");
-                dialog.setHeaderText("Please enter an alias list name (max 25 chars).");
-                dialog.setContentText("Name:");
-                dialog.getEditor().setTextFormatter(new TextFormatter<String>(new MaxLengthUnaryOperator(25)));
-                Optional<String> result = dialog.showAndWait();
-
-                result.ifPresent(s -> {
-                    String name = result.get();
-
-                    if(name != null && !name.isEmpty())
-                    {
-                        name = name.trim();
-                        mConfigurationManager.getAliasModel().addAliasList(name);
-                        getAliasListNameComboBox().getSelectionModel().select(name);
-                    }
-                });
-            });
-        }
-
-        return mNewAliasListButton;
     }
 
     private ComboBox<TalkgroupCategory> getTalkgroupCategoryComboBox()
@@ -717,17 +771,7 @@ public class SystemTalkgroupSelectionEditor extends GridPane
             mTalkgroupTableView.getColumns().add(descriptionColumn);
             mTalkgroupTableView.getColumns().add(importStatusColumn);
             mTalkgroupTableView.getSelectionModel().selectedItemProperty()
-                .addListener((observable, oldValue, selected) -> {
-
-                    TalkgroupCategory talkgroupCategory =
-                        getTalkgroupCategory(selected != null ? selected.getTalkgroup() : null);
-                    String aliasListName = getAliasListNameComboBox().getSelectionModel().getSelectedItem();
-                    getTalkgroupEditor().setTalkgroup((selected != null ? selected.getTalkgroup() : null),
-                        getCurrentSystem(), getRadioReferenceDecoder(), (selected != null ? selected.getAlias() : null),
-                        aliasListName, talkgroupCategory,
-                        getEncryptedAsDoNotMonitorCheckBox().selectedProperty().get(),
-                        selected != null ? selected.getImportStatus() : ImportStatus.NOT_PRESENT);
-                });
+                .addListener((observable, oldValue, selected) -> refreshSelectedTalkgroupEditor());
             mTalkgroupFilteredList = new FilteredList<>(mTalkgroupList);
             SortedList<AliasedTalkgroup> sortedList = new SortedList<>(mTalkgroupFilteredList);
             sortedList.comparatorProperty().bind(mTalkgroupTableView.comparatorProperty());

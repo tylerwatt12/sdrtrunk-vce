@@ -20,14 +20,13 @@
 package io.github.dsheirer.gui.configuration.alias;
 
 import io.github.dsheirer.alias.Alias;
-import io.github.dsheirer.alias.id.priority.Priority;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class LocalPlaybackUiContractTest
@@ -73,12 +72,9 @@ class LocalPlaybackUiContractTest
     void monitorPriorityRemainsPartOfAliasAudioPolicy()
     {
         Alias alias = new Alias("Playback priority");
-        Priority priority = new Priority(12);
-        alias.addAliasID(priority);
-
-        alias.removeNonAudioIdentifiers();
+        alias.setCallPriority(12);
 
         assertEquals(12, alias.getPlaybackPriority());
-        assertSame(priority, alias.getAliasIdentifiers().getFirst());
+        assertNull(alias.getMatchIdentifier());
     }
 }

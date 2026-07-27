@@ -15,6 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
@@ -27,6 +28,7 @@ import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.source.config.SourceConfigTuner;
+import java.io.IOException;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -47,7 +49,6 @@ class ConfigurationDatabaseStoreTest
         Path database = mTemporaryFolder.resolve("sdrtrunk.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
         ConfigurationDatabaseStore store = new ConfigurationDatabaseStore(database);
-        assertFalse(store.isInitialized());
 
         Channel channel = new Channel("Control");
         String configurationId = channel.getConfigurationId();
@@ -75,8 +76,7 @@ class ConfigurationDatabaseStoreTest
         state.setChannels(List.of(channel));
         state.setBroadcastConfigurations(List.of(stream));
 
-        store.replaceConfigurationState(state);
-        assertTrue(store.isInitialized());
+        replace(database, state);
 
         ConfigurationState loaded = store.loadConfigurationState();
         assertEquals(1, loaded.getChannels().size());
@@ -193,7 +193,7 @@ class ConfigurationDatabaseStoreTest
         active.setSourceConfiguration(source);
         ConfigurationState replacement = new ConfigurationState();
         replacement.setChannels(List.of(active));
-        store.replaceConfigurationState(replacement);
+        replace(database, replacement);
 
         ConfigurationState loaded = store.loadConfigurationState();
         assertEquals(1, loaded.getChannels().size());
@@ -283,7 +283,7 @@ class ConfigurationDatabaseStoreTest
         ConfigurationState state = new ConfigurationState();
         state.setChannels(List.of(channel));
 
-        store.replaceConfigurationState(state);
+        replace(database, state);
 
         Channel loaded = store.loadConfigurationState().getChannels().get(0);
         assertInstanceOf(DecodeConfigP25Conventional.class, loaded.getDecodeConfiguration());
@@ -296,6 +296,44 @@ class ConfigurationDatabaseStoreTest
             assertTrue(resultSet.next());
             assertEquals("P25_CONVENTIONAL", resultSet.getString("decoder_type"));
         }
+    }
+
+    @Test
+    void unknownCurrentSchemaStreamFailsLoadWithoutDeletingItsRawRow() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("unknown-stream.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        ConfigurationDatabaseStore store = new ConfigurationDatabaseStore(database);
+        String rawJson = "{\"type\":\"retiredUnknownStream\",\"payload\":\"preserve exactly\"}";
+
+        try(Connection connection = SdrTrunkDatabase.open(database);
+            PreparedStatement statement = connection.prepareStatement("""
+                INSERT INTO configuration_broadcast_stream (
+                    sort_order, name, server_type, enabled, host, port, delay_ms,
+                    maximum_recording_age_ms, config_json
+                ) VALUES (0, 'Unknown Stream', 'UNKNOWN', 0, NULL, NULL, NULL, NULL, ?)
+                """))
+        {
+            statement.setString(1, rawJson);
+            statement.executeUpdate();
+        }
+
+        assertThrows(IOException.class, store::loadConfigurationState);
+
+        try(Connection connection = SdrTrunkDatabase.open(database);
+            Statement statement = connection.createStatement();
+            ResultSet resultSet = statement.executeQuery("""
+                SELECT config_json FROM configuration_broadcast_stream
+                """))
+        {
+            assertTrue(resultSet.next());
+            assertEquals(rawJson, resultSet.getString(1));
+        }
+    }
+
+    private static void replace(Path database, ConfigurationState state) throws Exception
+    {
+        new ConfigurationSnapshotDatabaseStore(database).replace(state);
     }
 
     private static boolean tableExists(Connection connection, String table) throws Exception

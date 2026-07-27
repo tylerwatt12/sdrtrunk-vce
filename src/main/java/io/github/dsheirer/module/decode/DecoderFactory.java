@@ -170,7 +170,7 @@ public class DecoderFactory
 
         List<Module> modules = new ArrayList<>();
 
-        AliasList aliasList = aliasModel.getAliasList(channel.getAliasListName());
+        AliasList aliasList = aliasModel.getAliasListForChannel(channel);
         modules.add(new AliasActionManager(aliasList));
 
         ChannelType channelType = channel.getChannelType();

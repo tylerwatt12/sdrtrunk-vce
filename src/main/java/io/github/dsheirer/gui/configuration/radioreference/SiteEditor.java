@@ -19,10 +19,10 @@
 
 package io.github.dsheirer.gui.configuration.radioreference;
 
-import io.github.dsheirer.alias.AliasModel;
+import io.github.dsheirer.alias.AliasListDefinition;
+import io.github.dsheirer.alias.AliasMatchRegistry;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.eventbus.MyEventBus;
-import io.github.dsheirer.gui.control.MaxLengthUnaryOperator;
 import io.github.dsheirer.gui.configuration.channel.ViewChannelRequest;
 import io.github.dsheirer.module.decode.DecoderFactory;
 import io.github.dsheirer.module.decode.DecoderType;
@@ -50,9 +50,6 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Optional;
-import java.util.function.Predicate;
-import javafx.animation.RotateTransition;
 import javafx.beans.property.ReadOnlyObjectWrapper;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.beans.value.ObservableValue;
@@ -70,8 +67,6 @@ import javafx.scene.control.SelectionMode;
 import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableView;
 import javafx.scene.control.TextField;
-import javafx.scene.control.TextFormatter;
-import javafx.scene.control.TextInputDialog;
 import javafx.scene.control.ToggleButton;
 import javafx.scene.control.cell.PropertyValueFactory;
 import javafx.scene.layout.ColumnConstraints;
@@ -79,7 +74,6 @@ import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.util.Callback;
-import javafx.util.Duration;
 import org.controlsfx.control.SegmentedButton;
 
 public class SiteEditor extends GridPane
@@ -114,7 +108,7 @@ public class SiteEditor extends GridPane
     private System mCurrentSystem;
     private SystemInformation mCurrentSystemInformation;
     private ComboBox<String> mAliasListNameComboBox;
-    private Button mNewAliasListButton;
+    private FilteredList<String> mCompatibleAliasLists;
     private Label mP25ControlLabel;
     private SegmentedButton mP25ControlSegmentedButton;
     private ToggleButton mFdmaControlToggleButton;
@@ -201,7 +195,7 @@ public class SiteEditor extends GridPane
         GridPane.setHgrow(getNameTextField(), Priority.ALWAYS);
         getChildren().add(getNameTextField());
 
-        Label aliasListLabel = new Label("Alias List");
+        Label aliasListLabel = new Label("Alias List (Optional)");
         GridPane.setConstraints(aliasListLabel, 1, ++row);
         GridPane.setHalignment(aliasListLabel, HPos.RIGHT);
         getChildren().add(aliasListLabel);
@@ -209,9 +203,6 @@ public class SiteEditor extends GridPane
         GridPane.setConstraints(getAliasListNameComboBox(), 2, row);
         GridPane.setHgrow(getAliasListNameComboBox(), Priority.ALWAYS);
         getChildren().add(getAliasListNameComboBox());
-
-        GridPane.setConstraints(getNewAliasListButton(), 2, ++row);
-        getChildren().add(getNewAliasListButton());
 
         HBox createBox = new HBox();
         createBox.setAlignment(Pos.CENTER_LEFT);
@@ -336,6 +327,7 @@ public class SiteEditor extends GridPane
 
         boolean disable = site == null || site.getSite().getSiteFrequencies().isEmpty();
         boolean supported = decoder.hasSupportedProtocol(system);
+        boolean hasSystemName = system != null && system.getName() != null && !system.getName().isBlank();
 
         getFrequenciesSegmentedButton().setDisable(disable || !supported);
         getConfigurationsSegmentedButton().setDisable(disable || !supported);
@@ -344,8 +336,7 @@ public class SiteEditor extends GridPane
         getNameTextField().setDisable(disable || !supported);
         getCreateChannelConfigurationButton().setDisable(disable || !supported);
         getGoToChannelEditorCheckBox().setDisable(disable || !supported);
-        getAliasListNameComboBox().setDisable(disable || !supported);
-        getNewAliasListButton().setDisable(disable || !supported);
+        getAliasListNameComboBox().setDisable(disable || !supported || !hasSystemName);
 
         getCreateChannelConfigurationButton().setVisible(false);
         getGoToChannelEditorCheckBox().setVisible(false);
@@ -485,6 +476,9 @@ public class SiteEditor extends GridPane
             getSiteTextField().setText(null);
             getNameTextField().setText(null);
         }
+
+        refreshCompatibleAliasLists();
+        updateAliasListControlAvailability();
     }
 
     /**
@@ -888,26 +882,13 @@ public class SiteEditor extends GridPane
         return mTdmaControlToggleButton;
     }
 
-    /**
-     * Flashes the alias list combobox to let the user know that they must select an alias list
-     */
-    private void flashAliasListComboBox()
-    {
-        RotateTransition rt = new RotateTransition(Duration.millis(150), getAliasListNameComboBox());
-        rt.setByAngle(5);
-        rt.setCycleCount(4);
-        rt.setAutoReverse(true);
-        rt.play();
-    }
-
     private ComboBox<String> getAliasListNameComboBox()
     {
         if(mAliasListNameComboBox == null)
         {
-            Predicate<String> filterPredicate = s -> !s.contentEquals(AliasModel.NO_ALIAS_LIST);
-            FilteredList<String> filteredChannelList =
-                new FilteredList<>(mConfigurationManager.getAliasModel().aliasListNames(), filterPredicate);
-            mAliasListNameComboBox = new ComboBox<>(filteredChannelList);
+            mCompatibleAliasLists =
+                new FilteredList<>(mConfigurationManager.getAliasModel().aliasListNames());
+            mAliasListNameComboBox = new ComboBox<>(mCompatibleAliasLists);
             mAliasListNameComboBox.setDisable(true);
             mAliasListNameComboBox.setMaxWidth(Double.MAX_VALUE);
 
@@ -924,34 +905,53 @@ public class SiteEditor extends GridPane
         return mAliasListNameComboBox;
     }
 
-    private Button getNewAliasListButton()
+    private void refreshCompatibleAliasLists()
     {
-        if(mNewAliasListButton == null)
+        if(mCompatibleAliasLists == null)
         {
-            mNewAliasListButton = new Button("New Alias List");
-            mNewAliasListButton.setDisable(true);
-            mNewAliasListButton.setOnAction(event -> {
-                TextInputDialog dialog = new TextInputDialog();
-                dialog.setTitle("Create New Alias List");
-                dialog.setHeaderText("Please enter an alias list name (max 25 chars).");
-                dialog.setContentText("Name:");
-                dialog.getEditor().setTextFormatter(new TextFormatter<String>(new MaxLengthUnaryOperator(25)));
-                Optional<String> result = dialog.showAndWait();
-
-                result.ifPresent(s -> {
-                    String name = result.get();
-
-                    if(name != null && !name.isEmpty())
-                    {
-                        name = name.trim();
-                        mConfigurationManager.getAliasModel().addAliasList(name);
-                        getAliasListNameComboBox().getSelectionModel().select(name);
-                    }
-                });
-            });
+            return;
         }
 
-        return mNewAliasListButton;
+        String systemName = currentSystemName();
+        mCompatibleAliasLists.setPredicate(name -> {
+            AliasListDefinition definition = getAliasListDefinition(name);
+            return name != null && definition != null && systemName != null &&
+                definition.getSystemName() != null &&
+                systemName.trim().equalsIgnoreCase(definition.getSystemName().trim()) &&
+                AliasMatchRegistry.isChannelCompatible(definition,
+                    mRadioReferenceDecoder.getDecoderType(mCurrentSystem));
+        });
+
+        if(!mCompatibleAliasLists.contains(
+            getAliasListNameComboBox().getSelectionModel().getSelectedItem()))
+        {
+            getAliasListNameComboBox().getSelectionModel().clearSelection();
+        }
+    }
+
+    private String currentSystemName()
+    {
+        String systemName = getSystemTextField().getText();
+        return systemName != null && !systemName.isBlank() ? systemName.trim() : null;
+    }
+
+    private void updateAliasListControlAvailability()
+    {
+        boolean unavailable = mCurrentSite == null || mCurrentSystem == null || mRadioReferenceDecoder == null ||
+            currentSystemName() == null || mCurrentSite.getSite() == null ||
+            mCurrentSite.getSite().getSiteFrequencies().isEmpty() ||
+            !mRadioReferenceDecoder.hasSupportedProtocol(mCurrentSystem);
+
+        if(mAliasListNameComboBox != null)
+        {
+            mAliasListNameComboBox.setDisable(unavailable);
+        }
+
+    }
+
+    private AliasListDefinition getAliasListDefinition(String name)
+    {
+        return name == null ? null : mConfigurationManager.getAliasModel().getAliasListDefinition(name);
     }
 
     private Label getProtocolNotSupportedLabel()
@@ -1077,6 +1077,10 @@ public class SiteEditor extends GridPane
             mSystemTextField = new TextField();
             mSystemTextField.setDisable(true);
             mSystemTextField.setMaxWidth(Double.MAX_VALUE);
+            mSystemTextField.textProperty().addListener((observable, oldValue, newValue) -> {
+                refreshCompatibleAliasLists();
+                updateAliasListControlAvailability();
+            });
         }
 
         return mSystemTextField;
@@ -1146,39 +1150,24 @@ public class SiteEditor extends GridPane
                     throw new IllegalStateException("Can't create channel configuration - radio reference decoder is null");
                 }
 
-                String aliasList = getAliasListNameComboBox().getSelectionModel().getSelectedItem();
-
-                if(aliasList == null)
+                if(getControlToggleButton().isSelected())
                 {
-                    Alert alert = new Alert(Alert.AlertType.INFORMATION, "Please select an Alias List",
-                        ButtonType.OK);
-                    alert.setTitle("Alias List Required");
-                    alert.setHeaderText("Channel configuration requires an alias list");
-                    alert.initOwner((getCreateChannelConfigurationButton()).getScene().getWindow());
-                    alert.showAndWait();
-                    flashAliasListComboBox();
-                }
-                else
-                {
-                    if(getControlToggleButton().isSelected())
+                    if(mRadioReferenceDecoder.isHybridMotorolaP25(mCurrentSystem))
                     {
-                        if(mRadioReferenceDecoder.isHybridMotorolaP25(mCurrentSystem))
-                        {
-                            createHybridP25VoiceChannels();
-                        }
-                        else
-                        {
-                            createControlChannel();
-                        }
-                    }
-                    else if(getControlAndAltToggleButton().isSelected())
-                    {
-                        createControlAndAlternatesChannel();
+                        createHybridP25VoiceChannels();
                     }
                     else
                     {
-                        createChannels(getSelectedToggleButton().isSelected());
+                        createControlChannel();
                     }
+                }
+                else if(getControlAndAltToggleButton().isSelected())
+                {
+                    createControlAndAlternatesChannel();
+                }
+                else
+                {
+                    createChannels(getSelectedToggleButton().isSelected());
                 }
             });
         }

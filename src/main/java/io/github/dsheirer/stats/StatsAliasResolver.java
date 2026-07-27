@@ -237,11 +237,11 @@ class StatsAliasResolver
         try(Statement statement = connection.createStatement(); ResultSet resultSet = statement.executeQuery("""
             SELECT identifier.value, identifier.min_value, identifier.max_value, identifier.wacn,
                 identifier.system_id, identifier.fully_qualified, identifier.ranged, alias.name,
-                alias.group_name, alias.color, alias.alias_list_name, alias.sort_order
+                alias.group_name, alias.color, identifier.alias_list_name, alias.id AS alias_id
             FROM %s identifier
             JOIN alias ON alias.id = identifier.alias_id
             WHERE %s
-            ORDER BY alias.sort_order, alias.id
+            ORDER BY alias.id
             """.formatted(identifierTable, dmr ? "identifier.protocol = 'DMR'" :
                 "identifier.protocol IN ('APCO25', 'APCO25_PHASE2')")))
         {
@@ -252,7 +252,7 @@ class StatsAliasResolver
                     integer(resultSet.getObject("wacn")), integer(resultSet.getObject("system_id")),
                     resultSet.getInt("fully_qualified") != 0, resultSet.getInt("ranged") != 0,
                     resultSet.getString("name"), resultSet.getString("group_name"), resultSet.getInt("color"),
-                    resultSet.getString("alias_list_name"), resultSet.getInt("sort_order")));
+                    resultSet.getString("alias_list_name"), resultSet.getLong("alias_id")));
             }
         }
 
@@ -271,7 +271,7 @@ class StatsAliasResolver
 
     private record Rule(Integer value, Integer minimum, Integer maximum, Integer wacn, Integer systemId,
                         boolean fullyQualified, boolean ranged, String name, String group, int color,
-                        String aliasList, int sortOrder)
+                        String aliasList, long aliasId)
     {
         boolean isEligible(Set<String> systemAliasLists)
         {
@@ -282,14 +282,14 @@ class StatsAliasResolver
         {
             int specificity = specificity();
             int otherSpecificity = other.specificity();
-            return specificity > otherSpecificity || (specificity == otherSpecificity && sortOrder < other.sortOrder);
+            return specificity > otherSpecificity || (specificity == otherSpecificity && aliasId < other.aliasId);
         }
 
         boolean isPreferredDmrTo(Rule other)
         {
             int specificity = ranged ? 0 : 1;
             int otherSpecificity = other.ranged ? 0 : 1;
-            return specificity > otherSpecificity || (specificity == otherSpecificity && sortOrder < other.sortOrder);
+            return specificity > otherSpecificity || (specificity == otherSpecificity && aliasId < other.aliasId);
         }
 
         boolean matchesIdentifier(int identifier)

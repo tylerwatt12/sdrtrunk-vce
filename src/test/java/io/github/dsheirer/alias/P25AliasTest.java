@@ -43,16 +43,16 @@ public class P25AliasTest
     void aliasP25Talkgroup()
     {
         String correctAliasName = "Alias Talkgroup 1";
-        AliasList aliasList = new AliasList("Test Alias List");
+        AliasList aliasList = p25AliasList();
 
         Alias aliasTalkgroup1 = new Alias();
         aliasTalkgroup1.setName(correctAliasName);
-        aliasTalkgroup1.addAliasID(new Talkgroup(Protocol.APCO25, 1));
+        aliasTalkgroup1.setMatchIdentifier(new Talkgroup(Protocol.APCO25, 1));
         aliasList.addAlias(aliasTalkgroup1);
 
         Alias aliasTalkgroupRange = new Alias();
         aliasTalkgroupRange.setName("Alias Talkgroup Range");
-        aliasTalkgroupRange.addAliasID(new TalkgroupRange(Protocol.APCO25, 1, 65535));
+        aliasTalkgroupRange.setMatchIdentifier(new TalkgroupRange(Protocol.APCO25, 1, 65535));
         aliasList.addAlias(aliasTalkgroupRange);
 
         TalkgroupIdentifier talkgroupIdentifier1 = APCO25Talkgroup.create(1);
@@ -60,6 +60,25 @@ public class P25AliasTest
         List<Alias> aliases = aliasList.getAliases(talkgroupIdentifier1);
         assertEquals(1, aliases.size(), "Expected 1 matching alias");
         assertEquals(correctAliasName, aliases.getFirst().getName(), "Unexpected alias name");
+    }
+
+    @Test
+    void phase2AliasUsesP25LookupNamespace()
+    {
+        AliasList aliasList = p25AliasList();
+
+        Alias talkgroupAlias = new Alias();
+        talkgroupAlias.setName("Phase 2 Talkgroup");
+        talkgroupAlias.setMatchIdentifier(new Talkgroup(Protocol.APCO25_PHASE2, 101));
+        aliasList.addAlias(talkgroupAlias);
+
+        Alias radioAlias = new Alias();
+        radioAlias.setName("Phase 2 Radio");
+        radioAlias.setMatchIdentifier(new Radio(Protocol.APCO25_PHASE2, 202));
+        aliasList.addAlias(radioAlias);
+
+        assertEquals(talkgroupAlias, aliasList.getAliases(APCO25Talkgroup.create(101)).getFirst());
+        assertEquals(radioAlias, aliasList.getAliases(APCO25RadioIdentifier.createFrom(202)).getFirst());
     }
 
     /**
@@ -76,16 +95,16 @@ public class P25AliasTest
         int aliasGroup = 1;
         String correctAliasName = "Alias Fully Qualified Talkgroup 1";
 
-        AliasList aliasList = new AliasList("Test Alias List");
+        AliasList aliasList = p25AliasList();
 
         Alias aliasTalkgroup1 = new Alias();
         aliasTalkgroup1.setName("Alias Talkgroup 1");
-        aliasTalkgroup1.addAliasID(new Talkgroup(Protocol.APCO25, aliasGroup)); //Shadows the fully qualified variant
+        aliasTalkgroup1.setMatchIdentifier(new Talkgroup(Protocol.APCO25, aliasGroup)); //Shadows the fully qualified variant
         aliasList.addAlias(aliasTalkgroup1);
 
         Alias aliasFullyQualifiedTalkgroup1 = new Alias();
         aliasFullyQualifiedTalkgroup1.setName(correctAliasName);
-        aliasFullyQualifiedTalkgroup1.addAliasID(new P25FullyQualifiedTalkgroup(wacn, system, originalGroup));
+        aliasFullyQualifiedTalkgroup1.setMatchIdentifier(new P25FullyQualifiedTalkgroup(wacn, system, originalGroup));
         aliasList.addAlias(aliasFullyQualifiedTalkgroup1);
 
         //Identifier transmitted over the air that we want to alias
@@ -109,11 +128,11 @@ public class P25AliasTest
         int aliasGroup = 1;
         String correctAliasName = "Alias Talkgroup 1";
 
-        AliasList aliasList = new AliasList("Test Alias List");
+        AliasList aliasList = p25AliasList();
 
         Alias aliasTalkgroup1 = new Alias();
         aliasTalkgroup1.setName("Alias Talkgroup 1");
-        aliasTalkgroup1.addAliasID(new Talkgroup(Protocol.APCO25, aliasGroup));
+        aliasTalkgroup1.setMatchIdentifier(new Talkgroup(Protocol.APCO25, aliasGroup));
         aliasList.addAlias(aliasTalkgroup1);
 
         //Identifier transmitted over the air that we want to alias
@@ -136,11 +155,11 @@ public class P25AliasTest
         int aliasGroup = 1;
         String correctAliasName = "Alias Talkgroup 1";
 
-        AliasList aliasList = new AliasList("Test Alias List");
+        AliasList aliasList = p25AliasList();
 
         Alias aliasTalkgroupRange = new Alias();
         aliasTalkgroupRange.setName(correctAliasName);
-        aliasTalkgroupRange.addAliasID(new TalkgroupRange(Protocol.APCO25, 1, 0xFFFF));
+        aliasTalkgroupRange.setMatchIdentifier(new TalkgroupRange(Protocol.APCO25, 1, 0xFFFF));
         aliasList.addAlias(aliasTalkgroupRange);
 
         //Identifier transmitted over the air that we want to alias
@@ -154,16 +173,16 @@ public class P25AliasTest
     void aliasP25Radio()
     {
         String correctAliasName = "Alias Radio 1";
-        AliasList aliasList = new AliasList("Test Alias List");
+        AliasList aliasList = p25AliasList();
 
         Alias correctAlias = new Alias();
         correctAlias.setName(correctAliasName);
-        correctAlias.addAliasID(new Radio(Protocol.APCO25, 1));
+        correctAlias.setMatchIdentifier(new Radio(Protocol.APCO25, 1));
         aliasList.addAlias(correctAlias);
 
         Alias aliasRadioRange = new Alias();
         aliasRadioRange.setName("Alias Radio Range");
-        aliasRadioRange.addAliasID(new RadioRange(Protocol.APCO25, 1, 0xFFFFFF));
+        aliasRadioRange.setMatchIdentifier(new RadioRange(Protocol.APCO25, 1, 0xFFFFFF));
         aliasList.addAlias(aliasRadioRange);
 
         RadioIdentifier radioIdentifier1 = APCO25RadioIdentifier.createFrom(1);
@@ -187,16 +206,16 @@ public class P25AliasTest
         int aliasRadio = 1;
         String correctAliasName = "Alias Fully Qualified Radio 1";
 
-        AliasList aliasList = new AliasList("Test Alias List");
+        AliasList aliasList = p25AliasList();
 
         Alias aliasRadio1 = new Alias();
         aliasRadio1.setName("Alias Radio 1");
-        aliasRadio1.addAliasID(new Radio(Protocol.APCO25, aliasRadio)); //Shadows the fully qualified variant
+        aliasRadio1.setMatchIdentifier(new Radio(Protocol.APCO25, aliasRadio)); //Shadows the fully qualified variant
         aliasList.addAlias(aliasRadio1);
 
         Alias aliasFullyQualifiedRadio1 = new Alias();
         aliasFullyQualifiedRadio1.setName(correctAliasName);
-        aliasFullyQualifiedRadio1.addAliasID(new P25FullyQualifiedRadio(wacn, system, originalRadio));
+        aliasFullyQualifiedRadio1.setMatchIdentifier(new P25FullyQualifiedRadio(wacn, system, originalRadio));
         aliasList.addAlias(aliasFullyQualifiedRadio1);
 
         //Identifier transmitted over the air that we want to alias
@@ -220,11 +239,11 @@ public class P25AliasTest
         int aliasRadio = 1;
         String correctAliasName = "Alias Radio 1";
 
-        AliasList aliasList = new AliasList("Test Alias List");
+        AliasList aliasList = p25AliasList();
 
         Alias aliasRadio1 = new Alias();
         aliasRadio1.setName(correctAliasName);
-        aliasRadio1.addAliasID(new Radio(Protocol.APCO25, aliasRadio));
+        aliasRadio1.setMatchIdentifier(new Radio(Protocol.APCO25, aliasRadio));
         aliasList.addAlias(aliasRadio1);
 
         //Identifier transmitted over the air that we want to alias
@@ -247,11 +266,11 @@ public class P25AliasTest
         int aliasRadio = 1;
         String correctAliasName = "Alias Radio Range";
 
-        AliasList aliasList = new AliasList("Test Alias List");
+        AliasList aliasList = p25AliasList();
 
         Alias aliasTalkgroup1 = new Alias();
         aliasTalkgroup1.setName(correctAliasName);
-        aliasTalkgroup1.addAliasID(new RadioRange(Protocol.APCO25, 1, 0xFFFFFF));
+        aliasTalkgroup1.setMatchIdentifier(new RadioRange(Protocol.APCO25, 1, 0xFFFFFF));
         aliasList.addAlias(aliasTalkgroup1);
 
         //Identifier transmitted over the air that we want to alias
@@ -259,5 +278,11 @@ public class P25AliasTest
 
         List<Alias> aliases = aliasList.getAliases(p25FQTG1);
         assertEquals(0, aliases.size(), "Expected 0 matching aliases");
+    }
+
+    private static AliasList p25AliasList()
+    {
+        return new AliasList(
+            new AliasListDefinition("Test Alias List", "Test System", AliasListFamily.P25));
     }
 }

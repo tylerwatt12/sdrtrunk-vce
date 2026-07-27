@@ -21,6 +21,8 @@ package io.github.dsheirer.audio.broadcast;
 
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasList;
+import io.github.dsheirer.alias.AliasListDefinition;
+import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.audio.call.AudioCallId;
@@ -172,7 +174,7 @@ public class AudioStreamingManagerTest
         RoutingFixture fixture = getMergedRoutingFixture();
 
         //This current alias addition happens after the completed call froze its merged route set and must be ignored.
-        fixture.firstPatchedAlias().addAliasID(new BroadcastChannel("Late Addition"));
+        fixture.firstPatchedAlias().addBroadcastChannel(new BroadcastChannel("Late Addition"));
         manager.start();
         manager.receive(fixture.call());
 
@@ -293,16 +295,16 @@ public class AudioStreamingManagerTest
 
     private static RoutingFixture getMergedRoutingFixture()
     {
-        AliasList aliasList = new AliasList("merged-routing-test");
+        AliasList aliasList = p25AliasList("merged-routing-test");
         Alias firstPatchedAlias = new Alias("talkgroup 200");
-        firstPatchedAlias.addAliasID(new Talkgroup(Protocol.APCO25, TALKGROUP_2));
-        firstPatchedAlias.addAliasID(new BroadcastChannel("Route A"));
-        firstPatchedAlias.addAliasID(new BroadcastChannel("Shared"));
+        firstPatchedAlias.setMatchIdentifier(new Talkgroup(Protocol.APCO25, TALKGROUP_2));
+        firstPatchedAlias.addBroadcastChannel(new BroadcastChannel("Route A"));
+        firstPatchedAlias.addBroadcastChannel(new BroadcastChannel("Shared"));
         aliasList.addAlias(firstPatchedAlias);
 
         Alias secondPatchedAlias = new Alias("talkgroup 300");
-        secondPatchedAlias.addAliasID(new Talkgroup(Protocol.APCO25, TALKGROUP_3));
-        secondPatchedAlias.addAliasID(new BroadcastChannel("Shared"));
+        secondPatchedAlias.setMatchIdentifier(new Talkgroup(Protocol.APCO25, TALKGROUP_3));
+        secondPatchedAlias.addBroadcastChannel(new BroadcastChannel("Shared"));
         aliasList.addAlias(secondPatchedAlias);
 
         PatchGroup patchGroup = new PatchGroup(APCO25Talkgroup.create(TALKGROUP_1));
@@ -332,24 +334,29 @@ public class AudioStreamingManagerTest
 
     private static AliasList getAliasList()
     {
-        AliasList aliasList = new AliasList("test");
+        AliasList aliasList = p25AliasList("test");
 
         Alias patchAlias = new Alias("patch");
-        patchAlias.addAliasID(new Talkgroup(Protocol.APCO25, 100));
-        patchAlias.addAliasID(new BroadcastChannel("Stream A"));
+        patchAlias.setMatchIdentifier(new Talkgroup(Protocol.APCO25, 100));
+        patchAlias.addBroadcastChannel(new BroadcastChannel("Stream A"));
         aliasList.addAlias(patchAlias);
 
         Alias talkgroupAlias1 = new Alias("talkgroup1");
-        talkgroupAlias1.addAliasID(new Talkgroup(Protocol.APCO25, 200));
-        talkgroupAlias1.addAliasID(new BroadcastChannel("Stream B"));
+        talkgroupAlias1.setMatchIdentifier(new Talkgroup(Protocol.APCO25, 200));
+        talkgroupAlias1.addBroadcastChannel(new BroadcastChannel("Stream B"));
         aliasList.addAlias(talkgroupAlias1);
 
         Alias talkgroupAlias2 = new Alias("talkgroup2");
-        talkgroupAlias2.addAliasID(new Talkgroup(Protocol.APCO25, 300));
-        talkgroupAlias2.addAliasID(new BroadcastChannel("Stream C"));
+        talkgroupAlias2.setMatchIdentifier(new Talkgroup(Protocol.APCO25, 300));
+        talkgroupAlias2.addBroadcastChannel(new BroadcastChannel("Stream C"));
         aliasList.addAlias(talkgroupAlias2);
 
         return aliasList;
+    }
+
+    private static AliasList p25AliasList(String name)
+    {
+        return new AliasList(new AliasListDefinition(name, "Test System", AliasListFamily.P25));
     }
 
     /**

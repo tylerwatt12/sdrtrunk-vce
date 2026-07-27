@@ -870,12 +870,8 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
             return Collections.emptyList();
         }
 
-        AliasList aliasList = mAliasModel.getAliasList(identifiers);
-
-        if(aliasList == null && channel != null)
-        {
-            aliasList = mAliasModel.getAliasList(channel.getAliasListName());
-        }
+        AliasList aliasList = channel != null ? mAliasModel.getAliasListForChannel(channel) :
+            mAliasModel.getAliasList(identifiers);
 
         return aliasList != null ? aliasList.getAliases(identifier) : Collections.emptyList();
     }

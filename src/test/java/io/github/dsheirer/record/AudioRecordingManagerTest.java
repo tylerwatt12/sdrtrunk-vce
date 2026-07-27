@@ -259,7 +259,7 @@ class AudioRecordingManagerTest
         identifiers.update(APCO25Talkgroup.create(56138));
         long now = System.currentTimeMillis();
         AudioCallSnapshot snapshot = new AudioCallSnapshot(new AudioCallId(1L, sequence, 1), null,
-            new AliasList("test"),
+            AliasList.empty("test"),
             identifiers, Set.of(), now, now + 100, 1, 1, now, now + 100, false, true, false, true,
             100, duplicate);
         return new CompletedAudioCall(snapshot, audioBuffers);

@@ -95,10 +95,12 @@ public class SingleChannelState extends AbstractChannelState implements IDecoder
     private StateMachine mStateMachine = new StateMachine(0, State.SINGLE_CHANNEL_ACTIVE_STATES);
     private StateMonitoringSquelchController mSquelchController = new StateMonitoringSquelchController(0);
     private DecoderStateNotificationEventCache mStateNotificationCache = new DecoderStateNotificationEventCache();
+    private final AliasModel mAliasModel;
 
     public SingleChannelState(Channel channel, AliasModel aliasModel)
     {
         super(channel);
+        mAliasModel = aliasModel;
         mChannelMetadata = new ChannelMetadata(aliasModel);
         mIdentifierCollection.setIdentifierUpdateListener(mIdentifierUpdateNotificationProxy);
         createConfigurationIdentifiers(channel);
@@ -240,9 +242,16 @@ public class SingleChannelState extends AbstractChannelState implements IDecoder
         {
             mIdentifierCollection.update(SiteGuidConfigurationIdentifier.create(channel.getRadresGuid()));
         }
-        if(channel.getAliasListName() != null && !channel.getAliasListName().isEmpty())
+        AliasListConfigurationIdentifier existingAliasList =
+            mIdentifierCollection.getAliasListConfiguration();
+
+        if(mAliasModel != null && mAliasModel.isAliasListCompatible(channel))
         {
             mIdentifierCollection.update(AliasListConfigurationIdentifier.create(channel.getAliasListName()));
+        }
+        else if(existingAliasList != null)
+        {
+            mIdentifierCollection.remove(existingAliasList);
         }
         if(channel.getSourceConfiguration().getSourceType() == SourceType.TUNER)
         {

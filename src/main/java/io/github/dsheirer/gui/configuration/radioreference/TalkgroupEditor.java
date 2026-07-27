@@ -20,6 +20,7 @@
 package io.github.dsheirer.gui.configuration.radioreference;
 
 import io.github.dsheirer.alias.Alias;
+import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.gui.configuration.alias.ViewAliasRequest;
 import io.github.dsheirer.configuration.ConfigurationManager;
@@ -197,7 +198,7 @@ public class TalkgroupEditor extends GridPane
             getAliasNameTextField().setText(null);
         }
 
-        boolean supported = decoder.hasSupportedProtocol(system);
+        boolean supported = decoder != null && system != null && decoder.hasSupportedProtocol(system);
 
         getEditAliasButton().setText(mImportStatus == SystemTalkgroupSelectionEditor.ImportStatus.DIFFERENT ?
             "Update from RadioReference" : "View Alias");
@@ -324,7 +325,22 @@ public class TalkgroupEditor extends GridPane
                 }
                 else if(mRadioReferenceDecoder != null && mTalkgroup != null && mSystem != null)
                 {
-                    Alias alias = mRadioReferenceDecoder.createAlias(mTalkgroup, mSystem, mAliasListName,
+                    AliasListDefinition definition =
+                        mConfigurationManager.getAliasModel().getAliasListDefinition(mAliasListName);
+
+                    if(!isCurrentSystemCompatible(definition))
+                    {
+                        Alert alert = new Alert(Alert.AlertType.INFORMATION,
+                            "Please select a compatible, system-owned Alias List.", ButtonType.OK);
+                        alert.setTitle("Alias List Required");
+                        alert.setHeaderText("A compatible alias list is required to create aliases");
+                        alert.initOwner(getCreateAliasButton().getScene().getWindow());
+                        alert.showAndWait();
+                        MyEventBus.getGlobalEventBus().post(new FlashAliasListComboBoxRequest());
+                        return;
+                    }
+
+                    Alias alias = mRadioReferenceDecoder.createAlias(mTalkgroup, mSystem, definition,
                         getAliasGroupTextField().getText());
                     alias.setName(getAliasNameTextField().getText());
                     alias.setDescription(getAliasDescriptionTextField().getText());
@@ -336,6 +352,14 @@ public class TalkgroupEditor extends GridPane
         }
 
         return mCreateAliasButton;
+    }
+
+    private boolean isCurrentSystemCompatible(AliasListDefinition definition)
+    {
+        return SystemTalkgroupSelectionEditor.isRadioReferenceListCompatible(definition,
+            mSystem != null ? mSystem.getName() : null,
+            mSystem != null && mRadioReferenceDecoder != null ?
+                mRadioReferenceDecoder.getDecoderType(mSystem) : null);
     }
 
     private Button getEditAliasButton()

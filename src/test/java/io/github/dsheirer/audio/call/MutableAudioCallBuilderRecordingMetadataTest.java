@@ -16,6 +16,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasList;
+import io.github.dsheirer.alias.AliasListDefinition;
+import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
@@ -30,11 +32,12 @@ class MutableAudioCallBuilderRecordingMetadataTest
     void freezesAliasNamesAndRecordDecisionWhenIdentifiersJoinTheCall()
     {
         Alias destinationAlias = new Alias("Fire Dispatch");
-        destinationAlias.addAliasID(new Talkgroup(Protocol.APCO25, 56138));
+        destinationAlias.setMatchIdentifier(new Talkgroup(Protocol.APCO25, 56138));
         destinationAlias.setRecordable(true);
         Alias sourceAlias = new Alias("Engine 12");
-        sourceAlias.addAliasID(new Radio(Protocol.APCO25, 120012));
-        AliasList aliasList = new AliasList("Primary");
+        sourceAlias.setMatchIdentifier(new Radio(Protocol.APCO25, 120012));
+        AliasList aliasList = new AliasList(
+            new AliasListDefinition("Primary", "Primary", AliasListFamily.P25));
         aliasList.addAlias(destinationAlias);
         aliasList.addAlias(sourceAlias);
         MutableAudioCallBuilder builder = new MutableAudioCallBuilder(aliasList, 1);

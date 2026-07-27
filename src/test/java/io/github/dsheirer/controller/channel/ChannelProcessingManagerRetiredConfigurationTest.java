@@ -11,12 +11,12 @@
 
 package io.github.dsheirer.controller.channel;
 
+import io.github.dsheirer.alias.AliasModel;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.module.decode.DecoderFactory;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
 import io.github.dsheirer.module.decode.mpt1327.DecodeConfigMPT1327;
@@ -59,7 +59,7 @@ class ChannelProcessingManagerRetiredConfigurationTest
         retired.setAutoStart(true);
         retired.setAutoStartOrder(1);
 
-        ChannelModel model = new ChannelModel(new AliasModel());
+        ChannelModel model = new ChannelModel();
         model.addChannels(List.of(retired, active));
 
         assertTrue(ChannelProcessingManager.isRunnable(active));

@@ -13,39 +13,32 @@ package io.github.dsheirer.database.alias;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.alias.Alias;
-import io.github.dsheirer.alias.AliasFactory;
-import io.github.dsheirer.alias.AliasIdentifierPolicy;
+import io.github.dsheirer.alias.AliasListDefinition;
+import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.alias.action.RecurringAction;
 import io.github.dsheirer.alias.action.clip.ClipAction;
-import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
-import io.github.dsheirer.alias.id.dcs.Dcs;
-import io.github.dsheirer.alias.id.AliasIDType;
-import io.github.dsheirer.alias.id.legacy.mpt1327.MPT1327ID;
-import io.github.dsheirer.alias.id.legacy.nonrecordable.NonRecordable;
-import io.github.dsheirer.alias.id.priority.Priority;
-import io.github.dsheirer.alias.id.record.Record;
-import io.github.dsheirer.alias.id.talkgroup.P25FullyQualifiedTalkgroup;
 import io.github.dsheirer.alias.id.talkgroup.StreamAsTalkgroup;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
-import io.github.dsheirer.alias.id.talkgroup.TalkgroupRange;
-import io.github.dsheirer.alias.id.tone.TonesID;
+import io.github.dsheirer.configuration.ConfigurationState;
 import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
-import io.github.dsheirer.identifier.tone.AmbeTone;
-import io.github.dsheirer.identifier.tone.Tone;
-import io.github.dsheirer.identifier.tone.ToneSequence;
-import io.github.dsheirer.module.decode.dcs.DCSCode;
+import io.github.dsheirer.database.configuration.ConfigurationSnapshotDatabaseStore;
 import io.github.dsheirer.protocol.Protocol;
 import java.nio.file.Path;
 import java.sql.Connection;
-import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -55,247 +48,340 @@ class AliasDatabaseStoreTest
     Path mTemporaryFolder;
 
     @Test
-    void roundTripsAliases() throws Exception
+    void roundTripsOneOperationalMatcherAndBehavior() throws Exception
     {
-        Path database = mTemporaryFolder.resolve("sdrtrunk.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        Path database = database("round-trip.sqlite");
         AliasDatabaseStore store = new AliasDatabaseStore(database);
-        assertFalse(store.hasAliases());
-
-        Alias alias = new Alias("County Fire Dispatch");
-        alias.setDescription("Countywide fire dispatch, paging, and incident coordination");
-        alias.setAliasListName("Lake County");
+        AliasListDefinition definition = definition("Lake County", "Lake County P25", AliasListFamily.P25);
+        Alias alias = alias("County Fire Dispatch", definition, 1001);
+        alias.setDescription("Countywide fire dispatch");
         alias.setGroup("Fire");
         alias.setColor(0x123456);
         alias.setIconName("Fire Truck");
         alias.setStreamTalkgroupAlias(new StreamAsTalkgroup(42));
-        alias.addAliasID(new Talkgroup(Protocol.APCO25, 1001));
-        alias.addAliasID(new TalkgroupRange(Protocol.APCO25, 2000, 2999));
-        alias.addAliasID(new P25FullyQualifiedTalkgroup(0xbee00, 0x123, 3101));
-        alias.addAliasID(new BroadcastChannel("RadioResolve"));
-        alias.addAliasID(new Record());
-        alias.addAliasID(new NonRecordable());
-        alias.addAliasID(new Priority(5));
+        alias.setRecordable(true);
+        alias.setCallPriority(5);
+        alias.addBroadcastChannel(new BroadcastChannel("RadioResolve"));
 
-        Dcs dcs = new Dcs();
-        dcs.setDCSCode(DCSCode.N023);
-        alias.addAliasID(dcs);
+        ClipAction clip = new ClipAction();
+        clip.setPath("/tmp/alert.wav");
+        clip.setInterval(RecurringAction.Interval.DELAYED_RESET);
+        clip.setPeriod(7);
+        alias.addAliasAction(clip);
 
-        ToneSequence toneSequence = new ToneSequence();
-        toneSequence.addTone(new Tone(AmbeTone.DTMF_1, 3));
-        alias.addAliasID(new TonesID(toneSequence));
+        replace(store, List.of(alias), List.of(definition));
 
-        ClipAction clipAction = new ClipAction();
-        clipAction.setPath("/tmp/alert.wav");
-        clipAction.setInterval(RecurringAction.Interval.DELAYED_RESET);
-        clipAction.setPeriod(7);
-        alias.addAliasAction(clipAction);
+        assertNotEquals(Alias.UNASSIGNED_ID, alias.getId());
+        assertNotEquals(AliasListDefinition.UNASSIGNED_ID, definition.getId());
+        assertEquals(definition.getId(), alias.getAliasListId());
 
-        store.replaceAliases(List.of(alias));
-        assertTrue(store.hasAliases());
-
-        List<Alias> aliases = store.loadAliases();
-        assertEquals(1, aliases.size());
-
-        Alias loaded = aliases.get(0);
-        assertEquals("County Fire Dispatch", loaded.getName());
-        assertEquals("Countywide fire dispatch, paging, and incident coordination", loaded.getDescription());
-        assertEquals("Lake County", loaded.getAliasListName());
+        List<AliasListDefinition> definitions = store.loadAliasListDefinitions();
+        Alias loaded = store.loadAliases(definitions).getFirst();
+        assertEquals("Lake County P25", definitions.getFirst().getSystemName());
+        assertEquals(AliasListFamily.P25, definitions.getFirst().getFamily());
+        assertEquals(alias.getId(), loaded.getId());
+        assertEquals(definitions.getFirst().getId(), loaded.getAliasListId());
+        assertEquals("Countywide fire dispatch", loaded.getDescription());
         assertEquals("Fire", loaded.getGroup());
         assertEquals(0x123456, loaded.getColor());
         assertEquals("Fire Truck", loaded.getIconName());
         assertEquals(42, loaded.getStreamTalkgroupAlias().getValue());
+        assertTrue(loaded.isRecordable());
+        assertEquals(5, loaded.getPlaybackPriority());
+        assertEquals("RadioResolve", loaded.getBroadcastChannels().iterator().next().getChannelName());
+        assertEquals("/tmp/alert.wav", ((ClipAction)loaded.getAliasActions().getFirst()).getPath());
+        assertEquals(1001, ((Talkgroup)loaded.getMatchIdentifier()).getValue());
 
-        assertTrue(hasTalkgroup(loaded, Protocol.APCO25, 1001));
-        assertTrue(hasTalkgroupRange(loaded, Protocol.APCO25, 2000, 2999));
-        assertTrue(hasFullyQualifiedTalkgroup(loaded, 0xbee00, 0x123, 3101));
-        assertTrue(hasIdentifier(loaded, BroadcastChannel.class));
-        assertTrue(hasIdentifier(loaded, Record.class));
-        assertTrue(hasIdentifier(loaded, NonRecordable.class));
-        assertTrue(hasIdentifier(loaded, Priority.class));
-        assertTrue(hasIdentifier(loaded, Dcs.class));
-        assertTrue(hasIdentifier(loaded, TonesID.class));
+        try(Connection connection = SdrTrunkDatabase.open(database);
+            Statement statement = connection.createStatement();
+            ResultSet resultSet = statement.executeQuery("""
+                SELECT matcher_type, protocol, value FROM alias
+                """))
+        {
+            assertTrue(resultSet.next());
+            assertEquals("TALKGROUP", resultSet.getString("matcher_type"));
+            assertEquals("APCO25", resultSet.getString("protocol"));
+            assertEquals(1001, resultSet.getInt("value"));
+            assertEquals(1, countRows(connection, "alias_talkgroup"));
+            assertEquals(0, countRows(connection, "alias_radio"));
+        }
+    }
 
-        assertEquals(1, loaded.getAliasActions().size());
-        ClipAction loadedClip = (ClipAction)loaded.getAliasActions().get(0);
-        assertEquals("/tmp/alert.wav", loadedClip.getPath());
-        assertEquals(RecurringAction.Interval.DELAYED_RESET, loadedClip.getInterval());
-        assertEquals(7, loadedClip.getPeriod());
+    @Test
+    void currentSchemaContainsNoReviewOrLegacySnapshotColumns() throws Exception
+    {
+        Path database = database("strict-columns.sqlite");
 
+        try(Connection connection = SdrTrunkDatabase.open(database))
+        {
+            Set<String> aliasListColumns = columns(connection, "alias_list");
+            assertFalse(aliasListColumns.contains("assignable"));
+            assertFalse(aliasListColumns.contains("needs_review"));
+            assertFalse(aliasListColumns.contains("aux_decoder_types"));
+
+            Set<String> aliasColumns = columns(connection, "alias");
+            assertFalse(aliasColumns.contains("alias_list_name"));
+            assertFalse(aliasColumns.contains("non_recordable"));
+            assertFalse(aliasColumns.contains("matcher_enabled"));
+            assertFalse(aliasColumns.contains("compatibility_reason"));
+            assertFalse(columns(connection, "alias_action").contains("script"));
+            assertFalse(indexes(connection).contains("idx_alias_list_name"));
+            assertFalse(indexes(connection).contains("idx_alias_broadcast_channel_alias"));
+            assertFalse(columns(connection, "alias_talkgroup").contains("id"));
+            assertFalse(columns(connection, "alias_talkgroup").contains("sort_order"));
+        }
+    }
+
+    @Test
+    void preservesStableIdsAcrossCompleteSnapshotReplacement() throws Exception
+    {
+        AliasDatabaseStore store = new AliasDatabaseStore(database("stable-ids.sqlite"));
+        AliasListDefinition definition = definition("County", "County System", AliasListFamily.P25);
+        Alias first = alias("Dispatch", definition, 100);
+        Alias second = alias("Operations", definition, 200);
+        replace(store, List.of(first, second), List.of(definition));
+        long listId = definition.getId();
+        long firstId = first.getId();
+        long secondId = second.getId();
+
+        first.setMatchIdentifier(new Talkgroup(Protocol.APCO25, 101));
+        replace(store, List.of(second, first), List.of(definition));
+
+        List<AliasListDefinition> definitions = store.loadAliasListDefinitions();
+        List<Alias> aliases = store.loadAliases(definitions);
+        assertEquals(listId, definitions.getFirst().getId());
+        assertEquals("County", definitions.getFirst().getName());
+        assertEquals(firstId, aliases.get(0).getId());
+        assertEquals(secondId, aliases.get(1).getId());
+        assertEquals(101, ((Talkgroup)aliases.get(0).getMatchIdentifier()).getValue());
+    }
+
+    @Test
+    void persistsEmptySystemOwnedList() throws Exception
+    {
+        AliasDatabaseStore store = new AliasDatabaseStore(database("empty-list.sqlite"));
+        AliasListDefinition definition = definition("Empty P25", "Empty System", AliasListFamily.P25);
+
+        replace(store, List.of(), List.of(definition));
+
+        assertEquals(definition.getId(), store.loadAliasListDefinitions().getFirst().getId());
+        assertTrue(store.loadAliases(store.loadAliasListDefinitions()).isEmpty());
+    }
+
+    @Test
+    void rejectsAnythingOtherThanOneOperationalMatcher() throws Exception
+    {
+        AliasDatabaseStore store = new AliasDatabaseStore(database("strict-runtime.sqlite"));
+        AliasListDefinition definition = definition("County P25", "County", AliasListFamily.P25);
+
+        Alias missing = new Alias("Missing");
+        missing.setAliasListDefinition(definition);
+        assertThrows(SQLException.class,
+            () -> replace(store, List.of(missing), List.of(definition)));
+
+        Alias wrongFamily = new Alias("Wrong Protocol");
+        wrongFamily.setAliasListDefinition(definition);
+        wrongFamily.setMatchIdentifier(new Talkgroup(Protocol.DMR, 100));
+        SQLException familyFailure = assertThrows(SQLException.class,
+            () -> replace(store, List.of(wrongFamily), List.of(definition)));
+        assertTrue(familyFailure.getMessage().contains("not valid for alias list"));
+
+        Alias nameOnly = new Alias("Name Only");
+        nameOnly.setAliasListName("County P25");
+        nameOnly.setMatchIdentifier(new Talkgroup(Protocol.APCO25, 100));
+        assertThrows(SQLException.class, () -> replace(store, List.of(nameOnly), List.of()));
+    }
+
+    @Test
+    void rejectsUnownedOrUnclassifiedLists() throws Exception
+    {
+        AliasDatabaseStore store = new AliasDatabaseStore(database("invalid-list.sqlite"));
+        AliasListDefinition unowned = definition("Unowned", null, AliasListFamily.P25);
+        SQLException unownedFailure =
+            assertThrows(SQLException.class, () -> replace(store, List.of(), List.of(unowned)));
+        assertTrue(unownedFailure.getMessage().contains("owned by a system"));
+
+        AliasListDefinition unclassified = definition("Unclassified", "County", null);
+        SQLException familyFailure =
+            assertThrows(SQLException.class, () -> replace(store, List.of(), List.of(unclassified)));
+        assertTrue(familyFailure.getMessage().contains("active radio-system family"));
+    }
+
+    @Test
+    void malformedCurrentRowsFailWithoutRepair() throws Exception
+    {
+        AliasDatabaseStore protocolStore = populatedStore("malformed-protocol.sqlite");
+        bypassChecks(protocolStore.getDatabasePath(), "UPDATE alias SET protocol = 'NOT_A_PROTOCOL'");
+        assertThrows(SQLException.class, () -> loadAliases(protocolStore));
+        assertEquals("NOT_A_PROTOCOL",
+            scalarText(protocolStore.getDatabasePath(), "SELECT protocol FROM alias"));
+
+        AliasDatabaseStore requiredValueStore = populatedStore("missing-value.sqlite");
+        bypassChecks(requiredValueStore.getDatabasePath(), "UPDATE alias SET value = NULL");
+        assertThrows(SQLException.class, () -> loadAliases(requiredValueStore));
+        assertNull(scalarText(requiredValueStore.getDatabasePath(), "SELECT value FROM alias"));
+
+        AliasDatabaseStore unusedPayloadStore = populatedStore("unused-payload.sqlite");
+        bypassChecks(unusedPayloadStore.getDatabasePath(), "UPDATE alias SET min_value = 99");
+        assertThrows(SQLException.class, () -> loadAliases(unusedPayloadStore));
+        assertEquals("99", scalarText(unusedPayloadStore.getDatabasePath(), "SELECT min_value FROM alias"));
+
+        AliasDatabaseStore familyStore = populatedStore("malformed-family.sqlite");
+        bypassChecks(familyStore.getDatabasePath(), "UPDATE alias_list SET family = 'NOT_A_FAMILY'");
+        assertThrows(SQLException.class, familyStore::loadAliasListDefinitions);
+        assertEquals("NOT_A_FAMILY",
+            scalarText(familyStore.getDatabasePath(), "SELECT family FROM alias_list"));
+
+        AliasDatabaseStore actionStore = populatedStore("malformed-action.sqlite");
+        execute(actionStore.getDatabasePath(), "UPDATE alias_action SET type = 'NOT_AN_ACTION'");
+        assertThrows(SQLException.class, () -> loadAliases(actionStore));
+    }
+
+    @Test
+    void foreignKeyAndRouteConstraintsAreStrict() throws Exception
+    {
+        AliasDatabaseStore orphanStore = populatedStore("orphan.sqlite");
+        try(Connection connection = SdrTrunkDatabase.open(orphanStore.getDatabasePath());
+            Statement statement = connection.createStatement())
+        {
+            statement.execute("PRAGMA foreign_keys=OFF");
+            statement.executeUpdate("UPDATE alias SET alias_list_id = 9999");
+        }
+        assertThrows(SQLException.class, () -> loadAliases(orphanStore));
+
+        AliasDatabaseStore routeStore = populatedStore("duplicate-route.sqlite");
+        execute(routeStore.getDatabasePath(), """
+            INSERT INTO alias_broadcast_channel(alias_id, channel_name)
+            SELECT id, 'RadioResolve' FROM alias
+            """);
+        assertThrows(SQLException.class, () -> execute(routeStore.getDatabasePath(), """
+            INSERT INTO alias_broadcast_channel(alias_id, channel_name)
+            SELECT id, 'RadioResolve' FROM alias
+            """));
+    }
+
+    @Test
+    void identifierViewsExposeListNameAndRemainReadOnly() throws Exception
+    {
+        AliasDatabaseStore store = populatedStore("views.sqlite");
+        try(Connection connection = SdrTrunkDatabase.open(store.getDatabasePath());
+            Statement statement = connection.createStatement();
+            ResultSet resultSet = statement.executeQuery(
+                "SELECT alias_list_name FROM alias_talkgroup"))
+        {
+            assertTrue(resultSet.next());
+            assertEquals("County P25", resultSet.getString("alias_list_name"));
+            assertThrows(SQLException.class, () -> statement.executeUpdate("""
+                INSERT INTO alias_talkgroup (
+                    alias_id, protocol, value, fully_qualified, ranged, alias_list_name
+                ) VALUES (1, 'APCO25', 100, 0, 0, 'County P25')
+                """));
+        }
+    }
+
+    private Path database(String name) throws Exception
+    {
+        Path database = mTemporaryFolder.resolve(name);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        return database;
+    }
+
+    private AliasDatabaseStore populatedStore(String name) throws Exception
+    {
+        AliasDatabaseStore store = new AliasDatabaseStore(database(name));
+        AliasListDefinition definition = definition("County P25", "County", AliasListFamily.P25);
+        Alias alias = alias("Dispatch", definition, 100);
+        ClipAction clip = new ClipAction();
+        clip.setPath("/tmp/alert.wav");
+        alias.addAliasAction(clip);
+        replace(store, List.of(alias), List.of(definition));
+        return store;
+    }
+
+    private static void replace(AliasDatabaseStore store, List<Alias> aliases,
+                                List<AliasListDefinition> definitions) throws Exception
+    {
+        ConfigurationState state = new ConfigurationState();
+        state.setAliases(aliases);
+        state.setAliasListDefinitions(definitions);
+        new ConfigurationSnapshotDatabaseStore(store.getDatabasePath()).replace(state);
+    }
+
+    private static List<Alias> loadAliases(AliasDatabaseStore store) throws Exception
+    {
+        return store.loadAliases(store.loadAliasListDefinitions());
+    }
+
+    private static AliasListDefinition definition(String name, String system, AliasListFamily family)
+    {
+        return new AliasListDefinition(name, system, family);
+    }
+
+    private static Alias alias(String name, AliasListDefinition definition, int talkgroup)
+    {
+        Alias alias = new Alias(name);
+        alias.setAliasListDefinition(definition);
+        alias.setMatchIdentifier(new Talkgroup(Protocol.APCO25, talkgroup));
+        return alias;
+    }
+
+    private static void bypassChecks(Path database, String sql) throws Exception
+    {
         try(Connection connection = SdrTrunkDatabase.open(database);
             Statement statement = connection.createStatement())
         {
-            assertFalse(tableExists(connection, "alias_identifier"));
-            assertEquals(3, countRows(connection, "alias_talkgroup"));
-            assertEquals(1, countRows(connection, "alias_broadcast_channel"));
-            assertEquals(1, countRows(connection, "alias_text_identifier"));
-            assertEquals(1, countRows(connection, "alias_tone_sequence"));
-            assertEquals(1, countRows(connection, "alias_action"));
-
-            try(ResultSet resultSet = statement.executeQuery("""
-                SELECT record_enabled, non_recordable, priority
-                FROM alias
-                """))
-            {
-                assertTrue(resultSet.next());
-                assertEquals(1, resultSet.getInt("record_enabled"));
-                assertEquals(1, resultSet.getInt("non_recordable"));
-                assertEquals(5, resultSet.getInt("priority"));
-            }
+            statement.execute("PRAGMA ignore_check_constraints=ON");
+            statement.executeUpdate(sql);
         }
     }
 
-    @Test
-    void treatsExistingAliasRowsAsInitializedForMigration() throws Exception
+    private static void execute(Path database, String sql) throws Exception
     {
-        Path database = mTemporaryFolder.resolve("legacy-alias.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
-        AliasDatabaseStore store = new AliasDatabaseStore(database);
-
-        try(Connection connection = SdrTrunkDatabase.open(database);
-            PreparedStatement statement = connection.prepareStatement("""
-                INSERT INTO alias (sort_order, name, alias_list_name, group_name, color, icon_name, stream_as_talkgroup)
-                VALUES (0, 'Legacy Alias', 'Legacy List', NULL, 0, NULL, NULL)
-                """))
-        {
-            statement.executeUpdate();
-        }
-
-        assertTrue(store.isInitialized());
-        assertEquals(1, store.loadAliases().size());
-    }
-
-    @Test
-    void ignoresRetiredScriptActionsInExistingDatabases() throws Exception
-    {
-        Path database = mTemporaryFolder.resolve("retired-script-action.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
-        AliasDatabaseStore store = new AliasDatabaseStore(database);
-
         try(Connection connection = SdrTrunkDatabase.open(database);
             Statement statement = connection.createStatement())
         {
-            statement.executeUpdate("""
-                INSERT INTO alias (sort_order, name, alias_list_name, group_name, color, icon_name,
-                    stream_as_talkgroup)
-                VALUES (0, 'Legacy Script Alias', 'Legacy List', NULL, 0, NULL, NULL)
-                """);
-            statement.executeUpdate("""
-                INSERT INTO alias_action (alias_id, sort_order, type, interval, period, path, script)
-                SELECT id, 0, 'SCRIPT', 'ONCE', 0, NULL, '/tmp/retired-script' FROM alias
-                """);
+            statement.executeUpdate(sql);
         }
-
-        List<Alias> aliases = store.loadAliases();
-        assertEquals(1, aliases.size());
-        assertTrue(aliases.get(0).getAliasActions().isEmpty(),
-            "retired script rows must never be restored or executed");
     }
 
-    @Test
-    void keepsIdentifiersAndActionsAttachedToOwningAliasRows() throws Exception
+    private static String scalarText(Path database, String sql) throws Exception
     {
-        Path database = mTemporaryFolder.resolve("multi-alias.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
-        AliasDatabaseStore store = new AliasDatabaseStore(database);
-
-        Alias systemA = new Alias("System A Dispatch");
-        systemA.setAliasListName("System A");
-        systemA.addAliasID(new Talkgroup(Protocol.APCO25, 1001));
-        ClipAction systemAClip = new ClipAction();
-        systemAClip.setPath("/tmp/system-a.wav");
-        systemA.addAliasAction(systemAClip);
-
-        Alias systemB = new Alias("System B Dispatch");
-        systemB.setAliasListName("System B");
-        systemB.addAliasID(new Talkgroup(Protocol.APCO25, 2002));
-        ClipAction systemBClip = new ClipAction();
-        systemBClip.setPath("/tmp/system-b.wav");
-        systemB.addAliasAction(systemBClip);
-
-        store.replaceAliases(List.of(systemA, systemB));
-
-        List<Alias> aliases = store.loadAliases();
-        Alias loadedSystemA = getAlias(aliases, "System A Dispatch");
-        Alias loadedSystemB = getAlias(aliases, "System B Dispatch");
-
-        assertTrue(hasTalkgroup(loadedSystemA, Protocol.APCO25, 1001));
-        assertFalse(hasTalkgroup(loadedSystemA, Protocol.APCO25, 2002));
-        assertTrue(hasTalkgroup(loadedSystemB, Protocol.APCO25, 2002));
-        assertFalse(hasTalkgroup(loadedSystemB, Protocol.APCO25, 1001));
-
-        assertEquals(1, loadedSystemA.getAliasActions().size());
-        assertEquals("/tmp/system-a.wav", ((ClipAction)loadedSystemA.getAliasActions().get(0)).getPath());
-        assertEquals(1, loadedSystemB.getAliasActions().size());
-        assertEquals("/tmp/system-b.wav", ((ClipAction)loadedSystemB.getAliasActions().get(0)).getPath());
-    }
-
-    @Test
-    void emptyAliasReplacementMarksInitialized() throws Exception
-    {
-        Path database = mTemporaryFolder.resolve("empty-alias.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
-        AliasDatabaseStore store = new AliasDatabaseStore(database);
-        assertFalse(store.isInitialized());
-
-        store.replaceAliases(List.of());
-
-        assertTrue(store.isInitialized());
-        assertTrue(store.loadAliases().isEmpty());
-    }
-
-    @Test
-    void preservesButHidesRetiredMptAliasIdentifiers() throws Exception
-    {
-        Path database = mTemporaryFolder.resolve("retired-mpt-alias.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
-        AliasDatabaseStore store = new AliasDatabaseStore(database);
-
-        Alias alias = new Alias("Legacy MPT Alias");
-        alias.setAliasListName("Legacy");
-        MPT1327ID legacyIdentifier = new MPT1327ID();
-        legacyIdentifier.setIdent("001-0001");
-        alias.addAliasID(legacyIdentifier);
-        alias.addAliasID(new Talkgroup(Protocol.MPT1327, 8_193));
-
-        store.replaceAliases(List.of(alias));
-        Alias loaded = store.loadAliases().get(0);
-        assertEquals(2, loaded.getAliasIdentifiers().size());
-        assertTrue(loaded.getAliasIdentifiers().stream().noneMatch(AliasIdentifierPolicy::isUserVisible));
-        assertTrue(AliasIDType.MPT1327.isRetiredCompatibility());
-        MPT1327ID loadedLegacy = loaded.getAliasIdentifiers().stream()
-            .filter(MPT1327ID.class::isInstance)
-            .map(MPT1327ID.class::cast)
-            .findFirst()
-            .orElseThrow();
-        assertEquals("001-0001", loadedLegacy.getIdent());
-        MPT1327ID copiedLegacy = (MPT1327ID)AliasFactory.copyOf(loadedLegacy);
-        assertEquals("001-0001", copiedLegacy.getIdent());
-
-        store.replaceAliases(List.of(loaded));
-        Alias savedAgain = store.loadAliases().get(0);
-        assertEquals(2, savedAgain.getAliasIdentifiers().size());
-        assertTrue(savedAgain.getAliasIdentifiers().stream().noneMatch(AliasIdentifierPolicy::isUserVisible));
-    }
-
-    private static boolean hasIdentifier(Alias alias, Class<? extends AliasID> type)
-    {
-        return alias.getAliasIdentifiers().stream().anyMatch(type::isInstance);
-    }
-
-    private static boolean tableExists(Connection connection, String table) throws Exception
-    {
-        try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?
-            """))
+        try(Connection connection = SdrTrunkDatabase.open(database);
+            Statement statement = connection.createStatement();
+            ResultSet resultSet = statement.executeQuery(sql))
         {
-            statement.setString(1, table);
+            assertTrue(resultSet.next());
+            return resultSet.getString(1);
+        }
+    }
 
-            try(ResultSet resultSet = statement.executeQuery())
+    private static Set<String> columns(Connection connection, String table) throws Exception
+    {
+        Set<String> columns = new HashSet<>();
+        try(Statement statement = connection.createStatement();
+            ResultSet resultSet = statement.executeQuery("PRAGMA table_info(" + table + ')'))
+        {
+            while(resultSet.next())
             {
-                return resultSet.next();
+                columns.add(resultSet.getString("name"));
             }
         }
+        return columns;
+    }
+
+    private static Set<String> indexes(Connection connection) throws Exception
+    {
+        Set<String> indexes = new HashSet<>();
+        try(Statement statement = connection.createStatement();
+            ResultSet resultSet = statement.executeQuery(
+                "SELECT name FROM sqlite_master WHERE type='index'"))
+        {
+            while(resultSet.next())
+            {
+                indexes.add(resultSet.getString("name"));
+            }
+        }
+        return indexes;
     }
 
     private static int countRows(Connection connection, String table) throws Exception
@@ -306,41 +392,5 @@ class AliasDatabaseStoreTest
             assertTrue(resultSet.next());
             return resultSet.getInt(1);
         }
-    }
-
-    private static Alias getAlias(List<Alias> aliases, String name)
-    {
-        return aliases.stream()
-            .filter(alias -> name.equals(alias.getName()))
-            .findFirst()
-            .orElseThrow();
-    }
-
-    private static boolean hasTalkgroup(Alias alias, Protocol protocol, int value)
-    {
-        return alias.getAliasIdentifiers().stream()
-            .filter(Talkgroup.class::isInstance)
-            .map(Talkgroup.class::cast)
-            .anyMatch(talkgroup -> talkgroup.getProtocol() == protocol && talkgroup.getValue() == value);
-    }
-
-    private static boolean hasTalkgroupRange(Alias alias, Protocol protocol, int min, int max)
-    {
-        return alias.getAliasIdentifiers().stream()
-            .filter(TalkgroupRange.class::isInstance)
-            .map(TalkgroupRange.class::cast)
-            .anyMatch(range -> range.getProtocol() == protocol &&
-                range.getMinTalkgroup() == min &&
-                range.getMaxTalkgroup() == max);
-    }
-
-    private static boolean hasFullyQualifiedTalkgroup(Alias alias, int wacn, int system, int value)
-    {
-        return alias.getAliasIdentifiers().stream()
-            .filter(P25FullyQualifiedTalkgroup.class::isInstance)
-            .map(P25FullyQualifiedTalkgroup.class::cast)
-            .anyMatch(talkgroup -> talkgroup.getWacn() == wacn &&
-                talkgroup.getSystem() == system &&
-                talkgroup.getValue() == value);
     }
 }

@@ -21,8 +21,10 @@ package io.github.dsheirer.gui.configuration.alias;
 
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasFactory;
-import io.github.dsheirer.alias.AliasList;
-import io.github.dsheirer.alias.AliasModel;
+import io.github.dsheirer.alias.AliasListDefinition;
+import io.github.dsheirer.alias.AliasListFamily;
+import io.github.dsheirer.alias.AliasMatchRegistry;
+import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.gui.control.MaxLengthUnaryOperator;
 import io.github.dsheirer.gui.configuration.Editor;
 import io.github.dsheirer.gui.configuration.IAliasListRefreshListener;
@@ -30,7 +32,11 @@ import io.github.dsheirer.icon.Icon;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.preference.UserPreferences;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.function.Predicate;
 import javafx.application.Platform;
@@ -45,6 +51,7 @@ import javafx.geometry.Pos;
 import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonType;
+import javafx.scene.control.ChoiceDialog;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.MenuButton;
@@ -86,7 +93,6 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
     private Label mPlaceholderLabel;
     private Button mNewAliasButton;
     private Button mDeleteAliasButton;
-    private Button mRenameAliasButton;
     private Button mCloneAliasButton;
     private MenuButton mMoveToAliasButton;
     private VBox mButtonBox;
@@ -143,14 +149,7 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
     {
         if(alias != null)
         {
-            String aliasList = alias.getAliasListName();
-
-            if(aliasList == null || aliasList.isEmpty())
-            {
-                aliasList = AliasModel.NO_ALIAS_LIST;
-            }
-
-            getAliasListNameComboBox().getSelectionModel().select(aliasList);
+            getAliasListNameComboBox().getSelectionModel().select(alias.getAliasListName());
             getAliasTableView().getSelectionModel().clearSelection();
             getAliasTableView().getSelectionModel().select(alias);
             getAliasTableView().scrollTo(alias);
@@ -260,7 +259,7 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
             searchBox.setAlignment(Pos.BASELINE_RIGHT);
 
             mSearchAndListSelectionBox.getChildren().addAll(listLabel, getAliasListNameComboBox(),
-                getNewAliasListButton(), getRenameAliasListButton(), getDeleteAliasListButton(), searchBox);
+                getNewAliasListButton(), getDeleteAliasListButton(), searchBox);
         }
 
         return mSearchAndListSelectionBox;
@@ -296,6 +295,16 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
         return mAliasPredicate;
     }
 
+    private AliasListDefinition getAliasListDefinition(String name)
+    {
+        if(name == null)
+        {
+            return null;
+        }
+
+        return mConfigurationManager.getAliasModel().getAliasListDefinition(name);
+    }
+
     private ComboBox<String> getAliasListNameComboBox()
     {
         if(mAliasListNameComboBox == null)
@@ -304,22 +313,13 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
             mAliasListNameComboBox.getSelectionModel().selectedItemProperty()
                     .addListener((observable, oldValue, newValue) ->
                     {
-                        getNewAliasButton().setDisable(newValue == null || newValue.contentEquals(AliasModel.NO_ALIAS_LIST));
+                        AliasListDefinition definition = getAliasListDefinition(newValue);
+                        getNewAliasButton().setDisable(definition == null ||
+                            AliasMatchRegistry.allowed(definition).isEmpty());
                         update();
                     });
 
-            if(mAliasListNameComboBox.getItems().size() > 1)
-            {
-                if(!mAliasListNameComboBox.getItems().get(0).contentEquals(AliasModel.NO_ALIAS_LIST))
-                {
-                    mAliasListNameComboBox.getSelectionModel().select(0);
-                }
-                else
-                {
-                    mAliasListNameComboBox.getSelectionModel().select(1);
-                }
-            }
-            else if(mAliasListNameComboBox.getItems().size() == 1)
+            if(!mAliasListNameComboBox.getItems().isEmpty())
             {
                 mAliasListNameComboBox.getSelectionModel().select(0);
             }
@@ -335,6 +335,33 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
             mNewAliasListButton = new Button("New Alias List");
             mNewAliasListButton.setOnAction(event ->
             {
+                List<SystemCapability> capabilities = getConfiguredSystemCapabilities();
+
+                if(capabilities.isEmpty())
+                {
+                    Alert alert = new Alert(Alert.AlertType.INFORMATION,
+                        "Configure a supported channel with a system name before creating an alias list.",
+                        ButtonType.OK);
+                    alert.setTitle("Create New Alias List");
+                    alert.setHeaderText("No configured radio systems are available");
+                    alert.initOwner(getNewAliasListButton().getScene().getWindow());
+                    alert.showAndWait();
+                    return;
+                }
+
+                ChoiceDialog<SystemCapability> capabilityDialog =
+                    new ChoiceDialog<>(capabilities.getFirst(), capabilities);
+                capabilityDialog.setTitle("Create New Alias List");
+                capabilityDialog.setHeaderText("Select the configured radio system that will own this alias list.");
+                capabilityDialog.setContentText("System capability:");
+                capabilityDialog.initOwner(getNewAliasListButton().getScene().getWindow());
+                Optional<SystemCapability> selectedCapability = capabilityDialog.showAndWait();
+
+                if(selectedCapability.isEmpty())
+                {
+                    return;
+                }
+
                 TextInputDialog dialog = new TextInputDialog();
                 dialog.setTitle("Create New Alias List");
                 dialog.setHeaderText("Please enter an alias list name (max 25 chars).");
@@ -346,10 +373,28 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
                 {
                     String name = result.get();
 
-                    if(name != null && !name.isEmpty())
+                    if(name != null)
                     {
                         name = name.trim();
-                        mConfigurationManager.getAliasModel().addAliasList(name);
+
+                        if(name.isEmpty())
+                        {
+                            return;
+                        }
+
+                        if(getAliasListDefinition(name) != null)
+                        {
+                            Alert alert = new Alert(Alert.AlertType.ERROR,
+                                "An alias list named [" + name + "] already exists.", ButtonType.OK);
+                            alert.setTitle("Create New Alias List");
+                            alert.setHeaderText("Alias list name is already in use");
+                            alert.initOwner(getNewAliasListButton().getScene().getWindow());
+                            alert.showAndWait();
+                            return;
+                        }
+
+                        mConfigurationManager.getAliasModel().addAliasListDefinition(
+                            selectedCapability.get().toDefinition(name));
                         getAliasListNameComboBox().getSelectionModel().select(name);
                     }
                 });
@@ -359,36 +404,54 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
         return mNewAliasListButton;
     }
 
-    private Button getRenameAliasListButton() {
+    private List<SystemCapability> getConfiguredSystemCapabilities()
+    {
+        Map<SystemCapabilityKey,SystemCapability> capabilities = new LinkedHashMap<>();
 
-        if (mRenameAliasButton == null) {
-            mRenameAliasButton = new Button("Rename Alias List");
-            mRenameAliasButton.setOnAction(event -> {
-                String aliasListName = getAliasListNameComboBox().getSelectionModel().getSelectedItem();
+        for(Channel channel: mConfigurationManager.getChannelModel().getChannels())
+        {
+            if(channel == null || channel.getDecodeConfiguration() == null || channel.getSystem() == null ||
+                channel.getSystem().isBlank())
+            {
+                continue;
+            }
 
-                if (aliasListName.equals(AliasModel.NO_ALIAS_LIST)) {
-                    Alert alert = new Alert(Alert.AlertType.ERROR, "", ButtonType.OK);
-                    alert.setTitle("Rename Alias List");
-                    alert.setHeaderText("You cannot rename " + aliasListName + ".");
-                    alert.initOwner((getRenameAliasListButton()).getScene().getWindow());
-                    alert.showAndWait();
-                    return;
-                }
+            AliasListFamily family =
+                AliasMatchRegistry.familyFor(channel.getDecodeConfiguration().getDecoderType());
 
-                TextInputDialog dialog = new TextInputDialog();
-                dialog.setTitle("Renaming Alias List: " + aliasListName);
-                dialog.setHeaderText("Please enter the new alias list name (max 25 chars).");
-                dialog.setContentText("Name:");
-                dialog.getEditor().setTextFormatter(new TextFormatter<String>(new MaxLengthUnaryOperator(25)));
-                Optional<String> result = dialog.showAndWait();
-                result.ifPresent(newAliasListName -> {
-                    mConfigurationManager.renameAliasList(aliasListName, newAliasListName);
-                    getAliasListNameComboBox().getSelectionModel().select(newAliasListName);
-                });
-            });
+            if(family == null)
+            {
+                continue;
+            }
 
+            String systemName = channel.getSystem().trim();
+            SystemCapabilityKey key =
+                new SystemCapabilityKey(systemName.toLowerCase(Locale.ROOT), family);
+            capabilities.putIfAbsent(key, new SystemCapability(systemName, family));
         }
-        return mRenameAliasButton;
+
+        return capabilities.values().stream()
+            .sorted(Comparator.comparing(SystemCapability::systemName, String.CASE_INSENSITIVE_ORDER)
+                .thenComparing(capability -> capability.family().toString()))
+            .toList();
+    }
+
+    private record SystemCapabilityKey(String systemName, AliasListFamily family)
+    {
+    }
+
+    private record SystemCapability(String systemName, AliasListFamily family)
+    {
+        private AliasListDefinition toDefinition(String name)
+        {
+            return new AliasListDefinition(name, systemName, family);
+        }
+
+        @Override
+        public String toString()
+        {
+            return systemName + " — " + family;
+        }
     }
 
     private Button getDeleteAliasListButton() {
@@ -397,13 +460,6 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
             mDeleteAliasListButton = new Button("Delete Alias List");
             mDeleteAliasListButton.setOnAction(event -> {
                 String aliasListName = getAliasListNameComboBox().getSelectionModel().getSelectedItem();
-                if (aliasListName.equals(AliasModel.NO_ALIAS_LIST)) {
-                    Alert alert = createDeleteAliasListAlert(Alert.AlertType.ERROR, ButtonType.OK);
-                    alert.setHeaderText("You cannot delete " + aliasListName + ".");
-                    alert.showAndWait();
-                    return;
-                }
-
                 Alert alert = createDeleteAliasListAlert(Alert.AlertType.CONFIRMATION, ButtonType.NO, ButtonType.YES);
                 alert.setHeaderText("Are you sure you want to delete the alias list " + aliasListName + " and all associated aliases?");
 
@@ -468,8 +524,17 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
             streamColumn.setCellValueFactory(new PropertyValueFactory<>("streamable"));
             streamColumn.setCellFactory(new IconCell(FontAwesome.VOLUME_UP, Color.DARKBLUE));
 
-            TableColumn<Alias, Integer> idsColumn = new TableColumn<>("IDs");
-            idsColumn.setCellValueFactory(new IdentifierCountCell());
+            TableColumn<Alias, String> typeColumn = new TableColumn<>("Type");
+            typeColumn.setPrefWidth(150);
+            typeColumn.setCellValueFactory(features -> new ReadOnlyObjectWrapper<>(
+                features.getValue().getMatchIdentifier() != null ?
+                    features.getValue().getMatchIdentifier().getType().toString() : ""));
+
+            TableColumn<Alias, String> identifierColumn = new TableColumn<>("Identifier");
+            identifierColumn.setPrefWidth(220);
+            identifierColumn.setCellValueFactory(features -> new ReadOnlyObjectWrapper<>(
+                features.getValue().getMatchIdentifier() != null ?
+                    features.getValue().getMatchIdentifier().toString() : ""));
 
             TableColumn<Alias, Boolean> errorsColumn = new TableColumn<>("Error");
             errorsColumn.setPrefWidth(120);
@@ -505,7 +570,8 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
             mAliasTableView.getColumns().add(priorityColumn);
             mAliasTableView.getColumns().add(recordColumn);
             mAliasTableView.getColumns().add(streamColumn);
-            mAliasTableView.getColumns().add(idsColumn);
+            mAliasTableView.getColumns().add(typeColumn);
+            mAliasTableView.getColumns().add(identifierColumn);
             mAliasTableView.getColumns().add(errorsColumn);
 
             mAliasTableView.setPlaceholder(getPlaceholderLabel());
@@ -592,7 +658,16 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
             mNewAliasButton.setOnAction(event ->
             {
                 Alias alias = new Alias("New Alias");
-                alias.setAliasListName(getAliasListNameComboBox().getSelectionModel().getSelectedItem());
+                AliasListDefinition definition = getAliasListDefinition(
+                    getAliasListNameComboBox().getSelectionModel().getSelectedItem());
+
+                if(definition == null || AliasMatchRegistry.allowed(definition).isEmpty())
+                {
+                    return;
+                }
+
+                alias.setAliasListDefinition(definition);
+                alias.setMatchIdentifier(AliasMatchRegistry.allowed(definition).getFirst().create(definition));
                 mConfigurationManager.getAliasModel().addAlias(alias);
 
                 //Queue a select alias action to allow table to update filter predicate and display the alias
@@ -649,7 +724,7 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
             mCloneAliasButton.setOnAction(event ->
             {
                 Alias original = getAliasTableView().getSelectionModel().getSelectedItem();
-                Alias copy = AliasFactory.shallowCopyOf(original);
+                Alias copy = AliasFactory.copyOf(original);
                 mConfigurationManager.getAliasModel().addAlias(copy);
                 getAliasTableView().getSelectionModel().clearSelection();
                 getAliasTableView().getSelectionModel().select(copy);
@@ -674,15 +749,30 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
                 emptyItem.setDisable(true);
                 mMoveToAliasButton.getItems().addAll(emptyItem, new SeparatorMenuItem());
 
-                List<String> aliasLists = mConfigurationManager.getAliasModel().getListNames();
+                List<Alias> selectedAliases =
+                    new ArrayList<>(getAliasTableView().getSelectionModel().getSelectedItems());
 
-                for(String aliasList : aliasLists)
+                for(AliasListDefinition definition :
+                    mConfigurationManager.getAliasModel().aliasListDefinitions())
                 {
-                    if(!aliasList.contentEquals(AliasModel.NO_ALIAS_LIST) &&
-                            !aliasList.contentEquals(getAliasListNameComboBox().getSelectionModel().getSelectedItem()))
+                    if(!definition.getName().contentEquals(
+                        getAliasListNameComboBox().getSelectionModel().getSelectedItem()))
                     {
-                        mMoveToAliasButton.getItems().add(new MoveToAliasListItem(aliasList));
+                        boolean canPreserve = selectedAliases.stream().allMatch(alias ->
+                            AliasMatchRegistry.isOperational(definition, alias.getMatchIdentifier()));
+
+                        if(canPreserve)
+                        {
+                            mMoveToAliasButton.getItems().add(new MoveToAliasListItem(definition));
+                        }
                     }
+                }
+
+                if(mMoveToAliasButton.getItems().size() == 2)
+                {
+                    MenuItem none = new MenuItem("No compatible alias lists");
+                    none.setDisable(true);
+                    mMoveToAliasButton.getItems().add(none);
                 }
             });
         }
@@ -692,24 +782,27 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
 
     public class MoveToAliasListItem extends MenuItem
     {
-        public MoveToAliasListItem(String aliasList)
+        private final AliasListDefinition mDefinition;
+
+        public MoveToAliasListItem(AliasListDefinition definition)
         {
-            super(aliasList);
+            super(definition.getName());
+            mDefinition = definition;
 
             setOnAction(event ->
             {
                 List<Alias> selectedAliases = new ArrayList<>(getAliasTableView().getSelectionModel().getSelectedItems());
                 for(Alias selected : selectedAliases)
                 {
-                    AliasList existing = mConfigurationManager.getAliasModel().getAliasList(selected.getAliasListName());
-                    existing.removeAlias(selected);
-
-                    selected.setAliasListName(getText());
-                    AliasList moveToList = mConfigurationManager.getAliasModel().getAliasList(selected.getAliasListName());
-                    moveToList.addAlias(selected);
+                    moveAlias(selected, mDefinition);
                 }
             });
         }
+    }
+
+    private void moveAlias(Alias alias, AliasListDefinition definition)
+    {
+        alias.setAliasListDefinition(definition);
     }
 
     public class ColorizedCell implements Callback<TableColumn<Alias, Integer>, TableCell<Alias, Integer>>
@@ -796,20 +889,6 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
             tableCell.setAlignment(Pos.CENTER);
             tableCell.setGraphic(iconNode);
             return tableCell;
-        }
-    }
-
-    public class IdentifierCountCell implements Callback<TableColumn.CellDataFeatures<Alias, Integer>, ObservableValue<Integer>>
-    {
-        @Override
-        public ObservableValue<Integer> call(TableColumn.CellDataFeatures<Alias, Integer> param)
-        {
-            if(param.getValue() != null)
-            {
-                return param.getValue().nonAudioIdentifierCountProperty().asObject();
-            }
-
-            return null;
         }
     }
 

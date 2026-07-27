@@ -23,7 +23,6 @@
 package io.github.dsheirer.gui.configuration.streaming;
 
 import io.github.dsheirer.alias.Alias;
-import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import javafx.collections.ListChangeListener;
@@ -309,7 +308,7 @@ public class StreamAliasSelectionEditor extends VBox
 
                 if(selectedAlias != null && stream != null)
                 {
-                    selectedAlias.addAliasID(new BroadcastChannel(stream));
+                    selectedAlias.addBroadcastChannel(stream);
                     updateListFilters();
                 }
             });
@@ -340,7 +339,7 @@ public class StreamAliasSelectionEditor extends VBox
                     {
                         for(Alias selectedAlias: selectedAliases)
                         {
-                            selectedAlias.addAliasID(new BroadcastChannel(stream));
+                            selectedAlias.addBroadcastChannel(stream);
                         }
 
                         updateListFilters();

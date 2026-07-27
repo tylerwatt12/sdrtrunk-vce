@@ -18,12 +18,9 @@
  */
 package io.github.dsheirer.alias;
 
-import io.github.dsheirer.alias.action.AliasAction;
 import io.github.dsheirer.alias.id.AliasID;
-import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.alias.id.dcs.Dcs;
 import io.github.dsheirer.alias.id.esn.Esn;
-import io.github.dsheirer.alias.id.priority.Priority;
 import io.github.dsheirer.alias.id.radio.P25FullyQualifiedRadio;
 import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.alias.id.radio.RadioRange;
@@ -34,7 +31,6 @@ import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.alias.id.talkgroup.TalkgroupRange;
 import io.github.dsheirer.alias.id.tone.TonesID;
 import io.github.dsheirer.identifier.Identifier;
-import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.dcs.DCSIdentifier;
 import io.github.dsheirer.identifier.esn.ESNIdentifier;
 import io.github.dsheirer.identifier.patch.PatchGroup;
@@ -60,8 +56,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import javafx.beans.InvalidationListener;
+import javafx.beans.value.ChangeListener;
 import javafx.collections.FXCollections;
-import javafx.collections.ListChangeListener;
 import javafx.collections.ObservableList;
 import org.jspecify.annotations.NonNull;
 import org.slf4j.Logger;
@@ -79,6 +75,7 @@ public class AliasList
     private volatile LookupIndex mLookupIndex = new LookupIndex();
     private boolean mRebuilding;
     private final String mName;
+    private final AliasListDefinition mDefinition;
     private final ObservableList<Alias> mAliases = FXCollections.observableArrayList(Alias.extractor());
 
     /**
@@ -87,9 +84,21 @@ public class AliasList
      *
      * Responds to alias change events to keep the internal alias list updated.
      */
-    public AliasList(String name)
+    private AliasList(String name)
     {
         mName = name;
+        mDefinition = null;
+    }
+
+    public static AliasList empty(String name)
+    {
+        return new AliasList(name);
+    }
+
+    public AliasList(AliasListDefinition definition)
+    {
+        mDefinition = definition;
+        mName = definition != null ? definition.getName() : null;
     }
 
     /**
@@ -109,6 +118,8 @@ public class AliasList
         {
             return;
         }
+
+        requireOperationalMatcher(alias);
 
         synchronized(mMutationLock)
         {
@@ -144,6 +155,7 @@ public class AliasList
             {
                 if(alias != null && !mAliasObservers.containsKey(alias))
                 {
+                    requireOperationalMatcher(alias);
                     mAliases.add(alias);
                     observe(alias);
                     changed = true;
@@ -162,7 +174,7 @@ public class AliasList
      */
     private void addAliasID(AliasID id, Alias alias, LookupIndex index)
     {
-        if(id != null && id.isValid())
+        if(id != null && id.isValid() && AliasMatchRegistry.supports(mDefinition, id))
         {
             try
             {
@@ -170,7 +182,8 @@ public class AliasList
                 {
                     case TALKGROUP:
                         Talkgroup talkgroup = (Talkgroup)id;
-                        Protocol talkgroupProtocol = Objects.requireNonNull(talkgroup.getProtocol());
+                        Protocol talkgroupProtocol =
+                            lookupProtocol(Objects.requireNonNull(talkgroup.getProtocol()));
 
                         TalkgroupAliasList talkgroupAliasList = index.mTalkgroupProtocolMap.get(talkgroupProtocol);
 
@@ -184,7 +197,8 @@ public class AliasList
                         break;
                     case TALKGROUP_RANGE:
                         TalkgroupRange talkgroupRange = (TalkgroupRange)id;
-                        Protocol talkgroupRangeProtocol = Objects.requireNonNull(talkgroupRange.getProtocol());
+                        Protocol talkgroupRangeProtocol =
+                            lookupProtocol(Objects.requireNonNull(talkgroupRange.getProtocol()));
 
                         TalkgroupAliasList talkgroupRangeAliasList = index.mTalkgroupProtocolMap.get(talkgroupRangeProtocol);
 
@@ -198,7 +212,8 @@ public class AliasList
                         break;
                     case P25_FULLY_QUALIFIED_RADIO_ID:
                         P25FullyQualifiedRadio qualifiedRadio = (P25FullyQualifiedRadio) id;
-                        Protocol qualifiedRadioProtocol = Objects.requireNonNull(qualifiedRadio.getProtocol());
+                        Protocol qualifiedRadioProtocol =
+                            lookupProtocol(Objects.requireNonNull(qualifiedRadio.getProtocol()));
 
                         RadioAliasList p25RadioAliasList = index.mRadioProtocolMap.get(qualifiedRadioProtocol);
 
@@ -212,7 +227,8 @@ public class AliasList
                         break;
                     case P25_FULLY_QUALIFIED_TALKGROUP:
                         P25FullyQualifiedTalkgroup qualifiedTalkgroup = (P25FullyQualifiedTalkgroup) id;
-                        Protocol qualifiedTalkgroupProtocol = Objects.requireNonNull(qualifiedTalkgroup.getProtocol());
+                        Protocol qualifiedTalkgroupProtocol =
+                            lookupProtocol(Objects.requireNonNull(qualifiedTalkgroup.getProtocol()));
 
                         TalkgroupAliasList p25TalkgroupAliasList = index.mTalkgroupProtocolMap.get(qualifiedTalkgroupProtocol);
 
@@ -226,7 +242,7 @@ public class AliasList
                         break;
                     case RADIO_ID:
                         Radio radio = (Radio)id;
-                        Protocol radioProtocol = Objects.requireNonNull(radio.getProtocol());
+                        Protocol radioProtocol = lookupProtocol(Objects.requireNonNull(radio.getProtocol()));
 
                         RadioAliasList radioAliasList = index.mRadioProtocolMap.get(radioProtocol);
 
@@ -240,7 +256,8 @@ public class AliasList
                         break;
                     case RADIO_ID_RANGE:
                         RadioRange radioRange = (RadioRange)id;
-                        Protocol radioRangeProtocol = Objects.requireNonNull(radioRange.getProtocol());
+                        Protocol radioRangeProtocol =
+                            lookupProtocol(Objects.requireNonNull(radioRange.getProtocol()));
 
                         RadioAliasList radioRangeAliasList = index.mRadioProtocolMap.get(radioRangeProtocol);
 
@@ -262,13 +279,12 @@ public class AliasList
                             {
                                 dcs.setOverlap(true);
 
-                                for(AliasID aliasID: existingDcsAlias.getAliasIdentifiers())
+                                AliasID aliasID = existingDcsAlias.getMatchIdentifier();
+
+                                if(aliasID instanceof Dcs existingDcs &&
+                                    Objects.equals(existingDcs.getDCSCode(), dcsCode))
                                 {
-                                    if(aliasID instanceof Dcs existingDcs &&
-                                        Objects.equals(existingDcs.getDCSCode(), dcsCode))
-                                    {
-                                        existingDcs.setOverlap(true);
-                                    }
+                                    existingDcs.setOverlap(true);
                                 }
                             }
 
@@ -292,12 +308,12 @@ public class AliasList
                         {
                             id.setOverlap(true);
 
-                            for(AliasID aliasID: existingUserStatusAlias.getAliasIdentifiers())
+                            AliasID aliasID = existingUserStatusAlias.getMatchIdentifier();
+
+                            if(aliasID instanceof UserStatusID userStatusID &&
+                                userStatusID.getStatus() == userStatus)
                             {
-                                if(aliasID instanceof UserStatusID userStatusID && userStatusID.getStatus() == userStatus)
-                                {
-                                    aliasID.setOverlap(true);
-                                }
+                                aliasID.setOverlap(true);
                             }
                         }
                         index.mUserStatusMap.put(userStatus, alias);
@@ -311,12 +327,12 @@ public class AliasList
                         {
                             id.setOverlap(true);
 
-                            for(AliasID aliasID: existingUnitStatusAlias.getAliasIdentifiers())
+                            AliasID aliasID = existingUnitStatusAlias.getMatchIdentifier();
+
+                            if(aliasID instanceof UnitStatusID unitStatusID &&
+                                unitStatusID.getStatus() == unitStatus)
                             {
-                                if(aliasID instanceof UnitStatusID unitStatusID && unitStatusID.getStatus() == unitStatus)
-                                {
-                                    aliasID.setOverlap(true);
-                                }
+                                aliasID.setOverlap(true);
                             }
                         }
                         index.mUnitStatusMap.put(unitStatus, alias);
@@ -333,12 +349,11 @@ public class AliasList
                             {
                                 id.setOverlap(true);
 
-                                for(AliasID aliasID: existingToneSequenceAlias.getAliasIdentifiers())
+                                AliasID aliasID = existingToneSequenceAlias.getMatchIdentifier();
+
+                                if(aliasID instanceof TonesID && aliasID.equals(id))
                                 {
-                                    if(aliasID instanceof TonesID && aliasID.equals(id))
-                                    {
-                                        aliasID.setOverlap(true);
-                                    }
+                                    aliasID.setOverlap(true);
                                 }
                             }
                         }
@@ -406,17 +421,6 @@ public class AliasList
     }
 
     /**
-     * Rebuilds all lookup indexes and recalculates overlap flags.
-     */
-    public void validate()
-    {
-        synchronized(mMutationLock)
-        {
-            rebuildIndexes();
-        }
-    }
-
-    /**
      * Lookup alias by ESN
      */
     public Alias getESNAlias(String esn)
@@ -436,7 +440,7 @@ public class AliasList
      */
     public String toString()
     {
-        return mName;
+        return getName();
     }
 
     /**
@@ -444,54 +448,7 @@ public class AliasList
      */
     public String getName()
     {
-        return mName;
-    }
-
-    /**
-     * Indicates if this alias list has a non-null, non-empty name
-     */
-    private boolean hasName()
-    {
-        return mName != null && !mName.isEmpty();
-    }
-
-    /**
-     * Updates the alias by removing it from this list and then adding it back to this list when the list name matches.
-     */
-    public void updateAlias(Alias alias)
-    {
-        if(alias == null)
-        {
-            return;
-        }
-
-        synchronized(mMutationLock)
-        {
-            if(mRebuilding)
-            {
-                return;
-            }
-
-            boolean contains = mAliasObservers.containsKey(alias);
-            boolean belongs = belongsToThisList(alias);
-
-            if(contains && !belongs)
-            {
-                mAliases.remove(alias);
-                unobserve(alias);
-                rebuildIndexes();
-            }
-            else if(!contains && belongs)
-            {
-                mAliases.add(alias);
-                observe(alias);
-                rebuildIndexes();
-            }
-            else if(contains)
-            {
-                rebuildIndexes();
-            }
-        }
+        return mDefinition != null ? mDefinition.getName() : mName;
     }
 
     /**
@@ -558,7 +515,20 @@ public class AliasList
 
     private boolean belongsToThisList(Alias alias)
     {
-        return hasName() && alias.getAliasListName() != null && getName().equalsIgnoreCase(alias.getAliasListName());
+        if(mDefinition == null)
+        {
+            return false;
+        }
+
+        if(mDefinition.getId() > AliasListDefinition.UNASSIGNED_ID &&
+            alias.getAliasListId() > AliasListDefinition.UNASSIGNED_ID)
+        {
+            return mDefinition.getId() == alias.getAliasListId();
+        }
+
+        return mDefinition.getId() == AliasListDefinition.UNASSIGNED_ID &&
+            alias.getAliasListId() == AliasListDefinition.UNASSIGNED_ID &&
+            getName().equals(alias.getAliasListName());
     }
 
     private void observe(Alias alias)
@@ -627,26 +597,17 @@ public class AliasList
 
             for(Alias alias: mAliases)
             {
-                for(AliasID aliasID: alias.getAliasIdentifiers())
+                AliasID aliasID = alias.getMatchIdentifier();
+
+                if(aliasID != null && aliasID.overlapProperty().get())
                 {
-                    if(aliasID.overlapProperty().get())
-                    {
-                        aliasID.setOverlap(false);
-                    }
+                    aliasID.setOverlap(false);
                 }
             }
 
             for(Alias alias: mAliases)
             {
-                for(AliasID aliasID: alias.getAliasIdentifiers())
-                {
-                    addAliasID(aliasID, alias, rebuilt);
-                }
-
-                if(alias.hasActions())
-                {
-                    rebuilt.mHasAliasActions = true;
-                }
+                addAliasID(alias.getMatchIdentifier(), alias, rebuilt);
 
             }
 
@@ -661,17 +622,18 @@ public class AliasList
 
     private boolean isLookupIdentifier(AliasID aliasID)
     {
-        if(aliasID == null)
-        {
-            return false;
-        }
+        return AliasMatchRegistry.isOperational(mDefinition, aliasID);
+    }
 
-        return switch(aliasID.getType())
+    private void requireOperationalMatcher(Alias alias)
+    {
+        AliasID matcher = alias.getMatchIdentifier();
+
+        if(!AliasMatchRegistry.isOperational(mDefinition, matcher))
         {
-            case TALKGROUP, TALKGROUP_RANGE, P25_FULLY_QUALIFIED_TALKGROUP, RADIO_ID, RADIO_ID_RANGE,
-                 P25_FULLY_QUALIFIED_RADIO_ID, DCS, ESN, STATUS, UNIT_STATUS, TONES -> true;
-            default -> false;
-        };
+            throw new IllegalArgumentException("Alias [" + alias.getName() +
+                "] must have one valid matcher supported by alias list [" + getName() + "]");
+        }
     }
 
     private class AliasObserver
@@ -679,55 +641,32 @@ public class AliasList
         private final Alias mAlias;
         private final InvalidationListener mAliasIDValueListener;
         private final InvalidationListener mAliasListNameListener;
-        private final ListChangeListener<AliasID> mAliasIDListListener;
-        private final ListChangeListener<AliasAction> mAliasActionListener;
+        private final ChangeListener<AliasID> mMatchIdentifierListener;
 
         private AliasObserver(Alias alias)
         {
             mAlias = alias;
             mAliasIDValueListener = observable -> aliasLookupConfigurationChanged(mAlias);
             mAliasListNameListener = observable -> aliasListMembershipChanged(mAlias);
-            mAliasIDListListener = change -> {
-                boolean lookupChanged = false;
-
-                while(change.next())
-                {
-                    if(change.wasRemoved())
-                    {
-                        change.getRemoved().forEach(this::detach);
-                        lookupChanged |= change.getRemoved().stream().anyMatch(AliasList.this::isLookupIdentifier);
-                    }
-
-                    if(change.wasAdded())
-                    {
-                        change.getAddedSubList().forEach(this::attach);
-                        lookupChanged |= change.getAddedSubList().stream()
-                            .anyMatch(AliasList.this::isLookupIdentifier);
-                    }
-                }
-
-                if(lookupChanged)
-                {
-                    aliasLookupConfigurationChanged(mAlias);
-                }
+            mMatchIdentifierListener = (_, previous, current) -> {
+                detach(previous);
+                attach(current);
+                aliasLookupConfigurationChanged(mAlias);
             };
-            mAliasActionListener = change -> aliasLookupConfigurationChanged(mAlias);
         }
 
         private void attach()
         {
-            mAlias.aliasIds().forEach(this::attach);
-            mAlias.aliasIds().addListener(mAliasIDListListener);
-            mAlias.aliasActions().addListener(mAliasActionListener);
+            attach(mAlias.getMatchIdentifier());
+            mAlias.matchIdentifierProperty().addListener(mMatchIdentifierListener);
             mAlias.aliasListNameProperty().addListener(mAliasListNameListener);
         }
 
         private void detach()
         {
-            mAlias.aliasIds().removeListener(mAliasIDListListener);
-            mAlias.aliasActions().removeListener(mAliasActionListener);
+            detach(mAlias.getMatchIdentifier());
+            mAlias.matchIdentifierProperty().removeListener(mMatchIdentifierListener);
             mAlias.aliasListNameProperty().removeListener(mAliasListNameListener);
-            mAlias.aliasIds().forEach(this::detach);
         }
 
         private void attach(AliasID aliasID)
@@ -763,7 +702,8 @@ public class AliasList
                 case TALKGROUP:
                     TalkgroupIdentifier talkgroup = (TalkgroupIdentifier)identifier;
 
-                    TalkgroupAliasList talkgroupAliasList = index.mTalkgroupProtocolMap.get(identifier.getProtocol());
+                    TalkgroupAliasList talkgroupAliasList =
+                        index.mTalkgroupProtocolMap.get(lookupProtocol(identifier.getProtocol()));
 
                     if(talkgroupAliasList != null)
                     {
@@ -777,7 +717,7 @@ public class AliasList
                     PatchGroup patchGroup = patchGroupIdentifier.getValue();
 
                     TalkgroupAliasList patchGroupAliasList =
-                        index.mTalkgroupProtocolMap.get(patchGroupIdentifier.getProtocol());
+                        index.mTalkgroupProtocolMap.get(lookupProtocol(patchGroupIdentifier.getProtocol()));
 
                     if(patchGroupAliasList != null)
                     {
@@ -801,7 +741,8 @@ public class AliasList
 
                     if(patchGroup.hasPatchedRadios())
                     {
-                        RadioAliasList radioAliasList = index.mRadioProtocolMap.get(patchGroupIdentifier.getProtocol());
+                        RadioAliasList radioAliasList =
+                            index.mRadioProtocolMap.get(lookupProtocol(patchGroupIdentifier.getProtocol()));
 
                         if(radioAliasList != null)
                         {
@@ -821,7 +762,8 @@ public class AliasList
                 case RADIO:
                     RadioIdentifier radio = (RadioIdentifier)identifier;
 
-                    RadioAliasList radioAliasList = index.mRadioProtocolMap.get(identifier.getProtocol());
+                    RadioAliasList radioAliasList =
+                        index.mRadioProtocolMap.get(lookupProtocol(identifier.getProtocol()));
 
                     if(radioAliasList != null)
                     {
@@ -893,116 +835,9 @@ public class AliasList
         return Collections.emptyList();
     }
 
-    /**
-     * Indicates if any of the identifiers contain a broadcast channel for streaming of audio.
-     * @param identifierCollection to inspect
-     * @return true if the identifier collection is designated for streaming to one or more channels.
-     */
-    public boolean isStreamable(IdentifierCollection identifierCollection)
+    private static Protocol lookupProtocol(Protocol protocol)
     {
-        for(Identifier<?> identifier: identifierCollection.getIdentifiers())
-        {
-            List<Alias> aliases = getAliases(identifier);
-
-            for(Alias alias: aliases)
-            {
-                if(alias != null && alias.isStreamable())
-                {
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    }
-
-    /**
-     * Indicates if any of the identifiers have been identified for recording.
-     * @param identifierCollection to inspect
-     * @return true if recordable.
-     */
-    public boolean isRecordable(IdentifierCollection identifierCollection)
-    {
-        for(Identifier<?> identifier: identifierCollection.getIdentifiers())
-        {
-            List<Alias> aliases = getAliases(identifier);
-
-            for(Alias alias: aliases)
-            {
-                if(alias != null && alias.isRecordable())
-                {
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    }
-
-    /**
-     * Indicates if any of the aliases in this list have an associated alias action
-     */
-    public boolean hasAliasActions()
-    {
-        return mLookupIndex.mHasAliasActions;
-    }
-
-    /**
-     * Returns the lowest audio playback priority specified by aliases for identifiers in the
-     * identifier collection.
-     *
-     * @param identifierCollection to inspect for audio priority
-     * @return audio playback priority
-     */
-    public int getAudioPlaybackPriority(IdentifierCollection identifierCollection)
-    {
-        int priority = Priority.DEFAULT_PRIORITY;
-
-        for(Identifier<?> identifier: identifierCollection.getIdentifiers())
-        {
-            List<Alias> aliases = getAliases(identifier);
-
-            for(Alias alias: aliases)
-            {
-                if(alias != null && alias.getPlaybackPriority() < priority)
-                {
-                    priority = alias.getPlaybackPriority();
-                }
-            }
-        }
-
-        return priority;
-    }
-
-    /**
-     * Returns a list of streaming broadcast channels specified for any of the identifiers in the collection.
-     *
-     * @return list of broadcast channels or an empty list
-     */
-    public List<BroadcastChannel> getBroadcastChannels(IdentifierCollection identifierCollection)
-    {
-        List<BroadcastChannel> channels = new ArrayList<>();
-
-        for(Identifier<?> identifier: identifierCollection.getIdentifiers())
-        {
-            List<Alias> aliases = getAliases(identifier);
-
-            for(Alias alias: aliases)
-            {
-                if(alias != null && alias.isStreamable())
-                {
-                    for(BroadcastChannel broadcastChannel: alias.getBroadcastChannels())
-                    {
-                        if(!channels.contains(broadcastChannel))
-                        {
-                            channels.add(broadcastChannel);
-                        }
-                    }
-                }
-            }
-        }
-
-        return channels;
+        return protocol == Protocol.APCO25_PHASE2 ? Protocol.APCO25 : protocol;
     }
 
     private class LookupIndex
@@ -1016,8 +851,6 @@ public class AliasList
         private final Map<Integer,Alias> mUnitStatusMap = new HashMap<>();
         private final Map<Integer,Alias> mUserStatusMap = new HashMap<>();
         private final Map<ToneSequence,Alias> mToneSequenceMap = new HashMap<>();
-        private boolean mHasAliasActions;
-
         private void prepare()
         {
             mTalkgroupProtocolMap.values().forEach(TalkgroupAliasList::prepare);
@@ -1082,13 +915,12 @@ public class AliasList
                 {
                     fqt.setOverlap(true);
 
-                    for(AliasID aliasID: existingFullyQualifiedTalkgroupAlias.getAliasIdentifiers())
+                    AliasID aliasID = existingFullyQualifiedTalkgroupAlias.getMatchIdentifier();
+
+                    if(aliasID instanceof P25FullyQualifiedTalkgroup existingFqt &&
+                        existingFqt.getHashKey().contentEquals(fqt.getHashKey()))
                     {
-                        if(aliasID instanceof P25FullyQualifiedTalkgroup existingFqt &&
-                                existingFqt.getHashKey().contentEquals(fqt.getHashKey()))
-                        {
-                            aliasID.setOverlap(true);
-                        }
+                        aliasID.setOverlap(true);
                     }
                 }
             }
@@ -1101,15 +933,14 @@ public class AliasList
                 {
                     talkgroup.setOverlap(true);
 
-                    for(AliasID aliasID: existingTalkgroupAlias.getAliasIdentifiers())
+                    AliasID aliasID = existingTalkgroupAlias.getMatchIdentifier();
+
+                    if(aliasID instanceof Talkgroup existingTalkgroup &&
+                        !(existingTalkgroup instanceof P25FullyQualifiedTalkgroup) &&
+                        lookupProtocol(existingTalkgroup.getProtocol()) == lookupProtocol(talkgroup.getProtocol()) &&
+                        existingTalkgroup.getValue() == talkgroup.getValue())
                     {
-                        if(aliasID instanceof Talkgroup existingTalkgroup &&
-                            !(existingTalkgroup instanceof P25FullyQualifiedTalkgroup) &&
-                            existingTalkgroup.getProtocol() == talkgroup.getProtocol() &&
-                            existingTalkgroup.getValue() == talkgroup.getValue())
-                        {
-                            aliasID.setOverlap(true);
-                        }
+                        aliasID.setOverlap(true);
                     }
                 }
 
@@ -1330,13 +1161,12 @@ public class AliasList
                 {
                     fqr.setOverlap(true);
 
-                    for(AliasID aliasID: existingFullyQualifiedRadioAlias.getAliasIdentifiers())
+                    AliasID aliasID = existingFullyQualifiedRadioAlias.getMatchIdentifier();
+
+                    if(aliasID instanceof P25FullyQualifiedRadio existingFqr &&
+                        existingFqr.getHashKey().contentEquals(fqr.getHashKey()))
                     {
-                        if(aliasID instanceof P25FullyQualifiedRadio existingFqr &&
-                                existingFqr.getHashKey().contentEquals(fqr.getHashKey()))
-                        {
-                            aliasID.setOverlap(true);
-                        }
+                        aliasID.setOverlap(true);
                     }
                 }
             }
@@ -1349,15 +1179,14 @@ public class AliasList
                 {
                     radio.setOverlap(true);
 
-                    for(AliasID aliasID: existingRadioAlias.getAliasIdentifiers())
+                    AliasID aliasID = existingRadioAlias.getMatchIdentifier();
+
+                    if(aliasID instanceof Radio existingRadio &&
+                        !(existingRadio instanceof P25FullyQualifiedRadio) &&
+                        lookupProtocol(existingRadio.getProtocol()) == lookupProtocol(radio.getProtocol()) &&
+                        existingRadio.getValue() == radio.getValue())
                     {
-                        if(aliasID instanceof Radio existingRadio &&
-                            !(existingRadio instanceof P25FullyQualifiedRadio) &&
-                            existingRadio.getProtocol() == radio.getProtocol() &&
-                            existingRadio.getValue() == radio.getValue())
-                        {
-                            aliasID.setOverlap(true);
-                        }
+                        aliasID.setOverlap(true);
                     }
                 }
 

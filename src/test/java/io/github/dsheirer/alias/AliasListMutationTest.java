@@ -42,7 +42,7 @@ class AliasListMutationTest
     @Test
     void exactAndRangeEditsPublishNewLookupsWithoutLeavingOldMatches()
     {
-        AliasList aliasList = new AliasList("test");
+        AliasList aliasList = p25AliasList();
         Talkgroup talkgroup = new Talkgroup(Protocol.APCO25, 100);
         Alias exactAlias = alias("exact", talkgroup);
         TalkgroupRange talkgroupRange = new TalkgroupRange(Protocol.APCO25, 200, 299);
@@ -78,7 +78,7 @@ class AliasListMutationTest
     @Test
     void fullyQualifiedEditsAndRemovalDoNotLeaveStaleMatches()
     {
-        AliasList aliasList = new AliasList("test");
+        AliasList aliasList = p25AliasList();
         P25FullyQualifiedTalkgroup talkgroup = new P25FullyQualifiedTalkgroup(1, 2, 300);
         Alias talkgroupAlias = alias("fq talkgroup", talkgroup);
         P25FullyQualifiedRadio radio = new P25FullyQualifiedRadio(4, 5, 600);
@@ -117,7 +117,7 @@ class AliasListMutationTest
     @Test
     void dcsAndStatusEditsUseTheirOwnMapsAndRemoveCleanly()
     {
-        AliasList aliasList = new AliasList("test");
+        AliasList aliasList = p25AliasList();
         Dcs dcs = new Dcs();
         dcs.setDCSCode(DCSCode.N023);
         Alias dcsAlias = alias("dcs", dcs);
@@ -157,7 +157,7 @@ class AliasListMutationTest
     @Test
     void collisionFlagsAreRecalculatedAfterEditAndDelete()
     {
-        AliasList aliasList = new AliasList("test");
+        AliasList aliasList = p25AliasList();
         Talkgroup firstTalkgroup = new Talkgroup(Protocol.APCO25, 100);
         Talkgroup secondTalkgroup = new Talkgroup(Protocol.APCO25, 100);
         Alias first = alias("first", firstTalkgroup);
@@ -185,12 +185,10 @@ class AliasListMutationTest
     @Test
     void rangeAndDcsCollisionFlagsAreRecalculated()
     {
-        AliasList aliasList = new AliasList("test");
+        AliasList aliasList = p25AliasList();
         TalkgroupRange firstRange = new TalkgroupRange(Protocol.APCO25, 100, 200);
-        TalkgroupRange nestedFirstRange = new TalkgroupRange(Protocol.APCO25, 110, 190);
         TalkgroupRange secondRange = new TalkgroupRange(Protocol.APCO25, 150, 250);
         Alias firstRangeAlias = alias("first range", firstRange);
-        firstRangeAlias.addAliasID(nestedFirstRange);
         Alias secondRangeAlias = alias("second range", secondRange);
         Dcs firstDcs = new Dcs();
         firstDcs.setDCSCode(DCSCode.N023);
@@ -201,7 +199,6 @@ class AliasListMutationTest
         aliasList.addAliases(List.of(firstRangeAlias, secondRangeAlias, firstDcsAlias, secondDcsAlias));
 
         assertTrue(firstRange.overlapProperty().get());
-        assertTrue(nestedFirstRange.overlapProperty().get());
         assertTrue(secondRange.overlapProperty().get());
         assertTrue(firstDcs.overlapProperty().get());
         assertTrue(secondDcs.overlapProperty().get());
@@ -211,7 +208,6 @@ class AliasListMutationTest
         secondRange.setMaxTalkgroup(400);
         secondDcs.setDCSCode(DCSCode.N025);
         assertFalse(firstRange.overlapProperty().get());
-        assertFalse(nestedFirstRange.overlapProperty().get());
         assertFalse(secondRange.overlapProperty().get());
         assertFalse(firstDcs.overlapProperty().get());
         assertFalse(secondDcs.overlapProperty().get());
@@ -222,7 +218,7 @@ class AliasListMutationTest
     @Test
     void fullyQualifiedAndDcsCollisionRemovalRevealsTheSurvivingAlias()
     {
-        AliasList aliasList = new AliasList("test");
+        AliasList aliasList = p25AliasList();
         P25FullyQualifiedTalkgroup firstTalkgroup = new P25FullyQualifiedTalkgroup(1, 2, 300);
         P25FullyQualifiedTalkgroup secondTalkgroup = new P25FullyQualifiedTalkgroup(1, 2, 300);
         Alias firstTalkgroupAlias = alias("first fq talkgroup", firstTalkgroup);
@@ -265,17 +261,22 @@ class AliasListMutationTest
     void movingAliasBetweenCachedModelListsUpdatesBothSnapshots()
     {
         AliasModel model = new AliasModel();
+        AliasListDefinition firstDefinition =
+            new AliasListDefinition("first", "System", AliasListFamily.P25);
+        AliasListDefinition secondDefinition =
+            new AliasListDefinition("second", "System", AliasListFamily.P25);
+        model.setAliasListDefinitions(List.of(firstDefinition, secondDefinition));
         AliasList firstList = model.getAliasList("first");
         AliasList secondList = model.getAliasList("second");
         Talkgroup talkgroup = new Talkgroup(Protocol.APCO25, 100);
         Alias alias = alias("moving", talkgroup);
-        alias.setAliasListName("first");
+        alias.setAliasListDefinition(firstDefinition);
         model.addAlias(alias);
 
         assertSame(alias, only(firstList.getAliases(APCO25Talkgroup.create(100))));
         assertTrue(secondList.getAliases(APCO25Talkgroup.create(100)).isEmpty());
 
-        alias.setAliasListName("second");
+        alias.setAliasListDefinition(secondDefinition);
         assertTrue(firstList.getAliases(APCO25Talkgroup.create(100)).isEmpty());
         assertSame(alias, only(secondList.getAliases(APCO25Talkgroup.create(100))));
 
@@ -286,8 +287,13 @@ class AliasListMutationTest
     private static Alias alias(String name, io.github.dsheirer.alias.id.AliasID aliasID)
     {
         Alias alias = new Alias(name);
-        alias.addAliasID(aliasID);
+        alias.setMatchIdentifier(aliasID);
         return alias;
+    }
+
+    private static AliasList p25AliasList()
+    {
+        return new AliasList(new AliasListDefinition("test", "test", AliasListFamily.P25));
     }
 
     private static Alias only(List<Alias> aliases)

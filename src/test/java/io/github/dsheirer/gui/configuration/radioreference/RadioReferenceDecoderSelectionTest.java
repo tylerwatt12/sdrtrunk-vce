@@ -17,6 +17,8 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.alias.Alias;
+import io.github.dsheirer.alias.AliasListDefinition;
+import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
 import io.github.dsheirer.module.decode.dmr.DMRChannelMode;
@@ -121,11 +123,17 @@ class RadioReferenceDecoderSelectionTest
 
         RadioReferenceDecoder decoder = new RadioReferenceDecoder(null, Map.of(type.getTypeId(), type),
             Map.of(flavor.getFlavorId(), flavor), Map.of(voice.getVoiceId(), voice), Map.of());
-        Alias alias = decoder.createAlias(talkgroup, system, "Ohio MARCS-IP", "Law Dispatch");
+        AliasListDefinition definition =
+            new AliasListDefinition("Ohio MARCS-IP", "Ohio MARCS-IP", AliasListFamily.P25);
+        definition.setId(42);
+        Alias alias = decoder.createAlias(talkgroup, system, definition, "Law Dispatch");
 
         assertEquals("LORAIN DISP", alias.getName());
         assertEquals("Lorain County dispatch", alias.getDescription());
+        assertEquals(42, alias.getAliasListId());
         assertEquals("Ohio MARCS-IP", alias.getAliasListName());
+        assertInstanceOf(io.github.dsheirer.alias.id.talkgroup.Talkgroup.class,
+            alias.getMatchIdentifier());
         assertEquals("Law Dispatch", alias.getGroup());
     }
 

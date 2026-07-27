@@ -19,11 +19,11 @@
 
 package io.github.dsheirer.gui.configuration.channel;
 
-import io.github.dsheirer.alias.AliasModel;
+import io.github.dsheirer.alias.AliasListDefinition;
+import io.github.dsheirer.alias.AliasMatchRegistry;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.ChannelException;
 import io.github.dsheirer.eventbus.MyEventBus;
-import io.github.dsheirer.gui.control.MaxLengthUnaryOperator;
 import io.github.dsheirer.gui.configuration.Editor;
 import io.github.dsheirer.gui.preference.PreferenceEditorType;
 import io.github.dsheirer.gui.preference.ViewUserPreferenceEditorRequest;
@@ -41,13 +41,11 @@ import io.github.dsheirer.stats.activity.StatsDatabaseMaintenanceRequest;
 import io.github.dsheirer.util.ThreadPool;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.function.Predicate;
 import javafx.application.Platform;
 import javafx.beans.value.ChangeListener;
 import javafx.beans.value.ObservableValue;
 import javafx.collections.transformation.FilteredList;
 import javafx.event.ActionEvent;
-import javafx.event.EventHandler;
 import javafx.geometry.HPos;
 import javafx.geometry.Insets;
 import javafx.scene.control.Alert;
@@ -60,8 +58,6 @@ import javafx.scene.control.ScrollPane;
 import javafx.scene.control.Spinner;
 import javafx.scene.control.SpinnerValueFactory;
 import javafx.scene.control.TextField;
-import javafx.scene.control.TextFormatter;
-import javafx.scene.control.TextInputDialog;
 import javafx.scene.control.Tooltip;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
@@ -91,7 +87,7 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
     private TextField mNameField;
     private TextField mRadresGuidField;
     private ComboBox<String> mAliasListComboBox;
-    private Button mNewAliasListButton;
+    private FilteredList<String> mCompatibleAliasLists;
     private GridPane mTextFieldPane;
     private Button mSaveButton;
     private Button mResetButton;
@@ -194,7 +190,6 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
         getNameField().setDisable(disable);
         getRadresGuidField().setDisable(disable || channel.isProcessing());
         getAliasListComboBox().setDisable(disable);
-        getNewAliasListButton().setDisable(disable);
         getAutoStartSwitch().setDisable(disable);
         updateClearSiteStatisticsButtonState();
 
@@ -204,15 +199,11 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
             getSiteField().setText(channel.getSite());
             getNameField().setText(channel.getName());
             getRadresGuidField().setText(channel.getRadresGuid());
+            updateAliasListCompatibility();
             String aliasListName = channel.getAliasListName();
 
-            if(aliasListName != null)
+            if(aliasListName != null && getAliasListComboBox().getItems().contains(aliasListName))
             {
-                if(!getAliasListComboBox().getItems().contains(aliasListName))
-                {
-                    mConfigurationManager.getAliasModel().addAliasList(aliasListName);
-                }
-
                 getAliasListComboBox().getSelectionModel().select(aliasListName);
             }
             else
@@ -274,6 +265,7 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
         }
 
         modifiedProperty().setValue(false);
+        updateAliasListCompatibility();
     }
 
     @Override
@@ -285,6 +277,8 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
             {
                 return;
             }
+
+            updateAliasListCompatibility();
 
             getItem().setSystem(getSystemField().getText());
             getItem().setSite(getSiteField().getText());
@@ -314,6 +308,7 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
             saveSourceConfiguration();
 
             modifiedProperty().set(false);
+            updateAliasListCompatibility();
             updateClearSiteStatisticsButtonState();
         }
     }
@@ -599,17 +594,14 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
             GridPane.setHgrow(getNameField(), Priority.ALWAYS);
             mTextFieldPane.getChildren().add(getNameField());
 
-            Label aliasListLabel = new Label("Alias List");
+            Label aliasListLabel = new Label("Alias List (Optional)");
             GridPane.setHalignment(aliasListLabel, HPos.RIGHT);
             GridPane.setConstraints(aliasListLabel, 2, row);
             mTextFieldPane.getChildren().add(aliasListLabel);
 
-            GridPane.setConstraints(getAliasListComboBox(), 3, row);
+            GridPane.setConstraints(getAliasListComboBox(), 3, row, 2, 1);
             GridPane.setHgrow(getAliasListComboBox(), Priority.ALWAYS);
             mTextFieldPane.getChildren().add(getAliasListComboBox());
-
-            GridPane.setConstraints(getNewAliasListButton(), 4, row);
-            mTextFieldPane.getChildren().add(getNewAliasListButton());
 
             Label radresGuidLabel = new Label("Site GUID");
             GridPane.setHalignment(radresGuidLabel, HPos.RIGHT);
@@ -632,6 +624,8 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
             mSystemField.setDisable(true);
             mSystemField.setMaxWidth(Double.MAX_VALUE);
             mSystemField.textProperty().addListener(mEditorModificationListener);
+            mSystemField.textProperty().addListener((observable, oldValue, newValue) ->
+                updateAliasListCompatibility());
         }
 
         return mSystemField;
@@ -711,53 +705,64 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
     {
         if(mAliasListComboBox == null)
         {
-            Predicate<String> filterPredicate = s -> !s.contentEquals(AliasModel.NO_ALIAS_LIST);
-            FilteredList<String> filteredChannelList =
-                new FilteredList<>(mConfigurationManager.getAliasModel().aliasListNames(), filterPredicate);
-            mAliasListComboBox = new ComboBox<>(filteredChannelList);
+            mCompatibleAliasLists =
+                new FilteredList<>(mConfigurationManager.getAliasModel().aliasListNames());
+            mAliasListComboBox = new ComboBox<>(mCompatibleAliasLists);
             mAliasListComboBox.setPrefWidth(150);
             mAliasListComboBox.setDisable(true);
             mAliasListComboBox.setEditable(false);
             mAliasListComboBox.setMaxWidth(Double.MAX_VALUE);
-            mAliasListComboBox.setOnAction(event -> modifiedProperty().set(true));
+            mAliasListComboBox.setOnAction(event -> {
+                modifiedProperty().set(true);
+                updateAliasListCompatibility();
+            });
         }
 
         return mAliasListComboBox;
     }
 
-    private Button getNewAliasListButton()
+    private AliasListDefinition getAliasListDefinition(String name)
     {
-        if(mNewAliasListButton == null)
+        if(name == null)
         {
-            mNewAliasListButton = new Button("New Alias List");
-            mNewAliasListButton.setDisable(true);
-            mNewAliasListButton.setOnAction(new EventHandler<ActionEvent>()
-            {
-                @Override
-                public void handle(ActionEvent event)
-                {
-                    TextInputDialog dialog = new TextInputDialog();
-                    dialog.setTitle("Create New Alias List");
-                    dialog.setHeaderText("Please enter an alias list name (max 25 chars).");
-                    dialog.setContentText("Name:");
-                    dialog.getEditor().setTextFormatter(new TextFormatter<String>(new MaxLengthUnaryOperator(25)));
-                    Optional<String> result = dialog.showAndWait();
-
-                    result.ifPresent(s -> {
-                        String name = result.get();
-
-                        if(name != null && !name.isEmpty())
-                        {
-                            name = name.trim();
-                            mConfigurationManager.getAliasModel().addAliasList(name);
-                            getAliasListComboBox().getSelectionModel().select(name);
-                        }
-                    });
-                }
-            });
+            return null;
         }
 
-        return mNewAliasListButton;
+        return mConfigurationManager.getAliasModel().getAliasListDefinition(name);
+    }
+
+    private boolean isAliasListCompatible(String name)
+    {
+        AliasListDefinition definition = getAliasListDefinition(name);
+        Channel channel = getItem();
+
+        if(definition == null || channel == null || channel.getDecodeConfiguration() == null)
+        {
+            return false;
+        }
+
+        String channelSystem = getSystemField().getText();
+        String listSystem = definition.getSystemName();
+        boolean sameSystem = channelSystem != null && listSystem != null &&
+            channelSystem.trim().equalsIgnoreCase(listSystem.trim());
+        return sameSystem && AliasMatchRegistry.familyFor(
+            channel.getDecodeConfiguration().getDecoderType()) == definition.getFamily();
+    }
+
+    private void updateAliasListCompatibility()
+    {
+        if(mCompatibleAliasLists == null || mAliasListComboBox == null)
+        {
+            return;
+        }
+
+        mCompatibleAliasLists.setPredicate(name -> name != null && isAliasListCompatible(name));
+
+        String selected = mAliasListComboBox.getSelectionModel().getSelectedItem();
+        if(selected != null && !isAliasListCompatible(selected))
+        {
+            mAliasListComboBox.getSelectionModel().clearSelection();
+        }
     }
 
     private VBox getButtonBox()

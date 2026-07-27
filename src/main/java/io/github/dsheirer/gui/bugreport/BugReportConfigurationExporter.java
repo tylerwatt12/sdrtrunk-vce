@@ -28,13 +28,9 @@ public class BugReportConfigurationExporter
 {
     private static final List<String> CONFIGURATION_TABLES = List.of(
         "database_metadata",
+        "alias_list",
         "alias",
         "alias_broadcast_channel",
-        "alias_talkgroup",
-        "alias_radio",
-        "alias_status",
-        "alias_tone_sequence",
-        "alias_text_identifier",
         "alias_action",
         "configuration_channel",
         "configuration_channel_map",

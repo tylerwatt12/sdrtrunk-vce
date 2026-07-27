@@ -217,7 +217,7 @@ public class P25P1Viewer extends VBox
                     }
                 });
 
-                P25P1AudioModule audioModule = new P25P1AudioModule(mUserPreferences, new AliasList("debug"));
+                P25P1AudioModule audioModule = new P25P1AudioModule(mUserPreferences, AliasList.empty("debug"));
                 decoderState.setIdentifierUpdateListener(audioModule.getIdentifierUpdateListener());
                 audioModule.setAudioCallEventListener(messagePackager::add);
                 messageBroadcaster.addListener(audioModule);

@@ -20,8 +20,8 @@
 package io.github.dsheirer.gui.configuration.alias;
 
 import io.github.dsheirer.alias.Alias;
-import io.github.dsheirer.alias.AliasIdentifierPolicy;
-import io.github.dsheirer.alias.AliasModel;
+import io.github.dsheirer.alias.AliasListDefinition;
+import io.github.dsheirer.alias.AliasMatchRegistry;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.AliasIDType;
 import io.github.dsheirer.eventbus.MyEventBus;
@@ -49,8 +49,6 @@ import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
 import javafx.util.Callback;
 
-import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.function.Predicate;
 
@@ -124,12 +122,11 @@ public class AliasViewByIdentifierEditor extends VBox
 
         for(Alias alias: aliases)
         {
-            for(AliasID aliasID: alias.getAliasIdentifiers())
+            AliasID aliasID = alias.getMatchIdentifier();
+
+            if(aliasID != null && aliasID.getType() == type)
             {
-                if(aliasID.getType() == type && AliasIdentifierPolicy.isUserVisible(aliasID))
-                {
-                    getAliasAndIdentifierTableView().getItems().add(new AliasAndIdentifier(alias, aliasID));
-                }
+                getAliasAndIdentifierTableView().getItems().add(new AliasAndIdentifier(alias, aliasID));
             }
         }
 
@@ -229,20 +226,51 @@ public class AliasViewByIdentifierEditor extends VBox
     {
         if(mAliasListNameComboBox == null)
         {
-            Predicate<String> filterPredicate = s -> !s.contentEquals(AliasModel.NO_ALIAS_LIST);
-            FilteredList<String> filteredChannelList =
-                new FilteredList<>(mConfigurationManager.getAliasModel().aliasListNames(), filterPredicate);
-            mAliasListNameComboBox = new ComboBox<>(filteredChannelList);
+            mAliasListNameComboBox =
+                new ComboBox<>(mConfigurationManager.getAliasModel().aliasListNames());
             mAliasListNameComboBox.setPadding(new Insets(0,10,0,0));
             if(mAliasListNameComboBox.getItems().size() > 0)
             {
                 mAliasListNameComboBox.getSelectionModel().select(0);
             }
             mAliasListNameComboBox.getSelectionModel().selectedItemProperty()
-                .addListener((observable, oldValue, newValue) -> updateList());
+                .addListener((observable, oldValue, newValue) -> {
+                    refreshIdentifierTypes();
+                    updateList();
+                });
+            refreshIdentifierTypes();
         }
 
         return mAliasListNameComboBox;
+    }
+
+    private void refreshIdentifierTypes()
+    {
+        if(mAliasIDTypeComboBox == null)
+        {
+            getAliasIDTypeComboBox();
+        }
+
+        AliasIDType selected = mAliasIDTypeComboBox.getSelectionModel().getSelectedItem();
+        AliasListDefinition definition = mConfigurationManager.getAliasModel().getAliasListDefinition(
+            mAliasListNameComboBox != null ?
+                mAliasListNameComboBox.getSelectionModel().getSelectedItem() : null);
+        List<AliasIDType> values = AliasMatchRegistry.allowed(definition).stream()
+            .map(descriptor -> descriptor.type())
+            .filter(AliasIDType.VIEW_BY_VALUES::contains)
+            .distinct()
+            .sorted((left, right) -> left.toString().compareTo(right.toString()))
+            .toList();
+        mAliasIDTypeComboBox.getItems().setAll(values);
+
+        if(selected != null && values.contains(selected))
+        {
+            mAliasIDTypeComboBox.getSelectionModel().select(selected);
+        }
+        else if(!values.isEmpty())
+        {
+            mAliasIDTypeComboBox.getSelectionModel().selectFirst();
+        }
     }
 
     private ComboBox<AliasIDType> getAliasIDTypeComboBox()
@@ -250,15 +278,6 @@ public class AliasViewByIdentifierEditor extends VBox
         if(mAliasIDTypeComboBox == null)
         {
             mAliasIDTypeComboBox = new ComboBox<>();
-            List<AliasIDType> values = new ArrayList<>(AliasIDType.VIEW_BY_VALUES);
-            Collections.sort(values, (o1, o2) -> o1.toString().compareTo(o2.toString()));
-            mAliasIDTypeComboBox.getItems().addAll(values);
-
-            if(mAliasIDTypeComboBox.getItems().size() > 0)
-            {
-                mAliasIDTypeComboBox.getSelectionModel().select(AliasIDType.TALKGROUP);
-            }
-
             mAliasIDTypeComboBox.getSelectionModel().selectedItemProperty()
                 .addListener((observable, oldValue, newValue) -> updateList());
         }

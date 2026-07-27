@@ -21,7 +21,9 @@
  */
 package io.github.dsheirer.configuration;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import io.github.dsheirer.alias.Alias;
+import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.controller.channel.Channel;
 
@@ -30,26 +32,10 @@ import java.util.List;
 
 public class ConfigurationState
 {
-    private int mVersion = ConfigurationManager.CONFIGURATION_CURRENT_VERSION;
     private List<Alias> mAliases = new ArrayList<>();
+    private List<AliasListDefinition> mAliasListDefinitions = new ArrayList<>();
     private List<BroadcastConfiguration> mBroadcastConfigurations = new ArrayList<>();
     private List<Channel> mChannels = new ArrayList<>();
-
-    /**
-     * Version number for this configuration state.
-     */
-    public int getVersion()
-    {
-        return mVersion;
-    }
-
-    /**
-     * Sets the version for this configuration state.
-     */
-    public void setVersion(int version)
-    {
-        mVersion = version;
-    }
 
     public List<Alias> getAliases()
     {
@@ -59,6 +45,21 @@ public class ConfigurationState
     public void setAliases(List<Alias> aliases)
     {
         mAliases = aliases;
+    }
+
+    /**
+     * Durable alias-list identities and their system capabilities.  This is populated by SQLite and legacy-import
+     * boundaries; it is deliberately excluded from the legacy playlist XML shape.
+     */
+    @JsonIgnore
+    public List<AliasListDefinition> getAliasListDefinitions()
+    {
+        return mAliasListDefinitions;
+    }
+
+    public void setAliasListDefinitions(List<AliasListDefinition> aliasListDefinitions)
+    {
+        mAliasListDefinitions = aliasListDefinitions != null ? aliasListDefinitions : new ArrayList<>();
     }
 
     public List<Channel> getChannels()

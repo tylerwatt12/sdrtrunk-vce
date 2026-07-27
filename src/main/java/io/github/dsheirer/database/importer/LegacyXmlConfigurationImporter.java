@@ -23,18 +23,25 @@ import com.fasterxml.jackson.dataformat.xml.XmlMapper;
 import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlRootElement;
 import io.github.dsheirer.alias.Alias;
+import io.github.dsheirer.alias.AliasFactory;
 import io.github.dsheirer.alias.action.AliasAction;
 import io.github.dsheirer.alias.action.AliasActionType;
+import io.github.dsheirer.alias.id.AliasID;
+import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
+import io.github.dsheirer.alias.id.legacy.nonrecordable.NonRecordable;
+import io.github.dsheirer.alias.id.priority.Priority;
+import io.github.dsheirer.alias.id.record.Record;
+import io.github.dsheirer.alias.id.talkgroup.StreamAsTalkgroup;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
-import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.configuration.ConfigurationState;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.database.DatabaseFileInstaller;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.database.alias.AliasDatabaseStore;
 import io.github.dsheirer.database.configuration.ConfigurationDatabaseStore;
+import io.github.dsheirer.database.configuration.ConfigurationSnapshotDatabaseStore;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.module.decode.p25.phase1.Modulation;
@@ -93,7 +100,7 @@ public class LegacyXmlConfigurationImporter
         return Optional.empty();
     }
 
-    public static ImportResult importPlaylist(Path sourceXml, Path databasePath) throws IOException, SQLException
+    public static void importPlaylist(Path sourceXml, Path databasePath) throws IOException, SQLException
     {
         Path normalizedXml = sourceXml.toAbsolutePath().normalize();
         Path normalizedDatabase = databasePath.toAbsolutePath().normalize();
@@ -109,16 +116,13 @@ public class LegacyXmlConfigurationImporter
         }
 
         ConfigurationState state = readConfigurationState(normalizedXml);
-        int p25ConventionalConversions = convertLikelyConventionalP25Channels(state);
+        convertLikelyConventionalP25Channels(state);
         DatabaseFileInstaller.install(normalizedDatabase, temporaryDatabase -> {
             SdrTrunkDatabaseStartup.createGlobalDatabase(temporaryDatabase);
-            new AliasDatabaseStore(temporaryDatabase).replaceAliases(state.getAliases());
-            new ConfigurationDatabaseStore(temporaryDatabase).replaceConfigurationState(state);
+            new ConfigurationSnapshotDatabaseStore(temporaryDatabase).replace(state);
             validateMigration(temporaryDatabase, state);
         });
 
-        return new ImportResult(normalizedXml, normalizedDatabase, state.getAliases().size(),
-            state.getBroadcastConfigurations().size(), state.getChannels().size(), p25ConventionalConversions);
     }
 
     public static ConfigurationState readConfigurationState(Path sourceXml) throws IOException
@@ -127,17 +131,29 @@ public class LegacyXmlConfigurationImporter
         {
             XmlPlaylist playlist = xmlMapper().readValue(inputStream, XmlPlaylist.class);
             ConfigurationState state = new ConfigurationState();
-            state.setVersion(ConfigurationManager.CONFIGURATION_CURRENT_VERSION);
-            state.setAliases(nonNull(playlist.getAliases()));
-            state.getAliases().forEach(alias ->
-                alias.setAliasActions(alias.getAliasActions().stream()
-                    .filter(action -> !(action instanceof RetiredAliasAction)).toList()));
+            state.setAliases(convertAliases(nonNull(playlist.getAliases())));
             state.setBroadcastConfigurations(nonNull(playlist.getBroadcastConfigurations()));
             state.setChannels(new ArrayList<>(nonNull(playlist.getChannels()).stream()
                 .filter(channel -> !ChannelConfigurationPolicy.isRetired(channel))
                 .toList()));
+            AliasListDefinitionResolver.normalizeLegacyState(state);
             return state;
         }
+    }
+
+    private static List<Alias> convertAliases(List<LegacyAlias> legacyAliases)
+    {
+        List<Alias> aliases = new ArrayList<>();
+
+        for(LegacyAlias legacyAlias: legacyAliases)
+        {
+            if(legacyAlias != null)
+            {
+                aliases.addAll(legacyAlias.toAliases());
+            }
+        }
+
+        return aliases;
     }
 
     private static ObjectMapper xmlMapper()
@@ -206,16 +222,14 @@ public class LegacyXmlConfigurationImporter
         {
             if(alias != null && alias.matchesAliasList(aliasListName))
             {
-                for(var aliasIdentifier: alias.getAliasIdentifiers())
+                if(alias.getMatchIdentifier() instanceof Talkgroup talkgroup &&
+                    talkgroup.getProtocol() == Protocol.APCO25)
                 {
-                    if(aliasIdentifier instanceof Talkgroup talkgroup && talkgroup.getProtocol() == Protocol.APCO25)
-                    {
-                        talkgroups.add(talkgroup.getValue());
+                    talkgroups.add(talkgroup.getValue());
 
-                        if(talkgroups.size() >= P25_TRUNKED_TALKGROUP_COUNT)
-                        {
-                            return talkgroups.size();
-                        }
+                    if(talkgroups.size() >= P25_TRUNKED_TALKGROUP_COUNT)
+                    {
+                        return talkgroups.size();
                     }
                 }
             }
@@ -226,7 +240,9 @@ public class LegacyXmlConfigurationImporter
 
     private static void validateMigration(Path databasePath, ConfigurationState expected) throws IOException, SQLException
     {
-        List<Alias> aliases = new AliasDatabaseStore(databasePath).loadAliases();
+        AliasDatabaseStore aliasStore = new AliasDatabaseStore(databasePath);
+        var definitions = aliasStore.loadAliasListDefinitions();
+        List<Alias> aliases = aliasStore.loadAliases(definitions);
         ConfigurationState actual = new ConfigurationDatabaseStore(databasePath).loadConfigurationState();
 
         int expectedIdentifierCount = countAliasIdentifiers(expected.getAliases());
@@ -234,24 +250,29 @@ public class LegacyXmlConfigurationImporter
         int expectedActionCount = countAliasActions(expected.getAliases());
         int actualActionCount = countAliasActions(aliases);
 
-        if(aliases.size() != expected.getAliases().size() || actualIdentifierCount != expectedIdentifierCount ||
+        boolean identitiesValid = aliases.stream().allMatch(alias -> alias.getId() > 0 && alias.getAliasListId() > 0);
+
+        if(definitions.size() != expected.getAliasListDefinitions().size() ||
+            aliases.size() != expected.getAliases().size() || actualIdentifierCount != expectedIdentifierCount ||
             actualActionCount != expectedActionCount ||
             actual.getBroadcastConfigurations().size() != expected.getBroadcastConfigurations().size() ||
-            actual.getChannels().size() != expected.getChannels().size())
+            actual.getChannels().size() != expected.getChannels().size() || !identitiesValid)
         {
-            throw new IOException("Migrated SQLite validation failed: expected aliases=" + expected.getAliases().size() +
+            throw new IOException("Migrated SQLite validation failed: expected aliasLists=" +
+                expected.getAliasListDefinitions().size() + " aliases=" + expected.getAliases().size() +
                 " aliasIdentifiers=" + expectedIdentifierCount + " aliasActions=" + expectedActionCount +
                 " streams=" + expected.getBroadcastConfigurations().size() + " channels=" +
                 expected.getChannels().size() +
-                " but loaded aliases=" + aliases.size() + " aliasIdentifiers=" + actualIdentifierCount +
+                " but loaded aliasLists=" + definitions.size() + " aliases=" + aliases.size() +
+                " aliasIdentifiers=" + actualIdentifierCount +
                 " aliasActions=" + actualActionCount + " streams=" + actual.getBroadcastConfigurations().size() +
-                " channels=" + actual.getChannels().size());
+                " channels=" + actual.getChannels().size() + " identitiesValid=" + identitiesValid);
         }
     }
 
     private static int countAliasIdentifiers(List<Alias> aliases)
     {
-        return aliases.stream().mapToInt(alias -> alias.getAliasIdentifiers().size()).sum();
+        return (int)aliases.stream().filter(alias -> alias.getMatchIdentifier() != null).count();
     }
 
     private static int countAliasActions(List<Alias> aliases)
@@ -259,37 +280,20 @@ public class LegacyXmlConfigurationImporter
         return aliases.stream().mapToInt(alias -> alias.getAliasActions().size()).sum();
     }
 
-    public record ImportResult(Path sourceXml, Path database, int aliasCount, int streamCount, int channelCount,
-                               int p25ConventionalConversions)
-    {
-    }
-
     @JacksonXmlRootElement(localName = "playlist")
     private static class XmlPlaylist
     {
-        private int mVersion = ConfigurationManager.CONFIGURATION_CURRENT_VERSION;
-        private List<Alias> mAliases = new ArrayList<>();
+        private List<LegacyAlias> mAliases = new ArrayList<>();
         private List<BroadcastConfiguration> mBroadcastConfigurations = new ArrayList<>();
         private List<Channel> mChannels = new ArrayList<>();
 
-        @JacksonXmlProperty(isAttribute = true, localName = "version")
-        public int getVersion()
-        {
-            return mVersion;
-        }
-
-        public void setVersion(int version)
-        {
-            mVersion = version;
-        }
-
         @JacksonXmlProperty(isAttribute = false, localName = "alias")
-        public List<Alias> getAliases()
+        public List<LegacyAlias> getAliases()
         {
             return mAliases;
         }
 
-        public void setAliases(List<Alias> aliases)
+        public void setAliases(List<LegacyAlias> aliases)
         {
             mAliases = aliases;
         }
@@ -314,6 +318,75 @@ public class LegacyXmlConfigurationImporter
         public void setChannels(List<Channel> channels)
         {
             mChannels = channels;
+        }
+    }
+
+    /**
+     * Import-only representation of the old XML alias shape. It is converted immediately to one plain Alias for each
+     * match entry, so the runtime model never needs a multi-identifier compatibility buffer.
+     */
+    private static class LegacyAlias
+    {
+        @JacksonXmlProperty(isAttribute = true, localName = "name")
+        private String mName;
+        @JacksonXmlProperty(isAttribute = true, localName = "list")
+        private String mAliasListName;
+        @JacksonXmlProperty(isAttribute = true, localName = "description")
+        private String mDescription;
+        @JacksonXmlProperty(isAttribute = true, localName = "group")
+        private String mGroup;
+        @JacksonXmlProperty(isAttribute = true, localName = "color")
+        private int mColor;
+        @JacksonXmlProperty(isAttribute = true, localName = "iconName")
+        private String mIconName;
+        @JacksonXmlProperty(isAttribute = true, localName = "stream_talkgroup_alias")
+        private StreamAsTalkgroup mStreamTalkgroupAlias;
+        @JacksonXmlProperty(isAttribute = false, localName = "id")
+        private List<AliasID> mIdentifiers = new ArrayList<>();
+        @JacksonXmlProperty(isAttribute = false, localName = "action")
+        private List<AliasAction> mActions = new ArrayList<>();
+
+        private List<Alias> toAliases()
+        {
+            Alias template = new Alias(mName);
+            template.setAliasListName(mAliasListName);
+            template.setDescription(mDescription);
+            template.setGroup(mGroup);
+            template.setColor(mColor);
+            template.setIconName(mIconName);
+            template.setStreamTalkgroupAlias(mStreamTalkgroupAlias);
+            template.setAliasActions(nonNull(mActions).stream()
+                .filter(action -> !(action instanceof RetiredAliasAction)).toList());
+            List<AliasID> matchers = new ArrayList<>();
+
+            for(AliasID identifier: nonNull(mIdentifiers))
+            {
+                switch(identifier)
+                {
+                    case BroadcastChannel broadcastChannel -> template.addBroadcastChannel(broadcastChannel);
+                    case Record ignored -> template.setRecordable(true);
+                    case Priority priority -> template.setCallPriority(priority.getPriority());
+                    case NonRecordable ignored -> template.setRecordable(false);
+                    case StreamAsTalkgroup streamAsTalkgroup -> template.setStreamTalkgroupAlias(streamAsTalkgroup);
+                    default -> matchers.add(identifier);
+                }
+            }
+
+            List<Alias> aliases = new ArrayList<>(matchers.size());
+
+            if(matchers.isEmpty())
+            {
+                return List.of(template);
+            }
+
+            for(int index = 0; index < matchers.size(); index++)
+            {
+                Alias alias = index == 0 ? template : AliasFactory.copyOf(template);
+                alias.setMatchIdentifier(matchers.get(index));
+                aliases.add(alias);
+            }
+
+            return aliases;
         }
     }
 

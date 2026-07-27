@@ -6,6 +6,7 @@
 package io.github.dsheirer.gui.bugreport;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -69,6 +70,9 @@ class BugReportConfigurationExporterTest
         assertEquals(BugReportRedactor.REDACTED,
             preferences.at("/user~1test/vault.saved.password").textValue());
         assertEquals("kept", preferences.at("/user~1test/normal").textValue());
+        assertTrue(snapshot.containsKey("alias_list"));
         assertTrue(snapshot.containsKey("alias"));
+        assertFalse(snapshot.containsKey("alias_talkgroup"));
+        assertFalse(snapshot.containsKey("alias_radio"));
     }
 }

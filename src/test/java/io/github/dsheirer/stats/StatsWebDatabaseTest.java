@@ -1436,17 +1436,18 @@ class StatsWebDatabaseTest
                 VALUES (1, 2001, 0, 0, NULL, 1811332, 2, 856137500, 0)
                 """);
             statement.executeUpdate("""
-                INSERT INTO alias (id, sort_order, name, alias_list_name, group_name, color)
-                VALUES (1, 0, 'Dispatch', 'County', 'Law Dispatch', 255),
-                       (2, 0, 'Engine 1', 'County', 'Fire', 65280)
+                INSERT INTO alias_list
+                    (id, name, system_name, family)
+                VALUES (1, 'County', 'County', 'P25')
                 """);
             statement.executeUpdate("""
-                INSERT INTO alias_talkgroup (alias_id, sort_order, protocol, value, fully_qualified, ranged)
-                VALUES (1, 0, 'APCO25', 56132, 0, 0)
-                """);
-            statement.executeUpdate("""
-                INSERT INTO alias_radio (alias_id, sort_order, protocol, value, fully_qualified, ranged)
-                VALUES (2, 0, 'APCO25', 1811332, 0, 0)
+                INSERT INTO alias (
+                    id, alias_list_id, name, group_name, color, matcher_type, protocol, value
+                )
+                VALUES (1, 1, 'Dispatch', 'Law Dispatch', 255,
+                            'TALKGROUP', 'APCO25', 56132),
+                       (2, 1, 'Engine 1', 'Fire', 65280,
+                            'RADIO_ID', 'APCO25', 1811332)
                 """);
             statement.executeUpdate("""
                 INSERT INTO receiver_context (id, context_key, guid, kind_code, protocol_code, channel_name,
@@ -1499,25 +1500,27 @@ class StatsWebDatabaseTest
                          (6, 461012500, 1, 123456, 1000, 6000, 999, 999, 0, 999, 0, 0, 91, 234567)
                 """);
             statement.executeUpdate("""
-                INSERT INTO alias (id, sort_order, name, alias_list_name, group_name, color)
-                VALUES (100, 100, 'DMR Dispatch', 'County DMR', 'Fire Dispatch', 255),
-                       (101, 101, 'DMR Operations', 'County DMR', 'Fire Operations', 255),
-                       (102, 102, 'DMR Engine 1', 'County DMR', 'Fire Units', 65280),
-                       (103, 103, 'DMR Engine 2', 'County DMR', 'Fire Units', 65280),
-                       (104, 104, 'Other Dispatch', 'Other DMR', 'Other Dispatch', 255),
-                       (105, 105, 'Other Engine', 'Other DMR', 'Other Units', 65280)
+                INSERT INTO alias_list
+                    (id, name, system_name, family)
+                VALUES (100, 'County DMR', 'County DMR', 'DMR'),
+                       (101, 'Other DMR', 'Other DMR', 'DMR')
                 """);
             statement.executeUpdate("""
-                INSERT INTO alias_talkgroup (alias_id, sort_order, protocol, value, fully_qualified, ranged)
-                VALUES (100, 0, 'DMR', 91, 0, 0),
-                       (101, 0, 'DMR', 92, 0, 0),
-                       (104, 0, 'DMR', 91, 0, 0)
-                """);
-            statement.executeUpdate("""
-                INSERT INTO alias_radio (alias_id, sort_order, protocol, value, fully_qualified, ranged)
-                VALUES (102, 0, 'DMR', 123456, 0, 0),
-                       (103, 0, 'DMR', 234567, 0, 0),
-                       (105, 0, 'DMR', 123456, 0, 0)
+                INSERT INTO alias (
+                    id, alias_list_id, name, group_name, color, matcher_type, protocol, value
+                )
+                VALUES (100, 100, 'DMR Dispatch', 'Fire Dispatch', 255,
+                            'TALKGROUP', 'DMR', 91),
+                       (101, 100, 'DMR Operations', 'Fire Operations', 255,
+                            'TALKGROUP', 'DMR', 92),
+                       (102, 100, 'DMR Engine 1', 'Fire Units', 65280,
+                            'RADIO_ID', 'DMR', 123456),
+                       (103, 100, 'DMR Engine 2', 'Fire Units', 65280,
+                            'RADIO_ID', 'DMR', 234567),
+                       (104, 101, 'Other Dispatch', 'Other Dispatch', 255,
+                            'TALKGROUP', 'DMR', 91),
+                       (105, 101, 'Other Engine', 'Other Units', 65280,
+                            'RADIO_ID', 'DMR', 123456)
                 """);
         }
     }
@@ -1564,17 +1567,18 @@ class StatsWebDatabaseTest
                 VALUES (3, 3000, 0, 0, 1811332, 56132, 1, 855612500, 0)
                 """);
             statement.executeUpdate("""
-                INSERT INTO alias (id, sort_order, name, alias_list_name, group_name, color)
-                VALUES (3, 5000, 'Second Dispatch', 'Second', 'Second Law', 255),
-                       (4, 5001, 'Second Engine', 'Second', 'Second Fire', 65280)
+                INSERT INTO alias_list
+                    (id, name, system_name, family)
+                VALUES (2, 'Second', 'Second', 'P25')
                 """);
             statement.executeUpdate("""
-                INSERT INTO alias_talkgroup (alias_id, sort_order, protocol, value, fully_qualified, ranged)
-                VALUES (3, 0, 'APCO25', 56132, 0, 0)
-                """);
-            statement.executeUpdate("""
-                INSERT INTO alias_radio (alias_id, sort_order, protocol, value, fully_qualified, ranged)
-                VALUES (4, 0, 'APCO25', 1811332, 0, 0)
+                INSERT INTO alias (
+                    id, alias_list_id, name, group_name, color, matcher_type, protocol, value
+                )
+                VALUES (3, 2, 'Second Dispatch', 'Second Law', 255,
+                            'TALKGROUP', 'APCO25', 56132),
+                       (4, 2, 'Second Engine', 'Second Fire', 65280,
+                            'RADIO_ID', 'APCO25', 1811332)
                 """);
         }
     }
@@ -1602,17 +1606,13 @@ class StatsWebDatabaseTest
                        (1, 1811332, 100, 1, 1000, 3000, 100, 100, 0)
                 """);
             statement.executeUpdate("""
-                INSERT INTO alias (id, sort_order, name, alias_list_name, group_name, color)
-                VALUES (5, 0, 'Zulu Dispatch', 'County', 'Zulu Law', 255),
-                       (6, 0, 'Zulu Unit', 'County', 'Zulu Fire', 65280)
-                """);
-            statement.executeUpdate("""
-                INSERT INTO alias_talkgroup (alias_id, sort_order, protocol, value, fully_qualified, ranged)
-                VALUES (5, 0, 'APCO25', 100, 0, 0)
-                """);
-            statement.executeUpdate("""
-                INSERT INTO alias_radio (alias_id, sort_order, protocol, value, fully_qualified, ranged)
-                VALUES (6, 0, 'APCO25', 100, 0, 0)
+                INSERT INTO alias (
+                    id, alias_list_id, name, group_name, color, matcher_type, protocol, value
+                )
+                VALUES (5, 1, 'Zulu Dispatch', 'Zulu Law', 255,
+                            'TALKGROUP', 'APCO25', 100),
+                       (6, 1, 'Zulu Unit', 'Zulu Fire', 65280,
+                            'RADIO_ID', 'APCO25', 100)
                 """);
             statement.executeUpdate("""
                 INSERT INTO receiver_context (id, context_key, kind_code, protocol_code, channel_name,

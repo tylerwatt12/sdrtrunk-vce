@@ -20,7 +20,6 @@
 package io.github.dsheirer.gui.configuration.alias;
 
 import io.github.dsheirer.alias.Alias;
-import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import javafx.collections.ListChangeListener;
 import javafx.collections.transformation.FilteredList;
@@ -101,10 +100,8 @@ public class AliasViewByRecordingEditor extends VBox
     {
         if(mAliasListNameComboBox == null)
         {
-            Predicate<String> filterPredicate = s -> !s.contentEquals(AliasModel.NO_ALIAS_LIST);
-            FilteredList<String> filteredChannelList =
-                new FilteredList<>(mConfigurationManager.getAliasModel().aliasListNames(), filterPredicate);
-            mAliasListNameComboBox = new ComboBox<>(filteredChannelList);
+            mAliasListNameComboBox =
+                new ComboBox<>(mConfigurationManager.getAliasModel().aliasListNames());
             mAliasListNameComboBox.setPadding(new Insets(0,10,0,0));
             mAliasListNameComboBox.getSelectionModel().selectedItemProperty()
                 .addListener((observable, oldValue, newValue) -> updateListFilters());

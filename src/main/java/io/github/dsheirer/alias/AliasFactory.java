@@ -1,19 +1,11 @@
 /*
  * *****************************************************************************
- * Copyright (C) 2014-2023 Dennis Sheirer
+ * Copyright (C) 2014-2026 Dennis Sheirer
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>
  * ****************************************************************************
  */
 package io.github.dsheirer.alias;
@@ -25,217 +17,169 @@ import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.alias.id.dcs.Dcs;
 import io.github.dsheirer.alias.id.esn.Esn;
-import io.github.dsheirer.alias.id.legacy.mobileID.Min;
-import io.github.dsheirer.alias.id.legacy.mpt1327.MPT1327ID;
-import io.github.dsheirer.alias.id.legacy.siteID.SiteID;
-import io.github.dsheirer.alias.id.lojack.LoJackFunctionAndID;
-import io.github.dsheirer.alias.id.priority.Priority;
 import io.github.dsheirer.alias.id.radio.P25FullyQualifiedRadio;
 import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.alias.id.radio.RadioRange;
-import io.github.dsheirer.alias.id.record.Record;
 import io.github.dsheirer.alias.id.status.UnitStatusID;
 import io.github.dsheirer.alias.id.status.UserStatusID;
 import io.github.dsheirer.alias.id.talkgroup.P25FullyQualifiedTalkgroup;
+import io.github.dsheirer.alias.id.talkgroup.StreamAsTalkgroup;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.alias.id.talkgroup.TalkgroupRange;
 import io.github.dsheirer.alias.id.tone.TonesID;
-import java.util.ArrayList;
-import java.util.List;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
-public class AliasFactory
+/**
+ * Deep-copy helpers for current alias matchers, behavior, and actions.
+ */
+public final class AliasFactory
 {
-    private static final Logger mLog = LoggerFactory.getLogger(AliasFactory.class);
-
     private AliasFactory()
     {
     }
 
     public static AliasID copyOf(AliasID id)
     {
-        switch(id.getType())
+        if(id == null)
         {
-            case BROADCAST_CHANNEL:
-                BroadcastChannel originalBroadcast = (BroadcastChannel)id;
-                BroadcastChannel copyBroadcast = new BroadcastChannel();
-                copyBroadcast.setChannelName(originalBroadcast.getChannelName());
-                return copyBroadcast;
-            case DCS:
-                Dcs originalDcs = (Dcs)id;
-                Dcs copyDcs = new Dcs();
-                copyDcs.setDCSCode(originalDcs.getDCSCode());
-                return copyDcs;
-            case ESN:
-                Esn originalESN = (Esn)id;
-                Esn copyESN = new Esn();
-                copyESN.setEsn(originalESN.getEsn());
-                return copyESN;
-            case LOJACK:
-                LoJackFunctionAndID originalLoJackFunctionAndID = (LoJackFunctionAndID)id;
-                LoJackFunctionAndID copyLoJackFunctionAndID = new LoJackFunctionAndID();
-                copyLoJackFunctionAndID.setFunction(originalLoJackFunctionAndID.getFunction());
-                copyLoJackFunctionAndID.setID(originalLoJackFunctionAndID.getID());
-                return copyLoJackFunctionAndID;
-            case MIN:
-                Min originalMin = (Min)id;
-                Min copyMin = new Min();
-                copyMin.setMin(originalMin.getMin());
-                return copyMin;
-            case MPT1327:
-                MPT1327ID originalMpt = (MPT1327ID)id;
-                MPT1327ID copyMpt = new MPT1327ID();
-                copyMpt.setIdent(originalMpt.getIdent());
-                copyMpt.setOverlap(originalMpt.overlapProperty().get());
-                return copyMpt;
-            case P25_FULLY_QUALIFIED_RADIO_ID:
-                P25FullyQualifiedRadio originalP25 = (P25FullyQualifiedRadio) id;
-                P25FullyQualifiedRadio copyP25 = new P25FullyQualifiedRadio(originalP25.getWacn(),
-                        originalP25.getSystem(), originalP25.getValue());
-                copyP25.setOverlap(originalP25.overlapProperty().get());
-                return copyP25;
-            case P25_FULLY_QUALIFIED_TALKGROUP:
-                P25FullyQualifiedTalkgroup originalFqt = (P25FullyQualifiedTalkgroup) id;
-                P25FullyQualifiedTalkgroup copyFqt = new P25FullyQualifiedTalkgroup(originalFqt.getWacn(),
-                        originalFqt.getSystem(), originalFqt.getValue());
-                copyFqt.setOverlap(originalFqt.overlapProperty().get());
-                return copyFqt;
-            case PRIORITY:
-                Priority originalPriority = (Priority)id;
-                Priority copyPriority = new Priority();
-                copyPriority.setPriority(originalPriority.getPriority());
-                return copyPriority;
-            case RADIO_ID:
-                Radio originalRadio = (Radio)id;
-                Radio copyRadio = new Radio(originalRadio.getProtocol(), originalRadio.getValue());
-                copyRadio.setOverlap(originalRadio.overlapProperty().get());
-                return copyRadio;
-            case RADIO_ID_RANGE:
-                RadioRange originalRadioRange = (RadioRange)id;
-                RadioRange copyRadioRange = new RadioRange(originalRadioRange.getProtocol(), originalRadioRange.getMinRadio(),
-                    originalRadioRange.getMaxRadio());
-                copyRadioRange.setOverlap(originalRadioRange.overlapProperty().get());
-                return copyRadioRange;
-            case RECORD:
-                return new Record();
-            case SITE:
-                SiteID originalSiteID = (SiteID)id;
-                SiteID copySiteID = new SiteID();
-                copySiteID.setSite(originalSiteID.getSite());
-                return copySiteID;
-            case STATUS:
-                UserStatusID originalUserStatusID = (UserStatusID)id;
-                UserStatusID copyUserStatusID = new UserStatusID();
-                copyUserStatusID.setStatus(originalUserStatusID.getStatus());
-                copyUserStatusID.setOverlap(originalUserStatusID.overlapProperty().get());
-                return copyUserStatusID;
-            case TALKGROUP:
-                Talkgroup originalTalkgroup = (Talkgroup)id;
-                Talkgroup copyTalkgroup = new Talkgroup(originalTalkgroup.getProtocol(), originalTalkgroup.getValue());
-                copyTalkgroup.setOverlap(originalTalkgroup.overlapProperty().get());
-                return copyTalkgroup;
-            case TALKGROUP_RANGE:
-                TalkgroupRange originalRange = (TalkgroupRange)id;
-                TalkgroupRange copyRange = new TalkgroupRange(originalRange.getProtocol(), originalRange.getMinTalkgroup(),
-                    originalRange.getMaxTalkgroup());
-                copyRange.setOverlap(originalRange.overlapProperty().get());
-                return copyRange;
-            case TONES:
-                TonesID originalTones = (TonesID)id;
-                TonesID copyTones = new TonesID();
-                copyTones.setToneSequence(originalTones.getToneSequence().copyOf());
-                return copyTones;
-            case UNIT_STATUS:
-                UnitStatusID originalUnitStatus = (UnitStatusID)id;
-                UnitStatusID copyUnitStatusID = new UnitStatusID();
-                copyUnitStatusID.setStatus(originalUnitStatus.getStatus());
-                copyUnitStatusID.setOverlap(originalUnitStatus.overlapProperty().get());
-                return copyUnitStatusID;
-
-            //Legacy identifiers ... not supported
-            case FLEETSYNC, LEGACY_TALKGROUP, LTR_NET_UID, MDC1200, NON_RECORDABLE:
-                return null;
-            default:
-                mLog.warn("Unrecognized Alias ID Type [{}] cannot make copy of instance", id.getType());
-                break;
+            return null;
         }
 
-        return null;
+        return switch(id.getType())
+        {
+            case DCS -> {
+                Dcs copy = new Dcs();
+                copy.setDCSCode(((Dcs)id).getDCSCode());
+                yield copy;
+            }
+            case ESN -> {
+                Esn copy = new Esn();
+                copy.setEsn(((Esn)id).getEsn());
+                yield copy;
+            }
+            case P25_FULLY_QUALIFIED_RADIO_ID -> {
+                P25FullyQualifiedRadio original = (P25FullyQualifiedRadio)id;
+                P25FullyQualifiedRadio copy =
+                    new P25FullyQualifiedRadio(original.getWacn(), original.getSystem(), original.getValue());
+                copy.setOverlap(original.overlapProperty().get());
+                yield copy;
+            }
+            case P25_FULLY_QUALIFIED_TALKGROUP -> {
+                P25FullyQualifiedTalkgroup original = (P25FullyQualifiedTalkgroup)id;
+                P25FullyQualifiedTalkgroup copy =
+                    new P25FullyQualifiedTalkgroup(original.getWacn(), original.getSystem(), original.getValue());
+                copy.setOverlap(original.overlapProperty().get());
+                yield copy;
+            }
+            case RADIO_ID -> {
+                Radio original = (Radio)id;
+                Radio copy = new Radio(original.getProtocol(), original.getValue());
+                copy.setOverlap(original.overlapProperty().get());
+                yield copy;
+            }
+            case RADIO_ID_RANGE -> {
+                RadioRange original = (RadioRange)id;
+                RadioRange copy =
+                    new RadioRange(original.getProtocol(), original.getMinRadio(), original.getMaxRadio());
+                copy.setOverlap(original.overlapProperty().get());
+                yield copy;
+            }
+            case STATUS -> {
+                UserStatusID original = (UserStatusID)id;
+                UserStatusID copy = new UserStatusID();
+                copy.setStatus(original.getStatus());
+                copy.setOverlap(original.overlapProperty().get());
+                yield copy;
+            }
+            case TALKGROUP -> {
+                Talkgroup original = (Talkgroup)id;
+                Talkgroup copy = new Talkgroup(original.getProtocol(), original.getValue());
+                copy.setOverlap(original.overlapProperty().get());
+                yield copy;
+            }
+            case TALKGROUP_RANGE -> {
+                TalkgroupRange original = (TalkgroupRange)id;
+                TalkgroupRange copy = new TalkgroupRange(original.getProtocol(), original.getMinTalkgroup(),
+                    original.getMaxTalkgroup());
+                copy.setOverlap(original.overlapProperty().get());
+                yield copy;
+            }
+            case TONES -> {
+                TonesID original = (TonesID)id;
+                TonesID copy = new TonesID();
+                copy.setToneSequence(original.getToneSequence() != null ?
+                    original.getToneSequence().copyOf() : null);
+                yield copy;
+            }
+            case UNIT_STATUS -> {
+                UnitStatusID original = (UnitStatusID)id;
+                UnitStatusID copy = new UnitStatusID();
+                copy.setStatus(original.getStatus());
+                copy.setOverlap(original.overlapProperty().get());
+                yield copy;
+            }
+            default -> null;
+        };
     }
 
     public static AliasAction copyOf(AliasAction action)
     {
         if(action instanceof BeepAction original)
         {
-            BeepAction copyBeep = new BeepAction();
-            copyBeep.setInterval(original.getInterval());
-            copyBeep.setPeriod(original.getPeriod());
-            return copyBeep;
+            BeepAction copy = new BeepAction();
+            copy.setInterval(original.getInterval());
+            copy.setPeriod(original.getPeriod());
+            return copy;
         }
-        else if(action instanceof ClipAction originalClip)
+        else if(action instanceof ClipAction original)
         {
-            ClipAction copyClip = new ClipAction();
-            copyClip.setInterval(originalClip.getInterval());
-            copyClip.setPath(originalClip.getPath());
-            copyClip.setPeriod(originalClip.getPeriod());
-            return copyClip;
+            ClipAction copy = new ClipAction();
+            copy.setInterval(original.getInterval());
+            copy.setPath(original.getPath());
+            copy.setPeriod(original.getPeriod());
+            return copy;
         }
+
         return null;
     }
 
-    public static Alias shallowCopyOf(Alias original)
+    private static Alias shallowCopyOf(Alias original)
     {
         Alias copy = new Alias(original.getName());
+        copy.setAliasListId(original.getAliasListId());
         copy.setAliasListName(original.getAliasListName());
         copy.setDescription(original.getDescription());
         copy.setGroup(original.getGroup());
         copy.setColor(original.getColor());
         copy.setIconName(original.getIconName());
         copy.setRecordable(original.isRecordable());
+        copy.setCallPriority(original.getPlaybackPriority());
+
+        if(original.getStreamTalkgroupAlias() != null)
+        {
+            copy.setStreamTalkgroupAlias(new StreamAsTalkgroup(original.getStreamTalkgroupAlias().getValue()));
+        }
+
+        for(BroadcastChannel broadcastChannel: original.getBroadcastChannels())
+        {
+            copy.addBroadcastChannel(new BroadcastChannel(broadcastChannel.getChannelName()));
+        }
+
         return copy;
-    }
-
-    public static List<AliasID> copyAliasIDs(Alias original)
-    {
-        List<AliasID> aliasIDS = new ArrayList<>();
-
-        for(AliasID id : original.getAliasIdentifiers())
-        {
-            aliasIDS.add(copyOf(id));
-        }
-
-        return aliasIDS;
-    }
-
-    public static List<AliasAction> copyAliasActions(Alias original)
-    {
-        List<AliasAction> actions = new ArrayList<>();
-
-        for(AliasAction aliasAction: original.getAliasActions())
-        {
-            actions.add(copyOf(aliasAction));
-        }
-
-        return actions;
     }
 
     public static Alias copyOf(Alias original)
     {
         Alias copy = shallowCopyOf(original);
+        copy.setMatchIdentifier(copyOf(original.getMatchIdentifier()));
 
-        List<AliasID> aliasIDS = copyAliasIDs(original);
-
-        for(AliasID aliasID: aliasIDS)
+        for(AliasAction aliasAction: original.getAliasActions())
         {
-            copy.addAliasID(aliasID);
-        }
+            AliasAction actionCopy = copyOf(aliasAction);
 
-        List<AliasAction> actions = copyAliasActions(original);
-
-        for(AliasAction action: actions)
-        {
-            copy.addAliasAction(action);
+            if(actionCopy != null)
+            {
+                copy.addAliasAction(actionCopy);
+            }
         }
 
         return copy;

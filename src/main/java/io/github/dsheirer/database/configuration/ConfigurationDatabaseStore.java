@@ -14,7 +14,6 @@ package io.github.dsheirer.database.configuration;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
-import com.fasterxml.jackson.databind.exc.InvalidTypeIdException;
 import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
 import io.github.dsheirer.configuration.ConfigurationState;
@@ -37,8 +36,6 @@ import java.sql.Statement;
 import java.sql.Types;
 import java.util.ArrayList;
 import java.util.List;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * SQLite persistence for active channel and stream configuration. Retired channel rows and the legacy channel-map
@@ -46,10 +43,6 @@ import org.slf4j.LoggerFactory;
  */
 public class ConfigurationDatabaseStore
 {
-    private static final Logger mLog = LoggerFactory.getLogger(ConfigurationDatabaseStore.class);
-    private static final String CONFIGURATION_STATE_INITIALIZED_KEY = "configuration_state_initialized";
-    private static final String TRUE = "true";
-
     private final Path mDatabasePath;
     private final ObjectMapper mObjectMapper = new ObjectMapper()
         .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
@@ -65,14 +58,6 @@ public class ConfigurationDatabaseStore
         return mDatabasePath;
     }
 
-    public boolean isInitialized() throws IOException, SQLException
-    {
-        try(Connection connection = SdrTrunkDatabase.open(mDatabasePath))
-        {
-            return TRUE.equalsIgnoreCase(getMetadata(connection, CONFIGURATION_STATE_INITIALIZED_KEY));
-        }
-    }
-
     public ConfigurationState loadConfigurationState() throws IOException, SQLException
     {
         try(Connection connection = SdrTrunkDatabase.open(mDatabasePath))
@@ -84,33 +69,26 @@ public class ConfigurationDatabaseStore
         }
     }
 
-    public void replaceConfigurationState(ConfigurationState state) throws IOException, SQLException
+    /**
+     * Saves channels and streams using a caller-owned transaction. Import workflows use this overload together with
+     * {@link io.github.dsheirer.database.alias.AliasDatabaseStore#replaceAliases(Connection, List, List)} so every
+     * reference and its alias-list definition becomes visible in one commit.
+     *
+     * @param connection open connection with auto-commit disabled
+     */
+    public void replaceConfigurationState(Connection connection, ConfigurationState state)
+        throws IOException, SQLException
     {
-        try(Connection connection = SdrTrunkDatabase.open(mDatabasePath))
+        if(connection == null || connection.getAutoCommit())
         {
-            boolean previousAutoCommit = connection.getAutoCommit();
-            connection.setAutoCommit(false);
-
-            try
-            {
-                List<RetainedChannelRow> retainedChannels = loadRetainedChannelRows(connection);
-                clearConfigurationState(connection);
-                restoreRetainedChannelRows(connection, retainedChannels);
-                insertChannels(connection, state.getChannels());
-                insertBroadcastConfigurations(connection, state.getBroadcastConfigurations());
-                updateMetadata(connection, CONFIGURATION_STATE_INITIALIZED_KEY, TRUE);
-                connection.commit();
-            }
-            catch(SQLException | IOException e)
-            {
-                connection.rollback();
-                throw e;
-            }
-            finally
-            {
-                connection.setAutoCommit(previousAutoCommit);
-            }
+            throw new IllegalArgumentException("Configuration snapshot writes require a caller-owned transaction");
         }
+
+        List<RetainedChannelRow> retainedChannels = loadRetainedChannelRows(connection);
+        clearConfigurationState(connection);
+        restoreRetainedChannelRows(connection, retainedChannels);
+        insertChannels(connection, state.getChannels());
+        insertBroadcastConfigurations(connection, state.getBroadcastConfigurations());
     }
 
     private List<Channel> loadChannels(Connection connection) throws SQLException, IOException
@@ -197,16 +175,7 @@ public class ConfigurationDatabaseStore
             while(resultSet.next())
             {
                 String json = resultSet.getString("config_json");
-
-                try
-                {
-                    configurations.add(mObjectMapper.readValue(json, BroadcastConfiguration.class));
-                }
-                catch(InvalidTypeIdException e)
-                {
-                    mLog.warn("Skipping retired or unsupported stream configuration from SQLite database: {}",
-                        e.getTypeId());
-                }
+                configurations.add(mObjectMapper.readValue(json, BroadcastConfiguration.class));
             }
         }
 
@@ -368,43 +337,6 @@ public class ConfigurationDatabaseStore
     {
         EventLogConfiguration configuration = channel.getEventLogConfiguration();
         return configuration != null && configuration.getLoggers() != null && !configuration.getLoggers().isEmpty();
-    }
-
-    private String getMetadata(Connection connection, String key) throws SQLException
-    {
-        try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT value FROM database_metadata WHERE key = ?
-            """))
-        {
-            statement.setString(1, key);
-
-            try(ResultSet resultSet = statement.executeQuery())
-            {
-                if(resultSet.next())
-                {
-                    return resultSet.getString("value");
-                }
-            }
-        }
-
-        return null;
-    }
-
-    private void updateMetadata(Connection connection, String key, String value) throws SQLException
-    {
-        try(PreparedStatement statement = connection.prepareStatement("""
-            INSERT INTO database_metadata (key, value, updated_at_ms)
-            VALUES (?, ?, ?)
-            ON CONFLICT(key) DO UPDATE SET
-                value = excluded.value,
-                updated_at_ms = excluded.updated_at_ms
-            """))
-        {
-            statement.setString(1, key);
-            statement.setString(2, value);
-            statement.setLong(3, System.currentTimeMillis());
-            statement.executeUpdate();
-        }
     }
 
     private static void setInteger(PreparedStatement statement, int index, Integer value) throws SQLException
