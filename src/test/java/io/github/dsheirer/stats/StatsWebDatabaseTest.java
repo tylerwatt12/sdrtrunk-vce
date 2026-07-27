@@ -830,6 +830,7 @@ class StatsWebDatabaseTest
         assertEquals(1, sites.size());
         Map<String,Object> site = sites.getFirst();
         assertEquals("Cleveland Simulcast", site.get("channel_name"));
+        assertEquals(0x49FL, number(site.get("nac")));
         assertEquals(855_137_500L, number(site.get("quality_frequency_hz")));
         assertEquals(-60.0, ((Number)site.get("average_signal_dbfs")).doubleValue());
         List<Map<String,Object>> series = rowsFrom(site, "series");
@@ -923,6 +924,7 @@ class StatsWebDatabaseTest
             "/api/quality?guid=" + GUID + "&include_history=false")), "sites");
         assertEquals(1, qualitySites.size());
         assertEquals("DMR", qualitySites.getFirst().get("protocol"));
+        assertNull(qualitySites.getFirst().get("nac"));
 
         List<Map<String,Object>> directory = rows(mDatabase.systemDirectory(request(
             "/api/system-directory")));
@@ -957,6 +959,7 @@ class StatsWebDatabaseTest
             "/api/quality?guid=" + GUID + "&include_history=false")), "sites");
         assertEquals(1, qualitySites.size());
         assertEquals("P25", qualitySites.getFirst().get("protocol"));
+        assertEquals(0x49FL, number(qualitySites.getFirst().get("nac")));
 
         directory = rows(mDatabase.systemDirectory(request("/api/system-directory")));
         directoryChildren = directory.stream().flatMap(parent -> rowsFrom(parent, "children").stream())

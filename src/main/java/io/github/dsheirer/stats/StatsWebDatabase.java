@@ -1720,7 +1720,7 @@ class StatsWebDatabase
     private static String qualitySiteSelect()
     {
         String candidates = """
-            SELECT site.guid, site.channel_name, site.rfss, site.site, site.current_control_hz,
+            SELECT site.guid, site.channel_name, site.nac, site.rfss, site.site, site.current_control_hz,
                 site.last_seen_ms AS site_last_seen_ms, system.wacn, system.system_id,
                 1 AS protocol_code, 'P25' AS protocol, 'p25' AS site_kind,
                 NULL AS configured_system, NULL AS network_id, NULL AS site_id, NULL AS ran,
@@ -1730,7 +1730,8 @@ class StatsWebDatabase
 
             UNION ALL
 
-            SELECT site.guid, site.channel_name, NULL AS rfss, NULL AS site, site.current_control_hz,
+            SELECT site.guid, site.channel_name, NULL AS nac, NULL AS rfss, NULL AS site,
+                site.current_control_hz,
                 site.last_seen_ms AS site_last_seen_ms, NULL AS wacn, site.system_id,
                 site.protocol_code,
                 CASE site.protocol_code WHEN 3 THEN 'DMR' WHEN 4 THEN 'NXDN' ELSE 'Unknown' END AS protocol,
@@ -1739,8 +1740,8 @@ class StatsWebDatabase
             FROM trunked_site_snapshot site
             """;
         return """
-            SELECT guid, channel_name, rfss, site, current_control_hz, site_last_seen_ms, wacn, system_id,
-                protocol_code, protocol, site_kind, configured_system, network_id, site_id, ran,
+            SELECT guid, channel_name, nac, rfss, site, current_control_hz, site_last_seen_ms, wacn,
+                system_id, protocol_code, protocol, site_kind, configured_system, network_id, site_id, ran,
                 variant_code, identity_domain_code
             FROM (
                 SELECT candidate.*, row_number() OVER (
