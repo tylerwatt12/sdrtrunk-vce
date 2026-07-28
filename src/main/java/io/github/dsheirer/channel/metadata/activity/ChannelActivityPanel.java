@@ -274,7 +274,8 @@ public class ChannelActivityPanel extends JPanel
         if(tableModel.isCloseable())
         {
             int index = getTabbedPane().indexOfComponent(scrollPane);
-            getTabbedPane().setTabComponentAt(index, new ChannelActivityTabHeader(tableModel, this::closeTab));
+            getTabbedPane().setTabComponentAt(index, new ChannelActivityTabHeader(tableModel,
+                () -> getTabbedPane().setSelectedComponent(scrollPane), this::closeTab));
             getTabbedPane().setToolTipTextAt(index, getTabToolTip(tableModel));
         }
         else
@@ -305,8 +306,8 @@ public class ChannelActivityPanel extends JPanel
                 }
                 else
                 {
-                    getTabbedPane().setTabComponentAt(index,
-                        new ChannelActivityTabHeader(tableModel, this::closeTab));
+                    getTabbedPane().setTabComponentAt(index, new ChannelActivityTabHeader(tableModel,
+                        () -> getTabbedPane().setSelectedComponent(component), this::closeTab));
                 }
             }
 

@@ -12,6 +12,8 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.awt.event.MouseEvent;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.swing.SwingUtilities;
 import org.junit.jupiter.api.Test;
@@ -22,15 +24,21 @@ class ChannelActivityTabHeaderTest
     void closeButtonTargetsItsModelAndDoesNotDependOnTabGeometry() throws Exception
     {
         AtomicReference<ChannelActivityTableModel> closed = new AtomicReference<>();
+        AtomicBoolean selected = new AtomicBoolean();
         ChannelActivityTableModel model = new ChannelActivityTableModel("County Site", null, true);
 
         SwingUtilities.invokeAndWait(() -> {
-            ChannelActivityTabHeader header = new ChannelActivityTabHeader(model, closed::set);
+            ChannelActivityTabHeader header = new ChannelActivityTabHeader(model, () -> selected.set(true),
+                closed::set);
 
             assertEquals("County Site", header.getTitleLabel().getText());
             assertFalse(header.getActiveIndicator().isVisible());
             assertTrue(header.getCloseButton().isVisible());
             assertTrue(header.getCloseButton().isEnabled());
+
+            header.getTitleLabel().dispatchEvent(new MouseEvent(header.getTitleLabel(), MouseEvent.MOUSE_PRESSED,
+                System.currentTimeMillis(), 0, 2, 2, 1, false, MouseEvent.BUTTON1));
+            assertTrue(selected.get());
 
             header.getCloseButton().doClick();
             assertSame(model, closed.get());
@@ -44,7 +52,7 @@ class ChannelActivityTabHeaderTest
         ChannelActivityTableModel model = new ChannelActivityTableModel("Old Title", null, true);
 
         SwingUtilities.invokeAndWait(() -> {
-            ChannelActivityTabHeader header = new ChannelActivityTabHeader(model, closed::set);
+            ChannelActivityTabHeader header = new ChannelActivityTabHeader(model, () -> {}, closed::set);
             model.setTitle("Current Site");
             model.setControlActive(true);
             header.getCloseButton().doClick();

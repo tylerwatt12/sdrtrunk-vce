@@ -14,10 +14,13 @@ package io.github.dsheirer.channel.metadata.activity;
 import java.awt.Color;
 import java.awt.FlowLayout;
 import java.awt.Insets;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.util.function.Consumer;
 import javax.swing.JButton;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
+import javax.swing.SwingUtilities;
 
 /**
  * Tab header for a learned trunked site. Active sites show a green status marker and stale sites show a real Swing
@@ -27,19 +30,35 @@ class ChannelActivityTabHeader extends JPanel
 {
     private static final Color ACTIVE_COLOR = new Color(0, 145, 40);
     private final ChannelActivityTableModel mTableModel;
+    private final Runnable mSelectHandler;
     private final Consumer<ChannelActivityTableModel> mCloseHandler;
     private final JLabel mTitleLabel = new JLabel();
     private final JLabel mActiveIndicator = new JLabel("\u25cf");
     private final JButton mCloseButton = new JButton("\u00d7");
 
-    ChannelActivityTabHeader(ChannelActivityTableModel tableModel,
+    ChannelActivityTabHeader(ChannelActivityTableModel tableModel, Runnable selectHandler,
                              Consumer<ChannelActivityTableModel> closeHandler)
     {
         super(new FlowLayout(FlowLayout.LEFT, 4, 0));
         mTableModel = tableModel;
+        mSelectHandler = selectHandler;
         mCloseHandler = closeHandler;
         setOpaque(false);
 
+        MouseAdapter selectListener = new MouseAdapter()
+        {
+            @Override
+            public void mousePressed(MouseEvent event)
+            {
+                if(SwingUtilities.isLeftMouseButton(event))
+                {
+                    mSelectHandler.run();
+                }
+            }
+        };
+        addMouseListener(selectListener);
+        mTitleLabel.addMouseListener(selectListener);
+        mActiveIndicator.addMouseListener(selectListener);
         mActiveIndicator.setForeground(ACTIVE_COLOR);
         mCloseButton.setFocusable(false);
         mCloseButton.setMargin(new Insets(0, 4, 0, 4));
