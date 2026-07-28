@@ -1195,6 +1195,48 @@ class P25ActivityLogWriterTest
     }
 
     @Test
+    void olderSiteSnapshotIsRejectedBeforeItCanRegressCurrentOrRetainedFacts() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("site-out-of-order.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            P25ActivityLogSchema.insertSite(connection, siteSnapshot(2_000L));
+            P25ActivityLogSchema.insertSite(connection,
+                withSnapshotHash(siteSnapshot(1_000L), "older-structural-state"));
+
+            assertEquals("hash", scalarString(connection,
+                "SELECT snapshot_hash FROM p25_site_snapshot"));
+            assertEquals(2_000L, scalarLong(connection,
+                "SELECT last_seen_ms FROM p25_site_snapshot"));
+            assertEquals(1L, scalarLong(connection,
+                "SELECT observation_count FROM p25_site_snapshot"));
+            assertEquals(2_000L, scalarLong(connection,
+                "SELECT last_seen_ms FROM receiver_context WHERE guid IS NOT NULL"));
+
+            for(String table: List.of("p25_site_channel", "p25_site_channel_tag",
+                "p25_site_frequency_band", "p25_foreign_system_band", "p25_site_neighbor",
+                "p25_site_patch_group", "p25_site_patch_group_talkgroup", "p25_site_patch_group_radio"))
+            {
+                assertEquals(2_000L, scalarLong(connection,
+                    "SELECT MIN(confirmed_at_ms) FROM " + table));
+            }
+
+            for(String table: List.of("p25_site_channel_summary", "p25_site_channel_tag_summary",
+                "p25_site_frequency_band_summary", "p25_foreign_system_band_summary",
+                "p25_site_neighbor_summary", "p25_site_patch_group_summary",
+                "p25_site_patch_group_talkgroup_summary", "p25_site_patch_group_radio_summary"))
+            {
+                assertEquals(2_000L, scalarLong(connection,
+                    "SELECT MIN(last_seen_ms) FROM " + table));
+                assertEquals(1L, scalarLong(connection,
+                    "SELECT MAX(observation_count) FROM " + table));
+            }
+        }
+    }
+
+    @Test
     void mergesSystemEntitiesAcrossSiteGuidsButKeepsSiteBucketsSeparate() throws Exception
     {
         Path database = mTemporaryFolder.resolve("multi-site.sqlite");
@@ -1665,6 +1707,15 @@ class P25ActivityLogWriterTest
         }
     }
 
+    private static String scalarString(Connection connection, String sql) throws Exception
+    {
+        try(Statement statement = connection.createStatement(); ResultSet resultSet = statement.executeQuery(sql))
+        {
+            assertTrue(resultSet.next());
+            return resultSet.getString(1);
+        }
+    }
+
     private static void assertGuidCount(Connection connection, String table, String guid, int expected)
         throws Exception
     {
@@ -1885,6 +1936,18 @@ class P25ActivityLogWriterTest
             snapshot.lra(), snapshot.tdma(), updatedStatus, snapshot.primaryFrequencyHertz(),
             snapshot.currentControlHertz(), snapshot.channels(), snapshot.neighborSites(), snapshot.frequencyBands(),
             snapshot.patchGroups(), snapshot.foreignSystemBands());
+    }
+
+    private static P25ActivityLogRecords.SiteSnapshot withSnapshotHash(
+        P25ActivityLogRecords.SiteSnapshot snapshot, String snapshotHash)
+    {
+        return new P25ActivityLogRecords.SiteSnapshot(snapshot.observedAtEpochMilliseconds(), snapshot.guid(),
+            snapshot.contextKind(), snapshotHash, snapshot.protocol(), snapshot.channelName(),
+            snapshot.aliasListName(), snapshot.decoder(), snapshot.wacn(), snapshot.systemId(), snapshot.nac(),
+            snapshot.rfss(), snapshot.site(), snapshot.lra(), snapshot.tdma(), snapshot.siteStatus(),
+            snapshot.primaryFrequencyHertz(), snapshot.currentControlHertz(), snapshot.channels(),
+            snapshot.neighborSites(), snapshot.frequencyBands(), snapshot.patchGroups(),
+            snapshot.foreignSystemBands());
     }
 
     private static P25ActivityLogRecords.SiteSnapshot siteSnapshotWithDuplicateChannels(long timestamp)

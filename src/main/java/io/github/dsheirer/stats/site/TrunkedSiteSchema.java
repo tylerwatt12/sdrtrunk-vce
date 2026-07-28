@@ -209,8 +209,8 @@ public final class TrunkedSiteSchema
 
     /**
      * Updates one compact site summary. Learned child facts are only touched when the publisher's stable snapshot
-     * hash changes. An unchanged liveness heartbeat also refreshes at most one synthetic current-control child so
-     * the actively tuned frequency cannot expire while the site remains active.
+     * hash changes. Each liveness heartbeat refreshes only channels identified as current controls so active receiver
+     * state cannot expire while learned traffic, alternate-control, and neighbor evidence ages normally.
      */
     public static void upsert(Connection connection, Snapshot snapshot) throws SQLException
     {
@@ -226,15 +226,29 @@ public final class TrunkedSiteSchema
         throws SQLException
     {
         requireValid(snapshot);
-        String previousHash = snapshotHash(connection, snapshot.guid());
-        upsertSite(connection, snapshot);
+        SiteState previous = siteState(connection, snapshot.guid());
 
-        if(Objects.equals(previousHash, snapshot.snapshotHash()))
+        if(previous != null && snapshot.observedAtEpochMilliseconds() < previous.lastSeenEpochMilliseconds())
         {
-            refreshSyntheticCurrentControl(connection, snapshot, childRetentionCutoffEpochMilliseconds);
             return;
         }
 
+        boolean protocolChanged = previous != null && previous.protocolCode() != snapshot.protocolCode();
+        upsertSite(connection, snapshot);
+
+        if(protocolChanged)
+        {
+            clearProtocolSpecificChildren(connection, snapshot.guid());
+        }
+
+        if(previous != null && !protocolChanged &&
+            Objects.equals(previous.snapshotHash(), snapshot.snapshotHash()))
+        {
+            confirmCurrentControls(connection, snapshot, childRetentionCutoffEpochMilliseconds);
+            return;
+        }
+
+        clearMutableChannelRoles(connection, snapshot.guid());
         Set<ChannelKey> channelKeys = channelKeys(connection, snapshot.guid());
         int channelLimit = Math.min(snapshot.channels().size(), MAXIMUM_CHANNEL_FACTS_PER_SNAPSHOT);
 
@@ -257,6 +271,7 @@ public final class TrunkedSiteSchema
             }
         }
 
+        confirmCurrentControls(connection, snapshot, childRetentionCutoffEpochMilliseconds);
         Set<NeighborKey> neighborKeys = neighborKeys(connection, snapshot.guid());
         int neighborLimit = Math.min(snapshot.neighbors().size(), MAXIMUM_NEIGHBOR_FACTS_PER_SNAPSHOT);
 
@@ -281,35 +296,70 @@ public final class TrunkedSiteSchema
     }
 
     /**
-     * Refreshes the configured/current tuner frequency that the metadata mapper adds without a protocol channel
-     * number. This row represents active receiver state rather than a historical learned fact, so its freshness
-     * follows the site heartbeat. Limiting this path to one identifiable row preserves the bounded equal-hash
-     * heartbeat behavior for every cumulative learned channel and neighbor.
+     * Channel and neighbor identities are meaningful only within their decoder protocol. A receiver GUID can be
+     * reused when its configured decoder changes, so retained facts from the previous protocol must not be merged
+     * into the new protocol's evidence.
      */
-    private static void refreshSyntheticCurrentControl(Connection connection, Snapshot snapshot,
-                                                       long childRetentionCutoffEpochMilliseconds)
+    private static void clearProtocolSpecificChildren(Connection connection, String guid) throws SQLException
+    {
+        for(String table: List.of("trunked_site_channel_summary", "trunked_site_neighbor_summary"))
+        {
+            try(PreparedStatement statement = connection.prepareStatement("DELETE FROM " + table + " WHERE guid = ?"))
+            {
+                statement.setString(1, guid);
+                statement.executeUpdate();
+            }
+        }
+    }
+
+    /**
+     * Refreshes only channels that the latest stable snapshot identifies as current controls. A liveness
+     * confirmation advances freshness without inflating the independent-observation counter. Learned traffic,
+     * alternate-control, and neighbor facts remain tied to their own observation timestamps.
+     */
+    private static void confirmCurrentControls(Connection connection, Snapshot snapshot,
+                                               long childRetentionCutoffEpochMilliseconds)
         throws SQLException
     {
+        if(snapshot.observedAtEpochMilliseconds() < childRetentionCutoffEpochMilliseconds)
+        {
+            return;
+        }
+
         int channelLimit = Math.min(snapshot.channels().size(), MAXIMUM_CHANNEL_FACTS_PER_SNAPSHOT);
+        Set<ChannelKey> channelKeys = channelKeys(connection, snapshot.guid());
 
         for(int x = 0; x < channelLimit; x++)
         {
             Channel channel = snapshot.channels().get(x);
 
-            if(channel != null && channel.channelNumber() == null && channel.inboundChannelNumber() == null &&
-                channel.timeslot() == null && channel.frequencyHertz() != null &&
-                (channel.roleFlags() & CHANNEL_ROLE_CURRENT_CONTROL) != 0)
+            if(channel != null && (channel.roleFlags() & CHANNEL_ROLE_CURRENT_CONTROL) != 0)
             {
-                long childObservationTime = observationTime(channel.observedAtEpochMilliseconds(),
-                    snapshot.observedAtEpochMilliseconds());
+                ChannelKey key = ChannelKey.from(channel);
 
-                if(childObservationTime >= childRetentionCutoffEpochMilliseconds)
+                if(channelKeys.contains(key) || channelKeys.size() < MAXIMUM_CHANNEL_FACTS_PER_SNAPSHOT)
                 {
-                    upsertChannel(connection, snapshot.guid(), childObservationTime, channel);
+                    confirmChannel(connection, snapshot.guid(), snapshot.observedAtEpochMilliseconds(), channel);
+                    channelKeys.add(key);
                 }
-
-                return;
             }
+        }
+    }
+
+    private static void clearMutableChannelRoles(Connection connection, String guid) throws SQLException
+    {
+        int mutableRoleFlags = CHANNEL_ROLE_CURRENT_CONTROL | CHANNEL_ROLE_ALTERNATE_CONTROL;
+
+        try(PreparedStatement statement = connection.prepareStatement("""
+            UPDATE trunked_site_channel_summary
+            SET role_flags = role_flags & ?
+            WHERE guid = ? AND (role_flags & ?) != 0
+            """))
+        {
+            statement.setInt(1, ~mutableRoleFlags);
+            statement.setString(2, guid);
+            statement.setInt(3, mutableRoleFlags);
+            statement.executeUpdate();
         }
     }
 
@@ -518,16 +568,17 @@ public final class TrunkedSiteSchema
         }
     }
 
-    private static String snapshotHash(Connection connection, String guid) throws SQLException
+    private static SiteState siteState(Connection connection, String guid) throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement(
-            "SELECT snapshot_hash FROM trunked_site_snapshot WHERE guid = ?"))
+            "SELECT snapshot_hash, last_seen_ms, protocol_code FROM trunked_site_snapshot WHERE guid = ?"))
         {
             statement.setString(1, guid);
 
             try(ResultSet resultSet = statement.executeQuery())
             {
-                return resultSet.next() ? resultSet.getString(1) : null;
+                return resultSet.next() ?
+                    new SiteState(resultSet.getString(1), resultSet.getLong(2), resultSet.getInt(3)) : null;
             }
         }
     }
@@ -632,6 +683,33 @@ public final class TrunkedSiteSchema
             statement.setInt(7, channel.roleFlags());
             statement.setLong(8, observedAt);
             statement.setLong(9, observedAt);
+            statement.executeUpdate();
+        }
+    }
+
+    private static void confirmChannel(Connection connection, String guid, long confirmedAt, Channel channel)
+        throws SQLException
+    {
+        try(PreparedStatement statement = connection.prepareStatement("""
+            INSERT INTO trunked_site_channel_summary (
+                guid, channel_number, inbound_channel_number, timeslot, frequency_hz, uplink_hz, role_flags,
+                first_seen_ms, last_seen_ms, observation_count
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+            ON CONFLICT(guid, channel_number, inbound_channel_number, timeslot, frequency_hz) DO UPDATE SET
+                uplink_hz = coalesce(excluded.uplink_hz, trunked_site_channel_summary.uplink_hz),
+                role_flags = trunked_site_channel_summary.role_flags | excluded.role_flags,
+                last_seen_ms = max(trunked_site_channel_summary.last_seen_ms, excluded.last_seen_ms)
+            """))
+        {
+            statement.setString(1, guid);
+            statement.setInt(2, known(channel.channelNumber()));
+            statement.setInt(3, known(channel.inboundChannelNumber()));
+            statement.setInt(4, known(channel.timeslot()));
+            statement.setLong(5, known(channel.frequencyHertz()));
+            setLong(statement, 6, channel.uplinkHertz());
+            statement.setInt(7, channel.roleFlags());
+            statement.setLong(8, confirmedAt);
+            statement.setLong(9, confirmedAt);
             statement.executeUpdate();
         }
     }
@@ -819,6 +897,10 @@ public final class TrunkedSiteSchema
             return new ChannelKey(known(channel.channelNumber()), known(channel.inboundChannelNumber()),
                 known(channel.timeslot()), known(channel.frequencyHertz()));
         }
+    }
+
+    private record SiteState(String snapshotHash, long lastSeenEpochMilliseconds, int protocolCode)
+    {
     }
 
     private record NeighborKey(int variantCode, int identityDomainCode, int networkId, int systemId, int siteId,

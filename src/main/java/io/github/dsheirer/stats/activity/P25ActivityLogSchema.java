@@ -328,7 +328,15 @@ public class P25ActivityLogSchema
 
     static void insertSite(Connection connection, P25ActivityLogRecords.SiteSnapshot snapshot) throws SQLException
     {
-        boolean changed = siteSnapshotChanged(connection, snapshot);
+        SiteSnapshotState previous = siteSnapshotState(connection, snapshot.guid());
+
+        if(previous != null && snapshot.observedAtEpochMilliseconds() < previous.lastSeenEpochMilliseconds())
+        {
+            return;
+        }
+
+        boolean changed = previous == null ||
+            !java.util.Objects.equals(snapshot.snapshotHash(), previous.snapshotHash());
         Map<String,SiteChannelEvidence> channels = mergeSiteChannels(snapshot);
         Integer systemKey = upsertP25System(connection, snapshot.wacn(), snapshot.systemId(),
             snapshot.observedAtEpochMilliseconds());
@@ -2129,17 +2137,18 @@ public class P25ActivityLogSchema
         }
     }
 
-    private static boolean siteSnapshotChanged(Connection connection, P25ActivityLogRecords.SiteSnapshot snapshot)
+    private static SiteSnapshotState siteSnapshotState(Connection connection, String guid)
         throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement(
-            "SELECT snapshot_hash FROM p25_site_snapshot WHERE guid = ?"))
+            "SELECT snapshot_hash, last_seen_ms FROM p25_site_snapshot WHERE guid = ?"))
         {
-            statement.setString(1, snapshot.guid());
+            statement.setString(1, guid);
 
             try(ResultSet resultSet = statement.executeQuery())
             {
-                return !resultSet.next() || !java.util.Objects.equals(snapshot.snapshotHash(), resultSet.getString(1));
+                return resultSet.next() ?
+                    new SiteSnapshotState(resultSet.getString(1), resultSet.getLong(2)) : null;
             }
         }
     }
@@ -2755,6 +2764,10 @@ public class P25ActivityLogSchema
     }
 
     private record ReceiverContextIdentity(int contextId, Integer systemKey, int kindCode)
+    {
+    }
+
+    private record SiteSnapshotState(String snapshotHash, long lastSeenEpochMilliseconds)
     {
     }
 

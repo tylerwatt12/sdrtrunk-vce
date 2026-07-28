@@ -46,7 +46,7 @@ class TrunkedSiteSchemaTest
     }
 
     @Test
-    void unchangedHeartbeatOnlyUpdatesSiteSummary() throws Exception
+    void unchangedHeartbeatConfirmsCurrentControlWithoutInflatingChildObservations() throws Exception
     {
         Path database = mTemporaryFolder.resolve("heartbeat.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
@@ -62,8 +62,12 @@ class TrunkedSiteSchemaTest
                 "SELECT last_seen_ms FROM trunked_site_snapshot WHERE guid='dmr-site'"));
             assertEquals(1, scalarLong(connection,
                 "SELECT observation_count FROM trunked_site_channel_summary WHERE guid='dmr-site'"));
+            assertEquals(6_000L, scalarLong(connection,
+                "SELECT last_seen_ms FROM trunked_site_channel_summary WHERE guid='dmr-site'"));
             assertEquals(1, scalarLong(connection,
                 "SELECT observation_count FROM trunked_site_neighbor_summary WHERE guid='dmr-site'"));
+            assertEquals(1_000L, scalarLong(connection,
+                "SELECT last_seen_ms FROM trunked_site_neighbor_summary WHERE guid='dmr-site'"));
 
             TrunkedSiteSchema.upsert(connection, snapshot(7_000L, "hash-2", 8));
             assertEquals(2, scalarLong(connection,
@@ -76,7 +80,99 @@ class TrunkedSiteSchemaTest
     }
 
     @Test
-    void unchangedHeartbeatRestoresOnlySyntheticCurrentControlAfterRetention() throws Exception
+    void freshSnapshotsReplaceMutableControlRolesAndRejectOlderState() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("mutable-state.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        int originalEvidence = TrunkedSiteSchema.CHANNEL_ROLE_OBSERVED |
+            TrunkedSiteSchema.CHANNEL_ROLE_FREQUENCY_FROM_CONFIGURED_MAP;
+        TrunkedSiteSchema.Channel originalCurrent = new TrunkedSiteSchema.Channel(
+            42, null, 1, 451_000_000L, 456_000_000L,
+            originalEvidence | TrunkedSiteSchema.CHANNEL_ROLE_CURRENT_CONTROL, 1_000);
+        TrunkedSiteSchema.Channel originalAlternate = new TrunkedSiteSchema.Channel(
+            43, null, 1, 452_000_000L, 457_000_000L,
+            TrunkedSiteSchema.CHANNEL_ROLE_OBSERVED | TrunkedSiteSchema.CHANNEL_ROLE_ALTERNATE_CONTROL, 1_000);
+        TrunkedSiteSchema.Neighbor neighbor = new TrunkedSiteSchema.Neighbor(
+            1, 2, 10, 20, 31, 43, 452_000_000L, TrunkedSiteSchema.NEIGHBOR_STATUS_ACTIVE, 1_000);
+        int refreshedEvidence = TrunkedSiteSchema.CHANNEL_ROLE_OBSERVED |
+            TrunkedSiteSchema.CHANNEL_ROLE_TRAFFIC |
+            TrunkedSiteSchema.CHANNEL_ROLE_FREQUENCY_ANNOUNCED_OVER_THE_AIR;
+        TrunkedSiteSchema.Channel formerCurrent = new TrunkedSiteSchema.Channel(
+            42, null, 1, 451_000_000L, 456_000_000L, refreshedEvidence, 2_000);
+        TrunkedSiteSchema.Channel newCurrent = new TrunkedSiteSchema.Channel(
+            44, null, 1, 453_000_000L, 458_000_000L,
+            TrunkedSiteSchema.CHANNEL_ROLE_OBSERVED | TrunkedSiteSchema.CHANNEL_ROLE_CURRENT_CONTROL, 2_000);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            TrunkedSiteSchema.upsert(connection, mutableSnapshot(1_000, "first", 451_000_000L,
+                List.of(originalCurrent, originalAlternate), neighbor));
+            TrunkedSiteSchema.upsert(connection, mutableSnapshot(2_000, "second", 453_000_000L,
+                List.of(formerCurrent, newCurrent), neighbor));
+
+            int formerFlags = (int)scalarLong(connection, """
+                SELECT role_flags FROM trunked_site_channel_summary
+                WHERE guid='mutable-site' AND channel_number=42
+                """);
+            assertEquals(0, formerFlags & (TrunkedSiteSchema.CHANNEL_ROLE_CURRENT_CONTROL |
+                TrunkedSiteSchema.CHANNEL_ROLE_ALTERNATE_CONTROL));
+            assertEquals(originalEvidence | refreshedEvidence, formerFlags);
+            assertEquals(0, scalarLong(connection, """
+                SELECT role_flags & 3 FROM trunked_site_channel_summary
+                WHERE guid='mutable-site' AND channel_number=43
+                """));
+            assertEquals(TrunkedSiteSchema.CHANNEL_ROLE_CURRENT_CONTROL,
+                scalarLong(connection, """
+                    SELECT role_flags & 1 FROM trunked_site_channel_summary
+                    WHERE guid='mutable-site' AND channel_number=44
+                    """));
+
+            TrunkedSiteSchema.upsert(connection, mutableSnapshot(3_000, "second", 453_000_000L,
+                List.of(formerCurrent, newCurrent), neighbor));
+            assertEquals(3_000, scalarLong(connection, """
+                SELECT last_seen_ms FROM trunked_site_channel_summary
+                WHERE guid='mutable-site' AND channel_number=44
+                """));
+            assertEquals(1, scalarLong(connection, """
+                SELECT observation_count FROM trunked_site_channel_summary
+                WHERE guid='mutable-site' AND channel_number=44
+                """));
+            assertEquals(1_000, scalarLong(connection, """
+                SELECT last_seen_ms FROM trunked_site_neighbor_summary
+                WHERE guid='mutable-site'
+                """));
+
+            TrunkedSiteSchema.upsert(connection, mutableSnapshot(4_000, "third", 453_000_000L,
+                List.of(formerCurrent, newCurrent), neighbor), 3_500);
+            assertEquals(TrunkedSiteSchema.CHANNEL_ROLE_CURRENT_CONTROL,
+                scalarLong(connection, """
+                    SELECT role_flags & 1 FROM trunked_site_channel_summary
+                    WHERE guid='mutable-site' AND channel_number=44
+                    """));
+            assertEquals(4_000, scalarLong(connection, """
+                SELECT last_seen_ms FROM trunked_site_channel_summary
+                WHERE guid='mutable-site' AND channel_number=44
+                """));
+            assertEquals(1, scalarLong(connection, """
+                SELECT observation_count FROM trunked_site_channel_summary
+                WHERE guid='mutable-site' AND channel_number=44
+                """));
+
+            TrunkedSiteSchema.upsert(connection, mutableSnapshot(1_500, "stale", 451_000_000L,
+                List.of(originalCurrent), neighbor));
+            assertEquals("third", scalarString(connection, """
+                SELECT snapshot_hash FROM trunked_site_snapshot WHERE guid='mutable-site'
+                """));
+            assertEquals(TrunkedSiteSchema.CHANNEL_ROLE_CURRENT_CONTROL,
+                scalarLong(connection, """
+                    SELECT role_flags & 1 FROM trunked_site_channel_summary
+                    WHERE guid='mutable-site' AND channel_number=44
+                    """));
+        }
+    }
+
+    @Test
+    void siteHeartbeatPreservesOnlyCurrentControlThroughRetention() throws Exception
     {
         Path database = mTemporaryFolder.resolve("current-control-heartbeat.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
@@ -96,7 +192,7 @@ class TrunkedSiteSchemaTest
                 List.of(staleCurrentControl, staleLearnedChannel), List.of(staleNeighbor)));
 
             TrunkedSiteSchema.CleanupResult cleanup = TrunkedSiteSchema.deleteOlderThan(connection, 5_000);
-            assertEquals(2, cleanup.channelsDeleted());
+            assertEquals(1, cleanup.channelsDeleted());
             assertEquals(1, cleanup.neighborsDeleted());
             assertEquals(0, cleanup.sitesDeleted());
 
@@ -161,6 +257,63 @@ class TrunkedSiteSchemaTest
                 null, null, null, null, null, null, 0, null, null, null, List.of(), List.of());
             assertThrows(IllegalArgumentException.class, () -> TrunkedSiteSchema.upsert(connection, invalid));
             assertEquals(0, scalarLong(connection, "SELECT COUNT(*) FROM trunked_site_snapshot"));
+        }
+    }
+
+    @Test
+    void protocolTransitionsReplaceProtocolSpecificChildrenEvenWhenSnapshotHashesMatch() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("protocol-transition.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            TrunkedSiteSchema.upsert(connection,
+                transitionSnapshot(1_000, TrunkedSiteSchema.PROTOCOL_DMR));
+            assertEquals(1, scalarLong(connection, """
+                SELECT COUNT(*) FROM trunked_site_channel_summary
+                WHERE guid='transition-site' AND frequency_hz=451000000
+                """));
+            assertEquals(1, scalarLong(connection, """
+                SELECT COUNT(*) FROM trunked_site_neighbor_summary
+                WHERE guid='transition-site' AND identity_domain_code=2
+                """));
+
+            TrunkedSiteSchema.upsert(connection,
+                transitionSnapshot(2_000, TrunkedSiteSchema.PROTOCOL_NXDN));
+            assertEquals(TrunkedSiteSchema.PROTOCOL_NXDN, scalarLong(connection, """
+                SELECT protocol_code FROM trunked_site_snapshot WHERE guid='transition-site'
+                """));
+            assertEquals(1, scalarLong(connection,
+                "SELECT COUNT(*) FROM trunked_site_channel_summary WHERE guid='transition-site'"));
+            assertEquals(1, scalarLong(connection, """
+                SELECT COUNT(*) FROM trunked_site_channel_summary
+                WHERE guid='transition-site' AND frequency_hz=155000000
+                """));
+            assertEquals(1, scalarLong(connection,
+                "SELECT COUNT(*) FROM trunked_site_neighbor_summary WHERE guid='transition-site'"));
+            assertEquals(1, scalarLong(connection, """
+                SELECT COUNT(*) FROM trunked_site_neighbor_summary
+                WHERE guid='transition-site' AND identity_domain_code=4
+                """));
+
+            TrunkedSiteSchema.upsert(connection,
+                transitionSnapshot(3_000, TrunkedSiteSchema.PROTOCOL_DMR));
+            assertEquals(TrunkedSiteSchema.PROTOCOL_DMR, scalarLong(connection, """
+                SELECT protocol_code FROM trunked_site_snapshot WHERE guid='transition-site'
+                """));
+            assertEquals(1, scalarLong(connection,
+                "SELECT COUNT(*) FROM trunked_site_channel_summary WHERE guid='transition-site'"));
+            assertEquals(1, scalarLong(connection, """
+                SELECT COUNT(*) FROM trunked_site_channel_summary
+                WHERE guid='transition-site' AND frequency_hz=451000000
+                """));
+            assertEquals(1, scalarLong(connection,
+                "SELECT COUNT(*) FROM trunked_site_neighbor_summary WHERE guid='transition-site'"));
+            assertEquals(1, scalarLong(connection, """
+                SELECT COUNT(*) FROM trunked_site_neighbor_summary
+                WHERE guid='transition-site' AND identity_domain_code=2
+                """));
         }
     }
 
@@ -352,7 +505,7 @@ class TrunkedSiteSchemaTest
     }
 
     @Test
-    void actualChildObservationTimeControlsRetentionAndPreventsExpiredReplay() throws Exception
+    void currentControlFollowsSiteHeartbeatWhileExpiredLearnedFactsStayDeleted() throws Exception
     {
         Path database = mTemporaryFolder.resolve("child-time.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
@@ -370,7 +523,7 @@ class TrunkedSiteSchemaTest
             TrunkedSiteSchema.upsert(connection,
                 snapshotWithChildren(11_000, "hash-2", channel, neighbor), 5_000);
 
-            assertEquals(9_000, scalarLong(connection,
+            assertEquals(11_000, scalarLong(connection,
                 "SELECT last_seen_ms FROM trunked_site_channel_summary"));
             assertEquals(1, scalarLong(connection,
                 "SELECT observation_count FROM trunked_site_channel_summary"));
@@ -380,13 +533,17 @@ class TrunkedSiteSchemaTest
                 "SELECT observation_count FROM trunked_site_neighbor_summary"));
 
             TrunkedSiteSchema.deleteOlderThan(connection, 9_500);
-            assertEquals(0, scalarLong(connection, "SELECT COUNT(*) FROM trunked_site_channel_summary"));
+            assertEquals(1, scalarLong(connection, "SELECT COUNT(*) FROM trunked_site_channel_summary"));
             assertEquals(0, scalarLong(connection, "SELECT COUNT(*) FROM trunked_site_neighbor_summary"));
             assertEquals(1, scalarLong(connection, "SELECT COUNT(*) FROM trunked_site_snapshot"));
 
             TrunkedSiteSchema.upsert(connection,
                 snapshotWithChildren(12_000, "hash-3", channel, neighbor), 9_500);
-            assertEquals(0, scalarLong(connection, "SELECT COUNT(*) FROM trunked_site_channel_summary"));
+            assertEquals(1, scalarLong(connection, "SELECT COUNT(*) FROM trunked_site_channel_summary"));
+            assertEquals(12_000, scalarLong(connection,
+                "SELECT last_seen_ms FROM trunked_site_channel_summary"));
+            assertEquals(1, scalarLong(connection,
+                "SELECT observation_count FROM trunked_site_channel_summary"));
             assertEquals(0, scalarLong(connection, "SELECT COUNT(*) FROM trunked_site_neighbor_summary"));
             assertEquals(12_000, scalarLong(connection,
                 "SELECT last_seen_ms FROM trunked_site_snapshot"));
@@ -665,6 +822,16 @@ class TrunkedSiteSchemaTest
             450_000_000L, 450_000_000L, channels, neighbors);
     }
 
+    private static TrunkedSiteSchema.Snapshot mutableSnapshot(long observedAt, String hash, long currentControl,
+                                                              List<TrunkedSiteSchema.Channel> channels,
+                                                              TrunkedSiteSchema.Neighbor neighbor)
+    {
+        return new TrunkedSiteSchema.Snapshot(observedAt, "mutable-site", hash,
+            TrunkedSiteSchema.PROTOCOL_DMR, 1, 2, "Metro", "Downtown", null, "DMR",
+            10, 20, 30, null, null, null, null, null, null, null, null, 0, null,
+            451_000_000L, currentControl, channels, List.of(neighbor));
+    }
+
     private static TrunkedSiteSchema.Snapshot nxdnSnapshot(long observedAt, String hash)
     {
         return new TrunkedSiteSchema.Snapshot(observedAt, "nxdn-site", hash,
@@ -673,6 +840,23 @@ class TrunkedSiteSchemaTest
             155_000_000L, 155_000_000L,
             List.of(new TrunkedSiteSchema.Channel(120, 121, null, 155_000_000L, 160_000_000L, 1)),
             List.of(new TrunkedSiteSchema.Neighbor(2, 4, 7, 8, 10, 122, 155_012_500L, 1)));
+    }
+
+    private static TrunkedSiteSchema.Snapshot transitionSnapshot(long observedAt, int protocol)
+    {
+        boolean dmr = protocol == TrunkedSiteSchema.PROTOCOL_DMR;
+        return new TrunkedSiteSchema.Snapshot(observedAt, "transition-site", "same-hash", protocol,
+            dmr ? 1 : 2, dmr ? 2 : 4, dmr ? "Metro DMR" : "Metro NXDN",
+            dmr ? "DMR Site" : "NXDN Site", null, dmr ? "DMR" : "NXDN",
+            dmr ? 10 : 7, dmr ? 20 : 8, dmr ? 30 : 9, dmr ? null : 12,
+            null, null, null, null, null, null, null, 0, null,
+            dmr ? 451_000_000L : 155_000_000L, dmr ? 451_000_000L : 155_000_000L,
+            List.of(dmr ?
+                new TrunkedSiteSchema.Channel(42, null, 1, 451_000_000L, 456_000_000L, 1) :
+                new TrunkedSiteSchema.Channel(120, 121, null, 155_000_000L, 160_000_000L, 1)),
+            List.of(dmr ?
+                new TrunkedSiteSchema.Neighbor(1, 2, 10, 20, 31, 43, 452_000_000L, 1) :
+                new TrunkedSiteSchema.Neighbor(2, 4, 7, 8, 10, 122, 155_012_500L, 1)));
     }
 
     private static TrunkedSiteSchema.Snapshot snapshotWithChildren(long observedAt, String hash,
