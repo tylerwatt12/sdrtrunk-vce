@@ -23,6 +23,7 @@ import java.util.jar.JarFile;
 public final class JmbeLibraryMetadata
 {
     private static final String ENTRY_POINT = "jmbe/JMBEAudioLibrary.class";
+    public static final Version MINIMUM_SUPPORTED_VERSION = new Version(1, 0, 14, null);
 
     private JmbeLibraryMetadata()
     {
@@ -40,6 +41,28 @@ public final class JmbeLibraryMetadata
         }
 
         return null;
+    }
+
+    /**
+     * Indicates whether the library has a supported JMBE version and entry point.
+     */
+    public static boolean isSupported(Path library)
+    {
+        if(library != null)
+        {
+            try(JarFile jarFile = new JarFile(library.toFile()))
+            {
+                Version version = getVersion(jarFile);
+                return version != null && version.compareTo(MINIMUM_SUPPORTED_VERSION) >= 0 &&
+                    jarFile.getJarEntry(ENTRY_POINT) != null;
+            }
+            catch(IOException ignored)
+            {
+                //Invalid or unavailable libraries are not ready for use.
+            }
+        }
+
+        return false;
     }
 
     public static void verify(Path library, Version expectedVersion) throws IOException

@@ -454,7 +454,7 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
     {
         return getItem() != null &&
                getItem().getDecodeConfiguration().getDecoderType().providesMBEAudioFrames() &&
-               !mUserPreferences.getJmbeLibraryPreference().hasJmbeLibraryPath();
+               !mUserPreferences.getJmbeLibraryPreference().isJmbeLibraryReady();
     }
 
     /**

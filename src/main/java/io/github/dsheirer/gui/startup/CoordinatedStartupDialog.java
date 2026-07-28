@@ -8,12 +8,18 @@ package io.github.dsheirer.gui.startup;
 import io.github.dsheirer.controller.channel.AutoStartChannelModel;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.ChannelEvent;
+import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.gui.whatsnew.ReleaseNotes;
 import io.github.dsheirer.gui.whatsnew.WhatsNewDialog;
+import io.github.dsheirer.jmbe.JmbeCreator;
+import io.github.dsheirer.jmbe.JmbeEditorRequest;
+import io.github.dsheirer.jmbe.github.GitHub;
+import io.github.dsheirer.jmbe.github.Release;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultException;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultService;
 import io.github.dsheirer.sample.Listener;
+import io.github.dsheirer.util.ThreadPool;
 import io.github.dsheirer.vector.calibrate.Calibration;
 import io.github.dsheirer.vector.calibrate.CalibrationManager;
 import java.awt.BorderLayout;
@@ -85,6 +91,9 @@ public class CoordinatedStartupDialog extends JDialog
     private JLabel mCalibrationStatusLabel;
     private JProgressBar mCalibrationProgressBar;
     private boolean mCalibrationRunning;
+    private JCheckBox mHideJmbeCheckBox;
+    private JLabel mJmbeStatusLabel;
+    private boolean mJmbeBuilderOpening;
     private JPasswordField mVaultPasswordField;
     private JCheckBox mSaveVaultPasswordCheckBox;
     private JLabel mVaultStatusLabel;
@@ -107,8 +116,12 @@ public class CoordinatedStartupDialog extends JDialog
         mVaultService = vaultService;
         mAutoStartChannels = List.copyOf(autoStartChannels);
         mChannelEventListener = channelEventListener;
-        mSequence = new StartupSequence(releaseNotes.isPresent(), calibrationRequired, vaultService != null,
-            !autoStartChannels.isEmpty());
+        boolean jmbeSetupRequired =
+            mUserPreferences.getJmbeLibraryPreference().getAlertIfMissingLibraryRequired() &&
+                !mUserPreferences.getJmbeLibraryPreference().isJmbeLibraryReady() &&
+                channelsRequireJmbe(mAutoStartChannels);
+        mSequence = new StartupSequence(releaseNotes.isPresent(), calibrationRequired, jmbeSetupRequired,
+            vaultService != null, !autoStartChannels.isEmpty());
 
         setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
         addWindowListener(new WindowAdapter()
@@ -184,6 +197,10 @@ public class CoordinatedStartupDialog extends JDialog
         {
             mCards.add(createCalibrationPanel(), StartupStep.CPU_CALIBRATION.name());
         }
+        if(mSequence.getSteps().contains(StartupStep.JMBE_LIBRARY))
+        {
+            mCards.add(createJmbePanel(), StartupStep.JMBE_LIBRARY.name());
+        }
         if(mVaultService != null)
         {
             mCards.add(createVaultPanel(), StartupStep.ENCRYPTION_VAULT.name());
@@ -230,6 +247,23 @@ public class CoordinatedStartupDialog extends JDialog
         statusPanel.add(mCalibrationProgressBar, "growx,wrap");
         statusPanel.add(mHideCalibrationCheckBox, "wrap");
         statusPanel.add(mCalibrationCountdownLabel);
+        panel.add(statusPanel, BorderLayout.CENTER);
+        return panel;
+    }
+
+    private JPanel createJmbePanel()
+    {
+        JPanel panel = new JPanel(new BorderLayout(0, 18));
+        panel.setBorder(BorderFactory.createEmptyBorder(12, 8, 8, 8));
+        panel.add(wrappedText("Your digital voice channels need the optional JMBE audio library. Build and install " +
+            "it now so P25, DMR, and NXDN voice can be heard, recorded, and streamed when channels start."),
+            BorderLayout.NORTH);
+
+        JPanel statusPanel = new JPanel(new MigLayout("insets 20 0 0 0", "[grow,fill]", "[][]"));
+        mJmbeStatusLabel = new JLabel();
+        mHideJmbeCheckBox = new JCheckBox("Do not warn again when continuing without voice");
+        statusPanel.add(mJmbeStatusLabel, "wrap");
+        statusPanel.add(mHideJmbeCheckBox);
         panel.add(statusPanel, BorderLayout.CENTER);
         return panel;
     }
@@ -325,6 +359,11 @@ public class CoordinatedStartupDialog extends JDialog
                 startPassiveStepTimer(mCalibrationCountdownLabel,
                     seconds -> "Calibration will be deferred automatically in " + seconds + " seconds.");
             }
+            case JMBE_LIBRARY ->
+            {
+                updateJmbeStatus();
+                setJmbeButtons();
+            }
             case ENCRYPTION_VAULT ->
             {
                 mVaultStatusLabel.setText(" ");
@@ -349,6 +388,7 @@ public class CoordinatedStartupDialog extends JDialog
         {
             case WHATS_NEW -> "What's New";
             case CPU_CALIBRATION -> "CPU Calibration";
+            case JMBE_LIBRARY -> "JMBE Audio Library";
             case ENCRYPTION_VAULT -> "Encryption Key Vault";
             case AUTO_START_CHANNELS -> "Auto-Start Channels";
         };
@@ -493,6 +533,127 @@ public class CoordinatedStartupDialog extends JDialog
         mLog.error("CPU calibration failed", throwable);
         mCalibrationStatusLabel.setForeground(Color.RED.darker());
         mCalibrationStatusLabel.setText("Calibration could not finish. You can retry later from User Preferences.");
+    }
+
+    private void setJmbeButtons()
+    {
+        if(mUserPreferences.getJmbeLibraryPreference().isJmbeLibraryReady())
+        {
+            setButtons(button("Continue", this::advance, true));
+        }
+        else if(mJmbeBuilderOpening)
+        {
+            setButtons(button("Continue Without Voice", this::continueWithoutJmbe, false));
+        }
+        else
+        {
+            setButtons(button("Open JMBE Builder", this::openJmbeBuilder, true),
+                button("Check and Continue", this::continueAfterJmbeSetup, false),
+                button("Continue Without Voice", this::continueWithoutJmbe, false));
+        }
+    }
+
+    private void updateJmbeStatus()
+    {
+        if(mUserPreferences.getJmbeLibraryPreference().isJmbeLibraryReady())
+        {
+            mJmbeStatusLabel.setForeground(new Color(0, 110, 0));
+            mJmbeStatusLabel.setText("JMBE " +
+                mUserPreferences.getJmbeLibraryPreference().getCurrentVersion() + " is ready.");
+        }
+        else
+        {
+            mJmbeStatusLabel.setForeground(new Color(160, 80, 0));
+            mJmbeStatusLabel.setText("A compatible JMBE library is not installed.");
+        }
+    }
+
+    private void openJmbeBuilder()
+    {
+        if(mJmbeBuilderOpening)
+        {
+            return;
+        }
+
+        mJmbeBuilderOpening = true;
+        mJmbeStatusLabel.setForeground(Color.DARK_GRAY);
+        mJmbeStatusLabel.setText("Checking for the latest JMBE builder...");
+        setJmbeButtons();
+
+        try
+        {
+            ThreadPool.CACHED.execute(() -> {
+                Release release = null;
+
+                try
+                {
+                    release = GitHub.getLatestRelease(JmbeCreator.GITHUB_JMBE_RELEASES_URL);
+                }
+                catch(RuntimeException e)
+                {
+                    mLog.warn("Unable to check for the latest JMBE release", e);
+                }
+
+                Release latestRelease = release;
+                SwingUtilities.invokeLater(() -> completeJmbeBuilderOpen(latestRelease));
+            });
+        }
+        catch(RuntimeException e)
+        {
+            mLog.warn("Unable to start the JMBE release check", e);
+            completeJmbeBuilderOpen(null);
+        }
+    }
+
+    private void completeJmbeBuilderOpen(Release release)
+    {
+        mJmbeBuilderOpening = false;
+
+        if(!isDisplayable() || mSequence.current().orElse(null) != StartupStep.JMBE_LIBRARY)
+        {
+            return;
+        }
+
+        if(release != null)
+        {
+            MyEventBus.getGlobalEventBus().post(new JmbeEditorRequest(release));
+            mJmbeStatusLabel.setForeground(Color.DARK_GRAY);
+            mJmbeStatusLabel.setText(
+                "The JMBE builder is open. When it finishes, return here and click Check and Continue.");
+        }
+        else
+        {
+            mJmbeStatusLabel.setForeground(Color.RED.darker());
+            mJmbeStatusLabel.setText(
+                "The JMBE builder could not be opened. Check the network connection and try again.");
+        }
+
+        setJmbeButtons();
+    }
+
+    private void continueAfterJmbeSetup()
+    {
+        if(mUserPreferences.getJmbeLibraryPreference().isJmbeLibraryReady())
+        {
+            updateJmbeStatus();
+            advance();
+        }
+        else
+        {
+            mJmbeStatusLabel.setForeground(Color.RED.darker());
+            mJmbeStatusLabel.setText(
+                "JMBE is not ready yet. Complete the builder, or choose Continue Without Voice.");
+        }
+    }
+
+    private void continueWithoutJmbe()
+    {
+        if(mHideJmbeCheckBox.isSelected())
+        {
+            mUserPreferences.getJmbeLibraryPreference().setAlertIfMissingLibraryRequired(false);
+        }
+
+        advance();
     }
 
     private void startVaultTimer()
@@ -681,6 +842,26 @@ public class CoordinatedStartupDialog extends JDialog
         }
 
         advance();
+    }
+
+    static boolean channelsRequireJmbe(List<Channel> channels)
+    {
+        if(channels == null)
+        {
+            return false;
+        }
+
+        for(Channel channel: channels)
+        {
+            if(channel != null && channel.getDecodeConfiguration() != null &&
+                channel.getDecodeConfiguration().getDecoderType() != null &&
+                channel.getDecodeConfiguration().getDecoderType().providesMBEAudioFrames())
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private void cancelAutoStart()

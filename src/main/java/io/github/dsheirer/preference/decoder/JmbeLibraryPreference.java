@@ -98,6 +98,14 @@ public class JmbeLibraryPreference extends Preference
     }
 
     /**
+     * Indicates whether a selected JMBE library is new enough for this application.
+     */
+    public boolean isJmbeLibraryReady()
+    {
+        return JmbeLibraryMetadata.isSupported(getPathJmbeLibrary());
+    }
+
+    /**
      * Sets the path to the JMBE library
      */
     public void setPathJmbeLibrary(Path path)

@@ -37,7 +37,7 @@ public class ApplicationPreference extends Preference
         "p25.activity.logging.retention.days";
     private static final String PREFERENCE_KEY_STATS_WEB_SERVER_ENABLED = "stats.web.server.enabled";
     private static final String PREFERENCE_KEY_STATS_WEB_SERVER_PORT = "stats.web.server.port";
-    private static final String PREFERENCE_KEY_STATS_WEB_SERVER_LAN_ENABLED = "stats.web.server.lan.enabled";
+    private static final String PREFERENCE_KEY_STATS_WEB_SERVER_ANY_IP_ENABLED = "stats.web.server.any.ip.enabled";
     public static final boolean DEFAULT_STATS_LOGGING_ENABLED = false;
     public static final boolean DEFAULT_STATS_DETAILED_HISTORY_ENABLED = false;
     public static final int MIN_STATS_LOGGING_RETENTION_DAYS = 1;
@@ -54,7 +54,7 @@ public class ApplicationPreference extends Preference
     private Integer mStatsLoggingRetentionDays;
     private Boolean mStatsWebServerEnabled;
     private Integer mStatsWebServerPort;
-    private Boolean mStatsWebServerLanEnabled;
+    private Boolean mStatsWebServerAnyIpEnabled;
 
     /**
      * Constructs an instance
@@ -221,23 +221,24 @@ public class ApplicationPreference extends Preference
     /**
      * Indicates if non-loopback clients can reach the embedded stats web server.
      */
-    public boolean isStatsWebServerLanEnabled()
+    public boolean isStatsWebServerAnyIpEnabled()
     {
-        if(mStatsWebServerLanEnabled == null)
+        if(mStatsWebServerAnyIpEnabled == null)
         {
-            mStatsWebServerLanEnabled = mPreferences.getBoolean(PREFERENCE_KEY_STATS_WEB_SERVER_LAN_ENABLED, false);
+            mStatsWebServerAnyIpEnabled =
+                mPreferences.getBoolean(PREFERENCE_KEY_STATS_WEB_SERVER_ANY_IP_ENABLED, false);
         }
 
-        return mStatsWebServerLanEnabled;
+        return mStatsWebServerAnyIpEnabled;
     }
 
     /**
-     * Enables or disables LAN/Tailscale access for the embedded stats web server.
+     * Enables or disables access from any IP address for the embedded stats web server.
      */
-    public void setStatsWebServerLanEnabled(boolean enabled)
+    public void setStatsWebServerAnyIpEnabled(boolean enabled)
     {
-        mStatsWebServerLanEnabled = enabled;
-        mPreferences.putBoolean(PREFERENCE_KEY_STATS_WEB_SERVER_LAN_ENABLED, enabled);
+        mStatsWebServerAnyIpEnabled = enabled;
+        mPreferences.putBoolean(PREFERENCE_KEY_STATS_WEB_SERVER_ANY_IP_ENABLED, enabled);
         notifyPreferenceUpdated();
     }
 

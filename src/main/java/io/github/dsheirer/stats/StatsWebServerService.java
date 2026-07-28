@@ -63,7 +63,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
     private ExecutorService mExecutorService;
     private Path mAssetRoot;
     private int mPort;
-    private boolean mLanEnabled;
+    private boolean mAnyIpEnabled;
 
     public StatsWebServerService(UserPreferences userPreferences)
     {
@@ -107,20 +107,20 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         }
 
         int requestedPort = preference.getStatsWebServerPort();
-        boolean requestedLan = preference.isStatsWebServerLanEnabled();
+        boolean requestedAnyIp = preference.isStatsWebServerAnyIpEnabled();
         Path requestedRoot = StatsWebPath.getAssetsPath();
 
-        if(mServer != null && requestedPort == mPort && requestedLan == mLanEnabled &&
+        if(mServer != null && requestedPort == mPort && requestedAnyIp == mAnyIpEnabled &&
             requestedRoot.equals(mAssetRoot))
         {
             return;
         }
 
         stop();
-        start(requestedRoot, requestedPort, requestedLan);
+        start(requestedRoot, requestedPort, requestedAnyIp);
     }
 
-    private void start(Path assetRoot, int port, boolean lanEnabled)
+    private void start(Path assetRoot, int port, boolean anyIpEnabled)
     {
         try
         {
@@ -133,13 +133,12 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             mWebCallService.start();
 
             Files.createDirectories(assetRoot);
-            InetAddress bindAddress = lanEnabled ? InetAddress.getByName("0.0.0.0") : InetAddress.getLoopbackAddress();
-            mServer = HttpServer.create(new InetSocketAddress(bindAddress, port), 0);
+            mServer = HttpServer.create(createBindAddress(port, anyIpEnabled), 0);
             mExecutorService = Executors.newCachedThreadPool(new NamingThreadFactory("stats web server"));
             mServer.setExecutor(mExecutorService);
             mAssetRoot = assetRoot;
             mPort = port;
-            mLanEnabled = lanEnabled;
+            mAnyIpEnabled = anyIpEnabled;
 
             mServer.createContext("/api/status", exchange -> handleJson(exchange, this::status));
             mServer.createContext("/api/dashboard", exchange -> handleJson(exchange, mDatabase::dashboard));
@@ -206,7 +205,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             mServer.start();
 
             mLog.info("Stats web server started at http://{}:{}/ using assets [{}]",
-                lanEnabled ? "0.0.0.0" : "127.0.0.1", port, assetRoot);
+                anyIpEnabled ? "0.0.0.0" : "127.0.0.1", port, assetRoot);
         }
         catch(IOException e)
         {
@@ -235,7 +234,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
 
         mAssetRoot = null;
         mPort = 0;
-        mLanEnabled = false;
+        mAnyIpEnabled = false;
 
         if(mChannelProcessingManager != null)
         {
@@ -249,7 +248,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         status.put("server", Map.of(
             "enabled", mServer != null,
             "port", mPort,
-            "lanEnabled", mLanEnabled,
+            "accessMode", mAnyIpEnabled ? "any_ip" : "local_only",
             "assetRoot", mAssetRoot != null ? mAssetRoot.toString() : "",
             "assetsAvailable", mAssetRoot != null && Files.isRegularFile(mAssetRoot.resolve("index.html")),
             "liveChannels", Map.of(
@@ -299,7 +298,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
 
     private void handleJson(HttpExchange exchange, JsonSupplier supplier) throws IOException
     {
-        if(!isAllowed(exchange) || !requireMethod(exchange, "GET"))
+        if(!requireMethod(exchange, "GET"))
         {
             return;
         }
@@ -335,7 +334,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
 
     private void handleSystemsSse(HttpExchange exchange) throws IOException
     {
-        if(!isAllowed(exchange) || !requireMethod(exchange, "GET"))
+        if(!requireMethod(exchange, "GET"))
         {
             return;
         }
@@ -353,7 +352,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
 
     private void handleSitesSse(HttpExchange exchange) throws IOException
     {
-        if(!isAllowed(exchange) || !requireMethod(exchange, "GET"))
+        if(!requireMethod(exchange, "GET"))
         {
             return;
         }
@@ -372,7 +371,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
 
     private void handleWebCallsSse(HttpExchange exchange) throws IOException
     {
-        if(!isAllowed(exchange) || !requireMethod(exchange, "GET"))
+        if(!requireMethod(exchange, "GET"))
         {
             return;
         }
@@ -391,7 +390,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
 
     private void handleActivitySse(HttpExchange exchange) throws IOException
     {
-        if(!isAllowed(exchange) || !requireMethod(exchange, "GET"))
+        if(!requireMethod(exchange, "GET"))
         {
             return;
         }
@@ -464,7 +463,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
 
     private void handleWebCallAudio(HttpExchange exchange) throws IOException
     {
-        if(!isAllowed(exchange) || !requireMethod(exchange, "GET"))
+        if(!requireMethod(exchange, "GET"))
         {
             return;
         }
@@ -564,7 +563,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
 
     private void handleStatic(HttpExchange exchange) throws IOException
     {
-        if(!isAllowed(exchange) || !requireMethod(exchange, "GET", "HEAD"))
+        if(!requireMethod(exchange, "GET", "HEAD"))
         {
             return;
         }
@@ -644,48 +643,10 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             """.formatted(root));
     }
 
-    private boolean isAllowed(HttpExchange exchange) throws IOException
+    static InetSocketAddress createBindAddress(int port, boolean anyIpEnabled)
     {
-        InetAddress remoteAddress = exchange.getRemoteAddress().getAddress();
-
-        if(remoteAddress.isLoopbackAddress())
-        {
-            return true;
-        }
-
-        if(!mLanEnabled)
-        {
-            sendText(exchange, 403, "Stats web server is limited to this computer.");
-            return false;
-        }
-
-        if(isPrivateOrTailnet(remoteAddress))
-        {
-            return true;
-        }
-
-        sendText(exchange, 403, "Stats web server only allows loopback, LAN, link-local, and Tailscale clients.");
-        return false;
-    }
-
-    private static boolean isPrivateOrTailnet(InetAddress address)
-    {
-        if(address.isSiteLocalAddress() || address.isLinkLocalAddress())
-        {
-            return true;
-        }
-
-        byte[] bytes = address.getAddress();
-
-        if(bytes.length == 4)
-        {
-            int first = bytes[0] & 0xFF;
-            int second = bytes[1] & 0xFF;
-            return first == 100 && second >= 64 && second <= 127;
-        }
-
-        int first = bytes[0] & 0xFF;
-        return (first & 0xFE) == 0xFC;
+        return anyIpEnabled ? new InetSocketAddress(port) :
+            new InetSocketAddress(InetAddress.getLoopbackAddress(), port);
     }
 
     private boolean requireMethod(HttpExchange exchange, String... methods) throws IOException

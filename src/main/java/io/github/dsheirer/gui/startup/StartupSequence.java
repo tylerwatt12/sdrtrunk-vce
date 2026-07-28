@@ -17,7 +17,7 @@ public final class StartupSequence
     private final List<StartupStep> mSteps;
     private int mIndex = -1;
 
-    public StartupSequence(boolean showWhatsNew, boolean calibrateCpu, boolean unlockVault,
+    public StartupSequence(boolean showWhatsNew, boolean calibrateCpu, boolean setupJmbe, boolean unlockVault,
                            boolean autoStartChannels)
     {
         List<StartupStep> steps = new ArrayList<>();
@@ -30,6 +30,11 @@ public final class StartupSequence
         if(calibrateCpu)
         {
             steps.add(StartupStep.CPU_CALIBRATION);
+        }
+
+        if(setupJmbe)
+        {
+            steps.add(StartupStep.JMBE_LIBRARY);
         }
 
         if(unlockVault)

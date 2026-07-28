@@ -16,10 +16,15 @@ import io.github.dsheirer.preference.application.ApplicationPreference;
 import io.github.dsheirer.stats.StatsWebPath;
 import javafx.geometry.HPos;
 import javafx.geometry.Insets;
+import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
+import javafx.scene.control.ButtonBar;
+import javafx.scene.control.ButtonType;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.Label;
+import javafx.scene.control.RadioButton;
 import javafx.scene.control.Spinner;
+import javafx.scene.control.ToggleGroup;
 import javafx.scene.control.Tooltip;
 import javafx.scene.layout.ColumnConstraints;
 import javafx.scene.layout.GridPane;
@@ -33,18 +38,16 @@ import javafx.scene.layout.VBox;
 public class WebServerPreferenceEditor extends HBox
 {
     private final ApplicationPreference mApplicationPreference;
-    private final UserPreferences mUserPreferences;
     private GridPane mEditorPane;
     private CheckBox mServerCheckBox;
-    private CheckBox mLanCheckBox;
+    private RadioButton mLocalOnlyRadioButton;
+    private RadioButton mAnyIpRadioButton;
+    private ToggleGroup mAccessModeToggleGroup;
     private Spinner<Integer> mPortSpinner;
     private Label mUrlLabel;
-    private Button mStartButton;
-    private Button mStopButton;
 
     public WebServerPreferenceEditor(UserPreferences userPreferences)
     {
-        mUserPreferences = userPreferences;
         mApplicationPreference = userPreferences.getApplicationPreference();
         setMaxWidth(Double.MAX_VALUE);
         VBox vbox = new VBox(getEditorPane());
@@ -65,7 +68,8 @@ public class WebServerPreferenceEditor extends HBox
             mEditorPane.setPadding(new Insets(10));
             mEditorPane.add(new Label("Web Server"), 0, row++, 3, 1);
             mEditorPane.add(getServerCheckBox(), 0, row++, 3, 1);
-            mEditorPane.add(getLanCheckBox(), 0, row++, 3, 1);
+            mEditorPane.add(new Label("Network access"), 0, row);
+            mEditorPane.add(new HBox(12, getLocalOnlyRadioButton(), getAnyIpRadioButton()), 1, row++, 2, 1);
             mEditorPane.add(new Label("Port"), 0, row);
             GridPane.setHalignment(getPortSpinner(), HPos.RIGHT);
             mEditorPane.add(getPortSpinner(), 1, row++);
@@ -75,8 +79,6 @@ public class WebServerPreferenceEditor extends HBox
             Label assets = new Label(StatsWebPath.getAssetsPath().toString());
             assets.setWrapText(true);
             mEditorPane.add(assets, 1, row++, 2, 1);
-            mEditorPane.add(new Label("Server control"), 0, row);
-            mEditorPane.add(new HBox(8, getStartButton(), getStopButton()), 1, row, 2, 1);
 
             ColumnConstraints labelColumn = new ColumnConstraints();
             labelColumn.setPercentWidth(30);
@@ -104,21 +106,75 @@ public class WebServerPreferenceEditor extends HBox
         return mServerCheckBox;
     }
 
-    private CheckBox getLanCheckBox()
+    private ToggleGroup getAccessModeToggleGroup()
     {
-        if(mLanCheckBox == null)
+        if(mAccessModeToggleGroup == null)
         {
-            mLanCheckBox = new CheckBox("Allow LAN/Tailscale Access");
-            mLanCheckBox.setTooltip(new Tooltip(
-                "When disabled, the server accepts requests only from this computer."));
-            mLanCheckBox.setSelected(mApplicationPreference.isStatsWebServerLanEnabled());
-            mLanCheckBox.setOnAction(event -> {
-                mApplicationPreference.setStatsWebServerLanEnabled(mLanCheckBox.isSelected());
+            mAccessModeToggleGroup = new ToggleGroup();
+        }
+
+        return mAccessModeToggleGroup;
+    }
+
+    private RadioButton getLocalOnlyRadioButton()
+    {
+        if(mLocalOnlyRadioButton == null)
+        {
+            mLocalOnlyRadioButton = new RadioButton("Local only");
+            mLocalOnlyRadioButton.setToggleGroup(getAccessModeToggleGroup());
+            mLocalOnlyRadioButton.setTooltip(new Tooltip(
+                "Accepts connections only from this computer at 127.0.0.1."));
+            mLocalOnlyRadioButton.setSelected(!mApplicationPreference.isStatsWebServerAnyIpEnabled());
+            mLocalOnlyRadioButton.setOnAction(event -> {
+                mApplicationPreference.setStatsWebServerAnyIpEnabled(false);
                 updateControlState();
             });
         }
 
-        return mLanCheckBox;
+        return mLocalOnlyRadioButton;
+    }
+
+    private RadioButton getAnyIpRadioButton()
+    {
+        if(mAnyIpRadioButton == null)
+        {
+            mAnyIpRadioButton = new RadioButton("Any IP");
+            mAnyIpRadioButton.setToggleGroup(getAccessModeToggleGroup());
+            mAnyIpRadioButton.setTooltip(new Tooltip(
+                "Accepts connections through any network interface, subject to the computer's firewall."));
+            mAnyIpRadioButton.setSelected(mApplicationPreference.isStatsWebServerAnyIpEnabled());
+            mAnyIpRadioButton.setOnAction(event -> confirmAnyIpAccess());
+        }
+
+        return mAnyIpRadioButton;
+    }
+
+    private void confirmAnyIpAccess()
+    {
+        ButtonType allow = new ButtonType("Allow Any IP", ButtonBar.ButtonData.OTHER);
+        Alert alert = new Alert(Alert.AlertType.WARNING,
+            "Anyone who can reach this computer on this port can use the web interface. It uses plain HTTP with " +
+                "no login or encryption and exposes receiver activity and live decoded audio.\n\nDo not " +
+                "port-forward this port or expose it to the public internet. Use only on a trusted LAN, Tailnet, " +
+                "VPN, or behind a firewall.",
+            allow, ButtonType.CANCEL);
+        alert.setTitle("Web Server Security Warning");
+        alert.setHeaderText("Allow connections from any IP address?");
+        alert.initOwner(getAnyIpRadioButton().getScene().getWindow());
+        ((Button)alert.getDialogPane().lookupButton(allow)).setDefaultButton(false);
+        ((Button)alert.getDialogPane().lookupButton(ButtonType.CANCEL)).setDefaultButton(true);
+
+        if(alert.showAndWait().filter(allow::equals).isPresent())
+        {
+            mApplicationPreference.setStatsWebServerAnyIpEnabled(true);
+        }
+        else
+        {
+            getLocalOnlyRadioButton().setSelected(true);
+            mApplicationPreference.setStatsWebServerAnyIpEnabled(false);
+        }
+
+        updateControlState();
     }
 
     private Spinner<Integer> getPortSpinner()
@@ -147,28 +203,6 @@ public class WebServerPreferenceEditor extends HBox
         return mUrlLabel;
     }
 
-    private Button getStartButton()
-    {
-        if(mStartButton == null)
-        {
-            mStartButton = new Button("Start");
-            mStartButton.setOnAction(event -> setServerEnabled(true));
-        }
-
-        return mStartButton;
-    }
-
-    private Button getStopButton()
-    {
-        if(mStopButton == null)
-        {
-            mStopButton = new Button("Stop");
-            mStopButton.setOnAction(event -> setServerEnabled(false));
-        }
-
-        return mStopButton;
-    }
-
     private void setServerEnabled(boolean enabled)
     {
         mApplicationPreference.setStatsWebServerEnabled(enabled);
@@ -179,11 +213,7 @@ public class WebServerPreferenceEditor extends HBox
     private void updateControlState()
     {
         boolean running = getServerCheckBox().isSelected();
-        getPortSpinner().setDisable(running);
-        getLanCheckBox().setDisable(running);
-        getStartButton().setDisable(running);
-        getStopButton().setDisable(!running);
-        String host = mApplicationPreference.isStatsWebServerLanEnabled() ? "<receiver-ip>" : "127.0.0.1";
+        String host = mApplicationPreference.isStatsWebServerAnyIpEnabled() ? "<this-computer-ip>" : "127.0.0.1";
         String url = "http://" + host + ":" + mApplicationPreference.getStatsWebServerPort() + "/";
         getUrlLabel().setText(running ? url : "Stopped - " + url);
     }

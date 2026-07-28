@@ -12,6 +12,7 @@ public enum StartupStep
 {
     WHATS_NEW,
     CPU_CALIBRATION,
+    JMBE_LIBRARY,
     ENCRYPTION_VAULT,
     AUTO_START_CHANNELS
 }

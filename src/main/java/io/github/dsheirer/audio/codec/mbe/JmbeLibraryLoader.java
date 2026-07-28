@@ -11,6 +11,8 @@
 
 package io.github.dsheirer.audio.codec.mbe;
 
+import io.github.dsheirer.jmbe.JmbeLibraryMetadata;
+import io.github.dsheirer.jmbe.github.Version;
 import java.io.IOException;
 import java.net.URLClassLoader;
 import java.nio.file.Files;
@@ -111,11 +113,13 @@ public final class JmbeLibraryLoader implements AutoCloseable
                 throw new IllegalArgumentException("JMBE entry point does not implement IAudioCodecLibrary");
             }
 
-            if(library.getMajorVersion() < 1 ||
-                library.getMajorVersion() == 1 && library.getMinorVersion() == 0 &&
-                    library.getBuildVersion() < 14)
+            Version libraryVersion = new Version(library.getMajorVersion(), library.getMinorVersion(),
+                library.getBuildVersion(), null);
+
+            if(libraryVersion.compareTo(JmbeLibraryMetadata.MINIMUM_SUPPORTED_VERSION) < 0)
             {
-                throw new IllegalArgumentException("JMBE library version 1.0.14 or newer is required");
+                throw new IllegalArgumentException("JMBE library version " +
+                    JmbeLibraryMetadata.MINIMUM_SUPPORTED_VERSION + " or newer is required");
             }
 
             mClassLoaders.add(classLoader);

@@ -1,7 +1,9 @@
 package io.github.dsheirer.jmbe;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.jmbe.github.Version;
 import java.io.IOException;
@@ -36,6 +38,18 @@ class JmbeLibraryMetadataTest
         Path missingEntryPoint = createLibrary("1.0.12", false);
         assertThrows(IOException.class,
             () -> JmbeLibraryMetadata.verify(missingEntryPoint, Version.fromString("1.0.12")));
+    }
+
+    @Test
+    void identifiesSupportedVersions()
+        throws Exception
+    {
+        assertFalse(JmbeLibraryMetadata.isSupported(createLibrary("1.0.13", true)));
+        assertTrue(JmbeLibraryMetadata.isSupported(createLibrary("1.0.14", true)));
+        assertTrue(JmbeLibraryMetadata.isSupported(createLibrary("1.0.15", true)));
+        assertFalse(JmbeLibraryMetadata.isSupported(createLibrary("1.0.14", false)));
+        assertFalse(JmbeLibraryMetadata.isSupported(mTemporaryDirectory.resolve("missing.jar")));
+        assertFalse(JmbeLibraryMetadata.isSupported(null));
     }
 
     private Path createLibrary(String version, boolean includeEntryPoint) throws IOException
