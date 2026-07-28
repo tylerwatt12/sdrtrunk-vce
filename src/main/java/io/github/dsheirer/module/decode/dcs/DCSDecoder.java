@@ -116,7 +116,7 @@ public class DCSDecoder extends Decoder implements IRealBufferListener, Listener
     }
 
     /**
-     * Processes the demodulated 8 kHz audio samples to extract the 300-baud LTR signalling and delivers the decoded
+     * Processes the demodulated 8 kHz audio samples to extract 300-baud signalling and delivers the decoded
      * symbol array to the registered listener.
      * @param samples to demodulate.
      */

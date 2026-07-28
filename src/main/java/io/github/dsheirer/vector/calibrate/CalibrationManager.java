@@ -19,7 +19,6 @@
 
 package io.github.dsheirer.vector.calibrate;
 
-import io.github.dsheirer.dsp.am.AmDemodulatorCalibration;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.calibration.VectorCalibrationPreference;
 import io.github.dsheirer.vector.calibrate.demodulator.DifferentialDemodulatorCalibration;
@@ -104,7 +103,6 @@ public class CalibrationManager
             sInstance.add(new PackedSampleConverterCalibration());
             sInstance.add(new UnpackedSampleConverterCalibration());
             sInstance.add(new UnpackedInterleavedSampleConverterCalibration());
-            sInstance.add(new AmDemodulatorCalibration());
             sInstance.add(new ComplexGainCalibration());
             sInstance.add(new ComplexOscillatorCalibration());
             sInstance.add(new ComplexMixerCalibration());

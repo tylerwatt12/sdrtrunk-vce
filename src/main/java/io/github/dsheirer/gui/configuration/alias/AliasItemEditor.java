@@ -26,10 +26,6 @@ import io.github.dsheirer.alias.AliasFactory;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasMatchDescriptor;
 import io.github.dsheirer.alias.AliasMatchRegistry;
-import io.github.dsheirer.alias.action.AliasAction;
-import io.github.dsheirer.alias.action.AliasActionType;
-import io.github.dsheirer.alias.action.beep.BeepAction;
-import io.github.dsheirer.alias.action.clip.ClipAction;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.AliasIDType;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
@@ -46,9 +42,6 @@ import io.github.dsheirer.audio.broadcast.ConfiguredBroadcast;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.gui.control.IntegerFormatter;
 import io.github.dsheirer.gui.configuration.Editor;
-import io.github.dsheirer.gui.configuration.alias.action.ActionEditor;
-import io.github.dsheirer.gui.configuration.alias.action.ActionEditorFactory;
-import io.github.dsheirer.gui.configuration.alias.action.EmptyActionEditor;
 import io.github.dsheirer.gui.configuration.alias.identifier.EmptyIdentifierEditor;
 import io.github.dsheirer.gui.configuration.alias.identifier.IdentifierEditor;
 import io.github.dsheirer.gui.configuration.alias.identifier.IdentifierEditorFactory;
@@ -78,7 +71,6 @@ import javafx.event.EventHandler;
 import javafx.geometry.HPos;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
-import javafx.scene.Node;
 import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonType;
@@ -123,7 +115,6 @@ public class AliasItemEditor extends Editor<Alias>
     private UserPreferences mUserPreferences;
     private EditorModificationListener mEditorModificationListener = new EditorModificationListener();
     private IdentifierEditorModificationListener mIdentifierEditorModificationListener = new IdentifierEditorModificationListener();
-    private ActionEditorModificationListener mActionEditorModificationListener = new ActionEditorModificationListener();
     private TextField mGroupField;
     private TextField mNameField;
     private TextArea mDescriptionField;
@@ -139,19 +130,14 @@ public class AliasItemEditor extends Editor<Alias>
     private VBox mTitledPanesBox;
     private TitledPane mIdentifierPane;
     private TitledPane mStreamPane;
-    private TitledPane mActionPane;
     private ListView<String> mAvailableStreamsView;
     private ListView<BroadcastChannel> mSelectedStreamsView;
     private ListView<AliasID> mIdentifiersList;
-    private ListView<AliasAction> mActionsList;
     private Button mAddStreamButton;
     private Button mRemoveStreamButton;
     private MenuButton mAddIdentifierButton;
     private Button mShowOverlapButton;
     private final BooleanProperty mMatcherMissing = new SimpleBooleanProperty();
-    private MenuButton mAddActionButton;
-    private Button mDeleteActionButton;
-    private VBox mActionEditorBox;
     private VBox mIdentifierEditorBox;
     private TextField mStreamAsTalkgroupField;
     private TextFormatter<Integer> mStreamAsIntegerTextFormatter = new IntegerFormatter(1,0xFFFF);
@@ -159,11 +145,6 @@ public class AliasItemEditor extends Editor<Alias>
     private Map<AliasIDType,IdentifierEditor<?>> mIdentifierEditorMap = new EnumMap<>(AliasIDType.class);
     private EmptyIdentifierEditor mEmptyIdentifierEditor = new EmptyIdentifierEditor();
     private IdentifierEditor<?> mIdentifierEditor;
-
-    private Map<AliasActionType,ActionEditor<?>> mActionEditorMap = new EnumMap<>(AliasActionType.class);
-    private EmptyActionEditor mEmptyActionEditor = new EmptyActionEditor();
-    private ActionEditor<?> mActionEditor;
-
 
     public AliasItemEditor(ConfigurationManager configurationManager, UserPreferences userPreferences)
     {
@@ -237,10 +218,6 @@ public class AliasItemEditor extends Editor<Alias>
         getIdentifiersList().getItems().clear();
         getAddIdentifierButton().setDisable(disable);
 
-        getActionsList().setDisable(disable);
-        getActionsList().getItems().clear();
-        getAddActionButton().setDisable(disable);
-
         updateStreamViews();
 
         if(alias != null)
@@ -288,20 +265,6 @@ public class AliasItemEditor extends Editor<Alias>
                 }
             }
 
-            for(AliasAction original: alias.getAliasActions())
-            {
-                AliasAction copy = AliasFactory.copyOf(original);
-
-                if(copy != null)
-                {
-                    getActionsList().getItems().add(copy);
-                }
-                else
-                {
-                    mLog.warn("Unable to create copy of alias action [{}] for alias [{}] - action will be lost if alias is saved",
-                        original.getType(), alias.getName());
-                }
-            }
         }
         else
         {
@@ -450,13 +413,6 @@ public class AliasItemEditor extends Editor<Alias>
                     alias.setMatchIdentifier(replacement);
                 }
 
-                //Remove and replace alias actions
-                alias.removeAllActions();
-                for(AliasAction aliasAction: getActionsList().getItems())
-                {
-                    alias.addAliasAction(aliasAction);
-                }
-
                 //Hack: because we're using a sorted list for the alias editor, sometimes setting
                 //name and or group can cause list errors.  So, we wrap each of these in a try/catch
                 //block to mitigate the error and effect the changes.
@@ -530,7 +486,7 @@ public class AliasItemEditor extends Editor<Alias>
         {
             mTitledPanesBox = new VBox();
             mTitledPanesBox.setMaxWidth(Double.MAX_VALUE);
-            mTitledPanesBox.getChildren().addAll(getIdentifierPane(), getStreamPane(), getActionPane());
+            mTitledPanesBox.getChildren().addAll(getIdentifierPane(), getStreamPane());
         }
 
         return mTitledPanesBox;
@@ -575,121 +531,6 @@ public class AliasItemEditor extends Editor<Alias>
         }
 
         return mIdentifierEditor;
-    }
-
-    private Editor<?> getActionEditor()
-    {
-        if(mActionEditor == null)
-        {
-            mActionEditor = mEmptyActionEditor;
-        }
-
-        return mActionEditor;
-    }
-
-    private void setAction(AliasAction aliasAction)
-    {
-        ActionEditor<?> editor = null;
-
-        if(aliasAction != null)
-        {
-            editor = mActionEditorMap.get(aliasAction.getType());
-
-            if(editor == null)
-            {
-                editor = ActionEditorFactory.getEditor(aliasAction.getType());
-                mActionEditorMap.put(aliasAction.getType(), editor);
-            }
-        }
-
-        getDeleteActionButton().setDisable(aliasAction == null);
-
-        if(editor == null)
-        {
-            editor = mEmptyActionEditor;
-        }
-
-        //Remove the modification listener from the editor
-        if(mActionEditor != null)
-        {
-            mActionEditor.modifiedProperty().removeListener(mActionEditorModificationListener);
-        }
-
-        if(mActionEditor != editor)
-        {
-            getActionEditorBox().getChildren().remove(mActionEditor);
-            mActionEditor = editor;
-            getActionEditorBox().getChildren().add(mActionEditor);
-        }
-
-        mActionEditor.setAliasAction(aliasAction);
-
-        //Add the modification listener back to the editor
-        mActionEditor.modifiedProperty().addListener(mActionEditorModificationListener);
-    }
-
-    private ListView<AliasAction> getActionsList()
-    {
-        if(mActionsList == null)
-        {
-            mActionsList = new ListView<>(FXCollections.observableArrayList(AliasAction.extractor()));
-            mActionsList.setPrefHeight(75);
-            mActionsList.setDisable(true);
-            mActionsList.getSelectionModel().selectedItemProperty()
-                .addListener((observable, oldValue, newValue) -> setAction(newValue));
-        }
-
-        return mActionsList;
-    }
-
-    private MenuButton getAddActionButton()
-    {
-        if(mAddActionButton == null)
-        {
-            mAddActionButton = new MenuButton("Add Action");
-            mAddActionButton.setDisable(true);
-            mAddActionButton.setMaxWidth(Double.MAX_VALUE);
-            mAddActionButton.getItems().addAll(new AddAudioClipActionItem(), new AddBeepActionItem());
-        }
-
-        return mAddActionButton;
-    }
-
-    private Button getDeleteActionButton()
-    {
-        if(mDeleteActionButton == null)
-        {
-            mDeleteActionButton = new Button("Delete Action");
-            mDeleteActionButton.setDisable(true);
-            mDeleteActionButton.setMaxWidth(Double.MAX_VALUE);
-            mDeleteActionButton.setOnAction(new EventHandler<ActionEvent>()
-            {
-                @Override
-                public void handle(ActionEvent event)
-                {
-                    AliasAction selected = getActionsList().getSelectionModel().getSelectedItem();
-
-                    if(selected != null)
-                    {
-                        Alert alert = new Alert(Alert.AlertType.CONFIRMATION,
-                            "Do you want to delete the selected alias action?", ButtonType.NO, ButtonType.YES);
-                        alert.setTitle("Delete Alias Action");
-                        alert.setHeaderText("Are you sure?");
-                        alert.initOwner(((Node)getDeleteActionButton()).getScene().getWindow());
-
-                        Optional<ButtonType> result = alert.showAndWait();
-
-                        if(result.get() == ButtonType.YES)
-                        {
-                            getActionsList().getItems().remove(selected);
-                            modifiedProperty().set(true);
-                        }
-                    }
-                }
-            });
-        }
-
-        return mDeleteActionButton;
     }
 
     /**
@@ -961,38 +802,6 @@ public class AliasItemEditor extends Editor<Alias>
         return mRemoveStreamButton;
     }
 
-    private TitledPane getActionPane()
-    {
-        if(mActionPane == null)
-        {
-            VBox buttonsBox = new VBox();
-            buttonsBox.setSpacing(10);
-            buttonsBox.getChildren().addAll(getAddActionButton(), getDeleteActionButton());
-
-            HBox hbox = new HBox();
-            hbox.setSpacing(10);
-            HBox.setHgrow(getActionEditorBox(), Priority.ALWAYS);
-            hbox.getChildren().addAll(getActionEditorBox(), buttonsBox);
-
-            mActionPane = new TitledPane("Actions", hbox);
-            mActionPane.setExpanded(false);
-        }
-
-        return mActionPane;
-    }
-
-    private VBox getActionEditorBox()
-    {
-        if(mActionEditorBox == null)
-        {
-            mActionEditorBox = new VBox();
-            mActionEditorBox.setSpacing(10);
-            mActionEditorBox.getChildren().addAll(getActionsList(), getActionEditor());
-        }
-
-        return mActionEditorBox;
-    }
-
     private GridPane getTextFieldPane()
     {
         if(mTextFieldPane == null)
@@ -1246,50 +1055,6 @@ public class AliasItemEditor extends Editor<Alias>
     }
 
     /**
-     * Menu item to add a new beep alias action
-     */
-    public class AddBeepActionItem extends MenuItem
-    {
-        public AddBeepActionItem()
-        {
-            super("Beep");
-
-            setOnAction(event -> {
-                if(getItem() != null)
-                {
-                    BeepAction beepAction = new BeepAction();
-                    getActionsList().getItems().add(beepAction);
-                    getActionsList().getSelectionModel().select(beepAction);
-                    getActionsList().scrollTo(beepAction);
-                    modifiedProperty().set(true);
-                }
-            });
-        }
-    }
-
-    /**
-     * Menu item to add a new audio clip alias action
-     */
-    public class AddAudioClipActionItem extends MenuItem
-    {
-        public AddAudioClipActionItem()
-        {
-            super("Audio Clip");
-
-            setOnAction(event -> {
-                if(getItem() != null)
-                {
-                    ClipAction clipAction = new ClipAction();
-                    getActionsList().getItems().add(clipAction);
-                    getActionsList().getSelectionModel().select(clipAction);
-                    getActionsList().scrollTo(clipAction);
-                    modifiedProperty().set(true);
-                }
-            });
-        }
-    }
-
-    /**
      * Monitors for changes to the identifier editors modified property to in-turn set this editor's modified property
      */
     public class IdentifierEditorModificationListener implements ChangeListener<Boolean>
@@ -1301,21 +1066,6 @@ public class AliasItemEditor extends Editor<Alias>
             {
                 modifiedProperty().set(true);
                 refreshMatcherValidity();
-            }
-        }
-    }
-
-    /**
-     * Monitors for changes to the identifier editors modified property to in-turn set this editor's modified property
-     */
-    public class ActionEditorModificationListener implements ChangeListener<Boolean>
-    {
-        @Override
-        public void changed(ObservableValue<? extends Boolean> observable, Boolean oldValue, Boolean newValue)
-        {
-            if(Boolean.TRUE.equals(newValue))
-            {
-                modifiedProperty().set(true);
             }
         }
     }

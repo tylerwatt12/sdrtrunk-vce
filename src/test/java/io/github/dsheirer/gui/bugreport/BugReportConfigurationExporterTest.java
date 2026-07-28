@@ -74,5 +74,6 @@ class BugReportConfigurationExporterTest
         assertTrue(snapshot.containsKey("alias"));
         assertFalse(snapshot.containsKey("alias_talkgroup"));
         assertFalse(snapshot.containsKey("alias_radio"));
+        assertFalse(snapshot.containsKey("alias_action"));
     }
 }

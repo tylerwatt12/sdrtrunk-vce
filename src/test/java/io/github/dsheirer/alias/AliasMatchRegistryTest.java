@@ -59,7 +59,6 @@ class AliasMatchRegistryTest
 
         assertTrue(AliasMatchRegistry.supports(nbfm, fleetsync));
         assertTrue(AliasMatchRegistry.isChannelCompatible(nbfm, DecoderType.NBFM));
-        assertFalse(AliasMatchRegistry.isChannelCompatible(nbfm, DecoderType.AM));
     }
 
     @Test
@@ -80,25 +79,12 @@ class AliasMatchRegistryTest
     }
 
     @Test
-    void amAndNbfmRemainDistinctFamilies()
-    {
-        AliasListDefinition am = definition(AliasListFamily.AM);
-        AliasListDefinition nbfm = definition(AliasListFamily.NBFM);
-
-        assertTrue(AliasMatchRegistry.supports(am, new Talkgroup(Protocol.AM, 1)));
-        assertFalse(AliasMatchRegistry.supports(am, new Talkgroup(Protocol.NBFM, 1)));
-        assertTrue(AliasMatchRegistry.supports(nbfm, new Talkgroup(Protocol.NBFM, 1)));
-        assertFalse(AliasMatchRegistry.supports(nbfm, new Talkgroup(Protocol.AM, 1)));
-    }
-
-    @Test
     void tonesAreOfferedOnlyByDecodersThatEmitToneIdentifiers()
     {
         TonesID tones = new TonesID();
 
         assertTrue(AliasMatchRegistry.supports(definition(AliasListFamily.P25), tones));
         assertTrue(AliasMatchRegistry.supports(definition(AliasListFamily.DMR), tones));
-        assertFalse(AliasMatchRegistry.supports(definition(AliasListFamily.AM), tones));
         assertFalse(AliasMatchRegistry.supports(definition(AliasListFamily.NBFM), tones));
     }
 
@@ -106,7 +92,6 @@ class AliasMatchRegistryTest
     void eachActiveFamilyHasAValidDefaultForNewAndRepairedAliases()
     {
         for(AliasListFamily family: Set.of(AliasListFamily.P25, AliasListFamily.DMR, AliasListFamily.NXDN,
-            AliasListFamily.LTR, AliasListFamily.LTR_NET, AliasListFamily.PASSPORT, AliasListFamily.AM,
             AliasListFamily.NBFM))
         {
             AliasListDefinition definition = definition(family);
@@ -114,16 +99,6 @@ class AliasMatchRegistryTest
             assertTrue(AliasMatchRegistry.isOperational(definition, matcher),
                 () -> family + " default matcher must be immediately persistable");
         }
-    }
-
-    @Test
-    void ltrNetAcceptsLtrGroupsAndLtrNetUniqueIdsOnlyAsTalkgroups()
-    {
-        AliasListDefinition ltrNet = definition(AliasListFamily.LTR_NET);
-
-        assertTrue(AliasMatchRegistry.supports(ltrNet, new Talkgroup(Protocol.LTR, 1)));
-        assertTrue(AliasMatchRegistry.supports(ltrNet, new Talkgroup(Protocol.LTR_NET, 1)));
-        assertFalse(AliasMatchRegistry.supports(ltrNet, new Radio(Protocol.LTR_NET, 1)));
     }
 
     private static AliasListDefinition definition(AliasListFamily family)

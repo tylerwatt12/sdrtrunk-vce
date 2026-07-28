@@ -648,6 +648,21 @@ class P25ActivityLogWriterTest
     }
 
     @Test
+    void rejectsAStaleResolvedActivityView() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("stale-resolved-view.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("DROP VIEW p25_activity_event_resolved");
+            statement.executeUpdate("CREATE VIEW p25_activity_event_resolved AS SELECT 1 AS id");
+            assertThrows(Exception.class, () -> P25ActivityLogSchema.validate(connection));
+        }
+    }
+
+    @Test
     void storesReplacesAndClearsCurrentRadioAffiliation() throws Exception
     {
         Path database = mTemporaryFolder.resolve("affiliation.sqlite");

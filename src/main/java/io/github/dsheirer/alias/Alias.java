@@ -19,7 +19,6 @@
 package io.github.dsheirer.alias;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
-import io.github.dsheirer.alias.action.AliasAction;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.alias.id.priority.Priority;
@@ -70,7 +69,6 @@ public class Alias
             new Observable[] {channel.valueProperty(), channel.overlapProperty()});
     private final ObservableList<BroadcastChannel> mReadOnlyBroadcastChannels =
         FXCollections.unmodifiableObservableList(mBroadcastChannels);
-    private final ObservableList<AliasAction> mAliasActions = FXCollections.observableArrayList();
     private final ObjectProperty<StreamAsTalkgroup> mStreamTalkgroupAlias = new SimpleObjectProperty<>();
 
     public Alias(String name)
@@ -228,12 +226,6 @@ public class Alias
         return mReadOnlyBroadcastChannels;
     }
 
-    @JsonIgnore
-    public ObservableList<AliasAction> aliasActions()
-    {
-        return mAliasActions;
-    }
-
     @Override
     public String toString()
     {
@@ -334,29 +326,6 @@ public class Alias
         mIconName.set(iconName);
     }
 
-    public java.util.List<AliasAction> getAliasActions()
-    {
-        return mAliasActions;
-    }
-
-    public void setAliasActions(java.util.List<AliasAction> actions)
-    {
-        mAliasActions.setAll(actions != null ? actions : java.util.List.of());
-    }
-
-    public void addAliasAction(AliasAction action)
-    {
-        if(action != null)
-        {
-            mAliasActions.add(action);
-        }
-    }
-
-    public boolean hasActions()
-    {
-        return !mAliasActions.isEmpty();
-    }
-
     @JsonIgnore
     public int getPlaybackPriority()
     {
@@ -445,11 +414,6 @@ public class Alias
         }
     }
 
-    public void removeAllActions()
-    {
-        mAliasActions.clear();
-    }
-
     private void updateOverlapBinding()
     {
         mOverlap.unbind();
@@ -465,8 +429,7 @@ public class Alias
     {
         return alias -> new Observable[] {alias.recordableProperty(), alias.streamableProperty(),
             alias.colorProperty(), alias.aliasListNameProperty(), alias.descriptionProperty(), alias.groupProperty(),
-            alias.iconNameProperty(), alias.nameProperty(), alias.aliasActions(), alias.overlapProperty(),
-            alias.priorityProperty(), alias.streamTalkgroupAliasProperty(), alias.matchIdentifierProperty(),
-            alias.broadcastChannels()};
+            alias.iconNameProperty(), alias.nameProperty(), alias.overlapProperty(), alias.priorityProperty(),
+            alias.streamTalkgroupAliasProperty(), alias.matchIdentifierProperty(), alias.broadcastChannels()};
     }
 }

@@ -371,7 +371,7 @@ public class ChannelWebLinkPanel extends JPanel implements Listener<SelectedFreq
     private static boolean conventionalDecoder(Channel channel)
     {
         DecoderType decoder = decoderType(channel);
-        return decoder == DecoderType.P25_CONVENTIONAL || decoder == DecoderType.NBFM || decoder == DecoderType.AM;
+        return decoder == DecoderType.P25_CONVENTIONAL || decoder == DecoderType.NBFM;
     }
 
     private static DecoderType decoderType(Channel channel)

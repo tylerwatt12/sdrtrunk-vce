@@ -31,7 +31,7 @@ public enum RecorderType
 {
     /**
      * Audio - 8kHz PCM -- **DO NOT USE - DEPRECATED - AUDIO RECORDING IS NOW MANAGED BY ALIASES AND/OR DECODE CONFIG
-     * for AM/NBFM
+     * for NBFM
      */
 	AUDIO( "Audio (.wav)"),
 

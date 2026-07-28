@@ -55,20 +55,12 @@ public class ChannelConfigurationEditorFactory
     {
         switch(decoderType)
         {
-            case AM:
-                return new AMConfigurationEditor(configurationManager, tunerManager, userPreferences, filterProcessor);
             case DMR:
                 return new DMRConfigurationEditor(configurationManager, tunerManager, userPreferences, filterProcessor);
             case NBFM:
                 return new NBFMConfigurationEditor(configurationManager, tunerManager, userPreferences, filterProcessor);
             case NXDN:
                 return new NXDNConfigurationEditor(configurationManager, tunerManager, userPreferences, filterProcessor);
-            case LTR_NET:
-                return new LTRNetConfigurationEditor(configurationManager, tunerManager, userPreferences, filterProcessor);
-            case LTR:
-                return new LTRConfigurationEditor(configurationManager, tunerManager, userPreferences, filterProcessor);
-            case PASSPORT:
-                return new PassportConfigurationEditor(configurationManager, tunerManager, userPreferences, filterProcessor);
             case P25_CONVENTIONAL:
                 return new P25ConventionalConfigurationEditor(configurationManager, tunerManager, userPreferences,
                     filterProcessor);

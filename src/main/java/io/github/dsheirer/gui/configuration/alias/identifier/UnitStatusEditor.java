@@ -20,20 +20,13 @@
 package io.github.dsheirer.gui.configuration.alias.identifier;
 
 import io.github.dsheirer.alias.id.status.UnitStatusID;
-import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
-import io.github.dsheirer.gui.control.HexFormatter;
 import io.github.dsheirer.gui.control.IntegerFormatter;
-import io.github.dsheirer.gui.control.LtrFormatter;
-import io.github.dsheirer.gui.control.PrefixIdentFormatter;
-import io.github.dsheirer.preference.identifier.IntegerFormat;
-import io.github.dsheirer.protocol.Protocol;
 import javafx.beans.value.ChangeListener;
 import javafx.beans.value.ObservableValue;
 import javafx.geometry.HPos;
 import javafx.scene.control.Label;
 import javafx.scene.control.TextField;
 import javafx.scene.control.TextFormatter;
-import javafx.scene.control.Tooltip;
 import javafx.scene.layout.GridPane;
 
 /**

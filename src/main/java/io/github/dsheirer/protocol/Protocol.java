@@ -27,7 +27,6 @@ import java.util.Set;
  */
 public enum Protocol
 {
-    AM("AM", "AM", 0),
     APCO25("APCO-25", "APCO25PHASE1", 9600),
     APCO25_PHASE2("APCO-25 P2", "APCO25PHASE2", 12000),
     ARS("ARS", "ARS", 0),
@@ -38,13 +37,10 @@ public enum Protocol
     IPV4("IPV4", "IPV4", 0),
     LOJACK("LoJack", "LOJACK", 1200),
     LRRP("LRRP", "LRRP", 0),
-    LTR("LTR", "LTR", 300),
-    LTR_NET("LTR-Net", "LTRNET", 300),
     NBFM("NBFM", "NBFM", 0),
     MDC1200("MDC-1200", "MDC1200", 1200),
     MPT1327("MPT-1327", "MPT1327", 0, Availability.RETIRED_COMPATIBILITY),
     NXDN("NXDN", "NXDN", 9600),
-    PASSPORT("Passport", "PASSPORT", 300),
     TAIT1200("Tait 1200", "TAIT1200", 1200),
     UDP("UDP", "UDP", 0),
     UNKNOWN("Unknown", "UNKNOWN", 0);
@@ -67,10 +63,10 @@ public enum Protocol
         mAvailability = availability;
     }
 
-    public static final Set<Protocol> TALKGROUP_PROTOCOLS = activeOnly(EnumSet.of(AM, APCO25, DMR, FLEETSYNC, LTR,
-        LTR_NET, MDC1200, MPT1327, NBFM, NXDN, PASSPORT));
+    public static final Set<Protocol> TALKGROUP_PROTOCOLS =
+        activeOnly(EnumSet.of(APCO25, DMR, FLEETSYNC, MDC1200, MPT1327, NBFM, NXDN));
 
-    private static final Set<Protocol> RADIO_ID_PROTOCOLS = EnumSet.of(APCO25, DMR, NXDN, PASSPORT);
+    private static final Set<Protocol> RADIO_ID_PROTOCOLS = EnumSet.of(APCO25, DMR, NXDN);
 
     private static Set<Protocol> activeOnly(EnumSet<Protocol> candidates)
     {

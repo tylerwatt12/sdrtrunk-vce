@@ -164,9 +164,10 @@ For more detail, see [Portable Startup And Storage](docs/portable-startup-and-st
 
 These older or experimental features are not included:
 
-- Alias script actions
+- Local alias actions and the Actions editor
+- AM, LTR Standard, LTR-Net, Passport, and MPT-1327 decoders
 - Funcube Dongle Pro/Pro+ tuners
-- MPT-1327 and its old named Channel Maps
+- Old named Channel Maps
 - Heterodyne channelization
 - Sound-card capture sources
 - Shoutcast v2/Ultravox streaming

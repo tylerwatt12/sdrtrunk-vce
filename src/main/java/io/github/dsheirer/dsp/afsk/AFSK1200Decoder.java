@@ -108,7 +108,7 @@ public class AFSK1200Decoder implements Listener<float[]>
      * greater than zero (or not).  Average symbol timing offset is calculated for the full buffer and the offset is
      * adjusted and then each of the symbols are decoded using a simple majority decision.
      *
-     * @param buffer containing 8.0 kHz unfiltered FM demodulated audio samples with sub-audible LTR signalling.
+     * @param buffer containing 8.0 kHz unfiltered FM demodulated audio samples with sub-audible signalling.
      */
     @Override
     public void receive(float[] buffer)
@@ -125,7 +125,7 @@ public class AFSK1200Decoder implements Listener<float[]>
     }
 
     /**
-     * Registers a listener to receive decoded LTR symbols.
+     * Registers a listener to receive decoded symbols.
      *
      * @param binarySymbolProcessor to receive symbols.
      */
@@ -135,7 +135,7 @@ public class AFSK1200Decoder implements Listener<float[]>
     }
 
     /**
-     * Removes the symbol listener from receiving decoded LTR symbols.
+     * Removes the symbol listener.
      */
     public void removeListener()
     {

@@ -369,7 +369,7 @@ function checkbox(checked) {
 }
 
 function protocol(value) {
-  const values = { 1: 'P25 Phase 1', 2: 'P25 Phase 2', 3: 'DMR', 4: 'NXDN', 10: 'NBFM', 11: 'AM' };
+  const values = { 1: 'P25 Phase 1', 2: 'P25 Phase 2', 3: 'DMR', 4: 'NXDN', 10: 'NBFM' };
   return values[Number(value)] || value || '';
 }
 

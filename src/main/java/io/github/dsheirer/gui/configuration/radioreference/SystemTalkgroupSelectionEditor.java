@@ -364,7 +364,7 @@ public class SystemTalkgroupSelectionEditor extends GridPane
                         {
                             aliasesToUpdate.add(aliasedTalkgroup);
                         }
-                        else
+                        else if(aliasedTalkgroup.getImportStatus() == ImportStatus.IDENTICAL)
                         {
                             identical++;
                         }
@@ -410,7 +410,7 @@ public class SystemTalkgroupSelectionEditor extends GridPane
         AliasListDefinition definition = getAliasListDefinition(
             getAliasListNameComboBox().getSelectionModel().getSelectedItem());
 
-        if(!isCurrentSystemCompatible(definition))
+        if(!isCurrentSystemSupported() || !isCurrentSystemCompatible(definition))
         {
             throw new IllegalStateException("A compatible, system-owned alias list is required for bulk import");
         }
@@ -476,6 +476,11 @@ public class SystemTalkgroupSelectionEditor extends GridPane
      */
     private Alias getAlias(Talkgroup talkgroup)
     {
+        if(!isCurrentSystemSupported())
+        {
+            return null;
+        }
+
         TalkgroupIdentifier talkgroupIdentifier = getRadioReferenceDecoder().getIdentifier(talkgroup, getCurrentSystem());
         List<Alias> aliases = getAliasList().getAliases(talkgroupIdentifier);
 
@@ -590,12 +595,11 @@ public class SystemTalkgroupSelectionEditor extends GridPane
             return;
         }
 
-        boolean supported = mRadioReferenceDecoder != null && mCurrentSystem != null &&
-            mRadioReferenceDecoder.hasSupportedProtocol(mCurrentSystem);
         AliasListDefinition definition = getAliasListDefinition(
             mAliasListNameComboBox != null ?
                 mAliasListNameComboBox.getSelectionModel().getSelectedItem() : null);
-        mImportAllTalkgroupsButton.setDisable(!supported || !isCurrentSystemCompatible(definition));
+        mImportAllTalkgroupsButton.setDisable(!isCurrentSystemSupported() ||
+            !isCurrentSystemCompatible(definition));
     }
 
     private AliasListDefinition getAliasListDefinition(String name)
@@ -609,6 +613,12 @@ public class SystemTalkgroupSelectionEditor extends GridPane
             mCurrentSystem != null ? mCurrentSystem.getName() : null,
             mCurrentSystem != null && mRadioReferenceDecoder != null ?
                 mRadioReferenceDecoder.getDecoderType(mCurrentSystem) : null);
+    }
+
+    private boolean isCurrentSystemSupported()
+    {
+        return mRadioReferenceDecoder != null && mCurrentSystem != null &&
+            mRadioReferenceDecoder.hasSupportedProtocol(mCurrentSystem);
     }
 
     /**
@@ -671,7 +681,8 @@ public class SystemTalkgroupSelectionEditor extends GridPane
             getCurrentSystem(), getRadioReferenceDecoder(), selected != null ? selected.getAlias() : null,
             aliasListName, talkgroupCategory,
             getEncryptedAsDoNotMonitorCheckBox().selectedProperty().get(),
-            selected != null ? selected.getImportStatus() : ImportStatus.NOT_PRESENT);
+            selected != null ? selected.getImportStatus() :
+                (isCurrentSystemSupported() ? ImportStatus.NOT_PRESENT : ImportStatus.NOT_COMPATIBLE));
     }
 
     /**
@@ -879,6 +890,7 @@ public class SystemTalkgroupSelectionEditor extends GridPane
 
     enum ImportStatus
     {
+        NOT_COMPATIBLE("Not Compatible"),
         NOT_PRESENT("Not Present"),
         IDENTICAL("Identical"),
         DIFFERENT("Different");
@@ -917,6 +929,12 @@ public class SystemTalkgroupSelectionEditor extends GridPane
         }
 
         return identical ? ImportStatus.IDENTICAL : ImportStatus.DIFFERENT;
+    }
+
+    static ImportStatus getImportStatus(boolean compatible, Alias alias, Talkgroup talkgroup,
+                                        TalkgroupCategory category)
+    {
+        return compatible ? getImportStatus(alias, talkgroup, category) : ImportStatus.NOT_COMPATIBLE;
     }
 
     static List<ImportedFieldChange> getImportedFieldChanges(Alias alias, Talkgroup talkgroup,
@@ -1021,7 +1039,7 @@ public class SystemTalkgroupSelectionEditor extends GridPane
 
         public int getTalkgroupValue()
         {
-            return getRadioReferenceDecoder().getTalkgroupValue(mTalkgroup, getCurrentSystem());
+            return getRadioReferenceDecoder().getTalkgroupValue(mTalkgroup);
         }
 
         public void updateTalkgroup()
@@ -1057,8 +1075,8 @@ public class SystemTalkgroupSelectionEditor extends GridPane
         public void setAlias(Alias alias)
         {
             mAlias = alias;
-            mImportStatusProperty.setValue(SystemTalkgroupSelectionEditor.getImportStatus(mAlias, mTalkgroup,
-                getTalkgroupCategory(mTalkgroup)));
+            mImportStatusProperty.setValue(SystemTalkgroupSelectionEditor.getImportStatus(
+                isCurrentSystemSupported(), mAlias, mTalkgroup, getTalkgroupCategory(mTalkgroup)));
         }
     }
 

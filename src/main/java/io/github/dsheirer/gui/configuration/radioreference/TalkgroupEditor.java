@@ -199,20 +199,22 @@ public class TalkgroupEditor extends GridPane
         }
 
         boolean supported = decoder != null && system != null && decoder.hasSupportedProtocol(system);
+        boolean compatible = supported &&
+            mImportStatus != SystemTalkgroupSelectionEditor.ImportStatus.NOT_COMPATIBLE;
 
         getEditAliasButton().setText(mImportStatus == SystemTalkgroupSelectionEditor.ImportStatus.DIFFERENT ?
             "Update from RadioReference" : "View Alias");
-        getEditAliasButton().setVisible(mAlias != null);
-        getCreateAliasButton().setVisible(mTalkgroup != null && mAlias == null && supported);
-        getNameLabel().setVisible(mTalkgroup != null && mAlias == null && supported);
-        getAliasNameTextField().setVisible(mTalkgroup != null && mAlias == null && supported);
-        getAliasDescriptionLabel().setVisible(mTalkgroup != null && mAlias == null && supported);
-        getAliasDescriptionTextField().setVisible(mTalkgroup != null && mAlias == null && supported);
-        getGroupLabel().setVisible(mTalkgroup != null && mAlias == null && supported);
+        getEditAliasButton().setVisible(mAlias != null && compatible);
+        getCreateAliasButton().setVisible(mTalkgroup != null && mAlias == null && compatible);
+        getNameLabel().setVisible(mTalkgroup != null && mAlias == null && compatible);
+        getAliasNameTextField().setVisible(mTalkgroup != null && mAlias == null && compatible);
+        getAliasDescriptionLabel().setVisible(mTalkgroup != null && mAlias == null && compatible);
+        getAliasDescriptionTextField().setVisible(mTalkgroup != null && mAlias == null && compatible);
+        getGroupLabel().setVisible(mTalkgroup != null && mAlias == null && compatible);
         getAliasGroupTextField().setText(mTalkgroupCategory != null ? mTalkgroupCategory.getName() : null);
-        getAliasGroupTextField().setVisible(mTalkgroup != null && mAlias == null && supported);
-        getCreateLabel().setVisible(mTalkgroup != null && mAlias == null && supported);
-        getNotSupportedLabel().setVisible(mTalkgroup != null && !supported);
+        getAliasGroupTextField().setVisible(mTalkgroup != null && mAlias == null && compatible);
+        getCreateLabel().setVisible(mTalkgroup != null && mAlias == null && compatible);
+        getNotSupportedLabel().setVisible(mTalkgroup != null && !compatible);
     }
 
     private Label getNotSupportedLabel()
@@ -369,7 +371,8 @@ public class TalkgroupEditor extends GridPane
             mEditAliasButton = new Button("View/Edit Alias");
             mEditAliasButton.setVisible(false);
             mEditAliasButton.setOnAction(event -> {
-                if(mAlias != null)
+                if(mAlias != null &&
+                    mImportStatus != SystemTalkgroupSelectionEditor.ImportStatus.NOT_COMPATIBLE)
                 {
                     if(mImportStatus == SystemTalkgroupSelectionEditor.ImportStatus.DIFFERENT)
                     {

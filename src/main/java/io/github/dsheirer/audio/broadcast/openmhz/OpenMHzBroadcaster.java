@@ -29,7 +29,6 @@ import io.github.dsheirer.audio.broadcast.BroadcastEvent;
 import io.github.dsheirer.audio.broadcast.BroadcastState;
 import io.github.dsheirer.audio.convert.InputAudioFormat;
 import io.github.dsheirer.audio.convert.MP3Setting;
-import io.github.dsheirer.gui.configuration.radioreference.RadioReferenceDecoder;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierClass;
@@ -391,8 +390,7 @@ import org.slf4j.LoggerFactory;
                  }
                  else if(identifier instanceof TalkgroupIdentifier talkgroupIdentifier)
                  {
-                     return String.valueOf(RadioReferenceDecoder.convertToRadioReferenceTalkgroup(
-                         talkgroupIdentifier.getValue(), talkgroupIdentifier.getProtocol()));
+                     return talkgroupIdentifier.getValue().toString();
                  }
                  else if(identifier instanceof RadioIdentifier radioIdentifier)
                  {

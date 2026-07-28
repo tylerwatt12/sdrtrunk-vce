@@ -10,9 +10,6 @@
  */
 package io.github.dsheirer.alias;
 
-import io.github.dsheirer.alias.action.AliasAction;
-import io.github.dsheirer.alias.action.beep.BeepAction;
-import io.github.dsheirer.alias.action.clip.ClipAction;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.alias.id.dcs.Dcs;
@@ -29,7 +26,7 @@ import io.github.dsheirer.alias.id.talkgroup.TalkgroupRange;
 import io.github.dsheirer.alias.id.tone.TonesID;
 
 /**
- * Deep-copy helpers for current alias matchers, behavior, and actions.
+ * Deep-copy helpers for current alias matchers and behavior.
  */
 public final class AliasFactory
 {
@@ -121,27 +118,6 @@ public final class AliasFactory
         };
     }
 
-    public static AliasAction copyOf(AliasAction action)
-    {
-        if(action instanceof BeepAction original)
-        {
-            BeepAction copy = new BeepAction();
-            copy.setInterval(original.getInterval());
-            copy.setPeriod(original.getPeriod());
-            return copy;
-        }
-        else if(action instanceof ClipAction original)
-        {
-            ClipAction copy = new ClipAction();
-            copy.setInterval(original.getInterval());
-            copy.setPath(original.getPath());
-            copy.setPeriod(original.getPeriod());
-            return copy;
-        }
-
-        return null;
-    }
-
     private static Alias shallowCopyOf(Alias original)
     {
         Alias copy = new Alias(original.getName());
@@ -171,17 +147,6 @@ public final class AliasFactory
     {
         Alias copy = shallowCopyOf(original);
         copy.setMatchIdentifier(copyOf(original.getMatchIdentifier()));
-
-        for(AliasAction aliasAction: original.getAliasActions())
-        {
-            AliasAction actionCopy = copyOf(aliasAction);
-
-            if(actionCopy != null)
-            {
-                copy.addAliasAction(actionCopy);
-            }
-        }
-
         return copy;
     }
 }

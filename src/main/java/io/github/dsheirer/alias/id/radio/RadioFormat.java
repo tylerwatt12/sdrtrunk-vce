@@ -40,8 +40,6 @@ public enum RadioFormat
         "<html>DMR unit id valid range is 0 to 16,777,215"),
     NXDN(0, 0xFFFF, "0 to 65,535",
         "<html>NXDN unit id valid range is 0 to 65,535"),
-    PASSPORT(0, 0x7FFFFF, "0 to 8,388,607",
-        "<html>PASSPORT valid range is 0 to 8,388,607"),
     UNKNOWN(1, 0xFFFFFF, "1 to 16,777,215",
         "Unknown protocol valid value range is 1-16,777,215");
 
@@ -127,8 +125,6 @@ public enum RadioFormat
                 return DMR;
             case NXDN:
                 return NXDN;
-            case PASSPORT:
-                return PASSPORT;
             default:
                 return UNKNOWN;
         }

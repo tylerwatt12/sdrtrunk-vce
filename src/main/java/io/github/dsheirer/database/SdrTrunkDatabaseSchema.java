@@ -32,7 +32,7 @@ public final class SdrTrunkDatabaseSchema
             name TEXT NOT NULL COLLATE NOCASE,
             system_name TEXT NOT NULL CHECK(length(trim(system_name)) > 0),
             family TEXT NOT NULL CHECK(family IN (
-                'P25', 'DMR', 'NXDN', 'LTR', 'LTR_NET', 'PASSPORT', 'AM', 'NBFM'
+                'P25', 'DMR', 'NXDN', 'NBFM'
             )),
             UNIQUE(name)
         )
@@ -81,22 +81,11 @@ public final class SdrTrunkDatabaseSchema
             UNIQUE(alias_id, channel_name)
         )
         """;
-    private static final String ALIAS_ACTION_TABLE_SQL = """
-        CREATE TABLE IF NOT EXISTS alias_action (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            alias_id INTEGER NOT NULL REFERENCES alias(id) ON DELETE CASCADE,
-            type TEXT NOT NULL,
-            interval TEXT,
-            period INTEGER,
-            path TEXT
-        )
-        """;
     private static final List<SqliteSchemaValidator.Definition> EXACT_ALIAS_OBJECTS = List.of(
         new SqliteSchemaValidator.Definition("table", "alias_list", ALIAS_LIST_TABLE_SQL),
         new SqliteSchemaValidator.Definition("table", "alias", ALIAS_TABLE_SQL),
         new SqliteSchemaValidator.Definition("table", "alias_broadcast_channel",
             ALIAS_BROADCAST_CHANNEL_TABLE_SQL),
-        new SqliteSchemaValidator.Definition("table", "alias_action", ALIAS_ACTION_TABLE_SQL),
         new SqliteSchemaValidator.Definition("index", "idx_alias_talkgroup_value", """
             CREATE INDEX IF NOT EXISTS idx_alias_talkgroup_value
             ON alias(protocol, value, wacn, p25_system_id, alias_list_id, id)
@@ -120,8 +109,6 @@ public final class SdrTrunkDatabaseSchema
         new SqliteSchemaValidator.Definition("index", "idx_alias_broadcast_channel_name",
             "CREATE INDEX IF NOT EXISTS idx_alias_broadcast_channel_name " +
                 "ON alias_broadcast_channel(channel_name)"),
-        new SqliteSchemaValidator.Definition("index", "idx_alias_action_alias",
-            "CREATE INDEX IF NOT EXISTS idx_alias_action_alias ON alias_action(alias_id, id)"),
         new SqliteSchemaValidator.Definition("view", "alias_talkgroup", """
             CREATE VIEW IF NOT EXISTS alias_talkgroup AS
             SELECT alias.id AS alias_id,
@@ -170,7 +157,6 @@ public final class SdrTrunkDatabaseSchema
         "idx_alias_radio_value",
         "idx_alias_radio_range",
         "idx_alias_broadcast_channel_name",
-        "idx_alias_action_alias",
         "idx_configuration_channel_sort",
         "idx_configuration_channel_alias_list",
         "idx_configuration_channel_decoder",
@@ -197,8 +183,6 @@ public final class SdrTrunkDatabaseSchema
                 "max_value", "wacn", "p25_system_id", "text_value", "numeric_value",
                 "tone_sequence"),
             new SqliteSchemaValidator.Table("alias_broadcast_channel", "id", "alias_id", "channel_name"),
-            new SqliteSchemaValidator.Table("alias_action", "id", "alias_id", "type", "interval",
-                "period", "path"),
             new SqliteSchemaValidator.Table("configuration_channel", "id", "sort_order", "system_name", "site_name",
                 "name", "alias_list_name", "radres_guid", "auto_start", "auto_start_order", "decoder_type",
                 "source_type", "primary_frequency_hz", "frequency_count", "recording_enabled",

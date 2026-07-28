@@ -22,7 +22,6 @@ package io.github.dsheirer.gui.configuration.alias.identifier;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.gui.control.HexFormatter;
 import io.github.dsheirer.gui.control.IntegerFormatter;
-import io.github.dsheirer.gui.control.LtrFormatter;
 import io.github.dsheirer.gui.control.PrefixIdentFormatter;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.identifier.IntegerFormat;
@@ -243,10 +242,6 @@ public class TalkgroupEditor extends IdentifierEditor<Talkgroup>
     private void loadTalkgroupDetails()
     {
         mTalkgroupDetails.clear();
-        mTalkgroupDetails.add(new TalkgroupDetail(Protocol.AM, IntegerFormat.DECIMAL, new IntegerFormatter(1,0xFFFF),
-                "Format: 1 - 65535"));
-        mTalkgroupDetails.add(new TalkgroupDetail(Protocol.AM, IntegerFormat.HEXADECIMAL, new HexFormatter(1,0xFFFF),
-                "Format: 1 - FFFF"));
         addNumericTalkgroupDetails(Protocol.APCO25, 0, 0xFFFF);
         mTalkgroupDetails.add(new TalkgroupDetail(Protocol.DMR, IntegerFormat.DECIMAL, new IntegerFormatter(1,0xFFFFFF),
                 "Format: 1 - 16,777,215"));
@@ -254,14 +249,11 @@ public class TalkgroupEditor extends IdentifierEditor<Talkgroup>
                 "Format: 1 - FFFFFF"));
         mTalkgroupDetails.add(new TalkgroupDetail(Protocol.FLEETSYNC, IntegerFormat.FORMATTED,
                 new PrefixIdentFormatter(), "Format: PPP-IIII = Prefix (0-127), Ident (0-8191)"));
-        mTalkgroupDetails.add(new TalkgroupDetail(Protocol.LTR, IntegerFormat.FORMATTED, new LtrFormatter(),
-                "Format: A-HH-TTT = Area (0-1), Home (0-31), Talkgroup (0-255)"));
         addNumericTalkgroupDetails(Protocol.MDC1200, 0, 0xFFFF);
         mTalkgroupDetails.add(new TalkgroupDetail(Protocol.NBFM, IntegerFormat.DECIMAL, new IntegerFormatter(1,0xFFFF),
                 "Format: 1 - 65535"));
         mTalkgroupDetails.add(new TalkgroupDetail(Protocol.NBFM, IntegerFormat.HEXADECIMAL, new HexFormatter(1,0xFFFF),
                 "Format: 1 - FFFF"));
-        addNumericTalkgroupDetails(Protocol.PASSPORT, 0, 0xFFFF);
         addNumericTalkgroupDetail(Protocol.UNKNOWN, IntegerFormat.DECIMAL, 0, 0xFFFFFF);
         addNumericTalkgroupDetail(Protocol.UNKNOWN, IntegerFormat.FORMATTED, 0, 0xFFFFFF);
         addNumericTalkgroupDetail(Protocol.UNKNOWN, IntegerFormat.HEXADECIMAL, 0, 0xFFFFFF);

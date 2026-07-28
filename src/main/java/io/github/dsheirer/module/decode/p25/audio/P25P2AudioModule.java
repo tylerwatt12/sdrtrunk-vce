@@ -542,7 +542,7 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
 
         /**
          * Broadcasts the identifier to a registered listener and creates a new AMBE tone identifier message when tones
-         * are present to send to the alias action manager.
+         * are present.
          */
         private void broadcast(ToneIdentifier identifier, long timestamp)
         {

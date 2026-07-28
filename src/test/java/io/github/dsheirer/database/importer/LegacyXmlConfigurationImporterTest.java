@@ -153,13 +153,15 @@ class LegacyXmlConfigurationImporterTest
     }
 
     @Test
-    void skipsRetiredScriptActionsWhileImportingTheRestOfALegacyAlias() throws Exception
+    void silentlyDropsAllLegacyAliasActions() throws Exception
     {
         Path xml = mTemporaryFolder.resolve("retired-script.xml");
         Files.writeString(xml, """
             <playlist version="4">
               <alias name="Dispatch" list="County">
                 <id type="talkgroup" protocol="APCO25" value="1234"/>
+                <action type="beepAction" interval="ONCE" period="0"/>
+                <action type="clipAction" interval="DELAYED_RESET" period="5" path="/tmp/retired.wav"/>
                 <action type="scriptAction" interval="ONCE" period="0" script="/tmp/retired-script"/>
               </alias>
               <channel system="County" site="Site" name="Control">
@@ -174,10 +176,72 @@ class LegacyXmlConfigurationImporterTest
             </playlist>
             """);
 
+        Path database = mTemporaryFolder.resolve("retired-actions.sqlite");
+        LegacyXmlConfigurationImporter.importPlaylist(xml, database);
+        AliasDatabaseStore store = new AliasDatabaseStore(database);
+        List<Alias> aliases = store.loadAliases(store.loadAliasListDefinitions());
+        assertEquals(1, aliases.size());
+        assertInstanceOf(Talkgroup.class, aliases.getFirst().getMatchIdentifier());
+    }
+
+    @Test
+    void silentlyDropsRetiredDecoderChannelsAndIdentifiers() throws Exception
+    {
+        Path xml = mTemporaryFolder.resolve("retired-decoders.xml");
+        Files.writeString(xml, """
+            <playlist version="4">
+              <alias name="AM Alias" list="AM System">
+                <id type="talkgroup" protocol="AM" value="1"/>
+              </alias>
+              <alias name="LTR Alias" list="LTR System">
+                <id type="talkgroup" protocol="LTR" value="257"/>
+              </alias>
+              <alias name="LTR-Net Alias" list="LTR-Net System">
+                <id type="uniqueID" uid="1234"/>
+              </alias>
+              <alias name="Passport Alias" list="Passport System">
+                <id type="min" min="12345"/>
+              </alias>
+              <alias name="Current Alias" list="Current">
+                <id type="talkgroup" protocol="DMR" value="100"/>
+              </alias>
+              <channel system="AM System" site="Site" name="AM">
+                <alias_list_name>AM System</alias_list_name>
+                <source_configuration type="sourceConfigTuner" source_type="TUNER" frequency="118500000"/>
+                <decode_configuration type="decodeConfigAM" talkgroup="1"/>
+              </channel>
+              <channel system="LTR System" site="Site" name="LTR">
+                <alias_list_name>LTR System</alias_list_name>
+                <source_configuration type="sourceConfigTuner" source_type="TUNER" frequency="451000000"/>
+                <decode_configuration type="decodeConfigLTRStandard"/>
+              </channel>
+              <channel system="LTR-Net System" site="Site" name="LTR-Net">
+                <alias_list_name>LTR-Net System</alias_list_name>
+                <source_configuration type="sourceConfigTuner" source_type="TUNER" frequency="452000000"/>
+                <decode_configuration type="decodeConfigLTRNet"/>
+              </channel>
+              <channel system="Passport System" site="Site" name="Passport">
+                <alias_list_name>Passport System</alias_list_name>
+                <source_configuration type="sourceConfigTuner" source_type="TUNER" frequency="453000000"/>
+                <decode_configuration type="decodeConfigPassport"/>
+              </channel>
+              <channel system="Current" site="Site" name="DMR">
+                <alias_list_name>Current</alias_list_name>
+                <source_configuration type="sourceConfigTuner" source_type="TUNER" frequency="460000000"/>
+                <decode_configuration type="decodeConfigDMR" ignore_data_calls="false"/>
+              </channel>
+            </playlist>
+            """);
+
         ConfigurationState state = LegacyXmlConfigurationImporter.readConfigurationState(xml);
+
+        assertEquals(1, state.getChannels().size());
+        assertEquals(DecoderType.DMR, state.getChannels().getFirst().getDecodeConfiguration().getDecoderType());
         assertEquals(1, state.getAliases().size());
-        assertTrue(state.getAliases().get(0).getAliasActions().isEmpty());
-        assertInstanceOf(Talkgroup.class, state.getAliases().get(0).getMatchIdentifier());
+        assertEquals("Current Alias", state.getAliases().getFirst().getName());
+        Talkgroup talkgroup = assertInstanceOf(Talkgroup.class,
+            state.getAliases().getFirst().getMatchIdentifier());
+        assertEquals(Protocol.DMR, talkgroup.getProtocol());
     }
 
     @Test

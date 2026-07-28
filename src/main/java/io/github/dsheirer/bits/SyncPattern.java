@@ -82,22 +82,6 @@ public enum SyncPattern
 		true, true, true, true     //1111 0xF
 	} ),
 
-	/* Sync (0x158) = 101011000 */
-	PASSPORT( new boolean[]
-	{
-		true,false,true,false,true,true,false,false,false
-	} ),
-
-	LTR_STANDARD_OSW( new boolean[]
-	{
-		true,false,true,false,true,true,false,false,false
-	} ),
-
-	LTR_STANDARD_ISW( new boolean[]
-	{
-		false, true, false, true,false, false, true, true, true
-	} ),
-
 	TAIT_CCDI_GPS_MESSAGE( new boolean[]
 	{
 		true,false,true,false,

@@ -12,6 +12,7 @@
 package io.github.dsheirer.gui.configuration.radioreference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
@@ -36,6 +37,19 @@ import org.junit.jupiter.api.Test;
 
 class RadioReferenceDecoderSelectionTest
 {
+    @Test
+    void recognizesAmButDoesNotOfferChannelCreation()
+    {
+        Mode mode = new Mode();
+        mode.setName("am");
+        ModeDecoderType modeDecoderType = ModeDecoderType.get(mode);
+
+        assertEquals(ModeDecoderType.AM, modeDecoderType);
+        assertFalse(modeDecoderType.hasDecoderType());
+        assertNull(FrequencyEditor.createChannel(modeDecoderType, 118_500_000L,
+            "Aviation", "Airport", "Tower"));
+    }
+
     @Test
     void createsConventionalDecoderForP25AgencyFrequency()
     {
@@ -98,6 +112,34 @@ class RadioReferenceDecoderSelectionTest
 
         assertNull(decoder.getDecoderType(system));
         assertEquals(Protocol.UNKNOWN, decoder.getProtocol(system));
+    }
+
+    @Test
+    void treatsAllLtrFamiliesAsUnsupported()
+    {
+        for(String flavorName: new String[]{"Standard", "Net", "Passport"})
+        {
+            Type type = new Type();
+            type.setTypeId(1);
+            type.setName("LTR");
+            Flavor flavor = new Flavor();
+            flavor.setFlavorId(2);
+            flavor.setName(flavorName);
+            Voice voice = new Voice();
+            voice.setVoiceId(3);
+            voice.setName("Analog");
+            System system = new System();
+            system.setTypeId(type.getTypeId());
+            system.setFlavorId(flavor.getFlavorId());
+            system.setVoiceId(voice.getVoiceId());
+
+            RadioReferenceDecoder decoder = new RadioReferenceDecoder(null, Map.of(type.getTypeId(), type),
+                Map.of(flavor.getFlavorId(), flavor), Map.of(voice.getVoiceId(), voice), Map.of());
+
+            assertNull(decoder.getDecoderType(system), flavorName);
+            assertEquals(Protocol.UNKNOWN, decoder.getProtocol(system), flavorName);
+            assertFalse(decoder.hasSupportedProtocol(system), flavorName);
+        }
     }
 
     @Test

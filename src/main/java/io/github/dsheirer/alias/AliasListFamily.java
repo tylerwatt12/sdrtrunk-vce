@@ -22,10 +22,6 @@ public enum AliasListFamily
     P25("P25"),
     DMR("DMR"),
     NXDN("NXDN"),
-    LTR("LTR"),
-    LTR_NET("LTR-Net"),
-    PASSPORT("Passport"),
-    AM("AM"),
     NBFM("NBFM");
 
     private final String mLabel;
@@ -47,10 +43,6 @@ public enum AliasListFamily
             case P25_CONVENTIONAL, P25_PHASE1, P25_PHASE2 -> P25;
             case DMR -> DMR;
             case NXDN -> NXDN;
-            case LTR -> LTR;
-            case LTR_NET -> LTR_NET;
-            case PASSPORT -> PASSPORT;
-            case AM -> AM;
             case NBFM -> NBFM;
             case MPT1327, DCS, FLEETSYNC2, LJ_1200, MDC1200, TAIT_1200 -> null;
         };

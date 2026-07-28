@@ -51,8 +51,12 @@ class ChannelConfigurationPolicyTest
         assertFalse(ChannelConfigurationPolicy.isRetiredPersisted("DMR", "TUNER"));
         assertTrue(ChannelConfigurationPolicy.isRetiredPersisted("MPT1327", "TUNER"));
         assertTrue(ChannelConfigurationPolicy.isRetiredPersisted("DMR", "MIXER"));
-        assertTrue(ChannelConfigurationPolicy.isRetiredPersisted("DMR", "REMOVED_SOURCE"));
-        assertTrue(ChannelConfigurationPolicy.isRetiredPersisted("FUTURE_DECODER", "TUNER"));
+        assertFalse(ChannelConfigurationPolicy.isRetiredPersisted("DMR", "REMOVED_SOURCE"));
+        assertFalse(ChannelConfigurationPolicy.isRetiredPersisted("FUTURE_DECODER", "TUNER"));
+        assertFalse(ChannelConfigurationPolicy.isRetiredPersisted("AM", "TUNER"));
+        assertFalse(ChannelConfigurationPolicy.isRetiredPersisted("LTR", "TUNER"));
+        assertFalse(ChannelConfigurationPolicy.isRetiredPersisted("LTR_NET", "TUNER"));
+        assertFalse(ChannelConfigurationPolicy.isRetiredPersisted("PASSPORT", "TUNER"));
     }
 
     @Test

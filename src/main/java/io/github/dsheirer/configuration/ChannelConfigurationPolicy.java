@@ -55,17 +55,15 @@ public final class ChannelConfigurationPolicy
     }
 
     /**
-     * Tests the normalized type names stored beside channel JSON.  Unknown non-empty names are retained as
-     * compatibility data: a newer or removed type must not be destroyed merely because this runtime cannot bind it.
+     * Tests the normalized type names stored beside channel JSON.  Only explicitly declared compatibility values are
+     * retained. Unknown or removed types belong in an exact-state staged migration instead of becoming a permanent
+     * runtime compatibility layer.
      */
     public static boolean isRetiredPersisted(String decoderTypeName, String sourceTypeName)
     {
         DecoderType decoderType = parse(DecoderType.class, decoderTypeName);
         SourceType sourceType = parse(SourceType.class, sourceTypeName);
-        boolean unknownDecoder = decoderType == null && decoderTypeName != null && !decoderTypeName.isBlank();
-        boolean unknownSource = sourceType == null && sourceTypeName != null && !sourceTypeName.isBlank();
-        return unknownDecoder || unknownSource ||
-            (decoderType != null && decoderType.isRetiredCompatibility()) ||
+        return (decoderType != null && decoderType.isRetiredCompatibility()) ||
             (sourceType != null && sourceType.isRetiredCompatibility());
     }
 

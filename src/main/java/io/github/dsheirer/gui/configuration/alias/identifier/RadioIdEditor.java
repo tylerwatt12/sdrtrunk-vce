@@ -244,7 +244,6 @@ public class RadioIdEditor extends IdentifierEditor<Radio>
         mRadioDetails.clear();
         addRadioDetails(Protocol.APCO25, 0xFFFFFF);
         addRadioDetails(Protocol.DMR, 0xFFFFFF);
-        addRadioDetails(Protocol.PASSPORT, 0x7FFFFF);
         addRadioDetail(Protocol.UNKNOWN, IntegerFormat.DECIMAL, 0xFFFFFF);
         addRadioDetail(Protocol.UNKNOWN, IntegerFormat.FORMATTED, 0xFFFFFF);
         addRadioDetail(Protocol.UNKNOWN, IntegerFormat.HEXADECIMAL, 0xFFFFFF);

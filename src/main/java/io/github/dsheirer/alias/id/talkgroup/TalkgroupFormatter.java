@@ -25,9 +25,7 @@ import io.github.dsheirer.preference.identifier.talkgroup.AbstractIntegerFormatt
 import io.github.dsheirer.preference.identifier.talkgroup.AnalogTalkgroupFormatter;
 import io.github.dsheirer.preference.identifier.talkgroup.DMRTalkgroupFormatter;
 import io.github.dsheirer.preference.identifier.talkgroup.FleetsyncTalkgroupFormatter;
-import io.github.dsheirer.preference.identifier.talkgroup.LTRTalkgroupFormatter;
 import io.github.dsheirer.preference.identifier.talkgroup.MDC1200TalkgroupFormatter;
-import io.github.dsheirer.preference.identifier.talkgroup.PassportTalkgroupFormatter;
 import io.github.dsheirer.preference.identifier.talkgroup.UnknownTalkgroupFormatter;
 import io.github.dsheirer.protocol.Protocol;
 import java.text.ParseException;
@@ -44,17 +42,12 @@ public class TalkgroupFormatter
     static
     {
         AnalogTalkgroupFormatter analogTalkgroupFormatter = new AnalogTalkgroupFormatter();
-        mFormatterMap.put(Protocol.AM, analogTalkgroupFormatter);
         mFormatterMap.put(Protocol.NBFM, analogTalkgroupFormatter);
 
         mFormatterMap.put(Protocol.APCO25, new APCO25TalkgroupFormatter());
         mFormatterMap.put(Protocol.DMR, new DMRTalkgroupFormatter());
         mFormatterMap.put(Protocol.FLEETSYNC, new FleetsyncTalkgroupFormatter());
-        LTRTalkgroupFormatter ltr = new LTRTalkgroupFormatter();
-        mFormatterMap.put(Protocol.LTR, ltr);
-        mFormatterMap.put(Protocol.LTR_NET, ltr);
         mFormatterMap.put(Protocol.MDC1200, new MDC1200TalkgroupFormatter());
-        mFormatterMap.put(Protocol.PASSPORT, new PassportTalkgroupFormatter());
         mFormatterMap.put(Protocol.UNKNOWN, new UnknownTalkgroupFormatter());
     }
 

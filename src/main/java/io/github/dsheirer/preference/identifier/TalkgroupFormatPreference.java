@@ -29,10 +29,8 @@ import io.github.dsheirer.preference.identifier.talkgroup.APCO25TalkgroupFormatt
 import io.github.dsheirer.preference.identifier.talkgroup.AnalogTalkgroupFormatter;
 import io.github.dsheirer.preference.identifier.talkgroup.DMRTalkgroupFormatter;
 import io.github.dsheirer.preference.identifier.talkgroup.FleetsyncTalkgroupFormatter;
-import io.github.dsheirer.preference.identifier.talkgroup.LTRTalkgroupFormatter;
 import io.github.dsheirer.preference.identifier.talkgroup.MDC1200TalkgroupFormatter;
 import io.github.dsheirer.preference.identifier.talkgroup.NXDNTalkgroupFormatter;
-import io.github.dsheirer.preference.identifier.talkgroup.PassportTalkgroupFormatter;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.sample.Listener;
 import java.util.EnumMap;
@@ -139,16 +137,12 @@ public class TalkgroupFormatPreference extends Preference
         switch(protocol)
         {
             case FLEETSYNC:
-            case LTR:
-            case LTR_NET:
                 return IntegerFormat.FORMATTED;
-            case AM:
             case APCO25:
             case DMR:
             case MDC1200:
             case NBFM:
             case NXDN:
-            case PASSPORT:
             case UNKNOWN:
             default:
                 return IntegerFormat.DECIMAL;
@@ -160,16 +154,12 @@ public class TalkgroupFormatPreference extends Preference
         switch(protocol)
         {
             case FLEETSYNC:
-            case LTR:
-            case LTR_NET:
                 return IntegerFormat.DECIMAL_FORMATTED;
-            case AM:
             case APCO25:
             case DMR:
             case MDC1200:
             case NBFM:
             case NXDN:
-            case PASSPORT:
             case UNKNOWN:
             default:
                 return IntegerFormat.DECIMAL_HEXADECIMAL;
@@ -178,23 +168,7 @@ public class TalkgroupFormatPreference extends Preference
 
     private boolean getDefaultFixedWidth(Protocol protocol)
     {
-        switch(protocol)
-        {
-            case MDC1200:
-            case PASSPORT:
-                return false;
-            case AM:
-            case APCO25:
-            case DMR:
-            case FLEETSYNC:
-            case LTR:
-            case LTR_NET:
-            case NBFM:
-            case NXDN:
-            case UNKNOWN:
-            default:
-                return true;
-        }
+        return true;
     }
 
     /**
@@ -311,9 +285,6 @@ public class TalkgroupFormatPreference extends Preference
     {
         switch(talkgroupIdentifier.getProtocol())
         {
-            case AM:
-                return AnalogTalkgroupFormatter.format(talkgroupIdentifier, getTalkgroupFormat(Protocol.AM),
-                        isTalkgroupFixedWidth(Protocol.AM));
             case APCO25:
                 return APCO25TalkgroupFormatter.format(talkgroupIdentifier, getTalkgroupFormat(Protocol.APCO25),
                     isTalkgroupFixedWidth(Protocol.APCO25));
@@ -323,9 +294,6 @@ public class TalkgroupFormatPreference extends Preference
             case FLEETSYNC:
                 return FleetsyncTalkgroupFormatter.format(talkgroupIdentifier, getTalkgroupFormat(Protocol.FLEETSYNC),
                     isTalkgroupFixedWidth(Protocol.FLEETSYNC));
-            case LTR:
-                return LTRTalkgroupFormatter.format(talkgroupIdentifier, getTalkgroupFormat(Protocol.LTR),
-                    isTalkgroupFixedWidth(Protocol.LTR));
             case MDC1200:
                 return MDC1200TalkgroupFormatter.format(talkgroupIdentifier, getTalkgroupFormat(Protocol.MDC1200),
                     isTalkgroupFixedWidth(Protocol.MDC1200));
@@ -335,9 +303,6 @@ public class TalkgroupFormatPreference extends Preference
             case NXDN:
                 return NXDNTalkgroupFormatter.format(talkgroupIdentifier, getTalkgroupFormat(Protocol.NXDN),
                     isTalkgroupFixedWidth(Protocol.NXDN));
-            case PASSPORT:
-                return PassportTalkgroupFormatter.format(talkgroupIdentifier, getTalkgroupFormat(Protocol.PASSPORT),
-                    isTalkgroupFixedWidth(Protocol.PASSPORT));
             default:
                 return talkgroupIdentifier.toString();
         }
@@ -379,9 +344,6 @@ public class TalkgroupFormatPreference extends Preference
             case NXDN:
                 return NXDNTalkgroupFormatter.format(radioIdentifier, getTalkgroupFormat(Protocol.NXDN),
                     isTalkgroupFixedWidth(Protocol.NXDN));
-            case PASSPORT:
-                return PassportTalkgroupFormatter.format(radioIdentifier, getTalkgroupFormat(Protocol.PASSPORT),
-                    isTalkgroupFixedWidth(Protocol.PASSPORT));
             default:
                 return radioIdentifier.toString();
         }

@@ -398,29 +398,11 @@ public class SiteEditor extends GridPane
                     boolean hasControl = hasControl(siteFrequencies);
                     boolean hasAlternate = hasAlternate(siteFrequencies);
                     boolean p25Hybrid = decoder.isHybridMotorolaP25(system);
-                    boolean ltr = mRadioReferenceDecoder.isLTR(system);
 
                     //Set visibility for control, control & alt, and p25 traffic in frequencies toggle group
                     //For Motorola Type II with P25 Voice channel hybrid systems, we customize the first toggle button
 
-                    if(ltr)
-                    {
-                        getControlToggleButton().setDisable(true);
-                        getControlToggleButton().setText(TOGGLE_BUTTON_CONTROL);
-                        getControlToggleButton().setSelected(false);
-                        getControlAndAltToggleButton().setDisable(true);
-                        getControlAndAltToggleButton().setSelected(false);
-                        getSelectedToggleButton().setDisable(false);
-                        getSelectedToggleButton().setSelected(false);
-                        getAllToggleButton().setDisable(false);
-                        getAllToggleButton().setSelected(true);
-
-                        getSingleToggleButton().setDisable(true);
-                        getSingleToggleButton().setSelected(false);
-                        getForEachToggleButton().setDisable(false);
-                        getForEachToggleButton().setSelected(true);
-                    }
-                    else if(p25Hybrid)
+                    if(p25Hybrid)
                     {
                         getControlToggleButton().setDisable(false);
                         getControlToggleButton().setText(TOGGLE_BUTTON_P25_VOICE);

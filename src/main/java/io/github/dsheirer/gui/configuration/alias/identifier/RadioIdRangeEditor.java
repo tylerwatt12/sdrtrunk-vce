@@ -296,7 +296,6 @@ public class RadioIdRangeEditor extends IdentifierEditor<RadioRange>
     {
         List<RadioIdDetail> details = new ArrayList<>();
         addRadioIdDetails(details, Protocol.APCO25, 0xFFFFFF);
-        addRadioIdDetails(details, Protocol.PASSPORT, 0x7FFFFF);
         addRadioIdDetail(details, Protocol.UNKNOWN, IntegerFormat.DECIMAL, 0xFFFFFF);
         addRadioIdDetail(details, Protocol.UNKNOWN, IntegerFormat.FORMATTED, 0xFFFFFF);
         addRadioIdDetail(details, Protocol.UNKNOWN, IntegerFormat.HEXADECIMAL, 0xFFFFFF);

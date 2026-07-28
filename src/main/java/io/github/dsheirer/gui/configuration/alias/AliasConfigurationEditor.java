@@ -892,22 +892,6 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
         }
     }
 
-    public class ActionCountCell implements Callback<TableColumn.CellDataFeatures<Alias, Integer>, ObservableValue<Integer>>
-    {
-        @Override
-        public ObservableValue<Integer> call(TableColumn.CellDataFeatures<Alias, Integer> param)
-        {
-            Integer count = null;
-
-            if(param.getValue() != null && param.getValue().getAliasActions().size() > 0)
-            {
-                count = param.getValue().getAliasActions().size();
-            }
-
-            return new ReadOnlyObjectWrapper<>(count);
-        }
-    }
-
     public class CenteredCountCellFactory implements Callback<TableColumn<Alias, Integer>, TableCell<Alias, Integer>>
     {
         @Override

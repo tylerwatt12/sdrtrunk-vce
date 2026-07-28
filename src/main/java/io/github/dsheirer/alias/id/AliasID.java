@@ -27,12 +27,10 @@ import io.github.dsheirer.alias.id.dcs.Dcs;
 import io.github.dsheirer.alias.id.esn.Esn;
 import io.github.dsheirer.alias.id.legacy.fleetsync.FleetsyncID;
 import io.github.dsheirer.alias.id.legacy.mdc.MDC1200ID;
-import io.github.dsheirer.alias.id.legacy.mobileID.Min;
 import io.github.dsheirer.alias.id.legacy.mpt1327.MPT1327ID;
 import io.github.dsheirer.alias.id.legacy.nonrecordable.NonRecordable;
 import io.github.dsheirer.alias.id.legacy.siteID.SiteID;
 import io.github.dsheirer.alias.id.legacy.talkgroup.LegacyTalkgroupID;
-import io.github.dsheirer.alias.id.legacy.uniqueID.UniqueID;
 import io.github.dsheirer.alias.id.lojack.LoJackFunctionAndID;
 import io.github.dsheirer.alias.id.priority.Priority;
 import io.github.dsheirer.alias.id.radio.P25FullyQualifiedRadio;
@@ -61,7 +59,6 @@ import javafx.util.Callback;
     @JsonSubTypes.Type(value = LegacyTalkgroupID.class, name = "talkgroupID"),
     @JsonSubTypes.Type(value = LoJackFunctionAndID.class, name = "loJackFunctionAndID"),
     @JsonSubTypes.Type(value = MDC1200ID.class, name = "mdc1200ID"),
-    @JsonSubTypes.Type(value = Min.class, name = "min"),
     @JsonSubTypes.Type(value = MPT1327ID.class, name = "mpt1327ID"),
     @JsonSubTypes.Type(value = NonRecordable.class, name = "nonRecordable"),
     @JsonSubTypes.Type(value = P25FullyQualifiedRadio.class, name = "p25FullyQualifiedRadio"),
@@ -76,8 +73,7 @@ import javafx.util.Callback;
     @JsonSubTypes.Type(value = TalkgroupRange.class, name = "talkgroupRange"),
     @JsonSubTypes.Type(value = TonesID.class, name = "tones"),
     @JsonSubTypes.Type(value = UserStatusID.class, name = "statusID"),
-    @JsonSubTypes.Type(value = UnitStatusID.class, name = "unitStatusID"),
-    @JsonSubTypes.Type(value = UniqueID.class, name = "uniqueID")
+    @JsonSubTypes.Type(value = UnitStatusID.class, name = "unitStatusID")
 })
 @JacksonXmlRootElement(localName = "id")
 public abstract class AliasID

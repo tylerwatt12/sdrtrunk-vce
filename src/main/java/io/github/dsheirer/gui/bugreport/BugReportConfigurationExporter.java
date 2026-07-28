@@ -31,7 +31,6 @@ public class BugReportConfigurationExporter
         "alias_list",
         "alias",
         "alias_broadcast_channel",
-        "alias_action",
         "configuration_channel",
         "configuration_channel_map",
         "configuration_broadcast_stream",

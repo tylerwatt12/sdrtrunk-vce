@@ -23,13 +23,11 @@ import io.github.dsheirer.channel.metadata.activity.SelectedFrequencyContext;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.dsp.filter.channelizer.PolyphaseChannelSource;
 import io.github.dsheirer.gui.SplitPaneDividerHelper;
-import io.github.dsheirer.gui.power.SignalPowerView;
 import io.github.dsheirer.gui.squelch.NoiseSquelchView;
 import io.github.dsheirer.gui.symbol.SymbolView;
 import io.github.dsheirer.module.ProcessingChain;
 import io.github.dsheirer.module.decode.FeedbackDecoder;
 import io.github.dsheirer.module.decode.PrimaryDecoder;
-import io.github.dsheirer.module.decode.am.AMDecoder;
 import io.github.dsheirer.module.decode.nbfm.NBFMDecoder;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.preference.UserPreferences;
@@ -88,7 +86,6 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
     private static final String GROW_FILL = "[grow,fill]";
     private static final String SPLIT_PANE_DIVIDER_IDENTIFIER = "channel.spectrum.panel.split.pane.divider";
     private static final String CARD_NOISE_SQUELCH = "noise_squelch";
-    private static final String CARD_SIGNAL_POWER = "signal_power";
     private static final String CARD_SYMBOL = "symbol";
     private static final String CARD_EMPTY = "empty";
     private final ConfigurationManager mConfigurationManager;
@@ -108,7 +105,6 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
     private boolean mPanelVisible = false;
     private boolean mDftProcessing = false;
     private final NoiseSquelchView mNoiseSquelchView;
-    private final SignalPowerView mSignalPowerView;
     private final SymbolView mSymbolView = new SymbolView();
     private final JFXPanel mNoiseSquelchPanel;
     private final JFXPanel mSymbolPanel;
@@ -129,7 +125,6 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
         mUserPreferences = userPreferences;
         mComplexDftProcessor = new ComplexDftProcessor(mUserPreferences.getSpectrumPreference());
         mNoiseSquelchView = new NoiseSquelchView(mConfigurationManager);
-        mSignalPowerView = new SignalPowerView(mConfigurationManager);
         setLayout(new MigLayout("insets 0", GROW_FILL, GROW_FILL));
 
         JPanel fftPanel = new JPanel();
@@ -248,7 +243,6 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
         mRightCardLayout = new CardLayout();
         mRightCardPanel = new JPanel(mRightCardLayout);
         mRightCardPanel.add(mNoiseSquelchPanel, CARD_NOISE_SQUELCH);
-        mRightCardPanel.add(mSignalPowerView, CARD_SIGNAL_POWER);
         mRightCardPanel.add(mSymbolPanel, CARD_SYMBOL);
         mRightCardPanel.add(new JPanel(), CARD_EMPTY);
         mRightCardPanel.setMinimumSize(new Dimension(CHANNEL_SPECTRUM_MINIMUM_WIDTH, 0));
@@ -531,7 +525,6 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
         if(mProcessingChain != null)
         {
             mNoiseSquelchView.setController(null);
-            mSignalPowerView.setProcessingChain(null);
             mSymbolView.removeSymbolProvider();
             mSymbolView.setProtocol("");
             mProcessingChain.removeSourceEventListener(mSourceEventProcessor);
@@ -553,11 +546,6 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
             {
                 mRightCardLayout.show(mRightCardPanel, CARD_NOISE_SQUELCH);
                 mNoiseSquelchView.setController(nbfmDecoder);
-            }
-            else if(primaryDecoder instanceof AMDecoder)
-            {
-                mRightCardLayout.show(mRightCardPanel, CARD_SIGNAL_POWER);
-                mSignalPowerView.setProcessingChain(mProcessingChain);
             }
             else if(primaryDecoder instanceof FeedbackDecoder feedbackDecoder)
             {
@@ -653,8 +641,6 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
             {
                 updateViewedFrequency(sourceEvent.getValue().longValue());
             }
-
-            mSignalPowerView.receive(sourceEvent);
         }
 
         /**

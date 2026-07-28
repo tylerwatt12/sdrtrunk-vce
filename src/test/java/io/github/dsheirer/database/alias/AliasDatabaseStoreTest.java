@@ -21,8 +21,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasListFamily;
-import io.github.dsheirer.alias.action.RecurringAction;
-import io.github.dsheirer.alias.action.clip.ClipAction;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.alias.id.talkgroup.StreamAsTalkgroup;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
@@ -33,6 +31,7 @@ import io.github.dsheirer.database.configuration.ConfigurationSnapshotDatabaseSt
 import io.github.dsheirer.protocol.Protocol;
 import java.nio.file.Path;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
@@ -63,12 +62,6 @@ class AliasDatabaseStoreTest
         alias.setCallPriority(5);
         alias.addBroadcastChannel(new BroadcastChannel("RadioResolve"));
 
-        ClipAction clip = new ClipAction();
-        clip.setPath("/tmp/alert.wav");
-        clip.setInterval(RecurringAction.Interval.DELAYED_RESET);
-        clip.setPeriod(7);
-        alias.addAliasAction(clip);
-
         replace(store, List.of(alias), List.of(definition));
 
         assertNotEquals(Alias.UNASSIGNED_ID, alias.getId());
@@ -89,7 +82,6 @@ class AliasDatabaseStoreTest
         assertTrue(loaded.isRecordable());
         assertEquals(5, loaded.getPlaybackPriority());
         assertEquals("RadioResolve", loaded.getBroadcastChannels().iterator().next().getChannelName());
-        assertEquals("/tmp/alert.wav", ((ClipAction)loaded.getAliasActions().getFirst()).getPath());
         assertEquals(1001, ((Talkgroup)loaded.getMatchIdentifier()).getValue());
 
         try(Connection connection = SdrTrunkDatabase.open(database);
@@ -124,9 +116,10 @@ class AliasDatabaseStoreTest
             assertFalse(aliasColumns.contains("non_recordable"));
             assertFalse(aliasColumns.contains("matcher_enabled"));
             assertFalse(aliasColumns.contains("compatibility_reason"));
-            assertFalse(columns(connection, "alias_action").contains("script"));
+            assertFalse(hasTable(connection, "alias_action"));
             assertFalse(indexes(connection).contains("idx_alias_list_name"));
             assertFalse(indexes(connection).contains("idx_alias_broadcast_channel_alias"));
+            assertFalse(indexes(connection).contains("idx_alias_action_alias"));
             assertFalse(columns(connection, "alias_talkgroup").contains("id"));
             assertFalse(columns(connection, "alias_talkgroup").contains("sort_order"));
         }
@@ -232,9 +225,6 @@ class AliasDatabaseStoreTest
         assertEquals("NOT_A_FAMILY",
             scalarText(familyStore.getDatabasePath(), "SELECT family FROM alias_list"));
 
-        AliasDatabaseStore actionStore = populatedStore("malformed-action.sqlite");
-        execute(actionStore.getDatabasePath(), "UPDATE alias_action SET type = 'NOT_AN_ACTION'");
-        assertThrows(SQLException.class, () -> loadAliases(actionStore));
     }
 
     @Test
@@ -291,9 +281,6 @@ class AliasDatabaseStoreTest
         AliasDatabaseStore store = new AliasDatabaseStore(database(name));
         AliasListDefinition definition = definition("County P25", "County", AliasListFamily.P25);
         Alias alias = alias("Dispatch", definition, 100);
-        ClipAction clip = new ClipAction();
-        clip.setPath("/tmp/alert.wav");
-        alias.addAliasAction(clip);
         replace(store, List.of(alias), List.of(definition));
         return store;
     }
@@ -382,6 +369,19 @@ class AliasDatabaseStoreTest
             }
         }
         return indexes;
+    }
+
+    private static boolean hasTable(Connection connection, String table) throws Exception
+    {
+        try(PreparedStatement statement = connection.prepareStatement(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?"))
+        {
+            statement.setString(1, table);
+            try(ResultSet resultSet = statement.executeQuery())
+            {
+                return resultSet.next();
+            }
+        }
     }
 
     private static int countRows(Connection connection, String table) throws Exception

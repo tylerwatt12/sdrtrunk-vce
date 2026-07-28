@@ -15,11 +15,6 @@ import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.alias.AliasMatchRegistry;
-import io.github.dsheirer.alias.action.AliasAction;
-import io.github.dsheirer.alias.action.AliasActionType;
-import io.github.dsheirer.alias.action.RecurringAction;
-import io.github.dsheirer.alias.action.beep.BeepAction;
-import io.github.dsheirer.alias.action.clip.ClipAction;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.AliasIDType;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
@@ -64,8 +59,8 @@ import java.util.StringJoiner;
  * SQLite persistence for alias-list definitions and their aliases.
  *
  * <p>Alias schema v4 gives both lists and aliases durable identities. Each alias row contains exactly one operational
- * matcher. Recording, playback, streaming routes, and actions remain behavior attached to that matcher and are not
- * represented as additional match identifiers.</p>
+ * matcher. Recording, playback, and streaming routes remain behavior attached to that matcher and are not represented
+ * as additional match identifiers.</p>
  */
 public class AliasDatabaseStore
 {
@@ -247,7 +242,6 @@ public class AliasDatabaseStore
 
             Map<Long,List<BroadcastChannel>> broadcastChannels =
                 loadBroadcastChannels(connection, aliases.keySet());
-            Map<Long,List<AliasAction>> actions = loadActions(connection);
 
             for(Map.Entry<Long,Alias> entry: aliases.entrySet())
             {
@@ -258,7 +252,6 @@ public class AliasDatabaseStore
                 {
                     alias.addBroadcastChannel(broadcastChannel);
                 }
-                alias.setAliasActions(actions.getOrDefault(entry.getKey(), List.of()));
             }
         }
 
@@ -708,42 +701,6 @@ public class AliasDatabaseStore
                 statement.executeUpdate();
             }
         }
-
-        for(AliasAction action: alias.getAliasActions())
-        {
-            insertAction(connection, aliasId, action);
-        }
-    }
-
-    private void insertAction(Connection connection, long aliasId, AliasAction action)
-        throws SQLException
-    {
-        String interval = null;
-        Integer period = null;
-        String path = null;
-
-        if(action instanceof RecurringAction recurringAction)
-        {
-            interval = recurringAction.getInterval() != null ? recurringAction.getInterval().name() : null;
-            period = recurringAction.getPeriod();
-        }
-        if(action instanceof ClipAction clipAction)
-        {
-            path = clipAction.getPath();
-        }
-
-        try(PreparedStatement statement = connection.prepareStatement("""
-            INSERT INTO alias_action (alias_id, type, interval, period, path)
-            VALUES (?, ?, ?, ?, ?)
-            """))
-        {
-            statement.setLong(1, aliasId);
-            statement.setString(2, action.getType().name());
-            statement.setString(3, interval);
-            setInteger(statement, 4, period);
-            statement.setString(5, path);
-            statement.executeUpdate();
-        }
     }
 
     private Map<Long,List<BroadcastChannel>> loadBroadcastChannels(Connection connection, Set<Long> aliasIds)
@@ -775,61 +732,6 @@ public class AliasDatabaseStore
             }
         }
         return channels;
-    }
-
-    private Map<Long,List<AliasAction>> loadActions(Connection connection) throws SQLException
-    {
-        Map<Long,List<AliasAction>> actions = new LinkedHashMap<>();
-        try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT alias_id, type, interval, period, path
-            FROM alias_action
-            ORDER BY alias_id, id
-            """);
-            ResultSet resultSet = statement.executeQuery())
-        {
-            while(resultSet.next())
-            {
-                AliasAction action = toAliasAction(resultSet);
-                actions.computeIfAbsent(resultSet.getLong("alias_id"), ignored -> new ArrayList<>()).add(action);
-            }
-        }
-        return actions;
-    }
-
-    private AliasAction toAliasAction(ResultSet resultSet) throws SQLException
-    {
-        AliasActionType type = requireEnum(AliasActionType.class, resultSet.getString("type"),
-            "alias_action.type");
-        RecurringAction.Interval interval = requireEnum(RecurringAction.Interval.class,
-            resultSet.getString("interval"), "alias_action.interval");
-        Integer period = getInteger(resultSet, "period");
-        if(period == null || period < 1 || period > 60)
-        {
-            throw new SQLException("alias_action.period must be an integer from 1 through 60");
-        }
-        AliasAction action = switch(type)
-        {
-            case BEEP -> {
-                if(resultSet.getString("path") != null)
-                {
-                    throw new SQLException("BEEP alias action cannot contain a path");
-                }
-                yield new BeepAction();
-            }
-            case CLIP -> {
-                ClipAction clip = new ClipAction();
-                clip.setPath(resultSet.getString("path"));
-                yield clip;
-            }
-        };
-
-        if(action instanceof RecurringAction recurring)
-        {
-            recurring.setInterval(interval);
-            recurring.setPeriod(period);
-        }
-        action.updateValueProperty();
-        return action;
     }
 
     private String serializeToneSequence(ToneSequence toneSequence)

@@ -123,11 +123,6 @@ public final class AliasMatchRegistry
             _ -> new P25FullyQualifiedRadio(0, 0, 0), P25FullyQualifiedRadio.class::isInstance));
         addProtocolMatchers(descriptors, AliasListFamily.DMR, Protocol.DMR, "DMR");
         addProtocolMatchers(descriptors, AliasListFamily.NXDN, Protocol.NXDN, "NXDN");
-        addTalkgroupMatchers(descriptors, AliasListFamily.LTR, Protocol.LTR, "LTR");
-        addTalkgroupMatchers(descriptors, AliasListFamily.LTR_NET, Protocol.LTR_NET, "LTR-Net");
-        addTalkgroupMatchers(descriptors, AliasListFamily.LTR_NET, Protocol.LTR, "LTR-Net Group");
-        addProtocolMatchers(descriptors, AliasListFamily.PASSPORT, Protocol.PASSPORT, "Passport");
-        addTalkgroupMatchers(descriptors, AliasListFamily.AM, Protocol.AM, "AM");
         addTalkgroupMatchers(descriptors, AliasListFamily.NBFM, Protocol.NBFM, "NBFM");
 
         descriptors.add(descriptor("Tone Sequence", AliasIDType.TONES,

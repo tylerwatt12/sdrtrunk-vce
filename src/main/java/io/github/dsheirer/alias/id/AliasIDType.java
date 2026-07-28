@@ -29,8 +29,6 @@ public enum AliasIDType
     ESN("ESN"),
     INVERT("Audio Inversion"),
     LOJACK("LoJack"),
-    LTR_NET_UID("LTR-Net UID"),
-    MIN("Passport MIN"),
     P25_FULLY_QUALIFIED_RADIO_ID("P25 Fully Qualified Radio ID"),
     P25_FULLY_QUALIFIED_TALKGROUP("P25 Fully Qualified Talkgroup"),
     PRIORITY("Audio Priority"),

@@ -24,9 +24,8 @@ import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlRootElement;
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasFactory;
-import io.github.dsheirer.alias.action.AliasAction;
-import io.github.dsheirer.alias.action.AliasActionType;
 import io.github.dsheirer.alias.id.AliasID;
+import io.github.dsheirer.alias.id.AliasIDType;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.alias.id.legacy.nonrecordable.NonRecordable;
 import io.github.dsheirer.alias.id.priority.Priority;
@@ -45,9 +44,11 @@ import io.github.dsheirer.database.configuration.ConfigurationSnapshotDatabaseSt
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.module.decode.p25.phase1.Modulation;
-import io.github.dsheirer.message.IMessage;
+import io.github.dsheirer.module.decode.DecoderType;
+import io.github.dsheirer.module.decode.config.DecodeConfiguration;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.source.config.SourceConfigTuner;
+import io.github.dsheirer.source.tuner.channel.ChannelSpecification;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
@@ -70,6 +71,9 @@ public class LegacyXmlConfigurationImporter
     private static final long P25_TRUNKED_BAND_MINIMUM_HZ = 700_000_000L;
     private static final long P25_TRUNKED_BAND_MAXIMUM_HZ = 1_000_000_000L;
     private static final int P25_TRUNKED_TALKGROUP_COUNT = 3;
+    private static final Set<String> RETIRED_DECODER_CONFIG_TYPES = Set.of(
+        "decodeConfigAM", "decodeConfigLTRStandard", "decodeConfigLTRNet", "decodeConfigPassport");
+    private static final Set<String> RETIRED_ALIAS_IDENTIFIER_TYPES = Set.of("min", "uniqueID");
 
     private LegacyXmlConfigurationImporter()
     {
@@ -134,7 +138,7 @@ public class LegacyXmlConfigurationImporter
             state.setAliases(convertAliases(nonNull(playlist.getAliases())));
             state.setBroadcastConfigurations(nonNull(playlist.getBroadcastConfigurations()));
             state.setChannels(new ArrayList<>(nonNull(playlist.getChannels()).stream()
-                .filter(channel -> !ChannelConfigurationPolicy.isRetired(channel))
+                .filter(ChannelConfigurationPolicy::isActive)
                 .toList()));
             AliasListDefinitionResolver.normalizeLegacyState(state);
             return state;
@@ -162,21 +166,8 @@ public class LegacyXmlConfigurationImporter
         xmlModule.setDefaultUseWrapper(false);
         ObjectMapper objectMapper = new XmlMapper(xmlModule)
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
-            .addHandler(new DeserializationProblemHandler()
-            {
-                @Override
-                public JavaType handleUnknownTypeId(DeserializationContext context, JavaType baseType,
-                                                    String subTypeId, TypeIdResolver idResolver,
-                                                    String failureMessage)
-                {
-                    if(baseType.hasRawClass(AliasAction.class) && "scriptAction".equals(subTypeId))
-                    {
-                        return context.constructType(RetiredAliasAction.class);
-                    }
-
-                    return null;
-                }
-            });
+            .configure(DeserializationFeature.READ_UNKNOWN_ENUM_VALUES_AS_NULL, true);
+        objectMapper.addHandler(new RetiredTypeHandler());
         objectMapper.setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
         return objectMapper;
     }
@@ -247,25 +238,22 @@ public class LegacyXmlConfigurationImporter
 
         int expectedIdentifierCount = countAliasIdentifiers(expected.getAliases());
         int actualIdentifierCount = countAliasIdentifiers(aliases);
-        int expectedActionCount = countAliasActions(expected.getAliases());
-        int actualActionCount = countAliasActions(aliases);
 
         boolean identitiesValid = aliases.stream().allMatch(alias -> alias.getId() > 0 && alias.getAliasListId() > 0);
 
         if(definitions.size() != expected.getAliasListDefinitions().size() ||
             aliases.size() != expected.getAliases().size() || actualIdentifierCount != expectedIdentifierCount ||
-            actualActionCount != expectedActionCount ||
             actual.getBroadcastConfigurations().size() != expected.getBroadcastConfigurations().size() ||
             actual.getChannels().size() != expected.getChannels().size() || !identitiesValid)
         {
             throw new IOException("Migrated SQLite validation failed: expected aliasLists=" +
                 expected.getAliasListDefinitions().size() + " aliases=" + expected.getAliases().size() +
-                " aliasIdentifiers=" + expectedIdentifierCount + " aliasActions=" + expectedActionCount +
+                " aliasIdentifiers=" + expectedIdentifierCount +
                 " streams=" + expected.getBroadcastConfigurations().size() + " channels=" +
                 expected.getChannels().size() +
                 " but loaded aliasLists=" + definitions.size() + " aliases=" + aliases.size() +
                 " aliasIdentifiers=" + actualIdentifierCount +
-                " aliasActions=" + actualActionCount + " streams=" + actual.getBroadcastConfigurations().size() +
+                " streams=" + actual.getBroadcastConfigurations().size() +
                 " channels=" + actual.getChannels().size() + " identitiesValid=" + identitiesValid);
         }
     }
@@ -273,11 +261,6 @@ public class LegacyXmlConfigurationImporter
     private static int countAliasIdentifiers(List<Alias> aliases)
     {
         return (int)aliases.stream().filter(alias -> alias.getMatchIdentifier() != null).count();
-    }
-
-    private static int countAliasActions(List<Alias> aliases)
-    {
-        return aliases.stream().mapToInt(alias -> alias.getAliasActions().size()).sum();
     }
 
     @JacksonXmlRootElement(localName = "playlist")
@@ -343,8 +326,6 @@ public class LegacyXmlConfigurationImporter
         private StreamAsTalkgroup mStreamTalkgroupAlias;
         @JacksonXmlProperty(isAttribute = false, localName = "id")
         private List<AliasID> mIdentifiers = new ArrayList<>();
-        @JacksonXmlProperty(isAttribute = false, localName = "action")
-        private List<AliasAction> mActions = new ArrayList<>();
 
         private List<Alias> toAliases()
         {
@@ -355,14 +336,18 @@ public class LegacyXmlConfigurationImporter
             template.setColor(mColor);
             template.setIconName(mIconName);
             template.setStreamTalkgroupAlias(mStreamTalkgroupAlias);
-            template.setAliasActions(nonNull(mActions).stream()
-                .filter(action -> !(action instanceof RetiredAliasAction)).toList());
             List<AliasID> matchers = new ArrayList<>();
 
             for(AliasID identifier: nonNull(mIdentifiers))
             {
+                if(identifier == null)
+                {
+                    continue;
+                }
+
                 switch(identifier)
                 {
+                    case RetiredAliasIdentifier ignored -> { }
                     case BroadcastChannel broadcastChannel -> template.addBroadcastChannel(broadcastChannel);
                     case Record ignored -> template.setRecordable(true);
                     case Priority priority -> template.setCallPriority(priority.getPriority());
@@ -391,25 +376,70 @@ public class LegacyXmlConfigurationImporter
     }
 
     /**
-     * Import-only tombstone for retired script actions. It cannot retain a command or execute any behavior and is
-     * removed before the imported configuration reaches the database.
+     * Import-only recognition for removed polymorphic types. These objects are discarded before configuration reaches
+     * the runtime model or SQLite store.
      */
-    private static final class RetiredAliasAction extends AliasAction
+    private static class RetiredTypeHandler extends DeserializationProblemHandler
     {
         @Override
-        public AliasActionType getType()
+        public JavaType handleUnknownTypeId(DeserializationContext context, JavaType baseType, String subTypeId,
+                                            TypeIdResolver idResolver, String failureMessage)
+        {
+            if(baseType.hasRawClass(DecodeConfiguration.class) &&
+                RETIRED_DECODER_CONFIG_TYPES.contains(subTypeId))
+            {
+                return context.constructType(RetiredDecodeConfiguration.class);
+            }
+
+            if(baseType.hasRawClass(AliasID.class) && RETIRED_ALIAS_IDENTIFIER_TYPES.contains(subTypeId))
+            {
+                return context.constructType(RetiredAliasIdentifier.class);
+            }
+
+            return null;
+        }
+    }
+
+    private static class RetiredDecodeConfiguration extends DecodeConfiguration
+    {
+        @Override
+        public DecoderType getDecoderType()
         {
             return null;
         }
 
         @Override
-        public void execute(Alias alias, IMessage message)
+        public ChannelSpecification getChannelSpecification()
         {
+            return null;
+        }
+    }
+
+    private static class RetiredAliasIdentifier extends AliasID
+    {
+        @Override
+        public AliasIDType getType()
+        {
+            return null;
         }
 
         @Override
-        public void dismiss(boolean reset)
+        public boolean matches(AliasID id)
         {
+            return false;
+        }
+
+        @Override
+        public boolean isValid()
+        {
+            return false;
+        }
+
+        @Override
+        public boolean isAudioIdentifier()
+        {
+            return false;
         }
     }
+
 }

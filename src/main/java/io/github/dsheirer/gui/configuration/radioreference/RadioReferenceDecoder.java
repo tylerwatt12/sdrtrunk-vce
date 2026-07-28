@@ -21,7 +21,6 @@ package io.github.dsheirer.gui.configuration.radioreference;
 
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasListDefinition;
-import io.github.dsheirer.identifier.talkgroup.LTRTalkgroup;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import io.github.dsheirer.identifier.talkgroup.UnknownTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.DecoderType;
@@ -30,9 +29,7 @@ import io.github.dsheirer.module.decode.dmr.identifier.DMRTalkgroup;
 import io.github.dsheirer.module.decode.nxdn.channel.ChannelFrequency;
 import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
-import io.github.dsheirer.module.decode.passport.identifier.PassportTalkgroup;
 import io.github.dsheirer.preference.UserPreferences;
-import io.github.dsheirer.preference.identifier.talkgroup.LTRTalkgroupFormatter;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.rrapi.type.Flavor;
 import io.github.dsheirer.rrapi.type.Site;
@@ -54,7 +51,6 @@ import java.util.Map;
 public class RadioReferenceDecoder
 {
     private static final String TYPE_DMR = "DMR";
-    private static final String TYPE_LTR = "LTR";
     private static final String TYPE_MOTOROLA = "Motorola";
     private static final String TYPE_PROJECT_25 = "Project 25";
 
@@ -85,44 +81,11 @@ public class RadioReferenceDecoder
     /**
      * Converts radio reference formatted talkgroup values to sdrtrunk decimal format
      * @param talkgroup to convert
-     * @param system to identify the protocol
      * @return sdrtrunk formatted decimal value
      */
-    public int getTalkgroupValue(Talkgroup talkgroup, System system)
+    public int getTalkgroupValue(Talkgroup talkgroup)
     {
-        Protocol protocol = getProtocol(system);
-
-        switch(protocol)
-        {
-            case LTR:
-                int value = talkgroup.getDecimalValue();
-                int area = (value >= 100000 ? 1 : 0);
-                int home = ((value % 100000) / 1000);
-                int group = (value % 1000);
-                return LTRTalkgroup.create(area, home, group);
-            default:
-                return talkgroup.getDecimalValue();
-        }
-    }
-
-    /**
-     * Converts the talkgroup value to the format used by radio reference
-     * @param value of the talkgroup
-     * @param protocol for the talkgroup
-     * @return radio reference formatted talkgroup
-     */
-    public static int convertToRadioReferenceTalkgroup(int value, Protocol protocol)
-    {
-        switch(protocol)
-        {
-            case LTR:
-                int area = LTRTalkgroupFormatter.getArea(value);
-                int home = LTRTalkgroupFormatter.getLcn(value);
-                int group = LTRTalkgroupFormatter.getTalkgroup(value);
-                return (area * 100000) + (home * 1000) + group;
-            default:
-                return value;
-        }
+        return talkgroup.getDecimalValue();
     }
 
     /**
@@ -134,7 +97,7 @@ public class RadioReferenceDecoder
     public TalkgroupIdentifier getIdentifier(Talkgroup talkgroup, System system)
     {
         Protocol protocol = getProtocol(system);
-        int value = getTalkgroupValue(talkgroup, system);
+        int value = getTalkgroupValue(talkgroup);
 
         switch(protocol)
         {
@@ -142,12 +105,8 @@ public class RadioReferenceDecoder
                 return APCO25Talkgroup.create(value);
             case DMR:
                 return DMRTalkgroup.create(value);
-            case LTR:
-                return LTRTalkgroup.create(value);
             case NXDN:
                 return NXDNTalkgroupIdentifier.createTo(value);
-            case PASSPORT:
-                return PassportTalkgroup.create(value);
             default:
                 return UnknownTalkgroupIdentifier.create(value);
         }
@@ -162,7 +121,7 @@ public class RadioReferenceDecoder
     public io.github.dsheirer.alias.id.talkgroup.Talkgroup getTalkgroupAliasId(Talkgroup talkgroup, System system)
     {
         Protocol protocol = getProtocol(system);
-        int value = getTalkgroupValue(talkgroup, system);
+        int value = getTalkgroupValue(talkgroup);
         return new io.github.dsheirer.alias.id.talkgroup.Talkgroup(protocol, value);
     }
 
@@ -289,14 +248,6 @@ public class RadioReferenceDecoder
     public boolean hasSupportedProtocol(System system)
     {
         return getProtocol(system) != Protocol.UNKNOWN;
-    }
-
-    /**
-     * Indicates if this is an LTR (standard, net or passport) system
-     */
-    public boolean isLTR(System system)
-    {
-        return getType(system) != null && getType(system).getName().equalsIgnoreCase(TYPE_LTR);
     }
 
     /**
@@ -430,26 +381,12 @@ public class RadioReferenceDecoder
         }
 
         Type type = getType(system);
-        Flavor flavor = getFlavor(system);
         Voice voice = getVoice(system);
 
         switch(type.getName())
         {
             case TYPE_DMR:
                 return Protocol.DMR;
-            case TYPE_LTR:
-                if(flavor != null)
-                {
-                    if(flavor.getName().contentEquals("Standard") || flavor.getName().contentEquals("Net"))
-                    {
-                        return Protocol.LTR;
-                    }
-                    else if(flavor.getName().contentEquals("Passport"))
-                    {
-                        return Protocol.PASSPORT;
-                    }
-                }
-                return Protocol.LTR;
             case TYPE_PROJECT_25:
                 return Protocol.APCO25;
             case TYPE_MOTOROLA:
@@ -491,19 +428,6 @@ public class RadioReferenceDecoder
             {
                 case TYPE_DMR:
                     return DecoderType.DMR;
-                case TYPE_LTR:
-                    if(flavor.getName().contentEquals("Net"))
-                    {
-                        return DecoderType.LTR_NET;
-                    }
-                    else if(flavor.getName().contentEquals("Passport"))
-                    {
-                        return DecoderType.PASSPORT;
-                    }
-                    else
-                    {
-                        return DecoderType.LTR;
-                    }
                 case TYPE_PROJECT_25:
                     if(flavor.getName().contentEquals("Phase II"))
                     {

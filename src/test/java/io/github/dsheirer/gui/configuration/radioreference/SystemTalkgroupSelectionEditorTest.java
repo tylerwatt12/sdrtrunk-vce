@@ -66,6 +66,19 @@ class SystemTalkgroupSelectionEditorTest
     }
 
     @Test
+    void marksUnsupportedSystemTalkgroupsAsNotCompatible()
+    {
+        Talkgroup talkgroup = new Talkgroup();
+        talkgroup.setAlphaTag("RETIRED SYSTEM");
+        Alias alias = new Alias("RETIRED SYSTEM");
+
+        assertEquals(SystemTalkgroupSelectionEditor.ImportStatus.NOT_COMPATIBLE,
+            SystemTalkgroupSelectionEditor.getImportStatus(false, null, talkgroup, null));
+        assertEquals(SystemTalkgroupSelectionEditor.ImportStatus.NOT_COMPATIBLE,
+            SystemTalkgroupSelectionEditor.getImportStatus(false, alias, talkgroup, null));
+    }
+
+    @Test
     void ignoresLocalFieldsAndUnavailableCategoryEnrichment()
     {
         Talkgroup talkgroup = new Talkgroup();

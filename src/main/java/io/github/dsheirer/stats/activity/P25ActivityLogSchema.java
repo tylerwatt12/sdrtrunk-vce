@@ -61,7 +61,6 @@ public class P25ActivityLogSchema
     private static final int PROTOCOL_DMR = 3;
     private static final int PROTOCOL_NXDN = 4;
     private static final int PROTOCOL_NBFM = 10;
-    private static final int PROTOCOL_AM = 11;
 
     private static final int TARGET_TALKGROUP = 1;
     private static final int TARGET_RADIO = 2;
@@ -160,6 +159,8 @@ public class P25ActivityLogSchema
     {
         SqliteSchemaValidator.validate(connection, TABLES, INDEXES, VIEWS,
             List.of(new SqliteSchemaValidator.Metadata(SCHEMA_VERSION_KEY, Integer.toString(SCHEMA_VERSION))));
+        SqliteSchemaValidator.validateDefinitions(connection, List.of(
+            new SqliteSchemaValidator.Definition("view", "p25_activity_event_resolved", createResolvedViewSql())));
         validateIndexColumns(connection, "idx_p25_control_quality_retention",
             List.of("observed_at_ms", "guid", "frequency_hz", "bucket_start_ms"));
     }
@@ -2665,7 +2666,6 @@ public class P25ActivityLogSchema
             case "DMR" -> PROTOCOL_DMR;
             case "NXDN" -> PROTOCOL_NXDN;
             case "NBFM" -> PROTOCOL_NBFM;
-            case "AM" -> PROTOCOL_AM;
             default -> PROTOCOL_UNKNOWN;
         };
     }
@@ -2923,8 +2923,7 @@ public class P25ActivityLogSchema
     {
         return "CASE " + expression + " WHEN " + PROTOCOL_APCO25 + " THEN 'APCO25' WHEN " +
             PROTOCOL_APCO25_PHASE2 + " THEN 'APCO25_PHASE2' WHEN " + PROTOCOL_DMR + " THEN 'DMR' WHEN " +
-            PROTOCOL_NXDN + " THEN 'NXDN' WHEN " + PROTOCOL_NBFM + " THEN 'NBFM' WHEN " + PROTOCOL_AM +
-            " THEN 'AM' ELSE 'UNKNOWN' END";
+            PROTOCOL_NXDN + " THEN 'NXDN' WHEN " + PROTOCOL_NBFM + " THEN 'NBFM' ELSE 'UNKNOWN' END";
     }
 
     private static String targetKindCase(String expression)

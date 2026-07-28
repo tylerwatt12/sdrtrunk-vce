@@ -603,7 +603,7 @@ class P25ActivityLogMapper
             return P25ActivityLogRecords.ContextKind.TRUNKED_SITE;
         }
 
-        if(decoderType == DecoderType.NBFM || decoderType == DecoderType.AM)
+        if(decoderType == DecoderType.NBFM)
         {
             return P25ActivityLogRecords.ContextKind.CONVENTIONAL_ANALOG;
         }

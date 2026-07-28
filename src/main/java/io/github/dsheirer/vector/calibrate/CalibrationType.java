@@ -32,7 +32,6 @@ public enum CalibrationType
     OSCILLATOR_COMPLEX("Complex Oscillator", 1),
     GAIN_COMPLEX("Complex Gain", 2),
 
-    AM_DEMODULATOR("AM Demodulator", 1),
     DC_REMOVAL_REAL("Real DC Removal Filter", 1),
     DMR_SOFT_SYNC_DETECTOR("DMR Soft Sync Detector", 1),
     DIFFERENTIAL_DEMODULATOR("DQPSK Demodulator", 1),
