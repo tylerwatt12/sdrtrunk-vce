@@ -15,6 +15,8 @@ import io.github.dsheirer.channel.state.State;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
 import io.github.dsheirer.module.decode.dmr.DMRChannelMode;
 import io.github.dsheirer.module.decode.dmr.channel.TimeslotFrequency;
+import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
+import io.github.dsheirer.module.decode.p25.phase1.Modulation;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -49,6 +51,18 @@ class DecoderFactoryTest
 
         copy.getTimeslotMap().get(0).setDownlinkFrequency(460_000_000L);
         assertEquals(452_125_000L, original.getTimeslotMap().get(0).getDownlinkFrequency());
+    }
+
+    @Test
+    void copiesP25ConventionalModulation()
+    {
+        DecodeConfigP25Conventional original = new DecodeConfigP25Conventional();
+        original.setModulation(Modulation.CQPSK);
+
+        DecodeConfigP25Conventional copy = (DecodeConfigP25Conventional)DecoderFactory.copy(original);
+
+        assertNotSame(original, copy);
+        assertEquals(Modulation.CQPSK, copy.getModulation());
     }
 
     @Test

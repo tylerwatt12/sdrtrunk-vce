@@ -20,6 +20,8 @@ import io.github.dsheirer.source.tuner.channel.ChannelSpecification;
  */
 public class DecodeConfigP25Conventional extends DecodeConfiguration
 {
+    private Modulation mModulation = Modulation.C4FM;
+
     @Override
     public DecoderType getDecoderType()
     {
@@ -28,12 +30,12 @@ public class DecodeConfigP25Conventional extends DecodeConfiguration
 
     public Modulation getModulation()
     {
-        return Modulation.C4FM;
+        return mModulation;
     }
 
     public void setModulation(Modulation modulation)
     {
-        //P25 conventional channels are fixed to C4FM in this build.
+        mModulation = modulation != null ? modulation : Modulation.C4FM;
     }
 
     /**

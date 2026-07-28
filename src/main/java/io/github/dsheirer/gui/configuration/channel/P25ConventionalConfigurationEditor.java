@@ -31,12 +31,17 @@ import io.github.dsheirer.source.config.SourceConfiguration;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import java.util.ArrayList;
 import java.util.List;
+import javafx.beans.value.ChangeListener;
+import javafx.beans.value.ObservableValue;
 import javafx.geometry.HPos;
 import javafx.geometry.Insets;
 import javafx.scene.control.Label;
 import javafx.scene.control.TitledPane;
+import javafx.scene.control.Toggle;
+import javafx.scene.control.ToggleButton;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.VBox;
+import org.controlsfx.control.SegmentedButton;
 
 /**
  * P25 conventional channel configuration editor.
@@ -50,6 +55,9 @@ public class P25ConventionalConfigurationEditor extends ChannelConfigurationEdit
     private SourceConfigurationEditor<SourceConfiguration> mSourceConfigurationEditor;
     private EventLogConfigurationEditor mEventLogConfigurationEditor;
     private RecordConfigurationEditor mRecordConfigurationEditor;
+    private SegmentedButton mModulationSegmentedButton;
+    private ToggleButton mC4FMToggleButton;
+    private ToggleButton mLSMToggleButton;
 
     public P25ConventionalConfigurationEditor(ConfigurationManager configurationManager, TunerManager tunerManager,
                                              UserPreferences userPreferences, IFilterProcessor filterProcessor)
@@ -96,9 +104,13 @@ public class P25ConventionalConfigurationEditor extends ChannelConfigurationEdit
             GridPane.setConstraints(modulationLabel, 0, 0);
             gridPane.getChildren().add(modulationLabel);
 
-            Label c4fmLabel = new Label(Modulation.C4FM.toString());
-            GridPane.setConstraints(c4fmLabel, 1, 0);
-            gridPane.getChildren().add(c4fmLabel);
+            GridPane.setConstraints(getModulationSegmentedButton(), 1, 0);
+            gridPane.getChildren().add(getModulationSegmentedButton());
+
+            Label modulationHelpLabel =
+                new Label("C4FM: single-site conventional channels.  LSM: simulcast conventional channels.");
+            GridPane.setConstraints(modulationHelpLabel, 0, 1, 2, 1);
+            gridPane.getChildren().add(modulationHelpLabel);
 
             mDecoderPane.setContent(gridPane);
         }
@@ -166,6 +178,55 @@ public class P25ConventionalConfigurationEditor extends ChannelConfigurationEdit
         return mEventLogConfigurationEditor;
     }
 
+    private SegmentedButton getModulationSegmentedButton()
+    {
+        if(mModulationSegmentedButton == null)
+        {
+            mModulationSegmentedButton = new SegmentedButton();
+            mModulationSegmentedButton.getStyleClass().add(SegmentedButton.STYLE_CLASS_DARK);
+            mModulationSegmentedButton.getButtons().addAll(getC4FMToggleButton(), getLSMToggleButton());
+            mModulationSegmentedButton.getToggleGroup().selectedToggleProperty().addListener(new ChangeListener<Toggle>()
+            {
+                @Override
+                public void changed(ObservableValue<? extends Toggle> observable, Toggle oldValue, Toggle newValue)
+                {
+                    if(newValue == null)
+                    {
+                        //Ensure at least one toggle is always selected
+                        oldValue.setSelected(true);
+                    }
+                    else if(oldValue != null)
+                    {
+                        //Only set modified if the toggle changed from one to the other
+                        modifiedProperty().set(true);
+                    }
+                }
+            });
+        }
+
+        return mModulationSegmentedButton;
+    }
+
+    private ToggleButton getC4FMToggleButton()
+    {
+        if(mC4FMToggleButton == null)
+        {
+            mC4FMToggleButton = new ToggleButton("C4FM");
+        }
+
+        return mC4FMToggleButton;
+    }
+
+    private ToggleButton getLSMToggleButton()
+    {
+        if(mLSMToggleButton == null)
+        {
+            mLSMToggleButton = new ToggleButton("LSM");
+        }
+
+        return mLSMToggleButton;
+    }
+
     private RecordConfigurationEditor getRecordConfigurationEditor()
     {
         if(mRecordConfigurationEditor == null)
@@ -186,7 +247,17 @@ public class P25ConventionalConfigurationEditor extends ChannelConfigurationEdit
     @Override
     protected void setDecoderConfiguration(DecodeConfiguration config)
     {
-        //P25 conventional modulation is fixed to C4FM.
+        getModulationSegmentedButton().setDisable(config == null);
+
+        if(config instanceof DecodeConfigP25Conventional conventional &&
+            conventional.getModulation() == Modulation.CQPSK)
+        {
+            getLSMToggleButton().setSelected(true);
+        }
+        else
+        {
+            getC4FMToggleButton().setSelected(true);
+        }
     }
 
     @Override
@@ -194,7 +265,7 @@ public class P25ConventionalConfigurationEditor extends ChannelConfigurationEdit
     {
         DecodeConfigP25Conventional config = getItem().getDecodeConfiguration() instanceof DecodeConfigP25Conventional p25 ?
             p25 : new DecodeConfigP25Conventional();
-        config.setModulation(Modulation.C4FM);
+        config.setModulation(getC4FMToggleButton().isSelected() ? Modulation.C4FM : Modulation.CQPSK);
         getItem().setDecodeConfiguration(config);
     }
 

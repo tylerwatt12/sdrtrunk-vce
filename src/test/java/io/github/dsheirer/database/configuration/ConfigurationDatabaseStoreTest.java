@@ -27,6 +27,7 @@ import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
+import io.github.dsheirer.module.decode.p25.phase1.Modulation;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import java.io.IOException;
 import java.nio.file.Path;
@@ -274,7 +275,9 @@ class ConfigurationDatabaseStoreTest
         ConfigurationDatabaseStore store = new ConfigurationDatabaseStore(database);
         Channel channel = new Channel("P25 Conventional");
         channel.setRadresGuid("22222222-3333-4444-5555-666666666666");
-        channel.setDecodeConfiguration(new DecodeConfigP25Conventional());
+        DecodeConfigP25Conventional decodeConfiguration = new DecodeConfigP25Conventional();
+        decodeConfiguration.setModulation(Modulation.CQPSK);
+        channel.setDecodeConfiguration(decodeConfiguration);
 
         SourceConfigTuner sourceConfig = new SourceConfigTuner();
         sourceConfig.setFrequency(155_250_000L);
@@ -286,8 +289,10 @@ class ConfigurationDatabaseStoreTest
         replace(database, state);
 
         Channel loaded = store.loadConfigurationState().getChannels().get(0);
-        assertInstanceOf(DecodeConfigP25Conventional.class, loaded.getDecodeConfiguration());
+        DecodeConfigP25Conventional loadedDecodeConfiguration =
+            assertInstanceOf(DecodeConfigP25Conventional.class, loaded.getDecodeConfiguration());
         assertEquals(DecoderType.P25_CONVENTIONAL, loaded.getDecodeConfiguration().getDecoderType());
+        assertEquals(Modulation.CQPSK, loadedDecodeConfiguration.getModulation());
 
         try(Connection connection = SdrTrunkDatabase.open(database);
             Statement statement = connection.createStatement();
