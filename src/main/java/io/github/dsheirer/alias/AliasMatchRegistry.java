@@ -29,7 +29,6 @@ import io.github.dsheirer.alias.id.tone.TonesID;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.protocol.Protocol;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Set;
@@ -41,8 +40,6 @@ import java.util.function.Predicate;
  */
 public final class AliasMatchRegistry
 {
-    private static final Set<AliasListFamily> ACTIVE_FAMILIES =
-        Collections.unmodifiableSet(EnumSet.allOf(AliasListFamily.class));
     private static final List<AliasMatchDescriptor> DESCRIPTORS = createDescriptors();
 
     private AliasMatchRegistry()
@@ -130,13 +127,13 @@ public final class AliasMatchRegistry
             _ -> new TonesID(),
             TonesID.class::isInstance));
         descriptors.add(descriptor("Digital Coded Squelch (DCS)", AliasIDType.DCS,
-            ACTIVE_FAMILIES, _ -> new Dcs(), Dcs.class::isInstance));
-        addTalkgroupMatchers(descriptors, ACTIVE_FAMILIES, Protocol.FLEETSYNC, "Fleetsync");
-        addTalkgroupMatchers(descriptors, ACTIVE_FAMILIES, Protocol.MDC1200, "MDC-1200");
+            Set.of(AliasListFamily.NBFM), _ -> new Dcs(), Dcs.class::isInstance));
+        addTalkgroupMatchers(descriptors, AliasListFamily.NBFM, Protocol.FLEETSYNC, "Fleetsync");
+        addTalkgroupMatchers(descriptors, AliasListFamily.NBFM, Protocol.MDC1200, "MDC-1200");
         descriptors.add(descriptor("LoJack Transponder ESN", AliasIDType.ESN,
-            ACTIVE_FAMILIES, _ -> new Esn(), Esn.class::isInstance));
+            Set.of(AliasListFamily.NBFM), _ -> new Esn(), Esn.class::isInstance));
         descriptors.add(descriptor("User Status", AliasIDType.STATUS,
-            ACTIVE_FAMILIES, _ -> new UserStatusID(),
+            EnumSet.of(AliasListFamily.P25, AliasListFamily.NBFM), _ -> new UserStatusID(),
             UserStatusID.class::isInstance));
         descriptors.add(descriptor("Unit Status", AliasIDType.UNIT_STATUS,
             EnumSet.of(AliasListFamily.P25, AliasListFamily.DMR),

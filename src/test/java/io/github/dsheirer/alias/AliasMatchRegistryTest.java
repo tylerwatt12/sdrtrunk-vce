@@ -14,14 +14,17 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import io.github.dsheirer.alias.id.AliasIDType;
+import io.github.dsheirer.alias.id.dcs.Dcs;
+import io.github.dsheirer.alias.id.esn.Esn;
 import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.alias.id.status.UnitStatusID;
+import io.github.dsheirer.alias.id.status.UserStatusID;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.alias.id.tone.TonesID;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.protocol.Protocol;
 import java.util.Set;
+import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
 
 class AliasMatchRegistryTest
@@ -44,38 +47,64 @@ class AliasMatchRegistryTest
     @Test
     void protocolLessStatusUsesOwningFamily()
     {
+        AliasListDefinition p25 = definition(AliasListFamily.P25);
         AliasListDefinition dmr = definition(AliasListFamily.DMR);
         AliasListDefinition nxdn = definition(AliasListFamily.NXDN);
+        AliasListDefinition nbfm = definition(AliasListFamily.NBFM);
 
+        assertTrue(AliasMatchRegistry.supports(p25, new UnitStatusID()));
         assertTrue(AliasMatchRegistry.supports(dmr, new UnitStatusID()));
         assertFalse(AliasMatchRegistry.supports(nxdn, new UnitStatusID()));
+        assertFalse(AliasMatchRegistry.supports(nbfm, new UnitStatusID()));
+
+        assertTrue(AliasMatchRegistry.supports(p25, new UserStatusID()));
+        assertFalse(AliasMatchRegistry.supports(dmr, new UserStatusID()));
+        assertFalse(AliasMatchRegistry.supports(nxdn, new UserStatusID()));
+        assertTrue(AliasMatchRegistry.supports(nbfm, new UserStatusID()));
     }
 
     @Test
     void auxiliaryMatchersAreOwnedByPrimaryFamily()
     {
+        AliasListDefinition p25 = definition(AliasListFamily.P25);
+        AliasListDefinition dmr = definition(AliasListFamily.DMR);
+        AliasListDefinition nxdn = definition(AliasListFamily.NXDN);
         AliasListDefinition nbfm = definition(AliasListFamily.NBFM);
         Talkgroup fleetsync = new Talkgroup(Protocol.FLEETSYNC, 1);
+        Talkgroup mdc1200 = new Talkgroup(Protocol.MDC1200, 1);
 
         assertTrue(AliasMatchRegistry.supports(nbfm, fleetsync));
+        assertTrue(AliasMatchRegistry.supports(nbfm, mdc1200));
+        assertTrue(AliasMatchRegistry.supports(nbfm, new Dcs()));
+        assertTrue(AliasMatchRegistry.supports(nbfm, new Esn()));
+
+        for(AliasListDefinition trunked: Set.of(p25, dmr, nxdn))
+        {
+            assertFalse(AliasMatchRegistry.supports(trunked, fleetsync));
+            assertFalse(AliasMatchRegistry.supports(trunked, mdc1200));
+            assertFalse(AliasMatchRegistry.supports(trunked, new Dcs()));
+            assertFalse(AliasMatchRegistry.supports(trunked, new Esn()));
+        }
+
         assertTrue(AliasMatchRegistry.isChannelCompatible(nbfm, DecoderType.NBFM));
     }
 
     @Test
-    void eachFamilyOffersOneProtocolLessUserStatusChoice()
+    void eachFamilyOffersOnlyItsSupportedMatchers()
     {
-        AliasListDefinition p25 = definition(AliasListFamily.P25);
-
-        assertEquals(1, AliasMatchRegistry.allowed(p25).stream()
-            .filter(descriptor -> descriptor.type() == AliasIDType.STATUS).count());
-        assertEquals("User Status", AliasMatchRegistry.allowed(p25).stream()
-            .filter(descriptor -> descriptor.type() == AliasIDType.STATUS)
-            .findFirst().orElseThrow().label());
-
-        AliasListDefinition nbfm = definition(AliasListFamily.NBFM);
-        assertEquals("User Status", AliasMatchRegistry.allowed(nbfm).stream()
-            .filter(descriptor -> descriptor.type() == AliasIDType.STATUS)
-            .findFirst().orElseThrow().label());
+        assertEquals(Set.of("P25 Talkgroup", "P25 Talkgroup Range", "P25 Radio ID", "P25 Radio ID Range",
+                "P25 Fully Qualified Talkgroup", "P25 Fully Qualified Radio ID", "Tone Sequence", "User Status",
+                "Unit Status"),
+            labels(AliasListFamily.P25));
+        assertEquals(Set.of("DMR Talkgroup", "DMR Talkgroup Range", "DMR Radio ID", "DMR Radio ID Range",
+                "Tone Sequence", "Unit Status"),
+            labels(AliasListFamily.DMR));
+        assertEquals(Set.of("NXDN Talkgroup", "NXDN Talkgroup Range", "NXDN Radio ID", "NXDN Radio ID Range"),
+            labels(AliasListFamily.NXDN));
+        assertEquals(Set.of("NBFM Talkgroup", "NBFM Talkgroup Range", "Digital Coded Squelch (DCS)",
+                "Fleetsync Talkgroup", "Fleetsync Talkgroup Range", "MDC-1200 Talkgroup",
+                "MDC-1200 Talkgroup Range", "LoJack Transponder ESN", "User Status"),
+            labels(AliasListFamily.NBFM));
     }
 
     @Test
@@ -104,5 +133,12 @@ class AliasMatchRegistryTest
     private static AliasListDefinition definition(AliasListFamily family)
     {
         return new AliasListDefinition("Test", "System", family);
+    }
+
+    private static Set<String> labels(AliasListFamily family)
+    {
+        return AliasMatchRegistry.allowed(definition(family)).stream()
+            .map(AliasMatchDescriptor::label)
+            .collect(Collectors.toSet());
     }
 }

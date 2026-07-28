@@ -117,7 +117,8 @@ class AliasListMutationTest
     @Test
     void dcsAndStatusEditsUseTheirOwnMapsAndRemoveCleanly()
     {
-        AliasList aliasList = p25AliasList();
+        AliasList p25AliasList = p25AliasList();
+        AliasList nbfmAliasList = nbfmAliasList();
         Dcs dcs = new Dcs();
         dcs.setDCSCode(DCSCode.N023);
         Alias dcsAlias = alias("dcs", dcs);
@@ -127,31 +128,33 @@ class AliasListMutationTest
         UserStatusID userStatus = new UserStatusID();
         userStatus.setStatus(3);
         Alias userAlias = alias("user", userStatus);
-        aliasList.addAliases(List.of(dcsAlias, unitAlias, userAlias));
+        nbfmAliasList.addAlias(dcsAlias);
+        p25AliasList.addAliases(List.of(unitAlias, userAlias));
 
-        assertSame(dcsAlias, only(aliasList.getAliases(new DCSIdentifier(DCSCode.N023))));
-        assertSame(unitAlias, only(aliasList.getAliases(
+        assertSame(dcsAlias, only(nbfmAliasList.getAliases(new DCSIdentifier(DCSCode.N023))));
+        assertSame(unitAlias, only(p25AliasList.getAliases(
             new UnitStatusIdentifier(3, Role.FROM, Protocol.APCO25))));
-        assertSame(userAlias, only(aliasList.getAliases(
+        assertSame(userAlias, only(p25AliasList.getAliases(
             new UserStatusIdentifier(3, Role.FROM, Protocol.APCO25))));
 
         dcs.setDCSCode(DCSCode.N025);
         unitStatus.setStatus(4);
         userStatus.setStatus(5);
 
-        assertTrue(aliasList.getAliases(new DCSIdentifier(DCSCode.N023)).isEmpty());
-        assertTrue(aliasList.getAliases(new UnitStatusIdentifier(3, Role.FROM, Protocol.APCO25)).isEmpty());
-        assertTrue(aliasList.getAliases(new UserStatusIdentifier(3, Role.FROM, Protocol.APCO25)).isEmpty());
-        assertSame(dcsAlias, only(aliasList.getAliases(new DCSIdentifier(DCSCode.N025))));
-        assertSame(unitAlias, only(aliasList.getAliases(
+        assertTrue(nbfmAliasList.getAliases(new DCSIdentifier(DCSCode.N023)).isEmpty());
+        assertTrue(p25AliasList.getAliases(new UnitStatusIdentifier(3, Role.FROM, Protocol.APCO25)).isEmpty());
+        assertTrue(p25AliasList.getAliases(new UserStatusIdentifier(3, Role.FROM, Protocol.APCO25)).isEmpty());
+        assertSame(dcsAlias, only(nbfmAliasList.getAliases(new DCSIdentifier(DCSCode.N025))));
+        assertSame(unitAlias, only(p25AliasList.getAliases(
             new UnitStatusIdentifier(4, Role.FROM, Protocol.APCO25))));
-        assertSame(userAlias, only(aliasList.getAliases(
+        assertSame(userAlias, only(p25AliasList.getAliases(
             new UserStatusIdentifier(5, Role.FROM, Protocol.APCO25))));
 
-        aliasList.removeAliases(List.of(dcsAlias, unitAlias, userAlias));
-        assertTrue(aliasList.getAliases(new DCSIdentifier(DCSCode.N025)).isEmpty());
-        assertTrue(aliasList.getAliases(new UnitStatusIdentifier(4, Role.FROM, Protocol.APCO25)).isEmpty());
-        assertTrue(aliasList.getAliases(new UserStatusIdentifier(5, Role.FROM, Protocol.APCO25)).isEmpty());
+        nbfmAliasList.removeAlias(dcsAlias);
+        p25AliasList.removeAliases(List.of(unitAlias, userAlias));
+        assertTrue(nbfmAliasList.getAliases(new DCSIdentifier(DCSCode.N025)).isEmpty());
+        assertTrue(p25AliasList.getAliases(new UnitStatusIdentifier(4, Role.FROM, Protocol.APCO25)).isEmpty());
+        assertTrue(p25AliasList.getAliases(new UserStatusIdentifier(5, Role.FROM, Protocol.APCO25)).isEmpty());
     }
 
     @Test
@@ -185,7 +188,8 @@ class AliasListMutationTest
     @Test
     void rangeAndDcsCollisionFlagsAreRecalculated()
     {
-        AliasList aliasList = p25AliasList();
+        AliasList p25AliasList = p25AliasList();
+        AliasList nbfmAliasList = nbfmAliasList();
         TalkgroupRange firstRange = new TalkgroupRange(Protocol.APCO25, 100, 200);
         TalkgroupRange secondRange = new TalkgroupRange(Protocol.APCO25, 150, 250);
         Alias firstRangeAlias = alias("first range", firstRange);
@@ -196,13 +200,14 @@ class AliasListMutationTest
         secondDcs.setDCSCode(DCSCode.N023);
         Alias firstDcsAlias = alias("first dcs", firstDcs);
         Alias secondDcsAlias = alias("second dcs", secondDcs);
-        aliasList.addAliases(List.of(firstRangeAlias, secondRangeAlias, firstDcsAlias, secondDcsAlias));
+        p25AliasList.addAliases(List.of(firstRangeAlias, secondRangeAlias));
+        nbfmAliasList.addAliases(List.of(firstDcsAlias, secondDcsAlias));
 
         assertTrue(firstRange.overlapProperty().get());
         assertTrue(secondRange.overlapProperty().get());
         assertTrue(firstDcs.overlapProperty().get());
         assertTrue(secondDcs.overlapProperty().get());
-        assertSame(secondDcsAlias, only(aliasList.getAliases(new DCSIdentifier(DCSCode.N023))));
+        assertSame(secondDcsAlias, only(nbfmAliasList.getAliases(new DCSIdentifier(DCSCode.N023))));
 
         secondRange.setMinTalkgroup(300);
         secondRange.setMaxTalkgroup(400);
@@ -211,14 +216,15 @@ class AliasListMutationTest
         assertFalse(secondRange.overlapProperty().get());
         assertFalse(firstDcs.overlapProperty().get());
         assertFalse(secondDcs.overlapProperty().get());
-        assertSame(firstDcsAlias, only(aliasList.getAliases(new DCSIdentifier(DCSCode.N023))));
-        assertSame(secondDcsAlias, only(aliasList.getAliases(new DCSIdentifier(DCSCode.N025))));
+        assertSame(firstDcsAlias, only(nbfmAliasList.getAliases(new DCSIdentifier(DCSCode.N023))));
+        assertSame(secondDcsAlias, only(nbfmAliasList.getAliases(new DCSIdentifier(DCSCode.N025))));
     }
 
     @Test
     void fullyQualifiedAndDcsCollisionRemovalRevealsTheSurvivingAlias()
     {
-        AliasList aliasList = p25AliasList();
+        AliasList p25AliasList = p25AliasList();
+        AliasList nbfmAliasList = nbfmAliasList();
         P25FullyQualifiedTalkgroup firstTalkgroup = new P25FullyQualifiedTalkgroup(1, 2, 300);
         P25FullyQualifiedTalkgroup secondTalkgroup = new P25FullyQualifiedTalkgroup(1, 2, 300);
         Alias firstTalkgroupAlias = alias("first fq talkgroup", firstTalkgroup);
@@ -233,25 +239,26 @@ class AliasListMutationTest
         secondDcs.setDCSCode(DCSCode.N023);
         Alias firstDcsAlias = alias("first dcs", firstDcs);
         Alias secondDcsAlias = alias("second dcs", secondDcs);
-        aliasList.addAliases(List.of(firstTalkgroupAlias, secondTalkgroupAlias, firstRadioAlias, secondRadioAlias,
-            firstDcsAlias, secondDcsAlias));
+        p25AliasList.addAliases(List.of(firstTalkgroupAlias, secondTalkgroupAlias, firstRadioAlias, secondRadioAlias));
+        nbfmAliasList.addAliases(List.of(firstDcsAlias, secondDcsAlias));
 
-        assertSame(firstTalkgroupAlias, only(aliasList.getAliases(
+        assertSame(firstTalkgroupAlias, only(p25AliasList.getAliases(
             APCO25FullyQualifiedTalkgroupIdentifier.createTo(30, 1, 2, 300))));
-        assertSame(firstRadioAlias, only(aliasList.getAliases(
+        assertSame(firstRadioAlias, only(p25AliasList.getAliases(
             APCO25FullyQualifiedRadioIdentifier.createFrom(60, 4, 5, 600))));
-        assertSame(secondDcsAlias, only(aliasList.getAliases(new DCSIdentifier(DCSCode.N023))));
+        assertSame(secondDcsAlias, only(nbfmAliasList.getAliases(new DCSIdentifier(DCSCode.N023))));
         assertTrue(firstTalkgroup.overlapProperty().get());
         assertTrue(secondTalkgroup.overlapProperty().get());
         assertTrue(firstRadio.overlapProperty().get());
         assertTrue(secondRadio.overlapProperty().get());
 
-        aliasList.removeAliases(List.of(firstTalkgroupAlias, firstRadioAlias, secondDcsAlias));
-        assertSame(secondTalkgroupAlias, only(aliasList.getAliases(
+        p25AliasList.removeAliases(List.of(firstTalkgroupAlias, firstRadioAlias));
+        nbfmAliasList.removeAlias(secondDcsAlias);
+        assertSame(secondTalkgroupAlias, only(p25AliasList.getAliases(
             APCO25FullyQualifiedTalkgroupIdentifier.createTo(30, 1, 2, 300))));
-        assertSame(secondRadioAlias, only(aliasList.getAliases(
+        assertSame(secondRadioAlias, only(p25AliasList.getAliases(
             APCO25FullyQualifiedRadioIdentifier.createFrom(60, 4, 5, 600))));
-        assertSame(firstDcsAlias, only(aliasList.getAliases(new DCSIdentifier(DCSCode.N023))));
+        assertSame(firstDcsAlias, only(nbfmAliasList.getAliases(new DCSIdentifier(DCSCode.N023))));
         assertFalse(secondTalkgroup.overlapProperty().get());
         assertFalse(secondRadio.overlapProperty().get());
         assertFalse(firstDcs.overlapProperty().get());
@@ -294,6 +301,11 @@ class AliasListMutationTest
     private static AliasList p25AliasList()
     {
         return new AliasList(new AliasListDefinition("test", "test", AliasListFamily.P25));
+    }
+
+    private static AliasList nbfmAliasList()
+    {
+        return new AliasList(new AliasListDefinition("test", "test", AliasListFamily.NBFM));
     }
 
     private static Alias only(List<Alias> aliases)

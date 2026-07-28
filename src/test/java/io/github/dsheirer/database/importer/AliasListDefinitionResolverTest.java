@@ -119,6 +119,23 @@ class AliasListDefinitionResolverTest
         assertTrue(state.getAliases().isEmpty());
     }
 
+    @Test
+    void silentlyDropsMatchersThatDoNotBelongToTheClaimedSystemFamily()
+    {
+        ConfigurationState state = new ConfigurationState();
+        Channel p25 = channel("Metro P25", "Metro Aliases", new DecodeConfigP25Phase1());
+        state.setChannels(List.of(p25));
+        state.setAliases(List.of(
+            alias("Dispatch", "Metro Aliases", new Talkgroup(Protocol.APCO25, 101)),
+            alias("Legacy MDC", "Metro Aliases", new Talkgroup(Protocol.MDC1200, 202))));
+
+        AliasListDefinitionResolver.normalizeLegacyState(state);
+
+        assertEquals(1, state.getAliases().size());
+        assertEquals("Dispatch", state.getAliases().getFirst().getName());
+        assertEquals(101, ((Talkgroup)state.getAliases().getFirst().getMatchIdentifier()).getValue());
+    }
+
     private static Alias alias(String name, String aliasList, AliasID matcher)
     {
         Alias alias = new Alias(name);
