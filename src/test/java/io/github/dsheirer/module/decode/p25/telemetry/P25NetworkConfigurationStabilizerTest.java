@@ -180,6 +180,28 @@ public class P25NetworkConfigurationStabilizerTest
     }
 
     @Test
+    public void mergesPartialSiteStatusFromPhaseTwoTimeslots()
+    {
+        P25NetworkConfigurationStabilizer stabilizer = new P25NetworkConfigurationStabilizer("P25_PHASE_2");
+        P25NetworkConfigurationSnapshot.SiteStatus timing = new P25NetworkConfigurationSnapshot.SiteStatus(
+            946_684_860_000L, 85, null, null, null, null, null, null);
+        P25NetworkConfigurationSnapshot.SiteStatus services = new P25NetworkConfigurationSnapshot.SiteStatus(
+            null, null, true, "Autonomous and by Request", 240, true, 0x90, true);
+
+        stabilizer.observe(new P25NetworkConfigurationSnapshot("P25_PHASE_2", null, null, List.of(), List.of(),
+            List.of(), List.of(), List.of(), timing), 1_000L);
+        stabilizer.observe(new P25NetworkConfigurationSnapshot("P25_PHASE_2", null, null, List.of(), List.of(),
+            List.of(), List.of(), List.of(), services), 2_000L);
+
+        P25NetworkConfigurationSnapshot.SiteStatus merged = stabilizer.getSnapshot().siteStatus();
+        assertEquals(timing.broadcastClockEpochMilliseconds(), merged.broadcastClockEpochMilliseconds());
+        assertEquals(timing.microSlots(), merged.microSlots());
+        assertEquals(services.dataService(), merged.dataService());
+        assertEquals(services.dataAccess(), merged.dataAccess());
+        assertEquals(services.voiceService(), merged.voiceService());
+    }
+
+    @Test
     public void neighborIsUpdatedInPlaceWhenFrequencyResolvesLater()
     {
         P25NetworkConfigurationStabilizer stabilizer = new P25NetworkConfigurationStabilizer("P25_PHASE_1");

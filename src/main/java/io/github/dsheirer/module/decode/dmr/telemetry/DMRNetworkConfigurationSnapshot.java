@@ -46,6 +46,17 @@ public record DMRNetworkConfigurationSnapshot(String decoder, String variant, In
     }
 
     /**
+     * Structural metadata used for change detection without per-observation freshness timestamps.
+     */
+    public DMRNetworkConfigurationSnapshot withoutFreshness()
+    {
+        return new DMRNetworkConfigurationSnapshot(decoder, variant, network, site, brand, model, mode, channelType,
+            colorCodeTimeslot1, colorCodeTimeslot2,
+            channels.stream().map(channel -> channel != null ? channel.withoutFreshness() : null).toList(),
+            neighborSites.stream().map(neighbor -> neighbor != null ? neighbor.withoutFreshness() : null).toList());
+    }
+
+    /**
      * How an observed channel is being used by the local site.
      */
     public enum ChannelRole
@@ -137,6 +148,12 @@ public record DMRNetworkConfigurationSnapshot(String decoder, String variant, In
             return ChannelRole.OBSERVED;
         }
 
+        Channel withoutFreshness()
+        {
+            return new Channel(descriptor, logicalChannelNumber, timeslot, downlink, uplink, roles, frequencySource,
+                0);
+        }
+
         /**
          * Observation time is telemetry freshness, not a structural configuration change. Excluding it keeps repeated
          * observations on the bounded site-metadata heartbeat instead of triggering an immediate publish for each
@@ -181,6 +198,12 @@ public record DMRNetworkConfigurationSnapshot(String decoder, String variant, In
                             Integer adjacentPriority)
         {
             this(variant, network, site, model, logicalChannelNumber, downlink, uplink,
+                networkConnectionActive, confirmedPriority, adjacentPriority, 0);
+        }
+
+        NeighborSite withoutFreshness()
+        {
+            return new NeighborSite(variant, network, site, model, logicalChannelNumber, downlink, uplink,
                 networkConnectionActive, confirmedPriority, adjacentPriority, 0);
         }
 

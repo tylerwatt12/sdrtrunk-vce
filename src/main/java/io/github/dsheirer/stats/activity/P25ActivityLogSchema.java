@@ -333,7 +333,6 @@ public class P25ActivityLogSchema
             snapshot.observedAtEpochMilliseconds());
         upsertReceiverContext(connection, snapshot, systemKey);
         upsertSiteSnapshot(connection, snapshot, systemKey);
-        upsertSiteTalkerAliases(connection, snapshot, systemKey);
 
         if(changed)
         {
@@ -1570,25 +1569,6 @@ public class P25ActivityLogSchema
             statement.setString(5, talkerAlias.trim());
             statement.setLong(6, observedAt);
             statement.executeUpdate();
-        }
-    }
-
-    private static void upsertSiteTalkerAliases(Connection connection,
-                                                P25ActivityLogRecords.SiteSnapshot snapshot,
-                                                Integer systemKey) throws SQLException
-    {
-        if(systemKey == null || snapshot.talkerAliases() == null)
-        {
-            return;
-        }
-
-        for(P25NetworkConfigurationSnapshot.TalkerAlias talkerAlias: snapshot.talkerAliases())
-        {
-            if(talkerAlias != null && talkerAlias.radio() != null)
-            {
-                upsertP25TalkerAlias(connection, systemKey, talkerAlias.radio(), talkerAlias.alias(),
-                    snapshot.observedAtEpochMilliseconds());
-            }
         }
     }
 

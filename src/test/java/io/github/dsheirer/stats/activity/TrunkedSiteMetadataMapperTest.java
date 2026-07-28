@@ -110,7 +110,7 @@ class TrunkedSiteMetadataMapperTest
         assertEquals(source, refreshedSource);
         TrunkedSiteSchema.Snapshot refreshed = TrunkedSiteMetadataMapper.map(
             new ProtocolSiteMetadataEvent(channel, refreshedSource, 6_000L));
-        assertNotEquals(mapped.snapshotHash(), refreshed.snapshotHash());
+        assertEquals(mapped.snapshotHash(), refreshed.snapshotHash());
 
         channel.setSite("Airport");
         TrunkedSiteSchema.Snapshot renamed = TrunkedSiteMetadataMapper.map(
@@ -190,6 +190,53 @@ class TrunkedSiteMetadataMapperTest
             mapped.neighbors().getFirst().statusFlags());
         assertEquals(4, mapped.neighbors().getFirst().identityDomainCode());
         assertEquals(700L, mapped.neighbors().getFirst().observedAtEpochMilliseconds());
+
+        NXDNNetworkConfigurationSnapshot refreshedSource = new NXDNNetworkConfigurationSnapshot(
+            "NXDN", "TYPE-D", 5,
+            new NXDNNetworkConfigurationSnapshot.Location("TYPE_D", 8, null, 7),
+            9, "CONTROL", null, null, List.of("VOICE", "DATA"), List.of(),
+            new NXDNNetworkConfigurationSnapshot.FailureStatus(null, "60 SECONDS"),
+            List.of(new NXDNNetworkConfigurationSnapshot.Channel("CONTROL_1", "DFA", null,
+                120, 121, "BW_12_5", 155_000_000L, 160_000_000L, null, 1_600L)),
+            List.of(new NXDNNetworkConfigurationSnapshot.NeighborSite("TYPE_D", null,
+                new NXDNNetworkConfigurationSnapshot.Location("TYPE_D", 8, 10, 7), null, true, 1_700L)),
+            12, "FREE", List.of(12, 13), Map.of(12, 1_800L, 13, 1_900L));
+        assertEquals(source, refreshedSource);
+        TrunkedSiteSchema.Snapshot refreshed = TrunkedSiteMetadataMapper.map(
+            new ProtocolSiteMetadataEvent(channel, refreshedSource, 2_000L));
+        assertEquals(mapped.snapshotHash(), refreshed.snapshotHash());
+
+        NXDNNetworkConfigurationSnapshot changedSource = new NXDNNetworkConfigurationSnapshot(
+            refreshedSource.decoder(), refreshedSource.variant(), refreshedSource.ran(),
+            refreshedSource.currentLocation(), refreshedSource.typeDSite(), refreshedSource.typeDSiteType(),
+            refreshedSource.station(), refreshedSource.siteConfiguration(), refreshedSource.services(),
+            refreshedSource.restrictions(), refreshedSource.failureStatus(), refreshedSource.controlChannels(),
+            refreshedSource.neighborSites(), refreshedSource.currentRepeater(), "HALTED_CWID",
+            refreshedSource.observedRepeaters(), refreshedSource.observedRepeaterTimestamps());
+        TrunkedSiteSchema.Snapshot changed = TrunkedSiteMetadataMapper.map(
+            new ProtocolSiteMetadataEvent(channel, changedSource, 2_001L));
+        assertNotEquals(mapped.snapshotHash(), changed.snapshotHash());
+    }
+
+    @Test
+    void hashMaterialKeepsConfiguredFieldBoundaries()
+    {
+        DMRNetworkConfigurationSnapshot source = new DMRNetworkConfigurationSnapshot(
+            "DMR", "TIER_III", 10, 20, "Tier III Trunking", "SMALL", null, "Control", 1, 2,
+            List.of(), List.of());
+        Channel first = channel(451_000_000L);
+        first.setSystem("A|B");
+        first.setSite("C");
+        Channel second = channel(451_000_000L);
+        second.setSystem("A");
+        second.setSite("B|C");
+
+        TrunkedSiteSchema.Snapshot firstMapped = TrunkedSiteMetadataMapper.map(
+            new ProtocolSiteMetadataEvent(first, source, 1_000L));
+        TrunkedSiteSchema.Snapshot secondMapped = TrunkedSiteMetadataMapper.map(
+            new ProtocolSiteMetadataEvent(second, source, 1_000L));
+
+        assertNotEquals(firstMapped.snapshotHash(), secondMapped.snapshotHash());
     }
 
     @Test

@@ -1597,10 +1597,6 @@ public class DMRDecoderState extends TimeslotDecoderState
         {
             case REQUEST_RESET:
                 resetState();
-                if(mSiteMetadataPublisher != null)
-                {
-                    mSiteMetadataPublisher.reset();
-                }
                 break;
             case NOTIFICATION_SOURCE_FREQUENCY:
                 if(!mTrunkingEnabled && mChannel.isStandardChannel() &&

@@ -26,6 +26,7 @@ import io.github.dsheirer.identifier.IdentifierUpdateNotification;
 import io.github.dsheirer.identifier.configuration.FrequencyConfigurationIdentifier;
 import io.github.dsheirer.identifier.patch.PatchGroupManager;
 import io.github.dsheirer.message.StuffBitsMessage;
+import io.github.dsheirer.metadata.site.SiteMetadataPublicationRateLimiter;
 import io.github.dsheirer.module.decode.p25.P25FrequencyBandPreloadDataContent;
 import io.github.dsheirer.module.decode.p25.P25TrafficChannelManager;
 import io.github.dsheirer.module.decode.p25.phase1.message.P25FrequencyBand;
@@ -35,6 +36,8 @@ import io.github.dsheirer.module.decode.p25.phase2.P25P2DecoderState;
 import io.github.dsheirer.module.decode.p25.phase2.P25P2MessageFramer;
 import io.github.dsheirer.module.decode.p25.phase2.P25P2MessageProcessor;
 import io.github.dsheirer.module.decode.p25.phase2.enumeration.ScrambleParameters;
+import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationStabilizer;
+import io.github.dsheirer.module.decode.p25.telemetry.P25SiteMetadataPublisher;
 import io.github.dsheirer.record.binary.BinaryReader;
 import io.github.dsheirer.util.ThreadPool;
 import java.io.File;
@@ -243,12 +246,17 @@ public class P25P2Viewer extends VBox
                 //Register to receive events
                 trafficChannelManager.addDecodeEventListener(decodeEvent -> messagePackager.add(decodeEvent));
                 PatchGroupManager patchGroupManager = new PatchGroupManager();
+                P25NetworkConfigurationStabilizer networkConfigurationStabilizer =
+                    new P25NetworkConfigurationStabilizer("P25_PHASE_2");
+                SiteMetadataPublicationRateLimiter siteMetadataRateLimiter =
+                    new SiteMetadataPublicationRateLimiter(
+                        P25SiteMetadataPublisher.DEFAULT_EVENT_INTERVAL_MILLISECONDS);
                 P25P2DecoderState decoderState1 = new P25P2DecoderState(empty, 1, trafficChannelManager,
-                        patchGroupManager);
+                        patchGroupManager, networkConfigurationStabilizer, siteMetadataRateLimiter);
                 decoderState1.setDecoderStateListener(decoderStateEvent -> messagePackager.add(decoderStateEvent));
                 decoderState1.addDecodeEventListener(decodeEvent -> messagePackager.add(decodeEvent));
                 P25P2DecoderState decoderState2 = new P25P2DecoderState(empty, 2, trafficChannelManager,
-                        patchGroupManager);
+                        patchGroupManager, networkConfigurationStabilizer, siteMetadataRateLimiter);
                 decoderState2.setDecoderStateListener(decoderStateEvent -> messagePackager.add(decoderStateEvent));
                 decoderState2.addDecodeEventListener(decodeEvent -> messagePackager.add(decodeEvent));
                 decoderState1.start();

@@ -33,6 +33,7 @@ import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.message.IMessage;
 import io.github.dsheirer.metadata.site.ProtocolSiteMetadataPublisher;
+import io.github.dsheirer.metadata.site.SiteMetadataPublicationRateLimiter;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.event.PlottableDecodeEvent;
@@ -100,11 +101,18 @@ public class NXDNDecoderState extends DecoderState
      */
     public NXDNDecoderState(Channel channel, NXDNTrafficChannelManager trafficChannelManager)
     {
+        this(channel, trafficChannelManager, new SiteMetadataPublicationRateLimiter(
+            ProtocolSiteMetadataPublisher.DEFAULT_EVENT_INTERVAL_MILLISECONDS));
+    }
+
+    NXDNDecoderState(Channel channel, NXDNTrafficChannelManager trafficChannelManager,
+                     SiteMetadataPublicationRateLimiter siteMetadataRateLimiter)
+    {
         mChannel = channel;
         mTrafficChannelManager = trafficChannelManager;
         mSiteMetadataPublisher = new ProtocolSiteMetadataPublisher(mChannel,
             mNetworkConfigurationMonitor::getSnapshot, this::hasInterModuleEventBus,
-            event -> getInterModuleEventBus().post(event));
+            event -> getInterModuleEventBus().post(event), siteMetadataRateLimiter);
     }
 
     /**
@@ -145,7 +153,6 @@ public class NXDNDecoderState extends DecoderState
         {
             case REQUEST_RESET:
                 resetState();
-                mSiteMetadataPublisher.reset();
                 break;
             case NOTIFICATION_SOURCE_FREQUENCY:
                 setCurrentFrequency(event.getFrequency());

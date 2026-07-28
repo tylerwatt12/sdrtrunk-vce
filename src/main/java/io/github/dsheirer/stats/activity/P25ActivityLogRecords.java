@@ -151,7 +151,6 @@ final class P25ActivityLogRecords
                         List<P25NetworkConfigurationSnapshot.NeighborSite> neighborSites,
                         List<P25NetworkConfigurationSnapshot.FrequencyBand> frequencyBands,
                         List<P25NetworkConfigurationSnapshot.PatchGroup> patchGroups,
-                        List<P25NetworkConfigurationSnapshot.TalkerAlias> talkerAliases,
                         List<P25NetworkConfigurationSnapshot.ForeignSystemBand> foreignSystemBands)
         implements P25ActivityLogRecord
     {
@@ -163,12 +162,11 @@ final class P25ActivityLogRecords
                      List<P25NetworkConfigurationSnapshot.Channel> channels,
                      List<P25NetworkConfigurationSnapshot.NeighborSite> neighborSites,
                      List<P25NetworkConfigurationSnapshot.FrequencyBand> frequencyBands,
-                     List<P25NetworkConfigurationSnapshot.PatchGroup> patchGroups,
-                     List<P25NetworkConfigurationSnapshot.TalkerAlias> talkerAliases)
+                     List<P25NetworkConfigurationSnapshot.PatchGroup> patchGroups)
         {
             this(observedAtEpochMilliseconds, guid, contextKind, snapshotHash, protocol, channelName, aliasListName,
                 decoder, wacn, systemId, nac, rfss, site, lra, tdma, siteStatus, primaryFrequencyHertz,
-                currentControlHertz, channels, neighborSites, frequencyBands, patchGroups, talkerAliases, List.of());
+                currentControlHertz, channels, neighborSites, frequencyBands, patchGroups, List.of());
         }
 
         SiteSnapshot(long observedAtEpochMilliseconds, String guid, ContextKind contextKind, String snapshotHash,
@@ -178,12 +176,11 @@ final class P25ActivityLogRecords
                      List<P25NetworkConfigurationSnapshot.Channel> channels,
                      List<P25NetworkConfigurationSnapshot.NeighborSite> neighborSites,
                      List<P25NetworkConfigurationSnapshot.FrequencyBand> frequencyBands,
-                     List<P25NetworkConfigurationSnapshot.PatchGroup> patchGroups,
-                     List<P25NetworkConfigurationSnapshot.TalkerAlias> talkerAliases)
+                     List<P25NetworkConfigurationSnapshot.PatchGroup> patchGroups)
         {
             this(observedAtEpochMilliseconds, guid, contextKind, snapshotHash, protocol, channelName, aliasListName,
                 decoder, wacn, systemId, nac, rfss, site, null, null, null, primaryFrequencyHertz,
-                currentControlHertz, channels, neighborSites, frequencyBands, patchGroups, talkerAliases, List.of());
+                currentControlHertz, channels, neighborSites, frequencyBands, patchGroups, List.of());
         }
     }
 

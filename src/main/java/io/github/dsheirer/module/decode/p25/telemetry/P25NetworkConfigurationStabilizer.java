@@ -151,9 +151,13 @@ public class P25NetworkConfigurationStabilizer
 
         if(observation.siteStatus() != null)
         {
-            //Site status is already a monitor-merged latest-value record; publish each change immediately.
+            //Phase 2 timeslots have separate monitors, so merge their partial latest-value status into the shared
+            //stable snapshot before replacing it.
+            P25NetworkConfigurationSnapshot.SiteStatus currentStatus = mSiteStatus.getStableValue();
+            P25NetworkConfigurationSnapshot.SiteStatus latestStatus = currentStatus == null ?
+                observation.siteStatus() : currentStatus.merge(observation.siteStatus());
             mSiteStatus.reset();
-            mSiteStatus.observe(observation.siteStatus(), timestamp, IMMEDIATE_DISCOVERY_POLICY, ignored -> true);
+            mSiteStatus.observe(latestStatus, timestamp, IMMEDIATE_DISCOVERY_POLICY, ignored -> true);
         }
 
         for(P25NetworkConfigurationSnapshot.Channel channel: list(observation.channels()))

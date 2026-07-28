@@ -12,6 +12,7 @@
 package io.github.dsheirer.module.decode.p25.telemetry;
 
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.metadata.site.SiteMetadataPublicationRateLimiter;
 import io.github.dsheirer.metadata.site.SiteMetadataEvent;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
@@ -27,28 +28,27 @@ public class P25SiteMetadataPublisher
     private final Supplier<P25NetworkConfigurationSnapshot> mSnapshotSupplier;
     private final BooleanSupplier mHasInterModuleEventBus;
     private final Consumer<SiteMetadataEvent> mEventPublisher;
-    private final long mEventIntervalMilliseconds;
-    private int mLastPublishedSiteMetadataHash;
-    private long mLastPublishedSiteMetadataTimestamp;
+    private final SiteMetadataPublicationRateLimiter mRateLimiter;
 
     public P25SiteMetadataPublisher(Channel channel,
                                     Supplier<P25NetworkConfigurationSnapshot> snapshotSupplier,
                                     BooleanSupplier hasInterModuleEventBus,
                                     Consumer<SiteMetadataEvent> eventPublisher)
     {
-        this(channel, snapshotSupplier, hasInterModuleEventBus, eventPublisher, DEFAULT_EVENT_INTERVAL_MILLISECONDS);
+        this(channel, snapshotSupplier, hasInterModuleEventBus, eventPublisher,
+            new SiteMetadataPublicationRateLimiter(DEFAULT_EVENT_INTERVAL_MILLISECONDS));
     }
 
-    P25SiteMetadataPublisher(Channel channel, Supplier<P25NetworkConfigurationSnapshot> snapshotSupplier,
-                             BooleanSupplier hasInterModuleEventBus,
-                             Consumer<SiteMetadataEvent> eventPublisher,
-                             long eventIntervalMilliseconds)
+    public P25SiteMetadataPublisher(Channel channel, Supplier<P25NetworkConfigurationSnapshot> snapshotSupplier,
+                                    BooleanSupplier hasInterModuleEventBus,
+                                    Consumer<SiteMetadataEvent> eventPublisher,
+                                    SiteMetadataPublicationRateLimiter rateLimiter)
     {
         mChannel = channel;
         mSnapshotSupplier = snapshotSupplier;
         mHasInterModuleEventBus = hasInterModuleEventBus;
         mEventPublisher = eventPublisher;
-        mEventIntervalMilliseconds = eventIntervalMilliseconds;
+        mRateLimiter = rateLimiter;
     }
 
     public void publish(long timestamp)
@@ -58,8 +58,6 @@ public class P25SiteMetadataPublisher
             return;
         }
 
-        long eventTimestamp = timestamp > 0 ? timestamp : System.currentTimeMillis();
-
         if(mHasInterModuleEventBus == null || !mHasInterModuleEventBus.getAsBoolean())
         {
             return;
@@ -67,29 +65,13 @@ public class P25SiteMetadataPublisher
 
         P25NetworkConfigurationSnapshot snapshot = mSnapshotSupplier != null ? mSnapshotSupplier.get() : null;
 
-        if(snapshot != null && snapshot.isUseful())
+        if(snapshot != null && snapshot.isUseful() && mRateLimiter != null && mRateLimiter.tryAcquire())
         {
-            int hash = snapshot.hashCode();
-            boolean changed = hash != mLastPublishedSiteMetadataHash;
-            boolean intervalElapsed = eventTimestamp - mLastPublishedSiteMetadataTimestamp >=
-                mEventIntervalMilliseconds;
-
-            if(changed || intervalElapsed)
+            if(mEventPublisher != null)
             {
-                mLastPublishedSiteMetadataHash = hash;
-                mLastPublishedSiteMetadataTimestamp = eventTimestamp;
-
-                if(mEventPublisher != null)
-                {
-                    mEventPublisher.accept(new SiteMetadataEvent(mChannel, snapshot, eventTimestamp));
-                }
+                long eventTimestamp = timestamp > 0 ? timestamp : System.currentTimeMillis();
+                mEventPublisher.accept(new SiteMetadataEvent(mChannel, snapshot, eventTimestamp));
             }
         }
-    }
-
-    public void reset()
-    {
-        mLastPublishedSiteMetadataHash = 0;
-        mLastPublishedSiteMetadataTimestamp = 0;
     }
 }

@@ -38,6 +38,7 @@ class P25ActivityLogWriter implements AutoCloseable
     private static final Logger mLog = LoggerFactory.getLogger(P25ActivityLogWriter.class);
     private static final int DEFAULT_QUEUE_CAPACITY = 10000;
     private static final int BATCH_SIZE = 250;
+    private static final long BATCH_COLLECTION_MILLISECONDS = 100;
     private static final long POLL_TIMEOUT_MILLISECONDS = 1000;
     private static final long DATABASE_BUSY_RETRY_MILLISECONDS = 500;
     private static final long RETENTION_CLEANUP_INTERVAL_MILLISECONDS = TimeUnit.HOURS.toMillis(1);
@@ -271,9 +272,19 @@ class P25ActivityLogWriter implements AutoCloseable
                     batch.add(pendingRecord.record());
                     pendingRecord = null;
 
+                    long batchDeadline = System.nanoTime() +
+                        TimeUnit.MILLISECONDS.toNanos(BATCH_COLLECTION_MILLISECONDS);
+
                     while(batch.size() < BATCH_SIZE)
                     {
-                        QueuedRecord next = mQueue.poll();
+                        long remainingNanoseconds = batchDeadline - System.nanoTime();
+
+                        if(remainingNanoseconds <= 0)
+                        {
+                            break;
+                        }
+
+                        QueuedRecord next = mQueue.poll(remainingNanoseconds, TimeUnit.NANOSECONDS);
 
                         if(next == null)
                         {

@@ -43,6 +43,7 @@ import io.github.dsheirer.identifier.patch.PatchGroupPreLoadDataContent;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.log.LoggingSuppressor;
 import io.github.dsheirer.message.IMessage;
+import io.github.dsheirer.metadata.site.SiteMetadataPublicationRateLimiter;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.event.DecodeEvent;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
@@ -180,10 +181,8 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
     private static final String USER_LABEL = " USER:";
     private Channel mChannel;
     private PatchGroupManager mPatchGroupManager;
-    private P25NetworkConfigurationStabilizer mNetworkConfigurationStabilizer =
-        new P25NetworkConfigurationStabilizer("P25_PHASE_2");
-    private P25P2NetworkConfigurationMonitor mNetworkConfigurationMonitor =
-        new P25P2NetworkConfigurationMonitor(mNetworkConfigurationStabilizer);
+    private final P25NetworkConfigurationStabilizer mNetworkConfigurationStabilizer;
+    private final P25P2NetworkConfigurationMonitor mNetworkConfigurationMonitor;
     private P25SiteMetadataPublisher mSiteMetadataPublisher;
     private P25TrafficChannelManager mTrafficChannelManager;
     private int mEndPttOnFacchCounter = 0;
@@ -199,13 +198,29 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
     public P25P2DecoderState(Channel channel, int timeslot, P25TrafficChannelManager trafficChannelManager,
                              PatchGroupManager patchGroupManager)
     {
+        this(channel, timeslot, trafficChannelManager, patchGroupManager,
+            new P25NetworkConfigurationStabilizer("P25_PHASE_2"),
+            new SiteMetadataPublicationRateLimiter(P25SiteMetadataPublisher.DEFAULT_EVENT_INTERVAL_MILLISECONDS));
+    }
+
+    /**
+     * Constructs a pairable APCO-25 decoder state with site metadata state and rate limit shared by both timeslots.
+     */
+    public P25P2DecoderState(Channel channel, int timeslot, P25TrafficChannelManager trafficChannelManager,
+                             PatchGroupManager patchGroupManager,
+                             P25NetworkConfigurationStabilizer networkConfigurationStabilizer,
+                             SiteMetadataPublicationRateLimiter siteMetadataRateLimiter)
+    {
         super(timeslot);
         mChannel = channel;
         mTrafficChannelManager = trafficChannelManager;
         mPatchGroupManager = patchGroupManager;
+        mNetworkConfigurationStabilizer = networkConfigurationStabilizer != null ?
+            networkConfigurationStabilizer : new P25NetworkConfigurationStabilizer("P25_PHASE_2");
+        mNetworkConfigurationMonitor = new P25P2NetworkConfigurationMonitor(mNetworkConfigurationStabilizer);
         mSiteMetadataPublisher = new P25SiteMetadataPublisher(mChannel, mNetworkConfigurationStabilizer::getSnapshot,
             this::hasInterModuleEventBus,
-            event -> getInterModuleEventBus().post(event));
+            event -> getInterModuleEventBus().post(event), siteMetadataRateLimiter);
 
     }
 
@@ -1949,7 +1964,6 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                 case REQUEST_RESET:
                     resetState();
                     mNetworkConfigurationMonitor.reset();
-                    mSiteMetadataPublisher.reset();
                     break;
                 case NOTIFICATION_SOURCE_FREQUENCY:
                     long frequency = event.getFrequency();

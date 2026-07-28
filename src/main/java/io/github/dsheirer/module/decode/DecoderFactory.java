@@ -34,6 +34,7 @@ import io.github.dsheirer.filter.IFilter;
 import io.github.dsheirer.identifier.patch.PatchGroupManager;
 import io.github.dsheirer.message.IMessage;
 import io.github.dsheirer.message.MessageDirection;
+import io.github.dsheirer.metadata.site.SiteMetadataPublicationRateLimiter;
 import io.github.dsheirer.module.Module;
 import io.github.dsheirer.module.decode.am.AMDecoder;
 import io.github.dsheirer.module.decode.am.AMDecoderState;
@@ -97,6 +98,8 @@ import io.github.dsheirer.module.decode.p25.phase2.P25P2DecoderHDQPSK;
 import io.github.dsheirer.module.decode.p25.phase2.P25P2DecoderState;
 import io.github.dsheirer.module.decode.p25.phase2.message.P25P2Message;
 import io.github.dsheirer.module.decode.p25.phase2.message.filter.P25P2MessageFilterSet;
+import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationStabilizer;
+import io.github.dsheirer.module.decode.p25.telemetry.P25SiteMetadataPublisher;
 import io.github.dsheirer.module.decode.passport.DecodeConfigPassport;
 import io.github.dsheirer.module.decode.passport.PassportDecoder;
 import io.github.dsheirer.module.decode.passport.PassportDecoderState;
@@ -261,10 +264,16 @@ public class DecoderFactory
 
         //A single patch group manager is shared across both timeslots
         PatchGroupManager patchGroupManager = new PatchGroupManager();
+        P25NetworkConfigurationStabilizer networkConfigurationStabilizer =
+            new P25NetworkConfigurationStabilizer("P25_PHASE_2");
+        SiteMetadataPublicationRateLimiter siteMetadataRateLimiter =
+            new SiteMetadataPublicationRateLimiter(P25SiteMetadataPublisher.DEFAULT_EVENT_INTERVAL_MILLISECONDS);
 
-        P25P2DecoderState decoderState1 = new P25P2DecoderState(channel, P25P2Message.TIMESLOT_1, p25TrafficChannelManager, patchGroupManager);
+        P25P2DecoderState decoderState1 = new P25P2DecoderState(channel, P25P2Message.TIMESLOT_1,
+            p25TrafficChannelManager, patchGroupManager, networkConfigurationStabilizer, siteMetadataRateLimiter);
         decoderState1.setCurrentChannel(channelDescriptor);
-        P25P2DecoderState decoderState2 = new P25P2DecoderState(channel, P25P2Message.TIMESLOT_2, p25TrafficChannelManager, patchGroupManager);
+        P25P2DecoderState decoderState2 = new P25P2DecoderState(channel, P25P2Message.TIMESLOT_2,
+            p25TrafficChannelManager, patchGroupManager, networkConfigurationStabilizer, siteMetadataRateLimiter);
         decoderState2.setCurrentChannel(channelDescriptor);
         modules.add(decoderState1);
         modules.add(decoderState2);

@@ -62,8 +62,11 @@ final class TrunkedSiteMetadataMapper
         String configuredSystem = blankToNull(channel.getSystem());
         String configuredSite = blankToNull(channel.getSite());
         String channelName = configuredSite != null ? configuredSite : blankToNull(channel.getName());
-        String hash = sha256(String.join("|", safe(event.snapshot()), safe(configuredSystem), safe(channelName),
-            safe(channel.getAliasListName()), safe(primaryFrequency)));
+        Object structuralSnapshot = event.snapshot() instanceof DMRNetworkConfigurationSnapshot dmr ?
+            dmr.withoutFreshness() : event.snapshot() instanceof NXDNNetworkConfigurationSnapshot nxdn ?
+                nxdn.withoutFreshness() : event.snapshot();
+        String hash = sha256(structuralSnapshot, configuredSystem, channelName, channel.getAliasListName(),
+            primaryFrequency);
 
         if(event.snapshot() instanceof DMRNetworkConfigurationSnapshot dmr)
         {
@@ -406,16 +409,34 @@ final class TrunkedSiteMetadataMapper
         }
     }
 
-    private static String sha256(String value)
+    private static String sha256(Object... values)
     {
         try
         {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            return HexFormat.of().formatHex(digest.digest(value.getBytes(StandardCharsets.UTF_8)));
+
+            for(Object value: values)
+            {
+                if(value == null)
+                {
+                    digest.update((byte)0);
+                    continue;
+                }
+
+                byte[] bytes = value.toString().getBytes(StandardCharsets.UTF_8);
+                digest.update((byte)1);
+                digest.update((byte)(bytes.length >>> 24));
+                digest.update((byte)(bytes.length >>> 16));
+                digest.update((byte)(bytes.length >>> 8));
+                digest.update((byte)bytes.length);
+                digest.update(bytes);
+            }
+
+            return HexFormat.of().formatHex(digest.digest());
         }
         catch(NoSuchAlgorithmException e)
         {
-            return Integer.toHexString(value.hashCode());
+            throw new IllegalStateException("SHA-256 is unavailable", e);
         }
     }
 

@@ -2290,7 +2290,6 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                 resetState();
                 resetHarrisTalkerAliasSource();
                 mNetworkConfigurationMonitor.reset();
-                mSiteMetadataPublisher.reset();
                 break;
             case NOTIFICATION_SOURCE_FREQUENCY:
                 long frequency = event.getFrequency();

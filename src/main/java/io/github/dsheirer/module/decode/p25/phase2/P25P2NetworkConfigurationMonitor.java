@@ -370,10 +370,10 @@ public class P25P2NetworkConfigurationMonitor
     {
         mSiteStatus = mSiteStatus == null ? status : mSiteStatus.merge(status);
         return new P25NetworkConfigurationSnapshot("P25_PHASE_2", network, currentSite, channels, neighborSites,
-            frequencyBands, Collections.emptyList(), Collections.emptyList(), mSiteStatus);
+            frequencyBands, Collections.emptyList(), Collections.emptyList(), status);
     }
 
-    private P25NetworkConfigurationSnapshot statusObservation(P25NetworkConfigurationSnapshot.SiteStatus status)
+    P25NetworkConfigurationSnapshot statusObservation(P25NetworkConfigurationSnapshot.SiteStatus status)
     {
         return observation(null, null, Collections.emptyList(), Collections.emptyList(), Collections.emptyList(),
             status);

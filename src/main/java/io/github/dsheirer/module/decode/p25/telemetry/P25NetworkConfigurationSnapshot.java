@@ -102,6 +102,15 @@ public record P25NetworkConfigurationSnapshot(String decoder, Network network, C
                              Integer mfid, Boolean voiceService)
     {
         /**
+         * Status fields that describe site capabilities without the continuously changing broadcast clock.
+         */
+        public SiteStatus withoutVolatileTiming()
+        {
+            return new SiteStatus(null, null, dataService, dataAccess, wuidLeaseMinutes, registrationService,
+                mfid, voiceService);
+        }
+
+        /**
          * Applies non-null values from a newer partial broadcast to this latest-value snapshot.
          */
         public SiteStatus merge(SiteStatus newer)

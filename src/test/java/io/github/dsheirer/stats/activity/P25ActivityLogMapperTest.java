@@ -14,6 +14,7 @@ package io.github.dsheirer.stats.activity;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -409,6 +410,36 @@ class P25ActivityLogMapperTest
         assertEquals(1, record.foreignSystemBands().size());
         assertEquals(0x9EF, record.foreignSystemBands().getFirst().system());
         assertNotNull(record.snapshotHash());
+    }
+
+    @Test
+    void volatileTimingDoesNotChangeSiteInventoryHash()
+    {
+        Channel channel = new Channel("Example Site", ChannelType.STANDARD);
+        channel.setRadresGuid(GUID);
+        P25ActivityLogMapper mapper = new P25ActivityLogMapper();
+
+        P25ActivityLogRecords.SiteSnapshot first =
+            mapper.map(new SiteMetadataEvent(channel, siteMetadataSnapshot(1_000L, true), 1_000L));
+        P25ActivityLogRecords.SiteSnapshot clockUpdate =
+            mapper.map(new SiteMetadataEvent(channel, siteMetadataSnapshot(2_000L, true), 2_000L));
+        P25ActivityLogRecords.SiteSnapshot serviceUpdate =
+            mapper.map(new SiteMetadataEvent(channel, siteMetadataSnapshot(2_000L, false), 2_001L));
+
+        assertEquals(first.snapshotHash(), clockUpdate.snapshotHash());
+        assertEquals(2_000L, clockUpdate.siteStatus().broadcastClockEpochMilliseconds());
+        assertNotEquals(first.snapshotHash(), serviceUpdate.snapshotHash());
+    }
+
+    private static P25NetworkConfigurationSnapshot siteMetadataSnapshot(long broadcastClock, boolean voiceService)
+    {
+        return new P25NetworkConfigurationSnapshot("P25_PHASE_1",
+            new P25NetworkConfigurationSnapshot.Network(0xBEE00, 0x348, 0x348, null),
+            new P25NetworkConfigurationSnapshot.CurrentSite(0x348, 0x348, 2, 1, null, true),
+            List.of(), List.of(), List.of(), List.of(), List.of(),
+            new P25NetworkConfigurationSnapshot.SiteStatus(broadcastClock, Math.toIntExact(broadcastClock / 10),
+                true, "REQUEST", 30, true, 0, voiceService),
+            List.of());
     }
 
     private static DecodeEvent event(DecodeEventType eventType, String details)

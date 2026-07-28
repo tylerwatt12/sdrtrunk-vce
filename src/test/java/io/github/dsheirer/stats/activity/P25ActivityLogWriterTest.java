@@ -84,6 +84,24 @@ class P25ActivityLogWriterTest
     }
 
     @Test
+    void closeDrainsACollectingPartialBatch() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("close-drains.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10);
+        writer.start();
+        writer.enqueue(activity(1_000L, P25ActivityLogRecords.Action.GRANT));
+        writer.close();
+
+        assertEquals(1, writer.getWrittenRecords());
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            assertCount(connection, "p25_activity_event", 1);
+        }
+    }
+
+    @Test
     void writesEachCompletedDmrConventionalCallExactlyOnce() throws Exception
     {
         Path database = mTemporaryFolder.resolve("dmr-conventional.sqlite");
@@ -726,6 +744,7 @@ class P25ActivityLogWriterTest
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
             P25ActivityLogSchema.insertSite(connection, siteSnapshot(500L));
+            assertCount(connection, "p25_radio_summary", 0);
             P25ActivityLogSchema.recordActivity(connection,
                 activity(1000L, P25ActivityLogRecords.Action.CALL), true);
             P25ActivityLogSchema.updateTalkerAlias(connection, new P25ActivityLogRecords.TalkerAliasUpdate(
@@ -1101,7 +1120,7 @@ class P25ActivityLogWriterTest
             P25ActivityLogRecords.SiteSnapshot empty = new P25ActivityLogRecords.SiteSnapshot(2000L,
                 "123e4567-e89b-12d3-a456-426614174000", P25ActivityLogRecords.ContextKind.TRUNKED_SITE,
                 "changed", "APCO25", "Example Site", "Example System", "P25-1", 0xBEE00, 0x348, 0x348, 2, 1,
-                856137500L, null, List.of(), List.of(), List.of(), List.of(), List.of());
+                856137500L, null, List.of(), List.of(), List.of(), List.of());
             P25ActivityLogSchema.insertSite(connection, empty);
 
             assertCount(connection, "p25_site_channel", 0);
@@ -1112,6 +1131,51 @@ class P25ActivityLogWriterTest
             assertCount(connection, "p25_site_neighbor_summary", 1);
             assertCount(connection, "p25_foreign_system_band_summary", 3);
             assertCount(connection, "p25_site_patch_group_summary", 1);
+        }
+    }
+
+    @Test
+    void timingOnlyHeartbeatRefreshesCurrentFactsWithoutRecountingSummaries() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("site-timing-heartbeat.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            P25ActivityLogSchema.insertSite(connection, siteSnapshotWithTiming(1_000L, 1_784_000_000_000L));
+            P25ActivityLogSchema.insertSite(connection, siteSnapshotWithTiming(2_000L, 1_784_000_001_000L));
+
+            try(Statement statement = connection.createStatement();
+                ResultSet resultSet = statement.executeQuery("""
+                    SELECT broadcast_clock_ms, observation_count
+                    FROM p25_site_snapshot
+                    """))
+            {
+                assertTrue(resultSet.next());
+                assertEquals(1_784_000_001_000L, resultSet.getLong("broadcast_clock_ms"));
+                assertEquals(2, resultSet.getInt("observation_count"));
+            }
+
+            try(Statement statement = connection.createStatement();
+                ResultSet resultSet = statement.executeQuery("""
+                    SELECT observation_count, last_seen_ms
+                    FROM p25_site_channel_summary
+                    """))
+            {
+                assertTrue(resultSet.next());
+                assertEquals(1, resultSet.getInt("observation_count"));
+                assertEquals(1_000L, resultSet.getLong("last_seen_ms"));
+            }
+
+            try(Statement statement = connection.createStatement();
+                ResultSet resultSet = statement.executeQuery("""
+                    SELECT confirmed_at_ms
+                    FROM p25_site_channel
+                    """))
+            {
+                assertTrue(resultSet.next());
+                assertEquals(2_000L, resultSet.getLong("confirmed_at_ms"));
+            }
         }
     }
 
@@ -1776,8 +1840,6 @@ class P25ActivityLogWriterTest
                 -45000000L, 1));
         List<P25NetworkConfigurationSnapshot.PatchGroup> patches = List.of(
             new P25NetworkConfigurationSnapshot.PatchGroup(56182, 1, List.of(56180), List.of(1811524)));
-        List<P25NetworkConfigurationSnapshot.TalkerAlias> aliases = List.of(
-            new P25NetworkConfigurationSnapshot.TalkerAlias(1811524, "WPFF205"));
         List<P25NetworkConfigurationSnapshot.ForeignSystemBand> foreignBands = List.of(
             new P25NetworkConfigurationSnapshot.ForeignSystemBand(0xBEE00, 0x9EF, 4, 1,
                 935_012_500L, 12_500L, -39_000_000L),
@@ -1791,7 +1853,23 @@ class P25ActivityLogWriterTest
             0xBEE00, 0x348, 0x348, 2, 1, 0, true,
             new P25NetworkConfigurationSnapshot.SiteStatus(1_784_000_000_000L, 110, true,
                 "Autonomous and by Request", 240, true, 0x90, true),
-            856137500L, 856137500L, channels, neighbors, bands, patches, aliases, foreignBands);
+            856137500L, 856137500L, channels, neighbors, bands, patches, foreignBands);
+    }
+
+    private static P25ActivityLogRecords.SiteSnapshot siteSnapshotWithTiming(long timestamp, long broadcastClock)
+    {
+        P25ActivityLogRecords.SiteSnapshot snapshot = siteSnapshot(timestamp);
+        P25NetworkConfigurationSnapshot.SiteStatus status = snapshot.siteStatus();
+        P25NetworkConfigurationSnapshot.SiteStatus updatedStatus = new P25NetworkConfigurationSnapshot.SiteStatus(
+            broadcastClock, status.microSlots(), status.dataService(), status.dataAccess(),
+            status.wuidLeaseMinutes(), status.registrationService(), status.mfid(), status.voiceService());
+
+        return new P25ActivityLogRecords.SiteSnapshot(timestamp, snapshot.guid(), snapshot.contextKind(),
+            snapshot.snapshotHash(), snapshot.protocol(), snapshot.channelName(), snapshot.aliasListName(),
+            snapshot.decoder(), snapshot.wacn(), snapshot.systemId(), snapshot.nac(), snapshot.rfss(), snapshot.site(),
+            snapshot.lra(), snapshot.tdma(), updatedStatus, snapshot.primaryFrequencyHertz(),
+            snapshot.currentControlHertz(), snapshot.channels(), snapshot.neighborSites(), snapshot.frequencyBands(),
+            snapshot.patchGroups(), snapshot.foreignSystemBands());
     }
 
     private static P25ActivityLogRecords.SiteSnapshot siteSnapshotWithDuplicateChannels(long timestamp)
@@ -1809,7 +1887,6 @@ class P25ActivityLogWriterTest
             snapshot.contextKind(), "duplicate-channel-hash", snapshot.protocol(), snapshot.channelName(),
             snapshot.aliasListName(), snapshot.decoder(), snapshot.wacn(), snapshot.systemId(), snapshot.nac(),
             snapshot.rfss(), snapshot.site(), snapshot.primaryFrequencyHertz(), snapshot.currentControlHertz(),
-            channels, snapshot.neighborSites(), snapshot.frequencyBands(), snapshot.patchGroups(),
-            snapshot.talkerAliases());
+            channels, snapshot.neighborSites(), snapshot.frequencyBands(), snapshot.patchGroups());
     }
 }

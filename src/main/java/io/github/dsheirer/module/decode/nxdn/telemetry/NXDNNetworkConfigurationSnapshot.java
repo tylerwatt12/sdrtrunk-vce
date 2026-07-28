@@ -118,6 +118,19 @@ public record NXDNNetworkConfigurationSnapshot(String decoder, String variant, I
     }
 
     /**
+     * Structural metadata used for change detection without per-observation freshness timestamps.
+     */
+    public NXDNNetworkConfigurationSnapshot withoutFreshness()
+    {
+        return new NXDNNetworkConfigurationSnapshot(decoder, variant, ran, currentLocation, typeDSite, typeDSiteType,
+            station, siteConfiguration, services, restrictions, failureStatus,
+            controlChannels.stream().map(channel -> channel != null ? channel.withoutFreshness() : null).toList(),
+            neighborSites.stream().map(neighbor -> neighbor != null ? neighbor.withoutFreshness() : null).toList(),
+            currentRepeater, repeaterStatus,
+            observedRepeaters, Map.of());
+    }
+
+    /**
      * NXDN location identity. Type-C uses category/system/site; Type-D uses integrator/system/site.
      */
     public record Location(String category, Integer system, Integer site, Integer integrator)
@@ -155,6 +168,12 @@ public record NXDNNetworkConfigurationSnapshot(String decoder, String variant, I
                        String bandwidth, Long downlink, Long uplink, String notification)
         {
             this(role, allocation, channelNumber, outboundChannelNumber, inboundChannelNumber,
+                bandwidth, downlink, uplink, notification, 0);
+        }
+
+        Channel withoutFreshness()
+        {
+            return new Channel(role, allocation, channelNumber, outboundChannelNumber, inboundChannelNumber,
                 bandwidth, downlink, uplink, notification, 0);
         }
 
@@ -198,6 +217,12 @@ public record NXDNNetworkConfigurationSnapshot(String decoder, String variant, I
                             Boolean isolated)
         {
             this(variant, id, location, channel, isolated, 0);
+        }
+
+        NeighborSite withoutFreshness()
+        {
+            return new NeighborSite(variant, id, location, channel != null ? channel.withoutFreshness() : null,
+                isolated, 0);
         }
 
         /**

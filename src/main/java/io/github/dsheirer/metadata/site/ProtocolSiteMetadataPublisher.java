@@ -12,13 +12,12 @@
 package io.github.dsheirer.metadata.site;
 
 import io.github.dsheirer.controller.channel.Channel;
-import java.util.Objects;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 /**
- * Publishes useful protocol site metadata immediately when it changes and periodically while unchanged.
+ * Publishes useful protocol site metadata on a bounded latest-value interval.
  */
 public class ProtocolSiteMetadataPublisher
 {
@@ -27,9 +26,7 @@ public class ProtocolSiteMetadataPublisher
     private final Supplier<? extends SiteMetadataSnapshot> mSnapshotSupplier;
     private final BooleanSupplier mHasInterModuleEventBus;
     private final Consumer<ProtocolSiteMetadataEvent> mEventPublisher;
-    private final long mEventIntervalMilliseconds;
-    private SiteMetadataSnapshot mLastPublishedSnapshot;
-    private long mLastPublishedTimestamp;
+    private final SiteMetadataPublicationRateLimiter mRateLimiter;
 
     public ProtocolSiteMetadataPublisher(Channel channel,
                                          Supplier<? extends SiteMetadataSnapshot> snapshotSupplier,
@@ -37,19 +34,19 @@ public class ProtocolSiteMetadataPublisher
                                          Consumer<ProtocolSiteMetadataEvent> eventPublisher)
     {
         this(channel, snapshotSupplier, hasInterModuleEventBus, eventPublisher,
-            DEFAULT_EVENT_INTERVAL_MILLISECONDS);
+            new SiteMetadataPublicationRateLimiter(DEFAULT_EVENT_INTERVAL_MILLISECONDS));
     }
 
-    ProtocolSiteMetadataPublisher(Channel channel, Supplier<? extends SiteMetadataSnapshot> snapshotSupplier,
-                                  BooleanSupplier hasInterModuleEventBus,
-                                  Consumer<ProtocolSiteMetadataEvent> eventPublisher,
-                                  long eventIntervalMilliseconds)
+    public ProtocolSiteMetadataPublisher(Channel channel, Supplier<? extends SiteMetadataSnapshot> snapshotSupplier,
+                                         BooleanSupplier hasInterModuleEventBus,
+                                         Consumer<ProtocolSiteMetadataEvent> eventPublisher,
+                                         SiteMetadataPublicationRateLimiter rateLimiter)
     {
         mChannel = channel;
         mSnapshotSupplier = snapshotSupplier;
         mHasInterModuleEventBus = hasInterModuleEventBus;
         mEventPublisher = eventPublisher;
-        mEventIntervalMilliseconds = eventIntervalMilliseconds;
+        mRateLimiter = rateLimiter;
     }
 
     /**
@@ -70,25 +67,13 @@ public class ProtocolSiteMetadataPublisher
             return;
         }
 
-        long eventTimestamp = timestamp > 0 ? timestamp : System.currentTimeMillis();
-        boolean changed = !Objects.equals(snapshot, mLastPublishedSnapshot);
-        boolean intervalElapsed = eventTimestamp - mLastPublishedTimestamp >= mEventIntervalMilliseconds;
-
-        if(changed || intervalElapsed)
+        if(mRateLimiter != null && mRateLimiter.tryAcquire())
         {
-            mLastPublishedSnapshot = snapshot;
-            mLastPublishedTimestamp = eventTimestamp;
-
             if(mEventPublisher != null)
             {
+                long eventTimestamp = timestamp > 0 ? timestamp : System.currentTimeMillis();
                 mEventPublisher.accept(new ProtocolSiteMetadataEvent(mChannel, snapshot, eventTimestamp));
             }
         }
-    }
-
-    public void reset()
-    {
-        mLastPublishedSnapshot = null;
-        mLastPublishedTimestamp = 0;
     }
 }
