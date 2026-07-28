@@ -21,9 +21,6 @@ package io.github.dsheirer.audio.call;
 
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.audio.playback.ManagedPlayableAudioCall;
-import io.github.dsheirer.channel.quality.ControlChannelQualityProvider;
-import io.github.dsheirer.channel.quality.ControlChannelQualityRegistry;
-import io.github.dsheirer.channel.quality.ControlChannelQualitySnapshot;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.configuration.SiteGuidConfigurationIdentifier;
@@ -89,25 +86,25 @@ class AudioCallCoordinatorTest
     @Test
     void stickyLiveSpeakerWinnerRemainsIndependentFromFinalQualityElection() throws Exception
     {
-        long now = System.currentTimeMillis();
         String liveWinnerGuid = "00000000-0000-0000-0000-000000000201";
         String finalWinnerGuid = "00000000-0000-0000-0000-000000000202";
-        ControlChannelQualityRegistry qualityRegistry = new ControlChannelQualityRegistry();
-        qualityRegistry.receive(quality(liveWinnerGuid, now, true, 55.0d));
-        qualityRegistry.receive(quality(finalWinnerGuid, now, true, 99.0d));
         List<ManagedPlayableAudioCall> playbackCalls = new CopyOnWriteArrayList<>();
         List<CompletedAudioCall> completedCalls = new CopyOnWriteArrayList<>();
         AudioCallCoordinator coordinator = new AudioCallCoordinator(
             new TestCallManagementProvider(true, false, true), playbackCalls::add,
-            completedCalls::add, null, null, DuplicateCallPriorityProvider.NONE, qualityRegistry,
+            completedCalls::add, null, null, DuplicateCallPriorityProvider.NONE,
             100L, 1_000L, null);
 
         try
         {
-            AudioCallSnapshot liveWinner = snapshot(21, 1, 1200, 9001, "Test System", liveWinnerGuid,
-                1_000L, 2_000L, 1, false);
-            AudioCallSnapshot finalWinner = snapshot(22, 2, 1200, 9002, "Test System", finalWinnerGuid,
-                1_000L, 2_000L, 1, false);
+            AudioCallSnapshot liveWinner = withVoiceQuality(
+                snapshot(21, 1, 1200, 9001, "Test System", liveWinnerGuid,
+                    1_000L, 2_000L, 1, false),
+                new VoiceCallQuality(40, 0, 10, 0, 20, 6_850));
+            AudioCallSnapshot finalWinner = withVoiceQuality(
+                snapshot(22, 2, 1200, 9002, "Test System", finalWinnerGuid,
+                    1_000L, 2_000L, 1, false),
+                new VoiceCallQuality(49, 1, 0, 0, 5, 6_850));
             coordinator.receive(audioEvent(liveWinner, 800));
             coordinator.receive(audioEvent(finalWinner, 800));
 
@@ -227,8 +224,7 @@ class AudioCallCoordinatorTest
         List<CompletedAudioCall> recorded = new CopyOnWriteArrayList<>();
         AudioCallCoordinator coordinator = new AudioCallCoordinator(
             new TestCallManagementProvider(false, false), recorded::add, null, null,
-            DuplicateCallPriorityProvider.NONE, ControlChannelQualityProvider.NONE,
-            25L, 500L, webEvents::add);
+            DuplicateCallPriorityProvider.NONE, 25L, 500L, webEvents::add);
 
         try
         {
@@ -278,8 +274,7 @@ class AudioCallCoordinatorTest
         List<CompletedAudioCall> recorded = new CopyOnWriteArrayList<>();
         AudioCallCoordinator coordinator = new AudioCallCoordinator(
             new TestCallManagementProvider(true, false), recorded::add, null, null,
-            DuplicateCallPriorityProvider.NONE, ControlChannelQualityProvider.NONE,
-            25L, 500L, webEvents::add);
+            DuplicateCallPriorityProvider.NONE, 25L, 500L, webEvents::add);
 
         try
         {
@@ -319,8 +314,7 @@ class AudioCallCoordinatorTest
         List<WebCallDeliveryEvent> webEvents = new CopyOnWriteArrayList<>();
         AudioCallCoordinator coordinator = new AudioCallCoordinator(
             new TestCallManagementProvider(false, false), null, null, null,
-            DuplicateCallPriorityProvider.NONE, ControlChannelQualityProvider.NONE,
-            20L, 60L, webEvents::add);
+            DuplicateCallPriorityProvider.NONE, 20L, 60L, webEvents::add);
 
         try
         {
@@ -451,10 +445,14 @@ class AudioCallCoordinatorTest
 
         try
         {
-            AudioCallSnapshot survivor = snapshot(1, 1, 1200, 9001, "Test System", null,
-                1_000L, 2_000L, 1, false);
-            AudioCallSnapshot duplicate = snapshot(2, 2, 1200, 9002, "Test System", null,
-                1_000L, 2_000L, 1, false);
+            AudioCallSnapshot survivor = withVoiceQuality(
+                snapshot(1, 1, 1200, 9001, "Test System", null,
+                    1_000L, 2_000L, 1, false),
+                new VoiceCallQuality(40, 0, 10, 0, 0, 6_850));
+            AudioCallSnapshot duplicate = withVoiceQuality(
+                snapshot(2, 2, 1200, 9002, "Test System", null,
+                    1_000L, 2_000L, 1, false),
+                new VoiceCallQuality(50, 0, 0, 0, 0, 6_850));
 
             coordinator.receive(audioEvent(survivor, 160));
             coordinator.receive(audioEvent(duplicate, 160));
@@ -701,10 +699,14 @@ class AudioCallCoordinatorTest
 
         try
         {
-            AudioCallSnapshot sparse = snapshot(1, 1, 1200, 9001, "Test System", null,
-                1_000L, 2_000L, 2, false);
-            AudioCallSnapshot complete = snapshot(2, 2, 1200, 9002, "Test System", null,
-                1_000L, 2_000L, 1, false);
+            AudioCallSnapshot sparse = withVoiceQuality(
+                snapshot(1, 1, 1200, 9001, "Test System", null,
+                    1_000L, 2_000L, 2, false),
+                new VoiceCallQuality(40, 0, 10, 0, 0, 6_850));
+            AudioCallSnapshot complete = withVoiceQuality(
+                snapshot(2, 2, 1200, 9002, "Test System", null,
+                    1_000L, 2_000L, 1, false),
+                new VoiceCallQuality(50, 0, 0, 0, 0, 6_850));
 
             coordinator.receive(audioEvent(sparse, 160));
             coordinator.receive(audioEvent(complete, 160));
@@ -735,25 +737,25 @@ class AudioCallCoordinatorTest
     }
 
     @Test
-    void higherFreshControlChannelQualityWinsRegardlessOfCompletionOrder() throws Exception
+    void fewerMissingAndConcealedFramesWinsRegardlessOfCompletionOrder() throws Exception
     {
-        long now = System.currentTimeMillis();
         String lowerQualityGuid = "00000000-0000-0000-0000-000000000101";
         String higherQualityGuid = "00000000-0000-0000-0000-000000000102";
-        ControlChannelQualityRegistry qualityRegistry = new ControlChannelQualityRegistry();
-        qualityRegistry.receive(quality(lowerQualityGuid, now, true, 61.0d));
-        qualityRegistry.receive(quality(higherQualityGuid, now, true, 96.0d));
         List<CompletedAudioCall> resolvedCalls = new CopyOnWriteArrayList<>();
         AudioCallCoordinator coordinator = new AudioCallCoordinator(
             new TestCallManagementProvider(true, false, true), resolvedCalls::add, null, null,
-            DuplicateCallPriorityProvider.NONE, qualityRegistry, 100L, 1_000L);
+            DuplicateCallPriorityProvider.NONE, 100L, 1_000L);
 
         try
         {
-            AudioCallSnapshot lowerQuality = snapshot(201, 1, 1200, 9001, "Test System", lowerQualityGuid,
-                1_000L, 2_000L, 1, false);
-            AudioCallSnapshot higherQuality = snapshot(202, 2, 1200, 9002, "Test System", higherQualityGuid,
-                1_100L, 2_100L, 1, false);
+            AudioCallSnapshot lowerQuality = withVoiceQuality(
+                snapshot(201, 1, 1200, 9001, "Test System", lowerQualityGuid,
+                    1_000L, 2_000L, 1, false),
+                new VoiceCallQuality(45, 0, 5, 0, 0, 6_850));
+            AudioCallSnapshot higherQuality = withVoiceQuality(
+                snapshot(202, 2, 1200, 9002, "Test System", higherQualityGuid,
+                    1_000L, 2_000L, 1, false),
+                new VoiceCallQuality(50, 0, 0, 0, 100, 6_850));
             coordinator.receive(audioEvent(lowerQuality, 800));
             coordinator.receive(audioEvent(higherQuality, 800));
             coordinator.receive(completionEvent(higherQuality));
@@ -769,23 +771,21 @@ class AudioCallCoordinatorTest
     }
 
     @Test
-    void playableAudioWinsBeforeControlChannelQuality() throws Exception
+    void candidateWithoutPlayableAudioIsFullyMissing() throws Exception
     {
-        long now = System.currentTimeMillis();
         String playableGuid = "00000000-0000-0000-0000-000000000111";
         String emptyGuid = "00000000-0000-0000-0000-000000000112";
-        ControlChannelQualityRegistry qualityRegistry = new ControlChannelQualityRegistry();
-        qualityRegistry.receive(quality(playableGuid, now, true, 20.0d));
-        qualityRegistry.receive(quality(emptyGuid, now, true, 100.0d));
         List<CompletedAudioCall> resolvedCalls = new CopyOnWriteArrayList<>();
         AudioCallCoordinator coordinator = new AudioCallCoordinator(
             new TestCallManagementProvider(true, false, true), resolvedCalls::add, null, null,
-            DuplicateCallPriorityProvider.NONE, qualityRegistry, 100L, 1_000L);
+            DuplicateCallPriorityProvider.NONE, 100L, 1_000L);
 
         try
         {
-            AudioCallSnapshot playable = snapshot(211, 1, 1200, 9001, "Test System", playableGuid,
-                1_000L, 2_000L, 1, false);
+            AudioCallSnapshot playable = withVoiceQuality(
+                snapshot(211, 1, 1200, 9001, "Test System", playableGuid,
+                    1_000L, 2_000L, 1, false),
+                new VoiceCallQuality(50, 0, 0, 0, 0, 6_850));
             AudioCallSnapshot empty = snapshot(212, 2, 1200, 9002, "Test System", emptyGuid,
                 900L, 1_900L, 1, false);
             coordinator.receive(audioEvent(playable, 160));
@@ -805,25 +805,25 @@ class AudioCallCoordinatorTest
     }
 
     @Test
-    void tiedQualityFallsBackToPcmCompleteness() throws Exception
+    void sharedCohortWindowPreventsShortCleanCaptureFromBeatingCompleteCall() throws Exception
     {
-        long now = System.currentTimeMillis();
         String sparseGuid = "00000000-0000-0000-0000-000000000121";
         String completeGuid = "00000000-0000-0000-0000-000000000122";
-        ControlChannelQualityRegistry qualityRegistry = new ControlChannelQualityRegistry();
-        qualityRegistry.receive(quality(sparseGuid, now, true, 85.0d));
-        qualityRegistry.receive(quality(completeGuid, now, true, 85.0d));
         List<CompletedAudioCall> resolvedCalls = new CopyOnWriteArrayList<>();
         AudioCallCoordinator coordinator = new AudioCallCoordinator(
             new TestCallManagementProvider(true, false, true), resolvedCalls::add, null, null,
-            DuplicateCallPriorityProvider.NONE, qualityRegistry, 100L, 1_000L);
+            DuplicateCallPriorityProvider.NONE, 100L, 1_000L);
 
         try
         {
-            AudioCallSnapshot sparse = snapshot(221, 1, 1200, 9001, "Test System", sparseGuid,
-                900L, 1_900L, 1, false);
-            AudioCallSnapshot complete = snapshot(222, 2, 1200, 9002, "Test System", completeGuid,
-                1_000L, 2_000L, 1, false);
+            AudioCallSnapshot sparse = withVoiceQuality(
+                snapshot(221, 1, 1200, 9001, "Test System", sparseGuid,
+                    1_000L, 1_200L, 1, false),
+                new VoiceCallQuality(10, 0, 0, 0, 0, 1_370));
+            AudioCallSnapshot complete = withVoiceQuality(
+                snapshot(222, 2, 1200, 9002, "Test System", completeGuid,
+                    1_000L, 2_000L, 1, false),
+                new VoiceCallQuality(45, 0, 5, 0, 100, 6_850));
             coordinator.receive(audioEvent(sparse, 160));
             coordinator.receive(audioEvent(complete, 800));
             coordinator.receive(completionEvent(complete));
@@ -839,25 +839,84 @@ class AudioCallCoordinatorTest
     }
 
     @Test
+    void fewerRepeatedFramesWinsAfterCompletenessTie() throws Exception
+    {
+        List<CompletedAudioCall> resolvedCalls = new CopyOnWriteArrayList<>();
+        AudioCallCoordinator coordinator = new AudioCallCoordinator(
+            new TestCallManagementProvider(true, false, true), resolvedCalls::add, null, null,
+            DuplicateCallPriorityProvider.NONE, 100L, 1_000L);
+
+        try
+        {
+            AudioCallSnapshot moreRepeated = withVoiceQuality(
+                snapshot(223, 1, 1200, 9001, "Test System", null,
+                    1_000L, 2_000L, 1, false),
+                new VoiceCallQuality(48, 2, 0, 0, 0, 6_850));
+            AudioCallSnapshot fewerRepeated = withVoiceQuality(
+                snapshot(224, 2, 1200, 9002, "Test System", null,
+                    1_000L, 2_000L, 1, false),
+                new VoiceCallQuality(49, 1, 0, 0, 100, 6_850));
+            coordinator.receive(audioEvent(moreRepeated, 800));
+            coordinator.receive(audioEvent(fewerRepeated, 800));
+            coordinator.receive(completionEvent(fewerRepeated));
+            coordinator.receive(completionEvent(moreRepeated));
+
+            awaitCondition(() -> resolvedCalls.size() == 1, "Expected one resolved logical call");
+            assertEquals(fewerRepeated.callId(), resolvedCalls.getFirst().snapshot().callId());
+        }
+        finally
+        {
+            coordinator.dispose();
+        }
+    }
+
+    @Test
+    void lowerNormalizedFecCorrectionsWinsAfterFrameOutcomeTie() throws Exception
+    {
+        List<CompletedAudioCall> resolvedCalls = new CopyOnWriteArrayList<>();
+        AudioCallCoordinator coordinator = new AudioCallCoordinator(
+            new TestCallManagementProvider(true, false, true), resolvedCalls::add, null, null,
+            DuplicateCallPriorityProvider.NONE, 100L, 1_000L);
+
+        try
+        {
+            AudioCallSnapshot moreCorrections = withVoiceQuality(
+                snapshot(225, 1, 1200, 9001, "Test System", null,
+                    1_000L, 2_000L, 1, false),
+                new VoiceCallQuality(50, 0, 0, 0, 25, 6_850));
+            AudioCallSnapshot fewerCorrections = withVoiceQuality(
+                snapshot(226, 2, 1200, 9002, "Test System", null,
+                    1_000L, 2_000L, 1, false),
+                new VoiceCallQuality(50, 0, 0, 0, 4, 6_850));
+            coordinator.receive(audioEvent(moreCorrections, 800));
+            coordinator.receive(audioEvent(fewerCorrections, 800));
+            coordinator.receive(completionEvent(fewerCorrections));
+            coordinator.receive(completionEvent(moreCorrections));
+
+            awaitCondition(() -> resolvedCalls.size() == 1, "Expected one resolved logical call");
+            assertEquals(fewerCorrections.callId(), resolvedCalls.getFirst().snapshot().callId());
+        }
+        finally
+        {
+            coordinator.dispose();
+        }
+    }
+
+    @Test
     void resolvedCallUnionsRecordAndStreamingPoliciesButKeepsWinnerMetadata() throws Exception
     {
-        long now = System.currentTimeMillis();
         String winnerGuid = "00000000-0000-0000-0000-000000000131";
         String recordGuid = "00000000-0000-0000-0000-000000000132";
         String destinationRecordGuid = "00000000-0000-0000-0000-000000000133";
         BroadcastChannel streamA = new BroadcastChannel("Stream A");
         BroadcastChannel streamB = new BroadcastChannel("Stream B");
         BroadcastChannel streamC = new BroadcastChannel("Stream C");
-        ControlChannelQualityRegistry qualityRegistry = new ControlChannelQualityRegistry();
-        qualityRegistry.receive(quality(winnerGuid, now, true, 98.0d));
-        qualityRegistry.receive(quality(recordGuid, now, true, 70.0d));
-        qualityRegistry.receive(quality(destinationRecordGuid, now, true, 60.0d));
         List<CompletedAudioCall> recorded = new CopyOnWriteArrayList<>();
         List<CompletedAudioCall> streamed = new CopyOnWriteArrayList<>();
         List<CompletedAudioCall> webCalls = new CopyOnWriteArrayList<>();
         AudioCallCoordinator coordinator = new AudioCallCoordinator(
             new TestCallManagementProvider(false, true, true), recorded::add, streamed::add, webCalls::add,
-            DuplicateCallPriorityProvider.NONE, qualityRegistry, 100L, 1_000L);
+            DuplicateCallPriorityProvider.NONE, 100L, 1_000L);
 
         try
         {
@@ -911,16 +970,12 @@ class AudioCallCoordinatorTest
     @Test
     void destinationRecordingPolicyCarriesRecordEnabledMembersRecordingIdentity() throws Exception
     {
-        long now = System.currentTimeMillis();
         String winnerGuid = "00000000-0000-0000-0000-000000000141";
         String recordingGuid = "00000000-0000-0000-0000-000000000142";
-        ControlChannelQualityRegistry qualityRegistry = new ControlChannelQualityRegistry();
-        qualityRegistry.receive(quality(winnerGuid, now, true, 98.0d));
-        qualityRegistry.receive(quality(recordingGuid, now, true, 60.0d));
         List<CompletedAudioCall> recorded = new CopyOnWriteArrayList<>();
         AudioCallCoordinator coordinator = new AudioCallCoordinator(
             new TestCallManagementProvider(false, true, true), recorded::add, null, null,
-            DuplicateCallPriorityProvider.NONE, qualityRegistry, 100L, 1_000L);
+            DuplicateCallPriorityProvider.NONE, 100L, 1_000L);
 
         try
         {
@@ -959,18 +1014,13 @@ class AudioCallCoordinatorTest
     @Test
     void destinationRecordingPolicyPrefersRecordEnabledCopyOfWinnersLogicalDestination() throws Exception
     {
-        long now = System.currentTimeMillis();
         String winnerGuid = "00000000-0000-0000-0000-000000000151";
         String otherGuid = "00000000-0000-0000-0000-000000000152";
         String sameGuid = "00000000-0000-0000-0000-000000000153";
-        ControlChannelQualityRegistry qualityRegistry = new ControlChannelQualityRegistry();
-        qualityRegistry.receive(quality(winnerGuid, now, true, 98.0d));
-        qualityRegistry.receive(quality(otherGuid, now, true, 70.0d));
-        qualityRegistry.receive(quality(sameGuid, now, true, 60.0d));
         List<CompletedAudioCall> recorded = new CopyOnWriteArrayList<>();
         AudioCallCoordinator coordinator = new AudioCallCoordinator(
             new TestCallManagementProvider(false, true, true), recorded::add, null, null,
-            DuplicateCallPriorityProvider.NONE, qualityRegistry, 100L, 1_000L);
+            DuplicateCallPriorityProvider.NONE, 100L, 1_000L);
 
         try
         {
@@ -1021,10 +1071,14 @@ class AudioCallCoordinatorTest
 
         try
         {
-            AudioCallSnapshot sparse = snapshot(1, 1, 1200, 9001, "Test System", null,
-                1_000L, 2_000L, 2, false);
-            AudioCallSnapshot cleaner = snapshot(2, 2, 1200, 9002, "Test System", null,
-                1_000L, 2_000L, 1, false);
+            AudioCallSnapshot sparse = withVoiceQuality(
+                snapshot(1, 1, 1200, 9001, "Test System", null,
+                    1_000L, 2_000L, 2, false),
+                new VoiceCallQuality(40, 0, 10, 0, 0, 6_850));
+            AudioCallSnapshot cleaner = withVoiceQuality(
+                snapshot(2, 2, 1200, 9002, "Test System", null,
+                    1_000L, 2_000L, 1, false),
+                new VoiceCallQuality(50, 0, 0, 0, 0, 6_850));
             coordinator.receive(audioEvent(sparse, 160));
             coordinator.receive(audioEvent(cleaner, 160));
             coordinator.receive(completionEvent(sparse));
@@ -1139,8 +1193,7 @@ class AudioCallCoordinatorTest
         List<WebCallDeliveryEvent> webEvents = new CopyOnWriteArrayList<>();
         List<CompletedAudioCall> recorded = new CopyOnWriteArrayList<>();
         AudioCallCoordinator coordinator = new AudioCallCoordinator(preferences, recorded::add, null, null,
-            DuplicateCallPriorityProvider.NONE, ControlChannelQualityProvider.NONE,
-            20L, 60L, webEvents::add);
+            DuplicateCallPriorityProvider.NONE, 20L, 60L, webEvents::add);
 
         try
         {
@@ -1249,8 +1302,18 @@ class AudioCallCoordinatorTest
             snapshot.startTimestamp(), snapshot.lastActivityTimestamp(), snapshot.burstCount(),
             snapshot.burstGeneration(), snapshot.lastBurstStartTimestamp(), snapshot.lastBurstEndTimestamp(),
             false, true, snapshot.encrypted(), snapshot.recordAudio(), snapshot.monitorPriority(),
-            snapshot.duplicate(), snapshot.recordingMetadata());
+            snapshot.duplicate(), snapshot.recordingMetadata(), snapshot.voiceCallQuality());
         return new AudioCallEvent(AudioCallEventType.CALL_COMPLETED, completed, System.currentTimeMillis(), null);
+    }
+
+    private static AudioCallSnapshot withVoiceQuality(AudioCallSnapshot snapshot, VoiceCallQuality quality)
+    {
+        return new AudioCallSnapshot(snapshot.callId(), snapshot.linkedCallId(), snapshot.aliasList(),
+            snapshot.identifierCollection(), snapshot.broadcastChannels(), snapshot.startTimestamp(),
+            snapshot.lastActivityTimestamp(), snapshot.burstCount(), snapshot.burstGeneration(),
+            snapshot.lastBurstStartTimestamp(), snapshot.lastBurstEndTimestamp(), snapshot.burstActive(),
+            snapshot.complete(), snapshot.encrypted(), snapshot.recordAudio(), snapshot.monitorPriority(),
+            snapshot.duplicate(), snapshot.recordingMetadata(), quality);
     }
 
     private static AudioCallSnapshot withPolicy(AudioCallSnapshot snapshot, boolean recordAudio,
@@ -1269,7 +1332,7 @@ class AudioCallCoordinatorTest
             snapshot.lastActivityTimestamp(), snapshot.burstCount(), snapshot.burstGeneration(),
             snapshot.lastBurstStartTimestamp(), snapshot.lastBurstEndTimestamp(), snapshot.burstActive(),
             snapshot.complete(), snapshot.encrypted(), recordAudio, snapshot.monitorPriority(), snapshot.duplicate(),
-            policyMetadata);
+            policyMetadata, snapshot.voiceCallQuality());
     }
 
     private static AudioCallSnapshot withRecordingMetadata(AudioCallSnapshot snapshot, String aliasListName,
@@ -1289,14 +1352,7 @@ class AudioCallCoordinatorTest
             snapshot.lastActivityTimestamp(), snapshot.burstCount(), snapshot.burstGeneration(),
             snapshot.lastBurstStartTimestamp(), snapshot.lastBurstEndTimestamp(), snapshot.burstActive(),
             snapshot.complete(), snapshot.encrypted(), snapshot.recordAudio(), snapshot.monitorPriority(),
-            snapshot.duplicate(), recordingMetadata);
-    }
-
-    private static ControlChannelQualitySnapshot quality(String siteGuid, long observedAt, boolean active,
-                                                         Double decodeHealth)
-    {
-        return new ControlChannelQualitySnapshot(null, siteGuid, 851_012_500L, observedAt, active, -45.0d,
-            -46.0d, -50.0d, -40.0d, decodeHealth, 100L, 1L, 0L, 0L, 0L, observedAt);
+            snapshot.duplicate(), recordingMetadata, snapshot.voiceCallQuality());
     }
 
     private static boolean hasDestination(ResolvedCallPolicy policy, String value)

@@ -6,6 +6,7 @@
 package io.github.dsheirer.channel.metadata.activity;
 
 import io.github.dsheirer.alias.Alias;
+import io.github.dsheirer.audio.call.VoiceCallQuality;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.identifier.Identifier;
 import java.util.List;
@@ -40,6 +41,8 @@ public record ChannelActivitySnapshot(String tableId, String title, String chann
     public record Row(String key, String channelName, String status, List<String> tags, String lcn,
                       long frequencyHz, String callsign,
                       Double signalDbfs, Double decodeHealthPercent, long qualityObservedAtMs,
+                      long controlValidFrames, long controlInvalidFrames, long controlCorrectedBits,
+                      long controlSyncLossBits, long controlDroppedBits, VoiceCallQuality voiceQuality,
                       Integer timeslot, String sourceId, String sourceAlias, String talkerAlias,
                       String sourceAliasDisplay, String targetId, String targetAlias, String decoder,
                       String encryptionDetails)
@@ -47,10 +50,17 @@ public record ChannelActivitySnapshot(String tableId, String title, String chann
         private static Row from(ChannelActivityRow row)
         {
             String channelName = row.getRole() == ChannelActivityRow.Role.CONVENTIONAL ? row.getChannelName() : null;
+            ChannelActivityDecodeQuality quality = row.getDecodeQuality();
             return new Row(row.getKey(), channelName, row.getState().name(),
                 row.getTags().stream().map(Enum::name).toList(), row.getLcn(),
                 row.getFrequency(), row.getCallsign(), row.getSignalDbfs(),
-                row.getDecodeHealthPercent(), row.getQualityObservedAt(), row.getTimeslot(),
+                row.getDecodeHealthPercent(), row.getQualityObservedAt(),
+                quality != null ? quality.controlValidFrames() : 0,
+                quality != null ? quality.controlInvalidFrames() : 0,
+                quality != null ? quality.controlCorrectedBits() : 0,
+                quality != null ? quality.controlSyncLossBits() : 0,
+                quality != null ? quality.controlDroppedBits() : 0,
+                row.getVoiceCallQuality(), row.getTimeslot(),
                 value(row.getSource()), aliases(row.getSourceAliases()), value(row.getTalkerAlias()),
                 row.getSourceAliasDisplay(), value(row.getTarget()), aliases(row.getTargetAliases()),
                 row.getDecoder(), row.getEncryptionDetails());

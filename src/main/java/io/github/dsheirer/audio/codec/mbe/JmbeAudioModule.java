@@ -22,6 +22,7 @@ package io.github.dsheirer.audio.codec.mbe;
 import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.audio.AbstractAudioModule;
+import io.github.dsheirer.audio.call.VoiceFrameQualityObservation;
 import io.github.dsheirer.audio.squelch.ISquelchStateListener;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.message.IMessage;
@@ -30,7 +31,9 @@ import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.sample.Listener;
 import java.nio.file.Path;
+import java.util.Map;
 import jmbe.iface.IAudioCodec;
+import jmbe.iface.IAudioWithMetadata;
 
 /**
  * Base audio module for protocols that use the JMBE audio codec.
@@ -38,6 +41,10 @@ import jmbe.iface.IAudioCodec;
 public abstract class JmbeAudioModule extends AbstractAudioModule implements Listener<IMessage>, IMessageListener,
     ISquelchStateListener
 {
+    private static final String FRAME_METADATA_PREFIX = "jmbe.frame.";
+    private static final String FRAME_OUTCOME = FRAME_METADATA_PREFIX + "outcome";
+    private static final String FRAME_FEC_ERRORS = FRAME_METADATA_PREFIX + "fec_errors";
+    private static final String FRAME_FEC_PROTECTED_BITS = FRAME_METADATA_PREFIX + "fec_protected_bits";
     private static final JmbeLibraryLoader LIBRARY_LOADER = JmbeLibraryLoader.getInstance();
     private volatile IAudioCodec mAudioCodec;
     private final UserPreferences mUserPreferences;
@@ -82,6 +89,60 @@ public abstract class JmbeAudioModule extends AbstractAudioModule implements Lis
     protected boolean hasAudioCodec()
     {
         return getAudioCodec() != null;
+    }
+
+    /**
+     * Extracts optional diagnostics supplied by JMBE 1.0.14 and newer.  Older JMBE jars continue to provide audio
+     * without these metadata entries.
+     */
+    protected VoiceFrameQualityObservation getVoiceFrameQuality(IAudioWithMetadata audioWithMetadata)
+    {
+        if(audioWithMetadata == null || !audioWithMetadata.hasMetadata())
+        {
+            return null;
+        }
+
+        Map<String,String> metadata = audioWithMetadata.getMetadata();
+        String outcomeValue = metadata.get(FRAME_OUTCOME);
+
+        if(outcomeValue == null)
+        {
+            return null;
+        }
+
+        try
+        {
+            VoiceFrameQualityObservation.Outcome outcome =
+                VoiceFrameQualityObservation.Outcome.valueOf(outcomeValue);
+            return new VoiceFrameQualityObservation(outcome, parseNonNegative(metadata.get(FRAME_FEC_ERRORS)),
+                parseNonNegative(metadata.get(FRAME_FEC_PROTECTED_BITS)));
+        }
+        catch(IllegalArgumentException _)
+        {
+            return null;
+        }
+    }
+
+    protected boolean isVoiceFrameQualityMetadata(String key)
+    {
+        return key != null && key.startsWith(FRAME_METADATA_PREFIX);
+    }
+
+    private int parseNonNegative(String value)
+    {
+        if(value == null)
+        {
+            return 0;
+        }
+
+        try
+        {
+            return Math.max(0, Integer.parseInt(value));
+        }
+        catch(NumberFormatException _)
+        {
+            return 0;
+        }
     }
 
     @Override

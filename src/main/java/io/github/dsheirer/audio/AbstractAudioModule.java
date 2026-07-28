@@ -27,6 +27,7 @@ import io.github.dsheirer.audio.call.AudioCallId;
 import io.github.dsheirer.audio.call.AudioCallSnapshot;
 import io.github.dsheirer.audio.call.IAudioCallProvider;
 import io.github.dsheirer.audio.call.MutableAudioCallBuilder;
+import io.github.dsheirer.audio.call.VoiceFrameQualityObservation;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.IdentifierUpdateListener;
@@ -234,6 +235,11 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
 
     public void addAudio(float[] audioBuffer)
     {
+        addAudio(audioBuffer, null);
+    }
+
+    public void addAudio(float[] audioBuffer, VoiceFrameQualityObservation qualityObservation)
+    {
         MutableAudioCallBuilder audioCall = getAudioCall();
 
         //If the current segment exceeds the max samples length, close it so that a new segment gets generated
@@ -248,6 +254,7 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
         try
         {
             audioCall.addAudio(audioBuffer);
+            audioCall.addVoiceFrameQuality(qualityObservation);
             mAudioSampleCount += audioBuffer.length;
             emitAudioCallEvent(AudioCallEventType.AUDIO_FRAME, audioBuffer);
         }
@@ -330,7 +337,7 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
             audioCall.getBurstGeneration(), audioCall.getLastBurstStartTimestamp(),
             audioCall.getLastBurstEndTimestamp(), audioCall.isBurstActive(), audioCall.isComplete(), audioCall.isEncrypted(),
             audioCall.isRecordAudio(), audioCall.getMonitorPriority(), audioCall.isDuplicate(),
-            audioCall.getRecordingMetadata());
+            audioCall.getRecordingMetadata(), audioCall.getVoiceCallQuality());
     }
 
     private void emitAudioCallEvent(AudioCallEventType eventType, float[] audioFrame)

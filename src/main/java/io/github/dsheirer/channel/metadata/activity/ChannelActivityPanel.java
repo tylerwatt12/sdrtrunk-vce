@@ -21,6 +21,7 @@ package io.github.dsheirer.channel.metadata.activity;
 import com.google.common.base.Joiner;
 import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.alias.Alias;
+import io.github.dsheirer.audio.call.VoiceCallQuality;
 import io.github.dsheirer.channel.state.State;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
@@ -46,6 +47,7 @@ import java.awt.RenderingHints;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.text.DecimalFormat;
+import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -477,7 +479,7 @@ public class ChannelActivityPanel extends JPanel
         table.getColumnModel().getColumn(ChannelActivityTableModel.COLUMN_SIGNAL)
             .setCellRenderer(new QualityCellRenderer(false));
         table.getColumnModel().getColumn(ChannelActivityTableModel.COLUMN_DECODE_HEALTH)
-            .setCellRenderer(new QualityCellRenderer(true));
+            .setCellRenderer(new DecodeQualityCellRenderer());
         table.getColumnModel().getColumn(ChannelActivityTableModel.COLUMN_SOURCE_ALIAS)
             .setCellRenderer(new AliasCellRenderer());
         table.getColumnModel().getColumn(ChannelActivityTableModel.COLUMN_TARGET_ALIAS)
@@ -1056,6 +1058,97 @@ public class ChannelActivityPanel extends JPanel
 
             applySelectionBorder(table, label, isSelected, column);
             return label;
+        }
+    }
+
+    public class DecodeQualityCellRenderer extends DefaultTableCellRenderer
+    {
+        private final DecimalFormat mPercentFormatter = new DecimalFormat("0.0");
+
+        public DecodeQualityCellRenderer()
+        {
+            setHorizontalAlignment(SwingConstants.CENTER);
+        }
+
+        @Override
+        public Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected,
+                                                       boolean hasFocus, int row, int column)
+        {
+            JLabel label = (JLabel)super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
+            label.setText(null);
+            label.setToolTipText(null);
+            label.setForeground(table.getForeground());
+
+            if(value instanceof ChannelActivityDecodeQuality quality)
+            {
+                boolean showControl = mNowPlayingPreference.isShowControlDecodeQuality() && quality.hasControl();
+                boolean showVoice = mNowPlayingPreference.isShowVoiceDecodeQuality() && quality.hasVoice();
+                boolean detailed = mNowPlayingPreference.getDecodeQualityDisplayMode() ==
+                    NowPlayingPreference.DecodeQualityDisplayMode.DETAILED;
+                List<String> values = new ArrayList<>();
+                List<String> explanations = new ArrayList<>();
+                double lowestPercent = 100.0d;
+
+                if(showControl)
+                {
+                    String control = "CC " + mPercentFormatter.format(quality.controlPercent()) + "%";
+                    lowestPercent = Math.min(lowestPercent, quality.controlPercent());
+
+                    if(detailed)
+                    {
+                        control += " · " + quality.controlValidFrames() + "/" + quality.controlInvalidFrames() +
+                            "/" + quality.controlCorrectedBits() + "/" + quality.controlSyncLossBits() + "/" +
+                            quality.controlDroppedBits();
+                    }
+
+                    values.add(control);
+                    explanations.add("CC uses a rolling 30-second control-channel window. Detail order: valid frames / " +
+                        "invalid frames / corrected bits / sync-loss bits / dropped bits.");
+                }
+
+                if(showVoice)
+                {
+                    VoiceCallQuality voice = quality.voice();
+                    String voiceText = "VC " + mPercentFormatter.format(voice.qualityPercent()) + "%";
+                    lowestPercent = Math.min(lowestPercent, voice.qualityPercent());
+
+                    if(detailed)
+                    {
+                        voiceText += " · " + voice.decodedFrameCount() + "/" + voice.repeatedFrameCount() + "/" +
+                            voice.concealedFrameCount() + "/" + voice.missingFrameCount() + " · " +
+                            voice.fecErrorCount() + "/" + compact(voice.fecProtectedBitCount());
+                    }
+
+                    values.add(voiceText);
+                    explanations.add("VC uses 20 ms voice frames. Detail order: decoded / repeated / concealed / " +
+                        "missing frames · FEC detected corrections / inspected protected bits.");
+                }
+
+                if(!values.isEmpty())
+                {
+                    label.setText(String.join(" · ", values));
+                    label.setToolTipText("<html>" + String.join("<br>", explanations) + "</html>");
+                    label.setForeground(lowestPercent >= DECODE_HEALTHY_MINIMUM_PERCENT ? new Color(0, 128, 0) :
+                        lowestPercent >= DECODE_DEGRADED_MINIMUM_PERCENT ? new Color(180, 130, 0) : Color.RED);
+                }
+            }
+
+            applySelectionBorder(table, label, isSelected, column);
+            return label;
+        }
+
+        private String compact(long value)
+        {
+            if(value >= 1_000_000)
+            {
+                return mPercentFormatter.format(value / 1_000_000.0d) + "m";
+            }
+            else if(value >= 1_000)
+            {
+                return mPercentFormatter.format(value / 1_000.0d) + "k";
+            }
+
+            return Long.toString(value);
         }
     }
 

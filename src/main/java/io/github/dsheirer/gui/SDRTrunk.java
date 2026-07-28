@@ -279,8 +279,7 @@ public class SDRTrunk implements Listener<TunerEvent>
         mControlChannelQualityRegistry = new ControlChannelQualityRegistry();
         mAudioCallCoordinator = new AudioCallCoordinator(mUserPreferences, mAudioPlaybackManager,
             mAudioRecordingManager,
-            mAudioStreamingManager, mStatsWebServerService::receive, DuplicateCallPriorityProvider.NONE,
-            mControlChannelQualityRegistry);
+            mAudioStreamingManager, mStatsWebServerService::receive, DuplicateCallPriorityProvider.NONE);
 
         mConfigurationManager.getChannelProcessingManager().addAudioCallListener(mAudioCallCoordinator);
         mConfigurationManager.getChannelProcessingManager().addChannelDecodeEventListener(

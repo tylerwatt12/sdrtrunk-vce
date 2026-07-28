@@ -21,6 +21,10 @@ package io.github.dsheirer.channel.metadata.activity;
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.AliasModel;
+import io.github.dsheirer.audio.call.AudioCallEvent;
+import io.github.dsheirer.audio.call.AudioCallEventType;
+import io.github.dsheirer.audio.call.AudioCallSnapshot;
+import io.github.dsheirer.audio.call.VoiceCallQuality;
 import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.channel.metadata.ChannelMetadata;
 import io.github.dsheirer.channel.metadata.ChannelMetadataField;
@@ -272,7 +276,8 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
                 {
                     clearTrafficGrantAgeOut(row);
                     cancelPendingControlIdle(row);
-                    row.clearQuality();
+                    row.clearControlQuality();
+                    row.clearVoiceQuality();
 
                     if(table == mConventionalTable)
                     {
@@ -343,16 +348,108 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
             {
                 if(snapshot.active())
                 {
-                    row.setQuality(snapshot.signalDbfs(), snapshot.decodeHealthPercent(), snapshot.observedAtMs());
+                    row.setControlQuality(snapshot.signalDbfs(), snapshot.decodeHealthPercent(),
+                        snapshot.validFrames(), snapshot.invalidFrames(), snapshot.correctedBits(),
+                        snapshot.syncLossBits(), snapshot.droppedBits(), snapshot.observedAtMs());
                 }
                 else
                 {
-                    row.clearQuality();
+                    row.clearControlQuality();
                 }
 
                 table.refresh(row);
             }
         });
+    }
+
+    /**
+     * Carries transient 20 millisecond voice-frame diagnostics to the matching Systems row.  The first frame, each
+     * subsequent second, and the final result refresh the view; the per-frame audio path never writes these values to
+     * the activity database.
+     */
+    public void receiveAudioCallEvent(Channel channel, AudioCallEvent event)
+    {
+        if(!mEnabled || channel == null || event == null || event.snapshot() == null)
+        {
+            return;
+        }
+
+        AudioCallSnapshot snapshot = event.snapshot();
+        VoiceCallQuality quality = snapshot.voiceCallQuality();
+
+        if(quality == null || !quality.hasMeasurements())
+        {
+            return;
+        }
+
+        long observedFrames = quality.observedFrameCount();
+        boolean completed = event.eventType() == AudioCallEventType.CALL_COMPLETED;
+        boolean sampledAudioFrame = event.eventType() == AudioCallEventType.AUDIO_FRAME &&
+            (observedFrames == 1 || observedFrames % 50 == 0);
+
+        if(!completed && !sampledAudioFrame)
+        {
+            return;
+        }
+
+        runOnSwingIfEnabled(() -> {
+            ChannelActivityRow row = findVoiceQualityRow(channel, snapshot);
+
+            if(row == null || completed &&
+                row.getVoiceCallId() != null && !row.getVoiceCallId().equals(snapshot.callId()))
+            {
+                return;
+            }
+
+            row.setVoiceQuality(snapshot.callId(), quality);
+            ChannelActivityTableModel table = mRowTables.get(row);
+
+            if(table != null)
+            {
+                table.refresh(row);
+            }
+        });
+    }
+
+    private ChannelActivityRow findVoiceQualityRow(Channel channel, AudioCallSnapshot snapshot)
+    {
+        long frequency = getFrequency(snapshot.identifierCollection());
+        Integer timeslot = snapshot.timeslot() > 0 ? snapshot.timeslot() : null;
+
+        for(ChannelActivityRow row: mConventionalTable.getRows())
+        {
+            if(row.getChannel() == channel && matchesVoiceChannel(row, frequency, timeslot))
+            {
+                return row;
+            }
+        }
+
+        for(SiteActivitySession session: mSiteSessions.values())
+        {
+            for(ChannelActivityRow row: session.getTrafficRows())
+            {
+                if(row.getChannel() == channel && matchesVoiceChannel(row, frequency, timeslot))
+                {
+                    return row;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private boolean matchesVoiceChannel(ChannelActivityRow row, long frequency, Integer timeslot)
+    {
+        Integer rowTimeslot = row.getTimeslot() != null && row.getTimeslot() > 0 ? row.getTimeslot() : null;
+        return (frequency <= 0 || row.getFrequency() == frequency) && java.util.Objects.equals(rowTimeslot, timeslot);
+    }
+
+    private long getFrequency(IdentifierCollection identifiers)
+    {
+        Identifier<?> identifier = identifiers != null ? identifiers.getIdentifier(IdentifierClass.CONFIGURATION,
+            Form.CHANNEL_FREQUENCY, Role.ANY) : null;
+        return identifier instanceof FrequencyConfigurationIdentifier frequency && frequency.getValue() != null ?
+            frequency.getValue() : 0L;
     }
 
     @Override
@@ -601,6 +698,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
             if(newCall)
             {
                 row.clearCallDetails();
+                row.clearVoiceQuality();
             }
 
             row.setDecoder(getDecoder(rowChannel));
@@ -770,6 +868,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         if(newCall)
         {
             row.clearCallDetails();
+            row.clearVoiceQuality();
         }
 
         DecoderTypeConfigurationIdentifier decoderIdentifier = metadata.getDecoderTypeConfigurationIdentifier();

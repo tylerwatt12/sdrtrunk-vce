@@ -296,7 +296,8 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
                     // the holdoff window and discard them if the tone never reaches threshold.
                     // Returns a list of committed buffers — empty while in holdoff or if artifact
                     // was discarded; may contain previously held frames when threshold is first crossed.
-                    List<float[]> committed = mToneMetadataProcessor.processAudio(audioWithMetadata, timestamp);
+                    List<IAudioWithMetadata> committed = mToneMetadataProcessor.processAudio(audioWithMetadata,
+                        timestamp);
 
                     if(!committed.isEmpty())
                     {
@@ -313,9 +314,9 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
                             audioCommitted = true;
                         }
 
-                        for(float[] audio : committed)
+                        for(IAudioWithMetadata audio : committed)
                         {
-                            addAudio(audio);
+                            addAudio(audio.getAudio(), getVoiceFrameQuality(audio));
                         }
                     }
                 }
@@ -425,11 +426,11 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
         // so the audible artifact is suppressed, not just the metadata identifier.
         private static final int MINIMUM_TONE_FRAME_COUNT = 3;
 
-        private static final List<float[]> EMPTY = Collections.emptyList();
+        private static final List<IAudioWithMetadata> EMPTY = Collections.emptyList();
 
         private List<Tone> mTones = new ArrayList<>();
         private Tone mCurrentTone;
-        private List<float[]> mHeldAudio = new ArrayList<>();
+        private List<IAudioWithMetadata> mHeldAudio = new ArrayList<>();
 
         /**
          * Resets or clears any accumulated call tone sequences to prepare for the next call.
@@ -453,11 +454,14 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
          * @param timestamp of the carrier message
          * @return list of float[] audio buffers to commit; never null, may be empty
          */
-        public List<float[]> processAudio(IAudioWithMetadata audioWithMetadata, long timestamp)
+        public List<IAudioWithMetadata> processAudio(IAudioWithMetadata audioWithMetadata, long timestamp)
         {
             float[] audio = audioWithMetadata.getAudio();
+            boolean hasToneMetadata = audioWithMetadata.getMetadata().entrySet().stream()
+                .anyMatch(entry -> !isVoiceFrameQualityMetadata(entry.getKey()) &&
+                    AmbeTone.fromValues(entry.getKey(), entry.getValue()) != AmbeTone.INVALID);
 
-            if(!audioWithMetadata.hasMetadata())
+            if(!hasToneMetadata)
             {
                 // No tone on this frame — flush any held audio and close any pending tone.
                 if(mCurrentTone != null && mCurrentTone.getDuration() < MINIMUM_TONE_FRAME_COUNT)
@@ -468,7 +472,7 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
 
                 if(audio != null)
                 {
-                    return List.of(audio);
+                    return List.of(audioWithMetadata);
                 }
                 return EMPTY;
             }
@@ -478,6 +482,11 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
 
             for(Map.Entry<String,String> entry : audioWithMetadata.getMetadata().entrySet())
             {
+                if(isVoiceFrameQualityMetadata(entry.getKey()))
+                {
+                    continue;
+                }
+
                 AmbeTone tone = AmbeTone.fromValues(entry.getKey(), entry.getValue());
 
                 if(tone == AmbeTone.INVALID)
@@ -502,7 +511,7 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
                     // Still in holdoff — buffer audio, suppress output
                     if(audio != null)
                     {
-                        mHeldAudio.add(audio);
+                        mHeldAudio.add(audioWithMetadata);
                     }
                     return EMPTY;
                 }
@@ -524,18 +533,18 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
             // Threshold met — flush any held frames plus the current frame
             if(!mHeldAudio.isEmpty())
             {
-                List<float[]> toCommit = new ArrayList<>(mHeldAudio);
+                List<IAudioWithMetadata> toCommit = new ArrayList<>(mHeldAudio);
                 mHeldAudio.clear();
                 if(audio != null)
                 {
-                    toCommit.add(audio);
+                    toCommit.add(audioWithMetadata);
                 }
                 return toCommit;
             }
 
             if(audio != null)
             {
-                return List.of(audio);
+                return List.of(audioWithMetadata);
             }
             return EMPTY;
         }

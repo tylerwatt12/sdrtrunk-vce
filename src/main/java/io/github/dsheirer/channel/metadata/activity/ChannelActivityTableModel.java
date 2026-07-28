@@ -385,7 +385,8 @@ public class ChannelActivityTableModel extends AbstractTableModel
         {
             case COLUMN_STATUS -> State.class;
             case COLUMN_FREQUENCY -> Long.class;
-            case COLUMN_SIGNAL, COLUMN_DECODE_HEALTH -> Double.class;
+            case COLUMN_SIGNAL -> Double.class;
+            case COLUMN_DECODE_HEALTH -> ChannelActivityDecodeQuality.class;
             case COLUMN_SOURCE_ALIAS, COLUMN_TARGET_ALIAS -> Alias.class;
             case COLUMN_SOURCE, COLUMN_TARGET -> Identifier.class;
             default -> String.class;
@@ -410,7 +411,7 @@ public class ChannelActivityTableModel extends AbstractTableModel
             case COLUMN_FREQUENCY -> row.getFrequency();
             case COLUMN_CALLSIGN -> row.getCallsign();
             case COLUMN_SIGNAL -> row.getSignalDbfs();
-            case COLUMN_DECODE_HEALTH -> row.getDecodeHealthPercent();
+            case COLUMN_DECODE_HEALTH -> row.getDecodeQuality();
             case COLUMN_SOURCE_ALIAS -> row.getSourceAliases();
             case COLUMN_SOURCE -> row.getSource();
             case COLUMN_TARGET_ALIAS -> row.getTargetAliases();

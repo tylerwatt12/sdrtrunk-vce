@@ -48,6 +48,7 @@ import io.github.dsheirer.preference.encryption.VoiceEncryptionProtocol;
 import io.github.dsheirer.sample.Listener;
 import java.util.ArrayList;
 import java.util.List;
+import jmbe.iface.IAudioWithMetadata;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -209,9 +210,10 @@ public class NXDNAudioModule extends AmbeAudioModule
                     try
                     {
                         byte[] decodedFrame = mEncryptedCall ? mDecryptor.decrypt(frame) : frame;
-                        float[] generatedAudio = getAudioCodec().getAudio(decodedFrame);
-                        generatedAudio = mGain.apply(generatedAudio);
-                        addAudio(generatedAudio);
+                        IAudioWithMetadata audioWithMetadata =
+                            getAudioCodec().getAudioWithMetadata(decodedFrame);
+                        float[] generatedAudio = mGain.apply(audioWithMetadata.getAudio());
+                        addAudio(generatedAudio, getVoiceFrameQuality(audioWithMetadata));
                     }
                     catch(VoiceFrameDecryptionException e)
                     {

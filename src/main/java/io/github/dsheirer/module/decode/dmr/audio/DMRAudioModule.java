@@ -270,7 +270,7 @@ public class DMRAudioModule extends AmbeAudioModule implements IdentifierUpdateP
         try
         {
             IAudioWithMetadata audioWithMetadata = getAudioCodec().getAudioWithMetadata(frame);
-            addAudio(audioWithMetadata.getAudio());
+            addAudio(audioWithMetadata.getAudio(), getVoiceFrameQuality(audioWithMetadata));
             processMetadata(audioWithMetadata, timestamp);
         }
         catch(Exception e)
@@ -339,11 +339,18 @@ public class DMRAudioModule extends AmbeAudioModule implements IdentifierUpdateP
      */
     private void processMetadata(IAudioWithMetadata audioWithMetadata, long timestamp)
     {
+        boolean hasToneMetadata = false;
+
         if(audioWithMetadata.hasMetadata())
         {
-            //JMBE only places 1 entry in the map, but for consistency we'll process the map entry set
             for(Map.Entry<String,String> entry: audioWithMetadata.getMetadata().entrySet())
             {
+                if(isVoiceFrameQualityMetadata(entry.getKey()))
+                {
+                    continue;
+                }
+
+                hasToneMetadata = true;
                 //Each metadata map entry contains a tone-type (key) and tone (value)
                 ToneIdentifier metadataIdentifier = mToneMetadataProcessor.process(entry.getKey(), entry.getValue());
 
@@ -353,7 +360,8 @@ public class DMRAudioModule extends AmbeAudioModule implements IdentifierUpdateP
                 }
             }
         }
-        else
+
+        if(!hasToneMetadata)
         {
             mToneMetadataProcessor.closeMetadata();
         }

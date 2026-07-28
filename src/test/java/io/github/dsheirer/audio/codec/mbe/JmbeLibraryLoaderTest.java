@@ -3,6 +3,7 @@ package io.github.dsheirer.audio.codec.mbe;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
@@ -24,8 +25,8 @@ class JmbeLibraryLoaderTest
     @Test
     void changedLibraryCreatesCodecFromNewClassLoader() throws Exception
     {
-        Path firstLibrary = createLibrary("1.0.11", 11.0f);
-        Path secondLibrary = createLibrary("1.0.12", 12.0f);
+        Path firstLibrary = createLibrary("1.0.14", 14.0f);
+        Path secondLibrary = createLibrary("1.0.15", 15.0f);
 
         try(JmbeLibraryLoader loader = new JmbeLibraryLoader(getClass().getClassLoader(), false))
         {
@@ -34,9 +35,20 @@ class JmbeLibraryLoaderTest
 
             assertNotNull(first);
             assertNotNull(second);
-            assertEquals(11.0f, first.getAudio(new byte[0])[0]);
-            assertEquals(12.0f, second.getAudio(new byte[0])[0]);
+            assertEquals(14.0f, first.getAudio(new byte[0])[0]);
+            assertEquals(15.0f, second.getAudio(new byte[0])[0]);
             assertNotSame(first.getClass().getClassLoader(), second.getClass().getClassLoader());
+        }
+    }
+
+    @Test
+    void rejectsLibraryWithoutVoiceQualityDiagnostics() throws Exception
+    {
+        Path oldLibrary = createLibrary("1.0.13", 13.0f);
+
+        try(JmbeLibraryLoader loader = new JmbeLibraryLoader(getClass().getClassLoader(), false))
+        {
+            assertNull(loader.getAudioCodec(oldLibrary, "TEST"));
         }
     }
 
@@ -76,6 +88,7 @@ class JmbeLibraryLoaderTest
 
     private static String source(String version, float marker)
     {
+        int build = Integer.parseInt(version.substring(version.lastIndexOf('.') + 1));
         return """
             package jmbe;
             import jmbe.iface.IAudioCodec;
@@ -85,7 +98,7 @@ class JmbeLibraryLoaderTest
                 public String getVersion() { return "%s"; }
                 public int getMajorVersion() { return 1; }
                 public int getMinorVersion() { return 0; }
-                public int getBuildVersion() { return 0; }
+                public int getBuildVersion() { return %d; }
                 public boolean supports(String codec) { return "TEST".equals(codec); }
                 public IAudioCodec getAudioConverter(String codec) {
                     return new IAudioCodec() {
@@ -96,6 +109,6 @@ class JmbeLibraryLoaderTest
                     };
                 }
             }
-            """.formatted(version, marker);
+            """.formatted(version, build, marker);
     }
 }

@@ -583,6 +583,8 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         mChannelEventBroadcaster.addListener(processingChain);
 
         /* Register global listeners */
+        processingChain.addAudioCallListener(event -> mChannelActivityModel.receiveAudioCallEvent(channel, event));
+
         for(Listener<AudioCallEvent> listener : mAudioCallListeners)
         {
             processingChain.addAudioCallListener(listener);

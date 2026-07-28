@@ -462,6 +462,24 @@ final class StatsLiveService implements AutoCloseable, ProtocolSiteMetadataListe
         row.put("frequency_hz", snapshot.frequencyHz());
         put(row, "signal_dbfs", snapshot.signalDbfs());
         put(row, "decode_health_pct", snapshot.decodeHealthPercent());
+        if(snapshot.decodeHealthPercent() != null)
+        {
+            row.put("cc_valid_frames", snapshot.controlValidFrames());
+            row.put("cc_invalid_frames", snapshot.controlInvalidFrames());
+            row.put("cc_corrected_bits", snapshot.controlCorrectedBits());
+            row.put("cc_sync_loss_bits", snapshot.controlSyncLossBits());
+            row.put("cc_dropped_bits", snapshot.controlDroppedBits());
+        }
+        if(snapshot.voiceQuality() != null && snapshot.voiceQuality().hasMeasurements())
+        {
+            row.put("vc_quality_pct", snapshot.voiceQuality().qualityPercent());
+            row.put("vc_decoded_frames", snapshot.voiceQuality().decodedFrameCount());
+            row.put("vc_repeated_frames", snapshot.voiceQuality().repeatedFrameCount());
+            row.put("vc_concealed_frames", snapshot.voiceQuality().concealedFrameCount());
+            row.put("vc_missing_frames", snapshot.voiceQuality().missingFrameCount());
+            row.put("vc_fec_errors", snapshot.voiceQuality().fecErrorCount());
+            row.put("vc_fec_protected_bits", snapshot.voiceQuality().fecProtectedBitCount());
+        }
         if(snapshot.qualityObservedAtMs() > 0)
         {
             row.put("quality_observed_at_ms", snapshot.qualityObservedAtMs());

@@ -186,6 +186,16 @@ final class StatsWebCallService implements AutoCloseable
         value.put("frequency_hz", longValue(identifiers, Form.CHANNEL_FREQUENCY));
         value.put("timeslot", snapshot.timeslot());
         value.put("encrypted", snapshot.encrypted());
+        if(snapshot.voiceCallQuality() != null && snapshot.voiceCallQuality().hasMeasurements())
+        {
+            value.put("vc_quality_pct", snapshot.voiceCallQuality().qualityPercent());
+            value.put("vc_decoded_frames", snapshot.voiceCallQuality().decodedFrameCount());
+            value.put("vc_repeated_frames", snapshot.voiceCallQuality().repeatedFrameCount());
+            value.put("vc_concealed_frames", snapshot.voiceCallQuality().concealedFrameCount());
+            value.put("vc_missing_frames", snapshot.voiceCallQuality().missingFrameCount());
+            value.put("vc_fec_errors", snapshot.voiceCallQuality().fecErrorCount());
+            value.put("vc_fec_protected_bits", snapshot.voiceCallQuality().fecProtectedBitCount());
+        }
         return Map.copyOf(value);
     }
 

@@ -24,6 +24,8 @@ import javafx.geometry.HPos;
 import javafx.geometry.Insets;
 import javafx.geometry.Orientation;
 import javafx.scene.control.Label;
+import javafx.scene.control.CheckBox;
+import javafx.scene.control.ComboBox;
 import javafx.scene.control.Separator;
 import javafx.scene.control.Spinner;
 import javafx.scene.layout.ColumnConstraints;
@@ -43,6 +45,9 @@ public class NowPlayingPreferenceEditor extends HBox
     private ToggleSwitch mRetainIdleCallDetailsToggle;
     private ToggleSwitch mAdvancedP25EncryptionToggle;
     private Spinner<Integer> mTrafficGrantAgeOutSpinner;
+    private CheckBox mShowControlDecodeQualityCheckBox;
+    private CheckBox mShowVoiceDecodeQualityCheckBox;
+    private ComboBox<NowPlayingPreference.DecodeQualityDisplayMode> mDecodeQualityDisplayModeComboBox;
 
     /**
      * Constructs an instance.
@@ -81,6 +86,17 @@ public class NowPlayingPreferenceEditor extends HBox
             GridPane.setHalignment(getAdvancedP25EncryptionToggle(), HPos.RIGHT);
             mEditorPane.add(getAdvancedP25EncryptionToggle(), 0, ++row);
             mEditorPane.add(new Label("Show Advanced P25 Encryption Status"), 1, row, 2, 1);
+
+            GridPane.setHalignment(getShowControlDecodeQualityCheckBox(), HPos.RIGHT);
+            mEditorPane.add(getShowControlDecodeQualityCheckBox(), 0, ++row);
+            mEditorPane.add(new Label("Show CC Decode Quality"), 1, row, 2, 1);
+
+            GridPane.setHalignment(getShowVoiceDecodeQualityCheckBox(), HPos.RIGHT);
+            mEditorPane.add(getShowVoiceDecodeQualityCheckBox(), 0, ++row);
+            mEditorPane.add(new Label("Show VC Decode Quality"), 1, row, 2, 1);
+
+            mEditorPane.add(new Label("Decode Quality Display"), 0, ++row);
+            mEditorPane.add(getDecodeQualityDisplayModeComboBox(), 1, row, 2, 1);
 
             Separator separator = new Separator(Orientation.HORIZONTAL);
             GridPane.setHgrow(separator, Priority.ALWAYS);
@@ -146,5 +162,46 @@ public class NowPlayingPreferenceEditor extends HBox
         }
 
         return mTrafficGrantAgeOutSpinner;
+    }
+
+    private CheckBox getShowControlDecodeQualityCheckBox()
+    {
+        if(mShowControlDecodeQualityCheckBox == null)
+        {
+            mShowControlDecodeQualityCheckBox = new CheckBox();
+            mShowControlDecodeQualityCheckBox.setSelected(mNowPlayingPreference.isShowControlDecodeQuality());
+            mShowControlDecodeQualityCheckBox.selectedProperty().addListener((observable, oldValue, show) ->
+                mNowPlayingPreference.setShowControlDecodeQuality(show));
+        }
+
+        return mShowControlDecodeQualityCheckBox;
+    }
+
+    private CheckBox getShowVoiceDecodeQualityCheckBox()
+    {
+        if(mShowVoiceDecodeQualityCheckBox == null)
+        {
+            mShowVoiceDecodeQualityCheckBox = new CheckBox();
+            mShowVoiceDecodeQualityCheckBox.setSelected(mNowPlayingPreference.isShowVoiceDecodeQuality());
+            mShowVoiceDecodeQualityCheckBox.selectedProperty().addListener((observable, oldValue, show) ->
+                mNowPlayingPreference.setShowVoiceDecodeQuality(show));
+        }
+
+        return mShowVoiceDecodeQualityCheckBox;
+    }
+
+    private ComboBox<NowPlayingPreference.DecodeQualityDisplayMode> getDecodeQualityDisplayModeComboBox()
+    {
+        if(mDecodeQualityDisplayModeComboBox == null)
+        {
+            mDecodeQualityDisplayModeComboBox = new ComboBox<>();
+            mDecodeQualityDisplayModeComboBox.getItems().addAll(
+                NowPlayingPreference.DecodeQualityDisplayMode.values());
+            mDecodeQualityDisplayModeComboBox.setValue(mNowPlayingPreference.getDecodeQualityDisplayMode());
+            mDecodeQualityDisplayModeComboBox.valueProperty().addListener((observable, oldValue, mode) ->
+                mNowPlayingPreference.setDecodeQualityDisplayMode(mode));
+        }
+
+        return mDecodeQualityDisplayModeComboBox;
     }
 }

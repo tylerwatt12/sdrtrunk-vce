@@ -12,12 +12,18 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.alias.AliasModel;
+import io.github.dsheirer.audio.call.AudioCallEvent;
+import io.github.dsheirer.audio.call.AudioCallEventType;
+import io.github.dsheirer.audio.call.AudioCallId;
+import io.github.dsheirer.audio.call.AudioCallSnapshot;
+import io.github.dsheirer.audio.call.VoiceCallQuality;
 import io.github.dsheirer.channel.metadata.ChannelMetadata;
 import io.github.dsheirer.channel.quality.ControlChannelQualitySnapshot;
 import io.github.dsheirer.channel.state.State;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.Channel.ChannelType;
 import io.github.dsheirer.identifier.IdentifierCollection;
+import io.github.dsheirer.identifier.configuration.FrequencyConfigurationIdentifier;
 import io.github.dsheirer.metadata.site.ProtocolSiteMetadataEvent;
 import io.github.dsheirer.metadata.site.SiteMetadataSnapshot;
 import io.github.dsheirer.module.decode.config.DecodeConfiguration;
@@ -310,6 +316,9 @@ class ChannelActivityModelTest
         assertEquals(-20.5, row.getSignalDbfs());
         assertEquals(97.5, row.getDecodeHealthPercent());
         assertEquals(1_000L, row.getQualityObservedAt());
+        assertEquals(100, row.getDecodeQuality().controlValidFrames());
+        assertEquals(1, row.getDecodeQuality().controlInvalidFrames());
+        assertEquals(3, row.getDecodeQuality().controlCorrectedBits());
 
         SwingUtilities.invokeAndWait(() -> model.receiveControlChannelQuality(new ControlChannelQualitySnapshot(
             channel, channel.getRadresGuid(), 856_137_500L, 2_000L, false, -20.5, -21.0, -25.0, -18.0,
@@ -317,6 +326,34 @@ class ChannelActivityModelTest
         assertNull(row.getSignalDbfs());
         assertNull(row.getDecodeHealthPercent());
         assertEquals(0, row.getQualityObservedAt());
+    }
+
+    @Test
+    void appliesVoiceQualityToMatchingConventionalTimeslot() throws Exception
+    {
+        AliasModel aliasModel = new AliasModel();
+        ChannelActivityModel model = new ChannelActivityModel(aliasModel, new NowPlayingPreference(type -> {}));
+        Channel channel = trunkedChannel("Repeater", "Local", "Hill", new DecodeConfigDMR(), 451_012_500L);
+        ChannelMetadata metadata = new ChannelMetadata(aliasModel, 1);
+        IdentifierCollection identifiers = new IdentifierCollection(
+            List.of(FrequencyConfigurationIdentifier.create(451_012_500L)));
+        identifiers.setTimeslot(1);
+        VoiceCallQuality voiceQuality = new VoiceCallQuality(1, 0, 0, 0, 2, 47);
+        AudioCallSnapshot snapshot = new AudioCallSnapshot(new AudioCallId(1, 1, 1), null, null,
+            identifiers, Set.of(), 1_000L, 1_020L, 1, 1, 1_000L, 1_020L,
+            true, false, false, false, 50, false, null, voiceQuality);
+
+        SwingUtilities.invokeAndWait(() -> {
+            model.setEnabled(true);
+            model.channelStarted(channel, List.of(metadata));
+            model.receiveAudioCallEvent(channel, new AudioCallEvent(AudioCallEventType.AUDIO_FRAME, snapshot,
+                1_020L, new float[160]));
+        });
+
+        ChannelActivityRow row = model.getConventionalTable().getRows().getFirst();
+        assertEquals(snapshot.callId(), row.getVoiceCallId());
+        assertSame(voiceQuality, row.getVoiceCallQuality());
+        assertEquals(100.0d, row.getDecodeQuality().voice().qualityPercent());
     }
 
     @Test

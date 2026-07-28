@@ -19,6 +19,8 @@
 package io.github.dsheirer.channel.metadata.activity;
 
 import io.github.dsheirer.alias.Alias;
+import io.github.dsheirer.audio.call.AudioCallId;
+import io.github.dsheirer.audio.call.VoiceCallQuality;
 import io.github.dsheirer.channel.state.State;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.identifier.Identifier;
@@ -73,6 +75,13 @@ public class ChannelActivityRow
     private String mEncryptionDetails;
     private Double mSignalDbfs;
     private Double mDecodeHealthPercent;
+    private long mControlValidFrames;
+    private long mControlInvalidFrames;
+    private long mControlCorrectedBits;
+    private long mControlSyncLossBits;
+    private long mControlDroppedBits;
+    private AudioCallId mVoiceCallId;
+    private VoiceCallQuality mVoiceCallQuality;
     private long mQualityObservedAt;
     private long mTrafficGrantExpiresAt;
 
@@ -378,18 +387,60 @@ public class ChannelActivityRow
         return mQualityObservedAt;
     }
 
-    public void setQuality(Double signalDbfs, Double decodeHealthPercent, long observedAt)
+    public ChannelActivityDecodeQuality getDecodeQuality()
+    {
+        ChannelActivityDecodeQuality quality = new ChannelActivityDecodeQuality(mDecodeHealthPercent,
+            mControlValidFrames, mControlInvalidFrames, mControlCorrectedBits, mControlSyncLossBits,
+            mControlDroppedBits, mVoiceCallQuality);
+        return quality.hasControl() || quality.hasVoice() ? quality : null;
+    }
+
+    public AudioCallId getVoiceCallId()
+    {
+        return mVoiceCallId;
+    }
+
+    public VoiceCallQuality getVoiceCallQuality()
+    {
+        return mVoiceCallQuality;
+    }
+
+    public void setControlQuality(Double signalDbfs, Double decodeHealthPercent, long validFrames,
+                                  long invalidFrames, long correctedBits, long syncLossBits, long droppedBits,
+                                  long observedAt)
     {
         mSignalDbfs = signalDbfs;
         mDecodeHealthPercent = decodeHealthPercent;
+        mControlValidFrames = Math.max(0, validFrames);
+        mControlInvalidFrames = Math.max(0, invalidFrames);
+        mControlCorrectedBits = Math.max(0, correctedBits);
+        mControlSyncLossBits = Math.max(0, syncLossBits);
+        mControlDroppedBits = Math.max(0, droppedBits);
         mQualityObservedAt = observedAt;
     }
 
-    public void clearQuality()
+    public void clearControlQuality()
     {
         mSignalDbfs = null;
         mDecodeHealthPercent = null;
+        mControlValidFrames = 0;
+        mControlInvalidFrames = 0;
+        mControlCorrectedBits = 0;
+        mControlSyncLossBits = 0;
+        mControlDroppedBits = 0;
         mQualityObservedAt = 0;
+    }
+
+    public void setVoiceQuality(AudioCallId callId, VoiceCallQuality quality)
+    {
+        mVoiceCallId = callId;
+        mVoiceCallQuality = quality;
+    }
+
+    public void clearVoiceQuality()
+    {
+        mVoiceCallId = null;
+        mVoiceCallQuality = null;
     }
 
     public long getTrafficGrantExpiresAt()

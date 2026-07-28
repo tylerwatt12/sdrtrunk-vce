@@ -23,7 +23,6 @@ import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.audio.broadcast.AudioStreamingManager;
 import io.github.dsheirer.audio.playback.AudioPlaybackManager;
 import io.github.dsheirer.audio.playback.ManagedPlayableAudioCall;
-import io.github.dsheirer.channel.quality.ControlChannelQualityProvider;
 import io.github.dsheirer.controller.NamingThreadFactory;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
@@ -40,7 +39,6 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.OptionalDouble;
 import java.util.Set;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledFuture;
@@ -64,7 +62,6 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
     private final Map<Long, DuplicateGroup> mDuplicateGroups = new HashMap<>();
     private final ICallManagementProvider mCallManagementProvider;
     private final DuplicateCallPriorityProvider mDuplicateCallPriorityProvider;
-    private final ControlChannelQualityProvider mControlChannelQualityProvider;
     private final Consumer<ManagedPlayableAudioCall> mPlaybackConsumer;
     private final Consumer<CompletedAudioCall> mRecordingConsumer;
     private final Consumer<CompletedAudioCall> mStreamingConsumer;
@@ -81,7 +78,7 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
                                 Consumer<CompletedAudioCall> webConsumer)
     {
         this(userPreferences, audioRecordingManager, audioStreamingManager, webConsumer,
-            DuplicateCallPriorityProvider.NONE, ControlChannelQualityProvider.NONE);
+            DuplicateCallPriorityProvider.NONE);
     }
 
     /**
@@ -93,7 +90,7 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
                                 Consumer<CompletedAudioCall> webConsumer)
     {
         this(userPreferences, audioPlaybackManager, audioRecordingManager, audioStreamingManager, webConsumer,
-            DuplicateCallPriorityProvider.NONE, ControlChannelQualityProvider.NONE);
+            DuplicateCallPriorityProvider.NONE);
     }
 
     /**
@@ -105,8 +102,11 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
                                 Consumer<CompletedAudioCall> webConsumer,
                                 DuplicateCallPriorityProvider duplicateCallPriorityProvider)
     {
-        this(userPreferences, audioRecordingManager, audioStreamingManager, webConsumer,
-            duplicateCallPriorityProvider, ControlChannelQualityProvider.NONE);
+        this(userPreferences.getCallManagementPreference(), null,
+            audioRecordingManager != null ? audioRecordingManager::receive : null,
+            audioStreamingManager != null ? audioStreamingManager::receive : null, webConsumer,
+            duplicateCallPriorityProvider, DEFAULT_STREAMING_DUPLICATE_WATCHDOG_MILLISECONDS,
+            DEFAULT_STREAMING_DUPLICATE_ORPHAN_CEILING_MILLISECONDS, null);
     }
 
     /**
@@ -117,33 +117,13 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
                                 AudioRecordingManager audioRecordingManager,
                                 AudioStreamingManager audioStreamingManager,
                                 Consumer<CompletedAudioCall> webConsumer,
-                                DuplicateCallPriorityProvider duplicateCallPriorityProvider,
-                                ControlChannelQualityProvider controlChannelQualityProvider)
+                                DuplicateCallPriorityProvider duplicateCallPriorityProvider)
     {
         this(userPreferences.getCallManagementPreference(),
             audioPlaybackManager != null ? audioPlaybackManager::receive : null,
             audioRecordingManager != null ? audioRecordingManager::receive : null,
             audioStreamingManager != null ? audioStreamingManager::receive : null, webConsumer,
-            duplicateCallPriorityProvider, controlChannelQualityProvider,
-            DEFAULT_STREAMING_DUPLICATE_WATCHDOG_MILLISECONDS,
-            DEFAULT_STREAMING_DUPLICATE_ORPHAN_CEILING_MILLISECONDS, null);
-    }
-
-    /**
-     * Constructs an audio-call coordinator with in-memory source-priority and live control-channel-quality hooks for
-     * deterministic duplicate elections.
-     */
-    public AudioCallCoordinator(UserPreferences userPreferences, AudioRecordingManager audioRecordingManager,
-                                AudioStreamingManager audioStreamingManager,
-                                Consumer<CompletedAudioCall> webConsumer,
-                                DuplicateCallPriorityProvider duplicateCallPriorityProvider,
-                                ControlChannelQualityProvider controlChannelQualityProvider)
-    {
-        this(userPreferences.getCallManagementPreference(),
-            null,
-            audioRecordingManager != null ? audioRecordingManager::receive : null,
-            audioStreamingManager != null ? audioStreamingManager::receive : null, webConsumer,
-            duplicateCallPriorityProvider, controlChannelQualityProvider,
+            duplicateCallPriorityProvider,
             DEFAULT_STREAMING_DUPLICATE_WATCHDOG_MILLISECONDS,
             DEFAULT_STREAMING_DUPLICATE_ORPHAN_CEILING_MILLISECONDS, null);
     }
@@ -157,14 +137,13 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
                                 AudioStreamingManager audioStreamingManager,
                                 Consumer<CompletedAudioCall> webConsumer,
                                 DuplicateCallPriorityProvider duplicateCallPriorityProvider,
-                                ControlChannelQualityProvider controlChannelQualityProvider,
                                 WebCallDeliveryListener webCallDeliveryListener)
     {
         this(userPreferences.getCallManagementPreference(),
             null,
             audioRecordingManager != null ? audioRecordingManager::receive : null,
             audioStreamingManager != null ? audioStreamingManager::receive : null, webConsumer,
-            duplicateCallPriorityProvider, controlChannelQualityProvider,
+            duplicateCallPriorityProvider,
             DEFAULT_STREAMING_DUPLICATE_WATCHDOG_MILLISECONDS,
             DEFAULT_STREAMING_DUPLICATE_ORPHAN_CEILING_MILLISECONDS, webCallDeliveryListener);
     }
@@ -177,14 +156,13 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
                                 AudioStreamingManager audioStreamingManager,
                                 Consumer<CompletedAudioCall> webConsumer,
                                 DuplicateCallPriorityProvider duplicateCallPriorityProvider,
-                                ControlChannelQualityProvider controlChannelQualityProvider,
                                 WebCallDeliveryListener webCallDeliveryListener)
     {
         this(userPreferences.getCallManagementPreference(),
             audioPlaybackManager != null ? audioPlaybackManager::receive : null,
             audioRecordingManager != null ? audioRecordingManager::receive : null,
             audioStreamingManager != null ? audioStreamingManager::receive : null, webConsumer,
-            duplicateCallPriorityProvider, controlChannelQualityProvider,
+            duplicateCallPriorityProvider,
             DEFAULT_STREAMING_DUPLICATE_WATCHDOG_MILLISECONDS,
             DEFAULT_STREAMING_DUPLICATE_ORPHAN_CEILING_MILLISECONDS, webCallDeliveryListener);
     }
@@ -195,7 +173,7 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
                          Consumer<CompletedAudioCall> webConsumer)
     {
         this(callManagementProvider, null, recordingConsumer, streamingConsumer, webConsumer,
-            DuplicateCallPriorityProvider.NONE, ControlChannelQualityProvider.NONE,
+            DuplicateCallPriorityProvider.NONE,
             DEFAULT_STREAMING_DUPLICATE_WATCHDOG_MILLISECONDS,
             DEFAULT_STREAMING_DUPLICATE_ORPHAN_CEILING_MILLISECONDS, null);
     }
@@ -207,7 +185,7 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
                          Consumer<CompletedAudioCall> webConsumer)
     {
         this(callManagementProvider, playbackConsumer, recordingConsumer, streamingConsumer, webConsumer,
-            DuplicateCallPriorityProvider.NONE, ControlChannelQualityProvider.NONE,
+            DuplicateCallPriorityProvider.NONE,
             DEFAULT_STREAMING_DUPLICATE_WATCHDOG_MILLISECONDS,
             DEFAULT_STREAMING_DUPLICATE_ORPHAN_CEILING_MILLISECONDS, null);
     }
@@ -220,7 +198,7 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
                          long streamingDuplicateWatchdogMilliseconds)
     {
         this(callManagementProvider, null, recordingConsumer, streamingConsumer, webConsumer,
-            duplicateCallPriorityProvider, ControlChannelQualityProvider.NONE,
+            duplicateCallPriorityProvider,
             streamingDuplicateWatchdogMilliseconds,
             deriveOrphanCeilingMilliseconds(streamingDuplicateWatchdogMilliseconds), null);
     }
@@ -234,7 +212,7 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
                          long streamingDuplicateOrphanCeilingMilliseconds)
     {
         this(callManagementProvider, null, recordingConsumer, streamingConsumer, webConsumer,
-            duplicateCallPriorityProvider, ControlChannelQualityProvider.NONE,
+            duplicateCallPriorityProvider,
             streamingDuplicateWatchdogMilliseconds, streamingDuplicateOrphanCeilingMilliseconds, null);
     }
 
@@ -243,27 +221,12 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
                          Consumer<CompletedAudioCall> streamingConsumer,
                          Consumer<CompletedAudioCall> webConsumer,
                          DuplicateCallPriorityProvider duplicateCallPriorityProvider,
-                         ControlChannelQualityProvider controlChannelQualityProvider,
-                         long streamingDuplicateWatchdogMilliseconds,
-                         long streamingDuplicateOrphanCeilingMilliseconds)
-    {
-        this(callManagementProvider, null, recordingConsumer, streamingConsumer, webConsumer,
-            duplicateCallPriorityProvider, controlChannelQualityProvider,
-            streamingDuplicateWatchdogMilliseconds, streamingDuplicateOrphanCeilingMilliseconds, null);
-    }
-
-    AudioCallCoordinator(ICallManagementProvider callManagementProvider,
-                         Consumer<CompletedAudioCall> recordingConsumer,
-                         Consumer<CompletedAudioCall> streamingConsumer,
-                         Consumer<CompletedAudioCall> webConsumer,
-                         DuplicateCallPriorityProvider duplicateCallPriorityProvider,
-                         ControlChannelQualityProvider controlChannelQualityProvider,
                          long streamingDuplicateWatchdogMilliseconds,
                          long streamingDuplicateOrphanCeilingMilliseconds,
                          WebCallDeliveryListener webCallDeliveryListener)
     {
         this(callManagementProvider, null, recordingConsumer, streamingConsumer, webConsumer,
-            duplicateCallPriorityProvider, controlChannelQualityProvider,
+            duplicateCallPriorityProvider,
             streamingDuplicateWatchdogMilliseconds, streamingDuplicateOrphanCeilingMilliseconds,
             webCallDeliveryListener);
     }
@@ -274,7 +237,6 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
                          Consumer<CompletedAudioCall> streamingConsumer,
                          Consumer<CompletedAudioCall> webConsumer,
                          DuplicateCallPriorityProvider duplicateCallPriorityProvider,
-                         ControlChannelQualityProvider controlChannelQualityProvider,
                          long streamingDuplicateWatchdogMilliseconds,
                          long streamingDuplicateOrphanCeilingMilliseconds,
                          WebCallDeliveryListener webCallDeliveryListener)
@@ -287,8 +249,6 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
         mWebCallDeliveryListener = webCallDeliveryListener;
         mDuplicateCallPriorityProvider = duplicateCallPriorityProvider != null ?
             duplicateCallPriorityProvider : DuplicateCallPriorityProvider.NONE;
-        mControlChannelQualityProvider = controlChannelQualityProvider != null ?
-            controlChannelQualityProvider : ControlChannelQualityProvider.NONE;
         mStreamingDuplicateWatchdogMilliseconds = Math.max(0L, streamingDuplicateWatchdogMilliseconds);
         mStreamingDuplicateOrphanCeilingMilliseconds = Math.max(mStreamingDuplicateWatchdogMilliseconds,
             streamingDuplicateOrphanCeilingMilliseconds);
@@ -1068,16 +1028,22 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
 
         group.resolutionDecisionMade = true;
         cancelResolutionWatchdog(group);
+        long expectedFrameCount = getCohortExpectedFrameCount(group);
         CompletedCandidate winner = group.completedCandidates.values().stream()
-            .min(this::compareResolvedCandidates).orElse(null);
+            .min((first, second) -> compareResolvedCandidates(first, second, expectedFrameCount)).orElse(null);
         group.completedCandidates.clear();
 
         try
         {
             if(winner != null)
             {
+                AudioCallSnapshot winnerSnapshot = winner.completedAudioCall.snapshot();
+                CompletedAudioCall measuredWinner = new CompletedAudioCall(
+                    winnerSnapshot.withVoiceCallQuality(
+                        winnerSnapshot.voiceCallQuality().withExpectedFrameCount(expectedFrameCount)),
+                    winner.completedAudioCall.audioBuffers(), winner.completedAudioCall.resolvedPolicy());
                 CompletedAudioCall resolvedCall =
-                    mergeOutputPolicy(winner.completedAudioCall, group.memberSnapshots.values());
+                    mergeOutputPolicy(measuredWinner, group.memberSnapshots.values());
                 fanout(resolvedCall);
                 resolveWebDelivery(minimumWebOrderKey(group), Set.copyOf(group.memberCallIds),
                     resolvedCall);
@@ -1176,38 +1142,27 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
         }
     }
 
-    private int compareResolvedCandidates(CompletedCandidate first, CompletedCandidate second)
+    /**
+     * Final duplicate election uses only voice completeness, repeated audio, and normalized FEC corrections, in that
+     * order.  The remaining fallback is mechanical so exact ties are reproducible.
+     */
+    private int compareResolvedCandidates(CompletedCandidate first, CompletedCandidate second,
+                                          long expectedFrameCount)
     {
-        int comparison = Boolean.compare(hasPlayableAudio(second.completedAudioCall),
-            hasPlayableAudio(first.completedAudioCall));
+        VoiceQualityScore firstScore = getVoiceQualityScore(first.completedAudioCall, expectedFrameCount);
+        VoiceQualityScore secondScore = getVoiceQualityScore(second.completedAudioCall, expectedFrameCount);
+        int comparison = Double.compare(firstScore.missingAndConcealedRate(),
+            secondScore.missingAndConcealedRate());
 
         if(comparison == 0)
         {
-            comparison = compareControlChannelQuality(first.completedAudioCall, second.completedAudioCall);
+            comparison = Double.compare(firstScore.repeatedRate(), secondScore.repeatedRate());
         }
 
         if(comparison == 0)
         {
-            comparison = Double.compare(getPcmCoverage(second.completedAudioCall),
-                getPcmCoverage(first.completedAudioCall));
-        }
-
-        if(comparison == 0)
-        {
-            comparison = Long.compare(getSampleCount(second.completedAudioCall),
-                getSampleCount(first.completedAudioCall));
-        }
-
-        if(comparison == 0)
-        {
-            comparison = Integer.compare(getBufferCount(second.completedAudioCall),
-                getBufferCount(first.completedAudioCall));
-        }
-
-        if(comparison == 0)
-        {
-            comparison = Double.compare(getSamplesPerBurst(second.completedAudioCall),
-                getSamplesPerBurst(first.completedAudioCall));
+            comparison = Double.compare(firstScore.normalizedFecCorrectionRate(),
+                secondScore.normalizedFecCorrectionRate());
         }
 
         if(comparison == 0)
@@ -1218,48 +1173,44 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
         return comparison;
     }
 
-    private int compareControlChannelQuality(CompletedAudioCall first, CompletedAudioCall second)
+    private long getCohortExpectedFrameCount(DuplicateGroup group)
     {
-        OptionalDouble firstQuality = getControlChannelQuality(first);
-        OptionalDouble secondQuality = getControlChannelQuality(second);
+        long earliestStart = Long.MAX_VALUE;
+        long latestActivity = Long.MIN_VALUE;
+        long observedMaximum = 0L;
 
-        if(firstQuality.isPresent() && secondQuality.isPresent())
+        for(AudioCallSnapshot snapshot : group.memberSnapshots.values())
         {
-            return Double.compare(secondQuality.getAsDouble(), firstQuality.getAsDouble());
-        }
-        else if(firstQuality.isPresent())
-        {
-            return -1;
-        }
-        else if(secondQuality.isPresent())
-        {
-            return 1;
+            if(snapshot != null)
+            {
+                if(snapshot.startTimestamp() > 0)
+                {
+                    earliestStart = Math.min(earliestStart, snapshot.startTimestamp());
+                }
+
+                latestActivity = Math.max(latestActivity, snapshot.lastActivityTimestamp());
+                observedMaximum = Math.max(observedMaximum, snapshot.voiceCallQuality().observedFrameCount());
+            }
         }
 
-        return 0;
+        long elapsedFrames = earliestStart != Long.MAX_VALUE && latestActivity >= earliestStart ?
+            VoiceCallQuality.expectedFrameCount(earliestStart, latestActivity) : 1L;
+        return Math.max(elapsedFrames, observedMaximum);
     }
 
-    private OptionalDouble getControlChannelQuality(CompletedAudioCall call)
+    private VoiceQualityScore getVoiceQualityScore(CompletedAudioCall call, long expectedFrameCount)
     {
-        if(call == null || call.snapshot() == null)
-        {
-            return OptionalDouble.empty();
-        }
-
-        AudioCallSnapshot snapshot = call.snapshot();
-        AudioCallRecordingMetadata metadata = snapshot.recordingMetadata();
-        String sourceGuid = getStableSourceGuid(snapshot);
-        String siteIdentity = hasText(sourceGuid) ? sourceGuid :
-            metadata != null ? metadata.siteIdentity() : null;
-        OptionalDouble quality = mControlChannelQualityProvider.getDecodeHealthPercent(siteIdentity);
-
-        if(quality.isPresent() && Double.isFinite(quality.getAsDouble()) &&
-            quality.getAsDouble() >= 0.0d && quality.getAsDouble() <= 100.0d)
-        {
-            return quality;
-        }
-
-        return OptionalDouble.empty();
+        AudioCallSnapshot snapshot = call != null ? call.snapshot() : null;
+        VoiceCallQuality quality = snapshot != null ? snapshot.voiceCallQuality() : VoiceCallQuality.EMPTY;
+        long observedFrames = quality.observedFrameCount();
+        long expectedFrames = Math.max(Math.max(1L, expectedFrameCount), observedFrames);
+        long missingFrames = expectedFrames - observedFrames;
+        double missingAndConcealedRate =
+            (double)(missingFrames + quality.concealedFrameCount()) / expectedFrames;
+        double repeatedRate = (double)quality.repeatedFrameCount() / expectedFrames;
+        double normalizedFecCorrectionRate = quality.fecProtectedBitCount() > 0 ?
+            (double)quality.fecErrorCount() / quality.fecProtectedBitCount() : 1.0d;
+        return new VoiceQualityScore(missingAndConcealedRate, repeatedRate, normalizedFecCorrectionRate);
     }
 
     private int compareResolvedFallback(CompletedCandidate first, CompletedCandidate second)
@@ -1280,11 +1231,6 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
         }
 
         return comparison;
-    }
-
-    private boolean hasPlayableAudio(CompletedAudioCall call)
-    {
-        return getSampleCount(call) > 0;
     }
 
     /**
@@ -1340,7 +1286,8 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
             winnerSnapshot.lastActivityTimestamp(), winnerSnapshot.burstCount(), winnerSnapshot.burstGeneration(),
             winnerSnapshot.lastBurstStartTimestamp(), winnerSnapshot.lastBurstEndTimestamp(),
             winnerSnapshot.burstActive(), winnerSnapshot.complete(), winnerSnapshot.encrypted(),
-            resolvedPolicy.recordAudio(), winnerSnapshot.monitorPriority(), false, mergedMetadata);
+            resolvedPolicy.recordAudio(), winnerSnapshot.monitorPriority(), false, mergedMetadata,
+            winnerSnapshot.voiceCallQuality());
         return new CompletedAudioCall(mergedSnapshot, winner.audioBuffers(), resolvedPolicy);
     }
 
@@ -1540,55 +1487,6 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
         return normalized.isEmpty() ? null : normalized;
     }
 
-    private double getPcmCoverage(CompletedAudioCall call)
-    {
-        long sampleCount = getSampleCount(call);
-        AudioCallSnapshot snapshot = call.snapshot();
-        long callSpan = Math.max(1L, snapshot.lastActivityTimestamp() - snapshot.startTimestamp());
-        long expectedSampleCount;
-
-        try
-        {
-            expectedSampleCount = Math.multiplyExact(callSpan, 8L);
-        }
-        catch(ArithmeticException _)
-        {
-            expectedSampleCount = Long.MAX_VALUE;
-        }
-
-        return Math.min(1.0d, (double)sampleCount / Math.max(1L, expectedSampleCount));
-    }
-
-    private long getSampleCount(CompletedAudioCall call)
-    {
-        long sampleCount = 0L;
-
-        if(call != null && call.audioBuffers() != null)
-        {
-            for(float[] buffer : call.audioBuffers())
-            {
-                if(buffer != null)
-                {
-                    sampleCount += buffer.length;
-                }
-            }
-        }
-
-        return sampleCount;
-    }
-
-    private int getBufferCount(CompletedAudioCall call)
-    {
-        return call != null && call.audioBuffers() != null ? call.audioBuffers().size() : 0;
-    }
-
-    private double getSamplesPerBurst(CompletedAudioCall call)
-    {
-        int burstCount = call != null && call.snapshot() != null ?
-            Math.max(1, call.snapshot().burstCount()) : 1;
-        return (double)getSampleCount(call) / burstCount;
-    }
-
     private void finishDuplicateGroupMember(ManagedAudioCall context)
     {
         if(context.duplicateGroupId == null)
@@ -1710,6 +1608,11 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
     }
 
     private record CompletedCandidate(CompletedAudioCall completedAudioCall, long registrationOrdinal)
+    {
+    }
+
+    private record VoiceQualityScore(double missingAndConcealedRate, double repeatedRate,
+                                     double normalizedFecCorrectionRate)
     {
     }
 }

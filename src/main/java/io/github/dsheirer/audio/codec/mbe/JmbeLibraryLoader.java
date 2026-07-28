@@ -108,9 +108,11 @@ public final class JmbeLibraryLoader implements AutoCloseable
                 throw new IllegalArgumentException("JMBE entry point does not implement IAudioCodecLibrary");
             }
 
-            if(library.getMajorVersion() < 1)
+            if(library.getMajorVersion() < 1 ||
+                library.getMajorVersion() == 1 && library.getMinorVersion() == 0 &&
+                    library.getBuildVersion() < 14)
             {
-                throw new IllegalArgumentException("JMBE library version 1.0.0 or newer is required");
+                throw new IllegalArgumentException("JMBE library version 1.0.14 or newer is required");
             }
 
             mClassLoaders.add(classLoader);

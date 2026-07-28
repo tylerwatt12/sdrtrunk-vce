@@ -32,6 +32,9 @@ public class NowPlayingPreference extends Preference
     private static final String PREFERENCE_KEY_ADVANCED_P25_ENCRYPTION_STATUS = "advanced.p25.encryption.status";
     private static final String PREFERENCE_KEY_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS =
         "traffic.grant.age.out.milliseconds";
+    private static final String PREFERENCE_KEY_SHOW_CONTROL_DECODE_QUALITY = "show.control.decode.quality";
+    private static final String PREFERENCE_KEY_SHOW_VOICE_DECODE_QUALITY = "show.voice.decode.quality";
+    private static final String PREFERENCE_KEY_DECODE_QUALITY_DISPLAY_MODE = "decode.quality.display.mode";
 
     public static final int MIN_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS = 100;
     public static final int MAX_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS = 15000;
@@ -41,6 +44,28 @@ public class NowPlayingPreference extends Preference
     private Boolean mRetainIdleCallDetails;
     private Boolean mAdvancedP25EncryptionStatus;
     private Integer mTrafficGrantAgeOutMilliseconds;
+    private Boolean mShowControlDecodeQuality;
+    private Boolean mShowVoiceDecodeQuality;
+    private DecodeQualityDisplayMode mDecodeQualityDisplayMode;
+
+    public enum DecodeQualityDisplayMode
+    {
+        PERCENTAGE("Percentage"),
+        DETAILED("Detailed");
+
+        private final String mLabel;
+
+        DecodeQualityDisplayMode(String label)
+        {
+            mLabel = label;
+        }
+
+        @Override
+        public String toString()
+        {
+            return mLabel;
+        }
+    }
 
     /**
      * Constructs an instance.
@@ -121,6 +146,65 @@ public class NowPlayingPreference extends Preference
         mTrafficGrantAgeOutMilliseconds = clamp(milliseconds, MIN_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS,
             MAX_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS);
         mPreferences.putInt(PREFERENCE_KEY_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS, mTrafficGrantAgeOutMilliseconds);
+        notifyPreferenceUpdated();
+    }
+
+    public boolean isShowControlDecodeQuality()
+    {
+        if(mShowControlDecodeQuality == null)
+        {
+            mShowControlDecodeQuality = mPreferences.getBoolean(PREFERENCE_KEY_SHOW_CONTROL_DECODE_QUALITY, true);
+        }
+
+        return mShowControlDecodeQuality;
+    }
+
+    public void setShowControlDecodeQuality(boolean show)
+    {
+        mShowControlDecodeQuality = show;
+        mPreferences.putBoolean(PREFERENCE_KEY_SHOW_CONTROL_DECODE_QUALITY, show);
+        notifyPreferenceUpdated();
+    }
+
+    public boolean isShowVoiceDecodeQuality()
+    {
+        if(mShowVoiceDecodeQuality == null)
+        {
+            mShowVoiceDecodeQuality = mPreferences.getBoolean(PREFERENCE_KEY_SHOW_VOICE_DECODE_QUALITY, true);
+        }
+
+        return mShowVoiceDecodeQuality;
+    }
+
+    public void setShowVoiceDecodeQuality(boolean show)
+    {
+        mShowVoiceDecodeQuality = show;
+        mPreferences.putBoolean(PREFERENCE_KEY_SHOW_VOICE_DECODE_QUALITY, show);
+        notifyPreferenceUpdated();
+    }
+
+    public DecodeQualityDisplayMode getDecodeQualityDisplayMode()
+    {
+        if(mDecodeQualityDisplayMode == null)
+        {
+            try
+            {
+                mDecodeQualityDisplayMode = DecodeQualityDisplayMode.valueOf(mPreferences.get(
+                    PREFERENCE_KEY_DECODE_QUALITY_DISPLAY_MODE, DecodeQualityDisplayMode.PERCENTAGE.name()));
+            }
+            catch(IllegalArgumentException _)
+            {
+                mDecodeQualityDisplayMode = DecodeQualityDisplayMode.PERCENTAGE;
+            }
+        }
+
+        return mDecodeQualityDisplayMode;
+    }
+
+    public void setDecodeQualityDisplayMode(DecodeQualityDisplayMode mode)
+    {
+        mDecodeQualityDisplayMode = mode != null ? mode : DecodeQualityDisplayMode.PERCENTAGE;
+        mPreferences.put(PREFERENCE_KEY_DECODE_QUALITY_DISPLAY_MODE, mDecodeQualityDisplayMode.name());
         notifyPreferenceUpdated();
     }
 

@@ -44,6 +44,7 @@ import io.github.dsheirer.preference.encryption.VoiceEncryptionProtocol;
 import io.github.dsheirer.sample.Listener;
 import java.util.ArrayList;
 import java.util.List;
+import jmbe.iface.IAudioWithMetadata;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -364,9 +365,9 @@ public class P25P1AudioModule extends ImbeAudioModule implements IDecoderStateEv
                     }
                 }
 
-                float[] audio = getAudioCodec().getAudio(frame);
-                audio = mGain.apply(audio);
-                addAudio(audio);
+                IAudioWithMetadata audioWithMetadata = getAudioCodec().getAudioWithMetadata(frame);
+                float[] audio = mGain.apply(audioWithMetadata.getAudio());
+                addAudio(audio, getVoiceFrameQuality(audioWithMetadata));
                 mLastAudioTimestamp = timestamp;
                 mLastAudioSegmentId = currentSegmentId;
             }
@@ -418,9 +419,9 @@ public class P25P1AudioModule extends ImbeAudioModule implements IDecoderStateEv
             try
             {
                 byte[] decryptedFrame = mVoiceFrameDecryptor.decrypt(frame);
-                float[] audio = getAudioCodec().getAudio(decryptedFrame);
-                audio = mGain.apply(audio);
-                addAudio(audio);
+                IAudioWithMetadata audioWithMetadata = getAudioCodec().getAudioWithMetadata(decryptedFrame);
+                float[] audio = mGain.apply(audioWithMetadata.getAudio());
+                addAudio(audio, getVoiceFrameQuality(audioWithMetadata));
                 mLastAudioTimestamp = timestamp;
                 mLastAudioSegmentId = currentSegmentId;
             }

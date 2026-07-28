@@ -21,6 +21,7 @@ import io.github.dsheirer.controller.NamingThreadFactory;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.preference.UserPreferences;
+import io.github.dsheirer.preference.nowplaying.NowPlayingPreference;
 import io.github.dsheirer.preference.application.ApplicationPreference;
 import io.github.dsheirer.stats.activity.P25ActivityCommitListener;
 import io.github.dsheirer.stats.activity.P25ActivityLogPath;
@@ -261,6 +262,12 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         status.put("database", mDatabase.status());
         status.put("statsLogging", statsLoggingStatus());
         status.put("webPlayer", mWebCallService.status());
+        NowPlayingPreference nowPlaying = mUserPreferences.getNowPlayingPreference();
+        status.put("decodeDisplay", Map.of(
+            "showControl", nowPlaying.isShowControlDecodeQuality(),
+            "showVoice", nowPlaying.isShowVoiceDecodeQuality(),
+            "mode", nowPlaying.getDecodeQualityDisplayMode().name().toLowerCase()
+        ));
         return status;
     }
 

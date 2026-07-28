@@ -63,6 +63,11 @@ public class MutableAudioCallBuilder implements Listener<IdentifierUpdateNotific
     private int mMonitorPriority = Priority.DEFAULT_PRIORITY;
     private int mBurstCount;
     private int mAudioBufferCount;
+    private long mDecodedVoiceFrameCount;
+    private long mRepeatedVoiceFrameCount;
+    private long mConcealedVoiceFrameCount;
+    private long mFecErrorCount;
+    private long mFecProtectedBitCount;
 
     public MutableAudioCallBuilder(AliasList aliasList, int timeslot)
     {
@@ -181,6 +186,14 @@ public class MutableAudioCallBuilder implements Listener<IdentifierUpdateNotific
         return mAudioBufferCount > 0;
     }
 
+    public VoiceCallQuality getVoiceCallQuality()
+    {
+        VoiceCallQuality quality = new VoiceCallQuality(mDecodedVoiceFrameCount, mRepeatedVoiceFrameCount,
+            mConcealedVoiceFrameCount, 0, mFecErrorCount, mFecProtectedBitCount);
+        return quality.withExpectedFrameCount(VoiceCallQuality.expectedFrameCount(mStartTimestamp,
+            mLastActivityTimestamp));
+    }
+
     public void touch()
     {
         mLastActivityTimestamp = System.currentTimeMillis();
@@ -257,6 +270,24 @@ public class MutableAudioCallBuilder implements Listener<IdentifierUpdateNotific
         mAudioBufferCount++;
         mSampleCount += audioBuffer.length;
         mLastActivityTimestamp = System.currentTimeMillis();
+    }
+
+    public void addVoiceFrameQuality(VoiceFrameQualityObservation observation)
+    {
+        if(observation == null)
+        {
+            return;
+        }
+
+        switch(observation.outcome())
+        {
+            case DECODED -> mDecodedVoiceFrameCount++;
+            case REPEATED -> mRepeatedVoiceFrameCount++;
+            case CONCEALED -> mConcealedVoiceFrameCount++;
+        }
+
+        mFecErrorCount += observation.fecErrorCount();
+        mFecProtectedBitCount += observation.fecProtectedBitCount();
     }
 
     @Override

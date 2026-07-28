@@ -12,6 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.dsheirer.audio.call.AudioCallId;
 import io.github.dsheirer.audio.call.AudioCallSnapshot;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
+import io.github.dsheirer.audio.call.VoiceCallQuality;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.configuration.FrequencyConfigurationIdentifier;
@@ -49,6 +50,10 @@ class StatsWebCallServiceTest
             assertEquals("RADIO", metadata.get("source_form"));
             assertEquals(854_187_500L, metadata.get("frequency_hz"));
             assertEquals(100L, metadata.get("duration_ms"));
+            assertEquals(98.0d, metadata.get("vc_quality_pct"));
+            assertEquals(49L, metadata.get("vc_decoded_frames"));
+            assertEquals(1L, metadata.get("vc_repeated_frames"));
+            assertEquals(4L, metadata.get("vc_fec_errors"));
 
             StatsWebCallService.CachedCall cached = service.get(String.valueOf(metadata.get("call_id")));
             assertNotNull(cached);
@@ -87,7 +92,8 @@ class StatsWebCallServiceTest
             APCO25RadioIdentifier.createFrom(9001));
         AudioCallSnapshot snapshot = new AudioCallSnapshot(new AudioCallId(1, 2, 0), null, null,
             new IdentifierCollection(identifiers), Set.of(), 1_000L, 1_100L, 1, 1L, 1_000L, 1_100L,
-            false, true, false, true, 50, false);
+            false, true, false, true, 50, false, null,
+            new VoiceCallQuality(49, 1, 0, 0, 4, 6_850));
         float[] audio = new float[800];
 
         for(int index = 0; index < audio.length; index++)

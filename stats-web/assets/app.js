@@ -2297,6 +2297,58 @@ function liveSystemsSection() {
   const tables = new Map();
   const tabNodes = new Map();
   const rowNodes = new Map();
+  const decodeDisplay = serviceStatus?.decodeDisplay || { showControl: true, showVoice: true, mode: 'percentage' };
+  const compactQualityCount = (value) => {
+    const count = Number(value || 0);
+    if (count >= 1000000) return `${(count / 1000000).toFixed(1)}m`;
+    if (count >= 1000) return `${(count / 1000).toFixed(1)}k`;
+    return String(count);
+  };
+  const decodeQualityValues = (row) => {
+    const values = [];
+    if (decodeDisplay.showControl && row.decode_health_pct != null) {
+      values.push(Number(row.decode_health_pct));
+    }
+    if (decodeDisplay.showVoice && row.vc_quality_pct != null) {
+      values.push(Number(row.vc_quality_pct));
+    }
+    return values.filter(Number.isFinite);
+  };
+  const decodeQualityText = (row) => {
+    const values = [];
+    const detailed = decodeDisplay.mode === 'detailed';
+    if (decodeDisplay.showControl && row.decode_health_pct != null) {
+      let value = `CC ${Number(row.decode_health_pct).toFixed(1)}%`;
+      if (detailed) {
+        value += ` · ${Number(row.cc_valid_frames || 0)}/${Number(row.cc_invalid_frames || 0)}/` +
+          `${Number(row.cc_corrected_bits || 0)}/${Number(row.cc_sync_loss_bits || 0)}/` +
+          `${Number(row.cc_dropped_bits || 0)}`;
+      }
+      values.push(value);
+    }
+    if (decodeDisplay.showVoice && row.vc_quality_pct != null) {
+      let value = `VC ${Number(row.vc_quality_pct).toFixed(1)}%`;
+      if (detailed) {
+        value += ` · ${Number(row.vc_decoded_frames || 0)}/${Number(row.vc_repeated_frames || 0)}/` +
+          `${Number(row.vc_concealed_frames || 0)}/${Number(row.vc_missing_frames || 0)} · ` +
+          `${Number(row.vc_fec_errors || 0)}/${compactQualityCount(row.vc_fec_protected_bits)}`;
+      }
+      values.push(value);
+    }
+    return values.join(' · ');
+  };
+  const decodeQualityTitle = (row) => {
+    const values = [];
+    if (decodeDisplay.showControl && row.decode_health_pct != null) {
+      values.push('CC uses a rolling 30-second control-channel window. Detail order: valid frames / ' +
+        'invalid frames / corrected bits / sync-loss bits / dropped bits.');
+    }
+    if (decodeDisplay.showVoice && row.vc_quality_pct != null) {
+      values.push('VC uses 20 ms voice frames. Detail order: decoded / repeated / concealed / missing frames · ' +
+        'FEC detected corrections / inspected protected bits.');
+    }
+    return values.join('\n');
+  };
   const columns = [
     { id: 'status', label: 'Status', width: 145, sortValue: (row) => row.status || '' },
     { id: 'tags', label: 'Tags', width: 180, sortValue: channelTagText },
@@ -2304,7 +2356,11 @@ function liveSystemsSection() {
       channelTagSet(row.tags).has('CONVENTIONAL') ? (row.channel_name || '') : (row.lcn || '') },
     { id: 'frequency', label: 'MHz', fullLabel: 'Frequency MHz', width: 100, sortValue: (row) => Number(row.frequency_hz || 0) },
     { id: 'signal', label: 'dBFS', fullLabel: 'Signal dBFS', width: 90, sortValue: (row) => Number(row.signal_dbfs ?? -999) },
-    { id: 'decode-health', label: 'Decode %', width: 90, sortValue: (row) => Number(row.decode_health_pct ?? -1) },
+    { id: 'decode-health', label: 'Decode %', width: decodeDisplay.mode === 'detailed' ? 260 : 120,
+      sortValue: (row) => {
+        const values = decodeQualityValues(row);
+        return values.length ? Math.min(...values) : -1;
+      } },
     { id: 'source-alias', label: 'Source', fullLabel: 'Source Alias', width: 220, sortValue: (row) => row.source_alias_display || row.source_alias || row.talker_alias || '' },
     { id: 'source', label: 'Src ID', fullLabel: 'Source ID', width: 105, sortValue: (row) => Number(row.source_id || 0) },
     { id: 'target-alias', label: 'Target', fullLabel: 'Target Alias', width: 220, sortValue: (row) => row.target_alias || '' },
@@ -2369,7 +2425,7 @@ function liveSystemsSection() {
     cellText(cells[2], conventional ? row.channel_name : row.lcn);
     cellText(cells[3], frequency(row.frequency_hz));
     cellText(cells[4], row.signal_dbfs == null ? '' : `${Number(row.signal_dbfs).toFixed(1)} dBFS`);
-    cellText(cells[5], row.decode_health_pct == null ? '' : `${Number(row.decode_health_pct).toFixed(1)}%`);
+    cellText(cells[5], decodeQualityText(row));
     cellText(cells[6], row.source_alias_display || row.source_alias ||
       (row.talker_alias ? `TA: ${row.talker_alias}` : ''));
     cellText(cells[7], row.source_id);
@@ -2385,9 +2441,12 @@ function liveSystemsSection() {
       (tags.has('ALTERNATE_CONTROL') ? 'control-alternate' : '');
     cells[3].className = cells[2].className;
     cells[4].className = cells[2].className;
-    cells[5].className = row.decode_health_pct == null ? '' :
-      (Number(row.decode_health_pct) >= DECODE_HEALTHY_MINIMUM_PERCENT ? 'quality-good' :
-        (Number(row.decode_health_pct) >= DECODE_DEGRADED_MINIMUM_PERCENT ?
+    cells[5].title = decodeQualityTitle(row);
+    const decodeValues = decodeQualityValues(row);
+    const decodePercent = decodeValues.length ? Math.min(...decodeValues) : null;
+    cells[5].className = decodePercent == null ? '' :
+      (decodePercent >= DECODE_HEALTHY_MINIMUM_PERCENT ? 'quality-good' :
+        (decodePercent >= DECODE_DEGRADED_MINIMUM_PERCENT ?
           'quality-warn' : 'quality-bad'));
     element.classList.toggle('selected', selectedRowKey === row.key);
   };
