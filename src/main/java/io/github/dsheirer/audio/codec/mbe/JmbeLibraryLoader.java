@@ -30,6 +30,7 @@ public final class JmbeLibraryLoader implements AutoCloseable
 {
     private static final Logger mLog = LoggerFactory.getLogger(JmbeLibraryLoader.class);
     private static final String LIBRARY_CLASS = "jmbe.JMBEAudioLibrary";
+    private static final String ENABLE_VOICE_QUALITY_METADATA_METHOD = "setVoiceQualityMetadataEnabled";
     private static final JmbeLibraryLoader INSTANCE = new JmbeLibraryLoader(JmbeLibraryLoader.class.getClassLoader(), true);
 
     private final ClassLoader mParentClassLoader;
@@ -85,7 +86,9 @@ public final class JmbeLibraryLoader implements AutoCloseable
                 return null;
             }
 
-            return mLibrary.getAudioConverter(codecName);
+            IAudioCodec codec = mLibrary.getAudioConverter(codecName);
+            codec.getClass().getMethod(ENABLE_VOICE_QUALITY_METADATA_METHOD, boolean.class).invoke(codec, true);
+            return codec;
         }
         catch(IOException | ReflectiveOperationException | LinkageError | RuntimeException e)
         {

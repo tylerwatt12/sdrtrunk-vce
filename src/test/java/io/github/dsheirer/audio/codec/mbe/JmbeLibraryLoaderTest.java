@@ -42,7 +42,7 @@ class JmbeLibraryLoaderTest
     }
 
     @Test
-    void rejectsLibraryWithoutVoiceQualityDiagnostics() throws Exception
+    void rejectsOlderLibraryVersion() throws Exception
     {
         Path oldLibrary = createLibrary("1.0.13", 13.0f);
 
@@ -52,12 +52,28 @@ class JmbeLibraryLoaderTest
         }
     }
 
+    @Test
+    void rejectsLibraryWithoutVoiceQualityCapability() throws Exception
+    {
+        Path incompleteLibrary = createLibrary("1.0.14", 14.0f, false);
+
+        try(JmbeLibraryLoader loader = new JmbeLibraryLoader(getClass().getClassLoader(), false))
+        {
+            assertNull(loader.getAudioCodec(incompleteLibrary, "TEST"));
+        }
+    }
+
     private Path createLibrary(String version, float marker) throws Exception
+    {
+        return createLibrary(version, marker, true);
+    }
+
+    private Path createLibrary(String version, float marker, boolean includeVoiceQualityCapability) throws Exception
     {
         Path sourceDirectory = Files.createDirectories(mTemporaryDirectory.resolve("source-" + version));
         Path classDirectory = Files.createDirectories(mTemporaryDirectory.resolve("classes-" + version));
         Path source = sourceDirectory.resolve("JMBEAudioLibrary.java");
-        Files.writeString(source, source(version, marker));
+        Files.writeString(source, source(version, marker, includeVoiceQualityCapability));
 
         var compiler = ToolProvider.getSystemJavaCompiler();
 
@@ -86,9 +102,11 @@ class JmbeLibraryLoaderTest
         return library;
     }
 
-    private static String source(String version, float marker)
+    private static String source(String version, float marker, boolean includeVoiceQualityCapability)
     {
         int build = Integer.parseInt(version.substring(version.lastIndexOf('.') + 1));
+        String voiceQualityCapability = includeVoiceQualityCapability ?
+            "public void setVoiceQualityMetadataEnabled(boolean enabled) { qualityMetadataEnabled = enabled; }" : "";
         return """
             package jmbe;
             import jmbe.iface.IAudioCodec;
@@ -101,14 +119,21 @@ class JmbeLibraryLoaderTest
                 public int getBuildVersion() { return %d; }
                 public boolean supports(String codec) { return "TEST".equals(codec); }
                 public IAudioCodec getAudioConverter(String codec) {
-                    return new IAudioCodec() {
-                        public String getCodecName() { return codec; }
-                        public float[] getAudio(byte[] frame) { return new float[]{%sf}; }
-                        public IAudioWithMetadata getAudioWithMetadata(byte[] frame) { return null; }
-                        public void reset() {}
-                    };
+                    return new TestCodec(codec);
+                }
+                public static class TestCodec implements IAudioCodec {
+                    private final String codec;
+                    private boolean qualityMetadataEnabled;
+                    public TestCodec(String codec) { this.codec = codec; }
+                    %s
+                    public String getCodecName() { return codec; }
+                    public float[] getAudio(byte[] frame) {
+                        return new float[]{qualityMetadataEnabled ? %sf : -%sf};
+                    }
+                    public IAudioWithMetadata getAudioWithMetadata(byte[] frame) { return null; }
+                    public void reset() {}
                 }
             }
-            """.formatted(version, build, marker);
+            """.formatted(version, build, voiceQualityCapability, marker, marker);
     }
 }
