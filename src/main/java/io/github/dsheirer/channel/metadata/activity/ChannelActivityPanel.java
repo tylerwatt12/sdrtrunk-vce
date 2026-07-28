@@ -36,16 +36,8 @@ import io.github.dsheirer.preference.swing.JTableColumnWidthMonitor;
 import io.github.dsheirer.sample.Broadcaster;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.util.SwingUtils;
-import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Component;
-import java.awt.Dimension;
-import java.awt.Graphics;
-import java.awt.Graphics2D;
-import java.awt.Rectangle;
-import java.awt.RenderingHints;
-import java.awt.event.MouseAdapter;
-import java.awt.event.MouseEvent;
 import java.text.DecimalFormat;
 import java.util.ArrayList;
 import java.util.EnumMap;
@@ -55,7 +47,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import javax.swing.BorderFactory;
-import javax.swing.Icon;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
@@ -267,14 +258,6 @@ public class ChannelActivityPanel extends JPanel
             mTabbedPane.setFont(this.getFont());
             mTabbedPane.setForeground(Color.BLACK);
             mTabbedPane.addChangeListener(event -> updateTableVisibility());
-            mTabbedPane.addMouseListener(new MouseAdapter()
-            {
-                @Override
-                public void mouseClicked(MouseEvent event)
-                {
-                    handleTabIndicatorClick(event);
-                }
-            });
         }
 
         return mTabbedPane;
@@ -291,7 +274,7 @@ public class ChannelActivityPanel extends JPanel
         if(tableModel.isCloseable())
         {
             int index = getTabbedPane().indexOfComponent(scrollPane);
-            getTabbedPane().setIconAt(index, new TabStatusIcon(tableModel));
+            getTabbedPane().setTabComponentAt(index, new ChannelActivityTabHeader(tableModel, this::closeTab));
             getTabbedPane().setToolTipTextAt(index, getTabToolTip(tableModel));
         }
         else
@@ -314,9 +297,17 @@ public class ChannelActivityPanel extends JPanel
             getTabbedPane().setTitleAt(index, title);
             getTabbedPane().setToolTipTextAt(index, tableModel.isCloseable() ? getTabToolTip(tableModel) : title);
 
-            if(tableModel.isCloseable() && !(getTabbedPane().getIconAt(index) instanceof TabStatusIcon))
+            if(tableModel.isCloseable())
             {
-                getTabbedPane().setIconAt(index, new TabStatusIcon(tableModel));
+                if(getTabbedPane().getTabComponentAt(index) instanceof ChannelActivityTabHeader header)
+                {
+                    header.update();
+                }
+                else
+                {
+                    getTabbedPane().setTabComponentAt(index,
+                        new ChannelActivityTabHeader(tableModel, this::closeTab));
+                }
             }
 
             getTabbedPane().revalidate();
@@ -331,47 +322,8 @@ public class ChannelActivityPanel extends JPanel
             return "Control channel active. " + tableModel.getTitle();
         }
 
-        return "Control channel stale or stopped. Click the status dot to close this site tab. " +
+        return "Control channel stale or stopped. Click × to close this site tab. " +
             tableModel.getTitle();
-    }
-
-    private void handleTabIndicatorClick(MouseEvent event)
-    {
-        if(event.getButton() != MouseEvent.BUTTON1)
-        {
-            return;
-        }
-
-        int index = getTabbedPane().indexAtLocation(event.getX(), event.getY());
-        ChannelActivityTableModel tableModel = getTableModel(index);
-
-        if(tableModel != null && tableModel.isCloseable() && !tableModel.isControlActive())
-        {
-            Rectangle tabBounds = getTabbedPane().getUI().getTabBounds(getTabbedPane(), index);
-
-            if(tabBounds != null && event.getX() <= tabBounds.x + TabStatusIcon.WIDTH + 8)
-            {
-                closeTab(tableModel);
-            }
-        }
-    }
-
-    private ChannelActivityTableModel getTableModel(int tabIndex)
-    {
-        if(tabIndex >= 0)
-        {
-            Component tabComponent = getTabbedPane().getComponentAt(tabIndex);
-
-            for(Map.Entry<ChannelActivityTableModel,Component> entry: mTabComponents.entrySet())
-            {
-                if(entry.getValue() == tabComponent)
-                {
-                    return entry.getKey();
-                }
-            }
-        }
-
-        return null;
     }
 
     private void closeTab(ChannelActivityTableModel tableModel)
@@ -769,59 +721,6 @@ public class ChannelActivityPanel extends JPanel
         mForegroundColors.put(State.RESET, Color.YELLOW);
         mBackgroundColors.put(State.TEARDOWN, Color.DARK_GRAY);
         mForegroundColors.put(State.TEARDOWN, Color.WHITE);
-    }
-
-    public static class TabStatusIcon implements Icon
-    {
-        public static final int WIDTH = 18;
-        private static final int HEIGHT = 14;
-        private final ChannelActivityTableModel mTableModel;
-
-        public TabStatusIcon(ChannelActivityTableModel tableModel)
-        {
-            mTableModel = tableModel;
-        }
-
-        @Override
-        public int getIconWidth()
-        {
-            return WIDTH;
-        }
-
-        @Override
-        public int getIconHeight()
-        {
-            return HEIGHT;
-        }
-
-        @Override
-        public void paintIcon(Component component, Graphics graphics, int x, int y)
-        {
-            Graphics2D g2 = (Graphics2D)graphics.create();
-
-            try
-            {
-                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-                int size = 11;
-                int circleX = x + 3;
-                int circleY = y + ((HEIGHT - size) / 2);
-                boolean controlActive = mTableModel.isControlActive();
-                g2.setColor(controlActive ? new Color(0, 145, 40) : Color.BLACK);
-                g2.fillOval(circleX, circleY, size, size);
-
-                if(!controlActive)
-                {
-                    g2.setColor(Color.WHITE);
-                    g2.setStroke(new BasicStroke(1.6f));
-                    g2.drawLine(circleX + 3, circleY + 3, circleX + size - 4, circleY + size - 4);
-                    g2.drawLine(circleX + size - 4, circleY + 3, circleX + 3, circleY + size - 4);
-                }
-            }
-            finally
-            {
-                g2.dispose();
-            }
-        }
     }
 
     public class StateCellRenderer extends DefaultTableCellRenderer
