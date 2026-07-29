@@ -13,8 +13,8 @@ package io.github.dsheirer.stats.activity;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -28,6 +28,7 @@ import io.github.dsheirer.identifier.configuration.DecoderTypeConfigurationIdent
 import io.github.dsheirer.identifier.configuration.FrequencyConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.SiteGuidConfigurationIdentifier;
 import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
+import io.github.dsheirer.identifier.patch.PatchGroup;
 import io.github.dsheirer.metadata.site.SiteMetadataEvent;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.dmr.DMRConventionalCallEvent;
@@ -49,6 +50,7 @@ import io.github.dsheirer.module.decode.p25.identifier.APCO25System;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25Wacn;
 import io.github.dsheirer.identifier.alias.P25TalkerAliasIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.encryption.APCO25EncryptionKey;
+import io.github.dsheirer.module.decode.p25.identifier.patch.APCO25PatchGroup;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.module.decode.p25.reference.VoiceServiceOptions;
@@ -152,6 +154,61 @@ class P25ActivityLogMapperTest
         assertNull(grant.encryptionAlgorithmId());
         assertNull(grant.encryptionKeyId());
         P25EncryptionConfirmationTracker.complete(event, 4000L);
+    }
+
+    @Test
+    void mapsEncryptedPatchCallToCanonicalAndEveryDistinctMember()
+    {
+        MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
+        identifiers.update(APCO25RadioIdentifier.createFrom(1811524));
+        identifiers.update(patchGroup());
+        identifiers.update(FrequencyConfigurationIdentifier.create(854187500L));
+        identifiers.update(APCO25Wacn.create(0xBEE00));
+        identifiers.update(APCO25System.create(0x348));
+        identifiers.update(SiteGuidConfigurationIdentifier.create(GUID));
+        EncryptionKeyIdentifier encryptionKey =
+            EncryptionKeyIdentifier.create(APCO25EncryptionKey.create(0x84, 101));
+        identifiers.update(encryptionKey);
+
+        P25ChannelGrantEvent event = P25ChannelGrantEvent.builder(DecodeEventType.CALL_PATCH_GROUP_ENCRYPTED,
+                1_000L, VoiceServiceOptions.createEncrypted())
+            .duration(2_500L)
+            .identifiers(identifiers)
+            .build();
+        P25EncryptionConfirmationTracker.observe(event, encryptionKey, 1_000L);
+        P25EncryptionConfirmationTracker.observe(event, encryptionKey, 1_360L);
+
+        P25ActivityLogRecords.ActivityEvent record = new P25ActivityLogMapper().map(
+            new P25CallStartEvent(channel(DecoderType.P25_PHASE1), event));
+
+        assertNotNull(record);
+        assertEquals(P25ActivityLogRecords.Action.CALL, record.action());
+        assertEquals("56182", record.targetId());
+        assertEquals("PATCH_GROUP", record.targetKind());
+        assertEquals(List.of(56180, 56181), record.patchMemberTalkgroupIds());
+        assertEquals("1811524", record.sourceRadioId());
+        assertTrue(record.encrypted());
+        assertTrue(record.countedCall());
+        P25EncryptionConfirmationTracker.complete(event, 4_000L);
+    }
+
+    @Test
+    void patchDedupeKeyIgnoresMemberOrderAndDuplicatesButTracksMembershipChanges()
+    {
+        P25ActivityLogMapper mapper = new P25ActivityLogMapper();
+        P25ActivityLogRecords.ActivityEvent original = mapper.map(channel(DecoderType.P25_PHASE1),
+            patchEvent(56181, 56180, 56180));
+        P25ActivityLogRecords.ActivityEvent reordered = mapper.map(channel(DecoderType.P25_PHASE1),
+            patchEvent(56180, 56181));
+        P25ActivityLogRecords.ActivityEvent changed = mapper.map(channel(DecoderType.P25_PHASE1),
+            patchEvent(56180, 56181, 56183));
+
+        assertNotNull(original);
+        assertNotNull(reordered);
+        assertNotNull(changed);
+        assertNotNull(original.dedupeKey());
+        assertEquals(original.dedupeKey(), reordered.dedupeKey());
+        assertNotEquals(original.dedupeKey(), changed.dedupeKey());
     }
 
     @Test
@@ -339,6 +396,27 @@ class P25ActivityLogMapperTest
     }
 
     @Test
+    void preservesPatchMembersForCompletedCallOutput()
+    {
+        MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
+        identifiers.update(patchGroup());
+        identifiers.update(SiteGuidConfigurationIdentifier.create(GUID));
+        AudioCallSnapshot snapshot = new AudioCallSnapshot(new AudioCallId(1L, 2L, 1), null, null,
+            identifiers, Set.of(), 3_600_123L, 3_605_000L, 1, 1, 3_600_123L, 3_605_000L,
+            false, true, false, true, 100, false);
+
+        P25ActivityLogRecords.CompletedCallOutput metric = new P25ActivityLogMapper().mapCompletedCallOutput(
+            new CompletedAudioCall(snapshot, List.of(new float[800])),
+            P25ActivityLogRecords.CallOutput.STREAMED);
+
+        assertNotNull(metric);
+        assertEquals(56182, metric.talkgroupId());
+        assertEquals("PATCH_GROUP", metric.targetKind());
+        assertEquals(List.of(56180, 56181), metric.patchMemberTalkgroupIds());
+        assertEquals(P25ActivityLogRecords.CallOutput.STREAMED, metric.output());
+    }
+
+    @Test
     void mapsContextKindFromDecoderType()
     {
         P25ActivityLogMapper mapper = new P25ActivityLogMapper();
@@ -480,5 +558,39 @@ class P25ActivityLogMapperTest
             new DecodeConfigP25Conventional() : new DecodeConfigP25Phase1());
         channel.setRadresGuid(GUID);
         return channel;
+    }
+
+    private static APCO25PatchGroup patchGroup()
+    {
+        PatchGroup patchGroup = new PatchGroup(APCO25Talkgroup.create(56182));
+        patchGroup.addPatchedTalkgroup(APCO25Talkgroup.create(56181));
+        patchGroup.addPatchedTalkgroup(APCO25Talkgroup.create(56180));
+        patchGroup.addPatchedTalkgroup(APCO25Talkgroup.create(56180));
+        patchGroup.addPatchedTalkgroup(APCO25Talkgroup.create(56182));
+        return APCO25PatchGroup.create(patchGroup);
+    }
+
+    private static DecodeEvent patchEvent(Integer... members)
+    {
+        PatchGroup patchGroup = new PatchGroup(APCO25Talkgroup.create(56182));
+
+        for(Integer member: members)
+        {
+            patchGroup.getPatchedTalkgroupIdentifiers().add(APCO25Talkgroup.create(member));
+        }
+
+        MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
+        identifiers.update(APCO25RadioIdentifier.createFrom(1811524));
+        identifiers.update(APCO25PatchGroup.create(patchGroup));
+        identifiers.update(FrequencyConfigurationIdentifier.create(854187500L));
+        identifiers.update(APCO25Wacn.create(0xBEE00));
+        identifiers.update(APCO25System.create(0x348));
+        identifiers.update(SiteGuidConfigurationIdentifier.create(GUID));
+
+        return P25DecodeEvent.builder(DecodeEventType.CALL_PATCH_GROUP, 1_000L)
+            .duration(1_000L)
+            .details("PATCH VOICE")
+            .identifiers(identifiers)
+            .build();
     }
 }

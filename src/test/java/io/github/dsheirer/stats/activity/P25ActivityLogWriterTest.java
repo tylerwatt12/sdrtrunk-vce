@@ -1324,6 +1324,91 @@ class P25ActivityLogWriterTest
     }
 
     @Test
+    void fansOutEncryptedPatchCallAndOutputsWithoutInflatingPhysicalTotals() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("patch-call.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, 10);
+        String guid = "123e4567-e89b-12d3-a456-426614174000";
+        writer.start();
+        writer.enqueue(siteSnapshot(500L));
+        writer.enqueue(patchActivity(1_000L));
+        writer.enqueue(new P25ActivityLogRecords.CompletedCallOutput(1_000L, guid, 56182,
+            "PATCH_GROUP", List.of(56181, 56180, 56180, 56182), P25ActivityLogRecords.CallOutput.RECORDED));
+        writer.enqueue(new P25ActivityLogRecords.CompletedCallOutput(1_000L, guid, 56182,
+            "PATCH_GROUP", List.of(56180, 56181), P25ActivityLogRecords.CallOutput.STREAMED));
+
+        long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(5);
+        while(writer.getWrittenRecords() < 4 && System.currentTimeMillis() < deadline)
+        {
+            Thread.sleep(25);
+        }
+
+        writer.close();
+        assertEquals(4, writer.getWrittenRecords());
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            assertCount(connection, "p25_activity_event", 1);
+            assertEquals(56182L, scalarLong(connection,
+                "SELECT target_id FROM p25_activity_event"));
+            assertEquals(3L, scalarLong(connection,
+                "SELECT target_kind_code FROM p25_activity_event"));
+            assertEquals(1L, scalarLong(connection,
+                "SELECT encrypted FROM p25_activity_event"));
+
+            assertCount(connection, "p25_talkgroup_summary", 3);
+            assertCount(connection, "p25_radio_talkgroup_summary", 3);
+            assertCount(connection, "p25_site_talkgroup_bucket", 3);
+
+            for(String table: List.of("p25_talkgroup_summary", "p25_radio_talkgroup_summary"))
+            {
+                assertEquals(3L, scalarLong(connection,
+                    "SELECT SUM(call_count) FROM " + table));
+                assertEquals(3L, scalarLong(connection,
+                    "SELECT SUM(encrypted_count) FROM " + table));
+                assertEquals(1L, scalarLong(connection,
+                    "SELECT COUNT(*) FROM " + table +
+                        " WHERE talkgroup_id=56182 AND target_kind_code=3"));
+                assertEquals(2L, scalarLong(connection,
+                    "SELECT COUNT(*) FROM " + table +
+                        " WHERE talkgroup_id IN (56180,56181) AND target_kind_code=1"));
+            }
+
+            assertEquals(3L, scalarLong(connection,
+                "SELECT SUM(call_count) FROM p25_site_talkgroup_bucket"));
+            assertEquals(3L, scalarLong(connection,
+                "SELECT SUM(encrypted_count) FROM p25_site_talkgroup_bucket"));
+            assertEquals(3L, scalarLong(connection,
+                "SELECT SUM(recorded_count) FROM p25_talkgroup_summary"));
+            assertEquals(3L, scalarLong(connection,
+                "SELECT SUM(streamed_count) FROM p25_talkgroup_summary"));
+            assertEquals(3L, scalarLong(connection,
+                "SELECT SUM(recorded_count) FROM p25_site_talkgroup_bucket"));
+            assertEquals(3L, scalarLong(connection,
+                "SELECT SUM(streamed_count) FROM p25_site_talkgroup_bucket"));
+
+            assertCount(connection, "p25_radio_summary", 1);
+            assertEquals(1L, scalarLong(connection,
+                "SELECT call_count FROM p25_radio_summary"));
+            assertEquals(1L, scalarLong(connection,
+                "SELECT encrypted_count FROM p25_radio_summary"));
+            assertCount(connection, "p25_site_frequency_summary", 1);
+            assertEquals(1L, scalarLong(connection,
+                "SELECT call_count FROM p25_site_frequency_summary"));
+            assertCount(connection, "p25_site_activity_bucket", 1);
+            assertEquals(1L, scalarLong(connection,
+                "SELECT call_count FROM p25_site_activity_bucket"));
+            assertEquals(1L, scalarLong(connection,
+                "SELECT encrypted_count FROM p25_site_activity_bucket"));
+            assertEquals(1L, scalarLong(connection,
+                "SELECT recorded_count FROM p25_site_activity_bucket"));
+            assertEquals(1L, scalarLong(connection,
+                "SELECT streamed_count FROM p25_site_activity_bucket"));
+        }
+    }
+
+    @Test
     void aggregatesSuccessfulCallOutputsWithoutChangingTrackedCalls() throws Exception
     {
         Path database = mTemporaryFolder.resolve("call-outputs.sqlite");
@@ -1824,6 +1909,16 @@ class P25ActivityLogWriterTest
             action == P25ActivityLogRecords.Action.GRANT ? 0x84 : null,
             action == P25ActivityLogRecords.Action.GRANT ? 101 : null, 0xBEE00, 0x348, 0x348, 2, 1,
             "Example Site", null, null, action == P25ActivityLogRecords.Action.CALL, null, null);
+    }
+
+    private static P25ActivityLogRecords.ActivityEvent patchActivity(long timestamp)
+    {
+        String guid = "123e4567-e89b-12d3-a456-426614174000";
+        return new P25ActivityLogRecords.ActivityEvent(timestamp, "GUID:" + guid, guid,
+            P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "APCO25", P25ActivityLogRecords.Action.CALL,
+            "CALL_PATCH_GROUP_ENCRYPTED", "1811524", "56182", "PATCH_GROUP",
+            List.of(56181, 56180, 56180, 56182, -1), 854187500L, "00-0509", 1, true, 0x84, 101,
+            0xBEE00, 0x348, 0x348, 2, 1, "Example Site", "P25_PHASE1", null, true, null, null);
     }
 
     private static P25ActivityLogRecords.ActivityEvent serviceActivity(long timestamp, String eventType,

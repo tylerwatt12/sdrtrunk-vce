@@ -207,7 +207,8 @@ class P25ActivityLogMapper
             timestamp = System.currentTimeMillis();
         }
 
-        return new P25ActivityLogRecords.CompletedCallOutput(timestamp, facts.radresGuid(), talkgroup, output);
+        return new P25ActivityLogRecords.CompletedCallOutput(timestamp, facts.radresGuid(), talkgroup,
+            facts.targetForm(), facts.patchMemberTalkgroupIds(), output);
     }
 
     private P25ActivityLogRecords.ActivityEvent map(Channel channel, IDecodeEvent event,
@@ -275,6 +276,7 @@ class P25ActivityLogMapper
                 safe(sourceRadioId),
                 safe(targetId),
                 safe(targetKind),
+                safe(facts.patchMemberTalkgroupIds()),
                 safe(metricsAlgorithmId),
                 safe(metricsKeyId));
         }
@@ -282,7 +284,7 @@ class P25ActivityLogMapper
         return new P25ActivityLogRecords.ActivityEvent(observedAt, contextKey, guid, contextKind,
             event.getProtocol() != null ? event.getProtocol().name() : null, action,
             event.getEventType() != null ? event.getEventType().name() : null, sourceRadioId, targetId,
-            targetKind, frequency, lcn, timeslot, metricsEncrypted, metricsAlgorithmId,
+            targetKind, facts.patchMemberTalkgroupIds(), frequency, lcn, timeslot, metricsEncrypted, metricsAlgorithmId,
             metricsKeyId, facts.wacn(), facts.systemId(), facts.nac(), facts.rfss(), facts.site(),
             activityChannelName(contextKind, channel), decoderType.name(), facts.talkerAlias(),
             action == P25ActivityLogRecords.Action.CALL &&
@@ -538,6 +540,34 @@ class P25ActivityLogMapper
         return null;
     }
 
+    private static String targetValue(Identifier identifier)
+    {
+        if(identifier instanceof PatchGroupIdentifier)
+        {
+            Integer patchGroup = talkgroup(identifier);
+            return patchGroup != null ? patchGroup.toString() : null;
+        }
+
+        return identifier != null && identifier.getValue() != null ? identifier.getValue().toString() : null;
+    }
+
+    private static List<Integer> patchMemberTalkgroups(Identifier identifier)
+    {
+        if(!(identifier instanceof PatchGroupIdentifier patchGroup) || patchGroup.getValue() == null)
+        {
+            return List.of();
+        }
+
+        Integer canonical = talkgroup(identifier);
+        return patchGroup.getValue().getPatchedTalkgroupIdentifiers().stream()
+            .filter(member -> member != null && member.getValue() != null && member.getValue() > 0)
+            .map(TalkgroupIdentifier::getValue)
+            .filter(member -> !member.equals(canonical))
+            .distinct()
+            .sorted()
+            .toList();
+    }
+
     private static Integer positive(Integer value)
     {
         return value != null && value > 0 && value <= DmrActivitySchema.MAXIMUM_DMR_ID ? value : null;
@@ -668,8 +698,8 @@ class P25ActivityLogMapper
     }
 
     private record IdentifierFacts(String sourceId, String sourceForm, String targetId, String targetForm,
-                                   Long frequencyHertz, String channelDescriptor, String logicalChannelName,
-                                   boolean encrypted,
+                                   List<Integer> patchMemberTalkgroupIds, Long frequencyHertz,
+                                   String channelDescriptor, String logicalChannelName, boolean encrypted,
                                    Integer encryptionAlgorithmId, Integer encryptionKeyId, Integer wacn,
                                    Integer systemId, Integer nac, Integer rfss, Integer site, String radresGuid,
                                    String configuredChannelName, String decoder, String talkerAlias, Integer timeslot)
@@ -684,7 +714,8 @@ class P25ActivityLogMapper
             String sourceForm = form(source);
 
             return new IdentifierFacts(Form.RADIO.name().equals(sourceForm) ? value(source) : null, sourceForm,
-                value(target), form(target), longValue(first(identifiers, Form.CHANNEL_FREQUENCY)),
+                targetValue(target), form(target), patchMemberTalkgroups(target),
+                longValue(first(identifiers, Form.CHANNEL_FREQUENCY)),
                 value(first(identifiers, Form.CHANNEL_DESCRIPTOR)), value(first(identifiers, Form.CHANNEL_NAME)),
                 encryptionIdentifier != null && encryptionIdentifier.isEncrypted(),
                 encryptionKey != null && encryptionKey.isEncrypted() ? encryptionKey.getAlgorithm() : null,

@@ -15,6 +15,7 @@ import io.github.dsheirer.channel.metadata.activity.ChannelTag;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.util.List;
+import java.util.TreeSet;
 
 /**
  * Immutable records passed from decoder/UI threads to the SQLite writer.
@@ -75,13 +76,32 @@ final class P25ActivityLogRecords
 
     record ActivityEvent(long observedAtEpochMilliseconds, String contextKey, String guid, ContextKind contextKind,
                          String protocol, Action action, String eventType, String sourceRadioId, String targetId,
-                         String targetKind, Long frequencyHertz, String lcn, Integer timeslot, boolean encrypted,
-                         Integer encryptionAlgorithmId, Integer encryptionKeyId, Integer wacn, Integer systemId,
-                         Integer nac, Integer rfss, Integer site, String channelName, String decoder,
-                         String talkerAlias, boolean countedCall, String dedupeKey,
+                         String targetKind, List<Integer> patchMemberTalkgroupIds, Long frequencyHertz, String lcn,
+                         Integer timeslot, boolean encrypted, Integer encryptionAlgorithmId, Integer encryptionKeyId,
+                         Integer wacn, Integer systemId, Integer nac, Integer rfss, Integer site, String channelName,
+                         String decoder, String talkerAlias, boolean countedCall, String dedupeKey,
                          RadioAffiliationUpdate affiliationUpdate)
         implements P25ActivityLogRecord
     {
+        ActivityEvent
+        {
+            patchMemberTalkgroupIds = distinctPositiveTalkgroups(patchMemberTalkgroupIds,
+                positiveInteger(targetId));
+        }
+
+        ActivityEvent(long observedAtEpochMilliseconds, String contextKey, String guid, ContextKind contextKind,
+                      String protocol, Action action, String eventType, String sourceRadioId, String targetId,
+                      String targetKind, Long frequencyHertz, String lcn, Integer timeslot, boolean encrypted,
+                      Integer encryptionAlgorithmId, Integer encryptionKeyId, Integer wacn, Integer systemId,
+                      Integer nac, Integer rfss, Integer site, String channelName, String decoder,
+                      String talkerAlias, boolean countedCall, String dedupeKey,
+                      RadioAffiliationUpdate affiliationUpdate)
+        {
+            this(observedAtEpochMilliseconds, contextKey, guid, contextKind, protocol, action, eventType,
+                sourceRadioId, targetId, targetKind, List.of(), frequencyHertz, lcn, timeslot, encrypted,
+                encryptionAlgorithmId, encryptionKeyId, wacn, systemId, nac, rfss, site, channelName, decoder,
+                talkerAlias, countedCall, dedupeKey, affiliationUpdate);
+        }
     }
 
     /**
@@ -108,9 +128,20 @@ final class P25ActivityLogRecords
      * summaries and time buckets; it is never stored as an individual database row. The call-start timestamp keeps
      * tracked, recorded, and streamed series aligned to the same call hour.
      */
-    record CompletedCallOutput(long callStartEpochMilliseconds, String guid, int talkgroupId, CallOutput output)
+    record CompletedCallOutput(long callStartEpochMilliseconds, String guid, int talkgroupId, String targetKind,
+                               List<Integer> patchMemberTalkgroupIds, CallOutput output)
         implements P25ActivityLogRecord
     {
+        CompletedCallOutput
+        {
+            patchMemberTalkgroupIds = distinctPositiveTalkgroups(patchMemberTalkgroupIds, talkgroupId);
+        }
+
+        CompletedCallOutput(long callStartEpochMilliseconds, String guid, int talkgroupId, CallOutput output)
+        {
+            this(callStartEpochMilliseconds, guid, talkgroupId, "TALKGROUP", List.of(), output);
+        }
+
         @Override
         public long observedAtEpochMilliseconds()
         {
@@ -140,6 +171,44 @@ final class P25ActivityLogRecords
         GROUP,
         PRIVATE,
         UNKNOWN
+    }
+
+    private static List<Integer> distinctPositiveTalkgroups(List<Integer> talkgroups, Integer excludedTalkgroup)
+    {
+        if(talkgroups == null || talkgroups.isEmpty())
+        {
+            return List.of();
+        }
+
+        TreeSet<Integer> distinct = new TreeSet<>();
+
+        for(Integer talkgroup: talkgroups)
+        {
+            if(talkgroup != null && talkgroup > 0 && !talkgroup.equals(excludedTalkgroup))
+            {
+                distinct.add(talkgroup);
+            }
+        }
+
+        return List.copyOf(distinct);
+    }
+
+    private static Integer positiveInteger(String value)
+    {
+        if(value == null)
+        {
+            return null;
+        }
+
+        try
+        {
+            int parsed = Integer.parseInt(value);
+            return parsed > 0 ? parsed : null;
+        }
+        catch(NumberFormatException e)
+        {
+            return null;
+        }
     }
 
     record SiteSnapshot(long observedAtEpochMilliseconds, String guid, ContextKind contextKind, String snapshotHash,

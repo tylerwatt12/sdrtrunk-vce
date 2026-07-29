@@ -776,6 +776,11 @@ class StatsWebDatabase
 
         return read(connection -> {
             Map<String,Object> response = new LinkedHashMap<>();
+            /*
+             * Frequency summaries count each resolved call observation once and retain lifetime totals.  Talkgroup
+             * summaries cannot provide this physical total because patch calls are intentionally attributed to the
+             * canonical patch group and each member talkgroup.
+             */
             response.put("system", first(queryRows(connection, """
                 SELECT system.system_key, system.wacn, system.system_id, system.first_seen_ms,
                     system.last_seen_ms,
@@ -786,8 +791,12 @@ class StatsWebDatabase
                         WHERE radio.system_key = system.system_key) AS radios,
                     (SELECT COUNT(*) FROM p25_radio_affiliation affiliation
                         WHERE affiliation.system_key = system.system_key) AS affiliations,
-                    (SELECT SUM(call_count) FROM p25_talkgroup_summary talkgroup
-                        WHERE talkgroup.system_key = system.system_key) AS activity_calls
+                    COALESCE((
+                        SELECT SUM(frequency.call_count)
+                        FROM p25_site_frequency_summary frequency
+                        JOIN receiver_context context ON context.id = frequency.context_id
+                        WHERE context.system_key = system.system_key
+                    ), 0) AS activity_calls
                 FROM p25_system system
                 WHERE system.wacn = ? AND system.system_id = ?
                 """, wacn, systemId), "System not found"));

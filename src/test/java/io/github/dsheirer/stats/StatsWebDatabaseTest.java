@@ -96,6 +96,104 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void exposesPatchCallsForCanonicalMembersAndRadioRelationships() throws Exception
+    {
+        long bucket = Math.floorDiv(System.currentTimeMillis(), 3_600_000L) * 3_600_000L;
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO p25_talkgroup_summary (
+                    system_key, talkgroup_id, target_kind_code, first_seen_ms, last_seen_ms, call_count,
+                    encrypted_count, recorded_count, streamed_count, last_source_radio_id
+                ) VALUES
+                    (1, 56180, 1, 3000, 3000, 1, 1, 1, 1, 1811332),
+                    (1, 56181, 1, 3000, 3000, 1, 1, 1, 1, 1811332),
+                    (1, 56182, 3, 3000, 3000, 1, 1, 1, 1, 1811332)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_radio_talkgroup_summary (
+                    system_key, radio_id, talkgroup_id, target_kind_code, first_seen_ms, last_seen_ms,
+                    call_count, encrypted_count
+                ) VALUES
+                    (1, 1811332, 56180, 1, 3000, 3000, 1, 1),
+                    (1, 1811332, 56181, 1, 3000, 3000, 1, 1),
+                    (1, 1811332, 56182, 3, 3000, 3000, 1, 1)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_site_talkgroup_bucket (
+                    context_id, talkgroup_id, bucket_start_ms, call_count, encrypted_count, recorded_count,
+                    streamed_count
+                ) VALUES
+                    (1, 56180, %1$d, 1, 1, 1, 1),
+                    (1, 56181, %1$d, 1, 1, 1, 1),
+                    (1, 56182, %1$d, 1, 1, 1, 1)
+                """.formatted(bucket));
+            statement.executeUpdate("""
+                INSERT INTO p25_site_activity_bucket (
+                    context_id, bucket_start_ms, call_count, encrypted_count, recorded_count, streamed_count
+                ) VALUES (1, %d, 1, 1, 1, 1)
+                """.formatted(bucket));
+            statement.executeUpdate("""
+                INSERT INTO p25_site_frequency_summary (
+                    context_id, frequency_hz, timeslot, first_seen_ms, last_seen_ms, call_count, encrypted_count
+                ) VALUES (1, 854187500, 1, 3000, 3000, 1, 1)
+                """);
+        }
+
+        List<Map<String,Object>> talkgroups = rows(mDatabase.systemTalkgroups(request(
+            "/api/system/talkgroups?wacn=BEE00&system_id=0x348&q=5618&sort=talkgroup&direction=asc")));
+        assertEquals(List.of(56180L, 56181L, 56182L), talkgroups.stream()
+            .map(row -> number(row.get("talkgroup_id"))).toList());
+
+        for(Map<String,Object> talkgroup: talkgroups)
+        {
+            assertEquals(1L, number(talkgroup.get("call_count")));
+            assertEquals(1L, number(talkgroup.get("encrypted_count")));
+            assertEquals(1L, number(talkgroup.get("recorded_count")));
+            assertEquals(1L, number(talkgroup.get("streamed_count")));
+        }
+
+        Map<String,Object> patch = map(mDatabase.talkgroup(request(
+            "/api/talkgroup?wacn=BEE00&system_id=0x348&talkgroup_id=56182")), "talkgroup");
+        assertEquals(3L, number(patch.get("target_kind_code")));
+        assertEquals(1L, number(patch.get("radios")));
+
+        Map<String,Object> radio = map(mDatabase.radio(request(
+            "/api/radio?wacn=BEE00&system_id=0x348&radio_id=1811332")), "radio");
+        assertEquals(4L, number(radio.get("talkgroups")));
+
+        List<Map<String,Object>> relationships = rows(mDatabase.radioTalkgroupRelationships(request(
+            "/api/radio-talkgroups?wacn=BEE00&system_id=0x348&radio_id=1811332"))).stream()
+            .filter(row -> number(row.get("talkgroup_id")) >= 56180L)
+            .toList();
+        assertEquals(List.of(56180L, 56181L, 56182L), relationships.stream()
+            .map(row -> number(row.get("talkgroup_id"))).sorted().toList());
+        assertEquals(1L, relationships.stream()
+            .filter(row -> number(row.get("target_kind_code")) == 3L).count());
+
+        List<Map<String,Object>> siteTalkgroups = rows(mDatabase.siteTalkgroups(request(
+            "/api/site/talkgroups?guid=" + GUID))).stream()
+            .filter(row -> number(row.get("talkgroup_id")) >= 56180L)
+            .toList();
+        assertEquals(3, siteTalkgroups.size());
+        assertTrue(siteTalkgroups.stream().allMatch(row -> number(row.get("call_count")) == 1L &&
+            number(row.get("encrypted_count")) == 1L && number(row.get("recorded_count")) == 1L &&
+            number(row.get("streamed_count")) == 1L));
+
+        Map<String,Object> systemResponse = mDatabase.system(request(
+            "/api/system?wacn=BEE00&system_id=0x348"));
+        assertEquals(1L, number(map(systemResponse, "system").get("activity_calls")));
+
+        List<Map<String,Object>> actionCounts = rowsFrom(systemResponse, "actionCounts");
+        assertEquals(1L, number(actionCounts.stream()
+            .filter(row -> "CALL".equals(row.get("action"))).findFirst().orElseThrow().get("count")));
+        assertEquals(1L, number(actionCounts.stream()
+            .filter(row -> "ENCRYPTED".equals(row.get("action"))).findFirst().orElseThrow().get("count")));
+    }
+
+    @Test
     void exposesSiteRfTablesAndTypedActivity()
     {
         Map<String,Object> site = map(mDatabase.site(request("/api/site?guid=" + GUID)), "site");

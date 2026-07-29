@@ -208,7 +208,7 @@ public class P25ActivityLogSchema
     {
         if(completedCallOutput == null || completedCallOutput.guid() == null ||
             completedCallOutput.guid().isBlank() || completedCallOutput.talkgroupId() <= 0 ||
-            completedCallOutput.output() == null)
+            !isTalkgroup(completedCallOutput.targetKind()) || completedCallOutput.output() == null)
         {
             return false;
         }
@@ -227,9 +227,12 @@ public class P25ActivityLogSchema
 
         try(PreparedStatement summary = connection.prepareStatement("""
                 INSERT INTO p25_talkgroup_summary (
-                    system_key, talkgroup_id, first_seen_ms, last_seen_ms, recorded_count, streamed_count
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                    system_key, talkgroup_id, target_kind_code, first_seen_ms, last_seen_ms, recorded_count,
+                    streamed_count
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(system_key, talkgroup_id) DO UPDATE SET
+                    target_kind_code = coalesce(excluded.target_kind_code,
+                        p25_talkgroup_summary.target_kind_code),
                     first_seen_ms = min(p25_talkgroup_summary.first_seen_ms, excluded.first_seen_ms),
                     last_seen_ms = max(p25_talkgroup_summary.last_seen_ms, excluded.last_seen_ms),
                     recorded_count = p25_talkgroup_summary.recorded_count + excluded.recorded_count,
@@ -252,20 +255,34 @@ public class P25ActivityLogSchema
                     streamed_count = p25_site_activity_bucket.streamed_count + excluded.streamed_count
                 """))
         {
-            summary.setInt(1, context.systemKey());
-            summary.setInt(2, completedCallOutput.talkgroupId());
-            summary.setLong(3, callStart);
-            summary.setLong(4, callStart);
-            summary.setInt(5, recorded);
-            summary.setInt(6, streamed);
-            summary.executeUpdate();
+            List<TalkgroupTarget> targets = new ArrayList<>();
+            targets.add(new TalkgroupTarget(completedCallOutput.talkgroupId(),
+                completedCallOutput.targetKind()));
 
-            talkgroup.setInt(1, context.contextId());
-            talkgroup.setInt(2, completedCallOutput.talkgroupId());
-            talkgroup.setLong(3, bucket);
-            talkgroup.setInt(4, recorded);
-            talkgroup.setInt(5, streamed);
-            talkgroup.executeUpdate();
+            if("PATCH_GROUP".equals(completedCallOutput.targetKind()))
+            {
+                completedCallOutput.patchMemberTalkgroupIds().forEach(member ->
+                    targets.add(new TalkgroupTarget(member, Form.TALKGROUP.name())));
+            }
+
+            for(TalkgroupTarget target: targets)
+            {
+                summary.setInt(1, context.systemKey());
+                summary.setInt(2, target.talkgroupId());
+                setInteger(summary, 3, targetKindCode(target.targetKind()));
+                summary.setLong(4, callStart);
+                summary.setLong(5, callStart);
+                summary.setInt(6, recorded);
+                summary.setInt(7, streamed);
+                summary.executeUpdate();
+
+                talkgroup.setInt(1, context.contextId());
+                talkgroup.setInt(2, target.talkgroupId());
+                talkgroup.setLong(3, bucket);
+                talkgroup.setInt(4, recorded);
+                talkgroup.setInt(5, streamed);
+                talkgroup.executeUpdate();
+            }
 
             site.setInt(1, context.contextId());
             site.setLong(2, bucket);
@@ -1097,7 +1114,13 @@ public class P25ActivityLogSchema
 
         if(target != null && isTalkgroup(activity.targetKind()))
         {
-            upsertP25TalkgroupSummary(connection, activity, systemKey, target, sourceRadio);
+            upsertP25TalkgroupSummary(connection, activity, systemKey, target, sourceRadio, activity.targetKind());
+
+            for(Integer member: patchMemberTalkgroups(activity))
+            {
+                upsertP25TalkgroupSummary(connection, activity, systemKey, member, sourceRadio,
+                    Form.TALKGROUP.name());
+            }
         }
 
         if(sourceRadio != null)
@@ -1106,7 +1129,14 @@ public class P25ActivityLogSchema
 
             if(target != null && isTalkgroup(activity.targetKind()))
             {
-                upsertP25RadioTalkgroupSummary(connection, activity, systemKey, sourceRadio, target);
+                upsertP25RadioTalkgroupSummary(connection, activity, systemKey, sourceRadio, target,
+                    activity.targetKind());
+
+                for(Integer member: patchMemberTalkgroups(activity))
+                {
+                    upsertP25RadioTalkgroupSummary(connection, activity, systemKey, sourceRadio, member,
+                        Form.TALKGROUP.name());
+                }
             }
         }
     }
@@ -1120,6 +1150,11 @@ public class P25ActivityLogSchema
         if(target != null && isTalkgroup(activity.targetKind()))
         {
             upsertP25TalkgroupBucket(connection, activity, contextId, target);
+
+            for(Integer member: patchMemberTalkgroups(activity))
+            {
+                upsertP25TalkgroupBucket(connection, activity, contextId, member);
+            }
         }
 
         upsertP25SiteActivityBucket(connection, activity, contextId);
@@ -1214,7 +1249,8 @@ public class P25ActivityLogSchema
     }
 
     private static void upsertP25TalkgroupSummary(Connection connection, P25ActivityLogRecords.ActivityEvent activity,
-                                                  int systemKey, int talkgroup, Integer sourceRadio)
+                                                  int systemKey, int talkgroup, Integer sourceRadio,
+                                                  String targetKind)
         throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement("""
@@ -1235,7 +1271,7 @@ public class P25ActivityLogSchema
             int index = 1;
             statement.setInt(index++, systemKey);
             statement.setInt(index++, talkgroup);
-            setInteger(statement, index++, targetKindCode(activity.targetKind()));
+            setInteger(statement, index++, targetKindCode(targetKind));
             statement.setLong(index++, activity.observedAtEpochMilliseconds());
             statement.setLong(index++, activity.observedAtEpochMilliseconds());
             index = setActionCounts(statement, index, activity);
@@ -1312,7 +1348,7 @@ public class P25ActivityLogSchema
 
     private static void upsertP25RadioTalkgroupSummary(Connection connection,
                                                        P25ActivityLogRecords.ActivityEvent activity, int systemKey,
-                                                       int radio, int talkgroup) throws SQLException
+                                                       int radio, int talkgroup, String targetKind) throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement("""
             INSERT INTO p25_radio_talkgroup_summary (
@@ -1332,7 +1368,7 @@ public class P25ActivityLogSchema
             statement.setInt(index++, systemKey);
             statement.setInt(index++, radio);
             statement.setInt(index++, talkgroup);
-            setInteger(statement, index++, targetKindCode(activity.targetKind()));
+            setInteger(statement, index++, targetKindCode(targetKind));
             statement.setLong(index++, activity.observedAtEpochMilliseconds());
             statement.setLong(index++, activity.observedAtEpochMilliseconds());
             index = setActionCounts(statement, index, activity);
@@ -2599,6 +2635,11 @@ public class P25ActivityLogSchema
         return "TALKGROUP".equals(targetKind) || "PATCH_GROUP".equals(targetKind);
     }
 
+    private static List<Integer> patchMemberTalkgroups(P25ActivityLogRecords.ActivityEvent activity)
+    {
+        return "PATCH_GROUP".equals(activity.targetKind()) ? activity.patchMemberTalkgroupIds() : List.of();
+    }
+
     private static int summaryTimeslot(Integer timeslot)
     {
         return timeslot != null ? timeslot : NULL_TIMESLOT;
@@ -3035,6 +3076,10 @@ public class P25ActivityLogSchema
                 return null;
             }
         }
+    }
+
+    private record TalkgroupTarget(int talkgroupId, String targetKind)
+    {
     }
 
     private static void setInteger(PreparedStatement statement, int index, Integer value) throws SQLException
