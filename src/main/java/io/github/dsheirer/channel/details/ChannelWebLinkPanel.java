@@ -17,6 +17,7 @@ import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.gui.preference.PreferenceEditorType;
 import io.github.dsheirer.gui.preference.ViewUserPreferenceEditorRequest;
 import io.github.dsheirer.module.decode.DecoderType;
+import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.stats.StatsWebNavigationState;
@@ -29,7 +30,9 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.text.DecimalFormat;
 import java.util.EnumMap;
+import java.util.EnumSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.StringJoiner;
 import java.util.function.Supplier;
 import javax.swing.JButton;
@@ -166,9 +169,9 @@ public class ChannelWebLinkPanel extends JPanel implements Listener<SelectedFreq
         boolean conventionalAvailable = target.scope() == LinkScope.CONVENTIONAL;
 
         mSelectionLabel.setText(selectionText(mSelectedFrequencyContext));
-        mSiteMenu.setVisible(running && siteAvailable);
-        mSystemMenu.setVisible(running && siteAvailable);
-        mConventionalMenu.setVisible(running && conventionalAvailable);
+        mSiteMenu.setVisible(running && target.supports(Destination.SITE_INFO));
+        mSystemMenu.setVisible(running && target.supports(Destination.SYSTEM_OVERVIEW));
+        mConventionalMenu.setVisible(running && target.supports(Destination.CONVENTIONAL_INFO));
         mOpenWebButton.setEnabled(running && (siteAvailable || conventionalAvailable));
         mOpenConsoleButton.setEnabled(running);
 
@@ -180,7 +183,7 @@ public class ChannelWebLinkPanel extends JPanel implements Listener<SelectedFreq
         {
             showMessage("Select a channel to open its web pages.");
         }
-        else if(siteDecoder(selectedChannel) && !siteAvailable)
+        else if(siteCapabilities(mSelectedFrequencyContext, selectedChannel).isSite() && !siteAvailable)
         {
             showMessage("The selected channel does not have a site GUID. Site web pages are unavailable.");
         }
@@ -203,8 +206,10 @@ public class ChannelWebLinkPanel extends JPanel implements Listener<SelectedFreq
         {
             Destination destination = entry.getKey();
             JMenuItem item = entry.getValue();
-            boolean enabled = running && destination.scope() == target.scope() &&
+            boolean supported = target.supports(destination);
+            boolean enabled = running && supported &&
                 (!destination.requiresDetailedHistory() || historyActive);
+            item.setVisible(supported);
             item.setEnabled(enabled);
             item.setToolTipText(destination.requiresDetailedHistory() && !historyActive ?
                 "Detailed history logging is not running" : destination.description());
@@ -225,14 +230,24 @@ public class ChannelWebLinkPanel extends JPanel implements Listener<SelectedFreq
         return mDestinationItems.get(destination);
     }
 
+    String getMessageText()
+    {
+        return mMessageLabel.isVisible() ? mMessageLabel.getText() : null;
+    }
+
     boolean isGroupVisible(LinkScope scope)
     {
         return switch(scope)
         {
-            case SITE -> mSiteMenu.isVisible() && mSystemMenu.isVisible();
+            case SITE -> mSiteMenu.isVisible();
             case CONVENTIONAL -> mConventionalMenu.isVisible();
             case GLOBAL -> false;
         };
+    }
+
+    boolean isSystemGroupVisible()
+    {
+        return mSystemMenu.isVisible();
     }
 
     private void open(Destination destination)
@@ -240,8 +255,7 @@ public class ChannelWebLinkPanel extends JPanel implements Listener<SelectedFreq
         StatsWebNavigationState state = mStateSupplier.get();
         NavigationTarget target = navigationTarget(mSelectedFrequencyContext);
 
-        if(state == null || !state.running() ||
-            (destination.scope() != LinkScope.GLOBAL && destination.scope() != target.scope()) ||
+        if(state == null || !state.running() || !target.supports(destination) ||
             (destination.requiresDetailedHistory() && !state.detailedHistoryActive()))
         {
             refresh();
@@ -307,9 +321,11 @@ public class ChannelWebLinkPanel extends JPanel implements Listener<SelectedFreq
             return NavigationTarget.NONE;
         }
 
-        if(siteDecoder(channel) && channel.hasRadresGuid())
+        NavigationCapabilities siteCapabilities = siteCapabilities(context, channel);
+
+        if(siteCapabilities.isSite() && channel.hasRadresGuid())
         {
-            return new NavigationTarget(LinkScope.SITE, channel.getRadresGuid());
+            return new NavigationTarget(LinkScope.SITE, channel.getRadresGuid(), siteCapabilities);
         }
 
         if(conventionalDecoder(channel))
@@ -318,7 +334,8 @@ public class ChannelWebLinkPanel extends JPanel implements Listener<SelectedFreq
 
             if(contextKey != null)
             {
-                return new NavigationTarget(LinkScope.CONVENTIONAL, contextKey);
+                return new NavigationTarget(LinkScope.CONVENTIONAL, contextKey,
+                    NavigationCapabilities.CONVENTIONAL);
             }
         }
 
@@ -362,10 +379,33 @@ public class ChannelWebLinkPanel extends JPanel implements Listener<SelectedFreq
         return context.ownerChannel() != null ? context.ownerChannel() : context.rowChannel();
     }
 
-    private static boolean siteDecoder(Channel channel)
+    /**
+     * Resolves the desktop destinations supported by the same protocol capabilities exposed by the web site view.
+     * P25 retains its complete existing navigation. DMR must be explicitly configured as trunked. NXDN has no
+     * configured conventional/trunked mode, so the owner supplied by a Systems activity table is the positive
+     * trunking evidence. Using the owner also preserves site navigation when a traffic row has exact-frequency scope.
+     */
+    private static NavigationCapabilities siteCapabilities(SelectedFrequencyContext context, Channel channel)
     {
         DecoderType decoder = decoderType(channel);
-        return decoder == DecoderType.P25_PHASE1 || decoder == DecoderType.P25_PHASE2;
+
+        if(decoder == DecoderType.P25_PHASE1 || decoder == DecoderType.P25_PHASE2)
+        {
+            return NavigationCapabilities.P25_SITE;
+        }
+
+        if(decoder == DecoderType.DMR && channel.getDecodeConfiguration() instanceof DecodeConfigDMR dmr &&
+            dmr.isTrunked())
+        {
+            return NavigationCapabilities.TRUNKED_SITE;
+        }
+
+        if(decoder == DecoderType.NXDN && context != null && context.ownerChannel() == channel)
+        {
+            return NavigationCapabilities.TRUNKED_SITE;
+        }
+
+        return NavigationCapabilities.NONE;
     }
 
     private static boolean conventionalDecoder(Channel channel)
@@ -445,9 +485,16 @@ public class ChannelWebLinkPanel extends JPanel implements Listener<SelectedFreq
         GLOBAL
     }
 
-    private record NavigationTarget(LinkScope scope, String key)
+    private record NavigationTarget(LinkScope scope, String key, NavigationCapabilities capabilities)
     {
-        private static final NavigationTarget NONE = new NavigationTarget(null, null);
+        private static final NavigationTarget NONE =
+            new NavigationTarget(null, null, NavigationCapabilities.NONE);
+
+        boolean supports(Destination destination)
+        {
+            return destination != null && (destination.scope() == LinkScope.GLOBAL ||
+                capabilities.supports(destination));
+        }
     }
 
     enum Destination
@@ -514,6 +561,39 @@ public class ChannelWebLinkPanel extends JPanel implements Listener<SelectedFreq
         boolean requiresDetailedHistory()
         {
             return mRequiresDetailedHistory;
+        }
+    }
+
+    /**
+     * Desktop navigation mirrors the site capabilities returned by the web backend. Non-P25 trunked sites currently
+     * expose protocol-neutral site identity, channels, quality, and neighbors. P25-only summaries and system views
+     * stay unavailable instead of opening an empty or unrelated page.
+     */
+    private enum NavigationCapabilities
+    {
+        P25_SITE(EnumSet.of(Destination.SITE_INFO, Destination.TOP_TALKGROUPS, Destination.CHANNELS,
+            Destination.QUALITY, Destination.NEIGHBORS, Destination.BAND_PLAN, Destination.PATCHES,
+            Destination.ACTIVITY_LOG, Destination.SYSTEM_OVERVIEW, Destination.TALKER_ALIASES)),
+        TRUNKED_SITE(EnumSet.of(Destination.SITE_INFO, Destination.CHANNELS, Destination.QUALITY,
+            Destination.NEIGHBORS)),
+        CONVENTIONAL(EnumSet.of(Destination.CONVENTIONAL_INFO, Destination.CONVENTIONAL_ACTIVITY)),
+        NONE(EnumSet.noneOf(Destination.class));
+
+        private final Set<Destination> mDestinations;
+
+        NavigationCapabilities(EnumSet<Destination> destinations)
+        {
+            mDestinations = Set.copyOf(destinations);
+        }
+
+        boolean supports(Destination destination)
+        {
+            return mDestinations.contains(destination);
+        }
+
+        boolean isSite()
+        {
+            return this == P25_SITE || this == TRUNKED_SITE;
         }
     }
 }

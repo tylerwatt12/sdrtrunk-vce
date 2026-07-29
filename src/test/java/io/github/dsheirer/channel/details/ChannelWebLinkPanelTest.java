@@ -12,7 +12,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivitySelectionScope;
 import io.github.dsheirer.channel.metadata.activity.SelectedFrequencyContext;
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.module.decode.dmr.DMRChannelMode;
+import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
 import io.github.dsheirer.module.decode.nbfm.DecodeConfigNBFM;
+import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.stats.StatsWebNavigationState;
@@ -64,7 +67,18 @@ class ChannelWebLinkPanelTest
             assertFalse(contains(panel, JTextArea.class));
             assertFalse(contains(panel, JScrollPane.class));
             assertTrue(panel.isGroupVisible(ChannelWebLinkPanel.LinkScope.SITE));
+            assertTrue(panel.isSystemGroupVisible());
             assertFalse(panel.isGroupVisible(ChannelWebLinkPanel.LinkScope.CONVENTIONAL));
+
+            for(ChannelWebLinkPanel.Destination destination: List.of(
+                ChannelWebLinkPanel.Destination.SITE_INFO, ChannelWebLinkPanel.Destination.TOP_TALKGROUPS,
+                ChannelWebLinkPanel.Destination.CHANNELS, ChannelWebLinkPanel.Destination.QUALITY,
+                ChannelWebLinkPanel.Destination.NEIGHBORS, ChannelWebLinkPanel.Destination.BAND_PLAN,
+                ChannelWebLinkPanel.Destination.PATCHES, ChannelWebLinkPanel.Destination.ACTIVITY_LOG,
+                ChannelWebLinkPanel.Destination.SYSTEM_OVERVIEW, ChannelWebLinkPanel.Destination.TALKER_ALIASES))
+            {
+                assertTrue(item(panel, destination).isVisible(), destination + " should preserve P25 visibility");
+            }
 
             SwingUtilities.invokeAndWait(() -> {
                 talkgroups.doClick();
@@ -83,6 +97,195 @@ class ChannelWebLinkPanelTest
             SwingUtilities.invokeAndWait(activity::doClick);
             assertEquals("http://127.0.0.1:8090/?view=site&guid=" + ownerGuid + "&tab=activity",
                 opened.get(2).toString());
+        }
+        finally
+        {
+            SwingUtilities.invokeAndWait(panel::dispose);
+        }
+    }
+
+    @Test
+    void trunkedDmrOffersOnlyProtocolNeutralSitePages() throws Exception
+    {
+        String guid = UUID.randomUUID().toString();
+        Channel dmr = new Channel("DMR Site");
+        dmr.setSystem("County DMR");
+        dmr.setSite("North");
+        dmr.setRadresGuid(guid);
+        DecodeConfigDMR configuration = new DecodeConfigDMR();
+        configuration.setChannelMode(DMRChannelMode.TRUNKED);
+        dmr.setDecodeConfiguration(configuration);
+        AtomicReference<StatsWebNavigationState> state = new AtomicReference<>(
+            new StatsWebNavigationState(true, 8090, true, true));
+        List<URI> opened = new ArrayList<>();
+        ChannelWebLinkPanel[] panelReference = new ChannelWebLinkPanel[1];
+
+        SwingUtilities.invokeAndWait(() -> {
+            ChannelWebLinkPanel panel = new ChannelWebLinkPanel(state::get, opened::add);
+            panelReference[0] = panel;
+            panel.receive(new SelectedFrequencyContext(451_012_500L, 1, "DMR", dmr, dmr, null, null,
+                ChannelActivitySelectionScope.SITE, false));
+        });
+        SwingUtilities.invokeAndWait(() -> {});
+
+        ChannelWebLinkPanel panel = panelReference[0];
+
+        try
+        {
+            assertProtocolNeutralSiteDestinations(panel);
+            assertFalse(panel.isSystemGroupVisible());
+
+            List<ChannelWebLinkPanel.Destination> destinations = List.of(
+                ChannelWebLinkPanel.Destination.SITE_INFO, ChannelWebLinkPanel.Destination.CHANNELS,
+                ChannelWebLinkPanel.Destination.QUALITY, ChannelWebLinkPanel.Destination.NEIGHBORS);
+
+            for(ChannelWebLinkPanel.Destination destination: destinations)
+            {
+                SwingUtilities.invokeAndWait(item(panel, destination)::doClick);
+            }
+
+            assertEquals(List.of(
+                "http://127.0.0.1:8090/?view=site&guid=" + guid + "&tab=info",
+                "http://127.0.0.1:8090/?view=site&guid=" + guid + "&tab=channels",
+                "http://127.0.0.1:8090/?view=site&guid=" + guid + "&tab=quality",
+                "http://127.0.0.1:8090/?view=site&guid=" + guid + "&tab=neighbors"),
+                opened.stream().map(URI::toString).toList());
+
+            SwingUtilities.invokeAndWait(item(panel, ChannelWebLinkPanel.Destination.PATCHES)::doClick);
+            assertEquals(4, opened.size());
+
+            SwingUtilities.invokeAndWait(() -> panel.receive(new SelectedFrequencyContext(451_025_000L, 2,
+                "DMR", dmr, dmr, null, null, ChannelActivitySelectionScope.EXACT_FREQUENCY, false)));
+            SwingUtilities.invokeAndWait(() -> {});
+            assertProtocolNeutralSiteDestinations(panel);
+        }
+        finally
+        {
+            SwingUtilities.invokeAndWait(panel::dispose);
+        }
+    }
+
+    @Test
+    void trunkedSiteWithoutGuidExplainsWhyLinksAreUnavailable() throws Exception
+    {
+        Channel dmr = new Channel("DMR Site");
+        DecodeConfigDMR configuration = new DecodeConfigDMR();
+        configuration.setChannelMode(DMRChannelMode.TRUNKED);
+        dmr.setDecodeConfiguration(configuration);
+        AtomicReference<StatsWebNavigationState> state = new AtomicReference<>(
+            new StatsWebNavigationState(true, 8090, true, true));
+        ChannelWebLinkPanel[] panelReference = new ChannelWebLinkPanel[1];
+
+        SwingUtilities.invokeAndWait(() -> {
+            ChannelWebLinkPanel panel = new ChannelWebLinkPanel(state::get, uri -> {});
+            panelReference[0] = panel;
+            panel.receive(new SelectedFrequencyContext(451_012_500L, 1, "DMR", dmr, dmr, null, null,
+                ChannelActivitySelectionScope.SITE, false));
+        });
+        SwingUtilities.invokeAndWait(() -> {});
+
+        ChannelWebLinkPanel panel = panelReference[0];
+
+        try
+        {
+            assertFalse(panel.isGroupVisible(ChannelWebLinkPanel.LinkScope.SITE));
+            assertEquals("The selected channel does not have a site GUID. Site web pages are unavailable.",
+                panel.getMessageText());
+        }
+        finally
+        {
+            SwingUtilities.invokeAndWait(panel::dispose);
+        }
+    }
+
+    @Test
+    void conventionalDmrIsNeverPromotedToSiteNavigation() throws Exception
+    {
+        Channel dmr = new Channel("DMR Conventional");
+        dmr.setRadresGuid(UUID.randomUUID().toString());
+        DecodeConfigDMR configuration = new DecodeConfigDMR();
+        configuration.setChannelMode(DMRChannelMode.CONVENTIONAL);
+        dmr.setDecodeConfiguration(configuration);
+        AtomicReference<StatsWebNavigationState> state = new AtomicReference<>(
+            new StatsWebNavigationState(true, 8090, true, true));
+        List<URI> opened = new ArrayList<>();
+        ChannelWebLinkPanel[] panelReference = new ChannelWebLinkPanel[1];
+
+        SwingUtilities.invokeAndWait(() -> {
+            ChannelWebLinkPanel panel = new ChannelWebLinkPanel(state::get, opened::add);
+            panelReference[0] = panel;
+            /*
+             * Even a stale site-shaped selection must not override the channel's explicit conventional mode.
+             */
+            panel.receive(new SelectedFrequencyContext(154_452_500L, 1, "DMR", dmr, dmr, null, null,
+                ChannelActivitySelectionScope.SITE, false));
+        });
+        SwingUtilities.invokeAndWait(() -> {});
+
+        ChannelWebLinkPanel panel = panelReference[0];
+
+        try
+        {
+            assertFalse(panel.isGroupVisible(ChannelWebLinkPanel.LinkScope.SITE));
+            assertFalse(panel.isSystemGroupVisible());
+            assertFalse(item(panel, ChannelWebLinkPanel.Destination.SITE_INFO).isVisible());
+            assertFalse(item(panel, ChannelWebLinkPanel.Destination.NEIGHBORS).isEnabled());
+            SwingUtilities.invokeAndWait(item(panel, ChannelWebLinkPanel.Destination.SITE_INFO)::doClick);
+            assertTrue(opened.isEmpty());
+        }
+        finally
+        {
+            SwingUtilities.invokeAndWait(panel::dispose);
+        }
+    }
+
+    @Test
+    void nxdnRequiresSystemsTableEvidenceBeforeOfferingSitePages() throws Exception
+    {
+        String guid = UUID.randomUUID().toString();
+        Channel nxdn = new Channel("NXDN Site");
+        nxdn.setSystem("County NXDN");
+        nxdn.setSite("West");
+        nxdn.setRadresGuid(guid);
+        nxdn.setDecodeConfiguration(new DecodeConfigNXDN());
+        AtomicReference<StatsWebNavigationState> state = new AtomicReference<>(
+            new StatsWebNavigationState(true, 8090, true, true));
+        List<URI> opened = new ArrayList<>();
+        ChannelWebLinkPanel[] panelReference = new ChannelWebLinkPanel[1];
+
+        SwingUtilities.invokeAndWait(() -> {
+            ChannelWebLinkPanel panel = new ChannelWebLinkPanel(state::get, opened::add);
+            panelReference[0] = panel;
+            panel.receive(new SelectedFrequencyContext(460_112_500L, null, "NXDN", null, nxdn, null, null,
+                ChannelActivitySelectionScope.EXACT_FREQUENCY, false));
+        });
+        SwingUtilities.invokeAndWait(() -> {});
+
+        ChannelWebLinkPanel panel = panelReference[0];
+
+        try
+        {
+            assertFalse(panel.isGroupVisible(ChannelWebLinkPanel.LinkScope.SITE));
+            assertFalse(item(panel, ChannelWebLinkPanel.Destination.SITE_INFO).isEnabled());
+
+            SwingUtilities.invokeAndWait(() -> panel.receive(new SelectedFrequencyContext(460_112_500L, null,
+                "NXDN", nxdn, nxdn, null, null, ChannelActivitySelectionScope.SITE, false)));
+            SwingUtilities.invokeAndWait(() -> {});
+            assertProtocolNeutralSiteDestinations(panel);
+
+            /*
+             * A non-null owner is supplied only by a Systems table. It remains present for traffic-row selections,
+             * whose logical scope is exact frequency rather than the control site's persistent selection.
+             */
+            SwingUtilities.invokeAndWait(() -> panel.receive(new SelectedFrequencyContext(460_225_000L, null,
+                "NXDN", nxdn, nxdn, null, null, ChannelActivitySelectionScope.EXACT_FREQUENCY, false)));
+            SwingUtilities.invokeAndWait(() -> {});
+
+            assertProtocolNeutralSiteDestinations(panel);
+            assertFalse(panel.isSystemGroupVisible());
+            SwingUtilities.invokeAndWait(item(panel, ChannelWebLinkPanel.Destination.CHANNELS)::doClick);
+            assertEquals("http://127.0.0.1:8090/?view=site&guid=" + guid + "&tab=channels",
+                opened.getFirst().toString());
         }
         finally
         {
@@ -187,6 +390,28 @@ class ChannelWebLinkPanelTest
         channel.setRadresGuid(guid);
         channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
         return channel;
+    }
+
+    private static void assertProtocolNeutralSiteDestinations(ChannelWebLinkPanel panel)
+    {
+        assertTrue(panel.isGroupVisible(ChannelWebLinkPanel.LinkScope.SITE));
+
+        for(ChannelWebLinkPanel.Destination destination: List.of(ChannelWebLinkPanel.Destination.SITE_INFO,
+            ChannelWebLinkPanel.Destination.CHANNELS, ChannelWebLinkPanel.Destination.QUALITY,
+            ChannelWebLinkPanel.Destination.NEIGHBORS))
+        {
+            assertTrue(item(panel, destination).isVisible(), destination + " should be visible");
+            assertTrue(item(panel, destination).isEnabled(), destination + " should be enabled");
+        }
+
+        for(ChannelWebLinkPanel.Destination destination: List.of(ChannelWebLinkPanel.Destination.TOP_TALKGROUPS,
+            ChannelWebLinkPanel.Destination.BAND_PLAN, ChannelWebLinkPanel.Destination.PATCHES,
+            ChannelWebLinkPanel.Destination.ACTIVITY_LOG, ChannelWebLinkPanel.Destination.SYSTEM_OVERVIEW,
+            ChannelWebLinkPanel.Destination.TALKER_ALIASES))
+        {
+            assertFalse(item(panel, destination).isVisible(), destination + " should be hidden");
+            assertFalse(item(panel, destination).isEnabled(), destination + " should be disabled");
+        }
     }
 
     private static JMenuItem item(ChannelWebLinkPanel panel, ChannelWebLinkPanel.Destination destination)
