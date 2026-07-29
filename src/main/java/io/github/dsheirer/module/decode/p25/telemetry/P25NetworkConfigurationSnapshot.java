@@ -120,9 +120,12 @@ public record P25NetworkConfigurationSnapshot(String decoder, Network network, C
                 return this;
             }
 
+            //Micro-slots identify a synchronization observation, so a null clock alongside them explicitly clears
+            //an invalid synchronization date instead of retaining an older normalized value.
             return new SiteStatus(
-                newer.broadcastClockEpochMilliseconds != null ? newer.broadcastClockEpochMilliseconds :
-                    broadcastClockEpochMilliseconds,
+                newer.microSlots != null ? newer.broadcastClockEpochMilliseconds :
+                    (newer.broadcastClockEpochMilliseconds != null ? newer.broadcastClockEpochMilliseconds :
+                        broadcastClockEpochMilliseconds),
                 newer.microSlots != null ? newer.microSlots : microSlots,
                 newer.dataService != null ? newer.dataService : dataService,
                 newer.dataAccess != null ? newer.dataAccess : dataAccess,

@@ -387,8 +387,9 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
         }
         else if(iMessage instanceof MotorolaTalkerAliasComplete talkerAlias && talkerAlias.isValid())
         {
-            mTrafficChannelManager.processP1TalkerAlias(getCurrentFrequency(), talkerAlias.getRadio(),
-                talkerAlias.getAlias(), getIdentifierCollection(), talkerAlias.getTimestamp());
+            mTrafficChannelManager.processP1MotorolaTalkerAlias(getCurrentFrequency(), talkerAlias.getRadio(),
+                talkerAlias.getTalkgroup(), talkerAlias.getAlias(), getIdentifierCollection(),
+                talkerAlias.getTimestamp());
         }
         else if(iMessage instanceof LinkControlWord lcw)
         {
@@ -1500,7 +1501,8 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                         if(regroup.getRegroupOptions().isActivate())
                         {
                             mPatchGroupManager.addPatchGroup(regroup.getPatchGroup(), tsbk.getTimestamp());
-                            mNetworkConfigurationStabilizer.observePatchGroup(regroup.getPatchGroup(),
+                            mNetworkConfigurationStabilizer.observePatchGroup((PatchGroupIdentifier)
+                                mPatchGroupManager.update(regroup.getPatchGroup(), tsbk.getTimestamp()),
                                 tsbk.getTimestamp());
                         }
                         else

@@ -41,6 +41,7 @@ import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.identifier.patch.PatchGroupPreLoadDataContent;
 import io.github.dsheirer.identifier.scramble.ScrambleParameterIdentifier;
+import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import io.github.dsheirer.log.LoggingSuppressor;
@@ -185,13 +186,14 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
      * Records a completed Phase 1 talker alias independently of the current call tracker, then applies it to the
      * tracker when the call is still active.
      */
-    public void processP1TalkerAlias(long frequency, RadioIdentifier radio, TalkerAliasIdentifier alias,
-                                     IdentifierCollection identifiers, long timestamp)
+    public void processP1MotorolaTalkerAlias(long frequency, RadioIdentifier radio, Identifier talkgroup,
+                                             TalkerAliasIdentifier alias, IdentifierCollection identifiers,
+                                             long timestamp)
     {
         if(isUsableTalkerAlias(alias))
         {
             observeTalkerAlias(radio, alias, identifiers, timestamp);
-            processP1TrafficCurrentUser(frequency, alias, timestamp);
+            applyAuthoritativeTalkerAlias(frequency, TimeslotMessage.TIMESLOT_1, radio, talkgroup, alias, timestamp);
         }
     }
 
@@ -202,6 +204,45 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     public void processP1HarrisTalkerAlias(long frequency, RadioIdentifier radio, TalkerAliasIdentifier alias,
                                            IdentifierCollection identifiers, long timestamp)
     {
+        processHarrisTalkerAlias(frequency, TimeslotMessage.TIMESLOT_1, radio, alias, identifiers, timestamp);
+    }
+
+    /**
+     * Records a completed Phase 2 talker alias independently of the current call tracker, then applies it to the
+     * tracker when the call is still active.
+     */
+    public void processP2MotorolaTalkerAlias(long frequency, int timeslot, RadioIdentifier radio,
+                                             Identifier talkgroup, TalkerAliasIdentifier alias,
+                                             IdentifierCollection identifiers, long timestamp)
+    {
+        if(!isUsableTalkerAlias(alias))
+        {
+            return;
+        }
+
+        observeTalkerAlias(radio, alias, identifiers, timestamp);
+        applyAuthoritativeTalkerAlias(frequency, timeslot, radio, talkgroup, alias, timestamp);
+    }
+
+    /**
+     * Records a Phase 2 Harris alias against the traffic-channel source that accompanied it.  Unlike Motorola's
+     * complete alias message, the Harris message does not carry an independently verifiable radio and talkgroup.
+     */
+    public void processP2HarrisTalkerAlias(long frequency, int timeslot, RadioIdentifier radio,
+                                           TalkerAliasIdentifier alias, IdentifierCollection identifiers,
+                                           long timestamp)
+    {
+        processHarrisTalkerAlias(frequency, timeslot, radio, alias, identifiers, timestamp);
+    }
+
+    /**
+     * Harris alias messages contain text but no embedded radio identity.  Reject a conflicting traffic/grant source
+     * instead of guessing which radio owns the alias.
+     */
+    private void processHarrisTalkerAlias(long frequency, int timeslot, RadioIdentifier radio,
+                                          TalkerAliasIdentifier alias, IdentifierCollection identifiers,
+                                          long timestamp)
+    {
         if(!isUsableTalkerAlias(alias))
         {
             return;
@@ -211,7 +252,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
         try
         {
-            P25TrafficChannelEventTracker tracker = getTracker(frequency, TimeslotMessage.TIMESLOT_1);
+            P25TrafficChannelEventTracker tracker = getTracker(frequency, timeslot);
             boolean matchesTrackedCall = tracker != null && identifiers != null &&
                 tracker.isSameCallCheckingToOnly(identifiers, timestamp);
 
@@ -219,11 +260,13 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             {
                 Identifier trackedSource = tracker.getEvent().getIdentifierCollection().getFromIdentifier();
 
-                if(trackedSource instanceof RadioIdentifier trackedRadio)
+                if(trackedSource instanceof RadioIdentifier trackedRadio && radio != null &&
+                    !radioMatches(radio, trackedRadio))
                 {
-                    radio = trackedRadio;
+                    return;
                 }
-                else
+
+                if(trackedSource == null)
                 {
                     tracker.addIdentifierIfMissing(radio);
                 }
@@ -245,19 +288,71 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     }
 
     /**
-     * Records a completed Phase 2 talker alias independently of the current call tracker, then applies it to the
-     * tracker when the call is still active.
+     * Applies an authoritative Motorola alias to the live call only when that call still has the radio and talkgroup
+     * encoded in the alias message.  The independently decoded radio/alias observation is retained even when a late
+     * alias arrives after the traffic channel has moved to another talker.
      */
-    public void processP2TalkerAlias(long frequency, int timeslot, RadioIdentifier radio,
-                                     TalkerAliasIdentifier alias, IdentifierCollection identifiers, long timestamp)
+    private void applyAuthoritativeTalkerAlias(long frequency, int timeslot, RadioIdentifier radio,
+                                               Identifier talkgroup, TalkerAliasIdentifier alias, long timestamp)
     {
-        if(!isUsableTalkerAlias(alias))
+        mLock.lock();
+
+        try
         {
-            return;
+            P25TrafficChannelEventTracker tracker = getTracker(frequency, timeslot);
+
+            if(tracker == null || tracker.isComplete() || tracker.isStale(timestamp))
+            {
+                return;
+            }
+
+            IdentifierCollection tracked = tracker.getEvent().getIdentifierCollection();
+
+            if(radioMatches(radio, tracked.getFromIdentifier()) &&
+                talkgroupMatches(talkgroup, tracked.getToIdentifier()))
+            {
+                tracker.addIdentifierIfMissing(alias);
+                tracker.updateDurationTraffic(timestamp);
+                broadcast(tracker);
+            }
+        }
+        finally
+        {
+            mLock.unlock();
+        }
+    }
+
+    private static boolean radioMatches(RadioIdentifier authoritative, Identifier tracked)
+    {
+        if(authoritative == null || !(tracked instanceof RadioIdentifier trackedRadio))
+        {
+            return false;
         }
 
-        observeTalkerAlias(radio, alias, identifiers, timestamp);
-        processP2TrafficCurrentUser(frequency, timeslot, alias, timestamp);
+        return authoritative.getValue().equals(trackedRadio.getValue()) ||
+            canonicalRadio(authoritative) == canonicalRadio(trackedRadio);
+    }
+
+    private static int canonicalRadio(RadioIdentifier radio)
+    {
+        return radio instanceof FullyQualifiedRadioIdentifier fullyQualified ? fullyQualified.getRadio() :
+            radio.getValue();
+    }
+
+    private static boolean talkgroupMatches(Identifier authoritative, Identifier tracked)
+    {
+        if(authoritative == null || tracked == null)
+        {
+            return false;
+        }
+
+        if(authoritative.equals(tracked))
+        {
+            return true;
+        }
+
+        return tracked instanceof PatchGroupIdentifier patchGroup &&
+            authoritative.equals(patchGroup.getValue().getPatchGroup());
     }
 
     private void observeTalkerAlias(RadioIdentifier radio, TalkerAliasIdentifier alias,

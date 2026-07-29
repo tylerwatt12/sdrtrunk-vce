@@ -13,6 +13,7 @@ package io.github.dsheirer.stats.activity;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -975,6 +976,45 @@ class P25ActivityLogWriterTest
     }
 
     @Test
+    void onlyExplicitTalkerAliasUpdatesDurableRadioAlias() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("explicit-talker-alias.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            P25ActivityLogSchema.insertSite(connection, siteSnapshot(500L));
+            P25ActivityLogSchema.recordActivity(connection,
+                activityWithTalkerAlias(1_000L, "WRONG FIRST"), true);
+
+            try(Statement statement = connection.createStatement();
+                ResultSet resultSet = statement.executeQuery(
+                    "SELECT last_talker_alias FROM p25_radio_summary"))
+            {
+                assertTrue(resultSet.next());
+                assertNull(resultSet.getString("last_talker_alias"));
+            }
+
+            P25ActivityLogSchema.updateTalkerAlias(connection, new P25ActivityLogRecords.TalkerAliasUpdate(
+                2_000L, "GUID:123e4567-e89b-12d3-a456-426614174000",
+                "123e4567-e89b-12d3-a456-426614174000", 0xBEE00, 0x348, 1811524, "CAR 201"));
+            P25ActivityLogSchema.recordActivity(connection,
+                activityWithTalkerAlias(3_000L, "WRONG LATE"), true);
+
+            try(Statement statement = connection.createStatement();
+                ResultSet resultSet = statement.executeQuery("""
+                    SELECT last_talker_alias, last_talker_alias_seen_ms
+                    FROM p25_radio_summary
+                    """))
+            {
+                assertTrue(resultSet.next());
+                assertEquals("CAR 201", resultSet.getString("last_talker_alias"));
+                assertEquals(2_000L, resultSet.getLong("last_talker_alias_seen_ms"));
+            }
+        }
+    }
+
+    @Test
     void activityAndTalkerAliasCannotEstablishSystemIdentity() throws Exception
     {
         Path database = mTemporaryFolder.resolve("untrusted-activity-identity.sqlite");
@@ -1380,6 +1420,30 @@ class P25ActivityLogWriterTest
             {
                 assertTrue(resultSet.next());
                 assertEquals(2_000L, resultSet.getLong("confirmed_at_ms"));
+            }
+        }
+    }
+
+    @Test
+    void invalidSynchronizationDateClearsPersistedClockAndKeepsMicroslots() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("site-invalid-sync-date.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            P25ActivityLogSchema.insertSite(connection, siteSnapshotWithTiming(1_000L, 1_784_000_000_000L));
+            P25ActivityLogSchema.insertSite(connection, siteSnapshotWithTiming(2_000L, null, 222));
+
+            try(Statement statement = connection.createStatement();
+                ResultSet resultSet = statement.executeQuery("""
+                    SELECT broadcast_clock_ms, micro_slots
+                    FROM p25_site_snapshot
+                    """))
+            {
+                assertTrue(resultSet.next());
+                assertNull(resultSet.getObject("broadcast_clock_ms"));
+                assertEquals(222, resultSet.getInt("micro_slots"));
             }
         }
     }
@@ -2250,6 +2314,15 @@ class P25ActivityLogWriterTest
             0xBEE00, 0x348, 0x348, 2, 1, "Example Site", "P25_PHASE1", null, true, null, null);
     }
 
+    private static P25ActivityLogRecords.ActivityEvent activityWithTalkerAlias(long timestamp, String talkerAlias)
+    {
+        String guid = "123e4567-e89b-12d3-a456-426614174000";
+        return new P25ActivityLogRecords.ActivityEvent(timestamp, "GUID:" + guid, guid,
+            P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "APCO25", P25ActivityLogRecords.Action.CALL,
+            "CALL_GROUP", "1811524", "56138", "TALKGROUP", List.of(), 854187500L, "00-0509", 1, false,
+            null, null, 0xBEE00, 0x348, 0x348, 2, 1, "Example Site", null, talkerAlias, true, null, null);
+    }
+
     private static P25ActivityLogRecords.ActivityEvent serviceActivity(long timestamp, String eventType,
                                                                         boolean encrypted, long frequency,
                                                                         String lcn)
@@ -2348,10 +2421,16 @@ class P25ActivityLogWriterTest
 
     private static P25ActivityLogRecords.SiteSnapshot siteSnapshotWithTiming(long timestamp, long broadcastClock)
     {
+        return siteSnapshotWithTiming(timestamp, broadcastClock, 110);
+    }
+
+    private static P25ActivityLogRecords.SiteSnapshot siteSnapshotWithTiming(long timestamp, Long broadcastClock,
+                                                                              int microSlots)
+    {
         P25ActivityLogRecords.SiteSnapshot snapshot = siteSnapshot(timestamp);
         P25NetworkConfigurationSnapshot.SiteStatus status = snapshot.siteStatus();
         P25NetworkConfigurationSnapshot.SiteStatus updatedStatus = new P25NetworkConfigurationSnapshot.SiteStatus(
-            broadcastClock, status.microSlots(), status.dataService(), status.dataAccess(),
+            broadcastClock, microSlots, status.dataService(), status.dataAccess(),
             status.wuidLeaseMinutes(), status.registrationService(), status.mfid(), status.voiceService());
 
         return new P25ActivityLogRecords.SiteSnapshot(timestamp, snapshot.guid(), snapshot.contextKind(),

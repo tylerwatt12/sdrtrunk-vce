@@ -314,15 +314,6 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
             {
                 writer.enqueue(record);
             }
-            else
-            {
-                P25ActivityLogRecords.TalkerAliasUpdate talkerAlias = mMapper.mapTalkerAliasUpdate(record);
-
-                if(talkerAlias != null && shouldLogTalkerAlias(talkerAlias))
-                {
-                    writer.enqueue(talkerAlias);
-                }
-            }
         }
     }
 

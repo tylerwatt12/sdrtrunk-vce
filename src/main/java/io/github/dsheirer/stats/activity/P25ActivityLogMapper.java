@@ -161,27 +161,6 @@ class P25ActivityLogMapper
             P25ActivityLogRecords.Action.CONTINUE : P25ActivityLogRecords.Action.GRANT);
     }
 
-    P25ActivityLogRecords.TalkerAliasUpdate mapTalkerAliasUpdate(P25ActivityLogRecords.ActivityEvent activity)
-    {
-        if(activity == null || activity.contextKind() != P25ActivityLogRecords.ContextKind.TRUNKED_SITE ||
-            activity.sourceRadioId() == null || activity.talkerAlias() == null || activity.talkerAlias().isBlank())
-        {
-            return null;
-        }
-
-        try
-        {
-            int radio = Integer.parseInt(activity.sourceRadioId());
-            return radio > 0 ? new P25ActivityLogRecords.TalkerAliasUpdate(
-                activity.observedAtEpochMilliseconds(), activity.contextKey(), activity.guid(), activity.wacn(),
-                activity.systemId(), radio, activity.talkerAlias().trim()) : null;
-        }
-        catch(NumberFormatException e)
-        {
-            return null;
-        }
-    }
-
     P25ActivityLogRecords.CompletedCallOutput mapCompletedCallOutput(CompletedAudioCall call,
                                                                      P25ActivityLogRecords.CallOutput output)
     {

@@ -190,7 +190,11 @@ public class P25P2AudioModule extends AmbeAudioModule implements IdentifierUpdat
                 else if(macMessage.getMacPduType() == MacPduType.MAC_2_END_PTT ||
                     macMessage.getMacPduType() == MacPduType.MAC_6_HANGTIME)
                 {
-                    endCurrentAudioBurst();
+                    //End PTT is the normal per-speaker boundary. Hangtime closes the call when End PTT was missed.
+                    closeCurrentAudioSegment();
+                    mToneMetadataProcessor.reset();
+                    clearPendingVoiceTimeslots();
+                    resetEncryptionTracking();
                 }
             }
             else if(message instanceof EncryptionSynchronizationSequence encryptionSynchronizationSequence && message.isValid())

@@ -325,8 +325,8 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
             }
             else if(message instanceof MotorolaTalkerAliasComplete tac && tac.isValid())
             {
-                mTrafficChannelManager.processP2TalkerAlias(getCurrentFrequency(), getTimeslot(), tac.getRadio(),
-                    tac.getAlias(), getIdentifierCollection(), tac.getTimestamp());
+                mTrafficChannelManager.processP2MotorolaTalkerAlias(getCurrentFrequency(), getTimeslot(),
+                    tac.getRadio(), tac.getTalkgroup(), tac.getAlias(), getIdentifierCollection(), tac.getTimestamp());
             }
 
             mSiteMetadataPublisher.publish(message.getTimestamp());
@@ -1277,10 +1277,14 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                 {
                     if(regroup.getRegroupOptions().isActivate())
                     {
-                        if(mPatchGroupManager.addPatchGroup(regroup.getPatchGroup(), message.getTimestamp()))
+                        boolean changed = mPatchGroupManager.addPatchGroup(regroup.getPatchGroup(),
+                            message.getTimestamp());
+                        mNetworkConfigurationStabilizer.observePatchGroup((PatchGroupIdentifier)
+                            mPatchGroupManager.update(regroup.getPatchGroup(), message.getTimestamp()),
+                            message.getTimestamp());
+
+                        if(changed)
                         {
-                            mNetworkConfigurationStabilizer.observePatchGroup(regroup.getPatchGroup(),
-                                message.getTimestamp());
                             broadcast(message, mac, DecodeEventType.DYNAMIC_REGROUP, "ACTIVATE " + regroup.getPatchGroup());
                         }
                     }
@@ -1819,7 +1823,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
             getIdentifierCollection().update(alias);
             Identifier from = getIdentifierCollection().getFromIdentifier();
             RadioIdentifier radio = from instanceof RadioIdentifier radioIdentifier ? radioIdentifier : null;
-            mTrafficChannelManager.processP2TalkerAlias(getCurrentFrequency(), getTimeslot(), radio, alias,
+            mTrafficChannelManager.processP2HarrisTalkerAlias(getCurrentFrequency(), getTimeslot(), radio, alias,
                 getIdentifierCollection(), message.getTimestamp());
         }
     }

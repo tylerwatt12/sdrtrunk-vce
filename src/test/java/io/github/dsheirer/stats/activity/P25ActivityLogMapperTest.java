@@ -160,12 +160,6 @@ class P25ActivityLogMapperTest
         assertFalse(record.countedCall());
         assertEquals("CAR 201", record.talkerAlias());
 
-        P25ActivityLogRecords.TalkerAliasUpdate talkerAlias =
-            new P25ActivityLogMapper().mapTalkerAliasUpdate(record);
-        assertNotNull(talkerAlias);
-        assertEquals(1811524, talkerAlias.radioId());
-        assertEquals("CAR 201", talkerAlias.talkerAlias());
-
         P25ActivityLogRecords.ActivityEvent callStart = new P25ActivityLogMapper().map(
             new P25CallStartEvent(channel(DecoderType.P25_PHASE1), event));
         assertNotNull(callStart);

@@ -11,12 +11,18 @@
 
 package io.github.dsheirer.module.decode.p25.telemetry;
 
+import io.github.dsheirer.identifier.patch.PatchGroup;
+import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
+import io.github.dsheirer.identifier.patch.PatchGroupManager;
+import io.github.dsheirer.module.decode.p25.identifier.patch.APCO25PatchGroup;
+import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class P25NetworkConfigurationStabilizerTest
@@ -176,7 +182,7 @@ public class P25NetworkConfigurationStabilizerTest
 
         stabilizer.observe(new P25NetworkConfigurationSnapshot("P25_PHASE_1", null, null, List.of(), List.of(),
             List.of(), List.of(), List.of()), 602_001L);
-        assertEquals(null, stabilizer.getSnapshot().siteStatus());
+        assertNull(stabilizer.getSnapshot().siteStatus());
     }
 
     @Test
@@ -244,6 +250,50 @@ public class P25NetworkConfigurationStabilizerTest
         assertEquals(3, stabilizer.getSnapshot().foreignSystemBands().size());
         assertTrue(stabilizer.getSnapshot().foreignSystemBands().containsAll(bands));
         assertTrue(stabilizer.getSnapshot().frequencyBands().isEmpty());
+    }
+
+    @Test
+    public void promotesAccumulatedAlternatingHarrisPhaseOneMembers()
+    {
+        PatchGroupManager manager = new PatchGroupManager();
+        P25NetworkConfigurationStabilizer stabilizer = new P25NetworkConfigurationStabilizer("P25_PHASE_1");
+
+        observeAccumulatedPatchGroup(manager, stabilizer, patchGroup(65191, 9, 40002), 1_000L);
+        observeAccumulatedPatchGroup(manager, stabilizer, patchGroup(65191, 9, 40003), 11_000L);
+        observeAccumulatedPatchGroup(manager, stabilizer, patchGroup(65191, 9, 40002), 21_000L);
+
+        assertEquals(List.of(40002, 40003), stabilizer.getSnapshot().patchGroups().getFirst().talkgroups());
+    }
+
+    @Test
+    public void repeatedUnchangedHarrisPhaseTwoObservationCanPromote()
+    {
+        PatchGroupManager manager = new PatchGroupManager();
+        P25NetworkConfigurationStabilizer stabilizer = new P25NetworkConfigurationStabilizer("P25_PHASE_2");
+        PatchGroupIdentifier first = patchGroup(65191, 9, 40002);
+        PatchGroupIdentifier repeated = patchGroup(65191, 9, 40002);
+
+        assertTrue(manager.addPatchGroup(first, 1_000L));
+        stabilizer.observePatchGroup((PatchGroupIdentifier)manager.update(first, 1_000L), 1_000L);
+        assertFalse(manager.addPatchGroup(repeated, 11_000L));
+        stabilizer.observePatchGroup((PatchGroupIdentifier)manager.update(repeated, 11_000L), 11_000L);
+
+        assertEquals(List.of(40002), stabilizer.getSnapshot().patchGroups().getFirst().talkgroups());
+    }
+
+    private static void observeAccumulatedPatchGroup(PatchGroupManager manager,
+                                                     P25NetworkConfigurationStabilizer stabilizer,
+                                                     PatchGroupIdentifier patchGroup, long timestamp)
+    {
+        manager.addPatchGroup(patchGroup, timestamp);
+        stabilizer.observePatchGroup((PatchGroupIdentifier)manager.update(patchGroup, timestamp), timestamp);
+    }
+
+    private static PatchGroupIdentifier patchGroup(int supergroup, int version, int member)
+    {
+        PatchGroup patchGroup = new PatchGroup(APCO25Talkgroup.create(supergroup), version);
+        patchGroup.addPatchedTalkgroup(APCO25Talkgroup.create(member));
+        return APCO25PatchGroup.create(patchGroup);
     }
 
     private static P25NetworkConfigurationSnapshot snapshot(P25NetworkConfigurationSnapshot.NeighborSite neighbor)

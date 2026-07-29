@@ -47,6 +47,7 @@ public class ChannelRotationMonitor extends Module implements ISourceEventProvid
     public static final int CHANNEL_ROTATION_DELAY_MINIMUM = 200;
     public static final int CHANNEL_ROTATION_DELAY_DEFAULT = 500;
     public static final int CHANNEL_ROTATION_DELAY_MAXIMUM = 2000;
+    public static final int ACTIVE_STATE_LOSS_DELAY_DEFAULT = 2000;
 
     private static final Logger mLog = LoggerFactory.getLogger(ChannelRotationMonitor.class);
     private UserPreferences mUserPreferences;
@@ -54,7 +55,9 @@ public class ChannelRotationMonitor extends Module implements ISourceEventProvid
     private ScheduledFuture<?> mScheduledFuture;
     private Listener<SourceEvent> mSourceEventListener;
     private long mRotationDelay;
-    private long mLastActiveTimestamp = System.currentTimeMillis();
+    private final long mActiveStateLossDelay;
+    private volatile long mLastActiveTimestamp = System.currentTimeMillis();
+    private volatile boolean mActiveStateObserved;
     private boolean mEnabled = true;
 
     /**
@@ -64,8 +67,22 @@ public class ChannelRotationMonitor extends Module implements ISourceEventProvid
      */
     public ChannelRotationMonitor(Collection<State> activeStates, long rotationDelay, UserPreferences userPreferences)
     {
+        this(activeStates, rotationDelay, 0, userPreferences);
+    }
+
+    /**
+     * Constructs a channel rotation monitor with separate delays for seeking and losing a previously active channel.
+     * @param activeStates to monitor
+     * @param rotationDelay how long to seek on each frequency before rotating, in milliseconds
+     * @param activeStateLossDelay how long to tolerate silence after an active state was observed, in milliseconds
+     * @param userPreferences user preferences
+     */
+    public ChannelRotationMonitor(Collection<State> activeStates, long rotationDelay, long activeStateLossDelay,
+                                  UserPreferences userPreferences)
+    {
         mActiveStates = activeStates;
         mRotationDelay = rotationDelay;
+        mActiveStateLossDelay = activeStateLossDelay;
         mUserPreferences = userPreferences;
 
         if(mRotationDelay < CHANNEL_ROTATION_DELAY_MINIMUM)
@@ -109,6 +126,7 @@ public class ChannelRotationMonitor extends Module implements ISourceEventProvid
             mActiveStates.contains(event.getState()))
         {
             mLastActiveTimestamp = System.currentTimeMillis();
+            mActiveStateObserved = true;
         }
     }
 
@@ -142,11 +160,23 @@ public class ChannelRotationMonitor extends Module implements ISourceEventProvid
      */
     private void checkState()
     {
+        checkState(System.currentTimeMillis());
+    }
+
+    /**
+     * Checks the current active state at the supplied time. Package visibility supports deterministic tests.
+     */
+    void checkState(long currentTimeMillis)
+    {
+        long delay = mActiveStateObserved && mActiveStateLossDelay > 0 ?
+            Math.max(mRotationDelay, mActiveStateLossDelay) : mRotationDelay;
+
         if(mEnabled && mSourceEventListener != null &&
-            ((mLastActiveTimestamp + mRotationDelay) < System.currentTimeMillis()))
+            ((mLastActiveTimestamp + delay) < currentTimeMillis))
         {
             mSourceEventListener.receive(SourceEvent.frequencyRotationRequest());
-            mLastActiveTimestamp = System.currentTimeMillis();
+            mLastActiveTimestamp = currentTimeMillis;
+            mActiveStateObserved = false;
         }
     }
 

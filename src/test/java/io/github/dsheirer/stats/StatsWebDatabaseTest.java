@@ -280,6 +280,37 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void countsRetainedPhysicalP25ChannelsConsistently() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO p25_site_channel_summary (guid, channel_key, descriptor, downlink_hz, uplink_hz,
+                    tdma, timeslots, first_seen_ms, last_seen_ms, observation_count)
+                VALUES ('test-site-guid', '2-1470', '2-1470', 771193750, NULL, 1, 2, 1000, 2000, 2),
+                    ('test-site-guid', '10-2940', '10-2940', 771193750, NULL, 1, 2, 1000, 2000, 2),
+                    ('test-site-guid', '2-999', '2-999', NULL, NULL, 1, 2, 1000, 2000, 1),
+                    ('test-site-guid', '10-1998', '10-1998', NULL, NULL, 1, 2, 1000, 2000, 1)
+                """);
+        }
+
+        assertEquals(6, number(map(mDatabase.site(request("/api/site?guid=" + GUID)), "site").get("channels")));
+        assertEquals(6, rows(mDatabase.siteChannels(request("/api/site/channels?guid=" + GUID))).size());
+        assertEquals(1, rows(mDatabase.siteChannels(request(
+            "/api/site/channels?guid=" + GUID + "&limit=1"))).size());
+
+        Map<String,Object> recentSite = rowsFrom(mDatabase.dashboard(), "recentReceivers").stream()
+            .filter(row -> GUID.equals(row.get("guid"))).findFirst().orElseThrow();
+        assertEquals(6, number(recentSite.get("channels")));
+
+        Map<String,Object> directorySite = rows(mDatabase.systemDirectory(request("/api/system-directory"))).stream()
+            .flatMap(system -> rowsFrom(system, "children").stream())
+            .filter(row -> GUID.equals(row.get("guid"))).findFirst().orElseThrow();
+        assertEquals(6, number(directorySite.get("channels")));
+    }
+
+    @Test
     void exposesConventionalContextsSeparately()
     {
         Map<String,Object> conventional = mDatabase.conventional(request("/api/conventional"));
@@ -1298,6 +1329,14 @@ class StatsWebDatabaseTest
                 TrunkedSiteSchema.PROTOCOL_DMR, 1, 2, "Transitioned DMR", "DMR Receiver", 10, 20, 2, null,
                 List.of(new TrunkedSiteSchema.Channel(42, null, 1, 451_000_000L, 456_000_000L, 1)),
                 List.of(new TrunkedSiteSchema.Neighbor(1, 2, 10, 20, 3, 43, 452_000_000L, 1))));
+
+            try(PreparedStatement statement = connection.prepareStatement(
+                "UPDATE receiver_context SET last_seen_ms = ? WHERE guid = ?"))
+            {
+                statement.setLong(1, trunkedLastSeen + 1_000L);
+                statement.setString(2, GUID);
+                statement.executeUpdate();
+            }
         }
 
         Map<String,Object> latest = map(mDatabase.site(request("/api/site?guid=" + GUID)), "site");
@@ -1325,6 +1364,9 @@ class StatsWebDatabaseTest
             .filter(parent -> "P25".equals(parent.get("protocol"))).findFirst().orElseThrow();
         assertEquals(0, number(retainedP25Parent.get("sites")));
         assertNull(retainedP25Parent.get("site_names"));
+        Map<String,Object> recentReceiver = rowsFrom(mDatabase.dashboard(), "recentReceivers").stream()
+            .filter(receiver -> GUID.equals(receiver.get("guid"))).findFirst().orElseThrow();
+        assertEquals("DMR", recentReceiver.get("protocol"));
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
             PreparedStatement statement = connection.prepareStatement(
@@ -1358,6 +1400,9 @@ class StatsWebDatabaseTest
             .filter(parent -> "P25".equals(parent.get("protocol"))).findFirst().orElseThrow();
         assertEquals(1, number(retainedP25Parent.get("sites")));
         assertEquals("Cleveland Simulcast", retainedP25Parent.get("site_names"));
+        recentReceiver = rowsFrom(mDatabase.dashboard(), "recentReceivers").stream()
+            .filter(receiver -> GUID.equals(receiver.get("guid"))).findFirst().orElseThrow();
+        assertEquals("P25", recentReceiver.get("protocol"));
     }
 
     @Test

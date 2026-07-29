@@ -1867,20 +1867,13 @@ public class P25ActivityLogSchema
         try(PreparedStatement statement = connection.prepareStatement("""
             INSERT INTO p25_radio_summary (
                 system_key, radio_id, first_seen_ms, last_seen_ms, %s, encrypted_count, last_talkgroup_id,
-                last_talker_alias, last_talker_alias_seen_ms, last_encryption_algorithm_id, last_encryption_key_id
-            ) VALUES (?, ?, ?, ?, %s, ?, ?, ?, ?, ?, ?)
+                last_encryption_algorithm_id, last_encryption_key_id
+            ) VALUES (?, ?, ?, ?, %s, ?, ?, ?, ?)
             ON CONFLICT(system_key, radio_id) DO UPDATE SET
                 last_seen_ms = max(p25_radio_summary.last_seen_ms, excluded.last_seen_ms),
                 %s,
                 encrypted_count = p25_radio_summary.encrypted_count + excluded.encrypted_count,
                 last_talkgroup_id = coalesce(excluded.last_talkgroup_id, p25_radio_summary.last_talkgroup_id),
-                last_talker_alias = CASE
-                    WHEN excluded.last_talker_alias_seen_ms >= coalesce(p25_radio_summary.last_talker_alias_seen_ms, 0)
-                    THEN coalesce(excluded.last_talker_alias, p25_radio_summary.last_talker_alias)
-                    ELSE p25_radio_summary.last_talker_alias
-                END,
-                last_talker_alias_seen_ms = max(coalesce(p25_radio_summary.last_talker_alias_seen_ms, 0),
-                    coalesce(excluded.last_talker_alias_seen_ms, 0)),
                 last_encryption_algorithm_id = coalesce(excluded.last_encryption_algorithm_id, p25_radio_summary.last_encryption_algorithm_id),
                 last_encryption_key_id = coalesce(excluded.last_encryption_key_id, p25_radio_summary.last_encryption_key_id)
             """.formatted(ACTION_INSERT_COLUMNS, ACTION_INSERT_PLACEHOLDERS, actionUpdateSql("p25_radio_summary"))))
@@ -1893,8 +1886,6 @@ public class P25ActivityLogSchema
             index = setActionCounts(statement, index, activity);
             statement.setInt(index++, activity.encrypted() ? 1 : 0);
             setInteger(statement, index++, isTalkgroup(activity.targetKind()) ? target : null);
-            statement.setString(index++, activity.talkerAlias());
-            setLong(statement, index++, activity.talkerAlias() != null ? activity.observedAtEpochMilliseconds() : null);
             setInteger(statement, index++, activity.encryptionAlgorithmId());
             setInteger(statement, index, activity.encryptionKeyId());
             statement.executeUpdate();
@@ -2334,7 +2325,9 @@ public class P25ActivityLogSchema
                 site = excluded.site,
                 lra = coalesce(excluded.lra, p25_site_snapshot.lra),
                 mfid = coalesce(excluded.mfid, p25_site_snapshot.mfid),
-                broadcast_clock_ms = coalesce(excluded.broadcast_clock_ms, p25_site_snapshot.broadcast_clock_ms),
+                broadcast_clock_ms = CASE WHEN excluded.micro_slots IS NOT NULL
+                    THEN excluded.broadcast_clock_ms
+                    ELSE coalesce(excluded.broadcast_clock_ms, p25_site_snapshot.broadcast_clock_ms) END,
                 micro_slots = coalesce(excluded.micro_slots, p25_site_snapshot.micro_slots),
                 data_service = coalesce(excluded.data_service, p25_site_snapshot.data_service),
                 data_access = coalesce(excluded.data_access, p25_site_snapshot.data_access),

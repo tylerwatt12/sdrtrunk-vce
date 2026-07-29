@@ -1383,9 +1383,12 @@ class StatsWebDatabase
                 CASE WHEN max(max(coalesce(confirmed_at_ms, 0), last_seen_ms)) >= ?
                     THEN 'CURRENT' ELSE 'HISTORICAL' END AS state
             FROM logical
-            GROUP BY guid, coalesce(CAST(downlink_hz AS TEXT), channel_key)
+            GROUP BY guid, CASE WHEN downlink_hz > 0
+                THEN 'f:' || downlink_hz ELSE 'k:' || channel_key END
             ORDER BY coalesce(downlink_hz, 9223372036854775807), channel_key
-            """, guid, guid, guid, System.currentTimeMillis() - CURRENT_STATE_WINDOW_MILLISECONDS));
+            LIMIT ?
+            """, guid, guid, guid, System.currentTimeMillis() - CURRENT_STATE_WINDOW_MILLISECONDS,
+                request.limit()));
         });
     }
 
@@ -1872,7 +1875,9 @@ class StatsWebDatabase
                      WHERE channel.guid = site.guid AND channel.callsign IS NOT NULL
                      ORDER BY channel.confirmed_at_ms DESC LIMIT 1)
                 ) AS callsign,
-                (SELECT COUNT(*) FROM p25_site_channel channel WHERE channel.guid = site.guid) AS channels,
+                (SELECT COUNT(DISTINCT CASE WHEN channel.downlink_hz > 0
+                    THEN 'f:' || channel.downlink_hz ELSE 'k:' || channel.channel_key END)
+                    FROM p25_site_channel_summary channel WHERE channel.guid = site.guid) AS channels,
                 (SELECT COUNT(*) FROM p25_site_neighbor neighbor WHERE neighbor.guid = site.guid) AS neighbors,
                 (SELECT COUNT(*) FROM p25_site_frequency_band band WHERE band.guid = site.guid) AS bands,
                 (SELECT COUNT(*) FROM p25_site_patch_group patch WHERE patch.guid = site.guid) AS patches
@@ -2142,8 +2147,10 @@ class StatsWebDatabase
                     coalesce(context.current_control_hz, site.current_control_hz) AS current_control_hz,
                     min(site.first_seen_ms, coalesce(context.first_seen_ms, site.first_seen_ms)) AS first_seen_ms,
                     max(site.last_seen_ms, coalesce(context.last_seen_ms, site.last_seen_ms)) AS last_seen_ms,
-                    site.observation_count,
-                    (SELECT COUNT(*) FROM p25_site_channel channel WHERE channel.guid = site.guid) AS channels,
+                    site.last_seen_ms AS metadata_last_seen_ms, site.observation_count,
+                    (SELECT COUNT(DISTINCT CASE WHEN channel.downlink_hz > 0
+                        THEN 'f:' || channel.downlink_hz ELSE 'k:' || channel.channel_key END)
+                        FROM p25_site_channel_summary channel WHERE channel.guid = site.guid) AS channels,
                     (SELECT COUNT(*) FROM p25_site_neighbor neighbor WHERE neighbor.guid = site.guid) AS neighbors,
                     1 AS detail_available
                 FROM p25_site_snapshot site
@@ -2164,7 +2171,7 @@ class StatsWebDatabase
                     coalesce(context.current_control_hz, site.current_control_hz) AS current_control_hz,
                     min(site.first_seen_ms, coalesce(context.first_seen_ms, site.first_seen_ms)) AS first_seen_ms,
                     max(site.last_seen_ms, coalesce(context.last_seen_ms, site.last_seen_ms)) AS last_seen_ms,
-                    site.observation_count,
+                    site.last_seen_ms AS metadata_last_seen_ms, site.observation_count,
                     (SELECT COUNT(*) FROM trunked_site_channel_summary channel
                         WHERE channel.guid = site.guid) AS channels,
                     (SELECT COUNT(*) FROM trunked_site_neighbor_summary neighbor
@@ -2194,7 +2201,8 @@ class StatsWebDatabase
                     NULL AS network_id, NULL AS rfss, NULL AS site, NULL AS site_id, NULL AS ran,
                     NULL AS variant_code, NULL AS identity_domain_code, context.primary_frequency_hz,
                     context.current_control_hz, context.first_seen_ms, context.last_seen_ms,
-                    NULL AS observation_count, 0 AS channels, 0 AS neighbors, 1 AS detail_available
+                    context.last_seen_ms AS metadata_last_seen_ms, NULL AS observation_count,
+                    0 AS channels, 0 AS neighbors, 1 AS detail_available
                 FROM receiver_context context
                 WHERE context.kind_code <> 1
 
@@ -2215,7 +2223,8 @@ class StatsWebDatabase
                     NULL AS network_id, context.rfss, context.site, NULL AS site_id, NULL AS ran,
                     NULL AS variant_code, NULL AS identity_domain_code, context.primary_frequency_hz,
                     context.current_control_hz, context.first_seen_ms, context.last_seen_ms,
-                    NULL AS observation_count, 0 AS channels, 0 AS neighbors, 0 AS detail_available
+                    context.last_seen_ms AS metadata_last_seen_ms, NULL AS observation_count,
+                    0 AS channels, 0 AS neighbors, 0 AS detail_available
                 FROM receiver_context context
                 WHERE context.kind_code = 1
                   AND NOT EXISTS (
@@ -2227,7 +2236,7 @@ class StatsWebDatabase
             ),
             ranked AS (
                 SELECT candidates.*, row_number() OVER (
-                    PARTITION BY receiver_key ORDER BY last_seen_ms DESC, protocol_code ASC
+                    PARTITION BY receiver_key ORDER BY metadata_last_seen_ms DESC, protocol_code ASC
                 ) AS receiver_rank
                 FROM candidates
             )

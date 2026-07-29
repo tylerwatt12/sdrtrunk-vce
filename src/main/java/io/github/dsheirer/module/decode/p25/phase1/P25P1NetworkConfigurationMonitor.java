@@ -171,8 +171,8 @@ public class P25P1NetworkConfigurationMonitor
                 {
                     mSynchronizationBroadcast = synchronizationBroadcast;
                     return statusObservation(new P25NetworkConfigurationSnapshot.SiteStatus(
-                        synchronizationBroadcast.getSystemTime(), synchronizationBroadcast.getMicroSlots(), null,
-                        null, null, null, null, null));
+                        synchronizationBroadcast.hasValidDate() ? synchronizationBroadcast.getSystemTime() : null,
+                        synchronizationBroadcast.getMicroSlots(), null, null, null, null, null, null));
                 }
                 break;
             case OSP_TIME_DATE_ANNOUNCEMENT:

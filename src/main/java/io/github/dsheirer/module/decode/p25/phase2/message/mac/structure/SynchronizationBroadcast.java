@@ -79,11 +79,11 @@ public class SynchronizationBroadcast extends MacStructure
         }
         sb.append(":");
         mTimeFormatter.setTimeZone(getTimeZone());
-        sb.append(" ").append(mTimeFormatter.format(new Date(getSystemTime())));
+        sb.append(hasValidDate() ? " " + mTimeFormatter.format(new Date(getSystemTime())) : " INVALID DATE");
         sb.append(" LEAP-SECOND CORRECTION:").append(getLeapSecondCorrection()).append("mS");
         if(isMicroslotsLockedToMinuteRollover())
         {
-            sb.append(" MICROSLOT-MINUTE ROLLOVER:SLOW");
+            sb.append(" MICROSLOT-MINUTE ROLLOVER:LOCKED");
         }
         else
         {
@@ -106,6 +106,14 @@ public class SynchronizationBroadcast extends MacStructure
         cal.set(Calendar.MINUTE, getMinutes());
         cal.set(Calendar.MILLISECOND, getMilliSeconds());
         return cal.getTimeInMillis();
+    }
+
+    /**
+     * Indicates if the month and day fields are within their defined ranges.
+     */
+    public boolean hasValidDate()
+    {
+        return getMonth() >= 1 && getMonth() <= 12 && getDay() >= 1 && getDay() <= 31;
     }
 
     /**

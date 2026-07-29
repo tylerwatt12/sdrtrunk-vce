@@ -132,8 +132,8 @@ public class P25P2NetworkConfigurationMonitor
                     mSynchronizationBroadcastMessage = message;
                     mSynchronizationBroadcast = synchronizationBroadcast;
                     return statusObservation(new P25NetworkConfigurationSnapshot.SiteStatus(
-                        synchronizationBroadcast.getSystemTime(), synchronizationBroadcast.getMicroSlots(), null,
-                        null, null, null, null, null));
+                        synchronizationBroadcast.hasValidDate() ? synchronizationBroadcast.getSystemTime() : null,
+                        synchronizationBroadcast.getMicroSlots(), null, null, null, null, null, null));
                 }
                 break;
             case PHASE1_75_TIME_AND_DATE_ANNOUNCEMENT:
