@@ -285,10 +285,12 @@ class StatsWebDatabaseTest
         Map<String,Object> conventional = mDatabase.conventional(request("/api/conventional"));
         assertEquals(1, rows(conventional).size());
         assertEquals("County Fire", rows(conventional).get(0).get("channel_name"));
+        assertEquals(10L, number(rows(conventional).get(0).get("protocol_code")));
 
         Map<String,Object> detail = mDatabase.conventionalDetail(request(
             "/api/conventional/detail?context=conventional-fire"));
         assertEquals("County Fire", map(detail, "context").get("channel_name"));
+        assertEquals(10L, number(map(detail, "context").get("protocol_code")));
         assertTrue(rowsFrom(detail, "summaries").get(0).containsKey("frequency_hz"));
     }
 
@@ -1550,7 +1552,7 @@ class StatsWebDatabaseTest
             statement.executeUpdate("""
                 INSERT INTO receiver_context (id, context_key, guid, kind_code, protocol_code, channel_name,
                     alias_list_name, decoder, first_seen_ms, last_seen_ms, primary_frequency_hz)
-                VALUES (2, 'conventional-fire', NULL, 10, 10, 'County Fire', 'County', 'NBFM', 1000, 2000,
+                VALUES (2, 'conventional-fire', NULL, 10, 0, 'County Fire', 'County', 'NBFM', 1000, 2000,
                     154310000)
                 """);
             statement.executeUpdate("""

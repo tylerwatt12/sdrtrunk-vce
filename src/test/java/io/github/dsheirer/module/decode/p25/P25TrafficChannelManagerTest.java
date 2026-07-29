@@ -23,11 +23,16 @@ import io.github.dsheirer.module.decode.p25.phase1.message.P25FrequencyBand;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25System;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25Wacn;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
+import io.github.dsheirer.module.decode.p25.identifier.channel.StandardChannel;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
+import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.Opcode;
+import io.github.dsheirer.module.decode.p25.reference.VoiceServiceOptions;
 import java.lang.reflect.Field;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
@@ -40,6 +45,40 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class P25TrafficChannelManagerTest
 {
+    @Test
+    void publishesOneCallStartForEachConventionalTrafficCall()
+    {
+        long frequency = 154_875_000L;
+        Channel parentChannel = new Channel("Conventional");
+        parentChannel.setDecodeConfiguration(new DecodeConfigP25Conventional());
+        P25TrafficChannelManager manager = new P25TrafficChannelManager(parentChannel);
+        MutableIdentifierCollection identifiers = identifiers(1201,
+            APCO25RadioIdentifier.createFrom(1_234_567));
+        CallStartSubscriber subscriber = new CallStartSubscriber();
+        MyEventBus.getGlobalEventBus().register(subscriber);
+
+        try
+        {
+            manager.processP1TrafficCurrentUser(frequency, null,
+                DecodeEventType.CALL_GROUP, VoiceServiceOptions.createUnencrypted(), identifiers, 1_000L, null);
+            manager.processP1TrafficCurrentUser(frequency, new StandardChannel(frequency),
+                DecodeEventType.CALL_GROUP, VoiceServiceOptions.createUnencrypted(), identifiers, 1_100L, null);
+            assertTrue(manager.processP1TrafficCallEnd(frequency, 1_200L));
+            manager.processP1TrafficCurrentUser(frequency, new StandardChannel(frequency),
+                DecodeEventType.CALL_GROUP, VoiceServiceOptions.createUnencrypted(), identifiers, 1_300L, null);
+        }
+        finally
+        {
+            MyEventBus.getGlobalEventBus().unregister(subscriber);
+        }
+
+        assertEquals(2, subscriber.events.size());
+        assertSame(parentChannel, subscriber.events.get(0).channel());
+        assertEquals(1_000L, subscriber.events.get(0).event().getTimeStart());
+        assertEquals(frequency, subscriber.events.get(0).event().getChannelDescriptor().getDownlinkFrequency());
+        assertEquals(1_300L, subscriber.events.get(1).event().getTimeStart());
+    }
+
     @Test
     void clearsFrequencyBandsWhenControlFrequencyChanges() throws Exception
     {
@@ -246,6 +285,17 @@ class P25TrafficChannelManagerTest
         public void receive(P25TalkerAliasEvent talkerAliasEvent)
         {
             event.set(talkerAliasEvent);
+        }
+    }
+
+    private static class CallStartSubscriber
+    {
+        private final List<P25CallStartEvent> events = new CopyOnWriteArrayList<>();
+
+        @Subscribe
+        public void receive(P25CallStartEvent callStartEvent)
+        {
+            events.add(callStartEvent);
         }
     }
 }

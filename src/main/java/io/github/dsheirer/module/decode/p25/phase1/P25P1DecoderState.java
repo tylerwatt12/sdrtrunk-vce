@@ -266,6 +266,14 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
         else
         {
             mTrafficChannelManager = new P25TrafficChannelManager(channel);
+
+            if(mDecoderType == DecoderType.P25_CONVENTIONAL)
+            {
+                //Conventional P25 owns this manager privately, so forward its call lifecycle events through this
+                //decoder state. Otherwise audio and state changes are visible while activity listeners see no calls.
+                mTrafficChannelManager.addDecodeEventListener(this::broadcast);
+            }
+
             //Do nothing with channel events if we're not configured to process traffic channels
             mChannelEventListener = channelEvent -> {};
         }
@@ -830,7 +838,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
             }
         }
 
-        broadcast(new DecoderStateEvent(this, Event.DECODE, State.CONTROL));
+        broadcastControlState(message);
     }
 
     /**
@@ -1096,7 +1104,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                     "TELEPHONE INTERCONNECT:" + tired.getTelephoneNumber());
         }
 
-        broadcast(new DecoderStateEvent(this, Event.DECODE, State.CONTROL));
+        broadcastControlState(message);
     }
 
     /**
@@ -1316,7 +1324,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
      */
     private void processTSBK(P25P1Message message)
     {
-        broadcast(new DecoderStateEvent(this, Event.DECODE, State.CONTROL));
+        broadcastControlState(message);
 
         if(message.isValid() && message instanceof TSBKMessage tsbk)
         {
@@ -1676,6 +1684,20 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                 default:
                     break;
             }
+        }
+    }
+
+    /**
+     * An invalid control-family frame must not move a conventional P25 channel out of its current state. Trunked
+     * P25 retains the existing behavior because invalid control-channel frames still provide channel-rotation/hold
+     * evidence. Ignoring the conventional frame, instead of broadcasting an opposite state, also avoids introducing
+     * a new IDLE/CALL flicker.
+     */
+    private void broadcastControlState(P25P1Message message)
+    {
+        if(mDecoderType != DecoderType.P25_CONVENTIONAL || message.isValid())
+        {
+            broadcast(new DecoderStateEvent(this, Event.DECODE, State.CONTROL));
         }
     }
 

@@ -34,6 +34,7 @@ import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.dmr.DMRConventionalCallEvent;
 import io.github.dsheirer.module.decode.event.DecodeEvent;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
+import io.github.dsheirer.module.decode.nbfm.DecodeConfigNBFM;
 import io.github.dsheirer.module.decode.p25.P25ChannelGrantEvent;
 import io.github.dsheirer.module.decode.p25.P25CallStartEvent;
 import io.github.dsheirer.module.decode.p25.P25EncryptionConfirmationTracker;
@@ -154,6 +155,65 @@ class P25ActivityLogMapperTest
         assertNull(grant.encryptionAlgorithmId());
         assertNull(grant.encryptionKeyId());
         P25EncryptionConfirmationTracker.complete(event, 4000L);
+    }
+
+    @Test
+    void mapsNbfmProtocolFromConfiguredDecoderWhenEventProtocolIsUnknown()
+    {
+        MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
+        identifiers.update(FrequencyConfigurationIdentifier.create(154_920_000L));
+        DecodeEvent event = DecodeEvent.builder(DecodeEventType.CALL, 1_000L)
+            .duration(1_000L)
+            .identifiers(identifiers)
+            .build();
+        Channel channel = channel(DecoderType.NBFM);
+
+        P25ActivityLogRecords.ActivityEvent record = new P25ActivityLogMapper().map(channel, event);
+
+        assertNotNull(record);
+        assertEquals(P25ActivityLogRecords.ContextKind.CONVENTIONAL_ANALOG, record.contextKind());
+        assertEquals("NBFM", record.protocol());
+        assertEquals("GUID:" + GUID, record.contextKey());
+        assertTrue(record.countedCall());
+        assertNotNull(record.dedupeKey());
+
+        event.update(1_500L);
+        P25ActivityLogRecords.ActivityEvent continuation =
+            new P25ActivityLogMapper().map(channel, event);
+        DecodeEvent nextCall = DecodeEvent.builder(DecodeEventType.CALL, 2_000L)
+            .duration(1_000L)
+            .identifiers(identifiers)
+            .build();
+        P25ActivityLogRecords.ActivityEvent next =
+            new P25ActivityLogMapper().map(channel, nextCall);
+
+        assertEquals(record.dedupeKey(), continuation.dedupeKey());
+        assertNotEquals(record.dedupeKey(), next.dedupeKey());
+    }
+
+    @Test
+    void countsOnlyTypedStartForConventionalP25Tracker()
+    {
+        MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
+        identifiers.update(APCO25RadioIdentifier.createFrom(1_811_524));
+        identifiers.update(APCO25Talkgroup.create(56_138));
+        identifiers.update(FrequencyConfigurationIdentifier.create(154_875_000L));
+        P25ChannelGrantEvent trackerEvent = P25ChannelGrantEvent.builder(DecodeEventType.CALL_GROUP,
+                1_000L, VoiceServiceOptions.createUnencrypted())
+            .identifiers(identifiers)
+            .build();
+        Channel channel = channel(DecoderType.P25_CONVENTIONAL);
+        P25ActivityLogMapper mapper = new P25ActivityLogMapper();
+
+        assertNull(mapper.map(channel, trackerEvent));
+
+        P25ActivityLogRecords.ActivityEvent callStart =
+            mapper.map(new P25CallStartEvent(channel, trackerEvent));
+
+        assertNotNull(callStart);
+        assertEquals(P25ActivityLogRecords.Action.CALL, callStart.action());
+        assertTrue(callStart.countedCall());
+        assertNull(callStart.dedupeKey());
     }
 
     @Test
@@ -554,8 +614,12 @@ class P25ActivityLogMapperTest
     {
         Channel channel = new Channel("Test Channel",
             decoderType == DecoderType.P25_PHASE1 ? ChannelType.TRAFFIC : ChannelType.STANDARD);
-        channel.setDecodeConfiguration(decoderType == DecoderType.P25_CONVENTIONAL ?
-            new DecodeConfigP25Conventional() : new DecodeConfigP25Phase1());
+        channel.setDecodeConfiguration(switch(decoderType)
+        {
+            case P25_CONVENTIONAL -> new DecodeConfigP25Conventional();
+            case NBFM -> new DecodeConfigNBFM();
+            default -> new DecodeConfigP25Phase1();
+        });
         channel.setRadresGuid(GUID);
         return channel;
     }

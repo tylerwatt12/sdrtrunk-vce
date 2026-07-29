@@ -59,6 +59,8 @@ import io.github.dsheirer.module.decode.p25.identifier.channel.P25Channel;
 import io.github.dsheirer.module.decode.p25.identifier.channel.P25ExplicitChannel;
 import io.github.dsheirer.module.decode.p25.identifier.channel.P25P2Channel;
 import io.github.dsheirer.module.decode.p25.identifier.channel.P25P2ExplicitChannel;
+import io.github.dsheirer.module.decode.p25.identifier.channel.StandardChannel;
+import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.module.decode.p25.phase1.message.IFrequencyBand;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.osp.AMBTCNetworkStatusBroadcast;
@@ -553,6 +555,31 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     {
         P25TrafficChannelEventTracker tracker = new P25TrafficChannelEventTracker(event);
         addTracker(tracker, frequency, timeslot);
+        return tracker;
+    }
+
+    /**
+     * Creates a tracker from traffic-channel voice signalling. Conventional P25 has no control-channel tracker to
+     * announce the call, so publish the same one-time call-start contract when its first valid voice signalling
+     * creates the tracker. Updates to that tracker do not publish another start.
+     */
+    private P25TrafficChannelEventTracker createTrafficTracker(P25ChannelGrantEvent event, long frequency,
+                                                                int timeslot)
+    {
+        P25TrafficChannelEventTracker tracker = createTracker(event, frequency, timeslot);
+
+        if(mParentChannel != null &&
+            mParentChannel.getDecodeConfiguration() instanceof DecodeConfigP25Conventional &&
+            event.getEventType() != null && event.getEventType().isVoiceCallEvent())
+        {
+            if(event.getChannelDescriptor() == null && frequency > 0)
+            {
+                event.setChannelDescriptor(new StandardChannel(frequency));
+            }
+
+            MyEventBus.getGlobalEventBus().post(new P25CallStartEvent(mParentChannel, event));
+        }
+
         return tracker;
     }
 
@@ -1120,7 +1147,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                         .identifiers(mic)
                         .build();
 
-                tracker = createTracker(callEvent, frequency, TimeslotMessage.TIMESLOT_1);
+                tracker = createTrafficTracker(callEvent, frequency, TimeslotMessage.TIMESLOT_1);
             }
 
             P25EncryptionConfirmationTracker.observe(tracker.getEvent(), eki, timestamp);
@@ -1273,7 +1300,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                             .identifiers(mic)
                             .build();
 
-                    tracker = createTracker(callEvent, frequency, TimeslotMessage.TIMESLOT_1);
+                    tracker = createTrafficTracker(callEvent, frequency, TimeslotMessage.TIMESLOT_1);
                     broadcast(tracker);
                 }
             }
@@ -1331,7 +1358,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                     .identifiers(ic)
                     .build();
 
-            tracker = createTracker(callEvent, frequency, TimeslotMessage.TIMESLOT_1);
+            tracker = createTrafficTracker(callEvent, frequency, TimeslotMessage.TIMESLOT_1);
             broadcast(tracker);
         }
         finally

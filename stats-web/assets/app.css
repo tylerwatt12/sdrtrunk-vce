@@ -556,12 +556,6 @@ body[data-view="live"] .systems-live-tabs {
   opacity: .88;
 }
 
-.activity-metric-note {
-  color: var(--muted);
-  font-size: 0.86rem;
-  padding: 0 10px 10px;
-}
-
 .entity-info-layout {
   display: grid;
   grid-template-columns: minmax(280px, 1fr) minmax(0, 2fr);

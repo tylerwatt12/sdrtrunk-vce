@@ -1545,7 +1545,8 @@ class StatsWebDatabase
         return read(connection -> {
             StringBuilder sql = new StringBuilder("""
                 SELECT context.id AS context_id, context.context_key, context.guid, context.kind_code,
-                    context.protocol_code, context.channel_name, context.alias_list_name, context.decoder,
+                    CASE WHEN context.kind_code = 10 THEN 10 ELSE context.protocol_code END AS protocol_code,
+                    context.channel_name, context.alias_list_name, context.decoder,
                     context.nac, context.primary_frequency_hz, summary.frequency_hz, summary.timeslot,
                     summary.first_seen_ms, summary.last_seen_ms, summary.call_count, summary.last_event_type_code
                 FROM conventional_activity_summary summary
@@ -1575,7 +1576,8 @@ class StatsWebDatabase
         return read(connection -> {
             Map<String,Object> response = new LinkedHashMap<>();
             Map<String,Object> context = first(queryRows(connection, """
-                SELECT id AS context_id, context_key, guid, kind_code, protocol_code, channel_name,
+                SELECT id AS context_id, context_key, guid, kind_code,
+                    CASE WHEN kind_code = 10 THEN 10 ELSE protocol_code END AS protocol_code, channel_name,
                     alias_list_name, decoder, nac, primary_frequency_hz, first_seen_ms, last_seen_ms
                 FROM receiver_context WHERE context_key = ? AND kind_code <> 1
                 """, contextKey), "Conventional context not found");

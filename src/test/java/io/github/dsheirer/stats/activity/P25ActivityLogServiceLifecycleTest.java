@@ -18,10 +18,21 @@ import io.github.dsheirer.channel.quality.ControlChannelQualitySnapshot;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.identifier.IdentifierCollection;
+import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.metadata.site.ProtocolSiteMetadataEvent;
 import io.github.dsheirer.module.decode.dmr.DMRChannelMode;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
 import io.github.dsheirer.module.decode.dmr.telemetry.DMRNetworkConfigurationSnapshot;
+import io.github.dsheirer.module.decode.event.DecodeEvent;
+import io.github.dsheirer.module.decode.event.DecodeEventType;
+import io.github.dsheirer.module.decode.nbfm.DecodeConfigNBFM;
+import io.github.dsheirer.module.decode.p25.P25TrafficChannelManager;
+import io.github.dsheirer.module.decode.p25.identifier.channel.StandardChannel;
+import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
+import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
+import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
+import io.github.dsheirer.module.decode.p25.reference.VoiceServiceOptions;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.application.ApplicationPreference;
@@ -41,6 +52,93 @@ class P25ActivityLogServiceLifecycleTest
 {
     @TempDir
     Path mTemporaryFolder;
+
+    @Test
+    void countsOneConventionalP25StartNotItsMutableTrackerUpdates() throws Exception
+    {
+        Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
+        TestUserPreferences userPreferences =
+            new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
+        P25ActivityLogService service = new P25ActivityLogService(userPreferences);
+        Channel channel = new Channel("LorainCountySO", Channel.ChannelType.STANDARD);
+        channel.setRadresGuid("00000000-0000-0000-0000-000000000302");
+        channel.setDecodeConfiguration(new DecodeConfigP25Conventional());
+        P25TrafficChannelManager manager = new P25TrafficChannelManager(channel);
+        manager.addDecodeEventListener(event -> service.getDecodeEventListener().accept(channel, event));
+        MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
+        identifiers.update(APCO25Talkgroup.create(1_201));
+        identifiers.update(APCO25RadioIdentifier.createFrom(1_234_567));
+        long frequency = 154_875_000L;
+        long start = System.currentTimeMillis();
+
+        try
+        {
+            manager.processP1TrafficCurrentUser(frequency, null, DecodeEventType.CALL_GROUP,
+                VoiceServiceOptions.createUnencrypted(), identifiers, start, null);
+            manager.processP1TrafficCurrentUser(frequency, new StandardChannel(frequency),
+                DecodeEventType.CALL_GROUP, VoiceServiceOptions.createUnencrypted(), identifiers, start + 100L, null);
+            manager.processP1TrafficCallEnd(frequency, start + 200L);
+
+            awaitCount(database, "p25_activity_event", 1);
+            assertEquals(1, scalar(database,
+                "SELECT call_count FROM conventional_activity_summary"));
+            assertEquals(1, scalar(database,
+                "SELECT call_count FROM conventional_activity_bucket"));
+            assertEquals(0, scalar(database,
+                "SELECT active_count FROM conventional_activity_summary"));
+        }
+        finally
+        {
+            service.dispose();
+        }
+    }
+
+    @Test
+    void countsBackToBackNbfmCallsAndStoresOptionalHistory() throws Exception
+    {
+        Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
+        TestUserPreferences userPreferences =
+            new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
+        P25ActivityLogService service = new P25ActivityLogService(userPreferences);
+        Channel channel = new Channel("County Fire", Channel.ChannelType.STANDARD);
+        channel.setRadresGuid("00000000-0000-0000-0000-000000000301");
+        channel.setDecodeConfiguration(new DecodeConfigNBFM());
+        long frequency = 154_310_000L;
+        long start = System.currentTimeMillis();
+
+        try
+        {
+            DecodeEvent first = DecodeEvent.builder(DecodeEventType.CALL, start)
+                .channel(new StandardChannel(frequency))
+                .identifiers(new IdentifierCollection())
+                .build();
+            service.getDecodeEventListener().accept(channel, first);
+            first.update(start + 100L);
+            service.getDecodeEventListener().accept(channel, first);
+            first.end(start + 200L);
+            service.getDecodeEventListener().accept(channel, first);
+
+            DecodeEvent second = DecodeEvent.builder(DecodeEventType.CALL, start + 500L)
+                .channel(new StandardChannel(frequency))
+                .identifiers(new IdentifierCollection())
+                .build();
+            service.getDecodeEventListener().accept(channel, second);
+
+            awaitCount(database, "p25_activity_event", 2);
+            assertEquals(2, scalar(database,
+                "SELECT call_count FROM conventional_activity_summary"));
+            assertEquals(2, scalar(database,
+                "SELECT call_count FROM conventional_activity_bucket"));
+        }
+        finally
+        {
+            service.dispose();
+        }
+    }
 
     @Test
     void lowersRetentionAndRunsMaintenanceWhileCollectionIsDisabled() throws Exception
@@ -258,6 +356,17 @@ class P25ActivityLogServiceLifecycleTest
         }
     }
 
+    private static long scalar(Path database, String sql) throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement();
+            ResultSet resultSet = statement.executeQuery(sql))
+        {
+            assertTrue(resultSet.next());
+            return resultSet.getLong(1);
+        }
+    }
+
     private static void awaitCount(Path database, String table, int expected) throws Exception
     {
         long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(5);
@@ -347,12 +456,20 @@ class P25ActivityLogServiceLifecycleTest
     {
         private boolean mCollectionEnabled;
         private int mRetentionDays;
+        private final boolean mDetailedHistoryEnabled;
 
         private TestApplicationPreference(boolean collectionEnabled, int retentionDays)
+        {
+            this(collectionEnabled, retentionDays, false);
+        }
+
+        private TestApplicationPreference(boolean collectionEnabled, int retentionDays,
+                                          boolean detailedHistoryEnabled)
         {
             super(preferenceType -> {});
             mCollectionEnabled = collectionEnabled;
             mRetentionDays = retentionDays;
+            mDetailedHistoryEnabled = detailedHistoryEnabled;
         }
 
         @Override
@@ -369,7 +486,7 @@ class P25ActivityLogServiceLifecycleTest
         @Override
         public boolean isStatsDetailedHistoryEnabled()
         {
-            return false;
+            return mDetailedHistoryEnabled;
         }
 
         @Override

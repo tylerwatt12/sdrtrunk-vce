@@ -190,7 +190,8 @@ public class P25ActivityLogSchema
         }
         else if(isConventional(activity.contextKind()))
         {
-            if(activity.contextKind() == P25ActivityLogRecords.ContextKind.CONVENTIONAL_P25 &&
+            if((activity.contextKind() == P25ActivityLogRecords.ContextKind.CONVENTIONAL_P25 ||
+                activity.contextKind() == P25ActivityLogRecords.ContextKind.CONVENTIONAL_ANALOG) &&
                 detailedEventHistoryEnabled && activity.action() != P25ActivityLogRecords.Action.CONTINUE)
             {
                 activityId = insertP25ActivityEvent(connection, activity, contextId);

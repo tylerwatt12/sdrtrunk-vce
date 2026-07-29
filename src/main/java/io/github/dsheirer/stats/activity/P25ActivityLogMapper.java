@@ -117,7 +117,7 @@ class P25ActivityLogMapper
 
         IdentifierFacts facts = IdentifierFacts.from(event.identifiers());
         String guid = firstNonBlank(event.channel().getRadresGuid(), facts.radresGuid());
-        String contextKey = contextKey(guid, Protocol.APCO25, facts, null,
+        String contextKey = contextKey(guid, protocolName(Protocol.APCO25, facts, decoderType), facts, null,
             P25ActivityLogRecords.ContextKind.TRUNKED_SITE, event.channel().getName());
 
         if(contextKey == null)
@@ -227,6 +227,16 @@ class P25ActivityLogMapper
         Integer timeslot = event.hasTimeslot() ? Integer.valueOf(event.getTimeslot()) : facts.timeslot();
         P25ActivityLogRecords.Action action = actionOverride != null ? actionOverride : normalizeAction(event);
         DecoderType decoderType = channel.getDecodeConfiguration().getDecoderType();
+
+        //The conventional traffic manager rebroadcasts its mutable tracker for desktop/event-log consumers. Statistics
+        //use the one-time P25CallStartEvent instead, so tracker updates cannot create duplicate activity rows or counts.
+        if(actionOverride == null && decoderType == DecoderType.P25_CONVENTIONAL &&
+            event instanceof P25ChannelGrantEvent && event.getEventType() != null &&
+            event.getEventType().isVoiceCallEvent())
+        {
+            return null;
+        }
+
         P25ActivityLogRecords.ContextKind contextKind = contextKind(decoderType);
 
         if(contextKind == null)
@@ -243,7 +253,8 @@ class P25ActivityLogMapper
 
         String lcn = channelDescriptor;
         String guid = blankToNull(channel.getRadresGuid());
-        String contextKey = contextKey(guid, event.getProtocol(), facts, frequency, contextKind, channel.getName());
+        String protocol = protocolName(event.getProtocol(), facts, decoderType);
+        String contextKey = contextKey(guid, protocol, facts, frequency, contextKind, channel.getName());
 
         if(contextKey == null)
         {
@@ -278,11 +289,14 @@ class P25ActivityLogMapper
                 safe(targetKind),
                 safe(facts.patchMemberTalkgroupIds()),
                 safe(metricsAlgorithmId),
-                safe(metricsKeyId));
+                safe(metricsKeyId),
+                contextKind == P25ActivityLogRecords.ContextKind.CONVENTIONAL_ANALOG &&
+                    event.getEventType() != null && event.getEventType().isVoiceCallEvent() ?
+                    Long.toString(event.getTimeStart()) : "");
         }
 
         return new P25ActivityLogRecords.ActivityEvent(observedAt, contextKey, guid, contextKind,
-            event.getProtocol() != null ? event.getProtocol().name() : null, action,
+            protocol, action,
             event.getEventType() != null ? event.getEventType().name() : null, sourceRadioId, targetId,
             targetKind, facts.patchMemberTalkgroupIds(), frequency, lcn, timeslot, metricsEncrypted, metricsAlgorithmId,
             metricsKeyId, facts.wacn(), facts.systemId(), facts.nac(), facts.rfss(), facts.site(),
@@ -573,7 +587,7 @@ class P25ActivityLogMapper
         return value != null && value > 0 && value <= DmrActivitySchema.MAXIMUM_DMR_ID ? value : null;
     }
 
-    private static String contextKey(String guid, Protocol protocol, IdentifierFacts facts, Long frequency,
+    private static String contextKey(String guid, String protocol, IdentifierFacts facts, Long frequency,
                                      P25ActivityLogRecords.ContextKind contextKind, String configuredChannelName)
     {
         if(guid != null)
@@ -593,11 +607,11 @@ class P25ActivityLogMapper
 
         if(frequency != null && frequency > 0)
         {
-            return contextKind.name() + ":" + protocolName(protocol, facts) + ":" + frequency;
+            return contextKind.name() + ":" + protocol + ":" + frequency;
         }
 
         String channelName = blankToNull(configuredChannelName);
-        return channelName != null ? contextKind.name() + ":" + protocolName(protocol, facts) + ":" + channelName :
+        return channelName != null ? contextKind.name() + ":" + protocol + ":" + channelName :
             null;
     }
 
@@ -611,14 +625,19 @@ class P25ActivityLogMapper
         return blankToNull(channel.getName());
     }
 
-    private static String protocolName(Protocol protocol, IdentifierFacts facts)
+    private static String protocolName(Protocol protocol, IdentifierFacts facts, DecoderType decoderType)
     {
         if(protocol != null && protocol != Protocol.UNKNOWN)
         {
             return protocol.name();
         }
 
-        return facts != null && facts.decoder() != null ? facts.decoder() : "UNKNOWN";
+        if(facts != null && facts.decoder() != null)
+        {
+            return facts.decoder();
+        }
+
+        return decoderType != null ? decoderType.name() : "UNKNOWN";
     }
 
     private static P25ActivityLogRecords.ContextKind contextKind(DecoderType decoderType)

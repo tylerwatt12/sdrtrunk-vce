@@ -1245,17 +1245,6 @@ function countTimeSeriesChart(rows, configurations, options = {}) {
   return wrapper;
 }
 
-function outputMetricStartNote(response) {
-  const metricStart = Number(response?.metric_start_ms || 0);
-  if (metricStart > Number(response?.from_ms || 0) &&
-      metricStart <= Number(response?.to_ms || Date.now())) {
-    const note = node('div', 'activity-metric-note');
-    note.append('Recorded and Sent to Streamer counters begin ', dateTime(metricStart), '.');
-    return note;
-  }
-  return null;
-}
-
 function talkgroupActivityChart(response) {
   const values = (response.series || []).map((row) => ({ ...row, time_ms: Number(row.time_ms) }));
   if (!values.length) return node('div', 'empty', 'No activity data is available for this range');
@@ -1807,8 +1796,6 @@ async function talkgroupActivityHistorySection(scopeParameters) {
         ['Recorded', response.totals?.recorded_count],
         ['Sent to Streamer', response.totals?.streamed_count]
       ], true), talkgroupActivityChart(response), activityMetricGuide(true));
-      const metricNote = outputMetricStartNote(response);
-      if (metricNote) host.append(metricNote);
     } catch (error) {
       if (sequence === loadingSequence) host.replaceChildren(node('div', 'error', error.message));
     } finally {
@@ -1866,10 +1853,6 @@ async function siteTopTalkgroupsSection(site) {
       if (sequence !== loadingSequence) return;
       host.replaceChildren(table(response.rows || [], columns,
         'No talkgroup activity is available for this range', { type: 'site-top-talkgroups' }));
-      host.append(node('div', 'activity-metric-note',
-        'Last Active identifies the newest hourly activity bucket for this site and range.'));
-      const metricNote = outputMetricStartNote(response);
-      if (metricNote) host.append(metricNote);
     } catch (error) {
       if (sequence === loadingSequence) host.replaceChildren(node('div', 'error', error.message));
     } finally {
@@ -2277,8 +2260,6 @@ async function renderDashboard() {
     to: p25CallActivity.to_ms,
     ariaLabel: 'P25, non-P25, recorded, and sent-to-streamer calls per hour'
   }));
-  const metricNote = outputMetricStartNote(p25CallActivity);
-  if (metricNote) p25CallBody.append(metricNote);
   const p25CallSection = section('Call Activity · Last 24 Hours', p25CallBody);
   p25CallSection.append(node('div', 'dashboard-scope-note',
     'Non-P25 calls are the hourly total minus P25 trunked calls. Recorded and streamer counts apply to P25 calls.'));
@@ -2852,8 +2833,7 @@ function p25SiteDetailRows(site) {
     ['SysID', hexDecimalPair(site.system_id, 3)], ['NAC', hexDecimalPair(site.nac, 3)],
     ['RFSS', hexDecimalPair(site.rfss, 2)], ['Site', hexDecimalPair(site.site, 2)],
     ['Local Registration Area', hexDecimalPair(site.lra, 2)],
-    ['MFID', site.mfid === null || site.mfid === undefined ? site.mfid_display :
-      hexDecimalPair(site.mfid, 2)],
+    ['Manufacturer', site.mfid_display],
     ['Broadcast Clock', dateTime(site.broadcast_clock_ms)],
     ['Data', yesNoKnown(site.data_service)], ['Data Access', site.data_access],
     ['Working Unit ID Lease Time', site.wuid_lease_minutes == null ? '' :

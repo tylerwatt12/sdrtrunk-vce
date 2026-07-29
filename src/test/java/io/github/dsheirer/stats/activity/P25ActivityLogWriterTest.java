@@ -856,7 +856,7 @@ class P25ActivityLogWriterTest
     }
 
     @Test
-    void conventionalCallCountersCountCalls() throws Exception
+    void conventionalCallCountersAndOptionalAnalogHistoryCountEachCall() throws Exception
     {
         Path database = mTemporaryFolder.resolve("conventional-hits.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
@@ -867,10 +867,13 @@ class P25ActivityLogWriterTest
                 conventionalActivity(1000L, P25ActivityLogRecords.Action.GRANT), false);
             P25ActivityLogSchema.recordActivity(connection,
                 conventionalActivity(2000L, P25ActivityLogRecords.Action.CALL), false);
+            P25ActivityLogSchema.recordActivity(connection,
+                conventionalActivity(3000L, P25ActivityLogRecords.Action.CALL), true);
 
-            assertActionCount(connection, "conventional_activity_summary", "call_count", 1);
-            assertActionCount(connection, "conventional_activity_bucket", "call_count", 1);
+            assertActionCount(connection, "conventional_activity_summary", "call_count", 2);
+            assertActionCount(connection, "conventional_activity_bucket", "call_count", 2);
             assertActionCount(connection, "conventional_activity_summary", "grant_count", 1);
+            assertCount(connection, "p25_activity_event", 1);
         }
     }
 

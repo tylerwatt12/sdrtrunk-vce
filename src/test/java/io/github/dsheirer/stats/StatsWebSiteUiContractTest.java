@@ -58,6 +58,17 @@ class StatsWebSiteUiContractTest
         }
     }
 
+    @Test
+    void usesManufacturerNameAndOmitsMetricImplementationNotes() throws Exception
+    {
+        String source = source();
+        assertTrue(source.contains("['Manufacturer', site.mfid_display]"));
+        assertFalse(source.contains("['MFID'"));
+        assertFalse(source.contains("Last Active identifies"));
+        assertFalse(source.contains("counters begin"));
+        assertFalse(source.contains("outputMetricStartNote"));
+    }
+
     private static String source() throws Exception
     {
         assertTrue(Files.isRegularFile(APP_JAVASCRIPT), () -> "Missing " + APP_JAVASCRIPT.toAbsolutePath());
