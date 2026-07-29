@@ -20,11 +20,22 @@ const CALL_ACTIVITY_SERIES = Object.freeze([
   { field: 'recorded_count', label: 'Recorded', color: '#2f6da5', visible: true },
   { field: 'streamed_count', label: 'Sent to Streamer', color: '#cc7a00', visible: true }
 ]);
-const DASHBOARD_CALL_ACTIVITY_SERIES = Object.freeze([
-  { field: 'call_count', label: 'P25 Calls', color: '#0b7168', visible: true },
-  { field: 'non_p25_call_count', label: 'Non-P25 Calls', color: '#6b4fa3', visible: true },
-  { field: 'recorded_count', label: 'Recorded', color: '#2f6da5', visible: true },
-  { field: 'streamed_count', label: 'Sent to Streamer', color: '#cc7a00', visible: true }
+const DASHBOARD_CALL_METRICS = Object.freeze([
+  { field: 'call_count', label: 'Calls' },
+  { field: 'recorded_count', label: 'Recorded' },
+  { field: 'streamed_count', label: 'Streamed' },
+  { field: 'encrypted_count', label: 'Encrypted' }
+]);
+const DASHBOARD_PROTOCOL_SERIES = Object.freeze([
+  { key: 'P25', label: 'P25', color: '#0b7168' },
+  { key: 'DMR', label: 'DMR', color: '#2f6da5' },
+  { key: 'NXDN', label: 'NXDN', color: '#cc7a00' },
+  { key: 'NBFM', label: 'NBFM', color: '#6b4fa3' }
+]);
+const DASHBOARD_CHANNEL_KIND_FILTERS = Object.freeze([
+  { value: 'ALL', label: 'All' },
+  { value: 'TRUNKED', label: 'Trunked' },
+  { value: 'CONVENTIONAL', label: 'Conventional' }
 ]);
 const TALKGROUP_ACTIVITY_SERIES = Object.freeze([
   ...CALL_ACTIVITY_SERIES,
@@ -417,6 +428,7 @@ function protocolFamily(row) {
   if (code === 1 || code === 2) return 'P25';
   if (code === 3) return 'DMR';
   if (code === 4) return 'NXDN';
+  if (code === 10) return 'NBFM';
   return row?.protocol || '';
 }
 
@@ -1028,9 +1040,10 @@ function keyValues(entries) {
 
 function metrics(values, embedded = false) {
   const band = node(embedded ? 'div' : 'section', 'summary-band');
-  values.forEach(([label, value]) => {
+  values.forEach(([label, value, displayValue]) => {
     const metric = node('div', 'metric');
-    metric.append(node('span', '', label), node('strong', '', number(value)));
+    metric.append(node('span', '', label),
+      node('strong', '', displayValue === undefined ? number(value) : displayValue));
     band.append(metric);
   });
   return band;
@@ -1096,22 +1109,52 @@ function withoutGrantActions(rows) {
   return (rows || []).filter((row) => String(row.action || '').toUpperCase() !== 'GRANT');
 }
 
-function siteActivityColor(index) {
+function callSourceActivityColor(index) {
   return `hsl(${Math.round(index * 137.508) % 360} 58% 42%)`;
 }
 
-function siteActivityPie(activity) {
-  const rows = (activity?.rows || []).filter((row) => Number(row.call_count) > 0);
-  if (!rows.length) return node('div', 'empty', 'No P25 site calls recorded in the last 24 hours');
+function dashboardChannelKind(row) {
+  const value = String(row?.channel_kind || row?.channel_type || '').trim().toUpperCase();
+  if (value === 'TRUNKED' || value === 'CONVENTIONAL') return value;
+  return '';
+}
 
-  const total = Number(rows[0].total_call_count) ||
-    rows.reduce((sum, row) => sum + Number(row.call_count), 0);
+function callSourceLabel(row) {
+  if (row.source_label) return row.source_label;
+  if (row.channel_name) return row.channel_name;
+  if (dashboardChannelKind(row) === 'TRUNKED') return siteLabel(row);
+  if (row.context_key) return row.context_key;
+  if (row.frequency_hz) return `${frequency(row.frequency_hz)} MHz`;
+  return 'Unknown receiver';
+}
+
+function callSourceLink(row) {
+  const label = callSourceLabel(row);
+  if (!Number(row.detail_available ?? row.receiver_detail_available)) return label;
+  if (dashboardChannelKind(row) === 'TRUNKED' && row.guid) return siteLink(row, label);
+  if (dashboardChannelKind(row) === 'CONVENTIONAL' && row.context_key) {
+    return anchor(label, href('conventional-detail', { context: row.context_key, tab: 'info' }));
+  }
+  return label;
+}
+
+function callSourceActivityChart(activity) {
+  const activeRows = (Array.isArray(activity) ? activity : activity?.rows || [])
+    .filter((row) => Number(row.call_count) > 0);
+  if (!activeRows.length) return node('div', 'empty', 'No call source activity recorded in the last 24 hours');
+  const rows = activeRows.slice(0, 10);
+  const otherCalls = activeRows.slice(10)
+    .reduce((sum, row) => sum + Number(row.call_count), 0);
+  if (otherCalls > 0) rows.push({ source_label: 'Other receivers', call_count: otherCalls });
+
+  const total = Number(activeRows[0].total_call_count) ||
+    activeRows.reduce((sum, row) => sum + Number(row.call_count), 0);
   let offset = 0;
   const segments = rows.map((row, index) => {
     const calls = Number(row.call_count);
     const share = total ? calls / total * 100 : 0;
     const segment = { row, calls, share, start: offset, end: offset + share,
-      color: siteActivityColor(index) };
+      color: callSourceActivityColor(index) };
     offset += share;
     return segment;
   });
@@ -1121,7 +1164,8 @@ function siteActivityPie(activity) {
     `${segment.color} ${segment.start.toFixed(4)}% ${segment.end.toFixed(4)}%`).join(', ')})`;
   graphic.setAttribute('role', 'img');
   graphic.setAttribute('aria-label', segments.map((segment) =>
-    `${siteLabel(segment.row)} ${number(segment.calls)} calls ${segment.share.toFixed(1)} percent`).join('; '));
+    `${callSourceLabel(segment.row)} ${number(segment.calls)} calls ` +
+    `${segment.share.toFixed(1)} percent`).join('; '));
   const legend = node('div', 'site-activity-legend');
   legend.setAttribute('role', 'list');
   segments.forEach((segment) => {
@@ -1130,7 +1174,15 @@ function siteActivityPie(activity) {
     const swatch = node('span', 'site-activity-swatch');
     swatch.style.backgroundColor = segment.color;
     const identity = node('span', 'site-activity-identity');
-    identity.append(siteLink(segment.row));
+    const label = node('span', 'call-source-label');
+    label.append(valueNode(callSourceLink(segment.row)));
+    const channelKind = dashboardChannelKind(segment.row);
+    const context = [protocolFamily(segment.row),
+      channelKind === 'TRUNKED' ? 'Trunked' :
+        channelKind === 'CONVENTIONAL' ? 'Conventional' : '']
+      .filter(Boolean).join(' · ');
+    identity.append(label);
+    if (context) identity.append(node('small', 'call-source-context', context));
     const values = node('span', 'site-activity-values');
     values.append(node('strong', '', number(segment.calls)), node('span', '', `${segment.share.toFixed(1)}%`));
     item.append(swatch, identity, values);
@@ -1174,7 +1226,9 @@ function countTimeSeriesChart(rows, configurations, options = {}) {
   const plotWidth = width - margin.left - margin.right;
   const plotHeight = height - margin.top - margin.bottom;
   const maximum = Math.max(1, ...series.flatMap((configuration) =>
-    values.map((value) => Number(value[configuration.field] || 0))));
+    values.map((value) => value[configuration.field])
+      .filter((value) => !options.preserveNulls || value !== null)
+      .map((value) => Number(value || 0))));
   const roundedMaximum = roundedChartMaximum(maximum);
   const from = Number(options.from ?? values[0].time_ms);
   const to = Math.max(from + 1, Number(options.to ?? values.at(-1).time_ms));
@@ -1200,14 +1254,25 @@ function countTimeSeriesChart(rows, configurations, options = {}) {
 
   series.forEach((configuration) => {
     const points = values.map((value) => ({ timestamp: value.time_ms,
-      count: Number(value[configuration.field] || 0) }));
-    const path = points.map((point, index) => `${index ? 'L' : 'M'} ${xFor(point.timestamp).toFixed(2)} ` +
-      `${yFor(point.count).toFixed(2)}`).join(' ');
-    const line = svgNode('path', { d: path, class: 'activity-line-path' });
-    line.style.stroke = configuration.color;
-    svg.append(line);
+      count: options.preserveNulls && value[configuration.field] === null ?
+        null : Number(value[configuration.field] || 0) }));
+    let connected = false;
+    const path = points.flatMap((point) => {
+      if (point.count === null) {
+        connected = false;
+        return [];
+      }
+      const command = connected ? 'L' : 'M';
+      connected = true;
+      return `${command} ${xFor(point.timestamp).toFixed(2)} ${yFor(point.count).toFixed(2)}`;
+    }).join(' ');
+    if (path) {
+      const line = svgNode('path', { d: path, class: 'activity-line-path' });
+      line.style.stroke = configuration.color;
+      svg.append(line);
+    }
     if (values.length <= 96) {
-      points.forEach((point) => {
+      points.filter((point) => point.count !== null).forEach((point) => {
         const circle = svgNode('circle', { cx: xFor(point.timestamp), cy: yFor(point.count),
           r: values.length <= 48 ? 3 : 1.8, class: 'activity-line-point' });
         circle.style.stroke = configuration.color;
@@ -1235,13 +1300,289 @@ function countTimeSeriesChart(rows, configurations, options = {}) {
     timestamp: (point) => point.time_ms,
     markers: (point) => series.map((configuration) => ({
       x: xFor(point.time_ms),
-      y: yFor(point[configuration.field]),
+      y: options.preserveNulls && point[configuration.field] === null ?
+        Number.NaN : yFor(point[configuration.field]),
       color: configuration.color
     })),
     tooltipText: (point) => [new Date(point.time_ms).toLocaleString(),
       ...series.map((configuration) =>
-        `${configuration.label}: ${number(point[configuration.field] || 0)}`)]
+        `${configuration.label}: ${options.preserveNulls && point[configuration.field] === null ?
+          'Unavailable' : number(point[configuration.field] || 0)}`)]
   });
+  return wrapper;
+}
+
+function dashboardProtocolKey(row) {
+  const value = String(protocolFamily(row) || row?.protocol || '').trim().toUpperCase();
+  if (value.startsWith('P25') || value.startsWith('APCO25')) return 'P25';
+  if (value.startsWith('DMR')) return 'DMR';
+  if (value.startsWith('NXDN')) return 'NXDN';
+  if (value === 'NBFM' || value.includes('NARROWBAND FM')) return 'NBFM';
+  return value;
+}
+
+function dashboardCoverageRows(activity) {
+  const coverage = activity?.coverage;
+  if (Array.isArray(coverage)) return coverage;
+  if (!coverage || typeof coverage !== 'object') return [];
+  return Object.entries(coverage).flatMap(([protocolName, value]) => {
+    if (Array.isArray(value)) {
+      return value.map((entry) => ({ protocol: protocolName, ...entry }));
+    }
+    if (value && typeof value === 'object') {
+      return Object.entries(value).map(([channelKind, status]) => ({
+        protocol: protocolName, channel_kind: channelKind,
+        status: typeof status === 'object' ? status.status : status
+      }));
+    }
+    return [];
+  });
+}
+
+function dashboardCoverageStatus(activity, protocolKey, channelKind, metricField = '') {
+  const coverage = dashboardCoverageRows(activity).filter((row) =>
+    dashboardProtocolKey(row) === protocolKey &&
+    (channelKind === 'ALL' || dashboardChannelKind(row) === channelKind));
+  if (coverage.length) {
+    const statuses = coverage.map((row) =>
+      String((metricField && row[metricField]) || row.status || '').toUpperCase());
+    if (statuses.every((status) => status === 'COLLECTED')) return 'COLLECTED';
+    if (statuses.every((status) => status === 'NOT_COLLECTED')) return 'NOT_COLLECTED';
+    if (statuses.some((status) => status === 'COLLECTED' || status === 'PARTIAL')) return 'PARTIAL';
+    return 'UNKNOWN';
+  }
+  const hasRows = (activity?.series || []).some((row) =>
+    dashboardProtocolKey(row) === protocolKey &&
+    (channelKind === 'ALL' || dashboardChannelKind(row) === channelKind));
+  return hasRows ? 'COLLECTED' : 'UNKNOWN';
+}
+
+function dashboardMetricCoverageStatus(activity, field) {
+  return String(activity?.metricCoverage?.[field] || '').toUpperCase();
+}
+
+function dashboardMetricLabel(activity, field, label) {
+  const status = dashboardMetricCoverageStatus(activity, field);
+  if (status === 'PARTIAL') return `${label} · Partial coverage`;
+  if (status === 'NOT_COLLECTED') return `${label} · Unavailable`;
+  return label;
+}
+
+function dashboardMetricDisplay(activity, field) {
+  return dashboardMetricCoverageStatus(activity, field) === 'NOT_COLLECTED' ? '—' : undefined;
+}
+
+function dashboardProtocolConfigurations(activity) {
+  const configured = new Map(DASHBOARD_PROTOCOL_SERIES.map((item) => [item.key, item]));
+  const observed = [...(activity?.series || []), ...dashboardCoverageRows(activity)];
+  observed.forEach((row) => {
+    const key = dashboardProtocolKey(row);
+    if (!key || configured.has(key)) return;
+    configured.set(key, {
+      key,
+      label: key,
+      color: `hsl(${Math.round(configured.size * 137.508) % 360} 58% 42%)`
+    });
+  });
+  return [...configured.values()];
+}
+
+function dashboardActivitySeries(activity, channelKind, metricField, configurations) {
+  const rows = (activity?.series || []).filter((row) =>
+    channelKind === 'ALL' || dashboardChannelKind(row) === channelKind);
+  const timestamps = new Set(rows.map((row) => Number(row.time_ms)).filter(Number.isFinite));
+  const from = Number(activity?.from_ms);
+  const to = Number(activity?.to_ms);
+  const bucket = Number(activity?.bucket_ms);
+  if (Number.isFinite(from) && Number.isFinite(to) && Number.isFinite(bucket) && bucket > 0) {
+    for (let timestamp = from, count = 0; timestamp < to && count < 1000; timestamp += bucket, count += 1) {
+      timestamps.add(timestamp);
+    }
+  }
+  const values = [...timestamps].sort((left, right) => left - right)
+    .map((time_ms) => ({ time_ms }));
+  const byTimestamp = new Map(values.map((row) => [row.time_ms, row]));
+  rows.forEach((row) => {
+    const timestamp = Number(row.time_ms);
+    const protocolKey = dashboardProtocolKey(row);
+    const target = byTimestamp.get(timestamp);
+    if (!target || !protocolKey) return;
+    const field = `protocol_${protocolKey.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`;
+    const value = row[metricField];
+    if (value === null) {
+      if (!(field in target)) target[field] = null;
+    } else {
+      target[field] = Number(target[field] || 0) + Number(value || 0);
+    }
+  });
+  const series = configurations.map((configuration) => ({
+    ...configuration,
+    field: `protocol_${configuration.key.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`
+  }));
+  return { values, series };
+}
+
+function dashboardCoverage(activity) {
+  const coverage = dashboardCoverageRows(activity);
+  if (!coverage.length) return null;
+  const details = node('details', 'dashboard-coverage');
+  details.append(node('summary', '', 'Metric availability'));
+  const grid = node('div', 'dashboard-coverage-grid');
+  dashboardProtocolConfigurations(activity).forEach((configuration) => {
+    const reported = coverage.filter((row) => dashboardProtocolKey(row) === configuration.key);
+    if (!reported.length) return;
+    const item = node('div', 'dashboard-coverage-protocol');
+    item.append(node('strong', '', configuration.label));
+    ['TRUNKED', 'CONVENTIONAL'].forEach((channelKind) => {
+      const row = reported.find((candidate) => dashboardChannelKind(candidate) === channelKind);
+      if (!row) return;
+      const status = String(row.status || 'UNKNOWN').toUpperCase();
+      const statusLabel = status === 'COLLECTED' ? 'Full range' :
+        status === 'PARTIAL' ? 'Partial range' :
+          status === 'NOT_COLLECTED' ? 'Unavailable' : 'Unknown';
+      const line = node('span', 'dashboard-coverage-entry');
+      line.append(node('span', '', channelKind === 'TRUNKED' ? 'Trunked' : 'Conventional'),
+        badge(statusLabel, status === 'COLLECTED' ? 'state-current' :
+          status === 'NOT_COLLECTED' ? 'state-historical' : 'state-stale'));
+      item.append(line);
+    });
+    grid.append(item);
+  });
+  details.append(grid);
+  return details;
+}
+
+function dashboardCallActivityChart(activity) {
+  const configurations = dashboardProtocolConfigurations(activity);
+  const selectedProtocols = new Set(configurations.map((configuration) => configuration.key));
+  let selectedMetric = DASHBOARD_CALL_METRICS[0];
+  let selectedChannelKind = DASHBOARD_CHANNEL_KIND_FILTERS[0].value;
+  const wrapper = node('div', 'dashboard-call-activity');
+  const controls = node('div', 'dashboard-activity-controls');
+  const metricControls = node('div', 'dashboard-control-group');
+  const channelControls = node('div', 'dashboard-control-group');
+  const protocolLegend = node('div', 'activity-series-legend dashboard-protocol-legend');
+  const chartHost = node('div', 'dashboard-call-activity-chart-host');
+  metricControls.setAttribute('role', 'group');
+  metricControls.setAttribute('aria-label', 'Call activity metric');
+  channelControls.setAttribute('role', 'group');
+  channelControls.setAttribute('aria-label', 'Channel type');
+  metricControls.append(node('span', 'dashboard-control-label', 'Metric'));
+  channelControls.append(node('span', 'dashboard-control-label', 'Channel type'));
+  controls.append(metricControls, channelControls);
+  wrapper.append(controls, protocolLegend, chartHost);
+
+  const draw = () => {
+    chartHost.replaceChildren();
+    protocolLegend.replaceChildren();
+    const available = configurations.filter((configuration) =>
+      ['COLLECTED', 'PARTIAL'].includes(
+        dashboardCoverageStatus(activity, configuration.key, selectedChannelKind, selectedMetric.field)));
+    const { values, series } = dashboardActivitySeries(activity, selectedChannelKind,
+      selectedMetric.field, configurations);
+    configurations.forEach((configuration) => {
+      const status = dashboardCoverageStatus(activity, configuration.key, selectedChannelKind,
+        selectedMetric.field);
+      const collected = status !== 'NOT_COLLECTED' && status !== 'UNKNOWN';
+      const seriesConfiguration = series.find((candidate) => candidate.key === configuration.key);
+      const total = values.reduce((sum, row) =>
+        sum + Number(row[seriesConfiguration.field] || 0), 0);
+      const button = node('button', 'activity-series-button secondary');
+      button.type = 'button';
+      button.disabled = !collected;
+      const swatch = node('span', 'activity-series-swatch');
+      swatch.style.backgroundColor = configuration.color;
+      button.append(swatch, node('span', '', configuration.label));
+      if (collected) {
+        button.append(node('span', 'activity-series-total', number(total)));
+        if (status === 'PARTIAL') button.append(node('span', 'activity-series-status', 'Partial range'));
+      }
+      else button.append(node('span', 'activity-series-status', 'Unavailable'));
+      button.title = status === 'PARTIAL' ? `${configuration.label} is available for part of this range` :
+        collected ? `Show or hide ${configuration.label}` :
+          `${configuration.label} activity is unavailable for this channel type`;
+      const update = () => {
+        const active = collected && selectedProtocols.has(configuration.key);
+        button.classList.toggle('active', active);
+        button.setAttribute('aria-pressed', String(active));
+      };
+      button.addEventListener('click', () => {
+        if (selectedProtocols.has(configuration.key)) selectedProtocols.delete(configuration.key);
+        else selectedProtocols.add(configuration.key);
+        update();
+        draw();
+      });
+      update();
+      protocolLegend.append(button);
+    });
+    const visible = series.filter((configuration) =>
+      available.some((candidate) => candidate.key === configuration.key) &&
+      selectedProtocols.has(configuration.key));
+    if (!visible.length) {
+      chartHost.append(node('div', 'empty',
+        available.length ? 'Select at least one protocol' :
+          'Call activity is unavailable for this channel type'));
+      return;
+    }
+    chartHost.append(countTimeSeriesChart(values, visible, {
+      from: activity?.from_ms,
+      to: activity?.to_ms,
+      height: 300,
+      margin: { top: 18, right: 20, bottom: 48, left: 55 },
+      ariaLabel: `${selectedMetric.label} by protocol for ` +
+        `${selectedChannelKind === 'ALL' ? 'all channel types' : selectedChannelKind.toLowerCase()}`,
+      emptyMessage: 'No call activity data is available',
+      preserveNulls: true
+    }));
+  };
+
+  DASHBOARD_CALL_METRICS.forEach((metric) => {
+    const button = node('button', 'dashboard-filter-button secondary', metric.label);
+    button.type = 'button';
+    const coverageStatus = dashboardMetricCoverageStatus(activity, metric.field);
+    if (coverageStatus === 'PARTIAL') {
+      button.append(node('small', 'dashboard-metric-coverage', 'Partial coverage'));
+      button.title = `${metric.label} is not available for every protocol and topology`;
+    } else if (coverageStatus === 'NOT_COLLECTED') {
+      button.append(node('small', 'dashboard-metric-coverage', 'Unavailable'));
+      button.title = `${metric.label} is unavailable`;
+      button.disabled = true;
+    }
+    button.addEventListener('click', () => {
+      selectedMetric = metric;
+      metricControls.querySelectorAll('button').forEach((candidate) => {
+        const active = candidate === button;
+        candidate.classList.toggle('active', active);
+        candidate.setAttribute('aria-pressed', String(active));
+      });
+      draw();
+    });
+    const active = metric === selectedMetric;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+    metricControls.append(button);
+  });
+  DASHBOARD_CHANNEL_KIND_FILTERS.forEach((filter) => {
+    const button = node('button', 'dashboard-filter-button secondary', filter.label);
+    button.type = 'button';
+    button.addEventListener('click', () => {
+      selectedChannelKind = filter.value;
+      channelControls.querySelectorAll('button').forEach((candidate) => {
+        const active = candidate === button;
+        candidate.classList.toggle('active', active);
+        candidate.setAttribute('aria-pressed', String(active));
+      });
+      draw();
+    });
+    const active = filter.value === selectedChannelKind;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+    channelControls.append(button);
+  });
+
+  draw();
+  const coverage = dashboardCoverage(activity);
+  if (coverage) wrapper.append(coverage);
   return wrapper;
 }
 
@@ -2215,6 +2556,90 @@ const siteColumns = [
 ];
 const scopedSiteColumns = siteColumns.filter((column) => column.id !== 'system');
 
+function dashboardReceiverSystem(row) {
+  if (dashboardChannelKind(row) === 'CONVENTIONAL') return '';
+  if (isP25(row)) {
+    const system = systemLabel(row);
+    const rfss = hex(row.rfss, 2);
+    const site = hex(row.site, 2);
+    const siteIdentity = rfss && site ? `${rfss}-${site}` : rfss || site;
+    return [system, siteIdentity].filter(Boolean).join(' · ');
+  }
+  return [trunkedSystemLabel(row), trunkedIdentity(row)].filter(Boolean).join(' · ');
+}
+
+const dashboardReceiverColumns = [
+  { id: 'protocol', label: 'Protocol', render: protocolFamily, sortValue: protocolFamily },
+  { id: 'channel-kind', label: 'Topology', render: (row) =>
+    dashboardChannelKind(row) === 'TRUNKED' ? 'Trunked' : 'Conventional',
+    sortValue: dashboardChannelKind },
+  { id: 'name', label: 'Receiver', render: callSourceLink, className: 'alias-cell',
+    sortValue: callSourceLabel },
+  { id: 'system', label: 'System / Site', render: dashboardReceiverSystem,
+    sortValue: dashboardReceiverSystem },
+  { id: 'frequency', label: 'MHz', fullLabel: 'Current or Primary Frequency MHz',
+    render: (row) => frequency(row.current_control_hz || row.primary_frequency_hz),
+    className: 'numeric', sortValue: (row) =>
+      Number(row.current_control_hz || row.primary_frequency_hz || 0) },
+  { id: 'decoder', label: 'Decoder', key: 'decoder' },
+  { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen',
+    render: (row) => dateTime(row.last_seen_ms),
+    sortValue: (row) => Number(row.last_seen_ms || 0) }
+];
+
+function dashboardIdentityId(row) {
+  return Number(row.identity_kind_code) === 0 || Number(row.identity_id) <= 0 ? '—' :
+    number(row.identity_id);
+}
+
+function dashboardIdentityLink(row, label = dashboardIdentityId(row)) {
+  if (!Number(row.identity_detail_available)) return label;
+  if (row.identity_detail_view === 'talkgroup') {
+    return talkgroupLink(row, row.identity_id, label);
+  }
+  if (row.identity_detail_view === 'radio') {
+    return radioLink(row, row.identity_id, label);
+  }
+  if (row.identity_detail_view === 'conventional-talkgroups' && row.context_key) {
+    return anchor(label, href('conventional-detail', { context: row.context_key, tab: 'talkgroups' }));
+  }
+  if (row.identity_detail_view === 'conventional-radios' && row.context_key) {
+    return anchor(label, href('conventional-detail', { context: row.context_key, tab: 'radios' }));
+  }
+  return label;
+}
+
+function dashboardIdentityName(row) {
+  return row.alias_name ? dashboardIdentityLink(row, row.alias_name) : '';
+}
+
+const dashboardIdentityColumns = [
+  { id: 'protocol', label: 'Protocol', render: protocolFamily, sortValue: protocolFamily },
+  { id: 'channel-kind', label: 'Topology', render: (row) =>
+    dashboardChannelKind(row) === 'TRUNKED' ? 'Trunked' : 'Conventional',
+    sortValue: dashboardChannelKind },
+  { id: 'receiver', label: 'Receiver', render: callSourceLink, className: 'alias-cell',
+    sortValue: callSourceLabel },
+  { id: 'identity-kind', label: 'Type', key: 'identity_kind' },
+  { id: 'identity-id', label: 'ID', render: (row) => dashboardIdentityLink(row),
+    className: 'numeric', sortValue: (row) => Number(row.identity_id || 0) },
+  { id: 'identity-name', label: 'Name', render: dashboardIdentityName, className: 'alias-cell',
+    sortValue: (row) => row.alias_name || '' },
+  { id: 'calls', label: 'Calls', render: (row) => number(row.call_count), className: 'numeric',
+    sortValue: (row) => Number(row.call_count || 0) },
+  { id: 'recorded', label: 'Rec', fullLabel: 'Recorded', render: (row) => number(row.recorded_count),
+    className: 'numeric', sortValue: (row) => Number(row.recorded_count || 0) },
+  { id: 'streamed', label: 'Sent', fullLabel: 'Sent to Streamer',
+    render: (row) => number(row.streamed_count), className: 'numeric',
+    sortValue: (row) => Number(row.streamed_count || 0) },
+  { id: 'encrypted', label: 'Enc', fullLabel: 'Encrypted',
+    render: (row) => number(row.encrypted_count), className: 'numeric encrypted',
+    sortValue: (row) => Number(row.encrypted_count || 0) },
+  { id: 'last-active', label: 'Latest Hour', fullLabel: 'Latest Activity Hour',
+    render: (row) => dateTime(row.last_active_ms),
+    sortValue: (row) => Number(row.last_active_ms || 0) }
+];
+
 const talkgroupColumns = [
   { id: 'talkgroup-id', label: 'TGID', render: (row) => talkgroupLink(row), className: 'numeric', sort: 'talkgroup', sortValue: (row) => Number(row.talkgroup_id) },
   { id: 'talkgroup-name', label: 'Name', fullLabel: 'Talkgroup Name', render: (row) => talkgroupAliasLink(row, row.talkgroup_id), className: 'alias-cell', sort: 'alias', sortValue: aliasLabel },
@@ -2241,37 +2666,37 @@ const radioColumns = [
 async function renderDashboard() {
   const dashboard = await api('/api/dashboard');
   const counts = dashboard.counts || {};
+  const callActivity = dashboard.callActivity || {};
+  const callTotals = callActivity.totals || {};
   content.append(pageHeader('Dashboard', dashboard.lastSeenMs ?
     fragment('Last activity ', dateTime(dashboard.lastSeenMs)) : 'Last activity not recorded'));
   content.append(await signalHealthSection());
   content.append(metrics([
-    ['Systems', counts.systems], ['Sites', counts.sites], ['Talkgroups', counts.talkgroups],
-    ['Radios', counts.radios], ['Frequencies', counts.frequencies], ['Conventional', counts.conventional]
+    [dashboardMetricLabel(callActivity, 'call_count', 'Tracked Calls'), callTotals.call_count,
+      dashboardMetricDisplay(callActivity, 'call_count')],
+    [dashboardMetricLabel(callActivity, 'recorded_count', 'Recorded'), callTotals.recorded_count,
+      dashboardMetricDisplay(callActivity, 'recorded_count')],
+    [dashboardMetricLabel(callActivity, 'streamed_count', 'Sent to Streamer'), callTotals.streamed_count,
+      dashboardMetricDisplay(callActivity, 'streamed_count')],
+    ['Trunked Systems', counts.trunked_systems],
+    ['Trunked Sites', counts.trunked_sites],
+    ['Conventional Channels', counts.conventional_channels]
   ]));
-  const p25CallActivity = dashboard.p25CallActivity || {};
-  const p25CallBody = node('div', 'dashboard-call-activity');
-  p25CallBody.append(metrics([
-    ['P25 Calls', p25CallActivity.totals?.call_count],
-    ['Non-P25 Calls', p25CallActivity.totals?.non_p25_call_count],
-    ['Recorded', p25CallActivity.totals?.recorded_count],
-    ['Sent to Streamer', p25CallActivity.totals?.streamed_count]
-  ], true), countTimeSeriesChart(p25CallActivity.series || [], DASHBOARD_CALL_ACTIVITY_SERIES, {
-    from: p25CallActivity.from_ms,
-    to: p25CallActivity.to_ms,
-    ariaLabel: 'P25, non-P25, recorded, and sent-to-streamer calls per hour'
-  }));
-  const p25CallSection = section('Call Activity · Last 24 Hours', p25CallBody);
-  p25CallSection.append(node('div', 'dashboard-scope-note',
-    'Non-P25 calls are the hourly total minus P25 trunked calls. Recorded and streamer counts apply to P25 calls.'));
-  content.append(p25CallSection);
-  const sites = section('Recent Sites', table(dashboard.recentSites || [], siteColumns, 'No rows', { type: 'sites' }));
-  const actions = section('Site Activity · Last 24 Hours', siteActivityPie(dashboard.siteActivity24h));
-  content.append(node('div', 'split'));
-  content.lastChild.append(sites, actions);
-  const talkgroups = section('Top Talkgroups', table(dashboard.topTalkgroups || [], talkgroupColumns, 'No rows', { type: 'talkgroups' }));
-  const radios = section('Top Radios', table(dashboard.topRadios || [], radioColumns, 'No rows', { type: 'radios' }));
-  content.append(node('div', 'split'));
-  content.lastChild.append(talkgroups, radios);
+  content.append(section('Call Activity · Last 24 Hours', dashboardCallActivityChart(callActivity)));
+  const receivers = section('Recent Receivers', table(dashboard.recentReceivers || [],
+    dashboardReceiverColumns, 'No receivers recorded', { type: 'dashboard-receivers' }));
+  const actions = section('Busiest Call Sources · Last 24 Hours',
+    callSourceActivityChart(dashboard.sourceActivity24h));
+  content.append(node('div', 'split dashboard-overview-split'));
+  content.lastChild.append(receivers, actions);
+  const destinations = section('Top Destinations · Last 24 Hours',
+    table(dashboard.topDestinations || [], dashboardIdentityColumns,
+      'No call destinations recorded', { type: 'dashboard-destinations' }));
+  const sources = section('Top Sources · Last 24 Hours',
+    table(dashboard.topSources || [], dashboardIdentityColumns,
+      'No call sources recorded', { type: 'dashboard-sources' }));
+  content.append(node('div', 'split dashboard-identity-split'));
+  content.lastChild.append(destinations, sources);
 }
 
 function liveSystemsSection() {

@@ -29,7 +29,12 @@ import java.util.Set;
 class StatsAliasResolver
 {
     private static final long CACHE_MILLISECONDS = 30_000L;
-    private volatile Snapshot mSnapshot = new Snapshot(List.of(), List.of(), List.of(), List.of(), Map.of(), 0);
+    private static final String P25_PROTOCOL_FILTER =
+        "identifier.protocol IN ('APCO25', 'APCO25_PHASE2')";
+    private static final String DMR_PROTOCOL_FILTER = "identifier.protocol = 'DMR'";
+    private static final String NXDN_PROTOCOL_FILTER = "identifier.protocol = 'NXDN'";
+    private volatile Snapshot mSnapshot = new Snapshot(List.of(), List.of(), List.of(), List.of(), List.of(),
+        List.of(), Map.of(), 0);
 
     void enrichTalkgroups(Connection connection, List<Map<String,Object>> rows) throws SQLException
     {
@@ -88,7 +93,7 @@ class StatsAliasResolver
     void enrichDmrTalkgroups(Connection connection, List<Map<String,Object>> rows, String identifierColumn,
                              String prefix) throws SQLException
     {
-        enrichDmr(rows, snapshot(connection).dmrTalkgroups(), identifierColumn, prefix);
+        enrichByAssignedAliasList(rows, snapshot(connection).dmrTalkgroups(), identifierColumn, prefix);
     }
 
     /**
@@ -97,7 +102,44 @@ class StatsAliasResolver
     void enrichDmrRadios(Connection connection, List<Map<String,Object>> rows, String identifierColumn,
                          String prefix) throws SQLException
     {
-        enrichDmr(rows, snapshot(connection).dmrRadios(), identifierColumn, prefix);
+        enrichByAssignedAliasList(rows, snapshot(connection).dmrRadios(), identifierColumn, prefix);
+    }
+
+    /**
+     * Resolves NXDN aliases only from the exact alias list assigned to each receiver context.
+     */
+    void enrichNxdnTalkgroups(Connection connection, List<Map<String,Object>> rows, String identifierColumn,
+                              String prefix) throws SQLException
+    {
+        enrichByAssignedAliasList(rows, snapshot(connection).nxdnTalkgroups(), identifierColumn, prefix);
+    }
+
+    /**
+     * Resolves NXDN aliases only from the exact alias list assigned to each receiver context.
+     */
+    void enrichNxdnRadios(Connection connection, List<Map<String,Object>> rows, String identifierColumn,
+                          String prefix) throws SQLException
+    {
+        enrichByAssignedAliasList(rows, snapshot(connection).nxdnRadios(), identifierColumn, prefix);
+    }
+
+    /**
+     * Resolves a conventional P25 identity from its receiver's exact alias list. Fully-qualified rules are excluded
+     * because a conventional receiver has no decoded WACN/system identity with which to validate them.
+     */
+    void enrichP25ConventionalTalkgroups(Connection connection, List<Map<String,Object>> rows,
+                                         String identifierColumn, String prefix) throws SQLException
+    {
+        enrichByAssignedAliasList(rows, snapshot(connection).talkgroups(), identifierColumn, prefix);
+    }
+
+    /**
+     * Resolves a conventional P25 identity from its receiver's exact alias list.
+     */
+    void enrichP25ConventionalRadios(Connection connection, List<Map<String,Object>> rows,
+                                     String identifierColumn, String prefix) throws SQLException
+    {
+        enrichByAssignedAliasList(rows, snapshot(connection).radios(), identifierColumn, prefix);
     }
 
     private void enrich(List<Map<String,Object>> rows, List<Rule> rules, Map<Integer,Set<String>> aliasLists,
@@ -147,7 +189,8 @@ class StatsAliasResolver
         }
     }
 
-    private void enrichDmr(List<Map<String,Object>> rows, List<Rule> rules, String identifierColumn, String prefix)
+    private void enrichByAssignedAliasList(List<Map<String,Object>> rows, List<Rule> rules, String identifierColumn,
+                                           String prefix)
     {
         for(Map<String,Object> row: rows)
         {
@@ -163,12 +206,13 @@ class StatsAliasResolver
 
             for(Rule rule: rules)
             {
-                if(!aliasList.equals(rule.aliasList()) || !rule.matchesIdentifier(identifier))
+                if(rule.fullyQualified() || !aliasList.equals(rule.aliasList()) ||
+                    !rule.matchesIdentifier(identifier))
                 {
                     continue;
                 }
 
-                if(best == null || rule.isPreferredDmrTo(best))
+                if(best == null || rule.isPreferredAssignedListTo(best))
                 {
                     best = rule;
                 }
@@ -220,9 +264,12 @@ class StatsAliasResolver
 
             if(now - snapshot.loadedAt() > CACHE_MILLISECONDS)
             {
-                snapshot = new Snapshot(load(connection, "alias_talkgroup", false),
-                    load(connection, "alias_radio", false), load(connection, "alias_talkgroup", true),
-                    load(connection, "alias_radio", true), loadAliasLists(connection), now);
+                snapshot = new Snapshot(load(connection, "alias_talkgroup", P25_PROTOCOL_FILTER),
+                    load(connection, "alias_radio", P25_PROTOCOL_FILTER),
+                    load(connection, "alias_talkgroup", DMR_PROTOCOL_FILTER),
+                    load(connection, "alias_radio", DMR_PROTOCOL_FILTER),
+                    load(connection, "alias_talkgroup", NXDN_PROTOCOL_FILTER),
+                    load(connection, "alias_radio", NXDN_PROTOCOL_FILTER), loadAliasLists(connection), now);
                 mSnapshot = snapshot;
             }
         }
@@ -230,7 +277,7 @@ class StatsAliasResolver
         return snapshot;
     }
 
-    private List<Rule> load(Connection connection, String identifierTable, boolean dmr) throws SQLException
+    private List<Rule> load(Connection connection, String identifierTable, String protocolFilter) throws SQLException
     {
         List<Rule> rules = new ArrayList<>();
 
@@ -242,8 +289,7 @@ class StatsAliasResolver
             JOIN alias ON alias.id = identifier.alias_id
             WHERE %s
             ORDER BY alias.id
-            """.formatted(identifierTable, dmr ? "identifier.protocol = 'DMR'" :
-                "identifier.protocol IN ('APCO25', 'APCO25_PHASE2')")))
+            """.formatted(identifierTable, protocolFilter)))
         {
             while(resultSet.next())
             {
@@ -265,7 +311,8 @@ class StatsAliasResolver
     }
 
     private record Snapshot(List<Rule> talkgroups, List<Rule> radios, List<Rule> dmrTalkgroups,
-                            List<Rule> dmrRadios, Map<Integer,Set<String>> aliasLists, long loadedAt)
+                            List<Rule> dmrRadios, List<Rule> nxdnTalkgroups, List<Rule> nxdnRadios,
+                            Map<Integer,Set<String>> aliasLists, long loadedAt)
     {
     }
 
@@ -285,7 +332,7 @@ class StatsAliasResolver
             return specificity > otherSpecificity || (specificity == otherSpecificity && aliasId < other.aliasId);
         }
 
-        boolean isPreferredDmrTo(Rule other)
+        boolean isPreferredAssignedListTo(Rule other)
         {
             int specificity = ranged ? 0 : 1;
             int otherSpecificity = other.ranged ? 0 : 1;

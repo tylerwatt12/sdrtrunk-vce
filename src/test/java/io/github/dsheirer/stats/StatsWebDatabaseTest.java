@@ -456,6 +456,18 @@ class StatsWebDatabaseTest
     void scopesAliasesToEachSystemsAssignedAliasList() throws Exception
     {
         seedSecondSystem(mDatabasePath);
+        long currentHour = Math.floorDiv(System.currentTimeMillis(), 3_600_000L) * 3_600_000L;
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO call_identity_bucket (
+                    context_id, bucket_start_ms, identity_role_code, identity_kind_code, identity_id, call_count
+                ) VALUES (3, %d, 1, 1, 56132, 100)
+                """.formatted(currentHour));
+        }
+
         mDatabase = new StatsWebDatabase(new UserPreferences(), mDatabasePath);
 
         Map<String,Object> talkgroup = rows(mDatabase.systemTalkgroups(request(
@@ -476,7 +488,7 @@ class StatsWebDatabaseTest
         assertEquals("Second Dispatch", event.get("target_alias_name"));
         assertEquals("Second Engine", event.get("source_alias_name"));
 
-        Map<String,Object> dashboardTalkgroup = rowsFrom(mDatabase.dashboard(), "topTalkgroups").stream()
+        Map<String,Object> dashboardTalkgroup = rowsFrom(mDatabase.dashboard(), "topDestinations").stream()
             .filter(row -> number(row.get("system_id")) == SECOND_SYSTEM)
             .findFirst().orElseThrow();
         assertEquals("Second Dispatch", dashboardTalkgroup.get("alias_name"));
@@ -504,7 +516,7 @@ class StatsWebDatabaseTest
     }
 
     @Test
-    void dashboardProvidesZeroFilledCallsPerHourWithoutDoubleCountingGrants() throws Exception
+    void dashboardProvidesProtocolNeutralZeroFilledCallsWithoutDoubleCountingGrants() throws Exception
     {
         long currentHour = Math.floorDiv(System.currentTimeMillis(), 3_600_000L) * 3_600_000L;
 
@@ -512,14 +524,33 @@ class StatsWebDatabaseTest
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
+                INSERT INTO receiver_context (id, context_key, guid, kind_code, protocol_code, channel_name,
+                    decoder, first_seen_ms, last_seen_ms)
+                VALUES (7, 'conventional-p25', 'conventional-p25-guid', 2, 1, 'P25 Conventional',
+                           'P25-1', 1000, 2000),
+                       (8, 'conventional-dmr', 'conventional-dmr-guid', 3, 3, 'DMR Conventional',
+                           'DMR', 1000, 2000),
+                       (9, 'site-dmr', 'site-dmr-guid', 1, 3, 'DMR Trunked', 'DMR', 1000, 2000),
+                       (10, 'site-nxdn', 'site-nxdn-guid', 1, 4, 'NXDN Trunked', 'NXDN', 1000, 2000),
+                       (11, 'site-p25-phase2', 'site-p25-phase2-guid', 1, 2, 'P25 Phase 2',
+                           'P25-2', 1000, 2000)
+                """);
+            statement.executeUpdate("""
                 INSERT INTO p25_site_activity_bucket
-                    (context_id, bucket_start_ms, call_count, grant_count, recorded_count, streamed_count)
-                VALUES (1, %d, 7, 9, 5, 4)
+                    (context_id, bucket_start_ms, call_count, grant_count, recorded_count, streamed_count,
+                     encrypted_count)
+                VALUES (1, %1$d, 7, 9, 5, 4, 2),
+                       (9, %1$d, 5, 0, 2, 1, 1),
+                       (10, %1$d, 6, 0, 3, 2, 2),
+                       (11, %1$d, 1, 0, 1, 1, 0)
                 """.formatted(currentHour));
             statement.executeUpdate("""
                 INSERT INTO conventional_activity_bucket
-                    (context_id, frequency_hz, timeslot, bucket_start_ms, call_count)
-                VALUES (2, 154310000, -1, %d, 3)
+                    (context_id, frequency_hz, timeslot, bucket_start_ms, call_count, recorded_count,
+                     streamed_count, encrypted_count)
+                VALUES (2, 154310000, -1, %1$d, 3, 1, 1, 0),
+                       (7, 154875000, -1, %1$d, 2, 1, 1, 1),
+                       (8, 451012500, 1, %1$d, 4, 2, 1, 1)
                 """.formatted(currentHour));
         }
 
@@ -527,38 +558,96 @@ class StatsWebDatabaseTest
         List<Map<String,Object>> hours = rowsFrom(dashboard, "activityPerHour");
         assertEquals(24, hours.size());
         assertEquals(currentHour, number(hours.getLast().get("hour_ms")));
-        assertEquals(10, number(hours.getLast().get("call_count")));
+        assertEquals(28, number(hours.getLast().get("call_count")));
+        assertEquals(7, number(hours.getLast().get("encrypted_count")));
         assertFalse(hours.getLast().containsKey("grant_count"));
         assertTrue(hours.stream().limit(23).allMatch(row -> number(row.get("call_count")) == 0));
         assertTrue(rowsFrom(mDatabase.system(request(
             "/api/system?wacn=BEE00&system_id=0x348")), "actionCounts").stream()
             .noneMatch(row -> "GRANT".equals(row.get("action"))));
-        Map<String,Object> p25CallActivity = map(dashboard, "p25CallActivity");
-        Map<String,Object> p25Totals = map(p25CallActivity, "totals");
-        assertEquals(7, number(p25Totals.get("call_count")));
-        assertEquals(3, number(p25Totals.get("non_p25_call_count")));
-        assertEquals(5, number(p25Totals.get("recorded_count")));
-        assertEquals(4, number(p25Totals.get("streamed_count")));
-        List<Map<String,Object>> p25Series = rowsFrom(p25CallActivity, "series");
-        assertEquals(24, p25Series.size());
-        assertEquals(currentHour, number(p25Series.getLast().get("time_ms")));
-        assertEquals(7, number(p25Series.getLast().get("call_count")));
-        assertEquals(3, number(p25Series.getLast().get("non_p25_call_count")));
-        assertEquals(5, number(p25Series.getLast().get("recorded_count")));
-        assertEquals(4, number(p25Series.getLast().get("streamed_count")));
-        assertTrue(number(p25CallActivity.get("metric_start_ms")) > 0);
-        Map<String,Object> siteActivity = map(dashboard, "siteActivity24h");
-        List<Map<String,Object>> sites = rows(siteActivity);
-        assertEquals(1, sites.size());
-        assertEquals(GUID, sites.getFirst().get("guid"));
-        assertEquals("Cleveland Simulcast", sites.getFirst().get("channel_name"));
-        assertEquals(SYSTEM, number(sites.getFirst().get("system_id")));
-        assertEquals(7, number(sites.getFirst().get("call_count")));
-        assertEquals(7, number(sites.getFirst().get("total_call_count")));
+        assertFalse(dashboard.containsKey("p25CallActivity"));
+        Map<String,Object> callActivity = map(dashboard, "callActivity");
+        Map<String,Object> totals = map(callActivity, "totals");
+        assertEquals(28, number(totals.get("call_count")));
+        assertEquals(15, number(totals.get("recorded_count")));
+        assertEquals(11, number(totals.get("streamed_count")));
+        assertEquals(7, number(totals.get("encrypted_count")));
+        assertFalse(totals.containsKey("non_p25_call_count"));
+        assertTrue(number(callActivity.get("metric_start_ms")) > 0);
+
+        List<Map<String,Object>> breakdown = rowsFrom(callActivity, "breakdown");
+        Map<String,Object> p25Trunked = breakdown.stream()
+            .filter(row -> "P25".equals(row.get("protocol")) && "TRUNKED".equals(row.get("channel_kind")))
+            .findFirst().orElseThrow();
+        assertEquals(8, number(map(p25Trunked, "totals").get("call_count")));
+        Map<String,Object> p25Conventional = breakdown.stream()
+            .filter(row -> "P25".equals(row.get("protocol")) &&
+                "CONVENTIONAL".equals(row.get("channel_kind")))
+            .findFirst().orElseThrow();
+        assertEquals(2, number(map(p25Conventional, "totals").get("call_count")));
+        Map<String,Object> nbfmConventional = breakdown.stream()
+            .filter(row -> "NBFM".equals(row.get("protocol")) &&
+                "CONVENTIONAL".equals(row.get("channel_kind")))
+            .findFirst().orElseThrow();
+        assertEquals(3, number(map(nbfmConventional, "totals").get("call_count")));
+        assertFalse(map(p25Conventional, "totals").containsKey("non_p25_call_count"));
+
+        List<Map<String,Object>> series = rowsFrom(callActivity, "series");
+        assertEquals(7 * 24, series.size());
+        Map<String,Object> currentP25Conventional = series.stream()
+            .filter(row -> number(row.get("time_ms")) == currentHour &&
+                "P25".equals(row.get("protocol")) && "CONVENTIONAL".equals(row.get("channel_kind")))
+            .findFirst().orElseThrow();
+        assertEquals(2, number(currentP25Conventional.get("call_count")));
+        assertEquals(1, number(currentP25Conventional.get("recorded_count")));
+        assertTrue(series.stream()
+            .filter(row -> "P25".equals(row.get("protocol")) &&
+                "CONVENTIONAL".equals(row.get("channel_kind")) &&
+                number(row.get("time_ms")) < currentHour)
+            .allMatch(row -> number(row.get("call_count")) == 0));
+        assertTrue(series.stream()
+            .filter(row -> ("P25".equals(row.get("protocol")) || "DMR".equals(row.get("protocol"))) &&
+                "CONVENTIONAL".equals(row.get("channel_kind")) &&
+                number(row.get("time_ms")) < currentHour)
+            .allMatch(row -> row.get("encrypted_count") == null));
+        assertTrue(series.stream()
+            .filter(row -> "NBFM".equals(row.get("protocol")))
+            .allMatch(row -> row.get("encrypted_count") == null));
+        Map<String,Object> unavailableNxdnConventional = series.stream()
+            .filter(row -> "NXDN".equals(row.get("protocol")) &&
+                "CONVENTIONAL".equals(row.get("channel_kind")))
+            .findFirst().orElseThrow();
+        assertNull(unavailableNxdnConventional.get("call_count"));
+        assertTrue(series.stream()
+            .filter(row -> ("DMR".equals(row.get("protocol")) || "NXDN".equals(row.get("protocol"))) &&
+                "TRUNKED".equals(row.get("channel_kind")) &&
+                number(row.get("time_ms")) < currentHour)
+            .allMatch(row -> row.get("call_count") == null && row.get("encrypted_count") == null));
+        assertEquals("PARTIAL", rowsFrom(callActivity, "coverage").stream()
+            .filter(row -> "DMR".equals(row.get("protocol")) &&
+                "TRUNKED".equals(row.get("channel_kind")))
+            .findFirst().orElseThrow().get("call_count"));
+        assertEquals("PARTIAL", rowsFrom(callActivity, "coverage").stream()
+            .filter(row -> "NXDN".equals(row.get("protocol")) &&
+                "TRUNKED".equals(row.get("channel_kind")))
+            .findFirst().orElseThrow().get("encrypted_count"));
+        Map<String,Object> nxdnConventionalCoverage = rowsFrom(callActivity, "coverage").stream()
+            .filter(row -> "NXDN".equals(row.get("protocol")) &&
+                "CONVENTIONAL".equals(row.get("channel_kind")))
+            .findFirst().orElseThrow();
+        assertEquals("NOT_COLLECTED", nxdnConventionalCoverage.get("status"));
+
+        Map<String,Object> sourceActivity = map(dashboard, "sourceActivity24h");
+        List<Map<String,Object>> sources = rows(sourceActivity);
+        assertEquals(7, sources.size());
+        assertTrue(sources.stream().allMatch(row -> number(row.get("total_call_count")) == 28));
+        assertTrue(sources.stream().anyMatch(row -> "P25".equals(row.get("protocol")) &&
+            "CONVENTIONAL".equals(row.get("channel_kind")) &&
+            number(row.get("call_count")) == 2));
     }
 
     @Test
-    void dashboardRanksEachSiteSeparately() throws Exception
+    void dashboardRanksEachActivitySourceSeparately() throws Exception
     {
         long currentHour = Math.floorDiv(System.currentTimeMillis(), 3_600_000L) * 3_600_000L;
         long firstHour = currentHour - 23L * 3_600_000L;
@@ -577,10 +666,12 @@ class StatsWebDatabaseTest
                 """.formatted(currentHour, currentHour, firstHour));
         }
 
-        Map<String,Object> activity = map(mDatabase.dashboard(), "siteActivity24h");
+        Map<String,Object> activity = map(mDatabase.dashboard(), "sourceActivity24h");
         List<Map<String,Object>> rows = rows(activity);
         assertEquals(2, rows.size());
         assertEquals(GUID, rows.getFirst().get("guid"));
+        assertEquals("P25", rows.getFirst().get("protocol"));
+        assertEquals("TRUNKED", rows.getFirst().get("channel_kind"));
         assertEquals(12, number(rows.getFirst().get("call_count")));
         assertEquals("test-site-lakewood", rows.getLast().get("guid"));
         assertEquals(3, number(rows.getLast().get("call_count")));
@@ -589,7 +680,126 @@ class StatsWebDatabaseTest
     }
 
     @Test
-    void siteActivityDashboardQueryUsesTheTimeIndexAtRepresentativeVolume() throws Exception
+    void dashboardRanksProtocolNeutralDestinationsAndSourcesFromBoundedIdentityBuckets() throws Exception
+    {
+        long currentHour = Math.floorDiv(System.currentTimeMillis(), 3_600_000L) * 3_600_000L;
+        seedDmrConventionalRows(mDatabasePath);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO receiver_context (
+                    id, context_key, guid, kind_code, protocol_code, channel_name, alias_list_name,
+                    decoder, first_seen_ms, last_seen_ms, primary_frequency_hz
+                ) VALUES
+                    (7, 'conventional-p25-alias', 'conventional-p25-alias-guid', 2, 1,
+                        'P25 Conventional', 'County', 'P25-1', 1000, 2000, 154875000),
+                    (9, 'site-dmr-alias', 'site-dmr-alias-guid', 1, 3,
+                        'DMR Trunked', NULL, 'DMR', 1000, 2000, 461012500),
+                    (10, 'site-nxdn-alias', 'site-nxdn-alias-guid', 1, 4,
+                        'NXDN Trunked', NULL, 'NXDN', 1000, 2000, 452012500)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO trunked_site_snapshot (
+                    guid, snapshot_hash, protocol_code, channel_name, alias_list_name, decoder,
+                    primary_frequency_hz, current_control_hz, first_seen_ms, last_seen_ms
+                ) VALUES
+                    ('site-dmr-alias-guid', 'dmr-alias-hash', 3, 'DMR Trunked',
+                        'County DMR', 'DMR', 461012500, 461012500, 1000, 2000),
+                    ('site-nxdn-alias-guid', 'nxdn-alias-hash', 4, 'NXDN Trunked',
+                        'NXDN County', 'NXDN', 452012500, 452012500, 1000, 2000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias_list (id, name, system_name, family)
+                VALUES (200, 'NXDN County', 'NXDN County', 'NXDN')
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias (
+                    id, alias_list_id, name, group_name, color, matcher_type, protocol, value
+                ) VALUES
+                    (200, 200, 'NXDN Dispatch', 'NXDN Dispatch', 255, 'TALKGROUP', 'NXDN', 77),
+                    (201, 200, 'NXDN Unit', 'NXDN Units', 65280, 'RADIO_ID', 'NXDN', 700)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO call_identity_bucket (
+                    context_id, bucket_start_ms, identity_role_code, identity_kind_code, identity_id,
+                    call_count, encrypted_count, recorded_count, streamed_count
+                ) VALUES
+                    (1, %1$d, 1, 1, 56132, 8, 2, 5, 4),
+                    (1, %1$d, 2, 2, 1811332, 8, 2, 5, 4),
+                    (5, %1$d, 1, 1, 91, 12, 3, 6, 2),
+                    (5, %1$d, 2, 2, 123456, 12, 3, 6, 2),
+                    (7, %1$d, 1, 1, 56132, 10, 1, 4, 1),
+                    (7, %1$d, 2, 2, 1811332, 10, 1, 4, 1),
+                    (9, %1$d, 1, 1, 91, 9, 1, 2, 1),
+                    (9, %1$d, 2, 2, 123456, 9, 1, 2, 1),
+                    (10, %1$d, 1, 1, 77, 11, 2, 3, 2),
+                    (10, %1$d, 2, 2, 700, 11, 2, 3, 2),
+                    (2, %1$d, 1, 0, 0, 4, 0, 1, 0)
+                """.formatted(currentHour));
+        }
+
+        mDatabase = new StatsWebDatabase(new UserPreferences(), mDatabasePath);
+        Map<String,Object> dashboard = mDatabase.dashboard();
+        List<Map<String,Object>> destinations = rowsFrom(dashboard, "topDestinations");
+        List<Map<String,Object>> sources = rowsFrom(dashboard, "topSources");
+        assertFalse(dashboard.containsKey("topTalkgroups"));
+        assertFalse(dashboard.containsKey("topRadios"));
+        assertEquals(List.of("DMR", "NXDN", "P25", "DMR", "P25", "NBFM"), destinations.stream()
+            .map(row -> String.valueOf(row.get("protocol"))).toList());
+        assertEquals(List.of("DMR", "NXDN", "P25", "DMR", "P25"), sources.stream()
+            .map(row -> String.valueOf(row.get("protocol"))).toList());
+
+        Map<String,Object> dmrDestination = destinations.getFirst();
+        assertEquals("CONVENTIONAL", dmrDestination.get("channel_kind"));
+        assertEquals("Talkgroup", dmrDestination.get("identity_kind"));
+        assertEquals("DMR Dispatch", dmrDestination.get("alias_name"));
+        assertEquals("conventional-talkgroups", dmrDestination.get("identity_detail_view"));
+        assertEquals(12, number(dmrDestination.get("call_count")));
+        assertEquals(6, number(dmrDestination.get("recorded_count")));
+        assertEquals(2, number(dmrDestination.get("streamed_count")));
+
+        Map<String,Object> nxdnDestination = destinations.stream()
+            .filter(row -> "NXDN".equals(row.get("protocol"))).findFirst().orElseThrow();
+        assertEquals("NXDN Dispatch", nxdnDestination.get("alias_name"));
+        assertEquals("NXDN County", nxdnDestination.get("alias_list_name"));
+        assertEquals(0, number(nxdnDestination.get("identity_detail_available")));
+        Map<String,Object> nxdnSource = sources.stream()
+            .filter(row -> "NXDN".equals(row.get("protocol"))).findFirst().orElseThrow();
+        assertEquals("NXDN Unit", nxdnSource.get("alias_name"));
+
+        Map<String,Object> dmrTrunkedDestination = destinations.stream()
+            .filter(row -> "site-dmr-alias".equals(row.get("context_key"))).findFirst().orElseThrow();
+        assertEquals("DMR Dispatch", dmrTrunkedDestination.get("alias_name"));
+        assertEquals("County DMR", dmrTrunkedDestination.get("alias_list_name"));
+        Map<String,Object> dmrTrunkedSource = sources.stream()
+            .filter(row -> "site-dmr-alias".equals(row.get("context_key"))).findFirst().orElseThrow();
+        assertEquals("DMR Engine 1", dmrTrunkedSource.get("alias_name"));
+
+        Map<String,Object> p25Conventional = destinations.stream()
+            .filter(row -> "conventional-p25-alias".equals(row.get("context_key"))).findFirst().orElseThrow();
+        assertEquals("Dispatch", p25Conventional.get("alias_name"));
+        assertEquals(0, number(p25Conventional.get("identity_detail_available")));
+
+        Map<String,Object> p25TrunkedSource = sources.stream()
+            .filter(row -> "P25".equals(row.get("protocol")) &&
+                "TRUNKED".equals(row.get("channel_kind"))).findFirst().orElseThrow();
+        assertEquals("Engine 1", p25TrunkedSource.get("alias_name"));
+        assertEquals("radio", p25TrunkedSource.get("identity_detail_view"));
+        assertEquals(1, number(p25TrunkedSource.get("identity_detail_available")));
+
+        Map<String,Object> unknownDestination = destinations.stream()
+            .filter(row -> number(row.get("identity_kind_code")) == 0).findFirst().orElseThrow();
+        assertEquals("Channel / Unknown", unknownDestination.get("identity_kind"));
+        assertEquals("County Fire", unknownDestination.get("channel_name"));
+        assertFalse(unknownDestination.containsKey("alias_name"),
+            "NBFM calls are channel-scoped and do not carry a talkgroup/radio identity");
+        assertEquals(0, number(unknownDestination.get("identity_detail_available")));
+    }
+
+    @Test
+    void dashboardActivityQueriesUseBucketIndexesAtRepresentativeVolume() throws Exception
     {
         long currentHour = Math.floorDiv(System.currentTimeMillis(), 3_600_000L) * 3_600_000L;
         long firstHour = currentHour - 23L * 3_600_000L;
@@ -605,6 +815,11 @@ class StatsWebDatabaseTest
                 PreparedStatement buckets = connection.prepareStatement("""
                     INSERT INTO p25_site_activity_bucket (context_id, bucket_start_ms, call_count)
                     VALUES (?, ?, ?)
+                    """);
+                PreparedStatement identities = connection.prepareStatement("""
+                    INSERT INTO call_identity_bucket (
+                        context_id, bucket_start_ms, identity_role_code, identity_kind_code, identity_id, call_count
+                    ) VALUES (?, ?, 1, 1, ?, 1)
                     """))
             {
                 for(int context = 100; context < 150; context++)
@@ -619,32 +834,69 @@ class StatsWebDatabaseTest
                         buckets.setLong(2, previousFirstHour + hour * 3_600_000L);
                         buckets.setInt(3, 1);
                         buckets.addBatch();
+
+                        identities.setInt(1, context);
+                        identities.setLong(2, previousFirstHour + hour * 3_600_000L);
+                        identities.setInt(3, 10_000 + context);
+                        identities.addBatch();
                     }
                 }
 
                 contexts.executeBatch();
                 buckets.executeBatch();
+                identities.executeBatch();
             }
             connection.commit();
 
-            List<String> plan = new ArrayList<>();
-            try(PreparedStatement statement = connection.prepareStatement(
-                "EXPLAIN QUERY PLAN " + StatsWebDatabase.DASHBOARD_SITE_ACTIVITY_SQL))
+            for(String sql: List.of(StatsWebDatabase.DASHBOARD_CALL_ACTIVITY_SQL,
+                StatsWebDatabase.DASHBOARD_SOURCE_ACTIVITY_SQL))
+            {
+                List<String> plan = new ArrayList<>();
+                try(PreparedStatement statement = connection.prepareStatement("EXPLAIN QUERY PLAN " + sql))
+                {
+                    statement.setLong(1, firstHour);
+                    statement.setLong(2, currentHour + 3_600_000L);
+                    statement.setLong(3, firstHour);
+                    statement.setLong(4, currentHour + 3_600_000L);
+                    try(ResultSet resultSet = statement.executeQuery())
+                    {
+                        while(resultSet.next())
+                        {
+                            plan.add(resultSet.getString("detail"));
+                        }
+                    }
+                }
+
+                assertTrue(plan.stream().anyMatch(
+                        detail -> detail.contains("idx_p25_site_activity_bucket_time")),
+                    () -> "Expected time-indexed trunked bucket scan, plan was: " + plan);
+                assertTrue(plan.stream().anyMatch(
+                        detail -> detail.contains("idx_conventional_bucket_dashboard_time")),
+                    () -> "Expected indexed conventional bucket scan, plan was: " + plan);
+                assertTrue(plan.stream().noneMatch(detail -> detail.contains("p25_activity_event")));
+            }
+
+            List<String> identityPlan = new ArrayList<>();
+            try(PreparedStatement statement = connection.prepareStatement("EXPLAIN QUERY PLAN " +
+                StatsWebDatabase.DASHBOARD_IDENTITY_ACTIVITY_SQL))
             {
                 statement.setLong(1, firstHour);
                 statement.setLong(2, currentHour + 3_600_000L);
+                statement.setInt(3, 1);
+                statement.setInt(4, 20);
                 try(ResultSet resultSet = statement.executeQuery())
                 {
                     while(resultSet.next())
                     {
-                        plan.add(resultSet.getString("detail"));
+                        identityPlan.add(resultSet.getString("detail"));
                     }
                 }
             }
 
-            assertTrue(plan.stream().anyMatch(detail -> detail.contains("idx_p25_site_activity_bucket_time")),
-                () -> "Expected time-indexed bucket scan, plan was: " + plan);
-            assertTrue(plan.stream().noneMatch(detail -> detail.contains("p25_activity_event")));
+            assertTrue(identityPlan.stream().anyMatch(
+                    detail -> detail.contains("idx_call_identity_bucket_dashboard_time")),
+                () -> "Expected indexed identity bucket scan, plan was: " + identityPlan);
+            assertTrue(identityPlan.stream().noneMatch(detail -> detail.contains("p25_activity_event")));
         }
     }
 
@@ -877,7 +1129,7 @@ class StatsWebDatabaseTest
     }
 
     @Test
-    void dashboardRecentSitesRequireDecodedSiteIdentity() throws Exception
+    void dashboardRecentReceiversIncludeBothTopologiesAndAllSupportedProtocols() throws Exception
     {
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
             Statement statement = connection.createStatement())
@@ -887,11 +1139,47 @@ class StatsWebDatabaseTest
                     (guid, snapshot_hash, first_seen_ms, last_seen_ms, observation_count, channel_name, decoder)
                 VALUES ('unidentified-site-guid', 'empty', 3000, 4000, 1, 'No Signal', 'P25-1')
                 """);
+            statement.executeUpdate("""
+                INSERT INTO receiver_context (
+                    id, context_key, kind_code, protocol_code, channel_name, decoder,
+                    first_seen_ms, last_seen_ms, primary_frequency_hz
+                ) VALUES
+                    (12, 'conventional-no-calls', 10, 0, 'Weather', 'NBFM',
+                        3000, 7000, 162550000),
+                    (13, 'trunked-call-before-metadata', 1, 3, 'DMR Call Context', 'DMR',
+                        3000, 8000, 461025000)
+                """);
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshotAt(5000, "dashboard-dmr",
+                TrunkedSiteSchema.PROTOCOL_DMR, 1, 2, "Metro DMR", "DMR Dashboard",
+                10, 20, 2, null, List.of(), List.of()));
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshotAt(6000, "dashboard-nxdn",
+                TrunkedSiteSchema.PROTOCOL_NXDN, 2, 4, "Regional NXDN", "NXDN Dashboard",
+                7, 8, 9, 5, List.of(), List.of()));
         }
 
-        List<Map<String,Object>> recentSites = rowsFrom(mDatabase.dashboard(), "recentSites");
-        assertTrue(recentSites.stream().anyMatch(row -> GUID.equals(row.get("guid"))));
-        assertFalse(recentSites.stream().anyMatch(row -> "unidentified-site-guid".equals(row.get("guid"))));
+        Map<String,Object> dashboard = mDatabase.dashboard();
+        List<Map<String,Object>> receivers = rowsFrom(dashboard, "recentReceivers");
+        assertFalse(dashboard.containsKey("recentTrunkedSites"));
+        assertTrue(receivers.stream().anyMatch(row -> GUID.equals(row.get("guid"))));
+        assertTrue(receivers.stream().anyMatch(row -> "dashboard-dmr".equals(row.get("guid")) &&
+            "DMR".equals(row.get("protocol"))));
+        assertTrue(receivers.stream().anyMatch(row -> "dashboard-nxdn".equals(row.get("guid")) &&
+            "NXDN".equals(row.get("protocol"))));
+        assertTrue(receivers.stream().anyMatch(row -> "conventional-fire".equals(row.get("context_key")) &&
+            "CONVENTIONAL".equals(row.get("channel_kind")) && "NBFM".equals(row.get("protocol"))));
+        assertTrue(receivers.stream().anyMatch(row -> "conventional-no-calls".equals(row.get("context_key"))));
+        Map<String,Object> orphanTrunked = receivers.stream()
+            .filter(row -> "trunked-call-before-metadata".equals(row.get("context_key")))
+            .findFirst().orElseThrow();
+        assertEquals("TRUNKED", orphanTrunked.get("channel_kind"));
+        assertEquals("DMR", orphanTrunked.get("protocol"));
+        assertEquals(0, number(orphanTrunked.get("detail_available")));
+        assertEquals(2, number(map(dashboard, "counts").get("conventional_channels")));
+        assertTrue(receivers.stream().filter(row -> "TRUNKED".equals(row.get("channel_kind")) &&
+                !"trunked-call-before-metadata".equals(row.get("context_key")))
+            .allMatch(row -> number(row.get("detail_available")) == 1));
+        assertTrue(receivers.stream().anyMatch(row -> "unidentified-site-guid".equals(row.get("guid")) &&
+            "P25".equals(row.get("protocol")) && "TRUNKED".equals(row.get("channel_kind"))));
     }
 
     @Test
@@ -1253,8 +1541,11 @@ class StatsWebDatabaseTest
         assertEquals(120, number(nxdnChannels.getFirst().get("channel_number")));
 
         Map<String,Object> counts = map(mDatabase.dashboard(), "counts");
-        assertEquals(3, number(counts.get("systems")));
-        assertEquals(4, number(counts.get("sites")));
+        assertEquals(3, number(counts.get("trunked_systems")));
+        assertEquals(4, number(counts.get("trunked_sites")));
+        assertFalse(counts.containsKey("talkgroups"));
+        assertFalse(counts.containsKey("radios"));
+        assertFalse(counts.containsKey("frequencies"));
     }
 
     @Test
@@ -1301,7 +1592,7 @@ class StatsWebDatabaseTest
         assertEquals(2, dmr.size());
         assertEquals(List.of(1L, 2L), dmr.stream().map(row -> number(row.get("variant_code"))).sorted().toList());
         assertTrue(dmr.stream().allMatch(row -> rowsFrom(row, "children").size() == 1));
-        assertEquals(3, number(map(mDatabase.dashboard(), "counts").get("systems")));
+        assertEquals(3, number(map(mDatabase.dashboard(), "counts").get("trunked_systems")));
     }
 
     private static StatsRequest request(String uri)

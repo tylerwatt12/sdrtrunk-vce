@@ -29,6 +29,8 @@ import io.github.dsheirer.module.decode.p25.P25CallStartEvent;
 import io.github.dsheirer.module.decode.p25.P25GrantObservationEvent;
 import io.github.dsheirer.module.decode.p25.P25TalkerAliasEvent;
 import io.github.dsheirer.module.decode.p25.P25TrafficChannelConfirmationEvent;
+import io.github.dsheirer.module.decode.traffic.TrunkedCallStartEvent;
+import io.github.dsheirer.module.decode.traffic.TrunkedCallAttributionEvent;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.application.ApplicationPreference;
@@ -54,6 +56,9 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
 
     private final UserPreferences mUserPreferences;
     private final P25ActivityLogMapper mMapper = new P25ActivityLogMapper();
+    private final TrunkedCallActivityMapper mTrunkedCallMapper = new TrunkedCallActivityMapper();
+    private final CallAttributionTracker mCallAttributionTracker = new CallAttributionTracker();
+    private final CallOutputDeduplicator mCallOutputDeduplicator = new CallOutputDeduplicator();
     private final P25GrantFactConfirmationTracker mGrantFactConfirmationTracker =
         new P25GrantFactConfirmationTracker();
     private final BiConsumer<Channel,IDecodeEvent> mDecodeEventListener = this::receiveDecodeEvent;
@@ -105,7 +110,8 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
             P25ActivityLogRecords.CompletedCallOutput completedCallOutput =
                 mMapper.mapCompletedCallOutput(call, output);
 
-            if(completedCallOutput != null)
+            if(completedCallOutput != null &&
+                mCallOutputDeduplicator.firstOutput(call.snapshot(), output, System.currentTimeMillis()))
             {
                 writer.enqueue(completedCallOutput);
             }
@@ -288,7 +294,7 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
     {
         P25ActivityLogWriter writer = getCollectionWriter();
 
-        if(writer == null)
+        if(writer == null || P25ActivityLogMapper.isTypedCallOwnedObservation(channel, event))
         {
             return;
         }
@@ -297,9 +303,14 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
 
         if(record != null)
         {
-            boolean logActivity = shouldLog(record);
+            CallAttributionTracker.AttributionResult attribution = mCallAttributionTracker.enrich(record);
 
-            if(logActivity)
+            if(attribution.attribution() != null)
+            {
+                writer.enqueue(attribution.attribution());
+            }
+
+            if(!attribution.tracked() && shouldLog(record))
             {
                 writer.enqueue(record);
             }
@@ -326,6 +337,50 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
         }
 
         P25ActivityLogRecords.ActivityEvent record = mMapper.map(event);
+
+        if(record != null)
+        {
+            mCallAttributionTracker.register(record);
+            writer.enqueue(record);
+        }
+    }
+
+    /**
+     * Receives the exactly-once DMR/NXDN trunked call-start notification. Traffic-channel allocation and audio are
+     * intentionally not prerequisites for this observation.
+     */
+    @Subscribe
+    public void receiveTrunkedCallStart(TrunkedCallStartEvent event)
+    {
+        P25ActivityLogWriter writer = getCollectionWriter();
+
+        if(writer == null)
+        {
+            return;
+        }
+
+        P25ActivityLogRecords.ActivityEvent record = mTrunkedCallMapper.map(event);
+
+        if(record != null)
+        {
+            writer.enqueue(record);
+        }
+    }
+
+    /**
+     * Receives one-time DMR/NXDN identity or encryption enrichment for an already-counted call.
+     */
+    @Subscribe
+    public void receiveTrunkedCallAttribution(TrunkedCallAttributionEvent event)
+    {
+        P25ActivityLogWriter writer = getCollectionWriter();
+
+        if(writer == null)
+        {
+            return;
+        }
+
+        P25ActivityLogRecords.TrunkedCallAttribution record = mTrunkedCallMapper.map(event);
 
         if(record != null)
         {
@@ -506,6 +561,9 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
         {
             mRecentDedupeKeys.clear();
         }
+
+        mCallOutputDeduplicator.clear();
+        mCallAttributionTracker.clear();
     }
 
     private boolean shouldLog(P25ActivityLogRecords.ActivityEvent record)

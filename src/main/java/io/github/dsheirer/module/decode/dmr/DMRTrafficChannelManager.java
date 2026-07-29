@@ -37,6 +37,7 @@ import io.github.dsheirer.message.IMessage;
 import io.github.dsheirer.message.MessageHistoryPreloadData;
 import io.github.dsheirer.message.MessageHistoryRequest;
 import io.github.dsheirer.message.MessageHistoryResponse;
+import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.module.decode.config.DecodeConfiguration;
 import io.github.dsheirer.module.decode.dmr.channel.DMRChannel;
 import io.github.dsheirer.module.decode.dmr.event.DMRDecodeEvent;
@@ -51,6 +52,9 @@ import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
 import io.github.dsheirer.module.decode.event.IDecodeEventProvider;
 import io.github.dsheirer.module.decode.traffic.TrafficChannelManager;
+import io.github.dsheirer.module.decode.traffic.TrunkedCallStartEvent;
+import io.github.dsheirer.module.decode.traffic.TrunkedCallStartTracker;
+import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.source.SourceType;
 import io.github.dsheirer.source.config.SourceConfigTuner;
@@ -102,6 +106,8 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
     private ReentrantLock mLock = new ReentrantLock();
     private Map<Long,IDecodeEvent> mCallEventsTS1 = new ConcurrentHashMap<>();
     private Map<Long,IDecodeEvent> mCallEventsTS2 = new ConcurrentHashMap<>();
+    private final TrunkedCallStartTracker mCallStartTracker =
+        new TrunkedCallStartTracker(EVENT_TIME_STALE_THRESHOLD);
     private Listener<ChannelEvent> mChannelEventListener;
     private Listener<IDecodeEvent> mDecodeEventListener;
     private TrafficChannelTeardownMonitor mTrafficChannelTeardownMonitor = new TrafficChannelTeardownMonitor();
@@ -429,6 +435,22 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
 
         try
         {
+            DecodeEventType decodeEventType = getEventType(opcode, identifierCollection, encrypted);
+            TrunkedCallStartTracker.ObservationResult callObservation =
+                mCallStartTracker.observeWithAttribution(mParentChannel, Protocol.DMR, channel,
+                    channel.getTimeslot(), identifierCollection, decodeEventType, timestamp);
+            TrunkedCallStartEvent callStart = callObservation.callStart();
+
+            if(callStart != null)
+            {
+                MyEventBus.getGlobalEventBus().post(callStart);
+            }
+
+            if(callObservation.attribution() != null)
+            {
+                MyEventBus.getGlobalEventBus().post(callObservation.attribution());
+            }
+
             boolean allocated = mAllocatedChannelFrequencyMap.containsKey(channel.getDownlinkFrequency());
 
             if(allocated)
@@ -438,8 +460,7 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
                 //directly so that call remains visible after the parent is promoted out of Conventional activity.
                 if(mAllocatedChannelFrequencyMap.get(channel.getDownlinkFrequency()) == mParentChannel)
                 {
-                    publishChannelActivity(channel, identifierCollection,
-                        getEventType(opcode, identifierCollection, encrypted));
+                    publishChannelActivity(channel, identifierCollection, decodeEventType);
                 }
             }
             else
@@ -459,7 +480,6 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
 
                 if(isStale(event, timestamp, identifierCollection)) //Create new event
                 {
-                    DecodeEventType decodeEventType = getEventType(opcode, identifierCollection, encrypted);
                     event = DMRDecodeEvent.builder(decodeEventType, timestamp)
                             .channel(channel)
                             .details("CHANNEL GRANT" + (encrypted ? " ENCRYPTED" : ""))
@@ -479,7 +499,6 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
                         {
                             event.end(timestamp);
 
-                            DecodeEventType decodeEventType = getEventType(opcode, identifierCollection, encrypted);
                             event = DMRDecodeEvent.builder(decodeEventType, timestamp)
                                     .channel(channel)
                                     .details("CONTINUE - CHANNEL GRANT" + (encrypted ? " ENCRYPTED" : ""))
@@ -758,7 +777,7 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
     @Override
     public void reset()
     {
-        /* no action required */
+        mCallStartTracker.clear();
     }
 
     /**
@@ -796,6 +815,7 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
         try
         {
             mAvailableTrafficChannels.clear();
+            mCallStartTracker.clear();
 
             List<Channel> channels = new ArrayList<>(mAllocatedChannelFrequencyMap.values());
 
@@ -828,8 +848,19 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
 
             try
             {
-                mCallEventsTS1.remove(frequency);
-                mCallEventsTS2.remove(frequency);
+                IDecodeEvent timeslotOne = mCallEventsTS1.remove(frequency);
+                IDecodeEvent timeslotTwo = mCallEventsTS2.remove(frequency);
+                long endedAt = System.currentTimeMillis();
+
+                if(timeslotOne != null)
+                {
+                    mCallStartTracker.end(timeslotOne.getChannelDescriptor(), 1, endedAt);
+                }
+
+                if(timeslotTwo != null)
+                {
+                    mCallStartTracker.end(timeslotTwo.getChannelDescriptor(), 2, endedAt);
+                }
             }
             finally
             {

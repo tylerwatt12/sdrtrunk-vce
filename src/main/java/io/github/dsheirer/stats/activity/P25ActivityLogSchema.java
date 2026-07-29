@@ -42,9 +42,17 @@ import java.util.stream.Collectors;
  */
 public class P25ActivityLogSchema
 {
-    private static final int SCHEMA_VERSION = 21;
+    public static final int SCHEMA_VERSION = 22;
     private static final String SCHEMA_VERSION_KEY = "p25_activity_schema_version";
     public static final String CALL_OUTPUT_METRICS_STARTED_AT_KEY = "p25_call_output_metrics_started_at_ms";
+    public static final String ALL_MODE_CALL_OUTPUT_METRICS_STARTED_AT_KEY =
+        "all_mode_call_output_metrics_started_at_ms";
+    public static final int IDENTITY_ROLE_DESTINATION = 1;
+    public static final int IDENTITY_ROLE_SOURCE = 2;
+    public static final int IDENTITY_KIND_CHANNEL_OR_UNKNOWN = 0;
+    public static final int IDENTITY_KIND_TALKGROUP = 1;
+    public static final int IDENTITY_KIND_RADIO = 2;
+    public static final int IDENTITY_KIND_PATCH_GROUP = 3;
     private static final long HOUR_MILLISECONDS = 3_600_000L;
     private static final long QUALITY_BUCKET_MILLISECONDS = 10_000L;
     static final int RETENTION_DELETE_BATCH_SIZE = 1_000;
@@ -138,6 +146,7 @@ public class P25ActivityLogSchema
                 """);
             createP25SummaryTables(statement);
             createConventionalTables(statement);
+            createCallIdentityTable(statement);
             createP25SiteTables(statement);
             createControlChannelQualityTable(statement);
             statement.executeUpdate("""
@@ -153,6 +162,8 @@ public class P25ActivityLogSchema
         SdrTrunkDatabaseStartup.setMetadata(connection, SCHEMA_VERSION_KEY, Integer.toString(SCHEMA_VERSION));
         SdrTrunkDatabaseStartup.setMetadata(connection, CALL_OUTPUT_METRICS_STARTED_AT_KEY,
             Long.toString(System.currentTimeMillis()));
+        SdrTrunkDatabaseStartup.setMetadata(connection, ALL_MODE_CALL_OUTPUT_METRICS_STARTED_AT_KEY,
+            Long.toString(System.currentTimeMillis()));
     }
 
     public static void validate(Connection connection) throws SQLException
@@ -160,9 +171,17 @@ public class P25ActivityLogSchema
         SqliteSchemaValidator.validate(connection, TABLES, INDEXES, VIEWS,
             List.of(new SqliteSchemaValidator.Metadata(SCHEMA_VERSION_KEY, Integer.toString(SCHEMA_VERSION))));
         SqliteSchemaValidator.validateDefinitions(connection, List.of(
+            new SqliteSchemaValidator.Definition("table", "call_identity_bucket",
+                createCallIdentityBucketSql()),
             new SqliteSchemaValidator.Definition("view", "p25_activity_event_resolved", createResolvedViewSql())));
+        validatePositiveMetadataTimestamp(connection, CALL_OUTPUT_METRICS_STARTED_AT_KEY);
+        validatePositiveMetadataTimestamp(connection, ALL_MODE_CALL_OUTPUT_METRICS_STARTED_AT_KEY);
         validateIndexColumns(connection, "idx_p25_control_quality_retention",
             List.of("observed_at_ms", "guid", "frequency_hz", "bucket_start_ms"));
+        validateIndexColumns(connection, "idx_conventional_bucket_dashboard_time",
+            List.of("bucket_start_ms", "context_id"));
+        validateIndexColumns(connection, "idx_call_identity_bucket_dashboard_time",
+            List.of("bucket_start_ms", "identity_role_code", "identity_kind_code", "context_id", "identity_id"));
     }
 
     static Long recordActivity(Connection connection, P25ActivityLogRecords.ActivityEvent activity,
@@ -200,6 +219,11 @@ public class P25ActivityLogSchema
             upsertConventionalSummary(connection, activity, contextId);
         }
 
+        if(activity.countedCall())
+        {
+            upsertCallIdentityBuckets(connection, activity, contextId);
+        }
+
         return activityId;
     }
 
@@ -207,16 +231,15 @@ public class P25ActivityLogSchema
                                             P25ActivityLogRecords.CompletedCallOutput completedCallOutput)
         throws SQLException
     {
-        if(completedCallOutput == null || completedCallOutput.guid() == null ||
-            completedCallOutput.guid().isBlank() || completedCallOutput.talkgroupId() <= 0 ||
-            !isTalkgroup(completedCallOutput.targetKind()) || completedCallOutput.output() == null)
+        if(completedCallOutput == null || completedCallOutput.callStartEpochMilliseconds() <= 0 ||
+            completedCallOutput.output() == null)
         {
             return false;
         }
 
-        ReceiverContextIdentity context = selectContextIdentityByGuid(connection, completedCallOutput.guid());
+        ReceiverContextIdentity context = selectContextIdentity(connection, completedCallOutput);
 
-        if(context == null || context.kindCode() != CONTEXT_TRUNKED_SITE || context.systemKey() == null)
+        if(context == null)
         {
             return false;
         }
@@ -225,6 +248,62 @@ public class P25ActivityLogSchema
         int streamed = completedCallOutput.output() == P25ActivityLogRecords.CallOutput.STREAMED ? 1 : 0;
         long callStart = completedCallOutput.callStartEpochMilliseconds();
         long bucket = bucketStart(callStart);
+
+        if(context.kindCode() != CONTEXT_TRUNKED_SITE)
+        {
+            long frequency = completedCallOutput.frequencyHertz() != null &&
+                completedCallOutput.frequencyHertz() > 0 ? completedCallOutput.frequencyHertz() :
+                context.primaryFrequencyHertz() != null ? context.primaryFrequencyHertz() : 0;
+
+            if(frequency <= 0)
+            {
+                return false;
+            }
+
+            int timeslot = summaryTimeslot(completedCallOutput.timeslot());
+
+            try(PreparedStatement summary = connection.prepareStatement("""
+                    INSERT INTO conventional_activity_summary (
+                        context_id, frequency_hz, timeslot, first_seen_ms, last_seen_ms,
+                        recorded_count, streamed_count
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(context_id, frequency_hz, timeslot) DO UPDATE SET
+                        first_seen_ms = min(conventional_activity_summary.first_seen_ms, excluded.first_seen_ms),
+                        last_seen_ms = max(conventional_activity_summary.last_seen_ms, excluded.last_seen_ms),
+                        recorded_count = conventional_activity_summary.recorded_count + excluded.recorded_count,
+                        streamed_count = conventional_activity_summary.streamed_count + excluded.streamed_count
+                    """);
+                PreparedStatement hourly = connection.prepareStatement("""
+                    INSERT INTO conventional_activity_bucket (
+                        context_id, frequency_hz, timeslot, bucket_start_ms, recorded_count, streamed_count
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(context_id, frequency_hz, timeslot, bucket_start_ms) DO UPDATE SET
+                        recorded_count = conventional_activity_bucket.recorded_count + excluded.recorded_count,
+                        streamed_count = conventional_activity_bucket.streamed_count + excluded.streamed_count
+                    """))
+            {
+                summary.setInt(1, context.contextId());
+                summary.setLong(2, frequency);
+                summary.setInt(3, timeslot);
+                summary.setLong(4, callStart);
+                summary.setLong(5, callStart);
+                summary.setInt(6, recorded);
+                summary.setInt(7, streamed);
+                summary.executeUpdate();
+
+                hourly.setInt(1, context.contextId());
+                hourly.setLong(2, frequency);
+                hourly.setInt(3, timeslot);
+                hourly.setLong(4, bucket);
+                hourly.setInt(5, recorded);
+                hourly.setInt(6, streamed);
+                hourly.executeUpdate();
+            }
+
+            upsertCompletedCallOutputIdentityBuckets(connection, completedCallOutput, context.contextId(),
+                recorded, streamed);
+            return true;
+        }
 
         try(PreparedStatement summary = connection.prepareStatement("""
                 INSERT INTO p25_talkgroup_summary (
@@ -257,25 +336,32 @@ public class P25ActivityLogSchema
                 """))
         {
             List<TalkgroupTarget> targets = new ArrayList<>();
-            targets.add(new TalkgroupTarget(completedCallOutput.talkgroupId(),
-                completedCallOutput.targetKind()));
 
-            if("PATCH_GROUP".equals(completedCallOutput.targetKind()))
+            if(completedCallOutput.talkgroupId() > 0 && isTalkgroup(completedCallOutput.targetKind()))
             {
-                completedCallOutput.patchMemberTalkgroupIds().forEach(member ->
-                    targets.add(new TalkgroupTarget(member, Form.TALKGROUP.name())));
+                targets.add(new TalkgroupTarget(completedCallOutput.talkgroupId(),
+                    completedCallOutput.targetKind()));
+
+                if("PATCH_GROUP".equals(completedCallOutput.targetKind()))
+                {
+                    completedCallOutput.patchMemberTalkgroupIds().forEach(member ->
+                        targets.add(new TalkgroupTarget(member, Form.TALKGROUP.name())));
+                }
             }
 
             for(TalkgroupTarget target: targets)
             {
-                summary.setInt(1, context.systemKey());
-                summary.setInt(2, target.talkgroupId());
-                setInteger(summary, 3, targetKindCode(target.targetKind()));
-                summary.setLong(4, callStart);
-                summary.setLong(5, callStart);
-                summary.setInt(6, recorded);
-                summary.setInt(7, streamed);
-                summary.executeUpdate();
+                if(context.systemKey() != null)
+                {
+                    summary.setInt(1, context.systemKey());
+                    summary.setInt(2, target.talkgroupId());
+                    setInteger(summary, 3, targetKindCode(target.targetKind()));
+                    summary.setLong(4, callStart);
+                    summary.setLong(5, callStart);
+                    summary.setInt(6, recorded);
+                    summary.setInt(7, streamed);
+                    summary.executeUpdate();
+                }
 
                 talkgroup.setInt(1, context.contextId());
                 talkgroup.setInt(2, target.talkgroupId());
@@ -292,7 +378,298 @@ public class P25ActivityLogSchema
             site.executeUpdate();
         }
 
+        upsertCompletedCallOutputIdentityBuckets(connection, completedCallOutput, context.contextId(),
+            recorded, streamed);
         return true;
+    }
+
+    /**
+     * Atomically enriches an already-counted trunked call without changing physical or action counts.
+     */
+    static boolean applyTrunkedCallAttribution(
+        Connection connection, P25ActivityLogRecords.TrunkedCallAttribution attribution) throws SQLException
+    {
+        if(attribution == null || attribution.callStartEpochMilliseconds() <= 0 ||
+            (!attribution.destinationBecameKnown() && !attribution.sourceBecameKnown() &&
+                !attribution.encryptionBecameKnown()))
+        {
+            return false;
+        }
+
+        ReceiverContextIdentity context = selectContextIdentity(connection, attribution.contextKey(),
+            attribution.guid());
+
+        if(context == null || context.kindCode() != CONTEXT_TRUNKED_SITE)
+        {
+            return false;
+        }
+
+        if(attribution.destinationBecameKnown() &&
+            (attribution.destinationId() <= 0 ||
+                !(isTalkgroup(attribution.destinationKind()) ||
+                    Form.RADIO.name().equals(attribution.destinationKind()))))
+        {
+            return false;
+        }
+
+        if(attribution.sourceBecameKnown() &&
+            (attribution.sourceRadioId() == null || attribution.sourceRadioId() <= 0))
+        {
+            return false;
+        }
+
+        long bucket = bucketStart(attribution.callStartEpochMilliseconds());
+        List<CallIdentity> destinations = destinationIdentities(
+            attribution.destinationId() > 0 ? Integer.toString(attribution.destinationId()) : null,
+            attribution.destinationKind(), attribution.patchMemberTalkgroupIds());
+        List<TalkgroupTarget> talkgroups = talkgroupTargets(attribution.destinationId(),
+            attribution.destinationKind(), attribution.patchMemberTalkgroupIds());
+        P25ActivityLogRecords.ActivityEvent legacyActivity = attributionActivity(attribution);
+
+        if(attribution.destinationBecameKnown())
+        {
+            int priorEncrypted = attribution.encryptedBeforeObservation() ? 1 : 0;
+
+            try(PreparedStatement statement = connection.prepareStatement("""
+                UPDATE call_identity_bucket
+                SET call_count = call_count - 1,
+                    encrypted_count = encrypted_count - ?
+                WHERE context_id = ? AND bucket_start_ms = ?
+                  AND identity_role_code = ? AND identity_kind_code = ? AND identity_id = 0
+                  AND call_count > 0 AND encrypted_count >= ?
+                """))
+            {
+                statement.setInt(1, priorEncrypted);
+                statement.setInt(2, context.contextId());
+                statement.setLong(3, bucket);
+                statement.setInt(4, IDENTITY_ROLE_DESTINATION);
+                statement.setInt(5, IDENTITY_KIND_CHANNEL_OR_UNKNOWN);
+                statement.setInt(6, priorEncrypted);
+
+                if(statement.executeUpdate() != 1)
+                {
+                    return false;
+                }
+            }
+
+            try(PreparedStatement statement = connection.prepareStatement("""
+                DELETE FROM call_identity_bucket
+                WHERE context_id = ? AND bucket_start_ms = ?
+                  AND identity_role_code = ? AND identity_kind_code = ? AND identity_id = 0
+                  AND call_count = 0 AND encrypted_count = 0
+                  AND recorded_count = 0 AND streamed_count = 0
+                """))
+            {
+                statement.setInt(1, context.contextId());
+                statement.setLong(2, bucket);
+                statement.setInt(3, IDENTITY_ROLE_DESTINATION);
+                statement.setInt(4, IDENTITY_KIND_CHANNEL_OR_UNKNOWN);
+                statement.executeUpdate();
+            }
+
+            for(CallIdentity destination: destinations)
+            {
+                upsertCallIdentityBucket(connection, context.contextId(), bucket, IDENTITY_ROLE_DESTINATION,
+                    destination.kindCode(), destination.identityId(), 1, priorEncrypted, 0, 0);
+            }
+
+            for(TalkgroupTarget target: talkgroups)
+            {
+                upsertP25TalkgroupBucket(connection, legacyActivity, context.contextId(), target.talkgroupId());
+
+                if(context.systemKey() != null)
+                {
+                    upsertP25TalkgroupSummary(connection, legacyActivity, context.systemKey(),
+                        target.talkgroupId(), attribution.sourceRadioId(), target.targetKind());
+                }
+            }
+
+            if(context.systemKey() != null && attribution.sourceRadioId() != null &&
+                attribution.sourceRadioId() > 0 && !talkgroups.isEmpty())
+            {
+                try(PreparedStatement statement = connection.prepareStatement("""
+                    UPDATE p25_radio_summary
+                    SET last_talkgroup_id = ?, last_seen_ms = max(last_seen_ms, ?)
+                    WHERE system_key = ? AND radio_id = ?
+                    """))
+                {
+                    statement.setInt(1, attribution.destinationId());
+                    statement.setLong(2, attribution.callStartEpochMilliseconds());
+                    statement.setInt(3, context.systemKey());
+                    statement.setInt(4, attribution.sourceRadioId());
+                    statement.executeUpdate();
+                }
+            }
+        }
+
+        if(attribution.sourceBecameKnown())
+        {
+            upsertCallIdentityBucket(connection, context.contextId(), bucket, IDENTITY_ROLE_SOURCE,
+                IDENTITY_KIND_RADIO, attribution.sourceRadioId(), 1,
+                attribution.encryptedBeforeObservation() ? 1 : 0, 0, 0);
+
+            if(context.systemKey() != null)
+            {
+                upsertP25RadioSummary(connection, legacyActivity, context.systemKey(),
+                    attribution.sourceRadioId(), attribution.destinationId() > 0 ?
+                        attribution.destinationId() : null);
+            }
+        }
+
+        if(context.systemKey() != null && attribution.sourceRadioId() != null &&
+            attribution.sourceRadioId() > 0 && !talkgroups.isEmpty() &&
+            (attribution.destinationBecameKnown() || attribution.sourceBecameKnown()))
+        {
+            for(TalkgroupTarget target: talkgroups)
+            {
+                upsertP25RadioTalkgroupSummary(connection, legacyActivity, context.systemKey(),
+                    attribution.sourceRadioId(), target.talkgroupId(), target.targetKind());
+            }
+        }
+
+        if(attribution.encryptionBecameKnown())
+        {
+            try(PreparedStatement statement = connection.prepareStatement("""
+                INSERT INTO p25_site_activity_bucket (context_id, bucket_start_ms, encrypted_count)
+                VALUES (?, ?, 1)
+                ON CONFLICT(context_id, bucket_start_ms) DO UPDATE SET
+                    encrypted_count = p25_site_activity_bucket.encrypted_count + 1
+                """))
+            {
+                statement.setInt(1, context.contextId());
+                statement.setLong(2, bucket);
+                statement.executeUpdate();
+            }
+
+            for(CallIdentity destination: destinations)
+            {
+                upsertCallIdentityBucket(connection, context.contextId(), bucket, IDENTITY_ROLE_DESTINATION,
+                    destination.kindCode(), destination.identityId(), 0, 1, 0, 0);
+            }
+
+            if(attribution.sourceRadioId() != null && attribution.sourceRadioId() > 0)
+            {
+                upsertCallIdentityBucket(connection, context.contextId(), bucket, IDENTITY_ROLE_SOURCE,
+                    IDENTITY_KIND_RADIO, attribution.sourceRadioId(), 0, 1, 0, 0);
+            }
+
+            incrementLegacyAttributionEncryption(connection, context, attribution, talkgroups, bucket);
+        }
+
+        return true;
+    }
+
+    private static P25ActivityLogRecords.ActivityEvent attributionActivity(
+        P25ActivityLogRecords.TrunkedCallAttribution attribution)
+    {
+        return new P25ActivityLogRecords.ActivityEvent(attribution.callStartEpochMilliseconds(),
+            attribution.contextKey(), attribution.guid(), P25ActivityLogRecords.ContextKind.TRUNKED_SITE,
+            "APCO25", P25ActivityLogRecords.Action.CALL, "CALL",
+            attribution.sourceRadioId() != null ? attribution.sourceRadioId().toString() : null,
+            attribution.destinationId() > 0 ? Integer.toString(attribution.destinationId()) : null,
+            attribution.destinationKind(), attribution.patchMemberTalkgroupIds(), attribution.frequencyHertz(),
+            null, attribution.timeslot(), attribution.encryptedBeforeObservation(), null, null,
+            null, null, null, null, null, null, null, null, true, null, null);
+    }
+
+    private static List<TalkgroupTarget> talkgroupTargets(int destinationId, String destinationKind,
+                                                          List<Integer> patchMembers)
+    {
+        if(destinationId <= 0 || !isTalkgroup(destinationKind))
+        {
+            return List.of();
+        }
+
+        List<TalkgroupTarget> targets = new ArrayList<>();
+        targets.add(new TalkgroupTarget(destinationId, destinationKind));
+
+        if(Form.PATCH_GROUP.name().equals(destinationKind) && patchMembers != null)
+        {
+            patchMembers.stream()
+                .filter(member -> member != null && member > 0 && member != destinationId)
+                .distinct()
+                .sorted()
+                .map(member -> new TalkgroupTarget(member, Form.TALKGROUP.name()))
+                .forEach(targets::add);
+        }
+
+        return targets;
+    }
+
+    private static void incrementLegacyAttributionEncryption(
+        Connection connection, ReceiverContextIdentity context,
+        P25ActivityLogRecords.TrunkedCallAttribution attribution,
+        List<TalkgroupTarget> talkgroups, long bucket) throws SQLException
+    {
+        try(PreparedStatement siteTalkgroup = connection.prepareStatement("""
+                UPDATE p25_site_talkgroup_bucket
+                SET encrypted_count = encrypted_count + 1
+                WHERE context_id = ? AND talkgroup_id = ? AND bucket_start_ms = ?
+                """);
+            PreparedStatement talkgroupSummary = connection.prepareStatement("""
+                UPDATE p25_talkgroup_summary
+                SET encrypted_count = encrypted_count + 1
+                WHERE system_key = ? AND talkgroup_id = ?
+                """))
+        {
+            for(TalkgroupTarget target: talkgroups)
+            {
+                siteTalkgroup.setInt(1, context.contextId());
+                siteTalkgroup.setInt(2, target.talkgroupId());
+                siteTalkgroup.setLong(3, bucket);
+                siteTalkgroup.executeUpdate();
+
+                if(context.systemKey() != null)
+                {
+                    talkgroupSummary.setInt(1, context.systemKey());
+                    talkgroupSummary.setInt(2, target.talkgroupId());
+                    talkgroupSummary.executeUpdate();
+                }
+            }
+        }
+
+        if(context.systemKey() != null && attribution.sourceRadioId() != null &&
+            attribution.sourceRadioId() > 0)
+        {
+            try(PreparedStatement radio = connection.prepareStatement("""
+                    UPDATE p25_radio_summary
+                    SET encrypted_count = encrypted_count + 1
+                    WHERE system_key = ? AND radio_id = ?
+                    """);
+                PreparedStatement radioTalkgroup = connection.prepareStatement("""
+                    UPDATE p25_radio_talkgroup_summary
+                    SET encrypted_count = encrypted_count + 1
+                    WHERE system_key = ? AND radio_id = ? AND talkgroup_id = ?
+                    """))
+            {
+                radio.setInt(1, context.systemKey());
+                radio.setInt(2, attribution.sourceRadioId());
+                radio.executeUpdate();
+
+                for(TalkgroupTarget target: talkgroups)
+                {
+                    radioTalkgroup.setInt(1, context.systemKey());
+                    radioTalkgroup.setInt(2, attribution.sourceRadioId());
+                    radioTalkgroup.setInt(3, target.talkgroupId());
+                    radioTalkgroup.executeUpdate();
+                }
+            }
+        }
+
+        if(attribution.frequencyHertz() != null && attribution.frequencyHertz() > 0)
+        {
+            try(PreparedStatement statement = connection.prepareStatement("""
+                UPDATE p25_site_frequency_summary
+                SET encrypted_count = encrypted_count + 1
+                WHERE context_id = ? AND frequency_hz = ? AND timeslot = ?
+                """))
+            {
+                statement.setInt(1, context.contextId());
+                statement.setLong(2, attribution.frequencyHertz());
+                statement.setInt(3, summaryTimeslot(attribution.timeslot()));
+                statement.executeUpdate();
+            }
+        }
     }
 
     /**
@@ -322,12 +699,13 @@ public class P25ActivityLogSchema
                     DecodeEventType.CALL_UNIT_TO_UNIT.name()) :
                 (call.encrypted() ? DecodeEventType.CALL_ENCRYPTED.name() : DecodeEventType.CALL.name());
         P25ActivityLogRecords.ActivityEvent activity = new P25ActivityLogRecords.ActivityEvent(
-            call.callEndEpochMilliseconds(), call.contextKey(), call.guid(),
+            call.callStartEpochMilliseconds(), call.contextKey(), call.guid(),
             P25ActivityLogRecords.ContextKind.CONVENTIONAL_DMR, "DMR", P25ActivityLogRecords.Action.CALL,
             eventType, call.sourceRadioId() != null ? call.sourceRadioId().toString() : null, targetId, targetKind,
             call.frequencyHertz(), null, call.timeslot(), call.encrypted(), null, null, null, null, null, null, null,
             call.channelName(), "DMR", null, true, null, null);
         upsertConventionalSummary(connection, activity, contextId);
+        upsertCallIdentityBuckets(connection, activity, contextId);
         DmrActivitySchema.recordCompletedCall(connection, contextId, call);
     }
 
@@ -426,6 +804,7 @@ public class P25ActivityLogSchema
         deleted += deleteByTime(connection, "p25_activity_event", "observed_at_ms", cutoffEpochMilliseconds);
         deleted += deleteByTime(connection, "p25_site_talkgroup_bucket", "bucket_start_ms", cutoffEpochMilliseconds);
         deleted += deleteByTime(connection, "p25_site_activity_bucket", "bucket_start_ms", cutoffEpochMilliseconds);
+        deleted += deleteByTime(connection, "call_identity_bucket", "bucket_start_ms", cutoffEpochMilliseconds);
         deleted += deleteByTime(connection, "p25_radio_affiliation", "updated_at_ms", cutoffEpochMilliseconds);
         deleted += deleteByTime(connection, "conventional_activity_bucket", "bucket_start_ms", cutoffEpochMilliseconds);
         deleted += deleteByTime(connection, "p25_site_channel", "confirmed_at_ms", cutoffEpochMilliseconds);
@@ -456,6 +835,7 @@ public class P25ActivityLogSchema
         deleted += deleteAll(connection, "p25_activity_event");
         deleted += deleteAll(connection, "p25_site_talkgroup_bucket");
         deleted += deleteAll(connection, "p25_site_activity_bucket");
+        deleted += deleteAll(connection, "call_identity_bucket");
         deleted += deleteAll(connection, "p25_talkgroup_summary");
         deleted += deleteAll(connection, "p25_radio_summary");
         deleted += deleteAll(connection, "p25_radio_talkgroup_summary");
@@ -502,6 +882,7 @@ public class P25ActivityLogSchema
         deleted += deleteByContextGuid(connection, "p25_activity_event", guid);
         deleted += deleteByContextGuid(connection, "p25_site_talkgroup_bucket", guid);
         deleted += deleteByContextGuid(connection, "p25_site_activity_bucket", guid);
+        deleted += deleteByContextGuid(connection, "call_identity_bucket", guid);
         deleted += deleteByContextGuid(connection, "p25_site_frequency_summary", guid);
         deleted += deleteByContextGuid(connection, "conventional_activity_bucket", guid);
         deleted += deleteByContextGuid(connection, "conventional_activity_summary", guid);
@@ -681,6 +1062,9 @@ public class P25ActivityLogSchema
                 last_seen_ms INTEGER NOT NULL,
                 %s,
                 last_event_type_code INTEGER,
+                encrypted_count INTEGER NOT NULL DEFAULT 0,
+                recorded_count INTEGER NOT NULL DEFAULT 0,
+                streamed_count INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY(context_id, frequency_hz, timeslot)
             )
             """.formatted(ACTION_COUNT_DEFINITIONS));
@@ -691,9 +1075,54 @@ public class P25ActivityLogSchema
                 timeslot INTEGER NOT NULL DEFAULT -1,
                 bucket_start_ms INTEGER NOT NULL,
                 %s,
+                encrypted_count INTEGER NOT NULL DEFAULT 0,
+                recorded_count INTEGER NOT NULL DEFAULT 0,
+                streamed_count INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY(context_id, frequency_hz, timeslot, bucket_start_ms)
             )
             """.formatted(ACTION_COUNT_DEFINITIONS));
+    }
+
+    /**
+     * Creates the compact, protocol-neutral identity projection used by the website's bounded top-destination and
+     * top-source queries, grouped by protocol and trunked/conventional topology. A physical call is represented only
+     * by counter increments: one destination (or channel fallback), an optional source, and additional destination
+     * rows for patch members. Row growth is one upserted row per distinct context/hour/identity combination rather
+     * than one row per call, and {@link #deleteOlderThan(Connection, long)} applies the configured activity
+     * retention. Existing site and conventional hourly buckets cannot serve this query because they contain physical
+     * totals but no protocol-neutral source identity, destination kind, or patch-member dimensions.
+     */
+    private static void createCallIdentityTable(Statement statement) throws SQLException
+    {
+        statement.executeUpdate(createCallIdentityBucketSql());
+    }
+
+    private static String createCallIdentityBucketSql()
+    {
+        return """
+            CREATE TABLE IF NOT EXISTS call_identity_bucket (
+                context_id INTEGER NOT NULL REFERENCES receiver_context(id) ON DELETE CASCADE,
+                bucket_start_ms INTEGER NOT NULL,
+                identity_role_code INTEGER NOT NULL CHECK(identity_role_code IN (1, 2)),
+                identity_kind_code INTEGER NOT NULL CHECK(identity_kind_code IN (0, 1, 2, 3)),
+                identity_id INTEGER NOT NULL CHECK(identity_id >= 0),
+                call_count INTEGER NOT NULL DEFAULT 0 CHECK(call_count >= 0),
+                encrypted_count INTEGER NOT NULL DEFAULT 0 CHECK(encrypted_count >= 0),
+                recorded_count INTEGER NOT NULL DEFAULT 0 CHECK(recorded_count >= 0),
+                streamed_count INTEGER NOT NULL DEFAULT 0 CHECK(streamed_count >= 0),
+                PRIMARY KEY (
+                    context_id, bucket_start_ms, identity_role_code, identity_kind_code, identity_id
+                ),
+                CHECK (
+                    (identity_kind_code = 0 AND identity_id = 0)
+                    OR (identity_kind_code IN (1, 2, 3) AND identity_id > 0)
+                ),
+                CHECK (
+                    identity_role_code = 1
+                    OR (identity_role_code = 2 AND identity_kind_code = 2 AND identity_id > 0)
+                )
+            ) WITHOUT ROWID
+            """;
     }
 
     private static void createP25SiteTables(Statement statement) throws SQLException
@@ -996,6 +1425,13 @@ public class P25ActivityLogSchema
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_radio_affiliation_talkgroup ON p25_radio_affiliation(system_key, talkgroup_id, updated_at_ms DESC, radio_id)");
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_radio_talkgroup_talkgroup ON p25_radio_talkgroup_summary(system_key, talkgroup_id, last_seen_ms DESC, radio_id)");
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_conventional_bucket_time ON conventional_activity_bucket(context_id, bucket_start_ms)");
+        statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_conventional_bucket_dashboard_time ON conventional_activity_bucket(bucket_start_ms, context_id)");
+        statement.executeUpdate("""
+            CREATE INDEX IF NOT EXISTS idx_call_identity_bucket_dashboard_time
+            ON call_identity_bucket(
+                bucket_start_ms, identity_role_code, identity_kind_code, context_id, identity_id
+            )
+            """);
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_site_snapshot_identity ON p25_site_snapshot(system_key, rfss, site)");
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_site_channel_guid_frequency ON p25_site_channel(guid, downlink_hz)");
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_site_channel_tag_summary_guid_tag ON p25_site_channel_tag_summary(guid, tag, last_seen_ms DESC)");
@@ -1034,10 +1470,14 @@ public class P25ActivityLogSchema
             "encrypted_count", "recorded_count", "streamed_count"),
         tableWithActions("p25_site_activity_bucket", "context_id", "bucket_start_ms", "encrypted_count",
             "recorded_count", "streamed_count"),
-        tableWithActions("conventional_activity_summary", "context_id", "frequency_hz", "timeslot",
-            "first_seen_ms", "last_seen_ms", "last_event_type_code"),
+        tableWithActionsBeforeLastEvent("conventional_activity_summary", "context_id", "frequency_hz", "timeslot",
+            "first_seen_ms", "last_seen_ms", "last_event_type_code", "encrypted_count", "recorded_count",
+            "streamed_count"),
         tableWithActions("conventional_activity_bucket", "context_id", "frequency_hz", "timeslot",
-            "bucket_start_ms"),
+            "bucket_start_ms", "encrypted_count", "recorded_count", "streamed_count"),
+        table("call_identity_bucket", "context_id", "bucket_start_ms", "identity_role_code",
+            "identity_kind_code", "identity_id", "call_count", "encrypted_count", "recorded_count",
+            "streamed_count"),
         table("p25_site_snapshot", "guid", "snapshot_hash", "first_seen_ms", "last_seen_ms", "observation_count",
             "protocol", "channel_name", "alias_list_name", "decoder", "system_key", "nac", "rfss", "site",
             "lra", "mfid", "broadcast_clock_ms", "micro_slots", "data_service", "data_access",
@@ -1093,6 +1533,8 @@ public class P25ActivityLogSchema
         "idx_p25_radio_affiliation_talkgroup",
         "idx_p25_radio_talkgroup_talkgroup",
         "idx_conventional_bucket_time",
+        "idx_conventional_bucket_dashboard_time",
+        "idx_call_identity_bucket_dashboard_time",
         "idx_p25_site_snapshot_identity",
         "idx_p25_site_channel_guid_frequency",
         "idx_p25_site_channel_tag_summary_guid_tag",
@@ -1164,6 +1606,118 @@ public class P25ActivityLogSchema
         {
             upsertP25FrequencySummary(connection, activity, contextId, sourceRadio, target);
         }
+    }
+
+    private static void upsertCallIdentityBuckets(Connection connection,
+                                                  P25ActivityLogRecords.ActivityEvent activity,
+                                                  int contextId) throws SQLException
+    {
+        long bucket = bucketStart(activity.observedAtEpochMilliseconds());
+        int encrypted = activity.encrypted() ? 1 : 0;
+
+        for(CallIdentity destination: destinationIdentities(activity.targetId(), activity.targetKind(),
+            activity.patchMemberTalkgroupIds()))
+        {
+            upsertCallIdentityBucket(connection, contextId, bucket, IDENTITY_ROLE_DESTINATION,
+                destination.kindCode(), destination.identityId(), 1, encrypted, 0, 0);
+        }
+
+        Integer source = positiveInteger(activity.sourceRadioId());
+
+        if(source != null)
+        {
+            upsertCallIdentityBucket(connection, contextId, bucket, IDENTITY_ROLE_SOURCE, IDENTITY_KIND_RADIO,
+                source, 1, encrypted, 0, 0);
+        }
+    }
+
+    private static void upsertCompletedCallOutputIdentityBuckets(
+        Connection connection, P25ActivityLogRecords.CompletedCallOutput output, int contextId,
+        int recorded, int streamed) throws SQLException
+    {
+        long bucket = bucketStart(output.callStartEpochMilliseconds());
+
+        for(CallIdentity destination: destinationIdentities(
+            output.destinationId() > 0 ? Integer.toString(output.destinationId()) : null,
+            output.targetKind(), output.patchMemberTalkgroupIds()))
+        {
+            upsertCallIdentityBucket(connection, contextId, bucket, IDENTITY_ROLE_DESTINATION,
+                destination.kindCode(), destination.identityId(), 0, 0, recorded, streamed);
+        }
+
+        if(output.sourceRadioId() != null && output.sourceRadioId() > 0)
+        {
+            upsertCallIdentityBucket(connection, contextId, bucket, IDENTITY_ROLE_SOURCE, IDENTITY_KIND_RADIO,
+                output.sourceRadioId(), 0, 0, recorded, streamed);
+        }
+    }
+
+    private static void upsertCallIdentityBucket(Connection connection, int contextId, long bucketStart,
+                                                 int roleCode, int kindCode, int identityId, int calls,
+                                                 int encrypted, int recorded, int streamed) throws SQLException
+    {
+        try(PreparedStatement statement = connection.prepareStatement("""
+            INSERT INTO call_identity_bucket (
+                context_id, bucket_start_ms, identity_role_code, identity_kind_code, identity_id,
+                call_count, encrypted_count, recorded_count, streamed_count
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(
+                context_id, bucket_start_ms, identity_role_code, identity_kind_code, identity_id
+            ) DO UPDATE SET
+                call_count = call_identity_bucket.call_count + excluded.call_count,
+                encrypted_count = call_identity_bucket.encrypted_count + excluded.encrypted_count,
+                recorded_count = call_identity_bucket.recorded_count + excluded.recorded_count,
+                streamed_count = call_identity_bucket.streamed_count + excluded.streamed_count
+            """))
+        {
+            statement.setInt(1, contextId);
+            statement.setLong(2, bucketStart);
+            statement.setInt(3, roleCode);
+            statement.setInt(4, kindCode);
+            statement.setInt(5, identityId);
+            statement.setInt(6, calls);
+            statement.setInt(7, encrypted);
+            statement.setInt(8, recorded);
+            statement.setInt(9, streamed);
+            statement.executeUpdate();
+        }
+    }
+
+    private static List<CallIdentity> destinationIdentities(String targetId, String targetKind,
+                                                             List<Integer> patchMembers)
+    {
+        Integer target = positiveInteger(targetId);
+        List<CallIdentity> identities = new ArrayList<>();
+
+        if(target != null && Form.PATCH_GROUP.name().equals(targetKind))
+        {
+            identities.add(new CallIdentity(IDENTITY_KIND_PATCH_GROUP, target));
+        }
+        else if(target != null && Form.TALKGROUP.name().equals(targetKind))
+        {
+            identities.add(new CallIdentity(IDENTITY_KIND_TALKGROUP, target));
+        }
+        else if(target != null && Form.RADIO.name().equals(targetKind))
+        {
+            identities.add(new CallIdentity(IDENTITY_KIND_RADIO, target));
+        }
+        else
+        {
+            identities.add(new CallIdentity(IDENTITY_KIND_CHANNEL_OR_UNKNOWN, 0));
+        }
+
+        if(Form.PATCH_GROUP.name().equals(targetKind) && patchMembers != null)
+        {
+            patchMembers.stream()
+                .filter(member -> member != null && member > 0)
+                .filter(member -> target == null || !member.equals(target))
+                .distinct()
+                .sorted()
+                .map(member -> new CallIdentity(IDENTITY_KIND_TALKGROUP, member))
+                .forEach(identities::add);
+        }
+
+        return identities;
     }
 
     private static void updateRadioAffiliation(Connection connection, P25ActivityLogRecords.ActivityEvent activity,
@@ -1457,11 +2011,13 @@ public class P25ActivityLogSchema
 
         try(PreparedStatement statement = connection.prepareStatement("""
             INSERT INTO conventional_activity_summary (
-                context_id, frequency_hz, timeslot, first_seen_ms, last_seen_ms, %s, last_event_type_code
-            ) VALUES (?, ?, ?, ?, ?, %s, ?)
+                context_id, frequency_hz, timeslot, first_seen_ms, last_seen_ms, %s, encrypted_count,
+                last_event_type_code
+            ) VALUES (?, ?, ?, ?, ?, %s, ?, ?)
             ON CONFLICT(context_id, frequency_hz, timeslot) DO UPDATE SET
                 last_seen_ms = max(conventional_activity_summary.last_seen_ms, excluded.last_seen_ms),
                 %s,
+                encrypted_count = conventional_activity_summary.encrypted_count + excluded.encrypted_count,
                 last_event_type_code = coalesce(excluded.last_event_type_code, conventional_activity_summary.last_event_type_code)
             """.formatted(ACTION_INSERT_COLUMNS, ACTION_INSERT_PLACEHOLDERS,
             actionUpdateSql("conventional_activity_summary"))))
@@ -1473,16 +2029,18 @@ public class P25ActivityLogSchema
             statement.setLong(index++, activity.observedAtEpochMilliseconds());
             statement.setLong(index++, activity.observedAtEpochMilliseconds());
             index = setActionCounts(statement, index, activity);
+            statement.setInt(index++, activity.encrypted() ? 1 : 0);
             setInteger(statement, index, eventTypeCode(activity.eventType()));
             statement.executeUpdate();
         }
 
         try(PreparedStatement statement = connection.prepareStatement("""
             INSERT INTO conventional_activity_bucket (
-                context_id, frequency_hz, timeslot, bucket_start_ms, %s
-            ) VALUES (?, ?, ?, ?, %s)
+                context_id, frequency_hz, timeslot, bucket_start_ms, %s, encrypted_count
+            ) VALUES (?, ?, ?, ?, %s, ?)
             ON CONFLICT(context_id, frequency_hz, timeslot, bucket_start_ms) DO UPDATE SET
-                %s
+                %s,
+                encrypted_count = conventional_activity_bucket.encrypted_count + excluded.encrypted_count
             """.formatted(ACTION_INSERT_COLUMNS, ACTION_INSERT_PLACEHOLDERS,
             actionUpdateSql("conventional_activity_bucket"))))
         {
@@ -1491,7 +2049,8 @@ public class P25ActivityLogSchema
             statement.setLong(index++, activity.frequencyHertz());
             statement.setInt(index++, timeslot);
             statement.setLong(index++, bucketStart(activity.observedAtEpochMilliseconds()));
-            setActionCounts(statement, index, activity);
+            index = setActionCounts(statement, index, activity);
+            statement.setInt(index, activity.encrypted() ? 1 : 0);
             statement.executeUpdate();
         }
     }
@@ -2459,21 +3018,42 @@ public class P25ActivityLogSchema
         throw new SQLException("Missing receiver_context row for context [" + contextKey + "]");
     }
 
-    private static ReceiverContextIdentity selectContextIdentityByGuid(Connection connection, String guid)
+    private static ReceiverContextIdentity selectContextIdentity(
+        Connection connection, P25ActivityLogRecords.CompletedCallOutput output)
         throws SQLException
     {
-        try(PreparedStatement statement = connection.prepareStatement(
-            "SELECT id, system_key, kind_code FROM receiver_context WHERE guid = ?"))
+        return selectContextIdentity(connection, output.contextKey(), output.guid());
+    }
+
+    private static ReceiverContextIdentity selectContextIdentity(Connection connection, String contextKey,
+                                                                  String guid)
+        throws SQLException
+    {
+        try(PreparedStatement statement = connection.prepareStatement("""
+            SELECT id, system_key, kind_code, primary_frequency_hz
+            FROM receiver_context
+            WHERE (? IS NOT NULL AND context_key = ?)
+               OR (? IS NOT NULL AND guid = ?)
+            ORDER BY CASE WHEN context_key = ? THEN 0 ELSE 1 END, last_seen_ms DESC
+            LIMIT 1
+            """))
         {
-            statement.setString(1, guid);
+            statement.setString(1, contextKey);
+            statement.setString(2, contextKey);
+            statement.setString(3, guid);
+            statement.setString(4, guid);
+            statement.setString(5, contextKey);
 
             try(ResultSet resultSet = statement.executeQuery())
             {
                 if(resultSet.next())
                 {
                     int systemKey = resultSet.getInt("system_key");
+                    Integer nullableSystemKey = resultSet.wasNull() ? null : systemKey;
+                    long primaryFrequency = resultSet.getLong("primary_frequency_hz");
                     return new ReceiverContextIdentity(resultSet.getInt("id"),
-                        resultSet.wasNull() ? null : systemKey, resultSet.getInt("kind_code"));
+                        nullableSystemKey, resultSet.getInt("kind_code"),
+                        resultSet.wasNull() ? null : primaryFrequency);
                 }
 
                 return null;
@@ -2510,6 +3090,26 @@ public class P25ActivityLogSchema
         {
             throw new SQLException("SQLite schema has incorrect columns for index [" + index + "]: " + actual);
         }
+    }
+
+    private static void validatePositiveMetadataTimestamp(Connection connection, String key) throws SQLException
+    {
+        try(PreparedStatement statement = connection.prepareStatement("""
+            SELECT CAST(value AS INTEGER) FROM database_metadata WHERE key = ?
+            """))
+        {
+            statement.setString(1, key);
+
+            try(ResultSet resultSet = statement.executeQuery())
+            {
+                if(resultSet.next() && resultSet.getLong(1) > 0)
+                {
+                    return;
+                }
+            }
+        }
+
+        throw new SQLException("SQLite schema metadata [" + key + "] is missing or not a positive timestamp");
     }
 
     /**
@@ -2587,12 +3187,31 @@ public class P25ActivityLogSchema
 
         if(insertionPoint < 0)
         {
+            insertionPoint = list.indexOf("recorded_count");
+        }
+
+        if(insertionPoint < 0)
+        {
             insertionPoint = list.indexOf("last_event_type_code");
         }
 
         if(insertionPoint < 0)
         {
             insertionPoint = list.size();
+        }
+
+        list.addAll(insertionPoint, ACTION_COUNT_COLUMNS);
+        return new SqliteSchemaValidator.Table(name, list);
+    }
+
+    private static SqliteSchemaValidator.Table tableWithActionsBeforeLastEvent(String name, String... columns)
+    {
+        List<String> list = new ArrayList<>(List.of(columns));
+        int insertionPoint = list.indexOf("last_event_type_code");
+
+        if(insertionPoint < 0)
+        {
+            throw new IllegalArgumentException("Expected last_event_type_code column for table " + name);
         }
 
         list.addAll(insertionPoint, ACTION_COUNT_COLUMNS);
@@ -2760,6 +3379,12 @@ public class P25ActivityLogSchema
         }
     }
 
+    private static Integer positiveInteger(String value)
+    {
+        Integer parsed = parseInteger(value);
+        return parsed != null && parsed > 0 ? parsed : null;
+    }
+
     private static String channelKey(P25NetworkConfigurationSnapshot.Channel channel)
     {
         if(channel == null)
@@ -2805,7 +3430,8 @@ public class P25ActivityLogSchema
         return merged;
     }
 
-    private record ReceiverContextIdentity(int contextId, Integer systemKey, int kindCode)
+    private record ReceiverContextIdentity(int contextId, Integer systemKey, int kindCode,
+                                           Long primaryFrequencyHertz)
     {
     }
 
@@ -3080,6 +3706,10 @@ public class P25ActivityLogSchema
     }
 
     private record TalkgroupTarget(int talkgroupId, String targetKind)
+    {
+    }
+
+    private record CallIdentity(int kindCode, int identityId)
     {
     }
 

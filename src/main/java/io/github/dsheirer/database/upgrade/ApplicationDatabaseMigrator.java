@@ -56,7 +56,7 @@ public final class ApplicationDatabaseMigrator
     private static final String ALIAS_VERSION_KEY = "alias_schema_version";
     private static final String P25_VERSION_KEY = "p25_activity_schema_version";
     private static final String ALIAS_TARGET_VERSION = "4";
-    private static final String P25_TARGET_VERSION = "21";
+    private static final String P25_TARGET_VERSION = Integer.toString(P25ActivityLogSchema.SCHEMA_VERSION);
     private static final String DMR_TARGET_VERSION = Integer.toString(DmrActivitySchema.SCHEMA_VERSION);
     private static final String TRUNKED_SITE_TARGET_VERSION = Integer.toString(TrunkedSiteSchema.SCHEMA_VERSION);
     private static final String PORTABLE_PREFERENCES_KEY = "portable_java_preferences_v1";
@@ -494,7 +494,7 @@ public final class ApplicationDatabaseMigrator
             if(!P25_TARGET_VERSION.equals(p25Version))
             {
                 throw new UnsupportedSchemaVersionException(
-                    "Expected current P25 activity schema v21, found [" + p25Version +
+                    "Expected current P25 activity schema v" + P25_TARGET_VERSION + ", found [" + p25Version +
                         "]. Refusing migration.");
             }
 

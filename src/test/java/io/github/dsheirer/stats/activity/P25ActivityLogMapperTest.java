@@ -24,6 +24,7 @@ import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.Channel.ChannelType;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
+import io.github.dsheirer.identifier.configuration.ChannelConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.DecoderTypeConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.FrequencyConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.SiteGuidConfigurationIdentifier;
@@ -31,9 +32,12 @@ import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
 import io.github.dsheirer.identifier.patch.PatchGroup;
 import io.github.dsheirer.metadata.site.SiteMetadataEvent;
 import io.github.dsheirer.module.decode.DecoderType;
+import io.github.dsheirer.module.decode.dmr.DMRChannelMode;
 import io.github.dsheirer.module.decode.dmr.DMRConventionalCallEvent;
+import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
 import io.github.dsheirer.module.decode.event.DecodeEvent;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
+import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
 import io.github.dsheirer.module.decode.nbfm.DecodeConfigNBFM;
 import io.github.dsheirer.module.decode.p25.P25ChannelGrantEvent;
 import io.github.dsheirer.module.decode.p25.P25CallStartEvent;
@@ -56,6 +60,7 @@ import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifi
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.module.decode.p25.reference.VoiceServiceOptions;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
+import io.github.dsheirer.protocol.Protocol;
 import java.util.List;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
@@ -82,6 +87,29 @@ class P25ActivityLogMapperTest
         assertEquals(101, record.sourceRadioId());
         assertEquals(202, record.targetRadioId());
         assertTrue(record.encrypted());
+    }
+
+    @Test
+    void suppressesRawDmrAndNxdnVoiceEventsOwnedByTypedCallPaths()
+    {
+        DecodeConfigDMR dmrConfig = new DecodeConfigDMR();
+        dmrConfig.setChannelMode(DMRChannelMode.TRUNKED);
+        Channel dmr = new Channel("DMR Site", ChannelType.STANDARD);
+        dmr.setDecodeConfiguration(dmrConfig);
+        Channel nxdn = new Channel("NXDN Site", ChannelType.STANDARD);
+        nxdn.setDecodeConfiguration(new DecodeConfigNXDN());
+        DecodeEvent dmrVoice = DecodeEvent.builder(DecodeEventType.CALL_GROUP, 1_000L)
+            .protocol(Protocol.DMR)
+            .build();
+        DecodeEvent nxdnVoice = DecodeEvent.builder(DecodeEventType.CALL_GROUP, 1_000L)
+            .protocol(Protocol.NXDN)
+            .build();
+        P25ActivityLogMapper mapper = new P25ActivityLogMapper();
+
+        assertTrue(P25ActivityLogMapper.isTypedCallOwnedObservation(dmr, dmrVoice));
+        assertTrue(P25ActivityLogMapper.isTypedCallOwnedObservation(nxdn, nxdnVoice));
+        assertNull(mapper.map(dmr, dmrVoice));
+        assertNull(mapper.map(nxdn, nxdnVoice));
     }
 
     @Test
@@ -456,6 +484,69 @@ class P25ActivityLogMapperTest
     }
 
     @Test
+    void mapsConventionalOutputWithoutRequiringTalkgroupOrGuid()
+    {
+        MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
+        identifiers.update(FrequencyConfigurationIdentifier.create(154_310_000L));
+        identifiers.update(DecoderTypeConfigurationIdentifier.create(DecoderType.NBFM));
+        AudioCallSnapshot snapshot = new AudioCallSnapshot(new AudioCallId(7L, 8L, 0), null, null,
+            identifiers, Set.of(), 7_200_123L, 7_205_000L, 1, 1, 7_200_123L, 7_205_000L,
+            false, true, false, true, 100, false);
+
+        P25ActivityLogRecords.CompletedCallOutput metric = new P25ActivityLogMapper().mapCompletedCallOutput(
+            new CompletedAudioCall(snapshot, List.of(new float[800])),
+            P25ActivityLogRecords.CallOutput.STREAMED);
+
+        assertNotNull(metric);
+        assertEquals("CONVENTIONAL_ANALOG:NBFM:154310000", metric.contextKey());
+        assertNull(metric.guid());
+        assertEquals(154_310_000L, metric.frequencyHertz());
+        assertEquals(0, metric.talkgroupId());
+        assertEquals(P25ActivityLogRecords.CallOutput.STREAMED, metric.output());
+    }
+
+    @Test
+    void mapsPrivateCallOutputDestinationAndSourceRadios()
+    {
+        MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
+        identifiers.update(APCO25RadioIdentifier.createFrom(1_811_524));
+        identifiers.update(APCO25RadioIdentifier.createTo(1_822_001));
+        identifiers.update(SiteGuidConfigurationIdentifier.create(GUID));
+        AudioCallSnapshot snapshot = new AudioCallSnapshot(new AudioCallId(7L, 10L, 1), null, null,
+            identifiers, Set.of(), 7_200_123L, 7_205_000L, 1, 1, 7_200_123L, 7_205_000L,
+            false, true, false, true, 100, false);
+
+        P25ActivityLogRecords.CompletedCallOutput metric = new P25ActivityLogMapper().mapCompletedCallOutput(
+            new CompletedAudioCall(snapshot, List.of(new float[800])),
+            P25ActivityLogRecords.CallOutput.RECORDED);
+
+        assertNotNull(metric);
+        assertEquals(1_822_001, metric.talkgroupId());
+        assertEquals("RADIO", metric.targetKind());
+        assertEquals(1_811_524, metric.sourceRadioId());
+    }
+
+    @Test
+    void usesStableConfigurationIdentityForOutputWithoutGuid()
+    {
+        String configurationId = "223e4567-e89b-12d3-a456-426614174000";
+        MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
+        identifiers.update(ChannelConfigurationIdentifier.create(configurationId));
+        identifiers.update(FrequencyConfigurationIdentifier.create(451_012_500L));
+        identifiers.update(DecoderTypeConfigurationIdentifier.create(DecoderType.DMR));
+        AudioCallSnapshot snapshot = new AudioCallSnapshot(new AudioCallId(7L, 9L, 1), null, null,
+            identifiers, Set.of(), 7_200_123L, 7_205_000L, 1, 1, 7_200_123L, 7_205_000L,
+            false, true, false, true, 100, false);
+
+        P25ActivityLogRecords.CompletedCallOutput metric = new P25ActivityLogMapper().mapCompletedCallOutput(
+            new CompletedAudioCall(snapshot, List.of(new float[800])),
+            P25ActivityLogRecords.CallOutput.RECORDED);
+
+        assertNotNull(metric);
+        assertEquals("CONFIGURATION:" + configurationId, metric.contextKey());
+    }
+
+    @Test
     void preservesPatchMembersForCompletedCallOutput()
     {
         MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
@@ -493,7 +584,7 @@ class P25ActivityLogMapperTest
     }
 
     @Test
-    void skipsActivityWithoutGuid()
+    void mapsActivityWithoutGuidUsingStableConfigurationIdentity()
     {
         MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
         identifiers.update(APCO25RadioIdentifier.createFrom(1811524));
@@ -506,7 +597,9 @@ class P25ActivityLogMapperTest
 
         Channel channel = channel(DecoderType.P25_PHASE1);
         channel.setRadresGuid(null);
-        assertNull(new P25ActivityLogMapper().map(channel, event));
+        P25ActivityLogRecords.ActivityEvent record = new P25ActivityLogMapper().map(channel, event);
+        assertNotNull(record);
+        assertEquals("CONFIGURATION:" + channel.getConfigurationId(), record.contextKey());
     }
 
     @Test

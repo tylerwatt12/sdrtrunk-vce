@@ -25,6 +25,7 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -139,6 +140,41 @@ class P25ActivityLogWriterTest
                 assertTrue(resultSet.next());
                 assertEquals(2, resultSet.getInt(1));
             }
+        }
+    }
+
+    @Test
+    void bucketsDmrPrivateCallAndOutputsByCallStartForBothIdentities() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("dmr-private-identity.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        String guid = "dmr-private";
+        String contextKey = "GUID:" + guid;
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            P25ActivityLogRecords.DmrConventionalCall call = new P25ActivityLogRecords.DmrConventionalCall(
+                3_599_900L, 3_600_100L, contextKey, guid, "DMR Private", "County DMR",
+                461_125_000L, 2, P25ActivityLogRecords.DmrTargetKind.PRIVATE, null, 101, 202, true);
+            P25ActivityLogSchema.recordDmrConventionalCall(connection, call);
+            assertTrue(P25ActivityLogSchema.applyCompletedCallOutput(connection,
+                new P25ActivityLogRecords.CompletedCallOutput(3_599_900L, contextKey, guid,
+                    461_125_000L, 2, 202, "RADIO", List.of(), 101,
+                    P25ActivityLogRecords.CallOutput.RECORDED)));
+            assertTrue(P25ActivityLogSchema.applyCompletedCallOutput(connection,
+                new P25ActivityLogRecords.CompletedCallOutput(3_599_900L, contextKey, guid,
+                    461_125_000L, 2, 202, "RADIO", List.of(), 101,
+                    P25ActivityLogRecords.CallOutput.STREAMED)));
+
+            assertEquals(2, count(connection, "call_identity_bucket"));
+            assertIdentityBucket(connection, 0L, P25ActivityLogSchema.IDENTITY_ROLE_DESTINATION,
+                P25ActivityLogSchema.IDENTITY_KIND_RADIO, 202, 1, 1, 1, 1);
+            assertIdentityBucket(connection, 0L, P25ActivityLogSchema.IDENTITY_ROLE_SOURCE,
+                P25ActivityLogSchema.IDENTITY_KIND_RADIO, 101, 1, 1, 1, 1);
+            assertEquals(1L, scalarLong(connection,
+                "SELECT call_count FROM conventional_activity_bucket WHERE bucket_start_ms=0"));
+            assertEquals(0L, scalarLong(connection,
+                "SELECT COUNT(*) FROM conventional_activity_bucket WHERE bucket_start_ms=3600000"));
         }
     }
 
@@ -308,6 +344,7 @@ class P25ActivityLogWriterTest
             P25ActivityLogSchema.insertSite(connection, siteSnapshot(1000L));
             P25ActivityLogSchema.recordActivity(connection, activity(1000L, P25ActivityLogRecords.Action.CALL), true);
             recordConfirmedActivity(connection, activity(100000L, P25ActivityLogRecords.Action.GRANT), true);
+            assertCount(connection, "call_identity_bucket", 2);
             P25ActivityLogSchema.deleteOlderThan(connection, 50000L);
 
             try(Statement statement = connection.createStatement();
@@ -318,6 +355,7 @@ class P25ActivityLogWriterTest
             }
 
             assertCount(connection, "p25_site_channel_tag", 0);
+            assertCount(connection, "call_identity_bucket", 0);
 
             try(Statement statement = connection.createStatement();
                 ResultSet resultSet = statement.executeQuery("SELECT tag FROM p25_site_channel_tag_summary"))
@@ -441,6 +479,62 @@ class P25ActivityLogWriterTest
     }
 
     @Test
+    void representativeVolumeIdentityRankingUsesTimeLeadingIndex() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("identity-ranking-query-plan.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                WITH RECURSIVE contexts(value) AS (
+                    VALUES(0) UNION ALL SELECT value + 1 FROM contexts WHERE value < 31
+                )
+                INSERT INTO receiver_context (
+                    context_key, kind_code, protocol_code, first_seen_ms, last_seen_ms
+                )
+                SELECT printf('identity-context-%02d', value), 1, 1, 0, 0 FROM contexts
+                """);
+            statement.executeUpdate("""
+                WITH RECURSIVE buckets(value) AS (
+                    VALUES(0) UNION ALL SELECT value + 1 FROM buckets WHERE value < 511
+                )
+                INSERT INTO call_identity_bucket (
+                    context_id, bucket_start_ms, identity_role_code, identity_kind_code, identity_id, call_count
+                )
+                SELECT context.id, buckets.value * 3600000, 1, 1, 1000 + context.id, 1
+                FROM receiver_context context CROSS JOIN buckets
+                """);
+
+            assertEquals(16_384, count(connection, "call_identity_bucket"));
+            StringBuilder plan = new StringBuilder();
+
+            try(ResultSet resultSet = statement.executeQuery("""
+                EXPLAIN QUERY PLAN
+                SELECT identity_id, SUM(call_count)
+                FROM call_identity_bucket INDEXED BY idx_call_identity_bucket_dashboard_time
+                WHERE bucket_start_ms >= 1756800000
+                  AND identity_role_code = 1
+                  AND identity_kind_code = 1
+                GROUP BY identity_id
+                ORDER BY SUM(call_count) DESC
+                LIMIT 20
+                """))
+            {
+                while(resultSet.next())
+                {
+                    plan.append(resultSet.getString("detail")).append('\n');
+                }
+            }
+
+            assertTrue(plan.toString().contains(
+                "USING INDEX idx_call_identity_bucket_dashboard_time (bucket_start_ms>?)"), plan.toString());
+            assertFalse(plan.toString().contains("SCAN call_identity_bucket"), plan.toString());
+        }
+    }
+
+    @Test
     void maintenanceDeletesExpiredRowsAndUpdatesStatus() throws Exception
     {
         Path database = mTemporaryFolder.resolve("maintenance.sqlite");
@@ -482,6 +576,7 @@ class P25ActivityLogWriterTest
         {
             assertCount(connection, "p25_activity_event", 1);
             assertCount(connection, "p25_control_channel_quality", 1);
+            assertCount(connection, "call_identity_bucket", 0);
             assertCount(connection, "trunked_site_snapshot", 2);
             assertEquals(1, scalarLong(connection,
                 "SELECT COUNT(*) FROM trunked_site_snapshot WHERE protocol_code=3"));
@@ -526,6 +621,10 @@ class P25ActivityLogWriterTest
                 activity(2_000L, P25ActivityLogRecords.Action.GRANT, clearedGuid), true);
             recordConfirmedActivity(connection,
                 activity(3_000L, P25ActivityLogRecords.Action.GRANT, retainedGuid), true);
+            P25ActivityLogSchema.recordActivity(connection,
+                activity(2_100L, P25ActivityLogRecords.Action.CALL, clearedGuid), false);
+            P25ActivityLogSchema.recordActivity(connection,
+                activity(3_100L, P25ActivityLogRecords.Action.CALL, retainedGuid), false);
             P25ActivityLogSchema.insertControlChannelQuality(connection, quality(4_000L, -20.0, clearedGuid));
             P25ActivityLogSchema.insertControlChannelQuality(connection, quality(5_000L, -21.0, retainedGuid));
         }
@@ -551,6 +650,12 @@ class P25ActivityLogWriterTest
             assertCount(connection, "p25_site_frequency_summary", 1);
             assertCount(connection, "p25_site_talkgroup_bucket", 1);
             assertCount(connection, "p25_site_activity_bucket", 1);
+            assertEquals(2L, scalarLong(connection, """
+                SELECT COUNT(*)
+                FROM call_identity_bucket identity
+                JOIN receiver_context context ON context.id=identity.context_id
+                WHERE context.guid='223e4567-e89b-12d3-a456-426614174000'
+                """));
 
             //These summaries are shared by all receiver sites for the system and cannot be deleted site-by-site.
             assertCount(connection, "p25_system", 1);
@@ -572,7 +677,7 @@ class P25ActivityLogWriterTest
                 "SELECT value FROM database_metadata WHERE key='p25_activity_schema_version'"))
             {
                 assertTrue(resultSet.next());
-                assertEquals("21", resultSet.getString(1));
+                assertEquals("22", resultSet.getString(1));
             }
 
             try(ResultSet resultSet = statement.executeQuery("""
@@ -615,9 +720,89 @@ class P25ActivityLogWriterTest
     }
 
     @Test
+    void callIdentitySchemaEnforcesIdentityAndOwnershipContract() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("call-identity-schema.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            statement.execute("PRAGMA foreign_keys=ON");
+            P25ActivityLogSchema.recordActivity(connection,
+                conventionalActivity(1_000L, P25ActivityLogRecords.Action.CALL), false);
+
+            List<String> primaryKey = new ArrayList<>();
+
+            try(ResultSet resultSet = statement.executeQuery("PRAGMA table_info(call_identity_bucket)"))
+            {
+                while(resultSet.next())
+                {
+                    if(resultSet.getInt("pk") > 0)
+                    {
+                        primaryKey.add(resultSet.getInt("pk") + ":" + resultSet.getString("name"));
+                    }
+                }
+            }
+
+            assertEquals(List.of("1:context_id", "2:bucket_start_ms", "3:identity_role_code",
+                "4:identity_kind_code", "5:identity_id"), primaryKey);
+
+            try(ResultSet resultSet = statement.executeQuery("PRAGMA foreign_key_list(call_identity_bucket)"))
+            {
+                assertTrue(resultSet.next());
+                assertEquals("receiver_context", resultSet.getString("table"));
+                assertEquals("context_id", resultSet.getString("from"));
+                assertEquals("id", resultSet.getString("to"));
+                assertEquals("CASCADE", resultSet.getString("on_delete"));
+                assertFalse(resultSet.next());
+            }
+
+            List<String> indexColumns = new ArrayList<>();
+
+            try(ResultSet resultSet =
+                    statement.executeQuery("PRAGMA index_info(idx_call_identity_bucket_dashboard_time)"))
+            {
+                while(resultSet.next())
+                {
+                    indexColumns.add(resultSet.getString("name"));
+                }
+            }
+
+            assertEquals(List.of("bucket_start_ms", "identity_role_code", "identity_kind_code", "context_id",
+                "identity_id"), indexColumns);
+
+            long contextId = scalarLong(connection, "SELECT id FROM receiver_context");
+            assertThrows(Exception.class, () -> statement.executeUpdate("""
+                INSERT INTO call_identity_bucket (
+                    context_id, bucket_start_ms, identity_role_code, identity_kind_code, identity_id
+                ) VALUES (%d, 3600000, 9, 1, 1)
+                """.formatted(contextId)));
+            assertThrows(Exception.class, () -> statement.executeUpdate("""
+                INSERT INTO call_identity_bucket (
+                    context_id, bucket_start_ms, identity_role_code, identity_kind_code, identity_id
+                ) VALUES (%d, 3600000, 2, 0, 0)
+                """.formatted(contextId)));
+            assertThrows(Exception.class, () -> statement.executeUpdate("""
+                INSERT INTO call_identity_bucket (
+                    context_id, bucket_start_ms, identity_role_code, identity_kind_code, identity_id, call_count
+                ) VALUES (%d, 3600000, 1, 1, 1, -1)
+                """.formatted(contextId)));
+            assertThrows(Exception.class, () -> statement.executeUpdate("""
+                INSERT INTO call_identity_bucket (
+                    context_id, bucket_start_ms, identity_role_code, identity_kind_code, identity_id
+                ) VALUES (999999, 3600000, 1, 1, 1)
+                """));
+
+            statement.executeUpdate("DELETE FROM receiver_context WHERE id=" + contextId);
+            assertCount(connection, "call_identity_bucket", 0);
+        }
+    }
+
+    @Test
     void explicitSchemaStepsCreateAndValidateForeignBandsAndQualityRetentionIndex() throws Exception
     {
-        Path database = mTemporaryFolder.resolve("schema-v19-to-v21.sqlite");
+        Path database = mTemporaryFolder.resolve("schema-v19-to-v22.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
@@ -636,6 +821,8 @@ class P25ActivityLogWriterTest
             assertThrows(Exception.class, () -> P25ActivityLogSchema.validate(connection));
             P25ActivityLogSchema.createControlChannelQualityRetentionIndex(statement);
             SdrTrunkDatabaseStartup.setMetadata(connection, "p25_activity_schema_version", "21");
+            assertThrows(Exception.class, () -> P25ActivityLogSchema.validate(connection));
+            SdrTrunkDatabaseStartup.setMetadata(connection, "p25_activity_schema_version", "22");
             P25ActivityLogSchema.validate(connection);
             statement.execute("COMMIT");
 
@@ -1336,10 +1523,12 @@ class P25ActivityLogWriterTest
         writer.start();
         writer.enqueue(siteSnapshot(500L));
         writer.enqueue(patchActivity(1_000L));
-        writer.enqueue(new P25ActivityLogRecords.CompletedCallOutput(1_000L, guid, 56182,
-            "PATCH_GROUP", List.of(56181, 56180, 56180, 56182), P25ActivityLogRecords.CallOutput.RECORDED));
-        writer.enqueue(new P25ActivityLogRecords.CompletedCallOutput(1_000L, guid, 56182,
-            "PATCH_GROUP", List.of(56180, 56181), P25ActivityLogRecords.CallOutput.STREAMED));
+        writer.enqueue(new P25ActivityLogRecords.CompletedCallOutput(1_000L, "GUID:" + guid, guid,
+            854_187_500L, 1, 56182, "PATCH_GROUP", List.of(56181, 56180, 56180, 56182), 1811524,
+            P25ActivityLogRecords.CallOutput.RECORDED));
+        writer.enqueue(new P25ActivityLogRecords.CompletedCallOutput(1_000L, "GUID:" + guid, guid,
+            854_187_500L, 1, 56182, "PATCH_GROUP", List.of(56180, 56181), 1811524,
+            P25ActivityLogRecords.CallOutput.STREAMED));
 
         long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(5);
         while(writer.getWrittenRecords() < 4 && System.currentTimeMillis() < deadline)
@@ -1408,6 +1597,73 @@ class P25ActivityLogWriterTest
                 "SELECT recorded_count FROM p25_site_activity_bucket"));
             assertEquals(1L, scalarLong(connection,
                 "SELECT streamed_count FROM p25_site_activity_bucket"));
+
+            assertCount(connection, "call_identity_bucket", 4);
+            assertIdentityBucket(connection, 0L, P25ActivityLogSchema.IDENTITY_ROLE_DESTINATION,
+                P25ActivityLogSchema.IDENTITY_KIND_PATCH_GROUP, 56182, 1, 1, 1, 1);
+            assertIdentityBucket(connection, 0L, P25ActivityLogSchema.IDENTITY_ROLE_DESTINATION,
+                P25ActivityLogSchema.IDENTITY_KIND_TALKGROUP, 56180, 1, 1, 1, 1);
+            assertIdentityBucket(connection, 0L, P25ActivityLogSchema.IDENTITY_ROLE_DESTINATION,
+                P25ActivityLogSchema.IDENTITY_KIND_TALKGROUP, 56181, 1, 1, 1, 1);
+            assertIdentityBucket(connection, 0L, P25ActivityLogSchema.IDENTITY_ROLE_SOURCE,
+                P25ActivityLogSchema.IDENTITY_KIND_RADIO, 1811524, 1, 1, 1, 1);
+        }
+    }
+
+    @Test
+    void attributesLateP25IdentityAndEncryptionAcrossLegacySummariesWithoutAnotherPhysicalCall() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("p25-late-attribution.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        String guid = "123e4567-e89b-12d3-a456-426614174000";
+        P25ActivityLogRecords.ActivityEvent unidentified = new P25ActivityLogRecords.ActivityEvent(
+            1_000L, "GUID:" + guid, guid, P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "APCO25",
+            P25ActivityLogRecords.Action.CALL, "CALL_GROUP", null, null, null, List.of(),
+            854_187_500L, "00-0509", 1, false, null, null, 0xBEE00, 0x348, 0x348, 2, 1,
+            "Example Site", "P25_PHASE1", null, true, null, null);
+        P25ActivityLogRecords.TrunkedCallAttribution attribution =
+            new P25ActivityLogRecords.TrunkedCallAttribution(1_000L, "GUID:" + guid, guid,
+                854_187_500L, 1, 56138, "TALKGROUP", List.of(), 1811524,
+                true, true, true, false);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            P25ActivityLogSchema.insertSite(connection, siteSnapshot(500L));
+            P25ActivityLogSchema.recordActivity(connection, unidentified, true);
+            assertTrue(P25ActivityLogSchema.applyTrunkedCallAttribution(connection, attribution));
+
+            assertCount(connection, "p25_activity_event", 1);
+            assertEquals(1L, scalarLong(connection,
+                "SELECT call_count FROM p25_site_activity_bucket"));
+            assertEquals(1L, scalarLong(connection,
+                "SELECT encrypted_count FROM p25_site_activity_bucket"));
+            assertEquals(1L, scalarLong(connection,
+                "SELECT call_count FROM p25_site_frequency_summary"));
+            assertEquals(1L, scalarLong(connection,
+                "SELECT encrypted_count FROM p25_site_frequency_summary"));
+            assertEquals(1L, scalarLong(connection,
+                "SELECT call_count FROM p25_site_talkgroup_bucket WHERE talkgroup_id=56138"));
+            assertEquals(1L, scalarLong(connection,
+                "SELECT encrypted_count FROM p25_site_talkgroup_bucket WHERE talkgroup_id=56138"));
+            assertEquals(1L, scalarLong(connection,
+                "SELECT call_count FROM p25_talkgroup_summary WHERE talkgroup_id=56138"));
+            assertEquals(1L, scalarLong(connection,
+                "SELECT encrypted_count FROM p25_talkgroup_summary WHERE talkgroup_id=56138"));
+            assertEquals(1L, scalarLong(connection,
+                "SELECT call_count FROM p25_radio_summary WHERE radio_id=1811524"));
+            assertEquals(1L, scalarLong(connection,
+                "SELECT encrypted_count FROM p25_radio_summary WHERE radio_id=1811524"));
+            assertEquals(56138L, scalarLong(connection,
+                "SELECT last_talkgroup_id FROM p25_radio_summary WHERE radio_id=1811524"));
+            assertEquals(1L, scalarLong(connection,
+                "SELECT call_count FROM p25_radio_talkgroup_summary"));
+            assertEquals(1L, scalarLong(connection,
+                "SELECT encrypted_count FROM p25_radio_talkgroup_summary"));
+            assertCount(connection, "call_identity_bucket", 2);
+            assertIdentityBucket(connection, 0L, P25ActivityLogSchema.IDENTITY_ROLE_DESTINATION,
+                P25ActivityLogSchema.IDENTITY_KIND_TALKGROUP, 56138, 1, 1, 0, 0);
+            assertIdentityBucket(connection, 0L, P25ActivityLogSchema.IDENTITY_ROLE_SOURCE,
+                P25ActivityLogSchema.IDENTITY_KIND_RADIO, 1811524, 1, 1, 0, 0);
         }
     }
 
@@ -1459,6 +1715,45 @@ class P25ActivityLogWriterTest
             assertFalse(P25ActivityLogSchema.applyCompletedCallOutput(connection,
                 new P25ActivityLogRecords.CompletedCallOutput(1_000L, "missing-guid", 56138,
                     P25ActivityLogRecords.CallOutput.RECORDED)));
+        }
+    }
+
+    @Test
+    void aggregatesConventionalOutputsIntoTheTrackedCallHour() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("conventional-call-outputs.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            P25ActivityLogSchema.recordActivity(connection,
+                conventionalActivity(3_600_123L, P25ActivityLogRecords.Action.CALL), false);
+            String contextKey = "CONVENTIONAL_ANALOG:NBFM:154310000";
+            assertTrue(P25ActivityLogSchema.applyCompletedCallOutput(connection,
+                new P25ActivityLogRecords.CompletedCallOutput(3_600_123L, contextKey, null,
+                    154_310_000L, null, 0, null, List.of(),
+                    P25ActivityLogRecords.CallOutput.RECORDED)));
+            assertTrue(P25ActivityLogSchema.applyCompletedCallOutput(connection,
+                new P25ActivityLogRecords.CompletedCallOutput(3_600_123L, contextKey, null,
+                    154_310_000L, null, 0, null, List.of(),
+                    P25ActivityLogRecords.CallOutput.STREAMED)));
+
+            for(String table: List.of("conventional_activity_summary", "conventional_activity_bucket"))
+            {
+                try(Statement statement = connection.createStatement();
+                    ResultSet resultSet = statement.executeQuery(
+                        "SELECT call_count, recorded_count, streamed_count FROM " + table))
+                {
+                    assertTrue(resultSet.next());
+                    assertEquals(1, resultSet.getInt("call_count"));
+                    assertEquals(1, resultSet.getInt("recorded_count"));
+                    assertEquals(1, resultSet.getInt("streamed_count"));
+                }
+            }
+
+            assertCount(connection, "call_identity_bucket", 1);
+            assertIdentityBucket(connection, 3_600_000L, P25ActivityLogSchema.IDENTITY_ROLE_DESTINATION,
+                P25ActivityLogSchema.IDENTITY_KIND_CHANNEL_OR_UNKNOWN, 0, 1, 0, 1, 1);
         }
     }
 
@@ -1594,12 +1889,13 @@ class P25ActivityLogWriterTest
             writer.enqueue(activity(now - 1_000L + x, P25ActivityLogRecords.Action.GRANT));
         }
 
+        writer.enqueue(activity(now - 2_000L, P25ActivityLogRecords.Action.CALL));
         writer.enqueue(trunkedSite(now - 500L, dmrGuid, TrunkedSiteSchema.PROTOCOL_DMR, "pre-reset-dmr"));
         writer.enqueue(trunkedSite(now - 500L, nxdnGuid, TrunkedSiteSchema.PROTOCOL_NXDN, "pre-reset-nxdn"));
         StatsDatabaseMaintenanceRequest request =
             StatsDatabaseMaintenanceRequest.forOperation(P25ActivityLogMaintenance.Operation.RESET_STATS);
         writer.submitMaintenance(request);
-        writer.enqueue(activity(now, P25ActivityLogRecords.Action.GRANT));
+        writer.enqueue(activity(now, P25ActivityLogRecords.Action.CALL));
         writer.enqueue(trunkedSite(now, dmrGuid, TrunkedSiteSchema.PROTOCOL_DMR, "post-reset-dmr"));
         writer.enqueue(trunkedSite(now, nxdnGuid, TrunkedSiteSchema.PROTOCOL_NXDN, "post-reset-nxdn"));
 
@@ -1620,6 +1916,9 @@ class P25ActivityLogWriterTest
             }
 
             assertCount(connection, "trunked_site_snapshot", 2);
+            assertCount(connection, "call_identity_bucket", 2);
+            assertEquals(2L, scalarLong(connection,
+                "SELECT SUM(call_count) FROM call_identity_bucket"));
             assertCount(connection, "trunked_site_channel_summary", 2);
             assertCount(connection, "trunked_site_neighbor_summary", 2);
             assertEquals(2, scalarLong(connection,
@@ -1835,6 +2134,33 @@ class P25ActivityLogWriterTest
         {
             assertTrue(resultSet.next());
             assertEquals(expected, resultSet.getInt(column));
+        }
+    }
+
+    private static void assertIdentityBucket(Connection connection, long bucketStart, int roleCode, int kindCode,
+                                             int identityId, int calls, int encrypted, int recorded, int streamed)
+        throws Exception
+    {
+        try(java.sql.PreparedStatement statement = connection.prepareStatement("""
+            SELECT call_count, encrypted_count, recorded_count, streamed_count
+            FROM call_identity_bucket
+            WHERE bucket_start_ms = ? AND identity_role_code = ? AND identity_kind_code = ? AND identity_id = ?
+            """))
+        {
+            statement.setLong(1, bucketStart);
+            statement.setInt(2, roleCode);
+            statement.setInt(3, kindCode);
+            statement.setInt(4, identityId);
+
+            try(ResultSet resultSet = statement.executeQuery())
+            {
+                assertTrue(resultSet.next());
+                assertEquals(calls, resultSet.getInt("call_count"));
+                assertEquals(encrypted, resultSet.getInt("encrypted_count"));
+                assertEquals(recorded, resultSet.getInt("recorded_count"));
+                assertEquals(streamed, resultSet.getInt("streamed_count"));
+                assertFalse(resultSet.next());
+            }
         }
     }
 

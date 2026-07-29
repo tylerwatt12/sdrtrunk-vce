@@ -50,9 +50,9 @@ import org.sqlite.SQLiteConfig;
  */
 public final class ApplicationMigrationService
 {
-    public static final Set<Integer> SUPPORTED_P25_VERSIONS = Set.of(21);
+    public static final Set<Integer> SUPPORTED_P25_VERSIONS = Set.of(P25ActivityLogSchema.SCHEMA_VERSION);
     public static final Set<Integer> SUPPORTED_ALIAS_VERSIONS = Set.of(4);
-    public static final int CURRENT_P25_VERSION = 21;
+    public static final int CURRENT_P25_VERSION = P25ActivityLogSchema.SCHEMA_VERSION;
     public static final int CURRENT_ALIAS_VERSION = 4;
     public static final int CURRENT_DMR_VERSION = DmrActivitySchema.SCHEMA_VERSION;
 

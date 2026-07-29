@@ -48,19 +48,194 @@ class StatsWebDatabase
     private static final int QUALITY_MAXIMUM_POINTS = 360;
     private static final int ACTIVITY_TARGET_POINTS = 240;
     private static final int DASHBOARD_HOURS = 24;
-    static final String DASHBOARD_SITE_ACTIVITY_SQL = """
-        SELECT context.id AS context_id, context.guid, context.channel_name, context.rfss, context.site,
-            system.system_key, system.wacn, system.system_id,
+    private static final int DASHBOARD_IDENTITY_LIMIT = 20;
+    private static final int IDENTITY_ROLE_DESTINATION = P25ActivityLogSchema.IDENTITY_ROLE_DESTINATION;
+    private static final int IDENTITY_ROLE_SOURCE = P25ActivityLogSchema.IDENTITY_ROLE_SOURCE;
+    private static final int IDENTITY_KIND_CHANNEL_OR_UNKNOWN =
+        P25ActivityLogSchema.IDENTITY_KIND_CHANNEL_OR_UNKNOWN;
+    private static final int IDENTITY_KIND_TALKGROUP = P25ActivityLogSchema.IDENTITY_KIND_TALKGROUP;
+    private static final int IDENTITY_KIND_RADIO = P25ActivityLogSchema.IDENTITY_KIND_RADIO;
+    private static final int IDENTITY_KIND_PATCH_GROUP = P25ActivityLogSchema.IDENTITY_KIND_PATCH_GROUP;
+    static final String DASHBOARD_CALL_ACTIVITY_SQL = """
+        SELECT bucket.bucket_start_ms AS time_ms,
+            CASE
+                WHEN context.protocol_code IN (1, 2) THEN 1
+                WHEN context.kind_code = 10 THEN 10
+                ELSE coalesce(context.protocol_code, 0)
+            END AS protocol_code,
+            'TRUNKED' AS channel_kind,
             SUM(bucket.call_count) AS call_count,
-            SUM(SUM(bucket.call_count)) OVER () AS total_call_count
-        FROM p25_site_activity_bucket bucket
+            SUM(bucket.recorded_count) AS recorded_count,
+            SUM(bucket.streamed_count) AS streamed_count,
+            SUM(bucket.encrypted_count) AS encrypted_count
+        FROM p25_site_activity_bucket AS bucket INDEXED BY idx_p25_site_activity_bucket_time
         JOIN receiver_context context ON context.id = bucket.context_id
-        JOIN p25_system system ON system.system_key = context.system_key
         WHERE bucket.bucket_start_ms >= ? AND bucket.bucket_start_ms < ?
-        GROUP BY context.id, context.guid, context.channel_name, context.rfss, context.site,
-            system.system_key, system.wacn, system.system_id
-        HAVING SUM(bucket.call_count) > 0
-        ORDER BY call_count DESC, system.wacn ASC, system.system_id ASC, context.rfss ASC, context.site ASC
+        GROUP BY bucket.bucket_start_ms,
+            CASE
+                WHEN context.protocol_code IN (1, 2) THEN 1
+                WHEN context.kind_code = 10 THEN 10
+                ELSE coalesce(context.protocol_code, 0)
+            END
+
+        UNION ALL
+
+        SELECT bucket.bucket_start_ms AS time_ms,
+            CASE
+                WHEN context.kind_code = 10 THEN 10
+                WHEN context.protocol_code IN (1, 2) OR context.kind_code = 2 THEN 1
+                ELSE coalesce(context.protocol_code, 0)
+            END AS protocol_code,
+            'CONVENTIONAL' AS channel_kind,
+            SUM(bucket.call_count) AS call_count,
+            SUM(bucket.recorded_count) AS recorded_count,
+            SUM(bucket.streamed_count) AS streamed_count,
+            SUM(bucket.encrypted_count) AS encrypted_count
+        FROM receiver_context context
+        JOIN conventional_activity_bucket AS bucket INDEXED BY idx_conventional_bucket_dashboard_time
+            ON bucket.context_id = context.id
+        WHERE context.kind_code <> 1
+          AND bucket.bucket_start_ms >= ? AND bucket.bucket_start_ms < ?
+        GROUP BY bucket.bucket_start_ms,
+            CASE
+                WHEN context.kind_code = 10 THEN 10
+                WHEN context.protocol_code IN (1, 2) OR context.kind_code = 2 THEN 1
+                ELSE coalesce(context.protocol_code, 0)
+            END
+        ORDER BY time_ms, protocol_code, channel_kind
+        """;
+    static final String DASHBOARD_SOURCE_ACTIVITY_SQL = """
+        WITH source_activity AS (
+            SELECT context.id AS context_id, context.context_key, context.guid,
+                CASE
+                    WHEN context.protocol_code IN (1, 2) THEN 1
+                    WHEN context.kind_code = 10 THEN 10
+                    ELSE coalesce(context.protocol_code, 0)
+                END AS protocol_code,
+                'TRUNKED' AS channel_kind,
+                coalesce(context.channel_name, trunked.channel_name) AS channel_name,
+                context.decoder, context.primary_frequency_hz, context.current_control_hz,
+                context.system_key, system.wacn, system.system_id, context.rfss, context.site,
+                trunked.configured_system, trunked.network_id, trunked.site_id, trunked.ran,
+                CASE WHEN EXISTS (
+                    SELECT 1 FROM p25_site_snapshot detail WHERE detail.guid = context.guid
+                ) OR EXISTS (
+                    SELECT 1 FROM trunked_site_snapshot detail WHERE detail.guid = context.guid
+                ) THEN 1 ELSE 0 END AS detail_available,
+                SUM(bucket.call_count) AS call_count,
+                SUM(bucket.recorded_count) AS recorded_count,
+                SUM(bucket.streamed_count) AS streamed_count,
+                SUM(bucket.encrypted_count) AS encrypted_count
+            FROM p25_site_activity_bucket AS bucket INDEXED BY idx_p25_site_activity_bucket_time
+            JOIN receiver_context context ON context.id = bucket.context_id
+            LEFT JOIN p25_system system ON system.system_key = context.system_key
+            LEFT JOIN trunked_site_snapshot trunked ON trunked.guid = context.guid
+            WHERE bucket.bucket_start_ms >= ? AND bucket.bucket_start_ms < ?
+            GROUP BY context.id, context.context_key, context.guid,
+                CASE
+                    WHEN context.protocol_code IN (1, 2) THEN 1
+                    WHEN context.kind_code = 10 THEN 10
+                    ELSE coalesce(context.protocol_code, 0)
+                END,
+                coalesce(context.channel_name, trunked.channel_name), context.decoder,
+                context.primary_frequency_hz, context.current_control_hz, context.system_key,
+                system.wacn, system.system_id, context.rfss, context.site,
+                trunked.configured_system, trunked.network_id, trunked.site_id, trunked.ran
+
+            UNION ALL
+
+            SELECT context.id AS context_id, context.context_key, context.guid,
+                CASE
+                    WHEN context.kind_code = 10 THEN 10
+                    WHEN context.protocol_code IN (1, 2) OR context.kind_code = 2 THEN 1
+                    ELSE coalesce(context.protocol_code, 0)
+                END AS protocol_code,
+                'CONVENTIONAL' AS channel_kind, context.channel_name, context.decoder,
+                context.primary_frequency_hz, context.current_control_hz, context.system_key,
+                system.wacn, system.system_id, context.rfss, context.site,
+                NULL AS configured_system, NULL AS network_id, NULL AS site_id, NULL AS ran,
+                1 AS detail_available,
+                SUM(bucket.call_count) AS call_count,
+                SUM(bucket.recorded_count) AS recorded_count,
+                SUM(bucket.streamed_count) AS streamed_count,
+                SUM(bucket.encrypted_count) AS encrypted_count
+            FROM receiver_context context
+            JOIN conventional_activity_bucket AS bucket INDEXED BY idx_conventional_bucket_dashboard_time
+                ON bucket.context_id = context.id
+            LEFT JOIN p25_system system ON system.system_key = context.system_key
+            WHERE context.kind_code <> 1
+              AND bucket.bucket_start_ms >= ? AND bucket.bucket_start_ms < ?
+            GROUP BY context.id, context.context_key, context.guid,
+                CASE
+                    WHEN context.kind_code = 10 THEN 10
+                    WHEN context.protocol_code IN (1, 2) OR context.kind_code = 2 THEN 1
+                    ELSE coalesce(context.protocol_code, 0)
+                END,
+                context.channel_name, context.decoder, context.primary_frequency_hz,
+                context.current_control_hz, context.system_key, system.wacn, system.system_id,
+                context.rfss, context.site
+        )
+        SELECT source_activity.*,
+            CASE protocol_code
+                WHEN 1 THEN 'P25'
+                WHEN 3 THEN 'DMR'
+                WHEN 4 THEN 'NXDN'
+                WHEN 10 THEN 'NBFM'
+                ELSE 'Unknown'
+            END AS protocol,
+            SUM(call_count) OVER () AS total_call_count
+        FROM source_activity
+        WHERE call_count > 0
+        ORDER BY call_count DESC, protocol_code, channel_kind, lower(coalesce(channel_name, context_key))
+        """;
+    static final String DASHBOARD_IDENTITY_ACTIVITY_SQL = """
+        SELECT bucket.context_id, context.context_key, context.guid,
+            CASE
+                WHEN context.protocol_code IN (1, 2) THEN 1
+                WHEN context.kind_code = 10 THEN 10
+                ELSE coalesce(context.protocol_code, 0)
+            END AS protocol_code,
+            CASE
+                WHEN context.protocol_code IN (1, 2) THEN 'P25'
+                WHEN context.kind_code = 10 THEN 'NBFM'
+                WHEN context.protocol_code = 3 THEN 'DMR'
+                WHEN context.protocol_code = 4 THEN 'NXDN'
+                ELSE 'Unknown'
+            END AS protocol,
+            CASE WHEN context.kind_code = 1 THEN 'TRUNKED' ELSE 'CONVENTIONAL' END AS channel_kind,
+            coalesce(context.channel_name, trunked.channel_name) AS channel_name,
+            coalesce(context.alias_list_name, trunked.alias_list_name) AS alias_list_name,
+            context.decoder, context.primary_frequency_hz,
+            context.current_control_hz, context.system_key, system.wacn, system.system_id,
+            context.rfss, context.site, trunked.configured_system, trunked.network_id,
+            trunked.site_id, trunked.ran, trunked.variant_code, trunked.identity_domain_code,
+            bucket.identity_kind_code, bucket.identity_id,
+            CASE bucket.identity_kind_code
+                WHEN 1 THEN 'Talkgroup'
+                WHEN 2 THEN 'Radio'
+                WHEN 3 THEN 'Patch Group'
+                ELSE 'Channel / Unknown'
+            END AS identity_kind,
+            CASE WHEN context.kind_code <> 1 OR EXISTS (
+                SELECT 1 FROM p25_site_snapshot detail WHERE detail.guid = context.guid
+            ) OR EXISTS (
+                SELECT 1 FROM trunked_site_snapshot detail WHERE detail.guid = context.guid
+            ) THEN 1 ELSE 0 END AS receiver_detail_available,
+            SUM(bucket.call_count) AS call_count,
+            SUM(bucket.encrypted_count) AS encrypted_count,
+            SUM(bucket.recorded_count) AS recorded_count,
+            SUM(bucket.streamed_count) AS streamed_count,
+            MAX(bucket.bucket_start_ms) AS last_active_ms
+        FROM call_identity_bucket AS bucket INDEXED BY idx_call_identity_bucket_dashboard_time
+        JOIN receiver_context context ON context.id = bucket.context_id
+        LEFT JOIN p25_system system ON system.system_key = context.system_key
+        LEFT JOIN trunked_site_snapshot trunked ON trunked.guid = context.guid
+        WHERE bucket.bucket_start_ms >= ? AND bucket.bucket_start_ms < ?
+          AND bucket.identity_role_code = ?
+        GROUP BY bucket.context_id, bucket.identity_kind_code, bucket.identity_id
+        ORDER BY call_count DESC, last_active_ms DESC, protocol_code, channel_kind,
+            bucket.identity_kind_code, bucket.identity_id
+        LIMIT ?
         """;
     static final String ACTIVITY_SELECT_SQL = """
         SELECT id, context_id, context_key, guid, observed_at_ms, channel_kind, protocol, action,
@@ -73,7 +248,16 @@ class StatsWebDatabase
     static final String ACTIVITY_ORDER_SQL = " ORDER BY observed_at_ms DESC, id DESC LIMIT ?";
     private static final int DIRECTORY_SITE_LIMIT_PER_SYSTEM = 500;
     private static final List<String> CALL_ACTIVITY_FIELDS = List.of(
-        "call_count", "recorded_count", "streamed_count"
+        "call_count", "recorded_count", "streamed_count", "encrypted_count"
+    );
+    private static final List<CallActivityGroup> CALL_ACTIVITY_GROUPS = List.of(
+        new CallActivityGroup(1, "P25", "TRUNKED", true),
+        new CallActivityGroup(1, "P25", "CONVENTIONAL", true),
+        new CallActivityGroup(3, "DMR", "TRUNKED", true),
+        new CallActivityGroup(3, "DMR", "CONVENTIONAL", true),
+        new CallActivityGroup(4, "NXDN", "TRUNKED", true),
+        new CallActivityGroup(4, "NXDN", "CONVENTIONAL", false),
+        new CallActivityGroup(10, "NBFM", "CONVENTIONAL", true)
     );
     private static final List<String> TALKGROUP_ACTIVITY_FIELDS = List.of(
         "acknowledge_count", "active_count", "busy_count", "call_count", "check_count", "check_ack_count",
@@ -272,7 +456,7 @@ class StatsWebDatabase
         return read(connection -> {
             Map<String,Object> dashboard = new LinkedHashMap<>();
             dashboard.put("counts", Map.of(
-                "systems", scalarLong(connection, """
+                "trunked_systems", scalarLong(connection, """
                     SELECT (SELECT COUNT(*) FROM p25_system) + (SELECT COUNT(*) FROM (
                         SELECT protocol_code, variant_code, identity_domain_code, network_id, system_id,
                             CASE WHEN network_id IS NULL AND system_id IS NULL
@@ -284,17 +468,12 @@ class StatsWebDatabase
                             configured_group
                     ))
                     """),
-                "sites", scalarLong(connection, """
+                "trunked_sites", scalarLong(connection, """
                     SELECT (SELECT COUNT(*) FROM p25_site_snapshot) +
                         (SELECT COUNT(*) FROM trunked_site_snapshot)
                     """),
-                "talkgroups", scalarLong(connection, "SELECT COUNT(*) FROM p25_talkgroup_summary"),
-                "radios", scalarLong(connection, "SELECT COUNT(*) FROM p25_radio_summary"),
-                "frequencies", scalarLong(connection, """
-                    SELECT (SELECT COUNT(*) FROM p25_site_frequency_summary) +
-                        (SELECT COUNT(*) FROM trunked_site_channel_summary WHERE frequency_hz > 0)
-                    """),
-                "conventional", scalarLong(connection, "SELECT COUNT(*) FROM conventional_activity_summary")
+                "conventional_channels", scalarLong(connection,
+                    "SELECT COUNT(*) FROM receiver_context WHERE kind_code <> 1")
             ));
             dashboard.put("lastSeenMs", scalarLong(connection, """
                 SELECT MAX(last_seen_ms) FROM (
@@ -307,38 +486,18 @@ class StatsWebDatabase
                 )
                 """));
 
-            List<Map<String,Object>> talkgroups = queryRows(connection, """
-                SELECT system.system_key, system.wacn, system.system_id, summary.talkgroup_id, summary.call_count,
-                    summary.recorded_count, summary.streamed_count, summary.encrypted_count,
-                    summary.last_source_radio_id, summary.last_seen_ms
-                FROM p25_talkgroup_summary summary
-                JOIN p25_system system ON system.system_key = summary.system_key
-                ORDER BY summary.call_count DESC, summary.last_seen_ms DESC
-                LIMIT 20
-                """);
-            mAliasResolver.enrichTalkgroups(connection, talkgroups);
-            dashboard.put("topTalkgroups", talkgroups);
-
-            List<Map<String,Object>> radios = queryRows(connection, """
-                SELECT system.system_key, system.wacn, system.system_id, summary.radio_id, summary.call_count,
-                    summary.grant_count, summary.continue_count,
-                    summary.encrypted_count, summary.last_talkgroup_id, summary.last_talker_alias,
-                    summary.last_talker_alias_seen_ms, summary.last_seen_ms
-                FROM p25_radio_summary summary
-                JOIN p25_system system ON system.system_key = summary.system_key
-                ORDER BY summary.call_count DESC, summary.last_seen_ms DESC
-                LIMIT 20
-                """);
-            mAliasResolver.enrichRadios(connection, radios);
-            dashboard.put("topRadios", radios);
-            dashboard.put("recentSites", queryRows(connection, siteSelect() + """
-                 WHERE site.system_key IS NOT NULL AND site.rfss IS NOT NULL AND site.site IS NOT NULL
-                 ORDER BY site.last_seen_ms DESC LIMIT 12
-                """));
+            long now = System.currentTimeMillis();
+            long firstIdentityHour = Math.floorDiv(now, HOUR_MILLISECONDS) * HOUR_MILLISECONDS -
+                (DASHBOARD_HOURS - 1L) * HOUR_MILLISECONDS;
+            dashboard.put("topDestinations", topCallIdentities(connection, IDENTITY_ROLE_DESTINATION,
+                firstIdentityHour, now));
+            dashboard.put("topSources", topCallIdentities(connection, IDENTITY_ROLE_SOURCE,
+                firstIdentityHour, now));
+            dashboard.put("recentReceivers", recentReceivers(connection));
             List<Map<String,Object>> hourlyActivity = hourlyActivity(connection);
             dashboard.put("activityPerHour", hourlyActivity);
-            dashboard.put("p25CallActivity", p25CallActivity(connection, hourlyActivity));
-            dashboard.put("siteActivity24h", siteActivity24Hours(connection));
+            dashboard.put("callActivity", callActivity(connection));
+            dashboard.put("sourceActivity24h", sourceActivity24Hours(connection));
             return dashboard;
         });
     }
@@ -1857,6 +2016,234 @@ class StatsWebDatabase
         return queryRows(connection, "SELECT key, value, updated_at_ms FROM logger_status ORDER BY key");
     }
 
+    /**
+     * Ranks identities observed in the compact hourly call buckets. Identity roles and kinds are deliberately
+     * normalized here so the dashboard never has to infer a protocol-specific meaning from an integer ID.
+     */
+    private List<Map<String,Object>> topCallIdentities(Connection connection, int identityRole,
+                                                       long fromTimestamp, long toTimestamp) throws SQLException
+    {
+        if(identityRole != IDENTITY_ROLE_DESTINATION && identityRole != IDENTITY_ROLE_SOURCE)
+        {
+            throw new IllegalArgumentException("Unsupported call identity role");
+        }
+
+        List<Map<String,Object>> rows = queryRows(connection, DASHBOARD_IDENTITY_ACTIVITY_SQL,
+            fromTimestamp, toTimestamp, identityRole, DASHBOARD_IDENTITY_LIMIT);
+        List<Map<String,Object>> p25Talkgroups = new ArrayList<>();
+        List<Map<String,Object>> p25Radios = new ArrayList<>();
+        List<Map<String,Object>> p25ConventionalTalkgroups = new ArrayList<>();
+        List<Map<String,Object>> p25ConventionalRadios = new ArrayList<>();
+        List<Map<String,Object>> dmrTalkgroups = new ArrayList<>();
+        List<Map<String,Object>> dmrRadios = new ArrayList<>();
+        List<Map<String,Object>> nxdnTalkgroups = new ArrayList<>();
+        List<Map<String,Object>> nxdnRadios = new ArrayList<>();
+
+        for(Map<String,Object> row: rows)
+        {
+            int protocolCode = (int)number(row.get("protocol_code"));
+            int identityKind = (int)number(row.get("identity_kind_code"));
+            boolean trunked = "TRUNKED".equals(row.get("channel_kind"));
+
+            if(protocolCode == 1 && (identityKind == IDENTITY_KIND_TALKGROUP ||
+                identityKind == IDENTITY_KIND_PATCH_GROUP))
+            {
+                (trunked ? p25Talkgroups : p25ConventionalTalkgroups).add(row);
+            }
+            else if(protocolCode == 1 && identityKind == IDENTITY_KIND_RADIO)
+            {
+                (trunked ? p25Radios : p25ConventionalRadios).add(row);
+            }
+            else if(protocolCode == 3 && (identityKind == IDENTITY_KIND_TALKGROUP ||
+                identityKind == IDENTITY_KIND_PATCH_GROUP))
+            {
+                dmrTalkgroups.add(row);
+            }
+            else if(protocolCode == 3 && identityKind == IDENTITY_KIND_RADIO)
+            {
+                dmrRadios.add(row);
+            }
+            else if(protocolCode == 4 && (identityKind == IDENTITY_KIND_TALKGROUP ||
+                identityKind == IDENTITY_KIND_PATCH_GROUP))
+            {
+                nxdnTalkgroups.add(row);
+            }
+            else if(protocolCode == 4 && identityKind == IDENTITY_KIND_RADIO)
+            {
+                nxdnRadios.add(row);
+            }
+        }
+
+        mAliasResolver.enrichTalkgroups(connection, p25Talkgroups, "identity_id", "alias_");
+        mAliasResolver.enrichRadios(connection, p25Radios, "identity_id", "alias_");
+        mAliasResolver.enrichP25ConventionalTalkgroups(connection, p25ConventionalTalkgroups,
+            "identity_id", "alias_");
+        mAliasResolver.enrichP25ConventionalRadios(connection, p25ConventionalRadios,
+            "identity_id", "alias_");
+        mAliasResolver.enrichDmrTalkgroups(connection, dmrTalkgroups, "identity_id", "alias_");
+        mAliasResolver.enrichDmrRadios(connection, dmrRadios, "identity_id", "alias_");
+        mAliasResolver.enrichNxdnTalkgroups(connection, nxdnTalkgroups, "identity_id", "alias_");
+        mAliasResolver.enrichNxdnRadios(connection, nxdnRadios, "identity_id", "alias_");
+
+        for(Map<String,Object> row: rows)
+        {
+            int protocolCode = (int)number(row.get("protocol_code"));
+            int identityKind = (int)number(row.get("identity_kind_code"));
+            boolean trunked = "TRUNKED".equals(row.get("channel_kind"));
+            boolean conventionalDmr = protocolCode == 3 && !trunked;
+            boolean hasP25System = protocolCode == 1 && trunked && row.get("wacn") instanceof Number &&
+                row.get("system_id") instanceof Number;
+            String detailView = null;
+
+            if(hasP25System && (identityKind == IDENTITY_KIND_TALKGROUP ||
+                identityKind == IDENTITY_KIND_PATCH_GROUP))
+            {
+                detailView = "talkgroup";
+            }
+            else if(hasP25System && identityKind == IDENTITY_KIND_RADIO)
+            {
+                detailView = "radio";
+            }
+            else if(conventionalDmr && identityKind == IDENTITY_KIND_TALKGROUP)
+            {
+                detailView = "conventional-talkgroups";
+            }
+            else if(conventionalDmr && identityKind == IDENTITY_KIND_RADIO)
+            {
+                detailView = "conventional-radios";
+            }
+
+            row.put("identity_role_code", identityRole);
+            row.put("identity_role", identityRole == IDENTITY_ROLE_DESTINATION ? "Destination" : "Source");
+            row.put("identity_detail_view", detailView);
+            row.put("identity_detail_available", detailView != null ? 1 : 0);
+        }
+
+        return rows;
+    }
+
+    /**
+     * Returns the newest receiver contexts across both topologies. Trunked rows carry their decoded site metadata,
+     * while conventional rows remain linkable even before they have produced their first summary bucket.
+     */
+    private static List<Map<String,Object>> recentReceivers(Connection connection) throws SQLException
+    {
+        return queryRows(connection, """
+            WITH candidates AS (
+                SELECT coalesce(context.context_key, 'site:' || site.guid) AS receiver_key,
+                    context.id AS context_id, context.context_key, site.guid,
+                    1 AS protocol_code, 'P25' AS protocol, 'TRUNKED' AS channel_kind,
+                    coalesce(context.channel_name, site.channel_name) AS channel_name,
+                    coalesce(context.alias_list_name, site.alias_list_name) AS alias_list_name,
+                    coalesce(context.decoder, site.decoder) AS decoder, NULL AS configured_system,
+                    system.wacn, system.system_id, NULL AS network_id, site.rfss, site.site,
+                    NULL AS site_id, NULL AS ran, NULL AS variant_code, NULL AS identity_domain_code,
+                    coalesce(context.primary_frequency_hz, site.primary_frequency_hz) AS primary_frequency_hz,
+                    coalesce(context.current_control_hz, site.current_control_hz) AS current_control_hz,
+                    min(site.first_seen_ms, coalesce(context.first_seen_ms, site.first_seen_ms)) AS first_seen_ms,
+                    max(site.last_seen_ms, coalesce(context.last_seen_ms, site.last_seen_ms)) AS last_seen_ms,
+                    site.observation_count,
+                    (SELECT COUNT(*) FROM p25_site_channel channel WHERE channel.guid = site.guid) AS channels,
+                    (SELECT COUNT(*) FROM p25_site_neighbor neighbor WHERE neighbor.guid = site.guid) AS neighbors,
+                    1 AS detail_available
+                FROM p25_site_snapshot site
+                LEFT JOIN p25_system system ON system.system_key = site.system_key
+                LEFT JOIN receiver_context context ON context.guid = site.guid AND context.kind_code = 1
+
+                UNION ALL
+
+                SELECT coalesce(context.context_key, 'site:' || site.guid) AS receiver_key,
+                    context.id AS context_id, context.context_key, site.guid, site.protocol_code,
+                    CASE site.protocol_code WHEN 3 THEN 'DMR' WHEN 4 THEN 'NXDN' ELSE 'Unknown' END AS protocol,
+                    'TRUNKED' AS channel_kind, coalesce(context.channel_name, site.channel_name) AS channel_name,
+                    coalesce(context.alias_list_name, site.alias_list_name) AS alias_list_name,
+                    coalesce(context.decoder, site.decoder) AS decoder, site.configured_system,
+                    NULL AS wacn, site.system_id, site.network_id, NULL AS rfss, NULL AS site,
+                    site.site_id, site.ran, site.variant_code, site.identity_domain_code,
+                    coalesce(context.primary_frequency_hz, site.primary_frequency_hz) AS primary_frequency_hz,
+                    coalesce(context.current_control_hz, site.current_control_hz) AS current_control_hz,
+                    min(site.first_seen_ms, coalesce(context.first_seen_ms, site.first_seen_ms)) AS first_seen_ms,
+                    max(site.last_seen_ms, coalesce(context.last_seen_ms, site.last_seen_ms)) AS last_seen_ms,
+                    site.observation_count,
+                    (SELECT COUNT(*) FROM trunked_site_channel_summary channel
+                        WHERE channel.guid = site.guid) AS channels,
+                    (SELECT COUNT(*) FROM trunked_site_neighbor_summary neighbor
+                        WHERE neighbor.guid = site.guid) AS neighbors,
+                    1 AS detail_available
+                FROM trunked_site_snapshot site
+                LEFT JOIN receiver_context context ON context.guid = site.guid AND context.kind_code = 1
+
+                UNION ALL
+
+                SELECT context.context_key AS receiver_key, context.id AS context_id, context.context_key,
+                    context.guid,
+                    CASE
+                        WHEN context.kind_code = 10 THEN 10
+                        WHEN context.protocol_code IN (1, 2) OR context.kind_code = 2 THEN 1
+                        ELSE coalesce(context.protocol_code, 0)
+                    END AS protocol_code,
+                    CASE
+                        WHEN context.kind_code = 10 THEN 'NBFM'
+                        WHEN context.protocol_code IN (1, 2) OR context.kind_code = 2 THEN 'P25'
+                        WHEN context.protocol_code = 3 THEN 'DMR'
+                        WHEN context.protocol_code = 4 THEN 'NXDN'
+                        ELSE 'Unknown'
+                    END AS protocol,
+                    'CONVENTIONAL' AS channel_kind, context.channel_name, context.alias_list_name,
+                    context.decoder, NULL AS configured_system, NULL AS wacn, NULL AS system_id,
+                    NULL AS network_id, NULL AS rfss, NULL AS site, NULL AS site_id, NULL AS ran,
+                    NULL AS variant_code, NULL AS identity_domain_code, context.primary_frequency_hz,
+                    context.current_control_hz, context.first_seen_ms, context.last_seen_ms,
+                    NULL AS observation_count, 0 AS channels, 0 AS neighbors, 1 AS detail_available
+                FROM receiver_context context
+                WHERE context.kind_code <> 1
+
+                UNION ALL
+
+                SELECT context.context_key AS receiver_key, context.id AS context_id, context.context_key,
+                    context.guid,
+                    CASE WHEN context.protocol_code IN (1, 2) THEN 1
+                        ELSE coalesce(context.protocol_code, 0) END AS protocol_code,
+                    CASE
+                        WHEN context.protocol_code IN (1, 2) THEN 'P25'
+                        WHEN context.protocol_code = 3 THEN 'DMR'
+                        WHEN context.protocol_code = 4 THEN 'NXDN'
+                        ELSE 'Unknown'
+                    END AS protocol,
+                    'TRUNKED' AS channel_kind, context.channel_name, context.alias_list_name,
+                    context.decoder, NULL AS configured_system, NULL AS wacn, NULL AS system_id,
+                    NULL AS network_id, context.rfss, context.site, NULL AS site_id, NULL AS ran,
+                    NULL AS variant_code, NULL AS identity_domain_code, context.primary_frequency_hz,
+                    context.current_control_hz, context.first_seen_ms, context.last_seen_ms,
+                    NULL AS observation_count, 0 AS channels, 0 AS neighbors, 0 AS detail_available
+                FROM receiver_context context
+                WHERE context.kind_code = 1
+                  AND NOT EXISTS (
+                    SELECT 1 FROM p25_site_snapshot site WHERE site.guid = context.guid
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM trunked_site_snapshot site WHERE site.guid = context.guid
+                  )
+            ),
+            ranked AS (
+                SELECT candidates.*, row_number() OVER (
+                    PARTITION BY receiver_key ORDER BY last_seen_ms DESC, protocol_code ASC
+                ) AS receiver_rank
+                FROM candidates
+            )
+            SELECT context_id, context_key, guid, protocol_code, protocol, channel_kind, channel_name,
+                alias_list_name, decoder, configured_system, wacn, system_id, network_id, rfss, site,
+                site_id, ran, variant_code, identity_domain_code, primary_frequency_hz,
+                current_control_hz, first_seen_ms, last_seen_ms, observation_count, channels, neighbors,
+                detail_available
+            FROM ranked
+            WHERE receiver_rank = 1
+            ORDER BY last_seen_ms DESC, protocol_code, channel_kind,
+                lower(coalesce(channel_name, context_key, guid))
+            LIMIT 20
+            """);
+    }
+
     private static List<Map<String,Object>> hourlyActivity(Connection connection) throws SQLException
     {
         long currentHour = Math.floorDiv(System.currentTimeMillis(), HOUR_MILLISECONDS) * HOUR_MILLISECONDS;
@@ -1872,7 +2259,7 @@ class StatsWebDatabase
                     denial_count, busy_count, queued_count, encrypted_count
                 FROM p25_site_activity_bucket WHERE bucket_start_ms >= ?
                 UNION ALL
-                SELECT bucket_start_ms, call_count, 0, 0, 0, 0, 0, 0, 0
+                SELECT bucket_start_ms, call_count, 0, 0, 0, 0, 0, 0, encrypted_count
                 FROM conventional_activity_bucket WHERE bucket_start_ms >= ?
             )
             GROUP BY bucket_start_ms
@@ -1911,15 +2298,17 @@ class StatsWebDatabase
     }
 
     /**
-     * Ranks sites using the existing compact hourly buckets. The query is bounded to 24 hours and can use the
-     * bucket-time index; no detailed event history is involved.
+     * Ranks all call-producing receiver contexts using the existing compact hourly buckets. The query is bounded to
+     * 24 hours and uses the time-leading trunked and conventional bucket indexes; detailed event history is never
+     * consulted.
      */
-    private static Map<String,Object> siteActivity24Hours(Connection connection) throws SQLException
+    private static Map<String,Object> sourceActivity24Hours(Connection connection) throws SQLException
     {
         long currentHour = Math.floorDiv(System.currentTimeMillis(), HOUR_MILLISECONDS) * HOUR_MILLISECONDS;
         long firstHour = currentHour - (DASHBOARD_HOURS - 1L) * HOUR_MILLISECONDS;
         long nextHour = currentHour + HOUR_MILLISECONDS;
-        List<Map<String,Object>> rows = queryRows(connection, DASHBOARD_SITE_ACTIVITY_SQL, firstHour, nextHour);
+        List<Map<String,Object>> rows = queryRows(connection, DASHBOARD_SOURCE_ACTIVITY_SQL,
+            firstHour, nextHour, firstHour, nextHour);
         Map<String,Object> result = new LinkedHashMap<>();
         result.put("from_ms", firstHour);
         result.put("to_ms", System.currentTimeMillis());
@@ -1927,78 +2316,235 @@ class StatsWebDatabase
         return result;
     }
 
-    private static Map<String,Object> p25CallActivity(Connection connection,
-                                                       List<Map<String,Object>> hourlyActivity) throws SQLException
+    /**
+     * Builds a flat, protocol-neutral call series. P25 phase 1 and phase 2 share the P25 protocol row while channel
+     * topology remains an independent dimension. A collected source is zero-filled for every hour; an unsupported
+     * source uses null values and explicit NOT_COLLECTED coverage so it can never be mistaken for a quiet receiver.
+     */
+    private static Map<String,Object> callActivity(Connection connection) throws SQLException
     {
-        long currentHour = Math.floorDiv(System.currentTimeMillis(), HOUR_MILLISECONDS) * HOUR_MILLISECONDS;
+        long now = System.currentTimeMillis();
+        long currentHour = Math.floorDiv(now, HOUR_MILLISECONDS) * HOUR_MILLISECONDS;
         long firstHour = currentHour - (DASHBOARD_HOURS - 1L) * HOUR_MILLISECONDS;
-        List<Map<String,Object>> stored = queryRows(connection, """
-            SELECT bucket_start_ms AS time_ms, SUM(call_count) AS call_count,
-                SUM(recorded_count) AS recorded_count, SUM(streamed_count) AS streamed_count
-            FROM p25_site_activity_bucket
-            WHERE bucket_start_ms >= ?
-            GROUP BY bucket_start_ms
-            ORDER BY bucket_start_ms
-            """, firstHour);
-        Map<Long,Map<String,Object>> storedByTime = new LinkedHashMap<>();
+        long nextHour = currentHour + HOUR_MILLISECONDS;
+        long p25OutputMetricStart = p25CallOutputMetricsStartedAt(connection);
+        long allModeMetricStart = allModeCallOutputMetricsStartedAt(connection);
+        List<Map<String,Object>> stored = queryRows(connection, DASHBOARD_CALL_ACTIVITY_SQL,
+            firstHour, nextHour, firstHour, nextHour);
+        Map<String,Map<Long,Map<String,Object>>> storedByGroupAndTime = new LinkedHashMap<>();
 
         for(Map<String,Object> row: stored)
         {
-            if(row.get("time_ms") instanceof Number timestamp)
+            if(row.get("time_ms") instanceof Number timestamp &&
+                row.get("protocol_code") instanceof Number protocolCode &&
+                row.get("channel_kind") instanceof String channelKind)
             {
-                storedByTime.put(timestamp.longValue(), row);
+                String key = callActivityKey(protocolCode.intValue(), channelKind);
+                storedByGroupAndTime.computeIfAbsent(key, ignored -> new LinkedHashMap<>())
+                    .put(timestamp.longValue(), row);
             }
         }
 
-        Map<String,Long> totals = new LinkedHashMap<>();
+        Map<String,Object> totals = new LinkedHashMap<>();
 
         for(String field: CALL_ACTIVITY_FIELDS)
         {
             totals.put(field, 0L);
         }
-        totals.put("non_p25_call_count", 0L);
-        Map<Long,Long> allCallsByTime = new LinkedHashMap<>();
 
-        for(Map<String,Object> hour: hourlyActivity)
+        List<Map<String,Object>> breakdown = new ArrayList<>(CALL_ACTIVITY_GROUPS.size());
+        List<Map<String,Object>> series = new ArrayList<>(DASHBOARD_HOURS * CALL_ACTIVITY_GROUPS.size());
+
+        for(CallActivityGroup group: CALL_ACTIVITY_GROUPS)
         {
-            if(hour.get("hour_ms") instanceof Number timestamp)
-            {
-                allCallsByTime.put(timestamp.longValue(), number(hour.get("call_count")));
-            }
-        }
-
-        List<Map<String,Object>> series = new ArrayList<>(DASHBOARD_HOURS);
-
-        for(long timestamp = firstHour; timestamp <= currentHour; timestamp += HOUR_MILLISECONDS)
-        {
-            Map<String,Object> storedRow = storedByTime.get(timestamp);
-            Map<String,Object> point = new LinkedHashMap<>();
-            point.put("time_ms", timestamp);
+            Map<String,Object> coverage = callActivityCoverage(group, p25OutputMetricStart,
+                allModeMetricStart, firstHour, now);
+            Map<String,Object> groupTotals = new LinkedHashMap<>();
 
             for(String field: CALL_ACTIVITY_FIELDS)
             {
-                long value = storedRow != null ? number(storedRow.get(field)) : 0L;
-                point.put(field, value);
-                totals.compute(field, (key, total) -> total + value);
+                groupTotals.put(field, "NOT_COLLECTED".equals(coverage.get(field)) ? null : 0L);
             }
 
-            long nonP25Calls = Math.max(0L,
-                allCallsByTime.getOrDefault(timestamp, 0L) - number(point.get("call_count")));
-            point.put("non_p25_call_count", nonP25Calls);
-            totals.compute("non_p25_call_count", (key, total) -> total + nonP25Calls);
+            Map<Long,Map<String,Object>> storedByTime =
+                storedByGroupAndTime.getOrDefault(group.key(), Map.of());
 
-            series.add(point);
+            for(long timestamp = firstHour; timestamp <= currentHour; timestamp += HOUR_MILLISECONDS)
+            {
+                Map<String,Object> storedRow = storedByTime.get(timestamp);
+                Map<String,Object> point = new LinkedHashMap<>();
+                point.put("time_ms", timestamp);
+                point.put("protocol_code", group.protocolCode());
+                point.put("protocol", group.protocol());
+                point.put("channel_kind", group.channelKind());
+
+                for(String field: CALL_ACTIVITY_FIELDS)
+                {
+                    String fieldCoverage = String.valueOf(coverage.get(field));
+                    long metricStart = callActivityMetricStartedAt(group, field, p25OutputMetricStart,
+                        allModeMetricStart);
+                    boolean beforeMetricCollection = metricStart > 0 &&
+                        timestamp + HOUR_MILLISECONDS <= metricStart;
+                    Object value;
+
+                    if("NOT_COLLECTED".equals(fieldCoverage) || beforeMetricCollection)
+                    {
+                        value = null;
+                    }
+                    else
+                    {
+                        value = storedRow != null ? number(storedRow.get(field)) : 0L;
+                        groupTotals.compute(field,
+                            (key, total) -> ((Number)total).longValue() + ((Number)value).longValue());
+                        totals.compute(field,
+                            (key, total) -> ((Number)total).longValue() + ((Number)value).longValue());
+                    }
+
+                    point.put(field, value);
+                }
+
+                series.add(point);
+            }
+
+            Map<String,Object> groupRow = new LinkedHashMap<>();
+            groupRow.put("protocol_code", group.protocolCode());
+            groupRow.put("protocol", group.protocol());
+            groupRow.put("channel_kind", group.channelKind());
+            groupRow.put("coverage", coverage);
+            groupRow.put("totals", groupTotals);
+            breakdown.add(groupRow);
+        }
+
+        List<Map<String,Object>> coverage = new ArrayList<>(breakdown.size());
+
+        for(Map<String,Object> group: breakdown)
+        {
+            Map<String,Object> groupCoverage = mapValue(group, "coverage");
+            Map<String,Object> coverageRow = new LinkedHashMap<>();
+            coverageRow.put("protocol_code", group.get("protocol_code"));
+            coverageRow.put("protocol", group.get("protocol"));
+            coverageRow.put("channel_kind", group.get("channel_kind"));
+            coverageRow.putAll(groupCoverage);
+            boolean noneCollected = CALL_ACTIVITY_FIELDS.stream()
+                .allMatch(field -> "NOT_COLLECTED".equals(groupCoverage.get(field)));
+            boolean fullyCollected = CALL_ACTIVITY_FIELDS.stream()
+                .allMatch(field -> "COLLECTED".equals(groupCoverage.get(field)));
+            coverageRow.put("status", fullyCollected ? "COLLECTED" :
+                noneCollected ? "NOT_COLLECTED" : "PARTIAL");
+            coverage.add(coverageRow);
+        }
+
+        Map<String,Object> metricCoverage = new LinkedHashMap<>();
+
+        for(String field: CALL_ACTIVITY_FIELDS)
+        {
+            boolean anyCollected = breakdown.stream()
+                .map(row -> mapValue(row, "coverage"))
+                .anyMatch(row -> !"NOT_COLLECTED".equals(row.get(field)));
+            boolean allCollected = breakdown.stream()
+                .map(row -> mapValue(row, "coverage"))
+                .allMatch(row -> "COLLECTED".equals(row.get(field)));
+            metricCoverage.put(field,
+                allCollected ? "COLLECTED" : anyCollected ? "PARTIAL" : "NOT_COLLECTED");
+
+            if(!anyCollected)
+            {
+                totals.put(field, null);
+            }
         }
 
         Map<String,Object> result = new LinkedHashMap<>();
         result.put("range", "24h");
         result.put("from_ms", firstHour);
-        result.put("to_ms", System.currentTimeMillis());
+        result.put("to_ms", now);
         result.put("bucket_ms", HOUR_MILLISECONDS);
-        result.put("metric_start_ms", p25CallOutputMetricsStartedAt(connection));
+        result.put("metric_start_ms", allModeMetricStart);
+        result.put("coverage", coverage);
+        result.put("metricCoverage", metricCoverage);
         result.put("totals", totals);
+        result.put("breakdown", breakdown);
         result.put("series", series);
         return result;
+    }
+
+    private static Map<String,Object> callActivityCoverage(CallActivityGroup group, long p25OutputMetricStart,
+                                                            long allModeMetricStart, long firstHour, long now)
+    {
+        Map<String,Object> coverage = new LinkedHashMap<>();
+
+        for(String field: CALL_ACTIVITY_FIELDS)
+        {
+            long metricStart = callActivityMetricStartedAt(group, field, p25OutputMetricStart,
+                allModeMetricStart);
+            String status;
+
+            if(!group.collected() || metricStart < 0 || metricStart > now)
+            {
+                status = "NOT_COLLECTED";
+            }
+            else if(metricStart > firstHour)
+            {
+                status = "PARTIAL";
+            }
+            else
+            {
+                status = "COLLECTED";
+            }
+
+            coverage.put(field, status);
+        }
+
+        return coverage;
+    }
+
+    /**
+     * Returns zero when a metric has existed for the full retained history, a positive collection start for a metric
+     * introduced in a later schema, or -1 when collection is not available. DMR and NXDN trunked call starts were
+     * introduced with the all-mode output metrics, so earlier empty buckets must not be presented as observed zeros.
+     */
+    private static long callActivityMetricStartedAt(CallActivityGroup group, String field,
+                                                     long p25OutputMetricStart, long allModeMetricStart)
+    {
+        if(!group.collected())
+        {
+            return -1;
+        }
+
+        if("recorded_count".equals(field) || "streamed_count".equals(field))
+        {
+            long startedAt = group.protocolCode() == 1 && "TRUNKED".equals(group.channelKind()) ?
+                p25OutputMetricStart : allModeMetricStart;
+            return startedAt > 0 ? startedAt : -1;
+        }
+
+        if("encrypted_count".equals(field) && "CONVENTIONAL".equals(group.channelKind()))
+        {
+            if(group.protocolCode() == 10)
+            {
+                return -1;
+            }
+
+            return allModeMetricStart > 0 ? allModeMetricStart : -1;
+        }
+
+        if((group.protocolCode() == 3 || group.protocolCode() == 4) &&
+            "TRUNKED".equals(group.channelKind()))
+        {
+            return allModeMetricStart > 0 ? allModeMetricStart : -1;
+        }
+
+        return 0;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String,Object> mapValue(Map<String,Object> row, String key)
+    {
+        return (Map<String,Object>)row.get(key);
+    }
+
+    private static String callActivityKey(int protocolCode, String channelKind)
+    {
+        return protocolCode + ":" + channelKind;
     }
 
     private static long p25CallOutputMetricsStartedAt(Connection connection) throws SQLException
@@ -2006,6 +2552,13 @@ class StatsWebDatabase
         return scalarLong(connection, """
             SELECT COALESCE((SELECT CAST(value AS INTEGER) FROM database_metadata WHERE key = ?), 0)
             """, P25ActivityLogSchema.CALL_OUTPUT_METRICS_STARTED_AT_KEY);
+    }
+
+    private static long allModeCallOutputMetricsStartedAt(Connection connection) throws SQLException
+    {
+        return scalarLong(connection, """
+            SELECT COALESCE((SELECT CAST(value AS INTEGER) FROM database_metadata WHERE key = ?), 0)
+            """, P25ActivityLogSchema.ALL_MODE_CALL_OUTPUT_METRICS_STARTED_AT_KEY);
     }
 
     private static List<Map<String,Object>> systemActionCounts(Connection connection, int wacn, int systemId)
@@ -2338,6 +2891,14 @@ class StatsWebDatabase
 
                 return rows;
             }
+        }
+    }
+
+    private record CallActivityGroup(int protocolCode, String protocol, String channelKind, boolean collected)
+    {
+        private String key()
+        {
+            return callActivityKey(protocolCode, channelKind);
         }
     }
 

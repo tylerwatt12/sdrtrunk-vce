@@ -105,6 +105,29 @@ final class P25ActivityLogRecords
     }
 
     /**
+     * One-time identity/encryption enrichment for an already-counted trunked call.
+     */
+    record TrunkedCallAttribution(long callStartEpochMilliseconds, String contextKey, String guid,
+                                  Long frequencyHertz, Integer timeslot,
+                                  int destinationId, String destinationKind,
+                                  List<Integer> patchMemberTalkgroupIds, Integer sourceRadioId,
+                                  boolean destinationBecameKnown, boolean sourceBecameKnown,
+                                  boolean encryptionBecameKnown, boolean encryptedBeforeObservation)
+        implements P25ActivityLogRecord
+    {
+        TrunkedCallAttribution
+        {
+            patchMemberTalkgroupIds = distinctPositiveTalkgroups(patchMemberTalkgroupIds, destinationId);
+        }
+
+        @Override
+        public long observedAtEpochMilliseconds()
+        {
+            return callStartEpochMilliseconds;
+        }
+    }
+
+    /**
      * Confirmed service use for the durable site-channel inventory.  Activity events remain independent so a
      * candidate that is not yet confirmed never removes grant/call history.
      */
@@ -124,12 +147,15 @@ final class P25ActivityLogRecords
     }
 
     /**
-     * One successful completed-call output. This ephemeral writer message is aggregated directly into compact
-     * summaries and time buckets; it is never stored as an individual database row. The call-start timestamp keeps
-     * tracked, recorded, and streamed series aligned to the same call hour.
+     * One successful completed-call output. This protocol-neutral ephemeral writer message is aggregated directly
+     * into compact summaries and time buckets; it is never stored as an individual database row. The call-start
+     * timestamp keeps tracked, recorded, and streamed series aligned to the same call hour. The legacy
+     * {@code talkgroupId} component carries the numeric destination for radio/private calls too; targetKind controls
+     * how that value is interpreted and keeps talkgroup-specific projections gated.
      */
-    record CompletedCallOutput(long callStartEpochMilliseconds, String guid, int talkgroupId, String targetKind,
-                               List<Integer> patchMemberTalkgroupIds, CallOutput output)
+    record CompletedCallOutput(long callStartEpochMilliseconds, String contextKey, String guid,
+                               Long frequencyHertz, Integer timeslot, int talkgroupId, String targetKind,
+                               List<Integer> patchMemberTalkgroupIds, Integer sourceRadioId, CallOutput output)
         implements P25ActivityLogRecord
     {
         CompletedCallOutput
@@ -137,9 +163,29 @@ final class P25ActivityLogRecords
             patchMemberTalkgroupIds = distinctPositiveTalkgroups(patchMemberTalkgroupIds, talkgroupId);
         }
 
+        CompletedCallOutput(long callStartEpochMilliseconds, String contextKey, String guid,
+                            Long frequencyHertz, Integer timeslot, int talkgroupId, String targetKind,
+                            List<Integer> patchMemberTalkgroupIds, CallOutput output)
+        {
+            this(callStartEpochMilliseconds, contextKey, guid, frequencyHertz, timeslot, talkgroupId, targetKind,
+                patchMemberTalkgroupIds, null, output);
+        }
+
+        CompletedCallOutput(long callStartEpochMilliseconds, String guid, int talkgroupId, String targetKind,
+                            List<Integer> patchMemberTalkgroupIds, CallOutput output)
+        {
+            this(callStartEpochMilliseconds, guid != null && !guid.isBlank() ? "GUID:" + guid : null, guid,
+                null, null, talkgroupId, targetKind, patchMemberTalkgroupIds, null, output);
+        }
+
         CompletedCallOutput(long callStartEpochMilliseconds, String guid, int talkgroupId, CallOutput output)
         {
             this(callStartEpochMilliseconds, guid, talkgroupId, "TALKGROUP", List.of(), output);
+        }
+
+        int destinationId()
+        {
+            return talkgroupId;
         }
 
         @Override

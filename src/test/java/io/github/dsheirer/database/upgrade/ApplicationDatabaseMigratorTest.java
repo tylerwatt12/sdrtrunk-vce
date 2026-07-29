@@ -54,7 +54,7 @@ class ApplicationDatabaseMigratorTest
         try(Connection connection = open(database))
         {
             assertEquals("4", metadata(connection, "alias_schema_version"));
-            assertEquals("21", metadata(connection, "p25_activity_schema_version"));
+            assertEquals("22", metadata(connection, "p25_activity_schema_version"));
             assertEquals("2", metadata(connection, "trunked_site_schema_version"));
             assertEquals("1", metadata(connection, DmrActivitySchema.SCHEMA_VERSION_KEY));
             assertEquals("ok", scalar(connection, "PRAGMA quick_check"));
@@ -132,7 +132,7 @@ class ApplicationDatabaseMigratorTest
         CommandResult result = run(database);
 
         assertEquals(ApplicationDatabaseMigrator.EXIT_UNSUPPORTED_VERSION, result.exitCode());
-        assertTrue(result.error().contains("Expected current P25 activity schema v21"));
+        assertTrue(result.error().contains("Expected current P25 activity schema v22"));
 
         try(Connection connection = open(database))
         {

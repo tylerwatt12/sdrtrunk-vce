@@ -26,6 +26,7 @@ import io.github.dsheirer.controller.channel.ChannelEvent;
 import io.github.dsheirer.controller.channel.IChannelEventListener;
 import io.github.dsheirer.controller.channel.IChannelEventProvider;
 import io.github.dsheirer.controller.channel.event.ChannelStartProcessingRequest;
+import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
@@ -41,6 +42,7 @@ import io.github.dsheirer.module.decode.nxdn.channel.ChannelFrequency;
 import io.github.dsheirer.module.decode.nxdn.channel.NXDNChannel;
 import io.github.dsheirer.module.decode.nxdn.channel.NXDNChannelDFA;
 import io.github.dsheirer.module.decode.nxdn.channel.NXDNChannelFake;
+import io.github.dsheirer.module.decode.nxdn.channel.NXDNChannelLookup;
 import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkerAliasIdentifier;
 import io.github.dsheirer.module.decode.nxdn.layer3.call.DataCallAssignment;
 import io.github.dsheirer.module.decode.nxdn.layer3.call.VoiceCall;
@@ -55,6 +57,9 @@ import io.github.dsheirer.module.decode.nxdn.layer3.type.Duplex;
 import io.github.dsheirer.module.decode.nxdn.layer3.type.TransmissionMode;
 import io.github.dsheirer.module.decode.nxdn.layer3.type.VoiceCallOption;
 import io.github.dsheirer.module.decode.traffic.TrafficChannelManager;
+import io.github.dsheirer.module.decode.traffic.TrunkedCallStartEvent;
+import io.github.dsheirer.module.decode.traffic.TrunkedCallStartTracker;
+import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import java.util.ArrayList;
@@ -86,6 +91,7 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
     private final Map<Long, Channel> mAllocatedTrafficChannelMap = new HashMap<>();
     private final Map<Long, NXDNChannelEventTracker> mEventTrackerMap = new HashMap<>();
     private final Map<Long, Long> mLastActivityProgressMap = new HashMap<>();
+    private final TrunkedCallStartTracker mCallStartTracker = new TrunkedCallStartTracker(3000);
     private final Queue<Channel> mAvailableTrafficChannelQueue = new LinkedTransferQueue<>();
     private final TalkerAliasManager mTalkerAliasManager = new TalkerAliasManager();
     private final TrafficChannelTeardownMonitor mTrafficChannelTeardownMonitor = new TrafficChannelTeardownMonitor();
@@ -418,7 +424,7 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
      */
     public void processVoiceCallAssignment(VoiceCallAssignment vca)
     {
-        if(vca.hasChannel() && vca.getChannel().getDownlinkFrequency() > 0)
+        if(vca.hasChannel())
         {
             mTrunkedActivityObserved = true;
             processVoiceCall(vca.getIdentifiers(), vca.getChannel(), vca.getCallType(), vca.getEncryptionKeyIdentifier(),
@@ -511,6 +517,7 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
             if(tracker != null)
             {
                 tracker.updateDurationTraffic(timestamp);
+                mCallStartTracker.touch(channel, null, timestamp);
                 //Duration-only audio frame updates still belong in decode-event history.  Rate-limit Systems updates
                 //so active calls keep their grant age-out alive without queuing a full snapshot for every audio frame.
                 broadcast(tracker.getEvent(), shouldPublishActivityProgress(frequency, timestamp));
@@ -571,6 +578,8 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
                 broadcast(tracker);
                 removeTracker(frequency);
             }
+
+            mCallStartTracker.end(channel, null, timestamp);
         }
         finally
         {
@@ -583,9 +592,9 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
      * @param identifiers for the call
      * @param channel for the call
      */
-    private void processVoiceCall(List<Identifier> identifiers, NXDNChannel channel, CallType callType,
-                                  EncryptionKeyIdentifier encryption, long timestamp, VoiceCallOption vco,
-                                  CallTimer callTimer)
+    void processVoiceCall(List<Identifier> identifiers, NXDNChannel channel, CallType callType,
+                          EncryptionKeyIdentifier encryption, long timestamp, VoiceCallOption vco,
+                          CallTimer callTimer)
     {
         mLock.lock();
 
@@ -596,6 +605,22 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
             NXDNChannelEventTracker tracker = getTrackerRemoveIfStale(frequency, timestamp);
             MutableIdentifierCollection ic = new MutableIdentifierCollection(identifiers);
             mTalkerAliasManager.enrich(ic);
+            DecodeEventType eventType = getType(callType, encryption);
+            TrunkedCallStartTracker.ObservationResult callObservation = isLogicalVoiceChannel(channel) ?
+                mCallStartTracker.observeWithAttribution(mParentChannel, Protocol.NXDN, channel, null, ic,
+                    eventType, timestamp) : new TrunkedCallStartTracker.ObservationResult(null, null);
+            TrunkedCallStartEvent callStart = callObservation.callStart();
+
+            if(callStart != null)
+            {
+                MyEventBus.getGlobalEventBus().post(callStart);
+            }
+
+            if(callObservation.attribution() != null)
+            {
+                MyEventBus.getGlobalEventBus().post(callObservation.attribution());
+            }
+
             if(tracker != null)
             {
                 if(tracker.isSameCallCheckingToAndFrom(ic, timestamp))
@@ -611,7 +636,6 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
 
             if(tracker == null)
             {
-                DecodeEventType eventType = getType(callType, encryption);
                 tracker = createTracker(eventType, ic, channel, timestamp);
                 AudioCodec audioCodec = vco.getCodec();
                 TransmissionMode mode = vco.getTransmissionMode();
@@ -655,6 +679,15 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
         {
             mLock.unlock();
         }
+    }
+
+    /**
+     * Lookup and DFA assignments have a stable logical channel identity before their frequency maps resolve. Fake
+     * channels are duplicate-traffic placeholders and must never create another physical call.
+     */
+    private static boolean isLogicalVoiceChannel(NXDNChannel channel)
+    {
+        return channel instanceof NXDNChannelLookup || channel instanceof NXDNChannelDFA;
     }
 
     /**
@@ -769,7 +802,7 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
     @Override
     public void reset()
     {
-
+        mCallStartTracker.clear();
     }
 
     @Override
@@ -786,6 +819,7 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
         try
         {
             mAvailableTrafficChannelQueue.clear();
+            mCallStartTracker.clear();
 
             List<Channel> channels = new ArrayList<>(mAllocatedTrafficChannelMap.values());
 
