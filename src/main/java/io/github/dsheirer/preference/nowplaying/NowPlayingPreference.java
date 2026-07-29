@@ -34,6 +34,8 @@ public class NowPlayingPreference extends Preference
         "traffic.grant.age.out.milliseconds";
     private static final String PREFERENCE_KEY_SHOW_CONTROL_DECODE_QUALITY = "show.control.decode.quality";
     private static final String PREFERENCE_KEY_SHOW_VOICE_DECODE_QUALITY = "show.voice.decode.quality";
+    private static final String PREFERENCE_KEY_CLEAR_VOICE_DECODE_QUALITY_ON_CALL_END =
+        "clear.voice.decode.quality.on.call.end";
     private static final String PREFERENCE_KEY_DECODE_QUALITY_DISPLAY_MODE = "decode.quality.display.mode";
 
     public static final int MIN_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS = 100;
@@ -46,6 +48,7 @@ public class NowPlayingPreference extends Preference
     private Integer mTrafficGrantAgeOutMilliseconds;
     private Boolean mShowControlDecodeQuality;
     private Boolean mShowVoiceDecodeQuality;
+    private Boolean mClearVoiceDecodeQualityOnCallEnd;
     private DecodeQualityDisplayMode mDecodeQualityDisplayMode;
 
     public enum DecodeQualityDisplayMode
@@ -180,6 +183,30 @@ public class NowPlayingPreference extends Preference
     {
         mShowVoiceDecodeQuality = show;
         mPreferences.putBoolean(PREFERENCE_KEY_SHOW_VOICE_DECODE_QUALITY, show);
+        notifyPreferenceUpdated();
+    }
+
+    /**
+     * Indicates if the transient voice-channel decode quality should be cleared when its call completes.
+     */
+    public boolean isClearVoiceDecodeQualityOnCallEnd()
+    {
+        if(mClearVoiceDecodeQualityOnCallEnd == null)
+        {
+            mClearVoiceDecodeQualityOnCallEnd = mPreferences.getBoolean(
+                PREFERENCE_KEY_CLEAR_VOICE_DECODE_QUALITY_ON_CALL_END, false);
+        }
+
+        return mClearVoiceDecodeQualityOnCallEnd;
+    }
+
+    /**
+     * Sets whether voice-channel decode quality is cleared when its call completes.
+     */
+    public void setClearVoiceDecodeQualityOnCallEnd(boolean clear)
+    {
+        mClearVoiceDecodeQualityOnCallEnd = clear;
+        mPreferences.putBoolean(PREFERENCE_KEY_CLEAR_VOICE_DECODE_QUALITY_ON_CALL_END, clear);
         notifyPreferenceUpdated();
     }
 

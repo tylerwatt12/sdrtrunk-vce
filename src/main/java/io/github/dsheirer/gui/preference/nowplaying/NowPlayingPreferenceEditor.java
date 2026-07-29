@@ -28,6 +28,7 @@ import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Separator;
 import javafx.scene.control.Spinner;
+import javafx.scene.control.Tooltip;
 import javafx.scene.layout.ColumnConstraints;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
@@ -47,6 +48,7 @@ public class NowPlayingPreferenceEditor extends HBox
     private Spinner<Integer> mTrafficGrantAgeOutSpinner;
     private CheckBox mShowControlDecodeQualityCheckBox;
     private CheckBox mShowVoiceDecodeQualityCheckBox;
+    private CheckBox mClearVoiceDecodeQualityOnCallEndCheckBox;
     private ComboBox<NowPlayingPreference.DecodeQualityDisplayMode> mDecodeQualityDisplayModeComboBox;
 
     /**
@@ -94,6 +96,10 @@ public class NowPlayingPreferenceEditor extends HBox
             GridPane.setHalignment(getShowVoiceDecodeQualityCheckBox(), HPos.RIGHT);
             mEditorPane.add(getShowVoiceDecodeQualityCheckBox(), 0, ++row);
             mEditorPane.add(new Label("Show VC Decode Quality"), 1, row, 2, 1);
+
+            GridPane.setHalignment(getClearVoiceDecodeQualityOnCallEndCheckBox(), HPos.RIGHT);
+            mEditorPane.add(getClearVoiceDecodeQualityOnCallEndCheckBox(), 0, ++row);
+            mEditorPane.add(new Label("Clear VC Decode Quality When Call Ends"), 1, row, 2, 1);
 
             mEditorPane.add(new Label("Decode Quality Display"), 0, ++row);
             mEditorPane.add(getDecodeQualityDisplayModeComboBox(), 1, row, 2, 1);
@@ -188,6 +194,23 @@ public class NowPlayingPreferenceEditor extends HBox
         }
 
         return mShowVoiceDecodeQualityCheckBox;
+    }
+
+    private CheckBox getClearVoiceDecodeQualityOnCallEndCheckBox()
+    {
+        if(mClearVoiceDecodeQualityOnCallEndCheckBox == null)
+        {
+            mClearVoiceDecodeQualityOnCallEndCheckBox = new CheckBox();
+            mClearVoiceDecodeQualityOnCallEndCheckBox.setTooltip(new Tooltip(
+                "Clears the completed voice-channel value. Control-channel decode quality remains visible."));
+            mClearVoiceDecodeQualityOnCallEndCheckBox.setSelected(
+                mNowPlayingPreference.isClearVoiceDecodeQualityOnCallEnd());
+            mClearVoiceDecodeQualityOnCallEndCheckBox.selectedProperty().addListener(
+                (observable, oldValue, clear) ->
+                    mNowPlayingPreference.setClearVoiceDecodeQualityOnCallEnd(clear));
+        }
+
+        return mClearVoiceDecodeQualityOnCallEndCheckBox;
     }
 
     private ComboBox<NowPlayingPreference.DecodeQualityDisplayMode> getDecodeQualityDisplayModeComboBox()

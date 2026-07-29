@@ -25,10 +25,19 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * Immutable audio call event.
+ *
+ * @param continuationExpected true when a completed audio segment is immediately followed by a linked segment for
+ * the same continuing call
  */
 public record AudioCallEvent(AudioCallEventType eventType, AudioCallSnapshot snapshot, long eventTimestamp,
-                             float @Nullable [] audioFrame)
+                             float @Nullable [] audioFrame, boolean continuationExpected)
 {
+    public AudioCallEvent(AudioCallEventType eventType, AudioCallSnapshot snapshot, long eventTimestamp,
+                          float @Nullable [] audioFrame)
+    {
+        this(eventType, snapshot, eventTimestamp, audioFrame, false);
+    }
+
     public AudioCallEvent
     {
         audioFrame = audioFrame != null ? audioFrame.clone() : null;
@@ -59,6 +68,7 @@ public record AudioCallEvent(AudioCallEventType eventType, AudioCallSnapshot sna
         }
 
         return eventTimestamp == that.eventTimestamp &&
+            continuationExpected == that.continuationExpected &&
             eventType == that.eventType &&
             Objects.equals(snapshot, that.snapshot) &&
             Arrays.equals(audioFrame, that.audioFrame);
@@ -67,7 +77,7 @@ public record AudioCallEvent(AudioCallEventType eventType, AudioCallSnapshot sna
     @Override
     public int hashCode()
     {
-        int result = Objects.hash(eventType, snapshot, eventTimestamp);
+        int result = Objects.hash(eventType, snapshot, eventTimestamp, continuationExpected);
         result = 31 * result + Arrays.hashCode(audioFrame);
         return result;
     }
@@ -80,6 +90,7 @@ public record AudioCallEvent(AudioCallEventType eventType, AudioCallSnapshot sna
             ", snapshot=" + snapshot +
             ", eventTimestamp=" + eventTimestamp +
             ", audioFrame=" + Arrays.toString(audioFrame) +
+            ", continuationExpected=" + continuationExpected +
             "]";
     }
 }

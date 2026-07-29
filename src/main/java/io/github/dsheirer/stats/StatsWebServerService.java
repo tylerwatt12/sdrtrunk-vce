@@ -265,6 +265,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         status.put("decodeDisplay", Map.of(
             "showControl", nowPlaying.isShowControlDecodeQuality(),
             "showVoice", nowPlaying.isShowVoiceDecodeQuality(),
+            "clearVoiceOnCallEnd", nowPlaying.isClearVoiceDecodeQualityOnCallEnd(),
             "mode", nowPlaying.getDecodeQualityDisplayMode().name().toLowerCase()
         ));
         return status;

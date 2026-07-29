@@ -6,6 +6,7 @@
 package io.github.dsheirer.channel.metadata.activity;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -23,7 +24,10 @@ import io.github.dsheirer.channel.state.State;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.Channel.ChannelType;
 import io.github.dsheirer.identifier.IdentifierCollection;
+import io.github.dsheirer.identifier.IdentifierUpdateNotification;
+import io.github.dsheirer.identifier.IdentifierUpdateNotification.Operation;
 import io.github.dsheirer.identifier.configuration.FrequencyConfigurationIdentifier;
+import io.github.dsheirer.identifier.decoder.ChannelStateIdentifier;
 import io.github.dsheirer.metadata.site.ProtocolSiteMetadataEvent;
 import io.github.dsheirer.metadata.site.SiteMetadataSnapshot;
 import io.github.dsheirer.module.decode.config.DecodeConfiguration;
@@ -332,7 +336,15 @@ class ChannelActivityModelTest
     void appliesVoiceQualityToMatchingConventionalTimeslot() throws Exception
     {
         AliasModel aliasModel = new AliasModel();
-        ChannelActivityModel model = new ChannelActivityModel(aliasModel, new NowPlayingPreference(type -> {}));
+        NowPlayingPreference preference = new NowPlayingPreference(type -> {})
+        {
+            @Override
+            public boolean isClearVoiceDecodeQualityOnCallEnd()
+            {
+                return false;
+            }
+        };
+        ChannelActivityModel model = new ChannelActivityModel(aliasModel, preference);
         Channel channel = trunkedChannel("Repeater", "Local", "Hill", new DecodeConfigDMR(), 451_012_500L);
         ChannelMetadata metadata = new ChannelMetadata(aliasModel, 1);
         IdentifierCollection identifiers = new IdentifierCollection(
@@ -354,6 +366,148 @@ class ChannelActivityModelTest
         assertEquals(snapshot.callId(), row.getVoiceCallId());
         assertSame(voiceQuality, row.getVoiceCallQuality());
         assertEquals(100.0d, row.getDecodeQuality().voice().qualityPercent());
+    }
+
+    @Test
+    void clearsTerminalVoiceQualityWithoutFlickeringAtSegmentCompletion() throws Exception
+    {
+        AliasModel aliasModel = new AliasModel();
+        NowPlayingPreference preference = new NowPlayingPreference(type -> {})
+        {
+            @Override
+            public boolean isClearVoiceDecodeQualityOnCallEnd()
+            {
+                return true;
+            }
+        };
+        ChannelActivityModel model = new ChannelActivityModel(aliasModel, preference);
+        Channel channel = trunkedChannel("Repeater", "Local", "Hill", new DecodeConfigDMR(), 451_012_500L);
+        ChannelMetadata metadata = new ChannelMetadata(aliasModel, 1);
+        IdentifierCollection identifiers = new IdentifierCollection(
+            List.of(FrequencyConfigurationIdentifier.create(451_012_500L)));
+        identifiers.setTimeslot(1);
+        VoiceCallQuality voiceQuality = new VoiceCallQuality(50, 0, 0, 0, 2, 47);
+        AudioCallId currentCallId = new AudioCallId(1, 1, 1);
+        AudioCallSnapshot current = new AudioCallSnapshot(currentCallId, null, null, identifiers, Set.of(),
+            1_000L, 2_000L, 1, 1, 1_000L, 2_000L, true, false, false, false, 50, false, null,
+            voiceQuality);
+
+        SwingUtilities.invokeAndWait(() -> {
+            model.setEnabled(true);
+            model.channelStarted(channel, List.of(metadata));
+            metadata.receive(new IdentifierUpdateNotification(ChannelStateIdentifier.CALL, Operation.ADD, 1));
+            model.updated(metadata, io.github.dsheirer.channel.metadata.ChannelMetadataField.DECODER_STATE);
+            model.receiveAudioCallEvent(channel, new AudioCallEvent(AudioCallEventType.AUDIO_FRAME, current,
+                2_000L, new float[160]));
+        });
+
+        ChannelActivityRow row = model.getConventionalTable().getRows().getFirst();
+        row.setControlQuality(-40.0d, 95.0d, 100, 1, 2, 0, 0, 2_000L);
+        assertEquals(currentCallId, row.getVoiceCallId());
+        assertNotNull(row.getVoiceCallQuality());
+
+        AudioCallSnapshot stale = new AudioCallSnapshot(new AudioCallId(1, 2, 1), null, null, identifiers, Set.of(),
+            1_000L, 2_000L, 1, 1, 1_000L, 2_000L, false, true, false, false, 50, false, null,
+            voiceQuality);
+        SwingUtilities.invokeAndWait(() -> model.receiveAudioCallEvent(channel,
+            new AudioCallEvent(AudioCallEventType.CALL_COMPLETED, stale, 2_000L, null)));
+        assertEquals(currentCallId, row.getVoiceCallId());
+        assertNotNull(row.getVoiceCallQuality());
+
+        SwingUtilities.invokeAndWait(() -> model.receiveAudioCallEvent(channel,
+            new AudioCallEvent(AudioCallEventType.CALL_COMPLETED, current, 2_000L, null, true)));
+        assertEquals(currentCallId, row.getVoiceCallId());
+        assertNotNull(row.getVoiceCallQuality());
+
+        AudioCallId linkedCallId = new AudioCallId(1, 3, 1);
+        AudioCallSnapshot linkedWithoutMeasurements = new AudioCallSnapshot(linkedCallId, currentCallId, null,
+            identifiers, Set.of(), 2_000L, 2_100L, 1, 1, 2_000L, 2_100L, true, false, false, false,
+            50, false, null, new VoiceCallQuality(0, 0, 0, 5, 0, 0));
+        SwingUtilities.invokeAndWait(() -> model.receiveAudioCallEvent(channel,
+            new AudioCallEvent(AudioCallEventType.CALL_CREATED, linkedWithoutMeasurements, 2_000L, null)));
+        assertEquals(linkedCallId, row.getVoiceCallId());
+        assertEquals(voiceQuality, row.getVoiceCallQuality());
+
+        SwingUtilities.invokeAndWait(() -> model.receiveAudioCallEvent(channel,
+            new AudioCallEvent(AudioCallEventType.CALL_COMPLETED, linkedWithoutMeasurements, 2_100L, null)));
+        assertNull(row.getVoiceCallId());
+        assertNull(row.getVoiceCallQuality());
+        assertEquals(95.0d, row.getDecodeQuality().controlPercent());
+
+        model.receiveAudioCallEvent(channel, new AudioCallEvent(AudioCallEventType.AUDIO_FRAME, current,
+            2_000L, new float[160]));
+        SwingUtilities.invokeAndWait(() -> {});
+        assertEquals(currentCallId, row.getVoiceCallId());
+
+        SwingUtilities.invokeAndWait(() -> {
+            metadata.receive(new IdentifierUpdateNotification(ChannelStateIdentifier.IDLE, Operation.ADD, 1));
+            model.updated(metadata, io.github.dsheirer.channel.metadata.ChannelMetadataField.DECODER_STATE);
+        });
+        assertNull(row.getVoiceCallId());
+        assertNull(row.getVoiceCallQuality());
+        assertNull(ChannelActivitySnapshot.from(model.getConventionalTable()).rows().getFirst().voiceQuality());
+
+        SwingUtilities.invokeAndWait(() -> model.receiveAudioCallEvent(channel,
+            new AudioCallEvent(AudioCallEventType.CALL_COMPLETED, current, 2_000L, null)));
+        assertNull(row.getVoiceCallId());
+        assertNull(row.getVoiceCallQuality());
+    }
+
+    @Test
+    void clearsTrunkedVoiceQualityBeforeTrafficChannelRelease() throws Exception
+    {
+        AliasModel aliasModel = new AliasModel();
+        NowPlayingPreference preference = new NowPlayingPreference(type -> {})
+        {
+            @Override
+            public boolean isClearVoiceDecodeQualityOnCallEnd()
+            {
+                return true;
+            }
+        };
+        ChannelActivityModel model = new ChannelActivityModel(aliasModel, preference);
+        Channel parent = trunkedChannel("2.2", "Bus", "Site 5", trunkedDmrConfig(), 139_781_250L);
+        Channel trafficChannel = new Channel("T-2.2", ChannelType.TRAFFIC);
+        trafficChannel.setSystem("Bus");
+        trafficChannel.setSite("Site 5");
+        trafficChannel.setDecodeConfiguration(new DecodeConfigDMR());
+        SourceConfigTuner trafficSource = new SourceConfigTuner();
+        trafficSource.setFrequency(139_968_750L);
+        trafficChannel.setSourceConfiguration(trafficSource);
+        DMRAbsoluteChannel traffic = new DMRAbsoluteChannel(838, 1, 139_968_750L, 0);
+        IdentifierCollection identifiers = new IdentifierCollection(
+            List.of(FrequencyConfigurationIdentifier.create(139_968_750L)));
+        identifiers.setTimeslot(1);
+        AudioCallId callId = new AudioCallId(1, 1, 1);
+        VoiceCallQuality voiceQuality = new VoiceCallQuality(50, 0, 0, 0, 2, 47);
+        AudioCallSnapshot snapshot = new AudioCallSnapshot(callId, null, null, identifiers, Set.of(),
+            1_000L, 2_000L, 1, 1, 1_000L, 2_000L, true, false, false, false, 50, false, null,
+            voiceQuality);
+
+        SwingUtilities.invokeAndWait(() -> {
+            model.setEnabled(true);
+            model.trunkedTrafficEvent(parent, trafficChannel, traffic, 1, identifiers,
+                DecodeEventType.CALL_GROUP, 139_781_250L);
+            model.receiveAudioCallEvent(trafficChannel, new AudioCallEvent(AudioCallEventType.AUDIO_FRAME,
+                snapshot, 2_000L, new float[160]));
+        });
+
+        ChannelActivityRow row = model.getTables().get(1).getRows().stream()
+            .filter(candidate -> candidate.getRole() == ChannelActivityRow.Role.TRAFFIC)
+            .findFirst().orElseThrow();
+        assertSame(trafficChannel, row.getChannel());
+        assertEquals(callId, row.getVoiceCallId());
+        assertNotNull(row.getVoiceCallQuality());
+
+        SwingUtilities.invokeAndWait(() -> model.channelStopped(trafficChannel));
+        assertSame(parent, row.getChannel());
+        assertNull(row.getVoiceCallId());
+        assertNull(row.getVoiceCallQuality());
+
+        SwingUtilities.invokeAndWait(() -> model.receiveAudioCallEvent(trafficChannel,
+            new AudioCallEvent(AudioCallEventType.CALL_COMPLETED, snapshot, 2_000L, null)));
+        assertNull(row.getVoiceCallId());
+        assertNull(row.getVoiceCallQuality());
     }
 
     @Test

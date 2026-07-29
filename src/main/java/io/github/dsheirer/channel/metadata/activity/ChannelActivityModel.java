@@ -267,6 +267,12 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
                     if(row.getRole() == ChannelActivityRow.Role.TRAFFIC && table != null &&
                         table.getOwnerChannel() != null)
                     {
+                        /*
+                         * Processing-chain shutdown queues this callback before the audio module emits its terminal
+                         * completion. Clear while the traffic child still owns the row; after release, that delayed
+                         * completion deliberately cannot find and mutate the reparented row.
+                         */
+                        clearVoiceQualityOnIdle(row);
                         reference.session().releaseTrafficChannel(channel, row);
                         row.setDecoder(getDecoder(table.getOwnerChannel()));
                         table.refresh(row);
@@ -369,25 +375,22 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
      */
     public void receiveAudioCallEvent(Channel channel, AudioCallEvent event)
     {
-        if(!mEnabled || channel == null || event == null || event.snapshot() == null)
+        if(!mEnabled || channel == null || event == null || event.snapshot() == null ||
+            event.snapshot().callId() == null)
         {
             return;
         }
 
         AudioCallSnapshot snapshot = event.snapshot();
-        VoiceCallQuality quality = snapshot.voiceCallQuality();
-
-        if(quality == null || !quality.hasMeasurements())
-        {
-            return;
-        }
-
-        long observedFrames = quality.observedFrameCount();
+        boolean created = event.eventType() == AudioCallEventType.CALL_CREATED;
         boolean completed = event.eventType() == AudioCallEventType.CALL_COMPLETED;
-        boolean sampledAudioFrame = event.eventType() == AudioCallEventType.AUDIO_FRAME &&
+        VoiceCallQuality quality = snapshot.voiceCallQuality();
+        boolean hasMeasurements = quality != null && quality.hasMeasurements();
+        long observedFrames = hasMeasurements ? quality.observedFrameCount() : 0;
+        boolean sampledAudioFrame = hasMeasurements && event.eventType() == AudioCallEventType.AUDIO_FRAME &&
             (observedFrames == 1 || observedFrames % 50 == 0);
 
-        if(!completed && !sampledAudioFrame)
+        if(!created && !completed && !sampledAudioFrame)
         {
             return;
         }
@@ -395,20 +398,59 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         runOnSwingIfEnabled(() -> {
             ChannelActivityRow row = findVoiceQualityRow(channel, snapshot);
 
-            if(row == null || completed &&
-                row.getVoiceCallId() != null && !row.getVoiceCallId().equals(snapshot.callId()))
+            if(row == null)
             {
                 return;
             }
 
-            row.setVoiceQuality(snapshot.callId(), quality);
-            ChannelActivityTableModel table = mRowTables.get(row);
-
-            if(table != null)
+            /*
+             * A linked segment may not carry diagnostic observations. Transfer ownership at creation while retaining
+             * the prior segment's displayed quality, so any later terminal completion still belongs to this row.
+             */
+            if(created)
             {
-                table.refresh(row);
+                if(snapshot.linkedCallId() != null && snapshot.linkedCallId().equals(row.getVoiceCallId()) &&
+                    row.getVoiceCallQuality() != null)
+                {
+                    row.setVoiceQuality(snapshot.callId(), row.getVoiceCallQuality());
+                    refreshVoiceQualityRow(row);
+                }
+
+                return;
             }
+
+            /*
+             * CALL_COMPLETED is also emitted for linked one-minute audio segment rollovers. Preserve the live value
+             * when a continuation is expected, and require exact ownership so a delayed completion cannot overwrite
+             * a newer call before that call's first sampled voice frame.
+             */
+            if(completed && !snapshot.callId().equals(row.getVoiceCallId()))
+            {
+                return;
+            }
+
+            if(completed && !event.continuationExpected() &&
+                mNowPlayingPreference.isClearVoiceDecodeQualityOnCallEnd())
+            {
+                row.clearVoiceQuality();
+            }
+            else if(hasMeasurements)
+            {
+                row.setVoiceQuality(snapshot.callId(), quality);
+            }
+
+            refreshVoiceQualityRow(row);
         });
+    }
+
+    private void refreshVoiceQualityRow(ChannelActivityRow row)
+    {
+        ChannelActivityTableModel table = mRowTables.get(row);
+
+        if(table != null)
+        {
+            table.refresh(row);
+        }
     }
 
     private ChannelActivityRow findVoiceQualityRow(Channel channel, AudioCallSnapshot snapshot)
@@ -889,9 +931,14 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
 
         row.setState(getStickyTrafficState(row, state, wasEncrypted));
 
-        if(row.getState() == State.IDLE && !retainIdleCallDetails())
+        if(row.getState() == State.IDLE)
         {
-            row.clearCallDetails();
+            clearVoiceQualityOnIdle(row);
+
+            if(!retainIdleCallDetails())
+            {
+                row.clearCallDetails();
+            }
         }
     }
 
@@ -978,10 +1025,19 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
     private void setIdle(ChannelActivityRow row)
     {
         row.setState(State.IDLE);
+        clearVoiceQualityOnIdle(row);
 
         if(!retainIdleCallDetails())
         {
             row.clearCallDetails();
+        }
+    }
+
+    private void clearVoiceQualityOnIdle(ChannelActivityRow row)
+    {
+        if(row != null && mNowPlayingPreference.isClearVoiceDecodeQualityOnCallEnd())
+        {
+            row.clearVoiceQuality();
         }
     }
 

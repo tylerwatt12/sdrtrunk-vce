@@ -118,7 +118,7 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
             if(mCurrentAudioCall != null)
             {
                 mCurrentAudioCall.complete();
-                emitAudioCallEvent(AudioCallEventType.CALL_COMPLETED, null);
+                emitAudioCallEvent(AudioCallEventType.CALL_COMPLETED, null, mLinkNextAudioCallToPrevious);
                 mIdentifierUpdateNotificationBroadcaster.removeListener(mCurrentAudioCall);
                 mCurrentAudioCall = null;
                 mPreviousAudioCallId = mCurrentAudioCallId;
@@ -342,6 +342,11 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
 
     private void emitAudioCallEvent(AudioCallEventType eventType, float[] audioFrame)
     {
+        emitAudioCallEvent(eventType, audioFrame, false);
+    }
+
+    private void emitAudioCallEvent(AudioCallEventType eventType, float[] audioFrame, boolean continuationExpected)
+    {
         if(mAudioCallEventListener == null)
         {
             return;
@@ -352,7 +357,7 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
         if(snapshot != null)
         {
             mAudioCallEventListener.receive(new AudioCallEvent(eventType, snapshot, System.currentTimeMillis(),
-                audioFrame));
+                audioFrame, continuationExpected));
         }
     }
 
