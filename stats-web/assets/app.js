@@ -8,6 +8,7 @@ const SIGNAL_OFFLINE_MILLISECONDS = 45_000;
 const SITE_METADATA_OFFLINE_MILLISECONDS = 30_000;
 const DECODE_HEALTHY_MINIMUM_PERCENT = 90;
 const DECODE_DEGRADED_MINIMUM_PERCENT = 75;
+const VOICE_QUALITY_WARMUP_FRAMES = 50;
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
 const SIGNAL_RANGES = Object.freeze([
   ['1h', '1 hour'], ['6h', '6 hours'], ['24h', '24 hours'], ['7d', '7 days'], ['30d', '30 days']
@@ -2710,12 +2711,15 @@ function liveSystemsSection() {
     if (count >= 1000) return `${(count / 1000).toFixed(1)}k`;
     return String(count);
   };
+  const voiceQualityReady = (row) => Number(row.vc_decoded_frames || 0) +
+    Number(row.vc_repeated_frames || 0) + Number(row.vc_concealed_frames || 0) >=
+    VOICE_QUALITY_WARMUP_FRAMES;
   const decodeQualityValues = (row) => {
     const values = [];
     if (decodeDisplay.showControl && row.decode_health_pct != null) {
       values.push(Number(row.decode_health_pct));
     }
-    if (decodeDisplay.showVoice && row.vc_quality_pct != null) {
+    if (decodeDisplay.showVoice && row.vc_quality_pct != null && voiceQualityReady(row)) {
       values.push(Number(row.vc_quality_pct));
     }
     return values.filter(Number.isFinite);
@@ -2733,6 +2737,10 @@ function liveSystemsSection() {
       values.push(value);
     }
     if (decodeDisplay.showVoice && row.vc_quality_pct != null) {
+      if (!voiceQualityReady(row)) {
+        values.push('VC -');
+        return values.join(' · ');
+      }
       let value = `VC ${Number(row.vc_quality_pct).toFixed(1)}%`;
       if (detailed) {
         value += ` · ${Number(row.vc_decoded_frames || 0)}/${Number(row.vc_repeated_frames || 0)}/` +

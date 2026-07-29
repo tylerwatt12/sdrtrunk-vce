@@ -76,6 +76,7 @@ public class ChannelActivityPanel extends JPanel
     private static final int[] TABLE_COLUMN_MINIMUM_WIDTHS = {90, 90, 90, 80, 75, 70, 62, 80, 67, 80, 67, 54};
     private static final double DECODE_HEALTHY_MINIMUM_PERCENT = 90.0;
     private static final double DECODE_DEGRADED_MINIMUM_PERCENT = 75.0;
+    private static final long VOICE_QUALITY_WARMUP_FRAMES = 50;
     private final ChannelProcessingManager mChannelProcessingManager;
     private final ChannelActivityModel mActivityModel;
     private final IconModel mIconModel;
@@ -988,11 +989,13 @@ public class ChannelActivityPanel extends JPanel
                 List<String> values = new ArrayList<>();
                 List<String> explanations = new ArrayList<>();
                 double lowestPercent = 100.0d;
+                boolean hasMeasuredPercent = false;
 
                 if(showControl)
                 {
                     String control = "CC " + mPercentFormatter.format(quality.controlPercent()) + "%";
                     lowestPercent = Math.min(lowestPercent, quality.controlPercent());
+                    hasMeasuredPercent = true;
 
                     if(detailed)
                     {
@@ -1009,27 +1012,41 @@ public class ChannelActivityPanel extends JPanel
                 if(showVoice)
                 {
                     VoiceCallQuality voice = quality.voice();
-                    String voiceText = "VC " + mPercentFormatter.format(voice.qualityPercent()) + "%";
-                    lowestPercent = Math.min(lowestPercent, voice.qualityPercent());
 
-                    if(detailed)
+                    if(voice.observedFrameCount() < VOICE_QUALITY_WARMUP_FRAMES)
                     {
-                        voiceText += " · " + voice.decodedFrameCount() + "/" + voice.repeatedFrameCount() + "/" +
-                            voice.concealedFrameCount() + "/" + voice.missingFrameCount() + " · " +
-                            voice.fecErrorCount() + "/" + compact(voice.fecProtectedBitCount());
+                        values.add("VC -");
+                        explanations.add("VC quality appears after 50 voice frames.");
                     }
+                    else
+                    {
+                        String voiceText = "VC " + mPercentFormatter.format(voice.qualityPercent()) + "%";
+                        lowestPercent = Math.min(lowestPercent, voice.qualityPercent());
+                        hasMeasuredPercent = true;
 
-                    values.add(voiceText);
-                    explanations.add("VC uses 20 ms voice frames. Detail order: decoded / repeated / concealed / " +
-                        "missing frames · FEC detected corrections / inspected protected bits.");
+                        if(detailed)
+                        {
+                            voiceText += " · " + voice.decodedFrameCount() + "/" + voice.repeatedFrameCount() + "/" +
+                                voice.concealedFrameCount() + "/" + voice.missingFrameCount() + " · " +
+                                voice.fecErrorCount() + "/" + compact(voice.fecProtectedBitCount());
+                        }
+
+                        values.add(voiceText);
+                        explanations.add("VC uses 20 ms voice frames. Detail order: decoded / repeated / concealed / " +
+                            "missing frames · FEC detected corrections / inspected protected bits.");
+                    }
                 }
 
                 if(!values.isEmpty())
                 {
                     label.setText(String.join(" · ", values));
                     label.setToolTipText("<html>" + String.join("<br>", explanations) + "</html>");
-                    label.setForeground(lowestPercent >= DECODE_HEALTHY_MINIMUM_PERCENT ? new Color(0, 128, 0) :
-                        lowestPercent >= DECODE_DEGRADED_MINIMUM_PERCENT ? new Color(180, 130, 0) : Color.RED);
+
+                    if(hasMeasuredPercent)
+                    {
+                        label.setForeground(lowestPercent >= DECODE_HEALTHY_MINIMUM_PERCENT ? new Color(0, 128, 0) :
+                            lowestPercent >= DECODE_DEGRADED_MINIMUM_PERCENT ? new Color(180, 130, 0) : Color.RED);
+                    }
                 }
             }
 
