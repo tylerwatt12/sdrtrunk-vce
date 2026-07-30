@@ -26,10 +26,30 @@ class StatsWebInteractionUiContractTest
     {
         String activity = function(source(), "async function renderActivity(scopeParameters, title = 'Activity')");
         assertTrue(activity.contains("'Pause updates'"));
-        assertTrue(activity.contains("`Resume${pending.length"));
-        assertTrue(activity.contains("if (pending.length > 200)"));
-        assertTrue(activity.contains("pendingIds"));
+        assertTrue(activity.contains("`Resume${pending.size"));
+        assertTrue(activity.contains("if (pending.size > 200)"));
+        assertTrue(activity.contains("const pending = new Map()"));
+        assertTrue(activity.contains("pending.delete(pending.keys().next().value)"));
         assertTrue(activity.contains("rows.forEach(addActivityRow)"));
+    }
+
+    @Test
+    void refreshesExistingLiveActivityAndKeepsOnlyTheLatestPausedVersion() throws Exception
+    {
+        String source = source();
+        String table = function(source, "function table(rows, columns, emptyText = 'No rows', options = {})");
+        String activity = function(source, "async function renderActivity(scopeParameters, title = 'Activity')");
+        assertTrue(table.contains("upsertRow(data, settings = {})"));
+        assertTrue(table.contains("dataRows[existingIndex] = data"));
+        assertTrue(table.contains("renderBody()"));
+        assertTrue(activity.contains("activityTable.tableController.upsertRow(row"));
+        assertTrue(activity.contains("row.id !== null && row.id !== undefined ? String(row.id) : Symbol()"));
+        assertTrue(activity.contains("if (pending.has(key)) pending.delete(key)"));
+        assertTrue(activity.contains("pending.set(key, row)"));
+        assertTrue(activity.contains("[...pending.values()].sort"));
+        assertTrue(activity.contains("pending.clear()"));
+        assertFalse(activity.contains("pendingIds"));
+        assertFalse(activity.contains("if (row.id !== null && row.id !== undefined && body.querySelector"));
     }
 
     @Test

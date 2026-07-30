@@ -1111,6 +1111,22 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
         else body.firstElementChild.remove();
       }
     },
+    upsertRow(data, settings = {}) {
+      const key = options.rowKey ? options.rowKey(data) : null;
+      if (key !== null && key !== undefined) {
+        const existingIndex = dataRows.findIndex((candidate) => {
+          const candidateKey = options.rowKey(candidate);
+          return candidateKey !== null && candidateKey !== undefined &&
+            String(candidateKey) === String(key);
+        });
+        if (existingIndex >= 0) {
+          dataRows[existingIndex] = data;
+          renderBody();
+          return;
+        }
+      }
+      wrapper.tableController.addRow(data, settings);
+    },
     rows: () => dataRows,
     render: renderBody
   };
@@ -3777,7 +3793,6 @@ async function renderActivity(scopeParameters, title = 'Activity') {
   const columns = activityColumns();
   const activityTable = table(withoutGrantActions(data.rows), columns, 'No activity recorded',
     { type: 'activity', rowKey: (row) => row.id });
-  const body = activityTable.querySelector('tbody');
   const block = section(title, activityTable);
   const controls = node('div', 'pager');
   controls.append(route.get('before_id') ? anchor('Newest', currentHref({ before_id: null }), 'button secondary') :
@@ -3794,25 +3809,24 @@ async function renderActivity(scopeParameters, title = 'Activity') {
     pause.setAttribute('aria-pressed', 'false');
     titleBar.append(pause);
     let paused = false;
-    let pending = [];
-    const pendingIds = new Set();
+    const pending = new Map();
+    const activityRowKey = (row) =>
+      row.id !== null && row.id !== undefined ? String(row.id) : Symbol();
     const updatePauseLabel = () => {
-      pause.textContent = paused ? `Resume${pending.length ? ` (${number(pending.length)})` : ''}` :
+      pause.textContent = paused ? `Resume${pending.size ? ` (${number(pending.size)})` : ''}` :
         'Pause updates';
       pause.setAttribute('aria-pressed', String(paused));
     };
     const addActivityRow = (row) => {
-      if (row.id !== null && row.id !== undefined && body.querySelector(`[data-id="${row.id}"]`)) return;
-      activityTable.tableController.addRow(row, { prepend: true, limit: 200 });
+      activityTable.tableController.upsertRow(row, { prepend: true, limit: 200 });
     };
     pause.addEventListener('click', () => {
       paused = !paused;
-      if (!paused && pending.length) {
-        const rows = pending.sort((left, right) =>
+      if (!paused && pending.size) {
+        const rows = [...pending.values()].sort((left, right) =>
           Number(left.observed_at_ms || 0) - Number(right.observed_at_ms || 0) ||
             Number(left.id || 0) - Number(right.id || 0));
-        pending = [];
-        pendingIds.clear();
+        pending.clear();
         rows.forEach(addActivityRow);
       }
       updatePauseLabel();
@@ -3821,17 +3835,15 @@ async function renderActivity(scopeParameters, title = 'Activity') {
     source.addEventListener('activity', (event) => {
       const row = JSON.parse(event.data);
       if (String(row.action || '').toUpperCase() === 'GRANT') return;
-      if (row.id !== null && row.id !== undefined && body.querySelector(`[data-id="${row.id}"]`)) return;
       if (!paused) {
         addActivityRow(row);
         return;
       }
-      if (row.id !== null && row.id !== undefined && pendingIds.has(row.id)) return;
-      pending.push(row);
-      if (row.id !== null && row.id !== undefined) pendingIds.add(row.id);
-      if (pending.length > 200) {
-        const removed = pending.shift();
-        if (removed.id !== null && removed.id !== undefined) pendingIds.delete(removed.id);
+      const key = activityRowKey(row);
+      if (pending.has(key)) pending.delete(key);
+      pending.set(key, row);
+      if (pending.size > 200) {
+        pending.delete(pending.keys().next().value);
       }
       updatePauseLabel();
     });
