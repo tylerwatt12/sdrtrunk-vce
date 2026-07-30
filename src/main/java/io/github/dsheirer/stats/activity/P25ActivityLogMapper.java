@@ -24,8 +24,11 @@ import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import io.github.dsheirer.metadata.site.SiteMetadataEvent;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.dmr.DMRConventionalCallEvent;
+import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
+import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
+import io.github.dsheirer.module.decode.nxdn.NXDNConventionalCallEvent;
 import io.github.dsheirer.module.decode.p25.P25ChannelGrantEvent;
 import io.github.dsheirer.module.decode.p25.P25EncryptionConfirmationTracker;
 import io.github.dsheirer.module.decode.p25.P25AffiliationEvent;
@@ -97,6 +100,46 @@ class P25ActivityLogMapper
         return new P25ActivityLogRecords.DmrConventionalCall(event.startTimestamp(), event.endTimestamp(),
             contextKey, guid, channelName, blankToNull(event.aliasListName()), event.frequencyHertz(),
             event.timeslot(), targetKind, talkgroup, sourceRadio, targetRadio, event.encrypted());
+    }
+
+    P25ActivityLogRecords.NxdnConventionalCall map(NXDNConventionalCallEvent event)
+    {
+        if(event == null || event.startTimestamp() <= 0 || event.endTimestamp() < event.startTimestamp() ||
+            event.frequencyHertz() <= 0 || event.targetKind() == null)
+        {
+            return null;
+        }
+
+        String guid = blankToNull(event.guid());
+        String configurationId = blankToNull(event.channelConfigurationId());
+        String channelName = blankToNull(event.channelName());
+        String contextKey = guid != null ? "GUID:" + guid :
+            configurationId != null ? "CONFIGURATION:" + configurationId :
+                "CONVENTIONAL_NXDN:NXDN:" + event.frequencyHertz() +
+                    (channelName != null ? ":" + channelName : "");
+        P25ActivityLogRecords.NxdnTargetKind targetKind = switch(event.targetKind())
+        {
+            case GROUP -> P25ActivityLogRecords.NxdnTargetKind.GROUP;
+            case PRIVATE -> P25ActivityLogRecords.NxdnTargetKind.PRIVATE;
+            case UNKNOWN -> P25ActivityLogRecords.NxdnTargetKind.UNKNOWN;
+        };
+        Integer talkgroup = positiveNxdn(event.talkgroupId());
+        Integer sourceRadio = positiveNxdn(event.sourceRadioId());
+        Integer targetRadio = positiveNxdn(event.targetRadioId());
+
+        if(targetKind != P25ActivityLogRecords.NxdnTargetKind.GROUP)
+        {
+            talkgroup = null;
+        }
+
+        if(targetKind != P25ActivityLogRecords.NxdnTargetKind.PRIVATE)
+        {
+            targetRadio = null;
+        }
+
+        return new P25ActivityLogRecords.NxdnConventionalCall(event.startTimestamp(), event.endTimestamp(),
+            contextKey, guid, channelName, blankToNull(event.aliasListName()), event.frequencyHertz(),
+            targetKind, talkgroup, sourceRadio, targetRadio, event.encrypted());
     }
 
     P25ActivityLogRecords.TalkerAliasUpdate map(P25TalkerAliasEvent event)
@@ -240,6 +283,11 @@ class P25ActivityLogMapper
             return P25ActivityLogRecords.ContextKind.CONVENTIONAL_DMR.name() + ":" +
                 Protocol.DMR.name() + ":" + facts.frequencyHertz();
         }
+        else if(DecoderType.NXDN.toString().equals(decoder))
+        {
+            return P25ActivityLogRecords.ContextKind.CONVENTIONAL_NXDN.name() + ":" +
+                Protocol.NXDN.name() + ":" + facts.frequencyHertz();
+        }
         else if(DecoderType.NBFM.toString().equals(decoder))
         {
             return P25ActivityLogRecords.ContextKind.CONVENTIONAL_ANALOG.name() + ":" +
@@ -270,8 +318,16 @@ class P25ActivityLogMapper
         String channelDescriptor = firstNonBlank(descriptor != null ? descriptor.toString() : null,
             facts.channelDescriptor(), facts.logicalChannelName());
         Integer timeslot = event.hasTimeslot() ? Integer.valueOf(event.getTimeslot()) : facts.timeslot();
-        P25ActivityLogRecords.Action action = actionOverride != null ? actionOverride : normalizeAction(event);
         DecoderType decoderType = channel.getDecodeConfiguration().getDecoderType();
+        P25ActivityLogRecords.Action action = actionOverride != null ? actionOverride :
+            normalizeAction(event, decoderType);
+
+        //NXDN has no TDMA slot. Its decode events use zero as a UI placeholder, while stored conventional calls and
+        //completed outputs have no slot. Normalize them to one physical-channel summary key.
+        if(decoderType == DecoderType.NXDN)
+        {
+            timeslot = null;
+        }
 
         //The conventional traffic manager rebroadcasts its mutable tracker for desktop/event-log consumers. Statistics
         //use the one-time P25CallStartEvent instead, so tracker updates cannot create duplicate activity rows or counts.
@@ -282,9 +338,15 @@ class P25ActivityLogMapper
             return null;
         }
 
-        P25ActivityLogRecords.ContextKind contextKind = contextKind(decoderType);
+        P25ActivityLogRecords.ContextKind contextKind = contextKind(channel, decoderType);
 
         if(contextKind == null)
+        {
+            return null;
+        }
+
+        if(actionOverride == null && (decoderType == DecoderType.DMR || decoderType == DecoderType.NXDN) &&
+            !isUsefulProtocolSignaling(event.getEventType()))
         {
             return null;
         }
@@ -446,7 +508,7 @@ class P25ActivityLogMapper
             eventType == DecodeEventType.CALL_DO_NOT_MONITOR);
     }
 
-    private static P25ActivityLogRecords.Action normalizeAction(IDecodeEvent event)
+    private static P25ActivityLogRecords.Action normalizeAction(IDecodeEvent event, DecoderType decoderType)
     {
         if(event instanceof P25AffiliationEvent affiliationEvent)
         {
@@ -465,6 +527,8 @@ class P25ActivityLogMapper
 
         DecodeEventType eventType = event.getEventType();
         String details = event.getDetails() != null ? event.getDetails().toUpperCase() : "";
+        boolean useDetailHeuristics = decoderType != DecoderType.DMR && decoderType != DecoderType.NXDN &&
+            event.getProtocol() != Protocol.DMR && event.getProtocol() != Protocol.NXDN;
 
         if(eventType == DecodeEventType.DEREGISTER)
         {
@@ -474,7 +538,9 @@ class P25ActivityLogMapper
         {
             return P25ActivityLogRecords.Action.JOIN;
         }
-        if(eventType == DecodeEventType.REGISTER || eventType == DecodeEventType.REGISTER_ESN)
+        if(eventType == DecodeEventType.REGISTER || eventType == DecodeEventType.REGISTER_ESN ||
+            eventType == DecodeEventType.RADIO_REGISTRATION_SERVICE ||
+            eventType == DecodeEventType.AUTOMATIC_REGISTRATION_SERVICE)
         {
             return P25ActivityLogRecords.Action.REGISTER;
         }
@@ -486,7 +552,7 @@ class P25ActivityLogMapper
         {
             return P25ActivityLogRecords.Action.CHECK;
         }
-        if(eventType == DecodeEventType.PAGE)
+        if(eventType == DecodeEventType.PAGE || eventType == DecodeEventType.CALL_ALERT)
         {
             return P25ActivityLogRecords.Action.PAGE;
         }
@@ -523,31 +589,33 @@ class P25ActivityLogMapper
         {
             return P25ActivityLogRecords.Action.CHECK;
         }
-        if(details.contains("UNIT REGISTRATION"))
+        if(useDetailHeuristics && details.contains("UNIT REGISTRATION"))
         {
             return P25ActivityLogRecords.Action.REGISTER;
         }
-        if(details.contains("RADIO CHECK ACK"))
+        if(useDetailHeuristics && details.contains("RADIO CHECK ACK"))
         {
             return P25ActivityLogRecords.Action.CHECK_ACK;
         }
-        if(details.contains("RADIO CHECK"))
+        if(useDetailHeuristics && details.contains("RADIO CHECK"))
         {
             return P25ActivityLogRecords.Action.CHECK;
         }
-        if(details.contains("DENY") || details.contains("DENIED") || details.contains("DENIAL"))
+        if(useDetailHeuristics &&
+            (details.contains("DENY") || details.contains("DENIED") || details.contains("DENIAL")))
         {
             return P25ActivityLogRecords.Action.DENIAL;
         }
-        if(details.contains("BUSY") || details.contains("TARGET_GROUP_CURRENTLY_ACTIVE"))
+        if(useDetailHeuristics &&
+            (details.contains("BUSY") || details.contains("TARGET_GROUP_CURRENTLY_ACTIVE")))
         {
             return P25ActivityLogRecords.Action.BUSY;
         }
-        if(details.contains("QUEUED"))
+        if(useDetailHeuristics && details.contains("QUEUED"))
         {
             return P25ActivityLogRecords.Action.QUEUED;
         }
-        if(details.contains("ACKNOWLEDGE"))
+        if(useDetailHeuristics && details.contains("ACKNOWLEDGE"))
         {
             return P25ActivityLogRecords.Action.ACKNOWLEDGE;
         }
@@ -559,7 +627,10 @@ class P25ActivityLogMapper
         {
             return P25ActivityLogRecords.Action.CALL;
         }
-        if(eventType != null && DecodeEventType.DATA_CALLS.contains(eventType))
+        if(eventType != null && (DecodeEventType.DATA_CALLS.contains(eventType) ||
+            eventType == DecodeEventType.LRRP || eventType == DecodeEventType.SDM ||
+            eventType == DecodeEventType.SMS || eventType == DecodeEventType.TEXT_MESSAGE ||
+            eventType == DecodeEventType.UNKNOWN_PACKET || eventType == DecodeEventType.XCMP))
         {
             return P25ActivityLogRecords.Action.DATA;
         }
@@ -671,6 +742,11 @@ class P25ActivityLogMapper
         return value != null && value > 0 && value <= DmrActivitySchema.MAXIMUM_DMR_ID ? value : null;
     }
 
+    private static Integer positiveNxdn(Integer value)
+    {
+        return value != null && value > 0 && value <= 0xFFFF ? value : null;
+    }
+
     private static String contextKey(String guid, String protocol, IdentifierFacts facts, Long frequency,
                                      P25ActivityLogRecords.ContextKind contextKind, String configuredChannelName,
                                      String channelConfigurationId)
@@ -720,6 +796,18 @@ class P25ActivityLogMapper
 
     private static String protocolName(Protocol protocol, IdentifierFacts facts, DecoderType decoderType)
     {
+        //Activity protocol identifies the configured air interface. Some DMR data applications label their payload
+        //protocol (for example LRRP), which must not relabel the receiver context.
+        if(decoderType == DecoderType.DMR)
+        {
+            return Protocol.DMR.name();
+        }
+
+        if(decoderType == DecoderType.NXDN)
+        {
+            return Protocol.NXDN.name();
+        }
+
         if(protocol != null && protocol != Protocol.UNKNOWN)
         {
             return protocol.name();
@@ -733,7 +821,7 @@ class P25ActivityLogMapper
         return decoderType != null ? decoderType.name() : "UNKNOWN";
     }
 
-    private static P25ActivityLogRecords.ContextKind contextKind(DecoderType decoderType)
+    private static P25ActivityLogRecords.ContextKind contextKind(Channel channel, DecoderType decoderType)
     {
         if(decoderType == DecoderType.P25_CONVENTIONAL)
         {
@@ -750,7 +838,37 @@ class P25ActivityLogMapper
             return P25ActivityLogRecords.ContextKind.CONVENTIONAL_ANALOG;
         }
 
+        if(decoderType == DecoderType.DMR &&
+            channel.getDecodeConfiguration() instanceof DecodeConfigDMR config)
+        {
+            return config.isTrunked() ? P25ActivityLogRecords.ContextKind.TRUNKED_SITE :
+                P25ActivityLogRecords.ContextKind.CONVENTIONAL_DMR;
+        }
+
+        if(decoderType == DecoderType.NXDN &&
+            channel.getDecodeConfiguration() instanceof DecodeConfigNXDN config)
+        {
+            return config.isTrunked() ? P25ActivityLogRecords.ContextKind.TRUNKED_SITE :
+                P25ActivityLogRecords.ContextKind.CONVENTIONAL_NXDN;
+        }
+
         return null;
+    }
+
+    /**
+     * Keeps semantic signaling observations while excluding frame progress, mutable call updates and decoder noise.
+     * Message bodies are never retained.
+     */
+    private static boolean isUsefulProtocolSignaling(DecodeEventType eventType)
+    {
+        return eventType != null && switch(eventType)
+        {
+            case ACKNOWLEDGE, AFFILIATE, AUTOMATIC_REGISTRATION_SERVICE, CALL_ALERT, COMMAND, DATA_CALL,
+                 DATA_CALL_ENCRYPTED, DATA_PACKET, DEREGISTER, EMERGENCY, GPS, LRRP, PAGE, QUERY, RADIO_CHECK,
+                 RADIO_REGISTRATION_SERVICE, REGISTER, REGISTER_ESN, REQUEST, RESPONSE, SDM, SMS, STATUS,
+                 TEXT_MESSAGE, XCMP -> true;
+            default -> false;
+        };
     }
 
     private static Long currentControl(List<P25NetworkConfigurationSnapshot.Channel> channels)

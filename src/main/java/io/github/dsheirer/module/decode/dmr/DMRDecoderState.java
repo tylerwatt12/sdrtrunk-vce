@@ -455,7 +455,8 @@ public class DMRDecoderState extends TimeslotDecoderState
             StringBuilder sb = new StringBuilder();
             sb.append("HYTERA RRS REGISTER RADIO:");
             sb.append(rrs.getDestination());
-            DecodeEvent shortDataEvent = DMRDecodeEvent.builder(DecodeEventType.RADIO_REGISTRATION_SERVICE, packet.getTimestamp())
+            DecodeEvent shortDataEvent = DMRDecodeEvent.builder(DecodeEventType.RADIO_REGISTRATION_SERVICE,
+                    packet.getTimestamp())
                     .channel(getCurrentChannel())
                     .identifiers(mic)
                     .timeslot(getTimeslot())
@@ -481,7 +482,7 @@ public class DMRDecoderState extends TimeslotDecoderState
 
             sb.append(" SHORT DATA:").append(hsdp.getMessage().toHexString());
 
-            DecodeEvent shortDataEvent = DMRDecodeEvent.builder(DecodeEventType.RADIO_REGISTRATION_SERVICE, packet.getTimestamp())
+            DecodeEvent shortDataEvent = DMRDecodeEvent.builder(DecodeEventType.SDM, packet.getTimestamp())
                     .channel(getCurrentChannel())
                     .identifiers(mic)
                     .timeslot(getTimeslot())

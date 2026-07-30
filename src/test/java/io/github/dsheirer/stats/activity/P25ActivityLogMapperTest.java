@@ -38,6 +38,8 @@ import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
 import io.github.dsheirer.module.decode.event.DecodeEvent;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
+import io.github.dsheirer.module.decode.nxdn.NXDNChannelMode;
+import io.github.dsheirer.module.decode.nxdn.NXDNConventionalCallEvent;
 import io.github.dsheirer.module.decode.nbfm.DecodeConfigNBFM;
 import io.github.dsheirer.module.decode.p25.P25ChannelGrantEvent;
 import io.github.dsheirer.module.decode.p25.P25CallStartEvent;
@@ -87,6 +89,80 @@ class P25ActivityLogMapperTest
         assertEquals(101, record.sourceRadioId());
         assertEquals(202, record.targetRadioId());
         assertTrue(record.encrypted());
+    }
+
+    @Test
+    void mapsImmutableNxdnConventionalCompletion()
+    {
+        NXDNConventionalCallEvent event = new NXDNConventionalCallEvent(1_000L, 2_000L, "configuration-id",
+            GUID, "County Repeater", "County NXDN", 461_125_000L,
+            NXDNConventionalCallEvent.TargetKind.GROUP, 91, 101, null, true);
+
+        P25ActivityLogRecords.NxdnConventionalCall record = new P25ActivityLogMapper().map(event);
+
+        assertNotNull(record);
+        assertEquals("GUID:" + GUID, record.contextKey());
+        assertEquals("County NXDN", record.aliasListName());
+        assertEquals(461_125_000L, record.frequencyHertz());
+        assertEquals(P25ActivityLogRecords.NxdnTargetKind.GROUP, record.targetKind());
+        assertEquals(91, record.talkgroupId());
+        assertEquals(101, record.sourceRadioId());
+        assertNull(record.targetRadioId());
+        assertTrue(record.encrypted());
+    }
+
+    @Test
+    void retainsUsefulDmrAndNxdnSignalingButSuppressesDecoderNoise()
+    {
+        DecodeConfigDMR dmrConfig = new DecodeConfigDMR();
+        dmrConfig.setChannelMode(DMRChannelMode.CONVENTIONAL);
+        Channel dmr = new Channel("DMR Repeater", ChannelType.STANDARD);
+        dmr.setDecodeConfiguration(dmrConfig);
+        dmr.setRadresGuid(GUID);
+        DecodeConfigNXDN nxdnConfig = new DecodeConfigNXDN();
+        nxdnConfig.setChannelMode(NXDNChannelMode.TRUNKED);
+        Channel nxdn = new Channel("NXDN Site", ChannelType.STANDARD);
+        nxdn.setDecodeConfiguration(nxdnConfig);
+        nxdn.setRadresGuid(GUID);
+        DecodeEvent registration = DecodeEvent.builder(DecodeEventType.RADIO_REGISTRATION_SERVICE, 1_000L)
+            .protocol(Protocol.DMR)
+            .build();
+        DecodeEvent page = DecodeEvent.builder(DecodeEventType.PAGE, 2_000L)
+            .protocol(Protocol.NXDN)
+            .timeslot(0)
+            .build();
+        DecodeEvent location = DecodeEvent.builder(DecodeEventType.GPS, 2_500L)
+            .protocol(Protocol.LRRP)
+            .timeslot(1)
+            .build();
+        DecodeEvent shortData = DecodeEvent.builder(DecodeEventType.SDM, 2_750L)
+            .protocol(Protocol.DMR)
+            .timeslot(1)
+            .build();
+        DecodeEvent noise = DecodeEvent.builder(DecodeEventType.UNKNOWN_PACKET, 3_000L)
+            .protocol(Protocol.NXDN)
+            .details("unclassified decoder output")
+            .build();
+        P25ActivityLogMapper mapper = new P25ActivityLogMapper();
+
+        P25ActivityLogRecords.ActivityEvent dmrRecord = mapper.map(dmr, registration);
+        P25ActivityLogRecords.ActivityEvent nxdnRecord = mapper.map(nxdn, page);
+        P25ActivityLogRecords.ActivityEvent locationRecord = mapper.map(dmr, location);
+        P25ActivityLogRecords.ActivityEvent shortDataRecord = mapper.map(dmr, shortData);
+
+        assertNotNull(dmrRecord);
+        assertEquals(P25ActivityLogRecords.ContextKind.CONVENTIONAL_DMR, dmrRecord.contextKind());
+        assertEquals(P25ActivityLogRecords.Action.REGISTER, dmrRecord.action());
+        assertNotNull(nxdnRecord);
+        assertEquals(P25ActivityLogRecords.ContextKind.TRUNKED_SITE, nxdnRecord.contextKind());
+        assertEquals(P25ActivityLogRecords.Action.PAGE, nxdnRecord.action());
+        assertNull(nxdnRecord.timeslot());
+        assertNotNull(locationRecord);
+        assertEquals("DMR", locationRecord.protocol());
+        assertEquals(P25ActivityLogRecords.Action.GPS, locationRecord.action());
+        assertNotNull(shortDataRecord);
+        assertEquals(P25ActivityLogRecords.Action.DATA, shortDataRecord.action());
+        assertNull(mapper.map(nxdn, noise));
     }
 
     @Test
@@ -497,6 +573,25 @@ class P25ActivityLogMapperTest
         assertEquals(154_310_000L, metric.frequencyHertz());
         assertEquals(0, metric.talkgroupId());
         assertEquals(P25ActivityLogRecords.CallOutput.STREAMED, metric.output());
+    }
+
+    @Test
+    void mapsNxdnConventionalOutputWithoutGuidOrConfigurationIdentity()
+    {
+        MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
+        identifiers.update(FrequencyConfigurationIdentifier.create(461_125_000L));
+        identifiers.update(DecoderTypeConfigurationIdentifier.create(DecoderType.NXDN));
+        AudioCallSnapshot snapshot = new AudioCallSnapshot(new AudioCallId(9L, 10L, 0), null, null,
+            identifiers, Set.of(), 7_200_123L, 7_205_000L, 1, 1, 7_200_123L, 7_205_000L,
+            false, true, false, true, 100, false);
+
+        P25ActivityLogRecords.CompletedCallOutput metric = new P25ActivityLogMapper().mapCompletedCallOutput(
+            new CompletedAudioCall(snapshot, List.of(new float[800])),
+            P25ActivityLogRecords.CallOutput.RECORDED);
+
+        assertNotNull(metric);
+        assertEquals("CONVENTIONAL_NXDN:NXDN:461125000", metric.contextKey());
+        assertEquals(461_125_000L, metric.frequencyHertz());
     }
 
     @Test

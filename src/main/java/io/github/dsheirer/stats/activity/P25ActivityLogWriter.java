@@ -631,6 +631,18 @@ class P25ActivityLogWriter implements AutoCloseable
 
                     writtenRecords++;
                 }
+                else if(record instanceof P25ActivityLogRecords.NxdnConventionalCall nxdnCall)
+                {
+                    Long activityId = P25ActivityLogSchema.recordNxdnConventionalCall(connection, nxdnCall,
+                        mDetailedEventHistoryEnabled);
+
+                    if(activityId != null)
+                    {
+                        committedActivityIds.add(activityId);
+                    }
+
+                    writtenRecords++;
+                }
                 else if(record instanceof P25ActivityLogRecords.TrunkedSiteSnapshot trunkedSiteSnapshot)
                 {
                     long childRetentionCutoff = System.currentTimeMillis() -

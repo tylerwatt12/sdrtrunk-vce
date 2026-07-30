@@ -25,6 +25,8 @@ import io.github.dsheirer.module.decode.config.DecodeConfiguration;
 import io.github.dsheirer.module.decode.dmr.DMRConventionalCallEvent;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
+import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
+import io.github.dsheirer.module.decode.nxdn.NXDNConventionalCallEvent;
 import io.github.dsheirer.module.decode.p25.P25CallStartEvent;
 import io.github.dsheirer.module.decode.p25.P25GrantObservationEvent;
 import io.github.dsheirer.module.decode.p25.P25TalkerAliasEvent;
@@ -149,10 +151,9 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
     }
 
     /**
-     * Requires metadata evidence from the same running channel and decoder configuration. NXDN still uses decoded
-     * trunking evidence; explicit DMR mode is additionally checked so a conventional DMR channel cannot inherit
-     * evidence through a reused GUID. The quality monitor's inactive snapshot clears this evidence when the channel
-     * stops.
+     * Requires metadata evidence from the same running channel and decoder configuration. Explicit DMR and NXDN modes
+     * are also checked so a conventional channel cannot inherit evidence through a reused GUID. The quality monitor's
+     * inactive snapshot clears this evidence when the channel stops.
      */
     static boolean hasCurrentTrunkedSiteEvidence(ControlChannelQualitySnapshot snapshot,
                                                   TrunkedSiteEvidence evidence)
@@ -172,6 +173,12 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
             return false;
         }
 
+        if(decoderType == DecoderType.NXDN &&
+            (!(configuration instanceof DecodeConfigNXDN nxdn) || !nxdn.isTrunked()))
+        {
+            return false;
+        }
+
         return configuration == evidence.decodeConfiguration() && decoderType == evidence.decoderType();
     }
 
@@ -186,13 +193,14 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
         DecodeConfiguration configuration = snapshot != null && snapshot.channel() != null ?
             snapshot.channel().getDecodeConfiguration() : null;
         return decoderType == DecoderType.P25_PHASE1 || decoderType == DecoderType.P25_PHASE2 ||
-            decoderType == DecoderType.NXDN ||
-            decoderType == DecoderType.DMR && configuration instanceof DecodeConfigDMR dmr && dmr.isTrunked();
+            (decoderType == DecoderType.NXDN && configuration instanceof DecodeConfigNXDN nxdn &&
+                nxdn.isTrunked()) ||
+            (decoderType == DecoderType.DMR && configuration instanceof DecodeConfigDMR dmr && dmr.isTrunked());
     }
 
     /**
-     * P25 preserves its existing persistence behavior. Explicitly trunked DMR is accepted immediately and explicitly
-     * conventional DMR is rejected. NXDN still requires useful trunked-site metadata because it has no configured mode.
+     * P25 preserves its existing persistence behavior. Explicitly trunked DMR is accepted immediately. NXDN requires
+     * useful trunked-site metadata. Explicitly conventional DMR and NXDN channels are rejected.
      */
     static boolean shouldPersistControlChannelQuality(ControlChannelQualitySnapshot snapshot,
                                                        boolean observedTrunkedSite)
@@ -400,6 +408,27 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
         }
     }
 
+    /**
+     * Receives the immutable one-time completion snapshot instead of the mutable NXDN decode-event rebroadcasts.
+     */
+    @Subscribe
+    public void receiveNxdnConventionalCall(NXDNConventionalCallEvent event)
+    {
+        P25ActivityLogWriter writer = getCollectionWriter();
+
+        if(writer == null)
+        {
+            return;
+        }
+
+        P25ActivityLogRecords.NxdnConventionalCall record = mMapper.map(event);
+
+        if(record != null)
+        {
+            writer.enqueue(record);
+        }
+    }
+
     @Subscribe
     public void receiveTrafficChannelConfirmation(P25TrafficChannelConfirmationEvent event)
     {
@@ -489,8 +518,9 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
         Channel channel = event != null ? event.channel() : null;
         String guid = channel != null ? channel.getRadresGuid() : null;
 
-        if(channel != null && channel.getDecodeConfiguration() instanceof DecodeConfigDMR dmr &&
-            dmr.isConventional())
+        if(channel != null &&
+            (channel.getDecodeConfiguration() instanceof DecodeConfigDMR dmr && dmr.isConventional() ||
+                channel.getDecodeConfiguration() instanceof DecodeConfigNXDN nxdn && nxdn.isConventional()))
         {
             if(guid != null && !guid.isBlank())
             {

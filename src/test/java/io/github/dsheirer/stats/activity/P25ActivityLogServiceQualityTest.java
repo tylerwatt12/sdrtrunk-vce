@@ -16,6 +16,7 @@ import io.github.dsheirer.module.decode.config.DecodeConfiguration;
 import io.github.dsheirer.module.decode.dmr.DMRChannelMode;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
 import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
+import io.github.dsheirer.module.decode.nxdn.NXDNChannelMode;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.module.decode.p25.phase2.DecodeConfigP25Phase2;
 import org.junit.jupiter.api.Test;
@@ -34,7 +35,9 @@ class P25ActivityLogServiceQualityTest
         assertFalse(P25ActivityLogService.isTrunkedControlChannelQuality(
             quality(dmr(DMRChannelMode.CONVENTIONAL))));
         assertTrue(P25ActivityLogService.isTrunkedControlChannelQuality(
-            quality(new DecodeConfigNXDN())));
+            quality(nxdn(NXDNChannelMode.TRUNKED))));
+        assertFalse(P25ActivityLogService.isTrunkedControlChannelQuality(
+            quality(nxdn(NXDNChannelMode.CONVENTIONAL))));
         assertFalse(P25ActivityLogService.isTrunkedControlChannelQuality(null));
 
         assertTrue(P25ActivityLogService.shouldPersistControlChannelQuality(
@@ -44,13 +47,15 @@ class P25ActivityLogServiceQualityTest
         assertFalse(P25ActivityLogService.shouldPersistControlChannelQuality(
             quality(dmr(DMRChannelMode.CONVENTIONAL)), false));
         assertFalse(P25ActivityLogService.shouldPersistControlChannelQuality(
-            quality(new DecodeConfigNXDN()), false));
+            quality(nxdn(NXDNChannelMode.TRUNKED)), false));
         assertTrue(P25ActivityLogService.shouldPersistControlChannelQuality(
             quality(dmr(DMRChannelMode.TRUNKED)), false));
         assertFalse(P25ActivityLogService.shouldPersistControlChannelQuality(
             quality(dmr(DMRChannelMode.CONVENTIONAL)), true));
         assertTrue(P25ActivityLogService.shouldPersistControlChannelQuality(
-            quality(new DecodeConfigNXDN()), true));
+            quality(nxdn(NXDNChannelMode.TRUNKED)), true));
+        assertFalse(P25ActivityLogService.shouldPersistControlChannelQuality(
+            quality(nxdn(NXDNChannelMode.CONVENTIONAL)), true));
         assertFalse(P25ActivityLogService.shouldPersistControlChannelQuality(null, true));
     }
 
@@ -71,6 +76,17 @@ class P25ActivityLogServiceQualityTest
         trunked.setDecodeConfiguration(dmr(DMRChannelMode.TRUNKED));
         assertFalse(P25ActivityLogService.hasCurrentTrunkedSiteEvidence(
             quality(trunked), evidence));
+
+        DecodeConfigNXDN nxdnConfiguration = nxdn(NXDNChannelMode.TRUNKED);
+        Channel nxdnTrunked = channel(nxdnConfiguration);
+        P25ActivityLogService.TrunkedSiteEvidence nxdnEvidence =
+            new P25ActivityLogService.TrunkedSiteEvidence(
+                nxdnTrunked, nxdnConfiguration, DecoderType.NXDN);
+        assertTrue(P25ActivityLogService.hasCurrentTrunkedSiteEvidence(
+            quality(nxdnTrunked), nxdnEvidence));
+        nxdnTrunked.setDecodeConfiguration(nxdn(NXDNChannelMode.CONVENTIONAL));
+        assertFalse(P25ActivityLogService.hasCurrentTrunkedSiteEvidence(
+            quality(nxdnTrunked), nxdnEvidence));
     }
 
     private static ControlChannelQualitySnapshot quality(DecodeConfiguration configuration)
@@ -81,6 +97,13 @@ class P25ActivityLogServiceQualityTest
     private static DecodeConfigDMR dmr(DMRChannelMode mode)
     {
         DecodeConfigDMR configuration = new DecodeConfigDMR();
+        configuration.setChannelMode(mode);
+        return configuration;
+    }
+
+    private static DecodeConfigNXDN nxdn(NXDNChannelMode mode)
+    {
+        DecodeConfigNXDN configuration = new DecodeConfigNXDN();
         configuration.setChannelMode(mode);
         return configuration;
     }

@@ -182,6 +182,50 @@ class P25ActivityLogWriterTest
     }
 
     @Test
+    void reportsDetailedNxdnConventionalActivityOnlyAfterCommit() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("nxdn-conventional-detailed.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        AtomicReference<List<Long>> committed = new AtomicReference<>();
+        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, committed::set);
+        writer.start();
+        writer.enqueue(new P25ActivityLogRecords.NxdnConventionalCall(
+            1_000L, 2_000L, "GUID:nxdn-detailed", "nxdn-detailed", "NXDN Repeater",
+            "County NXDN", 461_125_000L, P25ActivityLogRecords.NxdnTargetKind.GROUP, 91, 101, null, true));
+        writer.enqueue(new P25ActivityLogRecords.CompletedCallOutput(
+            1_000L, "GUID:nxdn-detailed", "nxdn-detailed", 461_125_000L, null, 91, "TALKGROUP",
+            List.of(), 101, P25ActivityLogRecords.CallOutput.RECORDED));
+
+        long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(5);
+        while(committed.get() == null && System.currentTimeMillis() < deadline)
+        {
+            Thread.sleep(25);
+        }
+
+        writer.close();
+        assertEquals(List.of(1L), committed.get());
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            assertCount(connection, "p25_activity_event", 1);
+            assertEquals(1L, scalarLong(connection,
+                "SELECT call_count FROM conventional_activity_summary"));
+            assertEquals(1L, scalarLong(connection,
+                "SELECT recorded_count FROM conventional_activity_summary"));
+            assertEquals(2L, scalarLong(connection,
+                "SELECT COUNT(*) FROM call_identity_bucket"));
+            assertEquals(2L, scalarLong(connection,
+                "SELECT SUM(recorded_count) FROM call_identity_bucket"));
+            assertEquals("CONVENTIONAL_NXDN", scalarString(connection,
+                "SELECT channel_kind FROM p25_activity_event_resolved"));
+            assertEquals("NXDN", scalarString(connection,
+                "SELECT protocol FROM p25_activity_event_resolved"));
+            assertEquals("CALL", scalarString(connection,
+                "SELECT action FROM p25_activity_event_resolved"));
+        }
+    }
+
+    @Test
     void bucketsDmrPrivateCallAndOutputsByCallStartForBothIdentities() throws Exception
     {
         Path database = mTemporaryFolder.resolve("dmr-private-identity.sqlite");
@@ -245,6 +289,38 @@ class P25ActivityLogWriterTest
         {
             assertCount(connection, "receiver_context", 0);
             assertCount(connection, "dmr_conventional_talkgroup_summary", 0);
+            assertCount(connection, "conventional_activity_summary", 0);
+        }
+    }
+
+    @Test
+    void failsAndRollsBackBatchContainingInvalidNxdnIdentity() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("invalid-nxdn.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, false, 10);
+        writer.start();
+        writer.enqueue(new P25ActivityLogRecords.NxdnConventionalCall(
+            1_000L, 2_000L, "GUID:valid-nxdn", "valid-nxdn", "Valid NXDN", null, 461_125_000L,
+            P25ActivityLogRecords.NxdnTargetKind.GROUP, 91, 101, null, false));
+        writer.enqueue(new P25ActivityLogRecords.NxdnConventionalCall(
+            3_000L, 4_000L, "GUID:invalid-nxdn", "invalid-nxdn", "Invalid NXDN", null, 461_125_000L,
+            P25ActivityLogRecords.NxdnTargetKind.GROUP, 0x1_0000, 102, null, false));
+
+        long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(5);
+        while(writer.getStatus().state() != P25ActivityLogStatus.State.FAILED &&
+            System.currentTimeMillis() < deadline)
+        {
+            Thread.sleep(25);
+        }
+
+        assertEquals(P25ActivityLogStatus.State.FAILED, writer.getStatus().state());
+        assertEquals(0, writer.getWrittenRecords());
+        writer.close();
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            assertCount(connection, "receiver_context", 0);
             assertCount(connection, "conventional_activity_summary", 0);
         }
     }
@@ -851,8 +927,11 @@ class P25ActivityLogWriterTest
                 WHERE type='view' AND name='p25_activity_event_resolved'
                 """);
             String version22ResolvedView =
-                currentResolvedView.replace(" WHEN 3 THEN 'CONVENTIONAL_DMR'", "");
+                currentResolvedView
+                    .replace(" WHEN 3 THEN 'CONVENTIONAL_DMR'", "")
+                    .replace(" WHEN 4 THEN 'CONVENTIONAL_NXDN'", "");
             assertFalse(version22ResolvedView.contains("CONVENTIONAL_DMR"));
+            assertFalse(version22ResolvedView.contains("CONVENTIONAL_NXDN"));
 
             statement.executeUpdate("DROP TABLE p25_foreign_system_band");
             statement.executeUpdate("DROP TABLE p25_foreign_system_band_summary");

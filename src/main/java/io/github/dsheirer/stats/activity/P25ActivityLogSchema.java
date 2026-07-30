@@ -61,6 +61,7 @@ public class P25ActivityLogSchema
     private static final int CONTEXT_TRUNKED_SITE = 1;
     private static final int CONTEXT_CONVENTIONAL_P25 = 2;
     private static final int CONTEXT_CONVENTIONAL_DMR = 3;
+    private static final int CONTEXT_CONVENTIONAL_NXDN = 4;
     private static final int CONTEXT_CONVENTIONAL_ANALOG = 10;
 
     private static final int PROTOCOL_UNKNOWN = 0;
@@ -211,9 +212,7 @@ public class P25ActivityLogSchema
         }
         else if(isConventional(activity.contextKind()))
         {
-            if((activity.contextKind() == P25ActivityLogRecords.ContextKind.CONVENTIONAL_P25 ||
-                activity.contextKind() == P25ActivityLogRecords.ContextKind.CONVENTIONAL_ANALOG) &&
-                detailedEventHistoryEnabled && activity.action() != P25ActivityLogRecords.Action.CONTINUE)
+            if(detailedEventHistoryEnabled && activity.action() != P25ActivityLogRecords.Action.CONTINUE)
             {
                 activityId = insertP25ActivityEvent(connection, activity, contextId);
             }
@@ -818,6 +817,72 @@ public class P25ActivityLogSchema
         upsertCallIdentityBuckets(connection, activity, contextId);
         DmrActivitySchema.recordCompletedCall(connection, contextId, call);
         return detailedEventHistoryEnabled ? insertP25ActivityEvent(connection, activity, contextId) : null;
+    }
+
+    static Long recordNxdnConventionalCall(Connection connection,
+                                           P25ActivityLogRecords.NxdnConventionalCall call,
+                                           boolean detailedEventHistoryEnabled) throws SQLException
+    {
+        if(call == null)
+        {
+            return null;
+        }
+
+        validateNxdnConventionalCall(call);
+        int contextId = upsertReceiverContext(connection, call);
+        String targetId = call.targetKind() == P25ActivityLogRecords.NxdnTargetKind.GROUP ?
+            value(call.talkgroupId()) :
+            call.targetKind() == P25ActivityLogRecords.NxdnTargetKind.PRIVATE ?
+                value(call.targetRadioId()) : null;
+        String targetKind = call.targetKind() == P25ActivityLogRecords.NxdnTargetKind.GROUP ?
+            Form.TALKGROUP.name() :
+            call.targetKind() == P25ActivityLogRecords.NxdnTargetKind.PRIVATE ? Form.RADIO.name() : null;
+        String eventType = call.targetKind() == P25ActivityLogRecords.NxdnTargetKind.GROUP ?
+            (call.encrypted() ? DecodeEventType.CALL_GROUP_ENCRYPTED.name() : DecodeEventType.CALL_GROUP.name()) :
+            call.targetKind() == P25ActivityLogRecords.NxdnTargetKind.PRIVATE ?
+                (call.encrypted() ? DecodeEventType.CALL_UNIT_TO_UNIT_ENCRYPTED.name() :
+                    DecodeEventType.CALL_UNIT_TO_UNIT.name()) :
+                (call.encrypted() ? DecodeEventType.CALL_ENCRYPTED.name() : DecodeEventType.CALL.name());
+        P25ActivityLogRecords.ActivityEvent activity = new P25ActivityLogRecords.ActivityEvent(
+            call.callStartEpochMilliseconds(), call.contextKey(), call.guid(),
+            P25ActivityLogRecords.ContextKind.CONVENTIONAL_NXDN, "NXDN", P25ActivityLogRecords.Action.CALL,
+            eventType, value(call.sourceRadioId()), targetId, targetKind, call.frequencyHertz(), null, null,
+            call.encrypted(), null, null, null, null, null, null, null, call.channelName(), "NXDN", null,
+            true, null, null);
+        upsertConventionalSummary(connection, activity, contextId);
+        upsertCallIdentityBuckets(connection, activity, contextId);
+        return detailedEventHistoryEnabled ? insertP25ActivityEvent(connection, activity, contextId) : null;
+    }
+
+    private static void validateNxdnConventionalCall(P25ActivityLogRecords.NxdnConventionalCall call)
+        throws SQLException
+    {
+        if(call.callStartEpochMilliseconds() <= 0 ||
+            call.callEndEpochMilliseconds() < call.callStartEpochMilliseconds() ||
+            call.contextKey() == null || call.contextKey().isBlank() || call.frequencyHertz() <= 0 ||
+            call.targetKind() == null || !validNxdnId(call.sourceRadioId()) ||
+            !validNxdnId(call.talkgroupId()) || !validNxdnId(call.targetRadioId()))
+        {
+            throw new SQLException("Invalid completed conventional NXDN call");
+        }
+
+        if(call.targetKind() == P25ActivityLogRecords.NxdnTargetKind.GROUP && call.targetRadioId() != null ||
+            call.targetKind() == P25ActivityLogRecords.NxdnTargetKind.PRIVATE && call.talkgroupId() != null ||
+            call.targetKind() == P25ActivityLogRecords.NxdnTargetKind.UNKNOWN &&
+                (call.talkgroupId() != null || call.targetRadioId() != null))
+        {
+            throw new SQLException("NXDN target identity does not match the call type");
+        }
+    }
+
+    private static boolean validNxdnId(Integer identifier)
+    {
+        return identifier == null || identifier > 0 && identifier <= 0xFFFF;
+    }
+
+    private static String value(Integer identifier)
+    {
+        return identifier != null ? identifier.toString() : null;
     }
 
     static void updateTalkerAlias(Connection connection, P25ActivityLogRecords.TalkerAliasUpdate update)
@@ -2429,6 +2494,48 @@ public class P25ActivityLogSchema
         return selectContextId(connection, call.contextKey());
     }
 
+    private static int upsertReceiverContext(Connection connection, P25ActivityLogRecords.NxdnConventionalCall call)
+        throws SQLException
+    {
+        try(PreparedStatement statement = connection.prepareStatement("""
+            INSERT INTO receiver_context (
+                context_key, guid, kind_code, protocol_code, channel_name, alias_list_name, decoder, first_seen_ms,
+                last_seen_ms, primary_frequency_hz
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(context_key) DO UPDATE SET
+                guid = coalesce(excluded.guid, receiver_context.guid),
+                kind_code = excluded.kind_code,
+                protocol_code = excluded.protocol_code,
+                channel_name = excluded.channel_name,
+                alias_list_name = excluded.alias_list_name,
+                decoder = excluded.decoder,
+                first_seen_ms = min(receiver_context.first_seen_ms, excluded.first_seen_ms),
+                last_seen_ms = max(receiver_context.last_seen_ms, excluded.last_seen_ms),
+                system_key = NULL,
+                nac = NULL,
+                rfss = NULL,
+                site = NULL,
+                primary_frequency_hz = coalesce(
+                    excluded.primary_frequency_hz, receiver_context.primary_frequency_hz),
+                current_control_hz = NULL
+            """))
+        {
+            statement.setString(1, call.contextKey());
+            statement.setString(2, call.guid());
+            statement.setInt(3, CONTEXT_CONVENTIONAL_NXDN);
+            statement.setInt(4, PROTOCOL_NXDN);
+            statement.setString(5, call.channelName());
+            statement.setString(6, call.aliasListName());
+            statement.setString(7, "NXDN");
+            statement.setLong(8, call.callStartEpochMilliseconds());
+            statement.setLong(9, call.callEndEpochMilliseconds());
+            statement.setLong(10, call.frequencyHertz());
+            statement.executeUpdate();
+        }
+
+        return selectContextId(connection, call.contextKey());
+    }
+
     private static void upsertSiteSnapshot(Connection connection, P25ActivityLogRecords.SiteSnapshot snapshot,
                                            Integer systemKey) throws SQLException
     {
@@ -3368,6 +3475,7 @@ public class P25ActivityLogSchema
     {
         return contextKind == P25ActivityLogRecords.ContextKind.CONVENTIONAL_P25 ||
             contextKind == P25ActivityLogRecords.ContextKind.CONVENTIONAL_DMR ||
+            contextKind == P25ActivityLogRecords.ContextKind.CONVENTIONAL_NXDN ||
             contextKind == P25ActivityLogRecords.ContextKind.CONVENTIONAL_ANALOG;
     }
 
@@ -3453,6 +3561,11 @@ public class P25ActivityLogSchema
         if(contextKind == P25ActivityLogRecords.ContextKind.CONVENTIONAL_DMR)
         {
             return CONTEXT_CONVENTIONAL_DMR;
+        }
+
+        if(contextKind == P25ActivityLogRecords.ContextKind.CONVENTIONAL_NXDN)
+        {
+            return CONTEXT_CONVENTIONAL_NXDN;
         }
 
         return CONTEXT_CONVENTIONAL_P25;
@@ -3733,7 +3846,8 @@ public class P25ActivityLogSchema
     {
         return "CASE " + expression + " WHEN " + CONTEXT_TRUNKED_SITE + " THEN 'TRUNKED_SITE' WHEN " +
             CONTEXT_CONVENTIONAL_P25 + " THEN 'CONVENTIONAL_P25' WHEN " + CONTEXT_CONVENTIONAL_DMR +
-            " THEN 'CONVENTIONAL_DMR' WHEN " + CONTEXT_CONVENTIONAL_ANALOG +
+            " THEN 'CONVENTIONAL_DMR' WHEN " + CONTEXT_CONVENTIONAL_NXDN +
+            " THEN 'CONVENTIONAL_NXDN' WHEN " + CONTEXT_CONVENTIONAL_ANALOG +
             " THEN 'CONVENTIONAL_ANALOG' ELSE NULL END";
     }
 
