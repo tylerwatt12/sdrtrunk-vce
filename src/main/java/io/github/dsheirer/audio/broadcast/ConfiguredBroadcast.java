@@ -19,11 +19,15 @@
 
 package io.github.dsheirer.audio.broadcast;
 
+import java.awt.GraphicsEnvironment;
+import java.util.function.Consumer;
+import javafx.application.Platform;
 import javafx.beans.Observable;
 import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.ObjectProperty;
 import javafx.beans.property.SimpleObjectProperty;
 import javafx.beans.property.StringProperty;
+import javafx.beans.value.ChangeListener;
 import javafx.util.Callback;
 
 /**
@@ -31,10 +35,13 @@ import javafx.util.Callback;
  */
 public class ConfiguredBroadcast
 {
-    private BroadcastConfiguration mBroadcastConfiguration;
-    private AbstractAudioBroadcaster<?> mAudioBroadcaster;
-    private ObjectProperty<BroadcastState> mBroadcastState = new SimpleObjectProperty<>();
-    private ObjectProperty<BroadcastState> mLastBadBroadcastState = new SimpleObjectProperty<>();
+    private final BroadcastConfiguration mBroadcastConfiguration;
+    private final Consumer<Runnable> mFxDispatcher;
+    private volatile AbstractAudioBroadcaster<?> mAudioBroadcaster;
+    private volatile long mAudioBroadcasterVersion;
+    private ChangeListener<BroadcastState> mSourceBroadcastStateListener;
+    private final ObjectProperty<BroadcastState> mBroadcastState = new SimpleObjectProperty<>();
+    private final ObjectProperty<BroadcastState> mLastBadBroadcastState = new SimpleObjectProperty<>();
 
     /**
      * Constructs an instance
@@ -42,9 +49,20 @@ public class ConfiguredBroadcast
      */
     public ConfiguredBroadcast(BroadcastConfiguration broadcastConfiguration)
     {
+        this(broadcastConfiguration, ConfiguredBroadcast::dispatchToJavaFx);
+    }
+
+    /**
+     * Constructs an instance with an injectable JavaFX dispatcher for deterministic thread-handoff tests.
+     */
+    ConfiguredBroadcast(BroadcastConfiguration broadcastConfiguration, Consumer<Runnable> fxDispatcher)
+    {
         mBroadcastConfiguration = broadcastConfiguration;
-        mBroadcastConfiguration.validProperty().addListener((observable, oldValue, newValue) -> updateBroadcastState());
-        updateBroadcastState();
+        mFxDispatcher = fxDispatcher;
+        mBroadcastState.setValue(mBroadcastConfiguration.isValid() ? BroadcastState.READY :
+            BroadcastState.CONFIGURATION_ERROR);
+        mBroadcastConfiguration.validProperty()
+            .addListener((observable, oldValue, newValue) -> queueConfigurationStateUpdate());
     }
 
     /**
@@ -99,36 +117,91 @@ public class ConfiguredBroadcast
      * Sets the audio broadcaster
      * @param audioBroadcaster to use for this configuration
      */
-    public void setAudioBroadcaster(AbstractAudioBroadcaster<?> audioBroadcaster)
+    public synchronized void setAudioBroadcaster(AbstractAudioBroadcaster<?> audioBroadcaster)
     {
-        mBroadcastState.unbind();
-        mLastBadBroadcastState.unbind();
+        //Invalidate already-queued updates before detaching the old source.
+        long audioBroadcasterVersion = ++mAudioBroadcasterVersion;
+        AbstractAudioBroadcaster<?> previousAudioBroadcaster = mAudioBroadcaster;
+
+        if(previousAudioBroadcaster != null && mSourceBroadcastStateListener != null)
+        {
+            previousAudioBroadcaster.broadcastStateProperty().removeListener(mSourceBroadcastStateListener);
+        }
+
+        mSourceBroadcastStateListener = null;
         mAudioBroadcaster = audioBroadcaster;
 
         if(audioBroadcaster != null)
         {
-            mBroadcastState.bind(mAudioBroadcaster.broadcastStateProperty());
-            mLastBadBroadcastState.bind(mAudioBroadcaster.lastBadBroadcastStateProperty());
+            mSourceBroadcastStateListener = (observable, oldValue, newValue) ->
+                queueAudioBroadcasterStateUpdate(audioBroadcaster, audioBroadcasterVersion);
+            audioBroadcaster.broadcastStateProperty().addListener(mSourceBroadcastStateListener);
+            queueAudioBroadcasterStateUpdate(audioBroadcaster, audioBroadcasterVersion);
         }
         else
         {
-            updateBroadcastState();
+            queueConfigurationStateUpdate(audioBroadcasterVersion);
         }
     }
 
-    private void updateBroadcastState()
+    /**
+     * Copies the worker-owned broadcaster state to the table-facing properties on the JavaFX application thread.
+     * Each callback reads the source's latest values instead of retaining an intermediate connection state.
+     */
+    private void queueAudioBroadcasterStateUpdate(AbstractAudioBroadcaster<?> source, long audioBroadcasterVersion)
     {
-        if(!mBroadcastState.isBound())
+        mFxDispatcher.accept(() -> {
+            if(mAudioBroadcaster == source && mAudioBroadcasterVersion == audioBroadcasterVersion)
+            {
+                //Last-error changes occur before the corresponding state change.  Copy it first so the row update
+                //triggered by the state property observes a consistent pair.
+                mLastBadBroadcastState.setValue(source.getLastBadBroadcastState());
+                mBroadcastState.setValue(source.getBroadcastState());
+            }
+        });
+    }
+
+    private void queueConfigurationStateUpdate()
+    {
+        queueConfigurationStateUpdate(mAudioBroadcasterVersion);
+    }
+
+    /**
+     * Restores the row's configuration-only state after a broadcaster is detached.  A newly attached broadcaster
+     * invalidates this queued update before it can overwrite the replacement's state.
+     */
+    private void queueConfigurationStateUpdate(long audioBroadcasterVersion)
+    {
+        mFxDispatcher.accept(() -> {
+            if(mAudioBroadcaster == null && mAudioBroadcasterVersion == audioBroadcasterVersion)
+            {
+                mBroadcastState.setValue(mBroadcastConfiguration.isValid() ? BroadcastState.READY :
+                    BroadcastState.CONFIGURATION_ERROR);
+                mLastBadBroadcastState.setValue(null);
+            }
+        });
+    }
+
+    /**
+     * Dispatches table-facing property changes to JavaFX.  Headless operation and construction before the JavaFX
+     * toolkit starts have no JavaFX controls observing these properties, so direct execution is safe in those cases.
+     */
+    private static void dispatchToJavaFx(Runnable runnable)
+    {
+        if(GraphicsEnvironment.isHeadless() || Platform.isFxApplicationThread())
         {
-            if(mBroadcastConfiguration.isValid())
-            {
-                mBroadcastState.setValue(BroadcastState.READY);
-            }
-            else
-            {
-                mBroadcastState.setValue(BroadcastState.CONFIGURATION_ERROR);
-            }
-            mLastBadBroadcastState.setValue(null);
+            runnable.run();
+            return;
+        }
+
+        try
+        {
+            Platform.runLater(runnable);
+        }
+        catch(IllegalStateException e)
+        {
+            //The JavaFX toolkit has not started yet, so no JavaFX table can be observing this row.
+            runnable.run();
         }
     }
 
