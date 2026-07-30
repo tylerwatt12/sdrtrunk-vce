@@ -624,8 +624,6 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
             mSystemField.setDisable(true);
             mSystemField.setMaxWidth(Double.MAX_VALUE);
             mSystemField.textProperty().addListener(mEditorModificationListener);
-            mSystemField.textProperty().addListener((observable, oldValue, newValue) ->
-                updateAliasListCompatibility());
         }
 
         return mSystemField;
@@ -741,12 +739,15 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
             return false;
         }
 
-        String channelSystem = getSystemField().getText();
-        String listSystem = definition.getSystemName();
-        boolean sameSystem = channelSystem != null && listSystem != null &&
-            channelSystem.trim().equalsIgnoreCase(listSystem.trim());
-        return sameSystem && AliasMatchRegistry.familyFor(
-            channel.getDecodeConfiguration().getDecoderType()) == definition.getFamily();
+        return isAliasListCompatible(definition, channel.getDecodeConfiguration().getDecoderType());
+    }
+
+    /**
+     * Tests the exact protocol-family rule used to populate the channel editor's alias-list dropdown.
+     */
+    static boolean isAliasListCompatible(AliasListDefinition definition, DecoderType decoderType)
+    {
+        return AliasMatchRegistry.isChannelCompatible(definition, decoderType);
     }
 
     private void updateAliasListCompatibility()

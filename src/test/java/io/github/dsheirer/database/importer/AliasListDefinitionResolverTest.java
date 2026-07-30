@@ -64,7 +64,7 @@ class AliasListDefinitionResolverTest
     }
 
     @Test
-    void firstSystemOwnsLegacyListWithoutCreatingCopies()
+    void sameFamilySystemsShareLegacyListWithoutCreatingCopies()
     {
         ConfigurationState state = new ConfigurationState();
         Channel north = channel("North", "Regional", new DecodeConfigP25Phase1());
@@ -87,11 +87,11 @@ class AliasListDefinitionResolverTest
         assertTrue(state.getAliases().getFirst().isRecordable());
         assertTrue(state.getAliases().getFirst().hasBroadcastChannel("Calls"));
         assertEquals("Regional", north.getAliasListName());
-        assertNull(south.getAliasListName());
+        assertEquals("Regional", south.getAliasListName());
     }
 
     @Test
-    void ignoresAuxiliaryDecodersWhenResolvingListOwnership()
+    void ignoresAuxiliaryDecodersWhenResolvingListFamily()
     {
         ConfigurationState state = new ConfigurationState();
         Channel first = channel("Metro", "Shared", new DecodeConfigP25Phase1());
@@ -107,11 +107,27 @@ class AliasListDefinitionResolverTest
     }
 
     @Test
-    void omitsUnownedMatcherWithoutCreatingReviewState()
+    void infersUnassignedListFamilyFromProtocolSpecificMatcher()
     {
         ConfigurationState state = new ConfigurationState();
         Alias alias = alias("Orphan", "Old List", new Talkgroup(Protocol.NXDN, 1));
         state.setAliases(List.of(alias));
+
+        AliasListDefinitionResolver.normalizeLegacyState(state);
+
+        assertEquals(1, state.getAliasListDefinitions().size());
+        assertEquals(AliasListFamily.NXDN, state.getAliasListDefinitions().getFirst().getFamily());
+        assertEquals(1, state.getAliases().size());
+        assertEquals("Orphan", state.getAliases().getFirst().getName());
+    }
+
+    @Test
+    void omitsUnassignedListWhenMatchersSpanMultipleFamilies()
+    {
+        ConfigurationState state = new ConfigurationState();
+        state.setAliases(List.of(
+            alias("P25", "Mixed", new Talkgroup(Protocol.APCO25, 1)),
+            alias("DMR", "Mixed", new Talkgroup(Protocol.DMR, 1))));
 
         AliasListDefinitionResolver.normalizeLegacyState(state);
 
@@ -120,7 +136,7 @@ class AliasListDefinitionResolverTest
     }
 
     @Test
-    void silentlyDropsMatchersThatDoNotBelongToTheClaimedSystemFamily()
+    void silentlyDropsMatchersThatDoNotBelongToTheClaimedFamily()
     {
         ConfigurationState state = new ConfigurationState();
         Channel p25 = channel("Metro P25", "Metro Aliases", new DecodeConfigP25Phase1());

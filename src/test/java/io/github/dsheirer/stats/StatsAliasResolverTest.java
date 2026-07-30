@@ -35,11 +35,11 @@ class StatsAliasResolverTest
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
-                INSERT INTO alias_list (id, name, system_name, family)
-                VALUES (1, 'NXDN County', 'NXDN County', 'NXDN'),
-                       (2, 'NXDN Other', 'NXDN Other', 'NXDN'),
-                       (3, 'P25 Conventional', 'P25 Conventional', 'P25'),
-                       (4, 'DMR County', 'DMR County', 'DMR')
+                INSERT INTO alias_list (id, name, family)
+                VALUES (1, 'NXDN County', 'NXDN'),
+                       (2, 'NXDN Other', 'NXDN'),
+                       (3, 'P25 Conventional', 'P25'),
+                       (4, 'DMR County', 'DMR')
                 """);
             statement.executeUpdate("""
                 INSERT INTO alias (
@@ -129,8 +129,8 @@ class StatsAliasResolverTest
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
-                INSERT INTO alias_list (id, name, system_name, family)
-                VALUES (1, 'P25 Trunked', 'P25 Trunked', 'P25')
+                INSERT INTO alias_list (id, name, family)
+                VALUES (1, 'P25 Trunked', 'P25')
                 """);
             statement.executeUpdate("""
                 INSERT INTO alias (

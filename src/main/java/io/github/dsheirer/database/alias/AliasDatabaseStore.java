@@ -136,7 +136,7 @@ public class AliasDatabaseStore
         List<AliasListDefinition> definitions = new ArrayList<>();
 
         try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT id, name, system_name, family
+            SELECT id, name, family
             FROM alias_list
             ORDER BY id
             """);
@@ -150,7 +150,7 @@ public class AliasDatabaseStore
                     throw new SQLException("Persisted alias-list IDs must be greater than zero");
                 }
                 AliasListDefinition definition = new AliasListDefinition(
-                    resultSet.getString("name"), resultSet.getString("system_name"),
+                    resultSet.getString("name"),
                     requireEnum(AliasListFamily.class, resultSet.getString("family"), "alias_list.family"));
                 definition.setId(definitionId);
                 definitions.add(definition);
@@ -279,14 +279,10 @@ public class AliasDatabaseStore
             {
                 throw new SQLException("Duplicate alias-list name [" + definition.getName() + "]");
             }
-            if(definition.getSystemName() == null || definition.getSystemName().isBlank())
-            {
-                throw new SQLException("Alias list [" + definition.getName() + "] must be owned by a system");
-            }
             if(definition.getFamily() == null)
             {
                 throw new SQLException("Alias list [" + definition.getName() +
-                    "] must use an active radio-system family");
+                    "] must declare a protocol family");
             }
         }
 
@@ -360,8 +356,8 @@ public class AliasDatabaseStore
             {
                 try(PreparedStatement statement = connection.prepareStatement("""
                     INSERT INTO alias_list (
-                        name, system_name, family
-                    ) VALUES (?, ?, ?)
+                        name, family
+                    ) VALUES (?, ?)
                     """, Statement.RETURN_GENERATED_KEYS))
                 {
                     bindDefinition(statement, definition, 1);
@@ -380,8 +376,8 @@ public class AliasDatabaseStore
             {
                 try(PreparedStatement statement = connection.prepareStatement("""
                     INSERT INTO alias_list (
-                        id, name, system_name, family
-                    ) VALUES (?, ?, ?, ?)
+                        id, name, family
+                    ) VALUES (?, ?, ?)
                     """))
                 {
                     statement.setLong(1, definition.getId());
@@ -396,8 +392,7 @@ public class AliasDatabaseStore
         throws SQLException
     {
         statement.setString(offset, definition.getName());
-        statement.setString(offset + 1, definition.getSystemName());
-        statement.setString(offset + 2, definition.getFamily().name());
+        statement.setString(offset + 1, definition.getFamily().name());
     }
 
     private void attachDefinitions(List<Alias> aliases, List<AliasListDefinition> definitions) throws SQLException

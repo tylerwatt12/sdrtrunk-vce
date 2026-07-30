@@ -227,10 +227,18 @@ class StatsWebDatabase
             SUM(bucket.encrypted_count) AS encrypted_count,
             SUM(bucket.recorded_count) AS recorded_count,
             SUM(bucket.streamed_count) AS streamed_count,
-            MAX(bucket.bucket_start_ms) AS last_active_ms
+            MAX(bucket.bucket_start_ms) AS last_active_ms,
+            MAX(radio.last_talker_alias) AS last_talker_alias,
+            MAX(radio.last_talker_alias_seen_ms) AS last_talker_alias_seen_ms
         FROM call_identity_bucket AS bucket INDEXED BY idx_call_identity_bucket_dashboard_time
         JOIN receiver_context context ON context.id = bucket.context_id
         LEFT JOIN p25_system system ON system.system_key = context.system_key
+        LEFT JOIN p25_radio_summary radio
+          ON bucket.identity_role_code = 2
+         AND bucket.identity_kind_code = 2
+         AND context.protocol_code IN (1, 2)
+         AND radio.system_key = context.system_key
+         AND radio.radio_id = bucket.identity_id
         LEFT JOIN trunked_site_snapshot trunked ON trunked.guid = context.guid
         WHERE bucket.bucket_start_ms >= ? AND bucket.bucket_start_ms < ?
           AND bucket.identity_role_code = ?
@@ -2229,7 +2237,8 @@ class StatsWebDatabase
                     coalesce(context.channel_name, site.channel_name) AS channel_name,
                     coalesce(context.alias_list_name, site.alias_list_name) AS alias_list_name,
                     coalesce(context.decoder, site.decoder) AS decoder, NULL AS configured_system,
-                    system.wacn, system.system_id, NULL AS network_id, site.rfss, site.site,
+                    system.wacn, system.system_id, NULL AS network_id,
+                    coalesce(site.nac, context.nac) AS nac, site.rfss, site.site,
                     NULL AS site_id, NULL AS ran, NULL AS variant_code, NULL AS identity_domain_code,
                     coalesce(context.primary_frequency_hz, site.primary_frequency_hz) AS primary_frequency_hz,
                     coalesce(context.current_control_hz, site.current_control_hz) AS current_control_hz,
@@ -2253,7 +2262,7 @@ class StatsWebDatabase
                     'TRUNKED' AS channel_kind, coalesce(context.channel_name, site.channel_name) AS channel_name,
                     coalesce(context.alias_list_name, site.alias_list_name) AS alias_list_name,
                     coalesce(context.decoder, site.decoder) AS decoder, site.configured_system,
-                    NULL AS wacn, site.system_id, site.network_id, NULL AS rfss, NULL AS site,
+                    NULL AS wacn, site.system_id, site.network_id, NULL AS nac, NULL AS rfss, NULL AS site,
                     site.site_id, site.ran, site.variant_code, site.identity_domain_code,
                     coalesce(context.primary_frequency_hz, site.primary_frequency_hz) AS primary_frequency_hz,
                     coalesce(context.current_control_hz, site.current_control_hz) AS current_control_hz,
@@ -2286,7 +2295,7 @@ class StatsWebDatabase
                     END AS protocol,
                     'CONVENTIONAL' AS channel_kind, context.channel_name, context.alias_list_name,
                     context.decoder, NULL AS configured_system, NULL AS wacn, NULL AS system_id,
-                    NULL AS network_id, NULL AS rfss, NULL AS site, NULL AS site_id, NULL AS ran,
+                    NULL AS network_id, context.nac, NULL AS rfss, NULL AS site, NULL AS site_id, NULL AS ran,
                     NULL AS variant_code, NULL AS identity_domain_code, context.primary_frequency_hz,
                     context.current_control_hz, context.first_seen_ms, context.last_seen_ms,
                     context.last_seen_ms AS metadata_last_seen_ms, NULL AS observation_count,
@@ -2308,7 +2317,7 @@ class StatsWebDatabase
                     END AS protocol,
                     'TRUNKED' AS channel_kind, context.channel_name, context.alias_list_name,
                     context.decoder, NULL AS configured_system, NULL AS wacn, NULL AS system_id,
-                    NULL AS network_id, context.rfss, context.site, NULL AS site_id, NULL AS ran,
+                    NULL AS network_id, context.nac, context.rfss, context.site, NULL AS site_id, NULL AS ran,
                     NULL AS variant_code, NULL AS identity_domain_code, context.primary_frequency_hz,
                     context.current_control_hz, context.first_seen_ms, context.last_seen_ms,
                     context.last_seen_ms AS metadata_last_seen_ms, NULL AS observation_count,
@@ -2329,7 +2338,7 @@ class StatsWebDatabase
                 FROM candidates
             )
             SELECT context_id, context_key, guid, protocol_code, protocol, channel_kind, channel_name,
-                alias_list_name, decoder, configured_system, wacn, system_id, network_id, rfss, site,
+                alias_list_name, decoder, configured_system, wacn, system_id, network_id, nac, rfss, site,
                 site_id, ran, variant_code, identity_domain_code, primary_frequency_hz,
                 current_control_hz, first_seen_ms, last_seen_ms, observation_count, channels, neighbors,
                 detail_available

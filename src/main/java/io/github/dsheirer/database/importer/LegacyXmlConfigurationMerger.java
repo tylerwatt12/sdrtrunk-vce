@@ -115,8 +115,8 @@ public final class LegacyXmlConfigurationMerger
         for(AliasListDefinition sourceDefinition: nonNullDefinitions(importedState.getAliasListDefinitions()))
         {
             NameReservation reservation = reserveName(sourceDefinition.getName(), aliasListNames);
-            AliasListDefinition importedDefinition = new AliasListDefinition(reservation.name(),
-                sourceDefinition.getSystemName(), sourceDefinition.getFamily());
+            AliasListDefinition importedDefinition =
+                new AliasListDefinition(reservation.name(), sourceDefinition.getFamily());
             mergedDefinitions.add(importedDefinition);
             importedDefinitionsByOriginalName.putIfAbsent(normalize(sourceDefinition.getName()), importedDefinition);
 

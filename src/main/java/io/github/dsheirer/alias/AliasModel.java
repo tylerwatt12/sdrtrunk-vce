@@ -281,8 +281,8 @@ public class AliasModel
     }
 
     /**
-     * Returns the configured list only when its durable ownership and decoder capabilities match the channel.
-     * Invalid/stale assignments receive an empty list so no aliases or actions can cross system boundaries.
+     * Returns the configured list only when its protocol family matches the channel decoder. Invalid or stale
+     * assignments receive an empty list.
      */
     public AliasList getAliasListForChannel(Channel channel)
     {
@@ -298,13 +298,14 @@ public class AliasModel
             return getAliasList(definition);
         }
 
-        mLog.warn("Ignoring incompatible alias list [{}] for channel system [{}]",
-            channel.getAliasListName(), channel.getSystem());
+        mLog.warn("Ignoring alias list [{}] that is incompatible with channel decoder [{}]",
+            channel.getAliasListName(),
+            channel.getDecodeConfiguration() != null ? channel.getDecodeConfiguration().getDecoderType() : null);
         return definition != null ? new AliasList(definition) : AliasList.empty(channel.getAliasListName());
     }
 
     /**
-     * Validates the complete persisted channel/list relationship: exact system ownership plus primary decoder family.
+     * Validates the persisted channel/list protocol-family relationship.
      */
     public boolean isAliasListCompatible(Channel channel)
     {
@@ -314,9 +315,7 @@ public class AliasModel
 
     private boolean isAliasListCompatible(Channel channel, AliasListDefinition definition)
     {
-        if(channel == null || definition == null || channel.getSystem() == null ||
-            definition.getSystemName() == null || channel.getDecodeConfiguration() == null ||
-            !channel.getSystem().trim().equalsIgnoreCase(definition.getSystemName().trim()))
+        if(channel == null || definition == null || channel.getDecodeConfiguration() == null)
         {
             return false;
         }
@@ -488,7 +487,7 @@ public class AliasModel
     }
 
     /**
-     * Runtime accepts only current aliases with one valid matcher supported by their system-owned list.
+     * Runtime accepts only current aliases with one valid matcher supported by their protocol-owned list.
      */
     private Alias validateAndBind(Alias alias)
     {
@@ -511,11 +510,10 @@ public class AliasModel
                 "] must reference an existing alias-list definition");
         }
 
-        if(definition.getSystemName() == null || definition.getSystemName().isBlank() ||
-            definition.getFamily() == null)
+        if(definition.getFamily() == null)
         {
             throw new IllegalArgumentException("Alias list [" + definition.getName() +
-                "] must be owned by one active radio system");
+                "] must declare a protocol family");
         }
 
         AliasID matcher = alias.getMatchIdentifier();

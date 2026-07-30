@@ -38,7 +38,7 @@ class MutableAudioCallBuilderRecordingMetadataTest
         Alias sourceAlias = new Alias("Engine 12");
         sourceAlias.setMatchIdentifier(new Radio(Protocol.APCO25, 120012));
         AliasList aliasList = new AliasList(
-            new AliasListDefinition("Primary", "Primary", AliasListFamily.P25));
+            new AliasListDefinition("Primary", AliasListFamily.P25));
         aliasList.addAlias(destinationAlias);
         aliasList.addAlias(sourceAlias);
         MutableAudioCallBuilder builder = new MutableAudioCallBuilder(aliasList, 1);
@@ -65,7 +65,7 @@ class MutableAudioCallBuilderRecordingMetadataTest
         Alias exactAlias = new Alias("Phase 2 Exact");
         exactAlias.setMatchIdentifier(new Talkgroup(Protocol.APCO25_PHASE2, 101));
         AliasList exactList = new AliasList(
-            new AliasListDefinition("Exact", "System", AliasListFamily.P25));
+            new AliasListDefinition("Exact", AliasListFamily.P25));
         exactList.addAlias(exactAlias);
 
         AudioCallRecordingMetadata.DestinationDecision exact =
@@ -75,7 +75,7 @@ class MutableAudioCallBuilderRecordingMetadataTest
         Alias rangeAlias = new Alias("Phase 2 Range");
         rangeAlias.setMatchIdentifier(new TalkgroupRange(Protocol.APCO25_PHASE2, 200, 299));
         AliasList rangeList = new AliasList(
-            new AliasListDefinition("Range", "System", AliasListFamily.P25));
+            new AliasListDefinition("Range", AliasListFamily.P25));
         rangeList.addAlias(rangeAlias);
 
         AudioCallRecordingMetadata.DestinationDecision range =

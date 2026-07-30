@@ -63,8 +63,11 @@ class StatsWebDashboardUiContractTest
         String calls = declaration(source, "const dashboardCallSourceColumns = [");
         String identities = function(source, "function dashboardIdentityColumns(identityLabel)");
         assertTrue(health.contains("label: 'Site / Channel'"));
-        assertTrue(health.contains("label: 'System / Site'"));
+        assertTrue(health.contains("label: 'System'"));
         assertTrue(health.contains("label: 'Mode'"));
+        assertTrue(health.contains("label: 'RFSS'"));
+        assertTrue(health.contains("label: 'Site ID'"));
+        assertTrue(health.contains("label: 'NAC'"));
         assertTrue(health.contains("label: 'MHz'"));
         assertTrue(health.contains("label: 'Seen'"));
         assertFalse(health.contains("label: 'Decoder'"));
@@ -81,8 +84,11 @@ class StatsWebDashboardUiContractTest
         assertFalse(calls.contains("Latest Hour"));
         assertTrue(identities.contains("label: identityLabel"));
         assertTrue(identities.contains("...dashboardCallSourceColumns"));
-        assertTrue(function(source, "function dashboardIdentity(row)")
-            .contains("dashboard-identity-context"));
+        String identity = function(source, "function dashboardIdentity(row)");
+        assertTrue(identity.contains("dashboard-identity-context"));
+        assertTrue(identity.contains("last_talker_alias"));
+        assertTrue(identity.contains("`OTA ${talkerAlias}`"));
+        assertTrue(identities.contains("row.alias_name || row.last_talker_alias"));
         assertFalse(source.contains("function callSourceActivityChart(activity)"));
     }
 
@@ -149,6 +155,12 @@ class StatsWebDashboardUiContractTest
         assertFalse(sorter.contains("decode_health_pct"));
         assertFalse(section.contains("Highest decode"));
         assertFalse(section.contains("Weakest signal"));
+        String tile = function(source, "function updateSignalCurrentTile(tile, site)");
+        assertTrue(tile.contains("dashboardReceiverSystemDetails(site)"));
+        String identifiers = function(source, "function dashboardReceiverIdentifiers(row)");
+        assertTrue(identifiers.contains("`RFSS ${rfss}`"));
+        assertTrue(identifiers.contains("`Site ID ${site}`"));
+        assertTrue(identifiers.contains("`NAC ${nac}`"));
     }
 
     @Test

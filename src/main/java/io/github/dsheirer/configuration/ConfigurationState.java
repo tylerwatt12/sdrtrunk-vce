@@ -48,7 +48,7 @@ public class ConfigurationState
     }
 
     /**
-     * Durable alias-list identities and their system capabilities.  This is populated by SQLite and legacy-import
+     * Durable alias-list identities and their protocol families.  This is populated by SQLite and legacy-import
      * boundaries; it is deliberately excluded from the legacy playlist XML shape.
      */
     @JsonIgnore

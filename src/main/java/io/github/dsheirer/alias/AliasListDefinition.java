@@ -12,8 +12,8 @@
 package io.github.dsheirer.alias;
 
 /**
- * Immutable name and radio-system ownership for an alias list. The database ID is assigned once when a new
- * definition is first persisted.
+ * Immutable name and protocol family for an alias list. The database ID is assigned once when a new definition is
+ * first persisted.
  */
 public final class AliasListDefinition
 {
@@ -21,13 +21,11 @@ public final class AliasListDefinition
 
     private volatile long mId = UNASSIGNED_ID;
     private final String mName;
-    private final String mSystemName;
     private final AliasListFamily mFamily;
 
-    public AliasListDefinition(String name, String systemName, AliasListFamily family)
+    public AliasListDefinition(String name, AliasListFamily family)
     {
         mName = name;
-        mSystemName = systemName;
         mFamily = family;
     }
 
@@ -49,11 +47,6 @@ public final class AliasListDefinition
     public String getName()
     {
         return mName;
-    }
-
-    public String getSystemName()
-    {
-        return mSystemName;
     }
 
     public AliasListFamily getFamily()

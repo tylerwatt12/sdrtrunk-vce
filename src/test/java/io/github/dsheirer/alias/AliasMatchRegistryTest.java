@@ -30,18 +30,18 @@ import org.junit.jupiter.api.Test;
 class AliasMatchRegistryTest
 {
     @Test
-    void protocolFamiliesRejectCrossSystemMatchers()
+    void protocolFamiliesRejectCrossFamilyMatchers()
     {
         AliasListDefinition p25 = definition(AliasListFamily.P25);
         AliasListDefinition dmr = definition(AliasListFamily.DMR);
-        AliasListDefinition unowned = new AliasListDefinition("Unowned", null, AliasListFamily.P25);
 
         assertTrue(AliasMatchRegistry.supports(p25, new Talkgroup(Protocol.APCO25, 1)));
         assertTrue(AliasMatchRegistry.supports(p25, new Talkgroup(Protocol.APCO25_PHASE2, 1)));
         assertFalse(AliasMatchRegistry.supports(p25, new Talkgroup(Protocol.DMR, 1)));
         assertTrue(AliasMatchRegistry.supports(dmr, new Radio(Protocol.DMR, 1)));
         assertFalse(AliasMatchRegistry.supports(dmr, new Radio(Protocol.NXDN, 1)));
-        assertFalse(AliasMatchRegistry.supports(unowned, new Talkgroup(Protocol.APCO25, 1)));
+        assertTrue(AliasMatchRegistry.isChannelCompatible(p25, DecoderType.P25_PHASE1));
+        assertFalse(AliasMatchRegistry.isChannelCompatible(p25, DecoderType.DMR));
     }
 
     @Test
@@ -132,7 +132,7 @@ class AliasMatchRegistryTest
 
     private static AliasListDefinition definition(AliasListFamily family)
     {
-        return new AliasListDefinition("Test", "System", family);
+        return new AliasListDefinition("Test", family);
     }
 
     private static Set<String> labels(AliasListFamily family)

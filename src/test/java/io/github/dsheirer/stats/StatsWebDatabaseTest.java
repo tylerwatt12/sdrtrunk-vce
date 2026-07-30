@@ -992,8 +992,8 @@ class StatsWebDatabaseTest
                         'NXDN County', 'NXDN', 452012500, 452012500, 1000, 2000)
                 """);
             statement.executeUpdate("""
-                INSERT INTO alias_list (id, name, system_name, family)
-                VALUES (200, 'NXDN County', 'NXDN County', 'NXDN')
+                INSERT INTO alias_list (id, name, family)
+                VALUES (200, 'NXDN County', 'NXDN')
                 """);
             statement.executeUpdate("""
                 INSERT INTO alias (
@@ -1067,8 +1067,12 @@ class StatsWebDatabaseTest
             .filter(row -> "P25".equals(row.get("protocol")) &&
                 "TRUNKED".equals(row.get("channel_kind"))).findFirst().orElseThrow();
         assertEquals("Engine 1", p25TrunkedSource.get("alias_name"));
+        assertEquals("CAR 201", p25TrunkedSource.get("last_talker_alias"));
+        assertEquals(2000, number(p25TrunkedSource.get("last_talker_alias_seen_ms")));
         assertEquals("radio", p25TrunkedSource.get("identity_detail_view"));
         assertEquals(1, number(p25TrunkedSource.get("identity_detail_available")));
+        assertTrue(destinations.stream().allMatch(row -> row.get("last_talker_alias") == null),
+            "Destination identities must never inherit a matching radio's talker alias");
 
         Map<String,Object> unknownDestination = destinations.stream()
             .filter(row -> number(row.get("identity_kind_code")) == 0).findFirst().orElseThrow();
@@ -1423,13 +1427,15 @@ class StatsWebDatabaseTest
                 """);
             statement.executeUpdate("""
                 INSERT INTO receiver_context (
-                    id, context_key, kind_code, protocol_code, channel_name, decoder,
+                    id, context_key, kind_code, protocol_code, channel_name, decoder, nac,
                     first_seen_ms, last_seen_ms, primary_frequency_hz
                 ) VALUES
-                    (12, 'conventional-no-calls', 10, 0, 'Weather', 'NBFM',
+                    (12, 'conventional-no-calls', 10, 0, 'Weather', 'NBFM', NULL,
                         3000, 7000, 162550000),
-                    (13, 'trunked-call-before-metadata', 1, 3, 'DMR Call Context', 'DMR',
-                        3000, 8000, 461025000)
+                    (13, 'trunked-call-before-metadata', 1, 3, 'DMR Call Context', 'DMR', NULL,
+                        3000, 8000, 461025000),
+                    (14, 'conventional-p25-no-calls', 2, 1, 'Sheriff P25', 'P25-1', 0x293,
+                        3000, 9000, 154875000)
                 """);
             TrunkedSiteSchema.upsert(connection, trunkedSnapshotAt(5000, "dashboard-dmr",
                 TrunkedSiteSchema.PROTOCOL_DMR, 1, 2, "Metro DMR", "DMR Dashboard",
@@ -1442,21 +1448,34 @@ class StatsWebDatabaseTest
         Map<String,Object> dashboard = mDatabase.dashboard();
         List<Map<String,Object>> receivers = rowsFrom(dashboard, "recentReceivers");
         assertFalse(dashboard.containsKey("recentTrunkedSites"));
-        assertTrue(receivers.stream().anyMatch(row -> GUID.equals(row.get("guid"))));
-        assertTrue(receivers.stream().anyMatch(row -> "dashboard-dmr".equals(row.get("guid")) &&
-            "DMR".equals(row.get("protocol"))));
+        Map<String,Object> p25 = receivers.stream().filter(row -> GUID.equals(row.get("guid")))
+            .findFirst().orElseThrow();
+        assertEquals(0x49F, number(p25.get("nac")));
+        assertEquals(1, number(p25.get("rfss")));
+        assertEquals(1, number(p25.get("site")));
+        Map<String,Object> dmr = receivers.stream()
+            .filter(row -> "dashboard-dmr".equals(row.get("guid"))).findFirst().orElseThrow();
+        assertEquals("DMR", dmr.get("protocol"));
+        assertEquals(2, number(dmr.get("site_id")));
+        assertNull(dmr.get("nac"));
         assertTrue(receivers.stream().anyMatch(row -> "dashboard-nxdn".equals(row.get("guid")) &&
             "NXDN".equals(row.get("protocol"))));
         assertTrue(receivers.stream().anyMatch(row -> "conventional-fire".equals(row.get("context_key")) &&
             "CONVENTIONAL".equals(row.get("channel_kind")) && "NBFM".equals(row.get("protocol"))));
         assertTrue(receivers.stream().anyMatch(row -> "conventional-no-calls".equals(row.get("context_key"))));
+        Map<String,Object> conventionalP25 = receivers.stream()
+            .filter(row -> "conventional-p25-no-calls".equals(row.get("context_key")))
+            .findFirst().orElseThrow();
+        assertEquals(0x293, number(conventionalP25.get("nac")));
+        assertNull(conventionalP25.get("rfss"));
+        assertNull(conventionalP25.get("site"));
         Map<String,Object> orphanTrunked = receivers.stream()
             .filter(row -> "trunked-call-before-metadata".equals(row.get("context_key")))
             .findFirst().orElseThrow();
         assertEquals("TRUNKED", orphanTrunked.get("channel_kind"));
         assertEquals("DMR", orphanTrunked.get("protocol"));
         assertEquals(0, number(orphanTrunked.get("detail_available")));
-        assertEquals(2, number(map(dashboard, "counts").get("conventional_channels")));
+        assertEquals(3, number(map(dashboard, "counts").get("conventional_channels")));
         assertTrue(receivers.stream().filter(row -> "TRUNKED".equals(row.get("channel_kind")) &&
                 !"trunked-call-before-metadata".equals(row.get("context_key")))
             .allMatch(row -> number(row.get("detail_available")) == 1));
@@ -2199,8 +2218,8 @@ class StatsWebDatabaseTest
                 """);
             statement.executeUpdate("""
                 INSERT INTO alias_list
-                    (id, name, system_name, family)
-                VALUES (1, 'County', 'County', 'P25')
+                    (id, name, family)
+                VALUES (1, 'County', 'P25')
                 """);
             statement.executeUpdate("""
                 INSERT INTO alias (
@@ -2263,9 +2282,9 @@ class StatsWebDatabaseTest
                 """);
             statement.executeUpdate("""
                 INSERT INTO alias_list
-                    (id, name, system_name, family)
-                VALUES (100, 'County DMR', 'County DMR', 'DMR'),
-                       (101, 'Other DMR', 'Other DMR', 'DMR')
+                    (id, name, family)
+                VALUES (100, 'County DMR', 'DMR'),
+                       (101, 'Other DMR', 'DMR')
                 """);
             statement.executeUpdate("""
                 INSERT INTO alias (
@@ -2330,8 +2349,8 @@ class StatsWebDatabaseTest
                 """);
             statement.executeUpdate("""
                 INSERT INTO alias_list
-                    (id, name, system_name, family)
-                VALUES (2, 'Second', 'Second', 'P25')
+                    (id, name, family)
+                VALUES (2, 'Second', 'P25')
                 """);
             statement.executeUpdate("""
                 INSERT INTO alias (

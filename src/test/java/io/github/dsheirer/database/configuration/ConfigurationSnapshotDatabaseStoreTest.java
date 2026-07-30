@@ -44,7 +44,7 @@ class ConfigurationSnapshotDatabaseStoreTest
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
 
         AliasListDefinition definition =
-            new AliasListDefinition("County P25", "County System", AliasListFamily.P25);
+            new AliasListDefinition("County P25", AliasListFamily.P25);
         Alias alias = new Alias("Dispatch");
         alias.setAliasListDefinition(definition);
         alias.setMatchIdentifier(new Talkgroup(Protocol.APCO25, 1001));

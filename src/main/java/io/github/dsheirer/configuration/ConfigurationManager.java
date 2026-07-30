@@ -473,8 +473,6 @@ public class ConfigurationManager implements Listener<ChannelEvent>
                 definitionsByName.get(aliasListName.trim().toLowerCase(Locale.US));
 
             if(definition == null || !aliasListName.equals(definition.getName()) ||
-                channel.getSystem() == null || definition.getSystemName() == null ||
-                !channel.getSystem().trim().equalsIgnoreCase(definition.getSystemName().trim()) ||
                 channel.getDecodeConfiguration() == null ||
                 !AliasMatchRegistry.isChannelCompatible(definition,
                     channel.getDecodeConfiguration().getDecoderType()))

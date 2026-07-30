@@ -91,8 +91,7 @@ public final class AliasMatchRegistry
      */
     public static boolean isChannelCompatible(AliasListDefinition definition, DecoderType primaryDecoder)
     {
-        return definition != null && definition.getSystemName() != null &&
-            !definition.getSystemName().isBlank() && familyFor(primaryDecoder) == definition.getFamily();
+        return definition != null && familyFor(primaryDecoder) == definition.getFamily();
     }
 
     private static Protocol protocol(AliasID identifier)

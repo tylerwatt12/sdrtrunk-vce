@@ -410,9 +410,9 @@ public class SystemTalkgroupSelectionEditor extends GridPane
         AliasListDefinition definition = getAliasListDefinition(
             getAliasListNameComboBox().getSelectionModel().getSelectedItem());
 
-        if(!isCurrentSystemSupported() || !isCurrentSystemCompatible(definition))
+        if(!isCurrentSystemSupported() || !isCurrentProtocolCompatible(definition))
         {
-            throw new IllegalStateException("A compatible, system-owned alias list is required for bulk import");
+            throw new IllegalStateException("A protocol-compatible alias list is required for bulk import");
         }
 
         List<Alias> createdAliases = new ArrayList<>();
@@ -575,7 +575,7 @@ public class SystemTalkgroupSelectionEditor extends GridPane
                 return false;
             }
 
-            return isCurrentSystemCompatible(getAliasListDefinition(name));
+            return isCurrentProtocolCompatible(getAliasListDefinition(name));
         });
 
         if(!mCompatibleAliasLists.contains(
@@ -599,7 +599,7 @@ public class SystemTalkgroupSelectionEditor extends GridPane
             mAliasListNameComboBox != null ?
                 mAliasListNameComboBox.getSelectionModel().getSelectedItem() : null);
         mImportAllTalkgroupsButton.setDisable(!isCurrentSystemSupported() ||
-            !isCurrentSystemCompatible(definition));
+            !isCurrentProtocolCompatible(definition));
     }
 
     private AliasListDefinition getAliasListDefinition(String name)
@@ -607,10 +607,9 @@ public class SystemTalkgroupSelectionEditor extends GridPane
         return name == null ? null : mConfigurationManager.getAliasModel().getAliasListDefinition(name);
     }
 
-    private boolean isCurrentSystemCompatible(AliasListDefinition definition)
+    private boolean isCurrentProtocolCompatible(AliasListDefinition definition)
     {
         return isRadioReferenceListCompatible(definition,
-            mCurrentSystem != null ? mCurrentSystem.getName() : null,
             mCurrentSystem != null && mRadioReferenceDecoder != null ?
                 mRadioReferenceDecoder.getDecoderType(mCurrentSystem) : null);
     }
@@ -625,12 +624,9 @@ public class SystemTalkgroupSelectionEditor extends GridPane
      * RadioReference creates channels without auxiliary decoders, so its alias-list capability profile must be the
      * primary decoder family.
      */
-    static boolean isRadioReferenceListCompatible(AliasListDefinition definition, String systemName,
-                                                  DecoderType decoderType)
+    static boolean isRadioReferenceListCompatible(AliasListDefinition definition, DecoderType decoderType)
     {
-        return definition != null && systemName != null && definition.getSystemName() != null &&
-            systemName.trim().equalsIgnoreCase(definition.getSystemName().trim()) &&
-            AliasMatchRegistry.isChannelCompatible(definition, decoderType);
+        return AliasMatchRegistry.isChannelCompatible(definition, decoderType);
     }
 
     /**

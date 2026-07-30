@@ -24,7 +24,6 @@ import io.github.dsheirer.alias.AliasFactory;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.alias.AliasMatchRegistry;
-import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.gui.control.MaxLengthUnaryOperator;
 import io.github.dsheirer.gui.configuration.Editor;
 import io.github.dsheirer.gui.configuration.IAliasListRefreshListener;
@@ -32,11 +31,7 @@ import io.github.dsheirer.icon.Icon;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.preference.UserPreferences;
 import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
-import java.util.Map;
 import java.util.Optional;
 import java.util.function.Predicate;
 import javafx.application.Platform;
@@ -335,29 +330,15 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
             mNewAliasListButton = new Button("New Alias List");
             mNewAliasListButton.setOnAction(event ->
             {
-                List<SystemCapability> capabilities = getConfiguredSystemCapabilities();
+                ChoiceDialog<AliasListFamily> familyDialog =
+                    new ChoiceDialog<>(AliasListFamily.P25, AliasListFamily.values());
+                familyDialog.setTitle("Create New Alias List");
+                familyDialog.setHeaderText("Select the protocol family for this alias list.");
+                familyDialog.setContentText("Protocol:");
+                familyDialog.initOwner(getNewAliasListButton().getScene().getWindow());
+                Optional<AliasListFamily> selectedFamily = familyDialog.showAndWait();
 
-                if(capabilities.isEmpty())
-                {
-                    Alert alert = new Alert(Alert.AlertType.INFORMATION,
-                        "Configure a supported channel with a system name before creating an alias list.",
-                        ButtonType.OK);
-                    alert.setTitle("Create New Alias List");
-                    alert.setHeaderText("No configured radio systems are available");
-                    alert.initOwner(getNewAliasListButton().getScene().getWindow());
-                    alert.showAndWait();
-                    return;
-                }
-
-                ChoiceDialog<SystemCapability> capabilityDialog =
-                    new ChoiceDialog<>(capabilities.getFirst(), capabilities);
-                capabilityDialog.setTitle("Create New Alias List");
-                capabilityDialog.setHeaderText("Select the configured radio system that will own this alias list.");
-                capabilityDialog.setContentText("System capability:");
-                capabilityDialog.initOwner(getNewAliasListButton().getScene().getWindow());
-                Optional<SystemCapability> selectedCapability = capabilityDialog.showAndWait();
-
-                if(selectedCapability.isEmpty())
+                if(selectedFamily.isEmpty())
                 {
                     return;
                 }
@@ -394,7 +375,7 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
                         }
 
                         mConfigurationManager.getAliasModel().addAliasListDefinition(
-                            selectedCapability.get().toDefinition(name));
+                            new AliasListDefinition(name, selectedFamily.get()));
                         getAliasListNameComboBox().getSelectionModel().select(name);
                     }
                 });
@@ -402,56 +383,6 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
         }
 
         return mNewAliasListButton;
-    }
-
-    private List<SystemCapability> getConfiguredSystemCapabilities()
-    {
-        Map<SystemCapabilityKey,SystemCapability> capabilities = new LinkedHashMap<>();
-
-        for(Channel channel: mConfigurationManager.getChannelModel().getChannels())
-        {
-            if(channel == null || channel.getDecodeConfiguration() == null || channel.getSystem() == null ||
-                channel.getSystem().isBlank())
-            {
-                continue;
-            }
-
-            AliasListFamily family =
-                AliasMatchRegistry.familyFor(channel.getDecodeConfiguration().getDecoderType());
-
-            if(family == null)
-            {
-                continue;
-            }
-
-            String systemName = channel.getSystem().trim();
-            SystemCapabilityKey key =
-                new SystemCapabilityKey(systemName.toLowerCase(Locale.ROOT), family);
-            capabilities.putIfAbsent(key, new SystemCapability(systemName, family));
-        }
-
-        return capabilities.values().stream()
-            .sorted(Comparator.comparing(SystemCapability::systemName, String.CASE_INSENSITIVE_ORDER)
-                .thenComparing(capability -> capability.family().toString()))
-            .toList();
-    }
-
-    private record SystemCapabilityKey(String systemName, AliasListFamily family)
-    {
-    }
-
-    private record SystemCapability(String systemName, AliasListFamily family)
-    {
-        private AliasListDefinition toDefinition(String name)
-        {
-            return new AliasListDefinition(name, systemName, family);
-        }
-
-        @Override
-        public String toString()
-        {
-            return systemName + " — " + family;
-        }
     }
 
     private Button getDeleteAliasListButton() {

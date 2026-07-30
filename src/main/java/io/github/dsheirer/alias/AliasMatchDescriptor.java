@@ -31,8 +31,7 @@ public record AliasMatchDescriptor(String label, AliasIDType type, Set<AliasList
 
     public boolean supports(AliasListDefinition definition)
     {
-        return definition != null && definition.getSystemName() != null && !definition.getSystemName().isBlank() &&
-            families.contains(definition.getFamily());
+        return definition != null && families.contains(definition.getFamily());
     }
 
     public boolean matches(AliasID identifier)

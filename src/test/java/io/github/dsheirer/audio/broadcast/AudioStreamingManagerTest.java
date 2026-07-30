@@ -356,7 +356,7 @@ public class AudioStreamingManagerTest
 
     private static AliasList p25AliasList(String name)
     {
-        return new AliasList(new AliasListDefinition(name, "Test System", AliasListFamily.P25));
+        return new AliasList(new AliasListDefinition(name, AliasListFamily.P25));
     }
 
     /**

@@ -269,9 +269,9 @@ class AliasListMutationTest
     {
         AliasModel model = new AliasModel();
         AliasListDefinition firstDefinition =
-            new AliasListDefinition("first", "System", AliasListFamily.P25);
+            new AliasListDefinition("first", AliasListFamily.P25);
         AliasListDefinition secondDefinition =
-            new AliasListDefinition("second", "System", AliasListFamily.P25);
+            new AliasListDefinition("second", AliasListFamily.P25);
         model.setAliasListDefinitions(List.of(firstDefinition, secondDefinition));
         AliasList firstList = model.getAliasList("first");
         AliasList secondList = model.getAliasList("second");
@@ -300,12 +300,12 @@ class AliasListMutationTest
 
     private static AliasList p25AliasList()
     {
-        return new AliasList(new AliasListDefinition("test", "test", AliasListFamily.P25));
+        return new AliasList(new AliasListDefinition("test", AliasListFamily.P25));
     }
 
     private static AliasList nbfmAliasList()
     {
-        return new AliasList(new AliasListDefinition("test", "test", AliasListFamily.NBFM));
+        return new AliasList(new AliasListDefinition("test", AliasListFamily.NBFM));
     }
 
     private static Alias only(List<Alias> aliases)

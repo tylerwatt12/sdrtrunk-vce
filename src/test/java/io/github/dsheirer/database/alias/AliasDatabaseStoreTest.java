@@ -51,7 +51,7 @@ class AliasDatabaseStoreTest
     {
         Path database = database("round-trip.sqlite");
         AliasDatabaseStore store = new AliasDatabaseStore(database);
-        AliasListDefinition definition = definition("Lake County", "Lake County P25", AliasListFamily.P25);
+        AliasListDefinition definition = definition("Lake County", AliasListFamily.P25);
         Alias alias = alias("County Fire Dispatch", definition, 1001);
         alias.setDescription("Countywide fire dispatch");
         alias.setGroup("Fire");
@@ -70,7 +70,7 @@ class AliasDatabaseStoreTest
 
         List<AliasListDefinition> definitions = store.loadAliasListDefinitions();
         Alias loaded = store.loadAliases(definitions).getFirst();
-        assertEquals("Lake County P25", definitions.getFirst().getSystemName());
+        assertEquals("Lake County", definitions.getFirst().getName());
         assertEquals(AliasListFamily.P25, definitions.getFirst().getFamily());
         assertEquals(alias.getId(), loaded.getId());
         assertEquals(definitions.getFirst().getId(), loaded.getAliasListId());
@@ -107,6 +107,8 @@ class AliasDatabaseStoreTest
         try(Connection connection = SdrTrunkDatabase.open(database))
         {
             Set<String> aliasListColumns = columns(connection, "alias_list");
+            assertEquals(Set.of("id", "name", "family"), aliasListColumns);
+            assertFalse(aliasListColumns.contains("system_name"));
             assertFalse(aliasListColumns.contains("assignable"));
             assertFalse(aliasListColumns.contains("needs_review"));
             assertFalse(aliasListColumns.contains("aux_decoder_types"));
@@ -129,7 +131,7 @@ class AliasDatabaseStoreTest
     void preservesStableIdsAcrossCompleteSnapshotReplacement() throws Exception
     {
         AliasDatabaseStore store = new AliasDatabaseStore(database("stable-ids.sqlite"));
-        AliasListDefinition definition = definition("County", "County System", AliasListFamily.P25);
+        AliasListDefinition definition = definition("County", AliasListFamily.P25);
         Alias first = alias("Dispatch", definition, 100);
         Alias second = alias("Operations", definition, 200);
         replace(store, List.of(first, second), List.of(definition));
@@ -150,10 +152,10 @@ class AliasDatabaseStoreTest
     }
 
     @Test
-    void persistsEmptySystemOwnedList() throws Exception
+    void persistsEmptyProtocolOwnedList() throws Exception
     {
         AliasDatabaseStore store = new AliasDatabaseStore(database("empty-list.sqlite"));
-        AliasListDefinition definition = definition("Empty P25", "Empty System", AliasListFamily.P25);
+        AliasListDefinition definition = definition("Empty P25", AliasListFamily.P25);
 
         replace(store, List.of(), List.of(definition));
 
@@ -165,7 +167,7 @@ class AliasDatabaseStoreTest
     void rejectsAnythingOtherThanOneOperationalMatcher() throws Exception
     {
         AliasDatabaseStore store = new AliasDatabaseStore(database("strict-runtime.sqlite"));
-        AliasListDefinition definition = definition("County P25", "County", AliasListFamily.P25);
+        AliasListDefinition definition = definition("County P25", AliasListFamily.P25);
 
         Alias missing = new Alias("Missing");
         missing.setAliasListDefinition(definition);
@@ -186,18 +188,13 @@ class AliasDatabaseStoreTest
     }
 
     @Test
-    void rejectsUnownedOrUnclassifiedLists() throws Exception
+    void rejectsUnclassifiedLists() throws Exception
     {
         AliasDatabaseStore store = new AliasDatabaseStore(database("invalid-list.sqlite"));
-        AliasListDefinition unowned = definition("Unowned", null, AliasListFamily.P25);
-        SQLException unownedFailure =
-            assertThrows(SQLException.class, () -> replace(store, List.of(), List.of(unowned)));
-        assertTrue(unownedFailure.getMessage().contains("owned by a system"));
-
-        AliasListDefinition unclassified = definition("Unclassified", "County", null);
+        AliasListDefinition unclassified = definition("Unclassified", null);
         SQLException familyFailure =
             assertThrows(SQLException.class, () -> replace(store, List.of(), List.of(unclassified)));
-        assertTrue(familyFailure.getMessage().contains("active radio-system family"));
+        assertTrue(familyFailure.getMessage().contains("protocol family"));
     }
 
     @Test
@@ -279,7 +276,7 @@ class AliasDatabaseStoreTest
     private AliasDatabaseStore populatedStore(String name) throws Exception
     {
         AliasDatabaseStore store = new AliasDatabaseStore(database(name));
-        AliasListDefinition definition = definition("County P25", "County", AliasListFamily.P25);
+        AliasListDefinition definition = definition("County P25", AliasListFamily.P25);
         Alias alias = alias("Dispatch", definition, 100);
         replace(store, List.of(alias), List.of(definition));
         return store;
@@ -299,9 +296,9 @@ class AliasDatabaseStoreTest
         return store.loadAliases(store.loadAliasListDefinitions());
     }
 
-    private static AliasListDefinition definition(String name, String system, AliasListFamily family)
+    private static AliasListDefinition definition(String name, AliasListFamily family)
     {
-        return new AliasListDefinition(name, system, family);
+        return new AliasListDefinition(name, family);
     }
 
     private static Alias alias(String name, AliasListDefinition definition, int talkgroup)

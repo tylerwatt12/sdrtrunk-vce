@@ -20,12 +20,14 @@ import io.github.dsheirer.configuration.ConfigurationState;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.module.decode.DecoderType;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 /**
- * Converts legacy name-only alias lists into system-owned list definitions.
+ * Converts legacy name-only alias lists into protocol-owned list definitions.
  *
  * <p>Only complete, operational rows cross this import boundary. Everything else is omitted instead of creating
  * compatibility or review state in the current schema.</p>
@@ -39,7 +41,7 @@ public final class AliasListDefinitionResolver
     }
 
     /**
-     * Normalizes legacy list ownership in-place before the state is written to the current alias schema.
+     * Normalizes legacy list protocol families in-place before the state is written to the current alias schema.
      */
     public static void normalizeLegacyState(ConfigurationState state)
     {
@@ -75,17 +77,19 @@ public final class AliasListDefinitionResolver
                 definitionsByLegacyName.put(legacyName, definition);
                 channel.setAliasListName(definition.getName());
             }
-            else if(sameOwner(definition, proposed))
+            else if(sameFamily(definition, proposed))
             {
                 channel.setAliasListName(definition.getName());
             }
             else
             {
-                //A current list has one owner. Keep the first owner and leave ambiguous legacy data in the source
-                //backup instead of manufacturing duplicate lists and aliases.
+                //A current list has one protocol family. Keep the first family and leave ambiguous legacy data in the
+                //source backup instead of manufacturing duplicate lists and aliases.
                 channel.setAliasListName(null);
             }
         }
+
+        inferUnassignedListFamilies(sourceAliases, definitionsByLegacyName);
 
         List<AliasListDefinition> definitions = new ArrayList<>(definitionsByLegacyName.values());
         List<Alias> importedAliases = new ArrayList<>();
@@ -112,25 +116,88 @@ public final class AliasListDefinitionResolver
         state.setAliasListDefinitions(definitions);
     }
 
+    /**
+     * Infers a family for an unassigned legacy list only when all usable matchers agree on exactly one family.
+     * Protocol-specific matchers can narrow generic matchers such as tones and status values; mixed or still-ambiguous
+     * lists remain omitted.
+     */
+    private static void inferUnassignedListFamilies(List<Alias> aliases,
+                                                    Map<String,AliasListDefinition> definitionsByLegacyName)
+    {
+        Map<String,EnumSet<AliasListFamily>> candidatesByLegacyName = new LinkedHashMap<>();
+        Map<String,String> displayNames = new LinkedHashMap<>();
+
+        for(Alias alias: aliases)
+        {
+            String listName = alias != null ? alias.getAliasListName() : null;
+
+            if(isNoList(listName))
+            {
+                continue;
+            }
+
+            String legacyName = normalize(listName);
+
+            if(definitionsByLegacyName.containsKey(legacyName))
+            {
+                continue;
+            }
+
+            EnumSet<AliasListFamily> matcherFamilies = supportedFamilies(alias.getMatchIdentifier());
+
+            if(matcherFamilies.isEmpty())
+            {
+                continue;
+            }
+
+            displayNames.putIfAbsent(legacyName, displayName(listName));
+            EnumSet<AliasListFamily> candidates = candidatesByLegacyName.computeIfAbsent(legacyName,
+                _ -> EnumSet.allOf(AliasListFamily.class));
+            candidates.retainAll(matcherFamilies);
+        }
+
+        for(Map.Entry<String,EnumSet<AliasListFamily>> entry: candidatesByLegacyName.entrySet())
+        {
+            if(entry.getValue().size() == 1)
+            {
+                definitionsByLegacyName.put(entry.getKey(),
+                    new AliasListDefinition(displayNames.get(entry.getKey()), entry.getValue().iterator().next()));
+            }
+        }
+    }
+
+    private static EnumSet<AliasListFamily> supportedFamilies(AliasID matcher)
+    {
+        EnumSet<AliasListFamily> families = EnumSet.noneOf(AliasListFamily.class);
+
+        for(AliasListFamily family: AliasListFamily.values())
+        {
+            if(AliasMatchRegistry.isOperational(new AliasListDefinition("Legacy", family), matcher))
+            {
+                families.add(family);
+            }
+        }
+
+        return families;
+    }
+
     private static AliasListDefinition definition(Channel channel)
     {
         DecoderType primary = channel.getDecodeConfiguration() != null ?
             channel.getDecodeConfiguration().getDecoderType() : null;
         AliasListFamily family = AliasMatchRegistry.familyFor(primary);
-        String systemName = trimToNull(channel.getSystem());
 
-        if(systemName == null || family == null)
+        if(family == null)
         {
             return null;
         }
 
-        return new AliasListDefinition(displayName(channel.getAliasListName()), systemName, family);
+        return new AliasListDefinition(displayName(channel.getAliasListName()), family);
     }
 
-    private static boolean sameOwner(AliasListDefinition first, AliasListDefinition second)
+    private static boolean sameFamily(AliasListDefinition first, AliasListDefinition second)
     {
-        return first.getFamily() == second.getFamily() &&
-            first.getSystemName().equalsIgnoreCase(second.getSystemName());
+        return first.getFamily() == second.getFamily();
     }
 
     private static boolean isNoList(String value)

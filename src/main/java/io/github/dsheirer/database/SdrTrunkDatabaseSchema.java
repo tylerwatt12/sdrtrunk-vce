@@ -30,7 +30,6 @@ public final class SdrTrunkDatabaseSchema
         CREATE TABLE IF NOT EXISTS alias_list (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL COLLATE NOCASE,
-            system_name TEXT NOT NULL CHECK(length(trim(system_name)) > 0),
             family TEXT NOT NULL CHECK(family IN (
                 'P25', 'DMR', 'NXDN', 'NBFM'
             )),
@@ -176,7 +175,7 @@ public final class SdrTrunkDatabaseSchema
     {
         return List.of(
             new SqliteSchemaValidator.Table("database_metadata", "key", "value", "updated_at_ms"),
-            new SqliteSchemaValidator.Table("alias_list", "id", "name", "system_name", "family"),
+            new SqliteSchemaValidator.Table("alias_list", "id", "name", "family"),
             new SqliteSchemaValidator.Table("alias", "id", "alias_list_id", "name", "description",
                 "group_name", "color", "icon_name", "stream_as_talkgroup", "record_enabled",
                 "priority", "matcher_type", "protocol", "value", "min_value",

@@ -62,7 +62,6 @@ class LegacyXmlConfigurationImporterTest
         List<Alias> aliases = aliasStore.loadAliases(definitions);
         assertEquals(1, definitions.size());
         assertEquals("County", definitions.get(0).getName());
-        assertEquals("County", definitions.get(0).getSystemName());
         assertEquals(AliasListFamily.P25, definitions.get(0).getFamily());
         assertEquals(2, aliases.size());
         assertTrue(aliases.stream().allMatch(alias -> alias.getId() > 0 && alias.getAliasListId() > 0));
@@ -245,7 +244,7 @@ class LegacyXmlConfigurationImporterTest
     }
 
     @Test
-    void reportsAndOmitsMalformedOrUnownedLegacyMatchers() throws Exception
+    void reportsMalformedMatchersAndInfersUnassignedListFamily() throws Exception
     {
         Path xml = mTemporaryFolder.resolve("strict-alias-import.xml");
         Files.writeString(xml, """
@@ -279,8 +278,13 @@ class LegacyXmlConfigurationImporterTest
         LegacyXmlConfigurationImporter.importPlaylist(xml, database);
         AliasDatabaseStore aliasStore = new AliasDatabaseStore(database);
         var definitions = aliasStore.loadAliasListDefinitions();
-        assertEquals(1, definitions.size());
-        assertTrue(aliasStore.loadAliases(definitions).isEmpty());
+        assertEquals(2, definitions.size());
+        var aliases = aliasStore.loadAliases(definitions);
+        assertEquals(1, aliases.size());
+        assertEquals("Orphan", aliases.getFirst().getName());
+        assertEquals(AliasListFamily.P25,
+            definitions.stream().filter(definition -> definition.getName().equals("Old List"))
+                .findFirst().orElseThrow().getFamily());
     }
 
     @Test

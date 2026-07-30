@@ -76,7 +76,6 @@ class LegacyXmlConfigurationMergerTest
         AliasListDefinition importedDefinition = merged.getAliasListDefinitions().get(1);
         assertNotSame(imported.getAliasListDefinitions().getFirst(), importedDefinition);
         assertEquals("county (Imported)", importedDefinition.getName());
-        assertEquals("System", importedDefinition.getSystemName());
         assertEquals(AliasListFamily.P25, importedDefinition.getFamily());
         assertEquals(AliasListDefinition.UNASSIGNED_ID, importedDefinition.getId());
 
@@ -180,7 +179,7 @@ class LegacyXmlConfigurationMergerTest
     {
         ConfigurationState state = new ConfigurationState();
         AliasListDefinition definition =
-            new AliasListDefinition(aliasListName, "System", AliasListFamily.P25);
+            new AliasListDefinition(aliasListName, AliasListFamily.P25);
         Alias alias = new Alias("Talkgroup " + talkgroup);
         alias.setAliasListDefinition(definition);
         alias.setMatchIdentifier(new Talkgroup(Protocol.APCO25, talkgroup));

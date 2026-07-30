@@ -166,8 +166,8 @@ class ApplicationMigrationServiceTest
                 """))
         {
             listStatement.executeUpdate("""
-                INSERT INTO alias_list(id, name, system_name, family)
-                VALUES (1, 'Test', 'Test', 'P25')
+                INSERT INTO alias_list(id, name, family)
+                VALUES (1, 'Test', 'P25')
                 """);
             statement.setString(1, name);
             statement.executeUpdate();

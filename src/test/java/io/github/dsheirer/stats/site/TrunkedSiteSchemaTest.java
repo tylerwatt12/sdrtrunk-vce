@@ -461,8 +461,8 @@ class TrunkedSiteSchemaTest
     private static void insertAdministratorAlias(Statement statement) throws Exception
     {
         statement.executeUpdate("""
-            INSERT INTO alias_list(id, name, system_name, family)
-            VALUES (1, 'Administrator', 'Administrator', 'P25')
+            INSERT INTO alias_list(id, name, family)
+            VALUES (1, 'Administrator', 'P25')
             """);
         statement.executeUpdate("""
             INSERT INTO alias(alias_list_id, name, matcher_type, protocol, value)

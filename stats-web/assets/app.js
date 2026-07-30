@@ -1958,7 +1958,7 @@ function updateSignalCurrentTile(tile, site) {
   const labels = node('div', 'signal-current-labels');
   labels.append(siteLink(site));
   const system = node('div', 'signal-current-system');
-  system.append(systemValue(site));
+  system.append(dashboardReceiverSystemDetails(site));
   labels.append(system);
   header.append(labels, badge(state.label, `signal-state ${state.className}`));
   const power = node('div', 'signal-current-power');
@@ -2632,23 +2632,49 @@ const scopedSiteColumns = siteColumns.filter((column) => column.id !== 'system')
 
 function dashboardReceiverSystem(row) {
   if (dashboardChannelKind(row) === 'CONVENTIONAL') return '';
-  if (isP25(row)) {
-    const system = systemLabel(row);
-    const rfss = hex(row.rfss, 2);
-    const site = hex(row.site, 2);
-    const siteIdentity = rfss && site ? `${rfss}-${site}` : rfss || site;
-    return [system, siteIdentity].filter(Boolean).join(' · ');
-  }
-  return [trunkedSystemLabel(row), trunkedIdentity(row)].filter(Boolean).join(' · ');
+  return isP25(row) ? systemLabel(row) : trunkedSystemLabel(row);
+}
+
+function dashboardReceiverRfss(row) {
+  return isP25(row) ? hex(row.rfss, 2) : '';
+}
+
+function dashboardReceiverSiteId(row) {
+  return isP25(row) ? hex(row.site, 2) : identifierNumber(row.site_id);
+}
+
+function dashboardReceiverNac(row) {
+  return isP25(row) ? hex(row.nac, 3) : '';
+}
+
+function dashboardReceiverIdentifiers(row) {
+  const values = [];
+  const rfss = dashboardReceiverRfss(row);
+  const site = dashboardReceiverSiteId(row);
+  const nac = dashboardReceiverNac(row);
+  if (rfss) values.push(`RFSS ${rfss}`);
+  if (site) values.push(`Site ID ${site}`);
+  if (nac) values.push(`NAC ${nac}`);
+  return values.join(' · ');
+}
+
+function dashboardReceiverSystemDetails(row) {
+  return [dashboardReceiverSystem(row), dashboardReceiverIdentifiers(row)].filter(Boolean).join(' · ');
 }
 
 const dashboardHealthColumns = [
   { id: 'name', label: 'Site / Channel', render: callSourceLink, className: 'alias-cell',
     sortValue: callSourceLabel },
-  { id: 'system', label: 'System / Site', render: dashboardReceiverSystem,
+  { id: 'system', label: 'System', render: dashboardReceiverSystem,
     sortValue: dashboardReceiverSystem },
   { id: 'mode', label: 'Mode', fullLabel: 'Protocol and Topology',
     render: dashboardMode, sortValue: dashboardModeLabel },
+  { id: 'rfss', label: 'RFSS', render: dashboardReceiverRfss, className: 'numeric',
+    sortValue: (row) => Number(row.rfss ?? -1) },
+  { id: 'site-id', label: 'Site ID', render: dashboardReceiverSiteId, className: 'numeric',
+    sortValue: (row) => Number((isP25(row) ? row.site : row.site_id) ?? -1) },
+  { id: 'nac', label: 'NAC', render: dashboardReceiverNac, className: 'numeric',
+    sortValue: (row) => Number(row.nac ?? -1) },
   { id: 'frequency', label: 'MHz', fullLabel: 'Current or Primary Frequency MHz',
     render: (row) => frequency(row.current_control_hz || row.primary_frequency_hz),
     className: 'numeric', sortValue: (row) =>
@@ -2684,6 +2710,8 @@ function dashboardIdentity(row) {
   const identity = node('span', 'dashboard-identity');
   const id = dashboardIdentityId(row);
   const kind = String(row.identity_kind || '').trim();
+  const configuredAlias = String(row.alias_name || '').trim();
+  const talkerAlias = String(row.last_talker_alias || '').trim();
   const hasId = id !== '—';
   const compactKind = ({
     Talkgroup: 'TG',
@@ -2692,12 +2720,17 @@ function dashboardIdentity(row) {
     'Channel / Unknown': 'Channel'
   })[kind] || kind;
   const compactIdentity = hasId ? `${compactKind || 'ID'} ${id}` : kind;
-  const primaryLabel = row.alias_name || compactIdentity || 'Unknown identity';
+  const primaryLabel = configuredAlias || talkerAlias || compactIdentity || 'Unknown identity';
   const primary = node('span', 'dashboard-identity-primary');
   primary.append(valueNode(dashboardIdentityLink(row, primaryLabel)));
   identity.append(primary);
-  const details = row.alias_name && hasId ? compactIdentity : '';
-  if (details) identity.append(node('small', 'dashboard-identity-context', details));
+  const details = [];
+  if (configuredAlias && talkerAlias &&
+      configuredAlias.toLocaleLowerCase() !== talkerAlias.toLocaleLowerCase()) {
+    details.push(`OTA ${talkerAlias}`);
+  }
+  if ((configuredAlias || talkerAlias) && hasId) details.push(compactIdentity);
+  if (details.length) identity.append(node('small', 'dashboard-identity-context', details.join(' · ')));
   return identity;
 }
 
@@ -2718,7 +2751,8 @@ const dashboardCallSourceColumns = [
 function dashboardIdentityColumns(identityLabel) {
   return [
     { id: 'identity', label: identityLabel, render: dashboardIdentity, className: 'alias-cell',
-      sortValue: (row) => `${row.alias_name || ''}\u0000${dashboardIdentityId(row)}` },
+      sortValue: (row) =>
+        `${row.alias_name || row.last_talker_alias || ''}\u0000${dashboardIdentityId(row)}` },
     ...dashboardCallSourceColumns
   ];
 }

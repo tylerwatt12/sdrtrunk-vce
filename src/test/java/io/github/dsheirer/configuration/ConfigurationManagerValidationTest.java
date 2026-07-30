@@ -61,19 +61,19 @@ class ConfigurationManagerValidationTest
     }
 
     @Test
-    void startupValidationRejectsCrossSystemAndCrossFamilyAliasListAssignments()
+    void startupValidationAcceptsSameFamilyAcrossSystemsAndRejectsCrossFamilyAssignment()
     {
         AliasListDefinition definition =
-            new AliasListDefinition("County", "System A", AliasListFamily.P25);
-        Channel wrongSystem = new Channel("Wrong System");
-        wrongSystem.setSystem("System B");
-        wrongSystem.setAliasListName("County");
-        wrongSystem.setDecodeConfiguration(new DecodeConfigP25Phase1());
-        ConfigurationState wrongSystemState = new ConfigurationState();
-        wrongSystemState.setChannels(List.of(wrongSystem));
+            new AliasListDefinition("County", AliasListFamily.P25);
+        Channel differentSystem = new Channel("Different System");
+        differentSystem.setSystem("System B");
+        differentSystem.setAliasListName("County");
+        differentSystem.setDecodeConfiguration(new DecodeConfigP25Phase1());
+        ConfigurationState differentSystemState = new ConfigurationState();
+        differentSystemState.setChannels(List.of(differentSystem));
 
-        assertThrows(RuntimeException.class, () ->
-            ConfigurationManager.validateAliasListAssignments(wrongSystemState, List.of(definition)));
+        assertDoesNotThrow(() ->
+            ConfigurationManager.validateAliasListAssignments(differentSystemState, List.of(definition)));
 
         Channel wrongFamily = new Channel("Wrong Family");
         wrongFamily.setSystem("System A");
@@ -87,10 +87,10 @@ class ConfigurationManagerValidationTest
     }
 
     @Test
-    void startupValidationAcceptsExactSystemAndFamilyAliasListAssignment()
+    void startupValidationAcceptsMatchingFamilyAliasListAssignment()
     {
         AliasListDefinition definition =
-            new AliasListDefinition("County", "System A", AliasListFamily.P25);
+            new AliasListDefinition("County", AliasListFamily.P25);
         Channel channel = new Channel("Control");
         channel.setSystem("System A");
         channel.setAliasListName("County");
@@ -106,7 +106,7 @@ class ConfigurationManagerValidationTest
     void startupValidationRejectsNoncanonicalAliasListName()
     {
         AliasListDefinition definition =
-            new AliasListDefinition("County", "System A", AliasListFamily.P25);
+            new AliasListDefinition("County", AliasListFamily.P25);
         Channel channel = new Channel("Control");
         channel.setSystem("System A");
         channel.setAliasListName("county");

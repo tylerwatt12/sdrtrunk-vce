@@ -330,10 +330,10 @@ public class TalkgroupEditor extends GridPane
                     AliasListDefinition definition =
                         mConfigurationManager.getAliasModel().getAliasListDefinition(mAliasListName);
 
-                    if(!isCurrentSystemCompatible(definition))
+                    if(!isCurrentProtocolCompatible(definition))
                     {
                         Alert alert = new Alert(Alert.AlertType.INFORMATION,
-                            "Please select a compatible, system-owned Alias List.", ButtonType.OK);
+                            "Please select an Alias List with a compatible protocol.", ButtonType.OK);
                         alert.setTitle("Alias List Required");
                         alert.setHeaderText("A compatible alias list is required to create aliases");
                         alert.initOwner(getCreateAliasButton().getScene().getWindow());
@@ -356,10 +356,9 @@ public class TalkgroupEditor extends GridPane
         return mCreateAliasButton;
     }
 
-    private boolean isCurrentSystemCompatible(AliasListDefinition definition)
+    private boolean isCurrentProtocolCompatible(AliasListDefinition definition)
     {
         return SystemTalkgroupSelectionEditor.isRadioReferenceListCompatible(definition,
-            mSystem != null ? mSystem.getName() : null,
             mSystem != null && mRadioReferenceDecoder != null ?
                 mRadioReferenceDecoder.getDecoderType(mSystem) : null);
     }

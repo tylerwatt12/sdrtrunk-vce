@@ -166,7 +166,7 @@ class RadioReferenceDecoderSelectionTest
         RadioReferenceDecoder decoder = new RadioReferenceDecoder(null, Map.of(type.getTypeId(), type),
             Map.of(flavor.getFlavorId(), flavor), Map.of(voice.getVoiceId(), voice), Map.of());
         AliasListDefinition definition =
-            new AliasListDefinition("Ohio MARCS-IP", "Ohio MARCS-IP", AliasListFamily.P25);
+            new AliasListDefinition("Ohio MARCS-IP", AliasListFamily.P25);
         definition.setId(42);
         Alias alias = decoder.createAlias(talkgroup, system, definition, "Law Dispatch");
 

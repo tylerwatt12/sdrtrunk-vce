@@ -896,12 +896,9 @@ public class SiteEditor extends GridPane
             return;
         }
 
-        String systemName = currentSystemName();
         mCompatibleAliasLists.setPredicate(name -> {
             AliasListDefinition definition = getAliasListDefinition(name);
-            return name != null && definition != null && systemName != null &&
-                definition.getSystemName() != null &&
-                systemName.trim().equalsIgnoreCase(definition.getSystemName().trim()) &&
+            return name != null && definition != null &&
                 AliasMatchRegistry.isChannelCompatible(definition,
                     mRadioReferenceDecoder.getDecoderType(mCurrentSystem));
         });

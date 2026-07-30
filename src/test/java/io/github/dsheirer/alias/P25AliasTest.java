@@ -283,6 +283,6 @@ public class P25AliasTest
     private static AliasList p25AliasList()
     {
         return new AliasList(
-            new AliasListDefinition("Test Alias List", "Test System", AliasListFamily.P25));
+            new AliasListDefinition("Test Alias List", AliasListFamily.P25));
     }
 }

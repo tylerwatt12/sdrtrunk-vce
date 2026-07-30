@@ -182,7 +182,7 @@ class LegacyPlaylistImportServiceTest
     {
         ConfigurationState state = new ConfigurationState();
         AliasListDefinition definition =
-            new AliasListDefinition("County", "County", AliasListFamily.DMR);
+            new AliasListDefinition("County", AliasListFamily.DMR);
         Alias alias = new Alias("Existing Dispatch");
         alias.setAliasListDefinition(definition);
         alias.setMatchIdentifier(new Talkgroup(Protocol.DMR, 100));

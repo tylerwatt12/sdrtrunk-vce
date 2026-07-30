@@ -29,16 +29,16 @@ import org.junit.jupiter.api.Test;
 class SystemTalkgroupSelectionEditorTest
 {
     @Test
-    void radioReferenceRequiresExactSystemAndFamily()
+    void radioReferenceRequiresMatchingProtocolFamily()
     {
-        AliasListDefinition p25 = new AliasListDefinition("County P25", "County", AliasListFamily.P25);
+        AliasListDefinition p25 = new AliasListDefinition("County P25", AliasListFamily.P25);
 
         assertTrue(SystemTalkgroupSelectionEditor.isRadioReferenceListCompatible(
-            p25, " county ", DecoderType.P25_PHASE1));
+            p25, DecoderType.P25_PHASE1));
+        assertTrue(SystemTalkgroupSelectionEditor.isRadioReferenceListCompatible(
+            p25, DecoderType.P25_PHASE2));
         assertFalse(SystemTalkgroupSelectionEditor.isRadioReferenceListCompatible(
-            p25, "Other", DecoderType.P25_PHASE1));
-        assertFalse(SystemTalkgroupSelectionEditor.isRadioReferenceListCompatible(
-            p25, "County", DecoderType.DMR));
+            p25, DecoderType.DMR));
     }
 
     @Test

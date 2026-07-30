@@ -11,7 +11,6 @@
 package io.github.dsheirer.alias;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -63,7 +62,7 @@ class AliasOneToOneTest
     @Test
     void activeModelRejectsMissingMatcher()
     {
-        AliasListDefinition definition = new AliasListDefinition("Metro", "Metro", AliasListFamily.P25);
+        AliasListDefinition definition = new AliasListDefinition("Metro", AliasListFamily.P25);
         Alias alias = new Alias("Missing");
         alias.setAliasListDefinition(definition);
         AliasModel model = new AliasModel();
@@ -84,7 +83,7 @@ class AliasOneToOneTest
         Talkgroup original = new Talkgroup(Protocol.APCO25, 100);
         alias.setMatchIdentifier(original);
         AliasList aliasList = new AliasList(
-            new AliasListDefinition("Metro", "Metro", AliasListFamily.P25));
+            new AliasListDefinition("Metro", AliasListFamily.P25));
         aliasList.addAlias(alias);
 
         assertSame(alias, aliasList.getAliases(APCO25Talkgroup.create(100)).getFirst());
@@ -112,15 +111,9 @@ class AliasOneToOneTest
     }
 
     @Test
-    void definitionBackedListsRejectIncompleteOrCrossFamilyMatchers()
+    void definitionBackedListsRejectCrossFamilyMatchers()
     {
-        AliasListDefinition incomplete = new AliasListDefinition("Incomplete", null, AliasListFamily.P25);
-        Alias incompleteAlias = new Alias("Incomplete Alias");
-        incompleteAlias.setMatchIdentifier(new Talkgroup(Protocol.APCO25, 100));
-        AliasList incompleteList = new AliasList(incomplete);
-        assertThrows(IllegalArgumentException.class, () -> incompleteList.addAlias(incompleteAlias));
-
-        AliasListDefinition p25 = new AliasListDefinition("P25", "Metro", AliasListFamily.P25);
+        AliasListDefinition p25 = new AliasListDefinition("P25", AliasListFamily.P25);
         Alias p25Alias = new Alias("Dispatch");
         p25Alias.setMatchIdentifier(new Talkgroup(Protocol.APCO25, 100));
         AliasList p25List = new AliasList(p25);
@@ -133,9 +126,9 @@ class AliasOneToOneTest
     }
 
     @Test
-    void runtimeChannelLookupRejectsAnotherSystemsList()
+    void runtimeChannelLookupAcceptsSameFamilyListAcrossSystems()
     {
-        AliasListDefinition definition = new AliasListDefinition("County", "System A", AliasListFamily.P25);
+        AliasListDefinition definition = new AliasListDefinition("County", AliasListFamily.P25);
         Alias alias = new Alias("Dispatch");
         alias.setAliasListDefinition(definition);
         alias.setMatchIdentifier(new Talkgroup(Protocol.APCO25, 100));
@@ -148,9 +141,9 @@ class AliasOneToOneTest
 
         assertSame(alias, model.getAliasListForChannel(correct)
             .getAliases(APCO25Talkgroup.create(100)).getFirst());
-        assertTrue(model.getAliasListForChannel(wrongSystem)
-            .getAliases(APCO25Talkgroup.create(100)).isEmpty());
-        assertFalse(model.isAliasListCompatible(wrongSystem));
+        assertSame(alias, model.getAliasListForChannel(wrongSystem)
+            .getAliases(APCO25Talkgroup.create(100)).getFirst());
+        assertTrue(model.isAliasListCompatible(wrongSystem));
     }
 
     private static Channel channel(String system, String aliasList)

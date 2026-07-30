@@ -134,7 +134,7 @@ public class RadioReferenceDecoder
      * @return alias
      */
     /**
-     * Creates an alias attached to the stable, system-owned alias-list definition.
+     * Creates an alias attached to the stable, protocol-owned alias-list definition.
      */
     public Alias createAlias(Talkgroup talkgroup, System system, AliasListDefinition aliasList, String group)
     {
