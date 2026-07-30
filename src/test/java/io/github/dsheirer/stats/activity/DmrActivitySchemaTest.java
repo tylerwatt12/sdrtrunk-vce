@@ -98,6 +98,50 @@ class DmrActivitySchemaTest
     }
 
     @Test
+    void optionallyStoresOneResolvedDetailedCallWithoutInflatingSummaries() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("detailed-call.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            Long activityId = P25ActivityLogSchema.recordDmrConventionalCall(connection,
+                groupCall(1_000, 2_000, "detailed", 461_125_000L, 1, 91, 101, true), true);
+
+            assertEquals(Long.valueOf(1L), activityId);
+            assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM p25_activity_event"));
+            assertEquals(1, scalar(connection,
+                "SELECT call_count FROM conventional_activity_summary"));
+            assertEquals(1, scalar(connection,
+                "SELECT call_count FROM dmr_conventional_talkgroup_summary"));
+            assertEquals(1, scalar(connection,
+                "SELECT call_count FROM dmr_conventional_radio_summary"));
+            assertEquals(2, scalar(connection,
+                "SELECT SUM(call_count) FROM call_identity_bucket"));
+
+            try(ResultSet resultSet = statement.executeQuery("""
+                SELECT channel_kind, protocol, action, event_type, source_radio_id, target_id, target_kind,
+                       frequency_hz, timeslot, encrypted
+                FROM p25_activity_event_resolved
+                """))
+            {
+                assertTrue(resultSet.next());
+                assertEquals("CONVENTIONAL_DMR", resultSet.getString("channel_kind"));
+                assertEquals("DMR", resultSet.getString("protocol"));
+                assertEquals("CALL", resultSet.getString("action"));
+                assertEquals("CALL_GROUP_ENCRYPTED", resultSet.getString("event_type"));
+                assertEquals(101, resultSet.getInt("source_radio_id"));
+                assertEquals(91, resultSet.getInt("target_id"));
+                assertEquals("TALKGROUP", resultSet.getString("target_kind"));
+                assertEquals(461_125_000L, resultSet.getLong("frequency_hz"));
+                assertEquals(1, resultSet.getInt("timeslot"));
+                assertEquals(1, resultSet.getInt("encrypted"));
+            }
+        }
+    }
+
+    @Test
     void guidUsesCanonicalReceiverContextIdentity() throws Exception
     {
         P25ActivityLogRecords.DmrConventionalCall call =

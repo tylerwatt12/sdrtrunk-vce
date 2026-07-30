@@ -612,7 +612,14 @@ class P25ActivityLogWriter implements AutoCloseable
                 }
                 else if(record instanceof P25ActivityLogRecords.DmrConventionalCall dmrCall)
                 {
-                    P25ActivityLogSchema.recordDmrConventionalCall(connection, dmrCall);
+                    Long activityId = P25ActivityLogSchema.recordDmrConventionalCall(connection, dmrCall,
+                        mDetailedEventHistoryEnabled);
+
+                    if(activityId != null)
+                    {
+                        committedActivityIds.add(activityId);
+                    }
+
                     writtenRecords++;
                 }
                 else if(record instanceof P25ActivityLogRecords.TrunkedSiteSnapshot trunkedSiteSnapshot)

@@ -141,6 +141,43 @@ class P25ActivityLogWriterTest
                 assertTrue(resultSet.next());
                 assertEquals(2, resultSet.getInt(1));
             }
+
+            assertCount(connection, "p25_activity_event", 0);
+        }
+    }
+
+    @Test
+    void reportsDetailedDmrConventionalActivityOnlyAfterCommit() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("dmr-conventional-detailed.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        AtomicReference<List<Long>> committed = new AtomicReference<>();
+        P25ActivityLogWriter writer = new P25ActivityLogWriter(database, 30, true, committed::set);
+        writer.start();
+        writer.enqueue(new P25ActivityLogRecords.DmrConventionalCall(
+            1_000L, 2_000L, "GUID:dmr-detailed", "dmr-detailed", "DMR Repeater",
+            "County DMR", 461_125_000L, 2, P25ActivityLogRecords.DmrTargetKind.GROUP, 91, 101, null, false));
+
+        long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(5);
+        while(committed.get() == null && System.currentTimeMillis() < deadline)
+        {
+            Thread.sleep(25);
+        }
+
+        writer.close();
+        assertEquals(List.of(1L), committed.get());
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            assertCount(connection, "p25_activity_event", 1);
+            assertEquals(1L, scalarLong(connection,
+                "SELECT call_count FROM conventional_activity_summary"));
+            assertEquals(1L, scalarLong(connection,
+                "SELECT call_count FROM dmr_conventional_talkgroup_summary"));
+            assertEquals("CONVENTIONAL_DMR", scalarString(connection,
+                "SELECT channel_kind FROM p25_activity_event_resolved"));
+            assertEquals("CALL", scalarString(connection,
+                "SELECT action FROM p25_activity_event_resolved"));
         }
     }
 
@@ -678,7 +715,7 @@ class P25ActivityLogWriterTest
                 "SELECT value FROM database_metadata WHERE key='p25_activity_schema_version'"))
             {
                 assertTrue(resultSet.next());
-                assertEquals("22", resultSet.getString(1));
+                assertEquals("23", resultSet.getString(1));
             }
 
             try(ResultSet resultSet = statement.executeQuery("""
@@ -801,14 +838,22 @@ class P25ActivityLogWriterTest
     }
 
     @Test
-    void explicitSchemaStepsCreateAndValidateForeignBandsAndQualityRetentionIndex() throws Exception
+    void explicitSchemaStepsCreateAndValidateForeignBandsQualityRetentionIndexAndResolvedView() throws Exception
     {
-        Path database = mTemporaryFolder.resolve("schema-v19-to-v22.sqlite");
+        Path database = mTemporaryFolder.resolve("schema-v19-to-v23.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
             Statement statement = connection.createStatement())
         {
+            String currentResolvedView = scalarString(connection, """
+                SELECT sql FROM sqlite_schema
+                WHERE type='view' AND name='p25_activity_event_resolved'
+                """);
+            String version22ResolvedView =
+                currentResolvedView.replace(" WHEN 3 THEN 'CONVENTIONAL_DMR'", "");
+            assertFalse(version22ResolvedView.contains("CONVENTIONAL_DMR"));
+
             statement.executeUpdate("DROP TABLE p25_foreign_system_band");
             statement.executeUpdate("DROP TABLE p25_foreign_system_band_summary");
             statement.executeUpdate("DROP INDEX idx_p25_control_quality_retention");
@@ -823,7 +868,13 @@ class P25ActivityLogWriterTest
             P25ActivityLogSchema.createControlChannelQualityRetentionIndex(statement);
             SdrTrunkDatabaseStartup.setMetadata(connection, "p25_activity_schema_version", "21");
             assertThrows(Exception.class, () -> P25ActivityLogSchema.validate(connection));
+            statement.executeUpdate("DROP VIEW p25_activity_event_resolved");
+            statement.executeUpdate(version22ResolvedView);
             SdrTrunkDatabaseStartup.setMetadata(connection, "p25_activity_schema_version", "22");
+            assertThrows(Exception.class, () -> P25ActivityLogSchema.validate(connection));
+            statement.executeUpdate("DROP VIEW p25_activity_event_resolved");
+            statement.executeUpdate(currentResolvedView);
+            SdrTrunkDatabaseStartup.setMetadata(connection, "p25_activity_schema_version", "23");
             P25ActivityLogSchema.validate(connection);
             statement.execute("COMMIT");
 

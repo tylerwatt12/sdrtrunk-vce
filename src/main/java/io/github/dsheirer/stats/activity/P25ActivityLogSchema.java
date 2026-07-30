@@ -42,7 +42,7 @@ import java.util.stream.Collectors;
  */
 public class P25ActivityLogSchema
 {
-    public static final int SCHEMA_VERSION = 22;
+    public static final int SCHEMA_VERSION = 23;
     private static final String SCHEMA_VERSION_KEY = "p25_activity_schema_version";
     public static final String CALL_OUTPUT_METRICS_STARTED_AT_KEY = "p25_call_output_metrics_started_at_ms";
     public static final String ALL_MODE_CALL_OUTPUT_METRICS_STARTED_AT_KEY =
@@ -675,15 +675,25 @@ public class P25ActivityLogSchema
     }
 
     /**
-     * Aggregates one exactly-once completed DMR conventional call into the shared conventional channel totals and
-     * the compact DMR identity summaries.
+     * Aggregates one exactly-once completed DMR conventional call without retaining optional detailed event history.
      */
-    static void recordDmrConventionalCall(Connection connection, P25ActivityLogRecords.DmrConventionalCall call)
+    static Long recordDmrConventionalCall(Connection connection, P25ActivityLogRecords.DmrConventionalCall call)
         throws SQLException
+    {
+        return recordDmrConventionalCall(connection, call, false);
+    }
+
+    /**
+     * Aggregates one exactly-once completed DMR conventional call into the shared conventional channel totals and
+     * compact DMR identity summaries, and optionally retains one detailed event row. The event row is inserted
+     * directly so the summaries are not counted a second time through {@link #recordActivity}.
+     */
+    static Long recordDmrConventionalCall(Connection connection, P25ActivityLogRecords.DmrConventionalCall call,
+                                          boolean detailedEventHistoryEnabled) throws SQLException
     {
         if(call == null)
         {
-            return;
+            return null;
         }
 
         DmrActivitySchema.validateCompletedCall(call);
@@ -709,6 +719,7 @@ public class P25ActivityLogSchema
         upsertConventionalSummary(connection, activity, contextId);
         upsertCallIdentityBuckets(connection, activity, contextId);
         DmrActivitySchema.recordCompletedCall(connection, contextId, call);
+        return detailedEventHistoryEnabled ? insertP25ActivityEvent(connection, activity, contextId) : null;
     }
 
     static void updateTalkerAlias(Connection connection, P25ActivityLogRecords.TalkerAliasUpdate update)
@@ -3623,7 +3634,8 @@ public class P25ActivityLogSchema
     private static String contextKindCase(String expression)
     {
         return "CASE " + expression + " WHEN " + CONTEXT_TRUNKED_SITE + " THEN 'TRUNKED_SITE' WHEN " +
-            CONTEXT_CONVENTIONAL_P25 + " THEN 'CONVENTIONAL_P25' WHEN " + CONTEXT_CONVENTIONAL_ANALOG +
+            CONTEXT_CONVENTIONAL_P25 + " THEN 'CONVENTIONAL_P25' WHEN " + CONTEXT_CONVENTIONAL_DMR +
+            " THEN 'CONVENTIONAL_DMR' WHEN " + CONTEXT_CONVENTIONAL_ANALOG +
             " THEN 'CONVENTIONAL_ANALOG' ELSE NULL END";
     }
 
