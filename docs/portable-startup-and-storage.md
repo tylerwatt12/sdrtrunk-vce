@@ -70,6 +70,10 @@ not start and the completed backup is retained.
 If no portable database is found, startup still searches `${user.home}/SDRTrunk/playlist` for `default.xml` and then
 `playlist_v2.xml`. The legacy XML is read only.
 
+After setup, **File > Import Legacy Playlist XML** can merge another supported playlist into the active profile.
+Existing configuration is retained, imported name conflicts are renamed, and a validated timestamped database backup
+is created before the configuration snapshot is committed. The source XML remains read only.
+
 Headless launches require one explicit option when the database is absent:
 
 ```text

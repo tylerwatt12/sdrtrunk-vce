@@ -108,9 +108,10 @@ ${user.home}/SDRTrunk/playlist/default.xml
 ${user.home}/SDRTrunk/playlist/playlist_v2.xml
 ```
 
-You can also choose another XML file during first-launch setup. Import copies channels, aliases, DMR channel maps,
-streaming settings, and related configuration into a new SQLite database. Your original XML remains unchanged and
-regular SDRTrunk can continue using it.
+You can also choose another XML file. First-launch import creates a new SQLite configuration. To add another playlist
+later, use **File > Import Legacy Playlist XML**. VCE previews the supported contents, keeps existing configuration,
+renames imported name conflicts, and creates a timestamped database backup before applying the import. Your original
+XML remains unchanged and regular SDRTrunk can continue using it.
 
 After importing:
 

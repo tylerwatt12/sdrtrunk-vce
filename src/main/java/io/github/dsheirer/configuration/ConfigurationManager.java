@@ -50,6 +50,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -79,6 +80,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     private final Object mHeadlessWebConfigurationLock = new Object();
     private ScheduledFuture<?> mConfigurationSaveFuture;
     private boolean mConfigurationLoading = false;
+    private volatile boolean mExternalConfigurationOperation = false;
     private List<IAliasListRefreshListener> mAliasListRefreshListeners = new ArrayList<>();
 
     /**
@@ -258,7 +260,98 @@ public class ConfigurationManager implements Listener<ChannelEvent>
      */
     public void flushConfiguration()
     {
+        if(mExternalConfigurationOperation)
+        {
+            throw new IllegalStateException("Configuration saves are suspended until SDRTrunk restarts");
+        }
+
         saveNow();
+
+        if(hasDirtyConfiguration())
+        {
+            throw new IllegalStateException("Unable to save the current configuration");
+        }
+    }
+
+    /**
+     * Applies one externally prepared configuration snapshot without allowing an ordinary delayed save to interleave.
+     *
+     * <p>This method must run on the JavaFX application thread so configuration editors cannot mutate the live models
+     * while the operation is in progress. Running channels are stopped, pending changes are saved, the external
+     * operation atomically commits, and the live models are reloaded before delayed saves are enabled again. The
+     * supplied operation must leave the database unchanged when it throws.</p>
+     */
+    public synchronized <T> T applyExternalConfigurationSnapshot(Callable<T> operation) throws Exception
+    {
+        Objects.requireNonNull(operation, "External configuration operation cannot be null");
+
+        if(!javafx.application.Platform.isFxApplicationThread())
+        {
+            throw new IllegalStateException("External configuration changes must run on the JavaFX application thread");
+        }
+
+        if(mExternalConfigurationOperation)
+        {
+            throw new IllegalStateException("Another external configuration operation is already running");
+        }
+
+        mExternalConfigurationOperation = true;
+        boolean databaseOperationCompleted = false;
+        boolean configurationReady = false;
+
+        try
+        {
+            mChannelProcessingManager.shutdown();
+            saveNow(true);
+
+            if(hasDirtyConfiguration())
+            {
+                throw new IllegalStateException(
+                    "Unable to save the current configuration before applying the external configuration");
+            }
+
+            T result = operation.call();
+            databaseOperationCompleted = true;
+            transferStateToModels();
+            mConfigurationDirty.set(false);
+            configurationReady = true;
+            return result;
+        }
+        catch(Exception | Error e)
+        {
+            if(!databaseOperationCompleted)
+            {
+                configurationReady = true;
+            }
+
+            if(databaseOperationCompleted && !configurationReady)
+            {
+                throw new ExternalConfigurationReloadException(
+                    "The configuration was committed but could not be reloaded", e);
+            }
+
+            throw e;
+        }
+        finally
+        {
+            if(configurationReady)
+            {
+                mExternalConfigurationOperation = false;
+
+                if(hasDirtyConfiguration())
+                {
+                    scheduleSave();
+                }
+            }
+        }
+    }
+
+    public static class ExternalConfigurationReloadException extends RuntimeException
+    {
+        public ExternalConfigurationReloadException(String message, Throwable cause)
+        {
+            super(message, cause);
+        }
     }
 
     /**
@@ -285,6 +378,11 @@ public class ConfigurationManager implements Listener<ChannelEvent>
 
     private synchronized void saveNow()
     {
+        saveNow(false);
+    }
+
+    private void saveNow(boolean allowDuringExternalOperation)
+    {
         //Complete any pending configuration save.
         if(mConfigurationSaveFuture != null)
         {
@@ -302,7 +400,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
 
         if(mConfigurationSavePending.getAndSet(false) || mConfigurationDirty.get())
         {
-            save();
+            save(allowDuringExternalOperation);
         }
 
         if(hasDirtyConfiguration())
@@ -413,6 +511,16 @@ public class ConfigurationManager implements Listener<ChannelEvent>
      */
     private synchronized void save()
     {
+        save(false);
+    }
+
+    private void save(boolean allowDuringExternalOperation)
+    {
+        if(mExternalConfigurationOperation && !allowDuringExternalOperation)
+        {
+            return;
+        }
+
         if(!mConfigurationDirty.getAndSet(false))
         {
             return;
@@ -580,6 +688,11 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         }
 
         mConfigurationDirty.set(true);
+
+        if(mExternalConfigurationOperation)
+        {
+            return;
+        }
 
         if(mConfigurationSavePending.compareAndSet(false, true))
         {
