@@ -15,6 +15,8 @@ import io.github.dsheirer.channel.state.State;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
 import io.github.dsheirer.module.decode.dmr.DMRChannelMode;
 import io.github.dsheirer.module.decode.dmr.channel.TimeslotFrequency;
+import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
+import io.github.dsheirer.module.decode.nxdn.NXDNChannelMode;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
 import io.github.dsheirer.module.decode.p25.phase1.Modulation;
 import java.util.List;
@@ -91,5 +93,20 @@ class DecoderFactoryTest
         assertEquals(List.of(State.CALL, State.ENCRYPTED, State.DATA),
             DecoderFactory.dmrRotationActiveStates(noMap));
         assertEquals(List.of(State.CONTROL), DecoderFactory.dmrRotationActiveStates(withMap));
+    }
+
+    @Test
+    void copiesNxdnModeAndUsesItForRotationStates()
+    {
+        DecodeConfigNXDN conventional = new DecodeConfigNXDN();
+        conventional.setChannelMode(NXDNChannelMode.CONVENTIONAL);
+
+        DecodeConfigNXDN copy = (DecodeConfigNXDN)DecoderFactory.copy(conventional);
+
+        assertEquals(NXDNChannelMode.CONVENTIONAL, copy.getChannelMode());
+        assertEquals(List.of(State.CALL, State.ENCRYPTED, State.DATA),
+            DecoderFactory.nxdnRotationActiveStates(copy));
+        assertEquals(List.of(State.CONTROL),
+            DecoderFactory.nxdnRotationActiveStates(new DecodeConfigNXDN()));
     }
 }

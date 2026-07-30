@@ -28,6 +28,29 @@ import org.junit.jupiter.api.Test;
 class NXDNDecoderStateSiteMetadataTest
 {
     @Test
+    void conventionalModeDoesNotPromoteRuntimeMessagesToSiteMetadata()
+    {
+        Channel channel = new Channel("conventional", Channel.ChannelType.STANDARD);
+        DecodeConfigNXDN configuration = new DecodeConfigNXDN();
+        configuration.setChannelMode(NXDNChannelMode.CONVENTIONAL);
+        channel.setDecodeConfiguration(configuration);
+        NXDNDecoderState decoderState = new NXDNDecoderState(channel, null,
+            new SiteMetadataPublicationRateLimiter(0));
+        EventBus eventBus = new EventBus();
+        EventCollector collector = new EventCollector();
+        eventBus.register(collector);
+        decoderState.setInterModuleEventBus(eventBus);
+        CorrectedBinaryMessage siteBits = new CorrectedBinaryMessage(32);
+        siteBits.load(8, 5, 7);
+
+        decoderState.receive(new SiteID(siteBits, 1_000,
+            NXDNMessageType.TYPE_D_SCCH_OUT_INFO_4_SITE_ID, 0,
+            LICH.RTCH_2_OUTBOUND_SUPER_VOICE_VOICE));
+
+        assertNull(collector.event);
+    }
+
+    @Test
     void forwardsTypeDSiteAndRepeaterMessagesToMetadataMonitor()
     {
         Channel channel = new Channel("type-d", Channel.ChannelType.STANDARD);

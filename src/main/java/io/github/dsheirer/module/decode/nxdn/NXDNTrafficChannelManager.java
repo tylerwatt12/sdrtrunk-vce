@@ -101,6 +101,7 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
     private ChannelAccessInformation mChannelAccessInformation;
     private boolean mIgnoreDataCalls;
     private boolean mIgnoreEncryptedCalls;
+    private final boolean mTrunkingEnabled;
     private ChannelActivityModel mChannelActivityModel;
     private volatile boolean mTrunkedActivityObserved;
 
@@ -112,6 +113,8 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
     public NXDNTrafficChannelManager(Channel parentChannel)
     {
         mParentChannel = parentChannel;
+        mTrunkingEnabled = parentChannel.getDecodeConfiguration() instanceof DecodeConfigNXDN configNXDN &&
+            configNXDN.isTrunked();
 
         if(parentChannel.getDecodeConfiguration() instanceof DecodeConfigNXDN configNXDN)
         {
@@ -163,7 +166,7 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
             int trafficChannelPoolSize = decodeConfig.getTrafficChannelPoolSize();
             List<Channel> trafficChannelList = new ArrayList<>();
 
-            if(trafficChannelPoolSize > 0)
+            if(mTrunkingEnabled && trafficChannelPoolSize > 0)
             {
                 for(int x = 0; x < trafficChannelPoolSize; x++)
                 {
@@ -193,6 +196,7 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
     private static DecodeConfigNXDN copyDecodeConfiguration(DecodeConfigNXDN source)
     {
         DecodeConfigNXDN copy = new DecodeConfigNXDN(source.getTransmissionMode());
+        copy.setChannelMode(source.getChannelMode());
         copy.setTrafficChannelPoolSize(source.getTrafficChannelPoolSize());
         copy.setIgnoreDataCalls(source.isIgnoreDataCalls());
         copy.setIgnoreEncryptedCalls(source.isIgnoreEncryptedCalls());
@@ -336,7 +340,7 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
      */
     public void processDataCallAssignment(DataCallAssignment dca)
     {
-        if(dca.hasChannel() && dca.getChannel().getDownlinkFrequency() > 0)
+        if(mTrunkingEnabled && dca.hasChannel() && dca.getChannel().getDownlinkFrequency() > 0)
         {
             mTrunkedActivityObserved = true;
             DecodeEventType eventType = dca.getEncryptionKeyIdentifier().isEncrypted() ?
@@ -424,7 +428,7 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
      */
     public void processVoiceCallAssignment(VoiceCallAssignment vca)
     {
-        if(vca.hasChannel())
+        if(mTrunkingEnabled && vca.hasChannel())
         {
             mTrunkedActivityObserved = true;
             processVoiceCall(vca.getIdentifiers(), vca.getChannel(), vca.getCallType(), vca.getEncryptionKeyIdentifier(),
@@ -439,6 +443,11 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
      */
     public void processVoiceCallAssignment(VoiceCallAssignmentDuplicateTraffic vca)
     {
+        if(!mTrunkingEnabled)
+        {
+            return;
+        }
+
         NXDNChannel channel = vca.getChannel();
 
         if(channel == null || channel.getDownlinkFrequency() == 0)
@@ -596,6 +605,11 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
                           EncryptionKeyIdentifier encryption, long timestamp, VoiceCallOption vco,
                           CallTimer callTimer)
     {
+        if(!mTrunkingEnabled)
+        {
+            return;
+        }
+
         mLock.lock();
 
         long frequency = channel != null ? channel.getDownlinkFrequency() : 0;
@@ -777,6 +791,11 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
     @Override
     protected void processControlFrequencyUpdate(long previous, long current, Channel channel)
     {
+        if(!mTrunkingEnabled)
+        {
+            return;
+        }
+
         mLock.lock();
 
         try

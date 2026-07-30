@@ -354,9 +354,8 @@ public class DecoderFactory
             if(channel.getSourceConfiguration() instanceof SourceConfigTunerMultipleFrequency sctmf &&
                 sctmf.hasMultipleFrequencies())
             {
-                List<State> activeStates = new ArrayList<>();
-                activeStates.add(State.CONTROL);
-                modules.add(new ChannelRotationMonitor(activeStates, sctmf.getFrequencyRotationDelay(), userPreferences));
+                modules.add(new ChannelRotationMonitor(nxdnRotationActiveStates(configNXDN),
+                    sctmf.getFrequencyRotationDelay(), userPreferences));
             }
 
             modules.add(new NXDNDecoder(configNXDN));
@@ -385,6 +384,12 @@ public class DecoderFactory
         {
             throw new IllegalArgumentException("Can't create NXDN decoder - unrecognized config: " + decodeConfig);
         }
+    }
+
+    static List<State> nxdnRotationActiveStates(DecodeConfigNXDN decodeConfig)
+    {
+        return decodeConfig != null && decodeConfig.isConventional() ?
+            List.of(State.CALL, State.ENCRYPTED, State.DATA) : List.of(State.CONTROL);
     }
 
     /**
@@ -703,6 +708,7 @@ public class DecoderFactory
                 case NXDN:
                     DecodeConfigNXDN origNXDN = (DecodeConfigNXDN)config;
                     DecodeConfigNXDN copyNXDN = new DecodeConfigNXDN();
+                    copyNXDN.setChannelMode(origNXDN.getChannelMode());
                     copyNXDN.setChannelMap(origNXDN.getChannelMap());
                     copyNXDN.setEncoding(origNXDN.getEncoding());
                     copyNXDN.setIgnoreDataCalls(origNXDN.isIgnoreDataCalls());

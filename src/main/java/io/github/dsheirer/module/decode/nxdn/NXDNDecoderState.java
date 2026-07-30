@@ -24,20 +24,25 @@ import io.github.dsheirer.channel.state.DecoderState;
 import io.github.dsheirer.channel.state.DecoderStateEvent;
 import io.github.dsheirer.channel.state.State;
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.Role;
+import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
+import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import io.github.dsheirer.message.IMessage;
 import io.github.dsheirer.metadata.site.ProtocolSiteMetadataPublisher;
 import io.github.dsheirer.metadata.site.SiteMetadataPublicationRateLimiter;
 import io.github.dsheirer.module.decode.DecoderType;
+import io.github.dsheirer.module.decode.event.DecodeEvent;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.event.PlottableDecodeEvent;
 import io.github.dsheirer.module.decode.nxdn.layer3.NXDNLayer3Message;
+import io.github.dsheirer.module.decode.nxdn.layer3.NXDNMessageType;
 import io.github.dsheirer.module.decode.nxdn.layer3.broadcast.ControlChannelInformation;
 import io.github.dsheirer.module.decode.nxdn.layer3.broadcast.SiteInformation;
 import io.github.dsheirer.module.decode.nxdn.layer3.call.Audio;
@@ -54,6 +59,7 @@ import io.github.dsheirer.module.decode.nxdn.layer3.call.StatusInquiryRequest;
 import io.github.dsheirer.module.decode.nxdn.layer3.call.StatusInquiryResponse;
 import io.github.dsheirer.module.decode.nxdn.layer3.call.StatusRequest;
 import io.github.dsheirer.module.decode.nxdn.layer3.call.StatusResponse;
+import io.github.dsheirer.module.decode.nxdn.layer3.call.TransmissionRelease;
 import io.github.dsheirer.module.decode.nxdn.layer3.call.VoiceCall;
 import io.github.dsheirer.module.decode.nxdn.layer3.call.VoiceCallAssignment;
 import io.github.dsheirer.module.decode.nxdn.layer3.call.VoiceCallAssignmentDuplicateControl;
@@ -75,6 +81,7 @@ import io.github.dsheirer.module.decode.nxdn.layer3.mobility.RegistrationCommand
 import io.github.dsheirer.module.decode.nxdn.layer3.mobility.RegistrationResponse;
 import io.github.dsheirer.module.decode.nxdn.layer3.mobility.RegistrationResponseTypeD;
 import io.github.dsheirer.module.decode.nxdn.layer3.proprietary.TalkerAliasComplete;
+import io.github.dsheirer.module.decode.nxdn.layer3.type.CallType;
 import io.github.dsheirer.protocol.Protocol;
 import java.util.Collections;
 import java.util.List;
@@ -89,6 +96,8 @@ public class NXDNDecoderState extends DecoderState
     private final NXDNNetworkConfigurationMonitor mNetworkConfigurationMonitor = new NXDNNetworkConfigurationMonitor();
     private final ProtocolSiteMetadataPublisher mSiteMetadataPublisher;
     private final NXDNTrafficChannelManager mTrafficChannelManager;
+    private final boolean mTrunkingEnabled;
+    private DecodeEvent mCurrentConventionalCallEvent;
     private boolean mEncryptedCallStateDetermined = false;
     private boolean mEncryptedCall = false;
     private int mDisconnectResponseCount = 0;
@@ -110,9 +119,12 @@ public class NXDNDecoderState extends DecoderState
     {
         mChannel = channel;
         mTrafficChannelManager = trafficChannelManager;
-        mSiteMetadataPublisher = new ProtocolSiteMetadataPublisher(mChannel,
+        DecodeConfigNXDN config = channel != null &&
+            channel.getDecodeConfiguration() instanceof DecodeConfigNXDN configNXDN ? configNXDN : null;
+        mTrunkingEnabled = config == null || config.isTrunked();
+        mSiteMetadataPublisher = mTrunkingEnabled ? new ProtocolSiteMetadataPublisher(mChannel,
             mNetworkConfigurationMonitor::getSnapshot, this::hasInterModuleEventBus,
-            event -> getInterModuleEventBus().post(event), siteMetadataRateLimiter);
+            event -> getInterModuleEventBus().post(event), siteMetadataRateLimiter) : null;
     }
 
     /**
@@ -126,6 +138,37 @@ public class NXDNDecoderState extends DecoderState
     @Override
     public void init()
     {
+    }
+
+    @Override
+    public void reset()
+    {
+        if(!mTrunkingEnabled)
+        {
+            resetState();
+            setCurrentFrequency(0);
+        }
+
+        super.reset();
+    }
+
+    @Override
+    protected void resetState()
+    {
+        if(!mTrunkingEnabled)
+        {
+            closeCurrentConventionalCall(System.currentTimeMillis(), true);
+        }
+
+        super.resetState();
+
+        if(!mTrunkingEnabled)
+        {
+            mEncryptedCallStateDetermined = false;
+            mEncryptedCall = false;
+            mDisconnectResponseCount = 0;
+            mIdleDuringCallCount = IDLE_DURING_CALL_MAX_COUNT;
+        }
     }
 
     @Override
@@ -155,10 +198,17 @@ public class NXDNDecoderState extends DecoderState
                 resetState();
                 break;
             case NOTIFICATION_SOURCE_FREQUENCY:
+                if(!mTrunkingEnabled && mChannel.isStandardChannel() &&
+                    getCurrentFrequency() != event.getFrequency())
+                {
+                    closeCurrentConventionalCall(System.currentTimeMillis(), true);
+                    setCurrentChannel(null);
+                }
+
                 setCurrentFrequency(event.getFrequency());
 
                 //Only update the traffic channel manager if we're not a traffic channel.
-                if(hasTrafficChannelManager() && mChannel.isStandardChannel())
+                if(mTrunkingEnabled && hasTrafficChannelManager() && mChannel.isStandardChannel())
                 {
                     mTrafficChannelManager.setCurrentControlFrequency(getCurrentFrequency(), mChannel);
                 }
@@ -198,7 +248,12 @@ public class NXDNDecoderState extends DecoderState
     private void broadcastEvent(List<Identifier> identifiers, long timestamp, DecodeEventType decodeEventType, String details)
     {
         MutableIdentifierCollection mic = getMutableIdentifierCollection(identifiers);
-        mTrafficChannelManager.getTalkerAliasManager().enrichMutable(mic);
+
+        if(hasTrafficChannelManager())
+        {
+            mTrafficChannelManager.getTalkerAliasManager().enrichMutable(mic);
+        }
+
         broadcast(NXDNDecodeEvent.builder(decodeEventType, timestamp)
                 .channel(getCurrentChannel())
                 .details(details)
@@ -242,7 +297,7 @@ public class NXDNDecoderState extends DecoderState
      */
     private void processLayer3(NXDNLayer3Message layer3)
     {
-        State state = layer3.getMessageType().isControl() ? State.CONTROL : State.ACTIVE;
+        State state = mTrunkingEnabled && layer3.getMessageType().isControl() ? State.CONTROL : State.ACTIVE;
         DecoderStateEvent.Event event = DecoderStateEvent.Event.DECODE;
 
         switch(layer3.getMessageType())
@@ -259,15 +314,49 @@ public class NXDNDecoderState extends DecoderState
                 break;
             case TRAFFIC_OUT_01_CC_VOICE_CALL:
             case TYPE_D_OUT_01_CC_VOICE_CALL:
+            case TRAFFIC_IN_01_CC_VOICE_CALL:
                 if(layer3 instanceof VoiceCall vc)
                 {
+                    if(mTrunkingEnabled &&
+                        layer3.getMessageType() == NXDNMessageType.TRAFFIC_IN_01_CC_VOICE_CALL)
+                    {
+                        //Preserve the prior trunked inbound behavior. Conventional input-frequency monitoring uses
+                        //the same valid voice header as an explicit call start.
+                        state = State.CALL;
+                        break;
+                    }
+
                     mIdleDuringCallCount = 0;
+
+                    if(!mTrunkingEnabled)
+                    {
+                        //Conventional calls do not share a persistent trunked destination. Remove prior call identity
+                        //so a group-to-private or private-to-group transition cannot inherit the old target.
+                        getIdentifierCollection().remove(IdentifierClass.USER);
+                    }
+
                     getIdentifierCollection().update(vc.getIdentifiers());
                     mEncryptedCallStateDetermined = true;
-                    mEncryptedCall = vc.getEncryptionKeyIdentifier().isEncrypted();
+                    boolean encrypted = vc.getEncryptionKeyIdentifier().isEncrypted();
+
+                    if(mTrunkingEnabled)
+                    {
+                        mEncryptedCall = encrypted;
+                        event = DecoderStateEvent.Event.START;
+
+                        if(hasTrafficChannelManager())
+                        {
+                            mTrafficChannelManager.processVoiceCall(vc, getCurrentChannel());
+                        }
+                    }
+                    else
+                    {
+                        boolean started = updateConventionalCall(vc);
+                        mEncryptedCall = started ? encrypted : mEncryptedCall || encrypted;
+                        event = started ? DecoderStateEvent.Event.START : DecoderStateEvent.Event.CONTINUATION;
+                    }
+
                     state = mEncryptedCall ? State.ENCRYPTED : State.CALL;
-                    event = DecoderStateEvent.Event.START;
-                    mTrafficChannelManager.processVoiceCall(vc, getCurrentChannel());
                 }
                 break;
             case CONTROL_OUT_02_CC_VOICE_CALL_RECEPTION_REQUEST:
@@ -292,6 +381,11 @@ public class NXDNDecoderState extends DecoderState
                 state = State.CALL;
                 event = DecoderStateEvent.Event.CONTINUATION;
                 mIdleDuringCallCount = 0;
+
+                if(!mTrunkingEnabled)
+                {
+                    updateConventionalCallProgress(layer3.getTimestamp());
+                }
                 break;
             case CONTROL_OUT_04_CC_VOICE_CALL_ASSIGNMENT:
             case TRAFFIC_OUT_04_CC_VOICE_CALL_ASSIGNMENT:
@@ -299,27 +393,48 @@ public class NXDNDecoderState extends DecoderState
                 if(layer3 instanceof VoiceCallAssignment vca)
                 {
                     //Decode event is created by the traffic channel manager
-                    mTrafficChannelManager.processVoiceCallAssignment(vca);
+                    if(mTrunkingEnabled && hasTrafficChannelManager())
+                    {
+                        mTrafficChannelManager.processVoiceCallAssignment(vca);
+                    }
                 }
                 break;
             case CONTROL_OUT_05_CC_VOICE_CALL_ASSIGNMENT_DUPLICATE:
                 if(layer3 instanceof VoiceCallAssignmentDuplicateControl vcadc)
                 {
                     //This informs when there are 2-calls ongoing where a radio can participate in either call
-                    mTrafficChannelManager.processVoiceCallAssignment(vcadc);
+                    if(mTrunkingEnabled && hasTrafficChannelManager())
+                    {
+                        mTrafficChannelManager.processVoiceCallAssignment(vcadc);
+                    }
                 }
                 break;
             case TRAFFIC_OUT_05_CC_VOICE_CALL_ASSIGNMENT_DUPLICATE:
                 if(layer3 instanceof VoiceCallAssignmentDuplicateTraffic vcadt)
                 {
                     //This informs when there are 2-calls ongoing where a radio can participate in either call
-                    mTrafficChannelManager.processVoiceCallAssignment(vcadt);
+                    if(mTrunkingEnabled && hasTrafficChannelManager())
+                    {
+                        mTrafficChannelManager.processVoiceCallAssignment(vcadt);
+                    }
                 }
                 break;
             case TRAFFIC_OUT_07_CC_TRANSMISSION_RELEASE_EXTENSION:
             case TRAFFIC_OUT_08_CC_TRANSMISSION_RELEASE:
             case TYPE_D_OUT_08_CC_TRANSMISSION_RELEASE:
-                mTrafficChannelManager.processEndCall(getCurrentChannel(), layer3.getTimestamp());
+                if(mTrunkingEnabled)
+                {
+                    if(hasTrafficChannelManager())
+                    {
+                        mTrafficChannelManager.processEndCall(getCurrentChannel(), layer3.getTimestamp());
+                    }
+                }
+                else
+                {
+                    updateCompletionIdentifiers(layer3);
+                    closeCurrentConventionalCall(layer3.getTimestamp(), true);
+                }
+
                 mEncryptedCallStateDetermined = false;
                 mEncryptedCall = false;
                 mIdleDuringCallCount = IDLE_DURING_CALL_MAX_COUNT;
@@ -358,7 +473,10 @@ public class NXDNDecoderState extends DecoderState
             case CONTROL_OUT_13_CC_DATA_CALL_ASSIGNMENT_DUPLICATE:
                 if(layer3 instanceof DataCallAssignmentDuplicateControl dcadc)
                 {
-                    mTrafficChannelManager.processDataCallAssignment(dcadc);
+                    if(mTrunkingEnabled && hasTrafficChannelManager())
+                    {
+                        mTrafficChannelManager.processDataCallAssignment(dcadc);
+                    }
                 }
                 break;
             case TRAFFIC_OUT_13_CC_DATA_CALL_ASSIGNMENT_DUPLICATE:
@@ -366,7 +484,10 @@ public class NXDNDecoderState extends DecoderState
             case CONTROL_OUT_14_CC_DATA_CALL_ASSIGNMENT:
                 if(layer3 instanceof DataCallAssignment dca)
                 {
-                    mTrafficChannelManager.processDataCallAssignment(dca);
+                    if(mTrunkingEnabled && hasTrafficChannelManager())
+                    {
+                        mTrafficChannelManager.processDataCallAssignment(dca);
+                    }
                 }
                 break;
             case TRAFFIC_OUT_14_CC_DATA_CALL_ASSIGNMENT:
@@ -389,6 +510,11 @@ public class NXDNDecoderState extends DecoderState
                 }
                 else
                 {
+                    if(!mTrunkingEnabled)
+                    {
+                        closeCurrentConventionalCall(layer3.getTimestamp(), true);
+                    }
+
                     mEncryptedCallStateDetermined = false;
                     mEncryptedCall = false;
                 }
@@ -399,7 +525,19 @@ public class NXDNDecoderState extends DecoderState
                 break;
             case TRAFFIC_OUT_17_CC_DISCONNECT:
             case TYPE_D_OUT_17_CC_DISCONNECT:
-                mTrafficChannelManager.processEndCall(getCurrentChannel(), layer3.getTimestamp());
+                if(mTrunkingEnabled)
+                {
+                    if(hasTrafficChannelManager())
+                    {
+                        mTrafficChannelManager.processEndCall(getCurrentChannel(), layer3.getTimestamp());
+                    }
+                }
+                else
+                {
+                    updateCompletionIdentifiers(layer3);
+                    closeCurrentConventionalCall(layer3.getTimestamp(), true);
+                }
+
                 mEncryptedCallStateDetermined = false;
                 mEncryptedCall = false;
                 getIdentifierCollection().remove(IdentifierClass.USER);
@@ -421,22 +559,32 @@ public class NXDNDecoderState extends DecoderState
             case CONTROL_OUT_25_BC_SERVICE_INFORMATION:
             case CONTROL_OUT_27_BC_ADJACENT_SITE_INFORMATION:
             case CONTROL_OUT_28_BC_FAILURE_STATUS_INFORMATION:
-                mNetworkConfigurationMonitor.process(layer3);
+                if(mTrunkingEnabled)
+                {
+                    mNetworkConfigurationMonitor.process(layer3);
+                }
+
                 getIdentifierCollection().remove(IdentifierClass.USER);
                 break;
             case CONTROL_OUT_26_BC_CONTROL_CHANNEL_INFORMATION:
-                mNetworkConfigurationMonitor.process(layer3);
-
-                if(layer3 instanceof ControlChannelInformation cci)
+                if(mTrunkingEnabled)
                 {
-                    setCurrentChannel(cci.getChannel1());
+                    mNetworkConfigurationMonitor.process(layer3);
+
+                    if(layer3 instanceof ControlChannelInformation cci)
+                    {
+                        setCurrentChannel(cci.getChannel1());
+                    }
                 }
                 break;
             case TRAFFIC_OUT_24_BC_SITE_INFORMATION:
                 if(layer3 instanceof SiteInformation si)
                 {
                     //Update traffic channel manager so it can use this when allocation traffic channels.
-                    mTrafficChannelManager.setChannelAccessInformation(si.getChannelAccessInformation());
+                    if(mTrunkingEnabled && hasTrafficChannelManager())
+                    {
+                        mTrafficChannelManager.setChannelAccessInformation(si.getChannelAccessInformation());
+                    }
                 }
                 //Deliberate fall through
             case TRAFFIC_OUT_23_BC_DIGITAL_STATION_ID_INFORMATION:
@@ -451,7 +599,10 @@ public class NXDNDecoderState extends DecoderState
             case TYPE_D_SCCH_OUT_INFO_4_REPEATER_FREE:
             case TYPE_D_SCCH_OUT_INFO_4_REPEATER_HALT:
             case TYPE_D_SCCH_OUT_INFO_4_SITE_ID:
-                mNetworkConfigurationMonitor.process(layer3);
+                if(mTrunkingEnabled)
+                {
+                    mNetworkConfigurationMonitor.process(layer3);
+                }
                 break;
             case CONTROL_OUT_32_MM_REGISTRATION_RESPONSE:
                 if(layer3 instanceof RegistrationResponse rr)
@@ -640,6 +791,11 @@ public class NXDNDecoderState extends DecoderState
             case TALKER_ALIAS:
                 state = State.CALL;
                 event = DecoderStateEvent.Event.CONTINUATION;
+
+                if(!mTrunkingEnabled)
+                {
+                    updateConventionalCallProgress(layer3.getTimestamp());
+                }
                 break;
 
             case TALKER_ALIAS_COMPLETE:
@@ -651,19 +807,47 @@ public class NXDNDecoderState extends DecoderState
 
                     if(radio instanceof RadioIdentifier ri)
                     {
-                        mTrafficChannelManager.processTalkerAlias(getCurrentChannel(), tac.getTalkerAlias(), ri, tac.getTimestamp());
+                        if(hasTrafficChannelManager())
+                        {
+                            mTrafficChannelManager.processTalkerAlias(getCurrentChannel(), tac.getTalkerAlias(), ri,
+                                tac.getTimestamp());
+                        }
+
+                        if(!mTrunkingEnabled)
+                        {
+                            updateConventionalCallProgress(tac.getTimestamp());
+                        }
                     }
                 }
                 break;
 
-            case TRAFFIC_IN_01_CC_VOICE_CALL:
+            case TRAFFIC_IN_02_CC_VOICE_CALL_RECEPTION_RESPONSE:
                 state = State.CALL;
                 break;
-            case TRAFFIC_IN_02_CC_VOICE_CALL_RECEPTION_RESPONSE:
             case TRAFFIC_IN_03_CC_VOICE_CALL_INITIALIZATION_VECTOR:
                 state = State.CALL;
+
+                if(!mTrunkingEnabled)
+                {
+                    updateConventionalCallProgress(layer3.getTimestamp());
+                }
                 break;
             case TRAFFIC_IN_08_CC_TRANSMISSION_RELEASE:
+                if(!mTrunkingEnabled)
+                {
+                    updateCompletionIdentifiers(layer3);
+                    closeCurrentConventionalCall(layer3.getTimestamp(), true);
+                    mEncryptedCallStateDetermined = false;
+                    mEncryptedCall = false;
+                    getIdentifierCollection().remove(IdentifierClass.USER);
+                    state = State.ACTIVE;
+                }
+                else
+                {
+                    //Preserve the existing trunked inbound-state behavior.
+                    state = State.DATA;
+                }
+                break;
             case TRAFFIC_IN_09_CC_DATA_CALL_HEADER:
                 state = State.DATA;
                 break;
@@ -672,8 +856,45 @@ public class NXDNDecoderState extends DecoderState
                 break;
             case TRAFFIC_IN_12_CC_DATA_CALL_ACKNOWLEDGE:
             case TRAFFIC_IN_15_CC_HEADER_DELAY:
+                state = State.DATA;
+                break;
             case TRAFFIC_IN_16_CC_IDLE:
+                if(!mTrunkingEnabled)
+                {
+                    mIdleDuringCallCount++;
+
+                    if(mIdleDuringCallCount < IDLE_DURING_CALL_MAX_COUNT)
+                    {
+                        state = mEncryptedCall ? State.ENCRYPTED : State.CALL;
+                    }
+                    else
+                    {
+                        closeCurrentConventionalCall(layer3.getTimestamp(), true);
+                        mEncryptedCallStateDetermined = false;
+                        mEncryptedCall = false;
+                        state = State.ACTIVE;
+                    }
+                }
+                else
+                {
+                    state = State.DATA;
+                }
+                break;
             case TRAFFIC_IN_17_CC_DISCONNECT_REQUEST:
+                if(!mTrunkingEnabled)
+                {
+                    updateCompletionIdentifiers(layer3);
+                    closeCurrentConventionalCall(layer3.getTimestamp(), true);
+                    mEncryptedCallStateDetermined = false;
+                    mEncryptedCall = false;
+                    getIdentifierCollection().remove(IdentifierClass.USER);
+                    state = State.ACTIVE;
+                }
+                else
+                {
+                    state = State.DATA;
+                }
+                break;
             case TRAFFIC_IN_42_MM_AUTHENTICATION_INQUIRY_REQUEST_MULTI_SYSTEM:
             case TRAFFIC_IN_43_MM_AUTHORIZATION_INQUIRY_RESPONSE_MULTI_SYSTEM:
             case TRAFFIC_IN_48_CC_STATUS_INQUIRY_REQUEST:
@@ -694,8 +915,242 @@ public class NXDNDecoderState extends DecoderState
                 break;
         }
 
-        mSiteMetadataPublisher.publish(layer3.getTimestamp());
+        if(mSiteMetadataPublisher != null)
+        {
+            mSiteMetadataPublisher.publish(layer3.getTimestamp());
+        }
+
         broadcast(new DecoderStateEvent(this, event, state));
+    }
+
+    /**
+     * Creates or updates the mutable decode event for one explicitly conventional call.
+     *
+     * @return true when this observation starts a new call
+     */
+    private boolean updateConventionalCall(VoiceCall voiceCall)
+    {
+        if(mTrunkingEnabled || voiceCall == null)
+        {
+            return false;
+        }
+
+        MutableIdentifierCollection identifiers =
+            new MutableIdentifierCollection(getIdentifierCollection().getIdentifiers());
+
+        if(hasTrafficChannelManager())
+        {
+            mTrafficChannelManager.getTalkerAliasManager().enrichMutable(identifiers);
+        }
+
+        if(mCurrentConventionalCallEvent != null &&
+            callIdentityChanged(mCurrentConventionalCallEvent.getIdentifierCollection(), identifiers))
+        {
+            closeCurrentConventionalCall(voiceCall.getTimestamp(), false);
+        }
+
+        DecodeEventType type = callEventType(voiceCall.getCallType(),
+            voiceCall.getEncryptionKeyIdentifier());
+        boolean started = mCurrentConventionalCallEvent == null;
+
+        if(started)
+        {
+            mCurrentConventionalCallEvent = NXDNDecodeEvent.builder(type, voiceCall.getTimestamp())
+                .channel(getCurrentChannel())
+                .details(voiceCall.getCallOption().toString())
+                .identifiers(identifiers)
+                .build();
+        }
+        else
+        {
+            if(DecodeEventType.VOICE_CALLS_ENCRYPTED.contains(type))
+            {
+                mCurrentConventionalCallEvent.setDecodeEventType(type);
+            }
+
+            mCurrentConventionalCallEvent.setIdentifierCollection(identifiers);
+            mCurrentConventionalCallEvent.end(voiceCall.getTimestamp());
+        }
+
+        broadcast(mCurrentConventionalCallEvent);
+        return started;
+    }
+
+    /**
+     * Updates call duration for audio and call-related messages that do not repeat the call identities.
+     */
+    private void updateConventionalCallProgress(long timestamp)
+    {
+        if(!mTrunkingEnabled && mCurrentConventionalCallEvent != null)
+        {
+            mCurrentConventionalCallEvent.end(timestamp);
+            broadcast(mCurrentConventionalCallEvent);
+        }
+    }
+
+    /**
+     * Uses explicit end-of-call identifiers only when they contain non-zero values.
+     */
+    private void updateCompletionIdentifiers(NXDNLayer3Message layer3)
+    {
+        if(layer3 == null)
+        {
+            return;
+        }
+
+        if(layer3 instanceof TransmissionRelease release && !release.hasIdentifiers())
+        {
+            return;
+        }
+
+        for(Identifier identifier: layer3.getIdentifiers())
+        {
+            if(identifier != null && identifier.getValue() instanceof Number number && number.intValue() > 0)
+            {
+                getIdentifierCollection().update(identifier);
+            }
+        }
+    }
+
+    /**
+     * Closes and publishes one immutable completion for the current conventional call.
+     */
+    private void closeCurrentConventionalCall(long timestamp, boolean refreshIdentifiers)
+    {
+        if(mCurrentConventionalCallEvent == null)
+        {
+            return;
+        }
+
+        if(refreshIdentifiers)
+        {
+            mCurrentConventionalCallEvent.setIdentifierCollection(completionIdentifiers(
+                mCurrentConventionalCallEvent.getIdentifierCollection(), getIdentifierCollection()));
+        }
+
+        mCurrentConventionalCallEvent.end(timestamp);
+        broadcast(mCurrentConventionalCallEvent);
+        publishConventionalCall(mCurrentConventionalCallEvent, timestamp);
+        mCurrentConventionalCallEvent = null;
+    }
+
+    /**
+     * Publishes exactly one immutable completed-call snapshot for explicitly conventional standard channels.
+     */
+    private void publishConventionalCall(DecodeEvent call, long timestamp)
+    {
+        if(call == null || mChannel == null || !mChannel.isStandardChannel() || mTrunkingEnabled)
+        {
+            return;
+        }
+
+        IdentifierCollection identifiers = call.getIdentifierCollection();
+        Identifier source = identifiers != null ? identifiers.getFromIdentifier() : null;
+        Identifier target = identifiers != null ? identifiers.getToIdentifier() : null;
+        Integer sourceRadio = source instanceof RadioIdentifier radio ? positive(radio.getValue()) : null;
+        Integer talkgroup = target instanceof TalkgroupIdentifier group ? positive(group.getValue()) : null;
+        Integer targetRadio = target instanceof RadioIdentifier radio ? positive(radio.getValue()) : null;
+        NXDNConventionalCallEvent.TargetKind targetKind = talkgroup != null ?
+            NXDNConventionalCallEvent.TargetKind.GROUP : targetRadio != null ?
+            NXDNConventionalCallEvent.TargetKind.PRIVATE : targetKind(call.getEventType());
+        long frequency = call.getChannelDescriptor() != null ?
+            call.getChannelDescriptor().getDownlinkFrequency() : getCurrentFrequency();
+
+        if(frequency <= 0)
+        {
+            frequency = getCurrentFrequency();
+        }
+
+        long endTimestamp = Math.max(timestamp, call.getTimeEnd());
+
+        if(endTimestamp <= 0)
+        {
+            endTimestamp = System.currentTimeMillis();
+        }
+
+        long startTimestamp = call.getTimeStart() > 0 ? call.getTimeStart() : endTimestamp;
+        boolean encrypted = DecodeEventType.VOICE_CALLS_ENCRYPTED.contains(call.getEventType());
+        MyEventBus.getGlobalEventBus().post(new NXDNConventionalCallEvent(startTimestamp, endTimestamp,
+            mChannel.getConfigurationId(), mChannel.getRadresGuid(), mChannel.getName(), mChannel.getAliasListName(),
+            frequency, targetKind, talkgroup, sourceRadio, targetRadio, encrypted));
+    }
+
+    private static DecodeEventType callEventType(CallType callType, EncryptionKeyIdentifier encryption)
+    {
+        boolean encrypted = encryption != null && encryption.isEncrypted();
+        return switch(callType)
+        {
+            case GROUP_BROADCAST, GROUP_CONFERENCE ->
+                encrypted ? DecodeEventType.CALL_GROUP_ENCRYPTED : DecodeEventType.CALL_GROUP;
+            case INDIVIDUAL ->
+                encrypted ? DecodeEventType.CALL_UNIT_TO_UNIT_ENCRYPTED : DecodeEventType.CALL_UNIT_TO_UNIT;
+            case INTERCONNECT, SPEED_DIAL ->
+                encrypted ? DecodeEventType.CALL_INTERCONNECT_ENCRYPTED : DecodeEventType.CALL_INTERCONNECT;
+            default -> encrypted ? DecodeEventType.CALL_ENCRYPTED : DecodeEventType.CALL;
+        };
+    }
+
+    private static NXDNConventionalCallEvent.TargetKind targetKind(DecodeEventType eventType)
+    {
+        if(eventType == DecodeEventType.CALL_GROUP || eventType == DecodeEventType.CALL_GROUP_ENCRYPTED)
+        {
+            return NXDNConventionalCallEvent.TargetKind.GROUP;
+        }
+
+        if(eventType == DecodeEventType.CALL_UNIT_TO_UNIT ||
+            eventType == DecodeEventType.CALL_UNIT_TO_UNIT_ENCRYPTED)
+        {
+            return NXDNConventionalCallEvent.TargetKind.PRIVATE;
+        }
+
+        return NXDNConventionalCallEvent.TargetKind.UNKNOWN;
+    }
+
+    private static boolean callIdentityChanged(IdentifierCollection previous, IdentifierCollection current)
+    {
+        if(previous == null || current == null)
+        {
+            return false;
+        }
+
+        return identityChanged(previous.getFromIdentifier(), current.getFromIdentifier()) ||
+            identityChanged(previous.getToIdentifier(), current.getToIdentifier());
+    }
+
+    private static IdentifierCollection completionIdentifiers(IdentifierCollection call,
+                                                              IdentifierCollection latest)
+    {
+        if(call == null)
+        {
+            return latest != null ? new IdentifierCollection(latest.getIdentifiers()) : new IdentifierCollection();
+        }
+
+        MutableIdentifierCollection merged = new MutableIdentifierCollection(call.getIdentifiers());
+
+        if(latest != null)
+        {
+            if(call.getFromIdentifier() == null && latest.getFromIdentifier() != null)
+            {
+                merged.update(latest.getFromIdentifier());
+            }
+
+            if(call.getToIdentifier() == null && latest.getToIdentifier() != null)
+            {
+                merged.update(latest.getToIdentifier());
+            }
+        }
+
+        return merged.copyOf();
+    }
+
+    private static boolean identityChanged(Identifier previous, Identifier current)
+    {
+        return previous != null && current != null && !previous.equals(current);
+    }
+
+    private static Integer positive(Integer value)
+    {
+        return value != null && value > 0 && value <= 0xFFFF ? value : null;
     }
 
     /**
@@ -712,7 +1167,17 @@ public class NXDNDecoderState extends DecoderState
             state = State.ENCRYPTED;
         }
 
-        mTrafficChannelManager.processCallProgressUpdate(getCurrentChannel(), audio.getTimestamp());
+        if(mTrunkingEnabled)
+        {
+            if(hasTrafficChannelManager())
+            {
+                mTrafficChannelManager.processCallProgressUpdate(getCurrentChannel(), audio.getTimestamp());
+            }
+        }
+        else
+        {
+            updateConventionalCallProgress(audio.getTimestamp());
+        }
 
         broadcast(new DecoderStateEvent(this, DecoderStateEvent.Event.CONTINUATION, state));
     }

@@ -34,6 +34,7 @@ import io.github.dsheirer.module.decode.nxdn.layer3.type.VoiceCallOption;
 import io.github.dsheirer.module.decode.traffic.TrunkedCallStartEvent;
 import io.github.dsheirer.preference.nowplaying.NowPlayingPreference;
 import io.github.dsheirer.protocol.Protocol;
+import java.lang.reflect.Field;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -41,6 +42,36 @@ import org.junit.jupiter.api.Test;
 
 class NXDNTrafficChannelManagerTest
 {
+    @Test
+    void conventionalModeDoesNotCreateOrUseTrafficPool() throws Exception
+    {
+        Channel parent = new Channel("NXDN Conventional", Channel.ChannelType.STANDARD);
+        DecodeConfigNXDN config = new DecodeConfigNXDN();
+        config.setChannelMode(NXDNChannelMode.CONVENTIONAL);
+        config.setTrafficChannelPoolSize(2);
+        parent.setDecodeConfiguration(config);
+        NXDNTrafficChannelManager manager = new NXDNTrafficChannelManager(parent);
+        EncryptionKeyIdentifier clear = EncryptionKeyIdentifier.create(Protocol.NXDN,
+            NXDNEncryptionKey.create(0, 0));
+        CallStartSubscriber subscriber = new CallStartSubscriber();
+        MyEventBus.getGlobalEventBus().register(subscriber);
+
+        try
+        {
+            manager.processVoiceCall(identifiers(101, 91, clear), channel(452_012_500L),
+                CallType.GROUP_BROADCAST, clear, 1_000L, new VoiceCallOption(0), CallTimer.UNSPECIFIED);
+        }
+        finally
+        {
+            MyEventBus.getGlobalEventBus().unregister(subscriber);
+        }
+
+        Field field = NXDNTrafficChannelManager.class.getDeclaredField("mManagedTrafficChannels");
+        field.setAccessible(true);
+        assertTrue(((List<?>)field.get(manager)).isEmpty());
+        assertTrue(subscriber.events.isEmpty());
+    }
+
     @Test
     void publishesOneCallStartPerTargetWithoutTrafficTuner()
     {
