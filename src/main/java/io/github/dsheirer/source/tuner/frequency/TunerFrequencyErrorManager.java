@@ -40,15 +40,18 @@ public class TunerFrequencyErrorManager implements ISourceEventProcessor
     private static final double PPM_DIVISOR = 1.0 / 1_000_000.0;
     private static final long MAXIMUM_TUNER_ERROR_CORRECTION_PER_INTERVAL_HZ = 10;
     private static final long MINIMUM_CORRECTION_THRESHOLD_HZ = 50;
+    private static final double MAXIMUM_AUTO_PPM_EXCURSION = 3.0;
     private static final long CHANNEL_PROCESSING_INTERVAL_MILLISECONDS = 500;
     private static final int TUNER_PROCESSING_INTERVAL_TICKS = 10;
     private final List<ChannelFrequencyErrorManager> mChannelManagers = new ArrayList<>();
     private final TunerController mTunerController;
     private ScheduledFuture<?> mScheduledFuture;
-    private boolean mEnabled = true;
+    private volatile boolean mEnabled = true;
     private boolean mShutdown;
     private double mTunerPPM;
     private long mTunerCorrection;
+    private double mAutoCorrectionBaselinePPM;
+    private boolean mApplyingAutomaticCorrection;
     private int mTunerProcessingTickCounter;
 
     public TunerFrequencyErrorManager(TunerController tunerController)
@@ -57,6 +60,7 @@ public class TunerFrequencyErrorManager implements ISourceEventProcessor
         mTunerController.addListener(this);
         mTunerPPM = mTunerController.getFrequencyCorrection();
         mTunerCorrection = toHertz(mTunerPPM);
+        mAutoCorrectionBaselinePPM = mTunerPPM;
     }
 
     public void dispose()
@@ -78,12 +82,32 @@ public class TunerFrequencyErrorManager implements ISourceEventProcessor
                 mTunerPPM = ppm;
                 mTunerCorrection = toHertz(mTunerPPM);
             }
+
+            if(event.getEvent() == SourceEvent.Event.NOTIFICATION_FREQUENCY_CORRECTION_CHANGE &&
+                !mApplyingAutomaticCorrection)
+            {
+                mAutoCorrectionBaselinePPM = ppm;
+            }
         }
     }
 
     public void setEnabled(boolean enabled)
     {
-        mEnabled = enabled;
+        mTunerController.getLock().lock();
+
+        try
+        {
+            if(enabled && !mEnabled)
+            {
+                mAutoCorrectionBaselinePPM = mTunerController.getFrequencyCorrection();
+            }
+
+            mEnabled = enabled;
+        }
+        finally
+        {
+            mTunerController.getLock().unlock();
+        }
     }
 
     public boolean isEnabled()
@@ -168,22 +192,55 @@ public class TunerFrequencyErrorManager implements ISourceEventProcessor
 
         if(Math.abs(requestedChangeHz) > MINIMUM_CORRECTION_THRESHOLD_HZ)
         {
-            requestedChangeHz = clamp(requestedChangeHz, -MAXIMUM_TUNER_ERROR_CORRECTION_PER_INTERVAL_HZ,
-                MAXIMUM_TUNER_ERROR_CORRECTION_PER_INTERVAL_HZ);
+            applyAutomaticCorrection(requestedChangeHz);
+        }
+    }
 
-            if(mEnabled && mTunerController.getFrequency() > 0)
+    /**
+     * Applies one bounded automatic PPM adjustment. Package visibility supports deterministic safety-limit tests
+     * without starting the scheduled channel-processing loop.
+     */
+    void applyAutomaticCorrection(long requestedChangeHz)
+    {
+        requestedChangeHz = clamp(requestedChangeHz, -MAXIMUM_TUNER_ERROR_CORRECTION_PER_INTERVAL_HZ,
+            MAXIMUM_TUNER_ERROR_CORRECTION_PER_INTERVAL_HZ);
+
+        mTunerController.getLock().lock();
+
+        try
+        {
+            long frequency = mTunerController.getFrequency();
+
+            if(mEnabled && frequency > 0)
             {
-                double adjustment = requestedChangeHz / (mTunerController.getFrequency() * PPM_DIVISOR);
+                double adjustment = requestedChangeHz / (frequency * PPM_DIVISOR);
+                double currentPPM = mTunerController.getFrequencyCorrection();
+                double minimumPPM = mAutoCorrectionBaselinePPM - MAXIMUM_AUTO_PPM_EXCURSION;
+                double maximumPPM = mAutoCorrectionBaselinePPM + MAXIMUM_AUTO_PPM_EXCURSION;
+                double adjustedPPM = clamp(currentPPM + adjustment, minimumPPM, maximumPPM);
 
-                try
+                if(Double.compare(currentPPM, adjustedPPM) != 0)
                 {
-                    mTunerController.setFrequencyCorrection(mTunerController.getFrequencyCorrection() + adjustment);
-                }
-                catch(SourceException e)
-                {
-                    LOGGER.error("Error while adjusting tuner PPM value", e);
+                    mApplyingAutomaticCorrection = true;
+
+                    try
+                    {
+                        mTunerController.setFrequencyCorrection(adjustedPPM);
+                    }
+                    catch(SourceException e)
+                    {
+                        LOGGER.error("Error while adjusting tuner PPM value", e);
+                    }
+                    finally
+                    {
+                        mApplyingAutomaticCorrection = false;
+                    }
                 }
             }
+        }
+        finally
+        {
+            mTunerController.getLock().unlock();
         }
     }
 
@@ -270,6 +327,11 @@ public class TunerFrequencyErrorManager implements ISourceEventProcessor
     }
 
     private long clamp(long value, long minimum, long maximum)
+    {
+        return Math.max(minimum, Math.min(maximum, value));
+    }
+
+    private double clamp(double value, double minimum, double maximum)
     {
         return Math.max(minimum, Math.min(maximum, value));
     }
