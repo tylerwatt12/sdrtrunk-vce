@@ -558,7 +558,105 @@ public class P25ActivityLogSchema
             incrementLegacyAttributionEncryption(connection, context, attribution, talkgroups, bucket);
         }
 
+        enrichDetailedTrunkedCall(connection, context.contextId(), attribution);
         return true;
+    }
+
+    /**
+     * Updates the optional detailed row for the already-counted call.  The physical call and every compact summary
+     * remain unchanged; this only fills facts that were not present on the first grant.
+     */
+    private static void enrichDetailedTrunkedCall(Connection connection, int contextId,
+                                                   P25ActivityLogRecords.TrunkedCallAttribution attribution)
+        throws SQLException
+    {
+        Long activityId = findDetailedTrunkedCallId(connection, contextId, attribution);
+
+        if(activityId == null)
+        {
+            return;
+        }
+
+        boolean sourceKnown = attribution.sourceBecameKnown() && attribution.sourceRadioId() != null &&
+            attribution.sourceRadioId() > 0;
+        boolean destinationKnown = attribution.destinationBecameKnown() && attribution.destinationId() > 0;
+
+        try(PreparedStatement statement = connection.prepareStatement("""
+            UPDATE p25_activity_event
+            SET source_radio_id = CASE
+                    WHEN ? = 1 AND (source_radio_id IS NULL OR source_radio_id <= 0) THEN ?
+                    ELSE source_radio_id
+                END,
+                target_id = CASE
+                    WHEN ? = 1 AND (target_id IS NULL OR target_id <= 0) THEN ?
+                    ELSE target_id
+                END,
+                target_kind_code = CASE
+                    WHEN ? = 1 AND target_kind_code IS NULL THEN ?
+                    ELSE target_kind_code
+                END,
+                encrypted = CASE WHEN ? = 1 THEN 1 ELSE encrypted END
+            WHERE id = ?
+            """))
+        {
+            statement.setInt(1, sourceKnown ? 1 : 0);
+            setInteger(statement, 2, sourceKnown ? attribution.sourceRadioId() : null);
+            statement.setInt(3, destinationKnown ? 1 : 0);
+            setInteger(statement, 4, destinationKnown ? attribution.destinationId() : null);
+            statement.setInt(5, destinationKnown ? 1 : 0);
+            setInteger(statement, 6, destinationKnown ? targetKindCode(attribution.destinationKind()) : null);
+            statement.setInt(7, attribution.encryptionBecameKnown() ? 1 : 0);
+            statement.setLong(8, activityId);
+            statement.executeUpdate();
+        }
+    }
+
+    /**
+     * Finds the retained detail row for a one-time trunked call observation.  Frequency is used when the attribution
+     * contains it, and timeslot is matched null-safely so simultaneous DMR slots cannot update each other.
+     */
+    static Long findDetailedTrunkedCallId(Connection connection,
+                                          P25ActivityLogRecords.TrunkedCallAttribution attribution)
+        throws SQLException
+    {
+        if(attribution == null)
+        {
+            return null;
+        }
+
+        ReceiverContextIdentity context = selectContextIdentity(connection, attribution.contextKey(),
+            attribution.guid());
+        return context != null && context.kindCode() == CONTEXT_TRUNKED_SITE ?
+            findDetailedTrunkedCallId(connection, context.contextId(), attribution) : null;
+    }
+
+    private static Long findDetailedTrunkedCallId(Connection connection, int contextId,
+                                                   P25ActivityLogRecords.TrunkedCallAttribution attribution)
+        throws SQLException
+    {
+        try(PreparedStatement statement = connection.prepareStatement("""
+            SELECT id
+            FROM p25_activity_event
+            WHERE context_id = ? AND observed_at_ms = ? AND action_code = ?
+              AND (? IS NULL OR frequency_hz = ?)
+              AND ((? IS NULL AND timeslot IS NULL) OR timeslot = ?)
+            ORDER BY id DESC
+            LIMIT 1
+            """))
+        {
+            statement.setInt(1, contextId);
+            statement.setLong(2, attribution.callStartEpochMilliseconds());
+            statement.setInt(3, actionCode(P25ActivityLogRecords.Action.CALL));
+            setLong(statement, 4, attribution.frequencyHertz());
+            setLong(statement, 5, attribution.frequencyHertz());
+            setInteger(statement, 6, attribution.timeslot());
+            setInteger(statement, 7, attribution.timeslot());
+
+            try(ResultSet resultSet = statement.executeQuery())
+            {
+                return resultSet.next() ? resultSet.getLong(1) : null;
+            }
+        }
     }
 
     private static P25ActivityLogRecords.ActivityEvent attributionActivity(

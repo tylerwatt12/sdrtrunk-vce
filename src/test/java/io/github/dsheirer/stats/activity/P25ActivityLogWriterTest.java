@@ -1814,6 +1814,15 @@ class P25ActivityLogWriterTest
             assertTrue(P25ActivityLogSchema.applyTrunkedCallAttribution(connection, attribution));
 
             assertCount(connection, "p25_activity_event", 1);
+            assertEquals(1L, P25ActivityLogSchema.findDetailedTrunkedCallId(connection, attribution));
+            assertEquals(1811524L, scalarLong(connection,
+                "SELECT source_radio_id FROM p25_activity_event"));
+            assertEquals(56138L, scalarLong(connection,
+                "SELECT target_id FROM p25_activity_event"));
+            assertEquals(1L, scalarLong(connection,
+                "SELECT target_kind_code FROM p25_activity_event"));
+            assertEquals(1L, scalarLong(connection,
+                "SELECT encrypted FROM p25_activity_event"));
             assertEquals(1L, scalarLong(connection,
                 "SELECT call_count FROM p25_site_activity_bucket"));
             assertEquals(1L, scalarLong(connection,
@@ -1845,6 +1854,39 @@ class P25ActivityLogWriterTest
                 P25ActivityLogSchema.IDENTITY_KIND_TALKGROUP, 56138, 1, 1, 0, 0);
             assertIdentityBucket(connection, 0L, P25ActivityLogSchema.IDENTITY_ROLE_SOURCE,
                 P25ActivityLogSchema.IDENTITY_KIND_RADIO, 1811524, 1, 1, 0, 0);
+        }
+    }
+
+    @Test
+    void lateAttributionUpdatesOnlyTheMatchingDmrTimeslot() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("dmr-late-attribution-slot.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        String guid = "123e4567-e89b-12d3-a456-426614174001";
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            for(int timeslot: List.of(1, 2))
+            {
+                P25ActivityLogSchema.recordActivity(connection, new P25ActivityLogRecords.ActivityEvent(
+                    1_000L, "GUID:" + guid, guid, P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "DMR",
+                    P25ActivityLogRecords.Action.CALL, "CALL_GROUP", null, null, null, List.of(),
+                    461_125_000L, "12", timeslot, false, null, null, null, 7, null, null, 1,
+                    "Example DMR", "DMR", null, true, null, null), true);
+            }
+
+            P25ActivityLogRecords.TrunkedCallAttribution attribution =
+                new P25ActivityLogRecords.TrunkedCallAttribution(1_000L, "GUID:" + guid, guid,
+                    461_125_000L, 1, 91, "TALKGROUP", List.of(), 101,
+                    true, true, false, false);
+            assertTrue(P25ActivityLogSchema.applyTrunkedCallAttribution(connection, attribution));
+
+            assertEquals(91L, scalarLong(connection,
+                "SELECT target_id FROM p25_activity_event WHERE timeslot = 1"));
+            assertEquals(-1L, scalarLong(connection,
+                "SELECT coalesce(target_id, -1) FROM p25_activity_event WHERE timeslot = 2"));
+            assertEquals(2L, scalarLong(connection,
+                "SELECT call_count FROM p25_site_activity_bucket"));
         }
     }
 

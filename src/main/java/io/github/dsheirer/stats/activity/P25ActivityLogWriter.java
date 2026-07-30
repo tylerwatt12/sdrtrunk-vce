@@ -19,7 +19,9 @@ import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
@@ -555,7 +557,7 @@ class P25ActivityLogWriter implements AutoCloseable
 
         boolean previousAutoCommit = connection.getAutoCommit();
         connection.setAutoCommit(false);
-        List<Long> committedActivityIds = new ArrayList<>();
+        Set<Long> committedActivityIds = new LinkedHashSet<>();
         boolean committed = false;
 
         try
@@ -607,6 +609,13 @@ class P25ActivityLogWriter implements AutoCloseable
                 {
                     if(P25ActivityLogSchema.applyTrunkedCallAttribution(connection, attribution))
                     {
+                        Long activityId = P25ActivityLogSchema.findDetailedTrunkedCallId(connection, attribution);
+
+                        if(activityId != null)
+                        {
+                            committedActivityIds.add(activityId);
+                        }
+
                         writtenRecords++;
                     }
                 }
