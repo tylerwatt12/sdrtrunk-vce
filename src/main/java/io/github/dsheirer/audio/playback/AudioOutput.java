@@ -35,7 +35,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.sound.sampled.AudioSystem;
-import javax.sound.sampled.Control;
 import javax.sound.sampled.DataLine;
 import javax.sound.sampled.FloatControl;
 import javax.sound.sampled.LineEvent;
@@ -102,9 +101,13 @@ public class AudioOutput implements LineListener
                 if(mSourceDataLine != null)
                 {
                     mSourceDataLine.addLineListener(this);
-                    initializeGainControl(mixer);
+                    openSourceDataLine();
 
-                    mCanProcessAudio = true;
+                    if(mSourceDataLine.isOpen())
+                    {
+                        initializeGainControl();
+                        mCanProcessAudio = true;
+                    }
                 }
             }
             catch(LineUnavailableException e)
@@ -114,8 +117,6 @@ public class AudioOutput implements LineListener
 
             if(mCanProcessAudio)
             {
-                openSourceDataLine();
-
                 //The audio provider gives us audio 160 samples per interval representing 20 milliseconds of audio.
                 // Run the scheduled executor at just slightly faster than that time, recognizing that it will
                 // block against the mixer source data line until it can write all 160 samples.
@@ -134,18 +135,24 @@ public class AudioOutput implements LineListener
         }
     }
 
-    private void initializeGainControl(Mixer mixer)
+    private void initializeGainControl()
     {
-        try
+        mGainControl = getMasterGainControl(mSourceDataLine);
+    }
+
+    /**
+     * Gets the master gain control from an open audio line when the device exposes that optional capability.
+     */
+    static FloatControl getMasterGainControl(SourceDataLine sourceDataLine)
+    {
+        if(sourceDataLine != null && sourceDataLine.isOpen() &&
+            sourceDataLine.isControlSupported(FloatControl.Type.MASTER_GAIN) &&
+            sourceDataLine.getControl(FloatControl.Type.MASTER_GAIN) instanceof FloatControl gainControl)
         {
-            Control gain = mSourceDataLine.getControl(FloatControl.Type.MASTER_GAIN);
-            mGainControl = (FloatControl)gain;
+            return gainControl;
         }
-        catch(IllegalArgumentException iae)
-        {
-            LOGGING_SUPPRESSOR.error("no gain control", 2, "Couldn't obtain " +
-                "MASTER GAIN control for stereo line [" + mixer.getMixerInfo().getName() + "]");
-        }
+
+        return null;
     }
 
     /**
