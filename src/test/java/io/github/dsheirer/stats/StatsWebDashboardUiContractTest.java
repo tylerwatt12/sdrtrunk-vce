@@ -62,13 +62,26 @@ class StatsWebDashboardUiContractTest
         String source = Files.readString(APP_JAVASCRIPT);
         String coverage = function(source, "function dashboardCoverage(activity)");
         assertTrue(coverage.contains("'Metric availability'"));
-        assertTrue(coverage.contains("'Full range'"));
-        assertTrue(coverage.contains("'Partial range'"));
-        assertTrue(coverage.contains("'Unavailable'"));
+        assertTrue(coverage.contains("'Full 24 hours'"));
+        assertTrue(coverage.contains("'Partial history'"));
+        assertTrue(coverage.contains("'Not collected'"));
         assertFalse(coverage.contains("Collection coverage"));
         String metricLabel = function(source, "function dashboardMetricLabel(activity, field, label)");
-        assertTrue(metricLabel.contains("Partial coverage"));
+        assertFalse(metricLabel.contains("Partial coverage"));
         assertFalse(metricLabel.contains("Partial history"));
+    }
+
+    @Test
+    void keepsSignalHealthInStableNameOrder() throws Exception
+    {
+        String source = Files.readString(APP_JAVASCRIPT);
+        String sorter = function(source, "function sortSignalSites(sites)");
+        String section = function(source, "async function signalHealthSection()");
+        assertTrue(sorter.contains("siteLabel(left).localeCompare(siteLabel(right)"));
+        assertTrue(sorter.contains("left.guid"));
+        assertFalse(sorter.contains("decode_health_pct"));
+        assertFalse(section.contains("Highest decode"));
+        assertFalse(section.contains("Weakest signal"));
     }
 
     @Test

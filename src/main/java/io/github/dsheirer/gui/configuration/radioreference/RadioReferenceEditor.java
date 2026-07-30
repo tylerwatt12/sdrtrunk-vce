@@ -57,12 +57,16 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
+import java.util.Objects;
 import java.util.function.Consumer;
 
 public class RadioReferenceEditor extends BorderPane implements Consumer<AuthorizationInformation>
 {
     private static final Logger mLog = LoggerFactory.getLogger(RadioReferenceEditor.class);
+    private static final List<String> COMMON_COUNTRY_CODES = List.of("US", "CA", "AU", "UK", "GB");
     private UserPreferences mUserPreferences;
     private RadioReference mRadioReference;
     private ConfigurationManager mConfigurationManager;
@@ -142,7 +146,7 @@ public class RadioReferenceEditor extends BorderPane implements Consumer<Authori
         ThreadPool.CACHED.execute(() -> {
             try
             {
-                List<Country> countries = mRadioReference.getService().getCountries();
+                List<Country> countries = sortedCountries(mRadioReference.getService().getCountries());
 
                 Platform.runLater(() -> {
                     getCountryComboBox().getItems().addAll(countries);
@@ -166,6 +170,24 @@ public class RadioReferenceEditor extends BorderPane implements Consumer<Authori
                 Platform.runLater(() -> new RadioReferenceUnavailableAlert(getCountryComboBox()).showAndWait());
             }
         });
+    }
+
+    static List<Country> sortedCountries(List<Country> countries)
+    {
+        return (countries != null ? countries : List.<Country>of()).stream()
+            .filter(Objects::nonNull)
+            .sorted(Comparator.comparingInt(RadioReferenceEditor::countryRank)
+                .thenComparing(Country::getName, Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER))
+                .thenComparingInt(Country::getCountryId))
+            .toList();
+    }
+
+    private static int countryRank(Country country)
+    {
+        String code = country != null && country.getCountryCode() != null ?
+            country.getCountryCode().strip().toUpperCase(Locale.ROOT) : "";
+        int rank = COMMON_COUNTRY_CODES.indexOf(code);
+        return rank >= 0 ? rank : COMMON_COUNTRY_CODES.size();
     }
 
     private TabPane getTabPane()

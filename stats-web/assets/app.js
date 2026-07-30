@@ -10,6 +10,7 @@ const DECODE_HEALTHY_MINIMUM_PERCENT = 90;
 const DECODE_DEGRADED_MINIMUM_PERCENT = 75;
 const VOICE_QUALITY_WARMUP_FRAMES = 50;
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
+const THEME_STORAGE_KEY = 'sdrtrunk_theme';
 const SIGNAL_RANGES = Object.freeze([
   ['1h', '1 hour'], ['6h', '6 hours'], ['24h', '24 hours'], ['7d', '7 days'], ['30d', '30 days']
 ]);
@@ -17,9 +18,9 @@ const ACTIVITY_RANGES = Object.freeze([
   ['6h', '6 hours'], ['24h', '24 hours'], ['7d', '7 days'], ['30d', '30 days']
 ]);
 const CALL_ACTIVITY_SERIES = Object.freeze([
-  { field: 'call_count', label: 'Tracked Calls', color: '#0b7168', visible: true },
-  { field: 'recorded_count', label: 'Recorded', color: '#2f6da5', visible: true },
-  { field: 'streamed_count', label: 'Sent to Streamer', color: '#cc7a00', visible: true }
+  { field: 'call_count', label: 'Tracked Calls', color: 'var(--chart-call)', visible: true },
+  { field: 'recorded_count', label: 'Recorded', color: 'var(--chart-recorded)', visible: true },
+  { field: 'streamed_count', label: 'Sent to Streamer', color: 'var(--chart-streamed)', visible: true }
 ]);
 const DASHBOARD_CALL_METRICS = Object.freeze([
   { field: 'call_count', label: 'Calls' },
@@ -28,10 +29,10 @@ const DASHBOARD_CALL_METRICS = Object.freeze([
   { field: 'encrypted_count', label: 'Encrypted' }
 ]);
 const DASHBOARD_PROTOCOL_SERIES = Object.freeze([
-  { key: 'P25', label: 'P25', color: '#0b7168' },
-  { key: 'DMR', label: 'DMR', color: '#2f6da5' },
-  { key: 'NXDN', label: 'NXDN', color: '#cc7a00' },
-  { key: 'NBFM', label: 'NBFM', color: '#6b4fa3' }
+  { key: 'P25', label: 'P25', color: 'var(--chart-call)' },
+  { key: 'DMR', label: 'DMR', color: 'var(--chart-recorded)' },
+  { key: 'NXDN', label: 'NXDN', color: 'var(--chart-streamed)' },
+  { key: 'NBFM', label: 'NBFM', color: 'var(--chart-data)' }
 ]);
 const DASHBOARD_CHANNEL_KIND_FILTERS = Object.freeze([
   { value: 'ALL', label: 'All' },
@@ -40,28 +41,28 @@ const DASHBOARD_CHANNEL_KIND_FILTERS = Object.freeze([
 ]);
 const TALKGROUP_ACTIVITY_SERIES = Object.freeze([
   ...CALL_ACTIVITY_SERIES,
-  { field: 'encrypted_count', label: 'Encrypted', color: '#9d174d' },
-  { field: 'emergency_count', label: 'Emergency', color: '#b42318' },
-  { field: 'data_count', label: 'Data', color: '#6b4fa3' },
-  { field: 'join_count', label: 'Join', color: '#3c7a3c' },
-  { field: 'register_count', label: 'Register', color: '#0085a1' },
-  { field: 'denial_count', label: 'Denial', color: '#b33b5e' },
-  { field: 'busy_count', label: 'Busy', color: '#a65a3a' },
-  { field: 'queued_count', label: 'Queued', color: '#7c6b2f' },
-  { field: 'continue_count', label: 'Continue', color: '#526778' },
-  { field: 'active_count', label: 'Active', color: '#4d7f7b' },
-  { field: 'acknowledge_count', label: 'Acknowledge', color: '#865d9c' },
-  { field: 'check_count', label: 'Check', color: '#8b5d2e' },
-  { field: 'check_ack_count', label: 'Check Ack', color: '#556b2f' },
-  { field: 'gps_count', label: 'GPS', color: '#00758a' },
-  { field: 'logout_count', label: 'Logout', color: '#806000' },
-  { field: 'page_count', label: 'Page', color: '#754668' },
-  { field: 'patch_count', label: 'Patch', color: '#476a30' },
-  { field: 'patch_cancel_count', label: 'Patch Cancel', color: '#9a5b13' },
-  { field: 'patch_create_count', label: 'Patch Create', color: '#5b5f97' },
-  { field: 'request_count', label: 'Request', color: '#2f728f' },
-  { field: 'status_count', label: 'Status', color: '#6b6257' },
-  { field: 'unknown_count', label: 'Unknown', color: '#737c86' }
+  { field: 'encrypted_count', label: 'Encrypted', color: 'var(--chart-encrypted)' },
+  { field: 'emergency_count', label: 'Emergency', color: 'var(--chart-emergency)' },
+  { field: 'data_count', label: 'Data', color: 'var(--chart-data)' },
+  { field: 'join_count', label: 'Join', color: 'var(--chart-join)' },
+  { field: 'register_count', label: 'Register', color: 'var(--chart-register)' },
+  { field: 'denial_count', label: 'Denial', color: 'var(--chart-denial)' },
+  { field: 'busy_count', label: 'Busy', color: 'var(--chart-busy)' },
+  { field: 'queued_count', label: 'Queued', color: 'var(--chart-queued)' },
+  { field: 'continue_count', label: 'Continue', color: 'var(--chart-continue)' },
+  { field: 'active_count', label: 'Active', color: 'var(--chart-active)' },
+  { field: 'acknowledge_count', label: 'Acknowledge', color: 'var(--chart-acknowledge)' },
+  { field: 'check_count', label: 'Check', color: 'var(--chart-check)' },
+  { field: 'check_ack_count', label: 'Check Ack', color: 'var(--chart-check-ack)' },
+  { field: 'gps_count', label: 'GPS', color: 'var(--chart-gps)' },
+  { field: 'logout_count', label: 'Logout', color: 'var(--chart-logout)' },
+  { field: 'page_count', label: 'Page', color: 'var(--chart-page)' },
+  { field: 'patch_count', label: 'Patch', color: 'var(--chart-patch)' },
+  { field: 'patch_cancel_count', label: 'Patch Cancel', color: 'var(--chart-patch-cancel)' },
+  { field: 'patch_create_count', label: 'Patch Create', color: 'var(--chart-patch-create)' },
+  { field: 'request_count', label: 'Request', color: 'var(--chart-request)' },
+  { field: 'status_count', label: 'Status', color: 'var(--chart-status)' },
+  { field: 'unknown_count', label: 'Unknown', color: 'var(--chart-unknown)' }
 ]);
 const CALL_METRIC_GUIDE = Object.freeze([
   ['Tracked Calls', 'Traffic calls accepted by the channel manager. A tracked call can have no usable audio.'],
@@ -100,7 +101,8 @@ const CHANNEL_TAG_DISPLAY = Object.freeze({
   ALTERNATE_CONTROL: { abbreviation: 'ACC', description: 'Alternate control channel', className: 'role-secondary' },
   VOICE: { abbreviation: 'VC', description: 'Observed voice traffic', className: 'role-voice' },
   DATA: { abbreviation: 'DAT', description: 'Observed data traffic', className: 'role-data' },
-  DATA_ANNOUNCED: { abbreviation: 'DAT-A', description: 'Announced data channel', className: 'role-data-announced' }
+  DATA_ANNOUNCED: { abbreviation: 'DAT-A', description: 'Announced data channel', className: 'role-data-announced' },
+  CWID: { abbreviation: 'CWID', description: 'Base station identification channel' }
 });
 const TABLE_COLUMN_DEFAULT_WIDTHS = {
   'action': 82,
@@ -113,6 +115,7 @@ const TABLE_COLUMN_DEFAULT_WIDTHS = {
   'decoder': 78,
   'encrypted': 52,
   'encryption': 92,
+  'evidence': 134,
   'event': 115,
   'first-seen': 166,
   'frequency': 94,
@@ -121,6 +124,7 @@ const TABLE_COLUMN_DEFAULT_WIDTHS = {
   'last-seen': 166,
   'lcn': 68,
   'name': 175,
+  'neighbor-name': 175,
   'radio': 82,
   'radio-alias': 165,
   'recorded': 78,
@@ -135,6 +139,7 @@ const TABLE_COLUMN_DEFAULT_WIDTHS = {
   'streamed': 82,
   'system': 106,
   'talker-alias': 160,
+  'talkgroup-description': 240,
   'talkgroup-id': 90,
   'talkgroup-name': 175,
   'target': 82,
@@ -283,6 +288,40 @@ function writeTableWidthPreferences() {
   document.cookie = `${TABLE_WIDTH_COOKIE}=${encoded}; Max-Age=31536000; Path=/; SameSite=Lax`;
 }
 
+function currentTheme() {
+  return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
+}
+
+function updateThemeToggle() {
+  const toggle = document.getElementById('theme-toggle');
+  if (!toggle) return;
+  const dark = currentTheme() === 'dark';
+  toggle.textContent = dark ? 'Light' : 'Dark';
+  toggle.setAttribute('aria-pressed', String(dark));
+  toggle.setAttribute('aria-label', dark ? 'Use light theme' : 'Use dark theme');
+  toggle.title = dark ? 'Use light theme' : 'Use dark theme';
+}
+
+function setTheme(theme, persist = true) {
+  if (theme === 'dark') document.documentElement.dataset.theme = 'dark';
+  else document.documentElement.removeAttribute('data-theme');
+  if (persist) {
+    try {
+      window.localStorage.setItem(THEME_STORAGE_KEY, theme === 'dark' ? 'dark' : 'light');
+    } catch (error) {
+      // Browser storage can be disabled; the active page theme still changes.
+    }
+  }
+  updateThemeToggle();
+}
+
+function initializeThemeToggle() {
+  const toggle = document.getElementById('theme-toggle');
+  if (!toggle) return;
+  updateThemeToggle();
+  toggle.addEventListener('click', () => setTheme(currentTheme() === 'dark' ? 'light' : 'dark'));
+}
+
 function fragment(...children) {
   const result = document.createDocumentFragment();
   children.flat().filter(Boolean).forEach((child) => result.append(child));
@@ -313,30 +352,19 @@ function hexDecimalPair(value, width = 0) {
   return result;
 }
 
-const P25_ENCRYPTION_ALGORITHM_NAMES = Object.freeze({
-  0x00: 'ACRD3', 0x01: 'BAT-E', 0x02: 'FIREF', 0x03: 'MAYFL', 0x04: 'SAVIL', 0x05: 'PADSTN',
-  0x41: 'BAT-O', 0x81: 'DESOFB', 0x82: '3DES2', 0x83: '3DES3', 0x84: 'AES256', 0x85: 'AES128',
-  0x88: 'AESCBC', 0x89: 'A128OF', 0x9F: 'DESXL', 0xA0: 'DVIXL', 0xA1: 'DVPXL', 0xA2: 'DVPSPF',
-  0xA3: 'HAYSTK', 0xA4: 'MOT-A4', 0xA5: 'MOT-A5', 0xA6: 'MOT-A6', 0xA7: 'MOT-A7',
-  0xA8: 'MOT-A8', 0xA9: 'MOT-A9', 0xAA: 'ADP', 0xAB: 'CFX256', 0xAC: 'MOT-AC',
-  0xAD: 'MOT-AD', 0xAE: 'MOT-AE', 0xAF: 'A256GM', 0xB0: 'DVPB0'
-});
-
-function encryptionAlgorithm(value) {
-  if (value === null || value === undefined || value === '') return '';
-  const algorithm = Number(value);
-  return P25_ENCRYPTION_ALGORITHM_NAMES[algorithm] || `0x${hex(algorithm, 2)}`;
+function encryptionAlgorithmInfoValue(display, rawValue) {
+  if (display) return display;
+  if (rawValue === null || rawValue === undefined || rawValue === '') return '';
+  return `ALG:${hex(rawValue, 2)}`;
 }
 
-function encryptionAlgorithmInfoValue(value) {
-  const label = encryptionAlgorithm(value);
-  return label.startsWith('0x') ? hexDecimalPair(value, 2) : label;
-}
-
-function encryptionDetails(algorithm, key) {
-  const algorithmValue = encryptionAlgorithm(algorithm);
-  const keyValue = hex(key);
-  return `${algorithmValue}${keyValue ? `:${keyValue}` : ''}`;
+function encryptionActivityValue(row) {
+  if (!row.encrypted) return '';
+  const value = node('span', '', row.encryption_display || 'ENC');
+  if (row.encryption_full_display && row.encryption_full_display !== row.encryption_display) {
+    value.title = row.encryption_full_display;
+  }
+  return value;
 }
 
 function frequency(value) {
@@ -440,15 +468,21 @@ function isP25(row) {
 }
 
 function identifierNumber(value) {
-  return value === null || value === undefined || value === '' || Number(value) < 0 ? '' : number(value);
+  const numeric = Number(value);
+  return value === null || value === undefined || value === '' || !Number.isFinite(numeric) || numeric < 0 ?
+    '' : String(Math.trunc(numeric));
 }
 
 function trunkedSystemLabel(row) {
   const configured = row.configured_system || row.site_names;
   if (configured) return configured;
   const identities = [];
-  if (row.network_id !== null && row.network_id !== undefined) identities.push(`Network ${number(row.network_id)}`);
-  if (row.system_id !== null && row.system_id !== undefined) identities.push(`System ${number(row.system_id)}`);
+  if (row.network_id !== null && row.network_id !== undefined) {
+    identities.push(`Network ${identifierNumber(row.network_id)}`);
+  }
+  if (row.system_id !== null && row.system_id !== undefined) {
+    identities.push(`System ${identifierNumber(row.system_id)}`);
+  }
   return identities.length ? `${protocolFamily(row)} ${identities.join(' · ')}` : `${protocolFamily(row)} system`;
 }
 
@@ -495,10 +529,14 @@ function trunkedIdentity(row) {
   const values = [];
   const domain = identityDomainLabel(row);
   if (domain && domain !== trunkedVariant(row)) values.push(domain);
-  if (row.network_id !== null && row.network_id !== undefined) values.push(`Network ${number(row.network_id)}`);
-  if (row.system_id !== null && row.system_id !== undefined) values.push(`System ${number(row.system_id)}`);
-  if (row.site_id !== null && row.site_id !== undefined) values.push(`Site ${number(row.site_id)}`);
-  if (row.ran !== null && row.ran !== undefined) values.push(`RAN ${number(row.ran)}`);
+  if (row.network_id !== null && row.network_id !== undefined) {
+    values.push(`Network ${identifierNumber(row.network_id)}`);
+  }
+  if (row.system_id !== null && row.system_id !== undefined) {
+    values.push(`System ${identifierNumber(row.system_id)}`);
+  }
+  if (row.site_id !== null && row.site_id !== undefined) values.push(`Site ${identifierNumber(row.site_id)}`);
+  if (row.ran !== null && row.ran !== undefined) values.push(`RAN ${identifierNumber(row.ran)}`);
   return values.join(' · ');
 }
 
@@ -506,6 +544,14 @@ function badge(label, className = '', title = '') {
   const element = node('span', `badge ${className}`.trim(), label);
   if (title) element.title = title;
   return element;
+}
+
+function badgeGroup(values) {
+  const badges = (values || []).filter(Boolean);
+  if (!badges.length) return fragment();
+  const group = node('span', 'badge-group');
+  group.append(...badges);
+  return group;
 }
 
 function stateBadge(value) {
@@ -522,7 +568,7 @@ function neighborStatus(value) {
   if (status.includes('CONVENTIONAL')) labels.push(['Conventional', '']);
   if (status.includes('ISSI ADVERTISED')) labels.push(['ISSI Advertised', 'state-current']);
   if (!labels.length && status) labels.push([value, '']);
-  return fragment(...labels.map(([label, className]) => badge(label, className)));
+  return badgeGroup(labels.map(([label, className]) => badge(label, className)));
 }
 
 function neighborModes(row) {
@@ -581,6 +627,12 @@ function externalAnchor(label, target) {
   return element;
 }
 
+function callsignLink(value) {
+  const callsign = String(value || '').trim();
+  return callsign ? externalAnchor(callsign,
+    `https://www.radioreference.com/db/fcc/callsign/${encodeURIComponent(callsign)}`) : '';
+}
+
 function systemLink(row, label = systemValue(row)) {
   if (!isP25(row)) {
     const search = row.configured_system || [
@@ -595,6 +647,12 @@ function systemLink(row, label = systemValue(row)) {
 
 function siteLink(row, label = siteValue(row)) {
   return anchor(label, href('site', { guid: row.guid, tab: 'info' }));
+}
+
+function neighborSiteLink(row) {
+  const label = row.neighbor_name || row.neighbor_site_name || row.neighbor_channel_name || '';
+  return label && row.neighbor_guid ?
+    anchor(label, href('site', { guid: row.neighbor_guid, tab: 'info' })) : label;
 }
 
 function talkgroupLink(row, id = row.talkgroup_id, label) {
@@ -639,12 +697,13 @@ function channelTags(row) {
   if (observed.has('VOICE')) tags.push(channelTagBadge('VOICE'));
   if (observed.has('DATA')) tags.push(channelTagBadge('DATA'));
   if (observed.has('DATA_ANNOUNCED') && !observed.has('DATA')) tags.push(channelTagBadge('DATA_ANNOUNCED'));
-  return tags.length ? fragment(...tags) : badge('Unknown', 'state-historical');
+  if (observed.has('CWID') || current.has('CWID')) tags.push(channelTagBadge('CWID'));
+  return tags.length ? badgeGroup(tags) : badge('Unknown', 'state-historical');
 }
 
 function visibleLiveChannelTags(row) {
   const tags = channelTagSet(row.tags);
-  const visible = ['CURRENT_CONTROL', 'ALTERNATE_CONTROL', 'VOICE', 'DATA', 'DATA_ANNOUNCED']
+  const visible = ['CURRENT_CONTROL', 'ALTERNATE_CONTROL', 'VOICE', 'DATA', 'DATA_ANNOUNCED', 'CWID']
     .filter((tag) => tags.has(tag) && (tag !== 'DATA_ANNOUNCED' || !tags.has('DATA')));
   if (tags.has('CONVENTIONAL')) visible.unshift('CONVENTIONAL');
   if (tags.has('CONFIGURED') && visible.length === 0) visible.push('CONFIGURED');
@@ -1106,12 +1165,22 @@ function actionCounts(row) {
     .map(([key, value]) => [key.replace(/_count$/, '').replaceAll('_', ' '), Number(value)]);
 }
 
+function talkgroupEvidence(row) {
+  const total = talkgroupEvidenceSortValue(row);
+  return total > 0 ? number(total) : '—';
+}
+
+function talkgroupEvidenceSortValue(row) {
+  const total = Number(row.evidence_total || 0);
+  return Number.isFinite(total) && total > 0 ? total : 0;
+}
+
 function withoutGrantActions(rows) {
   return (rows || []).filter((row) => String(row.action || '').toUpperCase() !== 'GRANT');
 }
 
 function callSourceActivityColor(index) {
-  return `hsl(${Math.round(index * 137.508) % 360} 58% 42%)`;
+  return `hsl(${Math.round(index * 137.508) % 360} 58% var(--chart-dynamic-lightness))`;
 }
 
 function dashboardChannelKind(row) {
@@ -1364,7 +1433,6 @@ function dashboardMetricCoverageStatus(activity, field) {
 
 function dashboardMetricLabel(activity, field, label) {
   const status = dashboardMetricCoverageStatus(activity, field);
-  if (status === 'PARTIAL') return `${label} · Partial coverage`;
   if (status === 'NOT_COLLECTED') return `${label} · Unavailable`;
   return label;
 }
@@ -1382,7 +1450,7 @@ function dashboardProtocolConfigurations(activity) {
     configured.set(key, {
       key,
       label: key,
-      color: `hsl(${Math.round(configured.size * 137.508) % 360} 58% 42%)`
+      color: `hsl(${Math.round(configured.size * 137.508) % 360} 58% var(--chart-dynamic-lightness))`
     });
   });
   return [...configured.values()];
@@ -1438,9 +1506,9 @@ function dashboardCoverage(activity) {
       const row = reported.find((candidate) => dashboardChannelKind(candidate) === channelKind);
       if (!row) return;
       const status = String(row.status || 'UNKNOWN').toUpperCase();
-      const statusLabel = status === 'COLLECTED' ? 'Full range' :
-        status === 'PARTIAL' ? 'Partial range' :
-          status === 'NOT_COLLECTED' ? 'Unavailable' : 'Unknown';
+      const statusLabel = status === 'COLLECTED' ? 'Full 24 hours' :
+        status === 'PARTIAL' ? 'Partial history' :
+          status === 'NOT_COLLECTED' ? 'Not collected' : 'Unknown';
       const line = node('span', 'dashboard-coverage-entry');
       line.append(node('span', '', channelKind === 'TRUNKED' ? 'Trunked' : 'Conventional'),
         badge(statusLabel, status === 'COLLECTED' ? 'state-current' :
@@ -1496,7 +1564,7 @@ function dashboardCallActivityChart(activity) {
       button.append(swatch, node('span', '', configuration.label));
       if (collected) {
         button.append(node('span', 'activity-series-total', number(total)));
-        if (status === 'PARTIAL') button.append(node('span', 'activity-series-status', 'Partial range'));
+        if (status === 'PARTIAL') button.append(node('span', 'activity-series-status', 'Partial history'));
       }
       else button.append(node('span', 'activity-series-status', 'Unavailable'));
       button.title = status === 'PARTIAL' ? `${configuration.label} is available for part of this range` :
@@ -1541,10 +1609,7 @@ function dashboardCallActivityChart(activity) {
     const button = node('button', 'dashboard-filter-button secondary', metric.label);
     button.type = 'button';
     const coverageStatus = dashboardMetricCoverageStatus(activity, metric.field);
-    if (coverageStatus === 'PARTIAL') {
-      button.append(node('small', 'dashboard-metric-coverage', 'Partial coverage'));
-      button.title = `${metric.label} is not available for every protocol and topology`;
-    } else if (coverageStatus === 'NOT_COLLECTED') {
+    if (coverageStatus === 'NOT_COLLECTED') {
       button.append(node('small', 'dashboard-metric-coverage', 'Unavailable'));
       button.title = `${metric.label} is unavailable`;
       button.disabled = true;
@@ -1818,7 +1883,7 @@ function qualityHistoryChart(site, response, metric, domain) {
       markers: (point) => [{
         x: xFor(point.timestamp),
         y: yFor(point.value),
-        color: signal ? '#0b7168' : '#3d64b1'
+        color: signal ? 'var(--chart-call)' : 'var(--chart-decode)'
       }],
       tooltipText: (point) => {
         const frequencyText = Number(point.frequency_hz) ? `${frequency(point.frequency_hz)} MHz` :
@@ -1893,20 +1958,10 @@ function signalCurrentTile(site) {
   return updateSignalCurrentTile(node('article', 'signal-current-tile'), site);
 }
 
-function sortSignalSites(sites, selectedSort) {
-  return [...sites].sort((left, right) => {
-    if (selectedSort === 'name') return siteLabel(left).localeCompare(siteLabel(right));
-    if (selectedSort === 'signal') {
-      const leftSignal = optionalNumber(left.average_signal_dbfs);
-      const rightSignal = optionalNumber(right.average_signal_dbfs);
-      return (Number.isFinite(leftSignal) ? leftSignal : -Infinity) -
-        (Number.isFinite(rightSignal) ? rightSignal : -Infinity);
-    }
-    const leftDecode = optionalNumber(left.decode_health_pct);
-    const rightDecode = optionalNumber(right.decode_health_pct);
-    return (Number.isFinite(rightDecode) ? rightDecode : -1) -
-      (Number.isFinite(leftDecode) ? leftDecode : -1);
-  });
+function sortSignalSites(sites) {
+  return [...sites].sort((left, right) =>
+    siteLabel(left).localeCompare(siteLabel(right), undefined, { sensitivity: 'base' }) ||
+      String(left.guid || '').localeCompare(String(right.guid || '')));
 }
 
 function signalOverview(site, includeName = true) {
@@ -1961,17 +2016,7 @@ async function signalHealthSection() {
   const currentPanel = node('div', 'signal-current-panel');
   const currentToolbar = node('div', 'signal-current-toolbar');
   const summary = node('div', 'signal-health-summary');
-  const sortLabel = node('label', 'signal-sort-label', 'Sort');
-  const sort = node('select', 'signal-sort');
-  [['decode', 'Highest decode'], ['signal', 'Weakest signal'], ['name', 'Name']].forEach(([value, label]) => {
-    const option = node('option', '', label);
-    option.value = value;
-    sort.append(option);
-  });
-  let selectedSort = 'decode';
-  sort.value = selectedSort;
-  sortLabel.append(sort);
-  currentToolbar.append(summary, sortLabel);
+  currentToolbar.append(summary);
   const tiles = node('div', 'signal-current-grid');
   currentPanel.append(currentToolbar, tiles);
   host.append(currentPanel);
@@ -1983,7 +2028,7 @@ async function signalHealthSection() {
   const renderCurrent = () => {
     const now = Date.now();
     const sites = sortSignalSites((currentResponse?.sites || []).filter((site) =>
-      now - Number(site.last_observed_ms || 0) <= SIGNAL_OFFLINE_MILLISECONDS), selectedSort);
+      now - Number(site.last_observed_ms || 0) <= SIGNAL_OFFLINE_MILLISECONDS));
     const healthy = sites.filter((site) =>
       optionalNumber(site.decode_health_pct) >= DECODE_HEALTHY_MINIMUM_PERCENT).length;
     const degraded = sites.filter((site) => {
@@ -2012,11 +2057,6 @@ async function signalHealthSection() {
     tiles.replaceChildren(...orderedTiles);
     if (!sites.length) tiles.append(node('div', 'empty', 'No trunked receivers are currently reporting'));
   };
-
-  sort.addEventListener('change', () => {
-    selectedSort = sort.value;
-    if (currentResponse) renderCurrent();
-  });
 
   const logging = statsLoggingState();
   if (logging.available && !logging.summaryActive) {
@@ -2172,7 +2212,7 @@ async function siteTopTalkgroupsSection(site) {
   block.querySelector('.section-title').append(rangeControl.controls);
   const columns = [
     { id: 'talkgroup-id', label: 'TGID', render: (row) => talkgroupLink(row), className: 'numeric', sortValue: (row) => Number(row.talkgroup_id) },
-    { id: 'talkgroup-name', label: 'Name', fullLabel: 'Talkgroup Name', render: (row) => talkgroupAliasLink(row, row.talkgroup_id), className: 'alias-cell', sortValue: aliasLabel },
+    { id: 'talkgroup-name', label: 'Alias', fullLabel: 'Talkgroup Alias', render: (row) => talkgroupAliasLink(row, row.talkgroup_id), className: 'alias-cell', sortValue: aliasLabel },
     { label: 'Group', key: 'alias_group', className: 'alias-cell', sortValue: (row) => row.alias_group || '' },
     { id: 'calls', label: 'Calls', render: (row) => number(row.call_count), className: 'numeric', sortValue: (row) => Number(row.call_count || 0) },
     { id: 'recorded', label: 'Rec', fullLabel: 'Recorded', render: (row) => number(row.recorded_count), className: 'numeric', sortValue: (row) => Number(row.recorded_count || 0) },
@@ -2441,7 +2481,7 @@ function trunkedChannelUse(value) {
   if (flags & 1) values.push(badge('Current CC', 'state-current'));
   if (flags & 2) values.push(badge('Alt CC', 'state-current'));
   if (flags & 4) values.push(badge('Traffic'));
-  return fragment(...values);
+  return badgeGroup(values);
 }
 
 function trunkedChannelSources(value) {
@@ -2450,7 +2490,7 @@ function trunkedChannelSources(value) {
   if (flags & 8) values.push(badge('OTA Seen', '', 'This channel and timeslot were decoded over the air'));
   if (flags & 16) values.push(badge('LCN Map', '', 'Frequency resolved from the configured LCN-to-frequency map'));
   if (flags & 32) values.push(badge('OTA Freq', '', 'Absolute frequency was broadcast over the air'));
-  return fragment(...values);
+  return badgeGroup(values);
 }
 
 function trunkedNeighborStatus(value) {
@@ -2458,7 +2498,7 @@ function trunkedNeighborStatus(value) {
   const values = [];
   if (flags & 1) values.push(badge('Linked', 'state-current'));
   if (flags & 2) values.push(badge('Isolated', 'state-stale'));
-  return fragment(...values);
+  return badgeGroup(values);
 }
 
 function dmrBrand(value) {
@@ -2590,7 +2630,7 @@ const dashboardReceiverColumns = [
 
 function dashboardIdentityId(row) {
   return Number(row.identity_kind_code) === 0 || Number(row.identity_id) <= 0 ? '—' :
-    number(row.identity_id);
+    identifierNumber(row.identity_id);
 }
 
 function dashboardIdentityLink(row, label = dashboardIdentityId(row)) {
@@ -2643,9 +2683,13 @@ const dashboardIdentityColumns = [
 
 const talkgroupColumns = [
   { id: 'talkgroup-id', label: 'TGID', render: (row) => talkgroupLink(row), className: 'numeric', sort: 'talkgroup', sortValue: (row) => Number(row.talkgroup_id) },
-  { id: 'talkgroup-name', label: 'Name', fullLabel: 'Talkgroup Name', render: (row) => talkgroupAliasLink(row, row.talkgroup_id), className: 'alias-cell', sort: 'alias', sortValue: aliasLabel },
+  { id: 'talkgroup-name', label: 'Alias', fullLabel: 'Talkgroup Alias', render: (row) => talkgroupAliasLink(row, row.talkgroup_id), className: 'alias-cell', sort: 'alias', sortValue: aliasLabel },
+  { id: 'talkgroup-description', label: 'Description', key: 'alias_description', className: 'alias-cell' },
   { label: 'Group', key: 'alias_group', className: 'alias-cell', sort: 'group' },
   { id: 'calls', label: 'Calls', render: (row) => number(row.call_count), className: 'numeric', sort: 'calls', sortValue: (row) => Number(row.call_count || 0) },
+  { id: 'evidence', label: 'Evidence', fullLabel: 'Why This Talkgroup Is Known',
+    render: talkgroupEvidence, className: 'numeric', sort: 'evidence',
+    sortValue: talkgroupEvidenceSortValue },
   { id: 'recorded', label: 'Rec', fullLabel: 'Recorded', render: (row) => number(row.recorded_count), className: 'numeric', sort: 'recorded', sortValue: (row) => Number(row.recorded_count || 0) },
   { id: 'streamed', label: 'Sent', fullLabel: 'Sent to Streamer', render: (row) => number(row.streamed_count), className: 'numeric', sort: 'streamed', sortValue: (row) => Number(row.streamed_count || 0) },
   { id: 'encrypted', label: 'Enc', render: (row) => number(row.encrypted_count), className: 'numeric encrypted', sort: 'encrypted', sortValue: (row) => Number(row.encrypted_count || 0) },
@@ -2659,7 +2703,7 @@ const radioColumns = [
   { id: 'calls', label: 'Calls', render: (row) => number(row.call_count), className: 'numeric', sort: 'calls', sortValue: (row) => Number(row.call_count || 0) },
   { id: 'encrypted', label: 'Enc', render: (row) => number(row.encrypted_count), className: 'numeric encrypted', sort: 'encrypted', sortValue: (row) => Number(row.encrypted_count || 0) },
   { id: 'talkgroup-id', label: 'Affil TG', fullLabel: 'Affiliated Talkgroup ID', render: (row) => talkgroupLink(row, row.affiliated_talkgroup_id), className: 'numeric', sort: 'affiliated_talkgroup', sortValue: (row) => Number(row.affiliated_talkgroup_id) },
-  { id: 'talkgroup-name', label: 'TG Name', fullLabel: 'Talkgroup Name', render: (row) => talkgroupAliasLink(row,
+  { id: 'talkgroup-name', label: 'TG Alias', fullLabel: 'Talkgroup Alias', render: (row) => talkgroupAliasLink(row,
     row.affiliated_talkgroup_id, 'affiliated_talkgroup_alias_'), className: 'alias-cell', sortValue: (row) => row.affiliated_talkgroup_alias_name || '' },
   { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sort: 'last_seen', sortValue: (row) => Number(row.last_seen_ms || 0) }
 ];
@@ -3027,7 +3071,7 @@ async function renderLive() {
 async function renderSystems() {
   const page = await api('/api/system-directory', pageParameters({ limit: 25 }));
   content.append(pageHeader('Systems & Sites',
-    'P25, DMR, and NXDN parent systems with their observed receiver sites'));
+    'P25 systems plus DMR and NXDN receiver channels, each with its observed site'));
   const rows = [];
   (page.rows || []).forEach((system) => {
     rows.push({ ...system, directory_type: 'system' });
@@ -3037,10 +3081,10 @@ async function renderSystems() {
     { id: 'directory-name', label: 'System / Site', width: 230, className: 'directory-name', render: (row) => {
       const wrapper = node('div', 'directory-entity');
       if (row.directory_type === 'system') {
-        wrapper.append(node('strong', '', isP25(row) ? 'P25 System' : trunkedSystemLabel(row)));
-        if (row.site_names && row.site_names !== row.configured_system) {
-          wrapper.append(node('span', 'directory-secondary', row.site_names));
-        }
+        const label = row.configured_system || `${protocolFamily(row)} System`;
+        const heading = node('strong');
+        heading.append(isP25(row) ? systemLink(row, label) : label);
+        wrapper.append(heading);
       } else {
         wrapper.append(node('span', 'directory-branch', '↳'),
           siteLink(row, siteValue(row)));
@@ -3110,7 +3154,7 @@ async function renderSystem() {
       { id: 'talker-alias', label: 'OTA Alias', fullLabel: 'Talker Alias', key: 'last_talker_alias', className: 'alias-cell', sort: 'talker_alias' },
       { id: 'radio-alias', label: 'Alias', fullLabel: 'Configured Alias', render: (row) => aliasLabel(row) ? radioLink(row, row.radio_id, aliasLabel(row)) : '', className: 'alias-cell', sort: 'alias', sortValue: aliasLabel },
       { id: 'talkgroup-id', label: 'Last TGID', render: (row) => talkgroupLink(row, row.last_talkgroup_id), className: 'numeric', sort: 'last_talkgroup', sortValue: (row) => Number(row.last_talkgroup_id) },
-      { id: 'talkgroup-name', label: 'TG Name', fullLabel: 'Talkgroup Name', render: (row) => talkgroupAliasLink(row, row.last_talkgroup_id, 'talkgroup_alias_'), className: 'alias-cell', sort: 'last_talkgroup_name', sortValue: (row) => row.talkgroup_alias_name || '' },
+      { id: 'talkgroup-name', label: 'TG Alias', fullLabel: 'Talkgroup Alias', render: (row) => talkgroupAliasLink(row, row.last_talkgroup_id, 'talkgroup_alias_'), className: 'alias-cell', sort: 'last_talkgroup_name', sortValue: (row) => row.talkgroup_alias_name || '' },
       { id: 'calls', label: 'Calls', render: (row) => number(row.call_count), className: 'numeric', sort: 'calls', sortValue: (row) => Number(row.call_count || 0) },
       { id: 'encrypted', label: 'Enc', render: (row) => number(row.encrypted_count), className: 'numeric encrypted', sort: 'encrypted', sortValue: (row) => Number(row.encrypted_count || 0) },
       { id: 'last-seen', label: 'Alias Seen', fullLabel: 'Talker Alias Last Seen', render: (row) => dateTime(row.last_talker_alias_seen_ms), sort: 'talker_alias_seen', sortValue: (row) => Number(row.last_talker_alias_seen_ms || 0) }
@@ -3184,6 +3228,7 @@ async function renderTalkgroup() {
     infoColumn.append(section('Talkgroup Info', keyValues([
       ['System', systemLink(talkgroup, systemInfoValue(talkgroup))],
       ['Talkgroup ID', id], ['Alias', aliasLabel(talkgroup)],
+      ['Description', talkgroup.alias_description],
       ['Group', talkgroup.alias_group], ['First Seen', dateTime(talkgroup.first_seen_ms)],
       ['Last Seen', dateTime(talkgroup.last_seen_ms)], ['Calls', number(talkgroup.call_count)],
       ['Recorded', number(talkgroup.recorded_count)],
@@ -3191,7 +3236,8 @@ async function renderTalkgroup() {
       ['Radios', number(talkgroup.radios)], ['Currently Affiliated', affiliationLink],
       ['Enc', number(talkgroup.encrypted_count)],
       ['Last Source', radioLink(talkgroup, talkgroup.last_source_radio_id)],
-      ['Last Alg', encryptionAlgorithmInfoValue(talkgroup.last_encryption_algorithm_id)],
+      ['Last Alg', encryptionAlgorithmInfoValue(talkgroup.last_encryption_algorithm_name,
+        talkgroup.last_encryption_algorithm_id)],
       ['Last Key ID', hexDecimalPair(talkgroup.last_encryption_key_id)]
     ])));
     infoColumn.append(section('Action Counts', table(actionCounts(talkgroup).map(([action, count]) => ({ action, count })), [
@@ -3219,8 +3265,10 @@ async function renderRadio() {
       pageParameters({ ...systemScope, radio_id: id }));
     const columns = [
       { id: 'talkgroup-id', label: 'TGID', render: (row) => talkgroupLink(row), className: 'numeric', sort: 'talkgroup', sortValue: (row) => Number(row.talkgroup_id) },
-      { id: 'talkgroup-name', label: 'TG Name', fullLabel: 'Talkgroup Name', render: (row) => talkgroupAliasLink(row,
+      { id: 'talkgroup-name', label: 'TG Alias', fullLabel: 'Talkgroup Alias', render: (row) => talkgroupAliasLink(row,
         row.talkgroup_id, 'talkgroup_alias_'), className: 'alias-cell', sort: 'talkgroup_alias', sortValue: (row) => row.talkgroup_alias_name || '' },
+      { id: 'talkgroup-description', label: 'Description', key: 'talkgroup_alias_description',
+        className: 'alias-cell' },
       { id: 'calls', label: 'Calls', render: (row) => number(row.call_count), className: 'numeric', sort: 'calls', sortValue: (row) => Number(row.call_count || 0) },
       { id: 'encrypted', label: 'Enc', render: (row) => number(row.encrypted_count), className: 'numeric encrypted', sort: 'encrypted', sortValue: (row) => Number(row.encrypted_count || 0) },
       { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sort: 'last_seen', sortValue: (row) => Number(row.last_seen_ms || 0) }
@@ -3233,14 +3281,15 @@ async function renderRadio() {
       ['System', systemLink(radio, systemInfoValue(radio))], ['Radio ID', id], ['Alias', aliasLabel(radio)],
       ['Talker Alias', radio.last_talker_alias], ['Talker Alias Seen', dateTime(radio.last_talker_alias_seen_ms)],
       ['Current Affiliation TGID', talkgroupLink(radio, radio.affiliated_talkgroup_id)],
-      ['Current Affiliation Name', talkgroupAliasLink(radio, radio.affiliated_talkgroup_id,
+      ['Current Affiliation Alias', talkgroupAliasLink(radio, radio.affiliated_talkgroup_id,
         'affiliated_talkgroup_alias_')],
       ['Affiliation Updated', dateTime(radio.affiliation_updated_at_ms)],
       ['First Seen', dateTime(radio.first_seen_ms)], ['Last Seen', dateTime(radio.last_seen_ms)],
       ['Calls', number(radio.call_count)],
       ['Talkgroups', number(radio.talkgroups)],
       ['Enc', number(radio.encrypted_count)],
-      ['Last Alg', encryptionAlgorithmInfoValue(radio.last_encryption_algorithm_id)],
+      ['Last Alg', encryptionAlgorithmInfoValue(radio.last_encryption_algorithm_name,
+        radio.last_encryption_algorithm_id)],
       ['Last Key ID', hexDecimalPair(radio.last_encryption_key_id)]
     ])));
     content.append(section('Action Counts', fragment(table(actionCounts(radio).map(([action, count]) => ({ action, count })), [
@@ -3262,7 +3311,7 @@ function siteIdentity(site) {
 
 function p25SiteDetailRows(site) {
   return [
-    ['Callsign', site.callsign], ['WACN', hexDecimalPair(site.wacn, 5)],
+    ['Callsign', callsignLink(site.callsign)], ['WACN', hexDecimalPair(site.wacn, 5)],
     ['SysID', hexDecimalPair(site.system_id, 3)], ['NAC', hexDecimalPair(site.nac, 3)],
     ['RFSS', hexDecimalPair(site.rfss, 2)], ['Site', hexDecimalPair(site.site, 2)],
     ['Local Registration Area', hexDecimalPair(site.lra, 2)],
@@ -3312,7 +3361,8 @@ function siteProtocolDetailRows(site) {
 function p25SiteChannelColumns() {
   return [
     { label: 'LCN / Mode', fullLabel: 'Logical Channel Number and Modes', key: 'descriptor' },
-    { label: 'Callsign', key: 'callsign' },
+    { label: 'Callsign', render: (row) => callsignLink(row.callsign),
+      sortValue: (row) => row.callsign || '' },
     { label: 'Tags', key: 'tags', render: channelTags },
     { id: 'downlink', label: 'Down MHz', fullLabel: 'Downlink MHz',
       render: (row) => frequency(row.downlink_hz), className: 'numeric',
@@ -3336,10 +3386,12 @@ function p25SiteChannelColumns() {
 
 function trunkedSiteChannelColumns() {
   return [
-    { label: 'Channel', key: 'channel_number', className: 'numeric' },
+    { label: 'Channel', key: 'channel_number', className: 'numeric',
+      render: (row) => identifierNumber(row.channel_number) },
     { label: 'Inbound', fullLabel: 'Inbound Channel', key: 'inbound_channel_number', className: 'numeric',
       render: (row) => identifierNumber(row.inbound_channel_number) },
-    { label: 'Slot', key: 'timeslot', className: 'numeric' },
+    { label: 'Slot', key: 'timeslot', className: 'numeric',
+      render: (row) => identifierNumber(row.timeslot) },
     { label: 'Use', render: (row) => trunkedChannelUse(row.role_flags) },
     { label: 'Source', render: (row) => trunkedChannelSources(row.role_flags) },
     { id: 'downlink', label: 'Down MHz', fullLabel: 'Downlink MHz',
@@ -3369,6 +3421,9 @@ function p25SiteNeighborColumns() {
     { id: 'state', label: 'State', render: (row) => stateBadge(row.state),
       sortValue: (row) => row.state || '' },
     { id: 'type', label: 'Type', render: (row) => row.entry_type === 'ISSI' ? 'ISSI System' : 'Site' },
+    { id: 'neighbor-name', label: 'Name', fullLabel: 'Monitored Site Name',
+      render: neighborSiteLink,
+      sortValue: (row) => row.neighbor_name || row.neighbor_site_name || row.neighbor_channel_name || '' },
     { id: 'wacn', label: 'WACN', render: (row) => hex(row.wacn, 5),
       sortValue: (row) => Number(row.wacn || 0) },
     { id: 'system', label: 'Sys', fullLabel: 'System', render: (row) => hex(row.system_id, 3),
@@ -3533,16 +3588,16 @@ async function renderSite() {
     const groups = data.groups || [];
     const columns = [
       { id: 'patch-id', label: 'Patch', fullLabel: 'Patch Talkgroup ID', render: (row) => talkgroupLink(site, row.patch_group), className: 'numeric', sortValue: (row) => Number(row.patch_group) },
-      { id: 'patch-name', label: 'Name', fullLabel: 'Patch Name', render: (row) => row.patch_alias_name ?
+      { id: 'patch-name', label: 'Alias', fullLabel: 'Patch Alias', render: (row) => row.patch_alias_name ?
         talkgroupLink(site, row.patch_group, row.patch_alias_name) : '', className: 'alias-cell', sortValue: (row) => row.patch_alias_name || '' },
       { id: 'member-talkgroup-ids', label: 'TGIDs', fullLabel: 'Member Talkgroup IDs', render: (row) =>
         memberLinks(talkgroups.get(row.patch_group), (member) => talkgroupLink(site, member.talkgroup_id)) },
-      { id: 'member-talkgroup-names', label: 'TG Names', fullLabel: 'Talkgroup Names', className: 'alias-cell', render: (row) =>
+      { id: 'member-talkgroup-names', label: 'TG Aliases', fullLabel: 'Talkgroup Aliases', className: 'alias-cell', render: (row) =>
         memberLinks(talkgroups.get(row.patch_group), (member) => member.alias_name ?
           talkgroupLink(site, member.talkgroup_id, member.alias_name) : '') },
       { id: 'member-radio-ids', label: 'Radios', fullLabel: 'Radio IDs', render: (row) =>
         memberLinks(radios.get(row.patch_group), (member) => radioLink(site, member.radio_id)) },
-      { id: 'member-radio-names', label: 'Radio Names', className: 'alias-cell', render: (row) =>
+      { id: 'member-radio-names', label: 'Radio Aliases', className: 'alias-cell', render: (row) =>
         memberLinks(radios.get(row.patch_group), (member) => member.alias_name ?
           radioLink(site, member.radio_id, member.alias_name) : '') },
       { id: 'state', label: 'State', render: (row) => stateBadge(row.state), sortValue: (row) => row.state || '' },
@@ -3559,19 +3614,78 @@ async function renderSite() {
   }
 }
 
+function p25SpecialIdentifierLabel(row, value, kind) {
+  if (!isP25(row)) return '';
+  const identifier = Number(value);
+  if (kind === 'talkgroup') {
+    return ({ 0x0000: 'No Talkgroup', 0xFFFF: 'Everyone' })[identifier] || '';
+  }
+  if (kind === 'radio') {
+    return ({
+      0x000000: 'No Unit',
+      0xFFFFFC: 'FNE',
+      0xFFFFFD: 'System Default',
+      0xFFFFFE: 'Registration Default',
+      0xFFFFFF: 'All Units'
+    })[identifier] || '';
+  }
+  return '';
+}
+
+function activityIdentifier(row, value, kind) {
+  const identifier = identifierNumber(value);
+  if (!identifier) return '';
+  const specialLabel = p25SpecialIdentifierLabel(row, value, kind);
+  if (specialLabel) {
+    const result = node('span', 'special-identifier');
+    result.append(node('span', 'special-identifier-label', specialLabel),
+      badge('System/special', 'special-signaling'),
+      node('span', 'special-identifier-value', `(${identifier})`));
+    result.title = `P25 ${specialLabel}: system or special signaling identifier ${identifier}`;
+    result.setAttribute('aria-label',
+      `${specialLabel}, P25 system or special signaling identifier ${identifier}`);
+    return result;
+  }
+  if (kind === 'talkgroup') return talkgroupLink(row, value, identifier);
+  if (kind === 'radio') return radioLink(row, value, identifier);
+  return identifier;
+}
+
+function activityTargetIdentifier(row) {
+  const kind = TALKGROUP_TARGET_KINDS.has(Number(row.target_kind_code)) ? 'talkgroup' :
+    Number(row.target_kind_code) === 2 ? 'radio' : '';
+  if (kind === 'radio' && !p25SpecialIdentifierLabel(row, row.target_id, kind)) {
+    return identifierNumber(row.target_id);
+  }
+  return activityIdentifier(row, row.target_id, kind);
+}
+
+function activitySourceAlias(row) {
+  const alias = row.source_alias_name || '';
+  if (!alias) return '';
+  return p25SpecialIdentifierLabel(row, row.source_radio_id, 'radio') ?
+    alias : radioLink(row, row.source_radio_id, alias);
+}
+
 function activityColumns() {
   return [
     { id: 'time', label: 'Seen', fullLabel: 'Observed Time', render: (row) => dateTime(row.observed_at_ms), sortValue: (row) => Number(row.observed_at_ms || 0) },
     { label: 'Action', key: 'action' },
     { label: 'Event', key: 'event_type' },
-    { id: 'source', label: 'Src', fullLabel: 'Source ID', render: (row) => radioLink(row, row.source_radio_id), className: 'numeric', sortValue: (row) => Number(row.source_radio_id || 0) },
-    { id: 'source-alias', label: 'Src Alias', fullLabel: 'Source Alias', render: (row) => row.source_alias_name ? radioLink(row, row.source_radio_id, row.source_alias_name) : '', className: 'alias-cell', sortValue: (row) => row.source_alias_name || '' },
-    { id: 'target', label: 'Tgt', fullLabel: 'Target ID', render: (row) => TALKGROUP_TARGET_KINDS.has(Number(row.target_kind_code)) ? talkgroupLink(row, row.target_id) : row.target_id, className: 'numeric', sortValue: (row) => Number(row.target_id || 0) },
+    { id: 'source', label: 'Src', fullLabel: 'Source ID',
+      render: (row) => activityIdentifier(row, row.source_radio_id, 'radio'),
+      className: 'numeric identifier-cell', sortValue: (row) => Number(row.source_radio_id || 0) },
+    { id: 'source-alias', label: 'Src Alias', fullLabel: 'Source Alias',
+      render: activitySourceAlias, className: 'alias-cell',
+      sortValue: (row) => row.source_alias_name || '' },
+    { id: 'target', label: 'Tgt', fullLabel: 'Target ID', render: activityTargetIdentifier,
+      className: 'numeric identifier-cell', sortValue: (row) => Number(row.target_id || 0) },
     { id: 'target-alias', label: 'Tgt Alias', fullLabel: 'Target Alias', render: (row) => row.target_alias_name || '', className: 'alias-cell', sortValue: (row) => row.target_alias_name || '' },
     { id: 'frequency', label: 'MHz', render: (row) => frequency(row.frequency_hz), className: 'numeric', sortValue: (row) => Number(row.frequency_hz || 0) },
     { label: 'LCN', key: 'lcn' },
-    { label: 'Slot', key: 'timeslot', className: 'numeric' },
-    { id: 'encryption', label: 'Enc', fullLabel: 'Encryption', render: (row) => row.encrypted ? encryptionDetails(row.encryption_algorithm_id, row.encryption_key_id) : '', className: 'encrypted', sortValue: (row) => row.encrypted ? `${row.encryption_algorithm_id}:${row.encryption_key_id}` : '' }
+    { label: 'Slot', render: (row) => identifierNumber(row.timeslot), className: 'numeric' },
+    { id: 'encryption', label: 'Enc', fullLabel: 'Encryption', render: encryptionActivityValue,
+      className: 'encrypted', sortValue: (row) => row.encryption_display || (row.encrypted ? 'ENC' : '') }
   ];
 }
 
@@ -3601,12 +3715,52 @@ async function renderActivity(scopeParameters, title = 'Activity') {
   content.append(block);
 
   if (!route.get('before_id')) {
+    const titleBar = block.querySelector('.section-title');
+    const pause = node('button', 'button secondary', 'Pause updates');
+    pause.type = 'button';
+    pause.setAttribute('aria-pressed', 'false');
+    titleBar.append(pause);
+    let paused = false;
+    let pending = [];
+    const pendingIds = new Set();
+    const updatePauseLabel = () => {
+      pause.textContent = paused ? `Resume${pending.length ? ` (${number(pending.length)})` : ''}` :
+        'Pause updates';
+      pause.setAttribute('aria-pressed', String(paused));
+    };
+    const addActivityRow = (row) => {
+      if (row.id !== null && row.id !== undefined && body.querySelector(`[data-id="${row.id}"]`)) return;
+      activityTable.tableController.addRow(row, { prepend: true, limit: 200 });
+    };
+    pause.addEventListener('click', () => {
+      paused = !paused;
+      if (!paused && pending.length) {
+        const rows = pending.sort((left, right) =>
+          Number(left.observed_at_ms || 0) - Number(right.observed_at_ms || 0) ||
+            Number(left.id || 0) - Number(right.id || 0));
+        pending = [];
+        pendingIds.clear();
+        rows.forEach(addActivityRow);
+      }
+      updatePauseLabel();
+    });
     const source = liveConnection('/live/activity', scopeParameters);
     source.addEventListener('activity', (event) => {
       const row = JSON.parse(event.data);
       if (String(row.action || '').toUpperCase() === 'GRANT') return;
       if (row.id !== null && row.id !== undefined && body.querySelector(`[data-id="${row.id}"]`)) return;
-      activityTable.tableController.addRow(row, { prepend: true, limit: 200 });
+      if (!paused) {
+        addActivityRow(row);
+        return;
+      }
+      if (row.id !== null && row.id !== undefined && pendingIds.has(row.id)) return;
+      pending.push(row);
+      if (row.id !== null && row.id !== undefined) pendingIds.add(row.id);
+      if (pending.length > 200) {
+        const removed = pending.shift();
+        if (removed.id !== null && removed.id !== undefined) pendingIds.delete(removed.id);
+      }
+      updatePauseLabel();
     });
   }
 }
@@ -3620,7 +3774,8 @@ async function renderConventional() {
     { id: 'protocol', label: 'Protocol', render: (row) => protocol(row.protocol_code), sort: 'protocol', sortValue: (row) => protocol(row.protocol_code) },
     { label: 'Decoder', key: 'decoder', sort: 'decoder' },
     { id: 'frequency', label: 'MHz', fullLabel: 'Frequency MHz', render: (row) => frequency(row.frequency_hz), className: 'numeric', sort: 'frequency', sortValue: (row) => Number(row.frequency_hz || 0) },
-    { label: 'Slot', key: 'timeslot', className: 'numeric', sort: 'slot' },
+    { label: 'Slot', key: 'timeslot', className: 'numeric', sort: 'slot',
+      render: (row) => identifierNumber(row.timeslot) },
     { id: 'nac', label: 'NAC', render: (row) => hex(row.nac, 3), sort: 'nac', sortValue: (row) => Number(row.nac || 0) },
     { id: 'calls', label: 'Calls', render: (row) => number(row.call_count), className: 'numeric', sort: 'calls', sortValue: (row) => Number(row.call_count || 0) },
     { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sort: 'last_seen', sortValue: (row) => Number(row.last_seen_ms || 0) }
@@ -3672,17 +3827,21 @@ function conventionalTabItems(context) {
 function conventionalTalkgroupColumns() {
   return [
     { id: 'talkgroup-id', label: 'Talkgroup', key: 'talkgroup_id', className: 'numeric',
-      sort: 'talkgroup' },
+      sort: 'talkgroup', render: (row) => identifierNumber(row.talkgroup_id) },
     { id: 'talkgroup-name', label: 'Alias', key: 'alias_name', className: 'alias-cell', sort: 'alias' },
+    { id: 'talkgroup-description', label: 'Description', key: 'alias_description',
+      className: 'alias-cell' },
     { id: 'frequency', label: 'MHz', fullLabel: 'Frequency MHz',
       render: (row) => frequency(row.frequency_hz), className: 'numeric', sort: 'frequency',
       sortValue: (row) => Number(row.frequency_hz || 0) },
-    { id: 'timeslot', label: 'Slot', key: 'timeslot', className: 'numeric', sort: 'slot' },
+    { id: 'timeslot', label: 'Slot', key: 'timeslot', className: 'numeric', sort: 'slot',
+      render: (row) => identifierNumber(row.timeslot) },
     { id: 'calls', label: 'Calls', render: (row) => number(row.call_count), className: 'numeric',
       sort: 'calls', sortValue: (row) => Number(row.call_count || 0) },
     { id: 'encrypted', label: 'Encrypted', render: (row) => number(row.encrypted_count),
       className: 'numeric', sort: 'encrypted', sortValue: (row) => Number(row.encrypted_count || 0) },
-    { id: 'source', label: 'Last Source', key: 'last_source_radio_id', className: 'numeric' },
+    { id: 'source', label: 'Last Source', key: 'last_source_radio_id', className: 'numeric',
+      render: (row) => identifierNumber(row.last_source_radio_id) },
     { id: 'source-alias', label: 'Source Alias', key: 'last_source_alias_name', className: 'alias-cell' },
     { id: 'first-seen', label: 'First', fullLabel: 'First Seen',
       render: (row) => dateTime(row.first_seen_ms), sort: 'first_seen',
@@ -3695,12 +3854,14 @@ function conventionalTalkgroupColumns() {
 
 function conventionalRadioColumns() {
   return [
-    { id: 'radio', label: 'Radio', key: 'radio_id', className: 'numeric', sort: 'radio' },
+    { id: 'radio', label: 'Radio', key: 'radio_id', className: 'numeric', sort: 'radio',
+      render: (row) => identifierNumber(row.radio_id) },
     { id: 'radio-alias', label: 'Alias', key: 'alias_name', className: 'alias-cell', sort: 'alias' },
     { id: 'frequency', label: 'MHz', fullLabel: 'Frequency MHz',
       render: (row) => frequency(row.frequency_hz), className: 'numeric', sort: 'frequency',
       sortValue: (row) => Number(row.frequency_hz || 0) },
-    { id: 'timeslot', label: 'Slot', key: 'timeslot', className: 'numeric', sort: 'slot' },
+    { id: 'timeslot', label: 'Slot', key: 'timeslot', className: 'numeric', sort: 'slot',
+      render: (row) => identifierNumber(row.timeslot) },
     { id: 'calls', label: 'Calls', render: (row) => number(row.call_count), className: 'numeric',
       sort: 'calls', sortValue: (row) => Number(row.call_count || 0) },
     { id: 'source-calls', label: 'As Source', render: (row) => number(row.source_call_count),
@@ -3713,10 +3874,12 @@ function conventionalRadioColumns() {
       className: 'numeric', sort: 'private_calls', sortValue: (row) => Number(row.private_call_count || 0) },
     { id: 'encrypted', label: 'Encrypted', render: (row) => number(row.encrypted_count),
       className: 'numeric', sort: 'encrypted', sortValue: (row) => Number(row.encrypted_count || 0) },
-    { id: 'last-talkgroup', label: 'Last Talkgroup', key: 'last_talkgroup_id', className: 'numeric' },
+    { id: 'last-talkgroup', label: 'Last Talkgroup', key: 'last_talkgroup_id', className: 'numeric',
+      render: (row) => identifierNumber(row.last_talkgroup_id) },
     { id: 'talkgroup-name', label: 'Talkgroup Alias', key: 'last_talkgroup_alias_name',
       className: 'alias-cell' },
-    { id: 'last-peer', label: 'Last Peer', key: 'last_peer_radio_id', className: 'numeric' },
+    { id: 'last-peer', label: 'Last Peer', key: 'last_peer_radio_id', className: 'numeric',
+      render: (row) => identifierNumber(row.last_peer_radio_id) },
     { id: 'peer-alias', label: 'Peer Alias', key: 'last_peer_alias_name', className: 'alias-cell' },
     { id: 'first-seen', label: 'First', fullLabel: 'First Seen',
       render: (row) => dateTime(row.first_seen_ms), sort: 'first_seen',
@@ -3772,7 +3935,8 @@ async function renderConventionalDetail() {
     ])));
     content.append(section('Frequency Summaries', table(data.summaries || [], [
       { id: 'frequency', label: 'MHz', fullLabel: 'Frequency MHz', render: (row) => frequency(row.frequency_hz), className: 'numeric', sortValue: (row) => Number(row.frequency_hz || 0) },
-      { label: 'Slot', key: 'timeslot', className: 'numeric' },
+      { label: 'Slot', key: 'timeslot', className: 'numeric',
+        render: (row) => identifierNumber(row.timeslot) },
       { id: 'calls', label: 'Calls', render: (row) => number(row.call_count), className: 'numeric', sortValue: (row) => Number(row.call_count || 0) },
       { id: 'first-seen', label: 'First', fullLabel: 'First Seen', render: (row) => dateTime(row.first_seen_ms), sortValue: (row) => Number(row.first_seen_ms || 0) },
       { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
@@ -3928,6 +4092,7 @@ window.addEventListener('popstate', () => {
   route = new URLSearchParams(window.location.search);
   render();
 });
+initializeThemeToggle();
 initializePlaybackHeader();
 loadStatus().finally(render);
 window.setInterval(() => {

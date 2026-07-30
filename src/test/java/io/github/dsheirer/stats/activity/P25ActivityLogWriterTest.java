@@ -887,6 +887,72 @@ class P25ActivityLogWriterTest
     }
 
     @Test
+    void keepsReservedP25IdentitiesInActivityButOutOfDirectoryProjections() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("reserved-identities.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        int validRadio = 1_811_524;
+        int validTalkgroup = 56_138;
+        int[] invalidTalkgroups = {0, 0xFFFF, 0x10000};
+        int[] invalidRadios = {0, 0xFFFFFC, 0xFFFFFD, 0xFFFFFE, 0xFFFFFF, 0x1000000};
+        long timestamp = 1_000L;
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            P25ActivityLogSchema.insertSite(connection, siteSnapshot(500L));
+
+            for(int talkgroup: invalidTalkgroups)
+            {
+                P25ActivityLogSchema.recordActivity(connection,
+                    identityActivity(timestamp++, validRadio, talkgroup, null), true);
+            }
+
+            for(int radio: invalidRadios)
+            {
+                P25ActivityLogSchema.recordActivity(connection,
+                    identityActivity(timestamp++, radio, validTalkgroup, null), true);
+            }
+
+            P25ActivityLogSchema.recordActivity(connection,
+                affiliation(timestamp++, 0xFFFFFC, validTalkgroup), true);
+            P25ActivityLogSchema.recordActivity(connection,
+                affiliation(timestamp, validRadio, 0xFFFF), true);
+            P25ActivityLogSchema.recordActivity(connection,
+                countedIdentityActivity(++timestamp, 0xFFFFFC, 0), true);
+
+            assertEquals(invalidTalkgroups.length + invalidRadios.length + 3,
+                count(connection, "p25_activity_event"));
+            assertEquals(1, scalarLong(connection, """
+                SELECT COUNT(*) FROM p25_talkgroup_summary
+                WHERE talkgroup_id > 0 AND talkgroup_id < 65535
+                """));
+            assertEquals(0, scalarLong(connection, """
+                SELECT COUNT(*) FROM p25_talkgroup_summary
+                WHERE talkgroup_id <= 0 OR talkgroup_id >= 65535
+                """));
+            assertEquals(1, scalarLong(connection, """
+                SELECT COUNT(*) FROM p25_radio_summary
+                WHERE radio_id > 0 AND radio_id < 16777212
+                """));
+            assertEquals(0, scalarLong(connection, """
+                SELECT COUNT(*) FROM p25_radio_summary
+                WHERE radio_id <= 0 OR radio_id >= 16777212
+                """));
+            assertEquals(0, count(connection, "p25_radio_talkgroup_summary"));
+            assertEquals(0, count(connection, "p25_radio_affiliation"));
+            assertEquals(0, scalarLong(connection, """
+                SELECT COUNT(*) FROM p25_site_talkgroup_bucket
+                WHERE talkgroup_id <= 0 OR talkgroup_id >= 65535
+                """));
+            assertEquals(1, count(connection, "call_identity_bucket"));
+            assertEquals(1, scalarLong(connection, """
+                SELECT COUNT(*) FROM call_identity_bucket
+                WHERE identity_role_code = 1 AND identity_kind_code = 0 AND identity_id = 0
+                """));
+        }
+    }
+
+    @Test
     void updatesAggregateSummaries() throws Exception
     {
         Path database = mTemporaryFolder.resolve("summaries.sqlite");
@@ -2302,6 +2368,30 @@ class P25ActivityLogWriterTest
             action == P25ActivityLogRecords.Action.GRANT ? 0x84 : null,
             action == P25ActivityLogRecords.Action.GRANT ? 101 : null, 0xBEE00, 0x348, 0x348, 2, 1,
             "Example Site", null, null, action == P25ActivityLogRecords.Action.CALL, null, null);
+    }
+
+    private static P25ActivityLogRecords.ActivityEvent identityActivity(long timestamp, int sourceRadio,
+                                                                         int talkgroup,
+                                                                         P25ActivityLogRecords.RadioAffiliationUpdate
+                                                                             affiliationUpdate)
+    {
+        String guid = "123e4567-e89b-12d3-a456-426614174000";
+        return new P25ActivityLogRecords.ActivityEvent(timestamp, "GUID:" + guid, guid,
+            P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "APCO25", P25ActivityLogRecords.Action.JOIN,
+            "AFFILIATE", Integer.toString(sourceRadio), Integer.toString(talkgroup), "TALKGROUP",
+            null, null, null, false, null, null, 0xBEE00, 0x348, 0x348, 2, 1,
+            "Example Site", null, null, false, null, affiliationUpdate);
+    }
+
+    private static P25ActivityLogRecords.ActivityEvent countedIdentityActivity(long timestamp, int sourceRadio,
+                                                                                int talkgroup)
+    {
+        String guid = "123e4567-e89b-12d3-a456-426614174000";
+        return new P25ActivityLogRecords.ActivityEvent(timestamp, "GUID:" + guid, guid,
+            P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "APCO25", P25ActivityLogRecords.Action.CALL,
+            "CALL_GROUP", Integer.toString(sourceRadio), Integer.toString(talkgroup), "TALKGROUP",
+            null, null, null, false, null, null, 0xBEE00, 0x348, 0x348, 2, 1,
+            "Example Site", null, null, true, null, null);
     }
 
     private static P25ActivityLogRecords.ActivityEvent patchActivity(long timestamp)

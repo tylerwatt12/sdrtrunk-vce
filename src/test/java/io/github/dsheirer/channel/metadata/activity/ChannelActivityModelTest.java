@@ -94,6 +94,57 @@ class ChannelActivityModelTest
     }
 
     @Test
+    void usesCompactFallbackWhenEncryptedCallHasNoAlgorithmDetails() throws Exception
+    {
+        ChannelActivityModel model = new ChannelActivityModel(new AliasModel(),
+            new NowPlayingPreference(type -> {}));
+        Channel parent = trunkedChannel("2.2", "Bus", "Site 5", trunkedDmrConfig(), 139_781_250L);
+        DMRAbsoluteChannel traffic = new DMRAbsoluteChannel(838, 1, 139_968_750L, 0);
+
+        SwingUtilities.invokeAndWait(() -> {
+            model.setEnabled(true);
+            model.trunkedTrafficEvent(parent, null, traffic, 1, new IdentifierCollection(),
+                DecodeEventType.CALL_GROUP_ENCRYPTED, 139_781_250L);
+        });
+
+        ChannelActivityRow call = model.getTables().get(1).getRows().stream()
+            .filter(row -> row.getRole() == ChannelActivityRow.Role.TRAFFIC)
+            .findFirst().orElseThrow();
+        assertEquals(State.ENCRYPTED, call.getState());
+        assertEquals("ENC", call.getEncryptionDetails());
+    }
+
+    @Test
+    void retainsCompactEncryptionFallbackAcrossMetadataUpdates() throws Exception
+    {
+        AliasModel aliasModel = new AliasModel();
+        ChannelActivityModel model = new ChannelActivityModel(aliasModel,
+            new NowPlayingPreference(type -> {}));
+        Channel channel = trunkedChannel("Repeater", "Local", "Hill", new DecodeConfigDMR(), 451_012_500L);
+        ChannelMetadata metadata = new ChannelMetadata(aliasModel, 1);
+
+        SwingUtilities.invokeAndWait(() -> {
+            model.setEnabled(true);
+            model.channelStarted(channel, List.of(metadata));
+            metadata.receive(new IdentifierUpdateNotification(ChannelStateIdentifier.ENCRYPTED,
+                Operation.ADD, 1));
+            model.updated(metadata, io.github.dsheirer.channel.metadata.ChannelMetadataField.DECODER_STATE);
+        });
+
+        ChannelActivityRow row = model.getConventionalTable().getRows().getFirst();
+        assertEquals(State.ENCRYPTED, row.getState());
+        assertEquals("ENC", row.getEncryptionDetails());
+
+        SwingUtilities.invokeAndWait(() -> {
+            metadata.receive(new IdentifierUpdateNotification(ChannelStateIdentifier.CALL, Operation.ADD, 1));
+            model.updated(metadata, io.github.dsheirer.channel.metadata.ChannelMetadataField.DECODER_STATE);
+        });
+
+        assertEquals(State.ENCRYPTED, row.getState());
+        assertEquals("ENC", row.getEncryptionDetails());
+    }
+
+    @Test
     void configuredConventionalDmrCannotBePromotedByTrunkedTrafficEvent() throws Exception
     {
         AliasModel aliasModel = new AliasModel();

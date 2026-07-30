@@ -4,7 +4,18 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>sdrtrunk-vce</title>
-  <link rel="stylesheet" href="/assets/app.css?v=19">
+  <script>
+    (() => {
+      try {
+        if (window.localStorage.getItem('sdrtrunk_theme') === 'dark') {
+          document.documentElement.dataset.theme = 'dark';
+        }
+      } catch (error) {
+        // Browser storage can be disabled; light remains the default.
+      }
+    })();
+  </script>
+  <link rel="stylesheet" href="/assets/app.css?v=20">
 </head>
 <body>
   <div class="app-shell">
@@ -18,7 +29,11 @@
           <a data-view="conventional" href="/?view=conventional">Conventional</a>
           <a data-view="credits" href="/?view=credits">Credits</a>
         </nav>
-        <div id="server-status" class="server-status">Loading</div>
+        <div class="header-controls">
+          <div id="server-status" class="server-status">Loading</div>
+          <button type="button" id="theme-toggle" class="theme-toggle" aria-pressed="false"
+            aria-label="Use dark theme">Dark</button>
+        </div>
       </header>
       <section class="playback-bar" id="playback-bar" aria-label="Web call playback">
         <button type="button" id="playback-mute" class="playback-command">Unmute</button>
@@ -48,6 +63,6 @@
     </main>
   </div>
   <script src="/assets/web-call-player.js?v=2"></script>
-  <script src="/assets/app.js?v=25"></script>
+  <script src="/assets/app.js?v=26"></script>
 </body>
 </html>

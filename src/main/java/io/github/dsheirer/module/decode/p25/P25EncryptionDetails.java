@@ -18,17 +18,16 @@
  */
 package io.github.dsheirer.module.decode.p25;
 
-import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
-import io.github.dsheirer.identifier.encryption.EncryptionKey;
-import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
-import io.github.dsheirer.module.decode.p25.identifier.encryption.APCO25EncryptionKey;
-import io.github.dsheirer.module.decode.p25.reference.Encryption;
+import io.github.dsheirer.preference.encryption.VoiceEncryptionDisplay;
 
 /**
- * Formats P25 encryption metadata for compact Now Playing display.
+ * Backward-compatible P25 entry point for the protocol-aware voice encryption display formatter.
+ *
+ * @deprecated use {@link VoiceEncryptionDisplay}
  */
+@Deprecated
 public final class P25EncryptionDetails
 {
     public static final String ADVANCED_P25_ENCRYPTION_STATUS_PROPERTY =
@@ -40,62 +39,11 @@ public final class P25EncryptionDetails
 
     public static String format(IdentifierCollection identifiers)
     {
-        if(identifiers != null)
-        {
-            for(Identifier<?> identifier: identifiers.getIdentifiers(Form.ENCRYPTION_KEY))
-            {
-                String details = format(identifier);
-
-                if(details != null)
-                {
-                    return details;
-                }
-            }
-        }
-
-        return null;
+        return VoiceEncryptionDisplay.format(identifiers);
     }
 
     public static String format(Identifier<?> identifier)
     {
-        if(identifier instanceof EncryptionKeyIdentifier encryptionKeyIdentifier &&
-            encryptionKeyIdentifier.isEncrypted())
-        {
-            return format(encryptionKeyIdentifier.getValue());
-        }
-
-        return null;
-    }
-
-    private static String format(EncryptionKey encryptionKey)
-    {
-        if(encryptionKey == null || !encryptionKey.isEncrypted())
-        {
-            return null;
-        }
-
-        String algorithm = "ALG:" + toHex(encryptionKey.getAlgorithm(), 2);
-
-        if(encryptionKey instanceof APCO25EncryptionKey apco25EncryptionKey)
-        {
-            Encryption encryption = apco25EncryptionKey.getEncryptionAlgorithm();
-
-            if(encryption != Encryption.UNKNOWN)
-            {
-                algorithm = encryption.toString();
-            }
-        }
-
-        return algorithm + " K:" + toHex(encryptionKey.getKey());
-    }
-
-    private static String toHex(int value)
-    {
-        return Integer.toHexString(value).toUpperCase();
-    }
-
-    private static String toHex(int value, int width)
-    {
-        return String.format("%0" + width + "X", value);
+        return VoiceEncryptionDisplay.format(identifier);
     }
 }

@@ -24,58 +24,62 @@ package io.github.dsheirer.preference.encryption;
  */
 public enum VoiceEncryptionAlgorithm
 {
-    APCO25_ACCORDION_3(VoiceEncryptionProtocol.APCO25, 0x00, "ACCORDIAN 3", null),
-    APCO25_BATON_AUTO_EVEN(VoiceEncryptionProtocol.APCO25, 0x01, "BATON AUTO EVEN", null),
-    APCO25_FIREFLY(VoiceEncryptionProtocol.APCO25, 0x02, "FIREFLY", null),
-    APCO25_MAYFLY(VoiceEncryptionProtocol.APCO25, 0x03, "MAYFLY", null),
-    APCO25_SAVILLE(VoiceEncryptionProtocol.APCO25, 0x04, "SAVILLE", null),
-    APCO25_MOTOROLA_PADSTONE(VoiceEncryptionProtocol.APCO25, 0x05, "MOTOROLA PADSTONE", null),
-    APCO25_BATON_AUTO_ODD(VoiceEncryptionProtocol.APCO25, 0x41, "BATON AUTO ODD", null),
-    APCO25_DES_OFB(VoiceEncryptionProtocol.APCO25, 0x81, "DES OFB", 8),
-    APCO25_TRIPLE_DES_2_KEY(VoiceEncryptionProtocol.APCO25, 0x82, "2-KEY TRIPLE DES", 16),
-    APCO25_TRIPLE_DES_3_KEY(VoiceEncryptionProtocol.APCO25, 0x83, "3-KEY TRIPLE DES", 24),
-    APCO25_AES_256(VoiceEncryptionProtocol.APCO25, 0x84, "AES-256", 32),
-    APCO25_AES_128(VoiceEncryptionProtocol.APCO25, 0x85, "AES-128", 16),
-    APCO25_AES_CBC(VoiceEncryptionProtocol.APCO25, 0x88, "AES-CBC", null),
-    APCO25_AES_128_OFB(VoiceEncryptionProtocol.APCO25, 0x89, "AES-128-OFB", 16),
-    APCO25_DES_XL(VoiceEncryptionProtocol.APCO25, 0x9F, "MOTOROLA DES-XL", 8),
-    APCO25_DVI_XL(VoiceEncryptionProtocol.APCO25, 0xA0, "MOTOROLA DVI-XL", null),
-    APCO25_DVP_XL(VoiceEncryptionProtocol.APCO25, 0xA1, "MOTOROLA DVP-XL", null),
-    APCO25_DVP_SPFL(VoiceEncryptionProtocol.APCO25, 0xA2, "MOTOROLA DVP-SPFL", null),
-    APCO25_HAYSTACK(VoiceEncryptionProtocol.APCO25, 0xA3, "MOTOROLA HAYSTACK", null),
-    APCO25_MOTOROLA_A4(VoiceEncryptionProtocol.APCO25, 0xA4, "MOTOROLA UNKNOWN A4", null),
-    APCO25_MOTOROLA_A5(VoiceEncryptionProtocol.APCO25, 0xA5, "MOTOROLA UNKNOWN A5", null),
-    APCO25_MOTOROLA_A6(VoiceEncryptionProtocol.APCO25, 0xA6, "MOTOROLA UNKNOWN A6", null),
-    APCO25_MOTOROLA_A7(VoiceEncryptionProtocol.APCO25, 0xA7, "MOTOROLA UNKNOWN A7", null),
-    APCO25_MOTOROLA_A8(VoiceEncryptionProtocol.APCO25, 0xA8, "MOTOROLA UNKNOWN A8", null),
-    APCO25_MOTOROLA_A9(VoiceEncryptionProtocol.APCO25, 0xA9, "MOTOROLA UNKNOWN A9", null),
-    APCO25_ADP(VoiceEncryptionProtocol.APCO25, 0xAA, "Motorola ADP 40-bit RC4", 5),
-    APCO25_MOTOROLA_CFX_256(VoiceEncryptionProtocol.APCO25, 0xAB, "MOTOROLA CFX-256", 32),
-    APCO25_MOTOROLA_AC(VoiceEncryptionProtocol.APCO25, 0xAC, "MOTOROLA UNKNOWN AC", null),
-    APCO25_MOTOROLA_AD(VoiceEncryptionProtocol.APCO25, 0xAD, "MOTOROLA UNKNOWN AD", null),
-    APCO25_MOTOROLA_AE(VoiceEncryptionProtocol.APCO25, 0xAE, "MOTOROLA UNKNOWN AE", null),
-    APCO25_AES_256_GCM(VoiceEncryptionProtocol.APCO25, 0xAF, "MOTOROLA AES-256-GCM", 32),
-    APCO25_DVP_B0(VoiceEncryptionProtocol.APCO25, 0xB0, "MOTOROLA DVP B0", null),
-    DMR_HYTERA_BASIC_PRIVACY(VoiceEncryptionProtocol.DMR, 0x01, "Hytera Basic Privacy", null),
-    DMR_HYTERA_ENHANCED_PRIVACY(VoiceEncryptionProtocol.DMR, 0x02, "Hytera Enhanced Privacy", null),
-    DMR_DMRA_RC4(VoiceEncryptionProtocol.DMR, 0x21, "DMRA RC4/EP", 5),
-    DMR_DMRA_AES_128(VoiceEncryptionProtocol.DMR, 0x24, "DMRA AES-128", 16),
-    DMR_DMRA_AES_256(VoiceEncryptionProtocol.DMR, 0x25, "DMRA AES-256", 32),
-    DMR_HYTERA_ENHANCED_PRIVACY_2(VoiceEncryptionProtocol.DMR, 0x26, "Hytera Enhanced Privacy 2", null),
-    NXDN_SCRAMBLER(VoiceEncryptionProtocol.NXDN, 0x01, "Scrambler", 2),
-    NXDN_DES_OFB(VoiceEncryptionProtocol.NXDN, 0x02, "DES-OFB", 8),
-    NXDN_AES_256_OFB(VoiceEncryptionProtocol.NXDN, 0x03, "AES-256-OFB", 32);
+    APCO25_ACCORDION_3(VoiceEncryptionProtocol.APCO25, 0x00, "ACRD3", "ACCORDIAN 3", null),
+    APCO25_BATON_AUTO_EVEN(VoiceEncryptionProtocol.APCO25, 0x01, "BAT-E", "BATON AUTO EVEN", null),
+    APCO25_FIREFLY(VoiceEncryptionProtocol.APCO25, 0x02, "FIREF", "FIREFLY", null),
+    APCO25_MAYFLY(VoiceEncryptionProtocol.APCO25, 0x03, "MAYFL", "MAYFLY", null),
+    APCO25_SAVILLE(VoiceEncryptionProtocol.APCO25, 0x04, "SAVIL", "SAVILLE", null),
+    APCO25_MOTOROLA_PADSTONE(VoiceEncryptionProtocol.APCO25, 0x05, "PADSTN", "MOTOROLA PADSTONE", null),
+    APCO25_BATON_AUTO_ODD(VoiceEncryptionProtocol.APCO25, 0x41, "BAT-O", "BATON AUTO ODD", null),
+    APCO25_DES_OFB(VoiceEncryptionProtocol.APCO25, 0x81, "DESOFB", "DES OFB", 8),
+    APCO25_TRIPLE_DES_2_KEY(VoiceEncryptionProtocol.APCO25, 0x82, "3DES2", "2-KEY TRIPLE DES", 16),
+    APCO25_TRIPLE_DES_3_KEY(VoiceEncryptionProtocol.APCO25, 0x83, "3DES3", "3-KEY TRIPLE DES", 24),
+    APCO25_AES_256(VoiceEncryptionProtocol.APCO25, 0x84, "AES256", "AES-256", 32),
+    APCO25_AES_128(VoiceEncryptionProtocol.APCO25, 0x85, "AES128", "AES-128", 16),
+    APCO25_AES_CBC(VoiceEncryptionProtocol.APCO25, 0x88, "AESCBC", "AES-CBC", null),
+    APCO25_AES_128_OFB(VoiceEncryptionProtocol.APCO25, 0x89, "A128OF", "AES-128-OFB", 16),
+    APCO25_DES_XL(VoiceEncryptionProtocol.APCO25, 0x9F, "DESXL", "MOTOROLA DES-XL", 8),
+    APCO25_DVI_XL(VoiceEncryptionProtocol.APCO25, 0xA0, "DVIXL", "MOTOROLA DVI-XL", null),
+    APCO25_DVP_XL(VoiceEncryptionProtocol.APCO25, 0xA1, "DVPXL", "MOTOROLA DVP-XL", null),
+    APCO25_DVP_SPFL(VoiceEncryptionProtocol.APCO25, 0xA2, "DVPSPF", "MOTOROLA DVP-SPFL", null),
+    APCO25_HAYSTACK(VoiceEncryptionProtocol.APCO25, 0xA3, "HAYSTK", "MOTOROLA HAYSTACK", null),
+    APCO25_MOTOROLA_A4(VoiceEncryptionProtocol.APCO25, 0xA4, "MOT-A4", "MOTOROLA UNKNOWN A4", null),
+    APCO25_MOTOROLA_A5(VoiceEncryptionProtocol.APCO25, 0xA5, "MOT-A5", "MOTOROLA UNKNOWN A5", null),
+    APCO25_MOTOROLA_A6(VoiceEncryptionProtocol.APCO25, 0xA6, "MOT-A6", "MOTOROLA UNKNOWN A6", null),
+    APCO25_MOTOROLA_A7(VoiceEncryptionProtocol.APCO25, 0xA7, "MOT-A7", "MOTOROLA UNKNOWN A7", null),
+    APCO25_MOTOROLA_A8(VoiceEncryptionProtocol.APCO25, 0xA8, "MOT-A8", "MOTOROLA UNKNOWN A8", null),
+    APCO25_MOTOROLA_A9(VoiceEncryptionProtocol.APCO25, 0xA9, "MOT-A9", "MOTOROLA UNKNOWN A9", null),
+    APCO25_ADP(VoiceEncryptionProtocol.APCO25, 0xAA, "ADP", "Motorola ADP 40-bit RC4", 5),
+    APCO25_MOTOROLA_CFX_256(VoiceEncryptionProtocol.APCO25, 0xAB, "CFX256", "MOTOROLA CFX-256", 32),
+    APCO25_MOTOROLA_AC(VoiceEncryptionProtocol.APCO25, 0xAC, "MOT-AC", "MOTOROLA UNKNOWN AC", null),
+    APCO25_MOTOROLA_AD(VoiceEncryptionProtocol.APCO25, 0xAD, "MOT-AD", "MOTOROLA UNKNOWN AD", null),
+    APCO25_MOTOROLA_AE(VoiceEncryptionProtocol.APCO25, 0xAE, "MOT-AE", "MOTOROLA UNKNOWN AE", null),
+    APCO25_AES_256_GCM(VoiceEncryptionProtocol.APCO25, 0xAF, "A256GM", "MOTOROLA AES-256-GCM", 32),
+    APCO25_DVP_B0(VoiceEncryptionProtocol.APCO25, 0xB0, "DVPB0", "MOTOROLA DVP B0", null),
+    DMR_HYTERA_BASIC_PRIVACY(VoiceEncryptionProtocol.DMR, 0x01, "HYT-BP", "Hytera Basic Privacy", null),
+    DMR_HYTERA_ENHANCED_PRIVACY(VoiceEncryptionProtocol.DMR, 0x02, "HYT-EP", "Hytera Enhanced Privacy", null),
+    DMR_DMRA_RC4(VoiceEncryptionProtocol.DMR, 0x21, "DMRRC4", "DMRA RC4/EP", 5),
+    DMR_DMRA_AES_128(VoiceEncryptionProtocol.DMR, 0x24, "AES128", "DMRA AES-128", 16),
+    DMR_DMRA_AES_256(VoiceEncryptionProtocol.DMR, 0x25, "AES256", "DMRA AES-256", 32),
+    DMR_HYTERA_ENHANCED_PRIVACY_2(VoiceEncryptionProtocol.DMR, 0x26, "HYT-E2",
+        "Hytera Enhanced Privacy 2", null),
+    NXDN_SCRAMBLER(VoiceEncryptionProtocol.NXDN, 0x01, "SCRAM", "Scrambler", 2),
+    NXDN_DES_OFB(VoiceEncryptionProtocol.NXDN, 0x02, "DESOFB", "DES-OFB", 8),
+    NXDN_AES_256_OFB(VoiceEncryptionProtocol.NXDN, 0x03, "AES256", "AES-256-OFB", 32);
 
     private final VoiceEncryptionProtocol mProtocol;
     private final int mValue;
-    private final String mLabel;
+    private final String mCompactLabel;
+    private final String mFullLabel;
     private final Integer mExpectedKeyBytes;
 
-    VoiceEncryptionAlgorithm(VoiceEncryptionProtocol protocol, int value, String label, Integer expectedKeyBytes)
+    VoiceEncryptionAlgorithm(VoiceEncryptionProtocol protocol, int value, String compactLabel, String fullLabel,
+                             Integer expectedKeyBytes)
     {
         mProtocol = protocol;
         mValue = value;
-        mLabel = label;
+        mCompactLabel = compactLabel;
+        mFullLabel = fullLabel;
         mExpectedKeyBytes = expectedKeyBytes;
     }
 
@@ -87,6 +91,22 @@ public enum VoiceEncryptionAlgorithm
     public int getValue()
     {
         return mValue;
+    }
+
+    /**
+     * Stable compact display token for dense activity tables.
+     */
+    public String getCompactLabel()
+    {
+        return mCompactLabel;
+    }
+
+    /**
+     * Human-readable algorithm name for detail views and tooltips.
+     */
+    public String getFullLabel()
+    {
+        return mFullLabel;
     }
 
     public Integer getExpectedKeyBytes()
@@ -102,7 +122,7 @@ public enum VoiceEncryptionAlgorithm
     @Override
     public String toString()
     {
-        return mLabel + " (0x" + Integer.toHexString(mValue).toUpperCase() + ")";
+        return mFullLabel + " (0x" + Integer.toHexString(mValue).toUpperCase() + ")";
     }
 
     public static VoiceEncryptionAlgorithm fromValue(VoiceEncryptionProtocol protocol, int value)
@@ -128,5 +148,29 @@ public enum VoiceEncryptionAlgorithm
         }
 
         return "0x" + Integer.toHexString(value).toUpperCase();
+    }
+
+    /**
+     * Compact label for a protocol-scoped algorithm value.
+     */
+    public static String getCompactLabel(VoiceEncryptionProtocol protocol, int value)
+    {
+        VoiceEncryptionAlgorithm algorithm = fromValue(protocol, value);
+        return algorithm != null ? algorithm.getCompactLabel() : "ALG:" + toHex(value);
+    }
+
+    /**
+     * Full label for a protocol-scoped algorithm value.
+     */
+    public static String getFullLabel(VoiceEncryptionProtocol protocol, int value)
+    {
+        VoiceEncryptionAlgorithm algorithm = fromValue(protocol, value);
+        return algorithm != null ? algorithm.getFullLabel() : "ALG:" + toHex(value);
+    }
+
+    private static String toHex(int value)
+    {
+        String hex = Integer.toHexString(value & 0xFF).toUpperCase();
+        return hex.length() < 2 ? "0" + hex : hex;
     }
 }

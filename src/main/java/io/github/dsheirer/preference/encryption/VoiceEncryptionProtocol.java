@@ -19,6 +19,9 @@
 
 package io.github.dsheirer.preference.encryption;
 
+import io.github.dsheirer.protocol.Protocol;
+import java.util.Locale;
+
 /**
  * Protocol families for configured voice encryption keys.
  */
@@ -33,6 +36,52 @@ public enum VoiceEncryptionProtocol
     VoiceEncryptionProtocol(String label)
     {
         mLabel = label;
+    }
+
+    /**
+     * Maps a decoded protocol to its voice-encryption namespace.  P25 phase 1 and phase 2 share the same algorithm IDs.
+     *
+     * @return matching encryption protocol, or null when the protocol has no supported voice-encryption namespace
+     */
+    public static VoiceEncryptionProtocol fromProtocol(Protocol protocol)
+    {
+        if(protocol == null)
+        {
+            return null;
+        }
+
+        return switch(protocol)
+        {
+            case APCO25, APCO25_PHASE2 -> APCO25;
+            case DMR -> DMR;
+            case NXDN -> NXDN;
+            default -> null;
+        };
+    }
+
+    /**
+     * Maps persisted/API protocol names to their voice-encryption namespace.
+     */
+    public static VoiceEncryptionProtocol fromProtocolName(String protocol)
+    {
+        if(protocol == null || protocol.isBlank())
+        {
+            return null;
+        }
+
+        String normalized = protocol.trim().toUpperCase(Locale.ROOT)
+            .replace("-", "")
+            .replace("_", "")
+            .replace(" ", "");
+
+        return switch(normalized)
+        {
+            case "P25", "P25P1", "P25P2", "P25PHASE1", "P25PHASE2", "APCO25", "APCO25P1", "APCO25P2",
+                "APCO25PHASE1", "APCO25PHASE2" -> APCO25;
+            case "DMR" -> DMR;
+            case "NXDN" -> NXDN;
+            default -> null;
+        };
     }
 
     @Override

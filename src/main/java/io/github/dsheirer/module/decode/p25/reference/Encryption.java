@@ -122,6 +122,10 @@ public enum Encryption
                 return AES_256;
             case 0x85:
                 return AES_128;
+            case 0x88:
+                return AES_CBC;
+            case 0x89:
+                return AES_128_OFB;
             case 0x9F:
                 return DES_XL;
             case 0xA0:

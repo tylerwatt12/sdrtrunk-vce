@@ -44,7 +44,7 @@ public class NowPlayingPreferenceEditor extends HBox
     private final NowPlayingPreference mNowPlayingPreference;
     private GridPane mEditorPane;
     private ToggleSwitch mRetainIdleCallDetailsToggle;
-    private ToggleSwitch mAdvancedP25EncryptionToggle;
+    private ToggleSwitch mAdvancedEncryptionToggle;
     private Spinner<Integer> mTrafficGrantAgeOutSpinner;
     private CheckBox mShowControlDecodeQualityCheckBox;
     private CheckBox mShowVoiceDecodeQualityCheckBox;
@@ -85,9 +85,9 @@ public class NowPlayingPreferenceEditor extends HBox
             mEditorPane.add(getRetainIdleCallDetailsToggle(), 0, ++row);
             mEditorPane.add(new Label("Retain Last Call Source/Target On Idle Rows"), 1, row, 2, 1);
 
-            GridPane.setHalignment(getAdvancedP25EncryptionToggle(), HPos.RIGHT);
-            mEditorPane.add(getAdvancedP25EncryptionToggle(), 0, ++row);
-            mEditorPane.add(new Label("Show Advanced P25 Encryption Status"), 1, row, 2, 1);
+            GridPane.setHalignment(getAdvancedEncryptionToggle(), HPos.RIGHT);
+            mEditorPane.add(getAdvancedEncryptionToggle(), 0, ++row);
+            mEditorPane.add(new Label("Show Encryption Algorithm And Key"), 1, row, 2, 1);
 
             GridPane.setHalignment(getShowControlDecodeQualityCheckBox(), HPos.RIGHT);
             mEditorPane.add(getShowControlDecodeQualityCheckBox(), 0, ++row);
@@ -136,17 +136,17 @@ public class NowPlayingPreferenceEditor extends HBox
         return mRetainIdleCallDetailsToggle;
     }
 
-    private ToggleSwitch getAdvancedP25EncryptionToggle()
+    private ToggleSwitch getAdvancedEncryptionToggle()
     {
-        if(mAdvancedP25EncryptionToggle == null)
+        if(mAdvancedEncryptionToggle == null)
         {
-            mAdvancedP25EncryptionToggle = new ToggleSwitch();
-            mAdvancedP25EncryptionToggle.setSelected(mNowPlayingPreference.isAdvancedP25EncryptionStatus());
-            mAdvancedP25EncryptionToggle.selectedProperty().addListener((observable, oldValue, advanced) ->
-                mNowPlayingPreference.setAdvancedP25EncryptionStatus(advanced));
+            mAdvancedEncryptionToggle = new ToggleSwitch();
+            mAdvancedEncryptionToggle.setSelected(mNowPlayingPreference.isAdvancedEncryptionStatus());
+            mAdvancedEncryptionToggle.selectedProperty().addListener((observable, oldValue, advanced) ->
+                mNowPlayingPreference.setAdvancedEncryptionStatus(advanced));
         }
 
-        return mAdvancedP25EncryptionToggle;
+        return mAdvancedEncryptionToggle;
     }
 
     private Spinner<Integer> getTrafficGrantAgeOutSpinner()

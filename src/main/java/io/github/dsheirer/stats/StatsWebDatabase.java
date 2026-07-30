@@ -14,6 +14,8 @@ package io.github.dsheirer.stats;
 import io.github.dsheirer.module.decode.p25.reference.Vendor;
 import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
+import io.github.dsheirer.preference.encryption.VoiceEncryptionDisplay;
+import io.github.dsheirer.preference.encryption.VoiceEncryptionProtocol;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.stats.activity.P25ActivityLogSchema;
 import java.io.IOException;
@@ -266,6 +268,24 @@ class StatsWebDatabase
         "queued_count", "register_count", "request_count", "status_count", "unknown_count", "encrypted_count",
         "recorded_count", "streamed_count"
     );
+    private static final List<String> TALKGROUP_EVIDENCE_FIELDS = List.of(
+        "join_count", "register_count", "active_count", "continue_count", "denial_count",
+        "emergency_count", "request_count", "busy_count", "queued_count", "acknowledge_count",
+        "check_count", "check_ack_count", "page_count", "status_count", "gps_count", "logout_count",
+        "patch_count", "patch_create_count", "patch_cancel_count", "data_count", "unknown_count"
+    );
+    private static final List<String> TALKGROUP_OUTPUT_EVIDENCE_FIELDS = List.of(
+        "streamed_count", "recorded_count", "encrypted_count"
+    );
+    private static final String TALKGROUP_ACTION_EVIDENCE_SQL = TALKGROUP_EVIDENCE_FIELDS.stream()
+        .map(field -> "summary." + field)
+        .collect(java.util.stream.Collectors.joining(" + "));
+    private static final String TALKGROUP_OUTPUT_EVIDENCE_SQL = TALKGROUP_OUTPUT_EVIDENCE_FIELDS.stream()
+        .map(field -> "summary." + field)
+        .collect(java.util.stream.Collectors.joining(" + "));
+    private static final String TALKGROUP_EVIDENCE_TOTAL_SQL = "CASE WHEN (" +
+        TALKGROUP_ACTION_EVIDENCE_SQL + ") > 0 THEN (" + TALKGROUP_ACTION_EVIDENCE_SQL +
+        ") WHEN summary.call_count = 0 THEN (" + TALKGROUP_OUTPUT_EVIDENCE_SQL + ") ELSE 0 END";
     private static final Map<String,String> SYSTEM_SORT_COLUMNS = Map.ofEntries(
         Map.entry("wacn", "system.wacn"),
         Map.entry("system_id", "system.system_id"),
@@ -305,6 +325,8 @@ class StatsWebDatabase
         Map.entry("recorded", "summary.recorded_count"),
         Map.entry("streamed", "summary.streamed_count"),
         Map.entry("grants", "summary.grant_count"),
+        Map.entry("affiliations", "summary.join_count"),
+        Map.entry("evidence", "evidence_total"),
         Map.entry("encrypted", "summary.encrypted_count"),
         Map.entry("last_source", "summary.last_source_radio_id"),
         Map.entry("first_seen", "summary.first_seen_ms"),
@@ -457,16 +479,14 @@ class StatsWebDatabase
             Map<String,Object> dashboard = new LinkedHashMap<>();
             dashboard.put("counts", Map.of(
                 "trunked_systems", scalarLong(connection, """
-                    SELECT (SELECT COUNT(*) FROM p25_system) + (SELECT COUNT(*) FROM (
-                        SELECT protocol_code, variant_code, identity_domain_code, network_id, system_id,
-                            CASE WHEN network_id IS NULL AND system_id IS NULL
-                                THEN lower(coalesce(nullif(trim(configured_system), ''),
-                                    nullif(trim(channel_name), ''), guid))
-                                ELSE '' END AS configured_group
-                        FROM trunked_site_snapshot
-                        GROUP BY protocol_code, variant_code, identity_domain_code, network_id, system_id,
-                            configured_group
-                    ))
+                    SELECT (SELECT COUNT(*) FROM p25_system) +
+                        (SELECT COUNT(*) FROM trunked_site_snapshot site
+                            WHERE NOT EXISTS (
+                                SELECT 1 FROM p25_site_snapshot p25
+                                WHERE p25.guid = site.guid
+                                  AND (p25.last_seen_ms > site.last_seen_ms OR
+                                    (p25.last_seen_ms = site.last_seen_ms AND 1 < site.protocol_code))
+                            ))
                     """),
                 "trunked_sites", scalarLong(connection, """
                     SELECT (SELECT COUNT(*) FROM p25_site_snapshot) +
@@ -656,6 +676,7 @@ class StatsWebDatabase
                 ORDER BY id
                 """.formatted(placeholders), rowIds.toArray());
             mAliasResolver.enrichActivity(connection, rows);
+            enrichActivityEncryption(rows);
             return rows;
         });
     }
@@ -668,11 +689,15 @@ class StatsWebDatabase
                 SELECT system.system_key, system.wacn, system.system_id, system.first_seen_ms,
                     system.last_seen_ms, COUNT(DISTINCT site.guid) AS sites,
                     (SELECT COUNT(*) FROM p25_talkgroup_summary talkgroup
-                        WHERE talkgroup.system_key = system.system_key) AS talkgroups,
+                        WHERE talkgroup.system_key = system.system_key
+                          AND talkgroup.talkgroup_id > 0 AND talkgroup.talkgroup_id < 65535) AS talkgroups,
                     (SELECT COUNT(*) FROM p25_radio_summary radio
-                        WHERE radio.system_key = system.system_key) AS radios,
+                        WHERE radio.system_key = system.system_key
+                          AND radio.radio_id > 0 AND radio.radio_id < 16777212) AS radios,
                     (SELECT COUNT(*) FROM p25_radio_affiliation affiliation
-                        WHERE affiliation.system_key = system.system_key) AS affiliations,
+                        WHERE affiliation.system_key = system.system_key
+                          AND affiliation.radio_id > 0 AND affiliation.radio_id < 16777212
+                          AND affiliation.talkgroup_id > 0 AND affiliation.talkgroup_id < 65535) AS affiliations,
                     (SELECT group_concat(name, ', ') FROM (
                         SELECT DISTINCT channel_name AS name FROM p25_site_snapshot names
                         WHERE names.system_key = system.system_key AND channel_name IS NOT NULL
@@ -707,19 +732,53 @@ class StatsWebDatabase
             String search = request.search();
             String searchLike = search != null ? like(search) : null;
             List<Map<String,Object>> parentRows = queryRows(connection, """
-                WITH parents AS (
+                WITH active_p25_site AS (
+                    SELECT site.*
+                    FROM p25_site_snapshot site
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM trunked_site_snapshot trunked
+                        WHERE trunked.guid = site.guid
+                          AND trunked.last_seen_ms > site.last_seen_ms
+                    )
+                ),
+                p25_configured_system AS (
+                    SELECT site.system_key,
+                        CASE WHEN COUNT(DISTINCT lower(trim(channel.system_name))) = 1
+                            THEN min(trim(channel.system_name)) END AS configured_system,
+                        group_concat(channel.system_name, ' ') AS configured_system_search
+                    FROM active_p25_site site
+                    LEFT JOIN configuration_channel channel ON channel.radres_guid = site.guid
+                        AND channel.system_name IS NOT NULL
+                        AND trim(channel.system_name) <> ''
+                    GROUP BY site.system_key
+                ),
+                active_trunked_site AS (
+                    SELECT site.*
+                    FROM trunked_site_snapshot site
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM p25_site_snapshot p25
+                        WHERE p25.guid = site.guid
+                          AND (p25.last_seen_ms > site.last_seen_ms OR
+                            (p25.last_seen_ms = site.last_seen_ms AND 1 < site.protocol_code))
+                    )
+                ),
+                parents AS (
                     SELECT 1 AS protocol_code, 'P25' AS protocol,
                         'p25:' || system.wacn || ':' || system.system_id AS system_group_key,
                         system.system_key, system.wacn, system.system_id, NULL AS network_id,
                         0 AS variant_code, 0 AS identity_domain_code,
-                        NULL AS configured_system, system.first_seen_ms, system.last_seen_ms,
+                        configured.configured_system, system.first_seen_ms, system.last_seen_ms,
                         COUNT(DISTINCT site.guid) AS sites,
                         (SELECT COUNT(*) FROM p25_talkgroup_summary talkgroup
-                            WHERE talkgroup.system_key = system.system_key) AS talkgroups,
+                            WHERE talkgroup.system_key = system.system_key
+                              AND talkgroup.talkgroup_id > 0 AND talkgroup.talkgroup_id < 65535) AS talkgroups,
                         (SELECT COUNT(*) FROM p25_radio_summary radio
-                            WHERE radio.system_key = system.system_key) AS radios,
+                            WHERE radio.system_key = system.system_key
+                              AND radio.radio_id > 0 AND radio.radio_id < 16777212) AS radios,
                         (SELECT COUNT(*) FROM p25_radio_affiliation affiliation
-                            WHERE affiliation.system_key = system.system_key) AS affiliations,
+                            WHERE affiliation.system_key = system.system_key
+                              AND affiliation.radio_id > 0 AND affiliation.radio_id < 16777212
+                              AND affiliation.talkgroup_id > 0 AND affiliation.talkgroup_id < 65535) AS affiliations,
                         (SELECT group_concat(name, ', ') FROM (
                             SELECT DISTINCT channel_name AS name FROM p25_site_snapshot names
                             WHERE names.system_key = system.system_key AND channel_name IS NOT NULL
@@ -729,56 +788,39 @@ class StatsWebDatabase
                                     AND trunked.last_seen_ms > names.last_seen_ms
                               )
                             ORDER BY channel_name)) AS site_names,
-                        lower('P25 ' || system.wacn || ' ' || system.system_id || ' ' ||
+                        lower('P25 ' || system.wacn || ' ' || printf('%05X', system.wacn) || ' ' ||
+                            system.system_id || ' ' || printf('%03X', system.system_id) || ' ' ||
+                            coalesce(configured.configured_system_search, '') || ' ' ||
                             coalesce(group_concat(site.channel_name, ' '), '') || ' ' ||
-                            coalesce(group_concat(site.guid, ' '), '')) AS search_text
+                            coalesce(group_concat(site.guid, ' '), '') || ' ' ||
+                            coalesce(group_concat(site.nac, ' '), '') || ' ' ||
+                            coalesce(group_concat(site.rfss, ' '), '') || ' ' ||
+                            coalesce(group_concat(site.site, ' '), '')) AS search_text
                     FROM p25_system system
-                    LEFT JOIN p25_site_snapshot site ON site.system_key = system.system_key
-                        AND NOT EXISTS (
-                            SELECT 1 FROM trunked_site_snapshot trunked
-                            WHERE trunked.guid = site.guid
-                              AND trunked.last_seen_ms > site.last_seen_ms
-                        )
+                    LEFT JOIN active_p25_site site ON site.system_key = system.system_key
+                    LEFT JOIN p25_configured_system configured ON configured.system_key = system.system_key
                     GROUP BY system.system_key
 
                     UNION ALL
 
                     SELECT site.protocol_code,
                         CASE site.protocol_code WHEN 3 THEN 'DMR' WHEN 4 THEN 'NXDN' ELSE 'Unknown' END AS protocol,
-                        'trunked:' || site.protocol_code || ':' || site.variant_code || ':' ||
-                            site.identity_domain_code || ':' ||
-                            coalesce(site.network_id, -1) || ':' || coalesce(site.system_id, -1) || ':' ||
-                            CASE WHEN site.network_id IS NULL AND site.system_id IS NULL
-                                THEN lower(coalesce(nullif(trim(site.configured_system), ''),
-                                    nullif(trim(site.channel_name), ''), site.guid))
-                                ELSE '' END AS system_group_key,
+                        'trunked:' || site.protocol_code || ':guid:' || site.guid AS system_group_key,
                         NULL AS system_key, NULL AS wacn, site.system_id, site.network_id,
                         site.variant_code, site.identity_domain_code,
-                        coalesce(min(nullif(trim(site.configured_system), '')),
-                            min(nullif(trim(site.channel_name), ''))) AS configured_system,
-                        min(site.first_seen_ms) AS first_seen_ms, max(site.last_seen_ms) AS last_seen_ms,
-                        count(*) AS sites, 0 AS talkgroups, 0 AS radios, 0 AS affiliations,
-                        group_concat(DISTINCT site.channel_name) AS site_names,
+                        nullif(trim(site.configured_system), '') AS configured_system,
+                        site.first_seen_ms, site.last_seen_ms,
+                        1 AS sites, 0 AS talkgroups, 0 AS radios, 0 AS affiliations,
+                        site.channel_name AS site_names,
                         lower(
                             CASE site.protocol_code WHEN 3 THEN 'DMR ' WHEN 4 THEN 'NXDN ' ELSE '' END ||
+                            site.variant_code || ' ' || site.identity_domain_code || ' ' ||
                             coalesce(site.network_id, '') || ' ' || coalesce(site.system_id, '') || ' ' ||
-                            coalesce(group_concat(site.configured_system, ' '), '') || ' ' ||
-                            coalesce(group_concat(site.channel_name, ' '), '') || ' ' ||
-                            coalesce(group_concat(site.guid, ' '), '')
+                            coalesce(site.site_id, '') || ' ' || coalesce(site.ran, '') || ' ' ||
+                            coalesce(site.configured_system, '') || ' ' ||
+                            coalesce(site.channel_name, '') || ' ' || site.guid
                         ) AS search_text
-                    FROM trunked_site_snapshot site
-                    WHERE NOT EXISTS (
-                        SELECT 1 FROM p25_site_snapshot p25
-                        WHERE p25.guid = site.guid
-                          AND (p25.last_seen_ms > site.last_seen_ms OR
-                            (p25.last_seen_ms = site.last_seen_ms AND 1 < site.protocol_code))
-                    )
-                    GROUP BY site.protocol_code, site.variant_code, site.identity_domain_code, site.network_id,
-                        site.system_id,
-                        CASE WHEN site.network_id IS NULL AND site.system_id IS NULL
-                            THEN lower(coalesce(nullif(trim(site.configured_system), ''),
-                                nullif(trim(site.channel_name), ''), site.guid))
-                            ELSE '' END
+                    FROM active_trunked_site site
                 )
                 SELECT protocol_code, protocol, system_group_key, system_key, wacn, system_id, network_id,
                     variant_code, identity_domain_code, configured_system, first_seen_ms, last_seen_ms, sites,
@@ -854,49 +896,30 @@ class StatsWebDatabase
                 String placeholders = String.join(",",
                     java.util.Collections.nCopies(trunkedGroupKeys.size(), "?"));
                 List<Object> siteParameters = new ArrayList<>(trunkedGroupKeys);
-                siteParameters.add(DIRECTORY_SITE_LIMIT_PER_SYSTEM);
                 List<Map<String,Object>> sites = queryRows(connection, """
-                    SELECT * FROM (
-                        SELECT site.guid, site.snapshot_hash, site.protocol_code,
-                            CASE site.protocol_code WHEN 3 THEN 'DMR' WHEN 4 THEN 'NXDN'
-                                ELSE 'Unknown' END AS protocol,
-                            site.variant_code, site.identity_domain_code, site.configured_system, site.channel_name,
-                            site.alias_list_name, site.decoder, site.network_id, site.system_id, site.site_id, site.ran,
-                            site.model_code, site.brand_code, site.mode_code, site.channel_type_code,
-                            site.color_code_ts1, site.color_code_ts2, site.current_repeater,
-                            site.service_flags, site.failure_code, site.primary_frequency_hz,
-                            site.current_control_hz, site.first_seen_ms, site.last_seen_ms,
-                            site.observation_count,
-                            'trunked:' || site.protocol_code || ':' || site.variant_code || ':' ||
-                                site.identity_domain_code || ':' ||
-                                coalesce(site.network_id, -1) || ':' || coalesce(site.system_id, -1) || ':' ||
-                                CASE WHEN site.network_id IS NULL AND site.system_id IS NULL
-                                    THEN lower(coalesce(nullif(trim(site.configured_system), ''),
-                                        nullif(trim(site.channel_name), ''), site.guid))
-                                    ELSE '' END AS system_group_key,
-                            (SELECT COUNT(*) FROM trunked_site_channel_summary channel
-                                WHERE channel.guid = site.guid) AS channels,
-                            (SELECT COUNT(*) FROM trunked_site_neighbor_summary neighbor
-                                WHERE neighbor.guid = site.guid) AS neighbors,
-                            row_number() OVER (
-                                PARTITION BY site.protocol_code, site.variant_code, site.identity_domain_code,
-                                    site.network_id, site.system_id,
-                                    CASE WHEN site.network_id IS NULL AND site.system_id IS NULL
-                                        THEN lower(coalesce(nullif(trim(site.configured_system), ''),
-                                            nullif(trim(site.channel_name), ''), site.guid))
-                                        ELSE '' END
-                                ORDER BY site.site_id IS NULL ASC, site.site_id ASC, site.ran IS NULL ASC,
-                                    site.ran ASC, site.guid ASC
-                            ) AS directory_rank
-                        FROM trunked_site_snapshot site
-                        WHERE NOT EXISTS (
-                            SELECT 1 FROM p25_site_snapshot p25
-                            WHERE p25.guid = site.guid
-                              AND (p25.last_seen_ms > site.last_seen_ms OR
-                                (p25.last_seen_ms = site.last_seen_ms AND 1 < site.protocol_code))
-                        )
-                    ) ranked
-                    WHERE system_group_key IN (%s) AND directory_rank <= ?
+                    SELECT site.guid, site.snapshot_hash, site.protocol_code,
+                        CASE site.protocol_code WHEN 3 THEN 'DMR' WHEN 4 THEN 'NXDN'
+                            ELSE 'Unknown' END AS protocol,
+                        site.variant_code, site.identity_domain_code, site.configured_system, site.channel_name,
+                        site.alias_list_name, site.decoder, site.network_id, site.system_id, site.site_id, site.ran,
+                        site.model_code, site.brand_code, site.mode_code, site.channel_type_code,
+                        site.color_code_ts1, site.color_code_ts2, site.current_repeater,
+                        site.service_flags, site.failure_code, site.primary_frequency_hz,
+                        site.current_control_hz, site.first_seen_ms, site.last_seen_ms,
+                        site.observation_count,
+                        'trunked:' || site.protocol_code || ':guid:' || site.guid AS system_group_key,
+                        (SELECT COUNT(*) FROM trunked_site_channel_summary channel
+                            WHERE channel.guid = site.guid) AS channels,
+                        (SELECT COUNT(*) FROM trunked_site_neighbor_summary neighbor
+                            WHERE neighbor.guid = site.guid) AS neighbors
+                    FROM trunked_site_snapshot site
+                    WHERE ('trunked:' || site.protocol_code || ':guid:' || site.guid) IN (%s)
+                      AND NOT EXISTS (
+                        SELECT 1 FROM p25_site_snapshot p25
+                        WHERE p25.guid = site.guid
+                          AND (p25.last_seen_ms > site.last_seen_ms OR
+                            (p25.last_seen_ms = site.last_seen_ms AND 1 < site.protocol_code))
+                      )
                     ORDER BY protocol_code, variant_code, identity_domain_code, network_id IS NULL ASC,
                         network_id ASC, system_id IS NULL ASC, system_id ASC, site_id IS NULL ASC, site_id ASC,
                         ran IS NULL ASC, ran ASC, guid
@@ -945,11 +968,15 @@ class StatsWebDatabase
                     system.last_seen_ms,
                     (SELECT COUNT(*) FROM p25_site_snapshot site WHERE site.system_key = system.system_key) AS sites,
                     (SELECT COUNT(*) FROM p25_talkgroup_summary talkgroup
-                        WHERE talkgroup.system_key = system.system_key) AS talkgroups,
+                        WHERE talkgroup.system_key = system.system_key
+                          AND talkgroup.talkgroup_id > 0 AND talkgroup.talkgroup_id < 65535) AS talkgroups,
                     (SELECT COUNT(*) FROM p25_radio_summary radio
-                        WHERE radio.system_key = system.system_key) AS radios,
+                        WHERE radio.system_key = system.system_key
+                          AND radio.radio_id > 0 AND radio.radio_id < 16777212) AS radios,
                     (SELECT COUNT(*) FROM p25_radio_affiliation affiliation
-                        WHERE affiliation.system_key = system.system_key) AS affiliations,
+                        WHERE affiliation.system_key = system.system_key
+                          AND affiliation.radio_id > 0 AND affiliation.radio_id < 16777212
+                          AND affiliation.talkgroup_id > 0 AND affiliation.talkgroup_id < 65535) AS affiliations,
                     COALESCE((
                         SELECT SUM(frequency.call_count)
                         FROM p25_site_frequency_summary frequency
@@ -980,11 +1007,12 @@ class StatsWebDatabase
             StringBuilder sql = new StringBuilder("""
                 SELECT system.system_key, system.wacn, system.system_id, summary.talkgroup_id,
                     summary.first_seen_ms, summary.last_seen_ms, summary.call_count, summary.encrypted_count,
-                    summary.recorded_count, summary.streamed_count
+                    summary.recorded_count, summary.streamed_count, %s AS evidence_total
                 FROM p25_talkgroup_summary summary
                 JOIN p25_system system ON system.system_key = summary.system_key
                 WHERE system.wacn = ? AND system.system_id = ?
-                """);
+                  AND summary.talkgroup_id > 0 AND summary.talkgroup_id < 65535
+                """.formatted(TALKGROUP_EVIDENCE_TOTAL_SQL));
             List<Object> parameters = new ArrayList<>(List.of(wacn, systemId));
             addIdentifierSearch(sql, parameters, request.search(), "summary.talkgroup_id");
             sql.append(" ORDER BY ").append(order(request, TALKGROUP_SORT_COLUMNS, "calls"))
@@ -1004,13 +1032,17 @@ class StatsWebDatabase
         return read(connection -> {
             StringBuilder sql = new StringBuilder("""
                 SELECT system.system_key, system.wacn, system.system_id, summary.*,
+                    CASE WHEN summary.last_talkgroup_id > 0 AND summary.last_talkgroup_id < 65535
+                        THEN summary.last_talkgroup_id END AS last_talkgroup_id,
                     affiliation.talkgroup_id AS affiliated_talkgroup_id,
                     affiliation.updated_at_ms AS affiliation_updated_at_ms
                 FROM p25_radio_summary summary
                 JOIN p25_system system ON system.system_key = summary.system_key
                 LEFT JOIN p25_radio_affiliation affiliation
                   ON affiliation.system_key = summary.system_key AND affiliation.radio_id = summary.radio_id
+                 AND affiliation.talkgroup_id > 0 AND affiliation.talkgroup_id < 65535
                 WHERE system.wacn = ? AND system.system_id = ?
+                  AND summary.radio_id > 0 AND summary.radio_id < 16777212
                 """);
             List<Object> parameters = new ArrayList<>(List.of(wacn, systemId));
             addIdentifierSearch(sql, parameters, request.search(), "summary.radio_id");
@@ -1032,10 +1064,13 @@ class StatsWebDatabase
 
         return read(connection -> {
             StringBuilder sql = new StringBuilder("""
-                SELECT system.system_key, system.wacn, system.system_id, summary.*
+                SELECT system.system_key, system.wacn, system.system_id, summary.*,
+                    CASE WHEN summary.last_talkgroup_id > 0 AND summary.last_talkgroup_id < 65535
+                        THEN summary.last_talkgroup_id END AS last_talkgroup_id
                 FROM p25_radio_summary summary
                 JOIN p25_system system ON system.system_key = summary.system_key
                 WHERE system.wacn = ? AND system.system_id = ?
+                  AND summary.radio_id > 0 AND summary.radio_id < 16777212
                   AND summary.last_talker_alias IS NOT NULL
                   AND trim(summary.last_talker_alias) <> ''
                 """);
@@ -1069,17 +1104,23 @@ class StatsWebDatabase
         return read(connection -> {
             List<Map<String,Object>> rows = queryRows(connection, """
                 SELECT system.system_key, system.wacn, system.system_id, summary.*,
+                    CASE WHEN summary.last_source_radio_id > 0 AND summary.last_source_radio_id < 16777212
+                        THEN summary.last_source_radio_id END AS last_source_radio_id,
                     (SELECT COUNT(*) FROM p25_radio_talkgroup_summary relationship
                         WHERE relationship.system_key = summary.system_key
-                          AND relationship.talkgroup_id = summary.talkgroup_id) AS radios,
+                          AND relationship.talkgroup_id = summary.talkgroup_id
+                          AND relationship.radio_id > 0 AND relationship.radio_id < 16777212) AS radios,
                     (SELECT COUNT(*) FROM p25_radio_affiliation affiliation
                         WHERE affiliation.system_key = summary.system_key
-                          AND affiliation.talkgroup_id = summary.talkgroup_id) AS affiliated_radios
+                          AND affiliation.talkgroup_id = summary.talkgroup_id
+                          AND affiliation.radio_id > 0 AND affiliation.radio_id < 16777212) AS affiliated_radios
                 FROM p25_talkgroup_summary summary
                 JOIN p25_system system ON system.system_key = summary.system_key
                 WHERE system.wacn = ? AND system.system_id = ? AND summary.talkgroup_id = ?
+                  AND summary.talkgroup_id > 0 AND summary.talkgroup_id < 65535
                 """, wacn, systemId, talkgroup);
             mAliasResolver.enrichTalkgroups(connection, rows);
+            enrichP25SummaryEncryption(rows);
             return Map.of("talkgroup", first(rows, "Talkgroup not found"));
         });
     }
@@ -1111,6 +1152,7 @@ class StatsWebDatabase
                 JOIN receiver_context context ON context.id = bucket.context_id
                 JOIN p25_system system ON system.system_key = context.system_key
                 WHERE system.wacn = ? AND system.system_id = ? AND bucket.talkgroup_id = ?
+                    AND bucket.talkgroup_id > 0 AND bucket.talkgroup_id < 65535
                     AND bucket.bucket_start_ms >= ?
                 GROUP BY time_ms
                 ORDER BY time_ms
@@ -1172,20 +1214,26 @@ class StatsWebDatabase
         return read(connection -> {
             List<Map<String,Object>> rows = queryRows(connection, """
                 SELECT system.system_key, system.wacn, system.system_id, summary.*,
+                    CASE WHEN summary.last_talkgroup_id > 0 AND summary.last_talkgroup_id < 65535
+                        THEN summary.last_talkgroup_id END AS last_talkgroup_id,
                     affiliation.talkgroup_id AS affiliated_talkgroup_id,
                     affiliation.updated_at_ms AS affiliation_updated_at_ms,
                     (SELECT COUNT(*) FROM p25_radio_talkgroup_summary relationship
                         WHERE relationship.system_key = summary.system_key
-                          AND relationship.radio_id = summary.radio_id) AS talkgroups
+                          AND relationship.radio_id = summary.radio_id
+                          AND relationship.talkgroup_id > 0 AND relationship.talkgroup_id < 65535) AS talkgroups
                 FROM p25_radio_summary summary
                 JOIN p25_system system ON system.system_key = summary.system_key
                 LEFT JOIN p25_radio_affiliation affiliation
                   ON affiliation.system_key = summary.system_key AND affiliation.radio_id = summary.radio_id
+                 AND affiliation.talkgroup_id > 0 AND affiliation.talkgroup_id < 65535
                 WHERE system.wacn = ? AND system.system_id = ? AND summary.radio_id = ?
+                  AND summary.radio_id > 0 AND summary.radio_id < 16777212
                 """, wacn, systemId, radio);
             mAliasResolver.enrichRadios(connection, rows);
             mAliasResolver.enrichTalkgroups(connection, rows, "affiliated_talkgroup_id",
                 "affiliated_talkgroup_alias_");
+            enrichP25SummaryEncryption(rows);
             return Map.of("radio", first(rows, "Radio not found"));
         });
     }
@@ -1206,6 +1254,8 @@ class StatsWebDatabase
                 LEFT JOIN p25_radio_summary summary
                   ON summary.system_key = affiliation.system_key AND summary.radio_id = affiliation.radio_id
                 WHERE system.wacn = ? AND system.system_id = ?
+                  AND affiliation.radio_id > 0 AND affiliation.radio_id < 16777212
+                  AND affiliation.talkgroup_id > 0 AND affiliation.talkgroup_id < 65535
                 """);
             List<Object> parameters = new ArrayList<>(List.of(wacn, systemId));
 
@@ -1247,6 +1297,8 @@ class StatsWebDatabase
                 LEFT JOIN p25_radio_summary radio
                   ON radio.system_key = relationship.system_key AND radio.radio_id = relationship.radio_id
                 WHERE system.wacn = ? AND system.system_id = ?
+                  AND relationship.radio_id > 0 AND relationship.radio_id < 16777212
+                  AND relationship.talkgroup_id > 0 AND relationship.talkgroup_id < 65535
                 """);
             List<Object> parameters = new ArrayList<>(List.of(wacn, systemId));
 
@@ -1415,6 +1467,7 @@ class StatsWebDatabase
                     SUM(encrypted_count) AS encrypted_count, MAX(bucket_start_ms) AS last_active_ms
                 FROM p25_site_talkgroup_bucket
                 WHERE context_id = ? AND bucket_start_ms >= ?
+                  AND talkgroup_id > 0 AND talkgroup_id < 65535
                 GROUP BY talkgroup_id
                 ORDER BY call_count DESC, talkgroup_id
                 LIMIT ?
@@ -1520,7 +1573,7 @@ class StatsWebDatabase
             }
 
             List<Map<String,Object>> rows = new ArrayList<>(queryRows(connection, """
-            SELECT 'SITE' AS entry_type, NULL AS wacn, summary.neighbor_key,
+            SELECT 'SITE' AS entry_type, source_system.wacn AS wacn, summary.neighbor_key,
                 coalesce(current.system_id, summary.system_id) AS system_id,
                 coalesce(current.rfss, summary.rfss) AS rfss,
                 coalesce(current.site, summary.site) AS site,
@@ -1531,11 +1584,31 @@ class StatsWebDatabase
                 coalesce(current.status, summary.status) AS status,
                 current.confirmed_at_ms, summary.first_seen_ms, summary.last_seen_ms,
                 summary.observation_count,
+                nullif(trim(neighbor_site.channel_name), '') AS neighbor_name,
+                neighbor_site.guid AS neighbor_guid,
                 CASE WHEN max(coalesce(current.confirmed_at_ms, 0), summary.last_seen_ms) >= ?
                     THEN 'CURRENT' ELSE 'HISTORICAL' END AS state
             FROM p25_site_neighbor_summary summary
             LEFT JOIN p25_site_neighbor current
               ON current.guid = summary.guid AND current.neighbor_key = summary.neighbor_key
+            LEFT JOIN p25_site_snapshot source_site ON source_site.guid = summary.guid
+            LEFT JOIN p25_system source_system ON source_system.system_key = source_site.system_key
+            LEFT JOIN p25_system neighbor_system
+              ON neighbor_system.wacn = source_system.wacn
+             AND neighbor_system.system_id = coalesce(current.system_id, summary.system_id)
+            LEFT JOIN p25_site_snapshot neighbor_site
+              ON neighbor_site.system_key = neighbor_system.system_key
+             AND neighbor_site.rfss = coalesce(current.rfss, summary.rfss)
+             AND neighbor_site.site = coalesce(current.site, summary.site)
+             AND neighbor_site.guid = (
+                SELECT candidate.guid
+                FROM p25_site_snapshot candidate
+                WHERE candidate.system_key = neighbor_system.system_key
+                  AND candidate.rfss = coalesce(current.rfss, summary.rfss)
+                  AND candidate.site = coalesce(current.site, summary.site)
+                ORDER BY candidate.last_seen_ms DESC, candidate.guid ASC
+                LIMIT 1
+             )
             WHERE summary.guid = ?
             ORDER BY CASE WHEN current.neighbor_key IS NULL THEN 1 ELSE 0 END,
                 system_id, rfss, site, summary.neighbor_key
@@ -1698,6 +1771,7 @@ class StatsWebDatabase
             parameters.add(request.limit() + 1);
             List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
             mAliasResolver.enrichActivity(connection, rows);
+            enrichActivityEncryption(rows);
             return cursorPage(rows, request.limit());
         });
     }
@@ -2612,6 +2686,53 @@ class StatsWebDatabase
     private static long number(Object value)
     {
         return value instanceof Number number ? number.longValue() : 0L;
+    }
+
+    /**
+     * Adds protocol-aware encryption names to detailed activity without persisting duplicate display strings.
+     */
+    private static void enrichActivityEncryption(List<Map<String,Object>> rows)
+    {
+        for(Map<String,Object> row: rows)
+        {
+            if(number(row.get("encrypted")) == 0)
+            {
+                continue;
+            }
+
+            VoiceEncryptionProtocol protocol =
+                VoiceEncryptionProtocol.fromProtocolName(String.valueOf(row.get("protocol")));
+            Integer algorithm = integer(row.get("encryption_algorithm_id"));
+            Integer key = integer(row.get("encryption_key_id"));
+            row.put("encryption_display", VoiceEncryptionDisplay.format(protocol, algorithm, key));
+            row.put("encryption_full_display", VoiceEncryptionDisplay.formatFull(protocol, algorithm, key));
+        }
+    }
+
+    /**
+     * P25 summary tables retain only the latest raw algorithm and key IDs.  Translate them at read time so the Java
+     * GUI and web interface use the same vocabulary.
+     */
+    private static void enrichP25SummaryEncryption(List<Map<String,Object>> rows)
+    {
+        for(Map<String,Object> row: rows)
+        {
+            if(number(row.get("encrypted_count")) == 0)
+            {
+                continue;
+            }
+
+            Integer algorithm = integer(row.get("last_encryption_algorithm_id"));
+            row.put("last_encryption_algorithm_display",
+                VoiceEncryptionDisplay.compactAlgorithm(VoiceEncryptionProtocol.APCO25, algorithm));
+            row.put("last_encryption_algorithm_name",
+                VoiceEncryptionDisplay.fullAlgorithm(VoiceEncryptionProtocol.APCO25, algorithm));
+        }
+    }
+
+    private static Integer integer(Object value)
+    {
+        return value instanceof Number number ? number.intValue() : null;
     }
 
     private <T> T read(Query<T> query)

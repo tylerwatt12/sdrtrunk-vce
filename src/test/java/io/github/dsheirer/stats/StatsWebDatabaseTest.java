@@ -280,6 +280,232 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void sumsAffiliationEvidenceForZeroCallTalkgroups() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO p25_talkgroup_summary (
+                    system_key, talkgroup_id, target_kind_code, first_seen_ms, last_seen_ms, join_count
+                ) VALUES (1, 57000, 1, 1000, 3000, 9)
+                """);
+        }
+
+        List<Map<String,Object>> talkgroups = rows(mDatabase.systemTalkgroups(request(
+            "/api/system/talkgroups?wacn=BEE00&system_id=0x348&sort=evidence&direction=desc")));
+        Map<String,Object> affiliatedOnly = talkgroups.getFirst();
+        assertEquals(57000L, number(affiliatedOnly.get("talkgroup_id")));
+        assertEquals(0L, number(affiliatedOnly.get("call_count")));
+        assertEquals(9L, number(affiliatedOnly.get("evidence_total")));
+        assertFalse(affiliatedOnly.containsKey("join_count"));
+        assertFalse(affiliatedOnly.containsKey("evidence_label"));
+        assertFalse(affiliatedOnly.containsKey("evidence_count"));
+        assertFalse(affiliatedOnly.containsKey("evidence_kind"));
+        assertNull(affiliatedOnly.get("alias_name"));
+    }
+
+    @Test
+    void sortsTalkgroupsByTotalEvidenceAndUsesOutputOnlyAsFallback() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO p25_talkgroup_summary (
+                    system_key, talkgroup_id, target_kind_code, first_seen_ms, last_seen_ms,
+                    denial_count, request_count
+                ) VALUES (1, 57001, 1, 1000, 3000, 7, 5)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_talkgroup_summary (
+                    system_key, talkgroup_id, target_kind_code, first_seen_ms, last_seen_ms,
+                    recorded_count, streamed_count
+                ) VALUES (1, 57002, 1, 1000, 3000, 2, 3)
+                """);
+        }
+
+        List<Map<String,Object>> talkgroups = rows(mDatabase.systemTalkgroups(request(
+            "/api/system/talkgroups?wacn=BEE00&system_id=0x348&sort=evidence&direction=desc")));
+        Map<String,Object> signaling = talkgroups.stream()
+            .filter(row -> number(row.get("talkgroup_id")) == 57001L).findFirst().orElseThrow();
+        assertEquals(12L, number(signaling.get("evidence_total")));
+        assertFalse(signaling.containsKey("denial_count"));
+        assertFalse(signaling.containsKey("request_count"));
+        assertFalse(signaling.containsKey("evidence_label"));
+
+        Map<String,Object> output = talkgroups.stream()
+            .filter(row -> number(row.get("talkgroup_id")) == 57002L).findFirst().orElseThrow();
+        assertEquals(5L, number(output.get("evidence_total")));
+        assertFalse(output.containsKey("evidence_label"));
+        assertFalse(output.containsKey("evidence_count"));
+        assertFalse(output.containsKey("evidence_kind"));
+    }
+
+    @Test
+    void hidesLegacyReservedP25DirectoryRowsWithoutDeletingActivity() throws Exception
+    {
+        long bucket = Math.floorDiv(System.currentTimeMillis(), 3_600_000L) * 3_600_000L;
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO p25_talkgroup_summary (
+                    system_key, talkgroup_id, target_kind_code, first_seen_ms, last_seen_ms
+                ) VALUES (1, 0, 1, 1000, 3000),
+                         (1, 65535, 1, 1000, 3000),
+                         (1, 65536, 1, 1000, 3000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_radio_summary (system_key, radio_id, first_seen_ms, last_seen_ms)
+                VALUES (1, 0, 1000, 3000),
+                       (1, 16777212, 1000, 3000),
+                       (1, 16777215, 1000, 3000),
+                       (1, 16777216, 1000, 3000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_radio_talkgroup_summary (
+                    system_key, radio_id, talkgroup_id, target_kind_code, first_seen_ms, last_seen_ms
+                ) VALUES (1, 16777212, 56132, 1, 1000, 3000),
+                         (1, 1811332, 65535, 1, 1000, 3000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_radio_affiliation (system_key, radio_id, talkgroup_id, updated_at_ms)
+                VALUES (1, 16777212, 56132, 3000),
+                       (1, 1811333, 65535, 3000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_site_talkgroup_bucket (
+                    context_id, talkgroup_id, bucket_start_ms
+                ) VALUES (1, 0, %1$d), (1, 65535, %1$d), (1, 65536, %1$d)
+                """.formatted(bucket));
+            statement.executeUpdate("""
+                INSERT INTO p25_activity_event (
+                    context_id, observed_at_ms, action_code, source_radio_id, target_id, target_kind_code, encrypted
+                ) VALUES (1, 3000, 1, 16777212, 0, 1, 0)
+                """);
+        }
+
+        assertEquals(List.of(56132L), rows(mDatabase.systemTalkgroups(request(
+            "/api/system/talkgroups?wacn=BEE00&system_id=0x348"))).stream()
+            .map(row -> number(row.get("talkgroup_id"))).toList());
+        assertEquals(List.of(1811332L), rows(mDatabase.systemRadios(request(
+            "/api/system/radios?wacn=BEE00&system_id=0x348"))).stream()
+            .map(row -> number(row.get("radio_id"))).toList());
+        assertEquals(1, rows(mDatabase.currentAffiliations(request(
+            "/api/system/affiliations?wacn=BEE00&system_id=0x348"))).size());
+        assertEquals(1, rows(mDatabase.radioTalkgroupRelationships(request(
+            "/api/radio-talkgroups?wacn=BEE00&system_id=0x348"))).size());
+        assertEquals(0, rows(mDatabase.siteTalkgroups(request(
+            "/api/site/talkgroups?guid=" + GUID))).stream()
+            .filter(row -> number(row.get("talkgroup_id")) == 0 ||
+                number(row.get("talkgroup_id")) >= 65535).count());
+        assertEquals(1, rows(mDatabase.activity(request("/api/activity?guid=" + GUID))).stream()
+            .filter(row -> row.get("source_radio_id") instanceof Number source &&
+                source.longValue() == 16777212L &&
+                row.get("target_id") instanceof Number target && target.longValue() == 0).count());
+
+        Map<String,Object> system = map(mDatabase.system(request(
+            "/api/system?wacn=BEE00&system_id=0x348")), "system");
+        assertEquals(1L, number(system.get("talkgroups")));
+        assertEquals(1L, number(system.get("radios")));
+        assertEquals(1L, number(system.get("affiliations")));
+    }
+
+    @Test
+    void resolvesNeighborNameAndGuidWithinTheSourceWacn() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO p25_site_snapshot (
+                    guid, snapshot_hash, first_seen_ms, last_seen_ms, observation_count,
+                    protocol, channel_name, alias_list_name, decoder, system_key, nac, rfss, site,
+                    lra, mfid, micro_slots, data_service, registration_service, tdma, voice_service,
+                    primary_frequency_hz, current_control_hz
+                ) VALUES ('neighbor-site-guid', 'neighbor-hash', 1000, 4000, 1, 'APCO25',
+                    'Neighbor Simulcast', 'County', 'P25-1', 1, 0x49F, 1, 2,
+                    0, 0x90, 110, 1, 1, 1, 1, 855137500, 855137500)
+                """);
+        }
+
+        Map<String,Object> neighbor = rows(mDatabase.siteNeighbors(request(
+            "/api/site/neighbors?guid=" + GUID))).stream()
+            .filter(row -> number(row.get("rfss")) == 1 && number(row.get("site")) == 2)
+            .findFirst().orElseThrow();
+        assertEquals("Neighbor Simulcast", neighbor.get("neighbor_name"));
+        assertEquals("neighbor-site-guid", neighbor.get("neighbor_guid"));
+    }
+
+    @Test
+    void exposesProtocolAwareEncryptionNames() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO receiver_context (
+                    id, context_key, guid, kind_code, protocol_code, channel_name, decoder,
+                    first_seen_ms, last_seen_ms
+                ) VALUES
+                    (20, 'dmr-encryption', 'dmr-encryption-guid', 1, 3, 'DMR Encryption', 'DMR', 1000, 3000),
+                    (21, 'nxdn-encryption', 'nxdn-encryption-guid', 1, 4, 'NXDN Encryption', 'NXDN', 1000, 3000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_activity_event (
+                    context_id, observed_at_ms, action_code, event_type_code, encrypted,
+                    encryption_algorithm_id, encryption_key_id
+                ) VALUES
+                    (1, 3001, 0, 0, 1, 1, 17),
+                    (20, 3002, 0, 0, 1, 1, 17),
+                    (21, 3003, 0, 0, 1, 1, 17),
+                    (20, 3004, 0, 0, 1, NULL, NULL)
+                """);
+            statement.executeUpdate("""
+                UPDATE p25_talkgroup_summary
+                SET last_encryption_algorithm_id = 132, last_encryption_key_id = 52
+                WHERE system_key = 1 AND talkgroup_id = 56132
+                """);
+            statement.executeUpdate("""
+                UPDATE p25_radio_summary
+                SET last_encryption_algorithm_id = 132, last_encryption_key_id = 52
+                WHERE system_key = 1 AND radio_id = 1811332
+                """);
+        }
+
+        Map<String,Object> p25 = rows(mDatabase.activity(request(
+            "/api/activity?context=site-cleveland"))).getFirst();
+        assertEquals("BAT-E K:11", p25.get("encryption_display"));
+        assertEquals("BATON AUTO EVEN K:11", p25.get("encryption_full_display"));
+
+        List<Map<String,Object>> dmr = rows(mDatabase.activity(request(
+            "/api/activity?context=dmr-encryption")));
+        assertEquals("ENC", dmr.getFirst().get("encryption_display"));
+        assertEquals("HYT-BP K:11", dmr.get(1).get("encryption_display"));
+        assertEquals("Hytera Basic Privacy K:11", dmr.get(1).get("encryption_full_display"));
+
+        Map<String,Object> nxdn = rows(mDatabase.activity(request(
+            "/api/activity?context=nxdn-encryption"))).getFirst();
+        assertEquals("SCRAM K:11", nxdn.get("encryption_display"));
+        assertEquals("Scrambler K:11", nxdn.get("encryption_full_display"));
+
+        long p25Id = number(p25.get("id"));
+        assertEquals("BAT-E K:11", mDatabase.activityByIds(List.of(p25Id)).getFirst()
+            .get("encryption_display"));
+
+        Map<String,Object> talkgroup = map(mDatabase.talkgroup(request(
+            "/api/talkgroup?wacn=BEE00&system_id=0x348&talkgroup_id=56132")), "talkgroup");
+        assertEquals("AES256", talkgroup.get("last_encryption_algorithm_display"));
+        assertEquals("AES-256", talkgroup.get("last_encryption_algorithm_name"));
+        Map<String,Object> radio = map(mDatabase.radio(request(
+            "/api/radio?wacn=BEE00&system_id=0x348&radio_id=1811332")), "radio");
+        assertEquals("AES256", radio.get("last_encryption_algorithm_display"));
+        assertEquals("AES-256", radio.get("last_encryption_algorithm_name"));
+    }
+
+    @Test
     void countsRetainedPhysicalP25ChannelsConsistently() throws Exception
     {
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
@@ -1496,6 +1722,56 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void usesConsensusConfiguredChannelSystemForP25Directory() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO p25_site_snapshot (guid, snapshot_hash, first_seen_ms, last_seen_ms, observation_count,
+                    protocol, channel_name, alias_list_name, decoder, system_key, nac, rfss, site,
+                    primary_frequency_hz, current_control_hz)
+                VALUES ('consensus-site-guid', 'consensus-hash', 1000, 2500, 1, 'APCO25', 'Consensus Child',
+                    'County', 'P25-1', 1, 0x49F, 1, 2, 857137500, 857137500)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO configuration_channel (sort_order, system_name, radres_guid, config_json)
+                VALUES (1, ' Greater Cleveland ', 'test-site-guid', '{}'),
+                       (2, 'greater cleveland', 'consensus-site-guid', '{}')
+                """);
+        }
+
+        Map<String,Object> parent = rows(mDatabase.systemDirectory(request("/api/system-directory"))).stream()
+            .filter(row -> number(row.get("system_id")) == SYSTEM).findFirst().orElseThrow();
+        assertEquals("Greater Cleveland", parent.get("configured_system"));
+        assertEquals(2, number(parent.get("sites")));
+        assertEquals(2, rowsFrom(parent, "children").size());
+        assertEquals(1, rows(mDatabase.systemDirectory(request(
+            "/api/system-directory?q=greater%20cleveland"))).size());
+        assertEquals(1, rows(mDatabase.systemDirectory(request(
+            "/api/system-directory?q=BEE00"))).size());
+        assertEquals(1, rows(mDatabase.systemDirectory(request(
+            "/api/system-directory?q=consensus-site-guid"))).size());
+        assertEquals(1, rows(mDatabase.systemDirectory(request(
+            "/api/system-directory?q=Consensus%20Child"))).size());
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                UPDATE configuration_channel SET system_name = 'Other System'
+                WHERE radres_guid = 'consensus-site-guid'
+                """);
+        }
+
+        parent = rows(mDatabase.systemDirectory(request("/api/system-directory"))).stream()
+            .filter(row -> number(row.get("system_id")) == SYSTEM).findFirst().orElseThrow();
+        assertNull(parent.get("configured_system"));
+        assertEquals(1, rows(mDatabase.systemDirectory(request(
+            "/api/system-directory?q=Other%20System"))).size());
+    }
+
+    @Test
     void exposesBoundedDmrAndNxdnSystemDirectoryAndSiteDetails() throws Exception
     {
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
@@ -1518,23 +1794,47 @@ class StatsWebDatabaseTest
                 2, 4, "Regional NXDN", "NXDN North", 7, 8, 9, 5,
                 List.of(new TrunkedSiteSchema.Channel(120, 121, null, 155_000_000L, 160_000_000L, 1)),
                 List.of(new TrunkedSiteSchema.Neighbor(2, 4, 7, 8, 10, 122, 155_012_500L, 2))));
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("nxdn-b", TrunkedSiteSchema.PROTOCOL_NXDN,
+                2, 4, "Regional NXDN", "NXDN South", 7, 8, 10, 5,
+                List.of(new TrunkedSiteSchema.Channel(130, 131, null, 155_025_000L, 160_025_000L, 1)),
+                List.of()));
         }
 
         Map<String,Object> directory = mDatabase.systemDirectory(request("/api/system-directory"));
         List<Map<String,Object>> systems = rows(directory);
-        assertEquals(3, systems.size());
-        Map<String,Object> dmr = systems.stream().filter(row -> "DMR".equals(row.get("protocol")))
-            .findFirst().orElseThrow();
-        assertEquals(2, number(dmr.get("sites")));
-        assertEquals(2, rowsFrom(dmr, "children").size());
-        assertEquals("dmr-a", rowsFrom(dmr, "children").getFirst().get("guid"));
-        assertEquals("trunked", rowsFrom(dmr, "children").getFirst().get("site_kind"));
+        assertEquals(5, systems.size());
+        List<Map<String,Object>> dmr = systems.stream().filter(row -> "DMR".equals(row.get("protocol"))).toList();
+        assertEquals(2, dmr.size());
+        assertEquals(List.of("trunked:3:guid:dmr-a", "trunked:3:guid:dmr-b"),
+            dmr.stream().map(row -> String.valueOf(row.get("system_group_key"))).toList());
+        assertTrue(dmr.stream().allMatch(row -> number(row.get("sites")) == 1));
+        assertTrue(dmr.stream().allMatch(row -> "Metro DMR".equals(row.get("configured_system"))));
+        assertTrue(dmr.stream().allMatch(row -> rowsFrom(row, "children").size() == 1));
+        assertEquals("dmr-a", rowsFrom(dmr.getFirst(), "children").getFirst().get("guid"));
+        assertEquals("dmr-b", rowsFrom(dmr.getLast(), "children").getFirst().get("guid"));
+        assertTrue(dmr.stream().flatMap(row -> rowsFrom(row, "children").stream())
+            .allMatch(row -> "trunked".equals(row.get("site_kind"))));
+        assertEquals("dmr-b", rowsFrom(rows(mDatabase.systemDirectory(request(
+            "/api/system-directory?q=DMR%20Airport"))).getFirst(), "children").getFirst().get("guid"));
+        assertEquals(2, rows(mDatabase.systemDirectory(request(
+            "/api/system-directory?q=20"))).size());
+
+        List<Map<String,Object>> nxdn = systems.stream().filter(row -> "NXDN".equals(row.get("protocol"))).toList();
+        assertEquals(2, nxdn.size());
+        assertEquals(List.of("trunked:4:guid:nxdn-a", "trunked:4:guid:nxdn-b"),
+            nxdn.stream().map(row -> String.valueOf(row.get("system_group_key"))).toList());
+        assertTrue(nxdn.stream().allMatch(row -> number(row.get("sites")) == 1));
+        assertTrue(nxdn.stream().allMatch(row -> rowsFrom(row, "children").size() == 1));
 
         List<Map<String,Object>> nxdnSearch = rows(mDatabase.systemDirectory(request(
             "/api/system-directory?q=NXDN")));
-        assertEquals(1, nxdnSearch.size());
+        assertEquals(2, nxdnSearch.size());
         assertEquals("NXDN", nxdnSearch.getFirst().get("protocol"));
         assertEquals("nxdn-a", rowsFrom(nxdnSearch.getFirst(), "children").getFirst().get("guid"));
+        assertEquals(1, rows(mDatabase.systemDirectory(request(
+            "/api/system-directory?q=NXDN%20North"))).size());
+        assertEquals("nxdn-a", rowsFrom(rows(mDatabase.systemDirectory(request(
+            "/api/system-directory?q=9"))).getFirst(), "children").getFirst().get("guid"));
 
         Map<String,Object> site = map(mDatabase.site(request("/api/site?guid=dmr-a")), "site");
         assertEquals("DMR", site.get("protocol"));
@@ -1586,8 +1886,8 @@ class StatsWebDatabaseTest
         assertEquals(120, number(nxdnChannels.getFirst().get("channel_number")));
 
         Map<String,Object> counts = map(mDatabase.dashboard(), "counts");
-        assertEquals(3, number(counts.get("trunked_systems")));
-        assertEquals(4, number(counts.get("trunked_sites")));
+        assertEquals(5, number(counts.get("trunked_systems")));
+        assertEquals(5, number(counts.get("trunked_sites")));
         assertFalse(counts.containsKey("talkgroups"));
         assertFalse(counts.containsKey("radios"));
         assertFalse(counts.containsKey("frequencies"));

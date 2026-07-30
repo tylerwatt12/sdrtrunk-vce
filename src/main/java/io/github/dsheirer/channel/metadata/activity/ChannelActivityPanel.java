@@ -742,7 +742,7 @@ public class ChannelActivityPanel extends JPanel
             {
                 label.setText(state.toString());
 
-                if(state == State.ENCRYPTED && advancedP25EncryptionStatus())
+                if(state == State.ENCRYPTED && advancedEncryptionStatus())
                 {
                     ChannelActivityRow activityRow = getActivityRow(table, row);
 
@@ -761,9 +761,9 @@ public class ChannelActivityPanel extends JPanel
         }
     }
 
-    private boolean advancedP25EncryptionStatus()
+    private boolean advancedEncryptionStatus()
     {
-        return mNowPlayingPreference != null && mNowPlayingPreference.isAdvancedP25EncryptionStatus();
+        return mNowPlayingPreference != null && mNowPlayingPreference.isAdvancedEncryptionStatus();
     }
 
     private ChannelActivityRow getActivityRow(JTable table, int row)

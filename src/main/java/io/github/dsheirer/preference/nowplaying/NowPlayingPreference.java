@@ -44,7 +44,7 @@ public class NowPlayingPreference extends Preference
 
     private final Preferences mPreferences = Preferences.userNodeForPackage(NowPlayingPreference.class);
     private Boolean mRetainIdleCallDetails;
-    private Boolean mAdvancedP25EncryptionStatus;
+    private Boolean mAdvancedEncryptionStatus;
     private Integer mTrafficGrantAgeOutMilliseconds;
     private Boolean mShowControlDecodeQuality;
     private Boolean mShowVoiceDecodeQuality;
@@ -109,27 +109,45 @@ public class NowPlayingPreference extends Preference
     }
 
     /**
-     * Indicates if advanced P25 encryption details should replace ENCRYPTED status text.
+     * Indicates if protocol-aware encryption details should replace ENCRYPTED status text.
      */
-    public boolean isAdvancedP25EncryptionStatus()
+    public boolean isAdvancedEncryptionStatus()
     {
-        if(mAdvancedP25EncryptionStatus == null)
+        if(mAdvancedEncryptionStatus == null)
         {
-            mAdvancedP25EncryptionStatus = mPreferences.getBoolean(PREFERENCE_KEY_ADVANCED_P25_ENCRYPTION_STATUS,
+            mAdvancedEncryptionStatus = mPreferences.getBoolean(PREFERENCE_KEY_ADVANCED_P25_ENCRYPTION_STATUS,
                 false);
         }
 
-        return mAdvancedP25EncryptionStatus;
+        return mAdvancedEncryptionStatus;
     }
 
     /**
-     * Sets advanced P25 encryption status rendering.
+     * Sets protocol-aware encryption status rendering.  The legacy preference key is retained for compatibility.
      */
-    public void setAdvancedP25EncryptionStatus(boolean advanced)
+    public void setAdvancedEncryptionStatus(boolean advanced)
     {
-        mAdvancedP25EncryptionStatus = advanced;
+        mAdvancedEncryptionStatus = advanced;
         mPreferences.putBoolean(PREFERENCE_KEY_ADVANCED_P25_ENCRYPTION_STATUS, advanced);
         notifyPreferenceUpdated();
+    }
+
+    /**
+     * @deprecated use {@link #isAdvancedEncryptionStatus()}
+     */
+    @Deprecated
+    public boolean isAdvancedP25EncryptionStatus()
+    {
+        return isAdvancedEncryptionStatus();
+    }
+
+    /**
+     * @deprecated use {@link #setAdvancedEncryptionStatus(boolean)}
+     */
+    @Deprecated
+    public void setAdvancedP25EncryptionStatus(boolean advanced)
+    {
+        setAdvancedEncryptionStatus(advanced);
     }
 
     public int getTrafficGrantAgeOutMilliseconds()

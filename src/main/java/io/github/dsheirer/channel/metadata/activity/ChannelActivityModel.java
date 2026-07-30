@@ -47,9 +47,9 @@ import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
 import io.github.dsheirer.module.decode.dmr.channel.DMRChannel;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
-import io.github.dsheirer.module.decode.p25.P25EncryptionDetails;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
+import io.github.dsheirer.preference.encryption.VoiceEncryptionDisplay;
 import io.github.dsheirer.preference.nowplaying.NowPlayingPreference;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.source.config.SourceConfigTuner;
@@ -752,7 +752,14 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
                 session.addTag(channelDescriptor.getDownlinkFrequency(), serviceTag);
             }
 
-            row.setState(getStickyTrafficState(row, getState(eventType), wasEncrypted));
+            State state = getState(eventType);
+
+            if(state == State.ENCRYPTED && row.getEncryptionDetails() == null)
+            {
+                row.setEncryptionDetails(VoiceEncryptionDisplay.ENCRYPTED);
+            }
+
+            row.setState(getStickyTrafficState(row, state, wasEncrypted));
             table.refresh(row);
             scheduleTrafficGrantAgeOut(row);
         });
@@ -785,7 +792,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
     {
         long frequency = channelDescriptor != null ? channelDescriptor.getDownlinkFrequency() : 0;
         Integer timeslot = getTimeslot(channelDescriptor);
-        String encryptionDetails = P25EncryptionDetails.format(identifiers);
+        String encryptionDetails = VoiceEncryptionDisplay.format(identifiers);
 
         if(!mEnabled || parentChannel == null || !isP25TrunkedControlParent(parentChannel) || frequency <= 0 ||
             encryptionDetails == null)
@@ -921,7 +928,25 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         row.setTalkerAlias(metadata.getTalkerAliasIdentifier());
         row.setTarget(metadata.getToIdentifier());
         row.setTargetAliases(metadata.getToIdentifierAliases());
-        row.setEncryptionDetails(P25EncryptionDetails.format(metadata.getEncryptionIdentifier()));
+        State displayState = getStickyTrafficState(row, state, wasEncrypted);
+        String encryptionDetails = VoiceEncryptionDisplay.format(metadata.getEncryptionIdentifier());
+
+        if(encryptionDetails != null)
+        {
+            row.setEncryptionDetails(encryptionDetails);
+        }
+        else if(displayState == State.ENCRYPTED)
+        {
+            if(row.getEncryptionDetails() == null)
+            {
+                row.setEncryptionDetails(VoiceEncryptionDisplay.ENCRYPTED);
+            }
+        }
+        else
+        {
+            row.setEncryptionDetails(null);
+        }
+
         ChannelTag serviceTag = ChannelTag.fromService(state);
 
         if(serviceTag != null)
@@ -929,7 +954,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
             row.addTag(serviceTag);
         }
 
-        row.setState(getStickyTrafficState(row, state, wasEncrypted));
+        row.setState(displayState);
 
         if(row.getState() == State.IDLE)
         {
@@ -979,7 +1004,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
                 row.setTalkerAlias(talkerAlias);
             }
 
-            String encryptionDetails = P25EncryptionDetails.format(identifiers);
+            String encryptionDetails = VoiceEncryptionDisplay.format(identifiers);
 
             if(encryptionDetails != null)
             {

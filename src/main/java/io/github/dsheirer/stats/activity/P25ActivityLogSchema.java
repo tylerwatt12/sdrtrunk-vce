@@ -73,6 +73,8 @@ public class P25ActivityLogSchema
     private static final int TARGET_TALKGROUP = 1;
     private static final int TARGET_RADIO = 2;
     private static final int TARGET_PATCH_GROUP = 3;
+    private static final int P25_EVERYONE_TALKGROUP = 0xFFFF;
+    private static final int P25_FIRST_SPECIAL_RADIO = 0xFFFFFC;
 
     private static final List<P25ActivityLogRecords.Action> ACTIONS =
         Arrays.asList(P25ActivityLogRecords.Action.values());
@@ -301,7 +303,7 @@ public class P25ActivityLogSchema
             }
 
             upsertCompletedCallOutputIdentityBuckets(connection, completedCallOutput, context.contextId(),
-                recorded, streamed);
+                false, recorded, streamed);
             return true;
         }
 
@@ -337,15 +339,17 @@ public class P25ActivityLogSchema
         {
             List<TalkgroupTarget> targets = new ArrayList<>();
 
-            if(completedCallOutput.talkgroupId() > 0 && isTalkgroup(completedCallOutput.targetKind()))
+            if(isDirectoryTalkgroup(completedCallOutput.talkgroupId()) &&
+                isTalkgroup(completedCallOutput.targetKind()))
             {
                 targets.add(new TalkgroupTarget(completedCallOutput.talkgroupId(),
                     completedCallOutput.targetKind()));
 
                 if("PATCH_GROUP".equals(completedCallOutput.targetKind()))
                 {
-                    completedCallOutput.patchMemberTalkgroupIds().forEach(member ->
-                        targets.add(new TalkgroupTarget(member, Form.TALKGROUP.name())));
+                    completedCallOutput.patchMemberTalkgroupIds().stream()
+                        .filter(P25ActivityLogSchema::isDirectoryTalkgroup)
+                        .forEach(member -> targets.add(new TalkgroupTarget(member, Form.TALKGROUP.name())));
                 }
             }
 
@@ -379,7 +383,7 @@ public class P25ActivityLogSchema
         }
 
         upsertCompletedCallOutputIdentityBuckets(connection, completedCallOutput, context.contextId(),
-            recorded, streamed);
+            context.systemKey() != null, recorded, streamed);
         return true;
     }
 
@@ -405,15 +409,12 @@ public class P25ActivityLogSchema
         }
 
         if(attribution.destinationBecameKnown() &&
-            (attribution.destinationId() <= 0 ||
-                !(isTalkgroup(attribution.destinationKind()) ||
-                    Form.RADIO.name().equals(attribution.destinationKind()))))
-        {
-            return false;
-        }
-
-        if(attribution.sourceBecameKnown() &&
-            (attribution.sourceRadioId() == null || attribution.sourceRadioId() <= 0))
+            (!(isTalkgroup(attribution.destinationKind()) ||
+                Form.RADIO.name().equals(attribution.destinationKind())) ||
+                isTalkgroup(attribution.destinationKind()) &&
+                    !isDirectoryTalkgroup(attribution.destinationId()) ||
+                Form.RADIO.name().equals(attribution.destinationKind()) &&
+                    !isDirectoryRadio(attribution.destinationId())))
         {
             return false;
         }
@@ -421,7 +422,7 @@ public class P25ActivityLogSchema
         long bucket = bucketStart(attribution.callStartEpochMilliseconds());
         List<CallIdentity> destinations = destinationIdentities(
             attribution.destinationId() > 0 ? Integer.toString(attribution.destinationId()) : null,
-            attribution.destinationKind(), attribution.patchMemberTalkgroupIds());
+            attribution.destinationKind(), attribution.patchMemberTalkgroupIds(), true);
         List<TalkgroupTarget> talkgroups = talkgroupTargets(attribution.destinationId(),
             attribution.destinationKind(), attribution.patchMemberTalkgroupIds());
         P25ActivityLogRecords.ActivityEvent legacyActivity = attributionActivity(attribution);
@@ -480,12 +481,13 @@ public class P25ActivityLogSchema
                 if(context.systemKey() != null)
                 {
                     upsertP25TalkgroupSummary(connection, legacyActivity, context.systemKey(),
-                        target.talkgroupId(), attribution.sourceRadioId(), target.targetKind());
+                        target.talkgroupId(), isDirectoryRadio(attribution.sourceRadioId()) ?
+                            attribution.sourceRadioId() : null, target.targetKind());
                 }
             }
 
-            if(context.systemKey() != null && attribution.sourceRadioId() != null &&
-                attribution.sourceRadioId() > 0 && !talkgroups.isEmpty())
+            if(context.systemKey() != null && isDirectoryRadio(attribution.sourceRadioId()) &&
+                !talkgroups.isEmpty())
             {
                 try(PreparedStatement statement = connection.prepareStatement("""
                     UPDATE p25_radio_summary
@@ -502,7 +504,7 @@ public class P25ActivityLogSchema
             }
         }
 
-        if(attribution.sourceBecameKnown())
+        if(attribution.sourceBecameKnown() && isDirectoryRadio(attribution.sourceRadioId()))
         {
             upsertCallIdentityBucket(connection, context.contextId(), bucket, IDENTITY_ROLE_SOURCE,
                 IDENTITY_KIND_RADIO, attribution.sourceRadioId(), 1,
@@ -511,13 +513,13 @@ public class P25ActivityLogSchema
             if(context.systemKey() != null)
             {
                 upsertP25RadioSummary(connection, legacyActivity, context.systemKey(),
-                    attribution.sourceRadioId(), attribution.destinationId() > 0 ?
+                    attribution.sourceRadioId(), isDirectoryTalkgroup(attribution.destinationId()) ?
                         attribution.destinationId() : null);
             }
         }
 
-        if(context.systemKey() != null && attribution.sourceRadioId() != null &&
-            attribution.sourceRadioId() > 0 && !talkgroups.isEmpty() &&
+        if(context.systemKey() != null && isDirectoryRadio(attribution.sourceRadioId()) &&
+            !talkgroups.isEmpty() &&
             (attribution.destinationBecameKnown() || attribution.sourceBecameKnown()))
         {
             for(TalkgroupTarget target: talkgroups)
@@ -547,7 +549,7 @@ public class P25ActivityLogSchema
                     destination.kindCode(), destination.identityId(), 0, 1, 0, 0);
             }
 
-            if(attribution.sourceRadioId() != null && attribution.sourceRadioId() > 0)
+            if(isDirectoryRadio(attribution.sourceRadioId()))
             {
                 upsertCallIdentityBucket(connection, context.contextId(), bucket, IDENTITY_ROLE_SOURCE,
                     IDENTITY_KIND_RADIO, attribution.sourceRadioId(), 0, 1, 0, 0);
@@ -575,7 +577,7 @@ public class P25ActivityLogSchema
     private static List<TalkgroupTarget> talkgroupTargets(int destinationId, String destinationKind,
                                                           List<Integer> patchMembers)
     {
-        if(destinationId <= 0 || !isTalkgroup(destinationKind))
+        if(!isDirectoryTalkgroup(destinationId) || !isTalkgroup(destinationKind))
         {
             return List.of();
         }
@@ -586,7 +588,8 @@ public class P25ActivityLogSchema
         if(Form.PATCH_GROUP.name().equals(destinationKind) && patchMembers != null)
         {
             patchMembers.stream()
-                .filter(member -> member != null && member > 0 && member != destinationId)
+                .filter(P25ActivityLogSchema::isDirectoryTalkgroup)
+                .filter(member -> member != destinationId)
                 .distinct()
                 .sorted()
                 .map(member -> new TalkgroupTarget(member, Form.TALKGROUP.name()))
@@ -628,8 +631,7 @@ public class P25ActivityLogSchema
             }
         }
 
-        if(context.systemKey() != null && attribution.sourceRadioId() != null &&
-            attribution.sourceRadioId() > 0)
+        if(context.systemKey() != null && isDirectoryRadio(attribution.sourceRadioId()))
         {
             try(PreparedStatement radio = connection.prepareStatement("""
                     UPDATE p25_radio_summary
@@ -715,7 +717,7 @@ public class P25ActivityLogSchema
         Integer systemKey = resolveEstablishedP25SystemKey(connection, update.observedAtEpochMilliseconds(),
             update.contextKey(), update.guid());
 
-        if(systemKey != null)
+        if(systemKey != null && isDirectoryRadio(update.radioId()))
         {
             upsertP25TalkerAlias(connection, systemKey, update.radioId(), update.talkerAlias(),
                 update.observedAtEpochMilliseconds());
@@ -1554,30 +1556,35 @@ public class P25ActivityLogSchema
     {
         Integer sourceRadio = parseInteger(activity.sourceRadioId());
         Integer target = parseInteger(activity.targetId());
+        Integer directorySourceRadio = isDirectoryRadio(sourceRadio) ? sourceRadio : null;
 
-        if(target != null && isTalkgroup(activity.targetKind()))
+        if(isDirectoryTalkgroup(target) && isTalkgroup(activity.targetKind()))
         {
-            upsertP25TalkgroupSummary(connection, activity, systemKey, target, sourceRadio, activity.targetKind());
+            upsertP25TalkgroupSummary(connection, activity, systemKey, target, directorySourceRadio,
+                activity.targetKind());
 
-            for(Integer member: patchMemberTalkgroups(activity))
+            for(Integer member: patchMemberTalkgroups(activity).stream()
+                .filter(P25ActivityLogSchema::isDirectoryTalkgroup).toList())
             {
-                upsertP25TalkgroupSummary(connection, activity, systemKey, member, sourceRadio,
+                upsertP25TalkgroupSummary(connection, activity, systemKey, member, directorySourceRadio,
                     Form.TALKGROUP.name());
             }
         }
 
-        if(sourceRadio != null)
+        if(directorySourceRadio != null)
         {
-            upsertP25RadioSummary(connection, activity, systemKey, sourceRadio, target);
+            upsertP25RadioSummary(connection, activity, systemKey, directorySourceRadio,
+                isDirectoryTalkgroup(target) ? target : null);
 
-            if(target != null && isTalkgroup(activity.targetKind()))
+            if(isDirectoryTalkgroup(target) && isTalkgroup(activity.targetKind()))
             {
-                upsertP25RadioTalkgroupSummary(connection, activity, systemKey, sourceRadio, target,
+                upsertP25RadioTalkgroupSummary(connection, activity, systemKey, directorySourceRadio, target,
                     activity.targetKind());
 
-                for(Integer member: patchMemberTalkgroups(activity))
+                for(Integer member: patchMemberTalkgroups(activity).stream()
+                    .filter(P25ActivityLogSchema::isDirectoryTalkgroup).toList())
                 {
-                    upsertP25RadioTalkgroupSummary(connection, activity, systemKey, sourceRadio, member,
+                    upsertP25RadioTalkgroupSummary(connection, activity, systemKey, directorySourceRadio, member,
                         Form.TALKGROUP.name());
                 }
             }
@@ -1590,11 +1597,12 @@ public class P25ActivityLogSchema
         Integer sourceRadio = parseInteger(activity.sourceRadioId());
         Integer target = parseInteger(activity.targetId());
 
-        if(target != null && isTalkgroup(activity.targetKind()))
+        if(isDirectoryTalkgroup(target) && isTalkgroup(activity.targetKind()))
         {
             upsertP25TalkgroupBucket(connection, activity, contextId, target);
 
-            for(Integer member: patchMemberTalkgroups(activity))
+            for(Integer member: patchMemberTalkgroups(activity).stream()
+                .filter(P25ActivityLogSchema::isDirectoryTalkgroup).toList())
             {
                 upsertP25TalkgroupBucket(connection, activity, contextId, member);
             }
@@ -1616,7 +1624,9 @@ public class P25ActivityLogSchema
         int encrypted = activity.encrypted() ? 1 : 0;
 
         for(CallIdentity destination: destinationIdentities(activity.targetId(), activity.targetKind(),
-            activity.patchMemberTalkgroupIds()))
+            activity.patchMemberTalkgroupIds(), activity.contextKind() ==
+                P25ActivityLogRecords.ContextKind.TRUNKED_SITE && activity.protocol() != null &&
+                activity.protocol().startsWith("APCO25")))
         {
             upsertCallIdentityBucket(connection, contextId, bucket, IDENTITY_ROLE_DESTINATION,
                 destination.kindCode(), destination.identityId(), 1, encrypted, 0, 0);
@@ -1624,7 +1634,10 @@ public class P25ActivityLogSchema
 
         Integer source = positiveInteger(activity.sourceRadioId());
 
-        if(source != null)
+        boolean p25 = activity.contextKind() == P25ActivityLogRecords.ContextKind.TRUNKED_SITE &&
+            activity.protocol() != null && activity.protocol().startsWith("APCO25");
+
+        if(source != null && (!p25 || isDirectoryRadio(source)))
         {
             upsertCallIdentityBucket(connection, contextId, bucket, IDENTITY_ROLE_SOURCE, IDENTITY_KIND_RADIO,
                 source, 1, encrypted, 0, 0);
@@ -1633,19 +1646,20 @@ public class P25ActivityLogSchema
 
     private static void upsertCompletedCallOutputIdentityBuckets(
         Connection connection, P25ActivityLogRecords.CompletedCallOutput output, int contextId,
-        int recorded, int streamed) throws SQLException
+        boolean p25, int recorded, int streamed) throws SQLException
     {
         long bucket = bucketStart(output.callStartEpochMilliseconds());
 
         for(CallIdentity destination: destinationIdentities(
             output.destinationId() > 0 ? Integer.toString(output.destinationId()) : null,
-            output.targetKind(), output.patchMemberTalkgroupIds()))
+            output.targetKind(), output.patchMemberTalkgroupIds(), p25))
         {
             upsertCallIdentityBucket(connection, contextId, bucket, IDENTITY_ROLE_DESTINATION,
                 destination.kindCode(), destination.identityId(), 0, 0, recorded, streamed);
         }
 
-        if(output.sourceRadioId() != null && output.sourceRadioId() > 0)
+        if(output.sourceRadioId() != null && output.sourceRadioId() > 0 &&
+            (!p25 || isDirectoryRadio(output.sourceRadioId())))
         {
             upsertCallIdentityBucket(connection, contextId, bucket, IDENTITY_ROLE_SOURCE, IDENTITY_KIND_RADIO,
                 output.sourceRadioId(), 0, 0, recorded, streamed);
@@ -1684,20 +1698,23 @@ public class P25ActivityLogSchema
     }
 
     private static List<CallIdentity> destinationIdentities(String targetId, String targetKind,
-                                                             List<Integer> patchMembers)
+                                                             List<Integer> patchMembers, boolean p25)
     {
         Integer target = positiveInteger(targetId);
         List<CallIdentity> identities = new ArrayList<>();
+        boolean validTarget = target != null && (!p25 ||
+            (isTalkgroup(targetKind) && isDirectoryTalkgroup(target)) ||
+            (Form.RADIO.name().equals(targetKind) && isDirectoryRadio(target)));
 
-        if(target != null && Form.PATCH_GROUP.name().equals(targetKind))
+        if(validTarget && Form.PATCH_GROUP.name().equals(targetKind))
         {
             identities.add(new CallIdentity(IDENTITY_KIND_PATCH_GROUP, target));
         }
-        else if(target != null && Form.TALKGROUP.name().equals(targetKind))
+        else if(validTarget && Form.TALKGROUP.name().equals(targetKind))
         {
             identities.add(new CallIdentity(IDENTITY_KIND_TALKGROUP, target));
         }
-        else if(target != null && Form.RADIO.name().equals(targetKind))
+        else if(validTarget && Form.RADIO.name().equals(targetKind))
         {
             identities.add(new CallIdentity(IDENTITY_KIND_RADIO, target));
         }
@@ -1710,6 +1727,7 @@ public class P25ActivityLogSchema
         {
             patchMembers.stream()
                 .filter(member -> member != null && member > 0)
+                .filter(member -> !p25 || isDirectoryTalkgroup(member))
                 .filter(member -> target == null || !member.equals(target))
                 .distinct()
                 .sorted()
@@ -1725,7 +1743,8 @@ public class P25ActivityLogSchema
     {
         P25ActivityLogRecords.RadioAffiliationUpdate update = activity.affiliationUpdate();
 
-        if(update == null)
+        if(update == null || !isDirectoryRadio(update.radioId()) ||
+            update.talkgroupId() != null && !isDirectoryTalkgroup(update.talkgroupId()))
         {
             return;
         }
@@ -2138,7 +2157,7 @@ public class P25ActivityLogSchema
     private static void upsertP25TalkerAlias(Connection connection, int systemKey, int radio, String talkerAlias,
                                              long observedAt) throws SQLException
     {
-        if(radio <= 0 || talkerAlias == null || talkerAlias.isBlank())
+        if(!isDirectoryRadio(radio) || talkerAlias == null || talkerAlias.isBlank())
         {
             return;
         }
@@ -3246,6 +3265,21 @@ public class P25ActivityLogSchema
     private static boolean isTalkgroup(String targetKind)
     {
         return "TALKGROUP".equals(targetKind) || "PATCH_GROUP".equals(targetKind);
+    }
+
+    /**
+     * TIA-102.BAAC-A sections 2.4 and 2.5 reserve zero as "no one", reserve talkgroup FFFF as "everyone", and
+     * reserve radio identities FFFFFC-FFFFFF for infrastructure/special purposes.  These values remain visible in
+     * detailed activity, but are not projected into subscriber/talkgroup directory tables.
+     */
+    private static boolean isDirectoryTalkgroup(Integer talkgroup)
+    {
+        return talkgroup != null && talkgroup > 0 && talkgroup < P25_EVERYONE_TALKGROUP;
+    }
+
+    private static boolean isDirectoryRadio(Integer radio)
+    {
+        return radio != null && radio > 0 && radio < P25_FIRST_SPECIAL_RADIO;
     }
 
     private static List<Integer> patchMemberTalkgroups(P25ActivityLogRecords.ActivityEvent activity)
