@@ -3852,7 +3852,7 @@ async function renderActivity(scopeParameters, title = 'Activity') {
 
 async function renderConventional() {
   const page = await api('/api/conventional', pageParameters());
-  content.append(pageHeader('Conventional', 'Started conventional analog, P25, and DMR channel summaries'));
+  content.append(pageHeader('Conventional', 'Started conventional analog and digital channel summaries'));
   const columns = [
     { label: 'Name', render: (row) => anchor(row.channel_name || row.context_key,
       href('conventional-detail', { context: row.context_key, tab: 'info' })), className: 'alias-cell', sort: 'name', sortValue: (row) => row.channel_name || row.context_key },

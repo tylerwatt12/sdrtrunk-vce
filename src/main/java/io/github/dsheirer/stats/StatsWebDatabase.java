@@ -241,11 +241,7 @@ class StatsWebDatabase
         """;
     static final String ACTIVITY_SELECT_SQL = """
         SELECT activity.id, activity.context_id, activity.context_key, activity.guid,
-            activity.observed_at_ms,
-            CASE activity.channel_kind_code
-                WHEN 3 THEN 'CONVENTIONAL_DMR'
-                ELSE activity.channel_kind
-            END AS channel_kind,
+            activity.observed_at_ms, activity.channel_kind,
             activity.channel_kind_code, activity.protocol, activity.action, activity.event_type,
             activity.source_radio_id, activity.target_id, activity.target_kind_code, activity.target_kind,
             activity.frequency_hz, activity.lcn, activity.timeslot, activity.encrypted,
@@ -670,11 +666,7 @@ class StatsWebDatabase
             String placeholders = String.join(",", java.util.Collections.nCopies(rowIds.size(), "?"));
             List<Map<String,Object>> rows = queryRows(connection, """
                 SELECT activity.id, activity.context_id, activity.context_key, activity.guid,
-                    activity.observed_at_ms,
-                    CASE activity.channel_kind_code
-                        WHEN 3 THEN 'CONVENTIONAL_DMR'
-                        ELSE activity.channel_kind
-                    END AS channel_kind,
+                    activity.observed_at_ms, activity.channel_kind,
                     activity.channel_kind_code, activity.protocol, activity.action, activity.event_type,
                     activity.source_radio_id, activity.target_id, activity.target_kind_code, activity.target_kind,
                     activity.frequency_hz, activity.lcn, activity.timeslot, activity.encrypted,
