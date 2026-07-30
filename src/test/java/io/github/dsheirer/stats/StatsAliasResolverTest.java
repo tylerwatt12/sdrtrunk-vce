@@ -75,6 +75,12 @@ class StatsAliasResolverTest
             List<Map<String,Object>> p25Radios = rows(row("P25 Conventional", 456));
             List<Map<String,Object>> dmrTalkgroups = rows(row("DMR County", 301));
             List<Map<String,Object>> dmrRadios = rows(row("DMR County", 302));
+            Map<String,Object> dmrActivityRow = activityRow("DMR", 1, "DMR County", 302, 301, 1);
+            Map<String,Object> nxdnActivityRow = activityRow("NXDN", 1, "NXDN County", 123, 91, 1);
+            Map<String,Object> p25ConventionalActivityRow =
+                activityRow("APCO25", 2, "P25 Conventional", 456, 101, 1);
+            List<Map<String,Object>> activity = rows(dmrActivityRow, nxdnActivityRow,
+                p25ConventionalActivityRow);
 
             resolver.enrichNxdnTalkgroups(connection, nxdnTalkgroups, "identity_id", "talkgroup_alias_");
             resolver.enrichNxdnRadios(connection, nxdnRadios, "identity_id", "radio_alias_");
@@ -82,6 +88,7 @@ class StatsAliasResolverTest
             resolver.enrichP25ConventionalRadios(connection, p25Radios, "identity_id", "alias_");
             resolver.enrichDmrTalkgroups(connection, dmrTalkgroups, "identity_id", "talkgroup_alias_");
             resolver.enrichDmrRadios(connection, dmrRadios, "identity_id", "radio_alias_");
+            resolver.enrichActivity(connection, activity);
 
             assertEquals("NXDN Dispatch", nxdnTalkgroups.get(0).get("talkgroup_alias_name"));
             assertEquals("County dispatch operations",
@@ -103,6 +110,12 @@ class StatsAliasResolverTest
                 dmrTalkgroups.getFirst().get("talkgroup_alias_description"));
             assertEquals("DMR Unit", dmrRadios.getFirst().get("radio_alias_name"));
             assertEquals("DMR county unit", dmrRadios.getFirst().get("radio_alias_description"));
+            assertEquals("DMR Unit", dmrActivityRow.get("source_alias_name"));
+            assertEquals("DMR Dispatch", dmrActivityRow.get("target_alias_name"));
+            assertEquals("NXDN Unit", nxdnActivityRow.get("source_alias_name"));
+            assertEquals("NXDN Dispatch", nxdnActivityRow.get("target_alias_name"));
+            assertEquals("P25 Unit", p25ConventionalActivityRow.get("source_alias_name"));
+            assertEquals("P25 Local", p25ConventionalActivityRow.get("target_alias_name"));
         }
     }
 
@@ -191,9 +204,24 @@ class StatsAliasResolverTest
     private static Map<String,Object> p25Row()
     {
         Map<String,Object> row = new LinkedHashMap<>();
+        row.put("protocol", "APCO25");
+        row.put("channel_kind_code", 1);
         row.put("wacn", 0xBEE00);
         row.put("system_id", 0x348);
         row.put("system_key", 77);
+        return row;
+    }
+
+    private static Map<String,Object> activityRow(String protocol, int channelKind, String aliasList,
+                                                  int source, int target, int targetKind)
+    {
+        Map<String,Object> row = new LinkedHashMap<>();
+        row.put("protocol", protocol);
+        row.put("channel_kind_code", channelKind);
+        row.put("alias_list_name", aliasList);
+        row.put("source_radio_id", source);
+        row.put("target_id", target);
+        row.put("target_kind_code", targetKind);
         return row;
     }
 }

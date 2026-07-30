@@ -303,7 +303,8 @@ class StatsWebDatabaseTest
 
         List<Map<String,Object>> talkgroups = rows(mDatabase.systemTalkgroups(request(
             "/api/system/talkgroups?wacn=BEE00&system_id=0x348&sort=signaling&direction=desc")));
-        Map<String,Object> affiliatedOnly = talkgroups.getFirst();
+        Map<String,Object> affiliatedOnly = talkgroups.stream()
+            .filter(row -> number(row.get("talkgroup_id")) == 57000L).findFirst().orElseThrow();
         assertEquals(57000L, number(affiliatedOnly.get("talkgroup_id")));
         assertEquals(0L, number(affiliatedOnly.get("call_count")));
         assertEquals(9L, number(affiliatedOnly.get("signaling_count")));
@@ -324,8 +325,8 @@ class StatsWebDatabaseTest
             statement.executeUpdate("""
                 INSERT INTO p25_talkgroup_summary (
                     system_key, talkgroup_id, target_kind_code, first_seen_ms, last_seen_ms,
-                    denial_count, request_count
-                ) VALUES (1, 57001, 1, 1000, 3000, 7, 5)
+                    grant_count, denial_count, request_count
+                ) VALUES (1, 57001, 1, 1000, 3000, 3, 7, 5)
                 """);
             statement.executeUpdate("""
                 INSERT INTO p25_talkgroup_summary (
@@ -340,7 +341,7 @@ class StatsWebDatabaseTest
         assertEquals(57001L, number(talkgroups.getFirst().get("talkgroup_id")));
         Map<String,Object> signaling = talkgroups.stream()
             .filter(row -> number(row.get("talkgroup_id")) == 57001L).findFirst().orElseThrow();
-        assertEquals(12L, number(signaling.get("signaling_count")));
+        assertEquals(15L, number(signaling.get("signaling_count")));
         assertFalse(signaling.containsKey("denial_count"));
         assertFalse(signaling.containsKey("request_count"));
         assertFalse(signaling.containsKey("evidence_total"));
@@ -577,7 +578,7 @@ class StatsWebDatabaseTest
         assertTrue((Boolean)capabilities.get("info"));
         assertTrue((Boolean)capabilities.get("talkgroups"));
         assertTrue((Boolean)capabilities.get("radios"));
-        assertFalse((Boolean)capabilities.get("activity"));
+        assertTrue((Boolean)capabilities.get("activity"));
 
         Map<String,Object> analogDetail = mDatabase.conventionalDetail(request(
             "/api/conventional/detail?context=conventional-fire"));
@@ -830,8 +831,10 @@ class StatsWebDatabaseTest
         assertFalse(dashboard.containsKey("activityPerHour"));
         assertTrue(rowsFrom(mDatabase.system(request(
             "/api/system?wacn=BEE00&system_id=0x348")), "actionCounts").stream()
-            .noneMatch(row -> "GRANT".equals(row.get("action")) ||
-                "CALL".equals(row.get("action")) || "ENCRYPTED".equals(row.get("action"))));
+            .noneMatch(row -> "CALL".equals(row.get("action")) || "ENCRYPTED".equals(row.get("action"))));
+        assertTrue(rowsFrom(mDatabase.system(request(
+            "/api/system?wacn=BEE00&system_id=0x348")), "actionCounts").stream()
+            .anyMatch(row -> "GRANT".equals(row.get("action"))));
         assertFalse(dashboard.containsKey("p25CallActivity"));
         Map<String,Object> callActivity = map(dashboard, "callActivity");
         Map<String,Object> totals = map(callActivity, "totals");
@@ -1185,7 +1188,8 @@ class StatsWebDatabaseTest
 
             List<String> plan = new ArrayList<>();
             try(PreparedStatement query = connection.prepareStatement("EXPLAIN QUERY PLAN " +
-                StatsWebDatabase.ACTIVITY_SELECT_SQL + " AND guid = ?" + StatsWebDatabase.ACTIVITY_ORDER_SQL))
+                StatsWebDatabase.ACTIVITY_SELECT_SQL +
+                    " AND activity.guid = ?" + StatsWebDatabase.ACTIVITY_ORDER_SQL))
             {
                 query.setString(1, GUID);
                 query.setInt(2, 201);
@@ -1859,13 +1863,14 @@ class StatsWebDatabaseTest
         assertEquals(Boolean.TRUE, dmrCapabilities.get("quality_history"));
         assertEquals(Boolean.FALSE, dmrCapabilities.get("band_plan"));
         assertEquals(Boolean.FALSE, dmrCapabilities.get("patches"));
-        assertEquals(Boolean.FALSE, dmrCapabilities.get("activity"));
+        assertEquals(Boolean.TRUE, dmrCapabilities.get("activity"));
 
         Map<String,Object> nxdnSite = map(mDatabase.site(request("/api/site?guid=nxdn-a")), "site");
         assertEquals("NXDN", nxdnSite.get("protocol"));
         assertEquals(4, number(nxdnSite.get("identity_domain_code")));
         assertEquals(5, number(nxdnSite.get("ran")));
         assertEquals(Boolean.TRUE, map(nxdnSite, "capabilities").get("quality"));
+        assertEquals(Boolean.TRUE, map(nxdnSite, "capabilities").get("activity"));
 
         List<Map<String,Object>> channels = rows(mDatabase.siteChannels(request(
             "/api/site/channels?guid=dmr-a&limit=1")));

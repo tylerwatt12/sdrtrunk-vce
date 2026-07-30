@@ -240,14 +240,27 @@ class StatsWebDatabase
         LIMIT ?
         """;
     static final String ACTIVITY_SELECT_SQL = """
-        SELECT id, context_id, context_key, guid, observed_at_ms, channel_kind, protocol, action,
-            event_type, source_radio_id, target_id, target_kind_code, target_kind, frequency_hz, lcn, timeslot,
-            encrypted, encryption_algorithm_id, encryption_key_id, resolved_channel_name,
-            resolved_alias_list_name, resolved_system_key AS system_key, resolved_wacn AS wacn,
-            resolved_system_id AS system_id, resolved_nac, resolved_rfss, resolved_site
-        FROM p25_activity_event_resolved WHERE 1 = 1
+        SELECT activity.id, activity.context_id, activity.context_key, activity.guid,
+            activity.observed_at_ms,
+            CASE activity.channel_kind_code
+                WHEN 3 THEN 'CONVENTIONAL_DMR'
+                ELSE activity.channel_kind
+            END AS channel_kind,
+            activity.channel_kind_code, activity.protocol, activity.action, activity.event_type,
+            activity.source_radio_id, activity.target_id, activity.target_kind_code, activity.target_kind,
+            activity.frequency_hz, activity.lcn, activity.timeslot, activity.encrypted,
+            activity.encryption_algorithm_id, activity.encryption_key_id, activity.resolved_channel_name,
+            activity.resolved_alias_list_name,
+            coalesce(activity.resolved_alias_list_name, trunked.alias_list_name) AS alias_list_name,
+            activity.resolved_system_key AS system_key, activity.resolved_wacn AS wacn,
+            activity.resolved_system_id AS system_id, activity.resolved_nac, activity.resolved_rfss,
+            activity.resolved_site
+        FROM p25_activity_event_resolved activity
+        LEFT JOIN trunked_site_snapshot trunked ON trunked.guid = activity.guid
+        WHERE 1 = 1
         """;
-    static final String ACTIVITY_ORDER_SQL = " ORDER BY observed_at_ms DESC, id DESC LIMIT ?";
+    static final String ACTIVITY_ORDER_SQL =
+        " ORDER BY activity.observed_at_ms DESC, activity.id DESC LIMIT ?";
     private static final int DIRECTORY_SITE_LIMIT_PER_SYSTEM = 500;
     private static final List<String> CALL_ACTIVITY_FIELDS = List.of(
         "call_count", "recorded_count", "streamed_count", "encrypted_count"
@@ -269,7 +282,7 @@ class StatsWebDatabase
         "recorded_count", "streamed_count"
     );
     private static final List<String> TALKGROUP_SIGNALING_FIELDS = List.of(
-        "join_count", "register_count", "active_count", "continue_count", "denial_count",
+        "grant_count", "join_count", "register_count", "active_count", "continue_count", "denial_count",
         "emergency_count", "request_count", "busy_count", "queued_count", "acknowledge_count",
         "check_count", "check_ack_count", "page_count", "status_count", "gps_count", "logout_count",
         "patch_count", "patch_create_count", "patch_cancel_count", "data_count", "unknown_count"
@@ -656,14 +669,25 @@ class StatsWebDatabase
         return read(connection -> {
             String placeholders = String.join(",", java.util.Collections.nCopies(rowIds.size(), "?"));
             List<Map<String,Object>> rows = queryRows(connection, """
-                SELECT id, context_id, context_key, guid, observed_at_ms, channel_kind, protocol, action,
-                    event_type, source_radio_id, target_id, target_kind_code, target_kind, frequency_hz, lcn, timeslot,
-                    encrypted, encryption_algorithm_id, encryption_key_id, resolved_channel_name,
-                    resolved_alias_list_name, resolved_system_key AS system_key, resolved_wacn AS wacn,
-                    resolved_system_id AS system_id, resolved_nac, resolved_rfss, resolved_site
-                FROM p25_activity_event_resolved
-                WHERE id IN (%s)
-                ORDER BY id
+                SELECT activity.id, activity.context_id, activity.context_key, activity.guid,
+                    activity.observed_at_ms,
+                    CASE activity.channel_kind_code
+                        WHEN 3 THEN 'CONVENTIONAL_DMR'
+                        ELSE activity.channel_kind
+                    END AS channel_kind,
+                    activity.channel_kind_code, activity.protocol, activity.action, activity.event_type,
+                    activity.source_radio_id, activity.target_id, activity.target_kind_code, activity.target_kind,
+                    activity.frequency_hz, activity.lcn, activity.timeslot, activity.encrypted,
+                    activity.encryption_algorithm_id, activity.encryption_key_id, activity.resolved_channel_name,
+                    activity.resolved_alias_list_name,
+                    coalesce(activity.resolved_alias_list_name, trunked.alias_list_name) AS alias_list_name,
+                    activity.resolved_system_key AS system_key, activity.resolved_wacn AS wacn,
+                    activity.resolved_system_id AS system_id, activity.resolved_nac, activity.resolved_rfss,
+                    activity.resolved_site
+                FROM p25_activity_event_resolved activity
+                LEFT JOIN trunked_site_snapshot trunked ON trunked.guid = activity.guid
+                WHERE activity.id IN (%s)
+                ORDER BY activity.id
                 """.formatted(placeholders), rowIds.toArray());
             mAliasResolver.enrichActivity(connection, rows);
             enrichActivityEncryption(rows);
@@ -1737,7 +1761,7 @@ class StatsWebDatabase
             }
             if(guid != null)
             {
-                sql.append(" AND guid = ?");
+                sql.append(" AND activity.guid = ?");
                 parameters.add(guid);
             }
             if(context != null)
@@ -2014,7 +2038,7 @@ class StatsWebDatabase
         capabilities.put("neighbors", true);
         capabilities.put("band_plan", p25);
         capabilities.put("patches", p25);
-        capabilities.put("activity", p25);
+        capabilities.put("activity", true);
         capabilities.put("talkgroups", p25);
         return Map.copyOf(capabilities);
     }
@@ -2023,7 +2047,7 @@ class StatsWebDatabase
     {
         Map<String,Boolean> capabilities = new LinkedHashMap<>();
         capabilities.put("info", true);
-        capabilities.put("activity", !dmr);
+        capabilities.put("activity", true);
         capabilities.put("talkgroups", dmr);
         capabilities.put("radios", dmr);
         return Map.copyOf(capabilities);

@@ -63,19 +63,57 @@ class StatsAliasResolver
     void enrichActivity(Connection connection, List<Map<String,Object>> rows) throws SQLException
     {
         Snapshot snapshot = snapshot(connection);
-        enrich(rows, snapshot.radios(), snapshot.aliasLists(), "source_radio_id", "source_alias_");
 
         for(Map<String,Object> row: rows)
         {
+            enrichActivityIdentity(row, snapshot, true, "source_radio_id", "source_alias_");
             Integer targetKind = integer(row.get("target_kind_code"));
 
             if(targetKind != null && (targetKind == 1 || targetKind == 3))
             {
-                enrich(row, snapshot.talkgroups(), snapshot.aliasLists(), "target_id", "target_alias_");
+                enrichActivityIdentity(row, snapshot, false, "target_id", "target_alias_");
             }
             else if(targetKind != null && targetKind == 2)
             {
-                enrich(row, snapshot.radios(), snapshot.aliasLists(), "target_id", "target_alias_");
+                enrichActivityIdentity(row, snapshot, true, "target_id", "target_alias_");
+            }
+        }
+    }
+
+    /**
+     * Activity spans several protocols and ownership models. P25 trunked identities retain their system-qualified
+     * lookup, while conventional P25 and all DMR/NXDN identities resolve only against the alias list assigned to the
+     * exact receiver context.
+     */
+    private void enrichActivityIdentity(Map<String,Object> row, Snapshot snapshot, boolean radio,
+                                        String identifierColumn, String prefix)
+    {
+        String protocol = string(row.get("protocol"));
+        List<Rule> rules;
+
+        if("DMR".equals(protocol))
+        {
+            rules = radio ? snapshot.dmrRadios() : snapshot.dmrTalkgroups();
+            enrichByAssignedAliasList(row, rules, identifierColumn, prefix);
+        }
+        else if("NXDN".equals(protocol))
+        {
+            rules = radio ? snapshot.nxdnRadios() : snapshot.nxdnTalkgroups();
+            enrichByAssignedAliasList(row, rules, identifierColumn, prefix);
+        }
+        else if("APCO25".equals(protocol) || "APCO25_PHASE2".equals(protocol) ||
+            protocol == null && integer(row.get("wacn")) != null && integer(row.get("system_id")) != null)
+        {
+            rules = radio ? snapshot.radios() : snapshot.talkgroups();
+
+            if(Integer.valueOf(1).equals(integer(row.get("channel_kind_code"))) ||
+                integer(row.get("wacn")) != null && integer(row.get("system_id")) != null)
+            {
+                enrich(row, rules, snapshot.aliasLists(), identifierColumn, prefix);
+            }
+            else
+            {
+                enrichByAssignedAliasList(row, rules, identifierColumn, prefix);
             }
         }
     }
@@ -195,38 +233,44 @@ class StatsAliasResolver
     {
         for(Map<String,Object> row: rows)
         {
-            Integer identifier = integer(row.get(identifierColumn));
-            Object aliasListValue = row.get("alias_list_name");
+            enrichByAssignedAliasList(row, rules, identifierColumn, prefix);
+        }
+    }
 
-            if(identifier == null || !(aliasListValue instanceof String aliasList) || aliasList.isBlank())
+    private void enrichByAssignedAliasList(Map<String,Object> row, List<Rule> rules, String identifierColumn,
+                                           String prefix)
+    {
+        Integer identifier = integer(row.get(identifierColumn));
+        Object aliasListValue = row.get("alias_list_name");
+
+        if(identifier == null || !(aliasListValue instanceof String aliasList) || aliasList.isBlank())
+        {
+            return;
+        }
+
+        Rule best = null;
+
+        for(Rule rule: rules)
+        {
+            if(rule.fullyQualified() || !aliasList.equals(rule.aliasList()) ||
+                !rule.matchesIdentifier(identifier))
             {
                 continue;
             }
 
-            Rule best = null;
-
-            for(Rule rule: rules)
+            if(best == null || rule.isPreferredAssignedListTo(best))
             {
-                if(rule.fullyQualified() || !aliasList.equals(rule.aliasList()) ||
-                    !rule.matchesIdentifier(identifier))
-                {
-                    continue;
-                }
-
-                if(best == null || rule.isPreferredAssignedListTo(best))
-                {
-                    best = rule;
-                }
+                best = rule;
             }
+        }
 
-            if(best != null)
-            {
-                row.put(prefix + "name", best.name());
-                row.put(prefix + "description", best.description());
-                row.put(prefix + "group", best.group());
-                row.put(prefix + "color", best.color());
-                row.put(prefix + "list_name", best.aliasList());
-            }
+        if(best != null)
+        {
+            row.put(prefix + "name", best.name());
+            row.put(prefix + "description", best.description());
+            row.put(prefix + "group", best.group());
+            row.put(prefix + "color", best.color());
+            row.put(prefix + "list_name", best.aliasList());
         }
     }
 
@@ -312,6 +356,11 @@ class StatsAliasResolver
     private static Integer integer(Object value)
     {
         return value instanceof Number number ? number.intValue() : null;
+    }
+
+    private static String string(Object value)
+    {
+        return value instanceof String string && !string.isBlank() ? string : null;
     }
 
     private record Snapshot(List<Rule> talkgroups, List<Rule> radios, List<Rule> dmrTalkgroups,
