@@ -806,7 +806,9 @@ class StatsWebDatabaseTest
                        (9, 'site-dmr', 'site-dmr-guid', 1, 3, 'DMR Trunked', 'DMR', 1000, 2000),
                        (10, 'site-nxdn', 'site-nxdn-guid', 1, 4, 'NXDN Trunked', 'NXDN', 1000, 2000),
                        (11, 'site-p25-phase2', 'site-p25-phase2-guid', 1, 2, 'P25 Phase 2',
-                           'P25-2', 1000, 2000)
+                           'P25-2', 1000, 2000),
+                       (12, 'conventional-nxdn', 'conventional-nxdn-guid', 4, 4, 'NXDN Conventional',
+                           'NXDN', 1000, 2000)
                 """);
             statement.executeUpdate("""
                 INSERT INTO p25_site_activity_bucket
@@ -823,7 +825,8 @@ class StatsWebDatabaseTest
                      streamed_count, encrypted_count)
                 VALUES (2, 154310000, -1, %1$d, 3, 1, 1, 0),
                        (7, 154875000, -1, %1$d, 2, 1, 1, 1),
-                       (8, 451012500, 1, %1$d, 4, 2, 1, 1)
+                       (8, 451012500, 1, %1$d, 4, 2, 1, 1),
+                       (12, 461125000, -1, %1$d, 7, 2, 1, 2)
                 """.formatted(currentHour));
         }
 
@@ -838,10 +841,10 @@ class StatsWebDatabaseTest
         assertFalse(dashboard.containsKey("p25CallActivity"));
         Map<String,Object> callActivity = map(dashboard, "callActivity");
         Map<String,Object> totals = map(callActivity, "totals");
-        assertEquals(28, number(totals.get("call_count")));
-        assertEquals(15, number(totals.get("recorded_count")));
-        assertEquals(11, number(totals.get("streamed_count")));
-        assertEquals(7, number(totals.get("encrypted_count")));
+        assertEquals(35, number(totals.get("call_count")));
+        assertEquals(17, number(totals.get("recorded_count")));
+        assertEquals(12, number(totals.get("streamed_count")));
+        assertEquals(9, number(totals.get("encrypted_count")));
         assertFalse(totals.containsKey("non_p25_call_count"));
         assertTrue(number(callActivity.get("metric_start_ms")) > 0);
 
@@ -883,11 +886,15 @@ class StatsWebDatabaseTest
         assertTrue(series.stream()
             .filter(row -> "NBFM".equals(row.get("protocol")))
             .allMatch(row -> row.get("encrypted_count") == null));
-        Map<String,Object> unavailableNxdnConventional = series.stream()
+        Map<String,Object> currentNxdnConventional = series.stream()
             .filter(row -> "NXDN".equals(row.get("protocol")) &&
-                "CONVENTIONAL".equals(row.get("channel_kind")))
+                "CONVENTIONAL".equals(row.get("channel_kind")) &&
+                number(row.get("time_ms")) == currentHour)
             .findFirst().orElseThrow();
-        assertNull(unavailableNxdnConventional.get("call_count"));
+        assertEquals(7, number(currentNxdnConventional.get("call_count")));
+        assertEquals(2, number(currentNxdnConventional.get("recorded_count")));
+        assertEquals(1, number(currentNxdnConventional.get("streamed_count")));
+        assertEquals(2, number(currentNxdnConventional.get("encrypted_count")));
         assertTrue(series.stream()
             .filter(row -> ("DMR".equals(row.get("protocol")) || "NXDN".equals(row.get("protocol"))) &&
                 "TRUNKED".equals(row.get("channel_kind")) &&
@@ -905,15 +912,19 @@ class StatsWebDatabaseTest
             .filter(row -> "NXDN".equals(row.get("protocol")) &&
                 "CONVENTIONAL".equals(row.get("channel_kind")))
             .findFirst().orElseThrow();
-        assertEquals("NOT_COLLECTED", nxdnConventionalCoverage.get("status"));
+        assertEquals("PARTIAL", nxdnConventionalCoverage.get("status"));
+        assertEquals("PARTIAL", nxdnConventionalCoverage.get("call_count"));
 
         Map<String,Object> sourceActivity = map(dashboard, "sourceActivity24h");
         List<Map<String,Object>> sources = rows(sourceActivity);
-        assertEquals(7, sources.size());
-        assertTrue(sources.stream().allMatch(row -> number(row.get("total_call_count")) == 28));
+        assertEquals(8, sources.size());
+        assertTrue(sources.stream().allMatch(row -> number(row.get("total_call_count")) == 35));
         assertTrue(sources.stream().anyMatch(row -> "P25".equals(row.get("protocol")) &&
             "CONVENTIONAL".equals(row.get("channel_kind")) &&
             number(row.get("call_count")) == 2));
+        assertTrue(sources.stream().anyMatch(row -> "NXDN".equals(row.get("protocol")) &&
+            "CONVENTIONAL".equals(row.get("channel_kind")) &&
+            number(row.get("call_count")) == 7));
     }
 
     @Test

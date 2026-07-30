@@ -267,7 +267,7 @@ class StatsWebDatabase
         new CallActivityGroup(3, "DMR", "TRUNKED", true),
         new CallActivityGroup(3, "DMR", "CONVENTIONAL", true),
         new CallActivityGroup(4, "NXDN", "TRUNKED", true),
-        new CallActivityGroup(4, "NXDN", "CONVENTIONAL", false),
+        new CallActivityGroup(4, "NXDN", "CONVENTIONAL", true),
         new CallActivityGroup(10, "NBFM", "CONVENTIONAL", true)
     );
     private static final List<String> TALKGROUP_ACTIVITY_FIELDS = List.of(
@@ -2573,6 +2573,11 @@ class StatsWebDatabase
 
         if((group.protocolCode() == 3 || group.protocolCode() == 4) &&
             "TRUNKED".equals(group.channelKind()))
+        {
+            return allModeMetricStart > 0 ? allModeMetricStart : -1;
+        }
+
+        if(group.protocolCode() == 4 && "CONVENTIONAL".equals(group.channelKind()))
         {
             return allModeMetricStart > 0 ? allModeMetricStart : -1;
         }
