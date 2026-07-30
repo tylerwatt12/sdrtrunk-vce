@@ -25,8 +25,7 @@ const CALL_ACTIVITY_SERIES = Object.freeze([
 const DASHBOARD_CALL_METRICS = Object.freeze([
   { field: 'call_count', label: 'Calls' },
   { field: 'recorded_count', label: 'Recorded' },
-  { field: 'streamed_count', label: 'Streamed' },
-  { field: 'encrypted_count', label: 'Encrypted' }
+  { field: 'streamed_count', label: 'Sent' }
 ]);
 const DASHBOARD_PROTOCOL_SERIES = Object.freeze([
   { key: 'P25', label: 'P25', color: 'var(--chart-call)' },
@@ -39,9 +38,11 @@ const DASHBOARD_CHANNEL_KIND_FILTERS = Object.freeze([
   { value: 'TRUNKED', label: 'Trunked' },
   { value: 'CONVENTIONAL', label: 'Conventional' }
 ]);
-const TALKGROUP_ACTIVITY_SERIES = Object.freeze([
+const TALKGROUP_CALL_ACTIVITY_SERIES = Object.freeze([
   ...CALL_ACTIVITY_SERIES,
-  { field: 'encrypted_count', label: 'Encrypted', color: 'var(--chart-encrypted)' },
+  { field: 'encrypted_count', label: 'Encrypted', color: 'var(--chart-encrypted)', visible: true }
+]);
+const TALKGROUP_SIGNALING_SERIES = Object.freeze([
   { field: 'emergency_count', label: 'Emergency', color: 'var(--chart-emergency)' },
   { field: 'data_count', label: 'Data', color: 'var(--chart-data)' },
   { field: 'join_count', label: 'Join', color: 'var(--chart-join)' },
@@ -115,7 +116,7 @@ const TABLE_COLUMN_DEFAULT_WIDTHS = {
   'decoder': 78,
   'encrypted': 52,
   'encryption': 92,
-  'evidence': 134,
+  'signaling': 134,
   'event': 115,
   'first-seen': 166,
   'frequency': 94,
@@ -411,6 +412,35 @@ function checkbox(checked) {
 function protocol(value) {
   const values = { 1: 'P25 Phase 1', 2: 'P25 Phase 2', 3: 'DMR', 4: 'NXDN', 10: 'NBFM' };
   return values[Number(value)] || value || '';
+}
+
+function decoderLabel(value, compact = false) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const labels = {
+    P25_PHASE1: ['P25 P1', 'P25 Phase 1'],
+    P25_PHASE_1: ['P25 P1', 'P25 Phase 1'],
+    'P25-1': ['P25 P1', 'P25 Phase 1'],
+    P25_PHASE2: ['P25 P2', 'P25 Phase 2'],
+    P25_PHASE_2: ['P25 P2', 'P25 Phase 2'],
+    'P25-2': ['P25 P2', 'P25 Phase 2'],
+    P25_CONVENTIONAL: ['P25 Conv', 'P25 Conventional'],
+    'P25-C': ['P25 Conv', 'P25 Conventional'],
+    DMR: ['DMR', 'DMR'],
+    NXDN: ['NXDN', 'NXDN'],
+    NBFM: ['NBFM', 'NBFM']
+  };
+  const known = labels[raw.toUpperCase()];
+  if (known) return compact ? known[0] : known[1];
+  return raw;
+}
+
+function decoderDisplay(value) {
+  const label = decoderLabel(value, true);
+  if (!label) return '';
+  const display = node('span', '', label);
+  display.title = decoderLabel(value);
+  return display;
 }
 
 function aliasLabel(row, prefix = 'alias_') {
@@ -1157,21 +1187,31 @@ function pagedSection(title, page, columns, searchPlaceholder, tableType) {
     })());
 }
 
-const NON_ACTION_COUNT_FIELDS = new Set(['grant_count', 'recorded_count', 'streamed_count']);
+const SIGNALING_COUNT_LABELS = new Map(TALKGROUP_SIGNALING_SERIES.map((series) =>
+  [series.field, series.label]));
 
-function actionCounts(row) {
-  return Object.entries(row)
-    .filter(([key, value]) => key.endsWith('_count') && !NON_ACTION_COUNT_FIELDS.has(key) && Number(value) > 0)
-    .map(([key, value]) => [key.replace(/_count$/, '').replaceAll('_', ' '), Number(value)]);
+function signalingCounts(row) {
+  return [...SIGNALING_COUNT_LABELS]
+    .filter(([field]) => Number(row[field] || 0) > 0)
+    .map(([field, label]) => [label, Number(row[field])])
+    .sort((left, right) => right[1] - left[1]);
 }
 
-function talkgroupEvidence(row) {
-  const total = talkgroupEvidenceSortValue(row);
+function signalingActionRows(rows) {
+  return (rows || []).filter((row) => {
+    const field = `${String(row.action || '').trim().toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')}_count`;
+    return SIGNALING_COUNT_LABELS.has(field);
+  });
+}
+
+function talkgroupSignaling(row) {
+  const total = talkgroupSignalingSortValue(row);
   return total > 0 ? number(total) : '—';
 }
 
-function talkgroupEvidenceSortValue(row) {
-  const total = Number(row.evidence_total || 0);
+function talkgroupSignalingSortValue(row) {
+  const total = Number(row.signaling_count || 0);
   return Number.isFinite(total) && total > 0 ? total : 0;
 }
 
@@ -1179,14 +1219,30 @@ function withoutGrantActions(rows) {
   return (rows || []).filter((row) => String(row.action || '').toUpperCase() !== 'GRANT');
 }
 
-function callSourceActivityColor(index) {
-  return `hsl(${Math.round(index * 137.508) % 360} 58% var(--chart-dynamic-lightness))`;
-}
-
 function dashboardChannelKind(row) {
   const value = String(row?.channel_kind || row?.channel_type || '').trim().toUpperCase();
   if (value === 'TRUNKED' || value === 'CONVENTIONAL') return value;
   return '';
+}
+
+function dashboardModeLabel(row) {
+  const family = protocolFamily(row) || 'Unknown';
+  const channelKind = dashboardChannelKind(row);
+  if (!['P25', 'DMR', 'NXDN'].includes(family)) return family;
+  if (channelKind === 'TRUNKED') return `${family}-T`;
+  if (channelKind === 'CONVENTIONAL') return `${family}-C`;
+  return family;
+}
+
+function dashboardMode(row) {
+  const family = protocolFamily(row) || 'Unknown protocol';
+  const channelKind = dashboardChannelKind(row);
+  const topology = channelKind === 'TRUNKED' ? 'Trunked' :
+    channelKind === 'CONVENTIONAL' ? 'Conventional' : 'Unknown topology';
+  const value = node('span', 'dashboard-mode', dashboardModeLabel(row));
+  value.title = `${family} · ${topology}`;
+  value.setAttribute('aria-label', `${family}, ${topology}`);
+  return value;
 }
 
 function callSourceLabel(row) {
@@ -1206,60 +1262,6 @@ function callSourceLink(row) {
     return anchor(label, href('conventional-detail', { context: row.context_key, tab: 'info' }));
   }
   return label;
-}
-
-function callSourceActivityChart(activity) {
-  const activeRows = (Array.isArray(activity) ? activity : activity?.rows || [])
-    .filter((row) => Number(row.call_count) > 0);
-  if (!activeRows.length) return node('div', 'empty', 'No call source activity recorded in the last 24 hours');
-  const rows = activeRows.slice(0, 10);
-  const otherCalls = activeRows.slice(10)
-    .reduce((sum, row) => sum + Number(row.call_count), 0);
-  if (otherCalls > 0) rows.push({ source_label: 'Other receivers', call_count: otherCalls });
-
-  const total = Number(activeRows[0].total_call_count) ||
-    activeRows.reduce((sum, row) => sum + Number(row.call_count), 0);
-  let offset = 0;
-  const segments = rows.map((row, index) => {
-    const calls = Number(row.call_count);
-    const share = total ? calls / total * 100 : 0;
-    const segment = { row, calls, share, start: offset, end: offset + share,
-      color: callSourceActivityColor(index) };
-    offset += share;
-    return segment;
-  });
-  const chart = node('div', 'site-activity-chart');
-  const graphic = node('div', 'site-activity-pie');
-  graphic.style.background = `conic-gradient(${segments.map((segment) =>
-    `${segment.color} ${segment.start.toFixed(4)}% ${segment.end.toFixed(4)}%`).join(', ')})`;
-  graphic.setAttribute('role', 'img');
-  graphic.setAttribute('aria-label', segments.map((segment) =>
-    `${callSourceLabel(segment.row)} ${number(segment.calls)} calls ` +
-    `${segment.share.toFixed(1)} percent`).join('; '));
-  const legend = node('div', 'site-activity-legend');
-  legend.setAttribute('role', 'list');
-  segments.forEach((segment) => {
-    const item = node('div', 'site-activity-legend-row');
-    item.setAttribute('role', 'listitem');
-    const swatch = node('span', 'site-activity-swatch');
-    swatch.style.backgroundColor = segment.color;
-    const identity = node('span', 'site-activity-identity');
-    const label = node('span', 'call-source-label');
-    label.append(valueNode(callSourceLink(segment.row)));
-    const channelKind = dashboardChannelKind(segment.row);
-    const context = [protocolFamily(segment.row),
-      channelKind === 'TRUNKED' ? 'Trunked' :
-        channelKind === 'CONVENTIONAL' ? 'Conventional' : '']
-      .filter(Boolean).join(' · ');
-    identity.append(label);
-    if (context) identity.append(node('small', 'call-source-context', context));
-    const values = node('span', 'site-activity-values');
-    values.append(node('strong', '', number(segment.calls)), node('span', '', `${segment.share.toFixed(1)}%`));
-    item.append(swatch, identity, values);
-    legend.append(item);
-  });
-  chart.append(graphic, legend);
-  return chart;
 }
 
 function activityMetricGuide(includeCallMetrics = false) {
@@ -1652,15 +1654,22 @@ function dashboardCallActivityChart(activity) {
   return wrapper;
 }
 
-function talkgroupActivityChart(response) {
+function talkgroupActivityChart(response, seriesConfigurations, ariaLabel) {
   const values = (response.series || []).map((row) => ({ ...row, time_ms: Number(row.time_ms) }));
   if (!values.length) return node('div', 'empty', 'No activity data is available for this range');
 
   const totals = response.totals || {};
-  const configurations = TALKGROUP_ACTIVITY_SERIES.filter((series) => series.visible ||
+  const configurations = seriesConfigurations.filter((series) => series.visible ||
     Number(totals[series.field] || 0) > 0);
+  if (!configurations.length) {
+    return node('div', 'empty', 'No activity of this type is available for this range');
+  }
   const selected = new Set(configurations.filter((series) => series.visible).map((series) => series.field));
-  if (!selected.size && configurations.length) selected.add(configurations[0].field);
+  if (!selected.size && configurations.length) {
+    const largest = configurations.reduce((current, candidate) =>
+      Number(totals[candidate.field] || 0) > Number(totals[current.field] || 0) ? candidate : current);
+    selected.add(largest.field);
+  }
 
   const wrapper = node('div', 'talkgroup-activity-chart');
   const legend = node('div', 'activity-series-legend');
@@ -1680,7 +1689,7 @@ function talkgroupActivityChart(response) {
       to: Number(response.to_ms || values.at(-1).time_ms),
       height: 300,
       margin: { top: 18, right: 20, bottom: 48, left: 55 },
-      ariaLabel: 'Talkgroup activity by time and activity type',
+      ariaLabel,
       emptyMessage: 'No activity data is available for this range'
     }));
   };
@@ -2176,8 +2185,14 @@ async function talkgroupActivityHistorySection(scopeParameters) {
       host.replaceChildren(metrics([
         ['Tracked Calls', response.totals?.call_count],
         ['Recorded', response.totals?.recorded_count],
-        ['Sent to Streamer', response.totals?.streamed_count]
-      ], true), talkgroupActivityChart(response), activityMetricGuide(true));
+        ['Sent to Streamer', response.totals?.streamed_count],
+        ['Encrypted', response.totals?.encrypted_count]
+      ], true),
+      section('Call Activity', talkgroupActivityChart(response, TALKGROUP_CALL_ACTIVITY_SERIES,
+        'Talkgroup calls and call outcomes by time')),
+      section('Signaling Observations', talkgroupActivityChart(response, TALKGROUP_SIGNALING_SERIES,
+        'Talkgroup signaling observations by time')),
+      activityMetricGuide(true));
     } catch (error) {
       if (sequence === loadingSequence) host.replaceChildren(node('div', 'error', error.message));
     } finally {
@@ -2201,7 +2216,7 @@ async function talkgroupActivityHistorySection(scopeParameters) {
 
 async function siteTopTalkgroupsSection(site) {
   const host = node('div', 'site-top-talkgroups');
-  const block = section('Top Talkgroups', host);
+  const block = section('Talkgroup Call Activity', host);
   let selectedRange = '24h';
   let loadingSequence = 0;
   let loading = false;
@@ -2217,7 +2232,9 @@ async function siteTopTalkgroupsSection(site) {
     { id: 'calls', label: 'Calls', render: (row) => number(row.call_count), className: 'numeric', sortValue: (row) => Number(row.call_count || 0) },
     { id: 'recorded', label: 'Rec', fullLabel: 'Recorded', render: (row) => number(row.recorded_count), className: 'numeric', sortValue: (row) => Number(row.recorded_count || 0) },
     { id: 'streamed', label: 'Sent', fullLabel: 'Sent to Streamer', render: (row) => number(row.streamed_count), className: 'numeric', sortValue: (row) => Number(row.streamed_count || 0) },
-    { id: 'last-active', label: 'Active', fullLabel: 'Last Active', render: (row) => dateTime(row.last_active_ms), sortValue: (row) => Number(row.last_active_ms || 0) }
+    { id: 'encrypted', label: 'Enc', fullLabel: 'Encrypted',
+      render: (row) => number(row.encrypted_count), className: 'numeric encrypted',
+      sortValue: (row) => Number(row.encrypted_count || 0) }
   ];
 
   const load = async (buttons = rangeControl.buttons, interactive = false) => {
@@ -2226,7 +2243,7 @@ async function siteTopTalkgroupsSection(site) {
     loading = true;
     if (interactive) {
       buttons.forEach((button) => { button.disabled = true; });
-      host.replaceChildren(node('div', 'loading', 'Loading top talkgroups'));
+      host.replaceChildren(node('div', 'loading', 'Loading talkgroup call activity'));
     }
     try {
       const response = await api('/api/site/talkgroups', {
@@ -2248,7 +2265,7 @@ async function siteTopTalkgroupsSection(site) {
   const logging = statsLoggingState();
   if (logging.available && !logging.summaryActive) {
     rangeControl.controls.hidden = true;
-    host.append(node('div', 'empty', 'Top talkgroups require Stats Logging.'));
+    host.append(node('div', 'empty', 'Talkgroup call activity requires Stats Logging.'));
   } else {
     await load(rangeControl.buttons, true);
   }
@@ -2609,20 +2626,17 @@ function dashboardReceiverSystem(row) {
   return [trunkedSystemLabel(row), trunkedIdentity(row)].filter(Boolean).join(' · ');
 }
 
-const dashboardReceiverColumns = [
-  { id: 'protocol', label: 'Protocol', render: protocolFamily, sortValue: protocolFamily },
-  { id: 'channel-kind', label: 'Topology', render: (row) =>
-    dashboardChannelKind(row) === 'TRUNKED' ? 'Trunked' : 'Conventional',
-    sortValue: dashboardChannelKind },
-  { id: 'name', label: 'Receiver', render: callSourceLink, className: 'alias-cell',
+const dashboardHealthColumns = [
+  { id: 'name', label: 'Site / Channel', render: callSourceLink, className: 'alias-cell',
     sortValue: callSourceLabel },
   { id: 'system', label: 'System / Site', render: dashboardReceiverSystem,
     sortValue: dashboardReceiverSystem },
+  { id: 'mode', label: 'Mode', fullLabel: 'Protocol and Topology',
+    render: dashboardMode, sortValue: dashboardModeLabel },
   { id: 'frequency', label: 'MHz', fullLabel: 'Current or Primary Frequency MHz',
     render: (row) => frequency(row.current_control_hz || row.primary_frequency_hz),
     className: 'numeric', sortValue: (row) =>
       Number(row.current_control_hz || row.primary_frequency_hz || 0) },
-  { id: 'decoder', label: 'Decoder', key: 'decoder' },
   { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen',
     render: (row) => dateTime(row.last_seen_ms),
     sortValue: (row) => Number(row.last_seen_ms || 0) }
@@ -2650,36 +2664,54 @@ function dashboardIdentityLink(row, label = dashboardIdentityId(row)) {
   return label;
 }
 
-function dashboardIdentityName(row) {
-  return row.alias_name ? dashboardIdentityLink(row, row.alias_name) : '';
+function dashboardIdentity(row) {
+  const identity = node('span', 'dashboard-identity');
+  const id = dashboardIdentityId(row);
+  const kind = String(row.identity_kind || '').trim();
+  const hasId = id !== '—';
+  const compactKind = ({
+    Talkgroup: 'TG',
+    Radio: 'Radio',
+    'Patch Group': 'Patch',
+    'Channel / Unknown': 'Channel'
+  })[kind] || kind;
+  const compactIdentity = hasId ? `${compactKind || 'ID'} ${id}` : kind;
+  const primaryLabel = row.alias_name || compactIdentity || 'Unknown identity';
+  const primary = node('span', 'dashboard-identity-primary');
+  primary.append(valueNode(dashboardIdentityLink(row, primaryLabel)));
+  identity.append(primary);
+  const details = row.alias_name && hasId ? compactIdentity : '';
+  if (details) identity.append(node('small', 'dashboard-identity-context', details));
+  return identity;
 }
 
-const dashboardIdentityColumns = [
-  { id: 'protocol', label: 'Protocol', render: protocolFamily, sortValue: protocolFamily },
-  { id: 'channel-kind', label: 'Topology', render: (row) =>
-    dashboardChannelKind(row) === 'TRUNKED' ? 'Trunked' : 'Conventional',
-    sortValue: dashboardChannelKind },
-  { id: 'receiver', label: 'Receiver', render: callSourceLink, className: 'alias-cell',
+const dashboardCallSourceColumns = [
+  { id: 'receiver', label: 'Site / Channel', render: callSourceLink, className: 'alias-cell',
     sortValue: callSourceLabel },
-  { id: 'identity-kind', label: 'Type', key: 'identity_kind' },
-  { id: 'identity-id', label: 'ID', render: (row) => dashboardIdentityLink(row),
-    className: 'numeric', sortValue: (row) => Number(row.identity_id || 0) },
-  { id: 'identity-name', label: 'Name', render: dashboardIdentityName, className: 'alias-cell',
-    sortValue: (row) => row.alias_name || '' },
+  { id: 'mode', label: 'Mode', fullLabel: 'Protocol and Topology',
+    render: dashboardMode, sortValue: dashboardModeLabel },
   { id: 'calls', label: 'Calls', render: (row) => number(row.call_count), className: 'numeric',
     sortValue: (row) => Number(row.call_count || 0) },
-  { id: 'recorded', label: 'Rec', fullLabel: 'Recorded', render: (row) => number(row.recorded_count),
+  { id: 'recorded', label: 'Recorded', render: (row) => number(row.recorded_count),
     className: 'numeric', sortValue: (row) => Number(row.recorded_count || 0) },
   { id: 'streamed', label: 'Sent', fullLabel: 'Sent to Streamer',
     render: (row) => number(row.streamed_count), className: 'numeric',
-    sortValue: (row) => Number(row.streamed_count || 0) },
-  { id: 'encrypted', label: 'Enc', fullLabel: 'Encrypted',
-    render: (row) => number(row.encrypted_count), className: 'numeric encrypted',
-    sortValue: (row) => Number(row.encrypted_count || 0) },
-  { id: 'last-active', label: 'Latest Hour', fullLabel: 'Latest Activity Hour',
-    render: (row) => dateTime(row.last_active_ms),
-    sortValue: (row) => Number(row.last_active_ms || 0) }
+    sortValue: (row) => Number(row.streamed_count || 0) }
 ];
+
+function dashboardIdentityColumns(identityLabel) {
+  return [
+    { id: 'identity', label: identityLabel, render: dashboardIdentity, className: 'alias-cell',
+      sortValue: (row) => `${row.alias_name || ''}\u0000${dashboardIdentityId(row)}` },
+    ...dashboardCallSourceColumns
+  ];
+}
+
+function dashboardSummarySection(title, values) {
+  const block = section(title, metrics(values, true));
+  block.classList.add('dashboard-summary-section');
+  return block;
+}
 
 const talkgroupColumns = [
   { id: 'talkgroup-id', label: 'TGID', render: (row) => talkgroupLink(row), className: 'numeric', sort: 'talkgroup', sortValue: (row) => Number(row.talkgroup_id) },
@@ -2687,12 +2719,12 @@ const talkgroupColumns = [
   { id: 'talkgroup-description', label: 'Description', key: 'alias_description', className: 'alias-cell' },
   { label: 'Group', key: 'alias_group', className: 'alias-cell', sort: 'group' },
   { id: 'calls', label: 'Calls', render: (row) => number(row.call_count), className: 'numeric', sort: 'calls', sortValue: (row) => Number(row.call_count || 0) },
-  { id: 'evidence', label: 'Evidence', fullLabel: 'Why This Talkgroup Is Known',
-    render: talkgroupEvidence, className: 'numeric', sort: 'evidence',
-    sortValue: talkgroupEvidenceSortValue },
   { id: 'recorded', label: 'Rec', fullLabel: 'Recorded', render: (row) => number(row.recorded_count), className: 'numeric', sort: 'recorded', sortValue: (row) => Number(row.recorded_count || 0) },
   { id: 'streamed', label: 'Sent', fullLabel: 'Sent to Streamer', render: (row) => number(row.streamed_count), className: 'numeric', sort: 'streamed', sortValue: (row) => Number(row.streamed_count || 0) },
   { id: 'encrypted', label: 'Enc', render: (row) => number(row.encrypted_count), className: 'numeric encrypted', sort: 'encrypted', sortValue: (row) => Number(row.encrypted_count || 0) },
+  { id: 'signaling', label: 'Signaling', fullLabel: 'Signaling observations',
+    render: talkgroupSignaling, className: 'numeric', sort: 'signaling',
+    sortValue: talkgroupSignalingSortValue },
   { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sort: 'last_seen', sortValue: (row) => Number(row.last_seen_ms || 0) }
 ];
 
@@ -2700,11 +2732,11 @@ const radioColumns = [
   { id: 'radio', label: 'ID', render: (row) => radioLink(row), className: 'numeric', sort: 'id', sortValue: (row) => Number(row.radio_id) },
   { id: 'alias', label: 'Alias', render: (row) => aliasLabel(row) ? radioLink(row, row.radio_id, aliasLabel(row)) : '', className: 'alias-cell', sort: 'alias', sortValue: aliasLabel },
   { label: 'OTA Alias', fullLabel: 'Talker Alias', key: 'last_talker_alias', className: 'alias-cell', sort: 'talker_alias' },
-  { id: 'calls', label: 'Calls', render: (row) => number(row.call_count), className: 'numeric', sort: 'calls', sortValue: (row) => Number(row.call_count || 0) },
-  { id: 'encrypted', label: 'Enc', render: (row) => number(row.encrypted_count), className: 'numeric encrypted', sort: 'encrypted', sortValue: (row) => Number(row.encrypted_count || 0) },
   { id: 'talkgroup-id', label: 'Affil TG', fullLabel: 'Affiliated Talkgroup ID', render: (row) => talkgroupLink(row, row.affiliated_talkgroup_id), className: 'numeric', sort: 'affiliated_talkgroup', sortValue: (row) => Number(row.affiliated_talkgroup_id) },
   { id: 'talkgroup-name', label: 'TG Alias', fullLabel: 'Talkgroup Alias', render: (row) => talkgroupAliasLink(row,
     row.affiliated_talkgroup_id, 'affiliated_talkgroup_alias_'), className: 'alias-cell', sortValue: (row) => row.affiliated_talkgroup_alias_name || '' },
+  { id: 'calls', label: 'Calls', render: (row) => number(row.call_count), className: 'numeric', sort: 'calls', sortValue: (row) => Number(row.call_count || 0) },
+  { id: 'encrypted', label: 'Enc', render: (row) => number(row.encrypted_count), className: 'numeric encrypted', sort: 'encrypted', sortValue: (row) => Number(row.encrypted_count || 0) },
   { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sort: 'last_seen', sortValue: (row) => Number(row.last_seen_ms || 0) }
 ];
 
@@ -2713,32 +2745,46 @@ async function renderDashboard() {
   const counts = dashboard.counts || {};
   const callActivity = dashboard.callActivity || {};
   const callTotals = callActivity.totals || {};
+  const requestedTab = route.get('tab') || 'calls';
+  const tab = requestedTab === 'health' ? 'health' : 'calls';
   content.append(pageHeader('Dashboard', dashboard.lastSeenMs ?
-    fragment('Last activity ', dateTime(dashboard.lastSeenMs)) : 'Last activity not recorded'));
-  content.append(await signalHealthSection());
-  content.append(metrics([
-    [dashboardMetricLabel(callActivity, 'call_count', 'Tracked Calls'), callTotals.call_count,
+    fragment('Last activity ', dateTime(dashboard.lastSeenMs)) : 'Last activity not recorded'),
+  tabs([
+    { id: 'calls', label: 'Calls', href: href('dashboard', { tab: 'calls' }) },
+    { id: 'health', label: 'Health', href: href('dashboard', { tab: 'health' }) }
+  ], tab));
+
+  if (tab === 'health') {
+    content.append(await signalHealthSection());
+    content.append(dashboardSummarySection('Monitored Coverage', [
+      ['Trunked Systems', counts.trunked_systems],
+      ['Trunked Sites', counts.trunked_sites],
+      ['Conventional Channels', counts.conventional_channels]
+    ]));
+    content.append(section('Recent Sites / Channels', table(dashboard.recentReceivers || [],
+      dashboardHealthColumns, 'No sites or channels recorded', { type: 'dashboard-receivers' })));
+    return;
+  }
+
+  content.append(dashboardSummarySection('Call Totals · Last 24 Hours', [
+    [dashboardMetricLabel(callActivity, 'call_count', 'Calls'), callTotals.call_count,
       dashboardMetricDisplay(callActivity, 'call_count')],
     [dashboardMetricLabel(callActivity, 'recorded_count', 'Recorded'), callTotals.recorded_count,
       dashboardMetricDisplay(callActivity, 'recorded_count')],
-    [dashboardMetricLabel(callActivity, 'streamed_count', 'Sent to Streamer'), callTotals.streamed_count,
-      dashboardMetricDisplay(callActivity, 'streamed_count')],
-    ['Trunked Systems', counts.trunked_systems],
-    ['Trunked Sites', counts.trunked_sites],
-    ['Conventional Channels', counts.conventional_channels]
+    [dashboardMetricLabel(callActivity, 'streamed_count', 'Sent'), callTotals.streamed_count,
+      dashboardMetricDisplay(callActivity, 'streamed_count')]
   ]));
   content.append(section('Call Activity · Last 24 Hours', dashboardCallActivityChart(callActivity)));
-  const receivers = section('Recent Receivers', table(dashboard.recentReceivers || [],
-    dashboardReceiverColumns, 'No receivers recorded', { type: 'dashboard-receivers' }));
-  const actions = section('Busiest Call Sources · Last 24 Hours',
-    callSourceActivityChart(dashboard.sourceActivity24h));
-  content.append(node('div', 'split dashboard-overview-split'));
-  content.lastChild.append(receivers, actions);
+  const sourceRows = Array.isArray(dashboard.sourceActivity24h) ? dashboard.sourceActivity24h :
+    dashboard.sourceActivity24h?.rows || [];
+  content.append(section('Calls by Site / Channel · Last 24 Hours',
+    table(sourceRows, dashboardCallSourceColumns, 'No call activity recorded',
+      { type: 'dashboard-call-sources' })));
   const destinations = section('Top Destinations · Last 24 Hours',
-    table(dashboard.topDestinations || [], dashboardIdentityColumns,
+    table(dashboard.topDestinations || [], dashboardIdentityColumns('Destination'),
       'No call destinations recorded', { type: 'dashboard-destinations' }));
   const sources = section('Top Sources · Last 24 Hours',
-    table(dashboard.topSources || [], dashboardIdentityColumns,
+    table(dashboard.topSources || [], dashboardIdentityColumns('Source'),
       'No call sources recorded', { type: 'dashboard-sources' }));
   content.append(node('div', 'split dashboard-identity-split'));
   content.lastChild.append(destinations, sources);
@@ -2889,7 +2935,7 @@ function liveSystemsSection() {
     cellText(cells[7], row.source_id);
     cellText(cells[8], row.target_alias);
     cellText(cells[9], row.target_id);
-    cellText(cells[10], row.decoder);
+    cellText(cells[10], decoderLabel(row.decoder, true));
     cells[1].title = channelTagTitle(row);
     cells[2].title = conventional ? (row.channel_name || '') : '';
     cells[0].className = `activity-status state-${String(row.status || 'idle').toLowerCase()}`;
@@ -2900,6 +2946,7 @@ function liveSystemsSection() {
     cells[3].className = cells[2].className;
     cells[4].className = cells[2].className;
     cells[5].title = decodeQualityTitle(row);
+    cells[10].title = decoderLabel(row.decoder);
     const decodeValues = decodeQualityValues(row);
     const decodePercent = decodeValues.length ? Math.min(...decodeValues) : null;
     cells[5].className = decodePercent == null ? '' :
@@ -3165,18 +3212,25 @@ async function renderSystem() {
     content.append(block);
   } else {
     const infoColumn = node('div', 'entity-info-column system-info-column');
-    const summary = metrics([
-      ['Sites', system.sites], ['Talkgroups', system.talkgroups], ['Radios', system.radios],
-      ['Affiliated', system.affiliations], ['Calls', system.activity_calls]
-    ]);
-    summary.classList.add('system-summary-band');
-    infoColumn.append(summary, section('System Info', keyValues([
+    infoColumn.append(section('Directory', metrics([
+      ['Known Sites', system.sites],
+      ['Known Talkgroups', system.talkgroups],
+      ['Known Radios', system.radios]
+    ], true)), section('Retained Call Activity', metrics([
+      ['Calls', system.activity_retained_calls],
+      ['Recorded', system.activity_recorded],
+      ['Sent to Streamer', system.activity_streamed],
+      ['Encrypted', system.activity_encrypted]
+    ], true)), section('Current State', metrics([
+      ['Currently Affiliated', system.affiliations]
+    ], true)), section('System Info', keyValues([
       ['System', systemInfoValue(system)],
       ['First Seen', dateTime(system.first_seen_ms)], ['Last Seen', dateTime(system.last_seen_ms)]
-    ])), section('Observed Actions', fragment(table(withoutGrantActions(response.actionCounts), [
+    ])), section('Retained Signaling Observations', fragment(table(
+      signalingActionRows(response.actionCounts), [
       { label: 'Action', key: 'action' },
       { id: 'count', label: 'Count', render: (row) => number(row.count), className: 'numeric', sortValue: (row) => Number(row.count || 0) }
-    ], 'No actions recorded', { type: 'action-counts' }), activityMetricGuide())));
+    ], 'No signaling observations recorded', { type: 'action-counts' }), activityMetricGuide())));
 
     const sitesPage = await api('/api/system/sites', pageParameters(systemScope));
     const sitesColumn = node('div', 'entity-info-column system-sites-column');
@@ -3225,25 +3279,33 @@ async function renderTalkgroup() {
     const affiliationLink = anchor(number(talkgroup.affiliated_radios),
       href('talkgroup', { ...scope(talkgroup), id, tab: 'radios' }));
     const infoColumn = node('div', 'entity-info-column');
-    infoColumn.append(section('Talkgroup Info', keyValues([
+    infoColumn.append(section('Identity', keyValues([
       ['System', systemLink(talkgroup, systemInfoValue(talkgroup))],
       ['Talkgroup ID', id], ['Alias', aliasLabel(talkgroup)],
       ['Description', talkgroup.alias_description],
-      ['Group', talkgroup.alias_group], ['First Seen', dateTime(talkgroup.first_seen_ms)],
-      ['Last Seen', dateTime(talkgroup.last_seen_ms)], ['Calls', number(talkgroup.call_count)],
-      ['Recorded', number(talkgroup.recorded_count)],
-      ['Sent to Streamer', number(talkgroup.streamed_count)],
-      ['Radios', number(talkgroup.radios)], ['Currently Affiliated', affiliationLink],
-      ['Enc', number(talkgroup.encrypted_count)],
+      ['Group', talkgroup.alias_group]
+    ])), section('Collected Call Activity', metrics([
+      ['Calls', talkgroup.call_count],
+      ['Recorded', talkgroup.recorded_count],
+      ['Sent to Streamer', talkgroup.streamed_count],
+      ['Encrypted', talkgroup.encrypted_count]
+    ], true)), section('Relationships', metrics([
+      ['Observed Radios', talkgroup.radios]
+    ], true)), section('Current State', keyValues([
+      ['Currently Affiliated', affiliationLink]
+    ])), section('Last-known Facts', keyValues([
       ['Last Source', radioLink(talkgroup, talkgroup.last_source_radio_id)],
-      ['Last Alg', encryptionAlgorithmInfoValue(talkgroup.last_encryption_algorithm_name,
+      ['Last Encryption Algorithm', encryptionAlgorithmInfoValue(talkgroup.last_encryption_algorithm_name,
         talkgroup.last_encryption_algorithm_id)],
-      ['Last Key ID', hexDecimalPair(talkgroup.last_encryption_key_id)]
-    ])));
-    infoColumn.append(section('Action Counts', table(actionCounts(talkgroup).map(([action, count]) => ({ action, count })), [
+      ['Last Encryption Key ID', hexDecimalPair(talkgroup.last_encryption_key_id)]
+    ])), section('Observed Times', keyValues([
+      ['First Observed', dateTime(talkgroup.first_seen_ms)],
+      ['Last Observed', dateTime(talkgroup.last_seen_ms)]
+    ])), section('Collected Signaling Observations', table(
+      signalingCounts(talkgroup).map(([action, count]) => ({ action, count })), [
       { label: 'Action', key: 'action' },
       { id: 'count', label: 'Count', render: (row) => number(row.count), className: 'numeric', sortValue: (row) => Number(row.count || 0) }
-    ], 'No actions recorded', { type: 'action-counts' })));
+    ], 'No signaling observations recorded', { type: 'action-counts' })));
     const layout = node('div', 'entity-info-layout');
     layout.append(infoColumn, await talkgroupActivityHistorySection({ ...systemScope, talkgroup_id: id }));
     content.append(layout);
@@ -3277,25 +3339,36 @@ async function renderRadio() {
   } else if (tab === 'activity') {
     await renderActivity({ ...systemScope, radio_id: id });
   } else {
-    content.append(section('Radio Info', keyValues([
-      ['System', systemLink(radio, systemInfoValue(radio))], ['Radio ID', id], ['Alias', aliasLabel(radio)],
-      ['Talker Alias', radio.last_talker_alias], ['Talker Alias Seen', dateTime(radio.last_talker_alias_seen_ms)],
-      ['Current Affiliation TGID', talkgroupLink(radio, radio.affiliated_talkgroup_id)],
-      ['Current Affiliation Alias', talkgroupAliasLink(radio, radio.affiliated_talkgroup_id,
+    const infoColumn = node('div', 'entity-info-column entity-info-standalone');
+    infoColumn.append(section('Identity', keyValues([
+      ['System', systemLink(radio, systemInfoValue(radio))],
+      ['Radio ID', id],
+      ['Alias', aliasLabel(radio)],
+      ['Talker Alias', radio.last_talker_alias]
+    ])), section('Collected Call Activity', metrics([
+      ['Calls', radio.call_count],
+      ['Encrypted', radio.encrypted_count]
+    ], true)), section('Current Affiliation', keyValues([
+      ['Talkgroup ID', talkgroupLink(radio, radio.affiliated_talkgroup_id)],
+      ['Talkgroup Alias', talkgroupAliasLink(radio, radio.affiliated_talkgroup_id,
         'affiliated_talkgroup_alias_')],
-      ['Affiliation Updated', dateTime(radio.affiliation_updated_at_ms)],
-      ['First Seen', dateTime(radio.first_seen_ms)], ['Last Seen', dateTime(radio.last_seen_ms)],
-      ['Calls', number(radio.call_count)],
-      ['Talkgroups', number(radio.talkgroups)],
-      ['Enc', number(radio.encrypted_count)],
-      ['Last Alg', encryptionAlgorithmInfoValue(radio.last_encryption_algorithm_name,
+      ['Updated', dateTime(radio.affiliation_updated_at_ms)]
+    ])), section('Relationships', metrics([
+      ['Observed Talkgroups', radio.talkgroups]
+    ])), section('Last-known Facts', keyValues([
+      ['Last Encryption Algorithm', encryptionAlgorithmInfoValue(radio.last_encryption_algorithm_name,
         radio.last_encryption_algorithm_id)],
-      ['Last Key ID', hexDecimalPair(radio.last_encryption_key_id)]
-    ])));
-    content.append(section('Action Counts', fragment(table(actionCounts(radio).map(([action, count]) => ({ action, count })), [
+      ['Last Encryption Key ID', hexDecimalPair(radio.last_encryption_key_id)]
+    ])), section('Observed Times', keyValues([
+      ['Talker Alias Observed', dateTime(radio.last_talker_alias_seen_ms)],
+      ['First Observed', dateTime(radio.first_seen_ms)],
+      ['Last Observed', dateTime(radio.last_seen_ms)]
+    ])), section('Collected Signaling Observations', fragment(table(
+      signalingCounts(radio).map(([action, count]) => ({ action, count })), [
       { label: 'Action', key: 'action' },
       { id: 'count', label: 'Count', render: (row) => number(row.count), className: 'numeric', sortValue: (row) => Number(row.count || 0) }
-    ], 'No actions recorded', { type: 'action-counts' }), activityMetricGuide())));
+    ], 'No signaling observations recorded', { type: 'action-counts' }), activityMetricGuide())));
+    content.append(infoColumn);
   }
 }
 
@@ -3400,7 +3473,7 @@ function trunkedSiteChannelColumns() {
       render: (row) => frequency(row.uplink_hz), className: 'numeric' },
     { id: 'state', label: 'State', render: (row) => stateBadge(row.state) },
     { label: 'Snapshots', key: 'observation_count', className: 'numeric' },
-    { id: 'last-seen', label: 'Recorded', fullLabel: 'Last Recorded',
+    { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen',
       render: (row) => dateTime(row.last_seen_ms) }
   ];
 }
@@ -3486,7 +3559,7 @@ async function renderSiteNeighbors(site) {
 
 async function renderSiteInfo(site) {
   const summary = [
-    ['Observations', site.observation_count], ['Channels', site.channels], ['Neighbors', site.neighbors]
+    ['Metadata Updates', site.observation_count], ['Channels', site.channels], ['Neighbors', site.neighbors]
   ];
   if (siteCapability(site, 'band-plan')) summary.push(['Band Plans', site.bands]);
   if (siteCapability(site, 'patches')) summary.push(['Patches', site.patches]);
@@ -3495,7 +3568,7 @@ async function renderSiteInfo(site) {
   infoColumn.append(section('Site Info', keyValues([
     ['System', systemLink(site, systemInfoValue(site))],
     ['GUID', site.guid], ['Name', site.channel_name], ['Alias List', site.alias_list_name],
-    ['Protocol', protocolFamily(site)], ['Decoder', site.decoder],
+    ['Protocol', protocolFamily(site)], ['Decoder', decoderDisplay(site.decoder)],
     ['Configured Frequency', frequency(site.primary_frequency_hz)],
     ['Current Control Frequency', frequency(site.current_control_hz)],
     ['First Seen', dateTime(site.first_seen_ms)], ['Last Seen', dateTime(site.last_seen_ms)]
@@ -3772,7 +3845,8 @@ async function renderConventional() {
     { label: 'Name', render: (row) => anchor(row.channel_name || row.context_key,
       href('conventional-detail', { context: row.context_key, tab: 'info' })), className: 'alias-cell', sort: 'name', sortValue: (row) => row.channel_name || row.context_key },
     { id: 'protocol', label: 'Protocol', render: (row) => protocol(row.protocol_code), sort: 'protocol', sortValue: (row) => protocol(row.protocol_code) },
-    { label: 'Decoder', key: 'decoder', sort: 'decoder' },
+    { label: 'Decoder', render: (row) => decoderDisplay(row.decoder), sort: 'decoder',
+      sortValue: (row) => decoderLabel(row.decoder, true) },
     { id: 'frequency', label: 'MHz', fullLabel: 'Frequency MHz', render: (row) => frequency(row.frequency_hz), className: 'numeric', sort: 'frequency', sortValue: (row) => Number(row.frequency_hz || 0) },
     { label: 'Slot', key: 'timeslot', className: 'numeric', sort: 'slot',
       render: (row) => identifierNumber(row.timeslot) },
@@ -3864,6 +3938,8 @@ function conventionalRadioColumns() {
       render: (row) => identifierNumber(row.timeslot) },
     { id: 'calls', label: 'Calls', render: (row) => number(row.call_count), className: 'numeric',
       sort: 'calls', sortValue: (row) => Number(row.call_count || 0) },
+    { id: 'encrypted', label: 'Encrypted', render: (row) => number(row.encrypted_count),
+      className: 'numeric', sort: 'encrypted', sortValue: (row) => Number(row.encrypted_count || 0) },
     { id: 'source-calls', label: 'As Source', render: (row) => number(row.source_call_count),
       className: 'numeric', sort: 'source_calls', sortValue: (row) => Number(row.source_call_count || 0) },
     { id: 'target-calls', label: 'As Target', render: (row) => number(row.target_call_count),
@@ -3872,8 +3948,6 @@ function conventionalRadioColumns() {
       className: 'numeric', sort: 'group_calls', sortValue: (row) => Number(row.group_call_count || 0) },
     { id: 'private-calls', label: 'Private', render: (row) => number(row.private_call_count),
       className: 'numeric', sort: 'private_calls', sortValue: (row) => Number(row.private_call_count || 0) },
-    { id: 'encrypted', label: 'Encrypted', render: (row) => number(row.encrypted_count),
-      className: 'numeric', sort: 'encrypted', sortValue: (row) => Number(row.encrypted_count || 0) },
     { id: 'last-talkgroup', label: 'Last Talkgroup', key: 'last_talkgroup_id', className: 'numeric',
       render: (row) => identifierNumber(row.last_talkgroup_id) },
     { id: 'talkgroup-name', label: 'Talkgroup Alias', key: 'last_talkgroup_alias_name',
@@ -3928,7 +4002,7 @@ async function renderConventionalDetail() {
   } else {
     content.append(section('Channel Info', keyValues([
       ['Name', context.channel_name], ['Context', context.context_key], ['GUID', context.guid],
-      ['Protocol', protocol(context.protocol_code)], ['Decoder', context.decoder],
+      ['Protocol', protocol(context.protocol_code)], ['Decoder', decoderDisplay(context.decoder)],
       ['Alias List', context.alias_list_name], ['Frequency', frequency(context.primary_frequency_hz)],
       ['NAC', hexDecimalPair(context.nac, 3)], ['First Seen', dateTime(context.first_seen_ms)],
       ['Last Seen', dateTime(context.last_seen_ms)]
@@ -3938,8 +4012,17 @@ async function renderConventionalDetail() {
       { label: 'Slot', key: 'timeslot', className: 'numeric',
         render: (row) => identifierNumber(row.timeslot) },
       { id: 'calls', label: 'Calls', render: (row) => number(row.call_count), className: 'numeric', sortValue: (row) => Number(row.call_count || 0) },
-      { id: 'first-seen', label: 'First', fullLabel: 'First Seen', render: (row) => dateTime(row.first_seen_ms), sortValue: (row) => Number(row.first_seen_ms || 0) },
-      { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
+      { id: 'recorded', label: 'Rec', fullLabel: 'Recorded',
+        render: (row) => number(row.recorded_count), className: 'numeric',
+        sortValue: (row) => Number(row.recorded_count || 0) },
+      { id: 'streamed', label: 'Sent', fullLabel: 'Sent to Streamer',
+        render: (row) => number(row.streamed_count), className: 'numeric',
+        sortValue: (row) => Number(row.streamed_count || 0) },
+      { id: 'encrypted', label: 'Enc', fullLabel: 'Encrypted',
+        render: (row) => number(row.encrypted_count), className: 'numeric encrypted',
+        sortValue: (row) => Number(row.encrypted_count || 0) },
+      { id: 'first-seen', label: 'First', fullLabel: 'First Observed', render: (row) => dateTime(row.first_seen_ms), sortValue: (row) => Number(row.first_seen_ms || 0) },
+      { id: 'last-seen', label: 'Seen', fullLabel: 'Last Observed', render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
     ], 'No frequency summaries recorded', { type: 'conventional-frequencies' })));
   }
 }

@@ -132,8 +132,9 @@ class StatsWebDatabaseTest
                 """.formatted(bucket));
             statement.executeUpdate("""
                 INSERT INTO p25_site_activity_bucket (
-                    context_id, bucket_start_ms, call_count, encrypted_count, recorded_count, streamed_count
-                ) VALUES (1, %d, 1, 1, 1, 1)
+                    context_id, bucket_start_ms, call_count, continue_count, gps_count, encrypted_count,
+                    recorded_count, streamed_count
+                ) VALUES (1, %d, 1, 3, 2, 1, 1, 1)
                 """.formatted(bucket));
             statement.executeUpdate("""
                 INSERT INTO p25_site_frequency_summary (
@@ -184,13 +185,21 @@ class StatsWebDatabaseTest
 
         Map<String,Object> systemResponse = mDatabase.system(request(
             "/api/system?wacn=BEE00&system_id=0x348"));
-        assertEquals(1L, number(map(systemResponse, "system").get("activity_calls")));
+        Map<String,Object> system = map(systemResponse, "system");
+        assertEquals(1L, number(system.get("activity_calls")));
+        assertEquals(1L, number(system.get("activity_retained_calls")));
+        assertEquals(1L, number(system.get("activity_recorded")));
+        assertEquals(1L, number(system.get("activity_streamed")));
+        assertEquals(1L, number(system.get("activity_encrypted")));
 
         List<Map<String,Object>> actionCounts = rowsFrom(systemResponse, "actionCounts");
-        assertEquals(1L, number(actionCounts.stream()
-            .filter(row -> "CALL".equals(row.get("action"))).findFirst().orElseThrow().get("count")));
-        assertEquals(1L, number(actionCounts.stream()
-            .filter(row -> "ENCRYPTED".equals(row.get("action"))).findFirst().orElseThrow().get("count")));
+        assertEquals(2, actionCounts.size());
+        assertEquals("CONTINUE", actionCounts.getFirst().get("action"));
+        assertEquals(3L, number(actionCounts.getFirst().get("count")));
+        assertEquals("GPS", actionCounts.get(1).get("action"));
+        assertEquals(2L, number(actionCounts.get(1).get("count")));
+        assertTrue(actionCounts.stream().noneMatch(row ->
+            "CALL".equals(row.get("action")) || "ENCRYPTED".equals(row.get("action"))));
     }
 
     @Test
@@ -280,7 +289,7 @@ class StatsWebDatabaseTest
     }
 
     @Test
-    void sumsAffiliationEvidenceForZeroCallTalkgroups() throws Exception
+    void sumsAffiliationSignalingForZeroCallTalkgroups() throws Exception
     {
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
             Statement statement = connection.createStatement())
@@ -293,12 +302,13 @@ class StatsWebDatabaseTest
         }
 
         List<Map<String,Object>> talkgroups = rows(mDatabase.systemTalkgroups(request(
-            "/api/system/talkgroups?wacn=BEE00&system_id=0x348&sort=evidence&direction=desc")));
+            "/api/system/talkgroups?wacn=BEE00&system_id=0x348&sort=signaling&direction=desc")));
         Map<String,Object> affiliatedOnly = talkgroups.getFirst();
         assertEquals(57000L, number(affiliatedOnly.get("talkgroup_id")));
         assertEquals(0L, number(affiliatedOnly.get("call_count")));
-        assertEquals(9L, number(affiliatedOnly.get("evidence_total")));
+        assertEquals(9L, number(affiliatedOnly.get("signaling_count")));
         assertFalse(affiliatedOnly.containsKey("join_count"));
+        assertFalse(affiliatedOnly.containsKey("evidence_total"));
         assertFalse(affiliatedOnly.containsKey("evidence_label"));
         assertFalse(affiliatedOnly.containsKey("evidence_count"));
         assertFalse(affiliatedOnly.containsKey("evidence_kind"));
@@ -306,7 +316,7 @@ class StatsWebDatabaseTest
     }
 
     @Test
-    void sortsTalkgroupsByTotalEvidenceAndUsesOutputOnlyAsFallback() throws Exception
+    void sortsTalkgroupsBySignalingWithoutCountingCallOutputs() throws Exception
     {
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
             Statement statement = connection.createStatement())
@@ -326,20 +336,25 @@ class StatsWebDatabaseTest
         }
 
         List<Map<String,Object>> talkgroups = rows(mDatabase.systemTalkgroups(request(
-            "/api/system/talkgroups?wacn=BEE00&system_id=0x348&sort=evidence&direction=desc")));
+            "/api/system/talkgroups?wacn=BEE00&system_id=0x348&sort=signaling&direction=desc")));
+        assertEquals(57001L, number(talkgroups.getFirst().get("talkgroup_id")));
         Map<String,Object> signaling = talkgroups.stream()
             .filter(row -> number(row.get("talkgroup_id")) == 57001L).findFirst().orElseThrow();
-        assertEquals(12L, number(signaling.get("evidence_total")));
+        assertEquals(12L, number(signaling.get("signaling_count")));
         assertFalse(signaling.containsKey("denial_count"));
         assertFalse(signaling.containsKey("request_count"));
-        assertFalse(signaling.containsKey("evidence_label"));
+        assertFalse(signaling.containsKey("evidence_total"));
 
         Map<String,Object> output = talkgroups.stream()
             .filter(row -> number(row.get("talkgroup_id")) == 57002L).findFirst().orElseThrow();
-        assertEquals(5L, number(output.get("evidence_total")));
-        assertFalse(output.containsKey("evidence_label"));
-        assertFalse(output.containsKey("evidence_count"));
-        assertFalse(output.containsKey("evidence_kind"));
+        assertEquals(0L, number(output.get("signaling_count")));
+        assertEquals(2L, number(output.get("recorded_count")));
+        assertEquals(3L, number(output.get("streamed_count")));
+        assertFalse(output.containsKey("evidence_total"));
+
+        List<Map<String,Object>> compatibilitySort = rows(mDatabase.systemTalkgroups(request(
+            "/api/system/talkgroups?wacn=BEE00&system_id=0x348&sort=evidence&direction=desc")));
+        assertEquals(57001L, number(compatibilitySort.getFirst().get("talkgroup_id")));
     }
 
     @Test
@@ -812,16 +827,11 @@ class StatsWebDatabaseTest
         }
 
         Map<String,Object> dashboard = mDatabase.dashboard();
-        List<Map<String,Object>> hours = rowsFrom(dashboard, "activityPerHour");
-        assertEquals(24, hours.size());
-        assertEquals(currentHour, number(hours.getLast().get("hour_ms")));
-        assertEquals(28, number(hours.getLast().get("call_count")));
-        assertEquals(7, number(hours.getLast().get("encrypted_count")));
-        assertFalse(hours.getLast().containsKey("grant_count"));
-        assertTrue(hours.stream().limit(23).allMatch(row -> number(row.get("call_count")) == 0));
+        assertFalse(dashboard.containsKey("activityPerHour"));
         assertTrue(rowsFrom(mDatabase.system(request(
             "/api/system?wacn=BEE00&system_id=0x348")), "actionCounts").stream()
-            .noneMatch(row -> "GRANT".equals(row.get("action"))));
+            .noneMatch(row -> "GRANT".equals(row.get("action")) ||
+                "CALL".equals(row.get("action")) || "ENCRYPTED".equals(row.get("action"))));
         assertFalse(dashboard.containsKey("p25CallActivity"));
         Map<String,Object> callActivity = map(dashboard, "callActivity");
         Map<String,Object> totals = map(callActivity, "totals");

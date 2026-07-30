@@ -45,24 +45,38 @@ class StatsWebInteractionUiContractTest
     }
 
     @Test
-    void exposesTalkgroupDescriptionsAndPlainSummedEvidenceInRoomyViews() throws Exception
+    void separatesCallOutcomesFromNonCallSignalingInRoomyViews() throws Exception
     {
         String source = source();
         assertTrue(source.contains("key: 'alias_description'"));
         assertTrue(source.contains("key: 'talkgroup_alias_description'"));
-        assertTrue(source.contains("fullLabel: 'Why This Talkgroup Is Known'"));
-        assertTrue(source.contains("render: talkgroupEvidence, className: 'numeric'"));
-        assertTrue(source.contains("sort: 'evidence'"));
-        assertTrue(function(source, "function talkgroupEvidence(row)")
+        assertTrue(source.contains("fullLabel: 'Signaling observations'"));
+        assertTrue(source.contains("render: talkgroupSignaling, className: 'numeric'"));
+        assertTrue(source.contains("sort: 'signaling'"));
+        assertTrue(function(source, "function talkgroupSignaling(row)")
             .contains("return total > 0 ? number(total) : '—'"));
-        assertTrue(function(source, "function talkgroupEvidenceSortValue(row)")
-            .contains("row.evidence_total"));
-        assertFalse(source.contains("function talkgroupEvidenceEntries(row)"));
+        assertTrue(function(source, "function talkgroupSignalingSortValue(row)")
+            .contains("row.signaling_count"));
+        assertTrue(function(source, "function signalingCounts(row)")
+            .contains(".sort((left, right) => right[1] - left[1])"));
+        assertTrue(function(source, "function talkgroupActivityChart(response, seriesConfigurations, ariaLabel)")
+            .contains("const largest = configurations.reduce"));
+        assertTrue(source.contains("section('Retained Call Activity'"));
+        assertTrue(source.contains("section('Retained Signaling Observations'"));
+        assertTrue(source.contains("section('Collected Call Activity'"));
+        assertTrue(source.contains("section('Collected Signaling Observations'"));
+        assertTrue(source.contains("section('Signaling Observations'"));
+        assertTrue(source.contains("TALKGROUP_CALL_ACTIVITY_SERIES"));
+        assertTrue(source.contains("TALKGROUP_SIGNALING_SERIES"));
+        assertTrue(source.contains("entity-info-column entity-info-standalone"));
+        assertTrue(Files.readString(APP_CSS).contains(".entity-info-standalone > .section"));
+        assertFalse(source.contains("function talkgroupEvidence"));
+        assertFalse(source.contains("row.evidence_total"));
         assertFalse(source.contains("'Open full Action Counts'"));
         assertFalse(source.contains("node('details', 'evidence')"));
         assertFalse(source.contains("fullLabel: 'Affiliations'"));
         assertTrue(source.contains("talkgroup.alias_description"));
-        assertTrue(source.contains("section('Action Counts'"));
+        assertFalse(source.contains("section('Action Counts'"));
         assertTrue(function(source, "function conventionalTalkgroupColumns()")
             .contains("key: 'alias_description'"));
         assertFalse(source.contains("Talkgroup Name"));
@@ -159,8 +173,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(html.indexOf("localStorage.getItem('sdrtrunk_theme')") <
             html.indexOf("rel=\"stylesheet\""));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertFalse(html.contains("/assets/app.css?v=19"));
-        assertFalse(html.contains("/assets/app.js?v=25"));
+        assertTrue(html.contains("/assets/app.css?v=21"));
+        assertTrue(html.contains("/assets/app.js?v=27"));
         assertTrue(source.contains("window.localStorage.setItem(THEME_STORAGE_KEY"));
         assertTrue(source.contains("toggle.setAttribute('aria-pressed'"));
         assertTrue(css.contains(":root[data-theme=\"dark\"]"));

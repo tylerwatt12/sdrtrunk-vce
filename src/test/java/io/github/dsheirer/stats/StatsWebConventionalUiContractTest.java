@@ -70,6 +70,23 @@ class StatsWebConventionalUiContractTest
         }
     }
 
+    @Test
+    void humanizesDecodersAndGroupsConventionalCallOutcomes() throws Exception
+    {
+        String source = source();
+        String list = function(source, "async function renderConventional()");
+        String detail = function(source, "async function renderConventionalDetail()");
+        String radios = function(source, "function conventionalRadioColumns()");
+        assertTrue(list.contains("decoderDisplay(row.decoder)"));
+        assertTrue(detail.contains("decoderDisplay(context.decoder)"));
+        assertTrue(detail.contains("label: 'Calls'"));
+        assertTrue(detail.contains("label: 'Rec'"));
+        assertTrue(detail.contains("label: 'Sent'"));
+        assertTrue(detail.contains("label: 'Enc'"));
+        assertTrue(radios.indexOf("id: 'encrypted'") > radios.indexOf("id: 'calls'"));
+        assertTrue(radios.indexOf("id: 'encrypted'") < radios.indexOf("id: 'source-calls'"));
+    }
+
     private static String source() throws Exception
     {
         assertTrue(Files.isRegularFile(APP_JAVASCRIPT), () -> "Missing " + APP_JAVASCRIPT.toAbsolutePath());

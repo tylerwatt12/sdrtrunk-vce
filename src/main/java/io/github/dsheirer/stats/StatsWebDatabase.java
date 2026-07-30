@@ -268,24 +268,15 @@ class StatsWebDatabase
         "queued_count", "register_count", "request_count", "status_count", "unknown_count", "encrypted_count",
         "recorded_count", "streamed_count"
     );
-    private static final List<String> TALKGROUP_EVIDENCE_FIELDS = List.of(
+    private static final List<String> TALKGROUP_SIGNALING_FIELDS = List.of(
         "join_count", "register_count", "active_count", "continue_count", "denial_count",
         "emergency_count", "request_count", "busy_count", "queued_count", "acknowledge_count",
         "check_count", "check_ack_count", "page_count", "status_count", "gps_count", "logout_count",
         "patch_count", "patch_create_count", "patch_cancel_count", "data_count", "unknown_count"
     );
-    private static final List<String> TALKGROUP_OUTPUT_EVIDENCE_FIELDS = List.of(
-        "streamed_count", "recorded_count", "encrypted_count"
-    );
-    private static final String TALKGROUP_ACTION_EVIDENCE_SQL = TALKGROUP_EVIDENCE_FIELDS.stream()
+    private static final String TALKGROUP_SIGNALING_COUNT_SQL = TALKGROUP_SIGNALING_FIELDS.stream()
         .map(field -> "summary." + field)
         .collect(java.util.stream.Collectors.joining(" + "));
-    private static final String TALKGROUP_OUTPUT_EVIDENCE_SQL = TALKGROUP_OUTPUT_EVIDENCE_FIELDS.stream()
-        .map(field -> "summary." + field)
-        .collect(java.util.stream.Collectors.joining(" + "));
-    private static final String TALKGROUP_EVIDENCE_TOTAL_SQL = "CASE WHEN (" +
-        TALKGROUP_ACTION_EVIDENCE_SQL + ") > 0 THEN (" + TALKGROUP_ACTION_EVIDENCE_SQL +
-        ") WHEN summary.call_count = 0 THEN (" + TALKGROUP_OUTPUT_EVIDENCE_SQL + ") ELSE 0 END";
     private static final Map<String,String> SYSTEM_SORT_COLUMNS = Map.ofEntries(
         Map.entry("wacn", "system.wacn"),
         Map.entry("system_id", "system.system_id"),
@@ -326,7 +317,8 @@ class StatsWebDatabase
         Map.entry("streamed", "summary.streamed_count"),
         Map.entry("grants", "summary.grant_count"),
         Map.entry("affiliations", "summary.join_count"),
-        Map.entry("evidence", "evidence_total"),
+        Map.entry("signaling", "signaling_count"),
+        Map.entry("evidence", "signaling_count"),
         Map.entry("encrypted", "summary.encrypted_count"),
         Map.entry("last_source", "summary.last_source_radio_id"),
         Map.entry("first_seen", "summary.first_seen_ms"),
@@ -514,8 +506,6 @@ class StatsWebDatabase
             dashboard.put("topSources", topCallIdentities(connection, IDENTITY_ROLE_SOURCE,
                 firstIdentityHour, now));
             dashboard.put("recentReceivers", recentReceivers(connection));
-            List<Map<String,Object>> hourlyActivity = hourlyActivity(connection);
-            dashboard.put("activityPerHour", hourlyActivity);
             dashboard.put("callActivity", callActivity(connection));
             dashboard.put("sourceActivity24h", sourceActivity24Hours(connection));
             return dashboard;
@@ -982,9 +972,17 @@ class StatsWebDatabase
                         FROM p25_site_frequency_summary frequency
                         JOIN receiver_context context ON context.id = frequency.context_id
                         WHERE context.system_key = system.system_key
-                    ), 0) AS activity_calls
+                    ), 0) AS activity_calls,
+                    COALESCE(SUM(activity.call_count), 0) AS activity_retained_calls,
+                    COALESCE(SUM(activity.recorded_count), 0) AS activity_recorded,
+                    COALESCE(SUM(activity.streamed_count), 0) AS activity_streamed,
+                    COALESCE(SUM(activity.encrypted_count), 0) AS activity_encrypted
                 FROM p25_system system
+                LEFT JOIN receiver_context activity_context
+                  ON activity_context.system_key = system.system_key
+                LEFT JOIN p25_site_activity_bucket activity ON activity.context_id = activity_context.id
                 WHERE system.wacn = ? AND system.system_id = ?
+                GROUP BY system.system_key
                 """, wacn, systemId), "System not found"));
             response.put("actionCounts", systemActionCounts(connection, wacn, systemId));
             return response;
@@ -1007,12 +1005,12 @@ class StatsWebDatabase
             StringBuilder sql = new StringBuilder("""
                 SELECT system.system_key, system.wacn, system.system_id, summary.talkgroup_id,
                     summary.first_seen_ms, summary.last_seen_ms, summary.call_count, summary.encrypted_count,
-                    summary.recorded_count, summary.streamed_count, %s AS evidence_total
+                    summary.recorded_count, summary.streamed_count, %s AS signaling_count
                 FROM p25_talkgroup_summary summary
                 JOIN p25_system system ON system.system_key = summary.system_key
                 WHERE system.wacn = ? AND system.system_id = ?
                   AND summary.talkgroup_id > 0 AND summary.talkgroup_id < 65535
-                """.formatted(TALKGROUP_EVIDENCE_TOTAL_SQL));
+                """.formatted(TALKGROUP_SIGNALING_COUNT_SQL));
             List<Object> parameters = new ArrayList<>(List.of(wacn, systemId));
             addIdentifierSearch(sql, parameters, request.search(), "summary.talkgroup_id");
             sql.append(" ORDER BY ").append(order(request, TALKGROUP_SORT_COLUMNS, "calls"))
@@ -2327,59 +2325,6 @@ class StatsWebDatabase
             """);
     }
 
-    private static List<Map<String,Object>> hourlyActivity(Connection connection) throws SQLException
-    {
-        long currentHour = Math.floorDiv(System.currentTimeMillis(), HOUR_MILLISECONDS) * HOUR_MILLISECONDS;
-        long firstHour = currentHour - (DASHBOARD_HOURS - 1L) * HOUR_MILLISECONDS;
-        List<Map<String,Object>> stored = queryRows(connection, """
-            SELECT bucket_start_ms, SUM(call_count) AS call_count, SUM(continue_count) AS continue_count,
-                SUM(join_count) AS join_count,
-                SUM(register_count) AS register_count, SUM(denial_count) AS denial_count,
-                SUM(busy_count) AS busy_count, SUM(queued_count) AS queued_count,
-                SUM(encrypted_count) AS encrypted_count
-            FROM (
-                SELECT bucket_start_ms, call_count, continue_count, join_count, register_count,
-                    denial_count, busy_count, queued_count, encrypted_count
-                FROM p25_site_activity_bucket WHERE bucket_start_ms >= ?
-                UNION ALL
-                SELECT bucket_start_ms, call_count, 0, 0, 0, 0, 0, 0, encrypted_count
-                FROM conventional_activity_bucket WHERE bucket_start_ms >= ?
-            )
-            GROUP BY bucket_start_ms
-            ORDER BY bucket_start_ms
-            """, firstHour, firstHour);
-        Map<Long,Map<String,Object>> totals = new LinkedHashMap<>();
-
-        for(Map<String,Object> row: stored)
-        {
-            Object hour = row.get("bucket_start_ms");
-
-            if(hour instanceof Number hourNumber)
-            {
-                totals.put(hourNumber.longValue(), row);
-            }
-        }
-
-        List<Map<String,Object>> result = new ArrayList<>(DASHBOARD_HOURS);
-
-        for(long hour = firstHour; hour <= currentHour; hour += HOUR_MILLISECONDS)
-        {
-            Map<String,Object> values = totals.get(hour);
-            Map<String,Object> row = new LinkedHashMap<>();
-            row.put("hour_ms", hour);
-
-            for(String field: List.of("call_count", "continue_count", "join_count",
-                "register_count", "denial_count", "busy_count", "queued_count", "encrypted_count"))
-            {
-                row.put(field, values != null && values.get(field) instanceof Number number ? number.longValue() : 0L);
-            }
-
-            result.add(row);
-        }
-
-        return result;
-    }
-
     /**
      * Ranks all call-producing receiver contexts using the existing compact hourly buckets. The query is bounded to
      * 24 hours and uses the time-leading trunked and conventional bucket indexes; detailed event history is never
@@ -2647,18 +2592,16 @@ class StatsWebDatabase
     private static List<Map<String,Object>> systemActionCounts(Connection connection, int wacn, int systemId)
         throws SQLException
     {
+        String sums = TALKGROUP_SIGNALING_FIELDS.stream()
+            .map(field -> "SUM(bucket." + field + ") AS " + field)
+            .collect(java.util.stream.Collectors.joining(", "));
         List<Map<String,Object>> totals = queryRows(connection, """
-            SELECT SUM(bucket.call_count) AS call_count, SUM(bucket.continue_count) AS continue_count,
-                SUM(bucket.join_count) AS join_count,
-                SUM(bucket.register_count) AS register_count, SUM(bucket.logout_count) AS logout_count,
-                SUM(bucket.denial_count) AS denial_count, SUM(bucket.busy_count) AS busy_count,
-                SUM(bucket.queued_count) AS queued_count, SUM(bucket.emergency_count) AS emergency_count,
-                SUM(bucket.encrypted_count) AS encrypted_count
+            SELECT %s
             FROM p25_site_activity_bucket bucket
             JOIN receiver_context context ON context.id = bucket.context_id
             JOIN p25_system system ON system.system_key = context.system_key
             WHERE system.wacn = ? AND system.system_id = ?
-            """, wacn, systemId);
+            """.formatted(sums), wacn, systemId);
 
         if(totals.isEmpty())
         {
@@ -2668,14 +2611,13 @@ class StatsWebDatabase
         Map<String,Object> row = totals.getFirst();
         List<Map<String,Object>> result = new ArrayList<>();
 
-        for(String action: List.of("call", "continue", "join", "register", "logout", "denial", "busy",
-            "queued", "emergency", "encrypted"))
+        for(String field: TALKGROUP_SIGNALING_FIELDS)
         {
-            long count = number(row.get(action + "_count"));
+            long count = number(row.get(field));
 
             if(count > 0)
             {
-                result.add(Map.of("action", action.toUpperCase(), "count", count));
+                result.add(Map.of("action", field.replace("_count", "").toUpperCase(), "count", count));
             }
         }
 

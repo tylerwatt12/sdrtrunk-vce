@@ -69,6 +69,26 @@ class StatsWebSiteUiContractTest
         assertFalse(source.contains("outputMetricStartNote"));
     }
 
+    @Test
+    void keepsSiteMetadataAndCallOutcomesDistinct() throws Exception
+    {
+        String source = source();
+        String siteInfo = function(source, "async function renderSiteInfo(site)");
+        String talkgroups = function(source, "async function siteTopTalkgroupsSection(site)");
+        String channels = function(source, "function trunkedSiteChannelColumns()");
+        assertTrue(siteInfo.contains("['Metadata Updates', site.observation_count]"));
+        assertTrue(siteInfo.contains("['Decoder', decoderDisplay(site.decoder)]"));
+        assertTrue(talkgroups.contains("section('Talkgroup Call Activity'"));
+        assertTrue(talkgroups.contains("label: 'Calls'"));
+        assertTrue(talkgroups.contains("label: 'Rec'"));
+        assertTrue(talkgroups.contains("label: 'Sent'"));
+        assertTrue(talkgroups.contains("label: 'Enc'"));
+        assertFalse(talkgroups.contains("Last Active"));
+        assertTrue(channels.contains("label: 'Seen'"));
+        assertTrue(channels.contains("fullLabel: 'Last Seen'"));
+        assertFalse(channels.contains("Last Recorded"));
+    }
+
     private static String source() throws Exception
     {
         assertTrue(Files.isRegularFile(APP_JAVASCRIPT), () -> "Missing " + APP_JAVASCRIPT.toAbsolutePath());
@@ -87,5 +107,29 @@ class StatsWebSiteUiContractTest
         }
 
         return count;
+    }
+
+    private static String function(String source, String signature)
+    {
+        int start = source.indexOf(signature);
+        assertTrue(start >= 0, () -> "Missing " + signature);
+        int openingBrace = source.indexOf('{', start + signature.length());
+        int depth = 0;
+
+        for(int index = openingBrace; index < source.length(); index++)
+        {
+            char character = source.charAt(index);
+
+            if(character == '{')
+            {
+                depth++;
+            }
+            else if(character == '}' && --depth == 0)
+            {
+                return source.substring(start, index + 1);
+            }
+        }
+
+        throw new AssertionError("Unterminated " + signature);
     }
 }
