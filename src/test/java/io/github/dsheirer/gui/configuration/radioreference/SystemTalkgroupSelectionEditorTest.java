@@ -23,11 +23,41 @@ import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.rrapi.type.Talkgroup;
 import io.github.dsheirer.rrapi.type.TalkgroupCategory;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
 class SystemTalkgroupSelectionEditorTest
 {
+    @Test
+    void coalescesAliasMatchRefreshUntilAfterNotificationsComplete()
+    {
+        SystemTalkgroupSelectionEditor.DeferredRefresh deferredRefresh =
+            new SystemTalkgroupSelectionEditor.DeferredRefresh();
+        List<Runnable> scheduled = new ArrayList<>();
+        AtomicInteger refreshCount = new AtomicInteger();
+
+        deferredRefresh.request(scheduled::add, refreshCount::incrementAndGet);
+        deferredRefresh.request(scheduled::add, refreshCount::incrementAndGet);
+
+        assertEquals(1, scheduled.size());
+        assertEquals(0, refreshCount.get());
+
+        scheduled.remove(0).run();
+        assertEquals(1, refreshCount.get());
+
+        deferredRefresh.request(scheduled::add, refreshCount::incrementAndGet);
+        assertEquals(1, scheduled.size());
+    }
+
+    @Test
+    void reportsImportCompletionCounts()
+    {
+        assertEquals("Import complete: 12 added, 3 updated, 7 already current",
+            SystemTalkgroupSelectionEditor.formatImportCompletion(12, 3, 7));
+    }
+
     @Test
     void radioReferenceRequiresMatchingProtocolFamily()
     {
