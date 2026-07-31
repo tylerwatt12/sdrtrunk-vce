@@ -64,6 +64,7 @@ import io.github.dsheirer.module.decode.dmr.message.data.csbk.standard.Aloha;
 import io.github.dsheirer.module.decode.dmr.message.data.csbk.standard.Protect;
 import io.github.dsheirer.module.decode.dmr.message.data.csbk.standard.acknowledge.Acknowledge;
 import io.github.dsheirer.module.decode.dmr.message.data.csbk.standard.ahoy.Ahoy;
+import io.github.dsheirer.module.decode.dmr.message.data.csbk.standard.ahoy.AuthenticateRegisterRadioCheck;
 import io.github.dsheirer.module.decode.dmr.message.data.csbk.standard.ahoy.ServiceRadioCheck;
 import io.github.dsheirer.module.decode.dmr.message.data.csbk.standard.ahoy.StunReviveKill;
 import io.github.dsheirer.module.decode.dmr.message.data.csbk.standard.announcement.Announcement;
@@ -89,6 +90,7 @@ import io.github.dsheirer.module.decode.dmr.message.data.packet.DMRPacketMessage
 import io.github.dsheirer.module.decode.dmr.message.data.packet.UDTShortMessageService;
 import io.github.dsheirer.module.decode.dmr.message.data.terminator.Terminator;
 import io.github.dsheirer.module.decode.dmr.message.type.ServiceOptions;
+import io.github.dsheirer.module.decode.dmr.message.type.Reason;
 import io.github.dsheirer.module.decode.dmr.message.voice.VoiceEMBMessage;
 import io.github.dsheirer.module.decode.dmr.message.voice.VoiceMessage;
 import io.github.dsheirer.module.decode.dmr.message.voice.embedded.EmbeddedEncryptionParameters;
@@ -131,6 +133,7 @@ public class DMRDecoderState extends TimeslotDecoderState
     private DMRNetworkConfigurationMonitor mNetworkConfigurationMonitor;
     private ProtocolSiteMetadataPublisher mSiteMetadataPublisher;
     private DMRTrafficChannelManager mTrafficChannelManager;
+    private final DMRTrafficChannelManager mTrafficChannelEventManager;
     private DecodeEvent mCurrentCallEvent;
     private boolean mCurrentCallEncrypted;
     private boolean mIgnoreCRCChecksums;
@@ -148,6 +151,7 @@ public class DMRDecoderState extends TimeslotDecoderState
         super(timeslot);
         mChannel = channel;
         mTrafficChannelManager = trafficChannelManager;
+        mTrafficChannelEventManager = trafficChannelManager;
         DecodeConfigDMR config = channel.getDecodeConfiguration() instanceof DecodeConfigDMR dmrConfig ?
             dmrConfig : null;
         mTrunkingEnabled = config != null && config.isTrunked();
@@ -227,9 +231,9 @@ public class DMRDecoderState extends TimeslotDecoderState
     {
         super.broadcast(event);
 
-        if(mChannel.isTrafficChannel() && hasTrafficChannelManager())
+        if(mChannel.isTrafficChannel() && mTrafficChannelEventManager != null)
         {
-            mTrafficChannelManager.receiveTrafficChannelEvent(event);
+            mTrafficChannelEventManager.receiveTrafficChannelEvent(event);
         }
     }
 
@@ -264,8 +268,8 @@ public class DMRDecoderState extends TimeslotDecoderState
     /**
      * Processes channel configuration change notifications received over the processing chain event bus.  This is
      * primarily used for Capacity+ systems when the standard channel is converted to a traffic channel.  In response,
-     * we nullify the traffic channel manager to ensure the traffic channel no longer behaves as a standard channel
-     * regarding channel conversions and allocations.
+     * we nullify the manager reference used for channel conversions and allocations.  The reporting-only reference is
+     * retained so that completed traffic events and talker aliases can still reach the owning control channel.
      *
      * @param notification of channel configuration change
      */
@@ -274,6 +278,7 @@ public class DMRDecoderState extends TimeslotDecoderState
     {
         if(notification.getChannel().isTrafficChannel())
         {
+            mChannel = notification.getChannel();
             mTrafficChannelManager = null;
         }
     }
@@ -736,7 +741,7 @@ public class DMRDecoderState extends TimeslotDecoderState
             case STANDARD_ACKNOWLEDGE_RESPONSE_INBOUND_PAYLOAD, STANDARD_ACKNOWLEDGE_RESPONSE_OUTBOUND_PAYLOAD:
                 if(csbk instanceof Acknowledge acknowledge)
                 {
-                    broadcast(getDecodeEvent(csbk, DecodeEventType.RESPONSE,
+                    broadcast(getDecodeEvent(csbk, acknowledgeEventType(acknowledge.getReason()),
                             acknowledge.getReason().toString()));
                 }
                 broadcast(new DecoderStateEvent(this, Event.CONTINUATION, State.ACTIVE, getTimeslot()));
@@ -744,7 +749,7 @@ public class DMRDecoderState extends TimeslotDecoderState
             case STANDARD_ACKNOWLEDGE_RESPONSE_INBOUND_TSCC, STANDARD_ACKNOWLEDGE_RESPONSE_OUTBOUND_TSCC:
                 if(csbk instanceof Acknowledge acknowledge)
                 {
-                    broadcast(getDecodeEvent(csbk, DecodeEventType.RESPONSE,
+                    broadcast(getDecodeEvent(csbk, acknowledgeEventType(acknowledge.getReason()),
                             acknowledge.getReason().toString()));
                 }
                 broadcast(new DecoderStateEvent(this, Event.CONTINUATION, State.CONTROL, getTimeslot()));
@@ -755,7 +760,12 @@ public class DMRDecoderState extends TimeslotDecoderState
                     switch(ahoy.getServiceKind())
                     {
                         case AUTHENTICATE_REGISTER_RADIO_CHECK_SERVICE:
-                            broadcast(getDecodeEvent(csbk, DecodeEventType.COMMAND, DecodeEventType.REGISTER.toString()));
+                            if(csbk instanceof AuthenticateRegisterRadioCheck command)
+                            {
+                                DecodeEventType type = "RADIO CHECK".equals(command.getCommand()) ?
+                                    DecodeEventType.RADIO_CHECK : DecodeEventType.COMMAND;
+                                broadcast(getDecodeEvent(csbk, type, command.getCommand()));
+                            }
                             break;
                         case CANCEL_CALL_SERVICE:
                             broadcast(getDecodeEvent(csbk, DecodeEventType.COMMAND, "CANCEL CALL"));
@@ -1093,6 +1103,17 @@ public class DMRDecoderState extends TimeslotDecoderState
                 .build();
     }
 
+    private static DecodeEventType acknowledgeEventType(Reason reason)
+    {
+        return switch(reason)
+        {
+            case TS_REGISTRATION_ACCEPTED, TS_SUBSCRIPTION_SERVICE_REGISTRATION_ACCEPTED ->
+                DecodeEventType.REGISTER;
+            case TS_REGISTRATION_REFUSED, TS_REGISTRATION_DENIED -> DecodeEventType.DENIAL;
+            default -> DecodeEventType.RESPONSE;
+        };
+    }
+
     /**
      * Creates a copy of the current identifier collection, removes any USER class identifiers and loads the identifiers
      * argument values into the collection.
@@ -1119,7 +1140,11 @@ public class DMRDecoderState extends TimeslotDecoderState
                 if(message instanceof io.github.dsheirer.module.decode.dmr.message.data.lc.full.EncryptionParameters ep &&
                     mCurrentCallEvent != null)
                 {
+                    mCurrentCallEncrypted = true;
+                    mCurrentCallEvent.setDecodeEventType(encryptedCallType(
+                        mCurrentCallEvent.getEventType(), false));
                     mCurrentCallEvent.setDetails(ep.getDetails());
+                    mCurrentCallEvent.end(message.getTimestamp());
                     broadcast(mCurrentCallEvent);
                 }
                 break;
@@ -1181,27 +1206,33 @@ public class DMRDecoderState extends TimeslotDecoderState
                 if(message instanceof CapacityMaxTalkerAlias alias)
                 {
                     //If we have a talker alias identifier, append this value.
-                    Identifier existing = getIdentifierCollection().getIdentifier(IdentifierClass.USER, Form.TALKER_ALIAS, Role.FROM);
+                    Identifier existing = getIdentifierCollection()
+                        .getIdentifier(IdentifierClass.USER, Form.TALKER_ALIAS, Role.FROM);
+                    DmrTalkerAliasIdentifier baseAlias = alias.getTalkerAliasIdentifier();
+                    boolean newBaseAlias = !(existing instanceof DmrTalkerAliasIdentifier talkerAlias) ||
+                        !talkerAlias.equals(baseAlias);
 
                     if(existing instanceof DmrTalkerAliasIdentifier talkerAlias &&
-                            !talkerAlias.equals(alias.getTalkerAliasIdentifier()) &&
-                            !talkerAlias.getValue().contains(alias.getTalkerAliasIdentifier().getValue()))
+                            !talkerAlias.equals(baseAlias) &&
+                            !talkerAlias.getValue().contains(baseAlias.getValue()))
                     {
                         //Concatenate the existing talker alias fragment with the base alias value.
                         DmrTalkerAliasIdentifier updated = DmrTalkerAliasIdentifier
-                                .create(alias.getTalkerAliasIdentifier().getValue() + talkerAlias.getValue());
+                                .create(baseAlias.getValue() + talkerAlias.getValue());
                         getIdentifierCollection().update(updated);
 
-                        Identifier fromRadio = getIdentifierCollection().getFromIdentifier();
-
-                        if(hasTrafficChannelManager() && fromRadio instanceof RadioIdentifier radio)
-                        {
-                            mTrafficChannelManager.getTalkerAliasManager().update(radio, updated);
-                        }
+                        processTalkerAlias(updated, message.getTimestamp());
                     }
                     else
                     {
-                        getIdentifierCollection().update(alias.getTalkerAliasIdentifier());
+                        getIdentifierCollection().update(baseAlias);
+
+                        //The base message carries up to six characters.  Short aliases are complete without a
+                        //continuation, so publish the first observation now and suppress repeated base messages.
+                        if(alias.getLength() <= 6 && newBaseAlias)
+                        {
+                            processTalkerAlias(baseAlias, message.getTimestamp());
+                        }
                     }
 
                     if(mCurrentCallEvent != null)
@@ -1225,12 +1256,7 @@ public class DMRDecoderState extends TimeslotDecoderState
                                 alias.getTalkerAliasIdentifier().getValue());
                         getIdentifierCollection().update(updated);
 
-                        Identifier fromRadio = getIdentifierCollection().getFromIdentifier();
-
-                        if(hasTrafficChannelManager() && fromRadio instanceof RadioIdentifier radio)
-                        {
-                            mTrafficChannelManager.getTalkerAliasManager().update(radio, updated);
-                        }
+                        processTalkerAlias(updated, message.getTimestamp());
                     }
                     else
                     {
@@ -1351,10 +1377,21 @@ public class DMRDecoderState extends TimeslotDecoderState
                 if(message instanceof TalkerAliasComplete tac && tac.hasTalkerAliasIdentifier())
                 {
                     getIdentifierCollection().update(tac.getTalkerAliasIdentifier());
+                    processTalkerAlias(tac.getTalkerAliasIdentifier(), message.getTimestamp());
                 }
                 break;
             default:
                 break;
+        }
+    }
+
+    private void processTalkerAlias(DmrTalkerAliasIdentifier alias, long timestamp)
+    {
+        Identifier from = getIdentifierCollection().getFromIdentifier();
+
+        if(mTrafficChannelEventManager != null && from instanceof RadioIdentifier radio)
+        {
+            mTrafficChannelEventManager.processTalkerAlias(alias, radio, getIdentifierCollection().copyOf(), timestamp);
         }
     }
 
@@ -1369,6 +1406,8 @@ public class DMRDecoderState extends TimeslotDecoderState
 
         if(mCurrentCallEvent != null)
         {
+            mCurrentCallEvent.setDecodeEventType(encryptedCallType(
+                mCurrentCallEvent.getEventType(), isGroup));
             String details = mCurrentCallEvent.getDetails();
 
             if(details == null)
@@ -1381,6 +1420,9 @@ public class DMRDecoderState extends TimeslotDecoderState
             }
 
             mCurrentCallEvent.setDetails(details);
+            mCurrentCallEvent.setIdentifierCollection(getIdentifierCollection().copyOf());
+            mCurrentCallEvent.end(timestamp);
+            broadcast(mCurrentCallEvent);
         }
         else
         {
@@ -1430,6 +1472,11 @@ public class DMRDecoderState extends TimeslotDecoderState
         }
         else
         {
+            if(DecodeEventType.VOICE_CALLS_ENCRYPTED.contains(type))
+            {
+                mCurrentCallEvent.setDecodeEventType(type);
+            }
+
             if(mCurrentCallEvent.getDetails() == null)
             {
                 mCurrentCallEvent.setDetails(details);
@@ -1449,6 +1496,22 @@ public class DMRDecoderState extends TimeslotDecoderState
         {
             broadcast(new DecoderStateEvent(this, event, State.CALL, getTimeslot()));
         }
+    }
+
+    private static DecodeEventType encryptedCallType(DecodeEventType current, boolean groupFallback)
+    {
+        if(current == DecodeEventType.CALL_GROUP || current == DecodeEventType.CALL_GROUP_ENCRYPTED)
+        {
+            return DecodeEventType.CALL_GROUP_ENCRYPTED;
+        }
+
+        if(current == DecodeEventType.CALL_UNIT_TO_UNIT ||
+            current == DecodeEventType.CALL_UNIT_TO_UNIT_ENCRYPTED)
+        {
+            return DecodeEventType.CALL_UNIT_TO_UNIT_ENCRYPTED;
+        }
+
+        return groupFallback ? DecodeEventType.CALL_GROUP_ENCRYPTED : DecodeEventType.CALL_ENCRYPTED;
     }
 
     /**

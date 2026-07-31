@@ -54,7 +54,6 @@ public class RegistrationAccepted extends Acknowledge
 
         sb.append("CC:").append(getSlotType().getColorCode());
         sb.append(" REGISTRATION ACCEPTED TO:").append(getTargetAddress());
-        sb.append(" FM:").append(getSourceRadio());
 
         if(hasPowerSaveOffset())
         {

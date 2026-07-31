@@ -212,17 +212,19 @@ public final class TrunkedSiteSchema
      * hash changes. Each liveness heartbeat refreshes only channels identified as current controls so active receiver
      * state cannot expire while learned traffic, alternate-control, and neighbor evidence ages normally.
      */
-    public static void upsert(Connection connection, Snapshot snapshot) throws SQLException
+    public static boolean upsert(Connection connection, Snapshot snapshot) throws SQLException
     {
-        upsert(connection, snapshot, Long.MIN_VALUE);
+        return upsert(connection, snapshot, Long.MIN_VALUE);
     }
 
     /**
      * Updates one compact site summary while refusing to replay cumulative child facts that had already expired.
      *
      * @param childRetentionCutoffEpochMilliseconds child facts observed before this time are not inserted or updated
+     * @return true when the snapshot was accepted, or false when an older snapshot was ignored
      */
-    public static void upsert(Connection connection, Snapshot snapshot, long childRetentionCutoffEpochMilliseconds)
+    public static boolean upsert(Connection connection, Snapshot snapshot,
+                                 long childRetentionCutoffEpochMilliseconds)
         throws SQLException
     {
         requireValid(snapshot);
@@ -230,22 +232,26 @@ public final class TrunkedSiteSchema
 
         if(previous != null && snapshot.observedAtEpochMilliseconds() < previous.lastSeenEpochMilliseconds())
         {
-            return;
+            return false;
         }
 
-        boolean protocolChanged = previous != null && previous.protocolCode() != snapshot.protocolCode();
+        boolean classificationChanged = previous != null &&
+            (previous.protocolCode() != snapshot.protocolCode() ||
+                previous.variantCode() != snapshot.variantCode() ||
+                previous.identityDomainCode() != snapshot.identityDomainCode());
         upsertSite(connection, snapshot);
 
-        if(protocolChanged)
+        if(classificationChanged)
         {
             clearProtocolSpecificChildren(connection, snapshot.guid());
         }
 
-        if(previous != null && !protocolChanged &&
+        if(previous != null && !classificationChanged &&
             Objects.equals(previous.snapshotHash(), snapshot.snapshotHash()))
         {
             confirmCurrentControls(connection, snapshot, childRetentionCutoffEpochMilliseconds);
-            return;
+            reconcileProvisionalChannels(connection, snapshot);
+            return true;
         }
 
         clearMutableChannelRoles(connection, snapshot.guid());
@@ -272,6 +278,7 @@ public final class TrunkedSiteSchema
         }
 
         confirmCurrentControls(connection, snapshot, childRetentionCutoffEpochMilliseconds);
+        reconcileProvisionalChannels(connection, snapshot);
         Set<NeighborKey> neighborKeys = neighborKeys(connection, snapshot.guid());
         int neighborLimit = Math.min(snapshot.neighbors().size(), MAXIMUM_NEIGHBOR_FACTS_PER_SNAPSHOT);
 
@@ -293,12 +300,14 @@ public final class TrunkedSiteSchema
                 }
             }
         }
+
+        return true;
     }
 
     /**
-     * Channel and neighbor identities are meaningful only within their decoder protocol. A receiver GUID can be
-     * reused when its configured decoder changes, so retained facts from the previous protocol must not be merged
-     * into the new protocol's evidence.
+     * Channel and neighbor identities are meaningful only within their protocol variant and identity domain. A
+     * receiver GUID can be reconfigured, so retained facts from an incompatible classification must not be merged
+     * into the new evidence.
      */
     private static void clearProtocolSpecificChildren(Connection connection, String guid) throws SQLException
     {
@@ -360,6 +369,69 @@ public final class TrunkedSiteSchema
             statement.setString(2, guid);
             statement.setInt(3, mutableRoleFlags);
             statement.executeUpdate();
+        }
+    }
+
+    /**
+     * A configured control frequency is initially stored without a logical channel or slot. Once the current
+     * protocol snapshot resolves that exact frequency, remove only that provisional row. The resolved row has already
+     * been inserted or confirmed above, so its current-control role and freshness are preserved. Unresolved
+     * frequencies and placeholders for other frequencies remain intact.
+     */
+    private static void reconcileProvisionalChannels(Connection connection, Snapshot snapshot) throws SQLException
+    {
+        Set<Long> resolvedFrequencies = new HashSet<>();
+        int channelLimit = Math.min(snapshot.channels().size(), MAXIMUM_CHANNEL_FACTS_PER_SNAPSHOT);
+
+        for(int x = 0; x < channelLimit; x++)
+        {
+            Channel channel = snapshot.channels().get(x);
+
+            if(channel != null && channel.frequencyHertz() != null && channel.frequencyHertz() > 0 &&
+                (channel.channelNumber() != null || channel.inboundChannelNumber() != null ||
+                    channel.timeslot() != null))
+            {
+                resolvedFrequencies.add(channel.frequencyHertz());
+            }
+        }
+
+        if(resolvedFrequencies.isEmpty())
+        {
+            return;
+        }
+
+        try(PreparedStatement statement = connection.prepareStatement("""
+            DELETE FROM trunked_site_channel_summary AS provisional
+            WHERE provisional.guid = ?
+              AND provisional.channel_number = ?
+              AND provisional.inbound_channel_number = ?
+              AND provisional.timeslot = ?
+              AND provisional.frequency_hz = ?
+              AND EXISTS (
+                  SELECT 1
+                  FROM trunked_site_channel_summary AS resolved
+                  WHERE resolved.guid = provisional.guid
+                    AND resolved.frequency_hz = provisional.frequency_hz
+                    AND (resolved.channel_number != ?
+                         OR resolved.inbound_channel_number != ?
+                         OR resolved.timeslot != ?)
+              )
+            """))
+        {
+            for(Long frequency: resolvedFrequencies)
+            {
+                statement.setString(1, snapshot.guid());
+                statement.setInt(2, UNKNOWN);
+                statement.setInt(3, UNKNOWN);
+                statement.setInt(4, UNKNOWN);
+                statement.setLong(5, frequency);
+                statement.setInt(6, UNKNOWN);
+                statement.setInt(7, UNKNOWN);
+                statement.setInt(8, UNKNOWN);
+                statement.addBatch();
+            }
+
+            statement.executeBatch();
         }
     }
 
@@ -571,14 +643,19 @@ public final class TrunkedSiteSchema
     private static SiteState siteState(Connection connection, String guid) throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement(
-            "SELECT snapshot_hash, last_seen_ms, protocol_code FROM trunked_site_snapshot WHERE guid = ?"))
+            """
+            SELECT snapshot_hash, last_seen_ms, protocol_code, variant_code, identity_domain_code
+            FROM trunked_site_snapshot
+            WHERE guid = ?
+            """))
         {
             statement.setString(1, guid);
 
             try(ResultSet resultSet = statement.executeQuery())
             {
                 return resultSet.next() ?
-                    new SiteState(resultSet.getString(1), resultSet.getLong(2), resultSet.getInt(3)) : null;
+                    new SiteState(resultSet.getString(1), resultSet.getLong(2), resultSet.getInt(3),
+                        resultSet.getInt(4), resultSet.getInt(5)) : null;
             }
         }
     }
@@ -617,9 +694,21 @@ public final class TrunkedSiteSchema
                 failure_code = excluded.failure_code,
                 primary_frequency_hz = excluded.primary_frequency_hz,
                 current_control_hz = excluded.current_control_hz,
-                first_seen_ms = min(trunked_site_snapshot.first_seen_ms, excluded.first_seen_ms),
+                first_seen_ms = CASE
+                    WHEN trunked_site_snapshot.protocol_code != excluded.protocol_code
+                      OR trunked_site_snapshot.variant_code != excluded.variant_code
+                      OR trunked_site_snapshot.identity_domain_code != excluded.identity_domain_code
+                    THEN excluded.first_seen_ms
+                    ELSE min(trunked_site_snapshot.first_seen_ms, excluded.first_seen_ms)
+                END,
                 last_seen_ms = max(trunked_site_snapshot.last_seen_ms, excluded.last_seen_ms),
-                observation_count = trunked_site_snapshot.observation_count + 1
+                observation_count = CASE
+                    WHEN trunked_site_snapshot.protocol_code != excluded.protocol_code
+                      OR trunked_site_snapshot.variant_code != excluded.variant_code
+                      OR trunked_site_snapshot.identity_domain_code != excluded.identity_domain_code
+                    THEN 1
+                    ELSE trunked_site_snapshot.observation_count + 1
+                END
             """))
         {
             int parameter = 1;
@@ -899,7 +988,8 @@ public final class TrunkedSiteSchema
         }
     }
 
-    private record SiteState(String snapshotHash, long lastSeenEpochMilliseconds, int protocolCode)
+    private record SiteState(String snapshotHash, long lastSeenEpochMilliseconds, int protocolCode,
+                             int variantCode, int identityDomainCode)
     {
     }
 

@@ -80,6 +80,72 @@ class TrunkedSiteSchemaTest
     }
 
     @Test
+    void resolvedChannelReplacesOnlyItsFrequencyPlaceholderIncludingOnHeartbeat() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("resolved-channel.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        TrunkedSiteSchema.Channel unresolvedControl = new TrunkedSiteSchema.Channel(
+            null, null, null, 451_000_000L, null,
+            TrunkedSiteSchema.CHANNEL_ROLE_CURRENT_CONTROL, 1_000L);
+        TrunkedSiteSchema.Channel otherUnresolvedFrequency = new TrunkedSiteSchema.Channel(
+            null, null, null, 452_000_000L, null,
+            TrunkedSiteSchema.CHANNEL_ROLE_OBSERVED, 1_000L);
+        TrunkedSiteSchema.Channel resolvedControl = new TrunkedSiteSchema.Channel(
+            42, null, 1, 451_000_000L, 456_000_000L,
+            TrunkedSiteSchema.CHANNEL_ROLE_CURRENT_CONTROL | TrunkedSiteSchema.CHANNEL_ROLE_OBSERVED, 2_000L);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            TrunkedSiteSchema.upsert(connection, reconciliationSnapshot(1_000L, "unresolved",
+                List.of(unresolvedControl, otherUnresolvedFrequency)));
+            assertEquals(2, scalarLong(connection, """
+                SELECT COUNT(*) FROM trunked_site_channel_summary
+                WHERE guid='reconciliation-site' AND channel_number=-1
+                """));
+
+            TrunkedSiteSchema.upsert(connection, reconciliationSnapshot(2_000L, "resolved",
+                List.of(resolvedControl, otherUnresolvedFrequency)));
+            assertEquals(0, scalarLong(connection, """
+                SELECT COUNT(*) FROM trunked_site_channel_summary
+                WHERE guid='reconciliation-site' AND channel_number=-1 AND frequency_hz=451000000
+                """));
+            assertEquals(1, scalarLong(connection, """
+                SELECT COUNT(*) FROM trunked_site_channel_summary
+                WHERE guid='reconciliation-site' AND channel_number=42 AND timeslot=1
+                """));
+            assertEquals(1, scalarLong(connection, """
+                SELECT COUNT(*) FROM trunked_site_channel_summary
+                WHERE guid='reconciliation-site' AND channel_number=-1 AND frequency_hz=452000000
+                """));
+
+            //Simulates the extra provisional row left by an older build after the resolved snapshot was stored.
+            statement.executeUpdate("""
+                INSERT INTO trunked_site_channel_summary (
+                    guid, channel_number, inbound_channel_number, timeslot, frequency_hz, role_flags,
+                    first_seen_ms, last_seen_ms, observation_count
+                ) VALUES ('reconciliation-site', -1, -1, -1, 451000000, 1, 1000, 1500, 1)
+                """);
+            TrunkedSiteSchema.upsert(connection, reconciliationSnapshot(3_000L, "resolved",
+                List.of(resolvedControl, otherUnresolvedFrequency)));
+
+            assertEquals(0, scalarLong(connection, """
+                SELECT COUNT(*) FROM trunked_site_channel_summary
+                WHERE guid='reconciliation-site' AND channel_number=-1 AND frequency_hz=451000000
+                """));
+            assertEquals(3_000L, scalarLong(connection, """
+                SELECT last_seen_ms FROM trunked_site_channel_summary
+                WHERE guid='reconciliation-site' AND channel_number=42 AND timeslot=1
+                """));
+            assertEquals(TrunkedSiteSchema.CHANNEL_ROLE_CURRENT_CONTROL,
+                scalarLong(connection, """
+                    SELECT role_flags & 1 FROM trunked_site_channel_summary
+                    WHERE guid='reconciliation-site' AND channel_number=42 AND timeslot=1
+                    """));
+        }
+    }
+
+    @Test
     void freshSnapshotsReplaceMutableControlRolesAndRejectOlderState() throws Exception
     {
         Path database = mTemporaryFolder.resolve("mutable-state.sqlite");
@@ -158,8 +224,8 @@ class TrunkedSiteSchemaTest
                 WHERE guid='mutable-site' AND channel_number=44
                 """));
 
-            TrunkedSiteSchema.upsert(connection, mutableSnapshot(1_500, "stale", 451_000_000L,
-                List.of(originalCurrent), neighbor));
+            assertFalse(TrunkedSiteSchema.upsert(connection,
+                mutableSnapshot(1_500, "stale", 451_000_000L, List.of(originalCurrent), neighbor)));
             assertEquals("third", scalarString(connection, """
                 SELECT snapshot_hash FROM trunked_site_snapshot WHERE guid='mutable-site'
                 """));
@@ -313,6 +379,56 @@ class TrunkedSiteSchemaTest
             assertEquals(1, scalarLong(connection, """
                 SELECT COUNT(*) FROM trunked_site_neighbor_summary
                 WHERE guid='transition-site' AND identity_domain_code=2
+                """));
+        }
+    }
+
+    @Test
+    void acceptedSameProtocolVariantAndDomainChangesReplaceIncompatibleChildren() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("same-protocol-classification-transition.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            TrunkedSiteSchema.upsert(connection, classificationSnapshot("variant-site", 1_000L,
+                TrunkedSiteSchema.PROTOCOL_DMR, 1, 2, 451_000_000L));
+            TrunkedSiteSchema.upsert(connection, classificationSnapshot("variant-site", 2_000L,
+                TrunkedSiteSchema.PROTOCOL_DMR, 2, 2, 452_000_000L));
+
+            assertEquals(1, scalarLong(connection, """
+                SELECT COUNT(*) FROM trunked_site_channel_summary WHERE guid='variant-site'
+                """));
+            assertEquals(1, scalarLong(connection, """
+                SELECT COUNT(*) FROM trunked_site_channel_summary
+                WHERE guid='variant-site' AND frequency_hz=452000000
+                """));
+            assertEquals(1, scalarLong(connection, """
+                SELECT COUNT(*) FROM trunked_site_neighbor_summary WHERE guid='variant-site'
+                """));
+
+            assertFalse(TrunkedSiteSchema.upsert(connection, classificationSnapshot("variant-site", 1_500L,
+                TrunkedSiteSchema.PROTOCOL_DMR, 1, 2, 453_000_000L)));
+            assertEquals(1, scalarLong(connection, """
+                SELECT COUNT(*) FROM trunked_site_channel_summary
+                WHERE guid='variant-site' AND frequency_hz=452000000
+                """));
+
+            TrunkedSiteSchema.upsert(connection, classificationSnapshot("domain-site", 1_000L,
+                TrunkedSiteSchema.PROTOCOL_NXDN, 1, 1, 155_000_000L));
+            TrunkedSiteSchema.upsert(connection, classificationSnapshot("domain-site", 2_000L,
+                TrunkedSiteSchema.PROTOCOL_NXDN, 1, 2, 156_000_000L));
+
+            assertEquals(1, scalarLong(connection, """
+                SELECT COUNT(*) FROM trunked_site_channel_summary WHERE guid='domain-site'
+                """));
+            assertEquals(1, scalarLong(connection, """
+                SELECT COUNT(*) FROM trunked_site_channel_summary
+                WHERE guid='domain-site' AND frequency_hz=156000000
+                """));
+            assertEquals(1, scalarLong(connection, """
+                SELECT COUNT(*) FROM trunked_site_neighbor_summary
+                WHERE guid='domain-site' AND identity_domain_code=2
                 """));
         }
     }
@@ -832,6 +948,15 @@ class TrunkedSiteSchemaTest
             451_000_000L, currentControl, channels, List.of(neighbor));
     }
 
+    private static TrunkedSiteSchema.Snapshot reconciliationSnapshot(long observedAt, String hash,
+                                                                     List<TrunkedSiteSchema.Channel> channels)
+    {
+        return new TrunkedSiteSchema.Snapshot(observedAt, "reconciliation-site", hash,
+            TrunkedSiteSchema.PROTOCOL_DMR, 1, 2, "Metro", "Downtown", null, "DMR",
+            10, null, 20, null, null, null, null, null, null, null, null, 0, null,
+            451_000_000L, 451_000_000L, channels, List.of());
+    }
+
     private static TrunkedSiteSchema.Snapshot nxdnSnapshot(long observedAt, String hash)
     {
         return new TrunkedSiteSchema.Snapshot(observedAt, "nxdn-site", hash,
@@ -857,6 +982,18 @@ class TrunkedSiteSchemaTest
             List.of(dmr ?
                 new TrunkedSiteSchema.Neighbor(1, 2, 10, 20, 31, 43, 452_000_000L, 1) :
                 new TrunkedSiteSchema.Neighbor(2, 4, 7, 8, 10, 122, 155_012_500L, 1)));
+    }
+
+    private static TrunkedSiteSchema.Snapshot classificationSnapshot(
+        String guid, long observedAt, int protocol, int variant, int domain, long frequency)
+    {
+        return new TrunkedSiteSchema.Snapshot(observedAt, guid, "same-hash", protocol, variant, domain,
+            "System", "Site", null, protocol == TrunkedSiteSchema.PROTOCOL_DMR ? "DMR" : "NXDN",
+            1, 2, 3, null, null, null, null, null, null, null, null, 0, null,
+            frequency, frequency,
+            List.of(new TrunkedSiteSchema.Channel(42, null, 1, frequency, frequency + 5_000_000L, 1)),
+            List.of(new TrunkedSiteSchema.Neighbor(variant, domain, 1, 2, 4, 43,
+                frequency + 12_500L, 1)));
     }
 
     private static TrunkedSiteSchema.Snapshot snapshotWithChildren(long observedAt, String hash,

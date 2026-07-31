@@ -31,6 +31,7 @@ import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.Opcode;
 import io.github.dsheirer.module.decode.p25.reference.VoiceServiceOptions;
+import io.github.dsheirer.module.decode.traffic.TrunkedTalkerAliasEvent;
 import java.lang.reflect.Field;
 import java.util.List;
 import java.util.Map;
@@ -120,7 +121,7 @@ class P25TrafficChannelManagerTest
         }
 
         assertTrue(manager.getTalkerAliasManager().hasAlias(radio));
-        P25TalkerAliasEvent event = subscriber.event.get();
+        TrunkedTalkerAliasEvent event = subscriber.event.get();
         assertNotNull(event);
         assertEquals(parentChannel, event.channel());
         assertEquals(radio, event.radio());
@@ -384,10 +385,10 @@ class P25TrafficChannelManagerTest
 
     private static class TalkerAliasSubscriber
     {
-        private final AtomicReference<P25TalkerAliasEvent> event = new AtomicReference<>();
+        private final AtomicReference<TrunkedTalkerAliasEvent> event = new AtomicReference<>();
 
         @Subscribe
-        public void receive(P25TalkerAliasEvent talkerAliasEvent)
+        public void receive(TrunkedTalkerAliasEvent talkerAliasEvent)
         {
             event.set(talkerAliasEvent);
         }

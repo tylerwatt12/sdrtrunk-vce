@@ -34,7 +34,7 @@ class StatsAliasResolver
     private static final String DMR_PROTOCOL_FILTER = "identifier.protocol = 'DMR'";
     private static final String NXDN_PROTOCOL_FILTER = "identifier.protocol = 'NXDN'";
     private volatile Snapshot mSnapshot = new Snapshot(List.of(), List.of(), List.of(), List.of(), List.of(),
-        List.of(), Map.of(), 0);
+        List.of(), 0);
 
     void enrichTalkgroups(Connection connection, List<Map<String,Object>> rows) throws SQLException
     {
@@ -49,33 +49,49 @@ class StatsAliasResolver
     void enrichTalkgroups(Connection connection, List<Map<String,Object>> rows, String identifierColumn,
                           String prefix) throws SQLException
     {
+        if(rows.isEmpty())
+        {
+            return;
+        }
+
         Snapshot snapshot = snapshot(connection);
-        enrich(rows, snapshot.talkgroups(), snapshot.aliasLists(), identifierColumn, prefix);
+        enrich(rows, snapshot.talkgroups(), loadAliasLists(connection), identifierColumn, prefix);
     }
 
     void enrichRadios(Connection connection, List<Map<String,Object>> rows, String identifierColumn,
                       String prefix) throws SQLException
     {
+        if(rows.isEmpty())
+        {
+            return;
+        }
+
         Snapshot snapshot = snapshot(connection);
-        enrich(rows, snapshot.radios(), snapshot.aliasLists(), identifierColumn, prefix);
+        enrich(rows, snapshot.radios(), loadAliasLists(connection), identifierColumn, prefix);
     }
 
     void enrichActivity(Connection connection, List<Map<String,Object>> rows) throws SQLException
     {
+        if(rows.isEmpty())
+        {
+            return;
+        }
+
         Snapshot snapshot = snapshot(connection);
+        Map<Integer,Set<String>> aliasLists = loadAliasLists(connection);
 
         for(Map<String,Object> row: rows)
         {
-            enrichActivityIdentity(row, snapshot, true, "source_radio_id", "source_alias_");
+            enrichActivityIdentity(row, snapshot, aliasLists, true, "source_radio_id", "source_alias_");
             Integer targetKind = integer(row.get("target_kind_code"));
 
             if(targetKind != null && (targetKind == 1 || targetKind == 3))
             {
-                enrichActivityIdentity(row, snapshot, false, "target_id", "target_alias_");
+                enrichActivityIdentity(row, snapshot, aliasLists, false, "target_id", "target_alias_");
             }
             else if(targetKind != null && targetKind == 2)
             {
-                enrichActivityIdentity(row, snapshot, true, "target_id", "target_alias_");
+                enrichActivityIdentity(row, snapshot, aliasLists, true, "target_id", "target_alias_");
             }
         }
     }
@@ -85,7 +101,8 @@ class StatsAliasResolver
      * lookup, while conventional P25 and all DMR/NXDN identities resolve only against the alias list assigned to the
      * exact receiver context.
      */
-    private void enrichActivityIdentity(Map<String,Object> row, Snapshot snapshot, boolean radio,
+    private void enrichActivityIdentity(Map<String,Object> row, Snapshot snapshot,
+                                        Map<Integer,Set<String>> aliasLists, boolean radio,
                                         String identifierColumn, String prefix)
     {
         String protocol = string(row.get("protocol"));
@@ -109,7 +126,7 @@ class StatsAliasResolver
             if(Integer.valueOf(1).equals(integer(row.get("channel_kind_code"))) ||
                 integer(row.get("wacn")) != null && integer(row.get("system_id")) != null)
             {
-                enrich(row, rules, snapshot.aliasLists(), identifierColumn, prefix);
+                enrich(row, rules, aliasLists, identifierColumn, prefix);
             }
             else
             {
@@ -120,9 +137,15 @@ class StatsAliasResolver
 
     void enrichRelationships(Connection connection, List<Map<String,Object>> rows) throws SQLException
     {
+        if(rows.isEmpty())
+        {
+            return;
+        }
+
         Snapshot snapshot = snapshot(connection);
-        enrich(rows, snapshot.radios(), snapshot.aliasLists(), "radio_id", "radio_alias_");
-        enrich(rows, snapshot.talkgroups(), snapshot.aliasLists(), "talkgroup_id", "talkgroup_alias_");
+        Map<Integer,Set<String>> aliasLists = loadAliasLists(connection);
+        enrich(rows, snapshot.radios(), aliasLists, "radio_id", "radio_alias_");
+        enrich(rows, snapshot.talkgroups(), aliasLists, "talkgroup_id", "talkgroup_alias_");
     }
 
     /**
@@ -279,9 +302,16 @@ class StatsAliasResolver
         Map<Integer,Set<String>> aliasLists = new HashMap<>();
 
         try(Statement statement = connection.createStatement(); ResultSet resultSet = statement.executeQuery("""
-            SELECT DISTINCT system_key, alias_list_name
-            FROM p25_site_snapshot
-            WHERE system_key IS NOT NULL AND alias_list_name IS NOT NULL AND trim(alias_list_name) <> ''
+            SELECT DISTINCT scope.p25_system_key AS system_key, site.alias_list_name
+            FROM trunked_identity_scope scope
+            JOIN trunked_identity_scope_context ownership ON ownership.scope_id = scope.scope_id
+            JOIN receiver_context context ON context.id = ownership.context_id
+            JOIN p25_site_snapshot site
+              ON site.guid = context.guid AND site.system_key = scope.p25_system_key
+            WHERE scope.protocol_code = 1
+              AND scope.p25_system_key IS NOT NULL
+              AND site.alias_list_name IS NOT NULL
+              AND trim(site.alias_list_name) <> ''
             """))
         {
             while(resultSet.next())
@@ -315,7 +345,7 @@ class StatsAliasResolver
                     load(connection, "alias_talkgroup", DMR_PROTOCOL_FILTER),
                     load(connection, "alias_radio", DMR_PROTOCOL_FILTER),
                     load(connection, "alias_talkgroup", NXDN_PROTOCOL_FILTER),
-                    load(connection, "alias_radio", NXDN_PROTOCOL_FILTER), loadAliasLists(connection), now);
+                    load(connection, "alias_radio", NXDN_PROTOCOL_FILTER), now);
                 mSnapshot = snapshot;
             }
         }
@@ -364,8 +394,7 @@ class StatsAliasResolver
     }
 
     private record Snapshot(List<Rule> talkgroups, List<Rule> radios, List<Rule> dmrTalkgroups,
-                            List<Rule> dmrRadios, List<Rule> nxdnTalkgroups, List<Rule> nxdnRadios,
-                            Map<Integer,Set<String>> aliasLists, long loadedAt)
+                            List<Rule> dmrRadios, List<Rule> nxdnTalkgroups, List<Rule> nxdnRadios, long loadedAt)
     {
     }
 

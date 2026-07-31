@@ -30,6 +30,7 @@ import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
+import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.alias.TalkerAliasManager;
 import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
@@ -43,6 +44,7 @@ import io.github.dsheirer.module.decode.nxdn.channel.NXDNChannel;
 import io.github.dsheirer.module.decode.nxdn.channel.NXDNChannelDFA;
 import io.github.dsheirer.module.decode.nxdn.channel.NXDNChannelFake;
 import io.github.dsheirer.module.decode.nxdn.channel.NXDNChannelLookup;
+import io.github.dsheirer.module.decode.nxdn.identifier.NXDNRadioIdentifier;
 import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkerAliasIdentifier;
 import io.github.dsheirer.module.decode.nxdn.layer3.call.DataCallAssignment;
 import io.github.dsheirer.module.decode.nxdn.layer3.call.VoiceCall;
@@ -59,6 +61,8 @@ import io.github.dsheirer.module.decode.nxdn.layer3.type.VoiceCallOption;
 import io.github.dsheirer.module.decode.traffic.TrafficChannelManager;
 import io.github.dsheirer.module.decode.traffic.TrunkedCallStartEvent;
 import io.github.dsheirer.module.decode.traffic.TrunkedCallStartTracker;
+import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
+import io.github.dsheirer.module.decode.traffic.TrunkedTalkerAliasEvent;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.source.config.SourceConfigTuner;
@@ -490,25 +494,52 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
     public void processTalkerAlias(IChannelDescriptor channel, NXDNTalkerAliasIdentifier talkerAlias,
                                    RadioIdentifier radio, long timestamp)
     {
+        if(talkerAlias == null || talkerAlias.getValue() == null ||
+            talkerAlias.getValue().toString().isBlank() || radio == null || radio.getRole() != Role.FROM)
+        {
+            return;
+        }
+
         mLock.lock();
 
         try
         {
             long frequency = channel != null ? channel.getDownlinkFrequency() : 0;
             NXDNChannelEventTracker tracker = getTrackerRemoveIfStale(frequency, timestamp);
+            IdentifierCollection context = new IdentifierCollection(List.of(radio, talkerAlias));
 
             if(tracker != null)
             {
                 tracker.addIdentifierIfMissing(talkerAlias);
+                context = new IdentifierCollection(tracker.getEvent().getIdentifierCollection().getIdentifiers());
                 broadcast(tracker);
             }
 
             getTalkerAliasManager().update(radio, talkerAlias);
+
+            if(mTrunkingEnabled)
+            {
+                MyEventBus.getGlobalEventBus().post(new TrunkedTalkerAliasEvent(mParentChannel, Protocol.NXDN,
+                    radio, talkerAlias, context, talkerAliasIdentityDomain(radio),
+                    timestamp > 0 ? timestamp : System.currentTimeMillis()));
+            }
         }
         finally
         {
             mLock.unlock();
         }
+    }
+
+    private TrunkedIdentityDomain talkerAliasIdentityDomain(RadioIdentifier radio)
+    {
+        if(radio instanceof NXDNRadioIdentifier nxdnRadio && nxdnRadio.isTypeD() ||
+            mParentChannel.getDecodeConfiguration() instanceof DecodeConfigNXDN config &&
+                config.getTransmissionMode() != null && config.getTransmissionMode().isTypeD())
+        {
+            return TrunkedIdentityDomain.NXDN_TYPE_D;
+        }
+
+        return TrunkedIdentityDomain.NXDN_TYPE_C;
     }
 
     /**

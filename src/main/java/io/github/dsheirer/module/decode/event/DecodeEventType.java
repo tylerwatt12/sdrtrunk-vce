@@ -84,7 +84,12 @@ public enum DecodeEventType
     UDP_PACKET("UDP/IP Packet"),
     UNKNOWN_PACKET("Unknown Packet"),
     XCMP("Motorola XCMP"),
-    UNKNOWN("Unknown");
+    UNKNOWN("Unknown"),
+    /*
+     * Keep new values at the end.  Activity history stores ordinal + 1, so inserting a value above an existing one
+     * would reinterpret retained event rows.
+     */
+    DENIAL("Denial");
 
     private final String mLabel;
 
@@ -125,7 +130,8 @@ public enum DecodeEventType
      */
     public static final Set<@NonNull DecodeEventType> REGISTRATION = Set.copyOf(EnumSet.of(DecodeEventType.AFFILIATE,
             DecodeEventType.AUTOMATIC_REGISTRATION_SERVICE, DecodeEventType.REGISTER, DecodeEventType.REGISTER_ESN,
-            DecodeEventType.DEREGISTER, DecodeEventType.REQUEST, DecodeEventType.RESPONSE, DecodeEventType.RESPONSE_PACKET));
+            DecodeEventType.DENIAL, DecodeEventType.DEREGISTER, DecodeEventType.REQUEST, DecodeEventType.RESPONSE,
+            DecodeEventType.RESPONSE_PACKET));
 
     /**
      * All other event types of this enumeration that are not included in the groupings above.

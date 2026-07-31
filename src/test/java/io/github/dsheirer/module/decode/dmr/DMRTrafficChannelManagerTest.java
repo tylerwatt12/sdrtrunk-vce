@@ -16,12 +16,18 @@ import io.github.dsheirer.channel.metadata.activity.ChannelActivityRow;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
+import io.github.dsheirer.identifier.alias.DmrTalkerAliasIdentifier;
 import io.github.dsheirer.module.decode.dmr.channel.DMRTier3Channel;
 import io.github.dsheirer.module.decode.dmr.channel.TimeslotFrequency;
+import io.github.dsheirer.module.decode.dmr.event.DMRDecodeEvent;
 import io.github.dsheirer.module.decode.dmr.identifier.DMRRadio;
 import io.github.dsheirer.module.decode.dmr.identifier.DMRTalkgroup;
 import io.github.dsheirer.module.decode.dmr.message.data.csbk.Opcode;
+import io.github.dsheirer.module.decode.event.DecodeEvent;
+import io.github.dsheirer.module.decode.event.DecodeEventType;
+import io.github.dsheirer.module.decode.traffic.TrunkedCallAttributionEvent;
 import io.github.dsheirer.module.decode.traffic.TrunkedCallStartEvent;
+import io.github.dsheirer.module.decode.traffic.TrunkedTalkerAliasEvent;
 import io.github.dsheirer.preference.nowplaying.NowPlayingPreference;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import java.util.List;
@@ -70,6 +76,90 @@ class DMRTrafficChannelManagerTest
         assertEquals(92, subscriber.events.get(1).event().getIdentifierCollection().getToIdentifier().getValue());
         assertEquals(1_000L, subscriber.events.get(0).event().getTimeStart());
         assertEquals(1_200L, subscriber.events.get(1).event().getTimeStart());
+    }
+
+    @Test
+    void trafficUpdatesAttributeLateSourceAndEncryptionWithoutStartingAnotherCall()
+    {
+        Channel parent = new Channel("DMR Site", Channel.ChannelType.STANDARD);
+        DecodeConfigDMR config = new DecodeConfigDMR();
+        config.setChannelMode(DMRChannelMode.TRUNKED);
+        config.setTrafficChannelPoolSize(0);
+        parent.setDecodeConfiguration(config);
+        DMRTrafficChannelManager manager = new DMRTrafficChannelManager(parent);
+        manager.setInterModuleEventBus(new EventBus());
+        DMRTier3Channel channel = new DMRTier3Channel(12, 1);
+        TimeslotFrequency mapping = new TimeslotFrequency();
+        mapping.setNumber(12);
+        mapping.setDownlinkFrequency(451_012_500L);
+        channel.setTimeslotFrequency(mapping);
+        MutableIdentifierCollection targetOnly = new MutableIdentifierCollection();
+        targetOnly.update(DMRTalkgroup.create(91));
+        CallStartSubscriber startSubscriber = new CallStartSubscriber();
+        AttributionSubscriber attributionSubscriber = new AttributionSubscriber();
+        MyEventBus.getGlobalEventBus().register(startSubscriber);
+        MyEventBus.getGlobalEventBus().register(attributionSubscriber);
+
+        try
+        {
+            manager.processChannelGrant(channel, targetOnly,
+                Opcode.STANDARD_TALKGROUP_VOICE_CHANNEL_GRANT, 1_000L, false);
+            DecodeEvent sourceUpdate = DMRDecodeEvent.builder(DecodeEventType.CALL_GROUP, 1_000L)
+                .channel(channel)
+                .identifiers(identifiers(101, 91))
+                .timeslot(1)
+                .build();
+            sourceUpdate.end(1_100L);
+            manager.receiveTrafficChannelEvent(sourceUpdate);
+            manager.receiveTrafficChannelEvent(sourceUpdate);
+
+            DecodeEvent encryptedUpdate = DMRDecodeEvent.builder(DecodeEventType.CALL_GROUP_ENCRYPTED, 1_000L)
+                .channel(channel)
+                .identifiers(identifiers(101, 91))
+                .timeslot(1)
+                .build();
+            encryptedUpdate.end(1_200L);
+            manager.receiveTrafficChannelEvent(encryptedUpdate);
+            manager.receiveTrafficChannelEvent(encryptedUpdate);
+        }
+        finally
+        {
+            MyEventBus.getGlobalEventBus().unregister(attributionSubscriber);
+            MyEventBus.getGlobalEventBus().unregister(startSubscriber);
+        }
+
+        assertEquals(1, startSubscriber.events.size());
+        assertEquals(2, attributionSubscriber.events.size());
+        assertTrue(attributionSubscriber.events.get(0).sourceBecameKnown());
+        assertEquals(101, attributionSubscriber.events.get(0).identifiers().getFromIdentifier().getValue());
+        assertTrue(attributionSubscriber.events.get(1).encryptionBecameKnown());
+    }
+
+    @Test
+    void publishesOnlyExplicitTalkerAliasWithKnownSource()
+    {
+        Channel parent = new Channel("DMR Site", Channel.ChannelType.STANDARD);
+        DecodeConfigDMR config = new DecodeConfigDMR();
+        config.setChannelMode(DMRChannelMode.TRUNKED);
+        parent.setDecodeConfiguration(config);
+        DMRTrafficChannelManager manager = new DMRTrafficChannelManager(parent);
+        TalkerAliasSubscriber subscriber = new TalkerAliasSubscriber();
+        MyEventBus.getGlobalEventBus().register(subscriber);
+
+        try
+        {
+            MutableIdentifierCollection identifiers = identifiers(101, 91);
+            manager.processTalkerAlias(DmrTalkerAliasIdentifier.create("ENGINE 4"),
+                DMRRadio.createFrom(101), identifiers, 2_000L);
+        }
+        finally
+        {
+            MyEventBus.getGlobalEventBus().unregister(subscriber);
+        }
+
+        assertEquals(1, subscriber.events.size());
+        assertEquals("ENGINE 4", subscriber.events.getFirst().alias().getValue());
+        assertEquals(101, subscriber.events.getFirst().radio().getValue());
     }
 
     @Test
@@ -170,6 +260,28 @@ class DMRTrafficChannelManagerTest
 
         @Subscribe
         public void receive(TrunkedCallStartEvent event)
+        {
+            events.add(event);
+        }
+    }
+
+    private static class AttributionSubscriber
+    {
+        private final List<TrunkedCallAttributionEvent> events = new CopyOnWriteArrayList<>();
+
+        @Subscribe
+        public void receive(TrunkedCallAttributionEvent event)
+        {
+            events.add(event);
+        }
+    }
+
+    private static class TalkerAliasSubscriber
+    {
+        private final List<TrunkedTalkerAliasEvent> events = new CopyOnWriteArrayList<>();
+
+        @Subscribe
+        public void receive(TrunkedTalkerAliasEvent event)
         {
             events.add(event);
         }

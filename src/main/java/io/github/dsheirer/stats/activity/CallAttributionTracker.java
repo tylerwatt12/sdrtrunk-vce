@@ -37,9 +37,9 @@ class CallAttributionTracker
 
         cleanup(callStart.observedAtEpochMilliseconds());
         mActiveCalls.put(ResourceKey.from(callStart), new ActiveCall(
-            Destination.from(callStart.targetId(), callStart.targetKind(), callStart.patchMemberTalkgroupIds()),
-            positive(callStart.sourceRadioId()), callStart.encrypted(), callStart.observedAtEpochMilliseconds(),
-            callStart.observedAtEpochMilliseconds()));
+            Destination.from(callStart), eligibleSource(callStart), callStart.encrypted(),
+            callStart.observedAtEpochMilliseconds(),
+            callStart.observedAtEpochMilliseconds(), callStart.identityDomain()));
         trim();
     }
 
@@ -60,9 +60,8 @@ class CallAttributionTracker
             return previous != null ? AttributionResult.TRACKED_WITHOUT_CHANGE : AttributionResult.NOT_TRACKED;
         }
 
-        Destination observedDestination = Destination.from(continuation.targetId(), continuation.targetKind(),
-            continuation.patchMemberTalkgroupIds());
-        Integer observedSource = positive(continuation.sourceRadioId());
+        Destination observedDestination = Destination.from(continuation);
+        Integer observedSource = eligibleSource(continuation);
 
         //A known target change belongs to the next physical call-start notification.
         if(previous.destination().isKnown() && observedDestination.isKnown() &&
@@ -78,9 +77,12 @@ class CallAttributionTracker
         Destination updatedDestination = observedDestination.isKnown() ?
             observedDestination : previous.destination();
         Integer updatedSource = previous.sourceRadioId() != null ? previous.sourceRadioId() : observedSource;
+        P25ActivityLogRecords.IdentityDomain updatedDomain =
+            previous.identityDomain() != P25ActivityLogRecords.IdentityDomain.STANDARD ?
+                previous.identityDomain() : continuation.identityDomain();
         mActiveCalls.put(key, new ActiveCall(updatedDestination, updatedSource,
             previous.encrypted() || continuation.encrypted(), previous.callStart(),
-            continuation.observedAtEpochMilliseconds()));
+            continuation.observedAtEpochMilliseconds(), updatedDomain));
         trim();
 
         if(!destinationBecameKnown && !sourceBecameKnown && !encryptionBecameKnown)
@@ -92,7 +94,8 @@ class CallAttributionTracker
             continuation.contextKey(), continuation.guid(), continuation.frequencyHertz(), continuation.timeslot(),
             updatedDestination.identityId(),
             updatedDestination.kind(), updatedDestination.patchMembers(), updatedSource,
-            destinationBecameKnown, sourceBecameKnown, encryptionBecameKnown, previous.encrypted()));
+            destinationBecameKnown, sourceBecameKnown, encryptionBecameKnown, previous.encrypted(),
+            updatedDomain));
     }
 
     synchronized void clear()
@@ -166,6 +169,15 @@ class CallAttributionTracker
         }
     }
 
+    private static Integer eligibleSource(P25ActivityLogRecords.ActivityEvent activity)
+    {
+        Integer source = activity != null ? positive(activity.sourceRadioId()) : null;
+        int protocol = activity != null ? TrunkedIdentityPolicy.protocolFamilyCode(activity.protocol()) : 0;
+        return TrunkedIdentityPolicy.isDirectoryRadio(protocol,
+            activity != null ? activity.identityDomain() : P25ActivityLogRecords.IdentityDomain.STANDARD, source) ?
+            source : null;
+    }
+
     private record ResourceKey(String contextKey, String channel, int timeslot)
     {
         private static ResourceKey from(P25ActivityLogRecords.ActivityEvent activity)
@@ -179,7 +191,8 @@ class CallAttributionTracker
     }
 
     private record ActiveCall(Destination destination, Integer sourceRadioId, boolean encrypted,
-                              long callStart, long lastObservedAt)
+                              long callStart, long lastObservedAt,
+                              P25ActivityLogRecords.IdentityDomain identityDomain)
     {
     }
 
@@ -202,15 +215,18 @@ class CallAttributionTracker
             return other != null && identityId == other.identityId() && Objects.equals(kind, other.kind());
         }
 
-        private static Destination from(String targetId, String targetKind, List<Integer> patchMembers)
+        private static Destination from(P25ActivityLogRecords.ActivityEvent activity)
         {
-            Integer identity = positive(targetId);
+            Integer identity = activity != null ? positive(activity.targetId()) : null;
+            Integer kind = activity != null ? TrunkedIdentityPolicy.identityKindCode(activity.targetKind()) : null;
+            int protocol = activity != null ? TrunkedIdentityPolicy.protocolFamilyCode(activity.protocol()) : 0;
 
-            if(identity != null && (Form.TALKGROUP.name().equals(targetKind) ||
-                Form.PATCH_GROUP.name().equals(targetKind) || Form.RADIO.name().equals(targetKind)))
+            if(identity != null && kind != null &&
+                TrunkedIdentityPolicy.isDirectoryIdentity(protocol, activity.identityDomain(), kind, identity))
             {
-                return new Destination(identity, targetKind,
-                    patchMembers != null ? List.copyOf(patchMembers) : List.of());
+                return new Destination(identity, activity.targetKind(),
+                    activity.patchMemberTalkgroupIds() != null ?
+                        List.copyOf(activity.patchMemberTalkgroupIds()) : List.of());
             }
 
             return new Destination(0, null, List.of());

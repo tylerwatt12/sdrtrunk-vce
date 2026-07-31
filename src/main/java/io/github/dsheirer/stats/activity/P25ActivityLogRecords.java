@@ -69,6 +69,16 @@ final class P25ActivityLogRecords
     }
 
     /**
+     * Identity-number interpretation when a protocol has multiple on-air address domains.
+     */
+    enum IdentityDomain
+    {
+        STANDARD,
+        NXDN_TYPE_C,
+        NXDN_TYPE_D
+    }
+
+    /**
      * One current talkgroup per radio.  A null talkgroup clears the current affiliation.
      */
     record RadioAffiliationUpdate(int radioId, Integer talkgroupId)
@@ -81,13 +91,28 @@ final class P25ActivityLogRecords
                          Integer timeslot, boolean encrypted, Integer encryptionAlgorithmId, Integer encryptionKeyId,
                          Integer wacn, Integer systemId, Integer nac, Integer rfss, Integer site, String channelName,
                          String decoder, String talkerAlias, boolean countedCall, String dedupeKey,
-                         RadioAffiliationUpdate affiliationUpdate)
+                         RadioAffiliationUpdate affiliationUpdate, IdentityDomain identityDomain)
         implements P25ActivityLogRecord
     {
         ActivityEvent
         {
             patchMemberTalkgroupIds = distinctPositiveTalkgroups(patchMemberTalkgroupIds,
                 positiveInteger(targetId));
+            identityDomain = identityDomain != null ? identityDomain : IdentityDomain.STANDARD;
+        }
+
+        ActivityEvent(long observedAtEpochMilliseconds, String contextKey, String guid, ContextKind contextKind,
+                      String protocol, Action action, String eventType, String sourceRadioId, String targetId,
+                      String targetKind, List<Integer> patchMemberTalkgroupIds, Long frequencyHertz, String lcn,
+                      Integer timeslot, boolean encrypted, Integer encryptionAlgorithmId, Integer encryptionKeyId,
+                      Integer wacn, Integer systemId, Integer nac, Integer rfss, Integer site, String channelName,
+                      String decoder, String talkerAlias, boolean countedCall, String dedupeKey,
+                      RadioAffiliationUpdate affiliationUpdate)
+        {
+            this(observedAtEpochMilliseconds, contextKey, guid, contextKind, protocol, action, eventType,
+                sourceRadioId, targetId, targetKind, patchMemberTalkgroupIds, frequencyHertz, lcn, timeslot,
+                encrypted, encryptionAlgorithmId, encryptionKeyId, wacn, systemId, nac, rfss, site, channelName,
+                decoder, talkerAlias, countedCall, dedupeKey, affiliationUpdate, IdentityDomain.STANDARD);
         }
 
         ActivityEvent(long observedAtEpochMilliseconds, String contextKey, String guid, ContextKind contextKind,
@@ -101,7 +126,7 @@ final class P25ActivityLogRecords
             this(observedAtEpochMilliseconds, contextKey, guid, contextKind, protocol, action, eventType,
                 sourceRadioId, targetId, targetKind, List.of(), frequencyHertz, lcn, timeslot, encrypted,
                 encryptionAlgorithmId, encryptionKeyId, wacn, systemId, nac, rfss, site, channelName, decoder,
-                talkerAlias, countedCall, dedupeKey, affiliationUpdate);
+                talkerAlias, countedCall, dedupeKey, affiliationUpdate, IdentityDomain.STANDARD);
         }
     }
 
@@ -113,12 +138,26 @@ final class P25ActivityLogRecords
                                   int destinationId, String destinationKind,
                                   List<Integer> patchMemberTalkgroupIds, Integer sourceRadioId,
                                   boolean destinationBecameKnown, boolean sourceBecameKnown,
-                                  boolean encryptionBecameKnown, boolean encryptedBeforeObservation)
+                                  boolean encryptionBecameKnown, boolean encryptedBeforeObservation,
+                                  IdentityDomain identityDomain)
         implements P25ActivityLogRecord
     {
         TrunkedCallAttribution
         {
             patchMemberTalkgroupIds = distinctPositiveTalkgroups(patchMemberTalkgroupIds, destinationId);
+            identityDomain = identityDomain != null ? identityDomain : IdentityDomain.STANDARD;
+        }
+
+        TrunkedCallAttribution(long callStartEpochMilliseconds, String contextKey, String guid,
+                               Long frequencyHertz, Integer timeslot,
+                               int destinationId, String destinationKind,
+                               List<Integer> patchMemberTalkgroupIds, Integer sourceRadioId,
+                               boolean destinationBecameKnown, boolean sourceBecameKnown,
+                               boolean encryptionBecameKnown, boolean encryptedBeforeObservation)
+        {
+            this(callStartEpochMilliseconds, contextKey, guid, frequencyHertz, timeslot, destinationId,
+                destinationKind, patchMemberTalkgroupIds, sourceRadioId, destinationBecameKnown,
+                sourceBecameKnown, encryptionBecameKnown, encryptedBeforeObservation, IdentityDomain.STANDARD);
         }
 
         @Override
@@ -142,9 +181,20 @@ final class P25ActivityLogRecords
      * Late over-the-air talker alias update for an already-counted call.
      */
     record TalkerAliasUpdate(long observedAtEpochMilliseconds, String contextKey, String guid, Integer wacn,
-                             Integer systemId, int radioId, String talkerAlias)
+                             Integer systemId, int radioId, String talkerAlias, IdentityDomain identityDomain)
         implements P25ActivityLogRecord
     {
+        TalkerAliasUpdate
+        {
+            identityDomain = identityDomain != null ? identityDomain : IdentityDomain.STANDARD;
+        }
+
+        TalkerAliasUpdate(long observedAtEpochMilliseconds, String contextKey, String guid, Integer wacn,
+                          Integer systemId, int radioId, String talkerAlias)
+        {
+            this(observedAtEpochMilliseconds, contextKey, guid, wacn, systemId, radioId, talkerAlias,
+                IdentityDomain.STANDARD);
+        }
     }
 
     /**
@@ -156,12 +206,22 @@ final class P25ActivityLogRecords
      */
     record CompletedCallOutput(long callStartEpochMilliseconds, String contextKey, String guid,
                                Long frequencyHertz, Integer timeslot, int talkgroupId, String targetKind,
-                               List<Integer> patchMemberTalkgroupIds, Integer sourceRadioId, CallOutput output)
+                               List<Integer> patchMemberTalkgroupIds, Integer sourceRadioId, CallOutput output,
+                               IdentityDomain identityDomain)
         implements P25ActivityLogRecord
     {
         CompletedCallOutput
         {
             patchMemberTalkgroupIds = distinctPositiveTalkgroups(patchMemberTalkgroupIds, talkgroupId);
+            identityDomain = identityDomain != null ? identityDomain : IdentityDomain.STANDARD;
+        }
+
+        CompletedCallOutput(long callStartEpochMilliseconds, String contextKey, String guid,
+                            Long frequencyHertz, Integer timeslot, int talkgroupId, String targetKind,
+                            List<Integer> patchMemberTalkgroupIds, Integer sourceRadioId, CallOutput output)
+        {
+            this(callStartEpochMilliseconds, contextKey, guid, frequencyHertz, timeslot, talkgroupId, targetKind,
+                patchMemberTalkgroupIds, sourceRadioId, output, IdentityDomain.STANDARD);
         }
 
         CompletedCallOutput(long callStartEpochMilliseconds, String contextKey, String guid,
@@ -169,14 +229,15 @@ final class P25ActivityLogRecords
                             List<Integer> patchMemberTalkgroupIds, CallOutput output)
         {
             this(callStartEpochMilliseconds, contextKey, guid, frequencyHertz, timeslot, talkgroupId, targetKind,
-                patchMemberTalkgroupIds, null, output);
+                patchMemberTalkgroupIds, null, output, IdentityDomain.STANDARD);
         }
 
         CompletedCallOutput(long callStartEpochMilliseconds, String guid, int talkgroupId, String targetKind,
                             List<Integer> patchMemberTalkgroupIds, CallOutput output)
         {
             this(callStartEpochMilliseconds, guid != null && !guid.isBlank() ? "GUID:" + guid : null, guid,
-                null, null, talkgroupId, targetKind, patchMemberTalkgroupIds, null, output);
+                null, null, talkgroupId, targetKind, patchMemberTalkgroupIds, null, output,
+                IdentityDomain.STANDARD);
         }
 
         CompletedCallOutput(long callStartEpochMilliseconds, String guid, int talkgroupId, CallOutput output)

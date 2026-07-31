@@ -31,6 +31,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.URI;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -140,61 +141,63 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             mPort = port;
             mAnyIpEnabled = anyIpEnabled;
 
-            mServer.createContext("/api/status", exchange -> handleJson(exchange, this::status));
-            mServer.createContext("/api/dashboard", exchange -> handleJson(exchange, mDatabase::dashboard));
-            mServer.createContext("/api/quality", exchange -> handleJson(exchange,
+            mServer.createContext("/api/status", exchange -> handleJson(exchange, "/api/status", this::status));
+            mServer.createContext("/api/dashboard",
+                exchange -> handleJson(exchange, "/api/dashboard", mDatabase::dashboard));
+            mServer.createContext("/api/quality", exchange -> handleJson(exchange, "/api/quality",
                 () -> mDatabase.qualityHistory(StatsRequest.from(exchange.getRequestURI()))));
-            mServer.createContext("/api/systems", exchange -> handleJson(exchange,
-                () -> mDatabase.systems(StatsRequest.from(exchange.getRequestURI()))));
-            mServer.createContext("/api/system-directory", exchange -> handleJson(exchange,
+            mServer.createContext("/api/system-directory", exchange -> handleJson(exchange, "/api/system-directory",
                 () -> mDatabase.systemDirectory(StatsRequest.from(exchange.getRequestURI()))));
-            mServer.createContext("/api/sites", exchange -> handleJson(exchange,
-                () -> mDatabase.sites(StatsRequest.from(exchange.getRequestURI()))));
-            mServer.createContext("/api/system", exchange -> handleJson(exchange,
+            mServer.createContext("/api/system", exchange -> handleJson(exchange, "/api/system",
                 () -> mDatabase.system(StatsRequest.from(exchange.getRequestURI()))));
-            mServer.createContext("/api/system/sites", exchange -> handleJson(exchange,
+            mServer.createContext("/api/system/sites", exchange -> handleJson(exchange, "/api/system/sites",
                 () -> mDatabase.systemSites(StatsRequest.from(exchange.getRequestURI()))));
-            mServer.createContext("/api/system/talkgroups", exchange -> handleJson(exchange,
+            mServer.createContext("/api/system/talkgroups", exchange -> handleJson(exchange, "/api/system/talkgroups",
                 () -> mDatabase.systemTalkgroups(StatsRequest.from(exchange.getRequestURI()))));
-            mServer.createContext("/api/system/radios", exchange -> handleJson(exchange,
+            mServer.createContext("/api/system/radios", exchange -> handleJson(exchange, "/api/system/radios",
                 () -> mDatabase.systemRadios(StatsRequest.from(exchange.getRequestURI()))));
-            mServer.createContext("/api/system/talker-aliases", exchange -> handleJson(exchange,
+            mServer.createContext("/api/system/talker-aliases",
+                exchange -> handleJson(exchange, "/api/system/talker-aliases",
                 () -> mDatabase.systemTalkerAliases(StatsRequest.from(exchange.getRequestURI()))));
-            mServer.createContext("/api/talkgroup", exchange -> handleJson(exchange,
+            mServer.createContext("/api/talkgroup", exchange -> handleJson(exchange, "/api/talkgroup",
                 () -> mDatabase.talkgroup(StatsRequest.from(exchange.getRequestURI()))));
-            mServer.createContext("/api/talkgroup/activity", exchange -> handleJson(exchange,
+            mServer.createContext("/api/talkgroup/activity",
+                exchange -> handleJson(exchange, "/api/talkgroup/activity",
                 () -> mDatabase.talkgroupActivity(StatsRequest.from(exchange.getRequestURI()))));
-            mServer.createContext("/api/radio", exchange -> handleJson(exchange,
+            mServer.createContext("/api/radio", exchange -> handleJson(exchange, "/api/radio",
                 () -> mDatabase.radio(StatsRequest.from(exchange.getRequestURI()))));
-            mServer.createContext("/api/affiliations", exchange -> handleJson(exchange,
+            mServer.createContext("/api/affiliations", exchange -> handleJson(exchange, "/api/affiliations",
                 () -> mDatabase.currentAffiliations(StatsRequest.from(exchange.getRequestURI()))));
-            mServer.createContext("/api/radio-talkgroups", exchange -> handleJson(exchange,
+            mServer.createContext("/api/relationships", exchange -> handleJson(exchange, "/api/relationships",
                 () -> mDatabase.radioTalkgroupRelationships(StatsRequest.from(exchange.getRequestURI()))));
-            mServer.createContext("/api/site", exchange -> handleJson(exchange,
+            mServer.createContext("/api/site", exchange -> handleJson(exchange, "/api/site",
                 () -> mDatabase.site(StatsRequest.from(exchange.getRequestURI()))));
-            mServer.createContext("/api/site/channels", exchange -> handleJson(exchange,
+            mServer.createContext("/api/site/channels", exchange -> handleJson(exchange, "/api/site/channels",
                 () -> mDatabase.siteChannels(StatsRequest.from(exchange.getRequestURI()))));
-            mServer.createContext("/api/site/talkgroups", exchange -> handleJson(exchange,
+            mServer.createContext("/api/site/talkgroups", exchange -> handleJson(exchange, "/api/site/talkgroups",
                 () -> mDatabase.siteTalkgroups(StatsRequest.from(exchange.getRequestURI()))));
-            mServer.createContext("/api/site/quality", exchange -> handleJson(exchange,
+            mServer.createContext("/api/site/quality", exchange -> handleJson(exchange, "/api/site/quality",
                 () -> mDatabase.siteQuality(StatsRequest.from(exchange.getRequestURI()))));
-            mServer.createContext("/api/site/bands", exchange -> handleJson(exchange,
+            mServer.createContext("/api/site/bands", exchange -> handleJson(exchange, "/api/site/bands",
                 () -> mDatabase.siteBands(StatsRequest.from(exchange.getRequestURI()))));
-            mServer.createContext("/api/site/neighbors", exchange -> handleJson(exchange,
+            mServer.createContext("/api/site/neighbors", exchange -> handleJson(exchange, "/api/site/neighbors",
                 () -> mDatabase.siteNeighbors(StatsRequest.from(exchange.getRequestURI()))));
-            mServer.createContext("/api/site/patches", exchange -> handleJson(exchange,
+            mServer.createContext("/api/site/patches", exchange -> handleJson(exchange, "/api/site/patches",
                 () -> mDatabase.sitePatches(StatsRequest.from(exchange.getRequestURI()))));
-            mServer.createContext("/api/activity", exchange -> handleJson(exchange,
+            mServer.createContext("/api/activity", exchange -> handleJson(exchange, "/api/activity",
                 () -> mDatabase.activity(StatsRequest.from(exchange.getRequestURI()))));
-            mServer.createContext("/api/activity/recent", exchange -> handleJson(exchange,
+            mServer.createContext("/api/activity/recent", exchange -> handleJson(exchange, "/api/activity/recent",
                 () -> mDatabase.activity(StatsRequest.from(exchange.getRequestURI()))));
-            mServer.createContext("/api/conventional", exchange -> handleJson(exchange,
+            mServer.createContext("/api/conventional", exchange -> handleJson(exchange, "/api/conventional",
                 () -> mDatabase.conventional(StatsRequest.from(exchange.getRequestURI()))));
-            mServer.createContext("/api/conventional/detail", exchange -> handleJson(exchange,
+            mServer.createContext("/api/conventional/detail",
+                exchange -> handleJson(exchange, "/api/conventional/detail",
                 () -> mDatabase.conventionalDetail(StatsRequest.from(exchange.getRequestURI()))));
-            mServer.createContext("/api/conventional/talkgroups", exchange -> handleJson(exchange,
+            mServer.createContext("/api/conventional/talkgroups",
+                exchange -> handleJson(exchange, "/api/conventional/talkgroups",
                 () -> mDatabase.conventionalTalkgroups(StatsRequest.from(exchange.getRequestURI()))));
-            mServer.createContext("/api/conventional/radios", exchange -> handleJson(exchange,
+            mServer.createContext("/api/conventional/radios",
+                exchange -> handleJson(exchange, "/api/conventional/radios",
                 () -> mDatabase.conventionalRadios(StatsRequest.from(exchange.getRequestURI()))));
             mServer.createContext("/live/systems", this::handleSystemsSse);
             mServer.createContext("/live/sites", this::handleSitesSse);
@@ -297,8 +300,22 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             loggingStatus.detailedHistoryActive());
     }
 
-    private void handleJson(HttpExchange exchange, JsonSupplier supplier) throws IOException
+    /**
+     * Resolves a configured receiver GUID to the durable, protocol-neutral system scope used by web URLs.
+     */
+    public String getScopeToken(String guid)
     {
+        return mDatabase.scopeTokenForGuid(guid);
+    }
+
+    private void handleJson(HttpExchange exchange, String expectedPath, JsonSupplier supplier) throws IOException
+    {
+        if(!hasExactPath(exchange.getRequestURI(), expectedPath))
+        {
+            sendJson(exchange, 404, Map.of("error", "Not found", "status", 404));
+            return;
+        }
+
         if(!requireMethod(exchange, "GET"))
         {
             return;
@@ -319,6 +336,22 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         }
     }
 
+    static boolean hasExactPath(URI uri, String expectedPath)
+    {
+        return uri != null && expectedPath != null && expectedPath.equals(uri.getPath());
+    }
+
+    private static boolean requireExactTextPath(HttpExchange exchange, String expectedPath) throws IOException
+    {
+        if(hasExactPath(exchange.getRequestURI(), expectedPath))
+        {
+            return true;
+        }
+
+        sendText(exchange, 404, "Not found");
+        return false;
+    }
+
     private static void sendJson(HttpExchange exchange, int status, Map<String,Object> value) throws IOException
     {
         byte[] body = OBJECT_MAPPER.writeValueAsBytes(value);
@@ -335,7 +368,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
 
     private void handleSystemsSse(HttpExchange exchange) throws IOException
     {
-        if(!requireMethod(exchange, "GET"))
+        if(!requireExactTextPath(exchange, "/live/systems") || !requireMethod(exchange, "GET"))
         {
             return;
         }
@@ -353,7 +386,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
 
     private void handleSitesSse(HttpExchange exchange) throws IOException
     {
-        if(!requireMethod(exchange, "GET"))
+        if(!requireExactTextPath(exchange, "/live/sites") || !requireMethod(exchange, "GET"))
         {
             return;
         }
@@ -372,7 +405,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
 
     private void handleWebCallsSse(HttpExchange exchange) throws IOException
     {
-        if(!requireMethod(exchange, "GET"))
+        if(!requireExactTextPath(exchange, "/live/web-calls") || !requireMethod(exchange, "GET"))
         {
             return;
         }
@@ -391,7 +424,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
 
     private void handleActivitySse(HttpExchange exchange) throws IOException
     {
-        if(!requireMethod(exchange, "GET"))
+        if(!requireExactTextPath(exchange, "/live/activity") || !requireMethod(exchange, "GET"))
         {
             return;
         }
@@ -508,27 +541,31 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         outputStream.flush();
     }
 
-    private static boolean matchesActivity(Map<?,?> row, StatsRequest request)
+    static boolean matchesActivity(Map<?,?> row, StatsRequest request)
     {
-        Integer wacn = request.optionalIdentifier("wacn");
-        Integer system = request.optionalIdentifier("system_id");
         Integer talkgroup = request.optionalIdentifier("talkgroup_id");
         Integer radio = request.optionalIdentifier("radio_id");
+        String scope = request.text("scope");
         String guid = request.text("guid");
         String context = request.text("context");
 
-        if(wacn != null && !numberEquals(row.get("wacn"), wacn) ||
-            system != null && !numberEquals(row.get("system_id"), system) ||
+        if(scope != null && !scope.equals(row.get("scope_token")) ||
             guid != null && !guid.equals(row.get("guid")) ||
             context != null && !context.equals(row.get("context_key")))
         {
             return false;
         }
 
-        if(talkgroup != null && (!numberEquals(row.get("target_id"), talkgroup) ||
-            !(numberEquals(row.get("target_kind_code"), 1) || numberEquals(row.get("target_kind_code"), 3))))
+        if(talkgroup != null)
         {
-            return false;
+            boolean patch = "patch".equalsIgnoreCase(request.text("kind"));
+            boolean directTarget = numberEquals(row.get("target_id"), talkgroup) &&
+                numberEquals(row.get("target_kind_code"), patch ? 3 : 1);
+
+            if(!directTarget && (patch || !numberListContains(row.get("member_talkgroup_ids"), talkgroup)))
+            {
+                return false;
+            }
         }
 
         return radio == null || numberEquals(row.get("source_radio_id"), radio) ||
@@ -540,12 +577,32 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         return value instanceof Number number && number.intValue() == expected;
     }
 
+    private static boolean numberListContains(Object value, int expected)
+    {
+        if(value instanceof Iterable<?> values)
+        {
+            for(Object member: values)
+            {
+                if(numberEquals(member, expected))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
     private static void validateActivityRequest(StatsRequest request)
     {
-        request.optionalIdentifier("wacn");
-        request.optionalIdentifier("system_id");
         request.optionalIdentifier("talkgroup_id");
         request.optionalIdentifier("radio_id");
+        String kind = request.text("kind");
+
+        if(kind != null && !"talkgroup".equalsIgnoreCase(kind) && !"patch".equalsIgnoreCase(kind))
+        {
+            throw new StatsApiException(400, "kind must be talkgroup or patch");
+        }
     }
 
     @Override

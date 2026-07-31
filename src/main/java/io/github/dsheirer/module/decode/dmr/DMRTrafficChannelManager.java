@@ -32,7 +32,9 @@ import io.github.dsheirer.controller.channel.event.ChannelStartProcessingRequest
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.Role;
+import io.github.dsheirer.identifier.alias.TalkerAliasIdentifier;
 import io.github.dsheirer.identifier.alias.TalkerAliasManager;
+import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.message.IMessage;
 import io.github.dsheirer.message.MessageHistoryPreloadData;
 import io.github.dsheirer.message.MessageHistoryRequest;
@@ -54,6 +56,8 @@ import io.github.dsheirer.module.decode.event.IDecodeEventProvider;
 import io.github.dsheirer.module.decode.traffic.TrafficChannelManager;
 import io.github.dsheirer.module.decode.traffic.TrunkedCallStartEvent;
 import io.github.dsheirer.module.decode.traffic.TrunkedCallStartTracker;
+import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
+import io.github.dsheirer.module.decode.traffic.TrunkedTalkerAliasEvent;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.source.SourceType;
@@ -150,6 +154,31 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
     public TalkerAliasManager getTalkerAliasManager()
     {
         return mTalkerAliasManager;
+    }
+
+    /**
+     * Records a completed over-the-air alias only when its source radio is known.
+     */
+    public void processTalkerAlias(TalkerAliasIdentifier alias, RadioIdentifier radio,
+                                   IdentifierCollection identifiers, long timestamp)
+    {
+        if(alias == null || alias.getValue() == null || alias.getValue().toString().isBlank() ||
+            radio == null || radio.getRole() != Role.FROM)
+        {
+            return;
+        }
+
+        mTalkerAliasManager.update(radio, alias);
+
+        if(mTrunkingEnabled)
+        {
+            IdentifierCollection context = identifiers != null ?
+                new IdentifierCollection(identifiers.getIdentifiers()) : new IdentifierCollection();
+            context.setTimeslot(identifiers != null ? identifiers.getTimeslot() : 0);
+            MyEventBus.getGlobalEventBus().post(new TrunkedTalkerAliasEvent(mParentChannel, Protocol.DMR, radio,
+                alias, context, TrunkedIdentityDomain.STANDARD,
+                timestamp > 0 ? timestamp : System.currentTimeMillis()));
+        }
     }
 
     /**
@@ -415,6 +444,24 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
      */
     public void receiveTrafficChannelEvent(IDecodeEvent trafficChannelEvent)
     {
+        if(mTrunkingEnabled && trafficChannelEvent != null &&
+            trafficChannelEvent.getEventType() != null &&
+            trafficChannelEvent.getEventType().isVoiceCallEvent())
+        {
+            Integer timeslot = trafficChannelEvent.hasTimeslot() ? trafficChannelEvent.getTimeslot() :
+                trafficChannelEvent.getChannelDescriptor() instanceof DMRChannel dmrChannel ?
+                    dmrChannel.getTimeslot() : null;
+            long timestamp = Math.max(trafficChannelEvent.getTimeStart(), trafficChannelEvent.getTimeEnd());
+            TrunkedCallStartTracker.ObservationResult observation = mCallStartTracker.enrichActiveCall(
+                mParentChannel, Protocol.DMR, trafficChannelEvent.getChannelDescriptor(), timeslot,
+                trafficChannelEvent.getIdentifierCollection(), trafficChannelEvent.getEventType(), timestamp);
+
+            if(observation.attribution() != null)
+            {
+                MyEventBus.getGlobalEventBus().post(observation.attribution());
+            }
+        }
+
         broadcast(trafficChannelEvent);
     }
 

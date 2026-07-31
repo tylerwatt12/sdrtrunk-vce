@@ -75,6 +75,9 @@ import io.github.dsheirer.module.decode.p25.reference.DataServiceOptions;
 import io.github.dsheirer.module.decode.p25.reference.ServiceOptions;
 import io.github.dsheirer.module.decode.p25.reference.VoiceServiceOptions;
 import io.github.dsheirer.module.decode.traffic.TrafficChannelManager;
+import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
+import io.github.dsheirer.module.decode.traffic.TrunkedTalkerAliasEvent;
+import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
@@ -367,7 +370,8 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         IdentifierCollection context = identifiers != null ?
             new IdentifierCollection(identifiers.getIdentifiers()) : new IdentifierCollection();
         context.setTimeslot(identifiers != null ? identifiers.getTimeslot() : 0);
-        MyEventBus.getGlobalEventBus().post(new P25TalkerAliasEvent(mParentChannel, radio, alias, context,
+        MyEventBus.getGlobalEventBus().post(new TrunkedTalkerAliasEvent(mParentChannel, Protocol.APCO25, radio,
+            alias, context, TrunkedIdentityDomain.STANDARD,
             timestamp > 0 ? timestamp : System.currentTimeMillis()));
     }
 

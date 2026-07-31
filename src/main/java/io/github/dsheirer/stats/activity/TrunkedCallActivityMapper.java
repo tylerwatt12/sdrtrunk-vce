@@ -22,6 +22,9 @@ import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
+import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
+import io.github.dsheirer.module.decode.nxdn.identifier.NXDNRadioIdentifier;
+import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.traffic.TrunkedCallStartEvent;
 import io.github.dsheirer.module.decode.traffic.TrunkedCallAttributionEvent;
 import io.github.dsheirer.protocol.Protocol;
@@ -96,7 +99,8 @@ class TrunkedCallActivityMapper
             encrypted && encryptionKey != null ? encryptionKey.getKey() : null,
             null, intValue(identifiers, Form.SYSTEM), null, null, intValue(identifiers, Form.SITE),
             null, decoderType != null ? decoderType.name() : protocol.name(),
-            value(first(identifiers, Form.TALKER_ALIAS)), true, null, null);
+            value(first(identifiers, Form.TALKER_ALIAS)), true, null, null,
+            identityDomain(channel, identifiers));
     }
 
     P25ActivityLogRecords.TrunkedCallAttribution map(TrunkedCallAttributionEvent attribution)
@@ -141,7 +145,8 @@ class TrunkedCallActivityMapper
             frequency, attribution.timeslot(),
             destinationId != null ? destinationId : 0, destinationKind, patchMemberTalkgroups(target),
             sourceRadio, attribution.destinationBecameKnown(), attribution.sourceBecameKnown(),
-            attribution.encryptionBecameKnown(), attribution.encryptedBeforeObservation());
+            attribution.encryptionBecameKnown(), attribution.encryptedBeforeObservation(),
+            identityDomain(channel, identifiers));
     }
 
     private static String contextKey(String guid, String configurationId)
@@ -211,6 +216,42 @@ class TrunkedCallActivityMapper
         {
             return null;
         }
+    }
+
+    private static P25ActivityLogRecords.IdentityDomain identityDomain(Channel channel,
+                                                                       IdentifierCollection identifiers)
+    {
+        if(channel != null && channel.getDecodeConfiguration() instanceof DecodeConfigNXDN config)
+        {
+            if(config.getTransmissionMode() != null && config.getTransmissionMode().isTypeD())
+            {
+                return P25ActivityLogRecords.IdentityDomain.NXDN_TYPE_D;
+            }
+
+            return hasTypeDIdentifier(identifiers) ? P25ActivityLogRecords.IdentityDomain.NXDN_TYPE_D :
+                P25ActivityLogRecords.IdentityDomain.NXDN_TYPE_C;
+        }
+
+        return P25ActivityLogRecords.IdentityDomain.STANDARD;
+    }
+
+    private static boolean hasTypeDIdentifier(IdentifierCollection identifiers)
+    {
+        if(identifiers == null)
+        {
+            return false;
+        }
+
+        for(Identifier identifier: identifiers.getIdentifiers())
+        {
+            if(identifier instanceof NXDNTalkgroupIdentifier talkgroup && talkgroup.isTypeD() ||
+                identifier instanceof NXDNRadioIdentifier radio && radio.isTypeD())
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static Identifier first(IdentifierCollection identifiers, Form form)

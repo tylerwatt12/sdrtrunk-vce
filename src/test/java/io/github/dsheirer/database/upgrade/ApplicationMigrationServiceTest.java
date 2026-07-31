@@ -20,6 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.stats.activity.DmrActivitySchema;
+import io.github.dsheirer.stats.activity.P25ActivityLogSchema;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -41,16 +42,16 @@ class ApplicationMigrationServiceTest
     void onlyTheCurrentDevelopmentSchemaIsSupported()
     {
         ApplicationMigrationService.MigrationState current =
-            new ApplicationMigrationService.MigrationState(4, 23, 2, 1);
+            currentState();
         assertTrue(current.supported());
         assertFalse(current.requiresMigration());
         assertEquals("", current.requiredChanges());
 
         for(ApplicationMigrationService.MigrationState predecessor: List.of(
-            new ApplicationMigrationService.MigrationState(3, 23, 2, 1),
-            new ApplicationMigrationService.MigrationState(4, 22, 2, 1),
-            new ApplicationMigrationService.MigrationState(4, 23, null, 1),
-            new ApplicationMigrationService.MigrationState(4, 23, 2, null)))
+            new ApplicationMigrationService.MigrationState(3, P25ActivityLogSchema.SCHEMA_VERSION, 2, 1),
+            new ApplicationMigrationService.MigrationState(4, P25ActivityLogSchema.SCHEMA_VERSION - 1, 2, 1),
+            new ApplicationMigrationService.MigrationState(4, P25ActivityLogSchema.SCHEMA_VERSION, null, 1),
+            new ApplicationMigrationService.MigrationState(4, P25ActivityLogSchema.SCHEMA_VERSION, 2, null)))
         {
             assertFalse(predecessor.supported());
             assertTrue(predecessor.requiresMigration());
@@ -68,7 +69,7 @@ class ApplicationMigrationServiceTest
         ApplicationMigrationService.MigrationState state =
             ApplicationMigrationService.readMigrationState(database);
 
-        assertEquals(new ApplicationMigrationService.MigrationState(4, 23, 2, 1), state);
+        assertEquals(currentState(), state);
         assertTrue(state.supported());
     }
 
@@ -86,11 +87,11 @@ class ApplicationMigrationServiceTest
             .importPrevious(sourceRoot, targetRoot, null);
 
         assertTrue(result.importedPreviousProfile());
-        assertEquals(new ApplicationMigrationService.MigrationState(4, 23, 2, 1), result.sourceState());
+        assertEquals(currentState(), result.sourceState());
         assertTrue(result.helperOutput().contains("Application database migration and validation complete"));
         Path targetDatabase = SdrTrunkDatabasePath.getDatabasePath(targetRoot);
         assertEquals(1, count(targetDatabase, "alias"));
-        assertEquals(new ApplicationMigrationService.MigrationState(4, 23, 2, 1),
+        assertEquals(currentState(),
             ApplicationMigrationService.readMigrationState(targetDatabase));
         assertArrayEquals(sourceHash, sha256(sourceDatabase));
     }
@@ -110,10 +111,10 @@ class ApplicationMigrationServiceTest
         assertNotNull(result.safetyBackup());
         assertTrue(Files.isRegularFile(result.safetyBackup()));
         assertEquals(1, count(result.safetyBackup(), "alias"));
-        assertEquals(new ApplicationMigrationService.MigrationState(4, 23, 2, 1),
+        assertEquals(currentState(),
             ApplicationMigrationService.readMigrationState(result.safetyBackup()));
         assertEquals(1, count(database, "alias"));
-        assertEquals(new ApplicationMigrationService.MigrationState(4, 23, 2, 1),
+        assertEquals(currentState(),
             ApplicationMigrationService.readMigrationState(database));
     }
 
@@ -172,6 +173,11 @@ class ApplicationMigrationServiceTest
             statement.setString(1, name);
             statement.executeUpdate();
         }
+    }
+
+    private static ApplicationMigrationService.MigrationState currentState()
+    {
+        return new ApplicationMigrationService.MigrationState(4, P25ActivityLogSchema.SCHEMA_VERSION, 2, 1);
     }
 
     private static void removeDmrActivitySchema(Path database) throws Exception

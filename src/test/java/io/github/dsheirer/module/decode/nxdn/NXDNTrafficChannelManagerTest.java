@@ -24,14 +24,18 @@ import io.github.dsheirer.module.decode.nxdn.channel.NXDNChannelFake;
 import io.github.dsheirer.module.decode.nxdn.channel.NXDNChannelLookup;
 import io.github.dsheirer.module.decode.nxdn.identifier.NXDNEncryptionKey;
 import io.github.dsheirer.module.decode.nxdn.identifier.NXDNRadioIdentifier;
+import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkerAliasIdentifier;
 import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.nxdn.layer3.NXDNMessageType;
 import io.github.dsheirer.module.decode.nxdn.layer3.call.VoiceCallAssignment;
 import io.github.dsheirer.module.decode.nxdn.layer3.type.CallTimer;
 import io.github.dsheirer.module.decode.nxdn.layer3.type.CallType;
 import io.github.dsheirer.module.decode.nxdn.layer3.type.ChannelAccessInformation;
+import io.github.dsheirer.module.decode.nxdn.layer3.type.TransmissionMode;
 import io.github.dsheirer.module.decode.nxdn.layer3.type.VoiceCallOption;
 import io.github.dsheirer.module.decode.traffic.TrunkedCallStartEvent;
+import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
+import io.github.dsheirer.module.decode.traffic.TrunkedTalkerAliasEvent;
 import io.github.dsheirer.preference.nowplaying.NowPlayingPreference;
 import io.github.dsheirer.protocol.Protocol;
 import java.lang.reflect.Field;
@@ -194,6 +198,34 @@ class NXDNTrafficChannelManagerTest
     }
 
     @Test
+    void publishesTypeDTalkerAliasInTheTypeDIdentityDomain()
+    {
+        Channel parent = new Channel("NXDN Type-D", Channel.ChannelType.STANDARD);
+        DecodeConfigNXDN config = new DecodeConfigNXDN();
+        config.setTransmissionMode(TransmissionMode.TYPE_D);
+        parent.setDecodeConfiguration(config);
+        NXDNTrafficChannelManager manager = new NXDNTrafficChannelManager(parent);
+        TalkerAliasSubscriber subscriber = new TalkerAliasSubscriber();
+        MyEventBus.getGlobalEventBus().register(subscriber);
+
+        try
+        {
+            manager.processTalkerAlias(channel(452_012_500L),
+                new NXDNTalkerAliasIdentifier("UNIT 12"),
+                NXDNRadioIdentifier.createTypeDFrom(0x1234), 2_000L);
+        }
+        finally
+        {
+            MyEventBus.getGlobalEventBus().unregister(subscriber);
+        }
+
+        assertEquals(1, subscriber.events.size());
+        assertEquals(TrunkedIdentityDomain.NXDN_TYPE_D,
+            subscriber.events.getFirst().identityDomain());
+        assertEquals("UNIT 12", subscriber.events.getFirst().alias().getValue());
+    }
+
+    @Test
     void rateLimitsProgressAtTheDefaultCadence()
     {
         Channel parent = new Channel("NXDN", Channel.ChannelType.STANDARD);
@@ -266,6 +298,17 @@ class NXDNTrafficChannelManagerTest
 
         @Subscribe
         public void receive(TrunkedCallStartEvent event)
+        {
+            events.add(event);
+        }
+    }
+
+    private static class TalkerAliasSubscriber
+    {
+        private final List<TrunkedTalkerAliasEvent> events = new CopyOnWriteArrayList<>();
+
+        @Subscribe
+        public void receive(TrunkedTalkerAliasEvent event)
         {
             events.add(event);
         }

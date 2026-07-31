@@ -153,6 +153,9 @@ class TrunkedSiteMetadataMapperTest
         assertTrue((control.roleFlags() & TrunkedSiteSchema.CHANNEL_ROLE_TRAFFIC) != 0);
         assertTrue((control.roleFlags() &
             TrunkedSiteSchema.CHANNEL_ROLE_FREQUENCY_FROM_CONFIGURED_MAP) != 0);
+        assertTrue(mapped.channels().stream().noneMatch(value ->
+            value.channelNumber() == null && value.inboundChannelNumber() == null && value.timeslot() == null &&
+                Long.valueOf(451_000_000L).equals(value.frequencyHertz())));
     }
 
     @Test

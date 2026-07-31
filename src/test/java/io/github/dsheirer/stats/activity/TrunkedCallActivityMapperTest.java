@@ -28,6 +28,7 @@ import io.github.dsheirer.module.decode.nxdn.channel.NXDNChannelLookup;
 import io.github.dsheirer.module.decode.nxdn.identifier.NXDNEncryptionKey;
 import io.github.dsheirer.module.decode.nxdn.identifier.NXDNRadioIdentifier;
 import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkgroupIdentifier;
+import io.github.dsheirer.module.decode.nxdn.layer3.type.TransmissionMode;
 import io.github.dsheirer.module.decode.traffic.TrunkedCallStartEvent;
 import io.github.dsheirer.module.decode.traffic.TrunkedCallStartTracker;
 import io.github.dsheirer.protocol.Protocol;
@@ -163,6 +164,7 @@ class TrunkedCallActivityMapperTest
         assertEquals(3, record.encryptionAlgorithmId());
         assertEquals(7, record.encryptionKeyId());
         assertTrue(record.countedCall());
+        assertEquals(P25ActivityLogRecords.IdentityDomain.NXDN_TYPE_C, record.identityDomain());
 
         Path database = mTemporaryFolder.resolve("nxdn-trunked-call.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
@@ -180,6 +182,28 @@ class TrunkedCallActivityMapperTest
                 WHERE identity_role_code=2 AND identity_kind_code=2 AND identity_id=201
                 """));
         }
+    }
+
+    @Test
+    void preservesNxdnTypeDAddressDomain()
+    {
+        Channel parent = new Channel("NXDN Type-D Site", Channel.ChannelType.STANDARD);
+        parent.setDecodeConfiguration(new DecodeConfigNXDN(TransmissionMode.TYPE_D));
+        parent.setRadresGuid(NXDN_GUID);
+        MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
+        identifiers.update(NXDNRadioIdentifier.createTypeDFrom(0x1134));
+        identifiers.update(NXDNTalkgroupIdentifier.createTypeDTo(0x2223));
+        NXDNChannelLookup channel = new NXDNChannelLookup(12);
+        channel.receive(null, Map.of(12, new ChannelFrequency(12, 452_012_500L, 0)));
+        TrunkedCallStartEvent start = new TrunkedCallStartTracker(3_000).observe(parent, Protocol.NXDN,
+            channel, null, identifiers, DecodeEventType.CALL_GROUP, 2_000L);
+
+        P25ActivityLogRecords.ActivityEvent record = new TrunkedCallActivityMapper().map(start);
+
+        assertNotNull(record);
+        assertEquals(P25ActivityLogRecords.IdentityDomain.NXDN_TYPE_D, record.identityDomain());
+        assertEquals(Integer.toString(0x1134), record.sourceRadioId());
+        assertEquals(Integer.toString(0x2223), record.targetId());
     }
 
     @Test

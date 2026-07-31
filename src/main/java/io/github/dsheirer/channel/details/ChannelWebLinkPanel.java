@@ -18,6 +18,7 @@ import io.github.dsheirer.gui.preference.PreferenceEditorType;
 import io.github.dsheirer.gui.preference.ViewUserPreferenceEditorRequest;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
+import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.stats.StatsWebNavigationState;
@@ -31,9 +32,15 @@ import java.net.URISyntaxException;
 import java.text.DecimalFormat;
 import java.util.EnumMap;
 import java.util.EnumSet;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.StringJoiner;
+import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import javax.swing.JButton;
 import javax.swing.JLabel;
@@ -44,6 +51,8 @@ import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
 import javax.swing.SwingConstants;
 import net.miginfocom.swing.MigLayout;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Contextual launcher for the embedded web console.  Site identity always comes from the configured owner channel,
@@ -51,9 +60,30 @@ import net.miginfocom.swing.MigLayout;
  */
 public class ChannelWebLinkPanel extends JPanel implements Listener<SelectedFrequencyContext>
 {
+    private static final Logger mLog = LoggerFactory.getLogger(ChannelWebLinkPanel.class);
     private static final DecimalFormat FREQUENCY_FORMAT = new DecimalFormat("0.00000");
+    private static final int MAX_SCOPE_CACHE_ENTRIES = 32;
+    private static final long SCOPE_CACHE_REFRESH_MS = TimeUnit.MINUTES.toMillis(1);
+    private static final long SCOPE_RETRY_INITIAL_MS = 250;
+    private static final long SCOPE_RETRY_MAX_MS = TimeUnit.SECONDS.toMillis(10);
     private final Supplier<StatsWebNavigationState> mStateSupplier;
+    private final Function<String,String> mScopeTokenResolver;
     private final BrowserLauncher mBrowserLauncher;
+    private final ScheduledExecutorService mScopeLookupExecutor =
+        Executors.newSingleThreadScheduledExecutor(runnable -> {
+            Thread thread = new Thread(runnable, "desktop web scope lookup");
+            thread.setDaemon(true);
+            return thread;
+        });
+    private final Map<String,ScopeTokenCacheEntry> mScopeTokenCache =
+        new LinkedHashMap<>(MAX_SCOPE_CACHE_ENTRIES + 1, 0.75f, true)
+        {
+            @Override
+            protected boolean removeEldestEntry(Map.Entry<String,ScopeTokenCacheEntry> eldest)
+            {
+                return size() > MAX_SCOPE_CACHE_ENTRIES;
+            }
+        };
     private final Map<Destination,JMenuItem> mDestinationItems = new EnumMap<>(Destination.class);
     private final JLabel mSelectionLabel = new JLabel("Selected: None");
     private final JLabel mMessageLabel = new JLabel(" ");
@@ -64,16 +94,29 @@ public class ChannelWebLinkPanel extends JPanel implements Listener<SelectedFreq
     private final JButton mOpenWebButton = new JButton("Open Web \u25BE");
     private final JButton mOpenConsoleButton = new JButton("Open Full Web Console");
     private SelectedFrequencyContext mSelectedFrequencyContext = SelectedFrequencyContext.clear();
+    private String mScopeLookupGuid;
+    private boolean mScopeLookupScheduled;
+    private int mScopeLookupAttempts;
+    private String mScopeLookupFailure;
+    private String mLoggedScopeFailureSignature;
     private boolean mDisposed;
 
     public ChannelWebLinkPanel(StatsWebServerService statsWebServerService)
     {
-        this(statsWebServerService::getNavigationState, ChannelWebLinkPanel::browse);
+        this(statsWebServerService::getNavigationState, statsWebServerService::getScopeToken,
+            ChannelWebLinkPanel::browse);
     }
 
     ChannelWebLinkPanel(Supplier<StatsWebNavigationState> stateSupplier, BrowserLauncher browserLauncher)
     {
+        this(stateSupplier, guid -> "TEST:" + guid, browserLauncher);
+    }
+
+    ChannelWebLinkPanel(Supplier<StatsWebNavigationState> stateSupplier, Function<String,String> scopeTokenResolver,
+                        BrowserLauncher browserLauncher)
+    {
         mStateSupplier = stateSupplier;
+        mScopeTokenResolver = scopeTokenResolver;
         mBrowserLauncher = browserLauncher;
         init();
         MyEventBus.getGlobalEventBus().register(this);
@@ -168,6 +211,11 @@ public class ChannelWebLinkPanel extends JPanel implements Listener<SelectedFreq
         boolean siteAvailable = target.scope() == LinkScope.SITE;
         boolean conventionalAvailable = target.scope() == LinkScope.CONVENTIONAL;
 
+        if(running && siteAvailable)
+        {
+            requestScopeTokenIfNeeded(target);
+        }
+
         mSelectionLabel.setText(selectionText(mSelectedFrequencyContext));
         mSiteMenu.setVisible(running && target.supports(Destination.SITE_INFO));
         mSystemMenu.setVisible(running && target.supports(Destination.SYSTEM_OVERVIEW));
@@ -196,6 +244,11 @@ public class ChannelWebLinkPanel extends JPanel implements Listener<SelectedFreq
         {
             String decoder = decoderType(selectedChannel) != null ? decoderType(selectedChannel).toString() : "channel";
             showMessage("Channel-specific web pages are not available for " + decoder + ".");
+        }
+        else if(siteAvailable && target.systemScopeToken() == null && mScopeLookupFailure != null)
+        {
+            showMessage("System web pages are temporarily unavailable; the lookup will retry. " +
+                "See the application log for details.");
         }
         else
         {
@@ -264,7 +317,7 @@ public class ChannelWebLinkPanel extends JPanel implements Listener<SelectedFreq
 
         try
         {
-            mBrowserLauncher.open(buildUri(state, destination, target.key()));
+            mBrowserLauncher.open(buildUri(state, destination, target));
         }
         catch(Exception e)
         {
@@ -273,14 +326,15 @@ public class ChannelWebLinkPanel extends JPanel implements Listener<SelectedFreq
         }
     }
 
-    static URI buildUri(StatsWebNavigationState state, Destination destination, String contextKey)
+    static URI buildUri(StatsWebNavigationState state, Destination destination, NavigationTarget target)
     {
         if(state == null || state.port() <= 0)
         {
             throw new IllegalArgumentException("A valid web server state is required");
         }
 
-        if(destination.scope() != LinkScope.GLOBAL && (contextKey == null || contextKey.isBlank()))
+        if(destination.scope() != LinkScope.GLOBAL && (target == null || target.key() == null ||
+            target.key().isBlank()))
         {
             throw new IllegalArgumentException("A channel context is required");
         }
@@ -290,11 +344,22 @@ public class ChannelWebLinkPanel extends JPanel implements Listener<SelectedFreq
 
         if(destination.scope() == LinkScope.SITE)
         {
-            query.add("guid=" + contextKey);
+            if("system".equals(destination.view()))
+            {
+                if(target.systemScopeToken() == null || target.systemScopeToken().isBlank())
+                {
+                    throw new IllegalArgumentException("A system scope is required");
+                }
+                query.add("scope=" + target.systemScopeToken());
+            }
+            else
+            {
+                query.add("guid=" + target.key());
+            }
         }
         else if(destination.scope() == LinkScope.CONVENTIONAL)
         {
-            query.add("context=" + contextKey);
+            query.add("context=" + target.key());
         }
 
         if(destination.tab() != null)
@@ -312,7 +377,7 @@ public class ChannelWebLinkPanel extends JPanel implements Listener<SelectedFreq
         }
     }
 
-    private static NavigationTarget navigationTarget(SelectedFrequencyContext context)
+    private NavigationTarget navigationTarget(SelectedFrequencyContext context)
     {
         Channel channel = selectedChannel(context);
 
@@ -325,7 +390,10 @@ public class ChannelWebLinkPanel extends JPanel implements Listener<SelectedFreq
 
         if(siteCapabilities.isSite() && channel.hasRadresGuid())
         {
-            return new NavigationTarget(LinkScope.SITE, channel.getRadresGuid(), siteCapabilities);
+            String guid = channel.getRadresGuid();
+            ScopeTokenCacheEntry scope = mScopeTokenCache.get(guid);
+            return new NavigationTarget(LinkScope.SITE, guid, scope != null ? scope.token() : null,
+                siteCapabilities);
         }
 
         if(conventionalDecoder(channel))
@@ -334,12 +402,130 @@ public class ChannelWebLinkPanel extends JPanel implements Listener<SelectedFreq
 
             if(contextKey != null)
             {
-                return new NavigationTarget(LinkScope.CONVENTIONAL, contextKey,
+                return new NavigationTarget(LinkScope.CONVENTIONAL, contextKey, null,
                     NavigationCapabilities.CONVENTIONAL);
             }
         }
 
         return NavigationTarget.NONE;
+    }
+
+    /**
+     * Starts at most one off-EDT database lookup for this panel. A missing scope is expected while a newly started
+     * trunked receiver is still producing its first durable identity facts, so misses retry with bounded backoff.
+     * Successful tokens remain usable while later panel refreshes periodically check for a scope reclassification.
+     */
+    private void requestScopeTokenIfNeeded(NavigationTarget target)
+    {
+        if(mDisposed || target == null || target.key() == null ||
+            !target.capabilities().supports(Destination.SYSTEM_OVERVIEW))
+        {
+            return;
+        }
+
+        String guid = target.key();
+        ScopeTokenCacheEntry cached = mScopeTokenCache.get(guid);
+        boolean stale = cached == null ||
+            System.currentTimeMillis() - cached.resolvedAtEpochMilliseconds() >= SCOPE_CACHE_REFRESH_MS;
+
+        if(!stale || mScopeLookupScheduled)
+        {
+            return;
+        }
+
+        if(!guid.equals(mScopeLookupGuid))
+        {
+            mScopeLookupGuid = guid;
+            mScopeLookupAttempts = 0;
+            mScopeLookupFailure = null;
+            mLoggedScopeFailureSignature = null;
+        }
+
+        long delay = retryDelayMilliseconds(mScopeLookupAttempts);
+        mScopeLookupScheduled = true;
+
+        try
+        {
+            mScopeLookupExecutor.schedule(() -> lookupScopeToken(guid), delay, TimeUnit.MILLISECONDS);
+        }
+        catch(RejectedExecutionException e)
+        {
+            mScopeLookupScheduled = false;
+
+            if(!mDisposed)
+            {
+                mLog.warn("Unable to schedule desktop system-scope lookup for receiver [{}]", guid, e);
+            }
+        }
+    }
+
+    private void lookupScopeToken(String guid)
+    {
+        String token = null;
+        RuntimeException failure = null;
+
+        try
+        {
+            token = mScopeTokenResolver.apply(guid);
+        }
+        catch(RuntimeException e)
+        {
+            failure = e;
+        }
+
+        String resolvedToken = token;
+        RuntimeException lookupFailure = failure;
+        EventQueue.invokeLater(() -> completeScopeTokenLookup(guid, resolvedToken, lookupFailure));
+    }
+
+    private void completeScopeTokenLookup(String guid, String token, RuntimeException failure)
+    {
+        if(mDisposed)
+        {
+            return;
+        }
+
+        mScopeLookupScheduled = false;
+        mScopeLookupAttempts++;
+
+        if(token != null && !token.isBlank())
+        {
+            mScopeTokenCache.put(guid,
+                new ScopeTokenCacheEntry(token, System.currentTimeMillis()));
+            mScopeLookupAttempts = 0;
+            mScopeLookupFailure = null;
+            mLoggedScopeFailureSignature = null;
+        }
+        else if(failure != null)
+        {
+            mScopeLookupFailure = failure.getMessage() != null ? failure.getMessage() :
+                failure.getClass().getSimpleName();
+            String signature = failure.getClass().getName() + ":" + failure.getMessage();
+
+            if(!signature.equals(mLoggedScopeFailureSignature))
+            {
+                mLoggedScopeFailureSignature = signature;
+                mLog.warn("Unable to resolve desktop system scope for receiver [{}]", guid, failure);
+            }
+        }
+        else
+        {
+            mScopeTokenCache.remove(guid);
+            mScopeLookupFailure = null;
+        }
+
+        refresh();
+    }
+
+    private static long retryDelayMilliseconds(int attempts)
+    {
+        if(attempts <= 0)
+        {
+            return 0;
+        }
+
+        int shift = Math.min(attempts - 1, 6);
+        return Math.min(SCOPE_RETRY_INITIAL_MS << shift, SCOPE_RETRY_MAX_MS);
     }
 
     private static String conventionalContextKey(Channel channel, SelectedFrequencyContext context)
@@ -356,7 +542,13 @@ public class ChannelWebLinkPanel extends JPanel implements Listener<SelectedFreq
             return null;
         }
 
-        String kind = decoder == DecoderType.P25_CONVENTIONAL ? "CONVENTIONAL_P25" : "CONVENTIONAL_ANALOG";
+        String kind = switch(decoder)
+        {
+            case P25_CONVENTIONAL -> "CONVENTIONAL_P25";
+            case DMR -> "CONVENTIONAL_DMR";
+            case NXDN -> "CONVENTIONAL_NXDN";
+            default -> "CONVENTIONAL_ANALOG";
+        };
         String protocol = decoder.getProtocol() != null && decoder.getProtocol() != io.github.dsheirer.protocol.Protocol.UNKNOWN ?
             decoder.getProtocol().name() : decoder.name();
 
@@ -381,9 +573,8 @@ public class ChannelWebLinkPanel extends JPanel implements Listener<SelectedFreq
 
     /**
      * Resolves the desktop destinations supported by the same protocol capabilities exposed by the web site view.
-     * P25 retains its complete existing navigation. DMR must be explicitly configured as trunked. NXDN has no
-     * configured conventional/trunked mode, so the owner supplied by a Systems activity table is the positive
-     * trunking evidence. Using the owner also preserves site navigation when a traffic row has exact-frequency scope.
+     * P25 retains its complete existing navigation. DMR must be configured as trunked. NXDN accepts either an
+     * explicit trunked setting or the configured owner supplied by a Systems row for a legacy mode-less channel.
      */
     private static NavigationCapabilities siteCapabilities(SelectedFrequencyContext context, Channel channel)
     {
@@ -400,7 +591,9 @@ public class ChannelWebLinkPanel extends JPanel implements Listener<SelectedFreq
             return NavigationCapabilities.TRUNKED_SITE;
         }
 
-        if(decoder == DecoderType.NXDN && context != null && context.ownerChannel() == channel)
+        if(decoder == DecoderType.NXDN && channel.getDecodeConfiguration() instanceof DecodeConfigNXDN nxdn &&
+            nxdn.isTrunked() && (nxdn.hasExplicitChannelMode() ||
+                context != null && context.ownerChannel() == channel))
         {
             return NavigationCapabilities.TRUNKED_SITE;
         }
@@ -411,7 +604,11 @@ public class ChannelWebLinkPanel extends JPanel implements Listener<SelectedFreq
     private static boolean conventionalDecoder(Channel channel)
     {
         DecoderType decoder = decoderType(channel);
-        return decoder == DecoderType.P25_CONVENTIONAL || decoder == DecoderType.NBFM;
+        return decoder == DecoderType.P25_CONVENTIONAL || decoder == DecoderType.NBFM ||
+            (decoder == DecoderType.DMR && channel.getDecodeConfiguration() instanceof DecodeConfigDMR dmr &&
+                dmr.isConventional()) ||
+            (decoder == DecoderType.NXDN && channel.getDecodeConfiguration() instanceof DecodeConfigNXDN nxdn &&
+                nxdn.isConventional());
     }
 
     private static DecoderType decoderType(Channel channel)
@@ -468,6 +665,7 @@ public class ChannelWebLinkPanel extends JPanel implements Listener<SelectedFreq
         if(!mDisposed)
         {
             mDisposed = true;
+            mScopeLookupExecutor.shutdownNow();
             MyEventBus.getGlobalEventBus().unregister(this);
         }
     }
@@ -485,16 +683,23 @@ public class ChannelWebLinkPanel extends JPanel implements Listener<SelectedFreq
         GLOBAL
     }
 
-    private record NavigationTarget(LinkScope scope, String key, NavigationCapabilities capabilities)
+    private record NavigationTarget(LinkScope scope, String key, String systemScopeToken,
+                                    NavigationCapabilities capabilities)
     {
         private static final NavigationTarget NONE =
-            new NavigationTarget(null, null, NavigationCapabilities.NONE);
+            new NavigationTarget(null, null, null, NavigationCapabilities.NONE);
 
         boolean supports(Destination destination)
         {
             return destination != null && (destination.scope() == LinkScope.GLOBAL ||
-                capabilities.supports(destination));
+                capabilities.supports(destination) &&
+                    (!"system".equals(destination.view()) ||
+                        systemScopeToken != null && !systemScopeToken.isBlank()));
         }
+    }
+
+    private record ScopeTokenCacheEntry(String token, long resolvedAtEpochMilliseconds)
+    {
     }
 
     enum Destination
@@ -565,17 +770,18 @@ public class ChannelWebLinkPanel extends JPanel implements Listener<SelectedFreq
     }
 
     /**
-     * Desktop navigation mirrors the site capabilities returned by the web backend. Non-P25 trunked sites currently
-     * expose protocol-neutral site identity, channels, quality, and neighbors. P25-only summaries and system views
-     * stay unavailable instead of opening an empty or unrelated page.
+     * Desktop navigation mirrors the protocol-neutral site and system capabilities returned by the web backend.
+     * P25 alone exposes frequency bands and patch snapshots; every supported trunked protocol exposes its shared
+     * identity, activity, and real over-the-air talker-alias views.
      */
     private enum NavigationCapabilities
     {
         P25_SITE(EnumSet.of(Destination.SITE_INFO, Destination.TOP_TALKGROUPS, Destination.CHANNELS,
             Destination.QUALITY, Destination.NEIGHBORS, Destination.BAND_PLAN, Destination.PATCHES,
             Destination.ACTIVITY_LOG, Destination.SYSTEM_OVERVIEW, Destination.TALKER_ALIASES)),
-        TRUNKED_SITE(EnumSet.of(Destination.SITE_INFO, Destination.CHANNELS, Destination.QUALITY,
-            Destination.NEIGHBORS)),
+        TRUNKED_SITE(EnumSet.of(Destination.SITE_INFO, Destination.TOP_TALKGROUPS, Destination.CHANNELS,
+            Destination.QUALITY, Destination.NEIGHBORS, Destination.ACTIVITY_LOG,
+            Destination.SYSTEM_OVERVIEW, Destination.TALKER_ALIASES)),
         CONVENTIONAL(EnumSet.of(Destination.CONVENTIONAL_INFO, Destination.CONVENTIONAL_ACTIVITY)),
         NONE(EnumSet.noneOf(Destination.class));
 

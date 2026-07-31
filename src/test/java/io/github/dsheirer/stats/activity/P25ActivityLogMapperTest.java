@@ -24,6 +24,7 @@ import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.Channel.ChannelType;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
+import io.github.dsheirer.identifier.alias.DmrTalkerAliasIdentifier;
 import io.github.dsheirer.identifier.configuration.ChannelConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.DecoderTypeConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.FrequencyConfigurationIdentifier;
@@ -35,11 +36,17 @@ import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.dmr.DMRChannelMode;
 import io.github.dsheirer.module.decode.dmr.DMRConventionalCallEvent;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
+import io.github.dsheirer.module.decode.dmr.identifier.DMRRadio;
+import io.github.dsheirer.module.decode.dmr.identifier.DMRTalkgroup;
 import io.github.dsheirer.module.decode.event.DecodeEvent;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
 import io.github.dsheirer.module.decode.nxdn.NXDNChannelMode;
 import io.github.dsheirer.module.decode.nxdn.NXDNConventionalCallEvent;
+import io.github.dsheirer.module.decode.nxdn.identifier.NXDNRadioIdentifier;
+import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkerAliasIdentifier;
+import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkgroupIdentifier;
+import io.github.dsheirer.module.decode.nxdn.layer3.type.TransmissionMode;
 import io.github.dsheirer.module.decode.nbfm.DecodeConfigNBFM;
 import io.github.dsheirer.module.decode.p25.P25ChannelGrantEvent;
 import io.github.dsheirer.module.decode.p25.P25CallStartEvent;
@@ -47,7 +54,8 @@ import io.github.dsheirer.module.decode.p25.P25EncryptionConfirmationTracker;
 import io.github.dsheirer.module.decode.p25.P25AffiliationEvent;
 import io.github.dsheirer.module.decode.p25.P25DecodeEvent;
 import io.github.dsheirer.module.decode.p25.P25GrantObservationEvent;
-import io.github.dsheirer.module.decode.p25.P25TalkerAliasEvent;
+import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
+import io.github.dsheirer.module.decode.traffic.TrunkedTalkerAliasEvent;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25Nac;
@@ -60,6 +68,7 @@ import io.github.dsheirer.module.decode.p25.identifier.encryption.APCO25Encrypti
 import io.github.dsheirer.module.decode.p25.identifier.patch.APCO25PatchGroup;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
+import io.github.dsheirer.module.decode.p25.identifier.channel.StandardChannel;
 import io.github.dsheirer.module.decode.p25.reference.VoiceServiceOptions;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.protocol.Protocol;
@@ -157,12 +166,56 @@ class P25ActivityLogMapperTest
         assertEquals(P25ActivityLogRecords.ContextKind.TRUNKED_SITE, nxdnRecord.contextKind());
         assertEquals(P25ActivityLogRecords.Action.PAGE, nxdnRecord.action());
         assertNull(nxdnRecord.timeslot());
+        assertEquals(P25ActivityLogRecords.IdentityDomain.NXDN_TYPE_C, nxdnRecord.identityDomain());
         assertNotNull(locationRecord);
         assertEquals("DMR", locationRecord.protocol());
         assertEquals(P25ActivityLogRecords.Action.GPS, locationRecord.action());
         assertNotNull(shortDataRecord);
         assertEquals(P25ActivityLogRecords.Action.DATA, shortDataRecord.action());
         assertNull(mapper.map(nxdn, noise));
+    }
+
+    @Test
+    void coalescesOnlyEquivalentDmrSignalingBursts()
+    {
+        DecodeConfigDMR config = new DecodeConfigDMR();
+        config.setChannelMode(DMRChannelMode.TRUNKED);
+        Channel channel = new Channel("DMR Site", ChannelType.STANDARD);
+        channel.setDecodeConfiguration(config);
+        channel.setRadresGuid(GUID);
+        P25ActivityLogMapper mapper = new P25ActivityLogMapper();
+        P25ActivityLogRecords.ActivityEvent register = mapper.map(channel,
+            dmrSignaling(DecodeEventType.COMMAND, "REGISTER", 101, 201, 451_000_000L, 1));
+        P25ActivityLogRecords.ActivityEvent repeated = mapper.map(channel,
+            dmrSignaling(DecodeEventType.COMMAND, " register ", 101, 201, 451_000_000L, 1));
+        P25ActivityLogRecords.ActivityEvent differentSubtype = mapper.map(channel,
+            dmrSignaling(DecodeEventType.COMMAND, "CANCEL CALL", 101, 201, 451_000_000L, 1));
+        P25ActivityLogRecords.ActivityEvent differentType = mapper.map(channel,
+            dmrSignaling(DecodeEventType.REQUEST, "REGISTER", 101, 201, 451_000_000L, 1));
+        P25ActivityLogRecords.ActivityEvent differentSource = mapper.map(channel,
+            dmrSignaling(DecodeEventType.COMMAND, "REGISTER", 102, 201, 451_000_000L, 1));
+        P25ActivityLogRecords.ActivityEvent differentTarget = mapper.map(channel,
+            dmrSignaling(DecodeEventType.COMMAND, "REGISTER", 101, 202, 451_000_000L, 1));
+        P25ActivityLogRecords.ActivityEvent differentChannel = mapper.map(channel,
+            dmrSignaling(DecodeEventType.COMMAND, "REGISTER", 101, 201, 452_000_000L, 1));
+        P25ActivityLogRecords.ActivityEvent differentSlot = mapper.map(channel,
+            dmrSignaling(DecodeEventType.COMMAND, "REGISTER", 101, 201, 451_000_000L, 2));
+        P25ActivityLogRecords.ActivityEvent denied = mapper.map(channel,
+            dmrSignaling(DecodeEventType.DENIAL, "REGISTRATION DENIED", 101, 201, 451_000_000L, 1));
+
+        assertNotNull(register);
+        assertEquals(P25ActivityLogRecords.Action.REGISTER, register.action());
+        assertTrue(register.dedupeKey().startsWith(P25ActivityLogMapper.PROTOCOL_SIGNAL_DEDUPE_PREFIX));
+        assertEquals(register.dedupeKey(), repeated.dedupeKey());
+        assertNotEquals(register.dedupeKey(), differentSubtype.dedupeKey());
+        assertNotEquals(register.dedupeKey(), differentType.dedupeKey());
+        assertNotEquals(register.dedupeKey(), differentSource.dedupeKey());
+        assertNotEquals(register.dedupeKey(), differentTarget.dedupeKey());
+        assertNotEquals(register.dedupeKey(), differentChannel.dedupeKey());
+        assertNotEquals(register.dedupeKey(), differentSlot.dedupeKey());
+        assertEquals(P25ActivityLogRecords.Action.DENIAL, denied.action());
+        assertTrue(P25ActivityLogService.isWithinDedupeWindow(register.dedupeKey(), 1_000L, 1_500L));
+        assertFalse(P25ActivityLogService.isWithinDedupeWindow(register.dedupeKey(), 1_000L, 1_501L));
     }
 
     @Test
@@ -429,9 +482,9 @@ class P25ActivityLogMapperTest
         MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
         identifiers.update(APCO25Wacn.create(0xBEE00));
         identifiers.update(APCO25System.create(0x348));
-        P25TalkerAliasEvent event = new P25TalkerAliasEvent(channel,
+        TrunkedTalkerAliasEvent event = new TrunkedTalkerAliasEvent(channel, Protocol.APCO25,
             APCO25RadioIdentifier.createFrom(1811524), P25TalkerAliasIdentifier.create(" CAR 201 "),
-            identifiers, 2000L);
+            identifiers, TrunkedIdentityDomain.STANDARD, 2000L);
 
         P25ActivityLogRecords.TalkerAliasUpdate update = new P25ActivityLogMapper().map(event);
 
@@ -443,6 +496,35 @@ class P25ActivityLogMapperTest
         assertEquals(0x348, update.systemId());
         assertEquals(1811524, update.radioId());
         assertEquals("CAR 201", update.talkerAlias());
+    }
+
+    @Test
+    void mapsDmrAndTypeDTalkerAliasDomains()
+    {
+        Channel dmr = new Channel("DMR", ChannelType.STANDARD);
+        DecodeConfigDMR dmrConfig = new DecodeConfigDMR();
+        dmrConfig.setChannelMode(DMRChannelMode.TRUNKED);
+        dmr.setDecodeConfiguration(dmrConfig);
+        dmr.setRadresGuid("dmr-alias");
+        P25ActivityLogRecords.TalkerAliasUpdate dmrUpdate = new P25ActivityLogMapper().map(
+            new TrunkedTalkerAliasEvent(dmr, Protocol.DMR, DMRRadio.createFrom(101),
+                DmrTalkerAliasIdentifier.create("ENGINE 4"), new MutableIdentifierCollection(),
+                TrunkedIdentityDomain.STANDARD, 2_000L));
+
+        Channel nxdn = new Channel("NXDN Type-D", ChannelType.STANDARD);
+        DecodeConfigNXDN nxdnConfig = new DecodeConfigNXDN();
+        nxdnConfig.setTransmissionMode(TransmissionMode.TYPE_D);
+        nxdn.setDecodeConfiguration(nxdnConfig);
+        nxdn.setRadresGuid("nxdn-alias");
+        P25ActivityLogRecords.TalkerAliasUpdate nxdnUpdate = new P25ActivityLogMapper().map(
+            new TrunkedTalkerAliasEvent(nxdn, Protocol.NXDN,
+                NXDNRadioIdentifier.createTypeDFrom(0x1234), new NXDNTalkerAliasIdentifier("UNIT 12"),
+                new MutableIdentifierCollection(), TrunkedIdentityDomain.NXDN_TYPE_D, 3_000L));
+
+        assertNotNull(dmrUpdate);
+        assertEquals(P25ActivityLogRecords.IdentityDomain.STANDARD, dmrUpdate.identityDomain());
+        assertNotNull(nxdnUpdate);
+        assertEquals(P25ActivityLogRecords.IdentityDomain.NXDN_TYPE_D, nxdnUpdate.identityDomain());
     }
 
     @Test
@@ -592,6 +674,40 @@ class P25ActivityLogMapperTest
         assertNotNull(metric);
         assertEquals("CONVENTIONAL_NXDN:NXDN:461125000", metric.contextKey());
         assertEquals(461_125_000L, metric.frequencyHertz());
+        assertEquals(P25ActivityLogRecords.IdentityDomain.NXDN_TYPE_C, metric.identityDomain());
+    }
+
+    @Test
+    void preservesNxdnTypeDIdentityDomainForActivityAndCompletedOutputs()
+    {
+        DecodeConfigNXDN config = new DecodeConfigNXDN(TransmissionMode.TYPE_D);
+        config.setChannelMode(NXDNChannelMode.TRUNKED);
+        Channel channel = new Channel("NXDN Type-D Site", ChannelType.STANDARD);
+        channel.setDecodeConfiguration(config);
+        channel.setRadresGuid(GUID);
+        MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
+        identifiers.update(NXDNRadioIdentifier.createTypeDFrom(0x1134));
+        identifiers.update(NXDNTalkgroupIdentifier.createTypeDTo(0x2223));
+        identifiers.update(SiteGuidConfigurationIdentifier.create(GUID));
+        identifiers.update(DecoderTypeConfigurationIdentifier.create(DecoderType.NXDN));
+        DecodeEvent signaling = DecodeEvent.builder(DecodeEventType.PAGE, 2_000L)
+            .protocol(Protocol.NXDN)
+            .identifiers(identifiers)
+            .build();
+
+        P25ActivityLogMapper mapper = new P25ActivityLogMapper();
+        P25ActivityLogRecords.ActivityEvent activity = mapper.map(channel, signaling);
+        AudioCallSnapshot snapshot = new AudioCallSnapshot(new AudioCallId(9L, 10L, 0), null, null,
+            identifiers, Set.of(), 7_200_123L, 7_205_000L, 1, 1, 7_200_123L, 7_205_000L,
+            false, true, false, true, 100, false);
+        P25ActivityLogRecords.CompletedCallOutput output = mapper.mapCompletedCallOutput(
+            new CompletedAudioCall(snapshot, List.of(new float[800])),
+            P25ActivityLogRecords.CallOutput.RECORDED);
+
+        assertNotNull(activity);
+        assertEquals(P25ActivityLogRecords.IdentityDomain.NXDN_TYPE_D, activity.identityDomain());
+        assertNotNull(output);
+        assertEquals(P25ActivityLogRecords.IdentityDomain.NXDN_TYPE_D, output.identityDomain());
     }
 
     @Test
@@ -837,6 +953,23 @@ class P25ActivityLogMapperTest
             .duration(1_000L)
             .details("PATCH VOICE")
             .identifiers(identifiers)
+            .build();
+    }
+
+    private static DecodeEvent dmrSignaling(DecodeEventType eventType, String details, int source, int target,
+                                             long frequency, int timeslot)
+    {
+        MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
+        identifiers.update(DMRRadio.createFrom(source));
+        identifiers.update(DMRTalkgroup.create(target));
+        identifiers.update(FrequencyConfigurationIdentifier.create(frequency));
+        identifiers.update(SiteGuidConfigurationIdentifier.create(GUID));
+        return DecodeEvent.builder(eventType, 1_000L)
+            .protocol(Protocol.DMR)
+            .channel(new StandardChannel(frequency))
+            .details(details)
+            .identifiers(identifiers)
+            .timeslot(timeslot)
             .build();
     }
 }

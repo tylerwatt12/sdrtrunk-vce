@@ -71,8 +71,54 @@ class CallAttributionTrackerTest
         assertTrue(identified.attribution().encryptedBeforeObservation());
     }
 
+    @Test
+    void keepsNxdnTypeDAddressDomainDuringLateAttribution()
+    {
+        CallAttributionTracker tracker = new CallAttributionTracker();
+        tracker.register(activity(3_000L, null, null, false, true,
+            P25ActivityLogRecords.IdentityDomain.NXDN_TYPE_D));
+
+        CallAttributionTracker.AttributionResult identified =
+            tracker.enrich(activity(3_100L, 0x2223, 0x1134, false, false,
+                P25ActivityLogRecords.IdentityDomain.NXDN_TYPE_D));
+
+        assertTrue(identified.tracked());
+        assertEquals(P25ActivityLogRecords.IdentityDomain.NXDN_TYPE_D,
+            identified.attribution().identityDomain());
+    }
+
+    @Test
+    void ignoresReservedP25AddressesUntilARealIdentityArrives()
+    {
+        CallAttributionTracker tracker = new CallAttributionTracker();
+        tracker.register(activity(4_000L, null, null, false, true));
+
+        CallAttributionTracker.AttributionResult reserved =
+            tracker.enrich(activity(4_100L, 0xFFFF, 0xFFFFFC, false, false));
+
+        assertTrue(reserved.tracked());
+        assertNull(reserved.attribution());
+
+        CallAttributionTracker.AttributionResult identified =
+            tracker.enrich(activity(4_200L, 91, 101, false, false));
+
+        assertTrue(identified.tracked());
+        assertEquals(91, identified.attribution().destinationId());
+        assertEquals(101, identified.attribution().sourceRadioId());
+        assertTrue(identified.attribution().destinationBecameKnown());
+        assertTrue(identified.attribution().sourceBecameKnown());
+    }
+
     private static P25ActivityLogRecords.ActivityEvent activity(long timestamp, Integer target, Integer source,
                                                                  boolean encrypted, boolean countedCall)
+    {
+        return activity(timestamp, target, source, encrypted, countedCall,
+            P25ActivityLogRecords.IdentityDomain.STANDARD);
+    }
+
+    private static P25ActivityLogRecords.ActivityEvent activity(long timestamp, Integer target, Integer source,
+                                                                 boolean encrypted, boolean countedCall,
+                                                                 P25ActivityLogRecords.IdentityDomain identityDomain)
     {
         return new P25ActivityLogRecords.ActivityEvent(timestamp, "GUID:test-site", "test-site",
             P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "APCO25",
@@ -80,6 +126,7 @@ class CallAttributionTrackerTest
             encrypted ? "CALL_GROUP_ENCRYPTED" : "CALL_GROUP",
             source != null ? source.toString() : null, target != null ? target.toString() : null,
             target != null ? Form.TALKGROUP.name() : null, List.of(), 851_012_500L, "1-100", 1, encrypted,
-            null, null, 0xbee00, 0x123, 0x293, 1, 2, "P25 Site", "P25_PHASE2", null, countedCall, null, null);
+            null, null, 0xbee00, 0x123, 0x293, 1, 2, "P25 Site", "P25_PHASE2", null, countedCall, null, null,
+            identityDomain);
     }
 }

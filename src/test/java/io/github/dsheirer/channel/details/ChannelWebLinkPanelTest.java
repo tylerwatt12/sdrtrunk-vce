@@ -15,6 +15,7 @@ import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.module.decode.dmr.DMRChannelMode;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
 import io.github.dsheirer.module.decode.nbfm.DecodeConfigNBFM;
+import io.github.dsheirer.module.decode.nxdn.NXDNChannelMode;
 import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.preference.PreferenceType;
@@ -25,7 +26,12 @@ import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
 import javax.swing.JMenuItem;
 import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
@@ -58,6 +64,7 @@ class ChannelWebLinkPanelTest
 
         try
         {
+            awaitSwing(panel::isSystemGroupVisible);
             JMenuItem talkgroups = item(panel, ChannelWebLinkPanel.Destination.TOP_TALKGROUPS);
             JMenuItem aliases = item(panel, ChannelWebLinkPanel.Destination.TALKER_ALIASES);
             JMenuItem activity = item(panel, ChannelWebLinkPanel.Destination.ACTIVITY_LOG);
@@ -87,7 +94,8 @@ class ChannelWebLinkPanelTest
 
             assertEquals("http://127.0.0.1:8090/?view=site&guid=" + ownerGuid + "&tab=talkgroups",
                 opened.get(0).toString());
-            assertEquals("http://127.0.0.1:8090/?view=system&guid=" + ownerGuid + "&tab=talker-aliases",
+            assertEquals("http://127.0.0.1:8090/?view=system&scope=TEST:" + ownerGuid +
+                    "&tab=talker-aliases",
                 opened.get(1).toString());
 
             state.set(new StatsWebNavigationState(true, 8090, true, true));
@@ -133,7 +141,7 @@ class ChannelWebLinkPanelTest
         try
         {
             assertProtocolNeutralSiteDestinations(panel);
-            assertFalse(panel.isSystemGroupVisible());
+            assertTrue(panel.isSystemGroupVisible());
 
             List<ChannelWebLinkPanel.Destination> destinations = List.of(
                 ChannelWebLinkPanel.Destination.SITE_INFO, ChannelWebLinkPanel.Destination.CHANNELS,
@@ -199,7 +207,7 @@ class ChannelWebLinkPanelTest
     }
 
     @Test
-    void conventionalDmrIsNeverPromotedToSiteNavigation() throws Exception
+    void conventionalDmrUsesConventionalNavigationAndIsNeverPromotedToSiteNavigation() throws Exception
     {
         Channel dmr = new Channel("DMR Conventional");
         dmr.setRadresGuid(UUID.randomUUID().toString());
@@ -228,10 +236,56 @@ class ChannelWebLinkPanelTest
         {
             assertFalse(panel.isGroupVisible(ChannelWebLinkPanel.LinkScope.SITE));
             assertFalse(panel.isSystemGroupVisible());
+            assertTrue(panel.isGroupVisible(ChannelWebLinkPanel.LinkScope.CONVENTIONAL));
+            assertTrue(item(panel, ChannelWebLinkPanel.Destination.CONVENTIONAL_INFO).isEnabled());
+            assertTrue(item(panel, ChannelWebLinkPanel.Destination.CONVENTIONAL_ACTIVITY).isEnabled());
             assertFalse(item(panel, ChannelWebLinkPanel.Destination.SITE_INFO).isVisible());
             assertFalse(item(panel, ChannelWebLinkPanel.Destination.NEIGHBORS).isEnabled());
             SwingUtilities.invokeAndWait(item(panel, ChannelWebLinkPanel.Destination.SITE_INFO)::doClick);
             assertTrue(opened.isEmpty());
+
+            SwingUtilities.invokeAndWait(item(panel, ChannelWebLinkPanel.Destination.CONVENTIONAL_INFO)::doClick);
+            assertEquals("http://127.0.0.1:8090/?view=conventional-detail&context=GUID:" +
+                dmr.getRadresGuid() + "&tab=info", opened.getFirst().toString());
+        }
+        finally
+        {
+            SwingUtilities.invokeAndWait(panel::dispose);
+        }
+    }
+
+    @Test
+    void conventionalNxdnUsesConventionalNavigation() throws Exception
+    {
+        String guid = UUID.randomUUID().toString();
+        Channel nxdn = new Channel("NXDN Conventional");
+        nxdn.setRadresGuid(guid);
+        DecodeConfigNXDN configuration = new DecodeConfigNXDN();
+        configuration.setChannelMode(NXDNChannelMode.CONVENTIONAL);
+        nxdn.setDecodeConfiguration(configuration);
+        AtomicReference<StatsWebNavigationState> state = new AtomicReference<>(
+            new StatsWebNavigationState(true, 8090, true, true));
+        List<URI> opened = new ArrayList<>();
+        ChannelWebLinkPanel[] panelReference = new ChannelWebLinkPanel[1];
+
+        SwingUtilities.invokeAndWait(() -> {
+            ChannelWebLinkPanel panel = new ChannelWebLinkPanel(state::get, opened::add);
+            panelReference[0] = panel;
+            panel.receive(new SelectedFrequencyContext(460_112_500L, null, "NXDN", nxdn, nxdn, null, null,
+                ChannelActivitySelectionScope.SITE, false));
+        });
+        SwingUtilities.invokeAndWait(() -> {});
+
+        ChannelWebLinkPanel panel = panelReference[0];
+
+        try
+        {
+            assertTrue(panel.isGroupVisible(ChannelWebLinkPanel.LinkScope.CONVENTIONAL));
+            assertFalse(panel.isGroupVisible(ChannelWebLinkPanel.LinkScope.SITE));
+            assertFalse(panel.isSystemGroupVisible());
+            SwingUtilities.invokeAndWait(item(panel, ChannelWebLinkPanel.Destination.CONVENTIONAL_ACTIVITY)::doClick);
+            assertEquals("http://127.0.0.1:8090/?view=conventional-detail&context=GUID:" + guid +
+                "&tab=activity", opened.getFirst().toString());
         }
         finally
         {
@@ -282,13 +336,82 @@ class ChannelWebLinkPanelTest
             SwingUtilities.invokeAndWait(() -> {});
 
             assertProtocolNeutralSiteDestinations(panel);
-            assertFalse(panel.isSystemGroupVisible());
+            assertTrue(panel.isSystemGroupVisible());
             SwingUtilities.invokeAndWait(item(panel, ChannelWebLinkPanel.Destination.CHANNELS)::doClick);
             assertEquals("http://127.0.0.1:8090/?view=site&guid=" + guid + "&tab=channels",
                 opened.getFirst().toString());
         }
         finally
         {
+            SwingUtilities.invokeAndWait(panel::dispose);
+        }
+    }
+
+    @Test
+    void resolvesSystemScopeOffTheEdtAndRefreshesWhenItBecomesAvailable() throws Exception
+    {
+        String guid = UUID.randomUUID().toString();
+        Channel dmr = new Channel("DMR Site");
+        dmr.setRadresGuid(guid);
+        DecodeConfigDMR configuration = new DecodeConfigDMR();
+        configuration.setChannelMode(DMRChannelMode.TRUNKED);
+        dmr.setDecodeConfiguration(configuration);
+        AtomicReference<StatsWebNavigationState> state = new AtomicReference<>(
+            new StatsWebNavigationState(true, 8090, true, true));
+        CountDownLatch firstLookupStarted = new CountDownLatch(1);
+        CountDownLatch releaseFirstLookup = new CountDownLatch(1);
+        AtomicBoolean lookupRanOnEdt = new AtomicBoolean();
+        AtomicInteger lookupCount = new AtomicInteger();
+        List<URI> opened = new ArrayList<>();
+        ChannelWebLinkPanel[] panelReference = new ChannelWebLinkPanel[1];
+
+        SwingUtilities.invokeAndWait(() -> {
+            ChannelWebLinkPanel panel = new ChannelWebLinkPanel(state::get, receiverGuid -> {
+                if(SwingUtilities.isEventDispatchThread())
+                {
+                    lookupRanOnEdt.set(true);
+                }
+
+                if(lookupCount.incrementAndGet() == 1)
+                {
+                    firstLookupStarted.countDown();
+
+                    try
+                    {
+                        releaseFirstLookup.await(2, TimeUnit.SECONDS);
+                    }
+                    catch(InterruptedException e)
+                    {
+                        Thread.currentThread().interrupt();
+                    }
+
+                    return null;
+                }
+
+                return "DMR:" + receiverGuid;
+            }, opened::add);
+            panelReference[0] = panel;
+            panel.receive(new SelectedFrequencyContext(451_012_500L, 1, "DMR", dmr, dmr, null, null,
+                ChannelActivitySelectionScope.SITE, false));
+        });
+
+        ChannelWebLinkPanel panel = panelReference[0];
+
+        try
+        {
+            assertTrue(firstLookupStarted.await(2, TimeUnit.SECONDS));
+            assertFalse(lookupRanOnEdt.get(), "The database resolver must never run on Swing's event thread");
+            releaseFirstLookup.countDown();
+            awaitSwing(panel::isSystemGroupVisible);
+            assertTrue(lookupCount.get() >= 2, "A missing initial scope should be retried");
+
+            SwingUtilities.invokeAndWait(item(panel, ChannelWebLinkPanel.Destination.SYSTEM_OVERVIEW)::doClick);
+            assertEquals("http://127.0.0.1:8090/?view=system&scope=DMR:" + guid + "&tab=info",
+                opened.getFirst().toString());
+        }
+        finally
+        {
+            releaseFirstLookup.countDown();
             SwingUtilities.invokeAndWait(panel::dispose);
         }
     }
@@ -392,26 +515,48 @@ class ChannelWebLinkPanelTest
         return channel;
     }
 
-    private static void assertProtocolNeutralSiteDestinations(ChannelWebLinkPanel panel)
+    private static void assertProtocolNeutralSiteDestinations(ChannelWebLinkPanel panel) throws Exception
     {
+        awaitSwing(panel::isSystemGroupVisible);
         assertTrue(panel.isGroupVisible(ChannelWebLinkPanel.LinkScope.SITE));
 
         for(ChannelWebLinkPanel.Destination destination: List.of(ChannelWebLinkPanel.Destination.SITE_INFO,
-            ChannelWebLinkPanel.Destination.CHANNELS, ChannelWebLinkPanel.Destination.QUALITY,
-            ChannelWebLinkPanel.Destination.NEIGHBORS))
+            ChannelWebLinkPanel.Destination.TOP_TALKGROUPS, ChannelWebLinkPanel.Destination.CHANNELS,
+            ChannelWebLinkPanel.Destination.QUALITY, ChannelWebLinkPanel.Destination.NEIGHBORS,
+            ChannelWebLinkPanel.Destination.ACTIVITY_LOG, ChannelWebLinkPanel.Destination.SYSTEM_OVERVIEW,
+            ChannelWebLinkPanel.Destination.TALKER_ALIASES))
         {
             assertTrue(item(panel, destination).isVisible(), destination + " should be visible");
             assertTrue(item(panel, destination).isEnabled(), destination + " should be enabled");
         }
 
-        for(ChannelWebLinkPanel.Destination destination: List.of(ChannelWebLinkPanel.Destination.TOP_TALKGROUPS,
-            ChannelWebLinkPanel.Destination.BAND_PLAN, ChannelWebLinkPanel.Destination.PATCHES,
-            ChannelWebLinkPanel.Destination.ACTIVITY_LOG, ChannelWebLinkPanel.Destination.SYSTEM_OVERVIEW,
-            ChannelWebLinkPanel.Destination.TALKER_ALIASES))
+        for(ChannelWebLinkPanel.Destination destination: List.of(ChannelWebLinkPanel.Destination.BAND_PLAN,
+            ChannelWebLinkPanel.Destination.PATCHES))
         {
             assertFalse(item(panel, destination).isVisible(), destination + " should be hidden");
             assertFalse(item(panel, destination).isEnabled(), destination + " should be disabled");
         }
+    }
+
+    private static void awaitSwing(BooleanSupplier condition) throws Exception
+    {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
+        AtomicBoolean satisfied = new AtomicBoolean();
+
+        while(System.nanoTime() < deadline)
+        {
+            SwingUtilities.invokeAndWait(() -> satisfied.set(condition.getAsBoolean()));
+
+            if(satisfied.get())
+            {
+                return;
+            }
+
+            Thread.sleep(10);
+        }
+
+        SwingUtilities.invokeAndWait(() -> satisfied.set(condition.getAsBoolean()));
+        assertTrue(satisfied.get(), "Timed out waiting for Swing state to refresh");
     }
 
     private static JMenuItem item(ChannelWebLinkPanel panel, ChannelWebLinkPanel.Destination destination)

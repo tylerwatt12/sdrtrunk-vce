@@ -210,7 +210,9 @@ class StatsWebDatabase
             context.decoder, context.primary_frequency_hz,
             context.current_control_hz, context.system_key, system.wacn, system.system_id,
             context.rfss, context.site, trunked.configured_system, trunked.network_id,
-            trunked.site_id, trunked.ran, trunked.variant_code, trunked.identity_domain_code,
+            trunked.site_id, trunked.ran, trunked.variant_code,
+            coalesce(scope.identity_domain_code, trunked.identity_domain_code, 0) AS identity_domain_code,
+            scope.scope_token,
             bucket.identity_kind_code, bucket.identity_id,
             CASE bucket.identity_kind_code
                 WHEN 1 THEN 'Talkgroup'
@@ -232,17 +234,19 @@ class StatsWebDatabase
             MAX(radio.last_talker_alias_seen_ms) AS last_talker_alias_seen_ms
         FROM call_identity_bucket AS bucket INDEXED BY idx_call_identity_bucket_dashboard_time
         JOIN receiver_context context ON context.id = bucket.context_id
-        LEFT JOIN p25_system system ON system.system_key = context.system_key
-        LEFT JOIN p25_radio_summary radio
+        LEFT JOIN trunked_identity_scope_context ownership ON ownership.context_id = context.id
+        LEFT JOIN trunked_identity_scope scope ON scope.scope_id = ownership.scope_id
+        LEFT JOIN p25_system system ON system.system_key = scope.p25_system_key
+        LEFT JOIN trunked_identity_summary radio
           ON bucket.identity_role_code = 2
          AND bucket.identity_kind_code = 2
-         AND context.protocol_code IN (1, 2)
-         AND radio.system_key = context.system_key
-         AND radio.radio_id = bucket.identity_id
+         AND radio.scope_id = scope.scope_id
+         AND radio.identity_kind_code = 2
+         AND radio.identity_id = bucket.identity_id
         LEFT JOIN trunked_site_snapshot trunked ON trunked.guid = context.guid
         WHERE bucket.bucket_start_ms >= ? AND bucket.bucket_start_ms < ?
           AND bucket.identity_role_code = ?
-        GROUP BY bucket.context_id, bucket.identity_kind_code, bucket.identity_id
+        GROUP BY bucket.context_id, scope.scope_token, bucket.identity_kind_code, bucket.identity_id
         ORDER BY call_count DESC, last_active_ms DESC, protocol_code, channel_kind,
             bucket.identity_kind_code, bucket.identity_id
         LIMIT ?
@@ -256,11 +260,14 @@ class StatsWebDatabase
             activity.encryption_algorithm_id, activity.encryption_key_id, activity.resolved_channel_name,
             activity.resolved_alias_list_name,
             coalesce(activity.resolved_alias_list_name, trunked.alias_list_name) AS alias_list_name,
+            scope.scope_token, scope.identity_domain_code,
             activity.resolved_system_key AS system_key, activity.resolved_wacn AS wacn,
             activity.resolved_system_id AS system_id, activity.resolved_nac, activity.resolved_rfss,
             activity.resolved_site
         FROM p25_activity_event_resolved activity
         LEFT JOIN trunked_site_snapshot trunked ON trunked.guid = activity.guid
+        LEFT JOIN trunked_identity_scope_context ownership ON ownership.context_id = activity.context_id
+        LEFT JOIN trunked_identity_scope scope ON scope.scope_id = ownership.scope_id
         WHERE 1 = 1
         """;
     static final String ACTIVITY_ORDER_SQL =
@@ -291,44 +298,45 @@ class StatsWebDatabase
         "check_count", "check_ack_count", "page_count", "status_count", "gps_count", "logout_count",
         "patch_count", "patch_create_count", "patch_cancel_count", "data_count", "unknown_count"
     );
-    private static final String TALKGROUP_SIGNALING_COUNT_SQL = TALKGROUP_SIGNALING_FIELDS.stream()
+    private static final List<String> IDENTITY_EVIDENCE_FIELDS = TALKGROUP_SIGNALING_FIELDS.stream()
+        .filter(field -> !"continue_count".equals(field) && !"unknown_count".equals(field))
+        .toList();
+    private static final String TALKGROUP_SIGNALING_COUNT_SQL = IDENTITY_EVIDENCE_FIELDS.stream()
         .map(field -> "summary." + field)
         .collect(java.util.stream.Collectors.joining(" + "));
     private static final Map<String,String> SYSTEM_SORT_COLUMNS = Map.ofEntries(
-        Map.entry("wacn", "system.wacn"),
-        Map.entry("system_id", "system.system_id"),
+        Map.entry("wacn", "wacn"),
+        Map.entry("system_id", "system_id"),
         Map.entry("site_names", "lower(site_names)"),
         Map.entry("sites", "sites"),
         Map.entry("talkgroups", "talkgroups"),
         Map.entry("radios", "radios"),
         Map.entry("affiliations", "affiliations"),
-        Map.entry("first_seen", "system.first_seen_ms"),
-        Map.entry("last_seen", "system.last_seen_ms")
+        Map.entry("first_seen", "first_seen_ms"),
+        Map.entry("last_seen", "last_seen_ms")
     );
-    private static final Map<String,String> SITE_SORT_COLUMNS = Map.ofEntries(
-        Map.entry("system", "system.wacn * 4096 + system.system_id"),
-        Map.entry("wacn", "system.wacn"),
-        Map.entry("system_id", "system.system_id"),
-        Map.entry("rfss", "site.rfss"),
-        Map.entry("site", "site.site"),
-        Map.entry("name", "lower(site.channel_name)"),
-        Map.entry("protocol", "lower(site.protocol)"),
-        Map.entry("decoder", "lower(site.decoder)"),
-        Map.entry("control", "site.current_control_hz"),
-        Map.entry("control_frequency", "site.current_control_hz"),
+    private static final Map<String,String> SCOPED_SITE_SORT_COLUMNS = Map.ofEntries(
+        Map.entry("system", "scope_token"),
+        Map.entry("rfss", "rfss"),
+        Map.entry("site", "coalesce(site, site_id)"),
+        Map.entry("name", "lower(channel_name)"),
+        Map.entry("protocol", "protocol_code"),
+        Map.entry("decoder", "lower(decoder)"),
+        Map.entry("control", "current_control_hz"),
+        Map.entry("control_frequency", "current_control_hz"),
         Map.entry("channels", "channels"),
         Map.entry("neighbors", "neighbors"),
         Map.entry("bands", "bands"),
-        Map.entry("observations", "site.observation_count"),
-        Map.entry("first_seen", "site.first_seen_ms"),
-        Map.entry("last_seen", "site.last_seen_ms")
+        Map.entry("observations", "observation_count"),
+        Map.entry("first_seen", "first_seen_ms"),
+        Map.entry("last_seen", "last_seen_ms")
     );
     private static final Map<String,String> TALKGROUP_SORT_COLUMNS = Map.ofEntries(
-        Map.entry("id", "summary.talkgroup_id"),
-        Map.entry("talkgroup", "summary.talkgroup_id"),
-        Map.entry("alias", aliasSortExpression("alias_talkgroup", "summary.talkgroup_id", "name")),
-        Map.entry("name", aliasSortExpression("alias_talkgroup", "summary.talkgroup_id", "name")),
-        Map.entry("group", aliasSortExpression("alias_talkgroup", "summary.talkgroup_id", "group_name")),
+        Map.entry("id", "summary.identity_id"),
+        Map.entry("talkgroup", "summary.identity_id"),
+        Map.entry("alias", scopeAliasSortExpression("alias_talkgroup", "summary.identity_id", "name")),
+        Map.entry("name", scopeAliasSortExpression("alias_talkgroup", "summary.identity_id", "name")),
+        Map.entry("group", scopeAliasSortExpression("alias_talkgroup", "summary.identity_id", "group_name")),
         Map.entry("calls", "summary.call_count"),
         Map.entry("recorded", "summary.recorded_count"),
         Map.entry("streamed", "summary.streamed_count"),
@@ -337,23 +345,26 @@ class StatsWebDatabase
         Map.entry("signaling", "signaling_count"),
         Map.entry("evidence", "signaling_count"),
         Map.entry("encrypted", "summary.encrypted_count"),
-        Map.entry("last_source", "summary.last_source_radio_id"),
+        Map.entry("last_source", "CASE WHEN summary.last_counterpart_kind_code = 2 " +
+            "THEN summary.last_counterpart_id END"),
         Map.entry("first_seen", "summary.first_seen_ms"),
         Map.entry("last_seen", "summary.last_seen_ms")
     );
     private static final Map<String,String> RADIO_SORT_COLUMNS = Map.ofEntries(
-        Map.entry("id", "summary.radio_id"),
-        Map.entry("radio", "summary.radio_id"),
-        Map.entry("alias", aliasSortExpression("alias_radio", "summary.radio_id", "name")),
-        Map.entry("name", aliasSortExpression("alias_radio", "summary.radio_id", "name")),
+        Map.entry("id", "summary.identity_id"),
+        Map.entry("radio", "summary.identity_id"),
+        Map.entry("alias", scopeAliasSortExpression("alias_radio", "summary.identity_id", "name")),
+        Map.entry("name", scopeAliasSortExpression("alias_radio", "summary.identity_id", "name")),
         Map.entry("talker_alias", "lower(summary.last_talker_alias)"),
         Map.entry("talker_alias_seen", "summary.last_talker_alias_seen_ms"),
-        Map.entry("last_talkgroup", "summary.last_talkgroup_id"),
-        Map.entry("last_talkgroup_name", aliasSortExpression("alias_talkgroup", "summary.last_talkgroup_id", "name")),
+        Map.entry("last_talkgroup", "CASE WHEN summary.last_counterpart_kind_code IN (1, 3) " +
+            "THEN summary.last_counterpart_id END"),
+        Map.entry("last_talkgroup_name", "CASE WHEN summary.last_counterpart_kind_code IN (1, 3) THEN " +
+            scopeAliasSortExpression("alias_talkgroup", "summary.last_counterpart_id", "name") + " END"),
         Map.entry("calls", "summary.call_count"),
         Map.entry("grants", "summary.grant_count"),
         Map.entry("encrypted", "summary.encrypted_count"),
-        Map.entry("affiliated_talkgroup", aliasSortExpression("alias_talkgroup",
+        Map.entry("affiliated_talkgroup", scopeAliasSortExpression("alias_talkgroup",
             "affiliation.talkgroup_id", "name")),
         Map.entry("affiliation_updated", "affiliation.updated_at_ms"),
         Map.entry("first_seen", "summary.first_seen_ms"),
@@ -370,15 +381,16 @@ class StatsWebDatabase
     );
     private static final Map<String,String> RELATIONSHIP_SORT_COLUMNS = Map.ofEntries(
         Map.entry("radio", "relationship.radio_id"),
-        Map.entry("radio_alias", aliasSortExpression("alias_radio", "relationship.radio_id", "name")),
+        Map.entry("radio_alias", scopeAliasSortExpression("alias_radio", "relationship.radio_id", "name")),
         Map.entry("talker_alias", "lower(radio.last_talker_alias)"),
         Map.entry("talkgroup", "relationship.talkgroup_id"),
-        Map.entry("talkgroup_alias", aliasSortExpression("alias_talkgroup", "relationship.talkgroup_id", "name")),
+        Map.entry("talkgroup_alias",
+            scopeAliasSortExpression("alias_talkgroup", "relationship.talkgroup_id", "name")),
         Map.entry("calls", "relationship.call_count"),
         Map.entry("grants", "relationship.grant_count"),
         Map.entry("encrypted", "relationship.encrypted_count"),
         Map.entry("affiliated", "EXISTS (SELECT 1 FROM p25_radio_affiliation current_affiliation " +
-            "WHERE current_affiliation.system_key = relationship.system_key " +
+            "WHERE current_affiliation.system_key = scope.p25_system_key " +
             "AND current_affiliation.radio_id = relationship.radio_id " +
             "AND current_affiliation.talkgroup_id = relationship.talkgroup_id)"),
         Map.entry("first_seen", "relationship.first_seen_ms"),
@@ -446,6 +458,27 @@ class StatsWebDatabase
         mDatabasePath = databasePath;
     }
 
+    String scopeTokenForGuid(String guid)
+    {
+        if(guid == null || guid.isBlank())
+        {
+            return null;
+        }
+
+        return read(connection -> {
+            List<Map<String,Object>> rows = queryRows(connection, """
+                SELECT scope.scope_token
+                FROM trunked_identity_scope_context ownership
+                JOIN trunked_identity_scope scope ON scope.scope_id = ownership.scope_id
+                JOIN receiver_context context ON context.id = ownership.context_id
+                WHERE context.guid = ?
+                ORDER BY ownership.last_seen_ms DESC
+                LIMIT 1
+                """, guid);
+            return rows.isEmpty() ? null : String.valueOf(rows.getFirst().get("scope_token"));
+        });
+    }
+
     Map<String,Object> status()
     {
         Path path = getDatabasePath();
@@ -487,28 +520,17 @@ class StatsWebDatabase
         return read(connection -> {
             Map<String,Object> dashboard = new LinkedHashMap<>();
             dashboard.put("counts", Map.of(
-                "trunked_systems", scalarLong(connection, """
-                    SELECT (SELECT COUNT(*) FROM p25_system) +
-                        (SELECT COUNT(*) FROM trunked_site_snapshot site
-                            WHERE NOT EXISTS (
-                                SELECT 1 FROM p25_site_snapshot p25
-                                WHERE p25.guid = site.guid
-                                  AND (p25.last_seen_ms > site.last_seen_ms OR
-                                    (p25.last_seen_ms = site.last_seen_ms AND 1 < site.protocol_code))
-                            ))
-                    """),
-                "trunked_sites", scalarLong(connection, """
-                    SELECT (SELECT COUNT(*) FROM p25_site_snapshot) +
-                        (SELECT COUNT(*) FROM trunked_site_snapshot)
-                    """),
+                "trunked_systems", scalarLong(connection, "SELECT COUNT(*) FROM trunked_identity_scope"),
+                "trunked_sites", scalarLong(connection,
+                    "SELECT COUNT(*) FROM trunked_identity_scope_context"),
                 "conventional_channels", scalarLong(connection,
                     "SELECT COUNT(*) FROM receiver_context WHERE kind_code <> 1")
             ));
             dashboard.put("lastSeenMs", scalarLong(connection, """
                 SELECT MAX(last_seen_ms) FROM (
                     SELECT last_seen_ms FROM p25_site_snapshot
-                    UNION ALL SELECT last_seen_ms FROM p25_talkgroup_summary
-                    UNION ALL SELECT last_seen_ms FROM p25_radio_summary
+                    UNION ALL SELECT last_seen_ms FROM trunked_identity_scope
+                    UNION ALL SELECT last_seen_ms FROM trunked_identity_summary
                     UNION ALL SELECT last_seen_ms FROM p25_site_frequency_summary
                     UNION ALL SELECT last_seen_ms FROM conventional_activity_summary
                     UNION ALL SELECT last_seen_ms FROM trunked_site_snapshot
@@ -681,477 +703,380 @@ class StatsWebDatabase
                     activity.encryption_algorithm_id, activity.encryption_key_id, activity.resolved_channel_name,
                     activity.resolved_alias_list_name,
                     coalesce(activity.resolved_alias_list_name, trunked.alias_list_name) AS alias_list_name,
+                    scope.scope_token, scope.identity_domain_code,
                     activity.resolved_system_key AS system_key, activity.resolved_wacn AS wacn,
                     activity.resolved_system_id AS system_id, activity.resolved_nac, activity.resolved_rfss,
                     activity.resolved_site
                 FROM p25_activity_event_resolved activity
                 LEFT JOIN trunked_site_snapshot trunked ON trunked.guid = activity.guid
+                LEFT JOIN trunked_identity_scope_context ownership ON ownership.context_id = activity.context_id
+                LEFT JOIN trunked_identity_scope scope ON scope.scope_id = ownership.scope_id
                 WHERE activity.id IN (%s)
                 ORDER BY activity.id
                 """.formatted(placeholders), rowIds.toArray());
             mAliasResolver.enrichActivity(connection, rows);
             enrichActivityEncryption(rows);
+            enrichActivityTalkgroupMembers(connection, rows);
             return rows;
         });
     }
 
-    Map<String,Object> systems(StatsRequest request)
+    private static void enrichActivityTalkgroupMembers(Connection connection, List<Map<String,Object>> rows)
+        throws SQLException
     {
-        return read(connection -> {
-            String search = request.search();
-            StringBuilder sql = new StringBuilder("""
-                SELECT system.system_key, system.wacn, system.system_id, system.first_seen_ms,
-                    system.last_seen_ms, COUNT(DISTINCT site.guid) AS sites,
-                    (SELECT COUNT(*) FROM p25_talkgroup_summary talkgroup
-                        WHERE talkgroup.system_key = system.system_key
-                          AND talkgroup.talkgroup_id > 0 AND talkgroup.talkgroup_id < 65535) AS talkgroups,
-                    (SELECT COUNT(*) FROM p25_radio_summary radio
-                        WHERE radio.system_key = system.system_key
-                          AND radio.radio_id > 0 AND radio.radio_id < 16777212) AS radios,
-                    (SELECT COUNT(*) FROM p25_radio_affiliation affiliation
-                        WHERE affiliation.system_key = system.system_key
-                          AND affiliation.radio_id > 0 AND affiliation.radio_id < 16777212
-                          AND affiliation.talkgroup_id > 0 AND affiliation.talkgroup_id < 65535) AS affiliations,
-                    (SELECT group_concat(name, ', ') FROM (
-                        SELECT DISTINCT channel_name AS name FROM p25_site_snapshot names
-                        WHERE names.system_key = system.system_key AND channel_name IS NOT NULL
-                        ORDER BY channel_name)) AS site_names
-                FROM p25_system system
-                LEFT JOIN p25_site_snapshot site ON site.system_key = system.system_key
-                """);
-            List<Object> parameters = new ArrayList<>();
+        if(rows.isEmpty())
+        {
+            return;
+        }
 
-            if(search != null)
+        List<Long> eventIds = rows.stream()
+            .map(row -> row.get("id"))
+            .filter(Number.class::isInstance)
+            .map(Number.class::cast)
+            .map(Number::longValue)
+            .toList();
+
+        if(eventIds.isEmpty())
+        {
+            return;
+        }
+
+        String placeholders = String.join(",", java.util.Collections.nCopies(eventIds.size(), "?"));
+        List<Map<String,Object>> members = queryRows(connection, """
+            SELECT event_id, talkgroup_id
+            FROM activity_event_talkgroup_member
+            WHERE event_id IN (%s)
+            ORDER BY event_id, talkgroup_id
+            """.formatted(placeholders), eventIds.toArray());
+        Map<Long,List<Long>> membersByEventId = new LinkedHashMap<>();
+
+        for(Map<String,Object> member: members)
+        {
+            if(member.get("event_id") instanceof Number eventId &&
+                member.get("talkgroup_id") instanceof Number talkgroupId)
             {
-                sql.append(" WHERE CAST(system.wacn AS TEXT) LIKE ? OR CAST(system.system_id AS TEXT) LIKE ? " +
-                    "OR EXISTS (SELECT 1 FROM p25_site_snapshot matched WHERE matched.system_key = system.system_key " +
-                    "AND lower(matched.channel_name) LIKE ?)");
-                String like = like(search);
-                parameters.add(like);
-                parameters.add(like);
-                parameters.add(like);
+                membersByEventId.computeIfAbsent(eventId.longValue(), ignored -> new ArrayList<>())
+                    .add(talkgroupId.longValue());
             }
+        }
 
-            sql.append(" GROUP BY system.system_key ORDER BY ")
-                .append(order(request, SYSTEM_SORT_COLUMNS, "last_seen"))
-                .append(" LIMIT ? OFFSET ?");
-            addPageParameters(parameters, request);
-            return page(queryRows(connection, sql.toString(), parameters.toArray()), request);
-        });
+        for(Map<String,Object> row: rows)
+        {
+            if(row.get("id") instanceof Number eventId)
+            {
+                row.put("member_talkgroup_ids",
+                    List.copyOf(membersByEventId.getOrDefault(eventId.longValue(), List.of())));
+            }
+        }
     }
 
     Map<String,Object> systemDirectory(StatsRequest request)
     {
         return read(connection -> {
-            String search = request.search();
-            String searchLike = search != null ? like(search) : null;
-            List<Map<String,Object>> parentRows = queryRows(connection, """
-                WITH active_p25_site AS (
-                    SELECT site.*
-                    FROM p25_site_snapshot site
-                    WHERE NOT EXISTS (
-                        SELECT 1 FROM trunked_site_snapshot trunked
-                        WHERE trunked.guid = site.guid
-                          AND trunked.last_seen_ms > site.last_seen_ms
-                    )
-                ),
-                p25_configured_system AS (
-                    SELECT site.system_key,
-                        CASE WHEN COUNT(DISTINCT lower(trim(channel.system_name))) = 1
-                            THEN min(trim(channel.system_name)) END AS configured_system,
-                        group_concat(channel.system_name, ' ') AS configured_system_search
-                    FROM active_p25_site site
-                    LEFT JOIN configuration_channel channel ON channel.radres_guid = site.guid
-                        AND channel.system_name IS NOT NULL
-                        AND trim(channel.system_name) <> ''
-                    GROUP BY site.system_key
-                ),
-                active_trunked_site AS (
-                    SELECT site.*
-                    FROM trunked_site_snapshot site
-                    WHERE NOT EXISTS (
-                        SELECT 1 FROM p25_site_snapshot p25
-                        WHERE p25.guid = site.guid
-                          AND (p25.last_seen_ms > site.last_seen_ms OR
-                            (p25.last_seen_ms = site.last_seen_ms AND 1 < site.protocol_code))
-                    )
-                ),
-                parents AS (
-                    SELECT 1 AS protocol_code, 'P25' AS protocol,
-                        'p25:' || system.wacn || ':' || system.system_id AS system_group_key,
-                        system.system_key, system.wacn, system.system_id, NULL AS network_id,
-                        0 AS variant_code, 0 AS identity_domain_code,
-                        configured.configured_system, system.first_seen_ms, system.last_seen_ms,
-                        COUNT(DISTINCT site.guid) AS sites,
-                        (SELECT COUNT(*) FROM p25_talkgroup_summary talkgroup
-                            WHERE talkgroup.system_key = system.system_key
-                              AND talkgroup.talkgroup_id > 0 AND talkgroup.talkgroup_id < 65535) AS talkgroups,
-                        (SELECT COUNT(*) FROM p25_radio_summary radio
-                            WHERE radio.system_key = system.system_key
-                              AND radio.radio_id > 0 AND radio.radio_id < 16777212) AS radios,
-                        (SELECT COUNT(*) FROM p25_radio_affiliation affiliation
-                            WHERE affiliation.system_key = system.system_key
-                              AND affiliation.radio_id > 0 AND affiliation.radio_id < 16777212
-                              AND affiliation.talkgroup_id > 0 AND affiliation.talkgroup_id < 65535) AS affiliations,
-                        (SELECT group_concat(name, ', ') FROM (
-                            SELECT DISTINCT channel_name AS name FROM p25_site_snapshot names
-                            WHERE names.system_key = system.system_key AND channel_name IS NOT NULL
-                              AND NOT EXISTS (
-                                  SELECT 1 FROM trunked_site_snapshot trunked
-                                  WHERE trunked.guid = names.guid
-                                    AND trunked.last_seen_ms > names.last_seen_ms
-                              )
-                            ORDER BY channel_name)) AS site_names,
-                        lower('P25 ' || system.wacn || ' ' || printf('%05X', system.wacn) || ' ' ||
-                            system.system_id || ' ' || printf('%03X', system.system_id) || ' ' ||
-                            coalesce(configured.configured_system_search, '') || ' ' ||
-                            coalesce(group_concat(site.channel_name, ' '), '') || ' ' ||
-                            coalesce(group_concat(site.guid, ' '), '') || ' ' ||
-                            coalesce(group_concat(site.nac, ' '), '') || ' ' ||
-                            coalesce(group_concat(site.rfss, ' '), '') || ' ' ||
-                            coalesce(group_concat(site.site, ' '), '')) AS search_text
-                    FROM p25_system system
-                    LEFT JOIN active_p25_site site ON site.system_key = system.system_key
-                    LEFT JOIN p25_configured_system configured ON configured.system_key = system.system_key
-                    GROUP BY system.system_key
+            StringBuilder sql = new StringBuilder("WITH scoped AS (")
+                .append(scopeSummarySelect()).append(") SELECT * FROM scoped WHERE 1=1");
+            List<Object> parameters = new ArrayList<>();
 
-                    UNION ALL
+            if(request.search() != null)
+            {
+                sql.append("""
+                     AND (lower(protocol || ' ' || scope_token || ' ' ||
+                       coalesce(configured_system, '') || ' ' || coalesce(site_names, '') || ' ' ||
+                       coalesce(CAST(wacn AS TEXT), '') || ' ' ||
+                       CASE WHEN wacn IS NOT NULL THEN printf('%05X', wacn) ELSE '' END || ' ' ||
+                       coalesce(CAST(system_id AS TEXT), '') || ' ' ||
+                       CASE WHEN system_id IS NOT NULL THEN printf('%03X', system_id) ELSE '' END || ' ' ||
+                       coalesce(CAST(network_id AS TEXT), '')) LIKE ?
+                       OR EXISTS (
+                           SELECT 1
+                           FROM trunked_identity_scope_context ownership
+                           JOIN receiver_context context ON context.id = ownership.context_id
+                           LEFT JOIN p25_site_snapshot p25 ON p25.guid = context.guid
+                           LEFT JOIN trunked_site_snapshot trunked ON trunked.guid = context.guid
+                           LEFT JOIN configuration_channel config ON config.radres_guid = context.guid
+                           WHERE ownership.scope_id = scoped.scope_id
+                             AND lower(coalesce(context.guid, '') || ' ' ||
+                                 coalesce(context.channel_name, '') || ' ' ||
+                                 coalesce(p25.channel_name, '') || ' ' ||
+                                 coalesce(trunked.channel_name, '') || ' ' ||
+                                 coalesce(trunked.configured_system, '') || ' ' ||
+                                 coalesce(config.system_name, '') || ' ' ||
+                                 coalesce(CAST(trunked.network_id AS TEXT), '') || ' ' ||
+                                 coalesce(CAST(trunked.system_id AS TEXT), '') || ' ' ||
+                                 coalesce(CAST(trunked.site_id AS TEXT), '') || ' ' ||
+                                 coalesce(CAST(trunked.ran AS TEXT), '') || ' ' ||
+                                 coalesce(CAST(p25.rfss AS TEXT), '') || ' ' ||
+                                 coalesce(CAST(p25.site AS TEXT), '')) LIKE ?))
+                    """);
+                String like = like(request.search());
+                parameters.add(like);
+                parameters.add(like);
+            }
 
-                    SELECT site.protocol_code,
-                        CASE site.protocol_code WHEN 3 THEN 'DMR' WHEN 4 THEN 'NXDN' ELSE 'Unknown' END AS protocol,
-                        'trunked:' || site.protocol_code || ':guid:' || site.guid AS system_group_key,
-                        NULL AS system_key, NULL AS wacn, site.system_id, site.network_id,
-                        site.variant_code, site.identity_domain_code,
-                        nullif(trim(site.configured_system), '') AS configured_system,
-                        site.first_seen_ms, site.last_seen_ms,
-                        1 AS sites, 0 AS talkgroups, 0 AS radios, 0 AS affiliations,
-                        site.channel_name AS site_names,
-                        lower(
-                            CASE site.protocol_code WHEN 3 THEN 'DMR ' WHEN 4 THEN 'NXDN ' ELSE '' END ||
-                            site.variant_code || ' ' || site.identity_domain_code || ' ' ||
-                            coalesce(site.network_id, '') || ' ' || coalesce(site.system_id, '') || ' ' ||
-                            coalesce(site.site_id, '') || ' ' || coalesce(site.ran, '') || ' ' ||
-                            coalesce(site.configured_system, '') || ' ' ||
-                            coalesce(site.channel_name, '') || ' ' || site.guid
-                        ) AS search_text
-                    FROM active_trunked_site site
-                )
-                SELECT protocol_code, protocol, system_group_key, system_key, wacn, system_id, network_id,
-                    variant_code, identity_domain_code, configured_system, first_seen_ms, last_seen_ms, sites,
-                    talkgroups, radios, affiliations, site_names
-                FROM parents
-                WHERE (? IS NULL OR search_text LIKE ?)
-                ORDER BY protocol_code ASC, wacn IS NULL ASC, wacn ASC,
-                    variant_code ASC, identity_domain_code ASC, network_id IS NULL ASC, network_id ASC,
-                    system_id IS NULL ASC, system_id ASC,
-                    lower(coalesce(configured_system, site_names, system_group_key)), system_group_key
-                LIMIT ? OFFSET ?
-                """, search, searchLike, request.limit() + 1, request.offset());
+            sql.append(" ORDER BY ").append(order(request, SYSTEM_SORT_COLUMNS, "last_seen"))
+                .append(", scope_token LIMIT ? OFFSET ?");
+            addPageParameters(parameters, request);
+            List<Map<String,Object>> parentRows = queryRows(connection, sql.toString(), parameters.toArray());
             Map<String,Object> response = page(parentRows, request);
             @SuppressWarnings("unchecked")
             List<Map<String,Object>> systems = (List<Map<String,Object>>)response.get("rows");
 
-            if(systems.isEmpty())
-            {
-                return response;
-            }
-
-            List<Long> systemKeys = systems.stream()
-                .map(row -> row.get("system_key"))
-                .filter(Number.class::isInstance)
-                .map(Number.class::cast)
-                .map(Number::longValue)
-                .toList();
-            List<String> trunkedGroupKeys = systems.stream()
-                .map(row -> row.get("system_group_key"))
-                .filter(String.class::isInstance)
-                .map(String.class::cast)
-                .filter(key -> key.startsWith("trunked:"))
-                .toList();
-            Map<String,List<Map<String,Object>>> sitesBySystem = new LinkedHashMap<>();
-
-            if(!systemKeys.isEmpty())
-            {
-                String placeholders = String.join(",", java.util.Collections.nCopies(systemKeys.size(), "?"));
-                List<Object> siteParameters = new ArrayList<>(systemKeys);
-                siteParameters.add(DIRECTORY_SITE_LIMIT_PER_SYSTEM);
-                List<Map<String,Object>> sites = queryRows(connection, siteSelect() + """
-                    JOIN (
-                        SELECT guid, row_number() OVER (
-                            PARTITION BY system_key
-                            ORDER BY rfss IS NULL ASC, rfss ASC, site IS NULL ASC, site ASC, guid ASC
-                        ) AS directory_rank
-                        FROM p25_site_snapshot
-                        WHERE system_key IN (%s)
-                          AND NOT EXISTS (
-                            SELECT 1 FROM trunked_site_snapshot trunked
-                            WHERE trunked.guid = p25_site_snapshot.guid
-                              AND trunked.last_seen_ms > p25_site_snapshot.last_seen_ms
-                          )
-                    ) directory ON directory.guid = site.guid
-                    WHERE directory.directory_rank <= ?
-                    ORDER BY system.wacn ASC, system.system_id ASC,
-                        site.rfss IS NULL ASC, site.rfss ASC, site.site IS NULL ASC, site.site ASC, site.guid ASC
-                    """.formatted(placeholders), siteParameters.toArray());
-
-                for(Map<String,Object> site: sites)
-                {
-                    String groupKey = "p25:" + number(site.get("wacn")) + ":" + number(site.get("system_id"));
-                    site.put("protocol_code", 1);
-                    site.put("protocol", "P25");
-                    site.put("site_kind", "p25");
-                    site.put("system_group_key", groupKey);
-                    sitesBySystem.computeIfAbsent(groupKey, ignored -> new ArrayList<>()).add(site);
-                }
-            }
-
-            if(!trunkedGroupKeys.isEmpty())
-            {
-                String placeholders = String.join(",",
-                    java.util.Collections.nCopies(trunkedGroupKeys.size(), "?"));
-                List<Object> siteParameters = new ArrayList<>(trunkedGroupKeys);
-                List<Map<String,Object>> sites = queryRows(connection, """
-                    SELECT site.guid, site.snapshot_hash, site.protocol_code,
-                        CASE site.protocol_code WHEN 3 THEN 'DMR' WHEN 4 THEN 'NXDN'
-                            ELSE 'Unknown' END AS protocol,
-                        site.variant_code, site.identity_domain_code, site.configured_system, site.channel_name,
-                        site.alias_list_name, site.decoder, site.network_id, site.system_id, site.site_id, site.ran,
-                        site.model_code, site.brand_code, site.mode_code, site.channel_type_code,
-                        site.color_code_ts1, site.color_code_ts2, site.current_repeater,
-                        site.service_flags, site.failure_code, site.primary_frequency_hz,
-                        site.current_control_hz, site.first_seen_ms, site.last_seen_ms,
-                        site.observation_count,
-                        'trunked:' || site.protocol_code || ':guid:' || site.guid AS system_group_key,
-                        (SELECT COUNT(*) FROM trunked_site_channel_summary channel
-                            WHERE channel.guid = site.guid) AS channels,
-                        (SELECT COUNT(*) FROM trunked_site_neighbor_summary neighbor
-                            WHERE neighbor.guid = site.guid) AS neighbors
-                    FROM trunked_site_snapshot site
-                    WHERE ('trunked:' || site.protocol_code || ':guid:' || site.guid) IN (%s)
-                      AND NOT EXISTS (
-                        SELECT 1 FROM p25_site_snapshot p25
-                        WHERE p25.guid = site.guid
-                          AND (p25.last_seen_ms > site.last_seen_ms OR
-                            (p25.last_seen_ms = site.last_seen_ms AND 1 < site.protocol_code))
-                      )
-                    ORDER BY protocol_code, variant_code, identity_domain_code, network_id IS NULL ASC,
-                        network_id ASC, system_id IS NULL ASC, system_id ASC, site_id IS NULL ASC, site_id ASC,
-                        ran IS NULL ASC, ran ASC, guid
-                    """.formatted(placeholders), siteParameters.toArray());
-
-                for(Map<String,Object> site: sites)
-                {
-                    site.put("site_kind", "trunked");
-                    String groupKey = String.valueOf(site.get("system_group_key"));
-                    sitesBySystem.computeIfAbsent(groupKey, ignored -> new ArrayList<>()).add(site);
-                }
-            }
-
             for(Map<String,Object> system: systems)
             {
-                String groupKey = String.valueOf(system.get("system_group_key"));
-                List<Map<String,Object>> children = sitesBySystem.getOrDefault(groupKey, List.of());
+                List<Map<String,Object>> children = queryScopeSites(connection,
+                    number(system.get("scope_id")),
+                    new StatsRequest(Map.of("limit", String.valueOf(DIRECTORY_SITE_LIMIT_PER_SYSTEM))));
+                if(children.size() > DIRECTORY_SITE_LIMIT_PER_SYSTEM)
+                {
+                    children = new ArrayList<>(children.subList(0, DIRECTORY_SITE_LIMIT_PER_SYSTEM));
+                }
                 system.put("children", children);
                 system.put("children_truncated", number(system.get("sites")) > children.size());
+                system.put("capabilities", systemCapabilities((int)number(system.get("protocol_code"))));
             }
 
             return response;
         });
     }
 
-    Map<String,Object> sites(StatsRequest request)
-    {
-        return read(connection -> page(querySites(connection, request, request.optionalIdentifier("wacn"),
-            request.optionalIdentifier("system_id")), request));
-    }
-
     Map<String,Object> system(StatsRequest request)
     {
-        int wacn = request.requiredIdentifier("wacn");
-        int systemId = request.requiredIdentifier("system_id");
+        String scopeToken = request.requiredText("scope");
 
         return read(connection -> {
             Map<String,Object> response = new LinkedHashMap<>();
-            /*
-             * Frequency summaries count each resolved call observation once and retain lifetime totals.  Talkgroup
-             * summaries cannot provide this physical total because patch calls are intentionally attributed to the
-             * canonical patch group and each member talkgroup.
-             */
-            response.put("system", first(queryRows(connection, """
-                SELECT system.system_key, system.wacn, system.system_id, system.first_seen_ms,
-                    system.last_seen_ms,
-                    (SELECT COUNT(*) FROM p25_site_snapshot site WHERE site.system_key = system.system_key) AS sites,
-                    (SELECT COUNT(*) FROM p25_talkgroup_summary talkgroup
-                        WHERE talkgroup.system_key = system.system_key
-                          AND talkgroup.talkgroup_id > 0 AND talkgroup.talkgroup_id < 65535) AS talkgroups,
-                    (SELECT COUNT(*) FROM p25_radio_summary radio
-                        WHERE radio.system_key = system.system_key
-                          AND radio.radio_id > 0 AND radio.radio_id < 16777212) AS radios,
-                    (SELECT COUNT(*) FROM p25_radio_affiliation affiliation
-                        WHERE affiliation.system_key = system.system_key
-                          AND affiliation.radio_id > 0 AND affiliation.radio_id < 16777212
-                          AND affiliation.talkgroup_id > 0 AND affiliation.talkgroup_id < 65535) AS affiliations,
-                    COALESCE((
-                        SELECT SUM(frequency.call_count)
-                        FROM p25_site_frequency_summary frequency
-                        JOIN receiver_context context ON context.id = frequency.context_id
-                        WHERE context.system_key = system.system_key
-                    ), 0) AS activity_calls,
-                    COALESCE(SUM(activity.call_count), 0) AS activity_retained_calls,
-                    COALESCE(SUM(activity.recorded_count), 0) AS activity_recorded,
-                    COALESCE(SUM(activity.streamed_count), 0) AS activity_streamed,
-                    COALESCE(SUM(activity.encrypted_count), 0) AS activity_encrypted
-                FROM p25_system system
-                LEFT JOIN receiver_context activity_context
-                  ON activity_context.system_key = system.system_key
-                LEFT JOIN p25_site_activity_bucket activity ON activity.context_id = activity_context.id
-                WHERE system.wacn = ? AND system.system_id = ?
-                GROUP BY system.system_key
-                """, wacn, systemId), "System not found"));
-            response.put("actionCounts", systemActionCounts(connection, wacn, systemId));
+            Map<String,Object> system = requireScope(connection, scopeToken);
+            List<Map<String,Object>> activity = queryRows(connection, """
+                SELECT coalesce(SUM(bucket.call_count), 0) AS activity_retained_calls,
+                    coalesce(SUM(bucket.recorded_count), 0) AS activity_recorded,
+                    coalesce(SUM(bucket.streamed_count), 0) AS activity_streamed,
+                    coalesce(SUM(bucket.encrypted_count), 0) AS activity_encrypted
+                FROM trunked_identity_scope_context ownership
+                LEFT JOIN p25_site_activity_bucket bucket ON bucket.context_id = ownership.context_id
+                WHERE ownership.scope_id = ?
+                """, system.get("scope_id"));
+
+            if(!activity.isEmpty())
+            {
+                system.putAll(activity.getFirst());
+                system.put("activity_calls", activity.getFirst().get("activity_retained_calls"));
+            }
+
+            system.put("capabilities", systemCapabilities((int)number(system.get("protocol_code"))));
+            response.put("system", system);
+            response.put("actionCounts", systemActionCounts(connection, number(system.get("scope_id"))));
             return response;
         });
     }
 
     Map<String,Object> systemSites(StatsRequest request)
     {
-        int wacn = request.requiredIdentifier("wacn");
-        int systemId = request.requiredIdentifier("system_id");
-        return read(connection -> page(querySites(connection, request, wacn, systemId), request));
+        String scopeToken = request.requiredText("scope");
+        return read(connection -> {
+            Map<String,Object> scope = requireScope(connection, scopeToken);
+            return page(queryScopeSites(connection, number(scope.get("scope_id")), request), request);
+        });
     }
 
     Map<String,Object> systemTalkgroups(StatsRequest request)
     {
-        int wacn = request.requiredIdentifier("wacn");
-        int systemId = request.requiredIdentifier("system_id");
+        String scopeToken = request.requiredText("scope");
 
         return read(connection -> {
             StringBuilder sql = new StringBuilder("""
-                SELECT system.system_key, system.wacn, system.system_id, summary.talkgroup_id,
+                SELECT scope.scope_id, scope.scope_token, scope.protocol_code, scope.identity_domain_code,
+                    CASE scope.protocol_code WHEN 1 THEN 'P25' WHEN 3 THEN 'DMR'
+                        WHEN 4 THEN 'NXDN' ELSE 'Unknown' END AS protocol,
+                    scope.p25_system_key AS system_key, system.wacn,
+                    CASE WHEN scope.protocol_code = 1 THEN system.system_id ELSE
+                        (SELECT trunked.system_id FROM trunked_identity_scope_context ownership
+                         JOIN receiver_context context ON context.id = ownership.context_id
+                         LEFT JOIN trunked_site_snapshot trunked ON trunked.guid = context.guid
+                         WHERE ownership.scope_id = scope.scope_id ORDER BY ownership.context_id LIMIT 1)
+                    END AS system_id,
+                    (SELECT context.alias_list_name FROM trunked_identity_scope_context ownership
+                     JOIN receiver_context context ON context.id = ownership.context_id
+                     WHERE ownership.scope_id = scope.scope_id ORDER BY ownership.context_id LIMIT 1)
+                        AS alias_list_name,
+                    summary.identity_id AS talkgroup_id, summary.identity_kind_code AS target_kind_code,
                     summary.first_seen_ms, summary.last_seen_ms, summary.call_count, summary.encrypted_count,
                     summary.recorded_count, summary.streamed_count, %s AS signaling_count
-                FROM p25_talkgroup_summary summary
-                JOIN p25_system system ON system.system_key = summary.system_key
-                WHERE system.wacn = ? AND system.system_id = ?
-                  AND summary.talkgroup_id > 0 AND summary.talkgroup_id < 65535
+                FROM trunked_identity_summary summary
+                JOIN trunked_identity_scope scope ON scope.scope_id = summary.scope_id
+                LEFT JOIN p25_system system ON system.system_key = scope.p25_system_key
+                WHERE scope.scope_token = ? AND summary.identity_kind_code IN (1, 3)
                 """.formatted(TALKGROUP_SIGNALING_COUNT_SQL));
-            List<Object> parameters = new ArrayList<>(List.of(wacn, systemId));
-            addIdentifierSearch(sql, parameters, request.search(), "summary.talkgroup_id");
+            List<Object> parameters = new ArrayList<>(List.of(scopeToken));
+            addIdentifierSearch(sql, parameters, request.search(), "summary.identity_id");
             sql.append(" ORDER BY ").append(order(request, TALKGROUP_SORT_COLUMNS, "calls"))
-                .append(" LIMIT ? OFFSET ?");
+                .append(", summary.identity_kind_code, summary.identity_id LIMIT ? OFFSET ?");
             addPageParameters(parameters, request);
             List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
-            mAliasResolver.enrichTalkgroups(connection, rows);
+            enrichScopeTalkgroups(connection, rows, "talkgroup_id", "alias_");
             return page(rows, request);
         });
     }
 
     Map<String,Object> systemRadios(StatsRequest request)
     {
-        int wacn = request.requiredIdentifier("wacn");
-        int systemId = request.requiredIdentifier("system_id");
+        String scopeToken = request.requiredText("scope");
 
         return read(connection -> {
             StringBuilder sql = new StringBuilder("""
-                SELECT system.system_key, system.wacn, system.system_id, summary.*,
-                    CASE WHEN summary.last_talkgroup_id > 0 AND summary.last_talkgroup_id < 65535
-                        THEN summary.last_talkgroup_id END AS last_talkgroup_id,
+                SELECT scope.scope_id, scope.scope_token, scope.protocol_code, scope.identity_domain_code,
+                    CASE scope.protocol_code WHEN 1 THEN 'P25' WHEN 3 THEN 'DMR'
+                        WHEN 4 THEN 'NXDN' ELSE 'Unknown' END AS protocol,
+                    scope.p25_system_key AS system_key, system.wacn,
+                    CASE WHEN scope.protocol_code = 1 THEN system.system_id ELSE
+                        (SELECT trunked.system_id FROM trunked_identity_scope_context ownership
+                         JOIN receiver_context context ON context.id = ownership.context_id
+                         LEFT JOIN trunked_site_snapshot trunked ON trunked.guid = context.guid
+                         WHERE ownership.scope_id = scope.scope_id ORDER BY ownership.context_id LIMIT 1)
+                    END AS system_id,
+                    (SELECT context.alias_list_name FROM trunked_identity_scope_context ownership
+                     JOIN receiver_context context ON context.id = ownership.context_id
+                     WHERE ownership.scope_id = scope.scope_id ORDER BY ownership.context_id LIMIT 1)
+                        AS alias_list_name,
+                    summary.*, summary.identity_id AS radio_id,
+                    CASE WHEN summary.last_counterpart_kind_code IN (1, 3)
+                        THEN summary.last_counterpart_id END AS last_talkgroup_id,
+                    CASE WHEN summary.last_counterpart_kind_code IN (1, 3)
+                        THEN summary.last_counterpart_kind_code END AS last_talkgroup_kind_code,
                     affiliation.talkgroup_id AS affiliated_talkgroup_id,
                     affiliation.updated_at_ms AS affiliation_updated_at_ms
-                FROM p25_radio_summary summary
-                JOIN p25_system system ON system.system_key = summary.system_key
+                FROM trunked_identity_summary summary
+                JOIN trunked_identity_scope scope ON scope.scope_id = summary.scope_id
+                LEFT JOIN p25_system system ON system.system_key = scope.p25_system_key
                 LEFT JOIN p25_radio_affiliation affiliation
-                  ON affiliation.system_key = summary.system_key AND affiliation.radio_id = summary.radio_id
-                 AND affiliation.talkgroup_id > 0 AND affiliation.talkgroup_id < 65535
-                WHERE system.wacn = ? AND system.system_id = ?
-                  AND summary.radio_id > 0 AND summary.radio_id < 16777212
+                  ON scope.protocol_code = 1 AND affiliation.system_key = scope.p25_system_key
+                 AND affiliation.radio_id = summary.identity_id
+                WHERE scope.scope_token = ? AND summary.identity_kind_code = 2
                 """);
-            List<Object> parameters = new ArrayList<>(List.of(wacn, systemId));
-            addIdentifierSearch(sql, parameters, request.search(), "summary.radio_id");
+            List<Object> parameters = new ArrayList<>(List.of(scopeToken));
+            addIdentifierSearch(sql, parameters, request.search(), "summary.identity_id");
             sql.append(" ORDER BY ").append(order(request, RADIO_SORT_COLUMNS, "calls"))
-                .append(" LIMIT ? OFFSET ?");
+                .append(", summary.identity_id LIMIT ? OFFSET ?");
             addPageParameters(parameters, request);
             List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
-            mAliasResolver.enrichRadios(connection, rows);
-            mAliasResolver.enrichTalkgroups(connection, rows, "affiliated_talkgroup_id",
-                "affiliated_talkgroup_alias_");
+            enrichScopeRadios(connection, rows, "radio_id", "alias_");
+            enrichScopeTalkgroups(connection, rows, "affiliated_talkgroup_id", "affiliated_talkgroup_alias_");
             return page(rows, request);
         });
     }
 
     Map<String,Object> systemTalkerAliases(StatsRequest request)
     {
-        int wacn = request.requiredIdentifier("wacn");
-        int systemId = request.requiredIdentifier("system_id");
+        String scopeToken = request.requiredText("scope");
 
         return read(connection -> {
             StringBuilder sql = new StringBuilder("""
-                SELECT system.system_key, system.wacn, system.system_id, summary.*,
-                    CASE WHEN summary.last_talkgroup_id > 0 AND summary.last_talkgroup_id < 65535
-                        THEN summary.last_talkgroup_id END AS last_talkgroup_id
-                FROM p25_radio_summary summary
-                JOIN p25_system system ON system.system_key = summary.system_key
-                WHERE system.wacn = ? AND system.system_id = ?
-                  AND summary.radio_id > 0 AND summary.radio_id < 16777212
+                SELECT scope.scope_id, scope.scope_token, scope.protocol_code, scope.identity_domain_code,
+                    CASE scope.protocol_code WHEN 1 THEN 'P25' WHEN 3 THEN 'DMR'
+                        WHEN 4 THEN 'NXDN' ELSE 'Unknown' END AS protocol,
+                    scope.p25_system_key AS system_key, system.wacn,
+                    CASE WHEN scope.protocol_code = 1 THEN system.system_id ELSE
+                        (SELECT trunked.system_id FROM trunked_identity_scope_context ownership
+                         JOIN receiver_context context ON context.id = ownership.context_id
+                         LEFT JOIN trunked_site_snapshot trunked ON trunked.guid = context.guid
+                         WHERE ownership.scope_id = scope.scope_id ORDER BY ownership.context_id LIMIT 1)
+                    END AS system_id,
+                    (SELECT context.alias_list_name FROM trunked_identity_scope_context ownership
+                     JOIN receiver_context context ON context.id = ownership.context_id
+                     WHERE ownership.scope_id = scope.scope_id ORDER BY ownership.context_id LIMIT 1)
+                        AS alias_list_name,
+                    summary.*, summary.identity_id AS radio_id,
+                    CASE WHEN summary.last_counterpart_kind_code IN (1, 3)
+                        THEN summary.last_counterpart_id END AS last_talkgroup_id,
+                    CASE WHEN summary.last_counterpart_kind_code IN (1, 3)
+                        THEN summary.last_counterpart_kind_code END AS last_talkgroup_kind_code
+                FROM trunked_identity_summary summary
+                JOIN trunked_identity_scope scope ON scope.scope_id = summary.scope_id
+                LEFT JOIN p25_system system ON system.system_key = scope.p25_system_key
+                WHERE scope.scope_token = ? AND summary.identity_kind_code = 2
                   AND summary.last_talker_alias IS NOT NULL
                   AND trim(summary.last_talker_alias) <> ''
                 """);
-            List<Object> parameters = new ArrayList<>(List.of(wacn, systemId));
+            List<Object> parameters = new ArrayList<>(List.of(scopeToken));
 
             if(request.search() != null)
             {
-                sql.append(" AND (CAST(summary.radio_id AS TEXT) LIKE ? " +
-                    "OR lower(summary.last_talker_alias) LIKE ?)");
+                sql.append("""
+                     AND (CAST(summary.identity_id AS TEXT) LIKE ?
+                       OR (scope.protocol_code = 4 AND scope.identity_domain_code = 2
+                         AND printf('%02d-%04d', ((summary.identity_id >> 11) & 31),
+                           (summary.identity_id & 2047)) LIKE ?)
+                       OR lower(summary.last_talker_alias) LIKE ?)
+                    """);
                 String like = like(request.search());
+                parameters.add(like);
                 parameters.add(like);
                 parameters.add(like);
             }
 
             sql.append(" ORDER BY ").append(order(request, RADIO_SORT_COLUMNS, "talker_alias"))
-                .append(" LIMIT ? OFFSET ?");
+                .append(", summary.identity_id LIMIT ? OFFSET ?");
             addPageParameters(parameters, request);
             List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
-            mAliasResolver.enrichRadios(connection, rows);
-            mAliasResolver.enrichTalkgroups(connection, rows, "last_talkgroup_id", "talkgroup_alias_");
+            enrichScopeRadios(connection, rows, "radio_id", "alias_");
+            enrichScopeTalkgroups(connection, rows, "last_talkgroup_id", "talkgroup_alias_");
             return page(rows, request);
         });
     }
 
     Map<String,Object> talkgroup(StatsRequest request)
     {
-        int wacn = request.requiredIdentifier("wacn");
-        int systemId = request.requiredIdentifier("system_id");
+        String scopeToken = request.requiredText("scope");
         int talkgroup = request.requiredIdentifier("talkgroup_id");
+        int identityKind = targetKind(request);
 
         return read(connection -> {
             List<Map<String,Object>> rows = queryRows(connection, """
-                SELECT system.system_key, system.wacn, system.system_id, summary.*,
-                    CASE WHEN summary.last_source_radio_id > 0 AND summary.last_source_radio_id < 16777212
-                        THEN summary.last_source_radio_id END AS last_source_radio_id,
-                    (SELECT COUNT(*) FROM p25_radio_talkgroup_summary relationship
-                        WHERE relationship.system_key = summary.system_key
-                          AND relationship.talkgroup_id = summary.talkgroup_id
-                          AND relationship.radio_id > 0 AND relationship.radio_id < 16777212) AS radios,
+                SELECT scope.scope_id, scope.scope_token, scope.protocol_code, scope.identity_domain_code,
+                    CASE scope.protocol_code WHEN 1 THEN 'P25' WHEN 3 THEN 'DMR'
+                        WHEN 4 THEN 'NXDN' ELSE 'Unknown' END AS protocol,
+                    scope.p25_system_key AS system_key, system.wacn,
+                    CASE WHEN scope.protocol_code = 1 THEN system.system_id ELSE
+                        (SELECT trunked.system_id FROM trunked_identity_scope_context ownership
+                         JOIN receiver_context context ON context.id = ownership.context_id
+                         LEFT JOIN trunked_site_snapshot trunked ON trunked.guid = context.guid
+                         WHERE ownership.scope_id = scope.scope_id ORDER BY ownership.context_id LIMIT 1)
+                    END AS system_id,
+                    (SELECT context.alias_list_name FROM trunked_identity_scope_context ownership
+                     JOIN receiver_context context ON context.id = ownership.context_id
+                     WHERE ownership.scope_id = scope.scope_id ORDER BY ownership.context_id LIMIT 1)
+                        AS alias_list_name,
+                    summary.*, summary.identity_id AS talkgroup_id,
+                    summary.identity_kind_code AS target_kind_code,
+                    CASE WHEN summary.last_counterpart_kind_code = 2
+                        THEN summary.last_counterpart_id END AS last_source_radio_id,
+                    (SELECT COUNT(*) FROM trunked_radio_talkgroup_summary relationship
+                        WHERE relationship.scope_id = summary.scope_id
+                          AND relationship.talkgroup_id = summary.identity_id
+                          AND relationship.target_kind_code = summary.identity_kind_code) AS radios,
                     (SELECT COUNT(*) FROM p25_radio_affiliation affiliation
-                        WHERE affiliation.system_key = summary.system_key
-                          AND affiliation.talkgroup_id = summary.talkgroup_id
-                          AND affiliation.radio_id > 0 AND affiliation.radio_id < 16777212) AS affiliated_radios
-                FROM p25_talkgroup_summary summary
-                JOIN p25_system system ON system.system_key = summary.system_key
-                WHERE system.wacn = ? AND system.system_id = ? AND summary.talkgroup_id = ?
-                  AND summary.talkgroup_id > 0 AND summary.talkgroup_id < 65535
-                """, wacn, systemId, talkgroup);
-            mAliasResolver.enrichTalkgroups(connection, rows);
-            enrichP25SummaryEncryption(rows);
-            return Map.of("talkgroup", first(rows, "Talkgroup not found"));
+                        WHERE summary.identity_kind_code = 1
+                          AND scope.protocol_code = 1
+                          AND affiliation.system_key = scope.p25_system_key
+                          AND affiliation.talkgroup_id = summary.identity_id) AS affiliated_radios
+                FROM trunked_identity_summary summary
+                JOIN trunked_identity_scope scope ON scope.scope_id = summary.scope_id
+                LEFT JOIN p25_system system ON system.system_key = scope.p25_system_key
+                WHERE scope.scope_token = ? AND summary.identity_kind_code = ? AND summary.identity_id = ?
+                """, scopeToken, identityKind, talkgroup);
+            enrichScopeTalkgroups(connection, rows, "talkgroup_id", "alias_");
+            enrichSummaryEncryption(rows);
+            Map<String,Object> row = first(rows, "Talkgroup not found");
+            row.put("capabilities", talkgroupCapabilities((int)number(row.get("protocol_code")),
+                (int)number(row.get("target_kind_code"))));
+            return Map.of("talkgroup", row);
         });
     }
 
     Map<String,Object> talkgroupActivity(StatsRequest request)
     {
-        int wacn = request.requiredIdentifier("wacn");
-        int systemId = request.requiredIdentifier("system_id");
+        String scopeToken = request.requiredText("scope");
         int talkgroup = request.requiredIdentifier("talkgroup_id");
+        int identityKind = targetKind(request);
         ActivityRange requestedRange = activityRange(request);
         long rangeMilliseconds = requestedRange.milliseconds();
         long sourceBuckets = Math.max(1, (rangeMilliseconds + HOUR_MILLISECONDS - 1) / HOUR_MILLISECONDS);
@@ -1164,22 +1089,22 @@ class StatsWebDatabase
         String responseRange = requestedRange.label();
 
         return read(connection -> {
-            String sums = String.join(",\n                    ", TALKGROUP_ACTIVITY_FIELDS.stream()
+            Map<String,Object> scope = requireScope(connection, scopeToken);
+            String sums = String.join(",\n                    ", CALL_ACTIVITY_FIELDS.stream()
                 .map(field -> "SUM(bucket." + field + ") AS " + field)
                 .toList());
             List<Map<String,Object>> stored = queryRows(connection, """
                 SELECT CAST(bucket.bucket_start_ms / ? AS INTEGER) * ? AS time_ms,
                     %s
-                FROM p25_site_talkgroup_bucket bucket
-                JOIN receiver_context context ON context.id = bucket.context_id
-                JOIN p25_system system ON system.system_key = context.system_key
-                WHERE system.wacn = ? AND system.system_id = ? AND bucket.talkgroup_id = ?
-                    AND bucket.talkgroup_id > 0 AND bucket.talkgroup_id < 65535
+                FROM call_identity_bucket bucket
+                JOIN trunked_identity_scope_context ownership ON ownership.context_id = bucket.context_id
+                WHERE ownership.scope_id = ? AND bucket.identity_role_code = ?
+                    AND bucket.identity_kind_code = ? AND bucket.identity_id = ?
                     AND bucket.bucket_start_ms >= ?
                 GROUP BY time_ms
                 ORDER BY time_ms
-                """.formatted(sums), bucketMilliseconds, bucketMilliseconds, wacn, systemId, talkgroup,
-                fromMilliseconds);
+                """.formatted(sums), bucketMilliseconds, bucketMilliseconds, scope.get("scope_id"),
+                IDENTITY_ROLE_DESTINATION, identityKind, talkgroup, fromMilliseconds);
             Map<Long,Map<String,Object>> storedByTime = new LinkedHashMap<>();
 
             for(Map<String,Object> row: stored)
@@ -1205,7 +1130,7 @@ class StatsWebDatabase
                 Map<String,Object> point = new LinkedHashMap<>();
                 point.put("time_ms", timestamp);
 
-                for(String field: TALKGROUP_ACTIVITY_FIELDS)
+                for(String field: CALL_ACTIVITY_FIELDS)
                 {
                     long value = storedRow != null ? number(storedRow.get(field)) : 0L;
                     point.put(field, value);
@@ -1215,12 +1140,26 @@ class StatsWebDatabase
                 series.add(point);
             }
 
+            List<Map<String,Object>> summary = queryRows(connection, """
+                SELECT *
+                FROM trunked_identity_summary
+                WHERE scope_id = ? AND identity_kind_code = ? AND identity_id = ?
+                """, scope.get("scope_id"), identityKind, talkgroup);
+
+            if(!summary.isEmpty())
+            {
+                for(String field: TALKGROUP_SIGNALING_FIELDS)
+                {
+                    totals.put(field, number(summary.getFirst().get(field)));
+                }
+            }
+
             Map<String,Object> response = new LinkedHashMap<>();
             response.put("range", responseRange);
             response.put("from_ms", fromMilliseconds);
             response.put("to_ms", toMilliseconds);
             response.put("bucket_ms", bucketMilliseconds);
-            response.put("metric_start_ms", p25CallOutputMetricsStartedAt(connection));
+            response.put("metric_start_ms", scopeMetricStartedAt(connection));
             response.put("totals", totals);
             response.put("series", series);
             return response;
@@ -1229,57 +1168,84 @@ class StatsWebDatabase
 
     Map<String,Object> radio(StatsRequest request)
     {
-        int wacn = request.requiredIdentifier("wacn");
-        int systemId = request.requiredIdentifier("system_id");
+        String scopeToken = request.requiredText("scope");
         int radio = request.requiredIdentifier("radio_id");
 
         return read(connection -> {
             List<Map<String,Object>> rows = queryRows(connection, """
-                SELECT system.system_key, system.wacn, system.system_id, summary.*,
-                    CASE WHEN summary.last_talkgroup_id > 0 AND summary.last_talkgroup_id < 65535
-                        THEN summary.last_talkgroup_id END AS last_talkgroup_id,
+                SELECT scope.scope_id, scope.scope_token, scope.protocol_code, scope.identity_domain_code,
+                    CASE scope.protocol_code WHEN 1 THEN 'P25' WHEN 3 THEN 'DMR'
+                        WHEN 4 THEN 'NXDN' ELSE 'Unknown' END AS protocol,
+                    scope.p25_system_key AS system_key, system.wacn,
+                    CASE WHEN scope.protocol_code = 1 THEN system.system_id ELSE
+                        (SELECT trunked.system_id FROM trunked_identity_scope_context ownership
+                         JOIN receiver_context context ON context.id = ownership.context_id
+                         LEFT JOIN trunked_site_snapshot trunked ON trunked.guid = context.guid
+                         WHERE ownership.scope_id = scope.scope_id ORDER BY ownership.context_id LIMIT 1)
+                    END AS system_id,
+                    (SELECT context.alias_list_name FROM trunked_identity_scope_context ownership
+                     JOIN receiver_context context ON context.id = ownership.context_id
+                     WHERE ownership.scope_id = scope.scope_id ORDER BY ownership.context_id LIMIT 1)
+                        AS alias_list_name,
+                    summary.*, summary.identity_id AS radio_id,
+                    CASE WHEN summary.last_counterpart_kind_code IN (1, 3)
+                        THEN summary.last_counterpart_id END AS last_talkgroup_id,
+                    CASE WHEN summary.last_counterpart_kind_code IN (1, 3)
+                        THEN summary.last_counterpart_kind_code END AS last_talkgroup_kind_code,
+                    CASE WHEN summary.last_counterpart_kind_code = 2
+                        THEN summary.last_counterpart_id END AS last_peer_radio_id,
                     affiliation.talkgroup_id AS affiliated_talkgroup_id,
                     affiliation.updated_at_ms AS affiliation_updated_at_ms,
-                    (SELECT COUNT(*) FROM p25_radio_talkgroup_summary relationship
-                        WHERE relationship.system_key = summary.system_key
-                          AND relationship.radio_id = summary.radio_id
-                          AND relationship.talkgroup_id > 0 AND relationship.talkgroup_id < 65535) AS talkgroups
-                FROM p25_radio_summary summary
-                JOIN p25_system system ON system.system_key = summary.system_key
+                    (SELECT COUNT(*) FROM trunked_radio_talkgroup_summary relationship
+                        WHERE relationship.scope_id = summary.scope_id
+                          AND relationship.radio_id = summary.identity_id) AS talkgroups
+                FROM trunked_identity_summary summary
+                JOIN trunked_identity_scope scope ON scope.scope_id = summary.scope_id
+                LEFT JOIN p25_system system ON system.system_key = scope.p25_system_key
                 LEFT JOIN p25_radio_affiliation affiliation
-                  ON affiliation.system_key = summary.system_key AND affiliation.radio_id = summary.radio_id
-                 AND affiliation.talkgroup_id > 0 AND affiliation.talkgroup_id < 65535
-                WHERE system.wacn = ? AND system.system_id = ? AND summary.radio_id = ?
-                  AND summary.radio_id > 0 AND summary.radio_id < 16777212
-                """, wacn, systemId, radio);
-            mAliasResolver.enrichRadios(connection, rows);
-            mAliasResolver.enrichTalkgroups(connection, rows, "affiliated_talkgroup_id",
-                "affiliated_talkgroup_alias_");
-            enrichP25SummaryEncryption(rows);
-            return Map.of("radio", first(rows, "Radio not found"));
+                  ON scope.protocol_code = 1 AND affiliation.system_key = scope.p25_system_key
+                 AND affiliation.radio_id = summary.identity_id
+                WHERE scope.scope_token = ? AND summary.identity_kind_code = 2 AND summary.identity_id = ?
+                """, scopeToken, radio);
+            enrichScopeRadios(connection, rows, "radio_id", "alias_");
+            enrichScopeTalkgroups(connection, rows, "affiliated_talkgroup_id", "affiliated_talkgroup_alias_");
+            enrichScopeTalkgroups(connection, rows, "last_talkgroup_id", "last_talkgroup_alias_");
+            enrichScopeRadios(connection, rows, "last_peer_radio_id", "last_peer_alias_");
+            enrichSummaryEncryption(rows);
+            Map<String,Object> row = first(rows, "Radio not found");
+            row.put("capabilities", systemCapabilities((int)number(row.get("protocol_code"))));
+            return Map.of("radio", row);
         });
     }
 
     Map<String,Object> currentAffiliations(StatsRequest request)
     {
-        int wacn = request.requiredIdentifier("wacn");
-        int systemId = request.requiredIdentifier("system_id");
+        String scopeToken = request.requiredText("scope");
         Integer talkgroup = request.optionalIdentifier("talkgroup_id");
         Integer radio = request.optionalIdentifier("radio_id");
 
         return read(connection -> {
+            Map<String,Object> scopeRow = requireScope(connection, scopeToken);
+
+            if(number(scopeRow.get("protocol_code")) != 1)
+            {
+                throw new StatsApiException(404, "Current affiliation is not available for this protocol");
+            }
+
             StringBuilder sql = new StringBuilder("""
-                SELECT system.system_key, system.wacn, system.system_id, affiliation.radio_id,
-                    affiliation.talkgroup_id, affiliation.updated_at_ms, summary.last_talker_alias
+                SELECT scope.scope_id, scope.scope_token, scope.protocol_code, 'P25' AS protocol,
+                    scope.p25_system_key AS system_key, system.wacn, system.system_id,
+                    affiliation.radio_id, affiliation.talkgroup_id, affiliation.updated_at_ms,
+                    summary.last_talker_alias
                 FROM p25_radio_affiliation affiliation
-                JOIN p25_system system ON system.system_key = affiliation.system_key
-                LEFT JOIN p25_radio_summary summary
-                  ON summary.system_key = affiliation.system_key AND summary.radio_id = affiliation.radio_id
-                WHERE system.wacn = ? AND system.system_id = ?
-                  AND affiliation.radio_id > 0 AND affiliation.radio_id < 16777212
-                  AND affiliation.talkgroup_id > 0 AND affiliation.talkgroup_id < 65535
+                JOIN trunked_identity_scope scope ON scope.p25_system_key = affiliation.system_key
+                JOIN p25_system system ON system.system_key = scope.p25_system_key
+                LEFT JOIN trunked_identity_summary summary
+                  ON summary.scope_id = scope.scope_id AND summary.identity_kind_code = 2
+                 AND summary.identity_id = affiliation.radio_id
+                WHERE scope.scope_token = ?
                 """);
-            List<Object> parameters = new ArrayList<>(List.of(wacn, systemId));
+            List<Object> parameters = new ArrayList<>(List.of(scopeToken));
 
             if(talkgroup != null)
             {
@@ -1294,40 +1260,61 @@ class StatsWebDatabase
             }
 
             sql.append(" ORDER BY ").append(order(request, AFFILIATION_SORT_COLUMNS, "updated"))
-                .append(" LIMIT ? OFFSET ?");
+                .append(", affiliation.radio_id LIMIT ? OFFSET ?");
             addPageParameters(parameters, request);
             List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
-            mAliasResolver.enrichRadios(connection, rows);
-            mAliasResolver.enrichTalkgroups(connection, rows);
+            enrichScopeRadios(connection, rows, "radio_id", "alias_");
+            enrichScopeTalkgroups(connection, rows, "talkgroup_id", "alias_");
             return page(rows, request);
         });
     }
 
     Map<String,Object> radioTalkgroupRelationships(StatsRequest request)
     {
-        int wacn = request.requiredIdentifier("wacn");
-        int systemId = request.requiredIdentifier("system_id");
+        String scopeToken = request.requiredText("scope");
         Integer talkgroup = request.optionalIdentifier("talkgroup_id");
         Integer radio = request.optionalIdentifier("radio_id");
 
+        if(talkgroup == null && radio == null)
+        {
+            throw new StatsApiException(400, "radio_id or talkgroup_id is required");
+        }
+
+        int targetKind = talkgroup != null ? targetKind(request) : IDENTITY_KIND_TALKGROUP;
+
         return read(connection -> {
             StringBuilder sql = new StringBuilder("""
-                SELECT system.system_key, system.wacn, system.system_id, relationship.*,
+                SELECT scope.scope_id, scope.scope_token, scope.protocol_code, scope.identity_domain_code,
+                    CASE scope.protocol_code WHEN 1 THEN 'P25' WHEN 3 THEN 'DMR'
+                        WHEN 4 THEN 'NXDN' ELSE 'Unknown' END AS protocol,
+                    scope.p25_system_key AS system_key, system.wacn,
+                    CASE WHEN scope.protocol_code = 1 THEN system.system_id ELSE
+                        (SELECT trunked.system_id FROM trunked_identity_scope_context ownership
+                         JOIN receiver_context context ON context.id = ownership.context_id
+                         LEFT JOIN trunked_site_snapshot trunked ON trunked.guid = context.guid
+                         WHERE ownership.scope_id = scope.scope_id ORDER BY ownership.context_id LIMIT 1)
+                    END AS system_id,
+                    (SELECT context.alias_list_name FROM trunked_identity_scope_context ownership
+                     JOIN receiver_context context ON context.id = ownership.context_id
+                     WHERE ownership.scope_id = scope.scope_id ORDER BY ownership.context_id LIMIT 1)
+                        AS alias_list_name,
+                    relationship.*,
                     radio.last_talker_alias
-                FROM p25_radio_talkgroup_summary relationship
-                JOIN p25_system system ON system.system_key = relationship.system_key
-                LEFT JOIN p25_radio_summary radio
-                  ON radio.system_key = relationship.system_key AND radio.radio_id = relationship.radio_id
-                WHERE system.wacn = ? AND system.system_id = ?
-                  AND relationship.radio_id > 0 AND relationship.radio_id < 16777212
-                  AND relationship.talkgroup_id > 0 AND relationship.talkgroup_id < 65535
+                FROM trunked_radio_talkgroup_summary relationship
+                JOIN trunked_identity_scope scope ON scope.scope_id = relationship.scope_id
+                LEFT JOIN p25_system system ON system.system_key = scope.p25_system_key
+                LEFT JOIN trunked_identity_summary radio
+                  ON radio.scope_id = relationship.scope_id AND radio.identity_kind_code = 2
+                 AND radio.identity_id = relationship.radio_id
+                WHERE scope.scope_token = ?
                 """);
-            List<Object> parameters = new ArrayList<>(List.of(wacn, systemId));
+            List<Object> parameters = new ArrayList<>(List.of(scopeToken));
 
             if(talkgroup != null)
             {
-                sql.append(" AND relationship.talkgroup_id = ?");
+                sql.append(" AND relationship.talkgroup_id = ? AND relationship.target_kind_code = ?");
                 parameters.add(talkgroup);
+                parameters.add(targetKind);
             }
 
             if(radio != null)
@@ -1337,10 +1324,12 @@ class StatsWebDatabase
             }
 
             sql.append(" ORDER BY ").append(order(request, RELATIONSHIP_SORT_COLUMNS, "last_seen"))
+                .append(", relationship.target_kind_code, relationship.talkgroup_id, relationship.radio_id")
                 .append(" LIMIT ? OFFSET ?");
             addPageParameters(parameters, request);
             List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
-            mAliasResolver.enrichRelationships(connection, rows);
+            enrichScopeRadios(connection, rows, "radio_id", "radio_alias_");
+            enrichScopeTalkgroups(connection, rows, "talkgroup_id", "talkgroup_alias_");
             return page(rows, request);
         });
     }
@@ -1354,21 +1343,53 @@ class StatsWebDatabase
                 queryRows(connection, trunkedSiteSelect() + " WHERE site.guid = ?", guid);
             Map<String,Object> p25Site = p25Sites.isEmpty() ? null : p25Sites.getFirst();
             Map<String,Object> trunkedSite = trunkedSites.isEmpty() ? null : trunkedSites.getFirst();
+            int currentProtocol = currentSiteProtocolCode(connection, guid);
+            boolean p25OwnsGuid = currentProtocol == 1;
+            Map<String,Object> site = p25OwnsGuid ? p25Site :
+                currentProtocol == 3 || currentProtocol == 4 ? trunkedSite : null;
 
-            if(p25Site == null && trunkedSite == null)
+            if(site == null && currentProtocol != 0)
+            {
+                List<Map<String,Object>> fallback = queryRows(connection, """
+                    SELECT context.guid, context.channel_name, context.alias_list_name, context.decoder,
+                        context.system_key, system.wacn, system.system_id, context.nac, context.rfss,
+                        context.site, context.primary_frequency_hz, context.current_control_hz,
+                        context.first_seen_ms, context.last_seen_ms, 0 AS observation_count,
+                        0 AS channels, 0 AS neighbors, 0 AS bands, 0 AS patches
+                    FROM receiver_context context
+                    LEFT JOIN p25_system system ON system.system_key = context.system_key
+                    WHERE context.guid = ? AND context.kind_code = 1
+                    LIMIT 1
+                    """, guid);
+                site = fallback.isEmpty() ? null : fallback.getFirst();
+            }
+
+            if(site == null)
             {
                 throw new StatsApiException(404, "Site not found");
             }
 
-            boolean p25OwnsGuid = p25Site != null && (trunkedSite == null ||
-                number(p25Site.get("last_seen_ms")) >= number(trunkedSite.get("last_seen_ms")));
-            Map<String,Object> site = p25OwnsGuid ? p25Site : trunkedSite;
             site.put("site_type", "trunked");
             site.put("capabilities", siteCapabilities(p25OwnsGuid));
+            List<Map<String,Object>> scopes = queryRows(connection, """
+                SELECT scope.scope_token
+                FROM trunked_identity_scope_context ownership
+                JOIN trunked_identity_scope scope ON scope.scope_id = ownership.scope_id
+                JOIN receiver_context context ON context.id = ownership.context_id
+                WHERE context.guid = ?
+                ORDER BY ownership.last_seen_ms DESC
+                LIMIT 1
+                """, guid);
+
+            if(!scopes.isEmpty())
+            {
+                site.put("scope_token", scopes.getFirst().get("scope_token"));
+            }
 
             if(p25OwnsGuid)
             {
                 site.put("protocol_code", 1);
+                site.put("protocol", "P25");
                 site.put("site_kind", "p25");
                 Object mfid = site.get("mfid");
 
@@ -1376,6 +1397,13 @@ class StatsWebDatabase
                 {
                     site.put("mfid_display", mfidDisplay(number.intValue()));
                 }
+            }
+            else
+            {
+                site.put("protocol_code", currentProtocol);
+                site.put("protocol", currentProtocol == 3 ? "DMR" :
+                    currentProtocol == 4 ? "NXDN" : "Unknown");
+                site.put("site_kind", "trunked");
             }
 
             return Map.of("site", site);
@@ -1388,7 +1416,7 @@ class StatsWebDatabase
         return read(connection -> {
             if(isTrunkedSite(connection, guid))
             {
-                return Map.of("rows", queryRows(connection, """
+                return page(queryRows(connection, """
                     SELECT NULLIF(channel_number, -1) AS channel_number,
                         NULLIF(inbound_channel_number, -1) AS inbound_channel_number,
                         NULLIF(timeslot, -1) AS timeslot,
@@ -1399,12 +1427,14 @@ class StatsWebDatabase
                     FROM trunked_site_channel_summary
                     WHERE guid = ?
                     ORDER BY channel_number = -1, channel_number, timeslot = -1, timeslot,
-                        frequency_hz = -1, frequency_hz
-                    LIMIT ?
-                    """, System.currentTimeMillis() - CURRENT_STATE_WINDOW_MILLISECONDS, guid, request.limit()));
+                        frequency_hz = -1, frequency_hz,
+                        inbound_channel_number = -1, inbound_channel_number
+                    LIMIT ? OFFSET ?
+                    """, System.currentTimeMillis() - CURRENT_STATE_WINDOW_MILLISECONDS, guid,
+                    request.limit() + 1, request.offset()), request);
             }
 
-            return Map.of("rows", queryRows(connection, """
+            return page(queryRows(connection, """
             WITH tag_summary AS (
                 SELECT guid, channel_key, group_concat(tag) AS tags,
                     max(CASE WHEN tag = 'CONTROL' THEN observation_count ELSE 0 END) AS control_observations,
@@ -1460,9 +1490,9 @@ class StatsWebDatabase
             GROUP BY guid, CASE WHEN downlink_hz > 0
                 THEN 'f:' || downlink_hz ELSE 'k:' || channel_key END
             ORDER BY coalesce(downlink_hz, 9223372036854775807), channel_key
-            LIMIT ?
+            LIMIT ? OFFSET ?
             """, guid, guid, guid, System.currentTimeMillis() - CURRENT_STATE_WINDOW_MILLISECONDS,
-                request.limit()));
+                request.limit() + 1, request.offset()), request);
         });
     }
 
@@ -1478,37 +1508,48 @@ class StatsWebDatabase
 
         return read(connection -> {
             Map<String,Object> context = first(queryRows(connection, """
-                SELECT context.id AS context_id, system.system_key, system.wacn, system.system_id
+                SELECT context.id AS context_id, context.alias_list_name, scope.scope_id, scope.scope_token,
+                    scope.protocol_code, scope.identity_domain_code,
+                    scope.p25_system_key AS system_key, system.wacn,
+                    CASE WHEN scope.protocol_code = 1 THEN system.system_id ELSE trunked.system_id END AS system_id
                 FROM receiver_context context
-                JOIN p25_system system ON system.system_key = context.system_key
+                JOIN trunked_identity_scope_context ownership ON ownership.context_id = context.id
+                JOIN trunked_identity_scope scope ON scope.scope_id = ownership.scope_id
+                LEFT JOIN p25_system system ON system.system_key = scope.p25_system_key
+                LEFT JOIN trunked_site_snapshot trunked ON trunked.guid = context.guid
                 WHERE context.guid = ?
                 """, guid), "Site not found");
             List<Map<String,Object>> rows = queryRows(connection, """
-                SELECT talkgroup_id, SUM(call_count) AS call_count,
+                SELECT identity_id AS talkgroup_id, identity_kind_code,
+                    identity_kind_code AS target_kind_code, SUM(call_count) AS call_count,
                     SUM(recorded_count) AS recorded_count, SUM(streamed_count) AS streamed_count,
                     SUM(encrypted_count) AS encrypted_count, MAX(bucket_start_ms) AS last_active_ms
-                FROM p25_site_talkgroup_bucket
+                FROM call_identity_bucket
                 WHERE context_id = ? AND bucket_start_ms >= ?
-                  AND talkgroup_id > 0 AND talkgroup_id < 65535
-                GROUP BY talkgroup_id
-                ORDER BY call_count DESC, talkgroup_id
+                  AND identity_role_code = ? AND identity_kind_code IN (1, 3)
+                GROUP BY identity_kind_code, identity_id
+                ORDER BY call_count DESC, identity_id
                 LIMIT ?
-                """, context.get("context_id"), fromMilliseconds, request.limit());
+                """, context.get("context_id"), fromMilliseconds, IDENTITY_ROLE_DESTINATION, request.limit());
 
             for(Map<String,Object> row: rows)
             {
                 row.put("system_key", context.get("system_key"));
                 row.put("wacn", context.get("wacn"));
                 row.put("system_id", context.get("system_id"));
+                row.put("scope_token", context.get("scope_token"));
+                row.put("protocol_code", context.get("protocol_code"));
+                row.put("identity_domain_code", context.get("identity_domain_code"));
+                row.put("alias_list_name", context.get("alias_list_name"));
             }
 
-            mAliasResolver.enrichTalkgroups(connection, rows);
+            enrichScopeTalkgroups(connection, rows, "talkgroup_id", "alias_");
             Map<String,Object> response = new LinkedHashMap<>();
             response.put("range", range.label());
             response.put("from_ms", fromMilliseconds);
             response.put("to_ms", System.currentTimeMillis());
             response.put("bucket_ms", HOUR_MILLISECONDS);
-            response.put("metric_start_ms", p25CallOutputMetricsStartedAt(connection));
+            response.put("metric_start_ms", scopeMetricStartedAt(connection));
             response.put("rows", rows);
             return response;
         });
@@ -1532,6 +1573,7 @@ class StatsWebDatabase
     {
         String guid = request.requiredText("guid");
         return read(connection -> {
+            requireCurrentP25Site(connection, guid);
             long currentSince = System.currentTimeMillis() - CURRENT_STATE_WINDOW_MILLISECONDS;
             Map<String,Object> response = new LinkedHashMap<>();
             response.put("rows", queryRows(connection, """
@@ -1577,7 +1619,7 @@ class StatsWebDatabase
 
             if(isTrunkedSite(connection, guid))
             {
-                return Map.of("rows", queryRows(connection, """
+                return page(queryRows(connection, """
                     SELECT 'SITE' AS entry_type, variant_code, identity_domain_code,
                         NULLIF(network_id, -1) AS network_id, NULLIF(system_id, -1) AS system_id,
                         NULLIF(site_id, -1) AS site_id,
@@ -1589,78 +1631,99 @@ class StatsWebDatabase
                     FROM trunked_site_neighbor_summary
                     WHERE guid = ?
                     ORDER BY identity_domain_code, network_id = -1, network_id, system_id = -1, system_id,
-                        site_id = -1, site_id, channel_number = -1, channel_number
-                    LIMIT ?
-                    """, currentSince, guid, request.limit()));
+                        site_id = -1, site_id, channel_number = -1, channel_number,
+                        variant_code, frequency_hz = -1, frequency_hz
+                    LIMIT ? OFFSET ?
+                    """, currentSince, guid, request.limit() + 1, request.offset()), request);
             }
 
-            List<Map<String,Object>> rows = new ArrayList<>(queryRows(connection, """
-            SELECT 'SITE' AS entry_type, source_system.wacn AS wacn, summary.neighbor_key,
-                coalesce(current.system_id, summary.system_id) AS system_id,
-                coalesce(current.rfss, summary.rfss) AS rfss,
-                coalesce(current.site, summary.site) AS site,
-                coalesce(current.lra, summary.lra) AS lra,
-                coalesce(current.channel_descriptor, summary.channel_descriptor) AS channel_descriptor,
-                coalesce(current.downlink_hz, summary.downlink_hz) AS downlink_hz,
-                coalesce(current.uplink_hz, summary.uplink_hz) AS uplink_hz,
-                coalesce(current.status, summary.status) AS status,
-                current.confirmed_at_ms, summary.first_seen_ms, summary.last_seen_ms,
-                summary.observation_count,
-                nullif(trim(neighbor_site.channel_name), '') AS neighbor_name,
-                neighbor_site.guid AS neighbor_guid,
-                CASE WHEN max(coalesce(current.confirmed_at_ms, 0), summary.last_seen_ms) >= ?
-                    THEN 'CURRENT' ELSE 'HISTORICAL' END AS state
-            FROM p25_site_neighbor_summary summary
-            LEFT JOIN p25_site_neighbor current
-              ON current.guid = summary.guid AND current.neighbor_key = summary.neighbor_key
-            LEFT JOIN p25_site_snapshot source_site ON source_site.guid = summary.guid
-            LEFT JOIN p25_system source_system ON source_system.system_key = source_site.system_key
-            LEFT JOIN p25_system neighbor_system
-              ON neighbor_system.wacn = source_system.wacn
-             AND neighbor_system.system_id = coalesce(current.system_id, summary.system_id)
-            LEFT JOIN p25_site_snapshot neighbor_site
-              ON neighbor_site.system_key = neighbor_system.system_key
-             AND neighbor_site.rfss = coalesce(current.rfss, summary.rfss)
-             AND neighbor_site.site = coalesce(current.site, summary.site)
-             AND neighbor_site.guid = (
-                SELECT candidate.guid
-                FROM p25_site_snapshot candidate
-                WHERE candidate.system_key = neighbor_system.system_key
-                  AND candidate.rfss = coalesce(current.rfss, summary.rfss)
-                  AND candidate.site = coalesce(current.site, summary.site)
-                ORDER BY candidate.last_seen_ms DESC, candidate.guid ASC
-                LIMIT 1
-             )
-            WHERE summary.guid = ?
-            ORDER BY CASE WHEN current.neighbor_key IS NULL THEN 1 ELSE 0 END,
-                system_id, rfss, site, summary.neighbor_key
-            """, currentSince, guid));
-            rows.addAll(queryRows(connection, """
-                SELECT 'ISSI' AS entry_type, summary.foreign_wacn AS wacn,
-                    printf('%X:%03X', summary.foreign_wacn, summary.foreign_system_id) AS neighbor_key,
-                    summary.foreign_system_id AS system_id, NULL AS rfss, NULL AS site, NULL AS lra,
-                    NULL AS channel_descriptor, NULL AS downlink_hz, NULL AS uplink_hz,
-                    'ISSI ADVERTISED' AS status, MAX(current.confirmed_at_ms) AS confirmed_at_ms,
-                    MIN(summary.first_seen_ms) AS first_seen_ms, MAX(summary.last_seen_ms) AS last_seen_ms,
-                    SUM(summary.observation_count) AS observation_count,
-                    COUNT(*) AS band_count,
-                    MAX(CASE WHEN summary.channel_type BETWEEN 0 AND 2 THEN 1 ELSE 0 END) AS has_fdma,
-                    MAX(CASE WHEN summary.channel_type BETWEEN 3 AND 5 THEN 1 ELSE 0 END) AS has_tdma,
-                    MAX(CASE WHEN summary.channel_type NOT BETWEEN 0 AND 5 THEN 1 ELSE 0 END) AS has_unknown,
-                    CASE WHEN MAX(coalesce(current.confirmed_at_ms, 0)) >= ? OR MAX(summary.last_seen_ms) >= ?
-                        THEN 'CURRENT' ELSE 'HISTORICAL' END AS state
-                FROM p25_foreign_system_band_summary summary
-                LEFT JOIN p25_foreign_system_band current
-                  ON current.guid = summary.guid
-                 AND current.foreign_wacn = summary.foreign_wacn
-                 AND current.foreign_system_id = summary.foreign_system_id
-                 AND current.band = summary.band
-                WHERE summary.guid = ?
-                GROUP BY summary.foreign_wacn, summary.foreign_system_id
-                ORDER BY CASE WHEN MAX(current.confirmed_at_ms) IS NULL THEN 1 ELSE 0 END,
-                    summary.foreign_wacn, summary.foreign_system_id
-                """, currentSince, currentSince, guid));
-            return Map.of("rows", rows);
+            return page(queryRows(connection, """
+                WITH combined AS (
+                    SELECT 0 AS entry_order,
+                        CASE WHEN current.neighbor_key IS NULL THEN 1 ELSE 0 END AS current_order,
+                        'SITE' AS entry_type, source_system.wacn AS wacn, summary.neighbor_key,
+                        coalesce(current.system_id, summary.system_id) AS system_id,
+                        coalesce(current.rfss, summary.rfss) AS rfss,
+                        coalesce(current.site, summary.site) AS site,
+                        coalesce(current.lra, summary.lra) AS lra,
+                        coalesce(current.channel_descriptor, summary.channel_descriptor) AS channel_descriptor,
+                        coalesce(current.downlink_hz, summary.downlink_hz) AS downlink_hz,
+                        coalesce(current.uplink_hz, summary.uplink_hz) AS uplink_hz,
+                        coalesce(current.status, summary.status) AS status,
+                        current.confirmed_at_ms, summary.first_seen_ms, summary.last_seen_ms,
+                        summary.observation_count,
+                        nullif(trim(neighbor_site.channel_name), '') AS neighbor_name,
+                        neighbor_site.guid AS neighbor_guid,
+                        NULL AS band_count, NULL AS has_fdma, NULL AS has_tdma, NULL AS has_unknown,
+                        CASE WHEN max(coalesce(current.confirmed_at_ms, 0), summary.last_seen_ms) >= ?
+                            THEN 'CURRENT' ELSE 'HISTORICAL' END AS state
+                    FROM p25_site_neighbor_summary summary
+                    LEFT JOIN p25_site_neighbor current
+                      ON current.guid = summary.guid AND current.neighbor_key = summary.neighbor_key
+                    LEFT JOIN p25_site_snapshot source_site ON source_site.guid = summary.guid
+                    LEFT JOIN p25_system source_system ON source_system.system_key = source_site.system_key
+                    LEFT JOIN p25_system neighbor_system
+                      ON neighbor_system.wacn = source_system.wacn
+                     AND neighbor_system.system_id = coalesce(current.system_id, summary.system_id)
+                    LEFT JOIN p25_site_snapshot neighbor_site
+                      ON neighbor_site.system_key = neighbor_system.system_key
+                     AND neighbor_site.rfss = coalesce(current.rfss, summary.rfss)
+                     AND neighbor_site.site = coalesce(current.site, summary.site)
+                     AND neighbor_site.guid = (
+                        SELECT candidate.guid
+                        FROM p25_site_snapshot candidate
+                        JOIN receiver_context candidate_context ON candidate_context.guid = candidate.guid
+                        JOIN trunked_identity_scope_context candidate_ownership
+                          ON candidate_ownership.context_id = candidate_context.id
+                        JOIN trunked_identity_scope candidate_scope
+                          ON candidate_scope.scope_id = candidate_ownership.scope_id
+                        WHERE candidate_scope.protocol_code = 1
+                          AND candidate_scope.p25_system_key = neighbor_system.system_key
+                          AND candidate.system_key = neighbor_system.system_key
+                          AND candidate.rfss = coalesce(current.rfss, summary.rfss)
+                          AND candidate.site = coalesce(current.site, summary.site)
+                        ORDER BY candidate.last_seen_ms DESC, candidate.guid ASC
+                        LIMIT 1
+                     )
+                    WHERE summary.guid = ?
+
+                    UNION ALL
+
+                    SELECT 1 AS entry_order,
+                        CASE WHEN MAX(current.confirmed_at_ms) IS NULL THEN 1 ELSE 0 END AS current_order,
+                        'ISSI' AS entry_type, summary.foreign_wacn AS wacn,
+                        printf('%X:%03X', summary.foreign_wacn, summary.foreign_system_id) AS neighbor_key,
+                        summary.foreign_system_id AS system_id, NULL AS rfss, NULL AS site, NULL AS lra,
+                        NULL AS channel_descriptor, NULL AS downlink_hz, NULL AS uplink_hz,
+                        'ISSI ADVERTISED' AS status, MAX(current.confirmed_at_ms) AS confirmed_at_ms,
+                        MIN(summary.first_seen_ms) AS first_seen_ms, MAX(summary.last_seen_ms) AS last_seen_ms,
+                        SUM(summary.observation_count) AS observation_count,
+                        NULL AS neighbor_name, NULL AS neighbor_guid,
+                        COUNT(*) AS band_count,
+                        MAX(CASE WHEN summary.channel_type BETWEEN 0 AND 2 THEN 1 ELSE 0 END) AS has_fdma,
+                        MAX(CASE WHEN summary.channel_type BETWEEN 3 AND 5 THEN 1 ELSE 0 END) AS has_tdma,
+                        MAX(CASE WHEN summary.channel_type NOT BETWEEN 0 AND 5 THEN 1 ELSE 0 END) AS has_unknown,
+                        CASE WHEN MAX(coalesce(current.confirmed_at_ms, 0)) >= ?
+                                  OR MAX(summary.last_seen_ms) >= ?
+                            THEN 'CURRENT' ELSE 'HISTORICAL' END AS state
+                    FROM p25_foreign_system_band_summary summary
+                    LEFT JOIN p25_foreign_system_band current
+                      ON current.guid = summary.guid
+                     AND current.foreign_wacn = summary.foreign_wacn
+                     AND current.foreign_system_id = summary.foreign_system_id
+                     AND current.band = summary.band
+                    WHERE summary.guid = ?
+                    GROUP BY summary.foreign_wacn, summary.foreign_system_id
+                )
+                SELECT entry_type, wacn, neighbor_key, system_id, rfss, site, lra, channel_descriptor,
+                    downlink_hz, uplink_hz, status, confirmed_at_ms, first_seen_ms, last_seen_ms,
+                    observation_count, neighbor_name, neighbor_guid, band_count, has_fdma, has_tdma,
+                    has_unknown, state
+                FROM combined
+                ORDER BY entry_order, current_order, system_id, rfss, site, neighbor_key
+                LIMIT ? OFFSET ?
+                """, currentSince, guid, currentSince, currentSince, guid,
+                request.limit() + 1, request.offset()), request);
         });
     }
 
@@ -1668,6 +1731,7 @@ class StatsWebDatabase
     {
         String guid = request.requiredText("guid");
         return read(connection -> {
+            requireCurrentP25Site(connection, guid);
             Map<String,Object> response = new LinkedHashMap<>();
             List<Map<String,Object>> groups = queryRows(connection, """
                 SELECT system.system_key, system.wacn, system.system_id, current.patch_group, current.version,
@@ -1737,10 +1801,9 @@ class StatsWebDatabase
                 beforeTimestamp = number(cursor.getFirst().get("observed_at_ms"));
             }
 
-            Integer wacn = request.optionalIdentifier("wacn");
-            Integer systemId = request.optionalIdentifier("system_id");
             Integer talkgroup = request.optionalIdentifier("talkgroup_id");
             Integer radio = request.optionalIdentifier("radio_id");
+            String scopeToken = request.text("scope");
             String guid = request.text("guid");
             String context = request.text("context");
 
@@ -1749,15 +1812,10 @@ class StatsWebDatabase
                 sql.append(" AND action <> 'GRANT'");
             }
 
-            if(wacn != null)
+            if(scopeToken != null)
             {
-                sql.append(" AND resolved_wacn = ?");
-                parameters.add(wacn);
-            }
-            if(systemId != null)
-            {
-                sql.append(" AND resolved_system_id = ?");
-                parameters.add(systemId);
+                sql.append(" AND scope.scope_token = ?");
+                parameters.add(scopeToken);
             }
             if(guid != null)
             {
@@ -1771,8 +1829,31 @@ class StatsWebDatabase
             }
             if(talkgroup != null)
             {
-                sql.append(" AND target_id = ? AND target_kind_code IN (1, 3)");
-                parameters.add(talkgroup);
+                int requestedTargetKind = targetKind(request);
+
+                if(requestedTargetKind == IDENTITY_KIND_TALKGROUP)
+                {
+                    sql.append("""
+                         AND activity.id IN (
+                             SELECT event.id
+                             FROM p25_activity_event event
+                             WHERE event.target_id = ? AND event.target_kind_code = ?
+                             UNION
+                             SELECT member.event_id
+                             FROM activity_event_talkgroup_member member
+                             WHERE member.talkgroup_id = ?
+                         )
+                        """);
+                    parameters.add(talkgroup);
+                    parameters.add(requestedTargetKind);
+                    parameters.add(talkgroup);
+                }
+                else
+                {
+                    sql.append(" AND target_id = ? AND target_kind_code = ?");
+                    parameters.add(talkgroup);
+                    parameters.add(requestedTargetKind);
+                }
             }
             if(radio != null)
             {
@@ -1822,7 +1903,7 @@ class StatsWebDatabase
             }
 
             sql.append(" ORDER BY ").append(order(request, CONVENTIONAL_SORT_COLUMNS, "frequency"))
-                .append(" LIMIT ? OFFSET ?");
+                .append(", context.id, summary.frequency_hz, summary.timeslot LIMIT ? OFFSET ?");
             addPageParameters(parameters, request);
             return page(queryRows(connection, sql.toString(), parameters.toArray()), request);
         });
@@ -1924,33 +2005,165 @@ class StatsWebDatabase
             """, contextKey), "Conventional DMR context not found");
     }
 
-    private List<Map<String,Object>> querySites(Connection connection, StatsRequest request, Integer wacn,
-                                                 Integer systemId) throws SQLException
+    /**
+     * One bounded directory row per durable trunked identity scope. P25 scopes own multiple linked site contexts;
+     * DMR and NXDN scopes own exactly one configured receiver context.
+     */
+    private static String scopeSummarySelect()
     {
-        StringBuilder sql = new StringBuilder(siteSelect()).append(" WHERE 1=1");
-        List<Object> parameters = new ArrayList<>();
+        return """
+            SELECT scope.scope_id, scope.scope_token, scope.protocol_code, scope.identity_domain_code,
+                CASE scope.protocol_code WHEN 1 THEN 'P25' WHEN 3 THEN 'DMR'
+                    WHEN 4 THEN 'NXDN' ELSE 'Unknown' END AS protocol,
+                scope.scope_kind_code, scope.p25_system_key AS system_key, system.wacn,
+                CASE WHEN scope.protocol_code = 1 THEN system.system_id ELSE
+                    (SELECT trunked.system_id
+                     FROM trunked_identity_scope_context ownership
+                     JOIN receiver_context context ON context.id = ownership.context_id
+                     LEFT JOIN trunked_site_snapshot trunked ON trunked.guid = context.guid
+                     WHERE ownership.scope_id = scope.scope_id
+                     ORDER BY ownership.context_id LIMIT 1)
+                END AS system_id,
+                (SELECT trunked.network_id
+                 FROM trunked_identity_scope_context ownership
+                 JOIN receiver_context context ON context.id = ownership.context_id
+                 LEFT JOIN trunked_site_snapshot trunked ON trunked.guid = context.guid
+                 WHERE ownership.scope_id = scope.scope_id
+                 ORDER BY ownership.context_id LIMIT 1) AS network_id,
+                coalesce((SELECT trunked.variant_code
+                    FROM trunked_identity_scope_context ownership
+                    JOIN receiver_context context ON context.id = ownership.context_id
+                    LEFT JOIN trunked_site_snapshot trunked ON trunked.guid = context.guid
+                    WHERE ownership.scope_id = scope.scope_id
+                    ORDER BY ownership.context_id LIMIT 1), 0) AS variant_code,
+                CASE WHEN scope.protocol_code = 1 THEN
+                    (SELECT CASE WHEN COUNT(DISTINCT lower(trim(config.system_name))) = 1
+                                THEN min(trim(config.system_name)) END
+                     FROM trunked_identity_scope_context ownership
+                     JOIN receiver_context context ON context.id = ownership.context_id
+                     LEFT JOIN configuration_channel config ON config.radres_guid = context.guid
+                     WHERE ownership.scope_id = scope.scope_id
+                       AND config.system_name IS NOT NULL AND trim(config.system_name) <> '')
+                ELSE
+                    (SELECT coalesce(nullif(trim(trunked.configured_system), ''),
+                                     nullif(trim(config.system_name), ''))
+                     FROM trunked_identity_scope_context ownership
+                     JOIN receiver_context context ON context.id = ownership.context_id
+                     LEFT JOIN trunked_site_snapshot trunked ON trunked.guid = context.guid
+                     LEFT JOIN configuration_channel config ON config.radres_guid = context.guid
+                     WHERE ownership.scope_id = scope.scope_id
+                     ORDER BY ownership.context_id LIMIT 1)
+                END AS configured_system,
+                scope.first_seen_ms, scope.last_seen_ms,
+                (SELECT COUNT(*) FROM trunked_identity_scope_context ownership
+                    WHERE ownership.scope_id = scope.scope_id) AS sites,
+                (SELECT COUNT(*) FROM trunked_identity_summary identity
+                    WHERE identity.scope_id = scope.scope_id
+                      AND identity.identity_kind_code IN (1, 3)) AS talkgroups,
+                (SELECT COUNT(*) FROM trunked_identity_summary identity
+                    WHERE identity.scope_id = scope.scope_id
+                      AND identity.identity_kind_code = 2) AS radios,
+                (SELECT COUNT(*) FROM p25_radio_affiliation affiliation
+                    WHERE scope.protocol_code = 1
+                      AND affiliation.system_key = scope.p25_system_key) AS affiliations,
+                (SELECT group_concat(name, ', ') FROM (
+                    SELECT DISTINCT coalesce(nullif(trim(context.channel_name), ''),
+                                             nullif(trim(p25.channel_name), ''),
+                                             nullif(trim(trunked.channel_name), '')) AS name
+                    FROM trunked_identity_scope_context ownership
+                    JOIN receiver_context context ON context.id = ownership.context_id
+                    LEFT JOIN p25_site_snapshot p25 ON p25.guid = context.guid
+                    LEFT JOIN trunked_site_snapshot trunked ON trunked.guid = context.guid
+                    WHERE ownership.scope_id = scope.scope_id
+                    ORDER BY name)) AS site_names
+            FROM trunked_identity_scope scope
+            LEFT JOIN p25_system system ON system.system_key = scope.p25_system_key
+            """;
+    }
 
-        if(wacn != null)
-        {
-            sql.append(" AND system.wacn = ?");
-            parameters.add(wacn);
-        }
-        if(systemId != null)
-        {
-            sql.append(" AND system.system_id = ?");
-            parameters.add(systemId);
-        }
+    private static Map<String,Object> requireScope(Connection connection, String scopeToken) throws SQLException
+    {
+        return first(queryRows(connection, "WITH scoped AS (" + scopeSummarySelect() +
+            ") SELECT * FROM scoped WHERE scope_token = ?", scopeToken), "System not found");
+    }
+
+    private static List<Map<String,Object>> queryScopeSites(Connection connection, long scopeId, StatsRequest request)
+        throws SQLException
+    {
+        StringBuilder sql = new StringBuilder("""
+            WITH scoped_sites AS (
+                SELECT scope.scope_id, scope.scope_token, 1 AS protocol_code, 'P25' AS protocol,
+                    'p25' AS site_kind, context.guid, scope.p25_system_key AS system_key,
+                    system.wacn, system.system_id, NULL AS network_id, NULL AS configured_system,
+                    coalesce(site.channel_name, context.channel_name) AS channel_name,
+                    coalesce(context.alias_list_name, site.alias_list_name) AS alias_list_name,
+                    coalesce(site.decoder, context.decoder) AS decoder,
+                    site.nac, site.rfss, site.site, NULL AS site_id, NULL AS ran,
+                    NULL AS variant_code, NULL AS identity_domain_code,
+                    coalesce(site.primary_frequency_hz, context.primary_frequency_hz) AS primary_frequency_hz,
+                    coalesce(site.current_control_hz, context.current_control_hz) AS current_control_hz,
+                    coalesce(site.first_seen_ms, context.first_seen_ms) AS first_seen_ms,
+                    coalesce(site.last_seen_ms, context.last_seen_ms) AS last_seen_ms,
+                    coalesce(site.observation_count, 0) AS observation_count,
+                    (SELECT COUNT(DISTINCT CASE WHEN channel.downlink_hz > 0
+                        THEN 'f:' || channel.downlink_hz ELSE 'k:' || channel.channel_key END)
+                     FROM p25_site_channel_summary channel WHERE channel.guid = context.guid) AS channels,
+                    (SELECT COUNT(*) FROM p25_site_neighbor neighbor
+                     WHERE neighbor.guid = context.guid) AS neighbors,
+                    (SELECT COUNT(*) FROM p25_site_frequency_band band
+                     WHERE band.guid = context.guid) AS bands,
+                    (SELECT COUNT(*) FROM p25_site_patch_group patch
+                     WHERE patch.guid = context.guid) AS patches
+                FROM trunked_identity_scope_context ownership
+                JOIN trunked_identity_scope scope ON scope.scope_id = ownership.scope_id
+                JOIN receiver_context context ON context.id = ownership.context_id
+                LEFT JOIN p25_site_snapshot site ON site.guid = context.guid
+                LEFT JOIN p25_system system ON system.system_key = scope.p25_system_key
+                WHERE ownership.scope_id = ? AND scope.protocol_code = 1
+
+                UNION ALL
+
+                SELECT scope.scope_id, scope.scope_token, scope.protocol_code,
+                    CASE scope.protocol_code WHEN 3 THEN 'DMR' WHEN 4 THEN 'NXDN'
+                        ELSE 'Unknown' END AS protocol,
+                    'trunked' AS site_kind, context.guid, NULL AS system_key, NULL AS wacn,
+                    site.system_id, site.network_id, site.configured_system,
+                    coalesce(site.channel_name, context.channel_name) AS channel_name,
+                    coalesce(context.alias_list_name, site.alias_list_name) AS alias_list_name,
+                    coalesce(site.decoder, context.decoder) AS decoder,
+                    NULL AS nac, NULL AS rfss, NULL AS site, site.site_id, site.ran,
+                    site.variant_code, site.identity_domain_code,
+                    coalesce(site.primary_frequency_hz, context.primary_frequency_hz) AS primary_frequency_hz,
+                    coalesce(site.current_control_hz, context.current_control_hz) AS current_control_hz,
+                    coalesce(site.first_seen_ms, context.first_seen_ms) AS first_seen_ms,
+                    coalesce(site.last_seen_ms, context.last_seen_ms) AS last_seen_ms,
+                    coalesce(site.observation_count, 0) AS observation_count,
+                    (SELECT COUNT(*) FROM trunked_site_channel_summary channel
+                     WHERE channel.guid = context.guid) AS channels,
+                    (SELECT COUNT(*) FROM trunked_site_neighbor_summary neighbor
+                     WHERE neighbor.guid = context.guid) AS neighbors,
+                    0 AS bands, 0 AS patches
+                FROM trunked_identity_scope_context ownership
+                JOIN trunked_identity_scope scope ON scope.scope_id = ownership.scope_id
+                JOIN receiver_context context ON context.id = ownership.context_id
+                LEFT JOIN trunked_site_snapshot site ON site.guid = context.guid
+                WHERE ownership.scope_id = ? AND scope.protocol_code IN (3, 4)
+            )
+            SELECT * FROM scoped_sites WHERE 1=1
+            """);
+        List<Object> parameters = new ArrayList<>(List.of(scopeId, scopeId));
+
         if(request.search() != null)
         {
-            sql.append(" AND (lower(site.channel_name) LIKE ? OR lower(site.guid) LIKE ?)");
-            String like = like(request.search());
-            parameters.add(like);
-            parameters.add(like);
+            sql.append(" AND (lower(channel_name) LIKE ? OR lower(guid) LIKE ?)");
+            parameters.add(like(request.search()));
+            parameters.add(like(request.search()));
         }
 
-        sql.append(" ORDER BY ").append(order(request, SITE_SORT_COLUMNS, "last_seen"))
-            .append(" LIMIT ? OFFSET ?");
-        addPageParameters(parameters, request);
+        sql.append(" ORDER BY ").append(order(request, SCOPED_SITE_SORT_COLUMNS, "last_seen"))
+            .append(", guid LIMIT ? OFFSET ?");
+        parameters.add(request.limit() + 1);
+        parameters.add(request.offset());
         return queryRows(connection, sql.toString(), parameters.toArray());
     }
 
@@ -2039,7 +2252,7 @@ class StatsWebDatabase
         capabilities.put("band_plan", p25);
         capabilities.put("patches", p25);
         capabilities.put("activity", true);
-        capabilities.put("talkgroups", p25);
+        capabilities.put("talkgroups", true);
         return Map.copyOf(capabilities);
     }
 
@@ -2076,23 +2289,43 @@ class StatsWebDatabase
 
     private static boolean isTrunkedSite(Connection connection, String guid) throws SQLException
     {
-        long protocolCode = scalarLong(connection, """
-            SELECT protocol_code
-            FROM (
-                SELECT 1 AS protocol_code, last_seen_ms
-                FROM p25_site_snapshot
-                WHERE guid = ?
-
-                UNION ALL
-
-                SELECT protocol_code, last_seen_ms
-                FROM trunked_site_snapshot
-                WHERE guid = ?
-            )
-            ORDER BY last_seen_ms DESC, protocol_code ASC
-            LIMIT 1
-            """, guid, guid);
+        int protocolCode = currentSiteProtocolCode(connection, guid);
         return protocolCode == 3 || protocolCode == 4;
+    }
+
+    private static void requireCurrentP25Site(Connection connection, String guid) throws SQLException
+    {
+        if(currentSiteProtocolCode(connection, guid) != 1)
+        {
+            throw new StatsApiException(404, "P25 site not found");
+        }
+    }
+
+    private static int currentSiteProtocolCode(Connection connection, String guid) throws SQLException
+    {
+        return (int)scalarLong(connection, """
+            SELECT coalesce(
+                (SELECT CASE WHEN protocol_code IN (1, 2) THEN 1 ELSE protocol_code END
+                 FROM receiver_context
+                 WHERE guid = ? AND kind_code = 1
+                 LIMIT 1),
+                (SELECT protocol_code
+                 FROM (
+                     SELECT 1 AS protocol_code, last_seen_ms
+                     FROM p25_site_snapshot
+                     WHERE guid = ?
+
+                     UNION ALL
+
+                     SELECT protocol_code, last_seen_ms
+                     FROM trunked_site_snapshot
+                     WHERE guid = ?
+                 )
+                 ORDER BY last_seen_ms DESC, protocol_code ASC
+                 LIMIT 1),
+                0
+            )
+            """, guid, guid, guid);
     }
 
     static String mfidDisplay(int value)
@@ -2192,16 +2425,15 @@ class StatsWebDatabase
             int identityKind = (int)number(row.get("identity_kind_code"));
             boolean trunked = "TRUNKED".equals(row.get("channel_kind"));
             boolean conventionalDmr = protocolCode == 3 && !trunked;
-            boolean hasP25System = protocolCode == 1 && trunked && row.get("wacn") instanceof Number &&
-                row.get("system_id") instanceof Number;
+            boolean hasTrunkedScope = trunked && row.get("scope_token") instanceof String token && !token.isBlank();
             String detailView = null;
 
-            if(hasP25System && (identityKind == IDENTITY_KIND_TALKGROUP ||
+            if(hasTrunkedScope && (identityKind == IDENTITY_KIND_TALKGROUP ||
                 identityKind == IDENTITY_KIND_PATCH_GROUP))
             {
                 detailView = "talkgroup";
             }
-            else if(hasP25System && identityKind == IDENTITY_KIND_RADIO)
+            else if(hasTrunkedScope && identityKind == IDENTITY_KIND_RADIO)
             {
                 detailView = "radio";
             }
@@ -2619,7 +2851,78 @@ class StatsWebDatabase
             """, P25ActivityLogSchema.ALL_MODE_CALL_OUTPUT_METRICS_STARTED_AT_KEY);
     }
 
-    private static List<Map<String,Object>> systemActionCounts(Connection connection, int wacn, int systemId)
+    private static long scopeMetricStartedAt(Connection connection) throws SQLException
+    {
+        return scalarLong(connection, """
+            SELECT COALESCE((SELECT CAST(value AS INTEGER) FROM database_metadata WHERE key = ?), 0)
+            """, P25ActivityLogSchema.TRUNKED_IDENTITY_METRICS_STARTED_AT_KEY);
+    }
+
+    private static int targetKind(StatsRequest request)
+    {
+        String kind = request.text("kind");
+
+        if(kind == null || "talkgroup".equalsIgnoreCase(kind))
+        {
+            return IDENTITY_KIND_TALKGROUP;
+        }
+
+        if("patch".equalsIgnoreCase(kind))
+        {
+            return IDENTITY_KIND_PATCH_GROUP;
+        }
+
+        throw new StatsApiException(400, "kind must be talkgroup or patch");
+    }
+
+    private static Map<String,Boolean> systemCapabilities(int protocolCode)
+    {
+        boolean p25 = protocolCode == 1;
+        Map<String,Boolean> capabilities = new LinkedHashMap<>();
+        capabilities.put("talkgroups", true);
+        capabilities.put("radios", true);
+        capabilities.put("activity", true);
+        capabilities.put("talker_aliases", protocolCode == 1 || protocolCode == 3 || protocolCode == 4);
+        capabilities.put("current_affiliations", p25);
+        capabilities.put("patches", p25);
+        return Map.copyOf(capabilities);
+    }
+
+    private static Map<String,Boolean> talkgroupCapabilities(int protocolCode, int identityKind)
+    {
+        Map<String,Boolean> capabilities = new LinkedHashMap<>(systemCapabilities(protocolCode));
+        capabilities.put("current_affiliations", protocolCode == 1 && identityKind == IDENTITY_KIND_TALKGROUP);
+        return Map.copyOf(capabilities);
+    }
+
+    private void enrichScopeTalkgroups(Connection connection, List<Map<String,Object>> rows, String identifierColumn,
+                                       String prefix) throws SQLException
+    {
+        List<Map<String,Object>> p25 = protocolRows(rows, 1);
+        List<Map<String,Object>> dmr = protocolRows(rows, 3);
+        List<Map<String,Object>> nxdn = protocolRows(rows, 4);
+        mAliasResolver.enrichTalkgroups(connection, p25, identifierColumn, prefix);
+        mAliasResolver.enrichDmrTalkgroups(connection, dmr, identifierColumn, prefix);
+        mAliasResolver.enrichNxdnTalkgroups(connection, nxdn, identifierColumn, prefix);
+    }
+
+    private void enrichScopeRadios(Connection connection, List<Map<String,Object>> rows, String identifierColumn,
+                                   String prefix) throws SQLException
+    {
+        List<Map<String,Object>> p25 = protocolRows(rows, 1);
+        List<Map<String,Object>> dmr = protocolRows(rows, 3);
+        List<Map<String,Object>> nxdn = protocolRows(rows, 4);
+        mAliasResolver.enrichRadios(connection, p25, identifierColumn, prefix);
+        mAliasResolver.enrichDmrRadios(connection, dmr, identifierColumn, prefix);
+        mAliasResolver.enrichNxdnRadios(connection, nxdn, identifierColumn, prefix);
+    }
+
+    private static List<Map<String,Object>> protocolRows(List<Map<String,Object>> rows, int protocolCode)
+    {
+        return rows.stream().filter(row -> number(row.get("protocol_code")) == protocolCode).toList();
+    }
+
+    private static List<Map<String,Object>> systemActionCounts(Connection connection, long scopeId)
         throws SQLException
     {
         String sums = TALKGROUP_SIGNALING_FIELDS.stream()
@@ -2628,10 +2931,9 @@ class StatsWebDatabase
         List<Map<String,Object>> totals = queryRows(connection, """
             SELECT %s
             FROM p25_site_activity_bucket bucket
-            JOIN receiver_context context ON context.id = bucket.context_id
-            JOIN p25_system system ON system.system_key = context.system_key
-            WHERE system.wacn = ? AND system.system_id = ?
-            """.formatted(sums), wacn, systemId);
+            JOIN trunked_identity_scope_context ownership ON ownership.context_id = bucket.context_id
+            WHERE ownership.scope_id = ?
+            """.formatted(sums), scopeId);
 
         if(totals.isEmpty())
         {
@@ -2682,10 +2984,10 @@ class StatsWebDatabase
     }
 
     /**
-     * P25 summary tables retain only the latest raw algorithm and key IDs.  Translate them at read time so the Java
-     * GUI and web interface use the same vocabulary.
+     * Shared identity summaries retain only the latest raw algorithm and key IDs. Translate them at read time so the
+     * Java GUI and web interface use the same protocol-specific vocabulary.
      */
-    private static void enrichP25SummaryEncryption(List<Map<String,Object>> rows)
+    private static void enrichSummaryEncryption(List<Map<String,Object>> rows)
     {
         for(Map<String,Object> row: rows)
         {
@@ -2694,11 +2996,13 @@ class StatsWebDatabase
                 continue;
             }
 
+            VoiceEncryptionProtocol protocol =
+                VoiceEncryptionProtocol.fromProtocolName(String.valueOf(row.get("protocol")));
             Integer algorithm = integer(row.get("last_encryption_algorithm_id"));
             row.put("last_encryption_algorithm_display",
-                VoiceEncryptionDisplay.compactAlgorithm(VoiceEncryptionProtocol.APCO25, algorithm));
+                VoiceEncryptionDisplay.compactAlgorithm(protocol, algorithm));
             row.put("last_encryption_algorithm_name",
-                VoiceEncryptionDisplay.fullAlgorithm(VoiceEncryptionProtocol.APCO25, algorithm));
+                VoiceEncryptionDisplay.fullAlgorithm(protocol, algorithm));
         }
     }
 
@@ -2834,13 +3138,32 @@ class StatsWebDatabase
                  OR (identifier.ranged = 0 AND identifier.value = %s))
                AND (identifier.fully_qualified = 0 OR
                  (identifier.wacn = system.wacn AND identifier.system_id = system.system_id))
-               AND (EXISTS (SELECT 1 FROM p25_site_snapshot assigned
-                     WHERE assigned.system_key = system.system_key
+               AND (EXISTS (
+                     SELECT 1
+                     FROM trunked_identity_scope assigned_scope
+                     JOIN trunked_identity_scope_context assigned_ownership
+                       ON assigned_ownership.scope_id = assigned_scope.scope_id
+                     JOIN receiver_context assigned_context
+                       ON assigned_context.id = assigned_ownership.context_id
+                     JOIN p25_site_snapshot assigned
+                       ON assigned.guid = assigned_context.guid
+                      AND assigned.system_key = assigned_scope.p25_system_key
+                     WHERE assigned_scope.protocol_code = 1
+                       AND assigned_scope.p25_system_key = system.system_key
                        AND assigned.alias_list_name = identifier.alias_list_name
                        AND trim(assigned.alias_list_name) <> '')
                  OR (identifier.fully_qualified <> 0 AND NOT EXISTS
-                     (SELECT 1 FROM p25_site_snapshot assigned
-                      WHERE assigned.system_key = system.system_key
+                     (SELECT 1
+                      FROM trunked_identity_scope assigned_scope
+                      JOIN trunked_identity_scope_context assigned_ownership
+                        ON assigned_ownership.scope_id = assigned_scope.scope_id
+                      JOIN receiver_context assigned_context
+                        ON assigned_context.id = assigned_ownership.context_id
+                      JOIN p25_site_snapshot assigned
+                        ON assigned.guid = assigned_context.guid
+                       AND assigned.system_key = assigned_scope.p25_system_key
+                      WHERE assigned_scope.protocol_code = 1
+                        AND assigned_scope.p25_system_key = system.system_key
                         AND assigned.alias_list_name IS NOT NULL
                         AND trim(assigned.alias_list_name) <> '')))
              ORDER BY CASE
@@ -2851,6 +3174,80 @@ class StatsWebDatabase
                  alias.id
              LIMIT 1)
             """.formatted(aliasColumn, identifierTable, identifierColumn, identifierColumn).strip();
+    }
+
+    /**
+     * Protocol-neutral identity sort expression. P25 retains fully-qualified matching across every alias list assigned
+     * to its linked sites; DMR and NXDN resolve only against the exact alias list assigned to their one owning context.
+     */
+    private static String scopeAliasSortExpression(String identifierTable, String identifierColumn,
+                                                   String aliasColumn)
+    {
+        if(!"alias_talkgroup".equals(identifierTable) && !"alias_radio".equals(identifierTable) ||
+            !identifierColumn.matches(
+                "(?:summary|affiliation|relationship)\\.(?:identity_id|talkgroup_id|radio_id|last_counterpart_id)") ||
+            !"name".equals(aliasColumn) && !"group_name".equals(aliasColumn))
+        {
+            throw new IllegalArgumentException("Unsupported scoped alias sort expression");
+        }
+
+        String protocol = "alias_talkgroup".equals(identifierTable) ?
+            "CASE scope.protocol_code WHEN 1 THEN 'APCO25' WHEN 3 THEN 'DMR' WHEN 4 THEN 'NXDN' END" :
+            "CASE scope.protocol_code WHEN 1 THEN 'APCO25' WHEN 3 THEN 'DMR' WHEN 4 THEN 'NXDN' END";
+        return """
+            (SELECT lower(alias.%s)
+             FROM %s identifier
+             JOIN alias ON alias.id = identifier.alias_id
+             WHERE (identifier.protocol = %s OR
+                    (scope.protocol_code = 1 AND identifier.protocol = 'APCO25_PHASE2'))
+               AND ((identifier.ranged <> 0 AND %s BETWEEN identifier.min_value AND identifier.max_value)
+                 OR (identifier.ranged = 0 AND identifier.value = %s))
+               AND (
+                 (scope.protocol_code = 1
+                   AND (identifier.fully_qualified = 0 OR
+                     (identifier.wacn = system.wacn AND identifier.system_id = system.system_id))
+                   AND (EXISTS (
+                         SELECT 1
+                         FROM trunked_identity_scope_context assigned_ownership
+                         JOIN receiver_context assigned_context
+                           ON assigned_context.id = assigned_ownership.context_id
+                         JOIN p25_site_snapshot assigned
+                           ON assigned.guid = assigned_context.guid
+                          AND assigned.system_key = scope.p25_system_key
+                         WHERE assigned_ownership.scope_id = scope.scope_id
+                           AND assigned.alias_list_name = identifier.alias_list_name
+                           AND trim(assigned.alias_list_name) <> '')
+                     OR (identifier.fully_qualified <> 0 AND NOT EXISTS
+                         (SELECT 1
+                          FROM trunked_identity_scope_context assigned_ownership
+                          JOIN receiver_context assigned_context
+                            ON assigned_context.id = assigned_ownership.context_id
+                          JOIN p25_site_snapshot assigned
+                            ON assigned.guid = assigned_context.guid
+                           AND assigned.system_key = scope.p25_system_key
+                          WHERE assigned_ownership.scope_id = scope.scope_id
+                            AND assigned.alias_list_name IS NOT NULL
+                            AND trim(assigned.alias_list_name) <> ''))))
+                 OR
+                 (scope.protocol_code IN (3, 4) AND identifier.fully_qualified = 0
+                   AND identifier.alias_list_name = (
+                     SELECT context.alias_list_name
+                     FROM trunked_identity_scope_context ownership
+                     JOIN receiver_context context ON context.id = ownership.context_id
+                     WHERE ownership.scope_id = scope.scope_id
+                       AND context.alias_list_name IS NOT NULL
+                       AND trim(context.alias_list_name) <> ''
+                     ORDER BY ownership.context_id
+                     LIMIT 1))
+               )
+             ORDER BY CASE
+                 WHEN identifier.fully_qualified <> 0 AND identifier.ranged = 0 THEN 3
+                 WHEN identifier.ranged = 0 THEN 2
+                 WHEN identifier.fully_qualified <> 0 THEN 1
+                 ELSE 0 END DESC,
+                 alias.id
+             LIMIT 1)
+            """.formatted(aliasColumn, identifierTable, protocol, identifierColumn, identifierColumn).strip();
     }
 
     private static String order(StatsRequest request, Map<String,String> columns, String defaultSort)
@@ -2870,8 +3267,13 @@ class StatsWebDatabase
     {
         if(search != null)
         {
-            sql.append(" AND CAST(").append(column).append(" AS TEXT) LIKE ?");
-            parameters.add(like(search));
+            sql.append(" AND (CAST(").append(column).append(" AS TEXT) LIKE ? OR ")
+                .append("(scope.protocol_code = 4 AND scope.identity_domain_code = 2 ")
+                .append("AND printf('%02d-%04d', ((").append(column).append(" >> 11) & 31), (")
+                .append(column).append(" & 2047)) LIKE ?))");
+            String like = like(search);
+            parameters.add(like);
+            parameters.add(like);
         }
     }
 

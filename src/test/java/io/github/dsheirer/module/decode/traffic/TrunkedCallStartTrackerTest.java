@@ -123,6 +123,64 @@ class TrunkedCallStartTrackerTest
     }
 
     @Test
+    void enrichmentOnlyCannotStartOrReviveACall()
+    {
+        TrunkedCallStartTracker tracker = new TrunkedCallStartTracker(5_000);
+        Channel parent = new Channel("DMR Site", Channel.ChannelType.STANDARD);
+        parent.setDecodeConfiguration(new DecodeConfigDMR());
+        DMRTier3Channel channel = channel(451_012_500L, 1);
+        MutableIdentifierCollection targetOnly = identifiers(0, 91);
+
+        TrunkedCallStartTracker.ObservationResult untracked = tracker.enrichActiveCall(parent, Protocol.DMR,
+            channel, 1, identifiers(101, 91), DecodeEventType.CALL_GROUP, 900L);
+        TrunkedCallStartTracker.ObservationResult started = tracker.observeWithAttribution(parent, Protocol.DMR,
+            channel, 1, targetOnly, DecodeEventType.CALL_GROUP, 1_000L);
+        TrunkedCallStartTracker.ObservationResult enriched = tracker.enrichActiveCall(parent, Protocol.DMR,
+            channel, 1, identifiers(101, 91), DecodeEventType.CALL_GROUP_ENCRYPTED, 1_100L);
+        tracker.end(channel, 1, 1_200L);
+        TrunkedCallStartTracker.ObservationResult ended = tracker.enrichActiveCall(parent, Protocol.DMR,
+            channel, 1, identifiers(101, 91), DecodeEventType.CALL_GROUP_ENCRYPTED, 1_300L);
+        TrunkedCallStartEvent next = tracker.observe(parent, Protocol.DMR, channel, 1,
+            identifiers(102, 91), DecodeEventType.CALL_GROUP, 1_301L);
+
+        assertNull(untracked.callStart());
+        assertNull(untracked.attribution());
+        assertNotNull(started.callStart());
+        assertNotNull(enriched.attribution());
+        assertTrue(enriched.attribution().sourceBecameKnown());
+        assertTrue(enriched.attribution().encryptionBecameKnown());
+        assertNull(ended.callStart());
+        assertNull(ended.attribution());
+        assertNotNull(next);
+    }
+
+    @Test
+    void reservedDmrIdentitiesCanBeReplacedWithoutStartingAnotherCall()
+    {
+        TrunkedCallStartTracker tracker = new TrunkedCallStartTracker(5_000);
+        Channel parent = new Channel("DMR Site", Channel.ChannelType.STANDARD);
+        parent.setDecodeConfiguration(new DecodeConfigDMR());
+        DMRTier3Channel channel = channel(451_012_500L, 1);
+
+        TrunkedCallStartTracker.ObservationResult reserved = tracker.observeWithAttribution(parent, Protocol.DMR,
+            channel, 1, identifiers(0xFFFECA, 0xFFFEC6), DecodeEventType.CALL_GROUP, 1_000L);
+        TrunkedCallStartTracker.ObservationResult valid = tracker.observeWithAttribution(parent, Protocol.DMR,
+            channel, 1, identifiers(101, 91), DecodeEventType.CALL_GROUP, 1_100L);
+        TrunkedCallStartTracker.ObservationResult repeated = tracker.observeWithAttribution(parent, Protocol.DMR,
+            channel, 1, identifiers(101, 91), DecodeEventType.CALL_GROUP, 1_200L);
+
+        assertNotNull(reserved.callStart());
+        assertNull(valid.callStart());
+        assertNotNull(valid.attribution());
+        assertTrue(valid.attribution().destinationBecameKnown());
+        assertTrue(valid.attribution().sourceBecameKnown());
+        assertEquals(91, valid.attribution().identifiers().getToIdentifier().getValue());
+        assertEquals(101, valid.attribution().identifiers().getFromIdentifier().getValue());
+        assertNull(repeated.callStart());
+        assertNull(repeated.attribution());
+    }
+
+    @Test
     void startsAgainAfterExplicitEndOrContinuationGapAndIgnoresData()
     {
         TrunkedCallStartTracker tracker = new TrunkedCallStartTracker(3_000);

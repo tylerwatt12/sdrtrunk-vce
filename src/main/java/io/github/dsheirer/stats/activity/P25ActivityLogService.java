@@ -29,7 +29,7 @@ import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
 import io.github.dsheirer.module.decode.nxdn.NXDNConventionalCallEvent;
 import io.github.dsheirer.module.decode.p25.P25CallStartEvent;
 import io.github.dsheirer.module.decode.p25.P25GrantObservationEvent;
-import io.github.dsheirer.module.decode.p25.P25TalkerAliasEvent;
+import io.github.dsheirer.module.decode.traffic.TrunkedTalkerAliasEvent;
 import io.github.dsheirer.module.decode.p25.P25TrafficChannelConfirmationEvent;
 import io.github.dsheirer.module.decode.traffic.TrunkedCallStartEvent;
 import io.github.dsheirer.module.decode.traffic.TrunkedCallAttributionEvent;
@@ -55,6 +55,7 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
 {
     private static final Logger mLog = LoggerFactory.getLogger(P25ActivityLogService.class);
     private static final long DEDUPE_RETENTION_MILLISECONDS = 60000;
+    static final long PROTOCOL_SIGNAL_DEDUPE_WINDOW_MILLISECONDS = 500;
 
     private final UserPreferences mUserPreferences;
     private final P25ActivityLogMapper mMapper = new P25ActivityLogMapper();
@@ -469,7 +470,7 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
     }
 
     @Subscribe
-    public void receiveTalkerAlias(P25TalkerAliasEvent event)
+    public void receiveTalkerAlias(TrunkedTalkerAliasEvent event)
     {
         P25ActivityLogWriter writer = getCollectionWriter();
 
@@ -600,15 +601,27 @@ public class P25ActivityLogService implements SiteMetadataListener, ProtocolSite
         {
             cleanupDedupeKeys(now);
             Long previous = mRecentDedupeKeys.put(record.dedupeKey(), now);
-            return previous == null;
+            return previous == null || !isWithinDedupeWindow(record.dedupeKey(), previous, now);
         }
+    }
+
+    /**
+     * DMR and NXDN control messages are normally repeated in a tight transmission burst. Coalesce only uninterrupted
+     * repeats inside the short signaling window. The mapper's semantic key keeps distinct event types, subtypes,
+     * participants, channels and slots independent. Existing mutable call-event dedupe retains its longer window.
+     */
+    static boolean isWithinDedupeWindow(String key, long previous, long now)
+    {
+        long window = key != null && key.startsWith(P25ActivityLogMapper.PROTOCOL_SIGNAL_DEDUPE_PREFIX) ?
+            PROTOCOL_SIGNAL_DEDUPE_WINDOW_MILLISECONDS : DEDUPE_RETENTION_MILLISECONDS;
+        return now >= previous && now - previous <= window;
     }
 
     private boolean shouldLogTalkerAlias(P25ActivityLogRecords.TalkerAliasUpdate update)
     {
         long now = System.currentTimeMillis();
         String key = String.join("|", "talker-alias", update.contextKey(), Integer.toString(update.radioId()),
-            update.talkerAlias());
+            update.talkerAlias(), update.identityDomain().name());
 
         synchronized(mRecentDedupeKeys)
         {

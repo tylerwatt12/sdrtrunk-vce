@@ -16,11 +16,16 @@ import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
+import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
+import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.event.DecodeEvent;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.dmr.channel.DMRChannel;
+import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
 import io.github.dsheirer.module.decode.nxdn.channel.NXDNChannelDFA;
 import io.github.dsheirer.module.decode.nxdn.channel.NXDNChannelLookup;
+import io.github.dsheirer.module.decode.nxdn.identifier.NXDNRadioIdentifier;
+import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkgroupIdentifier;
 import io.github.dsheirer.protocol.Protocol;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -82,6 +87,30 @@ public class TrunkedCallStartTracker
                                                                   DecodeEventType eventType,
                                                                   long timestamp)
     {
+        return observe(parentChannel, protocol, channelDescriptor, timeslot, identifiers, eventType, timestamp,
+            true);
+    }
+
+    /**
+     * Enriches an already-tracked call from traffic-channel signalling. This method cannot start a call, so a late
+     * traffic decode by itself can never create or double-count a physical call.
+     */
+    public synchronized ObservationResult enrichActiveCall(Channel parentChannel, Protocol protocol,
+                                                            IChannelDescriptor channelDescriptor,
+                                                            Integer timeslot,
+                                                            IdentifierCollection identifiers,
+                                                            DecodeEventType eventType,
+                                                            long timestamp)
+    {
+        return observe(parentChannel, protocol, channelDescriptor, timeslot, identifiers, eventType, timestamp,
+            false);
+    }
+
+    private ObservationResult observe(Channel parentChannel, Protocol protocol,
+                                      IChannelDescriptor channelDescriptor, Integer timeslot,
+                                      IdentifierCollection identifiers, DecodeEventType eventType,
+                                      long timestamp, boolean allowCallStart)
+    {
         if(parentChannel == null || protocol == null || protocol == Protocol.UNKNOWN || eventType == null ||
             !eventType.isVoiceCallEvent() || timestamp <= 0)
         {
@@ -93,7 +122,7 @@ public class TrunkedCallStartTracker
         Long endedAt = mEndedObservations.get(resourceKey);
 
         //Control and traffic decoder streams can deliver an older observation after an explicit call end.
-        if(endedAt != null && timestamp <= endedAt)
+        if(endedAt != null && (timestamp <= endedAt || !allowCallStart))
         {
             return ObservationResult.EMPTY;
         }
@@ -105,15 +134,21 @@ public class TrunkedCallStartTracker
 
         ActiveCall previous = mObservations.get(resourceKey);
 
+        if(previous == null && !allowCallStart)
+        {
+            return ObservationResult.EMPTY;
+        }
+
         //A delayed observation must not rewind the current call or create a false target-change call.
         if(previous != null && timestamp < previous.lastObservedAtMilliseconds())
         {
             return ObservationResult.EMPTY;
         }
 
-        TargetIdentity target = TargetIdentity.fromTarget(
+        TrunkedIdentityDomain identityDomain = identityDomain(parentChannel, protocol, identifiers);
+        TargetIdentity target = TargetIdentity.fromTarget(protocol, identityDomain,
             identifiers != null ? identifiers.getToIdentifier() : null);
-        TargetIdentity source = TargetIdentity.fromSource(
+        TargetIdentity source = TargetIdentity.fromSource(protocol, identityDomain,
             identifiers != null ? identifiers.getFromIdentifier() : null);
         boolean encrypted = DecodeEventType.VOICE_CALLS_ENCRYPTED.contains(eventType);
         boolean targetChanged = previous != null && previous.target().isKnown() && target.isKnown() &&
@@ -123,6 +158,11 @@ public class TrunkedCallStartTracker
 
         if(newCall)
         {
+            if(!allowCallStart)
+            {
+                return ObservationResult.EMPTY;
+            }
+
             mObservations.put(resourceKey, new ActiveCall(target, source, encrypted, timestamp, timestamp));
             enforceMaximumSize(mObservations);
             return new ObservationResult(callStart(parentChannel, protocol, channelDescriptor, timeslot,
@@ -309,6 +349,35 @@ public class TrunkedCallStartTracker
         }
     }
 
+    private static TrunkedIdentityDomain identityDomain(Channel parentChannel, Protocol protocol,
+                                                        IdentifierCollection identifiers)
+    {
+        if(protocol != Protocol.NXDN)
+        {
+            return TrunkedIdentityDomain.STANDARD;
+        }
+
+        if(parentChannel != null && parentChannel.getDecodeConfiguration() instanceof DecodeConfigNXDN config &&
+            config.getTransmissionMode() != null && config.getTransmissionMode().isTypeD())
+        {
+            return TrunkedIdentityDomain.NXDN_TYPE_D;
+        }
+
+        if(identifiers != null)
+        {
+            for(Identifier identifier: identifiers.getIdentifiers())
+            {
+                if(identifier instanceof NXDNTalkgroupIdentifier talkgroup && talkgroup.isTypeD() ||
+                    identifier instanceof NXDNRadioIdentifier radio && radio.isTypeD())
+                {
+                    return TrunkedIdentityDomain.NXDN_TYPE_D;
+                }
+            }
+        }
+
+        return TrunkedIdentityDomain.NXDN_TYPE_C;
+    }
+
     public record ObservationResult(TrunkedCallStartEvent callStart, TrunkedCallAttributionEvent attribution)
     {
         private static final ObservationResult EMPTY = new ObservationResult(null, null);
@@ -331,17 +400,39 @@ public class TrunkedCallStartTracker
             return other != null && form == other.form() && Objects.equals(value, other.value());
         }
 
-        private static TargetIdentity fromTarget(Identifier identifier)
+        private static TargetIdentity fromTarget(Protocol protocol, TrunkedIdentityDomain identityDomain,
+                                                 Identifier identifier)
         {
             return identifier != null && (identifier.getForm() == Form.TALKGROUP ||
-                identifier.getForm() == Form.PATCH_GROUP || identifier.getForm() == Form.RADIO) ?
+                identifier.getForm() == Form.PATCH_GROUP || identifier.getForm() == Form.RADIO) &&
+                TrunkedIdentityEligibility.isEligible(protocol, identityDomain, identifier.getForm(),
+                    integerValue(identifier)) ? from(identifier) : new TargetIdentity(null, null, null);
+        }
+
+        private static TargetIdentity fromSource(Protocol protocol, TrunkedIdentityDomain identityDomain,
+                                                 Identifier identifier)
+        {
+            return identifier != null && identifier.getForm() == Form.RADIO &&
+                TrunkedIdentityEligibility.isEligible(protocol, identityDomain, Form.RADIO,
+                    integerValue(identifier)) ?
                 from(identifier) : new TargetIdentity(null, null, null);
         }
 
-        private static TargetIdentity fromSource(Identifier identifier)
+        private static Integer integerValue(Identifier identifier)
         {
-            return identifier != null && identifier.getForm() == Form.RADIO ?
-                from(identifier) : new TargetIdentity(null, null, null);
+            if(identifier instanceof PatchGroupIdentifier patch && patch.getValue() != null &&
+                patch.getValue().getPatchGroup() != null)
+            {
+                return patch.getValue().getPatchGroup().getValue();
+            }
+
+            if(identifier instanceof FullyQualifiedRadioIdentifier radio)
+            {
+                return radio.getValue() != null && radio.getValue() > 0 ? radio.getValue() : radio.getRadio();
+            }
+
+            return identifier != null && identifier.getValue() instanceof Number number ?
+                number.intValue() : null;
         }
 
         private static TargetIdentity from(Identifier identifier)

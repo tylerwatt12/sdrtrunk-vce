@@ -773,8 +773,11 @@ class P25ActivityLogWriterTest
 
             //These summaries are shared by all receiver sites for the system and cannot be deleted site-by-site.
             assertCount(connection, "p25_system", 1);
-            assertCount(connection, "p25_talkgroup_summary", 1);
-            assertActionCount(connection, "p25_talkgroup_summary", "grant_count", 2);
+            assertGroupIdentityCount(connection, 1);
+            assertEquals(2L, scalarLong(connection, """
+                SELECT grant_count FROM trunked_identity_summary
+                WHERE identity_kind_code IN (1,3)
+                """));
         }
     }
 
@@ -791,7 +794,7 @@ class P25ActivityLogWriterTest
                 "SELECT value FROM database_metadata WHERE key='p25_activity_schema_version'"))
             {
                 assertTrue(resultSet.next());
-                assertEquals("23", resultSet.getString(1));
+                assertEquals("24", resultSet.getString(1));
             }
 
             try(ResultSet resultSet = statement.executeQuery("""
@@ -809,13 +812,11 @@ class P25ActivityLogWriterTest
                 assertEquals(0, resultSet.getInt(1));
             }
 
-            assertColumnAbsent(connection, "p25_talkgroup_summary", "last_frequency_hz");
-            assertColumnAbsent(connection, "p25_talkgroup_summary", "last_lcn");
-            assertColumnAbsent(connection, "p25_radio_summary", "last_frequency_hz");
-            assertColumnAbsent(connection, "p25_radio_summary", "last_lcn");
+            assertColumnAbsent(connection, "trunked_identity_summary", "last_frequency_hz");
+            assertColumnAbsent(connection, "trunked_identity_summary", "last_lcn");
             assertColumnAbsent(connection, "p25_activity_event", "service");
             assertColumnAbsent(connection, "p25_activity_event", "details");
-            assertColumnAbsent(connection, "p25_talkgroup_summary", "hits");
+            assertColumnAbsent(connection, "trunked_identity_summary", "hits");
             assertColumnAbsent(connection, "p25_activity_event", "wacn");
             assertColumnAbsent(connection, "p25_activity_event", "system_id");
             assertColumnAbsent(connection, "p25_activity_event", "nac");
@@ -916,7 +917,7 @@ class P25ActivityLogWriterTest
     @Test
     void explicitSchemaStepsCreateAndValidateForeignBandsQualityRetentionIndexAndResolvedView() throws Exception
     {
-        Path database = mTemporaryFolder.resolve("schema-v19-to-v23.sqlite");
+        Path database = mTemporaryFolder.resolve("schema-v19-to-v24.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
@@ -954,6 +955,8 @@ class P25ActivityLogWriterTest
             statement.executeUpdate("DROP VIEW p25_activity_event_resolved");
             statement.executeUpdate(currentResolvedView);
             SdrTrunkDatabaseStartup.setMetadata(connection, "p25_activity_schema_version", "23");
+            assertThrows(Exception.class, () -> P25ActivityLogSchema.validate(connection));
+            SdrTrunkDatabaseStartup.setMetadata(connection, "p25_activity_schema_version", "24");
             P25ActivityLogSchema.validate(connection);
             statement.execute("COMMIT");
 
@@ -1053,22 +1056,22 @@ class P25ActivityLogWriterTest
             assertEquals(invalidTalkgroups.length + invalidRadios.length + 3,
                 count(connection, "p25_activity_event"));
             assertEquals(1, scalarLong(connection, """
-                SELECT COUNT(*) FROM p25_talkgroup_summary
-                WHERE talkgroup_id > 0 AND talkgroup_id < 65535
+                SELECT COUNT(*) FROM trunked_identity_summary
+                WHERE identity_kind_code=1 AND identity_id > 0 AND identity_id < 65535
                 """));
             assertEquals(0, scalarLong(connection, """
-                SELECT COUNT(*) FROM p25_talkgroup_summary
-                WHERE talkgroup_id <= 0 OR talkgroup_id >= 65535
+                SELECT COUNT(*) FROM trunked_identity_summary
+                WHERE identity_kind_code=1 AND (identity_id <= 0 OR identity_id >= 65535)
                 """));
             assertEquals(1, scalarLong(connection, """
-                SELECT COUNT(*) FROM p25_radio_summary
-                WHERE radio_id > 0 AND radio_id < 16777212
+                SELECT COUNT(*) FROM trunked_identity_summary
+                WHERE identity_kind_code=2 AND identity_id > 0 AND identity_id < 16777212
                 """));
             assertEquals(0, scalarLong(connection, """
-                SELECT COUNT(*) FROM p25_radio_summary
-                WHERE radio_id <= 0 OR radio_id >= 16777212
+                SELECT COUNT(*) FROM trunked_identity_summary
+                WHERE identity_kind_code=2 AND (identity_id <= 0 OR identity_id >= 16777212)
                 """));
-            assertEquals(0, count(connection, "p25_radio_talkgroup_summary"));
+            assertEquals(0, count(connection, "trunked_radio_talkgroup_summary"));
             assertEquals(0, count(connection, "p25_radio_affiliation"));
             assertEquals(0, scalarLong(connection, """
                 SELECT COUNT(*) FROM p25_site_talkgroup_bucket
@@ -1097,7 +1100,10 @@ class P25ActivityLogWriterTest
 
             try(Statement statement = connection.createStatement();
                 ResultSet resultSet = statement.executeQuery(
-                    "SELECT call_count, grant_count, continue_count, encrypted_count FROM p25_talkgroup_summary"))
+                    """
+                    SELECT call_count, grant_count, continue_count, encrypted_count
+                    FROM trunked_identity_summary WHERE identity_kind_code=1
+                    """))
             {
                 assertTrue(resultSet.next());
                 assertEquals(1, resultSet.getInt("call_count"));
@@ -1108,7 +1114,10 @@ class P25ActivityLogWriterTest
 
             try(Statement statement = connection.createStatement();
                 ResultSet resultSet = statement.executeQuery(
-                    "SELECT call_count, grant_count, encrypted_count FROM p25_radio_summary"))
+                    """
+                    SELECT call_count, grant_count, encrypted_count
+                    FROM trunked_identity_summary WHERE identity_kind_code=2
+                    """))
             {
                 assertTrue(resultSet.next());
                 assertEquals(1, resultSet.getInt("call_count"));
@@ -1126,8 +1135,8 @@ class P25ActivityLogWriterTest
                 assertEquals(1, resultSet.getInt("continue_count"));
             }
 
-            assertCount(connection, "p25_radio_talkgroup_summary", 1);
-            assertActionCount(connection, "p25_radio_talkgroup_summary", "call_count", 1);
+            assertCount(connection, "trunked_radio_talkgroup_summary", 1);
+            assertActionCount(connection, "trunked_radio_talkgroup_summary", "call_count", 1);
             assertActionCount(connection, "p25_site_talkgroup_bucket", "call_count", 1);
             assertActionCount(connection, "p25_site_activity_bucket", "call_count", 1);
             assertCount(connection, "p25_activity_event", 2);
@@ -1143,7 +1152,7 @@ class P25ActivityLogWriterTest
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
             P25ActivityLogSchema.insertSite(connection, siteSnapshot(500L));
-            assertCount(connection, "p25_radio_summary", 0);
+            assertIdentityCount(connection, TrunkedIdentityPolicy.IDENTITY_KIND_RADIO, 0);
             P25ActivityLogSchema.recordActivity(connection,
                 activity(1000L, P25ActivityLogRecords.Action.CALL), true);
             P25ActivityLogSchema.updateTalkerAlias(connection, new P25ActivityLogRecords.TalkerAliasUpdate(
@@ -1157,7 +1166,7 @@ class P25ActivityLogWriterTest
                 ResultSet resultSet = statement.executeQuery("""
                     SELECT call_count, grant_count, encrypted_count, last_talker_alias,
                         last_talker_alias_seen_ms, last_seen_ms
-                    FROM p25_radio_summary
+                    FROM trunked_identity_summary WHERE identity_kind_code=2
                     """))
             {
                 assertTrue(resultSet.next());
@@ -1185,7 +1194,7 @@ class P25ActivityLogWriterTest
 
             try(Statement statement = connection.createStatement();
                 ResultSet resultSet = statement.executeQuery(
-                    "SELECT last_talker_alias FROM p25_radio_summary"))
+                    "SELECT last_talker_alias FROM trunked_identity_summary WHERE identity_kind_code=2"))
             {
                 assertTrue(resultSet.next());
                 assertNull(resultSet.getString("last_talker_alias"));
@@ -1200,7 +1209,7 @@ class P25ActivityLogWriterTest
             try(Statement statement = connection.createStatement();
                 ResultSet resultSet = statement.executeQuery("""
                     SELECT last_talker_alias, last_talker_alias_seen_ms
-                    FROM p25_radio_summary
+                    FROM trunked_identity_summary WHERE identity_kind_code=2
                     """))
             {
                 assertTrue(resultSet.next());
@@ -1225,8 +1234,8 @@ class P25ActivityLogWriterTest
                 "123e4567-e89b-12d3-a456-426614174000", 0xBEE00, 0x348, 1811524, "CAR 201"));
 
             assertCount(connection, "p25_system", 0);
-            assertCount(connection, "p25_talkgroup_summary", 0);
-            assertCount(connection, "p25_radio_summary", 0);
+            assertGroupIdentityCount(connection, 0);
+            assertIdentityCount(connection, TrunkedIdentityPolicy.IDENTITY_KIND_RADIO, 0);
             assertCount(connection, "p25_site_activity_bucket", 1);
 
             try(Statement statement = connection.createStatement();
@@ -1243,7 +1252,7 @@ class P25ActivityLogWriterTest
     }
 
     @Test
-    void activityCannotRekeyIdentityEstablishedBySiteSnapshot() throws Exception
+    void activityWithMismatchedSystemIdentityIsRejectedAfterSiteSnapshot() throws Exception
     {
         Path database = mTemporaryFolder.resolve("stable-site-identity.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
@@ -1258,8 +1267,8 @@ class P25ActivityLogWriterTest
                 "123e4567-e89b-12d3-a456-426614174000", 0xAAAAA, 0x111, 1811524, "CAR 201"));
 
             assertCount(connection, "p25_system", 1);
-            assertCount(connection, "p25_talkgroup_summary", 1);
-            assertCount(connection, "p25_radio_summary", 1);
+            assertGroupIdentityCount(connection, 0);
+            assertIdentityCount(connection, TrunkedIdentityPolicy.IDENTITY_KIND_RADIO, 1);
 
             try(Statement statement = connection.createStatement();
                 ResultSet resultSet = statement.executeQuery("""
@@ -1707,15 +1716,16 @@ class P25ActivityLogWriterTest
 
             assertCount(connection, "p25_system", 1);
             assertCount(connection, "receiver_context", 2);
-            assertCount(connection, "p25_talkgroup_summary", 1);
-            assertCount(connection, "p25_radio_summary", 1);
-            assertCount(connection, "p25_radio_talkgroup_summary", 1);
+            assertGroupIdentityCount(connection, 1);
+            assertIdentityCount(connection, TrunkedIdentityPolicy.IDENTITY_KIND_RADIO, 1);
+            assertCount(connection, "trunked_radio_talkgroup_summary", 1);
             assertCount(connection, "p25_site_talkgroup_bucket", 2);
             assertCount(connection, "p25_site_activity_bucket", 2);
 
             try(Statement statement = connection.createStatement();
                 ResultSet resultSet = statement.executeQuery("""
-                    SELECT grant_count FROM p25_talkgroup_summary
+                    SELECT grant_count FROM trunked_identity_summary
+                    WHERE identity_kind_code=1
                     """))
             {
                 assertTrue(resultSet.next());
@@ -1736,9 +1746,9 @@ class P25ActivityLogWriterTest
             P25ActivityLogSchema.recordActivity(connection, activityWithoutSystemIdentity(2000L), false);
 
             assertCount(connection, "p25_system", 1);
-            assertCount(connection, "p25_talkgroup_summary", 1);
-            assertCount(connection, "p25_radio_summary", 1);
-            assertCount(connection, "p25_radio_talkgroup_summary", 1);
+            assertGroupIdentityCount(connection, 1);
+            assertIdentityCount(connection, TrunkedIdentityPolicy.IDENTITY_KIND_RADIO, 1);
+            assertCount(connection, "trunked_radio_talkgroup_summary", 1);
         }
     }
 
@@ -1801,6 +1811,11 @@ class P25ActivityLogWriterTest
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
+            try(Statement statement = connection.createStatement())
+            {
+                statement.execute("PRAGMA foreign_keys=ON");
+            }
+
             assertCount(connection, "p25_activity_event", 1);
             assertEquals(56182L, scalarLong(connection,
                 "SELECT target_id FROM p25_activity_event"));
@@ -1808,43 +1823,67 @@ class P25ActivityLogWriterTest
                 "SELECT target_kind_code FROM p25_activity_event"));
             assertEquals(1L, scalarLong(connection,
                 "SELECT encrypted FROM p25_activity_event"));
+            assertCount(connection, "activity_event_talkgroup_member", 2);
+            assertEquals(112361L, scalarLong(connection,
+                "SELECT SUM(talkgroup_id) FROM activity_event_talkgroup_member"));
 
-            assertCount(connection, "p25_talkgroup_summary", 3);
-            assertCount(connection, "p25_radio_talkgroup_summary", 3);
+            assertGroupIdentityCount(connection, 3);
+            assertCount(connection, "trunked_radio_talkgroup_summary", 3);
             assertCount(connection, "p25_site_talkgroup_bucket", 3);
 
-            for(String table: List.of("p25_talkgroup_summary", "p25_radio_talkgroup_summary"))
-            {
-                assertEquals(3L, scalarLong(connection,
-                    "SELECT SUM(call_count) FROM " + table));
-                assertEquals(3L, scalarLong(connection,
-                    "SELECT SUM(encrypted_count) FROM " + table));
-                assertEquals(1L, scalarLong(connection,
-                    "SELECT COUNT(*) FROM " + table +
-                        " WHERE talkgroup_id=56182 AND target_kind_code=3"));
-                assertEquals(2L, scalarLong(connection,
-                    "SELECT COUNT(*) FROM " + table +
-                        " WHERE talkgroup_id IN (56180,56181) AND target_kind_code=1"));
-            }
+            assertEquals(3L, scalarLong(connection, """
+                SELECT SUM(call_count) FROM trunked_identity_summary
+                WHERE identity_kind_code IN (1,3)
+                """));
+            assertEquals(3L, scalarLong(connection, """
+                SELECT SUM(encrypted_count) FROM trunked_identity_summary
+                WHERE identity_kind_code IN (1,3)
+                """));
+            assertEquals(1L, scalarLong(connection, """
+                SELECT COUNT(*) FROM trunked_identity_summary
+                WHERE identity_id=56182 AND identity_kind_code=3
+                """));
+            assertEquals(2L, scalarLong(connection, """
+                SELECT COUNT(*) FROM trunked_identity_summary
+                WHERE identity_id IN (56180,56181) AND identity_kind_code=1
+                """));
+            assertEquals(3L, scalarLong(connection,
+                "SELECT SUM(call_count) FROM trunked_radio_talkgroup_summary"));
+            assertEquals(3L, scalarLong(connection,
+                "SELECT SUM(encrypted_count) FROM trunked_radio_talkgroup_summary"));
+            assertEquals(1L, scalarLong(connection, """
+                SELECT COUNT(*) FROM trunked_radio_talkgroup_summary
+                WHERE talkgroup_id=56182 AND target_kind_code=3
+                """));
+            assertEquals(2L, scalarLong(connection, """
+                SELECT COUNT(*) FROM trunked_radio_talkgroup_summary
+                WHERE talkgroup_id IN (56180,56181) AND target_kind_code=1
+                """));
 
             assertEquals(3L, scalarLong(connection,
                 "SELECT SUM(call_count) FROM p25_site_talkgroup_bucket"));
             assertEquals(3L, scalarLong(connection,
                 "SELECT SUM(encrypted_count) FROM p25_site_talkgroup_bucket"));
             assertEquals(3L, scalarLong(connection,
-                "SELECT SUM(recorded_count) FROM p25_talkgroup_summary"));
+                """
+                SELECT SUM(recorded_count) FROM trunked_identity_summary
+                WHERE identity_kind_code IN (1,3)
+                """));
             assertEquals(3L, scalarLong(connection,
-                "SELECT SUM(streamed_count) FROM p25_talkgroup_summary"));
+                """
+                SELECT SUM(streamed_count) FROM trunked_identity_summary
+                WHERE identity_kind_code IN (1,3)
+                """));
             assertEquals(3L, scalarLong(connection,
                 "SELECT SUM(recorded_count) FROM p25_site_talkgroup_bucket"));
             assertEquals(3L, scalarLong(connection,
                 "SELECT SUM(streamed_count) FROM p25_site_talkgroup_bucket"));
 
-            assertCount(connection, "p25_radio_summary", 1);
+            assertIdentityCount(connection, TrunkedIdentityPolicy.IDENTITY_KIND_RADIO, 1);
             assertEquals(1L, scalarLong(connection,
-                "SELECT call_count FROM p25_radio_summary"));
+                "SELECT call_count FROM trunked_identity_summary WHERE identity_kind_code=2"));
             assertEquals(1L, scalarLong(connection,
-                "SELECT encrypted_count FROM p25_radio_summary"));
+                "SELECT encrypted_count FROM trunked_identity_summary WHERE identity_kind_code=2"));
             assertCount(connection, "p25_site_frequency_summary", 1);
             assertEquals(1L, scalarLong(connection,
                 "SELECT call_count FROM p25_site_frequency_summary"));
@@ -1867,6 +1906,10 @@ class P25ActivityLogWriterTest
                 P25ActivityLogSchema.IDENTITY_KIND_TALKGROUP, 56181, 1, 1, 1, 1);
             assertIdentityBucket(connection, 0L, P25ActivityLogSchema.IDENTITY_ROLE_SOURCE,
                 P25ActivityLogSchema.IDENTITY_KIND_RADIO, 1811524, 1, 1, 1, 1);
+
+            P25ActivityLogSchema.deleteOlderThan(connection, 2_000L);
+            assertCount(connection, "p25_activity_event", 0);
+            assertCount(connection, "activity_event_talkgroup_member", 0);
         }
     }
 
@@ -1915,24 +1958,76 @@ class P25ActivityLogWriterTest
             assertEquals(1L, scalarLong(connection,
                 "SELECT encrypted_count FROM p25_site_talkgroup_bucket WHERE talkgroup_id=56138"));
             assertEquals(1L, scalarLong(connection,
-                "SELECT call_count FROM p25_talkgroup_summary WHERE talkgroup_id=56138"));
+                """
+                SELECT call_count FROM trunked_identity_summary
+                WHERE identity_kind_code=1 AND identity_id=56138
+                """));
             assertEquals(1L, scalarLong(connection,
-                "SELECT encrypted_count FROM p25_talkgroup_summary WHERE talkgroup_id=56138"));
+                """
+                SELECT encrypted_count FROM trunked_identity_summary
+                WHERE identity_kind_code=1 AND identity_id=56138
+                """));
             assertEquals(1L, scalarLong(connection,
-                "SELECT call_count FROM p25_radio_summary WHERE radio_id=1811524"));
+                """
+                SELECT call_count FROM trunked_identity_summary
+                WHERE identity_kind_code=2 AND identity_id=1811524
+                """));
             assertEquals(1L, scalarLong(connection,
-                "SELECT encrypted_count FROM p25_radio_summary WHERE radio_id=1811524"));
+                """
+                SELECT encrypted_count FROM trunked_identity_summary
+                WHERE identity_kind_code=2 AND identity_id=1811524
+                """));
             assertEquals(56138L, scalarLong(connection,
-                "SELECT last_talkgroup_id FROM p25_radio_summary WHERE radio_id=1811524"));
+                """
+                SELECT last_counterpart_id FROM trunked_identity_summary
+                WHERE identity_kind_code=2 AND identity_id=1811524
+                """));
             assertEquals(1L, scalarLong(connection,
-                "SELECT call_count FROM p25_radio_talkgroup_summary"));
+                "SELECT call_count FROM trunked_radio_talkgroup_summary"));
             assertEquals(1L, scalarLong(connection,
-                "SELECT encrypted_count FROM p25_radio_talkgroup_summary"));
+                "SELECT encrypted_count FROM trunked_radio_talkgroup_summary"));
             assertCount(connection, "call_identity_bucket", 2);
             assertIdentityBucket(connection, 0L, P25ActivityLogSchema.IDENTITY_ROLE_DESTINATION,
                 P25ActivityLogSchema.IDENTITY_KIND_TALKGROUP, 56138, 1, 1, 0, 0);
             assertIdentityBucket(connection, 0L, P25ActivityLogSchema.IDENTITY_ROLE_SOURCE,
                 P25ActivityLogSchema.IDENTITY_KIND_RADIO, 1811524, 1, 1, 0, 0);
+        }
+    }
+
+    @Test
+    void lateP25PatchAttributionLinksRetainedActivityToEachValidMemberTalkgroup() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("p25-late-patch-attribution.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        String guid = "123e4567-e89b-12d3-a456-426614174000";
+        P25ActivityLogRecords.ActivityEvent unidentified = new P25ActivityLogRecords.ActivityEvent(
+            1_000L, "GUID:" + guid, guid, P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "APCO25",
+            P25ActivityLogRecords.Action.CALL, "CALL_GROUP", null, null, null, List.of(),
+            854_187_500L, "00-0509", 1, false, null, null, 0xBEE00, 0x348, 0x348, 2, 1,
+            "Example Site", "P25_PHASE1", null, true, null, null);
+        P25ActivityLogRecords.TrunkedCallAttribution attribution =
+            new P25ActivityLogRecords.TrunkedCallAttribution(1_000L, "GUID:" + guid, guid,
+                854_187_500L, 1, 56182, "PATCH_GROUP",
+                List.of(56180, 56181, 0xFFFF, 56182, 56180), null,
+                true, false, false, false);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            P25ActivityLogSchema.insertSite(connection, siteSnapshot(500L));
+            P25ActivityLogSchema.recordActivity(connection, unidentified, true);
+            assertTrue(P25ActivityLogSchema.applyTrunkedCallAttribution(connection, attribution));
+
+            assertCount(connection, "p25_activity_event", 1);
+            assertEquals(56182L, scalarLong(connection,
+                "SELECT target_id FROM p25_activity_event"));
+            assertEquals(P25ActivityLogSchema.IDENTITY_KIND_PATCH_GROUP, scalarLong(connection,
+                "SELECT target_kind_code FROM p25_activity_event"));
+            assertCount(connection, "activity_event_talkgroup_member", 2);
+            assertEquals(112361L, scalarLong(connection,
+                "SELECT SUM(talkgroup_id) FROM activity_event_talkgroup_member"));
+            assertEquals(1L, retainedActivityCountForMember(connection, 56180));
+            assertEquals(1L, retainedActivityCountForMember(connection, 56181));
+            assertEquals(0L, retainedActivityCountForMember(connection, 0xFFFF));
         }
     }
 
@@ -2004,8 +2099,11 @@ class P25ActivityLogWriterTest
 
             try(Statement statement = connection.createStatement();
                 ResultSet resultSet = statement.executeQuery("""
-                    SELECT call_count, recorded_count, streamed_count
-                    FROM p25_talkgroup_summary WHERE system_key = 1 AND talkgroup_id = 56138
+                    SELECT summary.call_count, summary.recorded_count, summary.streamed_count
+                    FROM trunked_identity_summary summary
+                    JOIN trunked_identity_scope scope ON scope.scope_id=summary.scope_id
+                    WHERE scope.p25_system_key=1
+                      AND summary.identity_kind_code=1 AND summary.identity_id=56138
                     """))
             {
                 assertTrue(resultSet.next());
@@ -2075,8 +2173,11 @@ class P25ActivityLogWriterTest
 
             try(Statement statement = connection.createStatement();
                 ResultSet resultSet = statement.executeQuery("""
-                    SELECT call_count, recorded_count, streamed_count
-                    FROM p25_talkgroup_summary WHERE system_key = 1 AND talkgroup_id = 60000
+                    SELECT summary.call_count, summary.recorded_count, summary.streamed_count
+                    FROM trunked_identity_summary summary
+                    JOIN trunked_identity_scope scope ON scope.scope_id=summary.scope_id
+                    WHERE scope.p25_system_key=1
+                      AND summary.identity_kind_code=1 AND summary.identity_id=60000
                     """))
             {
                 assertTrue(resultSet.next());
@@ -2108,6 +2209,47 @@ class P25ActivityLogWriterTest
 
         writer.close();
         assertTrue(writer.getDroppedRecords() > 0);
+    }
+
+    @Test
+    void siteSnapshotsAuthoritativelyRemoveAliasListsAndP25ContextFields() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("site-alias-removal.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        String guid = "123e4567-e89b-12d3-a456-426614174099";
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            P25ActivityLogRecords.SiteSnapshot p25 = siteSnapshot(1_000L, guid);
+            P25ActivityLogSchema.insertSite(connection, p25);
+            assertEquals("Example System", scalarString(connection, """
+                SELECT alias_list_name FROM receiver_context WHERE guid='%s'
+                """.formatted(guid)));
+
+            P25ActivityLogSchema.insertSite(connection, withAliasList(p25, 2_000L, "without-alias", null));
+            assertNull(scalarString(connection, """
+                SELECT alias_list_name FROM receiver_context WHERE guid='%s'
+                """.formatted(guid)));
+            assertNull(scalarString(connection, """
+                SELECT alias_list_name FROM p25_site_snapshot WHERE guid='%s'
+                """.formatted(guid)));
+
+            TrunkedSiteSchema.Snapshot dmr =
+                trunkedSite(3_000L, guid, TrunkedSiteSchema.PROTOCOL_DMR, "dmr-transition").snapshot();
+            TrunkedSiteSchema.upsert(connection, dmr);
+            P25ActivityLogSchema.ensureTrunkedSiteIdentityScope(connection, dmr);
+
+            assertEquals(TrunkedSiteSchema.PROTOCOL_DMR, scalarLong(connection, """
+                SELECT protocol_code FROM receiver_context WHERE guid='%s'
+                """.formatted(guid)));
+            assertEquals(0, scalarLong(connection, """
+                SELECT COUNT(*) FROM receiver_context
+                WHERE guid='%s' AND (system_key IS NOT NULL OR nac IS NOT NULL OR rfss IS NOT NULL OR site IS NOT NULL)
+                """.formatted(guid)));
+            assertNull(scalarString(connection, """
+                SELECT alias_list_name FROM receiver_context WHERE guid='%s'
+                """.formatted(guid)));
+        }
     }
 
     @Test
@@ -2377,6 +2519,20 @@ class P25ActivityLogWriterTest
         assertEquals(expected, count(connection, table));
     }
 
+    private static void assertIdentityCount(Connection connection, int identityKind, int expected) throws Exception
+    {
+        assertEquals(expected, scalarLong(connection, """
+            SELECT COUNT(*) FROM trunked_identity_summary WHERE identity_kind_code=%d
+            """.formatted(identityKind)));
+    }
+
+    private static void assertGroupIdentityCount(Connection connection, int expected) throws Exception
+    {
+        assertEquals(expected, scalarLong(connection, """
+            SELECT COUNT(*) FROM trunked_identity_summary WHERE identity_kind_code IN (1,3)
+            """));
+    }
+
     private static int count(Connection connection, String table) throws Exception
     {
         try(Statement statement = connection.createStatement();
@@ -2393,6 +2549,25 @@ class P25ActivityLogWriterTest
         {
             assertTrue(resultSet.next());
             return resultSet.getLong(1);
+        }
+    }
+
+    private static long retainedActivityCountForMember(Connection connection, int talkgroupId) throws Exception
+    {
+        try(java.sql.PreparedStatement statement = connection.prepareStatement("""
+            SELECT COUNT(DISTINCT event.id)
+            FROM p25_activity_event event
+            JOIN activity_event_talkgroup_member member ON member.event_id=event.id
+            WHERE member.talkgroup_id=?
+            """))
+        {
+            statement.setInt(1, talkgroupId);
+
+            try(ResultSet resultSet = statement.executeQuery())
+            {
+                assertTrue(resultSet.next());
+                return resultSet.getLong(1);
+            }
         }
     }
 
@@ -2712,6 +2887,17 @@ class P25ActivityLogWriterTest
             snapshot.rfss(), snapshot.site(), snapshot.lra(), snapshot.tdma(), snapshot.siteStatus(),
             snapshot.primaryFrequencyHertz(), snapshot.currentControlHertz(), snapshot.channels(),
             snapshot.neighborSites(), snapshot.frequencyBands(), snapshot.patchGroups(),
+            snapshot.foreignSystemBands());
+    }
+
+    private static P25ActivityLogRecords.SiteSnapshot withAliasList(
+        P25ActivityLogRecords.SiteSnapshot snapshot, long timestamp, String snapshotHash, String aliasListName)
+    {
+        return new P25ActivityLogRecords.SiteSnapshot(timestamp, snapshot.guid(), snapshot.contextKind(),
+            snapshotHash, snapshot.protocol(), snapshot.channelName(), aliasListName, snapshot.decoder(),
+            snapshot.wacn(), snapshot.systemId(), snapshot.nac(), snapshot.rfss(), snapshot.site(), snapshot.lra(),
+            snapshot.tdma(), snapshot.siteStatus(), snapshot.primaryFrequencyHertz(), snapshot.currentControlHertz(),
+            snapshot.channels(), snapshot.neighborSites(), snapshot.frequencyBands(), snapshot.patchGroups(),
             snapshot.foreignSystemBands());
     }
 

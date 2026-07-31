@@ -127,7 +127,7 @@ final class TrunkedSiteMetadataMapper
             }
         }
 
-        addCurrentControlIfMissing(channels, configuredCurrentControl, observedAt);
+        reconcileCurrentControl(channels, configuredCurrentControl, observedAt);
         List<TrunkedSiteSchema.Neighbor> neighbors = new ArrayList<>();
 
         for(DMRNetworkConfigurationSnapshot.NeighborSite neighbor: snapshot.neighborSites())
@@ -197,7 +197,7 @@ final class TrunkedSiteMetadataMapper
             .filter(frequency -> frequency != null && frequency > 0)
             .findFirst()
             .orElse(configuredCurrentControl);
-        addCurrentControlIfMissing(channels, currentControl, observedAt);
+        reconcileCurrentControl(channels, currentControl, observedAt);
         List<TrunkedSiteSchema.Neighbor> neighbors = new ArrayList<>();
 
         for(NXDNNetworkConfigurationSnapshot.NeighborSite neighbor: snapshot.neighborSites())
@@ -236,11 +236,26 @@ final class TrunkedSiteMetadataMapper
             nxdnFailureCode(snapshot.failureStatus()), primaryFrequency, currentControl, channels, neighbors);
     }
 
-    private static void addCurrentControlIfMissing(List<TrunkedSiteSchema.Channel> channels, Long frequency,
-                                                   long observedAt)
+    private static void reconcileCurrentControl(List<TrunkedSiteSchema.Channel> channels, Long frequency,
+                                                long observedAt)
     {
-        if(frequency != null && frequency > 0 && channels.stream()
-            .noneMatch(channel -> frequency.equals(channel.frequencyHertz())))
+        if(frequency == null || frequency <= 0)
+        {
+            return;
+        }
+
+        boolean resolved = channels.stream()
+            .anyMatch(channel -> frequency.equals(channel.frequencyHertz()) &&
+                (channel.channelNumber() != null || channel.inboundChannelNumber() != null ||
+                    channel.timeslot() != null));
+
+        if(resolved)
+        {
+            channels.removeIf(channel -> frequency.equals(channel.frequencyHertz()) &&
+                channel.channelNumber() == null && channel.inboundChannelNumber() == null &&
+                channel.timeslot() == null);
+        }
+        else if(channels.stream().noneMatch(channel -> frequency.equals(channel.frequencyHertz())))
         {
             channels.addFirst(new TrunkedSiteSchema.Channel(null, null, null, frequency, null,
                 TrunkedSiteSchema.CHANNEL_ROLE_CURRENT_CONTROL, observedAt));

@@ -647,7 +647,13 @@ class P25ActivityLogWriter implements AutoCloseable
                 {
                     long childRetentionCutoff = System.currentTimeMillis() -
                         TimeUnit.DAYS.toMillis(Math.max(1, mRetentionDays));
-                    TrunkedSiteSchema.upsert(connection, trunkedSiteSnapshot.snapshot(), childRetentionCutoff);
+                    if(P25ActivityLogSchema.isAuthoritativeTrunkedSiteSnapshot(
+                        connection, trunkedSiteSnapshot.snapshot()) &&
+                        TrunkedSiteSchema.upsert(connection, trunkedSiteSnapshot.snapshot(), childRetentionCutoff))
+                    {
+                        P25ActivityLogSchema.ensureTrunkedSiteIdentityScope(connection,
+                            trunkedSiteSnapshot.snapshot());
+                    }
                     writtenRecords++;
                 }
             }

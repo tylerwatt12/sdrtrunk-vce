@@ -29,6 +29,7 @@ class DecodeConfigNXDNTest
         assertEquals(NXDNChannelMode.TRUNKED, restored.getChannelMode());
         assertTrue(restored.isTrunked());
         assertFalse(restored.isConventional());
+        assertFalse(restored.hasExplicitChannelMode());
     }
 
     @Test
@@ -44,5 +45,6 @@ class DecodeConfigNXDNTest
         assertEquals(NXDNChannelMode.CONVENTIONAL, restored.getChannelMode());
         assertTrue(restored.isConventional());
         assertFalse(restored.isTrunked());
+        assertTrue(restored.hasExplicitChannelMode());
     }
 }

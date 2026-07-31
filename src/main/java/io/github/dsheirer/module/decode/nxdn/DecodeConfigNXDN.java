@@ -93,6 +93,17 @@ public class DecodeConfigNXDN extends DecodeConfiguration
     }
 
     /**
+     * Indicates whether this configuration explicitly selected conventional or trunked operation. Legacy
+     * configurations without the field still use the historical trunked default, but callers can require additional
+     * decoded evidence before presenting system-only features.
+     */
+    @JsonIgnore
+    public boolean hasExplicitChannelMode()
+    {
+        return mChannelMode != null;
+    }
+
+    /**
      * Indicates if this channel is explicitly configured for conventional operation.
      */
     @JsonIgnore

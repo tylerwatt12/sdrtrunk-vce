@@ -24,6 +24,7 @@ record StatsRequest(Map<String,String> parameters)
 {
     static final int DEFAULT_LIMIT = 100;
     static final int MAX_LIMIT = 500;
+    static final int MAX_OFFSET = 100_000;
 
     static StatsRequest from(URI uri)
     {
@@ -128,7 +129,7 @@ record StatsRequest(Map<String,String> parameters)
     int offset()
     {
         Integer requested = optionalInt("offset");
-        return Math.max(0, requested != null ? requested : 0);
+        return Math.max(0, Math.min(MAX_OFFSET, requested != null ? requested : 0));
     }
 
     long beforeId()

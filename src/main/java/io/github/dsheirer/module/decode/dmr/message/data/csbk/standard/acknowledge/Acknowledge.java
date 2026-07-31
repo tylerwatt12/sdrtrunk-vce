@@ -85,7 +85,12 @@ public class Acknowledge extends CSBKMessage
         }
         sb.append(" ").append(getAcknowledgeType());
         sb.append(" REASON:").append(getReason());
-        sb.append(" FM:").append(getSourceRadio());
+
+        if(hasSourceRadio())
+        {
+            sb.append(" FM:").append(getSourceRadio());
+        }
+
         sb.append(" TO:").append(getTargetAddress());
 
         return sb.toString();
@@ -147,7 +152,13 @@ public class Acknowledge extends CSBKMessage
 
     public boolean hasSourceRadio()
     {
-        return true; //TODO: delineate valid reason codes here
+        return switch(getReason())
+        {
+            //For registration responses this dual-purpose field carries additional information, not a radio address.
+            case TS_REGISTRATION_ACCEPTED, TS_SUBSCRIPTION_SERVICE_REGISTRATION_ACCEPTED,
+                 TS_REGISTRATION_REFUSED, TS_REGISTRATION_DENIED -> false;
+            default -> true;
+        };
     }
 
     /**

@@ -19,6 +19,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.stats.activity.DmrActivitySchema;
+import io.github.dsheirer.stats.activity.P25ActivityLogSchema;
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
@@ -54,7 +55,8 @@ class ApplicationDatabaseMigratorTest
         try(Connection connection = open(database))
         {
             assertEquals("4", metadata(connection, "alias_schema_version"));
-            assertEquals("23", metadata(connection, "p25_activity_schema_version"));
+            assertEquals(Integer.toString(P25ActivityLogSchema.SCHEMA_VERSION),
+                metadata(connection, "p25_activity_schema_version"));
             assertEquals("2", metadata(connection, "trunked_site_schema_version"));
             assertEquals("1", metadata(connection, DmrActivitySchema.SCHEMA_VERSION_KEY));
             assertEquals("ok", scalar(connection, "PRAGMA quick_check"));
@@ -132,7 +134,8 @@ class ApplicationDatabaseMigratorTest
         CommandResult result = run(database);
 
         assertEquals(ApplicationDatabaseMigrator.EXIT_UNSUPPORTED_VERSION, result.exitCode());
-        assertTrue(result.error().contains("Expected current P25 activity schema v23"));
+        assertTrue(result.error().contains(
+            "Expected current P25 activity schema v" + P25ActivityLogSchema.SCHEMA_VERSION));
 
         try(Connection connection = open(database))
         {

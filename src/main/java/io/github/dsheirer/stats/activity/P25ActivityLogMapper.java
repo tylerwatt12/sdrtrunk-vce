@@ -29,26 +29,32 @@ import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
 import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
 import io.github.dsheirer.module.decode.nxdn.NXDNConventionalCallEvent;
+import io.github.dsheirer.module.decode.nxdn.identifier.NXDNRadioIdentifier;
+import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.P25ChannelGrantEvent;
 import io.github.dsheirer.module.decode.p25.P25EncryptionConfirmationTracker;
 import io.github.dsheirer.module.decode.p25.P25AffiliationEvent;
 import io.github.dsheirer.module.decode.p25.P25CallStartEvent;
 import io.github.dsheirer.module.decode.p25.P25DecodeEvent;
 import io.github.dsheirer.module.decode.p25.P25GrantObservationEvent;
-import io.github.dsheirer.module.decode.p25.P25TalkerAliasEvent;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
+import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
+import io.github.dsheirer.module.decode.traffic.TrunkedTalkerAliasEvent;
 import io.github.dsheirer.protocol.Protocol;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * Converts SDRTrunk activity events into compact SQLite log records.
  */
 class P25ActivityLogMapper
 {
+    static final String PROTOCOL_SIGNAL_DEDUPE_PREFIX = "protocol-signal|";
+
     P25ActivityLogRecords.DmrConventionalCall map(DMRConventionalCallEvent event)
     {
         if(event == null || event.startTimestamp() <= 0 || event.endTimestamp() < event.startTimestamp() ||
@@ -142,10 +148,11 @@ class P25ActivityLogMapper
             targetKind, talkgroup, sourceRadio, targetRadio, event.encrypted());
     }
 
-    P25ActivityLogRecords.TalkerAliasUpdate map(P25TalkerAliasEvent event)
+    P25ActivityLogRecords.TalkerAliasUpdate map(TrunkedTalkerAliasEvent event)
     {
         if(event == null || event.channel() == null || event.radio() == null || event.alias() == null ||
-            event.alias().getValue() == null || event.alias().getValue().toString().isBlank())
+            event.alias().getValue() == null || event.alias().getValue().toString().isBlank() ||
+            event.protocol() == null || event.protocol() == Protocol.UNKNOWN)
         {
             return null;
         }
@@ -153,14 +160,22 @@ class P25ActivityLogMapper
         DecoderType decoderType = event.channel().getDecodeConfiguration() != null ?
             event.channel().getDecodeConfiguration().getDecoderType() : null;
 
-        if(decoderType != DecoderType.P25_PHASE1 && decoderType != DecoderType.P25_PHASE2)
+        boolean decoderMatches = switch(event.protocol())
+        {
+            case APCO25 -> decoderType == DecoderType.P25_PHASE1 || decoderType == DecoderType.P25_PHASE2;
+            case DMR -> decoderType == DecoderType.DMR;
+            case NXDN -> decoderType == DecoderType.NXDN;
+            default -> false;
+        };
+
+        if(!decoderMatches)
         {
             return null;
         }
 
         IdentifierFacts facts = IdentifierFacts.from(event.identifiers());
         String guid = firstNonBlank(event.channel().getRadresGuid(), facts.radresGuid());
-        String contextKey = contextKey(guid, protocolName(Protocol.APCO25, facts, decoderType), facts, null,
+        String contextKey = contextKey(guid, protocolName(event.protocol(), facts, decoderType), facts, null,
             P25ActivityLogRecords.ContextKind.TRUNKED_SITE, event.channel().getName(),
             event.channel().getConfigurationId());
 
@@ -171,7 +186,18 @@ class P25ActivityLogMapper
 
         long observedAt = event.timestamp() > 0 ? event.timestamp() : System.currentTimeMillis();
         return new P25ActivityLogRecords.TalkerAliasUpdate(observedAt, contextKey, guid, facts.wacn(),
-            facts.systemId(), event.radio().getValue(), event.alias().getValue().toString().trim());
+            facts.systemId(), event.radio().getValue(), event.alias().getValue().toString().trim(),
+            identityDomain(event.identityDomain()));
+    }
+
+    private static P25ActivityLogRecords.IdentityDomain identityDomain(TrunkedIdentityDomain domain)
+    {
+        return switch(domain != null ? domain : TrunkedIdentityDomain.STANDARD)
+        {
+            case STANDARD -> P25ActivityLogRecords.IdentityDomain.STANDARD;
+            case NXDN_TYPE_C -> P25ActivityLogRecords.IdentityDomain.NXDN_TYPE_C;
+            case NXDN_TYPE_D -> P25ActivityLogRecords.IdentityDomain.NXDN_TYPE_D;
+        };
     }
 
     P25ActivityLogRecords.ActivityEvent map(Channel channel, IDecodeEvent event)
@@ -239,7 +265,8 @@ class P25ActivityLogMapper
             facts.timeslot();
         return new P25ActivityLogRecords.CompletedCallOutput(timestamp, contextKey, guid, facts.frequencyHertz(),
             timeslot, destination != null ? destination : 0, facts.targetForm(),
-            facts.patchMemberTalkgroupIds(), sourceRadio, output);
+            facts.patchMemberTalkgroupIds(), sourceRadio, output,
+            identityDomain(identifiers, DecoderType.NXDN.toString().equals(facts.decoder()), false));
     }
 
     private static String outputContextKey(String guid, IdentifierFacts facts)
@@ -384,7 +411,13 @@ class P25ActivityLogMapper
         Integer metricsKeyId = metricsEncrypted ? facts.encryptionKeyId() : null;
 
         String dedupeKey = null;
-        if(actionOverride == null &&
+        if(actionOverride == null && (decoderType == DecoderType.DMR || decoderType == DecoderType.NXDN) &&
+            isUsefulProtocolSignaling(event.getEventType()))
+        {
+            dedupeKey = protocolSignalingDedupeKey(contextKey, protocol, action, event, frequency,
+                channelDescriptor, timeslot, sourceRadioId, targetId, targetKind);
+        }
+        else if(actionOverride == null &&
             (isHighChurnCallEvent(event.getEventType()) || action == P25ActivityLogRecords.Action.CONTINUE))
         {
             dedupeKey = String.join("|",
@@ -411,7 +444,7 @@ class P25ActivityLogMapper
             activityChannelName(contextKind, channel), decoderType.name(), facts.talkerAlias(),
             action == P25ActivityLogRecords.Action.CALL &&
                 (contextKind != P25ActivityLogRecords.ContextKind.TRUNKED_SITE || actionOverride != null), dedupeKey,
-            affiliationUpdate);
+            affiliationUpdate, identityDomain(channel, event.getIdentifierCollection()));
     }
 
     static boolean isTypedCallOwnedObservation(Channel channel, IDecodeEvent event)
@@ -526,13 +559,28 @@ class P25ActivityLogMapper
         }
 
         DecodeEventType eventType = event.getEventType();
-        String details = event.getDetails() != null ? event.getDetails().toUpperCase() : "";
+        String details = event.getDetails() != null ? event.getDetails().toUpperCase(Locale.ROOT) : "";
+        boolean protocolSignaling = decoderType == DecoderType.DMR || decoderType == DecoderType.NXDN ||
+            event.getProtocol() == Protocol.DMR || event.getProtocol() == Protocol.NXDN;
         boolean useDetailHeuristics = decoderType != DecoderType.DMR && decoderType != DecoderType.NXDN &&
             event.getProtocol() != Protocol.DMR && event.getProtocol() != Protocol.NXDN;
 
+        if(protocolSignaling && eventType == DecodeEventType.COMMAND && "REGISTER".equals(details.strip()))
+        {
+            return P25ActivityLogRecords.Action.REGISTER;
+        }
+        if(protocolSignaling && eventType == DecodeEventType.RESPONSE &&
+            "ALOHA ACKNOWLEDGE".equals(details.strip()))
+        {
+            return P25ActivityLogRecords.Action.ACKNOWLEDGE;
+        }
         if(eventType == DecodeEventType.DEREGISTER)
         {
             return P25ActivityLogRecords.Action.LOGOUT;
+        }
+        if(eventType == DecodeEventType.DENIAL)
+        {
+            return P25ActivityLogRecords.Action.DENIAL;
         }
         if(eventType == DecodeEventType.AFFILIATE)
         {
@@ -747,6 +795,51 @@ class P25ActivityLogMapper
         return value != null && value > 0 && value <= 0xFFFF ? value : null;
     }
 
+    private static P25ActivityLogRecords.IdentityDomain identityDomain(Channel channel,
+                                                                       IdentifierCollection identifiers)
+    {
+        if(channel != null && channel.getDecodeConfiguration() instanceof DecodeConfigNXDN config)
+        {
+            return identityDomain(identifiers, true,
+                config.getTransmissionMode() != null && config.getTransmissionMode().isTypeD());
+        }
+
+        return P25ActivityLogRecords.IdentityDomain.STANDARD;
+    }
+
+    private static P25ActivityLogRecords.IdentityDomain identityDomain(IdentifierCollection identifiers,
+                                                                       boolean nxdn, boolean nxdnTypeD)
+    {
+        if(identifiers != null)
+        {
+            for(Identifier identifier: identifiers.getIdentifiers())
+            {
+                if(identifier instanceof NXDNTalkgroupIdentifier talkgroup)
+                {
+                    nxdn = true;
+
+                    if(talkgroup.isTypeD())
+                    {
+                        return P25ActivityLogRecords.IdentityDomain.NXDN_TYPE_D;
+                    }
+                }
+                else if(identifier instanceof NXDNRadioIdentifier radio)
+                {
+                    nxdn = true;
+
+                    if(radio.isTypeD())
+                    {
+                        return P25ActivityLogRecords.IdentityDomain.NXDN_TYPE_D;
+                    }
+                }
+            }
+        }
+
+        return nxdnTypeD ? P25ActivityLogRecords.IdentityDomain.NXDN_TYPE_D :
+            nxdn ? P25ActivityLogRecords.IdentityDomain.NXDN_TYPE_C :
+                P25ActivityLogRecords.IdentityDomain.STANDARD;
+    }
+
     private static String contextKey(String guid, String protocol, IdentifierFacts facts, Long frequency,
                                      P25ActivityLogRecords.ContextKind contextKind, String configuredChannelName,
                                      String channelConfigurationId)
@@ -864,11 +957,38 @@ class P25ActivityLogMapper
         return eventType != null && switch(eventType)
         {
             case ACKNOWLEDGE, AFFILIATE, AUTOMATIC_REGISTRATION_SERVICE, CALL_ALERT, COMMAND, DATA_CALL,
-                 DATA_CALL_ENCRYPTED, DATA_PACKET, DEREGISTER, EMERGENCY, GPS, LRRP, PAGE, QUERY, RADIO_CHECK,
+                 DATA_CALL_ENCRYPTED, DATA_PACKET, DENIAL, DEREGISTER, EMERGENCY, GPS, LRRP, PAGE, QUERY, RADIO_CHECK,
                  RADIO_REGISTRATION_SERVICE, REGISTER, REGISTER_ESN, REQUEST, RESPONSE, SDM, SMS, STATUS,
                  TEXT_MESSAGE, XCMP -> true;
             default -> false;
         };
+    }
+
+    /**
+     * Creates a compact key for one semantic DMR/NXDN signaling operation. The detail digest differentiates known
+     * command and response subtypes without retaining message bodies. Event type, participants, physical channel and
+     * slot remain separate key components so unrelated operations can never suppress one another.
+     */
+    private static String protocolSignalingDedupeKey(String contextKey, String protocol,
+                                                      P25ActivityLogRecords.Action action, IDecodeEvent event,
+                                                      Long frequency, String channelDescriptor, Integer timeslot,
+                                                      String sourceRadioId, String targetId, String targetKind)
+    {
+        String details = event.getDetails();
+        String subtype = details != null && !details.isBlank() ?
+            sha256(details.strip().replaceAll("\\s+", " ").toUpperCase(Locale.ROOT)) : "";
+        return PROTOCOL_SIGNAL_DEDUPE_PREFIX + String.join("|",
+            safe(contextKey),
+            safe(protocol),
+            safe(event.getEventType()),
+            subtype,
+            safe(action),
+            safe(sourceRadioId),
+            safe(targetId),
+            safe(targetKind),
+            safe(frequency),
+            safe(channelDescriptor),
+            safe(timeslot));
     }
 
     private static Long currentControl(List<P25NetworkConfigurationSnapshot.Channel> channels)

@@ -53,11 +53,11 @@ class StatsWebInteractionUiContractTest
     }
 
     @Test
-    void showsConfiguredSystemHeadingsAndLinksP25Parents() throws Exception
+    void showsConfiguredSystemHeadingsAndLinksEveryTrunkedParent() throws Exception
     {
         String systems = function(source(), "async function renderSystems()");
         assertTrue(systems.contains("row.configured_system || `${protocolFamily(row)} System`"));
-        assertTrue(systems.contains("isP25(row) ? systemLink(row, label) : label"));
+        assertTrue(systems.contains("heading.append(systemLink(row, label))"));
         assertFalse(systems.contains("directory-secondary"));
         assertFalse(systems.contains("row.site_names && row.site_names"));
         assertFalse(systems.contains("isP25(row) ? 'P25 System'"));
@@ -85,7 +85,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(source.contains("section('Retained Signaling Observations'"));
         assertTrue(source.contains("section('Collected Call Activity'"));
         assertTrue(source.contains("section('Collected Signaling Observations'"));
-        assertTrue(source.contains("section('Signaling Observations'"));
+        assertTrue(source.contains("section('Retained Signaling Totals'"));
         assertTrue(source.contains("TALKGROUP_CALL_ACTIVITY_SERIES"));
         assertTrue(source.contains("TALKGROUP_SIGNALING_SERIES"));
         assertTrue(source.contains("entity-info-column entity-info-standalone"));
@@ -124,10 +124,55 @@ class StatsWebInteractionUiContractTest
     }
 
     @Test
-    void labelsP25SentinelsAsSystemOrSpecialActivityWithoutLinkingThem() throws Exception
+    void preservesPatchKindAcrossTabsRelationshipsAndActivity() throws Exception
     {
         String source = source();
-        String labels = function(source, "function p25SpecialIdentifierLabel(row, value, kind)");
+        String tabs = function(source, "function entityTabs(view, system, id, active, radio, kind = null)");
+        String talkgroup = function(source, "async function renderTalkgroup()");
+        String radio = function(source, "async function renderRadio()");
+        String links = function(source, "function talkgroupLink(row, id = row.talkgroup_id, label, explicitKindCode)");
+        assertTrue(tabs.contains("kind: kind === 'patch' ? 'patch' : null"));
+        assertTrue(talkgroup.contains("entityTabs('talkgroup', talkgroup, id, tab, false, kind)"));
+        assertTrue(talkgroup.contains("pageParameters({ ...systemScope, talkgroup_id: id, kind })"));
+        assertTrue(talkgroup.contains("renderActivity({ ...systemScope, talkgroup_id: id, kind }"));
+        assertTrue(talkgroup.contains("talkgroupActivityHistorySection({ ...systemScope, talkgroup_id: id, kind })"));
+        assertTrue(links.contains("explicitKindCode ?? row.identity_kind_code ?? row.target_kind_code"));
+        assertTrue(radio.contains("radio.last_talkgroup_kind_code"));
+        assertTrue(source.contains("Number(row.target_kind_code) === 3 ? 'Patch' : 'TG'"));
+        assertTrue(source.contains("talkgroupLink(site, row.patch_group, undefined, 3)"));
+        String siteTalkgroups = function(source, "async function siteTopTalkgroupsSection(site)");
+        assertTrue(siteTalkgroups.contains("id: 'talkgroup-kind'"));
+        assertTrue(siteTalkgroups.contains("=== 3 ? 'Patch' : 'TG'"));
+    }
+
+    @Test
+    void pagesSiteChannelsAndNeighborsWithoutLegacySiteRoutes() throws Exception
+    {
+        String source = source();
+        String channels = function(source, "async function renderSiteChannels(site)");
+        String neighbors = function(source, "async function renderSiteNeighbors(site)");
+        String render = function(source, "async function render()");
+        String system = function(source, "async function renderSystem()");
+        assertTrue(channels.contains("pageParameters({ guid: site.guid })"));
+        assertTrue(channels.contains("block.append(pager(data))"));
+        assertTrue(channels.contains("sortable: false"));
+        assertTrue(neighbors.contains("pageParameters({ guid: site.guid })"));
+        assertTrue(neighbors.contains("block.append(pager(data))"));
+        assertTrue(neighbors.contains("sortable: false"));
+        assertTrue(system.contains("const tabItems = systemTabItems(system)"));
+        assertTrue(system.contains("tabItems.some((item) => item.id === requestedTab)"));
+        assertTrue(system.contains("window.history.replaceState({}, '', currentHref())"));
+        assertFalse(source.contains("async function renderSites()"));
+        assertFalse(render.contains("route.get('view') === 'sites'"));
+        assertFalse(render.contains("sites: renderSites"));
+        assertFalse(system.contains("requestedTab === 'sites'"));
+    }
+
+    @Test
+    void labelsProtocolDefinedSentinelsAsSystemOrSpecialActivityWithoutLinkingThem() throws Exception
+    {
+        String source = source();
+        String labels = function(source, "function specialIdentifierLabel(row, value, kind)");
         String renderer = function(source, "function activityIdentifier(row, value, kind)");
         String sourceAlias = function(source, "function activitySourceAlias(row)");
         assertTrue(labels.contains("0x0000: 'No Talkgroup'"));
@@ -137,10 +182,16 @@ class StatsWebInteractionUiContractTest
         assertTrue(labels.contains("0xFFFFFD: 'System Default'"));
         assertTrue(labels.contains("0xFFFFFE: 'Registration Default'"));
         assertTrue(labels.contains("0xFFFFFF: 'All Units'"));
+        assertTrue(labels.contains("0xFFFEC0: 'PSTN Gateway'"));
+        assertTrue(labels.contains("0xFFFECA: 'Trunking System Controller'"));
+        assertTrue(labels.contains("0xFFFFFD: 'All Radios at Site'"));
+        assertTrue(labels.contains("0xFFF0: 'Reserved Group'"));
+        assertTrue(labels.contains("0xFFF0: 'Trunking Controller'"));
+        assertTrue(labels.contains("Number(row.identity_domain_code) !== 2"));
         assertTrue(renderer.contains("badge('System/special', 'special-signaling')"));
         assertTrue(renderer.indexOf("if (specialLabel)") < renderer.indexOf("talkgroupLink(row, value"));
-        assertTrue(sourceAlias.contains("p25SpecialIdentifierLabel(row, row.source_radio_id, 'radio')"));
-        assertTrue(sourceAlias.indexOf("p25SpecialIdentifierLabel") < sourceAlias.indexOf("radioLink("));
+        assertTrue(sourceAlias.contains("specialIdentifierLabel(row, row.source_radio_id, 'radio')"));
+        assertTrue(sourceAlias.indexOf("specialIdentifierLabel") < sourceAlias.indexOf("radioLink("));
         assertTrue(source.contains("render: activitySourceAlias"));
     }
 
@@ -152,7 +203,11 @@ class StatsWebInteractionUiContractTest
         assertTrue(identifier.contains("String(Math.trunc(numeric))"));
         assertFalse(identifier.contains("number(value)"));
         assertTrue(function(source, "function dashboardIdentityId(row)")
-            .contains("identifierNumber(row.identity_id)"));
+            .contains("identityNumber(row, row.identity_id)"));
+        assertTrue(function(source, "function identityNumber(row, value)")
+            .contains("String((numeric >> 11) & 0x1F).padStart(2, '0')"));
+        assertTrue(function(source, "function identityNumber(row, value)")
+            .contains("String(numeric & 0x7FF).padStart(4, '0')"));
         assertTrue(source.contains("render: (row) => identifierNumber(row.radio_id)"));
         assertTrue(source.contains("render: (row) => number(row.call_count)"));
     }
@@ -194,7 +249,7 @@ class StatsWebInteractionUiContractTest
             html.indexOf("rel=\"stylesheet\""));
         assertTrue(html.contains("id=\"theme-toggle\""));
         assertTrue(html.contains("/assets/app.css?v=21"));
-        assertTrue(html.contains("/assets/app.js?v=28"));
+        assertTrue(html.contains("/assets/app.js?v=32"));
         assertTrue(source.contains("window.localStorage.setItem(THEME_STORAGE_KEY"));
         assertTrue(source.contains("toggle.setAttribute('aria-pressed'"));
         assertTrue(css.contains(":root[data-theme=\"dark\"]"));

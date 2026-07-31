@@ -186,6 +186,7 @@ public final class P25ActivityLogMaintenance
         int deleted = P25ActivityLogSchema.deleteOlderThan(connection, cutoff) +
             TrunkedSiteSchema.deleteOlderThan(connection, cutoff).total() +
             DmrActivitySchema.deleteOlderThan(connection, cutoff).total();
+        deleted += P25ActivityLogSchema.pruneInactiveTrunkedContexts(connection);
 
         P25ActivityLogSchema.updateStatus(connection, "retention_days", Integer.toString(Math.max(1, retentionDays)));
         P25ActivityLogSchema.updateStatus(connection, "last_retention_cleanup_ms",
