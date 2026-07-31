@@ -172,6 +172,7 @@ class StatsWebInteractionUiContractTest
     void labelsProtocolDefinedSentinelsAsSystemOrSpecialActivityWithoutLinkingThem() throws Exception
     {
         String source = source();
+        String css = Files.readString(APP_CSS);
         String labels = function(source, "function specialIdentifierLabel(row, value, kind)");
         String renderer = function(source, "function activityIdentifier(row, value, kind)");
         String sourceAlias = function(source, "function activitySourceAlias(row)");
@@ -188,7 +189,11 @@ class StatsWebInteractionUiContractTest
         assertTrue(labels.contains("0xFFF0: 'Reserved Group'"));
         assertTrue(labels.contains("0xFFF0: 'Trunking Controller'"));
         assertTrue(labels.contains("Number(row.identity_domain_code) !== 2"));
-        assertTrue(renderer.contains("badge('System/special', 'special-signaling')"));
+        assertTrue(renderer.contains("node('span', 'special-identifier', specialLabel)"));
+        assertFalse(renderer.contains("badge('System/special'"));
+        assertTrue(css.contains(".special-identifier"));
+        assertTrue(css.contains("text-overflow: ellipsis"));
+        assertFalse(css.contains(".special-signaling"));
         assertTrue(renderer.indexOf("if (specialLabel)") < renderer.indexOf("talkgroupLink(row, value"));
         assertTrue(sourceAlias.contains("specialIdentifierLabel(row, row.source_radio_id, 'radio')"));
         assertTrue(sourceAlias.indexOf("specialIdentifierLabel") < sourceAlias.indexOf("radioLink("));

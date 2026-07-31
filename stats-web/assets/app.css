@@ -1576,27 +1576,12 @@ th.numeric {
 }
 
 .special-identifier {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 3px;
+  display: block;
   max-width: 100%;
-  white-space: normal;
-}
-
-.special-identifier-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-weight: 650;
-}
-
-.special-identifier-value {
-  color: var(--muted);
-}
-
-.special-signaling {
-  color: #5d6670;
-  background: #eef1f3;
-  border-color: #c9d1d8;
 }
 
 .resizable-table .alias-cell {
@@ -1831,8 +1816,7 @@ th.center {
 
 :root[data-theme="dark"] .signal-state.offline,
 :root[data-theme="dark"] .signal-state.unknown,
-:root[data-theme="dark"] .state-historical,
-:root[data-theme="dark"] .special-signaling {
+:root[data-theme="dark"] .state-historical {
   color: #bdc8d1;
   background: #29343d;
   border-color: #52616e;

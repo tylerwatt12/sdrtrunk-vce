@@ -3929,11 +3929,8 @@ function activityIdentifier(row, value, kind) {
   const specialLabel = specialIdentifierLabel(row, value, kind);
   if (specialLabel) {
     const protocol = protocolFamily(row);
-    const result = node('span', 'special-identifier');
-    result.append(node('span', 'special-identifier-label', specialLabel),
-      badge('System/special', 'special-signaling'),
-      node('span', 'special-identifier-value', `(${identifier})`));
-    result.title = `${protocol} ${specialLabel}: system or special signaling identifier ${identifier}`;
+    const result = node('span', 'special-identifier', specialLabel);
+    result.title = `${protocol} ${specialLabel} (${identifier}): system or special signaling identifier`;
     result.setAttribute('aria-label',
       `${specialLabel}, ${protocol} system or special signaling identifier ${identifier}`);
     return result;
