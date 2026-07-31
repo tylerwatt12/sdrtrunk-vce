@@ -41,6 +41,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -60,6 +61,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
     private final StatsWebCallService mWebCallService = new StatsWebCallService();
     private final ChannelProcessingManager mChannelProcessingManager;
     private final P25ActivityLogService mActivityLogService;
+    private final Semaphore mCsvExportPermit = new Semaphore(1);
     private HttpServer mServer;
     private ExecutorService mExecutorService;
     private Path mAssetRoot;
@@ -199,6 +201,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             mServer.createContext("/api/conventional/radios",
                 exchange -> handleJson(exchange, "/api/conventional/radios",
                 () -> mDatabase.conventionalRadios(StatsRequest.from(exchange.getRequestURI()))));
+            mServer.createContext("/api/export.csv", this::handleCsvExport);
             mServer.createContext("/live/systems", this::handleSystemsSse);
             mServer.createContext("/live/sites", this::handleSitesSse);
             mServer.createContext("/live/web-calls", this::handleWebCallsSse);
@@ -334,6 +337,60 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             mLog.warn("Stats web request failed [{}]", exchange.getRequestURI().getPath(), e);
             sendJson(exchange, 500, Map.of("error", "Stats request failed", "status", 500));
         }
+    }
+
+    private void handleCsvExport(HttpExchange exchange) throws IOException
+    {
+        if(!hasExactPath(exchange.getRequestURI(), "/api/export.csv"))
+        {
+            sendJson(exchange, 404, Map.of("error", "Not found", "status", 404));
+            return;
+        }
+
+        if(!requireMethod(exchange, "GET"))
+        {
+            return;
+        }
+
+        if(!mCsvExportPermit.tryAcquire())
+        {
+            sendJson(exchange, 429, Map.of("error", "Another CSV export is already running", "status", 429));
+            return;
+        }
+
+        try
+        {
+            StatsCsvExport export = mDatabase.csvExport(StatsRequest.from(exchange.getRequestURI()));
+            Headers headers = exchange.getResponseHeaders();
+            applyCsvHeaders(headers, export.fileName());
+            exchange.sendResponseHeaders(200, export.content().length);
+
+            try(OutputStream outputStream = exchange.getResponseBody())
+            {
+                outputStream.write(export.content());
+            }
+        }
+        catch(StatsApiException e)
+        {
+            sendJson(exchange, e.status(), Map.of("error", e.getMessage(), "status", e.status()));
+        }
+        catch(RuntimeException e)
+        {
+            mLog.warn("Stats CSV export failed", e);
+            sendJson(exchange, 500, Map.of("error", "CSV export failed", "status", 500));
+        }
+        finally
+        {
+            mCsvExportPermit.release();
+        }
+    }
+
+    static void applyCsvHeaders(Headers headers, String fileName)
+    {
+        headers.set("Content-Type", "text/csv; charset=utf-8");
+        headers.set("Content-Disposition", "attachment; filename=\"" + fileName + "\"");
+        headers.set("Cache-Control", "no-store");
+        headers.set("X-Content-Type-Options", "nosniff");
     }
 
     static boolean hasExactPath(URI uri, String expectedPath)

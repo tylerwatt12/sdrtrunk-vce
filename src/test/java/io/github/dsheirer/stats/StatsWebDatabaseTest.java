@@ -16,7 +16,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
+import java.io.StringReader;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -26,6 +28,9 @@ import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import org.apache.commons.csv.CSVFormat;
+import org.apache.commons.csv.CSVParser;
+import org.apache.commons.csv.CSVRecord;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -98,6 +103,76 @@ class StatsWebDatabaseTest
             mDatabase.radioTalkgroupRelationships(request(
                 "/api/relationships?scope=p25:BEE00:348")));
         assertEquals(400, unbounded.status());
+    }
+
+    @Test
+    void exportsCompleteFilteredAndSortedDatasetsWithoutUsingPageControls() throws Exception
+    {
+        seedSortingRows(mDatabasePath);
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO receiver_context (
+                    id, context_key, guid, kind_code, protocol_code, channel_name, decoder,
+                    first_seen_ms, last_seen_ms, primary_frequency_hz
+                ) VALUES (81, 'csv-p25-phase2', 'csv-p25-phase2-guid', 2, 2, 'CSV P25 Phase 2', 'P25-2',
+                             1000, 3000, 851012500),
+                         (82, 'csv-nxdn', 'csv-nxdn-guid', 4, 4, 'CSV NXDN', 'NXDN',
+                             1000, 3000, 461125000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO conventional_activity_summary (
+                    context_id, frequency_hz, timeslot, first_seen_ms, last_seen_ms, call_count
+                ) VALUES (81, 851012500, -1, 1000, 3000, 2),
+                         (82, 461125000, -1, 1000, 3000, 3)
+                """);
+        }
+        mDatabase = new StatsWebDatabase(new UserPreferences(), mDatabasePath);
+
+        StatsCsvExport talkgroups = mDatabase.csvExport(request(
+            "/api/export.csv?dataset=system-talkgroups&scope=p25:BEE00:348" +
+                "&sort=talkgroup&direction=asc&limit=1&offset=100000"));
+        List<CSVRecord> talkgroupRows = csvRows(talkgroups);
+        assertEquals(2, talkgroupRows.size());
+        assertEquals("100", talkgroupRows.getFirst().get("talkgroup_id"));
+        assertEquals("56132", talkgroupRows.getLast().get("talkgroup_id"));
+
+        StatsCsvExport filtered = mDatabase.csvExport(request(
+            "/api/export.csv?dataset=system-talkgroups&scope=p25:BEE00:348&q=56132"));
+        assertEquals(List.of("56132"), csvRows(filtered).stream()
+            .map(row -> row.get("talkgroup_id")).toList());
+
+        assertTrue(mDatabase.csvExport(request(
+            "/api/export.csv?dataset=system-radios&scope=p25:BEE00:348")).rowCount() > 0);
+        assertTrue(mDatabase.csvExport(request(
+            "/api/export.csv?dataset=site-channels&guid=" + GUID)).rowCount() > 0);
+        mDatabase.csvExport(request("/api/export.csv?dataset=site-neighbors&guid=" + GUID));
+        List<CSVRecord> conventional = csvRows(mDatabase.csvExport(request(
+            "/api/export.csv?dataset=conventional-channels")));
+        assertTrue(conventional.size() > 0);
+        CSVRecord nbfm = conventional.stream().filter(row ->
+            "conventional-fire".equals(row.get("context"))).findFirst().orElseThrow();
+        assertEquals("NBFM", nbfm.get("protocol"));
+        assertEquals("", nbfm.get("timeslot"));
+        assertEquals("P25", conventional.stream().filter(row ->
+            "csv-p25-phase2".equals(row.get("context"))).findFirst().orElseThrow().get("protocol"));
+        assertEquals("NXDN", conventional.stream().filter(row ->
+            "csv-nxdn".equals(row.get("context"))).findFirst().orElseThrow().get("protocol"));
+
+        seedDmrConventionalRows(mDatabasePath);
+        assertEquals(1, mDatabase.csvExport(request(
+            "/api/export.csv?dataset=conventional-talkgroups&context=conventional-dmr-county&q=dispatch"))
+            .rowCount());
+        List<CSVRecord> radios = csvRows(mDatabase.csvExport(request(
+            "/api/export.csv?dataset=conventional-radios&context=conventional-dmr-county&sort=radio" +
+                "&direction=asc")));
+        assertEquals("451012500", radios.getFirst().get("frequency_hz"));
+        assertEquals("1", radios.getFirst().get("timeslot"));
+
+        StatsApiException unsupported = assertThrows(StatsApiException.class,
+            () -> mDatabase.csvExport(request("/api/export.csv?dataset=activity")));
+        assertEquals(400, unsupported.status());
     }
 
     @Test
@@ -1907,6 +1982,12 @@ class StatsWebDatabaseTest
             "/api/site/channels?guid=" + GUID))).getFirst().get("channel_number")));
         assertEquals(3, number(rows(mDatabase.siteNeighbors(request(
             "/api/site/neighbors?guid=" + GUID))).getFirst().get("site_id")));
+        CSVRecord dmrChannelExport = csvRows(mDatabase.csvExport(request(
+            "/api/export.csv?dataset=site-channels&guid=" + GUID))).getFirst();
+        assertEquals("DMR", dmrChannelExport.get("protocol"));
+        assertEquals("10", dmrChannelExport.get("network_id"));
+        assertEquals("20", dmrChannelExport.get("system_id"));
+        assertEquals("2", dmrChannelExport.get("site_id"));
 
         List<Map<String,Object>> qualitySites = rowsFrom(mDatabase.qualityHistory(request(
             "/api/quality?guid=" + GUID + "&include_history=false")), "sites");
@@ -1954,6 +2035,11 @@ class StatsWebDatabaseTest
             "/api/site/channels?guid=" + GUID))).getFirst().get("descriptor"));
         assertFalse(rows(mDatabase.siteNeighbors(request(
             "/api/site/neighbors?guid=" + GUID))).getFirst().containsKey("site_id"));
+        CSVRecord p25ChannelExport = csvRows(mDatabase.csvExport(request(
+            "/api/export.csv?dataset=site-channels&guid=" + GUID))).getFirst();
+        assertEquals("P25", p25ChannelExport.get("protocol"));
+        assertEquals("BEE00", p25ChannelExport.get("wacn_hex"));
+        assertEquals("49F", p25ChannelExport.get("nac_hex"));
 
         qualitySites = rowsFrom(mDatabase.qualityHistory(request(
             "/api/quality?guid=" + GUID + "&include_history=false")), "sites");
@@ -2155,7 +2241,9 @@ class StatsWebDatabaseTest
                         scope_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms,
                         call_count, source_call_count, target_call_count, last_counterpart_kind_code,
                         last_counterpart_id, last_talker_alias, last_talker_alias_seen_ms
-                    ) VALUES (103, 1, 24921, 1000, 3000, 2, 0, 2, 2, 14358, NULL, NULL),
+                    ) VALUES (101, 1, 91, 1000, 3000, 3, 0, 3, 2, 1234, NULL, NULL),
+                             (101, 2, 1234, 1000, 3000, 3, 3, 0, 1, 91, 'DMR UNIT', 3000),
+                             (103, 1, 24921, 1000, 3000, 2, 0, 2, 2, 14358, NULL, NULL),
                              (103, 2, 14358, 1000, 3000, 2, 2, 0, 1, 24921, 'TYPE D UNIT', 3000)
                     """);
                 statement.executeUpdate("""
@@ -2244,6 +2332,25 @@ class StatsWebDatabaseTest
         assertEquals(14358, number(rows(mDatabase.systemTalkerAliases(request(
             "/api/system/talker-aliases?scope=nxdn:guid:nxdn-a&q=07-0022")))
             .getFirst().get("radio_id")));
+
+        CSVRecord dmrTalkgroupExport = csvRows(mDatabase.csvExport(request(
+            "/api/export.csv?dataset=system-talkgroups&scope=dmr:guid:dmr-a"))).getFirst();
+        assertEquals("DMR", dmrTalkgroupExport.get("protocol"));
+        assertEquals("10", dmrTalkgroupExport.get("network_id"));
+        assertEquals("20", dmrTalkgroupExport.get("system_id"));
+        CSVRecord dmrRadioExport = csvRows(mDatabase.csvExport(request(
+            "/api/export.csv?dataset=system-radios&scope=dmr:guid:dmr-a"))).getFirst();
+        assertEquals("10", dmrRadioExport.get("network_id"));
+        assertEquals("1234", dmrRadioExport.get("radio_id"));
+
+        CSVRecord nxdnTalkgroupExport = csvRows(mDatabase.csvExport(request(
+            "/api/export.csv?dataset=system-talkgroups&scope=nxdn:guid:nxdn-a"))).getFirst();
+        assertEquals("7", nxdnTalkgroupExport.get("network_id"));
+        assertEquals("12-0345", nxdnTalkgroupExport.get("formatted_talkgroup_id"));
+        CSVRecord nxdnRadioExport = csvRows(mDatabase.csvExport(request(
+            "/api/export.csv?dataset=system-radios&scope=nxdn:guid:nxdn-a"))).getFirst();
+        assertEquals("7", nxdnRadioExport.get("network_id"));
+        assertEquals("07-0022", nxdnRadioExport.get("formatted_radio_id"));
 
         Map<String,Object> dmrChannelPage = mDatabase.siteChannels(request(
             "/api/site/channels?guid=dmr-a&limit=1"));
@@ -2503,6 +2610,16 @@ class StatsWebDatabaseTest
     private static StatsRequest request(String uri)
     {
         return StatsRequest.from(URI.create(uri));
+    }
+
+    private static List<CSVRecord> csvRows(StatsCsvExport export) throws Exception
+    {
+        String csv = new String(export.content(), 3, export.content().length - 3, StandardCharsets.UTF_8);
+        try(CSVParser parser = CSVFormat.RFC4180.builder().setHeader().setSkipHeaderRecord(true).get()
+            .parse(new StringReader(csv)))
+        {
+            return parser.getRecords();
+        }
     }
 
     @SuppressWarnings("unchecked")

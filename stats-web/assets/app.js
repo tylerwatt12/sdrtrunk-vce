@@ -664,6 +664,22 @@ function anchor(label, target, className) {
   return element;
 }
 
+function exportCsvLink(dataset, context = {}) {
+  const parameters = new URLSearchParams();
+  parameters.set('dataset', dataset);
+  Object.entries(context).forEach(([key, value]) => {
+    if (value !== null && value !== undefined && value !== '') parameters.set(key, String(value));
+  });
+  ['q', 'sort', 'direction'].forEach((key) => {
+    const value = route.get(key);
+    if (value) parameters.set(key, value);
+  });
+  const link = anchor('Export CSV', `/api/export.csv?${parameters}`, 'button secondary export-csv-action');
+  link.setAttribute('download', '');
+  link.setAttribute('aria-label', `Export ${dataset.replace(/-/g, ' ')} as CSV`);
+  return link;
+}
+
 function externalAnchor(label, target) {
   const element = anchor(label, target);
   element.target = '_blank';
@@ -863,9 +879,11 @@ function tabs(items, active) {
   return bar;
 }
 
-function section(title, child) {
+function section(title, child, action = null) {
   const wrapper = node('section', 'section');
-  wrapper.append(node('div', 'section-title', title));
+  const titleBar = node('div', 'section-title', title);
+  if (action) titleBar.append(action);
+  wrapper.append(titleBar);
   if (child) wrapper.append(child);
   return wrapper;
 }
@@ -1199,7 +1217,7 @@ function pager(page) {
   return bar;
 }
 
-function pagedSection(title, page, columns, searchPlaceholder, tableType) {
+function pagedSection(title, page, columns, searchPlaceholder, tableType, action = null) {
   return fragment(searchPlaceholder ? searchBar(searchPlaceholder) : null,
     (() => {
       const block = section(title, table(page.rows, columns, 'No rows', {
@@ -1207,7 +1225,7 @@ function pagedSection(title, page, columns, searchPlaceholder, tableType) {
         serverSort: true,
         defaultSort: SERVER_TABLE_DEFAULT_SORTS[tableType],
         defaultDirection: 'desc'
-      }));
+      }), action);
       block.append(pager(page));
       return block;
     })());
@@ -3291,10 +3309,12 @@ async function renderSystem() {
 
   if (tab === 'talkgroups') {
     const page = await api('/api/system/talkgroups', pageParameters(systemScope));
-    content.append(pagedSection('Talkgroups', page, talkgroupColumns, 'Search talkgroup ID', 'talkgroups'));
+    content.append(pagedSection('Talkgroups', page, talkgroupColumns, 'Search talkgroup ID', 'talkgroups',
+      exportCsvLink('system-talkgroups', systemScope)));
   } else if (tab === 'radios') {
     const page = await api('/api/system/radios', pageParameters(systemScope));
-    content.append(pagedSection('Radios', page, systemRadioColumns(system), 'Search radio ID', 'radios'));
+    content.append(pagedSection('Radios', page, systemRadioColumns(system), 'Search radio ID', 'radios',
+      exportCsvLink('system-radios', systemScope)));
   } else if (tab === 'talker-aliases') {
     const page = await api('/api/system/talker-aliases', pageParameters(systemScope));
     const columns = [
@@ -3636,7 +3656,8 @@ async function renderSiteChannels(site) {
   const p25 = isP25(site);
   const block = section('Channels', fragment(explanation, table(data.rows || [],
     p25 ? p25SiteChannelColumns() : trunkedSiteChannelColumns(), 'No channels recorded',
-    { type: p25 ? 'site-channels' : 'trunked-site-channels', sortable: false })));
+    { type: p25 ? 'site-channels' : 'trunked-site-channels', sortable: false })),
+    exportCsvLink('site-channels', { guid: site.guid }));
   block.append(pager(data));
   content.append(block);
 }
@@ -3709,7 +3730,8 @@ async function renderSiteNeighbors(site) {
   const p25 = isP25(site);
   const block = section('Neighbors', table(data.rows || [],
     p25 ? p25SiteNeighborColumns() : trunkedSiteNeighborColumns(site), 'No neighbors recorded',
-    { type: p25 ? 'site-neighbors' : 'trunked-site-neighbors', sortable: false }));
+    { type: p25 ? 'site-neighbors' : 'trunked-site-neighbors', sortable: false }),
+    exportCsvLink('site-neighbors', { guid: site.guid }));
   block.append(pager(data));
   content.append(block);
 }
@@ -4075,7 +4097,8 @@ async function renderConventional() {
     { id: 'calls', label: 'Calls', render: (row) => number(row.call_count), className: 'numeric', sort: 'calls', sortValue: (row) => Number(row.call_count || 0) },
     { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sort: 'last_seen', sortValue: (row) => Number(row.last_seen_ms || 0) }
   ];
-  content.append(pagedSection('Conventional Channels', page, columns, 'Search name or frequency', 'conventional'));
+  content.append(pagedSection('Conventional Channels', page, columns, 'Search name or frequency', 'conventional',
+    exportCsvLink('conventional-channels')));
 }
 
 function conventionalCapability(context, capability) {
@@ -4191,7 +4214,8 @@ async function renderConventionalTalkgroups(contextKey) {
     limit: CONVENTIONAL_IDENTITY_PAGE_LIMIT
   }));
   content.append(pagedSection('Talkgroups', page, conventionalTalkgroupColumns(),
-    'Search talkgroup ID or alias', 'conventional-talkgroups'));
+    'Search talkgroup ID or alias', 'conventional-talkgroups',
+    exportCsvLink('conventional-talkgroups', { context: contextKey })));
 }
 
 async function renderConventionalRadios(contextKey) {
@@ -4200,7 +4224,8 @@ async function renderConventionalRadios(contextKey) {
     limit: CONVENTIONAL_IDENTITY_PAGE_LIMIT
   }));
   content.append(pagedSection('Radios', page, conventionalRadioColumns(),
-    'Search radio ID or alias', 'conventional-radios'));
+    'Search radio ID or alias', 'conventional-radios',
+    exportCsvLink('conventional-radios', { context: contextKey })));
 }
 
 async function renderConventionalDetail() {

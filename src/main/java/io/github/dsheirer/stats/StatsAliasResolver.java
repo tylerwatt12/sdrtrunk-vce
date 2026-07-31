@@ -206,10 +206,36 @@ class StatsAliasResolver
     private void enrich(List<Map<String,Object>> rows, List<Rule> rules, Map<Integer,Set<String>> aliasLists,
                         String identifierColumn, String prefix)
     {
+        RuleIndex index = index(rules);
+
         for(Map<String,Object> row: rows)
         {
-            enrich(row, rules, aliasLists, identifierColumn, prefix);
+            enrich(row, index, aliasLists, identifierColumn, prefix);
         }
+    }
+
+    /**
+     * Bulk table exports can contain tens of thousands of identities.  Index exact rules once so each row only
+     * evaluates rules for its identifier plus the comparatively small set of ranged rules.
+     */
+    private void enrich(Map<String,Object> row, RuleIndex index, Map<Integer,Set<String>> aliasListsBySystem,
+                        String identifierColumn, String prefix)
+    {
+        Integer identifier = integer(row.get(identifierColumn));
+        Integer wacn = integer(row.get("wacn"));
+        Integer system = integer(row.get("system_id"));
+        Integer systemKey = integer(row.get("system_key"));
+
+        if(identifier == null || wacn == null || system == null)
+        {
+            return;
+        }
+
+        Set<String> aliasLists = systemKey != null ? aliasListsBySystem.getOrDefault(systemKey, Set.of()) : Set.of();
+        Rule best = bestSystemRule(index.exact().getOrDefault(identifier, List.of()), null, identifier, wacn,
+            system, aliasLists);
+        best = bestSystemRule(index.ranged(), best, identifier, wacn, system, aliasLists);
+        apply(row, best, prefix);
     }
 
     private void enrich(Map<String,Object> row, List<Rule> rules, Map<Integer,Set<String>> aliasListsBySystem,
@@ -254,10 +280,29 @@ class StatsAliasResolver
     private void enrichByAssignedAliasList(List<Map<String,Object>> rows, List<Rule> rules, String identifierColumn,
                                            String prefix)
     {
+        RuleIndex index = index(rules);
+
         for(Map<String,Object> row: rows)
         {
-            enrichByAssignedAliasList(row, rules, identifierColumn, prefix);
+            enrichByAssignedAliasList(row, index, identifierColumn, prefix);
         }
+    }
+
+    private void enrichByAssignedAliasList(Map<String,Object> row, RuleIndex index, String identifierColumn,
+                                           String prefix)
+    {
+        Integer identifier = integer(row.get(identifierColumn));
+        Object aliasListValue = row.get("alias_list_name");
+
+        if(identifier == null || !(aliasListValue instanceof String aliasList) || aliasList.isBlank())
+        {
+            return;
+        }
+
+        Rule best = bestAssignedRule(index.exact().getOrDefault(identifier, List.of()), null, identifier,
+            aliasList);
+        best = bestAssignedRule(index.ranged(), best, identifier, aliasList);
+        apply(row, best, prefix);
     }
 
     private void enrichByAssignedAliasList(Map<String,Object> row, List<Rule> rules, String identifierColumn,
@@ -289,12 +334,69 @@ class StatsAliasResolver
 
         if(best != null)
         {
-            row.put(prefix + "name", best.name());
-            row.put(prefix + "description", best.description());
-            row.put(prefix + "group", best.group());
-            row.put(prefix + "color", best.color());
-            row.put(prefix + "list_name", best.aliasList());
+            apply(row, best, prefix);
         }
+    }
+
+    private static Rule bestSystemRule(List<Rule> rules, Rule best, int identifier, int wacn, int system,
+                                       Set<String> aliasLists)
+    {
+        for(Rule rule: rules)
+        {
+            if(rule.matches(identifier, wacn, system) && rule.isEligible(aliasLists) &&
+                (best == null || rule.isPreferredTo(best)))
+            {
+                best = rule;
+            }
+        }
+
+        return best;
+    }
+
+    private static Rule bestAssignedRule(List<Rule> rules, Rule best, int identifier, String aliasList)
+    {
+        for(Rule rule: rules)
+        {
+            if(!rule.fullyQualified() && aliasList.equals(rule.aliasList()) && rule.matchesIdentifier(identifier) &&
+                (best == null || rule.isPreferredAssignedListTo(best)))
+            {
+                best = rule;
+            }
+        }
+
+        return best;
+    }
+
+    private static void apply(Map<String,Object> row, Rule rule, String prefix)
+    {
+        if(rule != null)
+        {
+            row.put(prefix + "name", rule.name());
+            row.put(prefix + "description", rule.description());
+            row.put(prefix + "group", rule.group());
+            row.put(prefix + "color", rule.color());
+            row.put(prefix + "list_name", rule.aliasList());
+        }
+    }
+
+    private static RuleIndex index(List<Rule> rules)
+    {
+        Map<Integer,List<Rule>> exact = new HashMap<>();
+        List<Rule> ranged = new ArrayList<>();
+
+        for(Rule rule: rules)
+        {
+            if(rule.ranged())
+            {
+                ranged.add(rule);
+            }
+            else if(rule.value() != null)
+            {
+                exact.computeIfAbsent(rule.value(), ignored -> new ArrayList<>()).add(rule);
+            }
+        }
+
+        return new RuleIndex(exact, ranged);
     }
 
     private Map<Integer,Set<String>> loadAliasLists(Connection connection) throws SQLException
@@ -395,6 +497,10 @@ class StatsAliasResolver
 
     private record Snapshot(List<Rule> talkgroups, List<Rule> radios, List<Rule> dmrTalkgroups,
                             List<Rule> dmrRadios, List<Rule> nxdnTalkgroups, List<Rule> nxdnRadios, long loadedAt)
+    {
+    }
+
+    private record RuleIndex(Map<Integer,List<Rule>> exact, List<Rule> ranged)
     {
     }
 

@@ -515,6 +515,154 @@ class StatsWebDatabase
         return status;
     }
 
+    /**
+     * Produces one complete CSV dataset from one explicit read transaction.  The page controls are intentionally not
+     * used; search and allowlisted sort controls retain the same meaning as their corresponding JSON table.
+     */
+    StatsCsvExport csvExport(StatsRequest request)
+    {
+        String dataset = request.requiredText("dataset");
+
+        if(!List.of("system-talkgroups", "system-radios", "site-channels", "site-neighbors",
+            "conventional-channels", "conventional-talkgroups", "conventional-radios").contains(dataset))
+        {
+            throw new StatsApiException(400, "Unsupported CSV dataset");
+        }
+
+        return readSnapshot(connection -> {
+            int queryLimit = StatsCsvExport.MAX_ROWS + 1;
+            List<Map<String,Object>> rows;
+            String fileScope;
+
+            switch(dataset)
+            {
+                case "system-talkgroups" ->
+                {
+                    Map<String,Object> scope = requireScope(connection, request.requiredText("scope"));
+                    rows = querySystemTalkgroups(connection, request, queryLimit, 0);
+                    addExportMetadata(rows, Map.of(
+                        "configured_system", textValue(scope.get("configured_system")),
+                        "scope_token", textValue(scope.get("scope_token"))));
+                    fileScope = exportLabel(scope, "configured_system", "scope_token");
+                }
+                case "system-radios" ->
+                {
+                    Map<String,Object> scope = requireScope(connection, request.requiredText("scope"));
+                    rows = querySystemRadios(connection, request, queryLimit, 0);
+                    enrichScopeTalkgroups(connection, rows, "last_talkgroup_id", "last_talkgroup_alias_");
+                    addExportMetadata(rows, Map.of(
+                        "configured_system", textValue(scope.get("configured_system")),
+                        "scope_token", textValue(scope.get("scope_token"))));
+                    fileScope = exportLabel(scope, "configured_system", "scope_token");
+                }
+                case "site-channels" ->
+                {
+                    String guid = request.requiredText("guid");
+                    Map<String,Object> metadata = exportSiteMetadata(connection, guid);
+                    rows = querySiteChannels(connection, guid, queryLimit, 0);
+                    addExportMetadata(rows, metadata);
+                    fileScope = exportLabel(metadata, "site_name", "site_guid");
+                }
+                case "site-neighbors" ->
+                {
+                    String guid = request.requiredText("guid");
+                    Map<String,Object> metadata = exportSiteMetadata(connection, guid);
+                    rows = querySiteNeighbors(connection, guid, queryLimit, 0);
+                    addExportMetadata(rows, metadata);
+                    fileScope = exportLabel(metadata, "site_name", "site_guid");
+                }
+                case "conventional-channels" ->
+                {
+                    rows = queryConventional(connection, request, queryLimit, 0);
+                    fileScope = "all-conventional";
+                }
+                case "conventional-talkgroups" ->
+                {
+                    rows = queryConventionalTalkgroups(connection, request, queryLimit, 0);
+                    fileScope = request.requiredText("context");
+                }
+                case "conventional-radios" ->
+                {
+                    rows = queryConventionalRadios(connection, request, queryLimit, 0);
+                    fileScope = request.requiredText("context");
+                }
+                default -> throw new StatsApiException(400, "Unsupported CSV dataset");
+            }
+
+            return StatsCsvExport.create(dataset, fileScope, rows);
+        });
+    }
+
+    private static void addExportMetadata(List<Map<String,Object>> rows, Map<String,Object> metadata)
+    {
+        for(Map<String,Object> row: rows)
+        {
+            row.putAll(metadata);
+        }
+    }
+
+    private static String exportLabel(Map<String,Object> values, String preferredKey, String fallbackKey)
+    {
+        String preferred = textValue(values.get(preferredKey));
+        return !preferred.isBlank() ? preferred : textValue(values.get(fallbackKey));
+    }
+
+    private static String textValue(Object value)
+    {
+        return value != null ? String.valueOf(value) : "";
+    }
+
+    private static Map<String,Object> exportSiteMetadata(Connection connection, String guid) throws SQLException
+    {
+        int currentProtocol = currentSiteProtocolCode(connection, guid);
+        List<Map<String,Object>> currentSites = currentProtocol == 1 ?
+            queryRows(connection, siteSelect() + " WHERE site.guid = ?", guid) :
+            currentProtocol == 3 || currentProtocol == 4 ?
+                queryRows(connection, trunkedSiteSelect() + " WHERE site.guid = ?", guid) : List.of();
+
+        if(currentSites.isEmpty() && currentProtocol != 0)
+        {
+            currentSites = queryRows(connection, """
+                SELECT context.guid, context.channel_name, context.nac, context.rfss, context.site,
+                    system.wacn, system.system_id, NULL AS configured_system, NULL AS network_id,
+                    NULL AS site_id, NULL AS ran
+                FROM receiver_context context
+                LEFT JOIN p25_system system ON system.system_key = context.system_key
+                WHERE context.guid = ? AND context.kind_code = 1
+                LIMIT 1
+                """, guid);
+        }
+
+        Map<String,Object> site = first(currentSites, "Site not found");
+        List<Map<String,Object>> ownership = queryRows(connection, """
+            SELECT scope.scope_token, config.system_name
+            FROM receiver_context context
+            LEFT JOIN trunked_identity_scope_context assigned ON assigned.context_id = context.id
+            LEFT JOIN trunked_identity_scope scope ON scope.scope_id = assigned.scope_id
+            LEFT JOIN configuration_channel config ON config.radres_guid = context.guid
+            WHERE context.guid = ?
+            ORDER BY assigned.last_seen_ms DESC
+            LIMIT 1
+            """, guid);
+        Map<String,Object> assigned = ownership.isEmpty() ? Map.of() : ownership.getFirst();
+        Map<String,Object> metadata = new LinkedHashMap<>();
+        metadata.put("site_guid", guid);
+        metadata.put("site_name", textValue(site.get("channel_name")));
+        metadata.put("site_protocol", currentProtocol == 1 ? "P25" : currentProtocol == 3 ? "DMR" :
+            currentProtocol == 4 ? "NXDN" : "Unknown");
+        metadata.put("site_scope_token", textValue(assigned.get("scope_token")));
+        metadata.put("site_system_name", !textValue(site.get("configured_system")).isBlank() ?
+            textValue(site.get("configured_system")) : textValue(assigned.get("system_name")));
+        metadata.put("site_wacn", site.get("wacn") != null ? site.get("wacn") : "");
+        metadata.put("site_system_id", site.get("system_id") != null ? site.get("system_id") : "");
+        metadata.put("site_network_id", site.get("network_id") != null ? site.get("network_id") : "");
+        metadata.put("site_rfss", site.get("rfss") != null ? site.get("rfss") : "");
+        metadata.put("site_number", site.get("site") != null ? site.get("site") : site.get("site_id"));
+        metadata.put("site_nac", site.get("nac") != null ? site.get("nac") : "");
+        metadata.put("site_ran", site.get("ran") != null ? site.get("ran") : "");
+        return metadata;
+    }
+
     Map<String,Object> dashboard()
     {
         return read(connection -> {
@@ -880,10 +1028,18 @@ class StatsWebDatabase
 
     Map<String,Object> systemTalkgroups(StatsRequest request)
     {
-        String scopeToken = request.requiredText("scope");
-
         return read(connection -> {
-            StringBuilder sql = new StringBuilder("""
+            List<Map<String,Object>> rows = querySystemTalkgroups(connection, request,
+                request.limit() + 1, request.offset());
+            return page(rows, request);
+        });
+    }
+
+    private List<Map<String,Object>> querySystemTalkgroups(Connection connection, StatsRequest request,
+                                                           int limit, int offset) throws SQLException
+    {
+        String scopeToken = request.requiredText("scope");
+        StringBuilder sql = new StringBuilder("""
                 SELECT scope.scope_id, scope.scope_token, scope.protocol_code, scope.identity_domain_code,
                     CASE scope.protocol_code WHEN 1 THEN 'P25' WHEN 3 THEN 'DMR'
                         WHEN 4 THEN 'NXDN' ELSE 'Unknown' END AS protocol,
@@ -894,6 +1050,11 @@ class StatsWebDatabase
                          LEFT JOIN trunked_site_snapshot trunked ON trunked.guid = context.guid
                          WHERE ownership.scope_id = scope.scope_id ORDER BY ownership.context_id LIMIT 1)
                     END AS system_id,
+                    (SELECT trunked.network_id FROM trunked_identity_scope_context ownership
+                     JOIN receiver_context context ON context.id = ownership.context_id
+                     LEFT JOIN trunked_site_snapshot trunked ON trunked.guid = context.guid
+                     WHERE ownership.scope_id = scope.scope_id ORDER BY ownership.context_id LIMIT 1)
+                        AS network_id,
                     (SELECT context.alias_list_name FROM trunked_identity_scope_context ownership
                      JOIN receiver_context context ON context.id = ownership.context_id
                      WHERE ownership.scope_id = scope.scope_id ORDER BY ownership.context_id LIMIT 1)
@@ -906,23 +1067,30 @@ class StatsWebDatabase
                 LEFT JOIN p25_system system ON system.system_key = scope.p25_system_key
                 WHERE scope.scope_token = ? AND summary.identity_kind_code IN (1, 3)
                 """.formatted(TALKGROUP_SIGNALING_COUNT_SQL));
-            List<Object> parameters = new ArrayList<>(List.of(scopeToken));
-            addIdentifierSearch(sql, parameters, request.search(), "summary.identity_id");
-            sql.append(" ORDER BY ").append(order(request, TALKGROUP_SORT_COLUMNS, "calls"))
-                .append(", summary.identity_kind_code, summary.identity_id LIMIT ? OFFSET ?");
-            addPageParameters(parameters, request);
-            List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
-            enrichScopeTalkgroups(connection, rows, "talkgroup_id", "alias_");
-            return page(rows, request);
-        });
+        List<Object> parameters = new ArrayList<>(List.of(scopeToken));
+        addIdentifierSearch(sql, parameters, request.search(), "summary.identity_id");
+        sql.append(" ORDER BY ").append(order(request, TALKGROUP_SORT_COLUMNS, "calls"))
+            .append(", summary.identity_kind_code, summary.identity_id LIMIT ? OFFSET ?");
+        addLimitOffset(parameters, limit, offset);
+        List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
+        enrichScopeTalkgroups(connection, rows, "talkgroup_id", "alias_");
+        return rows;
     }
 
     Map<String,Object> systemRadios(StatsRequest request)
     {
-        String scopeToken = request.requiredText("scope");
-
         return read(connection -> {
-            StringBuilder sql = new StringBuilder("""
+            List<Map<String,Object>> rows = querySystemRadios(connection, request,
+                request.limit() + 1, request.offset());
+            return page(rows, request);
+        });
+    }
+
+    private List<Map<String,Object>> querySystemRadios(Connection connection, StatsRequest request,
+                                                       int limit, int offset) throws SQLException
+    {
+        String scopeToken = request.requiredText("scope");
+        StringBuilder sql = new StringBuilder("""
                 SELECT scope.scope_id, scope.scope_token, scope.protocol_code, scope.identity_domain_code,
                     CASE scope.protocol_code WHEN 1 THEN 'P25' WHEN 3 THEN 'DMR'
                         WHEN 4 THEN 'NXDN' ELSE 'Unknown' END AS protocol,
@@ -933,6 +1101,11 @@ class StatsWebDatabase
                          LEFT JOIN trunked_site_snapshot trunked ON trunked.guid = context.guid
                          WHERE ownership.scope_id = scope.scope_id ORDER BY ownership.context_id LIMIT 1)
                     END AS system_id,
+                    (SELECT trunked.network_id FROM trunked_identity_scope_context ownership
+                     JOIN receiver_context context ON context.id = ownership.context_id
+                     LEFT JOIN trunked_site_snapshot trunked ON trunked.guid = context.guid
+                     WHERE ownership.scope_id = scope.scope_id ORDER BY ownership.context_id LIMIT 1)
+                        AS network_id,
                     (SELECT context.alias_list_name FROM trunked_identity_scope_context ownership
                      JOIN receiver_context context ON context.id = ownership.context_id
                      WHERE ownership.scope_id = scope.scope_id ORDER BY ownership.context_id LIMIT 1)
@@ -952,16 +1125,15 @@ class StatsWebDatabase
                  AND affiliation.radio_id = summary.identity_id
                 WHERE scope.scope_token = ? AND summary.identity_kind_code = 2
                 """);
-            List<Object> parameters = new ArrayList<>(List.of(scopeToken));
-            addIdentifierSearch(sql, parameters, request.search(), "summary.identity_id");
-            sql.append(" ORDER BY ").append(order(request, RADIO_SORT_COLUMNS, "calls"))
-                .append(", summary.identity_id LIMIT ? OFFSET ?");
-            addPageParameters(parameters, request);
-            List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
-            enrichScopeRadios(connection, rows, "radio_id", "alias_");
-            enrichScopeTalkgroups(connection, rows, "affiliated_talkgroup_id", "affiliated_talkgroup_alias_");
-            return page(rows, request);
-        });
+        List<Object> parameters = new ArrayList<>(List.of(scopeToken));
+        addIdentifierSearch(sql, parameters, request.search(), "summary.identity_id");
+        sql.append(" ORDER BY ").append(order(request, RADIO_SORT_COLUMNS, "calls"))
+            .append(", summary.identity_id LIMIT ? OFFSET ?");
+        addLimitOffset(parameters, limit, offset);
+        List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
+        enrichScopeRadios(connection, rows, "radio_id", "alias_");
+        enrichScopeTalkgroups(connection, rows, "affiliated_talkgroup_id", "affiliated_talkgroup_alias_");
+        return rows;
     }
 
     Map<String,Object> systemTalkerAliases(StatsRequest request)
@@ -1413,10 +1585,16 @@ class StatsWebDatabase
     Map<String,Object> siteChannels(StatsRequest request)
     {
         String guid = request.requiredText("guid");
-        return read(connection -> {
-            if(isTrunkedSite(connection, guid))
-            {
-                return page(queryRows(connection, """
+        return read(connection -> page(querySiteChannels(connection, guid, request.limit() + 1,
+            request.offset()), request));
+    }
+
+    private List<Map<String,Object>> querySiteChannels(Connection connection, String guid, int limit, int offset)
+        throws SQLException
+    {
+        if(isTrunkedSite(connection, guid))
+        {
+            return queryRows(connection, """
                     SELECT NULLIF(channel_number, -1) AS channel_number,
                         NULLIF(inbound_channel_number, -1) AS inbound_channel_number,
                         NULLIF(timeslot, -1) AS timeslot,
@@ -1431,10 +1609,10 @@ class StatsWebDatabase
                         inbound_channel_number = -1, inbound_channel_number
                     LIMIT ? OFFSET ?
                     """, System.currentTimeMillis() - CURRENT_STATE_WINDOW_MILLISECONDS, guid,
-                    request.limit() + 1, request.offset()), request);
-            }
+                    limit, offset);
+        }
 
-            return page(queryRows(connection, """
+        return queryRows(connection, """
             WITH tag_summary AS (
                 SELECT guid, channel_key, group_concat(tag) AS tags,
                     max(CASE WHEN tag = 'CONTROL' THEN observation_count ELSE 0 END) AS control_observations,
@@ -1492,8 +1670,7 @@ class StatsWebDatabase
             ORDER BY coalesce(downlink_hz, 9223372036854775807), channel_key
             LIMIT ? OFFSET ?
             """, guid, guid, guid, System.currentTimeMillis() - CURRENT_STATE_WINDOW_MILLISECONDS,
-                request.limit() + 1, request.offset()), request);
-        });
+                limit, offset);
     }
 
     Map<String,Object> siteTalkgroups(StatsRequest request)
@@ -1614,12 +1791,18 @@ class StatsWebDatabase
     Map<String,Object> siteNeighbors(StatsRequest request)
     {
         String guid = request.requiredText("guid");
-        return read(connection -> {
-            long currentSince = System.currentTimeMillis() - CURRENT_STATE_WINDOW_MILLISECONDS;
+        return read(connection -> page(querySiteNeighbors(connection, guid, request.limit() + 1,
+            request.offset()), request));
+    }
 
-            if(isTrunkedSite(connection, guid))
-            {
-                return page(queryRows(connection, """
+    private List<Map<String,Object>> querySiteNeighbors(Connection connection, String guid, int limit, int offset)
+        throws SQLException
+    {
+        long currentSince = System.currentTimeMillis() - CURRENT_STATE_WINDOW_MILLISECONDS;
+
+        if(isTrunkedSite(connection, guid))
+        {
+            return queryRows(connection, """
                     SELECT 'SITE' AS entry_type, neighbor.variant_code, neighbor.identity_domain_code,
                         NULLIF(neighbor.network_id, -1) AS network_id,
                         NULLIF(neighbor.system_id, -1) AS system_id,
@@ -1672,10 +1855,10 @@ class StatsWebDatabase
                         neighbor.channel_number = -1, neighbor.channel_number,
                         neighbor.variant_code, neighbor.frequency_hz = -1, neighbor.frequency_hz
                     LIMIT ? OFFSET ?
-                    """, currentSince, guid, request.limit() + 1, request.offset()), request);
-            }
+                    """, currentSince, guid, limit, offset);
+        }
 
-            return page(queryRows(connection, """
+        return queryRows(connection, """
                 WITH combined AS (
                     SELECT 0 AS entry_order,
                         CASE WHEN current.neighbor_key IS NULL THEN 1 ELSE 0 END AS current_order,
@@ -1761,8 +1944,7 @@ class StatsWebDatabase
                 ORDER BY entry_order, current_order, system_id, rfss, site, neighbor_key
                 LIMIT ? OFFSET ?
                 """, currentSince, guid, currentSince, currentSince, guid,
-                request.limit() + 1, request.offset()), request);
-        });
+                limit, offset);
     }
 
     Map<String,Object> sitePatches(StatsRequest request)
@@ -1919,8 +2101,14 @@ class StatsWebDatabase
 
     Map<String,Object> conventional(StatsRequest request)
     {
-        return read(connection -> {
-            StringBuilder sql = new StringBuilder("""
+        return read(connection -> page(queryConventional(connection, request, request.limit() + 1,
+            request.offset()), request));
+    }
+
+    private static List<Map<String,Object>> queryConventional(Connection connection, StatsRequest request,
+                                                               int limit, int offset) throws SQLException
+    {
+        StringBuilder sql = new StringBuilder("""
                 SELECT context.id AS context_id, context.context_key, context.guid, context.kind_code,
                     CASE WHEN context.kind_code = 10 THEN 10 ELSE context.protocol_code END AS protocol_code,
                     context.channel_name, context.alias_list_name, context.decoder,
@@ -1930,21 +2118,20 @@ class StatsWebDatabase
                 JOIN receiver_context context ON context.id = summary.context_id
                 WHERE context.kind_code <> 1
                 """);
-            List<Object> parameters = new ArrayList<>();
+        List<Object> parameters = new ArrayList<>();
 
-            if(request.search() != null)
-            {
-                sql.append(" AND (lower(context.channel_name) LIKE ? OR CAST(summary.frequency_hz AS TEXT) LIKE ?)");
-                String like = like(request.search());
-                parameters.add(like);
-                parameters.add(like);
-            }
+        if(request.search() != null)
+        {
+            sql.append(" AND (lower(context.channel_name) LIKE ? OR CAST(summary.frequency_hz AS TEXT) LIKE ?)");
+            String like = like(request.search());
+            parameters.add(like);
+            parameters.add(like);
+        }
 
-            sql.append(" ORDER BY ").append(order(request, CONVENTIONAL_SORT_COLUMNS, "frequency"))
-                .append(", context.id, summary.frequency_hz, summary.timeslot LIMIT ? OFFSET ?");
-            addPageParameters(parameters, request);
-            return page(queryRows(connection, sql.toString(), parameters.toArray()), request);
-        });
+        sql.append(" ORDER BY ").append(order(request, CONVENTIONAL_SORT_COLUMNS, "frequency"))
+            .append(", context.id, summary.frequency_hz, summary.timeslot LIMIT ? OFFSET ?");
+        addLimitOffset(parameters, limit, offset);
+        return queryRows(connection, sql.toString(), parameters.toArray());
     }
 
     Map<String,Object> conventionalDetail(StatsRequest request)
@@ -1975,10 +2162,19 @@ class StatsWebDatabase
      */
     Map<String,Object> conventionalTalkgroups(StatsRequest request)
     {
-        String contextKey = request.requiredText("context");
         return read(connection -> {
-            requireDmrConventionalContext(connection, contextKey);
-            StringBuilder sql = new StringBuilder("""
+            List<Map<String,Object>> rows = queryConventionalTalkgroups(connection, request,
+                request.limit() + 1, request.offset());
+            return page(rows, request);
+        });
+    }
+
+    private List<Map<String,Object>> queryConventionalTalkgroups(Connection connection, StatsRequest request,
+                                                                 int limit, int offset) throws SQLException
+    {
+        String contextKey = request.requiredText("context");
+        requireDmrConventionalContext(connection, contextKey);
+        StringBuilder sql = new StringBuilder("""
                 SELECT context.id AS context_id, context.context_key, context.alias_list_name,
                     summary.frequency_hz, summary.timeslot, summary.talkgroup_id,
                     summary.first_seen_ms, summary.last_seen_ms, summary.call_count,
@@ -1987,18 +2183,17 @@ class StatsWebDatabase
                 JOIN receiver_context context ON context.id = summary.context_id
                 WHERE context.context_key = ? AND context.kind_code = 3 AND context.protocol_code = 3
                 """);
-            List<Object> parameters = new ArrayList<>(List.of(contextKey));
-            addDmrAliasSearch(sql, parameters, request.search(), "alias_talkgroup", "summary.talkgroup_id");
-            sql.append(" ORDER BY ")
-                .append(order(request, DMR_CONVENTIONAL_TALKGROUP_SORT_COLUMNS, "calls"))
-                .append(", summary.last_seen_ms DESC, summary.frequency_hz ASC, summary.timeslot ASC, ")
-                .append("summary.talkgroup_id ASC LIMIT ? OFFSET ?");
-            addPageParameters(parameters, request);
-            List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
-            mAliasResolver.enrichDmrTalkgroups(connection, rows, "talkgroup_id", "alias_");
-            mAliasResolver.enrichDmrRadios(connection, rows, "last_source_radio_id", "last_source_alias_");
-            return page(rows, request);
-        });
+        List<Object> parameters = new ArrayList<>(List.of(contextKey));
+        addDmrAliasSearch(sql, parameters, request.search(), "alias_talkgroup", "summary.talkgroup_id");
+        sql.append(" ORDER BY ")
+            .append(order(request, DMR_CONVENTIONAL_TALKGROUP_SORT_COLUMNS, "calls"))
+            .append(", summary.last_seen_ms DESC, summary.frequency_hz ASC, summary.timeslot ASC, ")
+            .append("summary.talkgroup_id ASC LIMIT ? OFFSET ?");
+        addLimitOffset(parameters, limit, offset);
+        List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
+        mAliasResolver.enrichDmrTalkgroups(connection, rows, "talkgroup_id", "alias_");
+        mAliasResolver.enrichDmrRadios(connection, rows, "last_source_radio_id", "last_source_alias_");
+        return rows;
     }
 
     /**
@@ -2006,10 +2201,19 @@ class StatsWebDatabase
      */
     Map<String,Object> conventionalRadios(StatsRequest request)
     {
-        String contextKey = request.requiredText("context");
         return read(connection -> {
-            requireDmrConventionalContext(connection, contextKey);
-            StringBuilder sql = new StringBuilder("""
+            List<Map<String,Object>> rows = queryConventionalRadios(connection, request,
+                request.limit() + 1, request.offset());
+            return page(rows, request);
+        });
+    }
+
+    private List<Map<String,Object>> queryConventionalRadios(Connection connection, StatsRequest request,
+                                                             int limit, int offset) throws SQLException
+    {
+        String contextKey = request.requiredText("context");
+        requireDmrConventionalContext(connection, contextKey);
+        StringBuilder sql = new StringBuilder("""
                 SELECT context.id AS context_id, context.context_key, context.alias_list_name,
                     summary.frequency_hz, summary.timeslot, summary.radio_id,
                     summary.first_seen_ms, summary.last_seen_ms, summary.call_count,
@@ -2020,19 +2224,18 @@ class StatsWebDatabase
                 JOIN receiver_context context ON context.id = summary.context_id
                 WHERE context.context_key = ? AND context.kind_code = 3 AND context.protocol_code = 3
                 """);
-            List<Object> parameters = new ArrayList<>(List.of(contextKey));
-            addDmrAliasSearch(sql, parameters, request.search(), "alias_radio", "summary.radio_id");
-            sql.append(" ORDER BY ")
-                .append(order(request, DMR_CONVENTIONAL_RADIO_SORT_COLUMNS, "calls"))
-                .append(", summary.last_seen_ms DESC, summary.frequency_hz ASC, summary.timeslot ASC, ")
-                .append("summary.radio_id ASC LIMIT ? OFFSET ?");
-            addPageParameters(parameters, request);
-            List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
-            mAliasResolver.enrichDmrRadios(connection, rows, "radio_id", "alias_");
-            mAliasResolver.enrichDmrTalkgroups(connection, rows, "last_talkgroup_id", "last_talkgroup_alias_");
-            mAliasResolver.enrichDmrRadios(connection, rows, "last_peer_radio_id", "last_peer_alias_");
-            return page(rows, request);
-        });
+        List<Object> parameters = new ArrayList<>(List.of(contextKey));
+        addDmrAliasSearch(sql, parameters, request.search(), "alias_radio", "summary.radio_id");
+        sql.append(" ORDER BY ")
+            .append(order(request, DMR_CONVENTIONAL_RADIO_SORT_COLUMNS, "calls"))
+            .append(", summary.last_seen_ms DESC, summary.frequency_hz ASC, summary.timeslot ASC, ")
+            .append("summary.radio_id ASC LIMIT ? OFFSET ?");
+        addLimitOffset(parameters, limit, offset);
+        List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
+        mAliasResolver.enrichDmrRadios(connection, rows, "radio_id", "alias_");
+        mAliasResolver.enrichDmrTalkgroups(connection, rows, "last_talkgroup_id", "last_talkgroup_alias_");
+        mAliasResolver.enrichDmrRadios(connection, rows, "last_peer_radio_id", "last_peer_alias_");
+        return rows;
     }
 
     private static void requireDmrConventionalContext(Connection connection, String contextKey) throws SQLException
@@ -3066,6 +3269,43 @@ class StatsWebDatabase
         }
     }
 
+    private <T> T readSnapshot(Query<T> query)
+    {
+        try(Connection connection = openReadOnly())
+        {
+            connection.setAutoCommit(false);
+
+            try
+            {
+                T result = query.execute(connection);
+                connection.rollback();
+                return result;
+            }
+            catch(RuntimeException | IOException | SQLException e)
+            {
+                try
+                {
+                    connection.rollback();
+                }
+                catch(SQLException rollbackError)
+                {
+                    e.addSuppressed(rollbackError);
+                }
+
+                throw e;
+            }
+        }
+        catch(StatsApiException e)
+        {
+            throw e;
+        }
+        catch(IOException | SQLException e)
+        {
+            mLog.warn("Stats Server CSV database query failed", e);
+            throw new StatsApiException(503, "Stats database is unavailable");
+        }
+    }
+
     private Connection openReadOnly() throws IOException, SQLException
     {
         Path databasePath = getDatabasePath();
@@ -3296,8 +3536,13 @@ class StatsWebDatabase
 
     private static void addPageParameters(List<Object> parameters, StatsRequest request)
     {
-        parameters.add(request.limit() + 1);
-        parameters.add(request.offset());
+        addLimitOffset(parameters, request.limit() + 1, request.offset());
+    }
+
+    private static void addLimitOffset(List<Object> parameters, int limit, int offset)
+    {
+        parameters.add(limit);
+        parameters.add(offset);
     }
 
     private static void addIdentifierSearch(StringBuilder sql, List<Object> parameters, String search,

@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.sun.net.httpserver.Headers;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.util.List;
@@ -41,6 +42,22 @@ class StatsWebServerServiceBindAddressTest
         assertFalse(StatsWebServerService.hasExactPath(URI.create("/live/systems-old"), "/live/systems"));
         assertFalse(StatsWebServerService.hasExactPath(URI.create("/live/sites/legacy"), "/live/sites"));
         assertFalse(StatsWebServerService.hasExactPath(URI.create("/live/web-calls/legacy"), "/live/web-calls"));
+        assertTrue(StatsWebServerService.hasExactPath(
+            URI.create("/api/export.csv?dataset=system-talkgroups"), "/api/export.csv"));
+        assertFalse(StatsWebServerService.hasExactPath(
+            URI.create("/api/export.csv/legacy"), "/api/export.csv"));
+    }
+
+    @Test
+    void appliesDownloadAndSecurityHeadersToCsvResponses()
+    {
+        Headers headers = new Headers();
+        StatsWebServerService.applyCsvHeaders(headers, "sdrtrunk-system-radios-test.csv");
+        assertEquals("text/csv; charset=utf-8", headers.getFirst("Content-Type"));
+        assertEquals("attachment; filename=\"sdrtrunk-system-radios-test.csv\"",
+            headers.getFirst("Content-Disposition"));
+        assertEquals("no-store", headers.getFirst("Cache-Control"));
+        assertEquals("nosniff", headers.getFirst("X-Content-Type-Options"));
     }
 
     @Test

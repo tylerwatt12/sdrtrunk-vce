@@ -5,6 +5,7 @@
  */
 package io.github.dsheirer.stats;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -169,6 +170,44 @@ class StatsWebInteractionUiContractTest
     }
 
     @Test
+    void exportsCompleteFilteredManagerTablesWithoutPaginationParameters() throws Exception
+    {
+        String source = source();
+        String helper = function(source, "function exportCsvLink(dataset, context = {})");
+        assertTrue(helper.contains("parameters.set('dataset', dataset)"));
+        assertTrue(helper.contains("['q', 'sort', 'direction']"));
+        assertTrue(helper.contains("anchor('Export CSV', `/api/export.csv?${parameters}`"));
+        assertTrue(helper.contains("link.setAttribute('download', '')"));
+        assertTrue(helper.contains("link.setAttribute('aria-label'"));
+        assertFalse(helper.contains("'limit'"));
+        assertFalse(helper.contains("'offset'"));
+        assertFalse(helper.contains("'before_id'"));
+
+        String system = function(source, "async function renderSystem()");
+        assertTrue(system.contains("exportCsvLink('system-talkgroups', systemScope)"));
+        assertTrue(system.contains("exportCsvLink('system-radios', systemScope)"));
+        assertEquals(2, system.split("exportCsvLink\\(", -1).length - 1,
+            "Talker Alias Summary must not expose CSV export");
+
+        assertTrue(function(source, "async function renderSiteChannels(site)")
+            .contains("exportCsvLink('site-channels', { guid: site.guid })"));
+        assertTrue(function(source, "async function renderSiteNeighbors(site)")
+            .contains("exportCsvLink('site-neighbors', { guid: site.guid })"));
+        assertTrue(function(source, "async function renderConventional()")
+            .contains("exportCsvLink('conventional-channels')"));
+        assertTrue(function(source, "async function renderConventionalTalkgroups(contextKey)")
+            .contains("exportCsvLink('conventional-talkgroups', { context: contextKey })"));
+        assertTrue(function(source, "async function renderConventionalRadios(contextKey)")
+            .contains("exportCsvLink('conventional-radios', { context: contextKey })"));
+
+        assertFalse(function(source, "async function renderDashboard()").contains("exportCsvLink("));
+        assertFalse(function(source, "async function renderLive()").contains("exportCsvLink("));
+        assertFalse(function(source, "async function renderActivity(scopeParameters, title = 'Activity')")
+            .contains("exportCsvLink("));
+        assertTrue(Files.readString(APP_CSS).contains(".export-csv-action"));
+    }
+
+    @Test
     void labelsProtocolDefinedSentinelsAsSystemOrSpecialActivityWithoutLinkingThem() throws Exception
     {
         String source = source();
@@ -255,8 +294,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(html.indexOf("localStorage.getItem('sdrtrunk_theme')") <
             html.indexOf("rel=\"stylesheet\""));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=21"));
-        assertTrue(html.contains("/assets/app.js?v=32"));
+        assertTrue(html.contains("/assets/app.css?v=22"));
+        assertTrue(html.contains("/assets/app.js?v=33"));
         assertTrue(source.contains("window.localStorage.setItem(THEME_STORAGE_KEY"));
         assertTrue(source.contains("toggle.setAttribute('aria-pressed'"));
         assertTrue(css.contains(":root[data-theme=\"dark\"]"));
