@@ -35,11 +35,11 @@ import io.github.dsheirer.rrapi.type.Voice;
 import io.github.dsheirer.service.radioreference.RadioReference;
 import io.github.dsheirer.util.ThreadPool;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -70,6 +70,10 @@ import org.slf4j.LoggerFactory;
 public class SystemEditor extends VBox
 {
     private static final Logger mLog = LoggerFactory.getLogger(SystemEditor.class);
+    private static final Comparator<System> SYSTEM_ORDER =
+        Comparator.comparing(System::getLastUpdated, Comparator.nullsLast(Comparator.reverseOrder()))
+            .thenComparing(System::getName, Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER))
+            .thenComparingInt(System::getSystemId);
 
     private UserPreferences mUserPreferences;
     private RadioReference mRadioReference;
@@ -141,11 +145,11 @@ public class SystemEditor extends VBox
     public void setSystems(List<System> systems)
     {
         clear();
+        List<System> sortedSystems = sortedSystems(systems);
 
-        if(systems != null && !systems.isEmpty())
+        if(!sortedSystems.isEmpty())
         {
-            Collections.sort(systems, new SystemComparator());
-            getSystemComboBox().getItems().addAll(systems);
+            getSystemComboBox().getItems().addAll(sortedSystems);
 
             int preferredSystemId = mUserPreferences.getRadioReferencePreference().getPreferredSystemId(mLevel);
 
@@ -158,6 +162,17 @@ public class SystemEditor extends VBox
                 }
             }
         }
+    }
+
+    /**
+     * Orders systems by the RadioReference update date so that recently maintained systems are easiest to find.
+     */
+    static List<System> sortedSystems(List<System> systems)
+    {
+        return (systems != null ? systems : List.<System>of()).stream()
+            .filter(Objects::nonNull)
+            .sorted(SYSTEM_ORDER)
+            .toList();
     }
 
     private TabPane getTabPane()
@@ -592,27 +607,4 @@ public class SystemEditor extends VBox
         }
     }
 
-    public class SystemComparator implements Comparator<System>
-    {
-        @Override
-        public int compare(System o1, System o2)
-        {
-            if(o1.getName() == null && o2.getName() == null)
-            {
-                return 0;
-            }
-            else if(o1.getName() == null)
-            {
-                return 1;
-            }
-            else if(o2.getName() == null)
-            {
-                return -1;
-            }
-            else
-            {
-                return o1.getName().compareTo(o2.getName());
-            }
-        }
-    }
 }

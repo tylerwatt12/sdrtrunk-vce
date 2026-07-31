@@ -59,6 +59,17 @@ class SystemTalkgroupSelectionEditorTest
     }
 
     @Test
+    void snapshotsOnlySelectedRowsBeforeImport()
+    {
+        List<Integer> selectedRows = new ArrayList<>(List.of(2, 4));
+        List<Integer> snapshot = SystemTalkgroupSelectionEditor.snapshotSelectedRows(selectedRows);
+
+        selectedRows.clear();
+
+        assertEquals(List.of(2, 4), snapshot);
+    }
+
+    @Test
     void radioReferenceRequiresMatchingProtocolFamily()
     {
         AliasListDefinition p25 = new AliasListDefinition("County P25", AliasListFamily.P25);

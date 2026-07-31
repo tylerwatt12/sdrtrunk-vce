@@ -64,6 +64,7 @@ import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
 import javafx.scene.control.ProgressIndicator;
 import javafx.scene.control.Separator;
+import javafx.scene.control.SelectionMode;
 import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableView;
 import javafx.scene.control.TextField;
@@ -96,7 +97,7 @@ public class SystemTalkgroupSelectionEditor extends GridPane
     private AliasList mAliasList;
     private AliasListChangeListener mAliasListChangeListener = new AliasListChangeListener();
     private DeferredRefresh mAliasMatchRefresh = new DeferredRefresh();
-    private Button mImportAllTalkgroupsButton;
+    private Button mImportSelectedTalkgroupsButton;
     private Label mImportResultLabel;
     private Label mPlaceholderLabel;
     private ProgressIndicator mProgressIndicator;
@@ -143,7 +144,7 @@ public class SystemTalkgroupSelectionEditor extends GridPane
         GridPane.setConstraints(searchBox, 0, ++row);
         getChildren().add(searchBox);
 
-        HBox importBox = new HBox(10, getImportAllTalkgroupsButton(), getImportResultLabel());
+        HBox importBox = new HBox(10, getImportSelectedTalkgroupsButton(), getImportResultLabel());
         importBox.setAlignment(Pos.CENTER);
         HBox.setHgrow(getImportResultLabel(), Priority.ALWAYS);
         GridPane.setHgrow(importBox, Priority.ALWAYS);
@@ -182,6 +183,7 @@ public class SystemTalkgroupSelectionEditor extends GridPane
 
     public void clear()
     {
+        getTalkgroupTableView().getSelectionModel().clearSelection();
         mTalkgroupList.clear();
         getTalkgroupCategoryComboBox().getItems().clear();
         clearImportResult();
@@ -314,7 +316,7 @@ public class SystemTalkgroupSelectionEditor extends GridPane
     {
         mCurrentSystem = null;
         clear();
-        getImportAllTalkgroupsButton().setDisable(true);
+        getImportSelectedTalkgroupsButton().setDisable(true);
         setLoading(false);
     }
 
@@ -336,12 +338,13 @@ public class SystemTalkgroupSelectionEditor extends GridPane
         rt.play();
     }
 
-    private Button getImportAllTalkgroupsButton()
+    private Button getImportSelectedTalkgroupsButton()
     {
-        if(mImportAllTalkgroupsButton == null)
+        if(mImportSelectedTalkgroupsButton == null)
         {
-            mImportAllTalkgroupsButton = new Button("Import/Update Talkgroups");
-            mImportAllTalkgroupsButton.setOnAction(event -> {
+            mImportSelectedTalkgroupsButton = new Button("Import/Update Selected");
+            mImportSelectedTalkgroupsButton.setDisable(true);
+            mImportSelectedTalkgroupsButton.setOnAction(event -> {
                 clearImportResult();
 
                 String aliasList = getAliasListNameComboBox().getSelectionModel().getSelectedItem();
@@ -352,7 +355,7 @@ public class SystemTalkgroupSelectionEditor extends GridPane
                         ButtonType.OK);
                     alert.setTitle("Alias List Required");
                     alert.setHeaderText("An alias list is required to create aliases");
-                    alert.initOwner((getImportAllTalkgroupsButton()).getScene().getWindow());
+                    alert.initOwner((getImportSelectedTalkgroupsButton()).getScene().getWindow());
                     alert.showAndWait();
                     flashAliasListComboBox();
                 }
@@ -362,7 +365,10 @@ public class SystemTalkgroupSelectionEditor extends GridPane
                     List<AliasedTalkgroup> aliasesToUpdate = new ArrayList<>();
                     int identical = 0;
 
-                    for(AliasedTalkgroup aliasedTalkgroup : mTalkgroupFilteredList)
+                    List<AliasedTalkgroup> selectedTalkgroups = snapshotSelectedRows(
+                        getTalkgroupTableView().getSelectionModel().getSelectedItems());
+
+                    for(AliasedTalkgroup aliasedTalkgroup : selectedTalkgroups)
                     {
                         if(aliasedTalkgroup.getImportStatus() == ImportStatus.NOT_PRESENT)
                         {
@@ -384,9 +390,10 @@ public class SystemTalkgroupSelectionEditor extends GridPane
                             "Update " + aliasesToUpdate.size() + " different aliases\n" +
                             "Leave " + identical + " identical aliases unchanged",
                         apply, ButtonType.CANCEL);
-                    confirmation.setTitle("Import/Update Talkgroups");
-                    confirmation.setHeaderText("Apply RadioReference talkgroup changes?");
-                    confirmation.initOwner(getImportAllTalkgroupsButton().getScene().getWindow());
+                    confirmation.setTitle("Import/Update Selected Talkgroups");
+                    confirmation.setHeaderText("Apply RadioReference changes to " + selectedTalkgroups.size() +
+                        " selected talkgroup" + (selectedTalkgroups.size() == 1 ? "?" : "s?"));
+                    confirmation.initOwner(getImportSelectedTalkgroupsButton().getScene().getWindow());
 
                     if(confirmation.showAndWait().filter(apply::equals).isPresent())
                     {
@@ -409,7 +416,7 @@ public class SystemTalkgroupSelectionEditor extends GridPane
             });
         }
 
-        return mImportAllTalkgroupsButton;
+        return mImportSelectedTalkgroupsButton;
     }
 
     private Label getImportResultLabel()
@@ -436,6 +443,14 @@ public class SystemTalkgroupSelectionEditor extends GridPane
     {
         return "Import complete: " + added + " added, " + updated + " updated, " + alreadyCurrent +
             " already current";
+    }
+
+    /**
+     * Copies the table selection before aliases are changed, since those changes can refresh the backing rows.
+     */
+    static <T> List<T> snapshotSelectedRows(List<? extends T> selectedRows)
+    {
+        return selectedRows == null || selectedRows.isEmpty() ? List.of() : List.copyOf(selectedRows);
     }
 
     /**
@@ -627,7 +642,7 @@ public class SystemTalkgroupSelectionEditor extends GridPane
 
     private void updateImportButtonState()
     {
-        if(mImportAllTalkgroupsButton == null)
+        if(mImportSelectedTalkgroupsButton == null)
         {
             return;
         }
@@ -635,8 +650,10 @@ public class SystemTalkgroupSelectionEditor extends GridPane
         AliasListDefinition definition = getAliasListDefinition(
             mAliasListNameComboBox != null ?
                 mAliasListNameComboBox.getSelectionModel().getSelectedItem() : null);
-        mImportAllTalkgroupsButton.setDisable(!isCurrentSystemSupported() ||
-            !isCurrentProtocolCompatible(definition));
+        boolean hasSelection = mTalkgroupTableView != null &&
+            !mTalkgroupTableView.getSelectionModel().getSelectedItems().isEmpty();
+        mImportSelectedTalkgroupsButton.setDisable(!isCurrentSystemSupported() ||
+            !isCurrentProtocolCompatible(definition) || !hasSelection);
     }
 
     private AliasListDefinition getAliasListDefinition(String name)
@@ -740,6 +757,7 @@ public class SystemTalkgroupSelectionEditor extends GridPane
         {
             mTalkgroupTableView = new TableView<>();
             mTalkgroupTableView.setMaxHeight(Double.MAX_VALUE);
+            mTalkgroupTableView.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
             TableColumn<AliasedTalkgroup,String> talkgroupColumn = new TableColumn<>("Talkgroup");
             talkgroupColumn.setCellValueFactory(new PropertyValueFactory<>("talkgroup"));
 
@@ -761,6 +779,11 @@ public class SystemTalkgroupSelectionEditor extends GridPane
             mTalkgroupTableView.getColumns().add(importStatusColumn);
             mTalkgroupTableView.getSelectionModel().selectedItemProperty()
                 .addListener((observable, oldValue, selected) -> refreshSelectedTalkgroupEditor());
+            mTalkgroupTableView.getSelectionModel().getSelectedItems().addListener(
+                (ListChangeListener.Change<? extends AliasedTalkgroup> change) -> {
+                    clearImportResult();
+                    updateImportButtonState();
+                });
             mTalkgroupFilteredList = new FilteredList<>(mTalkgroupList);
             SortedList<AliasedTalkgroup> sortedList = new SortedList<>(mTalkgroupFilteredList);
             sortedList.comparatorProperty().bind(mTalkgroupTableView.comparatorProperty());
