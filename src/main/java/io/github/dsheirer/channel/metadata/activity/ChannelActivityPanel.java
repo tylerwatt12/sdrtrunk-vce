@@ -257,7 +257,6 @@ public class ChannelActivityPanel extends JPanel
         {
             mTabbedPane = new JTabbedPane(JTabbedPane.TOP, JTabbedPane.WRAP_TAB_LAYOUT);
             mTabbedPane.setFont(this.getFont());
-            mTabbedPane.setForeground(Color.BLACK);
             mTabbedPane.addChangeListener(event -> updateTableVisibility());
         }
 
@@ -784,12 +783,12 @@ public class ChannelActivityPanel extends JPanel
         {
             if(activityRow.hasTag(ChannelTag.CURRENT_CONTROL))
             {
-                label.setForeground(Color.RED);
+                label.setForeground(getErrorForeground(table));
                 return;
             }
             else if(activityRow.hasTag(ChannelTag.ALTERNATE_CONTROL))
             {
-                label.setForeground(new Color(180, 130, 0));
+                label.setForeground(getWarningForeground(table));
                 return;
             }
         }
@@ -804,13 +803,42 @@ public class ChannelActivityPanel extends JPanel
             int lastColumn = table.getColumnCount() - 1;
             int left = column == 0 ? 1 : 0;
             int right = column == lastColumn ? 1 : 0;
-            Border outline = BorderFactory.createMatteBorder(1, left, 1, right, Color.BLACK);
+            Color outlineColor = table.getSelectionForeground() != null ? table.getSelectionForeground() :
+                table.getForeground();
+            Border outline = BorderFactory.createMatteBorder(1, left, 1, right, outlineColor);
             label.setBorder(outline);
         }
         else
         {
             label.setBorder(null);
         }
+    }
+
+    private Color getDecodeHealthForeground(JTable table, double percentage)
+    {
+        if(percentage >= DECODE_HEALTHY_MINIMUM_PERCENT)
+        {
+            return isDarkBackground(table.getBackground()) ? new Color(115, 210, 120) : new Color(0, 128, 0);
+        }
+
+        return percentage >= DECODE_DEGRADED_MINIMUM_PERCENT ? getWarningForeground(table) :
+            getErrorForeground(table);
+    }
+
+    private Color getWarningForeground(JTable table)
+    {
+        return isDarkBackground(table.getBackground()) ? new Color(255, 190, 85) : new Color(180, 130, 0);
+    }
+
+    private Color getErrorForeground(JTable table)
+    {
+        return isDarkBackground(table.getBackground()) ? new Color(255, 115, 115) : Color.RED;
+    }
+
+    private boolean isDarkBackground(Color background)
+    {
+        return background != null &&
+            background.getRed() * 0.2126 + background.getGreen() * 0.7152 + background.getBlue() * 0.0722 < 128;
     }
 
     public class LcnCellRenderer extends DefaultTableCellRenderer
@@ -943,8 +971,7 @@ public class ChannelActivityPanel extends JPanel
 
                 if(mHealth)
                 {
-                    label.setForeground(measurement >= DECODE_HEALTHY_MINIMUM_PERCENT ? new Color(0, 128, 0) :
-                        measurement >= DECODE_DEGRADED_MINIMUM_PERCENT ? new Color(180, 130, 0) : Color.RED);
+                    label.setForeground(getDecodeHealthForeground(table, measurement));
                 }
                 else
                 {
@@ -1044,8 +1071,7 @@ public class ChannelActivityPanel extends JPanel
 
                     if(hasMeasuredPercent)
                     {
-                        label.setForeground(lowestPercent >= DECODE_HEALTHY_MINIMUM_PERCENT ? new Color(0, 128, 0) :
-                            lowestPercent >= DECODE_DEGRADED_MINIMUM_PERCENT ? new Color(180, 130, 0) : Color.RED);
+                        label.setForeground(getDecodeHealthForeground(table, lowestPercent));
                     }
                 }
             }

@@ -18,7 +18,6 @@
  */
 package io.github.dsheirer.gui;
 
-import com.jidesoft.plaf.LookAndFeelFactory;
 import com.jidesoft.swing.JideSplitPane;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.application.ApplicationInfo;
@@ -45,6 +44,7 @@ import io.github.dsheirer.gui.icon.ViewIconManagerRequest;
 import io.github.dsheirer.gui.preference.ViewUserPreferenceEditorRequest;
 import io.github.dsheirer.gui.preference.encryption.ViewEncryptionKeyPreferenceEditorRequest;
 import io.github.dsheirer.gui.startup.CoordinatedStartupDialog;
+import io.github.dsheirer.gui.theme.ThemeManager;
 import io.github.dsheirer.gui.viewer.ViewRecordingViewerRequest;
 import io.github.dsheirer.gui.whatsnew.WhatsNewDialog;
 import io.github.dsheirer.icon.IconModel;
@@ -100,7 +100,6 @@ import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
-import java.util.Locale;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.prefs.Preferences;
 import javafx.embed.swing.JFXPanel;
@@ -122,11 +121,9 @@ import javax.swing.JPanel;
 import javax.swing.JSeparator;
 import javax.swing.KeyStroke;
 import javax.swing.JToggleButton;
-import javax.swing.UIManager;
 import javax.swing.WindowConstants;
 import javax.swing.event.MenuEvent;
 import javax.swing.event.MenuListener;
-import javax.swing.plaf.metal.MetalLookAndFeel;
 
 public class SDRTrunk implements Listener<TunerEvent>
 {
@@ -203,6 +200,8 @@ public class SDRTrunk implements Listener<TunerEvent>
 
         if(!GraphicsEnvironment.isHeadless())
         {
+            //Install the stored look-and-feel before realizing the first Swing component.
+            ThemeManager.getInstance().initialize(mUserPreferences);
             mMainGui = new JFrame();
         }
 
@@ -222,21 +221,6 @@ public class SDRTrunk implements Listener<TunerEvent>
         }
 
         mResourceMonitor = new ResourceMonitor(mUserPreferences);
-
-        String operatingSystem = System.getProperty("os.name", "generic").toLowerCase(Locale.ENGLISH);
-
-        if(operatingSystem.contains("mac") || operatingSystem.contains("nux"))
-        {
-            try
-            {
-                UIManager.setLookAndFeel(MetalLookAndFeel.class.getName());
-                LookAndFeelFactory.installJideExtension();
-            }
-            catch(Exception e)
-            {
-                mLog.error("Error trying to set Metal look and feel for OS [" + operatingSystem + "]");
-            }
-        }
 
         ThreadPool.logSettings();
 
@@ -339,6 +323,7 @@ public class SDRTrunk implements Listener<TunerEvent>
             {
                 if(!GraphicsEnvironment.isHeadless())
                 {
+                    ThemeManager.getInstance().registerSwing(mMainGui);
                     mMainGui.setVisible(true);
                     checkForUpdates(false);
 

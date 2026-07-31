@@ -52,6 +52,7 @@ import javax.swing.JTextArea;
 import javax.swing.SwingUtilities;
 import javax.swing.SwingWorker;
 import javax.swing.Timer;
+import javax.swing.UIManager;
 import javax.swing.WindowConstants;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
@@ -186,7 +187,7 @@ public class CoordinatedStartupDialog extends JDialog
         root.setBorder(BorderFactory.createEmptyBorder(14, 14, 14, 14));
 
         JPanel heading = new JPanel(new BorderLayout(0, 4));
-        mStepLabel.setForeground(Color.DARK_GRAY);
+        mStepLabel.setForeground(getSecondaryForeground(mStepLabel));
         mHeaderLabel.setFont(mHeaderLabel.getFont().deriveFont(Font.BOLD, 20.0f));
         heading.add(mStepLabel, BorderLayout.NORTH);
         heading.add(mHeaderLabel, BorderLayout.CENTER);
@@ -442,7 +443,7 @@ public class CoordinatedStartupDialog extends JDialog
         mCalibrationRunning = true;
         mHideCalibrationCheckBox.setEnabled(false);
         mCalibrationProgressBar.setValue(0);
-        mCalibrationStatusLabel.setForeground(Color.DARK_GRAY);
+        mCalibrationStatusLabel.setForeground(getSecondaryForeground(mCalibrationStatusLabel));
         mCalibrationStatusLabel.setText("Preparing calibration...");
         setButtons();
 
@@ -495,13 +496,13 @@ public class CoordinatedStartupDialog extends JDialog
                     mCalibrationProgressBar.setValue(100);
                     if(failures == 0)
                     {
-                        mCalibrationStatusLabel.setForeground(new Color(0, 110, 0));
+                        mCalibrationStatusLabel.setForeground(getSuccessForeground());
                         mCalibrationStatusLabel.setText(
                             "Calibration complete. The selected implementations will be used after restart.");
                     }
                     else
                     {
-                        mCalibrationStatusLabel.setForeground(new Color(160, 80, 0));
+                        mCalibrationStatusLabel.setForeground(getWarningForeground());
                         mCalibrationStatusLabel.setText(failures + " calibration" + (failures == 1 ? "" : "s") +
                             " failed. You can retry later from User Preferences.");
                     }
@@ -531,7 +532,7 @@ public class CoordinatedStartupDialog extends JDialog
     private void showCalibrationFailure(Throwable throwable)
     {
         mLog.error("CPU calibration failed", throwable);
-        mCalibrationStatusLabel.setForeground(Color.RED.darker());
+        mCalibrationStatusLabel.setForeground(getErrorForeground());
         mCalibrationStatusLabel.setText("Calibration could not finish. You can retry later from User Preferences.");
     }
 
@@ -557,13 +558,13 @@ public class CoordinatedStartupDialog extends JDialog
     {
         if(mUserPreferences.getJmbeLibraryPreference().isJmbeLibraryReady())
         {
-            mJmbeStatusLabel.setForeground(new Color(0, 110, 0));
+            mJmbeStatusLabel.setForeground(getSuccessForeground());
             mJmbeStatusLabel.setText("JMBE " +
                 mUserPreferences.getJmbeLibraryPreference().getCurrentVersion() + " is ready.");
         }
         else
         {
-            mJmbeStatusLabel.setForeground(new Color(160, 80, 0));
+            mJmbeStatusLabel.setForeground(getWarningForeground());
             mJmbeStatusLabel.setText("A compatible JMBE library is not installed.");
         }
     }
@@ -576,7 +577,7 @@ public class CoordinatedStartupDialog extends JDialog
         }
 
         mJmbeBuilderOpening = true;
-        mJmbeStatusLabel.setForeground(Color.DARK_GRAY);
+        mJmbeStatusLabel.setForeground(getSecondaryForeground(mJmbeStatusLabel));
         mJmbeStatusLabel.setText("Checking for the latest JMBE builder...");
         setJmbeButtons();
 
@@ -617,13 +618,13 @@ public class CoordinatedStartupDialog extends JDialog
         if(release != null)
         {
             MyEventBus.getGlobalEventBus().post(new JmbeEditorRequest(release));
-            mJmbeStatusLabel.setForeground(Color.DARK_GRAY);
+            mJmbeStatusLabel.setForeground(getSecondaryForeground(mJmbeStatusLabel));
             mJmbeStatusLabel.setText(
                 "The JMBE builder is open. When it finishes, return here and click Check and Continue.");
         }
         else
         {
-            mJmbeStatusLabel.setForeground(Color.RED.darker());
+            mJmbeStatusLabel.setForeground(getErrorForeground());
             mJmbeStatusLabel.setText(
                 "The JMBE builder could not be opened. Check the network connection and try again.");
         }
@@ -640,7 +641,7 @@ public class CoordinatedStartupDialog extends JDialog
         }
         else
         {
-            mJmbeStatusLabel.setForeground(Color.RED.darker());
+            mJmbeStatusLabel.setForeground(getErrorForeground());
             mJmbeStatusLabel.setText(
                 "JMBE is not ready yet. Complete the builder, or choose Continue Without Voice.");
         }
@@ -685,7 +686,7 @@ public class CoordinatedStartupDialog extends JDialog
         boolean savePassword = mSaveVaultPasswordCheckBox.isSelected();
         mVaultUnlockRunning = true;
         setVaultControlsEnabled(false);
-        mVaultStatusLabel.setForeground(Color.DARK_GRAY);
+        mVaultStatusLabel.setForeground(getSecondaryForeground(mVaultStatusLabel));
         mVaultStatusLabel.setText("Unlocking vault...");
         setButtons();
 
@@ -732,7 +733,7 @@ public class CoordinatedStartupDialog extends JDialog
     {
         mLog.warn("Encryption vault unlock failed", throwable);
         mVaultPasswordField.setText("");
-        mVaultStatusLabel.setForeground(Color.RED.darker());
+        mVaultStatusLabel.setForeground(getErrorForeground());
         mVaultStatusLabel.setText(throwable != null && throwable.getMessage() != null ? throwable.getMessage() :
             "The encryption key vault could not be unlocked.");
         setVaultControlsEnabled(true);
@@ -926,6 +927,34 @@ public class CoordinatedStartupDialog extends JDialog
             mAutoStartTimer.stop();
             mAutoStartTimer = null;
         }
+    }
+
+    private static Color getSecondaryForeground(JLabel label)
+    {
+        Color disabledForeground = UIManager.getColor("Label.disabledForeground");
+        return disabledForeground != null ? disabledForeground : label.getForeground();
+    }
+
+    private static Color getSuccessForeground()
+    {
+        return isDarkTheme() ? new Color(115, 210, 120) : new Color(0, 110, 0);
+    }
+
+    private static Color getWarningForeground()
+    {
+        return isDarkTheme() ? new Color(255, 190, 85) : new Color(160, 80, 0);
+    }
+
+    private static Color getErrorForeground()
+    {
+        return isDarkTheme() ? new Color(255, 115, 115) : Color.RED.darker();
+    }
+
+    private static boolean isDarkTheme()
+    {
+        Color background = UIManager.getColor("Panel.background");
+        return background != null &&
+            background.getRed() * 0.2126 + background.getGreen() * 0.7152 + background.getBlue() * 0.0722 < 128;
     }
 
     private record CalibrationProgress(int current, int total, String name) {}

@@ -31,7 +31,6 @@ import io.github.dsheirer.settings.SettingsManager;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.stats.StatsWebServerService;
 import io.github.dsheirer.source.tuner.ui.TunerViewPanel;
-import java.awt.Color;
 import java.awt.Dimension;
 import java.util.function.Consumer;
 import net.miginfocom.swing.MigLayout;
@@ -116,7 +115,6 @@ public class ControllerPanel extends JPanel
 
         mTabbedPane = new JideTabbedPane();
         mTabbedPane.setFont(this.getFont());
-        mTabbedPane.setForeground(Color.BLACK);
         if(mSystemsVisible)
         {
             mTabbedPane.addTab("Systems", mNowPlayingPanel);

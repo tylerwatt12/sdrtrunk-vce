@@ -19,6 +19,7 @@
 
 package io.github.dsheirer.preference.application;
 
+import io.github.dsheirer.gui.theme.Theme;
 import io.github.dsheirer.preference.Preference;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.sample.Listener;
@@ -30,6 +31,9 @@ import java.util.prefs.Preferences;
 public class ApplicationPreference extends Preference
 {
     private static final String PREFERENCE_KEY_CHANNEL_AUTO_START_TIMEOUT = "channel.auto.start.timeout";
+    private static final String PREFERENCE_KEY_DARK_MODE = "dark.mode";
+    private static final String PREFERENCE_KEY_THEME = "ui.theme";
+    private static final String PREFERENCE_KEY_GUI_SCALE = "ui.gui.scale";
     private static final String PREFERENCE_KEY_STATS_LOGGING_ENABLED = "p25.activity.logging.enabled";
     private static final String PREFERENCE_KEY_STATS_DETAILED_HISTORY_ENABLED =
         "p25.activity.logging.detailed.history.enabled";
@@ -46,6 +50,9 @@ public class ApplicationPreference extends Preference
     public static final int MIN_STATS_WEB_SERVER_PORT = 1024;
     public static final int MAX_STATS_WEB_SERVER_PORT = 65535;
     public static final int DEFAULT_STATS_WEB_SERVER_PORT = 8090;
+    public static final double MIN_GUI_SCALE = 0.5d;
+    public static final double MAX_GUI_SCALE = 2.0d;
+    public static final double DEFAULT_GUI_SCALE = 1.0d;
 
     private Preferences mPreferences = Preferences.userNodeForPackage(ApplicationPreference.class);
     private Integer mChannelAutoStartTimeout;
@@ -55,6 +62,8 @@ public class ApplicationPreference extends Preference
     private Boolean mStatsWebServerEnabled;
     private Integer mStatsWebServerPort;
     private Boolean mStatsWebServerAnyIpEnabled;
+    private Theme mTheme;
+    private Double mGuiScale;
 
     /**
      * Constructs an instance
@@ -240,6 +249,80 @@ public class ApplicationPreference extends Preference
         mStatsWebServerAnyIpEnabled = enabled;
         mPreferences.putBoolean(PREFERENCE_KEY_STATS_WEB_SERVER_ANY_IP_ENABLED, enabled);
         notifyPreferenceUpdated();
+    }
+
+    /**
+     * Selected desktop theme.  The legacy dark-mode flag is honored when a theme has not yet
+     * been stored, so existing portable profiles retain their appearance.
+     */
+    public Theme getTheme()
+    {
+        if(mTheme == null)
+        {
+            String stored = mPreferences.get(PREFERENCE_KEY_THEME, null);
+
+            if(stored != null)
+            {
+                mTheme = Theme.fromName(stored);
+            }
+            else
+            {
+                mTheme = mPreferences.getBoolean(PREFERENCE_KEY_DARK_MODE, false) ? Theme.DARK : Theme.LIGHT;
+            }
+        }
+
+        return mTheme;
+    }
+
+    /**
+     * Persists the desktop theme in the portable application preferences store.
+     */
+    public void setTheme(Theme theme)
+    {
+        if(theme == null)
+        {
+            theme = Theme.LIGHT;
+        }
+
+        mTheme = theme;
+        mPreferences.put(PREFERENCE_KEY_THEME, theme.name());
+        mPreferences.putBoolean(PREFERENCE_KEY_DARK_MODE, theme.isDark());
+        notifyPreferenceUpdated();
+    }
+
+    public boolean isDarkMode()
+    {
+        return getTheme().isDark();
+    }
+
+    /**
+     * Global Swing and JavaFX scale.  1.0 is the default size.
+     */
+    public double getGuiScale()
+    {
+        if(mGuiScale == null)
+        {
+            mGuiScale = clampScale(mPreferences.getDouble(PREFERENCE_KEY_GUI_SCALE, DEFAULT_GUI_SCALE));
+        }
+
+        return mGuiScale;
+    }
+
+    public void setGuiScale(double scale)
+    {
+        mGuiScale = clampScale(scale);
+        mPreferences.putDouble(PREFERENCE_KEY_GUI_SCALE, mGuiScale);
+        notifyPreferenceUpdated();
+    }
+
+    private static double clampScale(double scale)
+    {
+        if(Double.isNaN(scale) || scale < MIN_GUI_SCALE)
+        {
+            return MIN_GUI_SCALE;
+        }
+
+        return Math.min(MAX_GUI_SCALE, scale);
     }
 
     private static int clampRetentionDays(int days)

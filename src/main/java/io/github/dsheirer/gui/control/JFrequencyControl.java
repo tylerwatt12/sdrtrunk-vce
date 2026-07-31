@@ -548,7 +548,8 @@ public class JFrequencyControl extends JPanel implements ISourceEventProcessor
             @Override
             public void mouseExited(MouseEvent e)
             {
-                Digit.this.setBackground(Color.WHITE);
+                Color textBackground = javax.swing.UIManager.getColor("TextField.background");
+                Digit.this.setBackground(textBackground != null ? textBackground : Color.WHITE);
                 repaint();
             }
 

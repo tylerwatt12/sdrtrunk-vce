@@ -24,7 +24,8 @@ package io.github.dsheirer.gui.preference;
  */
 public enum PreferenceEditorType
 {
-    APPLICATION("Application"),
+    APPLICATION("General"),
+    APPEARANCE("Appearance"),
     CHANNEL_EVENT("Channel Events"),
     NOW_PLAYING("Systems"),
     DIRECTORY("Directories"),

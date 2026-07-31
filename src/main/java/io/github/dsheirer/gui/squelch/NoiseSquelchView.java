@@ -49,7 +49,6 @@ import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
-import javafx.scene.paint.Color;
 import jiconfont.icons.font_awesome.FontAwesome;
 import jiconfont.javafx.IconNode;
 import org.slf4j.Logger;
@@ -553,7 +552,7 @@ public class NoiseSquelchView extends ChannelView implements Listener<NoiseSquel
             mResetButton.setTooltip(new Tooltip("Reset noise and hysteresis to default values"));
             IconNode iconNode = new IconNode(FontAwesome.UNDO);
             iconNode.setIconSize(10);
-            iconNode.setFill(Color.BLACK);
+            iconNode.fillProperty().bind(mResetButton.textFillProperty());
             mResetButton.setGraphic(iconNode);
             mResetButton.setOnAction(event -> {
                 setNoiseSliderValues(NoiseSquelch.DEFAULT_NOISE_OPEN_THRESHOLD, NoiseSquelch.DEFAULT_NOISE_CLOSE_THRESHOLD);

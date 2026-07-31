@@ -31,7 +31,6 @@ import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.settings.SettingsManager;
 import io.github.dsheirer.stats.StatsWebServerService;
-import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
@@ -138,7 +137,6 @@ public class NowPlayingPanel extends JPanel
             mTabbedPane.addTab("Messages", mMessageActivityPanel);
             mTabbedPane.addTab("Channel", mChannelSpectrumSquelchPanel);
             mTabbedPane.setFont(this.getFont());
-            mTabbedPane.setForeground(Color.BLACK);
             mTabbedPane.setMinimumSize(new Dimension(0, LOWER_TABS_MINIMUM_HEIGHT));
             //Register state change listener to toggle visibility state for channel tab to turn-on/off FFT processing
             mTabbedPane.addChangeListener(e -> mChannelSpectrumSquelchPanel.setPanelVisible(getTabbedPane().getSelectedIndex() == getTabbedPane()

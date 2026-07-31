@@ -1,4 +1,5 @@
 open module sdr.trunk {
+    exports com.sun.java.swing.plaf.windows to jide.oss;
     exports io.github.dsheirer.audio.codec.mbe.decrypt;
     exports io.github.dsheirer.bits;
     exports io.github.dsheirer.edac;
@@ -14,6 +15,8 @@ open module sdr.trunk {
     requires com.fasterxml.jackson.databind;
     requires com.fasterxml.jackson.dataformat.xml;
     requires com.fazecast.jSerialComm;
+    requires com.formdev.flatlaf;
+    requires com.formdev.flatlaf.intellijthemes;
     requires com.google.common;
     requires com.google.gson;
     requires com.github.oshi;

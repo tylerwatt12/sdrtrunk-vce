@@ -266,7 +266,8 @@ public class TunerViewPanel extends JPanel
                 }
                 else if(tunerStatus == TunerStatus.DISABLED)
                 {
-                    component.setForeground(Color.DARK_GRAY);
+                    Color disabled = javax.swing.UIManager.getColor("Label.disabledForeground");
+                    component.setForeground(disabled != null ? disabled : table.getForeground());
                 }
                 else
                 {

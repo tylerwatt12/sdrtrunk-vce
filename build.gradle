@@ -60,6 +60,12 @@ def currentJavafxPlatform = org.gradle.nativeplatform.platform.internal.DefaultN
     (org.gradle.nativeplatform.platform.internal.DefaultNativePlatform.currentOperatingSystem.isMacOsX() ? "mac" : "linux")
 def javafxPlatform = project.findProperty('javafxPlatform') ?: currentJavafxPlatform
 
+//JIDE 3.6.18 references the Windows look-and-feel class directly.  Non-Windows JDKs need the
+//compatibility stub, while Windows must use the real java.desktop class to avoid a split package.
+if(javafxPlatform == "win") {
+    sourceSets.main.java.exclude 'com/sun/java/swing/plaf/windows/WindowsLookAndFeel.java'
+}
+
 //Version is defined in gradle.properties so that we can CLI override it for nightly builds.
 version = project.findProperty('projectVersion')
 
@@ -200,6 +206,8 @@ dependencies {
     implementation 'com.fasterxml.jackson.core:jackson-databind:2.20.1'
     implementation 'com.fasterxml.jackson.dataformat:jackson-dataformat-xml:2.20.1'
     implementation 'com.fazecast:jSerialComm:2.11.4'
+    implementation 'com.formdev:flatlaf:3.5.4'
+    implementation 'com.formdev:flatlaf-intellij-themes:3.5.4'
     implementation 'com.github.jiconfont:jiconfont-font_awesome:4.7.0.1'
     implementation 'com.github.jiconfont:jiconfont-javafx:1.0.0'
     implementation 'com.github.jiconfont:jiconfont-swing:1.0.1'

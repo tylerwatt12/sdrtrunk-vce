@@ -131,6 +131,7 @@ public class BugReportDialog extends JDialog
         JTextArea screenshotWarning = noticeArea(BugReportConstants.SCREENSHOT_WARNING);
         screenshotWarning.setOpaque(true);
         screenshotWarning.setBackground(new Color(255, 248, 225));
+        screenshotWarning.setForeground(new Color(92, 63, 12));
         screenshotWarning.setBorder(BorderFactory.createCompoundBorder(
             BorderFactory.createLineBorder(new Color(176, 125, 32)),
             BorderFactory.createEmptyBorder(8, 8, 8, 8)));
@@ -144,6 +145,7 @@ public class BugReportDialog extends JDialog
         JLabel exclusion = new JLabel("<html><b>" + BugReportConstants.EXCLUSION_NOTICE + "</b></html>");
         exclusion.setOpaque(true);
         exclusion.setBackground(new Color(239, 247, 255));
+        exclusion.setForeground(new Color(35, 70, 105));
         exclusion.setBorder(BorderFactory.createCompoundBorder(
             BorderFactory.createLineBorder(new Color(80, 120, 160)),
             BorderFactory.createEmptyBorder(8, 8, 8, 8)));
