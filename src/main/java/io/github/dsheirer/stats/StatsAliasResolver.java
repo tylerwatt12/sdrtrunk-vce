@@ -149,6 +149,88 @@ class StatsAliasResolver
     }
 
     /**
+     * Projects each compact evidence row to the one winning configured alias.  This is deliberately the same
+     * precedence used by the normal Stats read models, so overlapping exact/range/fully-qualified rules cannot make
+     * one observation count against multiple aliases.
+     *
+     * <p>Expected row fields are {@code protocol_code}, {@code topology}, {@code identity_kind_code},
+     * {@code identity_id}, and the normal system or assigned-list lookup fields.  A row with no eligible rule keeps
+     * a null {@code resolved_alias_id}.</p>
+     */
+    void resolveEvidenceAliases(Connection connection, List<Map<String,Object>> rows) throws SQLException
+    {
+        if(rows.isEmpty())
+        {
+            return;
+        }
+
+        Snapshot snapshot = snapshot(connection);
+        Map<Integer,Set<String>> systemAliasLists = loadAliasLists(connection);
+        RuleIndex p25Talkgroups = index(snapshot.talkgroups());
+        RuleIndex p25Radios = index(snapshot.radios());
+        RuleIndex dmrTalkgroups = index(snapshot.dmrTalkgroups());
+        RuleIndex dmrRadios = index(snapshot.dmrRadios());
+        RuleIndex nxdnTalkgroups = index(snapshot.nxdnTalkgroups());
+        RuleIndex nxdnRadios = index(snapshot.nxdnRadios());
+
+        for(Map<String,Object> row: rows)
+        {
+            Integer identifier = integer(row.get("identity_id"));
+            Integer kind = integer(row.get("identity_kind_code"));
+            Integer protocol = integer(row.get("protocol_code"));
+
+            if(identifier == null || kind == null || protocol == null)
+            {
+                continue;
+            }
+
+            boolean radio = kind == 2;
+            RuleIndex rules = switch(protocol)
+            {
+                case 1 -> radio ? p25Radios : p25Talkgroups;
+                case 3 -> radio ? dmrRadios : dmrTalkgroups;
+                case 4 -> radio ? nxdnRadios : nxdnTalkgroups;
+                default -> null;
+            };
+
+            if(rules == null)
+            {
+                continue;
+            }
+
+            Rule best = null;
+            boolean trunkedP25 = protocol == 1 && "TRUNKED".equals(row.get("topology"));
+
+            if(trunkedP25)
+            {
+                Integer wacn = integer(row.get("wacn"));
+                Integer system = integer(row.get("system_id"));
+                Integer systemKey = integer(row.get("system_key"));
+
+                if(wacn != null && system != null)
+                {
+                    Set<String> aliasLists = systemKey != null ?
+                        systemAliasLists.getOrDefault(systemKey, Set.of()) : Set.of();
+                    best = bestSystemRule(rules.exact().getOrDefault(identifier, List.of()), null, identifier,
+                        wacn, system, aliasLists);
+                    best = bestSystemRule(rules.ranged(), best, identifier, wacn, system, aliasLists);
+                }
+            }
+            else if(row.get("alias_list_name") instanceof String aliasList && !aliasList.isBlank())
+            {
+                best = bestAssignedRule(rules.exact().getOrDefault(identifier, List.of()), null, identifier,
+                    aliasList);
+                best = bestAssignedRule(rules.ranged(), best, identifier, aliasList);
+            }
+
+            if(best != null)
+            {
+                row.put("resolved_alias_id", best.aliasId());
+            }
+        }
+    }
+
+    /**
      * Resolves conventional DMR aliases only from the exact alias list assigned to each receiver context.
      */
     void enrichDmrTalkgroups(Connection connection, List<Map<String,Object>> rows, String identifierColumn,

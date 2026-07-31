@@ -106,6 +106,234 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void exposesConfiguredAliasesWithWinnerOnlySummaryEvidenceAndCsvParity() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO alias (id, alias_list_id, name, matcher_type, protocol, min_value, max_value)
+                VALUES (3, 1, 'County Range', 'TALKGROUP_RANGE', 'APCO25', 56000, 56200)
+                """);
+            statement.executeUpdate("""
+                UPDATE alias
+                SET matcher_type='P25_FULLY_QUALIFIED_TALKGROUP', wacn=0xBEE00, p25_system_id=0x348
+                WHERE id=1
+                """);
+            statement.executeUpdate("""
+                UPDATE trunked_radio_talkgroup_summary SET join_count=2
+                WHERE scope_id=1 AND radio_id=1811332 AND talkgroup_id=56132
+                """);
+            statement.executeUpdate("""
+                INSERT INTO configuration_channel(sort_order, name, alias_list_name, decoder_type, config_json)
+                VALUES(1, 'Configured P25', 'County', 'P25-1', '{}')
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias_broadcast_channel(alias_id, channel_name)
+                VALUES(1, 'Primary'), (1, 'Archive')
+                """);
+        }
+
+        Map<String,Object> lists = mDatabase.aliasLists();
+        Map<String,Object> county = rows(lists).getFirst();
+        assertEquals(1L, number(county.get("alias_list_id")));
+        assertEquals(1L, number(county.get("assigned_channel_count")));
+
+        Map<String,Object> response = mDatabase.aliases(request(
+            "/api/aliases?list=1&type=talkgroup&sort=call_count&direction=desc"));
+        List<Map<String,Object>> aliases = rows(response);
+        assertEquals(List.of("Dispatch", "County Range"), aliases.stream().map(row -> row.get("name")).toList());
+        Map<String,Object> dispatch = aliases.getFirst();
+        assertEquals("observed", dispatch.get("metrics_state"));
+        assertEquals(12L, number(dispatch.get("call_count")));
+        assertEquals(12L, number(dispatch.get("grant_count")));
+        assertEquals(1L, number(dispatch.get("relationship_count")));
+        assertEquals(1L, number(dispatch.get("join_relationship_count")));
+        assertEquals(1L, number(dispatch.get("current_affiliation_count")));
+        assertEquals(List.of("Archive", "Primary"), dispatch.get("broadcast_channels"));
+
+        Map<String,Object> range = aliases.getLast();
+        assertEquals("covered_no_evidence", range.get("metrics_state"));
+        assertEquals(0L, number(range.get("call_count")));
+        assertEquals(0L, number(range.get("relationship_count")));
+
+        Map<String,Object> detail = mDatabase.alias(request("/api/alias?id=1"));
+        assertEquals(1L, number(map(detail, "alias").get("alias_list_id")));
+        Map<String,Object> breakdown = rowsFrom(detail, "breakdown").getFirst();
+        assertEquals("scope:1", breakdown.get("scope_key"));
+        assertEquals("p25:BEE00:348", breakdown.get("scope_label"));
+        assertEquals(1L, number(breakdown.get("alias_list_id")));
+
+        List<CSVRecord> csv = csvRows(mDatabase.csvExport(request(
+            "/api/export.csv?dataset=aliases&list=County&type=talkgroup&sort=call_count&direction=desc")));
+        assertEquals(List.of("Dispatch", "County Range"), csv.stream().map(row -> row.get("name")).toList());
+        assertEquals("BEE00", csv.getFirst().get("wacn_hex"));
+    }
+
+    @Test
+    void searchesOnlyRealFullyQualifiedIdentifiersAndSortsEveryMatcherByItsDisplayValue() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO alias (
+                    id, alias_list_id, name, matcher_type, protocol, value, min_value, max_value,
+                    wacn, p25_system_id, text_value, numeric_value, tone_sequence
+                ) VALUES
+                    (3, 1, 'Qualified B', 'P25_FULLY_QUALIFIED_TALKGROUP', 'APCO25', 7,
+                        NULL, NULL, 0xBEE01, 0x100, NULL, NULL, NULL),
+                    (4, 1, 'Qualified A', 'P25_FULLY_QUALIFIED_TALKGROUP', 'APCO25', 8,
+                        NULL, NULL, 0xBEE00, 0x400, NULL, NULL, NULL),
+                    (5, 1, 'Small Range', 'TALKGROUP_RANGE', 'APCO25', NULL,
+                        20, 30, NULL, NULL, NULL, NULL, NULL),
+                    (6, 1, 'Status Ten', 'STATUS', NULL, NULL,
+                        NULL, NULL, NULL, NULL, NULL, 10, NULL),
+                    (7, 1, 'DCS Code', 'DCS', NULL, NULL,
+                        NULL, NULL, NULL, NULL, 'D023N', NULL, NULL),
+                    (8, 1, 'Tone Code', 'TONES', NULL, NULL,
+                        NULL, NULL, NULL, NULL, NULL, NULL, 'A-B')
+                """);
+        }
+
+        assertTrue(rows(mDatabase.aliases(request("/api/aliases?q=00000"))).isEmpty(),
+            "Ordinary aliases must not acquire a synthetic 00000-000 fully-qualified identifier");
+        assertEquals(List.of("Qualified A"), rows(mDatabase.aliases(request(
+            "/api/aliases?q=BEE00-400-8"))).stream().map(row -> row.get("name")).toList());
+        assertEquals(List.of("Qualified A"), rows(mDatabase.aliases(request(
+            "/api/aliases?q=781824-1024-8"))).stream().map(row -> row.get("name")).toList());
+
+        assertEquals(List.of("Status Ten", "Small Range", "Dispatch", "Engine 1", "Qualified A",
+                "Qualified B", "Tone Code", "DCS Code"),
+            rows(mDatabase.aliases(request("/api/aliases?sort=value&direction=asc&limit=20"))).stream()
+                .map(row -> row.get("name")).toList());
+    }
+
+    @Test
+    void exportsLatestAndHistoricalQualityWithoutSummingRollingCounters() throws Exception
+    {
+        long now = System.currentTimeMillis();
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("quiet-quality-site",
+                TrunkedSiteSchema.PROTOCOL_DMR, 1, 0, "Quiet DMR", "Quiet Quality Site",
+                7, null, 2, null, List.of(), List.of()));
+            statement.executeUpdate("""
+                INSERT INTO p25_control_channel_quality (
+                    guid, frequency_hz, bucket_start_ms, observed_at_ms, signal_dbfs,
+                    average_signal_dbfs, minimum_signal_dbfs, maximum_signal_dbfs, decode_health_pct,
+                    valid_frames, invalid_frames, corrected_bits, sync_loss_bits, dropped_bits,
+                    last_valid_decode_ms
+                ) VALUES ('test-site-guid', 856137500, %1$d, %1$d, -18.0, -19.0, -22.0, -17.0,
+                    96.0, 30, 2, 4, 1, 0, %1$d)
+                """.formatted((now / 10_000L) * 10_000L));
+        }
+
+        List<CSVRecord> latest = csvRows(mDatabase.csvExport(request(
+            "/api/export.csv?dataset=signal-health")));
+        assertEquals(2, latest.size());
+        CSVRecord sampled = latest.stream().filter(row -> GUID.equals(row.get("site_guid"))).findFirst()
+            .orElseThrow();
+        assertEquals("01", sampled.get("site_id_hex"));
+        assertFalse(sampled.get("sample_age_seconds").isBlank());
+        assertTrue(sampled.isMapped("valid_frames_rolling_30s"));
+        CSVRecord quiet = latest.stream().filter(row -> "quiet-quality-site".equals(row.get("site_guid")))
+            .findFirst().orElseThrow();
+        assertEquals("", quiet.get("observed_utc"));
+        assertEquals("", quiet.get("sample_age_seconds"));
+
+        List<CSVRecord> history = csvRows(mDatabase.csvExport(request(
+            "/api/export.csv?dataset=site-quality&guid=test-site-guid&range=1h&points=60")));
+        assertEquals(1, history.size());
+        assertTrue(history.getFirst().isMapped("bucket_end_utc"));
+        assertFalse(history.getFirst().isMapped("valid_frames_rolling_30s"));
+        assertEquals("BEE00", history.getFirst().get("wacn_hex"));
+    }
+
+    @Test
+    void enrichesConventionalDmrAliasesFromCompactSummariesAndOutputBuckets() throws Exception
+    {
+        seedDmrConventionalRows(mDatabasePath);
+        long bucket = Math.floorDiv(System.currentTimeMillis(), 3_600_000L) * 3_600_000L;
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO call_identity_bucket (
+                    context_id, identity_role_code, identity_kind_code, identity_id, bucket_start_ms,
+                    call_count, encrypted_count, recorded_count, streamed_count
+                ) VALUES (5, 1, 1, 91, %1$d, 10, 2, 3, 2),
+                         (5, 2, 2, 123456, %1$d, 10, 1, 3, 2)
+                """.formatted(bucket));
+        }
+
+        mDatabase = new StatsWebDatabase(new UserPreferences(), mDatabasePath);
+        List<Map<String,Object>> aliases = rows(mDatabase.aliases(request(
+            "/api/aliases?list=100&sort=name&direction=asc")));
+        Map<String,Object> dispatch = aliases.stream().filter(row -> "DMR Dispatch".equals(row.get("name")))
+            .findFirst().orElseThrow();
+        assertEquals("observed", dispatch.get("metrics_state"));
+        assertEquals(10L, number(dispatch.get("call_count")));
+        assertEquals(3L, number(dispatch.get("recorded_count")));
+        assertEquals(2L, number(dispatch.get("streamed_count")));
+        assertEquals(2L, number(dispatch.get("encrypted_evidence_count")));
+        assertNull(dispatch.get("grant_count"));
+        assertNull(dispatch.get("relationship_count"));
+        assertEquals(1000L, number(dispatch.get("first_evidence_ms")));
+        assertEquals(5000L, number(dispatch.get("last_evidence_ms")));
+
+        Map<String,Object> radio = aliases.stream().filter(row -> "DMR Engine 1".equals(row.get("name")))
+            .findFirst().orElseThrow();
+        assertEquals(10L, number(radio.get("call_count")));
+        assertEquals(3L, number(radio.get("recorded_count")));
+        assertNull(radio.get("current_affiliation_count"));
+    }
+
+    @Test
+    void returnsDurableAliasListIdsWithSiteAndConventionalRows()
+    {
+        assertEquals(1L, number(map(mDatabase.site(request("/api/site?guid=" + GUID)), "site")
+            .get("alias_list_id")));
+        assertEquals(1L, number(rows(mDatabase.conventional(request("/api/conventional"))).getFirst()
+            .get("alias_list_id")));
+        assertEquals(1L, number(map(mDatabase.conventionalDetail(
+            request("/api/conventional/detail?context=conventional-fire")), "context").get("alias_list_id")));
+    }
+
+    @Test
+    void aliasEvidenceQueriesUseScopeLeadingIndexesAndNeverDetailedEvents() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
+        {
+            List<String> identityPlan = explain(connection, """
+                SELECT identity_id, call_count
+                FROM trunked_identity_summary
+                WHERE scope_id IN (?)
+                ORDER BY scope_id, identity_kind_code, identity_id
+                LIMIT ?
+                """, 1, 500_001);
+            assertTrue(identityPlan.stream().anyMatch(detail -> detail.contains("PRIMARY KEY") ||
+                    detail.contains("idx_trunked_identity_scope_kind_last_seen")),
+                () -> "Expected scope-leading identity lookup, plan was: " + identityPlan);
+            assertTrue(identityPlan.stream().noneMatch(detail -> detail.contains("p25_activity_event")));
+
+            List<String> relationshipPlan = explain(connection, """
+                SELECT radio_id, talkgroup_id
+                FROM trunked_radio_talkgroup_summary
+                WHERE scope_id IN (?)
+                ORDER BY scope_id, radio_id, talkgroup_id, target_kind_code
+                LIMIT ?
+                """, 1, 250_001);
+            assertTrue(relationshipPlan.stream().anyMatch(detail -> detail.contains("PRIMARY KEY")),
+                () -> "Expected scope-leading relationship lookup, plan was: " + relationshipPlan);
+            assertTrue(relationshipPlan.stream().noneMatch(detail -> detail.contains("p25_activity_event")));
+        }
+    }
+
+    @Test
     void exportsCompleteFilteredAndSortedDatasetsWithoutUsingPageControls() throws Exception
     {
         seedSortingRows(mDatabasePath);
@@ -2643,6 +2871,29 @@ class StatsWebDatabaseTest
     private static long number(Object value)
     {
         return ((Number)value).longValue();
+    }
+
+    private static List<String> explain(Connection connection, String sql, Object... parameters) throws Exception
+    {
+        List<String> plan = new ArrayList<>();
+
+        try(PreparedStatement statement = connection.prepareStatement("EXPLAIN QUERY PLAN " + sql))
+        {
+            for(int x = 0; x < parameters.length; x++)
+            {
+                statement.setObject(x + 1, parameters[x]);
+            }
+
+            try(ResultSet resultSet = statement.executeQuery())
+            {
+                while(resultSet.next())
+                {
+                    plan.add(resultSet.getString("detail"));
+                }
+            }
+        }
+
+        return plan;
     }
 
     private static long metadataValue(Path database, String key) throws Exception

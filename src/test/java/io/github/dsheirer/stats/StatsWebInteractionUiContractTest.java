@@ -173,15 +173,17 @@ class StatsWebInteractionUiContractTest
     void exportsCompleteFilteredManagerTablesWithoutPaginationParameters() throws Exception
     {
         String source = source();
+        String href = function(source, "function exportCsvHref(dataset, context = {})");
         String helper = function(source, "function exportCsvLink(dataset, context = {})");
-        assertTrue(helper.contains("parameters.set('dataset', dataset)"));
-        assertTrue(helper.contains("['q', 'sort', 'direction']"));
-        assertTrue(helper.contains("anchor('Export CSV', `/api/export.csv?${parameters}`"));
+        assertTrue(href.contains("parameters.set('dataset', dataset)"));
+        assertTrue(href.contains("['q', 'sort', 'direction']"));
+        assertTrue(href.contains("return `/api/export.csv?${parameters}`"));
+        assertTrue(helper.contains("anchor('Export CSV', exportCsvHref(dataset, context)"));
         assertTrue(helper.contains("link.setAttribute('download', '')"));
         assertTrue(helper.contains("link.setAttribute('aria-label'"));
-        assertFalse(helper.contains("'limit'"));
-        assertFalse(helper.contains("'offset'"));
-        assertFalse(helper.contains("'before_id'"));
+        assertFalse(href.contains("'limit'"));
+        assertFalse(href.contains("'offset'"));
+        assertFalse(href.contains("'before_id'"));
 
         String system = function(source, "async function renderSystem()");
         assertTrue(system.contains("exportCsvLink('system-talkgroups', systemScope)"));
@@ -294,14 +296,30 @@ class StatsWebInteractionUiContractTest
         assertTrue(html.indexOf("localStorage.getItem('sdrtrunk_theme')") <
             html.indexOf("rel=\"stylesheet\""));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=22"));
-        assertTrue(html.contains("/assets/app.js?v=33"));
+        assertTrue(html.contains("/assets/app.css?v=25"));
+        assertTrue(html.contains("/assets/app.js?v=35"));
         assertTrue(source.contains("window.localStorage.setItem(THEME_STORAGE_KEY"));
         assertTrue(source.contains("toggle.setAttribute('aria-pressed'"));
         assertTrue(css.contains(":root[data-theme=\"dark\"]"));
         assertTrue(css.contains("--chart-call:"));
         assertTrue(css.contains(":not(.table-sort-control):not(.systems-live-tab)"));
         assertFalse(css.contains("filter: invert("));
+    }
+
+    @Test
+    void separatesLiveTabSignalStrengthFromDecodeQuality() throws Exception
+    {
+        String source = source();
+        String level = function(source, "function signalBarLevel(value)");
+        String live = function(source, "function liveSystemsSection()");
+        assertTrue(level.contains("signal >= -65"));
+        assertTrue(level.contains("signal >= -75"));
+        assertTrue(level.contains("signal >= -85"));
+        assertTrue(live.contains("const level = signalBarLevel(signalStrength)"));
+        assertTrue(live.contains("const state = decodeQuality === null ? 'unavailable'"));
+        assertTrue(live.contains("dBFS signal strength"));
+        assertTrue(live.contains("% decode quality"));
+        assertFalse(live.contains("Math.ceil(decodeQuality / 25)"));
     }
 
     private static String source() throws Exception

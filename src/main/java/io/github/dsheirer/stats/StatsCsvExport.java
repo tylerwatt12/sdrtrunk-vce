@@ -218,6 +218,87 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
                 text("last_peer_alias", "last_peer_alias_name"), time("first_seen_utc", "first_seen_ms"),
                 time("last_seen_utc", "last_seen_ms")
             );
+            case "signal-health" -> List.of(
+                text("protocol", "protocol"), text("system_name", row -> firstValue(row,
+                    "configured_system", "channel_name")), text("site_guid", "guid"),
+                text("site_name", "channel_name"), text("wacn_hex", row -> p25Hex(row, "wacn", 5)),
+                number("wacn", "wacn"), text("system_id_hex", row -> p25Hex(row, "system_id", 3)),
+                number("system_id", "system_id"), number("network_id", "network_id"),
+                text("rfss_hex", row -> p25Hex(row, "rfss", 2)), number("rfss", "rfss"),
+                text("site_id_hex", row -> p25Hex(row, "site", 2)),
+                number("site_id", row -> firstValue(row, "site", "site_id")),
+                text("nac_hex", row -> p25Hex(row, "nac", 3)), number("nac", "nac"),
+                number("ran", "ran"), number("frequency_hz", "quality_frequency_hz"),
+                text("frequency_mhz", row -> megahertz(row.get("quality_frequency_hz"))),
+                time("observed_utc", "last_observed_ms"), number("sample_age_seconds", "sample_age_seconds"),
+                number("signal_dbfs", "signal_dbfs"),
+                number("average_signal_dbfs", "average_signal_dbfs"),
+                number("minimum_signal_dbfs", "minimum_signal_dbfs"),
+                number("maximum_signal_dbfs", "maximum_signal_dbfs"),
+                number("decode_health_pct", "decode_health_pct"),
+                number("valid_frames_rolling_30s", "valid_frames"),
+                number("invalid_frames_rolling_30s", "invalid_frames"),
+                number("corrected_bits_rolling_30s", "corrected_bits"),
+                number("sync_loss_bits_rolling_30s", "sync_loss_bits"),
+                number("dropped_bits_rolling_30s", "dropped_bits"),
+                time("last_valid_decode_utc", "last_valid_decode_ms")
+            );
+            case "site-quality" -> List.of(
+                text("protocol", "protocol"), text("system_name", row -> firstValue(row,
+                    "configured_system", "channel_name")), text("site_guid", "guid"),
+                text("site_name", "channel_name"), text("wacn_hex", row -> p25Hex(row, "wacn", 5)),
+                number("wacn", "wacn"), text("system_id_hex", row -> p25Hex(row, "system_id", 3)),
+                number("system_id", "system_id"), number("network_id", "network_id"),
+                text("rfss_hex", row -> p25Hex(row, "rfss", 2)), number("rfss", "rfss"),
+                text("site_id_hex", row -> p25Hex(row, "site", 2)),
+                number("site_id", row -> firstValue(row, "site", "site_id")),
+                text("nac_hex", row -> p25Hex(row, "nac", 3)), number("nac", "nac"),
+                number("ran", "ran"), text("range", "range"),
+                number("bucket_ms", "bucket_ms"), time("bucket_start_utc", "time_ms"),
+                time("bucket_end_utc", "bucket_end_ms"),
+                time("last_observed_utc", "last_observed_ms"),
+                number("frequency_hz", "frequency_hz"),
+                text("frequency_mhz", row -> megahertz(row.get("frequency_hz"))),
+                number("frequency_count", "frequency_count"), number("sample_count", "sample_count"),
+                number("average_signal_dbfs", "average_signal_dbfs"),
+                number("minimum_signal_dbfs", "minimum_signal_dbfs"),
+                number("maximum_signal_dbfs", "maximum_signal_dbfs"),
+                number("average_decode_health_pct", "decode_health_pct"),
+                number("minimum_decode_health_pct", "minimum_decode_health_pct"),
+                number("maximum_decode_health_pct", "maximum_decode_health_pct")
+            );
+            case "aliases" -> List.of(
+                number("alias_id", "alias_id"), number("alias_list_id", "alias_list_id"),
+                text("alias_list", "alias_list_name"), text("family", "family"), text("name", "name"),
+                text("description", "description"), text("group", "group"), number("color", "color"),
+                text("icon", "icon_name"), number("stream_as_talkgroup", "stream_as_talkgroup"),
+                number("record_enabled", "record_enabled"), number("priority", "priority"),
+                text("identity_type", "identity_type"), text("matcher_type", "matcher_type"),
+                text("matcher", "matcher_label"), text("protocol", "protocol"),
+                text("identifier", "identifier_display"), number("value", "value"),
+                number("min_value", "min_value"), number("max_value", "max_value"),
+                text("wacn_hex", row -> aliasP25Hex(row, "wacn", 5)), number("wacn", "wacn"),
+                text("p25_system_id_hex", row -> aliasP25Hex(row, "p25_system_id", 3)),
+                number("p25_system_id", "p25_system_id"), text("text_value", "text_value"),
+                number("numeric_value", "numeric_value"), text("tone_sequence", "tone_sequence"),
+                number("exact", "exact"), number("ranged", "ranged"),
+                number("fully_qualified", "fully_qualified"),
+                text("broadcast_channels", row -> row.get("broadcast_channels") instanceof List<?> values ?
+                    String.join("; ", values.stream().map(String::valueOf).toList()) : ""),
+                text("metrics_state", "metrics_state"), number("coverage_scopes", "coverage_scope_count"),
+                number("observed_scopes", "observed_scope_count"), number("calls", "call_count"),
+                number("recorded", "recorded_count"), number("streamed", "streamed_count"),
+                number("encrypted_evidence", "encrypted_evidence_count"),
+                number("grants", "grant_count"), number("joins", "join_count"),
+                number("emergencies", "emergency_count"), number("registrations", "register_count"),
+                number("logouts", "logout_count"), number("denials", "denial_count"),
+                number("data", "data_count"), number("other_signaling", "other_signaling_count"),
+                number("relationships", "relationship_count"),
+                number("join_relationships", "join_relationship_count"),
+                number("current_affiliations", "current_affiliation_count"),
+                time("first_evidence_utc", "first_evidence_ms"),
+                time("last_evidence_utc", "last_evidence_ms")
+            );
             default -> throw new StatsApiException(400, "Unsupported CSV dataset");
         };
     }
@@ -225,6 +306,13 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
     private static Column text(String header, String key)
     {
         return text(header, row -> row.get(key));
+    }
+
+    private static String aliasP25Hex(Map<String,Object> row, String key, int digits)
+    {
+        Object value = row.get(key);
+        return "P25".equals(row.get("family")) && value instanceof Number number ?
+            String.format(Locale.ROOT, "%0" + digits + "X", number.longValue()) : "";
     }
 
     private static Column text(String header, Function<Map<String,Object>,Object> value)

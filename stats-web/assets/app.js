@@ -2,6 +2,7 @@ let route = new URLSearchParams(window.location.search);
 const content = document.getElementById('content');
 const tableOnly = route.get('layout') === 'table';
 const TABLE_WIDTH_COOKIE = 'sdrtrunk_table_widths_v4';
+const ALIAS_CATALOG_COLUMNS_STORAGE_KEY = 'sdrtrunk_alias_catalog_enrichment_columns_v1';
 const TABLE_WIDTH_MINIMUM = 48;
 const TABLE_WIDTH_MAXIMUM = 1200;
 const SIGNAL_OFFLINE_MILLISECONDS = 45_000;
@@ -161,8 +162,13 @@ const SERVER_TABLE_DEFAULT_SORTS = {
   'conventional-radios': 'calls'
 };
 const CONVENTIONAL_IDENTITY_PAGE_LIMIT = 100;
+const ALIAS_CATALOG_DEFAULT_ENRICHMENT_COLUMNS = Object.freeze([
+  'calls', 'recorded', 'streamed', 'encrypted-evidence', 'grants', 'joins', 'emergency', 'logout',
+  'relationships', 'last-evidence'
+]);
 let serviceStatus = null;
 let tableWidthPreferences = readTableWidthPreferences();
+let activeReadOnlyModal = null;
 
 if (tableOnly) {
   document.body.classList.add('table-only');
@@ -650,6 +656,9 @@ function href(view, values = {}) {
 
 function currentHref(overrides = {}) {
   const parameters = new URLSearchParams(route);
+  if (route.get('view') === 'aliases' && !Object.prototype.hasOwnProperty.call(overrides, 'alias')) {
+    parameters.delete('alias');
+  }
   Object.entries(overrides).forEach(([key, value]) => {
     if (value === null || value === undefined || value === '') parameters.delete(key);
     else parameters.set(key, String(value));
@@ -664,7 +673,7 @@ function anchor(label, target, className) {
   return element;
 }
 
-function exportCsvLink(dataset, context = {}) {
+function exportCsvHref(dataset, context = {}) {
   const parameters = new URLSearchParams();
   parameters.set('dataset', dataset);
   Object.entries(context).forEach(([key, value]) => {
@@ -674,10 +683,21 @@ function exportCsvLink(dataset, context = {}) {
     const value = route.get(key);
     if (value) parameters.set(key, value);
   });
-  const link = anchor('Export CSV', `/api/export.csv?${parameters}`, 'button secondary export-csv-action');
+  return `/api/export.csv?${parameters}`;
+}
+
+function exportCsvLink(dataset, context = {}) {
+  const link = anchor('Export CSV', exportCsvHref(dataset, context), 'button secondary export-csv-action');
   link.setAttribute('download', '');
   link.setAttribute('aria-label', `Export ${dataset.replace(/-/g, ' ')} as CSV`);
   return link;
+}
+
+function aliasListLink(name, id) {
+  const label = String(name || '').trim();
+  const aliasListId = Number(id);
+  return label && Number.isInteger(aliasListId) && aliasListId > 0 ?
+    anchor(label, href('aliases', { list: aliasListId })) : label;
 }
 
 function externalAnchor(label, target) {
@@ -787,6 +807,82 @@ function pageHeader(title, subtitle) {
   }
   wrapper.append(labels);
   return wrapper;
+}
+
+function closeReadOnlyModal(updateRoute = false) {
+  const active = activeReadOnlyModal;
+  if (!active) return;
+  activeReadOnlyModal = null;
+  document.removeEventListener('keydown', active.keydown);
+  active.backdrop.remove();
+  document.body.classList.remove('modal-open');
+  if (updateRoute && route.has('alias')) {
+    route.delete('alias');
+    window.history.replaceState({}, '', currentHref());
+  }
+  const returnFocus = active.returnFocusSelector ? document.querySelector(active.returnFocusSelector) : null;
+  if (returnFocus instanceof HTMLElement) returnFocus.focus();
+}
+
+function openReadOnlyModal(title, body, options = {}) {
+  closeReadOnlyModal(false);
+  const backdrop = node('div', 'modal-backdrop');
+  const dialog = node('section', 'read-only-modal');
+  const titleId = `read-only-modal-title-${String(options.id || 'detail').replace(/[^a-z0-9-]/gi, '')}`;
+  dialog.setAttribute('role', 'dialog');
+  dialog.setAttribute('aria-modal', 'true');
+  dialog.setAttribute('aria-labelledby', titleId);
+  const header = node('header', 'modal-header');
+  const heading = node('h2', '', title);
+  heading.id = titleId;
+  const close = node('button', 'button secondary modal-close', 'Close');
+  close.type = 'button';
+  close.setAttribute('aria-label', `Close ${title}`);
+  header.append(heading, close);
+  const contentNode = node('div', 'modal-content');
+  contentNode.append(valueNode(body));
+  dialog.append(header, contentNode);
+  backdrop.append(dialog);
+
+  const dismiss = () => closeReadOnlyModal(true);
+  const focusable = () => [...dialog.querySelectorAll(
+    'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])')]
+    .filter((element) => !element.hidden);
+  const keydown = (event) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      dismiss();
+      return;
+    }
+    if (event.key !== 'Tab') return;
+    const values = focusable();
+    if (!values.length) {
+      event.preventDefault();
+      dialog.focus();
+      return;
+    }
+    const first = values[0];
+    const last = values[values.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
+  close.addEventListener('click', dismiss);
+  backdrop.addEventListener('click', (event) => {
+    if (event.target === backdrop) dismiss();
+  });
+  activeReadOnlyModal = {
+    backdrop, keydown, returnFocusSelector: options.returnFocusSelector || null
+  };
+  document.addEventListener('keydown', keydown);
+  document.body.classList.add('modal-open');
+  document.body.append(backdrop);
+  close.focus();
+  return { dialog, content: contentNode, close: dismiss, state: activeReadOnlyModal };
 }
 
 function statsLoggingState() {
@@ -965,7 +1061,8 @@ function applyPreferredTableWidths(element, columns, columnElements, tableType) 
 
 function addColumnResizers(element, columns, columnElements, headers, tableType) {
   const saveWidths = (widths) => {
-    const saved = {};
+    const current = tableWidthPreferences[tableType];
+    const saved = current && typeof current === 'object' ? { ...current } : {};
     columns.forEach((column, index) => {
       saved[tableColumnKey(column, index)] = Math.round(widths[index]);
     });
@@ -1114,6 +1211,22 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
     headRow.append(header);
   });
 
+  const grouped = columns.some((column) => column.group);
+  if (grouped) {
+    const groupRow = node('tr', 'table-group-row');
+    let index = 0;
+    while (index < columns.length) {
+      const label = columns[index].group || '';
+      let end = index + 1;
+      while (end < columns.length && (columns[end].group || '') === label) end += 1;
+      const groupHeader = node('th', 'table-group-header', label);
+      groupHeader.colSpan = end - index;
+      groupHeader.scope = 'colgroup';
+      groupRow.append(groupHeader);
+      index = end;
+    }
+    head.append(groupRow);
+  }
   head.append(headRow);
   element.append(columnGroup, head, body);
   wrapper.append(element);
@@ -1229,6 +1342,532 @@ function pagedSection(title, page, columns, searchPlaceholder, tableType, action
       block.append(pager(page));
       return block;
     })());
+}
+
+function availableValue(value) {
+  return value === null || value === undefined || value === '' ? '—' : String(value);
+}
+
+function aliasMetricValue(row, field) {
+  if (!Object.prototype.hasOwnProperty.call(row || {}, field) || row[field] === null || row[field] === undefined) {
+    return '—';
+  }
+  const value = Number(row[field]);
+  return Number.isFinite(value) ? number(value) : '—';
+}
+
+function aliasMetricTime(row, field) {
+  if (!Object.prototype.hasOwnProperty.call(row || {}, field) || row[field] === null || row[field] === undefined) {
+    return '—';
+  }
+  return Number(row[field]) > 0 ? dateTime(row[field]) : '—';
+}
+
+function aliasMetricsState(value) {
+  return ({
+    observed: 'Observed',
+    covered_no_evidence: 'Covered · no evidence',
+    not_collected: 'Not collected',
+    unsupported: 'Unsupported'
+  })[String(value || '').toLowerCase()] || '—';
+}
+
+function aliasBehavior(row) {
+  const values = [];
+  const priority = row.priority === null || row.priority === undefined ? Number.NaN : Number(row.priority);
+  if (priority === -1) values.push(badge('Muted', 'state-stale', 'This alias is not monitored for audio'));
+  else if (Number.isFinite(priority) && priority >= 0 && priority < 100) {
+    values.push(badge(`Priority ${identifierNumber(priority)}`, '', 'Audio monitoring priority'));
+  }
+  if (Number(row.record_enabled)) values.push(badge('Record', 'state-current'));
+  const destinations = Array.isArray(row.broadcast_channels) ? row.broadcast_channels.length : 0;
+  if (destinations) values.push(badge(`Stream ×${identifierNumber(destinations)}`, 'state-current'));
+  if (row.stream_as_talkgroup !== null && row.stream_as_talkgroup !== undefined) {
+    values.push(badge(`As TG ${identifierNumber(row.stream_as_talkgroup)}`));
+  }
+  return values.length ? badgeGroup(values) : badge('Default', 'state-historical');
+}
+
+function aliasDetailLink(row) {
+  const id = Number(row.alias_id);
+  const label = String(row.name || '').trim() || `Alias ${identifierNumber(id)}`;
+  if (!Number.isInteger(id) || id <= 0) return label;
+  const link = anchor(label, currentHref({ alias: id }), 'alias-detail-link');
+  link.dataset.aliasId = String(id);
+  return link;
+}
+
+function aliasListCatalogLink(row) {
+  return aliasListLink(row.alias_list_name, row.alias_list_id) || '—';
+}
+
+function aliasCatalogCoreColumns() {
+  return [
+    { id: 'alias-list', label: 'Alias List', group: 'Configuration', render: aliasListCatalogLink,
+      className: 'alias-cell', sort: 'list', sortValue: (row) => row.alias_list_name || '' },
+    { id: 'family', label: 'Family', group: 'Configuration', key: 'family', sort: 'family' },
+    { id: 'matcher', label: 'Matcher', group: 'Configuration', render: (row) =>
+      availableValue(row.matcher_label || row.matcher_type), sort: 'matcher',
+      sortValue: (row) => row.matcher_label || row.matcher_type || '' },
+    { id: 'identifier', label: 'Identifier', group: 'Configuration', render: (row) =>
+      availableValue(row.identifier_display), sort: 'value', className: 'numeric',
+      sortValue: (row) => row.identifier_display || '' },
+    { id: 'alias', label: 'Alias', group: 'Configuration', render: aliasDetailLink,
+      className: 'alias-cell', sort: 'name', sortValue: (row) => row.name || '' },
+    { id: 'description', label: 'Description', group: 'Configuration', render: (row) =>
+      availableValue(row.description), className: 'alias-cell' },
+    { id: 'group', label: 'Group', group: 'Configuration', render: (row) =>
+      availableValue(row.group), className: 'alias-cell', sort: 'group' },
+    { id: 'behavior', label: 'Behavior', group: 'Configuration', render: aliasBehavior }
+  ];
+}
+
+function aliasCatalogEnrichmentColumns() {
+  const count = (id, label, field, group, fullLabel, sort = field) => ({
+    id, label, field, group, fullLabel, sort,
+    render: (row) => aliasMetricValue(row, field), className: 'numeric',
+    sortValue: (row) => row[field] === null || row[field] === undefined ? -1 : Number(row[field])
+  });
+  const evidence = 'Signaling / Relationship Evidence';
+  return [
+    count('calls', 'Calls', 'call_count', 'Call Activity',
+      'Call observations associated with this alias. 0 means coverage was collected and no calls were observed.'),
+    count('recorded', 'Recorded', 'recorded_count', 'Call Activity',
+      'Recorded call observations associated with this alias.'),
+    count('streamed', 'Sent', 'streamed_count', 'Call Activity',
+      'Call observations sent to at least one configured streamer.'),
+    count('encrypted-evidence', 'Enc Obs.', 'encrypted_evidence_count', 'Call Activity',
+      'Encrypted observations. This is evidence of encryption, not necessarily a unique completed-call count.'),
+    count('grants', 'Grants', 'grant_count', evidence, 'Channel-grant observations.'),
+    count('joins', 'Join', 'join_count', evidence, 'Group affiliation or join observations.'),
+    count('emergency', 'Emergency', 'emergency_count', evidence, 'Emergency signaling observations.'),
+    count('register', 'Register', 'register_count', evidence, 'Unit registration observations.'),
+    count('logout', 'Logout', 'logout_count', evidence,
+      'Unit deregistration or logout observations. This does not mean a radio left a talkgroup.'),
+    count('denial', 'Denial', 'denial_count', evidence, 'Denied service observations.'),
+    count('data', 'Data', 'data_count', evidence, 'Data-service observations.'),
+    count('other-signaling', 'Other', 'other_signaling_count', evidence,
+      'Other signaling observations that do not fit the named categories.'),
+    count('relationships', 'Relationships', 'relationship_count', evidence,
+      'Distinct retained radio/talkgroup relationship evidence.'),
+    count('join-relationships', 'Join Rel.', 'join_relationship_count', evidence,
+      'Relationship evidence established by join or affiliation signaling.'),
+    count('current-affiliations', 'Current Affil.', 'current_affiliation_count', evidence,
+      'Current affiliations. Unsupported protocols show an em dash.'),
+    count('covered-scopes', 'Covered', 'coverage_scope_count', evidence,
+      'Compatible monitored scopes where this alias could be resolved.', null),
+    count('observed-scopes', 'Observed', 'observed_scope_count', evidence,
+      'Compatible scopes with retained activity or relationship evidence.', null),
+    { id: 'evidence-state', label: 'Evidence', field: 'metrics_state', group: evidence,
+      fullLabel: 'Collection coverage state', render: (row) => aliasMetricsState(row.metrics_state),
+      sortValue: (row) => row.metrics_state || '' },
+    { id: 'first-evidence', label: 'First Evidence', field: 'first_evidence_ms', group: evidence,
+      fullLabel: 'First retained activity or relationship evidence', render: (row) =>
+        aliasMetricTime(row, 'first_evidence_ms'), sort: 'first_evidence_ms',
+      sortValue: (row) => Number(row.first_evidence_ms || 0) },
+    { id: 'last-evidence', label: 'Last Evidence', field: 'last_evidence_ms', group: evidence,
+      fullLabel: 'Most recent retained activity or relationship evidence',
+      render: (row) => aliasMetricTime(row, 'last_evidence_ms'), sort: 'last_evidence_ms',
+      sortValue: (row) => Number(row.last_evidence_ms || 0) }
+  ];
+}
+
+function readAliasCatalogColumnSelection(definitions) {
+  const valid = new Set(definitions.map((column) => column.id));
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(ALIAS_CATALOG_COLUMNS_STORAGE_KEY));
+    if (!Array.isArray(parsed)) return new Set(ALIAS_CATALOG_DEFAULT_ENRICHMENT_COLUMNS);
+    const selected = parsed.filter((id) => valid.has(id));
+    if (parsed.length && !selected.length) return new Set(ALIAS_CATALOG_DEFAULT_ENRICHMENT_COLUMNS);
+    return new Set(selected);
+  } catch (error) {
+    return new Set(ALIAS_CATALOG_DEFAULT_ENRICHMENT_COLUMNS);
+  }
+}
+
+function writeAliasCatalogColumnSelection(selected, definitions) {
+  const ordered = definitions.map((column) => column.id).filter((id) => selected.has(id));
+  try {
+    window.localStorage.setItem(ALIAS_CATALOG_COLUMNS_STORAGE_KEY, JSON.stringify(ordered));
+  } catch (error) {
+    // Browser storage can be disabled; the current page selection still works.
+  }
+}
+
+function aliasColumnChooser(definitions, selected, onChange) {
+  const chooser = node('details', 'column-chooser');
+  const summary = node('summary', 'button secondary column-chooser-summary');
+  const updateSummary = () => {
+    summary.textContent = `Columns · ${number(selected.size)} optional`;
+    summary.setAttribute('aria-label', `Choose optional columns; ${selected.size} selected`);
+  };
+  updateSummary();
+  const panel = node('div', 'column-chooser-panel');
+  panel.setAttribute('role', 'group');
+  panel.setAttribute('aria-label', 'Optional Alias Catalog columns');
+  panel.append(node('p', 'column-chooser-help',
+    'Configuration columns remain visible. Choose any call, signaling, and relationship evidence columns.'));
+  const groups = node('div', 'column-chooser-groups');
+  const checkboxes = new Map();
+  const grouped = new Map();
+  definitions.forEach((definition) => {
+    if (!grouped.has(definition.group)) grouped.set(definition.group, []);
+    grouped.get(definition.group).push(definition);
+  });
+  grouped.forEach((columns, label) => {
+    const fieldset = node('fieldset', 'column-chooser-group');
+    fieldset.append(node('legend', '', label));
+    columns.forEach((definition) => {
+      const item = node('label', 'column-chooser-option');
+      const checkbox = node('input');
+      checkbox.type = 'checkbox';
+      checkbox.checked = selected.has(definition.id);
+      checkbox.addEventListener('change', () => {
+        if (checkbox.checked) selected.add(definition.id);
+        else selected.delete(definition.id);
+        writeAliasCatalogColumnSelection(selected, definitions);
+        updateSummary();
+        onChange(definition);
+      });
+      checkboxes.set(definition.id, checkbox);
+      const copy = node('span');
+      copy.append(node('strong', '', definition.label));
+      if (definition.fullLabel) copy.append(node('small', '', definition.fullLabel));
+      item.append(checkbox, copy);
+      fieldset.append(item);
+    });
+    groups.append(fieldset);
+  });
+  const controls = node('div', 'column-chooser-controls');
+  const applySelection = (ids) => {
+    selected.clear();
+    ids.forEach((id) => selected.add(id));
+    checkboxes.forEach((checkbox, id) => { checkbox.checked = selected.has(id); });
+    writeAliasCatalogColumnSelection(selected, definitions);
+    updateSummary();
+    onChange(null);
+  };
+  const selectAll = node('button', 'button secondary', 'Select all');
+  selectAll.type = 'button';
+  selectAll.addEventListener('click', () => applySelection(definitions.map((column) => column.id)));
+  const reset = node('button', 'button secondary', 'Reset');
+  reset.type = 'button';
+  reset.addEventListener('click', () => applySelection(ALIAS_CATALOG_DEFAULT_ENRICHMENT_COLUMNS));
+  const done = node('button', 'button secondary', 'Done');
+  done.type = 'button';
+  done.addEventListener('click', () => {
+    chooser.open = false;
+    summary.focus();
+  });
+  controls.append(selectAll, reset, done);
+  panel.append(groups, controls);
+  chooser.append(summary, panel);
+  return chooser;
+}
+
+function aliasMatcherOption(value) {
+  if (value && typeof value === 'object') {
+    const raw = value.value || value.matcher_type || value.id || '';
+    return { value: String(raw), label: String(value.label || value.matcher_label || raw) };
+  }
+  const raw = String(value || '');
+  return { value: raw, label: raw.toLowerCase().replace(/_/g, ' ').replace(/\b\w/g,
+    (character) => character.toUpperCase()) };
+}
+
+function aliasCatalogFilterToolbar(listResponse) {
+  const form = node('form', 'toolbar alias-catalog-toolbar');
+  form.method = 'get';
+  const view = node('input');
+  view.type = 'hidden';
+  view.name = 'view';
+  view.value = 'aliases';
+  form.append(view);
+  ['sort', 'direction'].forEach((key) => {
+    const value = route.get(key);
+    if (!value) return;
+    const hidden = node('input');
+    hidden.type = 'hidden';
+    hidden.name = key;
+    hidden.value = value;
+    form.append(hidden);
+  });
+
+  const selectFilter = (label, name, options) => {
+    const wrapper = node('label', 'alias-filter');
+    wrapper.append(node('span', '', label));
+    const select = node('select');
+    select.name = name;
+    options.forEach(([value, text]) => {
+      const option = node('option', '', text);
+      option.value = value;
+      option.selected = String(route.get(name) || '') === String(value);
+      select.append(option);
+    });
+    wrapper.append(select);
+    return wrapper;
+  };
+
+  const lists = (listResponse.rows || []).map((row) => [String(row.alias_list_id),
+    [row.name, row.family, `${number(row.alias_count)} aliases`].filter(Boolean).join(' · ')]);
+  const preferredFamilies = ['P25', 'DMR', 'NXDN', 'NBFM'];
+  const families = [...new Set((listResponse.rows || []).map((row) => String(row.family || '').trim())
+    .filter(Boolean))].sort((left, right) => {
+    const leftIndex = preferredFamilies.indexOf(left);
+    const rightIndex = preferredFamilies.indexOf(right);
+    if (leftIndex >= 0 || rightIndex >= 0) {
+      return (leftIndex < 0 ? preferredFamilies.length : leftIndex) -
+        (rightIndex < 0 ? preferredFamilies.length : rightIndex);
+    }
+    return left.localeCompare(right);
+  });
+  form.append(
+    selectFilter('Alias List', 'list', [['', 'All alias lists'], ...lists]),
+    selectFilter('Family', 'family', [['', 'All families'], ...families.map((family) => [family, family])]),
+    selectFilter('Identity', 'type', [['', 'All identities'], ['talkgroup', 'Talkgroups'],
+      ['radio', 'Radios'], ['other', 'Other']])
+  );
+  const matcherOptions = (listResponse.matcher_types || []).map(aliasMatcherOption)
+    .filter((option) => option.value).sort((left, right) => left.label.localeCompare(right.label))
+    .map((option) => [option.value, option.label]);
+  form.append(selectFilter('Matcher', 'matcher', [['', 'All matchers'], ...matcherOptions]));
+  const search = node('label', 'alias-filter alias-search-filter');
+  search.append(node('span', '', 'Search'));
+  const input = node('input');
+  input.type = 'search';
+  input.name = 'q';
+  input.value = route.get('q') || '';
+  input.placeholder = 'Alias, description, group, or identifier';
+  search.append(input);
+  form.append(search, node('button', '', 'Apply'));
+  if (['list', 'family', 'type', 'matcher', 'q'].some((key) => route.get(key))) {
+    form.append(anchor('Clear', href('aliases'), 'button secondary'));
+  }
+  form.addEventListener('submit', () => {
+    [...form.elements].forEach((control) => {
+      if (control.name && control.name !== 'view' && !String(control.value || '').trim()) control.disabled = true;
+    });
+  });
+  return form;
+}
+
+function aliasRawValue(value) {
+  return value === null || value === undefined || value === '' ? '—' : identifierNumber(value);
+}
+
+function aliasColorValue(row) {
+  if (row.color === null || row.color === undefined) return '—';
+  const value = Number(row.color) >>> 0;
+  const hexValue = value.toString(16).toUpperCase().padStart(8, '0');
+  const wrapper = node('span', 'alias-color-value');
+  const swatch = node('span', 'alias-color-swatch');
+  swatch.style.backgroundColor = `#${hexValue.slice(-6)}`;
+  wrapper.append(swatch, `#${hexValue}`);
+  return wrapper;
+}
+
+function aliasDetailMetricBand(row, definitions) {
+  return metrics(definitions.map(([label, field]) =>
+    [label, row[field] ?? 0, aliasMetricValue(row, field)]), true);
+}
+
+function aliasScopeBreakdownColumns() {
+  const count = (id, label, field, group, fullLabel = label) => ({
+    id, label, group, fullLabel, render: (row) => aliasMetricValue(row, field), className: 'numeric',
+    sortValue: (row) => row[field] === null || row[field] === undefined ? -1 : Number(row[field])
+  });
+  return [
+    { id: 'scope', label: 'Scope', group: 'Scope', render: (row) => availableValue(row.scope_label),
+      className: 'alias-cell' },
+    { id: 'topology', label: 'Topology', group: 'Scope', render: (row) => availableValue(row.topology) },
+    { id: 'protocol', label: 'Protocol', group: 'Scope', render: (row) => availableValue(row.protocol) },
+    { id: 'system', label: 'System', group: 'Scope', render: (row) => availableValue(row.system_name),
+      className: 'alias-cell' },
+    { id: 'site', label: 'Site / Channel', group: 'Scope', render: (row) =>
+      availableValue(row.site_name), className: 'alias-cell' },
+    { id: 'evidence-state', label: 'Evidence', group: 'Scope', render: (row) =>
+      aliasMetricsState(row.metrics_state) },
+    count('calls', 'Calls', 'call_count', 'Call Activity',
+      'Call observations associated with this alias in this scope.'),
+    count('recorded', 'Recorded', 'recorded_count', 'Call Activity'),
+    count('streamed', 'Sent', 'streamed_count', 'Call Activity'),
+    count('encrypted-evidence', 'Enc Obs.', 'encrypted_evidence_count', 'Call Activity',
+      'Encrypted observations, not necessarily unique completed calls.'),
+    count('grants', 'Grants', 'grant_count', 'Signaling / Relationships'),
+    count('joins', 'Join', 'join_count', 'Signaling / Relationships'),
+    count('emergency', 'Emergency', 'emergency_count', 'Signaling / Relationships'),
+    count('register', 'Register', 'register_count', 'Signaling / Relationships'),
+    count('logout', 'Logout', 'logout_count', 'Signaling / Relationships',
+      'Unit deregistration or logout observations, not talkgroup leaves.'),
+    count('denial', 'Denial', 'denial_count', 'Signaling / Relationships'),
+    count('data', 'Data', 'data_count', 'Signaling / Relationships'),
+    count('other-signaling', 'Other', 'other_signaling_count', 'Signaling / Relationships'),
+    count('relationships', 'Relationships', 'relationship_count', 'Signaling / Relationships'),
+    count('join-relationships', 'Join Rel.', 'join_relationship_count', 'Signaling / Relationships'),
+    count('current-affiliations', 'Current Affil.', 'current_affiliation_count',
+      'Signaling / Relationships'),
+    { id: 'first-evidence', label: 'First Evidence', group: 'Signaling / Relationships',
+      render: (row) => aliasMetricTime(row, 'first_evidence_ms'),
+      sortValue: (row) => Number(row.first_evidence_ms || 0) },
+    { id: 'last-evidence', label: 'Last Evidence', group: 'Signaling / Relationships',
+      render: (row) => aliasMetricTime(row, 'last_evidence_ms'),
+      sortValue: (row) => Number(row.last_evidence_ms || 0) }
+  ];
+}
+
+function aliasDetailContent(alias, breakdown) {
+  const wrapper = node('div', 'alias-detail');
+  wrapper.append(section('Configuration', keyValues([
+    ['Alias List', aliasListLink(alias.alias_list_name, alias.alias_list_id)],
+    ['Family', availableValue(alias.family)],
+    ['Alias', availableValue(alias.name)],
+    ['Description', availableValue(alias.description)],
+    ['Group', availableValue(alias.group)],
+    ['Matcher', availableValue(alias.matcher_label || alias.matcher_type)],
+    ['Identifier', availableValue(alias.identifier_display)],
+    ['Color', aliasColorValue(alias)],
+    ['Icon', availableValue(alias.icon_name)],
+    ['Behavior', aliasBehavior(alias)]
+  ])));
+
+  wrapper.append(section('Raw Matcher Values', keyValues([
+    ['Matcher Type', availableValue(alias.matcher_type)],
+    ['Identity Type', availableValue(alias.identity_type)],
+    ['Protocol', availableValue(alias.protocol)],
+    ['Exact', alias.exact === null || alias.exact === undefined ? '—' : yesNoKnown(alias.exact)],
+    ['Ranged', alias.ranged === null || alias.ranged === undefined ? '—' : yesNoKnown(alias.ranged)],
+    ['Fully Qualified', alias.fully_qualified === null || alias.fully_qualified === undefined ? '—' :
+      yesNoKnown(alias.fully_qualified)],
+    ['Value', aliasRawValue(alias.value)],
+    ['Minimum', aliasRawValue(alias.min_value)],
+    ['Maximum', aliasRawValue(alias.max_value)],
+    ['WACN', alias.wacn === null || alias.wacn === undefined ? '—' : hexDecimalPair(alias.wacn, 5)],
+    ['P25 System', alias.p25_system_id === null || alias.p25_system_id === undefined ? '—' :
+      hexDecimalPair(alias.p25_system_id, 3)],
+    ['Text Value', availableValue(alias.text_value)],
+    ['Numeric Value', aliasRawValue(alias.numeric_value)],
+    ['Tone Sequence', availableValue(alias.tone_sequence)],
+    ['Stream as Talkgroup', aliasRawValue(alias.stream_as_talkgroup)]
+  ])));
+
+  const destinations = node('ul', 'alias-destination-list');
+  const channels = Array.isArray(alias.broadcast_channels) ? alias.broadcast_channels : [];
+  channels.forEach((channel) => destinations.append(node('li', '', channel)));
+  wrapper.append(section('Broadcast Destinations', channels.length ? destinations :
+    node('div', 'empty', 'No broadcast destinations configured')));
+
+  wrapper.append(section('Call Activity', aliasDetailMetricBand(alias, [
+    ['Calls', 'call_count'], ['Recorded', 'recorded_count'], ['Sent', 'streamed_count'],
+    ['Enc Obs.', 'encrypted_evidence_count']
+  ])));
+  wrapper.append(section('Signaling / Relationship Evidence', fragment(
+    aliasDetailMetricBand(alias, [
+      ['Grants', 'grant_count'], ['Join', 'join_count'], ['Emergency', 'emergency_count'],
+      ['Register', 'register_count'], ['Logout', 'logout_count'], ['Denial', 'denial_count'],
+      ['Data', 'data_count'], ['Other', 'other_signaling_count'],
+      ['Relationships', 'relationship_count'], ['Join Relationships', 'join_relationship_count'],
+      ['Current Affiliations', 'current_affiliation_count'], ['Covered Scopes', 'coverage_scope_count'],
+      ['Observed Scopes', 'observed_scope_count']
+    ]),
+    keyValues([
+      ['Collection State', aliasMetricsState(alias.metrics_state)],
+      ['First Evidence', aliasMetricTime(alias, 'first_evidence_ms')],
+      ['Last Evidence', aliasMetricTime(alias, 'last_evidence_ms')]
+    ]),
+    node('p', 'metric-meaning-note',
+      'Calls are observations. Logout means unit deregistration, not leaving a talkgroup. ' +
+      'An em dash means unavailable or not collected; 0 means coverage was collected and the count was zero.')
+  )));
+
+  const scopeRows = Array.isArray(breakdown) ? breakdown : [];
+  wrapper.append(section('Scope Breakdown', table(scopeRows, aliasScopeBreakdownColumns(),
+    'No compatible monitored scopes', { type: 'alias-scope-breakdown' })));
+  return wrapper;
+}
+
+async function renderAliasDetailModal(id) {
+  const modal = openReadOnlyModal(`Alias ${identifierNumber(id)}`, node('div', 'loading', 'Loading alias details'), {
+    id: `alias-${id}`,
+    returnFocusSelector: `.alias-detail-link[data-alias-id="${id}"]`
+  });
+  try {
+    const response = await api('/api/alias', { id });
+    if (activeReadOnlyModal !== modal.state || Number(route.get('alias')) !== id) return;
+    const alias = response.alias || {};
+    modal.dialog.querySelector('.modal-header h2').textContent = String(alias.name || '').trim() ||
+      `Alias ${identifierNumber(id)}`;
+    modal.content.replaceChildren(aliasDetailContent(alias, response.breakdown || []));
+  } catch (error) {
+    if (activeReadOnlyModal === modal.state) modal.content.replaceChildren(node('div', 'error', error.message));
+  }
+}
+
+async function renderAliases() {
+  const filters = {
+    list: route.get('list'), family: route.get('family'), type: route.get('type'),
+    matcher: route.get('matcher')
+  };
+  const [listResponse, page] = await Promise.all([
+    api('/api/alias-lists'),
+    api('/api/aliases', pageParameters(filters))
+  ]);
+  const selectedList = (listResponse.rows || []).find((row) =>
+    String(row.alias_list_id) === String(route.get('list') || ''));
+  const subtitle = selectedList ?
+    `${selectedList.name} · ${selectedList.family} · ${number(selectedList.alias_count)} configured aliases · ` +
+      `${number(selectedList.assigned_channel_count)} assigned channels` :
+    `${number(listResponse.count ?? (listResponse.rows || []).length)} alias lists · read-only`;
+  content.append(pageHeader('Alias Catalog', subtitle));
+  content.append(aliasCatalogFilterToolbar(listResponse));
+
+  const definitions = aliasCatalogEnrichmentColumns();
+  const selected = readAliasCatalogColumnSelection(definitions);
+  const tableHost = node('div', 'alias-catalog-table-host');
+  const renderTable = () => {
+    const optional = definitions.filter((column) => selected.has(column.id));
+    tableHost.replaceChildren(table(page.rows || [], [...aliasCatalogCoreColumns(), ...optional],
+      'No configured aliases match these filters', {
+        type: 'alias-catalog', serverSort: true, sortable: false,
+        defaultSort: 'name', defaultDirection: 'asc'
+      }));
+  };
+  const sortIsVisible = () => {
+    const current = route.get('sort');
+    if (!current) return true;
+    return [...aliasCatalogCoreColumns(), ...definitions.filter((column) => selected.has(column.id))]
+      .some((column) => column.sort === current);
+  };
+  const onColumnChange = () => {
+    if (!sortIsVisible()) {
+      route.set('sort', 'name');
+      route.set('direction', 'asc');
+      route.delete('offset');
+      window.history.replaceState({}, '', currentHref());
+      render();
+      return;
+    }
+    renderTable();
+  };
+  const chooser = aliasColumnChooser(definitions, selected, onColumnChange);
+  const exportContext = {};
+  ['list', 'family', 'type', 'matcher'].forEach((key) => {
+    if (route.get(key)) exportContext[key] = route.get(key);
+  });
+  const actions = node('div', 'section-title-actions');
+  actions.append(chooser, exportCsvLink('aliases', exportContext));
+  const block = section('Configured Aliases', tableHost, actions);
+  block.classList.add('alias-catalog-section');
+  renderTable();
+  block.append(node('p', 'metric-meaning-note alias-catalog-guide',
+    'Every configured alias is shown, including aliases never observed on the air. Calls are observations. ' +
+    'Logout means deregistration, not leaving a talkgroup. An em dash means unavailable or not collected; ' +
+    '0 means coverage was collected and the count was zero.'), pager(page));
+  content.append(block);
+
+  if (route.has('alias')) {
+    const aliasId = Number(route.get('alias'));
+    if (Number.isInteger(aliasId) && aliasId > 0) await renderAliasDetailModal(aliasId);
+  }
 }
 
 const SIGNALING_COUNT_LABELS = new Map(TALKGROUP_SIGNALING_SERIES.map((series) =>
@@ -1774,6 +2413,15 @@ function signalNumber(value) {
   return Number.isFinite(numeric) ? `${numeric.toFixed(1)} dBFS` : '—';
 }
 
+function signalBarLevel(value) {
+  const signal = optionalNumber(value);
+  if (!Number.isFinite(signal)) return 0;
+  if (signal >= -65) return 4;
+  if (signal >= -75) return 3;
+  if (signal >= -85) return 2;
+  return 1;
+}
+
 function percentNumber(value) {
   const numeric = optionalNumber(value);
   return Number.isFinite(numeric) ? `${numeric.toFixed(1)}%` : '—';
@@ -2073,7 +2721,7 @@ async function signalHealthSection() {
   const tiles = node('div', 'signal-current-grid');
   currentPanel.append(currentToolbar, tiles);
   host.append(currentPanel);
-  const block = section('Signal Health', host);
+  const block = section('Signal Health', host, exportCsvLink('signal-health'));
   let currentResponse = null;
   const tileNodes = new Map();
   let loading = false;
@@ -2148,9 +2796,13 @@ async function siteSignalHistorySection(site) {
   let loading = false;
   const rangeControl = signalRangeControls(selectedRange, async (value, buttons) => {
     selectedRange = value;
+    exportLink.href = exportCsvHref('site-quality', { guid: site.guid, range: selectedRange });
     await load(buttons, true);
   });
-  block.querySelector('.section-title').append(rangeControl.controls);
+  const exportLink = exportCsvLink('site-quality', { guid: site.guid, range: selectedRange });
+  const titleActions = node('div', 'section-title-actions');
+  titleActions.append(rangeControl.controls, exportLink);
+  block.querySelector('.section-title').append(titleActions);
   const load = async (buttons = rangeControl.buttons, interactive = false) => {
     if (loading && !interactive) return;
     const sequence = ++loadingSequence;
@@ -3167,27 +3819,35 @@ function liveSystemsSection() {
     tab.querySelector('.systems-tab-label').textContent = label;
     const quality = tab.querySelector('.systems-tab-quality');
     const currentControl = (value.rows || []).find((row) =>
-      channelTagSet(row.tags).has('CURRENT_CONTROL') && Number.isFinite(optionalNumber(row.decode_health_pct)));
+      channelTagSet(row.tags).has('CURRENT_CONTROL'));
     const qualityObservedAt = Number(currentControl?.quality_observed_at_ms || 0);
-    const decodeQuality = currentControl && value.control_active && qualityObservedAt > 0 &&
-      Date.now() - qualityObservedAt <= SIGNAL_OFFLINE_MILLISECONDS ?
-      Math.max(0, Math.min(100, Number(currentControl.decode_health_pct))) : null;
+    const qualityFresh = currentControl && value.control_active && qualityObservedAt > 0 &&
+      Date.now() - qualityObservedAt <= SIGNAL_OFFLINE_MILLISECONDS;
+    const signalValue = optionalNumber(currentControl?.signal_dbfs);
+    const decodeValue = optionalNumber(currentControl?.decode_health_pct);
+    const signalStrength = qualityFresh && Number.isFinite(signalValue) ? signalValue : null;
+    const decodeQuality = qualityFresh && Number.isFinite(decodeValue) ?
+      Math.max(0, Math.min(100, decodeValue)) : null;
     if (value.table_id === 'conventional') {
       quality.className = 'systems-tab-quality quality-neutral';
       tab.title = label;
       tab.setAttribute('aria-label', label);
-    } else if (decodeQuality === null) {
+    } else if (signalStrength === null && decodeQuality === null) {
       quality.className = 'systems-tab-quality quality-unavailable';
-      tab.title = `${label} · Decode quality unavailable`;
-      tab.setAttribute('aria-label', `${label}, decode quality unavailable`);
+      tab.title = `${label} · Signal strength and decode quality unavailable`;
+      tab.setAttribute('aria-label', `${label}, signal strength and decode quality unavailable`);
     } else {
-      const level = decodeQuality === 0 ? 0 : Math.min(4, Math.ceil(decodeQuality / 25));
-      const state = decodeQuality >= DECODE_HEALTHY_MINIMUM_PERCENT ? 'healthy' :
-        (decodeQuality >= DECODE_DEGRADED_MINIMUM_PERCENT ? 'degraded' : 'poor');
+      const level = signalBarLevel(signalStrength);
+      const state = decodeQuality === null ? 'unavailable' :
+        (decodeQuality >= DECODE_HEALTHY_MINIMUM_PERCENT ? 'healthy' :
+          (decodeQuality >= DECODE_DEGRADED_MINIMUM_PERCENT ? 'degraded' : 'poor'));
       quality.className = `systems-tab-quality quality-${state} quality-level-${level}`;
-      const qualityLabel = `${decodeQuality.toFixed(1)}% decode quality`;
-      tab.title = `${label} · ${qualityLabel}`;
-      tab.setAttribute('aria-label', `${label}, ${qualityLabel}`);
+      const signalLabel = signalStrength === null ? 'Signal strength unavailable' :
+        `${signalStrength.toFixed(1)} dBFS signal strength`;
+      const qualityLabel = decodeQuality === null ? 'Decode quality unavailable' :
+        `${decodeQuality.toFixed(1)}% decode quality`;
+      tab.title = `${label} · ${signalLabel} · ${qualityLabel}`;
+      tab.setAttribute('aria-label', `${label}, ${signalLabel}, ${qualityLabel}`);
     }
     if (!activeTableId) showTable(tables.has('conventional') ? 'conventional' : value.table_id);
     else updateVisibleRows(value);
@@ -3746,7 +4406,8 @@ async function renderSiteInfo(site) {
   const infoColumn = node('div', 'entity-info-column');
   infoColumn.append(section('Site Info', keyValues([
     ['System', systemLink(site, systemInfoValue(site))],
-    ['GUID', site.guid], ['Name', site.channel_name], ['Alias List', site.alias_list_name],
+    ['GUID', site.guid], ['Name', site.channel_name],
+    ['Alias List', aliasListLink(site.alias_list_name, site.alias_list_id)],
     ['Protocol', protocolFamily(site)], ['Decoder', decoderDisplay(site.decoder)],
     ['Configured Frequency', frequency(site.primary_frequency_hz)],
     ['Current Control Frequency', frequency(site.current_control_hz)],
@@ -4249,7 +4910,8 @@ async function renderConventionalDetail() {
     content.append(section('Channel Info', keyValues([
       ['Name', context.channel_name], ['Context', context.context_key], ['GUID', context.guid],
       ['Protocol', protocol(context.protocol_code)], ['Decoder', decoderDisplay(context.decoder)],
-      ['Alias List', context.alias_list_name], ['Frequency', frequency(context.primary_frequency_hz)],
+      ['Alias List', aliasListLink(context.alias_list_name, context.alias_list_id)],
+      ['Frequency', frequency(context.primary_frequency_hz)],
       ['NAC', hexDecimalPair(context.nac, 3)], ['First Seen', dateTime(context.first_seen_ms)],
       ['Last Seen', dateTime(context.last_seen_ms)]
     ])));
@@ -4368,6 +5030,7 @@ async function loadStatus(refreshCurrentView = false) {
 
 async function render() {
   const view = route.get('view') || 'dashboard';
+  closeReadOnlyModal(false);
   document.body.dataset.view = view;
   closePageConnections();
   activateNavigation(view);
@@ -4385,6 +5048,7 @@ async function render() {
       site: renderSite,
       conventional: renderConventional,
       'conventional-detail': renderConventionalDetail,
+      aliases: renderAliases,
       credits: renderCredits
     };
     await (handlers[view] || renderDashboard)();

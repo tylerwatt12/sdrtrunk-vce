@@ -446,6 +446,7 @@ class StatsWebDatabase
     private final UserPreferences mUserPreferences;
     private final Path mDatabasePath;
     private final StatsAliasResolver mAliasResolver = new StatsAliasResolver();
+    private final StatsAliasCatalog mAliasCatalog = new StatsAliasCatalog(mAliasResolver);
 
     StatsWebDatabase(UserPreferences userPreferences)
     {
@@ -524,7 +525,8 @@ class StatsWebDatabase
         String dataset = request.requiredText("dataset");
 
         if(!List.of("system-talkgroups", "system-radios", "site-channels", "site-neighbors",
-            "conventional-channels", "conventional-talkgroups", "conventional-radios").contains(dataset))
+            "conventional-channels", "conventional-talkgroups", "conventional-radios", "signal-health",
+            "site-quality", "aliases").contains(dataset))
         {
             throw new StatsApiException(400, "Unsupported CSV dataset");
         }
@@ -586,11 +588,156 @@ class StatsWebDatabase
                     rows = queryConventionalRadios(connection, request, queryLimit, 0);
                     fileScope = request.requiredText("context");
                 }
+                case "signal-health" ->
+                {
+                    rows = querySignalHealthExport(connection);
+                    fileScope = "all-sites";
+                }
+                case "site-quality" ->
+                {
+                    String guid = request.requiredText("guid");
+                    Map<String,Object> site = first(queryRows(connection, "SELECT * FROM (" +
+                        qualitySiteSelect() + ") WHERE guid = ?", guid), "Site not found");
+                    rows = querySiteQualityExport(connection, request, guid, site);
+                    fileScope = exportLabel(site, "channel_name", "guid");
+                }
+                case "aliases" ->
+                {
+                    rows = mAliasCatalog.exportRows(connection, request, StatsCsvExport.MAX_ROWS);
+                    fileScope = request.text("list") != null ? request.text("list") : "all-aliases";
+                }
                 default -> throw new StatsApiException(400, "Unsupported CSV dataset");
             }
 
             return StatsCsvExport.create(dataset, fileScope, rows);
         });
+    }
+
+    Map<String,Object> aliasLists()
+    {
+        return readSnapshot(mAliasCatalog::aliasLists);
+    }
+
+    Map<String,Object> aliases(StatsRequest request)
+    {
+        return readSnapshot(connection -> mAliasCatalog.aliases(connection, request));
+    }
+
+    Map<String,Object> alias(StatsRequest request)
+    {
+        return readSnapshot(connection -> mAliasCatalog.alias(connection, request.requiredIdentifier("id")));
+    }
+
+    /**
+     * Latest quality snapshot for every known monitored trunked site.  A left join deliberately retains sites that
+     * have not produced a quality sample yet; their measurement columns remain null in JSON/CSV.
+     */
+    private static List<Map<String,Object>> querySignalHealthExport(Connection connection) throws SQLException
+    {
+        List<Map<String,Object>> rows = queryRows(connection, """
+            SELECT site.*, quality.frequency_hz AS quality_frequency_hz,
+                quality.observed_at_ms AS last_observed_ms, quality.signal_dbfs,
+                quality.average_signal_dbfs, quality.minimum_signal_dbfs, quality.maximum_signal_dbfs,
+                quality.decode_health_pct, quality.valid_frames, quality.invalid_frames,
+                quality.corrected_bits, quality.sync_loss_bits, quality.dropped_bits,
+                quality.last_valid_decode_ms
+            FROM (
+                %s
+            ) site
+            LEFT JOIN p25_control_channel_quality quality ON quality.guid = site.guid AND
+                (quality.frequency_hz, quality.bucket_start_ms) = (
+                    SELECT candidate.frequency_hz, candidate.bucket_start_ms
+                    FROM p25_control_channel_quality candidate
+                    WHERE candidate.guid = site.guid
+                    ORDER BY candidate.observed_at_ms DESC, candidate.frequency_hz DESC
+                    LIMIT 1
+                )
+            ORDER BY lower(coalesce(site.channel_name, site.guid)), site.guid
+            """.formatted(qualitySiteSelect()));
+        long now = System.currentTimeMillis();
+
+        for(Map<String,Object> row: rows)
+        {
+            if(row.get("last_observed_ms") instanceof Number observed)
+            {
+                row.put("sample_age_seconds", Math.max(0, (now - observed.longValue()) / 1_000L));
+            }
+        }
+
+        return rows;
+    }
+
+    /**
+     * Chart-compatible bounded quality export.  Signal and health percentages are aggregated; rolling 30-second
+     * frame/bit counters are intentionally omitted because summing overlapping windows would produce false totals.
+     */
+    private List<Map<String,Object>> querySiteQualityExport(Connection connection, StatsRequest request, String guid,
+                                                             Map<String,Object> site) throws SQLException
+    {
+        String range = request.requiredText("range").toLowerCase();
+        long requestedMilliseconds = switch(range)
+        {
+            case "1h" -> HOUR_MILLISECONDS;
+            case "6h" -> 6L * HOUR_MILLISECONDS;
+            case "24h" -> DAY_MILLISECONDS;
+            case "7d" -> 7L * DAY_MILLISECONDS;
+            case "30d" -> 30L * DAY_MILLISECONDS;
+            default -> throw new StatsApiException(400, "range must be one of 1h, 6h, 24h, 7d, or 30d");
+        };
+        long retentionMilliseconds = Math.max(1,
+            mUserPreferences.getApplicationPreference().getStatsLoggingRetentionDays()) * DAY_MILLISECONDS;
+        long rangeMilliseconds = Math.min(requestedMilliseconds, retentionMilliseconds);
+        Integer requestedPoints = request.optionalInt("points");
+        int targetPoints = Math.max(QUALITY_MINIMUM_POINTS, Math.min(QUALITY_MAXIMUM_POINTS,
+            requestedPoints != null ? requestedPoints : QUALITY_DEFAULT_POINTS));
+        long rawBucketMilliseconds = Math.max(1,
+            (rangeMilliseconds + targetPoints - 1) / targetPoints);
+        long bucketMilliseconds = Math.max(QUALITY_BUCKET_MILLISECONDS,
+            ((rawBucketMilliseconds + QUALITY_BUCKET_MILLISECONDS - 1) / QUALITY_BUCKET_MILLISECONDS) *
+                QUALITY_BUCKET_MILLISECONDS);
+        long toMilliseconds = System.currentTimeMillis();
+        long fromMilliseconds = toMilliseconds - rangeMilliseconds;
+        List<Map<String,Object>> rows = queryRows(connection, """
+            SELECT (observed_at_ms / ?) * ? AS time_ms,
+                avg(average_signal_dbfs) AS average_signal_dbfs,
+                min(minimum_signal_dbfs) AS minimum_signal_dbfs,
+                max(maximum_signal_dbfs) AS maximum_signal_dbfs,
+                avg(decode_health_pct) AS decode_health_pct,
+                min(decode_health_pct) AS minimum_decode_health_pct,
+                max(decode_health_pct) AS maximum_decode_health_pct,
+                CASE WHEN min(frequency_hz) = max(frequency_hz) THEN min(frequency_hz) END AS frequency_hz,
+                count(DISTINCT frequency_hz) AS frequency_count, count(*) AS sample_count,
+                max(observed_at_ms) AS last_observed_ms
+            FROM p25_control_channel_quality INDEXED BY idx_p25_control_quality_guid_time
+            WHERE guid = ? AND observed_at_ms >= ? AND observed_at_ms <= ?
+            GROUP BY time_ms
+            ORDER BY time_ms
+            LIMIT ?
+            """, bucketMilliseconds, bucketMilliseconds, guid, fromMilliseconds, toMilliseconds,
+            targetPoints + 2);
+
+        if(rows.size() > targetPoints + 1)
+        {
+            throw new StatsApiException(413, "Site quality export exceeds the bounded point limit");
+        }
+
+        for(Map<String,Object> row: rows)
+        {
+            row.put("guid", guid);
+            row.put("range", range);
+            row.put("bucket_ms", bucketMilliseconds);
+            row.put("bucket_end_ms", number(row.get("time_ms")) + bucketMilliseconds);
+            row.put("protocol", site.get("protocol"));
+            row.put("configured_system", site.get("configured_system"));
+            row.put("channel_name", site.get("channel_name"));
+            for(String field: List.of("wacn", "system_id", "network_id", "rfss", "site", "site_id", "nac",
+                "ran"))
+            {
+                row.put(field, site.get(field));
+            }
+        }
+
+        return rows;
     }
 
     private static void addExportMetadata(List<Map<String,Object>> rows, Map<String,Object> metadata)
@@ -1523,7 +1670,10 @@ class StatsWebDatabase
             if(site == null && currentProtocol != 0)
             {
                 List<Map<String,Object>> fallback = queryRows(connection, """
-                    SELECT context.guid, context.channel_name, context.alias_list_name, context.decoder,
+                    SELECT context.guid, context.channel_name, context.alias_list_name,
+                        (SELECT list.id FROM alias_list list
+                         WHERE list.name = context.alias_list_name COLLATE NOCASE LIMIT 1) AS alias_list_id,
+                        context.decoder,
                         context.system_key, system.wacn, system.system_id, context.nac, context.rfss,
                         context.site, context.primary_frequency_hz, context.current_control_hz,
                         context.first_seen_ms, context.last_seen_ms, 0 AS observation_count,
@@ -2111,7 +2261,10 @@ class StatsWebDatabase
         StringBuilder sql = new StringBuilder("""
                 SELECT context.id AS context_id, context.context_key, context.guid, context.kind_code,
                     CASE WHEN context.kind_code = 10 THEN 10 ELSE context.protocol_code END AS protocol_code,
-                    context.channel_name, context.alias_list_name, context.decoder,
+                    context.channel_name, context.alias_list_name,
+                    (SELECT list.id FROM alias_list list
+                     WHERE list.name = context.alias_list_name COLLATE NOCASE LIMIT 1) AS alias_list_id,
+                    context.decoder,
                     context.nac, context.primary_frequency_hz, summary.frequency_hz, summary.timeslot,
                     summary.first_seen_ms, summary.last_seen_ms, summary.call_count, summary.last_event_type_code
                 FROM conventional_activity_summary summary
@@ -2142,7 +2295,10 @@ class StatsWebDatabase
             Map<String,Object> context = first(queryRows(connection, """
                 SELECT id AS context_id, context_key, guid, kind_code,
                     CASE WHEN kind_code = 10 THEN 10 ELSE protocol_code END AS protocol_code, channel_name,
-                    alias_list_name, decoder, nac, primary_frequency_hz, first_seen_ms, last_seen_ms
+                    alias_list_name,
+                    (SELECT list.id FROM alias_list list
+                     WHERE list.name = receiver_context.alias_list_name COLLATE NOCASE LIMIT 1) AS alias_list_id,
+                    decoder, nac, primary_frequency_hz, first_seen_ms, last_seen_ms
                 FROM receiver_context WHERE context_key = ? AND kind_code <> 1
                 """, contextKey), "Conventional context not found");
             boolean dmr = number(context.get("kind_code")) == 3 && number(context.get("protocol_code")) == 3;
@@ -2176,6 +2332,8 @@ class StatsWebDatabase
         requireDmrConventionalContext(connection, contextKey);
         StringBuilder sql = new StringBuilder("""
                 SELECT context.id AS context_id, context.context_key, context.alias_list_name,
+                    (SELECT list.id FROM alias_list list
+                     WHERE list.name = context.alias_list_name COLLATE NOCASE LIMIT 1) AS alias_list_id,
                     summary.frequency_hz, summary.timeslot, summary.talkgroup_id,
                     summary.first_seen_ms, summary.last_seen_ms, summary.call_count,
                     summary.encrypted_count, summary.last_source_radio_id
@@ -2215,6 +2373,8 @@ class StatsWebDatabase
         requireDmrConventionalContext(connection, contextKey);
         StringBuilder sql = new StringBuilder("""
                 SELECT context.id AS context_id, context.context_key, context.alias_list_name,
+                    (SELECT list.id FROM alias_list list
+                     WHERE list.name = context.alias_list_name COLLATE NOCASE LIMIT 1) AS alias_list_id,
                     summary.frequency_hz, summary.timeslot, summary.radio_id,
                     summary.first_seen_ms, summary.last_seen_ms, summary.call_count,
                     summary.source_call_count, summary.target_call_count, summary.group_call_count,
@@ -2338,6 +2498,9 @@ class StatsWebDatabase
                     system.wacn, system.system_id, NULL AS network_id, NULL AS configured_system,
                     coalesce(site.channel_name, context.channel_name) AS channel_name,
                     coalesce(context.alias_list_name, site.alias_list_name) AS alias_list_name,
+                    (SELECT list.id FROM alias_list list
+                     WHERE list.name = coalesce(context.alias_list_name, site.alias_list_name) COLLATE NOCASE
+                     LIMIT 1) AS alias_list_id,
                     coalesce(site.decoder, context.decoder) AS decoder,
                     site.nac, site.rfss, site.site, NULL AS site_id, NULL AS ran,
                     NULL AS variant_code, NULL AS identity_domain_code,
@@ -2371,6 +2534,9 @@ class StatsWebDatabase
                     site.system_id, site.network_id, site.configured_system,
                     coalesce(site.channel_name, context.channel_name) AS channel_name,
                     coalesce(context.alias_list_name, site.alias_list_name) AS alias_list_name,
+                    (SELECT list.id FROM alias_list list
+                     WHERE list.name = coalesce(context.alias_list_name, site.alias_list_name) COLLATE NOCASE
+                     LIMIT 1) AS alias_list_id,
                     coalesce(site.decoder, context.decoder) AS decoder,
                     NULL AS nac, NULL AS rfss, NULL AS site, site.site_id, site.ran,
                     site.variant_code, site.identity_domain_code,
@@ -2412,6 +2578,8 @@ class StatsWebDatabase
     {
         return """
             SELECT site.guid, site.system_key, site.protocol, site.channel_name, site.alias_list_name,
+                (SELECT list.id FROM alias_list list
+                 WHERE list.name = site.alias_list_name COLLATE NOCASE LIMIT 1) AS alias_list_id,
                 site.decoder, system.wacn, system.system_id, site.nac, site.rfss, site.site,
                 site.lra, site.mfid, site.broadcast_clock_ms, site.micro_slots, site.data_service,
                 site.data_access, site.wuid_lease_minutes, site.registration_service, site.tdma,
@@ -2448,7 +2616,9 @@ class StatsWebDatabase
             SELECT site.guid, site.channel_name, site.nac, site.rfss, site.site, site.current_control_hz,
                 site.last_seen_ms AS site_last_seen_ms, system.wacn, system.system_id,
                 1 AS protocol_code, 'P25' AS protocol, 'p25' AS site_kind,
-                NULL AS configured_system, NULL AS network_id, NULL AS site_id, NULL AS ran,
+                (SELECT config.system_name FROM configuration_channel config
+                 WHERE config.radres_guid = site.guid ORDER BY config.sort_order LIMIT 1) AS configured_system,
+                NULL AS network_id, NULL AS site_id, NULL AS ran,
                 NULL AS variant_code, NULL AS identity_domain_code
             FROM p25_site_snapshot site
             LEFT JOIN p25_system system ON system.system_key = site.system_key
@@ -2513,7 +2683,10 @@ class StatsWebDatabase
             SELECT site.guid, site.snapshot_hash, site.protocol_code,
                 CASE site.protocol_code WHEN 3 THEN 'DMR' WHEN 4 THEN 'NXDN' ELSE 'Unknown' END AS protocol,
                 'trunked' AS site_kind, site.variant_code, site.identity_domain_code, site.configured_system,
-                site.channel_name, site.alias_list_name, site.decoder, site.network_id, site.system_id, site.site_id,
+                site.channel_name, site.alias_list_name,
+                (SELECT list.id FROM alias_list list
+                 WHERE list.name = site.alias_list_name COLLATE NOCASE LIMIT 1) AS alias_list_id,
+                site.decoder, site.network_id, site.system_id, site.site_id,
                 site.ran,
                 site.model_code, site.brand_code, site.mode_code, site.channel_type_code,
                 site.color_code_ts1, site.color_code_ts2, site.current_repeater, site.service_flags,
@@ -3301,7 +3474,7 @@ class StatsWebDatabase
         }
         catch(IOException | SQLException e)
         {
-            mLog.warn("Stats Server CSV database query failed", e);
+            mLog.warn("Stats Server snapshot database query failed", e);
             throw new StatsApiException(503, "Stats database is unavailable");
         }
     }
