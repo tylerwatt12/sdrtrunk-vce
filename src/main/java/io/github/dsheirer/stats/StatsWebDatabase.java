@@ -1620,19 +1620,57 @@ class StatsWebDatabase
             if(isTrunkedSite(connection, guid))
             {
                 return page(queryRows(connection, """
-                    SELECT 'SITE' AS entry_type, variant_code, identity_domain_code,
-                        NULLIF(network_id, -1) AS network_id, NULLIF(system_id, -1) AS system_id,
-                        NULLIF(site_id, -1) AS site_id,
-                        NULLIF(site_id, -1) AS site, NULLIF(channel_number, -1) AS channel_number,
-                        NULLIF(frequency_hz, -1) AS frequency_hz,
-                        NULLIF(frequency_hz, -1) AS downlink_hz, status_flags,
-                        first_seen_ms, last_seen_ms, observation_count,
-                        CASE WHEN last_seen_ms >= ? THEN 'CURRENT' ELSE 'HISTORICAL' END AS state
-                    FROM trunked_site_neighbor_summary
-                    WHERE guid = ?
-                    ORDER BY identity_domain_code, network_id = -1, network_id, system_id = -1, system_id,
-                        site_id = -1, site_id, channel_number = -1, channel_number,
-                        variant_code, frequency_hz = -1, frequency_hz
+                    SELECT 'SITE' AS entry_type, neighbor.variant_code, neighbor.identity_domain_code,
+                        NULLIF(neighbor.network_id, -1) AS network_id,
+                        NULLIF(neighbor.system_id, -1) AS system_id,
+                        NULLIF(neighbor.site_id, -1) AS site_id,
+                        NULLIF(neighbor.site_id, -1) AS site,
+                        NULLIF(neighbor.channel_number, -1) AS channel_number,
+                        NULLIF(neighbor.frequency_hz, -1) AS frequency_hz,
+                        NULLIF(neighbor.frequency_hz, -1) AS downlink_hz, neighbor.status_flags,
+                        neighbor.first_seen_ms, neighbor.last_seen_ms, neighbor.observation_count,
+                        NULLIF(trim(resolved.channel_name), '') AS neighbor_name,
+                        resolved.guid AS neighbor_guid,
+                        CASE WHEN neighbor.last_seen_ms >= ? THEN 'CURRENT' ELSE 'HISTORICAL' END AS state
+                    FROM trunked_site_neighbor_summary neighbor
+                    JOIN trunked_site_snapshot source ON source.guid = neighbor.guid
+                    LEFT JOIN trunked_site_snapshot resolved ON resolved.guid = (
+                        SELECT min(candidate.guid)
+                        FROM trunked_site_snapshot candidate
+                        WHERE candidate.guid <> neighbor.guid
+                          AND candidate.protocol_code = source.protocol_code
+                          AND candidate.variant_code = neighbor.variant_code
+                          AND candidate.identity_domain_code = neighbor.identity_domain_code
+                          AND neighbor.variant_code <> 0
+                          AND neighbor.identity_domain_code <> 0
+                          AND neighbor.site_id <> -1
+                          AND (neighbor.network_id <> -1 OR neighbor.system_id <> -1)
+                          AND coalesce(candidate.network_id, -1) = neighbor.network_id
+                          AND coalesce(candidate.system_id, -1) = neighbor.system_id
+                          AND coalesce(candidate.site_id, -1) = neighbor.site_id
+                          AND NULLIF(trim(source.configured_system), '') IS NOT NULL
+                          AND lower(trim(candidate.configured_system)) = lower(trim(source.configured_system))
+                          AND EXISTS (
+                              SELECT 1
+                              FROM receiver_context candidate_context
+                              JOIN trunked_identity_scope_context candidate_ownership
+                                ON candidate_ownership.context_id = candidate_context.id
+                              JOIN trunked_identity_scope candidate_scope
+                                ON candidate_scope.scope_id = candidate_ownership.scope_id
+                              WHERE candidate_context.guid = candidate.guid
+                                AND candidate_context.kind_code = 1
+                                AND candidate_context.protocol_code = candidate.protocol_code
+                                AND candidate_scope.protocol_code = candidate.protocol_code
+                          )
+                        HAVING count(*) = 1
+                    )
+                    WHERE neighbor.guid = ?
+                    ORDER BY neighbor.identity_domain_code,
+                        neighbor.network_id = -1, neighbor.network_id,
+                        neighbor.system_id = -1, neighbor.system_id,
+                        neighbor.site_id = -1, neighbor.site_id,
+                        neighbor.channel_number = -1, neighbor.channel_number,
+                        neighbor.variant_code, neighbor.frequency_hz = -1, neighbor.frequency_hz
                     LIMIT ? OFFSET ?
                     """, currentSince, guid, request.limit() + 1, request.offset()), request);
             }

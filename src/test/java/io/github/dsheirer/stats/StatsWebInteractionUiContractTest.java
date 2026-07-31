@@ -218,6 +218,7 @@ class StatsWebInteractionUiContractTest
         String source = source();
         String callsign = function(source, "function callsignLink(value)");
         String neighbor = function(source, "function neighborSiteLink(row)");
+        String trunkedNeighbors = function(source, "function trunkedSiteNeighborColumns(site)");
         assertTrue(callsign.contains("externalAnchor(callsign"));
         assertTrue(callsign.contains("encodeURIComponent(callsign)"));
         assertTrue(source.contains("['Callsign', callsignLink(site.callsign)]"));
@@ -225,6 +226,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(neighbor.contains("row.neighbor_guid"));
         assertTrue(neighbor.contains("href('site', { guid: row.neighbor_guid"));
         assertTrue(source.contains("fullLabel: 'Monitored Site Name'"));
+        assertTrue(trunkedNeighbors.contains("render: neighborSiteLink"));
     }
 
     @Test

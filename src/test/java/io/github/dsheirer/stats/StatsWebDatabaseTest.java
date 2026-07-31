@@ -2272,6 +2272,8 @@ class StatsWebDatabaseTest
             "/api/site/neighbors?guid=dmr-a&limit=1")));
         assertEquals(1, dmrNeighbors.size());
         assertEquals(2, number(dmrNeighbors.getFirst().get("site_id")));
+        assertEquals("DMR Airport", dmrNeighbors.getFirst().get("neighbor_name"));
+        assertEquals("dmr-b", dmrNeighbors.getFirst().get("neighbor_guid"));
 
         List<Map<String,Object>> nxdnChannels = rows(mDatabase.siteChannels(request(
             "/api/site/channels?guid=nxdn-a&limit=1")));
@@ -2287,6 +2289,88 @@ class StatsWebDatabaseTest
         assertFalse(counts.containsKey("talkgroups"));
         assertFalse(counts.containsKey("radios"));
         assertFalse(counts.containsKey("frequencies"));
+    }
+
+    @Test
+    void linksOnlyUniquelyOwnedAndFullyQualifiedTrunkedNeighbors() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
+        {
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("dmr-link-source",
+                TrunkedSiteSchema.PROTOCOL_DMR, 1, 2, " Shared DMR ", "Site 3", 0, null, 3, null,
+                List.of(), List.of(new TrunkedSiteSchema.Neighbor(1, 2, 0, null, 5, 802, null, 1))));
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("dmr-link-target",
+                TrunkedSiteSchema.PROTOCOL_DMR, 1, 2, "shared dmr", "Site 5", 0, null, 5, null,
+                List.of(new TrunkedSiteSchema.Channel(802, null, 1, 139_518_750L, null, 1)), List.of()));
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("dmr-link-unowned",
+                TrunkedSiteSchema.PROTOCOL_DMR, 1, 2, "Shared DMR", "Unowned Site 5", 0, null, 5, null,
+                List.of(), List.of()));
+            seedContextScope(connection, 170, 170, "dmr-link-source", TrunkedSiteSchema.PROTOCOL_DMR, 0);
+            seedContextScope(connection, 171, 171, "dmr-link-target", TrunkedSiteSchema.PROTOCOL_DMR, 0);
+        }
+
+        Map<String,Object> neighbor = rows(mDatabase.siteNeighbors(request(
+            "/api/site/neighbors?guid=dmr-link-source"))).getFirst();
+        assertEquals(5, number(neighbor.get("site_id")));
+        assertEquals(802, number(neighbor.get("channel_number")));
+        assertEquals("Site 5", neighbor.get("neighbor_name"));
+        assertEquals("dmr-link-target", neighbor.get("neighbor_guid"));
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
+        {
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("dmr-link-duplicate",
+                TrunkedSiteSchema.PROTOCOL_DMR, 1, 2, "SHARED DMR", "Duplicate Site 5", 0, null, 5, null,
+                List.of(), List.of()));
+            seedContextScope(connection, 172, 172, "dmr-link-duplicate", TrunkedSiteSchema.PROTOCOL_DMR, 0);
+
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("dmr-other-source",
+                TrunkedSiteSchema.PROTOCOL_DMR, 1, 2, "DMR Alpha", "Other Source", 1, null, 3, null,
+                List.of(), List.of(new TrunkedSiteSchema.Neighbor(1, 2, 1, null, 5, 803, null, 1))));
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("dmr-other-target",
+                TrunkedSiteSchema.PROTOCOL_DMR, 1, 2, "DMR Beta", "Other Target", 1, null, 5, null,
+                List.of(), List.of()));
+            seedContextScope(connection, 173, 173, "dmr-other-source", TrunkedSiteSchema.PROTOCOL_DMR, 0);
+            seedContextScope(connection, 174, 174, "dmr-other-target", TrunkedSiteSchema.PROTOCOL_DMR, 0);
+
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("dmr-sparse-source",
+                TrunkedSiteSchema.PROTOCOL_DMR, 2, 0, "Sparse DMR", "Sparse Source", null, null, 3, null,
+                List.of(), List.of(new TrunkedSiteSchema.Neighbor(2, 0, null, null, 5, null, null, 1))));
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("dmr-sparse-target",
+                TrunkedSiteSchema.PROTOCOL_DMR, 2, 0, "Sparse DMR", "Sparse Target", null, null, 5, null,
+                List.of(), List.of()));
+            seedContextScope(connection, 175, 175, "dmr-sparse-source", TrunkedSiteSchema.PROTOCOL_DMR, 0);
+            seedContextScope(connection, 176, 176, "dmr-sparse-target", TrunkedSiteSchema.PROTOCOL_DMR, 0);
+
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("dmr-unclassified-source",
+                TrunkedSiteSchema.PROTOCOL_DMR, 0, 0, "Unclassified DMR", "Unclassified Source", 2, null,
+                3, null, List.of(),
+                List.of(new TrunkedSiteSchema.Neighbor(0, 0, 2, null, 5, 804, null, 1))));
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("dmr-unclassified-target",
+                TrunkedSiteSchema.PROTOCOL_DMR, 0, 0, "Unclassified DMR", "Unclassified Target", 2, null,
+                5, null, List.of(), List.of()));
+            seedContextScope(connection, 177, 177, "dmr-unclassified-source", TrunkedSiteSchema.PROTOCOL_DMR, 0);
+            seedContextScope(connection, 178, 178, "dmr-unclassified-target", TrunkedSiteSchema.PROTOCOL_DMR, 0);
+        }
+
+        neighbor = rows(mDatabase.siteNeighbors(request(
+            "/api/site/neighbors?guid=dmr-link-source"))).getFirst();
+        assertNull(neighbor.get("neighbor_name"));
+        assertNull(neighbor.get("neighbor_guid"));
+
+        neighbor = rows(mDatabase.siteNeighbors(request(
+            "/api/site/neighbors?guid=dmr-other-source"))).getFirst();
+        assertNull(neighbor.get("neighbor_name"));
+        assertNull(neighbor.get("neighbor_guid"));
+
+        neighbor = rows(mDatabase.siteNeighbors(request(
+            "/api/site/neighbors?guid=dmr-sparse-source"))).getFirst();
+        assertNull(neighbor.get("neighbor_name"));
+        assertNull(neighbor.get("neighbor_guid"));
+
+        neighbor = rows(mDatabase.siteNeighbors(request(
+            "/api/site/neighbors?guid=dmr-unclassified-source"))).getFirst();
+        assertNull(neighbor.get("neighbor_name"));
+        assertNull(neighbor.get("neighbor_guid"));
     }
 
     @Test

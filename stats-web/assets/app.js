@@ -3683,6 +3683,9 @@ function trunkedSiteNeighborColumns(site) {
       protocol_code: site.protocol_code,
       identity_domain_code: row.identity_domain_code
     }) },
+    { id: 'neighbor-name', label: 'Name', fullLabel: 'Monitored Site Name',
+      render: neighborSiteLink,
+      sortValue: (row) => row.neighbor_name || row.neighbor_site_name || row.neighbor_channel_name || '' },
     { label: 'Network', key: 'network_id', className: 'numeric',
       render: (row) => identifierNumber(row.network_id) },
     { label: 'System', key: 'system_id', className: 'numeric',
