@@ -48,6 +48,7 @@ import io.github.dsheirer.module.decode.p25.reference.SystemServiceClass;
 import io.github.dsheirer.module.decode.p25.reference.Vendor;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationStabilizer;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -137,12 +138,15 @@ public class P25P2NetworkConfigurationMonitor
                 }
                 break;
             case PHASE1_75_TIME_AND_DATE_ANNOUNCEMENT:
-                if(mac instanceof TimeAndDateAnnouncement timeAndDate && timeAndDate.hasValidDate() &&
-                    timeAndDate.hasValidTime())
+                if(mac instanceof TimeAndDateAnnouncement timeAndDate)
                 {
-                    return statusObservation(new P25NetworkConfigurationSnapshot.SiteStatus(
-                        timeAndDate.getDateAndTime().toInstant().toEpochMilli(), null, null, null, null, null, null,
-                        null));
+                    OffsetDateTime dateAndTime = timeAndDate.getDateAndTime();
+
+                    if(dateAndTime != null)
+                    {
+                        return statusObservation(new P25NetworkConfigurationSnapshot.SiteStatus(
+                            dateAndTime.toInstant().toEpochMilli(), null, null, null, null, null, null, null));
+                    }
                 }
                 break;
             case PHASE1_73_IDENTIFIER_UPDATE_TDMA_ABBREVIATED:

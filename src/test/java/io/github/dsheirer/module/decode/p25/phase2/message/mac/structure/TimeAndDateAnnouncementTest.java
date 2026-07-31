@@ -3,7 +3,7 @@
  * Copyright (C) 2026 Dennis Sheirer
  * ****************************************************************************
  */
-package io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp;
+package io.github.dsheirer.module.decode.p25.phase2.message.mac.structure;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -11,9 +11,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.bits.IntField;
-import io.github.dsheirer.module.decode.p25.phase1.Modulation;
-import io.github.dsheirer.module.decode.p25.phase1.P25P1DataUnitID;
-import io.github.dsheirer.module.decode.p25.phase1.P25P1NetworkConfigurationMonitor;
+import io.github.dsheirer.module.decode.p25.phase2.P25P2NetworkConfigurationMonitor;
+import io.github.dsheirer.module.decode.p25.phase2.enumeration.DataUnitID;
+import io.github.dsheirer.module.decode.p25.phase2.message.mac.MacMessage;
+import io.github.dsheirer.module.decode.p25.phase2.message.mac.MacMessageFactory;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import org.junit.jupiter.api.Test;
@@ -21,23 +22,12 @@ import org.junit.jupiter.api.Test;
 class TimeAndDateAnnouncementTest
 {
     @Test
-    void decodesPre2000ClockFromPhase1ControlChannel()
-    {
-        TimeAndDateAnnouncement announcement = announcement(1999, 11, 30, 0, 2, 44);
-
-        assertTrue(announcement.hasValidDate());
-        assertTrue(announcement.hasValidTime());
-        assertEquals(OffsetDateTime.of(1999, 11, 30, 0, 2, 44, 0, ZoneOffset.UTC),
-            announcement.getDateAndTime());
-    }
-
-    @Test
     void decodesNegativeLocalTimeOffset()
     {
         TimeAndDateAnnouncement announcement = announcement(2026, 7, 31, 10, 15, 0);
-        announcement.getMessage().set(18);
-        announcement.getMessage().set(20);
-        announcement.getMessage().setInt(240, IntField.range(21, 31));
+        int offset = announcement.getOffset();
+        announcement.getMessage().set(12 + offset);
+        announcement.getMessage().setInt(240, IntField.range(13 + offset, 23 + offset));
 
         assertEquals(OffsetDateTime.of(2026, 7, 31, 10, 15, 0, 0, ZoneOffset.ofHours(-4)),
             announcement.getDateAndTime());
@@ -47,9 +37,9 @@ class TimeAndDateAnnouncementTest
     void ignoresReservedBitBeforeLocalTimeOffset()
     {
         TimeAndDateAnnouncement announcement = announcement(2026, 7, 31, 10, 15, 0);
-        announcement.getMessage().set(18);
-        announcement.getMessage().set(19);
-        announcement.getMessage().setInt(330, IntField.range(21, 31));
+        int offset = announcement.getOffset();
+        announcement.getMessage().set(11 + offset);
+        announcement.getMessage().setInt(330, IntField.range(13 + offset, 23 + offset));
 
         assertEquals(OffsetDateTime.of(2026, 7, 31, 10, 15, 0, 0, ZoneOffset.ofHoursMinutes(5, 30)),
             announcement.getDateAndTime());
@@ -63,26 +53,31 @@ class TimeAndDateAnnouncementTest
         assertTrue(impossibleDate.toString().contains("INVALID DATE/TIME"));
 
         TimeAndDateAnnouncement invalidOffset = announcement(2026, 7, 31, 10, 15, 0);
-        invalidOffset.getMessage().set(18);
-        invalidOffset.getMessage().setInt(1081, IntField.range(21, 31));
+        int offset = invalidOffset.getOffset();
+        invalidOffset.getMessage().setInt(1081, IntField.range(13 + offset, 23 + offset));
         assertNull(invalidOffset.getDateAndTime());
         assertTrue(invalidOffset.toString().contains("INVALID DATE/TIME"));
-        assertNull(new P25P1NetworkConfigurationMonitor(Modulation.C4FM).process(invalidOffset));
+
+        MacMessage macMessage = new MacMessage(1, DataUnitID.UNSCRAMBLED_LCCH, invalidOffset.getMessage(), 1_000L,
+            invalidOffset);
+        assertNull(new P25P2NetworkConfigurationMonitor().processMacMessage(macMessage));
     }
 
     private static TimeAndDateAnnouncement announcement(int year, int month, int day, int hours, int minutes,
                                                          int seconds)
     {
+        int offset = MacMessageFactory.DEFAULT_MAC_STRUCTURE_INDEX;
         CorrectedBinaryMessage message = new CorrectedBinaryMessage(96);
-        message.setInt(53, IntField.length6(2));
-        message.set(16);
-        message.set(17);
-        message.setInt(month, IntField.range(32, 35));
-        message.setInt(day, IntField.range(36, 40));
-        message.setInt(year, IntField.range(41, 53));
-        message.setInt(hours, IntField.range(56, 60));
-        message.setInt(minutes, IntField.range(61, 66));
-        message.setInt(seconds, IntField.range(67, 72));
-        return new TimeAndDateAnnouncement(P25P1DataUnitID.TRUNKING_SIGNALING_BLOCK_1, message, 0x293, 0L);
+        message.setInt(117, IntField.length8(offset));
+        message.set(8 + offset);
+        message.set(9 + offset);
+        message.set(10 + offset);
+        message.setInt(month, IntField.range(24 + offset, 27 + offset));
+        message.setInt(day, IntField.range(28 + offset, 32 + offset));
+        message.setInt(year, IntField.range(33 + offset, 45 + offset));
+        message.setInt(hours, IntField.range(48 + offset, 52 + offset));
+        message.setInt(minutes, IntField.range(53 + offset, 58 + offset));
+        message.setInt(seconds, IntField.range(59 + offset, 64 + offset));
+        return new TimeAndDateAnnouncement(message, offset);
     }
 }

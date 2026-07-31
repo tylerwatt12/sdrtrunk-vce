@@ -16,6 +16,7 @@ import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.p25.phase1.P25P1DataUnitID;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.OSPMessage;
+import java.time.DateTimeException;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.Collections;
@@ -29,8 +30,8 @@ public class TimeAndDateAnnouncement extends OSPMessage
     private static final int VALID_DATE_FLAG = 16;
     private static final int VALID_TIME_FLAG = 17;
     private static final int VALID_LOCAL_TIME_OFFSET_FLAG = 18;
-    private static final int LOCAL_TIME_OFFSET_SIGN = 19;
-    private static final IntField LOCAL_TIME_OFFSET = IntField.range(20, 31);
+    private static final int LOCAL_TIME_OFFSET_SIGN = 20;
+    private static final IntField LOCAL_TIME_OFFSET = IntField.range(21, 31);
     private static final IntField MONTH = IntField.range(32, 35);
     private static final IntField DAY = IntField.range(36, 40);
     private static final IntField YEAR = IntField.range(41, 53);
@@ -58,13 +59,31 @@ public class TimeAndDateAnnouncement extends OSPMessage
         return getMessage().get(VALID_LOCAL_TIME_OFFSET_FLAG);
     }
 
+    /**
+     * Decoded date and time.
+     *
+     * @return date and time, or null when the validity flags or encoded fields are invalid
+     */
     public OffsetDateTime getDateAndTime()
     {
+        if(!hasValidDate() || !hasValidTime())
+        {
+            return null;
+        }
+
         int offsetMinutes = hasLocalTimeOffset() ? getMessage().getInt(LOCAL_TIME_OFFSET) : 0;
         offsetMinutes *= getMessage().get(LOCAL_TIME_OFFSET_SIGN) ? -1 : 1;
-        return OffsetDateTime.of(getMessage().getInt(YEAR), getMessage().getInt(MONTH),
-            getMessage().getInt(DAY), getMessage().getInt(HOURS), getMessage().getInt(MINUTES),
-            getMessage().getInt(SECONDS), 0, ZoneOffset.ofTotalSeconds(offsetMinutes * 60));
+
+        try
+        {
+            return OffsetDateTime.of(getMessage().getInt(YEAR), getMessage().getInt(MONTH),
+                getMessage().getInt(DAY), getMessage().getInt(HOURS), getMessage().getInt(MINUTES),
+                getMessage().getInt(SECONDS), 0, ZoneOffset.ofTotalSeconds(offsetMinutes * 60));
+        }
+        catch(DateTimeException e)
+        {
+            return null;
+        }
     }
 
     @Override
@@ -76,6 +95,7 @@ public class TimeAndDateAnnouncement extends OSPMessage
     @Override
     public String toString()
     {
-        return getMessageStub() + " " + (hasValidDate() && hasValidTime() ? getDateAndTime() : "INVALID DATE/TIME");
+        OffsetDateTime dateAndTime = getDateAndTime();
+        return getMessageStub() + " " + (dateAndTime != null ? dateAndTime : "INVALID DATE/TIME");
     }
 }

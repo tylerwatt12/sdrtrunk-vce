@@ -22,6 +22,7 @@ package io.github.dsheirer.module.decode.p25.phase2.message.mac.structure;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.identifier.Identifier;
+import java.time.DateTimeException;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.Collections;
@@ -35,8 +36,8 @@ public class TimeAndDateAnnouncement extends MacStructure
     private static final int VD_FLAG = 8;
     private static final int VT_FLAG = 9;
     private static final int VL_FLAG = 10;
-    private static final int LOCAL_TIME_OFFSET_SIGN = 11;
-    private static final IntField LOCAL_TIME_OFFSET = IntField.range(12, 23);
+    private static final int LOCAL_TIME_OFFSET_SIGN = 12;
+    private static final IntField LOCAL_TIME_OFFSET = IntField.range(13, 23);
     private static final IntField MONTH = IntField.range(24, 27);
     private static final IntField DAY = IntField.range(28, 32);
     private static final IntField YEAR = IntField.range(33, 45);
@@ -62,29 +63,36 @@ public class TimeAndDateAnnouncement extends MacStructure
     {
         StringBuilder sb = new StringBuilder();
         sb.append(getOpcode());
-        sb.append(" ").append(getDateAndTime());
+        OffsetDateTime dateAndTime = getDateAndTime();
+        sb.append(" ").append(dateAndTime != null ? dateAndTime : "INVALID DATE/TIME");
         return sb.toString();
     }
 
     /**
-     * Date and time value
-     * @return date in milliseconds since epoch (1970).
+     * Decoded date and time.
+     *
+     * @return date and time, or null when the validity flags or encoded fields are invalid
      */
     public OffsetDateTime getDateAndTime()
     {
-        boolean hasDate = hasValidDate();
-        boolean hasTime = hasValidTime();
-        boolean hasOffset = hasLocalTimeOffset();
-        int year = hasDate ? getInt(YEAR) : 0;
-        int month = hasDate ? getInt(MONTH) : 0;
-        int day = hasDate ? getInt(DAY) : 0;
-        int hours = hasTime ? getInt(HOURS) : 0;
-        int minutes = hasTime ? getInt(MINUTES) : 0;
-        int seconds = hasTime ? getInt(SECONDS) : 0;
-        int offsetMinutes = hasOffset ? getInt(LOCAL_TIME_OFFSET) : 0;
+        if(!hasValidDate() || !hasValidTime())
+        {
+            return null;
+        }
+
+        int offsetMinutes = hasLocalTimeOffset() ? getInt(LOCAL_TIME_OFFSET) : 0;
         offsetMinutes *= getMessage().get(LOCAL_TIME_OFFSET_SIGN + getOffset()) ? -1 : 1;
-        return OffsetDateTime.of(year, month, day, hours, minutes, seconds, 0,
+
+        try
+        {
+            return OffsetDateTime.of(getInt(YEAR), getInt(MONTH), getInt(DAY), getInt(HOURS), getInt(MINUTES),
+                getInt(SECONDS), 0,
                 ZoneOffset.ofTotalSeconds(offsetMinutes * 60));
+        }
+        catch(DateTimeException e)
+        {
+            return null;
+        }
     }
 
     public boolean hasValidDate()
