@@ -14,12 +14,15 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.dcs.Dcs;
 import io.github.dsheirer.alias.id.esn.Esn;
 import io.github.dsheirer.alias.id.radio.Radio;
+import io.github.dsheirer.alias.id.radio.RadioRange;
 import io.github.dsheirer.alias.id.status.UnitStatusID;
 import io.github.dsheirer.alias.id.status.UserStatusID;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
+import io.github.dsheirer.alias.id.talkgroup.TalkgroupRange;
 import io.github.dsheirer.alias.id.tone.TonesID;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.protocol.Protocol;
@@ -130,6 +133,27 @@ class AliasMatchRegistryTest
         }
     }
 
+    @Test
+    void nxdnFactoriesStartAtTheFirstValidIdentifier()
+    {
+        AliasListDefinition definition = definition(AliasListFamily.NXDN);
+        Talkgroup talkgroup = (Talkgroup)create(definition, "NXDN Talkgroup");
+        TalkgroupRange talkgroupRange = (TalkgroupRange)create(definition, "NXDN Talkgroup Range");
+        Radio radio = (Radio)create(definition, "NXDN Radio ID");
+        RadioRange radioRange = (RadioRange)create(definition, "NXDN Radio ID Range");
+
+        assertEquals(1, talkgroup.getValue());
+        assertEquals(1, talkgroupRange.getMinTalkgroup());
+        assertEquals(2, talkgroupRange.getMaxTalkgroup());
+        assertEquals(1, radio.getValue());
+        assertEquals(1, radioRange.getMinRadio());
+        assertEquals(2, radioRange.getMaxRadio());
+        assertTrue(talkgroup.isValid());
+        assertTrue(talkgroupRange.isValid());
+        assertTrue(radio.isValid());
+        assertTrue(radioRange.isValid());
+    }
+
     private static AliasListDefinition definition(AliasListFamily family)
     {
         return new AliasListDefinition("Test", family);
@@ -140,5 +164,14 @@ class AliasMatchRegistryTest
         return AliasMatchRegistry.allowed(definition(family)).stream()
             .map(AliasMatchDescriptor::label)
             .collect(Collectors.toSet());
+    }
+
+    private static AliasID create(AliasListDefinition definition, String label)
+    {
+        return AliasMatchRegistry.allowed(definition).stream()
+            .filter(descriptor -> label.equals(descriptor.label()))
+            .findFirst()
+            .orElseThrow()
+            .create(definition);
     }
 }

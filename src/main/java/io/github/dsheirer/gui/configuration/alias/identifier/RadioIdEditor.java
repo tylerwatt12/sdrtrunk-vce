@@ -242,31 +242,34 @@ public class RadioIdEditor extends IdentifierEditor<Radio>
     private void loadRadioDetails()
     {
         mRadioDetails.clear();
-        addRadioDetails(Protocol.APCO25, 0xFFFFFF);
-        addRadioDetails(Protocol.DMR, 0xFFFFFF);
-        addRadioDetail(Protocol.UNKNOWN, IntegerFormat.DECIMAL, 0xFFFFFF);
-        addRadioDetail(Protocol.UNKNOWN, IntegerFormat.FORMATTED, 0xFFFFFF);
-        addRadioDetail(Protocol.UNKNOWN, IntegerFormat.HEXADECIMAL, 0xFFFFFF);
+        addRadioDetails(Protocol.APCO25, 0, 0xFFFFFF);
+        addRadioDetails(Protocol.DMR, 0, 0xFFFFFF);
+        addRadioDetails(Protocol.NXDN, 1, 0xFFFF);
+        addRadioDetail(Protocol.UNKNOWN, IntegerFormat.DECIMAL, 0, 0xFFFFFF);
+        addRadioDetail(Protocol.UNKNOWN, IntegerFormat.FORMATTED, 0, 0xFFFFFF);
+        addRadioDetail(Protocol.UNKNOWN, IntegerFormat.HEXADECIMAL, 0, 0xFFFFFF);
     }
 
-    private void addRadioDetails(Protocol protocol, int maximum)
+    private void addRadioDetails(Protocol protocol, int minimum, int maximum)
     {
-        addRadioDetail(protocol, IntegerFormat.DECIMAL, maximum);
-        addRadioDetail(protocol, IntegerFormat.HEXADECIMAL, maximum);
+        addRadioDetail(protocol, IntegerFormat.DECIMAL, minimum, maximum);
+        addRadioDetail(protocol, IntegerFormat.HEXADECIMAL, minimum, maximum);
     }
 
-    private void addRadioDetail(Protocol protocol, IntegerFormat integerFormat, int maximum)
+    private void addRadioDetail(Protocol protocol, IntegerFormat integerFormat, int minimum, int maximum)
     {
         TextFormatter<Integer> formatter = integerFormat == IntegerFormat.HEXADECIMAL ?
-            new HexFormatter(0, maximum) : new IntegerFormatter(0, maximum);
-        mRadioDetails.add(new RadioDetail(protocol, integerFormat, formatter, getTooltip(integerFormat, maximum)));
+            new HexFormatter(minimum, maximum) : new IntegerFormatter(minimum, maximum);
+        mRadioDetails.add(new RadioDetail(protocol, integerFormat, formatter,
+            getTooltip(integerFormat, minimum, maximum)));
     }
 
-    private String getTooltip(IntegerFormat integerFormat, int maximum)
+    private String getTooltip(IntegerFormat integerFormat, int minimum, int maximum)
     {
         return integerFormat == IntegerFormat.HEXADECIMAL ?
-            "Format: 0 - " + Integer.toHexString(maximum).toUpperCase() :
-            "Format: 0 - " + maximum;
+            "Format: " + Integer.toHexString(minimum).toUpperCase() + " - " +
+                Integer.toHexString(maximum).toUpperCase() :
+            "Format: " + minimum + " - " + maximum;
     }
 
     public class RadioDetail

@@ -26,6 +26,7 @@ import io.github.dsheirer.preference.identifier.IntegerFormat;
 import io.github.dsheirer.preference.identifier.talkgroup.APCO25TalkgroupFormatter;
 import io.github.dsheirer.preference.identifier.talkgroup.AbstractIntegerFormatter;
 import io.github.dsheirer.preference.identifier.talkgroup.DMRTalkgroupFormatter;
+import io.github.dsheirer.preference.identifier.talkgroup.NXDNTalkgroupFormatter;
 import io.github.dsheirer.preference.identifier.talkgroup.UnknownTalkgroupFormatter;
 import io.github.dsheirer.protocol.Protocol;
 import org.jspecify.annotations.NonNull;
@@ -44,6 +45,7 @@ public class RadioFormatter
     {
         mFormatterMap.put(Protocol.APCO25, new APCO25TalkgroupFormatter());
         mFormatterMap.put(Protocol.DMR, new DMRTalkgroupFormatter());
+        mFormatterMap.put(Protocol.NXDN, new NXDNTalkgroupFormatter());
         mFormatterMap.put(Protocol.UNKNOWN, new UnknownTalkgroupFormatter());
     }
 

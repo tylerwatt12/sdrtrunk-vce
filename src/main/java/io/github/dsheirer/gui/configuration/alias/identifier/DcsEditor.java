@@ -23,6 +23,7 @@ import io.github.dsheirer.alias.id.dcs.Dcs;
 import io.github.dsheirer.module.decode.dcs.DCSCode;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
+import javafx.scene.control.ListCell;
 import javafx.scene.layout.GridPane;
 
 /**
@@ -56,10 +57,16 @@ public class DcsEditor extends IdentifierEditor<Dcs>
     public void setItem(Dcs item)
     {
         super.setItem(item);
-        if(item.isValid())
+
+        if(item != null && item.isValid())
         {
             getDCSCodeComboBox().getSelectionModel().select(item.getDCSCode());
         }
+        else
+        {
+            getDCSCodeComboBox().getSelectionModel().clearSelection();
+        }
+
         modifiedProperty().set(false);
     }
 
@@ -77,7 +84,7 @@ public class DcsEditor extends IdentifierEditor<Dcs>
 
     /**
      * Combo-box loaded with DCS codes
-     * @return
+     * @return combo box
      */
     private ComboBox<DCSCode> getDCSCodeComboBox()
     {
@@ -86,9 +93,32 @@ public class DcsEditor extends IdentifierEditor<Dcs>
             mDCSCodeComboBox = new ComboBox<>();
             mDCSCodeComboBox.getItems().addAll(DCSCode.STANDARD_CODES);
             mDCSCodeComboBox.getItems().addAll(DCSCode.INVERTED_CODES);
+
+            mDCSCodeComboBox.setPromptText("Select Code...");
+            mDCSCodeComboBox.setButtonCell(new ListCell<>()
+            {
+                @Override
+                protected void updateItem(DCSCode item, boolean empty)
+                {
+                    super.updateItem(item, empty);
+
+                    if(empty || item == null)
+                    {
+                        setText("Select Code...");
+                    }
+                    else
+                    {
+                        setText(item.toString());
+                    }
+                }
+            });
+
             mDCSCodeComboBox.valueProperty().addListener((observable, oldValue, newValue) -> {
-                getItem().setDCSCode(getDCSCodeComboBox().getSelectionModel().getSelectedItem());
-                modifiedProperty().set(true);
+                if(newValue != null && getItem() != null)
+                {
+                    getItem().setDCSCode(newValue);
+                    modifiedProperty().set(true);
+                }
             });
         }
 

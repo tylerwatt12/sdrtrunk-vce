@@ -38,8 +38,8 @@ public enum RadioFormat
         "<html>APCO25 valid range is 0 to 16,777,215"),
     DMR(0, 0xFFFFFF, "0 to 16,777,215",
         "<html>DMR unit id valid range is 0 to 16,777,215"),
-    NXDN(0, 0xFFFF, "0 to 65,535",
-        "<html>NXDN unit id valid range is 0 to 65,535"),
+    NXDN(1, 0xFFFF, "1 to 65,535",
+        "<html>NXDN unit id valid range is 1 to 65,535"),
     UNKNOWN(1, 0xFFFFFF, "1 to 16,777,215",
         "Unknown protocol valid value range is 1-16,777,215");
 

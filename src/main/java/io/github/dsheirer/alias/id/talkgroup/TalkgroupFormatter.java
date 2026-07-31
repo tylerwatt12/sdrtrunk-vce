@@ -26,6 +26,7 @@ import io.github.dsheirer.preference.identifier.talkgroup.AnalogTalkgroupFormatt
 import io.github.dsheirer.preference.identifier.talkgroup.DMRTalkgroupFormatter;
 import io.github.dsheirer.preference.identifier.talkgroup.FleetsyncTalkgroupFormatter;
 import io.github.dsheirer.preference.identifier.talkgroup.MDC1200TalkgroupFormatter;
+import io.github.dsheirer.preference.identifier.talkgroup.NXDNTalkgroupFormatter;
 import io.github.dsheirer.preference.identifier.talkgroup.UnknownTalkgroupFormatter;
 import io.github.dsheirer.protocol.Protocol;
 import java.text.ParseException;
@@ -48,6 +49,7 @@ public class TalkgroupFormatter
         mFormatterMap.put(Protocol.DMR, new DMRTalkgroupFormatter());
         mFormatterMap.put(Protocol.FLEETSYNC, new FleetsyncTalkgroupFormatter());
         mFormatterMap.put(Protocol.MDC1200, new MDC1200TalkgroupFormatter());
+        mFormatterMap.put(Protocol.NXDN, new NXDNTalkgroupFormatter());
         mFormatterMap.put(Protocol.UNKNOWN, new UnknownTalkgroupFormatter());
     }
 

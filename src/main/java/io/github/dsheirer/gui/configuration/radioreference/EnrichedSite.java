@@ -148,7 +148,12 @@ public class EnrichedSite implements Comparable<EnrichedSite>
     {
         if(mSite != null)
         {
-            return mSite.getDescription() + (mSite.getTdmaControlChannel() > 0 ? " (TDMA CC)" : "");
+            String description = mSite.getDescription();
+
+            if(description != null && !description.isBlank())
+            {
+                return description + (mSite.getTdmaControlChannel() > 0 ? " (TDMA CC)" : "");
+            }
         }
 
         return null;

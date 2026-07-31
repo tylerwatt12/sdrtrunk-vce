@@ -33,6 +33,7 @@ import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.Role;
+import io.github.dsheirer.identifier.alias.TalkerAliasIdentifier;
 import io.github.dsheirer.identifier.configuration.AliasListConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.ConfigurationLongIdentifier;
 import io.github.dsheirer.identifier.patch.PatchGroup;
@@ -230,6 +231,22 @@ public class BroadcastifyCallBroadcaster extends AbstractAudioBroadcaster<Broadc
     }
 
     /**
+     * Returns the over-the-air talker alias carried with this call, when one was decoded.
+     */
+    static String getFromAlias(AudioRecording audioRecording)
+    {
+        for(Identifier identifier: audioRecording.getIdentifierCollection().getIdentifiers(Role.FROM))
+        {
+            if(identifier instanceof TalkerAliasIdentifier talkerAliasIdentifier && talkerAliasIdentifier.isValid())
+            {
+                return talkerAliasIdentifier.getValue();
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * Formats a patch group
      */
     public static String format(PatchGroupIdentifier patchGroupIdentifier)
@@ -409,6 +426,7 @@ public class BroadcastifyCallBroadcaster extends AbstractAudioBroadcaster<Broadc
                     long timestampSeconds = (int)(audioRecording.getStartTime() / 1E3);
                     String talkgroup = getTo(audioRecording);
                     String radioId = getFrom(audioRecording);
+                    String radioIdAlias = getFromAlias(audioRecording);
                     float frequency = getFrequency(audioRecording);
 
                     BroadcastifyCallBuilder bodyBuilder = new BroadcastifyCallBuilder();
@@ -420,6 +438,11 @@ public class BroadcastifyCallBroadcaster extends AbstractAudioBroadcaster<Broadc
                         .addPart(FormField.RADIO_ID, radioId)
                         .addPart(FormField.FREQUENCY, frequency)
                         .addPart(FormField.ENCODING, ENCODING_TYPE_MP3);
+
+                    if(radioIdAlias != null && !radioIdAlias.isEmpty())
+                    {
+                        bodyBuilder.addPart(FormField.RADIO_ID_ALIAS, radioIdAlias);
+                    }
 
                     try
                     {

@@ -295,35 +295,38 @@ public class RadioIdRangeEditor extends IdentifierEditor<RadioRange>
     private List<RadioIdDetail> createRadioDetails()
     {
         List<RadioIdDetail> details = new ArrayList<>();
-        addRadioIdDetails(details, Protocol.APCO25, 0xFFFFFF);
-        addRadioIdDetail(details, Protocol.UNKNOWN, IntegerFormat.DECIMAL, 0xFFFFFF);
-        addRadioIdDetail(details, Protocol.UNKNOWN, IntegerFormat.FORMATTED, 0xFFFFFF);
-        addRadioIdDetail(details, Protocol.UNKNOWN, IntegerFormat.HEXADECIMAL, 0xFFFFFF);
-        addRadioIdDetails(details, Protocol.DMR, 0xFFFFFF);
+        addRadioIdDetails(details, Protocol.APCO25, 0, 0xFFFFFF);
+        addRadioIdDetail(details, Protocol.UNKNOWN, IntegerFormat.DECIMAL, 0, 0xFFFFFF);
+        addRadioIdDetail(details, Protocol.UNKNOWN, IntegerFormat.FORMATTED, 0, 0xFFFFFF);
+        addRadioIdDetail(details, Protocol.UNKNOWN, IntegerFormat.HEXADECIMAL, 0, 0xFFFFFF);
+        addRadioIdDetails(details, Protocol.DMR, 0, 0xFFFFFF);
+        addRadioIdDetails(details, Protocol.NXDN, 1, 0xFFFF);
         return details;
     }
 
-    private void addRadioIdDetails(List<RadioIdDetail> details, Protocol protocol, int maximum)
+    private void addRadioIdDetails(List<RadioIdDetail> details, Protocol protocol, int minimum, int maximum)
     {
-        addRadioIdDetail(details, protocol, IntegerFormat.DECIMAL, maximum);
-        addRadioIdDetail(details, protocol, IntegerFormat.HEXADECIMAL, maximum);
+        addRadioIdDetail(details, protocol, IntegerFormat.DECIMAL, minimum, maximum);
+        addRadioIdDetail(details, protocol, IntegerFormat.HEXADECIMAL, minimum, maximum);
     }
 
-    private void addRadioIdDetail(List<RadioIdDetail> details, Protocol protocol, IntegerFormat integerFormat, int maximum)
+    private void addRadioIdDetail(List<RadioIdDetail> details, Protocol protocol, IntegerFormat integerFormat,
+                                  int minimum, int maximum)
     {
         TextFormatter<Integer> minTextFormatter = integerFormat == IntegerFormat.HEXADECIMAL ?
-                new HexFormatter(0, maximum) : new IntegerFormatter(0, maximum);
+                new HexFormatter(minimum, maximum) : new IntegerFormatter(minimum, maximum);
         TextFormatter<Integer> maxTextFormatter = integerFormat == IntegerFormat.HEXADECIMAL ?
-                new HexFormatter(0, maximum) : new IntegerFormatter(0, maximum);
+                new HexFormatter(minimum, maximum) : new IntegerFormatter(minimum, maximum);
         details.add(new RadioIdDetail(protocol, integerFormat, minTextFormatter, maxTextFormatter,
-                getTooltip(integerFormat, maximum)));
+                getTooltip(integerFormat, minimum, maximum)));
     }
 
-    private String getTooltip(IntegerFormat integerFormat, int maximum)
+    private String getTooltip(IntegerFormat integerFormat, int minimum, int maximum)
     {
         return integerFormat == IntegerFormat.HEXADECIMAL ?
-                "Format: 0 - " + Integer.toHexString(maximum).toUpperCase() :
-                "Format: 0 - " + maximum;
+                "Format: " + Integer.toHexString(minimum).toUpperCase() + " - " +
+                    Integer.toHexString(maximum).toUpperCase() :
+                "Format: " + minimum + " - " + maximum;
     }
 
     public class RadioIdDetail

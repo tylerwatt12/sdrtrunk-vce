@@ -23,15 +23,21 @@ import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
 import io.github.dsheirer.module.decode.dmr.DMRChannelMode;
+import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
+import io.github.dsheirer.module.decode.nxdn.NXDNChannelMode;
+import io.github.dsheirer.module.decode.nxdn.layer3.type.TransmissionMode;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
 import io.github.dsheirer.protocol.Protocol;
+import io.github.dsheirer.rrapi.type.CountyInfo;
 import io.github.dsheirer.rrapi.type.Flavor;
 import io.github.dsheirer.rrapi.type.Mode;
+import io.github.dsheirer.rrapi.type.Site;
 import io.github.dsheirer.rrapi.type.System;
 import io.github.dsheirer.rrapi.type.Talkgroup;
 import io.github.dsheirer.rrapi.type.Type;
 import io.github.dsheirer.rrapi.type.Voice;
 import io.github.dsheirer.source.config.SourceConfigTuner;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 
@@ -88,6 +94,52 @@ class RadioReferenceDecoderSelectionTest
         DecodeConfigDMR configuration =
             assertInstanceOf(DecodeConfigDMR.class, channel.getDecodeConfiguration());
         assertEquals(DMRChannelMode.CONVENTIONAL, configuration.getChannelMode());
+    }
+
+    @Test
+    void createsConventionalNxdnAgencyFrequenciesWithTheRadioReferenceMode()
+    {
+        assertConventionalNxdn("nxdn", ModeDecoderType.NXDN, TransmissionMode.M4800);
+        assertConventionalNxdn("nxdn48", ModeDecoderType.NXDN48, TransmissionMode.M4800);
+        assertConventionalNxdn("nxdn96", ModeDecoderType.NXDN96, TransmissionMode.M9600);
+    }
+
+    @Test
+    void mapsTrunkedNxdnFlavorsAndKeepsTrunkedChannelMode()
+    {
+        assertTrunkedNxdn("NEXEDGE 9600", TransmissionMode.M9600);
+        assertTrunkedNxdn("Conventional Networked", TransmissionMode.M9600);
+        assertTrunkedNxdn("Icom IDAS Type D", TransmissionMode.TYPE_D);
+        assertTrunkedNxdn("Kenwood Type D", TransmissionMode.TYPE_D);
+        assertTrunkedNxdn("Narrowband Networked", TransmissionMode.M4800);
+        assertTrunkedNxdn("NEXEDGE 4800", TransmissionMode.M4800);
+        assertTrunkedNxdn("Icom IDAS Type C", TransmissionMode.M4800);
+        assertTrunkedNxdn(null, TransmissionMode.M4800);
+    }
+
+    @Test
+    void usesRadioReferenceSiteDescriptionInsteadOfCountyName()
+    {
+        Site site = new Site();
+        site.setDescription("Medina Simulcast");
+        CountyInfo countyInfo = new CountyInfo();
+        countyInfo.setName("Medina County");
+
+        EnrichedSite enrichedSite = new EnrichedSite(site, countyInfo);
+
+        assertEquals("Medina Simulcast", SiteEditor.getSiteLabel(enrichedSite));
+    }
+
+    @Test
+    void fallsBackToCountyWhenRadioReferenceSiteDescriptionIsMissing()
+    {
+        Site site = new Site();
+        CountyInfo countyInfo = new CountyInfo();
+        countyInfo.setName("Medina County");
+
+        EnrichedSite enrichedSite = new EnrichedSite(site, countyInfo);
+
+        assertEquals("Medina County", SiteEditor.getSiteLabel(enrichedSite));
     }
 
     @Test
@@ -201,5 +253,39 @@ class RadioReferenceDecoderSelectionTest
         RadioReferenceDecoder decoder = new RadioReferenceDecoder(null, Map.of(type.getTypeId(), type),
             Map.of(flavor.getFlavorId(), flavor), Map.of(voice.getVoiceId(), voice), Map.of());
         return decoder.getDecoderType(system);
+    }
+
+    private static void assertConventionalNxdn(String modeName, ModeDecoderType expectedDecoderType,
+                                                TransmissionMode expectedTransmissionMode)
+    {
+        Mode mode = new Mode();
+        mode.setName(modeName);
+        ModeDecoderType modeDecoderType = ModeDecoderType.get(mode);
+
+        Channel channel = FrequencyEditor.createChannel(modeDecoderType, 451_012_500L,
+            "Public Safety", "Public Works", "Repeater");
+
+        DecodeConfigNXDN configuration = assertInstanceOf(DecodeConfigNXDN.class,
+            channel.getDecodeConfiguration());
+        assertEquals(expectedDecoderType, modeDecoderType);
+        assertEquals(NXDNChannelMode.CONVENTIONAL, configuration.getChannelMode());
+        assertEquals(expectedTransmissionMode, configuration.getTransmissionMode());
+    }
+
+    private static void assertTrunkedNxdn(String flavorName, TransmissionMode expectedTransmissionMode)
+    {
+        Flavor flavor = null;
+
+        if(flavorName != null)
+        {
+            flavor = new Flavor();
+            flavor.setName(flavorName);
+        }
+
+        DecodeConfigNXDN configuration = SiteEditor.createNXDNDecodeConfiguration(flavor, List.of());
+
+        assertEquals(NXDNChannelMode.TRUNKED, configuration.getChannelMode());
+        assertEquals(expectedTransmissionMode, configuration.getTransmissionMode());
+        assertEquals(List.of(), configuration.getChannelMap());
     }
 }

@@ -20,15 +20,12 @@
 package io.github.dsheirer.module.decode.nxdn.layer3.proprietary;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Assembles a talker alias from four fragments.
  */
 public class TalkerAliasAssembler
 {
-    private static final Logger LOGGER = LoggerFactory.getLogger(TalkerAliasAssembler.class);
     private TalkerAlias mFragment1;
     private TalkerAlias mFragment2;
     private TalkerAlias mFragment3;
@@ -66,8 +63,6 @@ public class TalkerAliasAssembler
             case 4:
                 mFragment4 = fragment;
                 break;
-            default:
-                LOGGER.info("Unexpected NXDN Talker Alias Fragment sequence # - please notify developer: " + fragment);
         }
 
         if(mFragment1 != null && mFragment2 != null && mFragment3 != null && mFragment4 != null)

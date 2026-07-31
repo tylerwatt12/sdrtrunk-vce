@@ -304,6 +304,7 @@ public class TalkgroupRangeEditor extends IdentifierEditor<TalkgroupRange>
                 new IntegerFormatter(0,65535), "Format 0 - 65535"));
         details.add(new TalkgroupDetail(Protocol.NBFM, IntegerFormat.HEXADECIMAL, new IntegerFormatter(0,65535),
                 new IntegerFormatter(0,65535), "Format 0 - FFFF"));
+        addNumericTalkgroupDetails(details, Protocol.NXDN, 1, 0xFFFF);
         addNumericTalkgroupDetail(details, Protocol.UNKNOWN, IntegerFormat.DECIMAL, 0, 0xFFFFFF);
         addNumericTalkgroupDetail(details, Protocol.UNKNOWN, IntegerFormat.FORMATTED, 0, 0xFFFFFF);
         addNumericTalkgroupDetail(details, Protocol.UNKNOWN, IntegerFormat.HEXADECIMAL, 0, 0xFFFFFF);

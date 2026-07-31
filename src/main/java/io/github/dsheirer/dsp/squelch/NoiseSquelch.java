@@ -52,8 +52,8 @@ public class NoiseSquelch implements INoiseSquelchController
     private float mMeanAccumulator;
     private float mNoiseOpenThreshold = DEFAULT_NOISE_OPEN_THRESHOLD;
     private float mNoiseCloseThreshold = DEFAULT_NOISE_CLOSE_THRESHOLD;
-    private boolean mSquelch = true;
-    private boolean mSquelchOverride = false;
+    private volatile boolean mSquelch = true;
+    private volatile boolean mSquelchOverride = false;
     private int mMeanAccumulatorPointer;
     private int mVarianceWindowSize;
     private int mHysteresisOpenThreshold = DEFAULT_HYSTERESIS_OPEN_THRESHOLD;
@@ -86,6 +86,11 @@ public class NoiseSquelch implements INoiseSquelchController
      */
     public boolean isSquelched()
     {
+        if(mSquelchOverride)
+        {
+            return false;
+        }
+
         return mSquelch;
     }
 
@@ -96,11 +101,20 @@ public class NoiseSquelch implements INoiseSquelchController
     @Override
     public void setSquelchOverride(boolean override)
     {
+        if(mSquelchOverride == override)
+        {
+            return;
+        }
+
         mSquelchOverride = override;
 
-        if(mSquelchOverride)
+        if(override)
         {
             broadcast(SquelchState.UNSQUELCH);
+        }
+        else if(mSquelch)
+        {
+            broadcast(SquelchState.SQUELCH);
         }
     }
 

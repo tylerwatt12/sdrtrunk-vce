@@ -27,6 +27,9 @@ import io.github.dsheirer.module.decode.config.DecodeConfiguration;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
 import io.github.dsheirer.module.decode.dmr.DMRChannelMode;
 import io.github.dsheirer.module.decode.nbfm.DecodeConfigNBFM;
+import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
+import io.github.dsheirer.module.decode.nxdn.NXDNChannelMode;
+import io.github.dsheirer.module.decode.nxdn.layer3.type.TransmissionMode;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.rrapi.type.Category;
@@ -421,6 +424,12 @@ public class FrequencyEditor extends VBox
             else if(decodeConfiguration instanceof DecodeConfigDMR dmr)
             {
                 dmr.setChannelMode(DMRChannelMode.CONVENTIONAL);
+            }
+            else if(decodeConfiguration instanceof DecodeConfigNXDN nxdn)
+            {
+                nxdn.setChannelMode(NXDNChannelMode.CONVENTIONAL);
+                nxdn.setTransmissionMode(modeDecoderType == ModeDecoderType.NXDN96 ?
+                    TransmissionMode.M9600 : TransmissionMode.M4800);
             }
             channel.setDecodeConfiguration(decodeConfiguration);
             return channel;

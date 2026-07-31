@@ -32,6 +32,8 @@ import io.github.dsheirer.module.decode.dmr.DMRChannelMode;
 import io.github.dsheirer.module.decode.dmr.channel.TimeslotFrequency;
 import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
 import io.github.dsheirer.module.decode.nxdn.NXDNChannelMode;
+import io.github.dsheirer.module.decode.nxdn.channel.ChannelFrequency;
+import io.github.dsheirer.module.decode.nxdn.layer3.type.TransmissionMode;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.module.decode.p25.phase1.Modulation;
 import io.github.dsheirer.module.decode.p25.phase2.DecodeConfigP25Phase2;
@@ -242,10 +244,8 @@ public class SiteEditor extends GridPane
                 dmr.setTimeslotMap(timeslotFrequencies);
                 return dmr;
             case NXDN:
-                DecodeConfigNXDN nxdn = new DecodeConfigNXDN();
-                nxdn.setChannelMode(NXDNChannelMode.TRUNKED);
-                nxdn.setChannelMap(mRadioReferenceDecoder.getChannelMap(systemInformation, site));
-                return nxdn;
+                return createNXDNDecodeConfiguration(mRadioReferenceDecoder.getFlavor(systemInformation),
+                    mRadioReferenceDecoder.getChannelMap(systemInformation, site));
             case P25_PHASE1:
                 DecodeConfiguration p1config = DecoderFactory.getDecodeConfiguration(decoderType);
 
@@ -392,7 +392,7 @@ public class SiteEditor extends GridPane
                 getCreateChannelConfigurationButton().setVisible(true);
                 getGoToChannelEditorCheckBox().setVisible(true);
                 getSystemTextField().setText(system.getName());
-                getSiteTextField().setText(mCurrentSite.getCountyName());
+                getSiteTextField().setText(getSiteLabel(mCurrentSite));
                 getNameTextField().setText(TOGGLE_BUTTON_CONTROL);
 
                 if(!siteFrequencies.isEmpty())
@@ -463,6 +463,57 @@ public class SiteEditor extends GridPane
 
         refreshCompatibleAliasLists();
         updateAliasListControlAvailability();
+    }
+
+    /**
+     * Creates a trunked NXDN configuration using the RadioReference system flavor to select the transmission mode.
+     */
+    static DecodeConfigNXDN createNXDNDecodeConfiguration(Flavor flavor, List<ChannelFrequency> channelMap)
+    {
+        DecodeConfigNXDN configuration = new DecodeConfigNXDN(getNXDNTransmissionMode(flavor));
+        configuration.setChannelMode(NXDNChannelMode.TRUNKED);
+        configuration.setChannelMap(channelMap);
+        return configuration;
+    }
+
+    /**
+     * Maps RadioReference NXDN system flavors to decoder transmission modes.
+     */
+    static TransmissionMode getNXDNTransmissionMode(Flavor flavor)
+    {
+        String name = flavor != null ? flavor.getName() : null;
+
+        if("NEXEDGE 9600".equals(name) || "Conventional Networked".equals(name))
+        {
+            return TransmissionMode.M9600;
+        }
+        else if("Icom IDAS Type D".equals(name) || "Kenwood Type D".equals(name))
+        {
+            return TransmissionMode.TYPE_D;
+        }
+
+        return TransmissionMode.M4800;
+    }
+
+    /**
+     * Uses the RadioReference site description for the channel site label.
+     */
+    static String getSiteLabel(EnrichedSite site)
+    {
+        if(site == null)
+        {
+            return "";
+        }
+
+        String description = site.getDescription();
+
+        if(description != null && !description.isBlank())
+        {
+            return description;
+        }
+
+        String countyName = site.getCountyName();
+        return countyName != null ? countyName : "";
     }
 
     /**

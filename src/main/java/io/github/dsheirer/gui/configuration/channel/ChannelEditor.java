@@ -477,6 +477,10 @@ public class ChannelEditor extends SplitPane implements IFilterProcessor, IAlias
             protocolColumn.setCellValueFactory(new ProtocolCellValueFactory());
             protocolColumn.setPrefWidth(100);
 
+            TableColumn<Channel, String> aliasListColumn = new TableColumn<>("Alias List");
+            aliasListColumn.setCellValueFactory(cellData -> cellData.getValue().aliasListNameProperty());
+            aliasListColumn.setPrefWidth(150);
+
             mChannelTableView.getColumns().add(systemColumn);
             mChannelTableView.getColumns().add(siteColumn);
             mChannelTableView.getColumns().add(nameColumn);
@@ -484,6 +488,7 @@ public class ChannelEditor extends SplitPane implements IFilterProcessor, IAlias
             mChannelTableView.getColumns().add(protocolColumn);
             mChannelTableView.getColumns().add(playingColumn);
             mChannelTableView.getColumns().add(autoStartColumn);
+            mChannelTableView.getColumns().add(aliasListColumn);
             mChannelTableView.setPlaceholder(getPlaceholderLabel());
 
             //Sorting and filtering for the table

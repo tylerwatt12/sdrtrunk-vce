@@ -44,8 +44,8 @@ public enum TalkgroupFormat
         "MDC-1200 valid value range is 1-65,535"),
     NBFM(1, 0xFFFF,
             "NBFM valid value range is 1-65,535"),
-    NXDN(0, 0xFFFF,
-        "<html>NXDN talkgroup valid range is 0 to 65,535"),
+    NXDN(1, 0xFFFF,
+        "<html>NXDN talkgroup valid range is 1 to 65,535"),
     UNKNOWN(1, 0xFFFFFF,
         "Unknown protocol valid value range is 1-16,777,215", true);
 
