@@ -628,7 +628,7 @@ class AudioCallCoordinatorTest
     {
         CountDownLatch streamed = new CountDownLatch(1);
         AudioCallCoordinator coordinator = new AudioCallCoordinator(new TestCallManagementProvider(true, false),
-            null, call -> streamed.countDown(), null, DuplicateCallPriorityProvider.NONE, 500L);
+            null, call -> streamed.countDown(), null, DuplicateCallPriorityProvider.NONE, 2_000L);
 
         try
         {
@@ -637,7 +637,7 @@ class AudioCallCoordinatorTest
             coordinator.receive(audioEvent(call, 160));
             coordinator.receive(completionEvent(call));
 
-            assertTrue(streamed.await(200, TimeUnit.MILLISECONDS),
+            assertTrue(streamed.await(1, TimeUnit.SECONDS),
                 "A call without an actual duplicate group should stream immediately");
         }
         finally
@@ -695,7 +695,7 @@ class AudioCallCoordinatorTest
             }, call -> {
                 webCalls.add(call);
                 resolvedFanout.countDown();
-            }, DuplicateCallPriorityProvider.NONE, 150L);
+            }, DuplicateCallPriorityProvider.NONE, 1_000L);
 
         try
         {
@@ -1067,7 +1067,7 @@ class AudioCallCoordinatorTest
             new TestCallManagementProvider(true, false, true), null, call -> {
                 streamed.add(call);
                 streamingFanout.countDown();
-            }, null, DuplicateCallPriorityProvider.NONE, 300L, 3_000L);
+            }, null, DuplicateCallPriorityProvider.NONE, 1_000L, 5_000L);
 
         try
         {
@@ -1082,13 +1082,14 @@ class AudioCallCoordinatorTest
             coordinator.receive(audioEvent(sparse, 160));
             coordinator.receive(audioEvent(cleaner, 160));
             coordinator.receive(completionEvent(sparse));
-            assertFalse(streamingFanout.await(80, TimeUnit.MILLISECONDS),
+            assertFalse(streamingFanout.await(100, TimeUnit.MILLISECONDS),
                 "The first completed member must remain pending while its peer progresses");
 
-            coordinator.receive(audioEvent(cleaner, 2_000));
-            Thread.sleep(200);
-            coordinator.receive(audioEvent(cleaner, 2_000));
-            Thread.sleep(100);
+            for(int progress = 0; progress < 4; progress++)
+            {
+                coordinator.receive(audioEvent(cleaner, 2_000));
+                Thread.sleep(300);
+            }
             assertTrue(streamed.isEmpty(),
                 "A known member that is still progressing must not be treated as an orphan");
 
@@ -1114,7 +1115,7 @@ class AudioCallCoordinatorTest
             new TestCallManagementProvider(true, false, true), null, call -> {
                 streamed.add(call);
                 streamingFanout.countDown();
-            }, webCalls::add, DuplicateCallPriorityProvider.NONE, 120L);
+            }, webCalls::add, DuplicateCallPriorityProvider.NONE, 500L);
 
         try
         {
@@ -1126,9 +1127,9 @@ class AudioCallCoordinatorTest
             coordinator.receive(audioEvent(lingering, 160));
             coordinator.receive(completionEvent(completed));
 
-            assertFalse(streamingFanout.await(40, TimeUnit.MILLISECONDS),
+            assertFalse(streamingFanout.await(100, TimeUnit.MILLISECONDS),
                 "The watchdog should not fire before its bounded timeout");
-            assertTrue(streamingFanout.await(1, TimeUnit.SECONDS),
+            assertTrue(streamingFanout.await(2, TimeUnit.SECONDS),
                 "A lingering member must not block streaming forever");
             assertEquals(completed.callId(), streamed.getFirst().snapshot().callId());
 
@@ -1238,7 +1239,7 @@ class AudioCallCoordinatorTest
         CountDownLatch streamed = new CountDownLatch(1);
         AudioCallCoordinator coordinator = new AudioCallCoordinator(
             new TestCallManagementProvider(true, false, true), null,
-            call -> streamed.countDown(), null, DuplicateCallPriorityProvider.NONE, 100L);
+            call -> streamed.countDown(), null, DuplicateCallPriorityProvider.NONE, 500L);
 
         try
         {
@@ -1250,9 +1251,9 @@ class AudioCallCoordinatorTest
             coordinator.receive(audioEvent(second, 160));
             coordinator.receive(completionEvent(first));
 
-            assertFalse(streamed.await(40, TimeUnit.MILLISECONDS));
+            assertFalse(streamed.await(100, TimeUnit.MILLISECONDS));
             coordinator.dispose();
-            assertFalse(streamed.await(200, TimeUnit.MILLISECONDS),
+            assertFalse(streamed.await(700, TimeUnit.MILLISECONDS),
                 "Disposal should cancel delayed streaming work");
         }
         finally

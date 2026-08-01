@@ -7,7 +7,9 @@ package io.github.dsheirer.channel.metadata.activity;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
+import java.awt.GraphicsEnvironment;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseEvent;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -21,6 +23,7 @@ class ChannelActivityTableTest
     @Test
     void distinguishesUserInputFromProgrammaticSelection() throws Exception
     {
+        assumeFalse(GraphicsEnvironment.isHeadless(), "Requires a graphical AWT environment");
         AtomicBoolean mouseObservedAsUser = new AtomicBoolean();
         AtomicInteger userSelections = new AtomicInteger();
 

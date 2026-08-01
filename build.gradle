@@ -93,7 +93,10 @@ tasks.register('verifyReleaseNotesContent') {
     group = 'verification'
     description = 'Checks that the current numbered version has complete rich-text release notes.'
     inputs.property('releaseVersion', releaseVersion)
-    inputs.files(releaseNotesMetadataFile, releaseNotesHtmlFile)
+
+    if(isNumberedPublicRelease(releaseVersion)) {
+        inputs.files(releaseNotesMetadataFile, releaseNotesHtmlFile)
+    }
 
     doLast {
         if(!isNumberedPublicRelease(releaseVersion)) {
@@ -134,7 +137,10 @@ tasks.register('verifyApprovedReleaseNotes') {
     description = 'Stops public packaging until the versioned release notes have explicit human approval.'
     dependsOn('verifyReleaseNotesContent')
     inputs.property('releaseVersion', releaseVersion)
-    inputs.file(releaseNotesMetadataFile)
+
+    if(isNumberedPublicRelease(releaseVersion)) {
+        inputs.file(releaseNotesMetadataFile)
+    }
 
     doLast {
         if(!isNumberedPublicRelease(releaseVersion)) {
