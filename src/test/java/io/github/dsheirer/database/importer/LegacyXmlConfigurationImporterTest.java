@@ -13,34 +13,53 @@ package io.github.dsheirer.database.importer;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasListFamily;
+import io.github.dsheirer.alias.id.AliasID;
+import io.github.dsheirer.alias.id.dcs.Dcs;
+import io.github.dsheirer.alias.id.radio.Radio;
+import io.github.dsheirer.alias.id.radio.RadioRange;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.alias.id.talkgroup.TalkgroupRange;
+import io.github.dsheirer.alias.id.tone.TonesID;
+import io.github.dsheirer.audio.broadcast.BroadcastFormat;
+import io.github.dsheirer.audio.broadcast.icecast.IcecastHTTPConfiguration;
 import io.github.dsheirer.audio.broadcast.radioresolve.RadioResolveConfiguration;
+import io.github.dsheirer.audio.broadcast.shoutcast.v1.ShoutcastV1Configuration;
 import io.github.dsheirer.configuration.ConfigurationState;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.database.alias.AliasDatabaseStore;
 import io.github.dsheirer.database.configuration.ConfigurationDatabaseStore;
+import io.github.dsheirer.identifier.tone.AmbeTone;
 import io.github.dsheirer.module.decode.DecoderType;
+import io.github.dsheirer.module.decode.analog.DecodeConfigAnalog;
+import io.github.dsheirer.module.decode.dcs.DCSCode;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
 import io.github.dsheirer.module.decode.dmr.DMRChannelMode;
+import io.github.dsheirer.module.decode.nbfm.DecodeConfigNBFM;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.module.decode.p25.phase1.Modulation;
+import io.github.dsheirer.module.log.EventLogType;
 import io.github.dsheirer.protocol.Protocol;
+import io.github.dsheirer.record.RecorderType;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFileAttributeView;
+import java.nio.file.attribute.PosixFileAttributes;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.List;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -107,6 +126,395 @@ class LegacyXmlConfigurationImporterTest
     }
 
     @Test
+    void importPreservesExistingDataRootPosixAccess() throws Exception
+    {
+        Path xml = writePlaylistXml();
+        Path dataRoot = Files.createDirectory(mTemporaryFolder.resolve("xml-import-data"));
+        PosixFileAttributeView view = Files.getFileAttributeView(dataRoot, PosixFileAttributeView.class);
+        Assumptions.assumeTrue(view != null, "POSIX file attributes are unavailable");
+        view.setPermissions(PosixFilePermissions.fromString("rwx------"));
+        PosixFileAttributes before = view.readAttributes();
+        Path database = dataRoot.resolve("database/sdrtrunk.sqlite");
+
+        LegacyXmlConfigurationImporter.importPlaylist(xml, database);
+
+        PosixFileAttributes after = Files.readAttributes(dataRoot, PosixFileAttributes.class);
+        assertEquals(before.permissions(), after.permissions());
+        assertEquals(before.owner(), after.owner());
+        assertEquals(before.group(), after.group());
+    }
+
+    @Test
+    void upgradesStockVersionOneAndTwoP25AndNbfmMatchers() throws Exception
+    {
+        for(int version: List.of(1, 2))
+        {
+            Path xml = mTemporaryFolder.resolve("playlist-v" + version + ".xml");
+            Files.writeString(xml, legacyMatcherPlaylist(version));
+
+            ConfigurationState state = LegacyXmlConfigurationImporter.readConfigurationState(xml);
+            assertEquals(4, state.getAliases().size());
+
+            Talkgroup p25Talkgroup = assertInstanceOf(Talkgroup.class,
+                matcher(state, "P25 Talkgroup"));
+            assertEquals(Protocol.APCO25, p25Talkgroup.getProtocol());
+            assertEquals(0x1234, p25Talkgroup.getValue());
+
+            Radio p25Radio = assertInstanceOf(Radio.class, matcher(state, "P25 Radio"));
+            assertEquals(Protocol.APCO25, p25Radio.getProtocol());
+            assertEquals(0x123456, p25Radio.getValue());
+
+            Talkgroup fleetsync = assertInstanceOf(Talkgroup.class, matcher(state, "FleetSync"));
+            assertEquals(Protocol.FLEETSYNC, fleetsync.getProtocol());
+            assertEquals((1 << 12) + 1, fleetsync.getValue());
+
+            Talkgroup mdc1200 = assertInstanceOf(Talkgroup.class, matcher(state, "MDC-1200"));
+            assertEquals(Protocol.MDC1200, mdc1200.getProtocol());
+            assertEquals(0xABCD, mdc1200.getValue());
+        }
+    }
+
+    @Test
+    void treatsMissingVersionAsOneAndRemovesVersionOneOnlySettings() throws Exception
+    {
+        Path xml = mTemporaryFolder.resolve("playlist-without-version.xml");
+        Files.writeString(xml, """
+            <playlist>
+              <alias name="Dispatch" list="County">
+                <id type="talkgroupID" talkgroup="1234"/>
+                <id type="siteID" site="Old Site"/>
+                <id type="nonRecordable"/>
+              </alias>
+              <channel system="County" site="Site" name="Control">
+                <alias_list_name>County</alias_list_name>
+                <source_configuration type="sourceConfigTuner" source_type="TUNER" frequency="851000000"/>
+                <decode_configuration type="decodeConfigP25Phase1" modulation="CQPSK"
+                    ignore_data_calls="false"/>
+                <event_log_configuration>
+                  <logger>BINARY_MESSAGE</logger>
+                  <logger>DECODED_MESSAGE</logger>
+                </event_log_configuration>
+                <record_configuration>
+                  <recorder>AUDIO</recorder>
+                  <recorder>BASEBAND</recorder>
+                </record_configuration>
+              </channel>
+            </playlist>
+            """);
+
+        ConfigurationState state = LegacyXmlConfigurationImporter.readConfigurationState(xml);
+        assertEquals(1, state.getAliases().size());
+        Alias alias = state.getAliases().getFirst();
+        assertInstanceOf(Talkgroup.class, alias.getMatchIdentifier());
+        assertFalse(alias.isRecordable());
+
+        Channel channel = state.getChannels().getFirst();
+        assertEquals(List.of(RecorderType.BASEBAND), channel.getRecordConfiguration().getRecorders());
+        assertEquals(List.of(EventLogType.DECODED_MESSAGE), channel.getEventLogConfiguration().getLoggers());
+    }
+
+    @Test
+    void upgradesStockVersionThreeP25RadioIdsAndSplitsCrossingRanges() throws Exception
+    {
+        Path xml = mTemporaryFolder.resolve("playlist-v3.xml");
+        Files.writeString(xml, """
+            <playlist version="3">
+              <alias name="Large Single" list="County">
+                <id type="talkgroup" protocol="APCO25" value="70000"/>
+              </alias>
+              <alias name="Crossing Range" list="County">
+                <id type="talkgroupRange" protocol="APCO25" min="65000" max="66000"/>
+              </alias>
+              <alias name="Radio Range" list="County">
+                <id type="talkgroupRange" protocol="APCO25" min="70000" max="71000"/>
+              </alias>
+              <channel system="County" site="Site" name="Control">
+                <alias_list_name>County</alias_list_name>
+                <source_configuration type="sourceConfigTuner" source_type="TUNER" frequency="851000000"/>
+                <decode_configuration type="decodeConfigP25Phase1" modulation="CQPSK"
+                    ignore_data_calls="false"/>
+              </channel>
+            </playlist>
+            """);
+
+        ConfigurationState state = LegacyXmlConfigurationImporter.readConfigurationState(xml);
+        assertEquals(4, state.getAliases().size());
+
+        Radio single = assertInstanceOf(Radio.class, matcher(state, "Large Single"));
+        assertEquals(70000, single.getValue());
+
+        List<AliasID> crossing = state.getAliases().stream()
+            .filter(alias -> "Crossing Range".equals(alias.getName()))
+            .map(Alias::getMatchIdentifier)
+            .toList();
+        assertEquals(2, crossing.size());
+        TalkgroupRange talkgroups = assertInstanceOf(TalkgroupRange.class, crossing.get(0));
+        assertEquals(65000, talkgroups.getMinTalkgroup());
+        assertEquals(65535, talkgroups.getMaxTalkgroup());
+        RadioRange radios = assertInstanceOf(RadioRange.class, crossing.get(1));
+        assertEquals(65536, radios.getMinRadio());
+        assertEquals(66000, radios.getMaxRadio());
+
+        RadioRange radioRange = assertInstanceOf(RadioRange.class, matcher(state, "Radio Range"));
+        assertEquals(70000, radioRange.getMinRadio());
+        assertEquals(71000, radioRange.getMaxRadio());
+    }
+
+    @Test
+    void readsVersionFourWithoutApplyingOlderMatcherRules() throws Exception
+    {
+        Path xml = mTemporaryFolder.resolve("playlist-v4.xml");
+        Files.writeString(xml, """
+            <playlist version="4">
+              <alias name="Dispatch" list="County">
+                <id type="talkgroup" protocol="APCO25" value="1234"/>
+              </alias>
+            </playlist>
+            """);
+
+        ConfigurationState state = LegacyXmlConfigurationImporter.readConfigurationState(xml);
+        Talkgroup talkgroup = assertInstanceOf(Talkgroup.class, matcher(state, "Dispatch"));
+        assertEquals(1234, talkgroup.getValue());
+    }
+
+    @Test
+    void rejectsFuturePlaylistVersionsBeforeBindingTheirContent() throws Exception
+    {
+        Path xml = mTemporaryFolder.resolve("playlist-v5.xml");
+        Files.writeString(xml, """
+            <playlist version="5">
+              <stream type="futureBroadcastConfiguration"/>
+            </playlist>
+            """);
+
+        IOException exception = assertThrows(IOException.class,
+            () -> LegacyXmlConfigurationImporter.readConfigurationState(xml));
+        assertTrue(exception.getMessage().contains("version 5 is newer"));
+        assertTrue(exception.getMessage().contains("versions 1 through 4"));
+    }
+
+    @Test
+    void rejectsUnsupportedAndMalformedPlaylistVersions() throws Exception
+    {
+        for(String version: List.of("0", "-1"))
+        {
+            Path xml = mTemporaryFolder.resolve("unsupported-" + version.replace('-', 'n') + ".xml");
+            Files.writeString(xml, "<playlist version=\"" + version + "\"/>");
+            IOException exception = assertThrows(IOException.class,
+                () -> LegacyXmlConfigurationImporter.readConfigurationState(xml));
+            assertTrue(exception.getMessage().contains("Unsupported SDRTrunk playlist version"));
+        }
+
+        Path nonnumeric = mTemporaryFolder.resolve("nonnumeric-version.xml");
+        Files.writeString(nonnumeric, "<playlist version=\"old\"/>");
+        IOException nonnumericException = assertThrows(IOException.class,
+            () -> LegacyXmlConfigurationImporter.readConfigurationState(nonnumeric));
+        assertTrue(nonnumericException.getMessage().contains("version must be a whole number"));
+
+        Path blank = mTemporaryFolder.resolve("blank-version.xml");
+        Files.writeString(blank, "<playlist version=\"  \"/>");
+        IOException blankException = assertThrows(IOException.class,
+            () -> LegacyXmlConfigurationImporter.readConfigurationState(blank));
+        assertTrue(blankException.getMessage().contains("version must be a whole number"));
+
+        Path wrongRoot = mTemporaryFolder.resolve("wrong-root.xml");
+        Files.writeString(wrongRoot, "<configuration version=\"4\"/>");
+        IOException wrongRootException = assertThrows(IOException.class,
+            () -> LegacyXmlConfigurationImporter.readConfigurationState(wrongRoot));
+        assertTrue(wrongRootException.getMessage().contains("not an SDRTrunk playlist"));
+
+        Path malformed = mTemporaryFolder.resolve("malformed.xml");
+        Files.writeString(malformed, "<playlist version=\"4\"><alias>");
+        assertThrows(IOException.class, () -> LegacyXmlConfigurationImporter.readConfigurationState(malformed));
+
+        Path namespacedRoot = mTemporaryFolder.resolve("namespaced-root.xml");
+        Files.writeString(namespacedRoot,
+            "<foreign:playlist xmlns:foreign=\"https://example.invalid/not-sdrtrunk\" version=\"4\"/>");
+        assertThrows(IOException.class, () -> LegacyXmlConfigurationImporter.readConfigurationState(namespacedRoot));
+
+        Path secondRoot = mTemporaryFolder.resolve("second-root.xml");
+        Files.writeString(secondRoot, "<playlist version=\"4\"/><other/>");
+        assertThrows(IOException.class, () -> LegacyXmlConfigurationImporter.readConfigurationState(secondRoot));
+
+        Path trailingJunk = mTemporaryFolder.resolve("trailing-junk.xml");
+        Files.writeString(trailingJunk, "<playlist version=\"4\"/>not-xml");
+        assertThrows(IOException.class, () -> LegacyXmlConfigurationImporter.readConfigurationState(trailingJunk));
+    }
+
+    @Test
+    void rejectsDoctypeAndExternalEntitiesInTheBindingPass() throws Exception
+    {
+        Path external = mTemporaryFolder.resolve("external-entity.txt");
+        Files.writeString(external, "this content must not be read");
+        Path xml = mTemporaryFolder.resolve("external-entity.xml");
+        Files.writeString(xml, """
+            <!DOCTYPE playlist [
+              <!ENTITY external SYSTEM "%s">
+            ]>
+            <playlist version="4">
+              <ignored>&external;</ignored>
+            </playlist>
+            """.formatted(external.toUri()));
+
+        assertThrows(IOException.class, () -> LegacyXmlConfigurationImporter.readConfigurationState(xml));
+    }
+
+    @Test
+    void omitsRetiredShoutcastVersionTwoWithoutAbortingImport() throws Exception
+    {
+        Path xml = mTemporaryFolder.resolve("shoutcast-v2.xml");
+        Files.writeString(xml, """
+            <playlist version="4">
+              <stream type="shoutcastV2Configuration" name="Retired Stream" host="localhost" port="8000"
+                  password="secret" stream_id="1" user_id="source" bitrate="16" enabled="true"/>
+              <alias name="Dispatch" list="County">
+                <id type="talkgroup" protocol="APCO25" value="1234"/>
+              </alias>
+            </playlist>
+            """);
+
+        Path database = mTemporaryFolder.resolve("shoutcast-v2.sqlite");
+        LegacyXmlConfigurationImporter.importPlaylist(xml, database);
+
+        ConfigurationState state = new ConfigurationDatabaseStore(database).loadConfigurationState();
+        assertTrue(state.getBroadcastConfigurations().isEmpty());
+        AliasDatabaseStore aliasStore = new AliasDatabaseStore(database);
+        assertEquals(1, aliasStore.loadAliases(aliasStore.loadAliasListDefinitions()).size());
+    }
+
+    @Test
+    void preservesExactStockVersionFourXmlNamesThroughSqlite() throws Exception
+    {
+        Path xml = mTemporaryFolder.resolve("stock-v4-fields.xml");
+        Files.writeString(xml, """
+            <playlist version="4">
+              <alias name="Radio Range" list="County">
+                <id type="radioRange" protocol="APCO25" min="70000" max="71000"/>
+                <id type="broadcastChannel" channel="Icecast"/>
+              </alias>
+              <alias name="Tone Sequence" list="County">
+                <id type="tones">
+                  <toneSequence>
+                    <tone value="DTMF_1" duration="4"/>
+                    <tone value="DTMF_2" duration="6"/>
+                  </toneSequence>
+                </id>
+              </alias>
+              <alias name="DCS" list="Analog">
+                <id type="dcs" code="N023"/>
+              </alias>
+              <stream type="icecastHTTPConfiguration" name="Icecast" host="localhost" port="8000"
+                  password="test-password" user_name="source" mount_point="/test" bitrate="48"
+                  channels="1" sample_rate="8000" enabled="false">
+                <format>MP3</format>
+              </stream>
+              <stream type="shoutcastV1Configuration" name="Shoutcast" host="localhost" port="8001"
+                  password="test-password" bitrate="64" channels="1" enabled="false">
+                <format>MP3</format>
+              </stream>
+              <channel system="County" site="Site" name="P25" enabled="true" order="2">
+                <alias_list_name>County</alias_list_name>
+                <source_configuration type="sourceConfigTuner" source_type="TUNER" frequency="851000000"/>
+                <aux_decode_configuration/>
+                <decode_configuration type="decodeConfigP25Phase1" modulation="CQPSK"
+                    ignore_data_calls="false"/>
+                <event_log_configuration/>
+                <record_configuration/>
+              </channel>
+              <channel system="Analog" site="Site" name="NBFM" enabled="true" order="3">
+                <alias_list_name>Analog</alias_list_name>
+                <source_configuration type="sourceConfigTuner" source_type="TUNER" frequency="154875000"/>
+                <aux_decode_configuration>
+                  <aux_decoder>MDC1200</aux_decoder>
+                  <aux_decoder>DCS</aux_decoder>
+                  <aux_decoder>MPT1327</aux_decoder>
+                  <aux_decoder>FUTURE_AUX_DECODER</aux_decoder>
+                </aux_decode_configuration>
+                <decode_configuration type="decodeConfigNBFM" bandwidth="BW_25_0" talkgroup="1"
+                    audioFilter="false" squelchNoiseOpenThreshold="0.15"
+                    squelchNoiseCloseThreshold="0.25" squelchHysteresisOpenThreshold="3"
+                    squelchHysteresisCloseThreshold="5" deemphasis="US_750US"
+                    squelchTailRemovalEnabled="true" squelchTailRemovalMs="75"
+                    squelchHeadRemovalMs="25" lowPassEnabled="true" lowPassCutoff="3200"
+                    voiceEnhanceAmount="45.0" bassBoostDb="6.0" outputGain="1.5"/>
+                <event_log_configuration>
+                  <logger>DECODED_MESSAGE</logger>
+                  <logger>FUTURE_EVENT_LOGGER</logger>
+                </event_log_configuration>
+                <record_configuration>
+                  <recorder>BASEBAND</recorder>
+                  <recorder>FUTURE_RECORDER</recorder>
+                </record_configuration>
+              </channel>
+            </playlist>
+            """);
+        byte[] original = Files.readAllBytes(xml);
+        Path database = mTemporaryFolder.resolve("stock-v4-fields.sqlite");
+
+        LegacyXmlConfigurationImporter.importPlaylist(xml, database);
+
+        assertArrayEquals(original, Files.readAllBytes(xml));
+        AliasDatabaseStore aliasStore = new AliasDatabaseStore(database);
+        List<Alias> aliases = aliasStore.loadAliases(aliasStore.loadAliasListDefinitions());
+        Alias radioAlias = aliases.stream().filter(alias -> "Radio Range".equals(alias.getName()))
+            .findFirst().orElseThrow();
+        RadioRange radioRange = assertInstanceOf(RadioRange.class, radioAlias.getMatchIdentifier());
+        assertEquals(70000, radioRange.getMinRadio());
+        assertEquals(71000, radioRange.getMaxRadio());
+        assertTrue(radioAlias.hasBroadcastChannel("Icecast"));
+
+        Dcs dcs = assertInstanceOf(Dcs.class, aliases.stream()
+            .filter(alias -> "DCS".equals(alias.getName())).findFirst().orElseThrow().getMatchIdentifier());
+        assertEquals(DCSCode.N023, dcs.getDCSCode());
+
+        TonesID tones = assertInstanceOf(TonesID.class, aliases.stream()
+            .filter(alias -> "Tone Sequence".equals(alias.getName())).findFirst().orElseThrow().getMatchIdentifier());
+        assertEquals(2, tones.getToneSequence().getTones().size());
+        assertEquals(AmbeTone.DTMF_1, tones.getToneSequence().getTones().get(0).getAmbeTone());
+        assertEquals(4, tones.getToneSequence().getTones().get(0).getDuration());
+        assertEquals(AmbeTone.DTMF_2, tones.getToneSequence().getTones().get(1).getAmbeTone());
+        assertEquals(6, tones.getToneSequence().getTones().get(1).getDuration());
+
+        ConfigurationState state = new ConfigurationDatabaseStore(database).loadConfigurationState();
+        Channel nbfmChannel = state.getChannels().stream().filter(channel -> "NBFM".equals(channel.getName()))
+            .findFirst().orElseThrow();
+        assertEquals(List.of(DecoderType.MDC1200, DecoderType.DCS),
+            nbfmChannel.getAuxDecodeConfiguration().getAuxDecoders());
+        assertEquals(List.of(RecorderType.BASEBAND), nbfmChannel.getRecordConfiguration().getRecorders());
+        assertEquals(List.of(EventLogType.DECODED_MESSAGE), nbfmChannel.getEventLogConfiguration().getLoggers());
+
+        DecodeConfigNBFM nbfm = assertInstanceOf(DecodeConfigNBFM.class, nbfmChannel.getDecodeConfiguration());
+        assertEquals(DecodeConfigAnalog.Bandwidth.BW_25_0, nbfm.getBandwidth());
+        assertFalse(nbfm.isAudioFilter());
+        assertEquals(0.15f, nbfm.getSquelchNoiseOpenThreshold());
+        assertEquals(0.25f, nbfm.getSquelchNoiseCloseThreshold());
+        assertEquals(3, nbfm.getSquelchHysteresisOpenThreshold());
+        assertEquals(5, nbfm.getSquelchHysteresisCloseThreshold());
+        assertEquals(DecodeConfigNBFM.DeemphasisMode.US_750US, nbfm.getDeemphasis());
+        assertTrue(nbfm.isSquelchTailRemovalEnabled());
+        assertEquals(75, nbfm.getSquelchTailRemovalMs());
+        assertEquals(25, nbfm.getSquelchHeadRemovalMs());
+        assertTrue(nbfm.isLowPassEnabled());
+        assertEquals(3200, nbfm.getLowPassCutoff());
+        assertEquals(45.0f, nbfm.getVoiceEnhanceAmount());
+        assertEquals(6.0f, nbfm.getBassBoostDb());
+        assertEquals(1.5f, nbfm.getOutputGain());
+
+        IcecastHTTPConfiguration icecast = assertInstanceOf(IcecastHTTPConfiguration.class,
+            state.getBroadcastConfigurations().stream()
+                .filter(configuration -> configuration instanceof IcecastHTTPConfiguration)
+                .findFirst().orElseThrow());
+        assertEquals(BroadcastFormat.MP3, icecast.getBroadcastFormat());
+        assertEquals(48, icecast.getBitRate());
+        ShoutcastV1Configuration shoutcast = assertInstanceOf(ShoutcastV1Configuration.class,
+            state.getBroadcastConfigurations().stream()
+                .filter(configuration -> configuration instanceof ShoutcastV1Configuration)
+                .findFirst().orElseThrow());
+        assertEquals(BroadcastFormat.MP3, shoutcast.getBroadcastFormat());
+        assertEquals(64, shoutcast.getBitRate());
+    }
+
+    @Test
     void importsLegacyDmrTierThreeFrequencyMappings() throws Exception
     {
         Path xml = mTemporaryFolder.resolve("dmr-tier-three.xml");
@@ -149,6 +557,46 @@ class LegacyXmlConfigurationImporterTest
         assertEquals(DMRChannelMode.TRUNKED, dmr.getChannelMode());
         assertTrue(dmr.getIgnoreCRCChecksums());
         assertTrue(dmr.isUseCompressedTalkgroups());
+    }
+
+    private static AliasID matcher(ConfigurationState state, String aliasName)
+    {
+        return state.getAliases().stream()
+            .filter(alias -> aliasName.equals(alias.getName()))
+            .findFirst()
+            .orElseThrow()
+            .getMatchIdentifier();
+    }
+
+    private static String legacyMatcherPlaylist(int version)
+    {
+        return """
+            <playlist version="%d">
+              <alias name="P25 Talkgroup" list="County">
+                <id type="talkgroupID" talkgroup="1234"/>
+              </alias>
+              <alias name="P25 Radio" list="County">
+                <id type="talkgroupID" talkgroup="123456"/>
+              </alias>
+              <alias name="FleetSync" list="Analog">
+                <id type="fleetsyncID" ident="001-0001"/>
+              </alias>
+              <alias name="MDC-1200" list="Analog">
+                <id type="mdc1200ID" ident="ABCD"/>
+              </alias>
+              <channel system="County" site="Site" name="Control">
+                <alias_list_name>County</alias_list_name>
+                <source_configuration type="sourceConfigTuner" source_type="TUNER" frequency="851000000"/>
+                <decode_configuration type="decodeConfigP25Phase1" modulation="CQPSK"
+                    ignore_data_calls="false"/>
+              </channel>
+              <channel system="Analog" site="Site" name="Repeater">
+                <alias_list_name>Analog</alias_list_name>
+                <source_configuration type="sourceConfigTuner" source_type="TUNER" frequency="154875000"/>
+                <decode_configuration type="decodeConfigNBFM" talkgroup="1"/>
+              </channel>
+            </playlist>
+            """.formatted(version);
     }
 
     @Test
@@ -244,7 +692,7 @@ class LegacyXmlConfigurationImporterTest
     }
 
     @Test
-    void reportsMalformedMatchersAndInfersUnassignedListFamily() throws Exception
+    void omitsMalformedMatchersAndPreservesSupportedMixedListFamilies() throws Exception
     {
         Path xml = mTemporaryFolder.resolve("strict-alias-import.xml");
         Files.writeString(xml, """
@@ -278,12 +726,21 @@ class LegacyXmlConfigurationImporterTest
         LegacyXmlConfigurationImporter.importPlaylist(xml, database);
         AliasDatabaseStore aliasStore = new AliasDatabaseStore(database);
         var definitions = aliasStore.loadAliasListDefinitions();
-        assertEquals(2, definitions.size());
+        assertEquals(3, definitions.size());
         var aliases = aliasStore.loadAliases(definitions);
-        assertEquals(1, aliases.size());
-        assertEquals("Orphan", aliases.getFirst().getName());
+        assertEquals(2, aliases.size());
+        assertEquals(List.of("Orphan", "Wrong Family"),
+            aliases.stream().map(Alias::getName).sorted().toList());
+        assertTrue(aliases.stream().noneMatch(alias ->
+            List.of("Missing", "Invalid", "Retired").contains(alias.getName())));
         assertEquals(AliasListFamily.P25,
             definitions.stream().filter(definition -> definition.getName().equals("Old List"))
+                .findFirst().orElseThrow().getFamily());
+        assertEquals(AliasListFamily.P25,
+            definitions.stream().filter(definition -> definition.getName().equals("County [P25]"))
+                .findFirst().orElseThrow().getFamily());
+        assertEquals(AliasListFamily.DMR,
+            definitions.stream().filter(definition -> definition.getName().equals("County [DMR]"))
                 .findFirst().orElseThrow().getFamily());
     }
 

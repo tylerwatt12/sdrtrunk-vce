@@ -30,9 +30,10 @@ key integers, four value/timestamp integers, and SQLite B-tree overhead, with no
 
 The decoder publishes message-scoped facts through the existing bounded statistics queue and single background writer.
 Ordinary runtime services never perform schema migration. Current rows use the standard `confirmed_at_ms` retention
-path; summaries use `last_seen_ms`. Site-specific clearing and full statistics reset delete both tables. The Alpha 7
-release tag retains its backed-up predecessor migration. The current unreleased branch accepts only the current v21
-schema until the next numbered release transition is prepared.
+path; summaries use `last_seen_ms`. Site-specific clearing and full statistics reset delete both tables. The current
+P25 activity schema is v24. The release migrator preserves Alpha 7 receiver configuration but creates this and the
+other current activity storage empty; historical Alpha 7 band observations are not converted. Older and intermediate
+schema combinations are rejected.
 
 ## Query access path
 

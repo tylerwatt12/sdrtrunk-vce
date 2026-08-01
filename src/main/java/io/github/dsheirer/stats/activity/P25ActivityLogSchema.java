@@ -1824,11 +1824,8 @@ public class P25ActivityLogSchema
             """);
     }
 
-    /**
-     * Creates the current and retained foreign-system band tables. This is called only by the startup schema creator
-     * for a new database and by the application migrator for a staged v19 database.
-     */
-    public static void createForeignSystemBandTables(Statement statement) throws SQLException
+    /** Creates the current foreign-system band tables as part of fresh current-schema creation. */
+    private static void createForeignSystemBandTables(Statement statement) throws SQLException
     {
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_foreign_system_band (
@@ -1862,11 +1859,8 @@ public class P25ActivityLogSchema
             """);
     }
 
-    /**
-     * Creates the retention-first index for the shared P25/DMR/NXDN control-channel quality buckets. This is called
-     * only by the startup schema creator for a new database and by the application migrator for a staged database.
-     */
-    public static void createControlChannelQualityRetentionIndex(Statement statement) throws SQLException
+    /** Creates the current retention-first shared control-channel-quality index. */
+    private static void createControlChannelQualityRetentionIndex(Statement statement) throws SQLException
     {
         statement.executeUpdate("""
             CREATE INDEX IF NOT EXISTS idx_p25_control_quality_retention

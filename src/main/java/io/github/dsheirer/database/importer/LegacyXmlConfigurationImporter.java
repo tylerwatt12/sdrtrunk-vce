@@ -19,6 +19,7 @@ import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.fasterxml.jackson.databind.deser.DeserializationProblemHandler;
 import com.fasterxml.jackson.databind.jsontype.TypeIdResolver;
 import com.fasterxml.jackson.dataformat.xml.JacksonXmlModule;
+import com.fasterxml.jackson.dataformat.xml.XmlFactory;
 import com.fasterxml.jackson.dataformat.xml.XmlMapper;
 import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlRootElement;
@@ -27,12 +28,25 @@ import io.github.dsheirer.alias.AliasFactory;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.AliasIDType;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
+import io.github.dsheirer.alias.id.dcs.Dcs;
+import io.github.dsheirer.alias.id.legacy.fleetsync.FleetsyncID;
+import io.github.dsheirer.alias.id.legacy.mdc.MDC1200ID;
 import io.github.dsheirer.alias.id.legacy.nonrecordable.NonRecordable;
+import io.github.dsheirer.alias.id.legacy.siteID.SiteID;
+import io.github.dsheirer.alias.id.legacy.talkgroup.LegacyTalkgroupID;
 import io.github.dsheirer.alias.id.priority.Priority;
+import io.github.dsheirer.alias.id.radio.Radio;
+import io.github.dsheirer.alias.id.radio.RadioRange;
 import io.github.dsheirer.alias.id.record.Record;
 import io.github.dsheirer.alias.id.talkgroup.StreamAsTalkgroup;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
+import io.github.dsheirer.alias.id.talkgroup.TalkgroupRange;
+import io.github.dsheirer.alias.id.tone.TonesID;
 import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
+import io.github.dsheirer.audio.broadcast.BroadcastFormat;
+import io.github.dsheirer.audio.broadcast.BroadcastServerType;
+import io.github.dsheirer.audio.broadcast.icecast.IcecastConfiguration;
+import io.github.dsheirer.audio.broadcast.shoutcast.v1.ShoutcastV1Configuration;
 import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
 import io.github.dsheirer.configuration.ConfigurationState;
 import io.github.dsheirer.controller.channel.Channel;
@@ -41,12 +55,22 @@ import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.database.alias.AliasDatabaseStore;
 import io.github.dsheirer.database.configuration.ConfigurationDatabaseStore;
 import io.github.dsheirer.database.configuration.ConfigurationSnapshotDatabaseStore;
+import io.github.dsheirer.identifier.tone.AmbeTone;
+import io.github.dsheirer.identifier.tone.Tone;
+import io.github.dsheirer.identifier.tone.ToneSequence;
+import io.github.dsheirer.module.decode.DecoderType;
+import io.github.dsheirer.module.decode.config.AuxDecodeConfiguration;
+import io.github.dsheirer.module.decode.config.DecodeConfiguration;
+import io.github.dsheirer.module.decode.dcs.DCSCode;
+import io.github.dsheirer.module.decode.nbfm.DecodeConfigNBFM;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.module.decode.p25.phase1.Modulation;
-import io.github.dsheirer.module.decode.DecoderType;
-import io.github.dsheirer.module.decode.config.DecodeConfiguration;
+import io.github.dsheirer.module.log.EventLogType;
+import io.github.dsheirer.module.log.config.EventLogConfiguration;
 import io.github.dsheirer.protocol.Protocol;
+import io.github.dsheirer.record.RecorderType;
+import io.github.dsheirer.record.config.RecordConfiguration;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import io.github.dsheirer.source.tuner.channel.ChannelSpecification;
 import java.io.IOException;
@@ -59,6 +83,12 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import javax.xml.stream.XMLInputFactory;
+import javax.xml.stream.XMLStreamConstants;
+import javax.xml.stream.XMLStreamException;
+import javax.xml.stream.XMLStreamReader;
 
 /**
  * One-way import from a legacy playlist XML file into a new SQLite database.
@@ -68,12 +98,19 @@ public class LegacyXmlConfigurationImporter
     private static final String PLAYLIST_DIRECTORY = "playlist";
     private static final String DEFAULT_PLAYLIST = "default.xml";
     private static final String LEGACY_PLAYLIST = "playlist_v2.xml";
+    private static final int MINIMUM_PLAYLIST_VERSION = 1;
+    private static final int MAXIMUM_PLAYLIST_VERSION = 4;
     private static final long P25_TRUNKED_BAND_MINIMUM_HZ = 700_000_000L;
     private static final long P25_TRUNKED_BAND_MAXIMUM_HZ = 1_000_000_000L;
     private static final int P25_TRUNKED_TALKGROUP_COUNT = 3;
+    private static final int P25_MAXIMUM_TALKGROUP = 65_535;
+    private static final Pattern LEGACY_P25_MATCHER = Pattern.compile("[A-Fa-f\\d]{4}|[A-Fa-f\\d]{6}");
+    private static final Pattern LEGACY_FLEETSYNC_MATCHER = Pattern.compile("(\\d{3})-(\\d{4})");
+    private static final Pattern LEGACY_MDC1200_MATCHER = Pattern.compile("[A-Fa-f\\d]{4}");
     private static final Set<String> RETIRED_DECODER_CONFIG_TYPES = Set.of(
         "decodeConfigAM", "decodeConfigLTRStandard", "decodeConfigLTRNet", "decodeConfigPassport");
     private static final Set<String> RETIRED_ALIAS_IDENTIFIER_TYPES = Set.of("min", "uniqueID");
+    private static final Set<String> RETIRED_BROADCAST_CONFIG_TYPES = Set.of("shoutcastV2Configuration");
 
     private LegacyXmlConfigurationImporter()
     {
@@ -131,13 +168,25 @@ public class LegacyXmlConfigurationImporter
 
     public static ConfigurationState readConfigurationState(Path sourceXml) throws IOException
     {
+        int playlistVersion = readPlaylistVersion(sourceXml);
+
         try(InputStream inputStream = Files.newInputStream(sourceXml))
         {
             XmlPlaylist playlist = xmlMapper().readValue(inputStream, XmlPlaylist.class);
             ConfigurationState state = new ConfigurationState();
-            state.setAliases(convertAliases(nonNull(playlist.getAliases())));
-            state.setBroadcastConfigurations(nonNull(playlist.getBroadcastConfigurations()));
-            state.setChannels(new ArrayList<>(nonNull(playlist.getChannels()).stream()
+            state.setAliases(convertAliases(nonNull(playlist.getAliases()), playlistVersion));
+            state.setBroadcastConfigurations(new ArrayList<>(nonNull(playlist.getBroadcastConfigurations()).stream()
+                .filter(configuration -> !(configuration instanceof RetiredBroadcastConfiguration))
+                .toList()));
+            List<Channel> channels = new ArrayList<>(nonNull(playlist.getChannels()));
+            sanitizeChannelConfigurationLists(channels);
+
+            if(playlistVersion <= 2)
+            {
+                removeVersionOneChannelSettings(channels);
+            }
+
+            state.setChannels(new ArrayList<>(channels.stream()
                 .filter(ChannelConfigurationPolicy::isActive)
                 .toList()));
             AliasListDefinitionResolver.normalizeLegacyState(state);
@@ -145,7 +194,147 @@ public class LegacyXmlConfigurationImporter
         }
     }
 
-    private static List<Alias> convertAliases(List<LegacyAlias> legacyAliases)
+    /**
+     * Unknown enum values deserialize as null so that a retired option does not abort the whole playlist import. Keep
+     * those placeholders out of current configuration, and retain only decoders that are active auxiliary decoders.
+     */
+    private static void sanitizeChannelConfigurationLists(List<Channel> channels)
+    {
+        for(Channel channel: channels)
+        {
+            if(channel == null)
+            {
+                continue;
+            }
+
+            AuxDecodeConfiguration auxDecodeConfiguration = channel.getAuxDecodeConfiguration();
+
+            if(auxDecodeConfiguration != null)
+            {
+                if(auxDecodeConfiguration.getAuxDecoders() == null)
+                {
+                    auxDecodeConfiguration.setAuxDecoders(new ArrayList<>());
+                }
+                else
+                {
+                    auxDecodeConfiguration.getAuxDecoders().removeIf(
+                        decoder -> !DecoderType.AUX_DECODERS.contains(decoder));
+                }
+            }
+
+            RecordConfiguration recordConfiguration = channel.getRecordConfiguration();
+
+            if(recordConfiguration != null)
+            {
+                if(recordConfiguration.getRecorders() == null)
+                {
+                    recordConfiguration.setRecorders(new ArrayList<>());
+                }
+                else
+                {
+                    recordConfiguration.getRecorders().removeIf(recorder -> recorder == null);
+                }
+            }
+
+            EventLogConfiguration eventLogConfiguration = channel.getEventLogConfiguration();
+
+            if(eventLogConfiguration != null)
+            {
+                if(eventLogConfiguration.getLoggers() == null)
+                {
+                    eventLogConfiguration.setLoggers(new ArrayList<>());
+                }
+                else
+                {
+                    eventLogConfiguration.getLoggers().removeIf(logger -> logger == null);
+                }
+            }
+        }
+    }
+
+    private static int readPlaylistVersion(Path sourceXml) throws IOException
+    {
+        XMLInputFactory factory = secureXmlInputFactory();
+
+        try(InputStream inputStream = Files.newInputStream(sourceXml))
+        {
+            XMLStreamReader reader = factory.createXMLStreamReader(inputStream);
+
+            try
+            {
+                while(reader.hasNext())
+                {
+                    if(reader.next() == XMLStreamConstants.START_ELEMENT)
+                    {
+                        String namespace = reader.getNamespaceURI();
+
+                        if(!"playlist".equals(reader.getLocalName()) ||
+                            (namespace != null && !namespace.isEmpty()))
+                        {
+                            throw new IOException("The selected XML is not an SDRTrunk playlist.");
+                        }
+
+                        String value = reader.getAttributeValue(null, "version");
+                        int version = MINIMUM_PLAYLIST_VERSION;
+
+                        if(value != null)
+                        {
+                            if(value.isBlank())
+                            {
+                                throw new IOException("SDRTrunk playlist version must be a whole number from 1 through " +
+                                    MAXIMUM_PLAYLIST_VERSION + ".");
+                            }
+
+                            try
+                            {
+                                version = Integer.parseInt(value.trim());
+                            }
+                            catch(NumberFormatException e)
+                            {
+                                throw new IOException("SDRTrunk playlist version must be a whole number from 1 through " +
+                                    MAXIMUM_PLAYLIST_VERSION + ".", e);
+                            }
+                        }
+
+                        if(version > MAXIMUM_PLAYLIST_VERSION)
+                        {
+                            throw new IOException("SDRTrunk playlist version " + version +
+                                " is newer than this importer supports (versions 1 through " +
+                                MAXIMUM_PLAYLIST_VERSION + ").");
+                        }
+
+                        if(version < MINIMUM_PLAYLIST_VERSION)
+                        {
+                            throw new IOException("Unsupported SDRTrunk playlist version " + version +
+                                ". This importer supports versions 1 through " + MAXIMUM_PLAYLIST_VERSION + ".");
+                        }
+
+                        return version;
+                    }
+                }
+            }
+            finally
+            {
+                reader.close();
+            }
+        }
+        catch(XMLStreamException e)
+        {
+            throw new IOException("Unable to read the SDRTrunk playlist version.", e);
+        }
+
+        throw new IOException("The selected XML does not contain an SDRTrunk playlist.");
+    }
+
+    private static XMLInputFactory secureXmlInputFactory()
+    {
+        XMLInputFactory factory = XMLInputFactory.newFactory();
+        factory.setProperty(XMLInputFactory.SUPPORT_DTD, false);
+        factory.setProperty(XMLInputFactory.IS_SUPPORTING_EXTERNAL_ENTITIES, false);
+        return factory;
+    }
+
+    private static List<Alias> convertAliases(List<LegacyAlias> legacyAliases, int playlistVersion)
     {
         List<Alias> aliases = new ArrayList<>();
 
@@ -153,20 +342,58 @@ public class LegacyXmlConfigurationImporter
         {
             if(legacyAlias != null)
             {
-                aliases.addAll(legacyAlias.toAliases());
+                aliases.addAll(legacyAlias.toAliases(playlistVersion));
             }
         }
 
         return aliases;
     }
 
+    private static void removeVersionOneChannelSettings(List<Channel> channels)
+    {
+        for(Channel channel: channels)
+        {
+            if(channel == null)
+            {
+                continue;
+            }
+
+            RecordConfiguration recordConfiguration = channel.getRecordConfiguration();
+
+            if(recordConfiguration != null && recordConfiguration.getRecorders() != null)
+            {
+                recordConfiguration.getRecorders().removeIf(recorder -> recorder == RecorderType.AUDIO);
+            }
+
+            EventLogConfiguration eventLogConfiguration = channel.getEventLogConfiguration();
+
+            if(eventLogConfiguration != null && eventLogConfiguration.getLoggers() != null)
+            {
+                eventLogConfiguration.getLoggers().removeIf(logger -> logger == EventLogType.BINARY_MESSAGE);
+            }
+        }
+    }
+
     private static ObjectMapper xmlMapper()
     {
         JacksonXmlModule xmlModule = new JacksonXmlModule();
         xmlModule.setDefaultUseWrapper(false);
-        ObjectMapper objectMapper = new XmlMapper(xmlModule)
+        ObjectMapper objectMapper = new XmlMapper(new XmlFactory(secureXmlInputFactory()), xmlModule)
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
-            .configure(DeserializationFeature.READ_UNKNOWN_ENUM_VALUES_AS_NULL, true);
+            .configure(DeserializationFeature.READ_UNKNOWN_ENUM_VALUES_AS_NULL, true)
+            .configure(DeserializationFeature.FAIL_ON_TRAILING_TOKENS, true);
+        objectMapper.addMixIn(AuxDecodeConfiguration.class, LegacyAuxDecodeConfigurationMixin.class);
+        objectMapper.addMixIn(DecodeConfigNBFM.class, LegacyNbfmConfigurationMixin.class);
+        objectMapper.addMixIn(RadioRange.class, LegacyRadioRangeMixin.class);
+        objectMapper.addMixIn(Dcs.class, LegacyDcsMixin.class);
+        objectMapper.addMixIn(TonesID.class, LegacyTonesIdMixin.class);
+        objectMapper.addMixIn(ToneSequence.class, LegacyToneSequenceMixin.class);
+        objectMapper.addMixIn(Tone.class, LegacyToneMixin.class);
+        objectMapper.addMixIn(BroadcastConfiguration.class, LegacyBroadcastConfigurationMixin.class);
+        objectMapper.addMixIn(IcecastConfiguration.class, LegacyIcecastConfigurationMixin.class);
+        objectMapper.addMixIn(ShoutcastV1Configuration.class, LegacyShoutcastV1ConfigurationMixin.class);
+        objectMapper.addMixIn(RecordConfiguration.class, LegacyRecordConfigurationMixin.class);
+        objectMapper.addMixIn(EventLogConfiguration.class, LegacyEventLogConfigurationMixin.class);
         objectMapper.addHandler(new RetiredTypeHandler());
         objectMapper.setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
         return objectMapper;
@@ -327,7 +554,7 @@ public class LegacyXmlConfigurationImporter
         @JacksonXmlProperty(isAttribute = false, localName = "id")
         private List<AliasID> mIdentifiers = new ArrayList<>();
 
-        private List<Alias> toAliases()
+        private List<Alias> toAliases(int playlistVersion)
         {
             Alias template = new Alias(mName);
             template.setAliasListName(mAliasListName);
@@ -351,9 +578,14 @@ public class LegacyXmlConfigurationImporter
                     case BroadcastChannel broadcastChannel -> template.addBroadcastChannel(broadcastChannel);
                     case Record ignored -> template.setRecordable(true);
                     case Priority priority -> template.setCallPriority(priority.getPriority());
-                    case NonRecordable ignored -> template.setRecordable(false);
+                    case NonRecordable ignored -> {
+                        if(playlistVersion > 2)
+                        {
+                            template.setRecordable(false);
+                        }
+                    }
                     case StreamAsTalkgroup streamAsTalkgroup -> template.setStreamTalkgroupAlias(streamAsTalkgroup);
-                    default -> matchers.add(identifier);
+                    default -> matchers.addAll(upgradeMatcher(identifier, playlistVersion));
                 }
             }
 
@@ -372,6 +604,108 @@ public class LegacyXmlConfigurationImporter
             }
 
             return aliases;
+        }
+
+        /**
+         * Applies the stock SDRTrunk playlist v1-v4 matcher upgrades that remain useful in VCE. Retired protocols are
+         * deliberately left to the normal import filter instead of restoring their runtime support.
+         */
+        private static List<AliasID> upgradeMatcher(AliasID identifier, int playlistVersion)
+        {
+            if(playlistVersion <= 2 && identifier instanceof SiteID)
+            {
+                return List.of();
+            }
+
+            AliasID upgraded = identifier;
+
+            if(playlistVersion <= 2)
+            {
+                upgraded = upgradeVersionOneMatcher(identifier);
+            }
+
+            if(playlistVersion <= 3)
+            {
+                return upgradeVersionThreeP25Matcher(upgraded);
+            }
+
+            return List.of(upgraded);
+        }
+
+        private static AliasID upgradeVersionOneMatcher(AliasID identifier)
+        {
+            if(identifier instanceof LegacyTalkgroupID legacyTalkgroup)
+            {
+                String value = legacyTalkgroup.getTalkgroup();
+
+                if(value != null && LEGACY_P25_MATCHER.matcher(value).matches())
+                {
+                    return new Talkgroup(Protocol.APCO25, Integer.parseInt(value, 16));
+                }
+            }
+            else if(identifier instanceof FleetsyncID fleetsync)
+            {
+                String value = fleetsync.getIdent();
+                Matcher matcher = value != null ? LEGACY_FLEETSYNC_MATCHER.matcher(value) : null;
+
+                if(matcher != null && matcher.matches())
+                {
+                    int fleet = Integer.parseInt(matcher.group(1));
+                    int ident = Integer.parseInt(matcher.group(2));
+                    return new Talkgroup(Protocol.FLEETSYNC, (fleet << 12) + ident);
+                }
+            }
+            else if(identifier instanceof MDC1200ID mdc1200)
+            {
+                String value = mdc1200.getIdent();
+
+                if(value != null && LEGACY_MDC1200_MATCHER.matcher(value).matches())
+                {
+                    return new Talkgroup(Protocol.MDC1200, Integer.parseInt(value, 16));
+                }
+            }
+
+            return identifier;
+        }
+
+        private static List<AliasID> upgradeVersionThreeP25Matcher(AliasID identifier)
+        {
+            if(identifier instanceof Talkgroup talkgroup && talkgroup.getProtocol() == Protocol.APCO25 &&
+                talkgroup.getValue() > P25_MAXIMUM_TALKGROUP)
+            {
+                return List.of(new Radio(Protocol.APCO25, talkgroup.getValue()));
+            }
+
+            if(identifier instanceof TalkgroupRange range && range.getProtocol() == Protocol.APCO25)
+            {
+                int minimum = range.getMinTalkgroup();
+                int maximum = range.getMaxTalkgroup();
+
+                if(minimum > P25_MAXIMUM_TALKGROUP)
+                {
+                    return List.of(radioMatcher(minimum, maximum));
+                }
+
+                if(minimum <= P25_MAXIMUM_TALKGROUP && maximum > P25_MAXIMUM_TALKGROUP)
+                {
+                    return List.of(talkgroupMatcher(minimum, P25_MAXIMUM_TALKGROUP),
+                        radioMatcher(P25_MAXIMUM_TALKGROUP + 1, maximum));
+                }
+            }
+
+            return List.of(identifier);
+        }
+
+        private static AliasID talkgroupMatcher(int minimum, int maximum)
+        {
+            return minimum == maximum ? new Talkgroup(Protocol.APCO25, minimum) :
+                new TalkgroupRange(Protocol.APCO25, minimum, maximum);
+        }
+
+        private static AliasID radioMatcher(int minimum, int maximum)
+        {
+            return minimum == maximum ? new Radio(Protocol.APCO25, minimum) :
+                new RadioRange(Protocol.APCO25, minimum, maximum);
         }
     }
 
@@ -394,6 +728,12 @@ public class LegacyXmlConfigurationImporter
             if(baseType.hasRawClass(AliasID.class) && RETIRED_ALIAS_IDENTIFIER_TYPES.contains(subTypeId))
             {
                 return context.constructType(RetiredAliasIdentifier.class);
+            }
+
+            if(baseType.hasRawClass(BroadcastConfiguration.class) &&
+                RETIRED_BROADCAST_CONFIG_TYPES.contains(subTypeId))
+            {
+                return context.constructType(RetiredBroadcastConfiguration.class);
             }
 
             return null;
@@ -440,6 +780,132 @@ public class LegacyXmlConfigurationImporter
         {
             return false;
         }
+    }
+
+    private static class RetiredBroadcastConfiguration extends BroadcastConfiguration
+    {
+        @Override
+        public BroadcastConfiguration copyOf()
+        {
+            return new RetiredBroadcastConfiguration();
+        }
+
+        @Override
+        public BroadcastServerType getBroadcastServerType()
+        {
+            return BroadcastServerType.UNKNOWN;
+        }
+    }
+
+    private abstract static class LegacyRecordConfigurationMixin
+    {
+        @JacksonXmlProperty(isAttribute = false, localName = "recorder")
+        abstract List<RecorderType> getRecorders();
+    }
+
+    private abstract static class LegacyEventLogConfigurationMixin
+    {
+        @JacksonXmlProperty(isAttribute = false, localName = "logger")
+        abstract List<EventLogType> getLoggers();
+    }
+
+    private abstract static class LegacyAuxDecodeConfigurationMixin
+    {
+        @JacksonXmlProperty(isAttribute = false, localName = "aux_decoder")
+        abstract List<DecoderType> getAuxDecoders();
+    }
+
+    private abstract static class LegacyNbfmConfigurationMixin
+    {
+        @JacksonXmlProperty(isAttribute = true, localName = "audioFilter")
+        abstract boolean isAudioFilter();
+
+        @JacksonXmlProperty(isAttribute = true, localName = "squelchNoiseOpenThreshold")
+        abstract float getSquelchNoiseOpenThreshold();
+
+        @JacksonXmlProperty(isAttribute = true, localName = "squelchNoiseCloseThreshold")
+        abstract float getSquelchNoiseCloseThreshold();
+
+        @JacksonXmlProperty(isAttribute = true, localName = "squelchHysteresisOpenThreshold")
+        abstract int getSquelchHysteresisOpenThreshold();
+
+        @JacksonXmlProperty(isAttribute = true, localName = "squelchHysteresisCloseThreshold")
+        abstract int getSquelchHysteresisCloseThreshold();
+
+        @JacksonXmlProperty(isAttribute = true, localName = "squelchTailRemovalEnabled")
+        abstract boolean isSquelchTailRemovalEnabled();
+
+        @JacksonXmlProperty(isAttribute = true, localName = "squelchTailRemovalMs")
+        abstract int getSquelchTailRemovalMs();
+
+        @JacksonXmlProperty(isAttribute = true, localName = "squelchHeadRemovalMs")
+        abstract int getSquelchHeadRemovalMs();
+
+        @JacksonXmlProperty(isAttribute = true, localName = "lowPassEnabled")
+        abstract boolean isLowPassEnabled();
+
+        @JacksonXmlProperty(isAttribute = true, localName = "lowPassCutoff")
+        abstract int getLowPassCutoff();
+
+        @JacksonXmlProperty(isAttribute = true, localName = "voiceEnhanceAmount")
+        abstract float getVoiceEnhanceAmount();
+
+        @JacksonXmlProperty(isAttribute = true, localName = "bassBoostDb")
+        abstract float getBassBoostDb();
+
+        @JacksonXmlProperty(isAttribute = true, localName = "outputGain")
+        abstract float getOutputGain();
+    }
+
+    private abstract static class LegacyRadioRangeMixin
+    {
+        @JacksonXmlProperty(isAttribute = true, localName = "min")
+        abstract int getMinRadio();
+
+        @JacksonXmlProperty(isAttribute = true, localName = "max")
+        abstract int getMaxRadio();
+    }
+
+    private abstract static class LegacyDcsMixin
+    {
+        @JacksonXmlProperty(isAttribute = true, localName = "code")
+        abstract DCSCode getDCSCode();
+    }
+
+    private abstract static class LegacyTonesIdMixin
+    {
+        @JacksonXmlProperty(isAttribute = false, localName = "toneSequence")
+        abstract ToneSequence getToneSequence();
+    }
+
+    private abstract static class LegacyToneSequenceMixin
+    {
+        @JacksonXmlProperty(isAttribute = false, localName = "tone")
+        abstract List<Tone> getTones();
+    }
+
+    private abstract static class LegacyToneMixin
+    {
+        @JacksonXmlProperty(isAttribute = true, localName = "value")
+        abstract AmbeTone getAmbeTone();
+    }
+
+    private abstract static class LegacyBroadcastConfigurationMixin
+    {
+        @JacksonXmlProperty(isAttribute = false, localName = "format")
+        abstract BroadcastFormat getBroadcastFormat();
+    }
+
+    private abstract static class LegacyIcecastConfigurationMixin
+    {
+        @JacksonXmlProperty(isAttribute = true, localName = "bitrate")
+        abstract int getBitRate();
+    }
+
+    private abstract static class LegacyShoutcastV1ConfigurationMixin
+    {
+        @JacksonXmlProperty(isAttribute = true, localName = "bitrate")
+        abstract int getBitRate();
     }
 
 }

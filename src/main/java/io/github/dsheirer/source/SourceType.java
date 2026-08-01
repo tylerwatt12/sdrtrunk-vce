@@ -20,7 +20,7 @@ package io.github.dsheirer.source;
  */
 public enum SourceType
 {
-    NONE("No Source"),
+    NONE("No Source", Availability.INACTIVE),
     /**
      * Compatibility value for saved channels that used a computer sound-card input.  These channels are retained in
      * legacy storage but are not loaded, selectable, or runnable.
@@ -70,6 +70,7 @@ public enum SourceType
     public enum Availability
     {
         ACTIVE,
+        INACTIVE,
         RETIRED_COMPATIBILITY
     }
 }

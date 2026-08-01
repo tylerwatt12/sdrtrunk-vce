@@ -14,6 +14,7 @@ package io.github.dsheirer.database.upgrade;
 import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
+import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultPath;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultSchema;
 import io.github.dsheirer.stats.activity.DmrActivitySchema;
@@ -24,6 +25,7 @@ import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.FileStore;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardCopyOption;
@@ -35,6 +37,8 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
@@ -50,8 +54,11 @@ import org.sqlite.SQLiteConfig;
  */
 public final class ApplicationMigrationService
 {
-    public static final Set<Integer> SUPPORTED_P25_VERSIONS = Set.of(P25ActivityLogSchema.SCHEMA_VERSION);
-    public static final Set<Integer> SUPPORTED_ALIAS_VERSIONS = Set.of(4);
+    public static final int ALPHA_7_P25_VERSION = 21;
+    public static final int ALPHA_7_ALIAS_VERSION = 3;
+    public static final Set<Integer> SUPPORTED_P25_VERSIONS =
+        Set.of(ALPHA_7_P25_VERSION, P25ActivityLogSchema.SCHEMA_VERSION);
+    public static final Set<Integer> SUPPORTED_ALIAS_VERSIONS = Set.of(ALPHA_7_ALIAS_VERSION, 4);
     public static final int CURRENT_P25_VERSION = P25ActivityLogSchema.SCHEMA_VERSION;
     public static final int CURRENT_ALIAS_VERSION = 4;
     public static final int CURRENT_DMR_VERSION = DmrActivitySchema.SCHEMA_VERSION;
@@ -85,22 +92,22 @@ public final class ApplicationMigrationService
         ProgressListener listener = progress == null ? ignored -> { } : progress;
         Path sourceRoot = sourceDataRoot.toAbsolutePath().normalize();
         Path targetRoot = targetDataRoot.toAbsolutePath().normalize();
+        requireSeparatePhysicalRoots(sourceRoot, targetRoot);
         Path sourceDatabase = SdrTrunkDatabasePath.getDatabasePath(sourceRoot);
         Path targetDatabase = SdrTrunkDatabasePath.getDatabasePath(targetRoot);
-
-        if(sourceRoot.equals(targetRoot))
-        {
-            throw new IOException("The previous and current portable data folders are the same.");
-        }
 
         if(Files.exists(targetDatabase))
         {
             throw new IOException("The current portable data folder already has a database: " + targetDatabase);
         }
+        SqliteDatabaseSnapshot.requireSourceUsable(sourceDatabase);
 
         listener.update("Checking previous data");
         MigrationState sourceState = requireSupportedState(sourceDatabase);
         requireEmptyOrMissing(targetRoot);
+        FileAccessAttributeSnapshot targetRootAttributes =
+            Files.exists(targetRoot, LinkOption.NOFOLLOW_LINKS) ? FileAccessAttributeSnapshot.capture(targetRoot) :
+                null;
         Path targetParent = targetRoot.getParent();
 
         if(targetParent == null)
@@ -109,7 +116,7 @@ public final class ApplicationMigrationService
         }
 
         Files.createDirectories(targetParent);
-        ensureFreeSpace(targetParent, requiredImportSpace(sourceRoot));
+        ensureFreeSpace(targetParent, requiredImportSpace(sourceRoot, sourceState));
         Path stageRoot = targetParent.resolve("." + targetRoot.getFileName() + ".migration-" + UUID.randomUUID());
         boolean promoted = false;
 
@@ -134,6 +141,10 @@ public final class ApplicationMigrationService
             listener.update("Finishing");
             requireNoSidecars(stagedDatabase,
                 "The staged database still has SQLite sidecar files and cannot be installed safely.");
+            if(targetRootAttributes != null)
+            {
+                targetRootAttributes.applyTo(stageRoot);
+            }
             removeEmptyTreeIfPresent(targetRoot);
             moveAtomically(stageRoot, targetRoot);
             promoted = true;
@@ -157,25 +168,43 @@ public final class ApplicationMigrationService
         ProgressListener listener = progress == null ? ignored -> { } : progress;
         Path normalizedRoot = dataRoot.toAbsolutePath().normalize();
         Path database = SdrTrunkDatabasePath.getDatabasePath(normalizedRoot);
+        SqliteDatabaseSnapshot.requireSourceUsable(database);
+        FileAccessAttributeSnapshot liveDatabaseAttributes = FileAccessAttributeSnapshot.capture(database);
 
         listener.update("Checking previous data");
         MigrationState sourceState = requireSupportedState(database);
 
         Path databaseDirectory = database.getParent();
-        ensureFreeSpace(databaseDirectory,
-            safeAdd(safeMultiply(sqliteFootprint(database), 2), FREE_SPACE_MARGIN_BYTES));
+        int databaseCopies = sourceState.alpha7() ? 4 : 2;
+        long requiredDatabaseSpace = sourceState.alpha7() ?
+            alpha7DatabaseWorkingSpace(database, databaseCopies) :
+            safeMultiply(sqliteFootprint(database), databaseCopies);
+        ensureFreeSpace(databaseDirectory, safeAdd(requiredDatabaseSpace, FREE_SPACE_MARGIN_BYTES));
         Path backupDirectory = databaseDirectory.resolve("backups");
         Files.createDirectories(backupDirectory);
         String identity = BACKUP_TIME.format(LocalDateTime.now()) + "-" +
             UUID.randomUUID().toString().substring(0, 8);
         Path backup = backupDirectory.resolve("sdrtrunk-before-application-migration-" + identity + ".sqlite");
+        Path stagedBackup = backupDirectory.resolve("." + backup.getFileName() + ".incomplete-" + UUID.randomUUID());
         Path staged = databaseDirectory.resolve("." + SdrTrunkDatabasePath.DATABASE_FILENAME + ".migration-" +
             UUID.randomUUID());
 
+        Throwable primaryFailure = null;
         try
         {
             listener.update("Creating safety backup");
-            mSnapshotter.create(database, backup);
+            mSnapshotter.create(database, stagedBackup);
+            liveDatabaseAttributes.applyTo(stagedBackup);
+            MigrationState backupState = requireSupportedState(stagedBackup);
+            if(!sourceState.equals(backupState))
+            {
+                throw new IOException("The safety backup schema state differs from the source database.");
+            }
+            finalizeStandaloneSnapshot(stagedBackup);
+            requireNoSidecars(stagedBackup,
+                "The safety backup still has SQLite sidecar files and cannot be published safely.");
+            liveDatabaseAttributes.applyTo(stagedBackup);
+            moveAtomically(stagedBackup, backup);
             Files.copy(backup, staged, StandardCopyOption.COPY_ATTRIBUTES);
 
             listener.update("Updating database");
@@ -185,6 +214,7 @@ public final class ApplicationMigrationService
             validateGlobalDatabase(staged);
             requireNoSidecars(staged,
                 "The staged database still has SQLite sidecar files and cannot replace the live database safely.");
+            liveDatabaseAttributes.applyTo(staged);
 
             listener.update("Finishing");
             prepareLiveDatabaseForReplacement(database);
@@ -193,12 +223,13 @@ public final class ApplicationMigrationService
             try
             {
                 validateGlobalDatabase(database);
+                liveDatabaseAttributes.applyTo(database);
             }
             catch(IOException | SQLException validationFailure)
             {
                 try
                 {
-                    restoreBackup(backup, database);
+                    restoreBackup(backup, database, liveDatabaseAttributes);
                 }
                 catch(IOException restoreFailure)
                 {
@@ -210,9 +241,53 @@ public final class ApplicationMigrationService
 
             return new MigrationResult(false, backup, sourceState, helperOutput);
         }
+        catch(IOException | SQLException | InterruptedException | RuntimeException e)
+        {
+            primaryFailure = e;
+            throw e;
+        }
+        catch(Error e)
+        {
+            primaryFailure = e;
+            throw e;
+        }
         finally
         {
-            Files.deleteIfExists(staged);
+            IOException cleanupFailure = null;
+            try
+            {
+                deleteDatabaseAndSidecarsIfExists(staged);
+            }
+            catch(IOException e)
+            {
+                cleanupFailure = e;
+            }
+            try
+            {
+                deleteDatabaseAndSidecarsIfExists(stagedBackup);
+            }
+            catch(IOException e)
+            {
+                if(cleanupFailure == null)
+                {
+                    cleanupFailure = e;
+                }
+                else
+                {
+                    cleanupFailure.addSuppressed(e);
+                }
+            }
+            if(cleanupFailure != null)
+            {
+                if(primaryFailure != null)
+                {
+                    primaryFailure.addSuppressed(cleanupFailure);
+                }
+                else
+                {
+                    throw cleanupFailure;
+                }
+            }
         }
     }
 
@@ -254,10 +329,13 @@ public final class ApplicationMigrationService
 
         if(!state.supported())
         {
-            throw new IOException("This development build accepts only its current schemas: Alias v4, P25 activity " +
-                "v21, trunked-site v2, and DMR activity v" + CURRENT_DMR_VERSION + ". Found " +
-                state.description() + ".");
+            throw new IOException("This release accepts only the complete Alpha 7 database (Alias v3, P25 " +
+                "activity v21, trunked-site v2, and no DMR activity schema) or its complete current database " +
+                "(Alias v4, P25 activity v" + CURRENT_P25_VERSION + ", trunked-site v2, and DMR activity v" +
+                CURRENT_DMR_VERSION + "). Found " + state.description() + ".");
         }
+
+        ApplicationDatabaseMigrator.validateAcceptedSource(database, state);
 
         return state;
     }
@@ -310,6 +388,7 @@ public final class ApplicationMigrationService
 
         try(Connection connection = openReadOnly(database))
         {
+            SdrTrunkDatabaseStartup.requireMainTrackDatabase(connection);
             SdrTrunkDatabaseSchema.validate(connection);
             P25ActivityLogSchema.validate(connection);
             DmrActivitySchema.validate(connection);
@@ -317,6 +396,9 @@ public final class ApplicationMigrationService
             requireIntegrity(connection);
             requireForeignKeysValid(connection);
         }
+
+        //The read-only checks above establish that it is safe to apply the main runtime's WAL configuration.
+        SdrTrunkDatabaseStartup.validateGlobalDatabase(database);
     }
 
     private static void validateVaultIfPresent(Path dataRoot) throws SQLException
@@ -417,13 +499,38 @@ public final class ApplicationMigrationService
         }
     }
 
-    private static void restoreBackup(Path backup, Path database) throws IOException
+    private static void finalizeStandaloneSnapshot(Path database) throws IOException, SQLException
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            statement.execute("PRAGMA busy_timeout=" + SdrTrunkDatabase.BUSY_TIMEOUT_MILLISECONDS);
+            try(ResultSet resultSet = statement.executeQuery("PRAGMA wal_checkpoint(TRUNCATE)"))
+            {
+                if(!resultSet.next() || resultSet.getInt(1) != 0)
+                {
+                    throw new IOException("The safety backup could not be checkpointed.");
+                }
+            }
+            try(ResultSet resultSet = statement.executeQuery("PRAGMA journal_mode=DELETE"))
+            {
+                if(!resultSet.next() || !"delete".equalsIgnoreCase(resultSet.getString(1)))
+                {
+                    throw new IOException("The safety backup could not be made standalone.");
+                }
+            }
+        }
+    }
+
+    private static void restoreBackup(Path backup, Path database, FileAccessAttributeSnapshot accessAttributes)
+        throws IOException
     {
         Path restore = database.resolveSibling("." + database.getFileName() + ".restore-" + UUID.randomUUID());
 
         try
         {
             Files.copy(backup, restore);
+            accessAttributes.applyTo(restore);
             requireNoSidecars(database, "The migrated database is still active, so its safety backup cannot be " +
                 "restored automatically.");
             moveAtomicallyReplacing(restore, database);
@@ -496,6 +603,11 @@ public final class ApplicationMigrationService
             return;
         }
 
+        if(Files.isSymbolicLink(directory))
+        {
+            throw new IOException("The portable data location must not be a symbolic link: " + directory);
+        }
+
         if(!Files.isDirectory(directory))
         {
             throw new IOException("The portable data location is not a folder: " + directory);
@@ -516,7 +628,37 @@ public final class ApplicationMigrationService
         if(Files.exists(directory))
         {
             requireEmptyOrMissing(directory);
-            deleteTreeIfExists(directory);
+            //A nonrecursive delete fails atomically if another first-run process populated this folder after the
+            //emptiness check. Recursive deletion is reserved for this process's private UUID staging folder.
+            Files.deleteIfExists(directory);
+        }
+    }
+
+    static void deleteDatabaseAndSidecarsIfExists(Path database) throws IOException
+    {
+        IOException failure = null;
+        for(String suffix: List.of("-journal", "-wal", "-shm", ""))
+        {
+            Path path = suffix.isEmpty() ? database : Path.of(database + suffix);
+            try
+            {
+                Files.deleteIfExists(path);
+            }
+            catch(IOException e)
+            {
+                if(failure == null)
+                {
+                    failure = e;
+                }
+                else
+                {
+                    failure.addSuppressed(e);
+                }
+            }
+        }
+        if(failure != null)
+        {
+            throw failure;
         }
     }
 
@@ -546,9 +688,13 @@ public final class ApplicationMigrationService
         }
     }
 
-    private static long requiredImportSpace(Path sourceRoot) throws IOException
+    private static long requiredImportSpace(Path sourceRoot, MigrationState sourceState)
+        throws IOException, SQLException
     {
-        long required = sqliteFootprint(SdrTrunkDatabasePath.getDatabasePath(sourceRoot));
+        long databaseFootprint = sqliteFootprint(SdrTrunkDatabasePath.getDatabasePath(sourceRoot));
+        long required = sourceState.alpha7() ?
+            alpha7DatabaseWorkingSpace(SdrTrunkDatabasePath.getDatabasePath(sourceRoot), 3) :
+            databaseFootprint;
         Path vault = EncryptionKeyVaultPath.getVaultPath(sourceRoot);
 
         if(Files.isRegularFile(vault))
@@ -573,6 +719,131 @@ public final class ApplicationMigrationService
         }
 
         return safeAdd(required, FREE_SPACE_MARGIN_BYTES);
+    }
+
+    /**
+     * Conservative extra working-space bound for Alias-v3's matcher-row and protocol-family split rewrite. The
+     * estimate is driven by the actual duplicated text, matcher and route counts, and SQLite page size instead of
+     * relying only on a fixed database-size multiplier.
+     */
+    static long alpha7AliasExpansionEstimate(Path database) throws SQLException
+    {
+        try(Connection connection = openReadOnly(database);
+            Statement pageStatement = connection.createStatement();
+            ResultSet pageResult = pageStatement.executeQuery("PRAGMA page_size"))
+        {
+            if(!pageResult.next())
+            {
+                throw new SQLException("Unable to read the Alpha 7 database page size");
+            }
+            long pageSize = pageResult.getLong(1);
+            long estimate = 0L;
+            try(Statement statement = connection.createStatement(); ResultSet resultSet = statement.executeQuery("""
+                WITH matcher_payload AS (
+                    SELECT alias_id, length(CAST(coalesce(protocol, '') AS BLOB)) AS bytes
+                    FROM alias_talkgroup
+                    UNION ALL
+                    SELECT alias_id, length(CAST(coalesce(protocol, '') AS BLOB)) FROM alias_radio
+                    UNION ALL
+                    SELECT alias_id, 0 FROM alias_status
+                    UNION ALL
+                    SELECT alias_id, length(CAST(coalesce(tone_sequence, '') AS BLOB))
+                    FROM alias_tone_sequence
+                    UNION ALL
+                    SELECT alias_id,
+                           length(CAST(coalesce(identifier_type, '') AS BLOB)) +
+                           length(CAST(coalesce(text_value, '') AS BLOB)) +
+                           length(CAST(coalesce(text_value_2, '') AS BLOB))
+                    FROM alias_text_identifier
+                ), matcher AS (
+                    SELECT alias_id, count(*) AS matcher_count, coalesce(sum(bytes), 0) AS matcher_bytes
+                    FROM matcher_payload GROUP BY alias_id
+                ), route AS (
+                    SELECT alias_id, count(*) AS route_count,
+                           coalesce(sum(length(CAST(coalesce(channel_name, '') AS BLOB))), 0) AS route_bytes
+                    FROM alias_broadcast_channel GROUP BY alias_id
+                )
+                SELECT
+                    length(CAST(coalesce(alias.name, '') AS BLOB)) +
+                    length(CAST(coalesce(alias.description, '') AS BLOB)) +
+                    length(CAST(coalesce(alias.alias_list_name, '') AS BLOB)) +
+                    length(CAST(coalesce(alias.group_name, '') AS BLOB)) +
+                    length(CAST(coalesce(alias.icon_name, '') AS BLOB)) AS alias_bytes,
+                    coalesce(matcher.matcher_count, 0), coalesce(matcher.matcher_bytes, 0),
+                    coalesce(route.route_count, 0), coalesce(route.route_bytes, 0)
+                FROM alias
+                LEFT JOIN matcher ON matcher.alias_id=alias.id
+                LEFT JOIN route ON route.alias_id=alias.id
+                """))
+            {
+                while(resultSet.next())
+                {
+                    //A crossing P25 range can split in two and each result can be preserved in up to four families.
+                    long targetRows = safeMultiply(resultSet.getLong(2), 8L);
+                    long aliasPayload = safeAdd(safeMultiply(targetRows, resultSet.getLong(1)),
+                        safeMultiply(resultSet.getLong(3), 8L));
+                    //One table page and up to one page in each of the four Alias-v4 matcher indexes per target row.
+                    long aliasPages = safeMultiply(safeMultiply(targetRows, pageSize), 5L);
+                    long targetRoutes = safeMultiply(targetRows, resultSet.getLong(4));
+                    //The channel name is stored in the table, UNIQUE autoindex, and explicit name index.
+                    long routePayload = safeMultiply(
+                        safeMultiply(targetRows, resultSet.getLong(5)), 3L);
+                    long routePages = safeMultiply(safeMultiply(targetRoutes, pageSize), 3L);
+                    estimate = safeAdd(estimate,
+                        safeAdd(safeAdd(aliasPayload, aliasPages), safeAdd(routePayload, routePages)));
+                }
+            }
+            return estimate;
+        }
+    }
+
+    static long alpha7AliasWorkingSpace(Path database) throws SQLException
+    {
+        //Expanded alias pages can coexist in the database and WAL until the migrator's final checkpoint.
+        return safeMultiply(alpha7AliasExpansionEstimate(database), 2L);
+    }
+
+    static long alpha7DatabaseWorkingSpace(Path database, int databaseCopies) throws IOException, SQLException
+    {
+        long footprint = sqliteFootprint(database);
+        return safeAdd(safeMultiply(footprint, databaseCopies), alpha7AliasWorkingSpace(database));
+    }
+
+    private static void requireSeparatePhysicalRoots(Path sourceRoot, Path targetRoot) throws IOException
+    {
+        Path physicalSource = sourceRoot.toRealPath();
+        Path targetParent = targetRoot.getParent();
+        if(targetParent == null || targetRoot.getFileName() == null)
+        {
+            throw new IOException("The current portable data folder has no parent: " + targetRoot);
+        }
+        //Resolve the install parent, but never follow an existing target symlink that promotion would replace.
+        Path physicalTarget = effectivePhysicalPath(targetParent).resolve(targetRoot.getFileName()).normalize();
+        if(physicalSource.startsWith(physicalTarget) || physicalTarget.startsWith(physicalSource))
+        {
+            throw new IOException("The previous and current portable data folders overlap.");
+        }
+    }
+
+    private static Path effectivePhysicalPath(Path path) throws IOException
+    {
+        Path existing = path;
+        Deque<Path> missing = new ArrayDeque<>();
+        while(existing != null && !Files.exists(existing, LinkOption.NOFOLLOW_LINKS))
+        {
+            missing.addFirst(existing.getFileName());
+            existing = existing.getParent();
+        }
+        if(existing == null)
+        {
+            throw new IOException("The current portable data folder has no existing filesystem ancestor: " + path);
+        }
+        Path effective = existing.toRealPath();
+        for(Path element: missing)
+        {
+            effective = effective.resolve(element);
+        }
+        return effective.normalize();
     }
 
     private static long sqliteFootprint(Path database) throws IOException
@@ -617,6 +888,19 @@ public final class ApplicationMigrationService
     private static long safeMultiply(long value, int multiplier)
     {
         return value > Long.MAX_VALUE / multiplier ? Long.MAX_VALUE : value * multiplier;
+    }
+
+    private static long safeMultiply(long left, long right)
+    {
+        if(left < 0 || right < 0)
+        {
+            throw new IllegalArgumentException("Safe size multiplication requires non-negative values");
+        }
+        if(left == 0 || right == 0)
+        {
+            return 0;
+        }
+        return left > Long.MAX_VALUE / right ? Long.MAX_VALUE : left * right;
     }
 
     private static String humanSize(long bytes)
@@ -683,15 +967,25 @@ public final class ApplicationMigrationService
 
         public boolean supported()
         {
-            return SUPPORTED_ALIAS_VERSIONS.contains(aliasVersion) &&
-                SUPPORTED_P25_VERSIONS.contains(p25Version) &&
+            return current() || alpha7();
+        }
+
+        public boolean current()
+        {
+            return aliasVersion == CURRENT_ALIAS_VERSION && p25Version == CURRENT_P25_VERSION &&
                 Integer.valueOf(TrunkedSiteSchema.SCHEMA_VERSION).equals(trunkedSiteVersion) &&
                 Integer.valueOf(CURRENT_DMR_VERSION).equals(dmrVersion);
         }
 
+        public boolean alpha7()
+        {
+            return aliasVersion == ALPHA_7_ALIAS_VERSION && p25Version == ALPHA_7_P25_VERSION &&
+                Integer.valueOf(TrunkedSiteSchema.SCHEMA_VERSION).equals(trunkedSiteVersion) && dmrVersion == null;
+        }
+
         public boolean requiresMigration()
         {
-            return !supported();
+            return alpha7();
         }
 
         public String description()
@@ -703,8 +997,15 @@ public final class ApplicationMigrationService
 
         public String requiredChanges()
         {
-            return supported() ? "" :
-                "no bundled transition exists for this unreleased development schema";
+            if(current())
+            {
+                return "";
+            }
+            if(alpha7())
+            {
+                return "convert Alpha 7 channels and aliases and start activity/statistics history fresh";
+            }
+            return "no bundled transition exists for this schema combination";
         }
     }
 

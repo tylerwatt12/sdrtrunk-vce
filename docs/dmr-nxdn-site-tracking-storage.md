@@ -311,9 +311,11 @@ Schema v24 removes the obsolete `p25_talkgroup_summary`, `p25_radio_summary`, an
 projected into the shared tables; `p25_system`, P25 site/band/patch facts, and `p25_radio_affiliation` remain as
 protocol capabilities.
 
-These DMR changes are not yet a numbered public release boundary. Development and receiver test databases use a
-backed-up one-time conversion kept outside the repository. When the next `main` release is prepared, its bundled
-Application Migrator will receive one reviewed transition from the immediately preceding public `main` release.
+This release makes these DMR changes part of the numbered `main` release boundary. Its bundled Application Migrator
+accepts the immediately preceding Alpha 7 database, converts its channels and Alias v3 configuration, and creates
+empty current P25 v24, DMR v1, and trunked-site v2 activity schemas on a backed-up staged copy. Historical activity,
+counts, site observations, and quality records are intentionally not converted. Intermediate development schemas are
+not accepted.
 
 ## Retention
 
@@ -407,6 +409,7 @@ known trunking variant on that exact running channel and decoder configuration. 
 sustained decode loss and is cleared by the quality monitor's inactive shutdown snapshot, channel/configuration
 replacement, statistics disablement, or writer shutdown. Samples use the existing bounded statistics queue and single
 database writer. Existing retention, site-specific clear, and full reset paths already operate on this shared
-GUID-keyed table. New databases create the index in the single startup schema routine. The Application Migrator adds
-it to supported v19 and v20 databases only on a backed-up staged copy; ordinary application services never create or
-repair the index.
+GUID-keyed table. New databases create the index in the single startup schema routine. Alpha 7 P25 activity v21
+databases already contain an earlier copy of the index; the exact release migrator resets activity storage and creates
+the current empty schema and index. P25 v19 and v20 databases are not accepted. Ordinary application services never
+create or repair the index.
