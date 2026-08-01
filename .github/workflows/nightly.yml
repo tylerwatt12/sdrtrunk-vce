@@ -3,10 +3,10 @@ name: Nightly Release
 
 on:
   push:
-    branches: [ master ]
+    branches: [ main ]
 # Don't run nightly build for pull requests - uncomment to test changes to this action within scope of the PR review
 #  pull_request:
-#    branches: [ master ]
+#    branches: [ main ]
 
 jobs:
   nightly:
