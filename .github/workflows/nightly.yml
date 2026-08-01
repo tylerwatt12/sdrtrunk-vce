@@ -8,6 +8,9 @@ on:
 #  pull_request:
 #    branches: [ main ]
 
+permissions:
+  contents: write
+
 jobs:
   nightly:
     runs-on: ubuntu-latest
@@ -25,12 +28,12 @@ jobs:
       - name: Build Linux and Mac releases with Gradle
         uses: gradle/gradle-build-action@v2
         with:
-          arguments: runtimeZipOthers -PprojectVersion=nightly
+          arguments: --no-configuration-cache runtimeZipOthers -PprojectVersion=nightly
 
       - name: Build Windows release with Gradle
         uses: gradle/gradle-build-action@v2
         with:
-          arguments: runtimeZipWindows -PprojectVersion=nightly
+          arguments: --no-configuration-cache runtimeZipWindows -PprojectVersion=nightly
 
       - name: Create Build Info file
         run: |
@@ -40,6 +43,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: nightly
+          target_commitish: ${{ github.sha }}
           prerelease: true
           files: |
             build/image/*.zip
