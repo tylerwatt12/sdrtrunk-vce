@@ -1319,11 +1319,21 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
 
     /**
      * End Push-To-Talk (ie end of current audio segment on this channel).
+     * TIA-102.BBAC (December 2010), Section 8.2.2, Figures 8-7 through 8-9, and Section 8.4.8.
      */
     private void processEndPushToTalk(MacMessage message, MacStructure mac)
     {
-        if(mac instanceof EndPushToTalk)
+        if(mac instanceof EndPushToTalk endPushToTalk)
         {
+            List<Identifier> candidates = List.of(endPushToTalk.getSourceAddress(),
+                mPatchGroupManager.update(endPushToTalk.getGroupAddress(), message.getTimestamp()),
+                endPushToTalk.getNAC());
+
+            List<Identifier> recovered = mTrafficChannelManager.recoverP25TrafficEndFrameIdentifiers(
+                getCurrentFrequency(), getTimeslot(), Protocol.APCO25_PHASE2, getIdentifierCollection(), candidates,
+                message.getTimestamp());
+            getIdentifierCollection().update(recovered);
+
             //No matter what, remove the FROM identifier on end PTT.
             getIdentifierCollection().remove(Role.FROM);
 

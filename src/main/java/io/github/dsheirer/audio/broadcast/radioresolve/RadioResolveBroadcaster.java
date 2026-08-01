@@ -80,6 +80,7 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
     public static final String TEST_PATH = "/api/node/test";
     public static final String AGENT_VERSION = "sdrtrunk-vce";
     private static final String MULTIPART_FORM_DATA = "multipart/form-data";
+    private static final Duration CALL_UPLOAD_TIMEOUT = Duration.ofSeconds(30);
     private static final long METADATA_MINIMUM_SEND_INTERVAL_MILLISECONDS = TimeUnit.SECONDS.toMillis(30);
     private static final long MISSING_GUID_WARNING_INTERVAL_MILLISECONDS = TimeUnit.SECONDS.toMillis(60);
     private static final long[] RETRY_BACKOFF_MS = {5000, 15000, 30000, 60000, 120000};
@@ -576,6 +577,7 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
         return HttpRequest.newBuilder()
             .uri(createUri(configuration.getHost(), UPLOAD_PATH))
             .version(HttpClient.Version.HTTP_1_1)
+            .timeout(CALL_UPLOAD_TIMEOUT)
             .header(HttpHeaders.AUTHORIZATION, "Bearer " + configuration.getApiKey())
             .header(HttpHeaders.CONTENT_TYPE, MULTIPART_FORM_DATA + "; boundary=" + bodyBuilder.getBoundary())
             .header(HttpHeaders.USER_AGENT, "sdrtrunk-vce")

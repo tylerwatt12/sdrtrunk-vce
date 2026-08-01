@@ -76,6 +76,7 @@ import io.github.dsheirer.module.decode.p25.reference.ServiceOptions;
 import io.github.dsheirer.module.decode.p25.reference.VoiceServiceOptions;
 import io.github.dsheirer.module.decode.traffic.TrafficChannelManager;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
+import io.github.dsheirer.module.decode.traffic.TrunkedIdentityEligibility;
 import io.github.dsheirer.module.decode.traffic.TrunkedTalkerAliasEvent;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.sample.Listener;
@@ -1332,6 +1333,142 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         {
             mLock.unlock();
         }
+    }
+
+    /**
+     * Recovers identifiers carried by a valid P25 call-ending frame.  The ending frame can supply a source, target,
+     * or NAC that was missed at call start, but it must not change established call metadata or attach to a newer
+     * call that has already started on the same resource.
+     *
+     * <p>This method only operates on an existing, active traffic tracker.  It never creates or replaces a tracker.
+     * Returned identifiers are safe for the decoder state to apply to its audio metadata collection: an identifier
+     * is returned when the corresponding semantic source/target slot or exact NAC slot was empty and has been filled,
+     * or when the tracked slot already contains that exact identifier.</p>
+     *
+     * @param frequency traffic-channel frequency
+     * @param timeslot traffic-channel timeslot
+     * @param protocol APCO25 or APCO25_PHASE2
+     * @param decoderIdentifiers current identifiers in the decoder/audio metadata path
+     * @param identifiers end-frame identifiers to consider
+     * @param timestamp end-frame timestamp
+     * @return identifiers that are compatible with the existing tracked call
+     */
+    public List<Identifier> recoverP25TrafficEndFrameIdentifiers(long frequency, int timeslot, Protocol protocol,
+                                                                  IdentifierCollection decoderIdentifiers,
+                                                                  List<Identifier> identifiers, long timestamp)
+    {
+        if((protocol != Protocol.APCO25 && protocol != Protocol.APCO25_PHASE2) || decoderIdentifiers == null ||
+            identifiers == null || identifiers.isEmpty())
+        {
+            return Collections.emptyList();
+        }
+
+        mLock.lock();
+
+        try
+        {
+            P25TrafficChannelEventTracker tracker = getTracker(frequency, timeslot);
+
+            if(tracker == null || !tracker.isStarted() || tracker.isComplete() ||
+                timestamp < tracker.getEvent().getTimeStart())
+            {
+                return Collections.emptyList();
+            }
+
+            IdentifierCollection existingIdentifiers = tracker.getEvent().getIdentifierCollection();
+            MutableIdentifierCollection tracked = new MutableIdentifierCollection(existingIdentifiers.getIdentifiers(),
+                existingIdentifiers.getTimeslot());
+            List<Identifier> accepted = new ArrayList<>();
+            boolean changed = false;
+
+            for(Identifier identifier: identifiers)
+            {
+                if(!isEligibleP25EndFrameIdentifier(protocol, identifier))
+                {
+                    continue;
+                }
+
+                Identifier decoderExisting = getP25EndFrameSlot(decoderIdentifiers, identifier);
+                Identifier trackedExisting = getP25EndFrameSlot(tracked, identifier);
+
+                if((decoderExisting == null || decoderExisting.equals(identifier)) &&
+                    (trackedExisting == null || trackedExisting.equals(identifier)))
+                {
+                    if(trackedExisting == null)
+                    {
+                        tracked.update(identifier);
+                        changed = true;
+                    }
+
+                    accepted.add(identifier);
+                }
+            }
+
+            if(changed)
+            {
+                tracker.getEvent().setIdentifierCollection(tracked);
+                broadcast(tracker);
+            }
+
+            return accepted.isEmpty() ? Collections.emptyList() : List.copyOf(accepted);
+        }
+        finally
+        {
+            mLock.unlock();
+        }
+    }
+
+    private static boolean isEligibleP25EndFrameIdentifier(Protocol protocol, Identifier identifier)
+    {
+        if(identifier == null || !identifier.isValid())
+        {
+            return false;
+        }
+
+        if(identifier.getIdentifierClass() == IdentifierClass.NETWORK &&
+            identifier.getForm() == Form.NETWORK_ACCESS_CODE && identifier.getRole() == Role.BROADCAST)
+        {
+            return true;
+        }
+
+        if(identifier.getIdentifierClass() != IdentifierClass.USER)
+        {
+            return false;
+        }
+
+        boolean expectedRole = (identifier.getRole() == Role.FROM && identifier.getForm() == Form.RADIO) ||
+            (identifier.getRole() == Role.TO && (identifier.getForm() == Form.TALKGROUP ||
+                identifier.getForm() == Form.PATCH_GROUP || identifier.getForm() == Form.RADIO));
+
+        return expectedRole && TrunkedIdentityEligibility.isEligible(protocol, TrunkedIdentityDomain.STANDARD,
+            identifier.getForm(), integerValue(identifier));
+    }
+
+    private static Identifier getP25EndFrameSlot(IdentifierCollection identifiers, Identifier candidate)
+    {
+        if(candidate.getIdentifierClass() == IdentifierClass.USER)
+        {
+            return candidate.getRole() == Role.FROM ? identifiers.getIdentifier(IdentifierClass.USER, Form.RADIO,
+                Role.FROM) : identifiers.getToIdentifier();
+        }
+
+        return identifiers.getIdentifier(candidate.getIdentifierClass(), candidate.getForm(), candidate.getRole());
+    }
+
+    private static Integer integerValue(Identifier identifier)
+    {
+        if(identifier instanceof PatchGroupIdentifier patch && patch.getValue() != null &&
+            patch.getValue().getPatchGroup() != null)
+        {
+            return patch.getValue().getPatchGroup().getValue();
+        }
+
+        if(identifier instanceof FullyQualifiedRadioIdentifier radio)
+        {
+            return radio.getValue() != null && radio.getValue() > 0 ? radio.getValue() : radio.getRadio();
+        }
+
+        return identifier != null && identifier.getValue() instanceof Number number ? number.intValue() : null;
     }
 
     /**

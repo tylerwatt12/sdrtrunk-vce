@@ -42,6 +42,7 @@ import io.github.dsheirer.identifier.patch.PatchGroupManager;
 import io.github.dsheirer.identifier.patch.PatchGroupPreLoadDataContent;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.message.IMessage;
+import io.github.dsheirer.message.TimeslotMessage;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.event.DecodeEvent;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
@@ -1058,12 +1059,40 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
             resetHarrisTalkerAliasSource();
             LinkControlWord lcw = tdulc.getLinkControlWord();
 
-            if(lcw != null && lcw.isValid())
+            if(message.isValid() && lcw != null && lcw.isValid())
             {
+                recoverTerminatorIdentifiers(lcw, message.getTimestamp());
                 mTrafficChannelManager.processP1TrafficCallEnd(getCurrentFrequency(), message.getTimestamp());
                 broadcast(new DecoderStateEvent(this, Event.DECODE, State.ACTIVE));
                 processLC(lcw, message.getTimestamp(), true);
+                getIdentifierCollection().remove(IdentifierClass.USER);
             }
+        }
+    }
+
+    /**
+     * A valid TDULC channel-user word can recover source or target metadata that was missed at call start.  Only
+     * identifiers compatible with the existing tracked call are applied, and they are applied before the call-end
+     * event freezes audio metadata.
+     *
+     * Historical protocol references: ANSI/TIA-102.BAAA-A-2003 section 8.2.3 and figure 8-6; and
+     * ANSI/TIA-102.AABF-A-2004 sections 7.3.1 and 7.3.3.
+     */
+    private void recoverTerminatorIdentifiers(LinkControlWord lcw, long timestamp)
+    {
+        switch(lcw.getOpcode())
+        {
+            case GROUP_VOICE_CHANNEL_USER, MOTOROLA_GROUP_REGROUP_VOICE_CHANNEL_USER,
+                    TELEPHONE_INTERCONNECT_VOICE_CHANNEL_USER, UNIT_TO_UNIT_VOICE_CHANNEL_USER,
+                    UNIT_TO_UNIT_VOICE_CHANNEL_USER_EXTENDED:
+                List<Identifier> resolved = mPatchGroupManager.update(lcw.getIdentifiers(), timestamp);
+                List<Identifier> recovered = mTrafficChannelManager.recoverP25TrafficEndFrameIdentifiers(
+                    getCurrentFrequency(), TimeslotMessage.TIMESLOT_1, Protocol.APCO25,
+                    getIdentifierCollection(), resolved, timestamp);
+                getIdentifierCollection().update(recovered);
+                break;
+            default:
+                break;
         }
     }
 
@@ -2038,11 +2067,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
             case GROUP_VOICE_CHANNEL_USER, MOTOROLA_GROUP_REGROUP_VOICE_CHANNEL_USER,
                     TELEPHONE_INTERCONNECT_VOICE_CHANNEL_USER, UNIT_TO_UNIT_VOICE_CHANNEL_USER,
                     UNIT_TO_UNIT_VOICE_CHANNEL_USER_EXTENDED:
-                if(isTerminator)
-                {
-                    getIdentifierCollection().update(mPatchGroupManager.update(lcw.getIdentifiers(), timestamp));
-                }
-                else
+                if(!isTerminator)
                 {
                     processLCChannelUser(lcw, timestamp);
                 }
