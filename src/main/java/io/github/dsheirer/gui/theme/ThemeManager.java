@@ -22,6 +22,7 @@ package io.github.dsheirer.gui.theme;
 import com.formdev.flatlaf.FlatLightLaf;
 import com.google.common.eventbus.Subscribe;
 import com.jidesoft.plaf.LookAndFeelFactory;
+import com.jidesoft.swing.JideTabbedPane;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.preference.UserPreferences;
@@ -819,8 +820,12 @@ public class ThemeManager
         UIManager.put("TabbedPane.selectedForeground", fgPrimary);
         UIManager.put("TabbedPane.selected", bgRaised);
         UIManager.put("TabbedPane.contentAreaColor", bgPanel);
+        UIManager.put("TabbedPane.tabSeparatorColor", border);
         UIManager.put("TabbedPane.darkShadow", border);
         UIManager.put("TabbedPane.shadow", border);
+        UIManager.put("TabbedPane.showTabSeparators", true);
+        UIManager.put("TabbedPane.tabSeparatorsFullHeight", true);
+        UIManager.put("TabbedPane.hasFullBorder", true);
 
         UIManager.put("MenuItem.selectionBackground", bgSelection);
         UIManager.put("MenuItem.selectionForeground", fgSelection);
@@ -853,6 +858,8 @@ public class ThemeManager
         UIManager.put("JideTabbedPane.darkShadow", border);
         UIManager.put("JideTabbedPane.light", bgRaised);
         UIManager.put("JideTabbedPane.highlight", bgRaised);
+        UIManager.put("JideTabbedPane.defaultTabShape", JideTabbedPane.SHAPE_BOX);
+        UIManager.put("JideTabbedPane.defaultTabBorderShadowColor", border);
 
         UIManager.put("JideSplitPane.background", bgPanel);
         UIManager.put("JideSplitPaneDivider.background", bgPanel);

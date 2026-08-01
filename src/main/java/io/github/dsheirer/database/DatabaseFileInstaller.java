@@ -6,14 +6,19 @@
 package io.github.dsheirer.database;
 
 import java.io.IOException;
+import java.nio.channels.FileChannel;
+import java.nio.channels.FileLock;
+import java.nio.channels.OverlappingFileLockException;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.UUID;
 
 /**
  * Creates a SQLite database in a temporary sibling file and atomically installs it after a successful checkpoint.
@@ -33,22 +38,60 @@ public final class DatabaseFileInstaller
             throw new IOException("Refusing to overwrite existing SQLite database: " + target);
         }
 
-        Files.createDirectories(target.getParent());
-        Path temporary = target.resolveSibling(target.getFileName() + ".creating");
-        delete(temporary);
+        Path parent = target.getParent();
+        if(parent == null)
+        {
+            throw new IOException("SQLite database has no parent folder: " + target);
+        }
+        Files.createDirectories(parent);
+        Path lockPath = target.resolveSibling("." + target.getFileName() + ".install.lock");
 
+        try(FileChannel lockChannel = FileChannel.open(lockPath, StandardOpenOption.CREATE, StandardOpenOption.WRITE);
+            FileLock ignored = tryLock(lockChannel, target))
+        {
+            if(Files.exists(target))
+            {
+                throw new IOException("Refusing to overwrite existing SQLite database: " + target);
+            }
+
+            Path temporary = target.resolveSibling(target.getFileName() + ".creating-" + UUID.randomUUID());
+            try
+            {
+                builder.build(temporary);
+                checkpoint(temporary);
+                move(temporary, target);
+                deleteSidecars(temporary);
+            }
+            catch(IOException | SQLException | RuntimeException | Error e)
+            {
+                try
+                {
+                    delete(temporary);
+                }
+                catch(IOException cleanupFailure)
+                {
+                    e.addSuppressed(cleanupFailure);
+                }
+                throw e;
+            }
+        }
+    }
+
+    private static FileLock tryLock(FileChannel channel, Path target) throws IOException
+    {
         try
         {
-            builder.build(temporary);
-            checkpoint(temporary);
-            move(temporary, target);
-            deleteSidecars(temporary);
+            FileLock lock = channel.tryLock();
+            if(lock != null)
+            {
+                return lock;
+            }
         }
-        catch(IOException | SQLException | RuntimeException e)
+        catch(OverlappingFileLockException e)
         {
-            delete(temporary);
-            throw e;
+            throw new IOException("SQLite database setup is already in progress: " + target, e);
         }
+        throw new IOException("SQLite database setup is already in progress: " + target);
     }
 
     private static void checkpoint(Path databasePath) throws SQLException
@@ -80,6 +123,7 @@ public final class DatabaseFileInstaller
 
     private static void deleteSidecars(Path database) throws IOException
     {
+        Files.deleteIfExists(database.resolveSibling(database.getFileName() + "-journal"));
         Files.deleteIfExists(database.resolveSibling(database.getFileName() + "-wal"));
         Files.deleteIfExists(database.resolveSibling(database.getFileName() + "-shm"));
     }

@@ -239,7 +239,8 @@ public class ChannelMetadataPanel extends JPanel implements ListSelectionListene
                     label.setText(Joiner.on(", ").skipNulls().join(aliases));
                     Alias firstAlias = Alias.class.cast(aliases.getFirst());
                     label.setIcon(mIconModel.getIcon(firstAlias.getIconName(), IconModel.DEFAULT_ICON_SIZE));
-                    label.setForeground(firstAlias.getDisplayColor());
+                    label.setForeground(firstAlias.getColor() == 0 ? table.getForeground() :
+                        firstAlias.getDisplayColor());
                 }
                 else
                 {

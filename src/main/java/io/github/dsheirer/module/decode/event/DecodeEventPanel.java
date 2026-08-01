@@ -432,8 +432,14 @@ public class DecodeEventPanel extends JPanel implements Listener<SelectedFrequen
                                     sb.append(",");
                                 }
                                 sb.append(Joiner.on(", ").skipNulls().join(aliases));
-                                color = aliases.get(0).getDisplayColor();
-                                icon = mIconModel.getIcon(aliases.get(0).getIconName(), IconModel.DEFAULT_ICON_SIZE);
+                                Alias firstAlias = aliases.get(0);
+
+                                if(firstAlias.getColor() != 0)
+                                {
+                                    color = firstAlias.getDisplayColor();
+                                }
+
+                                icon = mIconModel.getIcon(firstAlias.getIconName(), IconModel.DEFAULT_ICON_SIZE);
                             }
                         }
 

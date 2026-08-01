@@ -32,9 +32,15 @@ Saved output and library paths that point inside the previous data folder are ch
 the new data folder. Deliberately shared paths outside the previous data folder are left alone.
 
 Schema transitions are added only while preparing a numbered public release, from the immediately preceding public
-release on the same product track. The Alpha 7 tag therefore retains the Alpha 6 to Alpha 7 transition that added
-Alias descriptions, the P25 v21 changes, and the trunked-site schema. The current unreleased development branch does
-not carry those predecessor paths forward and accepts only its exact current schema.
+release on the same product track. This release accepts either an exact Alpha 7 database (Alias v3, P25 activity v21,
+trunked-site v2, and no DMR activity schema) or its exact current database (Alias v4, P25 activity v24, trunked-site
+v2, and DMR activity v1). It does not accept Alpha 1 through Alpha 6 databases, mixed schema combinations, or
+intermediate development schemas; those older public releases must be upgraded sequentially through Alpha 7.
+
+The Alpha 7 transition preserves application and tuner settings, channels, channel maps, supported broadcast streams,
+icons, and converted aliases. It starts P25, DMR, and trunked-site activity/statistics storage empty instead of
+converting historical calls, counts, affiliations, site observations, or quality records. The unchanged Alpha 7 safety
+backup remains available if that history is needed outside the new release.
 
 ## Recording Storage By Release Track
 

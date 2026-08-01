@@ -11,6 +11,9 @@
 
 package io.github.dsheirer.database;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -18,6 +21,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HexFormat;
 import java.util.List;
 
 /**
@@ -72,6 +76,40 @@ public final class SqliteSchemaValidator
                     "] does not match its current-schema definition");
             }
         }
+    }
+
+    /**
+     * Fingerprints every application-owned schema object while ignoring SQLite's optional sqlite_* statistics and
+     * autoindex objects. Harmless quotes retained by published column-add operations are normalized.
+     */
+    public static String fingerprint(Connection connection) throws SQLException
+    {
+        MessageDigest digest;
+        try
+        {
+            digest = MessageDigest.getInstance("SHA-256");
+        }
+        catch(NoSuchAlgorithmException e)
+        {
+            throw new SQLException("SHA-256 is unavailable for SQLite schema validation", e);
+        }
+
+        try(Statement statement = connection.createStatement();
+            ResultSet resultSet = statement.executeQuery("""
+                SELECT type, name, sql
+                FROM sqlite_master
+                WHERE name NOT GLOB 'sqlite_*'
+                ORDER BY type, name
+                """))
+        {
+            while(resultSet.next())
+            {
+                updateDigest(digest, resultSet.getString("type"));
+                updateDigest(digest, resultSet.getString("name"));
+                updateDigest(digest, canonicalSql(resultSet.getString("sql")));
+            }
+        }
+        return HexFormat.of().formatHex(digest.digest());
     }
 
     private static void validateTable(Connection connection, Table table) throws SQLException
@@ -139,9 +177,19 @@ public final class SqliteSchemaValidator
             .replaceFirst(
                 "(?i)^CREATE\\s+((?:UNIQUE\\s+)?(?:TABLE|INDEX|VIEW|TRIGGER))\\s+IF\\s+NOT\\s+EXISTS\\s+",
                 "CREATE $1 ")
+            .replaceAll("\"([A-Za-z_][A-Za-z0-9_]*)\"", "$1")
             .replaceAll("\\s+", " ")
             .replaceAll("\\s*([(),=])\\s*", "$1")
             .replaceFirst(";\\s*$", "");
+    }
+
+    private static void updateDigest(MessageDigest digest, String value)
+    {
+        if(value != null)
+        {
+            digest.update(value.getBytes(StandardCharsets.UTF_8));
+        }
+        digest.update((byte)0);
     }
 
     private static List<String> columns(Connection connection, String table) throws SQLException

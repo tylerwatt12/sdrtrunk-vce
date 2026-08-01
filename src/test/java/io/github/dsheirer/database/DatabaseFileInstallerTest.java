@@ -15,6 +15,9 @@ import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.Statement;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -38,11 +41,11 @@ class DatabaseFileInstallerTest
         });
 
         assertTrue(Files.isRegularFile(database));
-        assertFalse(Files.exists(mTemporaryFolder.resolve("sdrtrunk.sqlite.creating")));
+        assertNoCreatingFiles();
     }
 
     @Test
-    void removesIncompleteDatabaseWhenBuilderFails()
+    void removesIncompleteDatabaseWhenBuilderFails() throws Exception
     {
         Path database = mTemporaryFolder.resolve("sdrtrunk.sqlite");
 
@@ -53,7 +56,7 @@ class DatabaseFileInstallerTest
         }));
 
         assertFalse(Files.exists(database));
-        assertFalse(Files.exists(mTemporaryFolder.resolve("sdrtrunk.sqlite.creating")));
+        assertNoCreatingFiles();
     }
 
     @Test
@@ -64,5 +67,59 @@ class DatabaseFileInstallerTest
 
         assertThrows(IOException.class, () -> DatabaseFileInstaller.install(database, ignored -> { }));
         assertTrue(Files.isRegularFile(database));
+    }
+
+    @Test
+    void concurrentInstallCannotDeleteOrReplaceAnotherInstallStage() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("sdrtrunk.sqlite");
+        CountDownLatch builderEntered = new CountDownLatch(1);
+        CountDownLatch releaseBuilder = new CountDownLatch(1);
+        try(var executor = Executors.newSingleThreadExecutor())
+        {
+            var first = executor.submit(() ->
+            {
+                DatabaseFileInstaller.install(database, temporary ->
+                {
+                    builderEntered.countDown();
+                    try
+                    {
+                        if(!releaseBuilder.await(10, TimeUnit.SECONDS))
+                        {
+                            throw new IOException("Timed out waiting to finish the first test install");
+                        }
+                    }
+                    catch(InterruptedException e)
+                    {
+                        Thread.currentThread().interrupt();
+                        throw new IOException("Interrupted while testing concurrent install", e);
+                    }
+                    try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + temporary);
+                        Statement statement = connection.createStatement())
+                    {
+                        statement.execute("CREATE TABLE installed (id INTEGER PRIMARY KEY)");
+                    }
+                });
+                return null;
+            });
+
+            assertTrue(builderEntered.await(10, TimeUnit.SECONDS));
+            IOException competing = assertThrows(IOException.class,
+                () -> DatabaseFileInstaller.install(database, ignored -> { }));
+            assertTrue(competing.getMessage().contains("already in progress"));
+            releaseBuilder.countDown();
+            first.get(10, TimeUnit.SECONDS);
+        }
+
+        assertTrue(Files.isRegularFile(database));
+        assertNoCreatingFiles();
+    }
+
+    private void assertNoCreatingFiles() throws Exception
+    {
+        try(var paths = Files.list(mTemporaryFolder))
+        {
+            assertFalse(paths.anyMatch(path -> path.getFileName().toString().contains(".creating-")));
+        }
     }
 }

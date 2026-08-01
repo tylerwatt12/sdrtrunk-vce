@@ -55,6 +55,7 @@ import javax.swing.JTabbedPane;
 import javax.swing.ScrollPaneConstants;
 import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
+import javax.swing.UIManager;
 import javax.swing.event.ChangeEvent;
 import javax.swing.event.ListSelectionEvent;
 import javax.swing.event.TableColumnModelEvent;
@@ -716,8 +717,6 @@ public class ChannelActivityPanel extends JPanel
         mForegroundColors.put(State.ENCRYPTED, Color.WHITE);
         mBackgroundColors.put(State.FADE, Color.LIGHT_GRAY);
         mForegroundColors.put(State.FADE, Color.DARK_GRAY);
-        mBackgroundColors.put(State.IDLE, Color.WHITE);
-        mForegroundColors.put(State.IDLE, Color.DARK_GRAY);
         mBackgroundColors.put(State.RESET, Color.PINK);
         mForegroundColors.put(State.RESET, Color.YELLOW);
         mBackgroundColors.put(State.TEARDOWN, Color.DARK_GRAY);
@@ -736,6 +735,8 @@ public class ChannelActivityPanel extends JPanel
                                                        boolean hasFocus, int row, int column)
         {
             JLabel label = (JLabel)super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
+            label.setBackground(getRowBackground(table, row));
+            label.setForeground(table.getForeground());
 
             if(value instanceof State state)
             {
@@ -751,13 +752,35 @@ public class ChannelActivityPanel extends JPanel
                     }
                 }
 
-                label.setBackground(mBackgroundColors.getOrDefault(state, table.getBackground()));
-                label.setForeground(mForegroundColors.getOrDefault(state, table.getForeground()));
+                if(mBackgroundColors.containsKey(state))
+                {
+                    label.setBackground(mBackgroundColors.get(state));
+                }
+
+                if(mForegroundColors.containsKey(state))
+                {
+                    label.setForeground(mForegroundColors.get(state));
+                }
             }
 
             applySelectionBorder(table, label, isSelected, column);
             return label;
         }
+    }
+
+    private Color getRowBackground(JTable table, int row)
+    {
+        if(row % 2 != 0)
+        {
+            Color alternate = UIManager.getColor("Table.alternateRowColor");
+
+            if(alternate != null)
+            {
+                return alternate;
+            }
+        }
+
+        return table.getBackground();
     }
 
     private boolean advancedEncryptionStatus()
@@ -917,8 +940,8 @@ public class ChannelActivityPanel extends JPanel
                     label.setText(Joiner.on(", ").skipNulls().join(aliases));
                     Alias firstAlias = Alias.class.cast(aliases.getFirst());
                     label.setIcon(mIconModel.getIcon(firstAlias.getIconName(), IconModel.DEFAULT_ICON_SIZE));
-
-                    label.setForeground(firstAlias.getDisplayColor());
+                    label.setForeground(firstAlias.getColor() == 0 ? table.getForeground() :
+                        firstAlias.getDisplayColor());
                 }
                 else
                 {
@@ -1108,7 +1131,6 @@ public class ChannelActivityPanel extends JPanel
         {
             JLabel label = (JLabel)super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
             label.setForeground(table.getForeground());
-            label.setBackground(table.getBackground());
             applySelectionBorder(table, label, isSelected, column);
             return label;
         }

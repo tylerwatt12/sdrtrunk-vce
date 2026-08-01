@@ -71,15 +71,21 @@ public final class ApplicationMigratorLauncher
         }
         catch(InterruptedException e)
         {
-            process.destroyForcibly();
+            try
+            {
+                destroyAndWait(process);
+            }
+            catch(InterruptedException cleanupInterruption)
+            {
+                e.addSuppressed(cleanupInterruption);
+            }
             Thread.currentThread().interrupt();
             throw e;
         }
 
         if(!completed)
         {
-            process.destroyForcibly();
-            process.waitFor(10, TimeUnit.SECONDS);
+            destroyAndWait(process);
             throw new IOException("The application database migrator did not finish within " +
                 PROCESS_TIMEOUT.toMinutes() + " minutes.");
         }
@@ -93,6 +99,36 @@ public final class ApplicationMigratorLauncher
         }
 
         return output;
+    }
+
+    private static void destroyAndWait(Process process) throws InterruptedException
+    {
+        process.destroyForcibly();
+        InterruptedException interruption = null;
+        while(process.isAlive())
+        {
+            try
+            {
+                process.waitFor();
+            }
+            catch(InterruptedException e)
+            {
+                if(interruption == null)
+                {
+                    interruption = e;
+                }
+                else
+                {
+                    interruption.addSuppressed(e);
+                }
+            }
+        }
+
+        if(interruption != null)
+        {
+            Thread.currentThread().interrupt();
+            throw interruption;
+        }
     }
 
     static List<String> command(Path stagedDatabase) throws IOException

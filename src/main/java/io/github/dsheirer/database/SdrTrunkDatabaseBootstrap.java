@@ -35,6 +35,8 @@ public final class SdrTrunkDatabaseBootstrap
 {
     private static final String TITLE = "sdrtrunk-vce Setup";
     private static final String MIGRATOR_TITLE = "sdrtrunk-vce Application Migrator";
+    private static final String ALPHA_7_SUMMARY_PREFIX = "Alpha 7 migration:";
+    private static final int MAXIMUM_MIGRATION_SUMMARY_LENGTH = 8_192;
 
     private SdrTrunkDatabaseBootstrap()
     {
@@ -59,9 +61,10 @@ public final class SdrTrunkDatabaseBootstrap
 
             if(!state.supported())
             {
-                throw new IOException("This unreleased development build has no bundled transition for " +
-                    state.description() + ". Use a separately backed-up one-time development conversion, or wait " +
-                    "for the next numbered release migrator.");
+                throw new IOException("This release accepts only an exact Alpha 7 database or its exact current " +
+                    "database, not " + state.description() + ". Upgrade an older public release sequentially to " +
+                    "Alpha 7 first. Intermediate development and webfirst databases are not supported; keep " +
+                    "separate portable data folders for main and webfirst.");
             }
 
             if(state.requiresMigration())
@@ -84,6 +87,7 @@ public final class SdrTrunkDatabaseBootstrap
                 if(GraphicsEnvironment.isHeadless())
                 {
                     result = service.migrateCurrent(dataRoot, System.out::println);
+                    printMigrationSummary(result);
                 }
                 else
                 {
@@ -107,7 +111,8 @@ public final class SdrTrunkDatabaseBootstrap
                     }
 
                     JOptionPane.showMessageDialog(null,
-                        "Your database was migrated successfully.\n\nSafety backup:\n" + result.safetyBackup(),
+                        "Your database was migrated successfully." + dialogMigrationSummary(result) +
+                            "\n\nSafety backup:\n" + result.safetyBackup(),
                         MIGRATOR_TITLE, JOptionPane.INFORMATION_MESSAGE);
                 }
             }
@@ -139,7 +144,9 @@ public final class SdrTrunkDatabaseBootstrap
             Path source = PreviousBuildLocator.resolveSelection(options.upgradeData()).orElseThrow(() ->
                 new IOException("The selected location does not contain portable sdrtrunk-vce data: " +
                     options.upgradeData()));
-            new ApplicationMigrationService().importPrevious(source, dataRoot, System.out::println);
+            ApplicationMigrationService.MigrationResult migration =
+                new ApplicationMigrationService().importPrevious(source, dataRoot, System.out::println);
+            printMigrationSummary(migration);
             result = BootstrapResult.existingProfile();
         }
         else if(GraphicsEnvironment.isHeadless())
@@ -328,12 +335,42 @@ public final class SdrTrunkDatabaseBootstrap
         }
 
         ApplicationMigrationService service = new ApplicationMigrationService();
-        ApplicationMigrationProgressDialog.run(null, MIGRATOR_TITLE,
+        ApplicationMigrationService.MigrationResult result = ApplicationMigrationProgressDialog.run(null,
+            MIGRATOR_TITLE,
             progress -> service.importPrevious(source, target, progress));
         JOptionPane.showMessageDialog(null,
-            "Migration complete. Your previous installation and its data were left unchanged.", MIGRATOR_TITLE,
+            "Migration complete. Your previous installation and its data were left unchanged." +
+                dialogMigrationSummary(result), MIGRATOR_TITLE,
             JOptionPane.INFORMATION_MESSAGE);
         return true;
+    }
+
+    /** Returns only the release-owned summary line, never the helper process's other captured output. */
+    static Optional<String> alpha7MigrationSummary(String helperOutput)
+    {
+        if(helperOutput == null || helperOutput.isBlank())
+        {
+            return Optional.empty();
+        }
+
+        return helperOutput.lines()
+            .map(String::trim)
+            .filter(line -> line.startsWith(ALPHA_7_SUMMARY_PREFIX))
+            .filter(line -> line.length() <= MAXIMUM_MIGRATION_SUMMARY_LENGTH)
+            .filter(line -> line.matches("[A-Za-z0-9 .,:;=/()_-]+"))
+            .findFirst();
+    }
+
+    private static void printMigrationSummary(ApplicationMigrationService.MigrationResult result)
+    {
+        alpha7MigrationSummary(result.helperOutput()).ifPresent(System.out::println);
+    }
+
+    private static String dialogMigrationSummary(ApplicationMigrationService.MigrationResult result)
+    {
+        return alpha7MigrationSummary(result.helperOutput())
+            .map(summary -> "\n\nMigration summary:\n" + summary)
+            .orElse("");
     }
 
     private static boolean confirmCurrentMigration(Path database, ApplicationMigrationService.MigrationState state)

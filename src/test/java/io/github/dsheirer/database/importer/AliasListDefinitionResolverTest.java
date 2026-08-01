@@ -11,8 +11,9 @@
 
 package io.github.dsheirer.database.importer;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.alias.Alias;
@@ -20,22 +21,30 @@ import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.alias.AliasMatchRegistry;
 import io.github.dsheirer.alias.id.AliasID;
-import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
+import io.github.dsheirer.alias.id.dcs.Dcs;
 import io.github.dsheirer.alias.id.radio.Radio;
+import io.github.dsheirer.alias.id.status.UnitStatusID;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.configuration.ConfigurationState;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.module.decode.DecoderType;
+import io.github.dsheirer.module.decode.dcs.DCSCode;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.protocol.Protocol;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class AliasListDefinitionResolverTest
 {
+    @TempDir
+    Path mTemporaryFolder;
+
     @Test
-    void firstChannelClaimsLegacyListAndConflictingChannelIsDetached()
+    void splitsSharedLegacyNameAndPreservesEveryCompatibleAliasAndRoute()
     {
         ConfigurationState state = new ConfigurationState();
         Channel p25 = channel("Metro P25", "Shared", new DecodeConfigP25Phase1());
@@ -44,23 +53,38 @@ class AliasListDefinitionResolverTest
 
         Alias p25Source = alias("Dispatch", "Shared", new Talkgroup(Protocol.APCO25, 101));
         Alias dmrSource = alias("Dispatch", "Shared", new Radio(Protocol.DMR, 202));
-        state.setAliases(List.of(p25Source, dmrSource));
+        Alias sharedStatus = alias("Emergency", "Shared", unitStatus(3));
+        sharedStatus.setRecordable(true);
+        sharedStatus.addBroadcastChannel("Calls");
+        state.setAliases(List.of(p25Source, dmrSource, sharedStatus));
 
         AliasListDefinitionResolver.normalizeLegacyState(state);
 
-        assertEquals(1, state.getAliasListDefinitions().size());
-        assertEquals(1, state.getAliases().size());
-        assertEquals("Shared", p25.getAliasListName());
-        assertNull(dmr.getAliasListName());
+        assertEquals(2, state.getAliasListDefinitions().size());
+        assertEquals(4, state.getAliases().size());
+        assertEquals("Shared [P25]", p25.getAliasListName());
+        assertEquals("Shared [DMR]", dmr.getAliasListName());
 
         AliasListDefinition p25List = definition(state, p25.getAliasListName());
+        AliasListDefinition dmrList = definition(state, dmr.getAliasListName());
         assertEquals(AliasListFamily.P25, p25List.getFamily());
+        assertEquals(AliasListFamily.DMR, dmrList.getFamily());
         assertTrue(AliasMatchRegistry.allowed(p25List).stream()
             .noneMatch(descriptor -> descriptor.matches(new Talkgroup(Protocol.DMR, 1))));
 
-        Alias p25Alias = state.getAliases().getFirst();
+        Alias p25Alias = aliases(state, "Dispatch").stream()
+            .filter(alias -> alias.getMatchIdentifier() instanceof Talkgroup).findFirst().orElseThrow();
         assertEquals(p25List.getName(), p25Alias.getAliasListName());
         assertEquals(101, ((Talkgroup)p25Alias.getMatchIdentifier()).getValue());
+
+        List<Alias> statusAliases = aliases(state, "Emergency");
+        assertEquals(2, statusAliases.size());
+        assertNotSame(statusAliases.get(0), statusAliases.get(1));
+        assertEquals(List.of("Shared [P25]", "Shared [DMR]"),
+            statusAliases.stream().map(Alias::getAliasListName).toList());
+        assertTrue(statusAliases.stream().allMatch(Alias::isRecordable));
+        assertTrue(statusAliases.stream().allMatch(alias -> alias.hasBroadcastChannel("Calls")));
+        assertTrue(statusAliases.stream().allMatch(alias -> alias.getMatchIdentifier() instanceof UnitStatusID));
     }
 
     @Test
@@ -88,6 +112,22 @@ class AliasListDefinitionResolverTest
         assertTrue(state.getAliases().getFirst().hasBroadcastChannel("Calls"));
         assertEquals("Regional", north.getAliasListName());
         assertEquals("Regional", south.getAliasListName());
+    }
+
+    @Test
+    void genericMatcherUsesClaimedFamilyWithoutInventingAnotherProtocol()
+    {
+        ConfigurationState state = new ConfigurationState();
+        Channel p25 = channel("Metro", "Regional", new DecodeConfigP25Phase1());
+        state.setChannels(List.of(p25));
+        state.setAliases(List.of(alias("Emergency", "Regional", unitStatus(4))));
+
+        AliasListDefinitionResolver.normalizeLegacyState(state);
+
+        assertEquals(1, state.getAliasListDefinitions().size());
+        assertEquals(AliasListFamily.P25, state.getAliasListDefinitions().getFirst().getFamily());
+        assertEquals("Regional", p25.getAliasListName());
+        assertEquals(1, state.getAliases().size());
     }
 
     @Test
@@ -122,7 +162,7 @@ class AliasListDefinitionResolverTest
     }
 
     @Test
-    void omitsUnassignedListWhenMatchersSpanMultipleFamilies()
+    void splitsNamedListInferredFromMixedMatchersWithoutChannels()
     {
         ConfigurationState state = new ConfigurationState();
         state.setAliases(List.of(
@@ -131,25 +171,145 @@ class AliasListDefinitionResolverTest
 
         AliasListDefinitionResolver.normalizeLegacyState(state);
 
-        assertTrue(state.getAliasListDefinitions().isEmpty());
-        assertTrue(state.getAliases().isEmpty());
+        assertEquals(List.of("Mixed [P25]", "Mixed [DMR]"),
+            state.getAliasListDefinitions().stream().map(AliasListDefinition::getName).toList());
+        assertEquals(2, state.getAliases().size());
+        assertEquals(List.of("Mixed [P25]", "Mixed [DMR]"),
+            state.getAliases().stream().map(Alias::getAliasListName).toList());
     }
 
     @Test
-    void silentlyDropsMatchersThatDoNotBelongToTheClaimedFamily()
+    void matcherFamilyAddsASecondDefinitionInsteadOfBeingDropped()
     {
         ConfigurationState state = new ConfigurationState();
         Channel p25 = channel("Metro P25", "Metro Aliases", new DecodeConfigP25Phase1());
         state.setChannels(List.of(p25));
         state.setAliases(List.of(
             alias("Dispatch", "Metro Aliases", new Talkgroup(Protocol.APCO25, 101)),
-            alias("Legacy MDC", "Metro Aliases", new Talkgroup(Protocol.MDC1200, 202))));
+            alias("DMR Dispatch", "Metro Aliases", new Talkgroup(Protocol.DMR, 202))));
 
         AliasListDefinitionResolver.normalizeLegacyState(state);
 
-        assertEquals(1, state.getAliases().size());
-        assertEquals("Dispatch", state.getAliases().getFirst().getName());
-        assertEquals(101, ((Talkgroup)state.getAliases().getFirst().getMatchIdentifier()).getValue());
+        assertEquals(List.of("Metro Aliases [P25]", "Metro Aliases [DMR]"),
+            state.getAliasListDefinitions().stream().map(AliasListDefinition::getName).toList());
+        assertEquals("Metro Aliases [P25]", p25.getAliasListName());
+        assertEquals(2, state.getAliases().size());
+        assertEquals(List.of("Dispatch", "DMR Dispatch"),
+            state.getAliases().stream().map(Alias::getName).toList());
+    }
+
+    @Test
+    void recoversNullBlankAndNoAliasListAliasesIntoFamilyOwnedLists()
+    {
+        ConfigurationState state = new ConfigurationState();
+        state.setAliases(List.of(
+            alias("P25", null, new Talkgroup(Protocol.APCO25, 1)),
+            alias("DMR", "   ", new Talkgroup(Protocol.DMR, 2)),
+            alias("NXDN", "(No Alias List)", new Talkgroup(Protocol.NXDN, 3))));
+
+        AliasListDefinitionResolver.normalizeLegacyState(state);
+
+        assertEquals(List.of("Imported Unassigned [P25]", "Imported Unassigned [DMR]",
+                "Imported Unassigned [NXDN]"),
+            state.getAliasListDefinitions().stream().map(AliasListDefinition::getName).toList());
+        assertEquals(List.of("Imported Unassigned [P25]", "Imported Unassigned [DMR]",
+                "Imported Unassigned [NXDN]"),
+            state.getAliases().stream().map(Alias::getAliasListName).toList());
+    }
+
+    @Test
+    void clonesAmbiguousUnassignedMatcherIntoEachCompatibleFamily()
+    {
+        ConfigurationState state = new ConfigurationState();
+        Alias status = alias("Emergency", null, unitStatus(5));
+        status.addBroadcastChannel("Calls");
+        state.setAliases(List.of(status));
+
+        AliasListDefinitionResolver.normalizeLegacyState(state);
+
+        assertEquals(List.of("Imported Unassigned [P25]", "Imported Unassigned [DMR]"),
+            state.getAliasListDefinitions().stream().map(AliasListDefinition::getName).toList());
+        assertEquals(2, state.getAliases().size());
+        assertTrue(state.getAliases().stream().allMatch(alias -> alias.hasBroadcastChannel("Calls")));
+    }
+
+    @Test
+    void preservesAmbiguousMatcherAlongsideIncompatibleSingletonMatcher()
+    {
+        ConfigurationState state = new ConfigurationState();
+        Dcs dcs = new Dcs();
+        dcs.setDCSCode(DCSCode.N023);
+        state.setAliases(List.of(
+            alias("DCS", "Mixed", dcs),
+            alias("Unit Status", "Mixed", unitStatus(6))));
+
+        AliasListDefinitionResolver.normalizeLegacyState(state);
+
+        assertEquals(List.of(AliasListFamily.P25, AliasListFamily.NBFM),
+            state.getAliasListDefinitions().stream().map(AliasListDefinition::getFamily).toList());
+        assertEquals(2, state.getAliases().size());
+        assertEquals("Mixed [NBFM]", aliases(state, "DCS").getFirst().getAliasListName());
+        assertEquals("Mixed [P25]", aliases(state, "Unit Status").getFirst().getAliasListName());
+    }
+
+    @Test
+    void preservesSingleFamilyOriginalNameWhenGeneratedFamilyNameWouldCollide()
+    {
+        ConfigurationState state = new ConfigurationState();
+        Channel p25 = channel("Metro P25", "Shared", new DecodeConfigP25Phase1());
+        Channel dmr = channel("Metro DMR", "Shared", new DecodeConfigDMR());
+        Channel original = channel("Other P25", "Shared [P25]", new DecodeConfigP25Phase1());
+        state.setChannels(List.of(p25, dmr, original));
+
+        AliasListDefinitionResolver.normalizeLegacyState(state);
+
+        assertEquals("Shared [P25] 2", p25.getAliasListName());
+        assertEquals("Shared [DMR]", dmr.getAliasListName());
+        assertEquals("Shared [P25]", original.getAliasListName());
+        assertEquals(List.of("Shared [P25] 2", "Shared [DMR]", "Shared [P25]"),
+            state.getAliasListDefinitions().stream().map(AliasListDefinition::getName).toList());
+    }
+
+    @Test
+    void stockXmlImportSplitsMixedListWithoutChangingSource() throws Exception
+    {
+        Path source = mTemporaryFolder.resolve("mixed-alias-lists.xml");
+        Files.writeString(source, """
+            <playlist version="4">
+              <alias name="Dispatch" list="Shared" recordable="true">
+                <id type="talkgroup" protocol="APCO25" value="101"/>
+                <id type="talkgroup" protocol="DMR" value="202"/>
+                <id type="broadcastChannel" channel="Calls"/>
+              </alias>
+              <alias name="Orphan" list="(No Alias List)">
+                <id type="talkgroup" protocol="NXDN" value="303"/>
+              </alias>
+              <channel system="Metro" site="P25" name="P25 Control">
+                <alias_list_name>Shared</alias_list_name>
+                <source_configuration type="sourceConfigTuner" source_type="TUNER" frequency="851000000"/>
+                <decode_configuration type="decodeConfigP25Phase1" modulation="CQPSK"
+                    ignore_data_calls="false"/>
+              </channel>
+              <channel system="Metro" site="DMR" name="DMR Control">
+                <alias_list_name>Shared</alias_list_name>
+                <source_configuration type="sourceConfigTuner" source_type="TUNER" frequency="452000000"/>
+                <decode_configuration type="decodeConfigDMR" ignore_data_calls="false"/>
+              </channel>
+            </playlist>
+            """);
+        byte[] before = Files.readAllBytes(source);
+
+        ConfigurationState state = LegacyXmlConfigurationImporter.readConfigurationState(source);
+
+        assertArrayEquals(before, Files.readAllBytes(source));
+        assertEquals(List.of("Shared [P25]", "Shared [DMR]", "Imported Unassigned [NXDN]"),
+            state.getAliasListDefinitions().stream().map(AliasListDefinition::getName).toList());
+        assertEquals(List.of("Shared [P25]", "Shared [DMR]"),
+            state.getChannels().stream().map(Channel::getAliasListName).toList());
+        assertEquals(3, state.getAliases().size());
+        assertTrue(aliases(state, "Dispatch").stream()
+            .allMatch(alias -> alias.hasBroadcastChannel("Calls")));
+        assertEquals("Imported Unassigned [NXDN]", aliases(state, "Orphan").getFirst().getAliasListName());
     }
 
     private static Alias alias(String name, String aliasList, AliasID matcher)
@@ -158,6 +318,13 @@ class AliasListDefinitionResolverTest
         alias.setAliasListName(aliasList);
         alias.setMatchIdentifier(matcher);
         return alias;
+    }
+
+    private static UnitStatusID unitStatus(int value)
+    {
+        UnitStatusID status = new UnitStatusID();
+        status.setStatus(value);
+        return status;
     }
 
     private static Channel channel(String system, String aliasList, Object decodeConfiguration)
@@ -182,5 +349,10 @@ class AliasListDefinitionResolverTest
     {
         return state.getAliasListDefinitions().stream()
             .filter(definition -> name.equals(definition.getName())).findFirst().orElseThrow();
+    }
+
+    private static List<Alias> aliases(ConfigurationState state, String name)
+    {
+        return state.getAliases().stream().filter(alias -> name.equals(alias.getName())).toList();
     }
 }

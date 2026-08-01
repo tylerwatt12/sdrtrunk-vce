@@ -68,6 +68,9 @@ class ChannelConfigurationPolicyTest
         assertTrue(Protocol.MPT1327.isRetiredCompatibility());
         assertFalse(Protocol.TALKGROUP_PROTOCOLS.contains(Protocol.MPT1327));
         assertTrue(SourceType.TUNER.isActive());
+        assertFalse(SourceType.NONE.isActive());
+        assertFalse(SourceType.NONE.isRetiredCompatibility());
+        assertFalse(Arrays.asList(SourceType.getTypes()).contains(SourceType.NONE));
         assertTrue(SourceType.MIXER.isRetiredCompatibility());
         assertFalse(Arrays.asList(SourceType.getTypes()).contains(SourceType.MIXER));
         assertThrows(IllegalArgumentException.class,

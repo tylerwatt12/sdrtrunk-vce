@@ -15,6 +15,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
+import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.stats.activity.DmrActivitySchema;
 import io.github.dsheirer.stats.activity.P25ActivityLogSchema;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
@@ -35,6 +36,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.StringJoiner;
 import java.util.regex.Pattern;
+import org.sqlite.SQLiteConfig;
 
 /**
  * The single application-owned database migration entry point.
@@ -56,6 +58,8 @@ public final class ApplicationDatabaseMigrator
     private static final String ALIAS_VERSION_KEY = "alias_schema_version";
     private static final String P25_VERSION_KEY = "p25_activity_schema_version";
     private static final String ALIAS_TARGET_VERSION = "4";
+    private static final String ALPHA_7_ALIAS_VERSION = "3";
+    private static final String ALPHA_7_P25_VERSION = "21";
     private static final String P25_TARGET_VERSION = Integer.toString(P25ActivityLogSchema.SCHEMA_VERSION);
     private static final String DMR_TARGET_VERSION = Integer.toString(DmrActivitySchema.SCHEMA_VERSION);
     private static final String TRUNKED_SITE_TARGET_VERSION = Integer.toString(TrunkedSiteSchema.SCHEMA_VERSION);
@@ -68,6 +72,10 @@ public final class ApplicationDatabaseMigrator
         "directory.screen.capture",
         "directory.streaming",
         "directory.last.recording.browse"
+    );
+    private static final Set<String> PORTABLE_PATH_KEY_PREFIXES = Set.of(
+        "path.jmbe.library.",
+        "path.voice.decryption.module."
     );
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final String UUID_PATTERN =
@@ -166,12 +174,12 @@ public final class ApplicationDatabaseMigrator
         {
             SchemaState state = SchemaState.read(connection);
             output.println("Detected " + state.description() + ".");
-            state.requireSupported();
-            preflight(connection);
+            SourceKind sourceKind = state.requireSupported();
+            preflight(connection, sourceKind);
 
             boolean relocationRequired = relocation != null && !relocation.source().equals(relocation.target());
 
-            if(!state.requiresMigration() && !relocationRequired)
+            if(sourceKind == SourceKind.CURRENT && !relocationRequired)
             {
                 validateCurrentDatabase(connection);
                 requireIntegrity(connection, "PRAGMA quick_check", "Quick check");
@@ -181,13 +189,17 @@ public final class ApplicationDatabaseMigrator
             }
 
             output.println("Pre-migration checks passed. Updating the staged database.");
-            int rebased = migrateInTransaction(connection, relocation);
+            MigrationSummary migration = migrateInTransaction(connection, sourceKind, relocation);
             validateCurrentDatabase(connection);
             requireForeignKeysValid(connection);
             requireIntegrity(connection, "PRAGMA quick_check", "Quick check");
             finalizeStagedDatabase(connection);
 
-            output.println("Portable directory preferences updated: " + rebased + ".");
+            if(sourceKind == SourceKind.ALPHA_7)
+            {
+                output.println(migration.releaseSummary());
+            }
+            output.println("Portable directory preferences updated: " + migration.rebasedDirectories() + ".");
             output.println("RESULT: Application database migration and validation complete.");
         }
     }
@@ -217,14 +229,49 @@ public final class ApplicationDatabaseMigrator
             "Refusing direct database path: " + database);
     }
 
-    private static void preflight(Connection connection) throws SQLException
+    static void validateAcceptedSource(Path database, ApplicationMigrationService.MigrationState state)
+        throws IOException, SQLException
     {
-        validateCurrentDatabase(connection);
-        requireIntegrity(connection, "PRAGMA integrity_check", "Integrity check");
-        requireForeignKeysValid(connection);
+        try(Connection connection = openReadOnly(database))
+        {
+            SdrTrunkDatabaseStartup.requireMainTrackDatabase(connection);
+            if(state.current())
+            {
+                validateCurrentDatabase(connection);
+                requireForeignKeysValid(connection);
+            }
+            else if(state.alpha7())
+            {
+                Alpha7DatabaseMigration.validateSource(connection);
+                //Alpha 7 foreign keys cover only site-history tables that this release discards.
+            }
+            else
+            {
+                throw new IOException("No bundled migration accepts " + state.description() + ".");
+            }
+
+            requireIntegrity(connection, "PRAGMA integrity_check", "Integrity check");
+        }
     }
 
-    private static int migrateInTransaction(Connection connection, DataRootRelocation relocation)
+    private static void preflight(Connection connection, SourceKind sourceKind) throws SQLException
+    {
+        SdrTrunkDatabaseStartup.requireMainTrackDatabase(connection);
+        if(sourceKind == SourceKind.CURRENT)
+        {
+            validateCurrentDatabase(connection);
+            requireForeignKeysValid(connection);
+        }
+        else
+        {
+            Alpha7DatabaseMigration.validateSource(connection);
+            //Alpha 7 foreign keys cover only site-history tables that this release discards.
+        }
+        requireIntegrity(connection, "PRAGMA integrity_check", "Integrity check");
+    }
+
+    private static MigrationSummary migrateInTransaction(Connection connection, SourceKind sourceKind,
+                                                          DataRootRelocation relocation)
         throws IOException, SQLException
     {
         try(Statement statement = connection.createStatement())
@@ -236,6 +283,8 @@ public final class ApplicationDatabaseMigrator
                 statement.execute("BEGIN IMMEDIATE");
                 transactionOpen = true;
 
+                String releaseSummary = sourceKind == SourceKind.ALPHA_7 ?
+                    Alpha7DatabaseMigration.migrate(connection) : "";
                 int rebased = rebasePortableDirectoryPreferences(connection, relocation);
 
                 validateCurrentDatabase(connection);
@@ -243,7 +292,7 @@ public final class ApplicationDatabaseMigrator
                 requireIntegrity(connection, "PRAGMA quick_check", "Quick check");
                 statement.execute("COMMIT");
                 transactionOpen = false;
-                return rebased;
+                return new MigrationSummary(rebased, releaseSummary);
             }
             catch(IOException | SQLException | RuntimeException e)
             {
@@ -310,9 +359,20 @@ public final class ApplicationDatabaseMigrator
 
         for(Map<String,String> node : values.values())
         {
-            for(String key : PORTABLE_DIRECTORY_KEYS)
+            if(node == null)
             {
-                String value = node.get(key);
+                continue;
+            }
+
+            for(Map.Entry<String,String> entry : node.entrySet())
+            {
+                String key = entry.getKey();
+                if(!isPortablePathKey(key))
+                {
+                    continue;
+                }
+
+                String value = entry.getValue();
 
                 if(value == null || value.isBlank())
                 {
@@ -331,7 +391,7 @@ public final class ApplicationDatabaseMigrator
                         {
                             Path updated = relocation.target().resolve(relocation.source().relativize(normalized))
                                 .normalize();
-                            node.put(key, updated.toString());
+                            entry.setValue(updated.toString());
                             rebased++;
                         }
                     }
@@ -366,12 +426,26 @@ public final class ApplicationDatabaseMigrator
         return rebased;
     }
 
-    private static void validateCurrentDatabase(Connection connection) throws SQLException
+    private static boolean isPortablePathKey(String key)
+    {
+        if(key == null)
+        {
+            return false;
+        }
+        if(PORTABLE_DIRECTORY_KEYS.contains(key))
+        {
+            return true;
+        }
+        return PORTABLE_PATH_KEY_PREFIXES.stream().anyMatch(key::startsWith);
+    }
+
+    static void validateCurrentDatabase(Connection connection) throws SQLException
     {
         SdrTrunkDatabaseSchema.validate(connection);
         P25ActivityLogSchema.validate(connection);
         DmrActivitySchema.validate(connection);
         TrunkedSiteSchema.validate(connection);
+        SdrTrunkDatabaseStartup.requireCurrentSchemaFingerprint(connection);
     }
 
     private static Connection open(Path database) throws SQLException
@@ -385,6 +459,16 @@ public final class ApplicationDatabaseMigrator
         }
 
         return connection;
+    }
+
+    private static Connection openReadOnly(Path database) throws SQLException
+    {
+        SQLiteConfig config = new SQLiteConfig();
+        config.setReadOnly(true);
+        config.enforceForeignKeys(true);
+        config.setBusyTimeout(5000);
+        return DriverManager.getConnection("jdbc:sqlite:" + database.toAbsolutePath().normalize(),
+            config.toProperties());
     }
 
     private static void requireIntegrity(Connection connection, String pragma, String label) throws SQLException
@@ -476,41 +560,26 @@ public final class ApplicationDatabaseMigrator
                 metadata(connection, DmrActivitySchema.SCHEMA_VERSION_KEY));
         }
 
-        private boolean requiresMigration()
+        private SourceKind requireSupported() throws UnsupportedSchemaVersionException
         {
-            return !ALIAS_TARGET_VERSION.equals(aliasVersion) || !P25_TARGET_VERSION.equals(p25Version) ||
-                !TRUNKED_SITE_TARGET_VERSION.equals(trunkedSiteVersion) ||
-                !DMR_TARGET_VERSION.equals(dmrVersion);
-        }
-
-        private void requireSupported() throws UnsupportedSchemaVersionException
-        {
-            if(!ALIAS_TARGET_VERSION.equals(aliasVersion))
+            if(ALIAS_TARGET_VERSION.equals(aliasVersion) && P25_TARGET_VERSION.equals(p25Version) &&
+                TRUNKED_SITE_TARGET_VERSION.equals(trunkedSiteVersion) && DMR_TARGET_VERSION.equals(dmrVersion))
             {
-                throw new UnsupportedSchemaVersionException(
-                    "Expected current Alias schema v4, found [" + aliasVersion + "]. Refusing migration.");
+                return SourceKind.CURRENT;
             }
 
-            if(!P25_TARGET_VERSION.equals(p25Version))
+            if(ALPHA_7_ALIAS_VERSION.equals(aliasVersion) && ALPHA_7_P25_VERSION.equals(p25Version) &&
+                TRUNKED_SITE_TARGET_VERSION.equals(trunkedSiteVersion) && dmrVersion == null)
             {
-                throw new UnsupportedSchemaVersionException(
-                    "Expected current P25 activity schema v" + P25_TARGET_VERSION + ", found [" + p25Version +
-                        "]. Refusing migration.");
+                return SourceKind.ALPHA_7;
             }
 
-            if(!TRUNKED_SITE_TARGET_VERSION.equals(trunkedSiteVersion))
-            {
-                throw new UnsupportedSchemaVersionException(
-                    "Expected current trunked-site schema v2, found [" + trunkedSiteVersion +
-                        "]. Refusing migration.");
-            }
-
-            if(!DMR_TARGET_VERSION.equals(dmrVersion))
-            {
-                throw new UnsupportedSchemaVersionException(
-                    "Expected current DMR activity schema v" + DMR_TARGET_VERSION + ", found [" +
-                        dmrVersion + "]. Refusing migration.");
-            }
+            throw new UnsupportedSchemaVersionException(
+                "Expected either the complete Alpha 7 source tuple (Alias v3, P25 activity v21, trunked-site v" +
+                    TRUNKED_SITE_TARGET_VERSION + ", DMR activity absent) or the complete current tuple " +
+                    "(Alias v" + ALIAS_TARGET_VERSION + ", P25 activity v" + P25_TARGET_VERSION +
+                    ", trunked-site v" + TRUNKED_SITE_TARGET_VERSION + ", DMR activity v" +
+                    DMR_TARGET_VERSION + "). Found " + description() + ". Refusing migration.");
         }
 
         private String description()
@@ -533,6 +602,16 @@ public final class ApplicationDatabaseMigrator
     }
 
     private record DataRootRelocation(Path source, Path target)
+    {
+    }
+
+    private enum SourceKind
+    {
+        ALPHA_7,
+        CURRENT
+    }
+
+    private record MigrationSummary(int rebasedDirectories, String releaseSummary)
     {
     }
 }

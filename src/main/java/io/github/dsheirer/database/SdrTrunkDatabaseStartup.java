@@ -21,14 +21,20 @@ import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.List;
+import org.sqlite.SQLiteConfig;
 
 /**
  * Single startup owner for SDRTrunk SQLite schema creation and validation.
  */
 public final class SdrTrunkDatabaseStartup
 {
+    private static final String CURRENT_GLOBAL_SCHEMA_FINGERPRINT =
+        "ef9197c7cee7261cdda03a395b6552754f3607f6c0053acbe21c273e4242ce3a";
     private SdrTrunkDatabaseStartup()
     {
     }
@@ -51,10 +57,12 @@ public final class SdrTrunkDatabaseStartup
             P25ActivityLogSchema.create(connection);
             DmrActivitySchema.create(connection);
             TrunkedSiteSchema.create(connection);
+            requireMainTrackDatabase(connection);
             SdrTrunkDatabaseSchema.validate(connection);
             P25ActivityLogSchema.validate(connection);
             DmrActivitySchema.validate(connection);
             TrunkedSiteSchema.validate(connection);
+            requireCurrentSchemaFingerprint(connection);
         }
     }
 
@@ -62,13 +70,21 @@ public final class SdrTrunkDatabaseStartup
     {
         Path normalized = requireDatabase(databasePath, "SDRTrunk");
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + normalized))
+        try(Connection connection = openReadOnly(normalized))
         {
-            configure(connection);
+            requireMainTrackDatabase(connection);
             SdrTrunkDatabaseSchema.validate(connection);
             P25ActivityLogSchema.validate(connection);
             DmrActivitySchema.validate(connection);
             TrunkedSiteSchema.validate(connection);
+            requireCurrentSchemaFingerprint(connection);
+        }
+
+        //Only a database proven to be the current main-track schema may be opened read/write and placed in the
+        //operational WAL mode. A wrong-track or malformed database is rejected above without being changed.
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + normalized))
+        {
+            configure(connection);
         }
     }
 
@@ -95,10 +111,14 @@ public final class SdrTrunkDatabaseStartup
     {
         Path normalized = requireDatabase(vaultPath, "Encryption vault");
 
+        try(Connection connection = openReadOnly(normalized))
+        {
+            EncryptionKeyVaultSchema.validate(connection);
+        }
+
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + normalized))
         {
             configure(connection);
-            EncryptionKeyVaultSchema.validate(connection);
         }
     }
 
@@ -119,6 +139,58 @@ public final class SdrTrunkDatabaseStartup
         }
     }
 
+    /**
+     * Main and webfirst intentionally have incompatible recording products. Reject a webfirst catalog even when all
+     * shared schema versions happen to match, so normal startup cannot open the wrong portable data directory.
+     */
+    public static void requireMainTrackDatabase(Connection connection) throws SQLException
+    {
+        List<String> footprints = new ArrayList<>();
+        try(Statement statement = connection.createStatement();
+            ResultSet resultSet = statement.executeQuery("""
+                SELECT type || ':' || name
+                FROM sqlite_master
+                WHERE lower(name) GLOB 'recorded_call*'
+                   OR lower(name) GLOB 'idx_recorded_call*'
+                ORDER BY type, name
+                """))
+        {
+            while(resultSet.next())
+            {
+                footprints.add(resultSet.getString(1));
+            }
+        }
+
+        try(Statement statement = connection.createStatement();
+            ResultSet resultSet = statement.executeQuery("""
+                SELECT 'metadata:' || key
+                FROM database_metadata
+                WHERE lower(key) GLOB 'recorded_call*'
+                ORDER BY key
+                """))
+        {
+            while(resultSet.next())
+            {
+                footprints.add(resultSet.getString(1));
+            }
+        }
+
+        if(!footprints.isEmpty())
+        {
+            throw new SQLException("This main release cannot open a webfirst managed-recording database; found " +
+                footprints + ". Use separate portable data folders for main and webfirst.");
+        }
+    }
+
+    public static void requireCurrentSchemaFingerprint(Connection connection) throws SQLException
+    {
+        String actual = SqliteSchemaValidator.fingerprint(connection);
+        if(!CURRENT_GLOBAL_SCHEMA_FINGERPRINT.equals(actual))
+        {
+            throw new SQLException("SQLite database is not the exact current main schema layout (" + actual + ")");
+        }
+    }
+
     private static void configure(Connection connection) throws SQLException
     {
         try(Statement statement = connection.createStatement())
@@ -128,6 +200,25 @@ public final class SdrTrunkDatabaseStartup
             statement.execute("PRAGMA busy_timeout=" + SdrTrunkDatabase.BUSY_TIMEOUT_MILLISECONDS);
             statement.execute("PRAGMA foreign_keys=ON");
         }
+    }
+
+    private static Connection openReadOnly(Path databasePath) throws SQLException
+    {
+        SQLiteConfig config = new SQLiteConfig();
+        config.setReadOnly(true);
+        Connection connection = DriverManager.getConnection("jdbc:sqlite:" + databasePath, config.toProperties());
+        try(Statement statement = connection.createStatement())
+        {
+            statement.execute("PRAGMA query_only=ON");
+            statement.execute("PRAGMA busy_timeout=" + SdrTrunkDatabase.BUSY_TIMEOUT_MILLISECONDS);
+            statement.execute("PRAGMA foreign_keys=ON");
+        }
+        catch(SQLException e)
+        {
+            connection.close();
+            throw e;
+        }
+        return connection;
     }
 
     private static Path requireDatabase(Path databasePath, String label) throws IOException

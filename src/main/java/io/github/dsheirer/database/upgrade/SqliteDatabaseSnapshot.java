@@ -13,6 +13,7 @@ package io.github.dsheirer.database.upgrade;
 
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -40,10 +41,7 @@ public final class SqliteDatabaseSnapshot
         Path normalizedSource = source.toAbsolutePath().normalize();
         Path normalizedDestination = destination.toAbsolutePath().normalize();
 
-        if(!Files.isRegularFile(normalizedSource))
-        {
-            throw new IOException("SQLite database does not exist: " + normalizedSource);
-        }
+        requireSourceUsable(normalizedSource);
 
         if(Files.exists(normalizedDestination))
         {
@@ -79,7 +77,7 @@ public final class SqliteDatabaseSnapshot
         {
             try
             {
-                Files.deleteIfExists(normalizedDestination);
+                deleteDatabaseAndSidecars(normalizedDestination);
             }
             catch(IOException cleanupFailure)
             {
@@ -87,6 +85,66 @@ public final class SqliteDatabaseSnapshot
             }
 
             throw e;
+        }
+    }
+
+    static void requireSourceUsable(Path source) throws IOException
+    {
+        Path normalized = source.toAbsolutePath().normalize();
+        if(Files.isSymbolicLink(normalized))
+        {
+            throw new IOException("Refusing to snapshot a symbolic-link SQLite database: " + normalized);
+        }
+        if(!Files.isRegularFile(normalized, LinkOption.NOFOLLOW_LINKS))
+        {
+            throw new IOException("SQLite database does not exist: " + normalized);
+        }
+        Path parent = normalized.getParent();
+        if(!Files.isReadable(normalized) || !Files.isWritable(normalized) || parent == null ||
+            !Files.isWritable(parent))
+        {
+            throw new IOException("SQLite database and its folder must be writable for a safe locked snapshot: " +
+                normalized + ". Copy it to a writable folder or correct its permissions and try again.");
+        }
+        for(String suffix: java.util.List.of("-journal", "-wal", "-shm"))
+        {
+            Path sidecar = Path.of(normalized + suffix);
+            if(Files.isSymbolicLink(sidecar))
+            {
+                throw new IOException("Refusing to snapshot a symbolic-link SQLite sidecar: " + sidecar);
+            }
+            if(Files.exists(sidecar, LinkOption.NOFOLLOW_LINKS) && !Files.isWritable(sidecar))
+            {
+                throw new IOException("SQLite sidecar is not writable for a safe locked snapshot: " + sidecar);
+            }
+        }
+    }
+
+    private static void deleteDatabaseAndSidecars(Path database) throws IOException
+    {
+        IOException failure = null;
+        for(String suffix: java.util.List.of("-journal", "-wal", "-shm", ""))
+        {
+            Path path = suffix.isEmpty() ? database : Path.of(database + suffix);
+            try
+            {
+                Files.deleteIfExists(path);
+            }
+            catch(IOException e)
+            {
+                if(failure == null)
+                {
+                    failure = e;
+                }
+                else
+                {
+                    failure.addSuppressed(e);
+                }
+            }
+        }
+        if(failure != null)
+        {
+            throw failure;
         }
     }
 }

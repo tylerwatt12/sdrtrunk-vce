@@ -915,60 +915,6 @@ class P25ActivityLogWriterTest
     }
 
     @Test
-    void explicitSchemaStepsCreateAndValidateForeignBandsQualityRetentionIndexAndResolvedView() throws Exception
-    {
-        Path database = mTemporaryFolder.resolve("schema-v19-to-v24.sqlite");
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
-
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
-            Statement statement = connection.createStatement())
-        {
-            String currentResolvedView = scalarString(connection, """
-                SELECT sql FROM sqlite_schema
-                WHERE type='view' AND name='p25_activity_event_resolved'
-                """);
-            String version22ResolvedView =
-                currentResolvedView
-                    .replace(" WHEN 3 THEN 'CONVENTIONAL_DMR'", "")
-                    .replace(" WHEN 4 THEN 'CONVENTIONAL_NXDN'", "");
-            assertFalse(version22ResolvedView.contains("CONVENTIONAL_DMR"));
-            assertFalse(version22ResolvedView.contains("CONVENTIONAL_NXDN"));
-
-            statement.executeUpdate("DROP TABLE p25_foreign_system_band");
-            statement.executeUpdate("DROP TABLE p25_foreign_system_band_summary");
-            statement.executeUpdate("DROP INDEX idx_p25_control_quality_retention");
-            SdrTrunkDatabaseStartup.setMetadata(connection, "p25_activity_schema_version", "19");
-
-            assertThrows(Exception.class, () -> P25ActivityLogSchema.validate(connection));
-
-            statement.execute("BEGIN IMMEDIATE");
-            P25ActivityLogSchema.createForeignSystemBandTables(statement);
-            SdrTrunkDatabaseStartup.setMetadata(connection, "p25_activity_schema_version", "20");
-            assertThrows(Exception.class, () -> P25ActivityLogSchema.validate(connection));
-            P25ActivityLogSchema.createControlChannelQualityRetentionIndex(statement);
-            SdrTrunkDatabaseStartup.setMetadata(connection, "p25_activity_schema_version", "21");
-            assertThrows(Exception.class, () -> P25ActivityLogSchema.validate(connection));
-            statement.executeUpdate("DROP VIEW p25_activity_event_resolved");
-            statement.executeUpdate(version22ResolvedView);
-            SdrTrunkDatabaseStartup.setMetadata(connection, "p25_activity_schema_version", "22");
-            assertThrows(Exception.class, () -> P25ActivityLogSchema.validate(connection));
-            statement.executeUpdate("DROP VIEW p25_activity_event_resolved");
-            statement.executeUpdate(currentResolvedView);
-            SdrTrunkDatabaseStartup.setMetadata(connection, "p25_activity_schema_version", "23");
-            assertThrows(Exception.class, () -> P25ActivityLogSchema.validate(connection));
-            SdrTrunkDatabaseStartup.setMetadata(connection, "p25_activity_schema_version", "24");
-            P25ActivityLogSchema.validate(connection);
-            statement.execute("COMMIT");
-
-            try(ResultSet resultSet = statement.executeQuery("PRAGMA quick_check"))
-            {
-                assertTrue(resultSet.next());
-                assertEquals("ok", resultSet.getString(1));
-            }
-        }
-    }
-
-    @Test
     void rejectsAStaleResolvedActivityView() throws Exception
     {
         Path database = mTemporaryFolder.resolve("stale-resolved-view.sqlite");

@@ -12,6 +12,7 @@
 package io.github.dsheirer.database.importer;
 
 import io.github.dsheirer.alias.Alias;
+import io.github.dsheirer.alias.AliasFactory;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.alias.AliasMatchRegistry;
@@ -20,11 +21,14 @@ import io.github.dsheirer.configuration.ConfigurationState;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.module.decode.DecoderType;
 import java.util.ArrayList;
+import java.util.EnumMap;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Converts legacy name-only alias lists into protocol-owned list definitions.
@@ -35,6 +39,7 @@ import java.util.Map;
 public final class AliasListDefinitionResolver
 {
     private static final String LEGACY_NO_ALIAS_LIST = "(No Alias List)";
+    private static final String IMPORTED_UNASSIGNED = "Imported Unassigned";
 
     private AliasListDefinitionResolver()
     {
@@ -52,46 +57,79 @@ public final class AliasListDefinitionResolver
 
         List<Alias> sourceAliases = state.getAliases() != null ? state.getAliases() : List.of();
         List<Channel> channels = state.getChannels() != null ? state.getChannels() : List.of();
-        LinkedHashMap<String,AliasListDefinition> definitionsByLegacyName = new LinkedHashMap<>();
+        LinkedHashMap<String,LegacyListGroup> groups = new LinkedHashMap<>();
+        List<ChannelClaim> channelClaims = new ArrayList<>();
+
         for(Channel channel: channels)
         {
-            if(channel == null || isNoList(channel.getAliasListName()))
+            if(channel == null)
             {
                 continue;
             }
 
-            AliasListDefinition proposed = definition(channel);
+            AliasListFamily family = family(channel);
 
-            if(proposed == null)
+            if(family == null)
             {
                 channel.setAliasListName(null);
                 continue;
             }
 
-            String legacyName = normalize(channel.getAliasListName());
-            AliasListDefinition definition = definitionsByLegacyName.get(legacyName);
-
-            if(definition == null)
+            if(!isNoList(channel.getAliasListName()))
             {
-                definition = proposed;
-                definitionsByLegacyName.put(legacyName, definition);
-                channel.setAliasListName(definition.getName());
-            }
-            else if(sameFamily(definition, proposed))
-            {
-                channel.setAliasListName(definition.getName());
-            }
-            else
-            {
-                //A current list has one protocol family. Keep the first family and leave ambiguous legacy data in the
-                //source backup instead of manufacturing duplicate lists and aliases.
-                channel.setAliasListName(null);
+                LegacyListGroup group = group(groups, channel.getAliasListName());
+                group.mClaimedFamilies.add(family);
+                channelClaims.add(new ChannelClaim(channel, group, family));
             }
         }
 
-        inferUnassignedListFamilies(sourceAliases, definitionsByLegacyName);
+        for(Alias alias: sourceAliases)
+        {
+            if(alias == null)
+            {
+                continue;
+            }
 
-        List<AliasListDefinition> definitions = new ArrayList<>(definitionsByLegacyName.values());
+            LegacyListGroup group = group(groups, alias.getAliasListName());
+            group.addMatcherFamilies(supportedFamilies(alias.getMatchIdentifier()));
+        }
+
+        for(LegacyListGroup group: groups.values())
+        {
+            group.resolveFamilies();
+        }
+
+        Set<String> usedNames = reserveSingleFamilyNames(groups.values());
+        List<AliasListDefinition> definitions = new ArrayList<>();
+
+        for(LegacyListGroup group: groups.values())
+        {
+            boolean split = group.mNoList || group.mFamilies.size() > 1;
+            String baseName = group.mNoList ? IMPORTED_UNASSIGNED : group.mName;
+
+            for(AliasListFamily family: group.mFamilies)
+            {
+                String name = split ? uniqueFamilyName(baseName, family, usedNames) : baseName;
+                AliasListDefinition definition = new AliasListDefinition(name, family);
+                group.mDefinitions.put(family, definition);
+                definitions.add(definition);
+            }
+        }
+
+        for(ChannelClaim claim: channelClaims)
+        {
+            AliasListDefinition definition = claim.mGroup.mDefinitions.get(claim.mFamily);
+
+            if(definition == null)
+            {
+                claim.mChannel.setAliasListName(null);
+            }
+            else
+            {
+                claim.mChannel.setAliasListName(definition.getName());
+            }
+        }
+
         List<Alias> importedAliases = new ArrayList<>();
         for(Alias alias: sourceAliases)
         {
@@ -101,69 +139,56 @@ public final class AliasListDefinitionResolver
             }
 
             AliasID matcher = alias.getMatchIdentifier();
-            AliasListDefinition definition = definitionsByLegacyName.get(normalize(alias.getAliasListName()));
+            LegacyListGroup group = groups.get(groupKey(alias.getAliasListName()));
 
-            if(definition == null || !AliasMatchRegistry.isOperational(definition, matcher))
+            if(group == null)
             {
                 continue;
             }
 
-            alias.setAliasListDefinition(definition);
-            importedAliases.add(alias);
+            List<AliasListDefinition> targets = group.mDefinitions.values().stream()
+                .filter(definition -> AliasMatchRegistry.isOperational(definition, matcher))
+                .toList();
+
+            for(int index = 0; index < targets.size(); index++)
+            {
+                Alias imported = index == 0 ? alias : AliasFactory.copyOf(alias);
+                imported.setAliasListDefinition(targets.get(index));
+                importedAliases.add(imported);
+            }
         }
 
         state.setAliases(importedAliases);
         state.setAliasListDefinitions(definitions);
     }
 
-    /**
-     * Infers a family for an unassigned legacy list only when all usable matchers agree on exactly one family.
-     * Protocol-specific matchers can narrow generic matchers such as tones and status values; mixed or still-ambiguous
-     * lists remain omitted.
-     */
-    private static void inferUnassignedListFamilies(List<Alias> aliases,
-                                                    Map<String,AliasListDefinition> definitionsByLegacyName)
+    private static Set<String> reserveSingleFamilyNames(Iterable<LegacyListGroup> groups)
     {
-        Map<String,EnumSet<AliasListFamily>> candidatesByLegacyName = new LinkedHashMap<>();
-        Map<String,String> displayNames = new LinkedHashMap<>();
+        Set<String> usedNames = new LinkedHashSet<>();
 
-        for(Alias alias: aliases)
+        for(LegacyListGroup group: groups)
         {
-            String listName = alias != null ? alias.getAliasListName() : null;
-
-            if(isNoList(listName))
+            if(!group.mNoList && group.mFamilies.size() == 1)
             {
-                continue;
+                usedNames.add(normalize(group.mName));
             }
-
-            String legacyName = normalize(listName);
-
-            if(definitionsByLegacyName.containsKey(legacyName))
-            {
-                continue;
-            }
-
-            EnumSet<AliasListFamily> matcherFamilies = supportedFamilies(alias.getMatchIdentifier());
-
-            if(matcherFamilies.isEmpty())
-            {
-                continue;
-            }
-
-            displayNames.putIfAbsent(legacyName, displayName(listName));
-            EnumSet<AliasListFamily> candidates = candidatesByLegacyName.computeIfAbsent(legacyName,
-                _ -> EnumSet.allOf(AliasListFamily.class));
-            candidates.retainAll(matcherFamilies);
         }
 
-        for(Map.Entry<String,EnumSet<AliasListFamily>> entry: candidatesByLegacyName.entrySet())
+        return usedNames;
+    }
+
+    private static String uniqueFamilyName(String baseName, AliasListFamily family, Set<String> usedNames)
+    {
+        String familyName = baseName + " [" + family.name() + ']';
+        String candidate = familyName;
+        int suffix = 2;
+
+        while(!usedNames.add(normalize(candidate)))
         {
-            if(entry.getValue().size() == 1)
-            {
-                definitionsByLegacyName.put(entry.getKey(),
-                    new AliasListDefinition(displayNames.get(entry.getKey()), entry.getValue().iterator().next()));
-            }
+            candidate = familyName + ' ' + suffix++;
         }
+
+        return candidate;
     }
 
     private static EnumSet<AliasListFamily> supportedFamilies(AliasID matcher)
@@ -181,23 +206,23 @@ public final class AliasListDefinitionResolver
         return families;
     }
 
-    private static AliasListDefinition definition(Channel channel)
+    private static AliasListFamily family(Channel channel)
     {
         DecoderType primary = channel.getDecodeConfiguration() != null ?
             channel.getDecodeConfiguration().getDecoderType() : null;
-        AliasListFamily family = AliasMatchRegistry.familyFor(primary);
-
-        if(family == null)
-        {
-            return null;
-        }
-
-        return new AliasListDefinition(displayName(channel.getAliasListName()), family);
+        return AliasMatchRegistry.familyFor(primary);
     }
 
-    private static boolean sameFamily(AliasListDefinition first, AliasListDefinition second)
+    private static LegacyListGroup group(Map<String,LegacyListGroup> groups, String legacyName)
     {
-        return first.getFamily() == second.getFamily();
+        String key = groupKey(legacyName);
+        return groups.computeIfAbsent(key,
+            ignored -> new LegacyListGroup(displayName(legacyName), isNoList(legacyName)));
+    }
+
+    private static String groupKey(String value)
+    {
+        return normalize(isNoList(value) ? LEGACY_NO_ALIAS_LIST : value);
     }
 
     private static boolean isNoList(String value)
@@ -226,6 +251,78 @@ public final class AliasListDefinitionResolver
     private static String normalize(String value)
     {
         return displayName(value).toLowerCase(Locale.ROOT);
+    }
+
+    private static final class LegacyListGroup
+    {
+        private final String mName;
+        private final boolean mNoList;
+        private final EnumSet<AliasListFamily> mClaimedFamilies = EnumSet.noneOf(AliasListFamily.class);
+        private final EnumSet<AliasListFamily> mInferredFamilies = EnumSet.noneOf(AliasListFamily.class);
+        private final List<EnumSet<AliasListFamily>> mAmbiguousMatcherFamilies = new ArrayList<>();
+        private final EnumSet<AliasListFamily> mFamilies = EnumSet.noneOf(AliasListFamily.class);
+        private final Map<AliasListFamily,AliasListDefinition> mDefinitions =
+            new EnumMap<>(AliasListFamily.class);
+
+        private LegacyListGroup(String name, boolean noList)
+        {
+            mName = name;
+            mNoList = noList;
+        }
+
+        private void addMatcherFamilies(EnumSet<AliasListFamily> families)
+        {
+            if(families.size() == 1)
+            {
+                mInferredFamilies.addAll(families);
+            }
+            else if(!families.isEmpty())
+            {
+                mAmbiguousMatcherFamilies.add(EnumSet.copyOf(families));
+            }
+        }
+
+        private void resolveFamilies()
+        {
+            mFamilies.addAll(mClaimedFamilies);
+            mFamilies.addAll(mInferredFamilies);
+
+            if(mFamilies.isEmpty() && !mAmbiguousMatcherFamilies.isEmpty())
+            {
+                EnumSet<AliasListFamily> common = EnumSet.copyOf(mAmbiguousMatcherFamilies.getFirst());
+
+                for(int index = 1; index < mAmbiguousMatcherFamilies.size(); index++)
+                {
+                    common.retainAll(mAmbiguousMatcherFamilies.get(index));
+                }
+
+                mFamilies.addAll(common);
+            }
+
+            for(EnumSet<AliasListFamily> matcherFamilies: mAmbiguousMatcherFamilies)
+            {
+                if(mFamilies.stream().noneMatch(matcherFamilies::contains))
+                {
+                    //No claimed or protocol-specific family can hold this matcher. Add the first compatible family
+                    //in enum order so that the matcher is preserved without manufacturing unnecessary extra lists.
+                    mFamilies.add(matcherFamilies.iterator().next());
+                }
+            }
+        }
+    }
+
+    private static final class ChannelClaim
+    {
+        private final Channel mChannel;
+        private final LegacyListGroup mGroup;
+        private final AliasListFamily mFamily;
+
+        private ChannelClaim(Channel channel, LegacyListGroup group, AliasListFamily family)
+        {
+            mChannel = channel;
+            mGroup = group;
+            mFamily = family;
+        }
     }
 
 }
