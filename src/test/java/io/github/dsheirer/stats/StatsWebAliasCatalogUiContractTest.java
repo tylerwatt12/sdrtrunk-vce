@@ -26,7 +26,7 @@ class StatsWebAliasCatalogUiContractTest
     void exposesAReadOnlyCatalogWithServerBackedFiltersAndCsv() throws Exception
     {
         String source = source();
-        String html = Files.readString(INDEX_HTML);
+        String html = readText(INDEX_HTML);
         String renderer = function(source, "async function renderAliases()");
         String filters = function(source, "function aliasCatalogFilterToolbar(listResponse)");
 
@@ -167,7 +167,7 @@ class StatsWebAliasCatalogUiContractTest
     @Test
     void keepsTheCatalogAndDialogUsableOnSmallScreensAndDarkThemes() throws Exception
     {
-        String css = Files.readString(APP_CSS);
+        String css = readText(APP_CSS);
         assertTrue(css.contains(".column-chooser-groups"));
         assertTrue(css.contains(".read-only-modal"));
         assertTrue(css.contains("@media (max-width: 900px)"));
@@ -183,7 +183,12 @@ class StatsWebAliasCatalogUiContractTest
     private static String source() throws Exception
     {
         assertTrue(Files.isRegularFile(APP_JAVASCRIPT), () -> "Missing " + APP_JAVASCRIPT.toAbsolutePath());
-        return Files.readString(APP_JAVASCRIPT);
+        return readText(APP_JAVASCRIPT);
+    }
+
+    private static String readText(Path path) throws Exception
+    {
+        return Files.readString(path).replace("\r\n", "\n").replace('\r', '\n');
     }
 
     private static String function(String source, String signature)
