@@ -33,6 +33,7 @@ public final class JmbeLibraryLoader implements AutoCloseable
     private static final Logger mLog = LoggerFactory.getLogger(JmbeLibraryLoader.class);
     private static final String LIBRARY_CLASS = "jmbe.JMBEAudioLibrary";
     private static final String ENABLE_VOICE_QUALITY_METADATA_METHOD = "setVoiceQualityMetadataEnabled";
+    private static final String SET_TONE_AUDIO_ENABLED_METHOD = "setToneAudioEnabled";
     private static final JmbeLibraryLoader INSTANCE = new JmbeLibraryLoader(JmbeLibraryLoader.class.getClassLoader(), true);
 
     private final ClassLoader mParentClassLoader;
@@ -60,7 +61,16 @@ public final class JmbeLibraryLoader implements AutoCloseable
      * Creates a codec from the currently selected library. A changed path, size, or modification time atomically loads
      * a new library while existing codec instances remain valid for channels still using them.
      */
-    public synchronized IAudioCodec getAudioCodec(Path libraryPath, String codecName)
+    public IAudioCodec getAudioCodec(Path libraryPath, String codecName)
+    {
+        return getAudioCodec(libraryPath, codecName, true);
+    }
+
+    /**
+     * Creates a codec and applies optional tone-audio behavior when the selected JMBE library supports it. Libraries
+     * without the optional capability retain their default tone behavior.
+     */
+    public synchronized IAudioCodec getAudioCodec(Path libraryPath, String codecName, boolean toneAudioEnabled)
     {
         if(libraryPath == null)
         {
@@ -90,6 +100,17 @@ public final class JmbeLibraryLoader implements AutoCloseable
 
             IAudioCodec codec = mLibrary.getAudioConverter(codecName);
             codec.getClass().getMethod(ENABLE_VOICE_QUALITY_METADATA_METHOD, boolean.class).invoke(codec, true);
+
+            try
+            {
+                codec.getClass().getMethod(SET_TONE_AUDIO_ENABLED_METHOD, boolean.class)
+                    .invoke(codec, toneAudioEnabled);
+            }
+            catch(NoSuchMethodException _)
+            {
+                //JMBE 1.0.14 does not provide the optional tone-audio control and retains its default behavior.
+            }
+
             return codec;
         }
         catch(IOException | ReflectiveOperationException | LinkageError | RuntimeException e)

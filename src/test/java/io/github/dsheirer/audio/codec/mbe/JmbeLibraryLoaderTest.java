@@ -63,6 +63,32 @@ class JmbeLibraryLoaderTest
         }
     }
 
+    @Test
+    void acceptsLibraryWithoutOptionalToneAudioCapability() throws Exception
+    {
+        Path library = createLibrary("1.0.14", 14.0f, true, false);
+
+        try(JmbeLibraryLoader loader = new JmbeLibraryLoader(getClass().getClassLoader(), false))
+        {
+            assertNotNull(loader.getAudioCodec(library, "TEST", false));
+        }
+    }
+
+    @Test
+    void configuresOptionalToneAudioCapability() throws Exception
+    {
+        Path library = createLibrary("1.0.15", 15.0f, true, true);
+
+        try(JmbeLibraryLoader loader = new JmbeLibraryLoader(getClass().getClassLoader(), false))
+        {
+            IAudioCodec enabled = loader.getAudioCodec(library, "TEST", true);
+            IAudioCodec muted = loader.getAudioCodec(library, "TEST", false);
+
+            assertEquals(15.0f, enabled.getAudio(new byte[0])[0]);
+            assertEquals(-15.0f, muted.getAudio(new byte[0])[0]);
+        }
+    }
+
     private Path createLibrary(String version, float marker) throws Exception
     {
         return createLibrary(version, marker, true);
@@ -70,10 +96,16 @@ class JmbeLibraryLoaderTest
 
     private Path createLibrary(String version, float marker, boolean includeVoiceQualityCapability) throws Exception
     {
+        return createLibrary(version, marker, includeVoiceQualityCapability, false);
+    }
+
+    private Path createLibrary(String version, float marker, boolean includeVoiceQualityCapability,
+                               boolean includeToneAudioCapability) throws Exception
+    {
         Path sourceDirectory = Files.createDirectories(mTemporaryDirectory.resolve("source-" + version));
         Path classDirectory = Files.createDirectories(mTemporaryDirectory.resolve("classes-" + version));
         Path source = sourceDirectory.resolve("JMBEAudioLibrary.java");
-        Files.writeString(source, source(version, marker, includeVoiceQualityCapability));
+        Files.writeString(source, source(version, marker, includeVoiceQualityCapability, includeToneAudioCapability));
 
         var compiler = ToolProvider.getSystemJavaCompiler();
 
@@ -102,11 +134,14 @@ class JmbeLibraryLoaderTest
         return library;
     }
 
-    private static String source(String version, float marker, boolean includeVoiceQualityCapability)
+    private static String source(String version, float marker, boolean includeVoiceQualityCapability,
+                                 boolean includeToneAudioCapability)
     {
         int build = Integer.parseInt(version.substring(version.lastIndexOf('.') + 1));
         String voiceQualityCapability = includeVoiceQualityCapability ?
             "public void setVoiceQualityMetadataEnabled(boolean enabled) { qualityMetadataEnabled = enabled; }" : "";
+        String toneAudioCapability = includeToneAudioCapability ?
+            "public void setToneAudioEnabled(boolean enabled) { toneAudioEnabled = enabled; }" : "";
         return """
             package jmbe;
             import jmbe.iface.IAudioCodec;
@@ -124,16 +159,18 @@ class JmbeLibraryLoaderTest
                 public static class TestCodec implements IAudioCodec {
                     private final String codec;
                     private boolean qualityMetadataEnabled;
+                    private boolean toneAudioEnabled = true;
                     public TestCodec(String codec) { this.codec = codec; }
+                    %s
                     %s
                     public String getCodecName() { return codec; }
                     public float[] getAudio(byte[] frame) {
-                        return new float[]{qualityMetadataEnabled ? %sf : -%sf};
+                        return new float[]{qualityMetadataEnabled && toneAudioEnabled ? %sf : -%sf};
                     }
                     public IAudioWithMetadata getAudioWithMetadata(byte[] frame) { return null; }
                     public void reset() {}
                 }
             }
-            """.formatted(version, build, voiceQualityCapability, marker, marker);
+            """.formatted(version, build, voiceQualityCapability, toneAudioCapability, marker, marker);
     }
 }
