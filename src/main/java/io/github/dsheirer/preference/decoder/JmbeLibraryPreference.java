@@ -45,8 +45,10 @@ public class JmbeLibraryPreference extends Preference
 
     private static final String PREFERENCE_KEY_PATH_JMBE_LIBRARY = "path.jmbe.library.1.0.0";
     private static final String PREFERENCE_KEY_PATH_ALERT_LIBRARY_REQUIRED = "alert.jmbe.required";
+    private static final String PREFERENCE_KEY_MUTE_DECODED_AMBE_TONE_FRAMES = "jmbe.ambe.tone.audio.muted";
     private Path mPathJmbeLibrary;
     private Boolean mAlertIfMissingLibraryRequired;
+    private Boolean mMuteDecodedAmbeToneFrames;
 
     /**
      * Constructs this preference with an update listener
@@ -154,6 +156,31 @@ public class JmbeLibraryPreference extends Preference
     {
         mAlertIfMissingLibraryRequired = alert;
         mPreferences.putBoolean(PREFERENCE_KEY_PATH_ALERT_LIBRARY_REQUIRED, mAlertIfMissingLibraryRequired);
+        notifyPreferenceUpdated();
+    }
+
+    /**
+     * Indicates whether recognized AMBE tone frames should produce silence instead of synthesized tone audio.
+     * Tone detection and metadata remain available. The default is false to preserve existing decoder behavior.
+     */
+    public boolean getMuteDecodedAmbeToneFrames()
+    {
+        if(mMuteDecodedAmbeToneFrames == null)
+        {
+            mMuteDecodedAmbeToneFrames =
+                mPreferences.getBoolean(PREFERENCE_KEY_MUTE_DECODED_AMBE_TONE_FRAMES, false);
+        }
+
+        return mMuteDecodedAmbeToneFrames;
+    }
+
+    /**
+     * Sets whether recognized AMBE tone-frame audio should be muted.
+     */
+    public void setMuteDecodedAmbeToneFrames(boolean mute)
+    {
+        mMuteDecodedAmbeToneFrames = mute;
+        mPreferences.putBoolean(PREFERENCE_KEY_MUTE_DECODED_AMBE_TONE_FRAMES, mute);
         notifyPreferenceUpdated();
     }
 
