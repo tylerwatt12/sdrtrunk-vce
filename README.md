@@ -31,6 +31,8 @@ This project is currently an **alpha release**. Back up your receiver data befor
 
 ## What’s New in Alpha 9
 
+Alpha 9 is a focused bugfix release for playback and tuner stability.
+
 - **Suppressed calls stay silent.** Calls marked Do Not Monitor, suppressed duplicates, and unidentified trunked
   fragments no longer leak a tone or brief piece of voice audio.
 - **Playback status is more accurate.** The desktop queue represents calls that can actually play, and browser Hold

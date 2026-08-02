@@ -2,9 +2,9 @@
 
 ## What
 
-Alpha 9 is a focused playback and tuner-stability release. It prevents calls that should not be heard from leaking
-tones or brief audio, makes playback status more accurate, adds browser volume control, and prevents an out-of-range
-channel from moving the wrong tuner.
+Alpha 9 is a focused bugfix release for playback and tuner stability. It prevents calls that should not be heard from
+leaking tones or brief audio, makes playback status more accurate, adds browser volume control, and prevents an
+out-of-range channel from moving the wrong tuner.
 
 This release does not change the database schema, recording formats, streaming-provider configuration or upload
 formats, RadioReference importing, or activity and statistics storage.
