@@ -29,34 +29,20 @@ This project is currently an **alpha release**. Back up your receiver data befor
 - **Clear channel types:** Conventional P25, DMR, and NXDN are kept separate from trunked systems.
 - **Improved listening:** Desktop audio adds Hold, Avoid, Clear, saved mute state, a queue counter, and a queue limit.
 
-## What’s New in Alpha 8
+## What’s New in Alpha 9
 
-- **DMR and NXDN are now first-class analytics protocols.** Trunked systems use the same system, site, talkgroup,
-  radio, activity, call, recording, streaming, encryption, and signaling framework as P25 wherever the protocol
-  supplies that information.
-- **Conventional activity is much more complete.** DMR has talkgroup and radio directories, NXDN produces completed
-  calls and detailed activity, and conventional P25 and NBFM participate in common call totals.
-- **A new read-only Alias Catalog** makes every configured Alias searchable in the browser and adds optional usage and
-  signaling columns that help identify stale or actively programmed talkgroups and radios.
-- **CSV export** is available for talkgroups, radios, aliases, channels, neighbors, signal health, and retained site
-  quality.
-- **Voice-call quality diagnostics** show useful P25, DMR, and NXDN voice decode measurements after a short warmup,
-  help choose the best duplicate recording, and add the completed quality summary to recording metadata.
-- **Decoder and attribution fixes** address incorrect talker aliases, patch-member counts, combined P25 Phase 2 calls,
-  false conventional P25 control states, invalid site clocks, late P25 call metadata, and facts created by one bad
-  decode.
-- **RadioReference, RadioResolve, and Alias List workflows are safer.** Alias Lists belong to a protocol family,
-  imports refresh immediately, selected talkgroups can be imported in bulk, NXDN importing is more complete, and a
-  stalled RadioResolve call request cannot block an upload slot forever.
-- **The web and desktop interfaces have new appearance options.** The browser has a persistent light/dark switch,
-  while the desktop adds themes and 50–200% interface scaling.
+- **Suppressed calls stay silent.** Calls marked Do Not Monitor, suppressed duplicates, and unidentified trunked
+  fragments no longer leak a tone or brief piece of voice audio.
+- **Playback status is more accurate.** The desktop queue represents calls that can actually play, and browser Hold
+  and Avoid remain unavailable until audio is playing.
+- **Browser listening has its own saved volume control** that is separate from Mute.
+- **Mixed-band tuner allocation is safer.** An out-of-range channel is rejected before it can move the wrong tuner,
+  while valid in-range site centering still works.
+- **Alpha 8 data carries forward unchanged.** Alpha 9 uses the same database schema, so configuration, calls, counts,
+  Activity, site observations, identity evidence, and quality history are preserved.
 
-Read the complete [Alpha 8 What’s New](docs/whats-new-0.6.2-alpha-8.md), including removals and the important Alpha 7
-upgrade behavior.
-
-> **Alpha 7 upgrade note:** Supported channels, aliases, streams, tuners, and portable settings are preserved or
-> converted, but collected calls, counts, Activity, site observations, talkgroup/radio evidence, and quality history
-> intentionally restart from zero.
+Read the complete [Alpha 9 What’s New](docs/whats-new-0.6.2-alpha-9.md), including the Alpha 8 upgrade instructions
+and the direct Alpha 7 upgrade-path removal.
 
 ## Screenshots
 

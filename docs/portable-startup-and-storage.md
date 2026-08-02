@@ -32,15 +32,14 @@ Saved output and library paths that point inside the previous data folder are ch
 the new data folder. Deliberately shared paths outside the previous data folder are left alone.
 
 Schema transitions are added only while preparing a numbered public release, from the immediately preceding public
-release on the same product track. This release accepts either an exact Alpha 7 database (Alias v3, P25 activity v21,
-trunked-site v2, and no DMR activity schema) or its exact current database (Alias v4, P25 activity v24, trunked-site
-v2, and DMR activity v1). It does not accept Alpha 1 through Alpha 6 databases, mixed schema combinations, or
-intermediate development schemas; those older public releases must be upgraded sequentially through Alpha 7.
+release on the same product track. Alpha 9 accepts the exact Alpha 8/current database tuple: Alias v4, P25 activity
+v24, trunked-site v2, and DMR activity v1. It does not accept Alpha 1 through Alpha 7 databases, mixed schema
+combinations, or intermediate development schemas; an Alpha 7 installation must be upgraded through Alpha 8 first.
 
-The Alpha 7 transition preserves application and tuner settings, channels, channel maps, supported broadcast streams,
-icons, and converted aliases. It starts P25, DMR, and trunked-site activity/statistics storage empty instead of
-converting historical calls, counts, affiliations, site observations, or quality records. The unchanged Alpha 7 safety
-backup remains available if that history is needed outside the new release.
+Alpha 8 and Alpha 9 use the same schema, so no database conversion or history reset occurs. Application and tuner
+settings, channels, channel maps, broadcast streams, icons, aliases, calls, counts, affiliations, site observations,
+identity evidence, and quality records remain in the copied database. Importing a previous profile still uses a
+validated staged copy and rebases recognized portable paths when the data folder moves.
 
 ## Recording Storage By Release Track
 

@@ -1,0 +1,65 @@
+<h1>What’s New in sdrtrunk-vce 0.6.2 Alpha 9</h1>
+<h2>What</h2>
+<p>Alpha 9 is a focused playback and tuner-stability release. It prevents calls that should not be heard from leaking
+tones or brief audio, makes playback status more accurate, adds browser volume control, and prevents an out-of-range
+channel from moving the wrong tuner.</p>
+<p>This release does not change the database schema, recording formats, streaming-provider configuration or upload
+formats, RadioReference importing, or activity and statistics storage.</p>
+<h2>Added</h2>
+<ul>
+<li><strong>Browser playback volume.</strong> The web player has a 0–100% volume control that is separate from Mute and remembered
+by that browser.</li>
+</ul>
+<h2>Changed</h2>
+<ul>
+<li><strong>Trunked traffic calls are identified explicitly.</strong> Temporary P25 Phase 1, P25 Phase 2, DMR, and NXDN traffic
+channels carry an internal marker so the player can distinguish an unidentified trunked fragment from a legitimate
+conventional or direct call.</li>
+<li><strong>Conventional calls without a destination remain playable.</strong> Desktop playback retains their opening audio while
+waiting briefly for optional destination information. Playback begins when the call completes or after approximately
+half a second, without discarding the beginning.</li>
+<li><strong>Playback status reflects usable audio.</strong> The desktop queue excludes calls still waiting for identification or
+already suppressed. Browser Hold and Avoid remain unavailable until audio is actually playing.</li>
+<li><strong>Nightly packaging is more reliable.</strong> Automated builds run from <code>main</code>, package without the incompatible
+configuration cache, and keep the nightly tag aligned with the uploaded files.</li>
+</ul>
+<h2>Fixed</h2>
+<ul>
+<li><strong>Suppressed calls no longer leak audio.</strong> A Do Not Monitor call or suppressed duplicate is rejected before its
+start tone, drop tone, or opening voice reaches the speakers. Alias listening policy and duplicate status are applied
+before the call is first offered to playback.</li>
+<li><strong>Unidentified trunked fragments no longer reach desktop or browser playback.</strong> This addresses the frequent
+beep/boop sounds and very short call fragments that were not shown as normal calls. Legitimate conventional and direct
+calls without talkgroup information are not discarded.</li>
+<li><strong>Browser playback controls no longer flash while a call is loading.</strong> Hold and Avoid now represent the call that is
+actually playing.</li>
+<li><strong>Out-of-range tuner requests are rejected before tuner centering.</strong> A wide-band tuner can no longer be pulled
+toward a channel outside its configured frequency range merely because it was given another site's frequency group.
+Valid in-range groups still use normal center-frequency selection.</li>
+</ul>
+<h2>Removed</h2>
+<ul>
+<li><strong>The obsolete direct Alpha 7 database conversion path is removed.</strong> Alpha 9 accepts the exact Alpha 8 database
+layout. Alpha 7 installations must upgrade through Alpha 8 first.</li>
+<li>No decoder, channel type, Alias feature, recording feature, configured streaming provider, or RadioReference feature
+is removed. Importing supported original SDRTrunk playlist XML remains available.</li>
+</ul>
+<h2>Before You Upgrade</h2>
+<ul>
+<li><strong>Alpha 8 and Alpha 9 use the same database schema.</strong> An exact Alpha 8 database opens without a data conversion.
+Channels, aliases, tuner settings, preferences, calls, counts, Activity, affiliations, site observations, talkgroup and
+radio evidence, and quality history remain intact.</li>
+<li><strong>Migrate Previous Data can copy an Alpha 8 portable profile into a new Alpha 9 installation.</strong> The source
+installation remains unchanged, and portable directory references are adjusted for the new location. Existing classic
+recording files remain in their configured location; Alpha 9 does not move or convert them.</li>
+<li><strong>Alpha 7 cannot skip directly to Alpha 9.</strong> Upgrade it with Alpha 8 first. Unsupported or development database
+layouts are refused without modification, and <code>main</code> and <code>webfirst</code> must continue using separate portable data
+folders.</li>
+<li>Stop sdrtrunk-vce and back up the complete portable <code>data</code> folder before upgrading.</li>
+<li>The tuner fix prevents an incorrect allocation attempt. It does not eliminate CPU or USB buffer overload; a wide
+sample rate still requires enough processing and USB capacity.</li>
+</ul>
+<h2>Downloads</h2>
+<p>Use the package that matches your operating system and processor. Java 25 is included. JMBE remains a separate setup
+under <strong>Preferences &gt; Decoder &gt; JMBE Audio Library</strong>. Verify the downloaded ZIP with
+<code>SHA256SUMS.txt</code> before installing.</p>
