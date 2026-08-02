@@ -41,8 +41,8 @@ This project is currently an **alpha release**. Back up your receiver data befor
 - **Alpha 8 data carries forward unchanged.** Alpha 9 uses the same database schema, so configuration, calls, counts,
   Activity, site observations, identity evidence, and quality history are preserved.
 
-Read the complete [Alpha 9 What’s New](docs/whats-new-0.6.2-alpha-9.md), including the Alpha 8 upgrade instructions
-and the direct Alpha 7 upgrade-path removal.
+Read the complete [Alpha 9 What’s New](docs/whats-new-0.6.2-alpha-9.md), including the different Alpha 7 and Alpha 8
+upgrade behavior.
 
 ## Screenshots
 

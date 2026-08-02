@@ -43,10 +43,9 @@ formats, RadioReference importing, or activity and statistics storage.
 
 ## Removed
 
-- **The obsolete direct Alpha 7 database conversion path is removed.** Alpha 9 accepts the exact Alpha 8 database
-  layout. Alpha 7 installations must upgrade through Alpha 8 first.
-- No decoder, channel type, Alias feature, recording feature, configured streaming provider, or RadioReference feature
-  is removed. Importing supported original SDRTrunk playlist XML remains available.
+- No decoder, channel type, Alias feature, recording feature, configured streaming provider, RadioReference feature,
+  or supported upgrade path is removed. The existing exact Alpha 7 conversion and supported original SDRTrunk
+  playlist XML imports remain available.
 
 ## Before You Upgrade
 
@@ -56,9 +55,11 @@ formats, RadioReference importing, or activity and statistics storage.
 - **Migrate Previous Data can copy an Alpha 8 portable profile into a new Alpha 9 installation.** The source
   installation remains unchanged, and portable directory references are adjusted for the new location. Existing
   classic recording files remain in their configured location; Alpha 9 does not move or convert them.
-- **Alpha 7 cannot skip directly to Alpha 9.** Upgrade it with Alpha 8 first. Unsupported or development database
-  layouts are refused without modification, and `main` and `webfirst` must continue using separate portable data
-  folders.
+- **An exact Alpha 7 profile can still upgrade directly.** Supported channels, aliases, streams, tuners, and portable
+  settings are preserved or converted, but calls, counts, Activity, affiliations, site observations, identity
+  evidence, and quality history begin empty, just as they did when upgrading to Alpha 8. Older, mixed, or development
+  layouts are refused without modification.
+- `main` and `webfirst` must continue using separate portable data folders.
 - Stop sdrtrunk-vce and back up the complete portable `data` folder before upgrading.
 - The tuner fix prevents an incorrect allocation attempt. It does not eliminate CPU or USB buffer overload; a wide
   sample rate still requires enough processing and USB capacity.
