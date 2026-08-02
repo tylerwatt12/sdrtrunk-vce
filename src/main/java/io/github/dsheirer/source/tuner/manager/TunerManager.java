@@ -27,7 +27,6 @@ import io.github.dsheirer.source.config.SourceConfigTuner;
 import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import io.github.dsheirer.source.config.SourceConfiguration;
 import io.github.dsheirer.source.tuner.TunerClass;
-import io.github.dsheirer.source.tuner.TunerController;
 import io.github.dsheirer.source.tuner.TunerFactory;
 import io.github.dsheirer.source.tuner.TunerType;
 import io.github.dsheirer.source.tuner.channel.ChannelSpecification;
@@ -624,7 +623,7 @@ public class TunerManager implements IDiscoveredTunerStatusListener
 
     /**
      * Iterates current available tuners to get a tuner channel source for the specified frequency and bandwidth,
-     * optionally using a broader channel set to pre-position an idle polyphase tuner.
+     * optionally using a broader channel set for polyphase center-frequency selection.
      */
     public Source getSource(TunerChannel tunerChannel, ChannelSpecification channelSpecification, String preferredTuner,
                             String threadName, SortedSet<TunerChannel> tunerChannels)
@@ -643,7 +642,6 @@ public class TunerManager implements IDiscoveredTunerStatusListener
                 {
                     try
                     {
-                        preTunePolyphaseCenter(discoveredTuner, tunerChannels);
                         source = getSource(discoveredTuner, tunerChannel, channelSpecification, threadName,
                             tunerChannels);
 
@@ -672,7 +670,6 @@ public class TunerManager implements IDiscoveredTunerStatusListener
                 {
                     try
                     {
-                        preTunePolyphaseCenter(discoveredTuner, tunerChannels);
                         source = getSource(discoveredTuner, tunerChannel, channelSpecification, threadName,
                             tunerChannels);
                     }
@@ -719,43 +716,6 @@ public class TunerManager implements IDiscoveredTunerStatusListener
         }
 
         return source;
-    }
-
-    /**
-     * Pre-positions an idle polyphase tuner using the full requested channel set so that the first allocated channel
-     * can reuse a center frequency chosen for the overall site spread rather than a single active channel.
-     */
-    private void preTunePolyphaseCenter(DiscoveredTuner discoveredTuner, SortedSet<TunerChannel> tunerChannels)
-        throws SourceException
-    {
-        if(tunerChannels == null || tunerChannels.isEmpty() || !discoveredTuner.hasTuner())
-        {
-            return;
-        }
-
-        ChannelSourceManager channelSourceManager = discoveredTuner.getTuner().getChannelSourceManager();
-        TunerController tunerController = discoveredTuner.getTuner().getTunerController();
-
-        if(channelSourceManager instanceof PolyphaseChannelSourceManager polyphaseChannelSourceManager &&
-            polyphaseChannelSourceManager.getTunerChannelCount() == 0 && !tunerController.isCenterFrequencyLocked())
-        {
-            try
-            {
-                long centerFrequency = polyphaseChannelSourceManager.getCenterFrequency(tunerChannels);
-
-                if(centerFrequency != discoveredTuner.getTuner().getTunerController().getFrequency())
-                {
-                    discoveredTuner.getTuner().getTunerController().setFrequency(centerFrequency);
-                    mTunerConfigurationManager.updateTunerFrequency(discoveredTuner);
-                }
-            }
-            catch(IllegalArgumentException iae)
-            {
-                //The broader frequency set is only a centering preference.  If it cannot fit inside one tuner
-                //passband, continue with normal source allocation so each rotation candidate can be tuned separately.
-                mLog.debug("Unable to pre-position tuner for the full frequency set - using per-frequency tuning");
-            }
-        }
     }
 
     /**
