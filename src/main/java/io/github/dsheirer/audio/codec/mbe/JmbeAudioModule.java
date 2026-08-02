@@ -176,6 +176,7 @@ public abstract class JmbeAudioModule extends AbstractAudioModule implements Lis
     protected void loadConverter()
     {
         Path path = mUserPreferences.getJmbeLibraryPreference().getPathJmbeLibrary();
-        mAudioCodec = LIBRARY_LOADER.getAudioCodec(path, getCodecName());
+        boolean toneAudioEnabled = !mUserPreferences.getJmbeLibraryPreference().getMuteDecodedAmbeToneFrames();
+        mAudioCodec = LIBRARY_LOADER.getAudioCodec(path, getCodecName(), toneAudioEnabled);
     }
 }

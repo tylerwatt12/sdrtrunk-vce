@@ -39,6 +39,7 @@ import javafx.scene.control.Button;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.Label;
+import javafx.scene.control.Tooltip;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Region;
@@ -75,6 +76,7 @@ public class JmbeLibraryPreferenceEditor extends VBox
     private Button mCreateButton;
     private HBox mButtonsBox;
     private CheckBox mAlertUserWhenMissingCheckBox;
+    private CheckBox mMuteDecodedAmbeToneFramesCheckBox;
 
     public JmbeLibraryPreferenceEditor(UserPreferences userPreferences)
     {
@@ -85,7 +87,8 @@ public class JmbeLibraryPreferenceEditor extends VBox
 
         setPadding(new Insets(10,10,10,10));
         setSpacing(10);
-        getChildren().addAll(getEditorPane(), getButtonsBox(), getAlertUserWhenMissingCheckBox());
+        getChildren().addAll(getEditorPane(), getButtonsBox(), getAlertUserWhenMissingCheckBox(),
+            getMuteDecodedAmbeToneFramesCheckBox());
     }
 
     public void dispose()
@@ -107,6 +110,25 @@ public class JmbeLibraryPreferenceEditor extends VBox
         }
 
         return mAlertUserWhenMissingCheckBox;
+    }
+
+    private CheckBox getMuteDecodedAmbeToneFramesCheckBox()
+    {
+        if(mMuteDecodedAmbeToneFramesCheckBox == null)
+        {
+            mMuteDecodedAmbeToneFramesCheckBox =
+                new CheckBox("Mute decoded AMBE tone frames (JMBE 1.0.15+)");
+            mMuteDecodedAmbeToneFramesCheckBox.setTooltip(new Tooltip(
+                "Replaces recognized AMBE tone-frame audio with silence while preserving tone metadata. " +
+                    "Voice frames are unchanged."));
+            mMuteDecodedAmbeToneFramesCheckBox.setSelected(mUserPreferences.getJmbeLibraryPreference()
+                .getMuteDecodedAmbeToneFrames());
+            mMuteDecodedAmbeToneFramesCheckBox.setOnAction(event ->
+                mUserPreferences.getJmbeLibraryPreference().setMuteDecodedAmbeToneFrames(
+                    mMuteDecodedAmbeToneFramesCheckBox.isSelected()));
+        }
+
+        return mMuteDecodedAmbeToneFramesCheckBox;
     }
 
     private HBox getButtonsBox()
@@ -352,6 +374,8 @@ public class JmbeLibraryPreferenceEditor extends VBox
                 .getPathJmbeLibrary() != null ? CHECK_FOR_UPDATE : CREATE_LIBRARY);
             getAlertUserWhenMissingCheckBox().setSelected(mUserPreferences.getJmbeLibraryPreference()
                 .getAlertIfMissingLibraryRequired());
+            getMuteDecodedAmbeToneFramesCheckBox().setSelected(mUserPreferences.getJmbeLibraryPreference()
+                .getMuteDecodedAmbeToneFrames());
         }
     }
 }
