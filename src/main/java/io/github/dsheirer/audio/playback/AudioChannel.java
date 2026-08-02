@@ -60,6 +60,7 @@ public class AudioChannel
     private boolean mMetadataSent = false;
     private boolean mMuted;
     private boolean mDisabled;
+    private boolean mCurrentCallAudioEmitted;
     private float[] mAudioSegmentStartTone;
     private float[] mAudioSegmentDropTone;
     private int mNoAudioFromSegmentIntervalCount = 0;
@@ -164,6 +165,9 @@ public class AudioChannel
     {
         boolean hadWork = getCurrentAudioCall() != null;
 
+        //Policy can change after assignment. Re-check it before returning any already-buffered tone or voice audio.
+        discardThrowawayCalls();
+
         if(mAudioBuffer.isFull())
         {
             float[] audio = mAudioBuffer.get();
@@ -174,20 +178,9 @@ public class AudioChannel
             }
             else
             {
+                mCurrentCallAudioEmitted = mCurrentCallAudioEmitted || getCurrentPlaybackBufferIndex() > 0;
                 return audio;
             }
-        }
-
-        //Evaluate the current call to see if its status has changed for duplicate or do-not-monitor.
-        while(isThrowaway(getCurrentAudioCall()))
-        {
-            if(getCurrentPlaybackBufferIndex() > 0)
-            {
-                //Flush the buffer and insert the drop tone
-                mAudioBuffer.replace(mAudioSegmentDropTone);
-            }
-
-            disposeCurrentAudioSegment();
         }
 
         if(mCurrentPlaybackBurst != null)
@@ -216,6 +209,9 @@ public class AudioChannel
 
             mNoAudioFromSegmentIntervalCount = 0;
         }
+
+        //Close the smaller race where policy changes while opening audio was copied into the output buffer.
+        discardThrowawayCalls();
 
         // Completed calls can be retired quickly once playback is done. Incomplete calls get a much longer
         // stale timeout so brief decoder gaps do not kill active audio, while channels that never receive a close
@@ -262,6 +258,10 @@ public class AudioChannel
         if(isMuted() && audio != null)
         {
             audio = new float[SAMPLES_PER_INTERVAL];
+        }
+        else if(audio != null && getCurrentPlaybackBufferIndex() > 0)
+        {
+            mCurrentCallAudioEmitted = true;
         }
 
         if(hadWork && isIdle())
@@ -313,6 +313,24 @@ public class AudioChannel
     private boolean isThrowaway(PlayableAudioCall audioCall)
     {
         return audioCall != null && (audioCall.isDoNotMonitor() || mDropDuplicates && audioCall.isDuplicate());
+    }
+
+    private void discardThrowawayCalls()
+    {
+        while(isThrowaway(getCurrentAudioCall()))
+        {
+            if(mCurrentCallAudioEmitted && mAudioSegmentDropTone != null)
+            {
+                mAudioBuffer.replace(mAudioSegmentDropTone);
+            }
+            else
+            {
+                //The call was rejected before anything reached the speakers; discard its opening tone and audio.
+                mAudioBuffer.clear();
+            }
+
+            disposeCurrentAudioSegment();
+        }
     }
 
     /**
@@ -436,6 +454,7 @@ public class AudioChannel
     public void clearPlayback()
     {
         mCurrentPlaybackBurst = null;
+        mCurrentCallAudioEmitted = false;
         mNoAudioFromSegmentIntervalCount = 0;
         mMetadataSent = false;
         mAudioBuffer.clear();
@@ -450,10 +469,11 @@ public class AudioChannel
      */
     public void play(PlayableAudioCall audioCall)
     {
-        if(audioCall != null && !isDisabled() && getCurrentAudioCall() == null)
+        if(audioCall != null && !isDisabled() && getCurrentAudioCall() == null && !isThrowaway(audioCall))
         {
             broadcast(audioCall.getIdentifierCollection());
             mMetadataSent = true;
+            mCurrentCallAudioEmitted = false;
             mCurrentPlaybackBurst = new AudioPlaybackBurst(audioCall);
         }
     }
@@ -477,6 +497,7 @@ public class AudioChannel
                     currentAudioCall.isComplete(), mNoAudioFromSegmentIntervalCount);
             }
             mCurrentPlaybackBurst = null;
+            mCurrentCallAudioEmitted = false;
             clearMetadata();
         }
     }

@@ -27,6 +27,8 @@ import io.github.dsheirer.controller.NamingThreadFactory;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
+import io.github.dsheirer.identifier.IdentifierClass;
+import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.playback.PlayTestAudioRequest;
@@ -64,6 +66,8 @@ public class AudioPlaybackManager implements IAudioController
     private static final long NORMAL_PROCESS_INTERVAL_MS = 20;
     private static final long WATCHDOG_INTERVAL_MS = 1000;
     private static final long WATCHDOG_STARTUP_GRACE_PERIOD_MS = 5000;
+    /** Maximum standard-channel opening audio retained while waiting for optional destination metadata (25 x 20 ms). */
+    static final int PLAYBACK_POLICY_BUFFER_LIMIT = 25;
     private final AudioSegmentPrioritySorter mAudioSegmentPrioritySorter = new AudioSegmentPrioritySorter();
     private final Broadcaster<AudioEvent> mControllerBroadcaster = new Broadcaster<>();
     private final LinkedTransferQueue<PlayableAudioCall> mIncomingSegments = new LinkedTransferQueue<>();
@@ -90,7 +94,7 @@ public class AudioPlaybackManager implements IAudioController
 
     private enum PlaybackCallState
     {
-        WAITING_FOR_AUDIO,
+        WAITING_FOR_PLAYBACK,
         READY
     }
 
@@ -429,8 +433,9 @@ public class AudioPlaybackManager implements IAudioController
             {
                 for(AudioChannel audioChannel: mAudioOutput.getAudioProvider().getAudioChannels())
                 {
-                    AudioPlaybackCall call = AudioPlaybackCall.from(audioChannel.getChannelName(),
-                        audioChannel.getCurrentAudioCall());
+                    PlayableAudioCall currentAudioCall = audioChannel.getCurrentAudioCall();
+                    AudioPlaybackCall call = isVisibleForPlaybackState(currentAudioCall) ?
+                        AudioPlaybackCall.from(audioChannel.getChannelName(), currentAudioCall) : null;
 
                     if(call != null)
                     {
@@ -444,11 +449,10 @@ public class AudioPlaybackManager implements IAudioController
             mAudioChannelsLock.unlock();
         }
 
-        queuedCalls.addAll(mIncomingSegments);
-
         for(PlaybackCallContext context: mCallContexts.values())
         {
-            if(context != null && context.audioCall() != null)
+            if(context != null && context.state() == PlaybackCallState.READY &&
+                isVisibleForPlaybackState(context.audioCall()))
             {
                 queuedCalls.add(context.audioCall());
             }
@@ -625,7 +629,7 @@ public class AudioPlaybackManager implements IAudioController
             {
                 for(AudioChannel audioChannel : mAudioOutput.getAudioProvider().getAudioChannels())
                 {
-                    if(audioChannel != null && audioChannel.getCurrentAudioCall() != null)
+                    if(audioChannel != null && isVisibleForPlaybackState(audioChannel.getCurrentAudioCall()))
                     {
                         return audioChannel.getCurrentAudioCall();
                     }
@@ -641,13 +645,12 @@ public class AudioPlaybackManager implements IAudioController
 
         for(PlaybackCallContext context : mCallContexts.values())
         {
-            if(context != null && context.audioCall() != null)
+            if(context != null && context.state() == PlaybackCallState.READY &&
+                isVisibleForPlaybackState(context.audioCall()))
             {
                 queuedCalls.add(context.audioCall());
             }
         }
-
-        queuedCalls.addAll(mIncomingSegments);
 
         if(queuedCalls.isEmpty())
         {
@@ -670,6 +673,53 @@ public class AudioPlaybackManager implements IAudioController
         }
 
         return holdTarget == null || holdTarget.equals(target);
+    }
+
+    private boolean isSuppressedDuplicate(PlayableAudioCall audioCall)
+    {
+        return audioCall != null && audioCall.isDuplicate() &&
+            mUserPreferences.getCallManagementPreference().isDuplicatePlaybackSuppressionEnabled();
+    }
+
+    /**
+     * Policy-pending calls are internal scheduler work, not a user-visible queue or current target.
+     */
+    private boolean isVisibleForPlaybackState(PlayableAudioCall audioCall)
+    {
+        return isReadyForPlayback(audioCall) && !audioCall.isDoNotMonitor() &&
+            !isSuppressedDuplicate(audioCall) && isAllowedForLocalPlayback(audioCall);
+    }
+
+    /**
+     * A destination identifier confirms that alias-based listening policy has been applied. Traffic calls always
+     * require that grant identity. Standard channels use a short bounded opening buffer because valid direct/late-entry
+     * calls may not carry a destination at all.
+     */
+    static boolean isReadyForPlayback(PlayableAudioCall audioCall)
+    {
+        if(audioCall == null || !audioCall.hasAudio())
+        {
+            return false;
+        }
+
+        if(audioCall.getIdentifierCollection() != null &&
+            audioCall.getIdentifierCollection().getToIdentifier() != null)
+        {
+            return true;
+        }
+
+        return !isTrafficCall(audioCall) &&
+            (audioCall.isComplete() || audioCall.getAudioBufferCount() >= PLAYBACK_POLICY_BUFFER_LIMIT);
+    }
+
+    /**
+     * Temporary trunked traffic channels receive an explicit marker with their grant preload.
+     */
+    static boolean isTrafficCall(PlayableAudioCall audioCall)
+    {
+        return audioCall != null && audioCall.getIdentifierCollection() != null &&
+            audioCall.getIdentifierCollection().getIdentifier(IdentifierClass.DECODER, Form.TRAFFIC_CHANNEL,
+                Role.ANY) != null;
     }
 
     private boolean isCurrentHoldCallActive()
@@ -747,7 +797,18 @@ public class AudioPlaybackManager implements IAudioController
 
     private void updateQueuedCallCount()
     {
-        mQueuedCallCount.set(mIncomingSegments.size() + mCallContexts.size());
+        int readyCalls = 0;
+
+        for(PlaybackCallContext context : mCallContexts.values())
+        {
+            if(context != null && context.state() == PlaybackCallState.READY &&
+                isVisibleForPlaybackState(context.audioCall()))
+            {
+                readyCalls++;
+            }
+        }
+
+        mQueuedCallCount.set(readyCalls);
     }
 
     /**
@@ -923,8 +984,8 @@ public class AudioPlaybackManager implements IAudioController
                     !(incomingSegment.isComplete() && !incomingSegment.hasAudio()) &&
                     isAllowedForLocalPlayback(incomingSegment))
                 {
-                    PlaybackCallState initialState = incomingSegment.hasAudio() ? PlaybackCallState.READY :
-                        PlaybackCallState.WAITING_FOR_AUDIO;
+                    PlaybackCallState initialState = isReadyForPlayback(incomingSegment) ? PlaybackCallState.READY :
+                        PlaybackCallState.WAITING_FOR_PLAYBACK;
                     mCallContexts.put(incomingSegment, new PlaybackCallContext(incomingSegment, initialState));
 
                     if(watchdog)
@@ -966,7 +1027,13 @@ public class AudioPlaybackManager implements IAudioController
                 {
                     mCallContexts.remove(entry.getKey());
                 }
-                else if(context.state() == PlaybackCallState.WAITING_FOR_AUDIO && audioSegment.hasAudio())
+                else if(audioSegment.isComplete() && !isReadyForPlayback(audioSegment))
+                {
+                    //Incomplete digital fragments never acquired enough metadata to evaluate listening policy.
+                    mCallContexts.remove(entry.getKey());
+                }
+                else if(context.state() == PlaybackCallState.WAITING_FOR_PLAYBACK &&
+                    isReadyForPlayback(audioSegment))
                 {
                     entry.setValue(context.withState(PlaybackCallState.READY));
 
@@ -1046,12 +1113,6 @@ public class AudioPlaybackManager implements IAudioController
             }
 
             return null;
-        }
-
-        private boolean isSuppressedDuplicate(PlayableAudioCall audioSegment)
-        {
-            return audioSegment.isDuplicate() &&
-                mUserPreferences.getCallManagementPreference().isDuplicatePlaybackSuppressionEnabled();
         }
 
         private void trimBackloggedCalls()

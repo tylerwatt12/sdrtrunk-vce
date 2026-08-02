@@ -282,7 +282,7 @@ body[data-view="live"] .systems-live-tabs {
 .playback-bar {
   min-height: 50px;
   display: grid;
-  grid-template-columns: repeat(5, max-content) minmax(280px, 1fr) max-content max-content max-content;
+  grid-template-columns: repeat(6, max-content) minmax(280px, 1fr) max-content max-content max-content;
   align-items: center;
   gap: 5px;
   padding: 5px 12px;
@@ -356,6 +356,33 @@ body[data-view="live"] .systems-live-tabs {
 .playback-field {
   color: #aab3b9;
   font-weight: 400;
+}
+
+.playback-volume {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 28px;
+  padding: 0 4px;
+  white-space: nowrap;
+}
+
+.playback-volume input {
+  width: 68px;
+  margin: 0;
+  accent-color: #36a99e;
+}
+
+.playback-volume input:focus-visible {
+  outline: 2px solid #64e47e;
+  outline-offset: 2px;
+}
+
+.playback-volume output {
+  width: 30px;
+  color: #aab3b9;
+  font-size: 11px;
+  text-align: right;
 }
 
 .playback-queue {
@@ -2296,7 +2323,7 @@ th.center {
   }
 
   .playback-bar {
-    grid-template-columns: repeat(5, max-content) minmax(260px, 1fr);
+    grid-template-columns: repeat(6, max-content) minmax(260px, 1fr);
     overflow-x: auto;
   }
 

@@ -5,6 +5,7 @@
  */
 package io.github.dsheirer.controller.channel;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -36,6 +37,19 @@ class ChannelProcessingManagerQualityTest
         assertFalse(ChannelProcessingManager.supportsControlChannelQuality(
             channel(ChannelType.STANDARD, new DecodeConfigNBFM())));
         assertFalse(ChannelProcessingManager.supportsControlChannelQuality(null));
+    }
+
+    @Test
+    void usesConfiguredInternalTimeslotNumbersForTrafficPreload()
+    {
+        assertArrayEquals(new int[]{1, 2}, ChannelProcessingManager.getTrafficIdentifierTimeslots(
+            channel(ChannelType.TRAFFIC, new DecodeConfigDMR())));
+        assertArrayEquals(new int[]{1, 2}, ChannelProcessingManager.getTrafficIdentifierTimeslots(
+            channel(ChannelType.TRAFFIC, new DecodeConfigP25Phase2())));
+        assertArrayEquals(new int[]{0}, ChannelProcessingManager.getTrafficIdentifierTimeslots(
+            channel(ChannelType.TRAFFIC, new DecodeConfigP25Phase1())));
+        assertArrayEquals(new int[]{0}, ChannelProcessingManager.getTrafficIdentifierTimeslots(
+            channel(ChannelType.TRAFFIC, new DecodeConfigNXDN())));
     }
 
     private static Channel channel(ChannelType type, DecodeConfiguration configuration)

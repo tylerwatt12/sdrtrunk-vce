@@ -71,7 +71,7 @@ final class StatsWebCallService implements AutoCloseable
         AudioCallSnapshot snapshot = call != null ? call.snapshot() : null;
 
         if(!mRunning || !mEventHub.hasSubscribers() || !call.hasAudio() || snapshot == null ||
-            snapshot.isDoNotMonitor() || snapshot.duplicate())
+            snapshot.isDoNotMonitor() || snapshot.duplicate() || isUnresolvedTrafficCall(snapshot))
         {
             return;
         }
@@ -89,6 +89,13 @@ final class StatsWebCallService implements AutoCloseable
     StatsLiveEventHub.Subscription subscribe()
     {
         return mRunning ? mEventHub.subscribe() : null;
+    }
+
+    private static boolean isUnresolvedTrafficCall(AudioCallSnapshot snapshot)
+    {
+        IdentifierCollection identifiers = snapshot != null ? snapshot.identifierCollection() : null;
+        return identifiers != null && identifiers.getToIdentifier() == null &&
+            identifiers.getIdentifier(IdentifierClass.DECODER, Form.TRAFFIC_CHANNEL, Role.ANY) != null;
     }
 
     synchronized CachedCall get(String id)

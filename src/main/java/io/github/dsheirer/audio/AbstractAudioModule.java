@@ -86,6 +86,8 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
             {
                 if(mCurrentAudioCall != null)
                 {
+                    //Apply this identifier and its alias policy before publishing the corresponding snapshot.
+                    mCurrentAudioCall.receive(notification);
                     emitAudioCallEvent(AudioCallEventType.METADATA_UPDATED, null);
                 }
             }
@@ -119,7 +121,6 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
             {
                 mCurrentAudioCall.complete();
                 emitAudioCallEvent(AudioCallEventType.CALL_COMPLETED, null, mLinkNextAudioCallToPrevious);
-                mIdentifierUpdateNotificationBroadcaster.removeListener(mCurrentAudioCall);
                 mCurrentAudioCall = null;
                 mPreviousAudioCallId = mCurrentAudioCallId;
                 mCurrentAudioCallId = null;
@@ -148,8 +149,6 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
                 mCurrentLinkedAudioCallId = mLinkNextAudioCallToPrevious ? mPreviousAudioCallId : null;
                 mLinkNextAudioCallToPrevious = false;
                 mCurrentAudioCall.addIdentifiers(asTypedIdentifiers(mIdentifierCollection.getIdentifiers()));
-                mIdentifierUpdateNotificationBroadcaster.addListener(mCurrentAudioCall);
-
                 if(mRecordAudioOverride)
                 {
                     mCurrentAudioCall.setRecordAudio(true);

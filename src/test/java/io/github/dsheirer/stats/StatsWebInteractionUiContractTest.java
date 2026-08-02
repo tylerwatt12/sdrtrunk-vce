@@ -20,6 +20,7 @@ class StatsWebInteractionUiContractTest
 {
     private static final Path APP_JAVASCRIPT = Path.of("stats-web", "assets", "app.js");
     private static final Path APP_CSS = Path.of("stats-web", "assets", "app.css");
+    private static final Path WEB_CALL_PLAYER = Path.of("stats-web", "assets", "web-call-player.js");
     private static final Path INDEX_HTML = Path.of("stats-web", "index.html");
 
     @Test
@@ -296,14 +297,61 @@ class StatsWebInteractionUiContractTest
         assertTrue(html.indexOf("localStorage.getItem('sdrtrunk_theme')") <
             html.indexOf("rel=\"stylesheet\""));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=25"));
-        assertTrue(html.contains("/assets/app.js?v=35"));
+        assertTrue(html.contains("/assets/app.css?v=26"));
+        assertTrue(html.contains("/assets/app.js?v=36"));
         assertTrue(source.contains("window.localStorage.setItem(THEME_STORAGE_KEY"));
         assertTrue(source.contains("toggle.setAttribute('aria-pressed'"));
         assertTrue(css.contains(":root[data-theme=\"dark\"]"));
         assertTrue(css.contains("--chart-call:"));
         assertTrue(css.contains(":not(.table-sort-control):not(.systems-live-tab)"));
         assertFalse(css.contains("filter: invert("));
+    }
+
+    @Test
+    void controlsAndPersistsBrowserPlaybackVolumeIndependentlyOfMute() throws Exception
+    {
+        String html = Files.readString(INDEX_HTML);
+        String source = Files.readString(WEB_CALL_PLAYER);
+        String css = Files.readString(APP_CSS);
+        String changeVolume = function(source, "  changeVolume()");
+        String readVolume = function(source, "  readVolume()");
+        String ensureAudioContext = function(source, "  ensureAudioContext()");
+        String startCurrent = function(source, "  startCurrent()");
+
+        assertTrue(html.contains("id=\"playback-volume\" type=\"range\""));
+        assertTrue(html.contains("aria-label=\"Browser playback volume\""));
+        assertTrue(html.contains("id=\"playback-volume-value\""));
+        assertTrue(html.contains("/assets/web-call-player.js?v=4"));
+        assertTrue(source.contains("VOLUME_KEY = 'sdrtrunk-vce.web-player.volume'"));
+        assertTrue(source.contains("this.volume = this.readVolume()"));
+        assertTrue(changeVolume.contains("this.gainNode.gain.value = this.volume"));
+        assertTrue(changeVolume.contains("localStorage.setItem(WebCallPlayer.VOLUME_KEY"));
+        assertFalse(changeVolume.contains("this.muted"));
+        assertTrue(readVolume.contains("stored === null || stored.trim() === ''"));
+        assertTrue(readVolume.contains("return 1"));
+        assertTrue(readVolume.contains("saved >= 0 && saved <= 1"));
+        assertTrue(ensureAudioContext.contains("this.audioContext.createGain()"));
+        assertTrue(ensureAudioContext.contains("this.gainNode.gain.value = this.volume"));
+        assertTrue(startCurrent.contains("source.connect(this.gainNode)"));
+        assertTrue(css.contains(".playback-volume input:focus-visible"));
+        assertTrue(css.contains("accent-color: #36a99e"));
+    }
+
+    @Test
+    void keepsBufferingCallsOutOfQueueAndPlaybackActions() throws Exception
+    {
+        String source = Files.readString(WEB_CALL_PLAYER);
+        String enqueue = function(source, "  enqueue(call)");
+        String toggleHold = function(source, "  toggleHold()");
+        String avoidCurrent = function(source, "  avoidCurrent()");
+        String render = function(source, "  render()");
+
+        assertTrue(enqueue.contains("if (!this.muted && !this.current) this.playNext();"));
+        assertTrue(enqueue.contains("else this.render();"));
+        assertTrue(toggleHold.contains("this.source && this.current"));
+        assertTrue(avoidCurrent.contains("if (!this.source || !this.current) return;"));
+        assertTrue(render.contains("this.ui.hold.disabled = !this.holdTarget && !activelyPlaying"));
+        assertTrue(render.contains("this.ui.avoid.disabled = !activelyPlaying"));
     }
 
     @Test

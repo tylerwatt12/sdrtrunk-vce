@@ -287,8 +287,27 @@ public class SingleChannelState extends AbstractChannelState implements IDecoder
     @Override
     public void updateChannelStateIdentifiers(IdentifierUpdateNotification notification)
     {
-        mIdentifierCollection.receive(notification);
-        mChannelMetadata.receive(notification);
+        if(notification.getTimeslot() != mIdentifierCollection.getTimeslot())
+        {
+            return;
+        }
+
+        if(notification.isAdd())
+        {
+            mIdentifierCollection.update(notification.getIdentifier());
+        }
+        else if(notification.isSilentAdd())
+        {
+            mIdentifierCollection.silentUpdate(notification.getIdentifier());
+        }
+        else if(notification.isRemove())
+        {
+            mIdentifierCollection.remove(notification.getIdentifier());
+        }
+        else if(notification.isSilentRemove())
+        {
+            mIdentifierCollection.silentRemove(notification.getIdentifier());
+        }
     }
 
     /**

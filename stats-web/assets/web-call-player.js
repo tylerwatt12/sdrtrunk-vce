@@ -1,5 +1,6 @@
 class WebCallPlayer {
   static MAXIMUM_QUEUE_KEY = 'sdrtrunk-vce.web-player.maximum-queued-calls';
+  static VOLUME_KEY = 'sdrtrunk-vce.web-player.volume';
 
   constructor(ids) {
     this.ui = Object.fromEntries(Object.entries(ids).map(([key, id]) => [key, document.getElementById(id)]));
@@ -9,11 +10,14 @@ class WebCallPlayer {
     this.current = null;
     this.currentBuffer = null;
     this.source = null;
+    this.gainNode = null;
     this.audioContext = null;
     this.loadToken = 0;
     this.dropped = 0;
     this.muted = true;
+    this.volume = this.readVolume();
     this.maximumQueued = this.readMaximumQueued();
+    this.ui.volume.value = String(this.volume);
     this.ui.maximumQueued.value = this.maximumQueued;
     this.bindControls();
     this.render();
@@ -37,8 +41,8 @@ class WebCallPlayer {
     }
 
     this.queue.push(call);
-    this.render();
     if (!this.muted && !this.current) this.playNext();
+    else this.render();
   }
 
   bindControls() {
@@ -50,6 +54,7 @@ class WebCallPlayer {
       this.render();
     });
     this.ui.skip.addEventListener('click', () => this.skip());
+    this.ui.volume.addEventListener('input', () => this.changeVolume());
     this.ui.maximumQueued.addEventListener('change', () => this.changeMaximumQueued());
   }
 
@@ -73,7 +78,7 @@ class WebCallPlayer {
   toggleHold() {
     if (this.holdTarget) {
       this.holdTarget = null;
-    } else if (this.current) {
+    } else if (this.source && this.current) {
       this.holdTarget = this.targetKey(this.current);
       this.queue = this.queue.filter((call) => this.targetKey(call) === this.holdTarget);
     }
@@ -82,7 +87,7 @@ class WebCallPlayer {
   }
 
   avoidCurrent() {
-    if (!this.current) return;
+    if (!this.source || !this.current) return;
     const target = this.targetKey(this.current);
     this.avoids.add(target);
     if (this.holdTarget === target) this.holdTarget = null;
@@ -136,7 +141,7 @@ class WebCallPlayer {
     const token = this.loadToken;
     const source = this.audioContext.createBufferSource();
     source.buffer = this.currentBuffer;
-    source.connect(this.audioContext.destination);
+    source.connect(this.gainNode);
     source.onended = () => {
       if (token !== this.loadToken || source !== this.source) return;
       this.source = null;
@@ -177,6 +182,27 @@ class WebCallPlayer {
     this.render();
   }
 
+  changeVolume() {
+    const requested = Number(this.ui.volume.value);
+    this.volume = Number.isFinite(requested) ? Math.max(0, Math.min(1, requested)) : 1;
+    this.ui.volume.value = String(this.volume);
+    if (this.gainNode) this.gainNode.gain.value = this.volume;
+    try {
+      localStorage.setItem(WebCallPlayer.VOLUME_KEY, String(this.volume));
+    } catch (_) { }
+    this.renderVolume();
+  }
+
+  readVolume() {
+    try {
+      const stored = localStorage.getItem(WebCallPlayer.VOLUME_KEY);
+      if (stored === null || stored.trim() === '') return 1;
+      const saved = Number(stored);
+      if (Number.isFinite(saved) && saved >= 0 && saved <= 1) return saved;
+    } catch (_) { }
+    return 1;
+  }
+
   readMaximumQueued() {
     const saved = Math.trunc(Number(localStorage.getItem(WebCallPlayer.MAXIMUM_QUEUE_KEY)));
     return Number.isFinite(saved) && saved >= 1 && saved <= 500 ? saved : 100;
@@ -186,7 +212,15 @@ class WebCallPlayer {
     if (!this.audioContext) {
       const AudioContext = window.AudioContext || window.webkitAudioContext;
       this.audioContext = new AudioContext();
+      this.gainNode = this.audioContext.createGain();
+      this.gainNode.gain.value = this.volume;
+      this.gainNode.connect(this.audioContext.destination);
     }
+  }
+
+  renderVolume() {
+    this.ui.volumeValue.value = `${Math.round(this.volume * 100)}%`;
+    this.ui.volume.setAttribute('aria-valuetext', `${Math.round(this.volume * 100)} percent`);
   }
 
   isAllowed(call) {
@@ -252,6 +286,7 @@ class WebCallPlayer {
   }
 
   render() {
+    this.renderVolume();
     const activelyPlaying = Boolean(this.source);
     this.ui.current.replaceChildren();
     if (activelyPlaying && this.current) {
@@ -296,9 +331,9 @@ class WebCallPlayer {
     this.ui.mute.textContent = this.muted ? 'Unmute' : 'Mute';
     this.ui.mute.classList.toggle('active', !this.muted);
     this.ui.hold.classList.toggle('active', Boolean(this.holdTarget));
-    this.ui.hold.disabled = !this.holdTarget && !this.current;
+    this.ui.hold.disabled = !this.holdTarget && !activelyPlaying;
     this.ui.hold.title = this.holdTarget ? 'Release browser hold' : 'Hold the current target in this browser';
-    this.ui.avoid.disabled = !this.current;
+    this.ui.avoid.disabled = !activelyPlaying;
     this.ui.clear.disabled = !this.avoids.size;
     this.ui.clear.title = `Clear ${this.avoids.size} browser avoid(s)`;
     this.ui.skip.disabled = !this.current && !this.queue.length;

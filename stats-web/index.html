@@ -15,7 +15,7 @@
       }
     })();
   </script>
-  <link rel="stylesheet" href="/assets/app.css?v=25">
+  <link rel="stylesheet" href="/assets/app.css?v=26">
 </head>
 <body>
   <div class="app-shell">
@@ -38,6 +38,12 @@
       </header>
       <section class="playback-bar" id="playback-bar" aria-label="Web call playback">
         <button type="button" id="playback-mute" class="playback-command">Unmute</button>
+        <label class="playback-volume" title="Browser playback volume">
+          <span class="playback-field">Vol</span>
+          <input id="playback-volume" type="range" min="0" max="1" step="0.05" value="1"
+            aria-label="Browser playback volume" aria-describedby="playback-volume-value">
+          <output id="playback-volume-value" for="playback-volume">100%</output>
+        </label>
         <button type="button" id="playback-hold" class="playback-command">Hold</button>
         <button type="button" id="playback-avoid" class="playback-command">Avoid</button>
         <button type="button" id="playback-clear" class="playback-command">Clear</button>
@@ -63,7 +69,7 @@
       <div class="loading">Loading</div>
     </main>
   </div>
-  <script src="/assets/web-call-player.js?v=2"></script>
-  <script src="/assets/app.js?v=35"></script>
+  <script src="/assets/web-call-player.js?v=4"></script>
+  <script src="/assets/app.js?v=36"></script>
 </body>
 </html>

@@ -3043,6 +3043,8 @@ function initializePlaybackHeader() {
     avoid: 'playback-avoid',
     clear: 'playback-clear',
     skip: 'playback-skip',
+    volume: 'playback-volume',
+    volumeValue: 'playback-volume-value',
     current: 'playback-current',
     queued: 'playback-queued',
     dropped: 'playback-dropped',

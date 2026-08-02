@@ -361,6 +361,7 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
         }
 
         updateDuplicateState(context);
+        releasePlaybackCall(context);
 
         if(event.eventType() == AudioCallEventType.CALL_COMPLETED)
         {
@@ -391,8 +392,20 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
         }
 
         ManagedPlayableAudioCall playbackCall = new ManagedPlayableAudioCall(snapshot);
-        mPlaybackConsumer.accept(playbackCall);
         return playbackCall;
+    }
+
+    /**
+     * Publishes a live call only after its current snapshot, audio and duplicate state have been applied. This closes
+     * the race where the playback manager could accept the object between construction and the first policy update.
+     */
+    private void releasePlaybackCall(ManagedAudioCall context)
+    {
+        if(context != null && context.playbackCall != null && !context.playbackReleased)
+        {
+            context.playbackReleased = true;
+            mPlaybackConsumer.accept(context.playbackCall);
+        }
     }
 
     /**
@@ -1568,6 +1581,7 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
         private Long duplicateGroupId;
         private WebCallDeliveryEvent.OrderKey webOrderKey;
         private ScheduledFuture<?> webReservationWatchdog;
+        private boolean playbackReleased;
         private boolean webReservationOpen;
         private boolean webDeliveryFinalized;
 

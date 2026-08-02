@@ -39,6 +39,7 @@ import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.IdentifierUpdateNotification;
 import io.github.dsheirer.identifier.decoder.DecoderLogicalChannelNameIdentifier;
+import io.github.dsheirer.identifier.decoder.TrafficChannelIdentifier;
 import io.github.dsheirer.metadata.site.ProtocolSiteMetadataEvent;
 import io.github.dsheirer.metadata.site.ProtocolSiteMetadataListener;
 import io.github.dsheirer.metadata.site.SiteMetadataEvent;
@@ -646,9 +647,15 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         //Inject the channel identifier for traffic channels and preload user identifiers
         if(channel.isTrafficChannel())
         {
-            if(request.hasChannelDescriptor() && request.hasIdentifierCollection())
+            int[] trafficTimeslots = getTrafficIdentifierTimeslots(channel);
+
+            for(int timeslot: trafficTimeslots)
             {
-                for(int timeslot = 0; timeslot < request.getChannelDescriptor().getTimeslotCount(); timeslot++)
+                IdentifierUpdateNotification trafficNotification = new IdentifierUpdateNotification(
+                    TrafficChannelIdentifier.create(), IdentifierUpdateNotification.Operation.ADD, timeslot);
+                processingChain.getChannelState().updateChannelStateIdentifiers(trafficNotification);
+
+                if(request.hasChannelDescriptor())
                 {
                     DecoderLogicalChannelNameIdentifier identifier =
                         DecoderLogicalChannelNameIdentifier.create(request.getChannelDescriptor().toString(),
@@ -656,7 +663,10 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
                     IdentifierUpdateNotification notification = new IdentifierUpdateNotification(identifier,
                         IdentifierUpdateNotification.Operation.ADD, timeslot);
                     processingChain.getChannelState().updateChannelStateIdentifiers(notification);
+                }
 
+                if(request.hasIdentifierCollection())
+                {
                     //Inject scramble parameters
                     for(Identifier<?> scrambleParameters: request.getIdentifierCollection()
                         .getIdentifiers(Form.SCRAMBLE_PARAMETERS))
@@ -669,20 +679,13 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
                 }
             }
 
-            for(Identifier<?> userIdentifier : request.getIdentifierCollection().getIdentifiers(IdentifierClass.USER))
+            if(request.hasIdentifierCollection())
             {
-                if(request.getChannelDescriptor().getTimeslotCount() > 1)
+                for(Identifier<?> userIdentifier : request.getIdentifierCollection().getIdentifiers(IdentifierClass.USER))
                 {
-                    //Only broadcast an identifier update for the timeslot specified in the originating collection
+                    int timeslot = trafficTimeslots.length > 1 ? request.getIdentifierCollection().getTimeslot() : 0;
                     IdentifierUpdateNotification notification = new IdentifierUpdateNotification(userIdentifier,
-                        IdentifierUpdateNotification.Operation.ADD, request.getIdentifierCollection().getTimeslot());
-                    processingChain.getChannelState().updateChannelStateIdentifiers(notification);
-                }
-                else
-                {
-                    //Only broadcast an identifier update for the timeslot specified in the originating collection
-                    IdentifierUpdateNotification notification = new IdentifierUpdateNotification(userIdentifier,
-                        IdentifierUpdateNotification.Operation.ADD, 0);
+                        IdentifierUpdateNotification.Operation.ADD, timeslot);
                     processingChain.getChannelState().updateChannelStateIdentifiers(notification);
                 }
             }
@@ -721,6 +724,24 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
             processingChain.getEventBus().unregister(ChannelProcessingManager.this);
             processingChain.dispose();
         }
+    }
+
+    /**
+     * Internal channel-state keys are zero for single-slot decoders and one/two for DMR and P25 Phase 2.
+     */
+    static int[] getTrafficIdentifierTimeslots(Channel channel)
+    {
+        if(channel != null && channel.getDecodeConfiguration() != null)
+        {
+            int[] timeslots = channel.getDecodeConfiguration().getTimeslots();
+
+            if(timeslots != null && timeslots.length > 0)
+            {
+                return timeslots;
+            }
+        }
+
+        return new int[]{0};
     }
 
     /**
@@ -907,6 +928,13 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
 
             //Post a change notification so that processing chain modules can reconfigure
             processingChain.channelConfigurationChanged(new ChannelConfigurationChangeNotification(request.getTrafficChannel()));
+
+            for(int timeslot: getTrafficIdentifierTimeslots(request.getTrafficChannel()))
+            {
+                IdentifierUpdateNotification notification = new IdentifierUpdateNotification(
+                    TrafficChannelIdentifier.create(), IdentifierUpdateNotification.Operation.ADD, timeslot);
+                processingChain.getChannelState().updateChannelStateIdentifiers(notification);
+            }
         }
         else
         {

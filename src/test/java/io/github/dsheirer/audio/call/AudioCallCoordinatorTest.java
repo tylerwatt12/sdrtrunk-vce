@@ -131,6 +131,34 @@ class AudioCallCoordinatorTest
     }
 
     @Test
+    void playbackConsumerSeesDuplicateDecisionOnFirstPublication() throws Exception
+    {
+        List<Boolean> duplicateAtPublication = new CopyOnWriteArrayList<>();
+        AudioCallCoordinator coordinator = new AudioCallCoordinator(
+            new TestCallManagementProvider(true, false),
+            call -> duplicateAtPublication.add(call.isDuplicate()), null, null, null);
+
+        try
+        {
+            AudioCallSnapshot first = snapshot(41, 1, 1200, 9001, "Test System", null,
+                1_000L, 2_000L, 1, false);
+            AudioCallSnapshot second = snapshot(42, 2, 1200, 9002, "Test System", null,
+                1_000L, 2_000L, 1, false);
+            coordinator.receive(audioEvent(first, 160));
+            coordinator.receive(audioEvent(second, 160));
+
+            awaitCondition(() -> duplicateAtPublication.size() == 2,
+                "Expected both physical calls to reach the playback preference gate");
+            assertEquals(List.of(false, true), duplicateAtPublication,
+                "The duplicate loser must never be published briefly as an ordinary call");
+        }
+        finally
+        {
+            coordinator.dispose();
+        }
+    }
+
+    @Test
     void duplicateCohortProducesOneResolvedCallWithWinnerAudio() throws Exception
     {
         List<CompletedAudioCall> recorded = new CopyOnWriteArrayList<>();
