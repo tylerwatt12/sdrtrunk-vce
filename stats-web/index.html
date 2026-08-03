@@ -15,7 +15,7 @@
       }
     })();
   </script>
-  <link rel="stylesheet" href="/assets/app.css?v=26">
+  <link rel="stylesheet" href="/assets/app.css?v=27">
 </head>
 <body>
   <div class="app-shell">
@@ -23,15 +23,20 @@
       <header class="topbar" id="topbar">
         <a class="brand" href="/?view=dashboard">sdrtrunk-vce</a>
         <nav class="primary-nav" aria-label="Primary navigation">
-          <a data-view="dashboard" href="/?view=dashboard">Dashboard</a>
-          <a data-view="live" href="/?view=live">Live</a>
-          <a data-view="systems" href="/?view=systems">Systems &amp; Sites</a>
-          <a data-view="conventional" href="/?view=conventional">Conventional</a>
-          <a data-view="aliases" href="/?view=aliases">Aliases</a>
-          <a data-view="credits" href="/?view=credits">Credits</a>
+          <a data-view="dashboard" href="/?view=dashboard" hidden>Dashboard</a>
+          <a data-view="live" href="/?view=live" hidden>Live</a>
+          <a data-view="systems" href="/?view=systems" hidden>Systems &amp; Sites</a>
+          <a data-view="conventional" href="/?view=conventional" hidden>Conventional</a>
+          <a data-view="aliases" href="/?view=aliases" hidden>Aliases</a>
+          <a data-view="admin" href="/?view=admin&amp;tab=users" hidden>Admin</a>
+          <a data-view="credits" href="/?view=credits" hidden>Credits</a>
         </nav>
         <div class="header-controls">
           <div id="server-status" class="server-status">Loading</div>
+          <div id="auth-controls" class="auth-controls" aria-live="polite">
+            <span id="auth-session-label" class="auth-session-label" hidden></span>
+            <button type="button" id="auth-action" class="auth-action" disabled>Checking access</button>
+          </div>
           <button type="button" id="theme-toggle" class="theme-toggle" aria-pressed="false"
             aria-label="Use dark theme">Dark</button>
         </div>
@@ -62,14 +67,14 @@
         <label class="playback-limit"><span class="playback-field">Max</span>
           <input id="playback-max-queued" type="number" min="1" max="500" step="1" value="100">
         </label>
-        <div id="playback-status" class="playback-status">Connecting</div>
+        <div id="playback-status" class="playback-status">Checking access</div>
       </section>
     </div>
     <main id="content" class="content" aria-live="polite">
       <div class="loading">Loading</div>
     </main>
   </div>
-  <script src="/assets/web-call-player.js?v=4"></script>
-  <script src="/assets/app.js?v=36"></script>
+  <script src="/assets/web-call-player.js?v=5"></script>
+  <script src="/assets/app.js?v=37"></script>
 </body>
 </html>

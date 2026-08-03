@@ -1,0 +1,306 @@
+/*
+ * *****************************************************************************
+ * Copyright (C) 2026 Dennis Sheirer
+ * *****************************************************************************
+ */
+package io.github.dsheirer.web.http;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sun.net.httpserver.HttpServer;
+import com.sun.net.httpserver.HttpsConfigurator;
+import com.sun.net.httpserver.HttpsServer;
+import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
+import io.github.dsheirer.web.auth.AccessTier;
+import io.github.dsheirer.web.auth.WebAccessService;
+import io.github.dsheirer.web.auth.WebCapability;
+import io.github.dsheirer.web.tls.TlsMaterial;
+import io.github.dsheirer.web.tls.TlsMaterialService;
+import java.io.OutputStream;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
+import java.security.SecureRandom;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.time.Duration;
+import java.util.Arrays;
+import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509TrustManager;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+class WebAccessHttpControllerTest
+{
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final String ADMIN_PASSWORD = "admin-password-2026";
+    private static final String USER_PASSWORD = "listener-password-2026";
+
+    @TempDir
+    Path mTemporaryDirectory;
+
+    @Test
+    void enforcesSessionsCsrfRolesUserLifecycleAndCapabilityChanges() throws Exception
+    {
+        Path database = mTemporaryDirectory.resolve("sdrtrunk.sqlite");
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            SdrTrunkDatabaseSchema.create(connection);
+        }
+
+        WebAccessService accessService = new WebAccessService(database);
+        char[] primaryPassword = ADMIN_PASSWORD.toCharArray();
+
+        try
+        {
+            accessService.provisionOrResetPrimaryAdmin(primaryPassword);
+        }
+        finally
+        {
+            Arrays.fill(primaryPassword, '\u0000');
+        }
+
+        accessService.setCapabilityTier(WebCapability.DASHBOARD_VIEW, AccessTier.USER);
+        WebAccessHttpController controller = new WebAccessHttpController(accessService);
+        HttpServer server = HttpServer.create(
+            new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0);
+        ExecutorService executor = Executors.newCachedThreadPool();
+        server.setExecutor(executor);
+        controller.register(server);
+        server.createContext("/protected", controller.protect(WebCapability.DASHBOARD_VIEW, exchange -> {
+            byte[] body = "ok".getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, body.length);
+
+            try(OutputStream outputStream = exchange.getResponseBody())
+            {
+                outputStream.write(body);
+            }
+        }));
+        server.start();
+
+        try
+        {
+            URI origin = URI.create("http://127.0.0.1:" + server.getAddress().getPort());
+            HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
+            HttpResponse<String> anonymousSession = send(client, request(origin, "/api/v1/auth/session").GET());
+            JsonNode anonymous = json(anonymousSession);
+            assertEquals(200, anonymousSession.statusCode());
+            assertTrue(anonymous.get("configured").booleanValue());
+            assertFalse(anonymous.get("authenticated").booleanValue());
+            assertFalse(anonymous.at("/capabilities/dashboard").booleanValue());
+            assertFalse(anonymous.at("/capabilities/admin-users").booleanValue());
+
+            HttpResponse<String> anonymousProtected = send(client, request(origin, "/protected").GET());
+            assertEquals(401, anonymousProtected.statusCode());
+            assertTrue(anonymousProtected.headers().firstValue("Content-Security-Policy").isPresent());
+
+            Login admin = login(client, origin, "admin", ADMIN_PASSWORD);
+            assertEquals("ADMIN", admin.body().get("tier").textValue());
+            assertTrue(admin.cookieHeader().contains(WebAccessHttpController.SESSION_COOKIE_NAME + "="));
+            assertTrue(admin.setCookie().contains("HttpOnly"));
+            assertTrue(admin.setCookie().contains("SameSite=Strict"));
+            assertFalse(admin.setCookie().contains("Secure"));
+
+            assertEquals(200, send(client, request(origin, "/protected")
+                .header("Cookie", admin.cookieHeader()).GET()).statusCode());
+            assertEquals(200, send(client, request(origin, "/api/v1/admin/users")
+                .header("Cookie", admin.cookieHeader()).GET()).statusCode());
+
+            String createBody = OBJECT_MAPPER.writeValueAsString(Map.of(
+                "username", "listener", "password", USER_PASSWORD, "tier", "USER"));
+            HttpResponse<String> missingCsrf = send(client, request(origin, "/api/v1/admin/users")
+                .header("Origin", origin.toString())
+                .header("Cookie", admin.cookieHeader())
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(createBody)));
+            assertEquals(403, missingCsrf.statusCode());
+
+            HttpResponse<String> created = send(client, mutation(origin, "/api/v1/admin/users", admin)
+                .POST(HttpRequest.BodyPublishers.ofString(createBody)));
+            assertEquals(201, created.statusCode());
+            assertEquals("listener", json(created).get("username").textValue());
+
+            Login listener = login(client, origin, "listener", USER_PASSWORD);
+            assertEquals("USER", listener.body().get("tier").textValue());
+            assertEquals(200, send(client, request(origin, "/protected")
+                .header("Cookie", listener.cookieHeader()).GET()).statusCode());
+
+            String adminOnly = OBJECT_MAPPER.writeValueAsString(
+                Map.of("capability", "dashboard", "tier", "ADMIN"));
+            HttpResponse<String> policyChanged = send(client, mutation(origin, "/api/v1/admin/access", admin)
+                .PUT(HttpRequest.BodyPublishers.ofString(adminOnly)));
+            assertEquals(200, policyChanged.statusCode());
+            assertEquals("ADMIN", json(policyChanged).get("requiredTier").textValue());
+            assertEquals(403, send(client, request(origin, "/protected")
+                .header("Cookie", listener.cookieHeader()).GET()).statusCode());
+
+            String promote = OBJECT_MAPPER.writeValueAsString(Map.of("tier", "ADMIN"));
+            HttpResponse<String> promoted = send(client,
+                mutation(origin, "/api/v1/admin/users/listener", admin)
+                    .PUT(HttpRequest.BodyPublishers.ofString(promote)));
+            assertEquals(200, promoted.statusCode());
+            assertEquals("ADMIN", json(promoted).get("tier").textValue());
+            assertEquals(401, send(client, request(origin, "/protected")
+                .header("Cookie", listener.cookieHeader()).GET()).statusCode());
+
+            Login promotedLogin = login(client, origin, "listener", USER_PASSWORD);
+            assertEquals("ADMIN", promotedLogin.body().get("tier").textValue());
+            assertEquals(200, send(client, request(origin, "/protected")
+                .header("Cookie", promotedLogin.cookieHeader()).GET()).statusCode());
+
+            HttpResponse<String> primaryMutation = send(client,
+                mutation(origin, "/api/v1/admin/users/admin", admin)
+                    .PUT(HttpRequest.BodyPublishers.ofString(promote)));
+            assertEquals(400, primaryMutation.statusCode());
+
+            HttpResponse<String> deleted = send(client,
+                mutation(origin, "/api/v1/admin/users/listener", admin).DELETE());
+            assertEquals(200, deleted.statusCode());
+            assertEquals(401, send(client, request(origin, "/protected")
+                .header("Cookie", promotedLogin.cookieHeader()).GET()).statusCode());
+
+            HttpResponse<String> logout = send(client, mutation(origin, "/api/v1/auth/logout", admin)
+                .POST(HttpRequest.BodyPublishers.noBody()));
+            assertEquals(200, logout.statusCode());
+            assertTrue(logout.headers().firstValue("Set-Cookie").orElse("").contains("Max-Age=0"));
+        }
+        finally
+        {
+            server.stop(0);
+            controller.close();
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void marksTheSessionCookieSecureOnHttps() throws Exception
+    {
+        Path database = mTemporaryDirectory.resolve("https-sdrtrunk.sqlite");
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            SdrTrunkDatabaseSchema.create(connection);
+        }
+
+        WebAccessService accessService = new WebAccessService(database);
+        char[] password = ADMIN_PASSWORD.toCharArray();
+
+        try
+        {
+            accessService.provisionOrResetPrimaryAdmin(password);
+        }
+        finally
+        {
+            Arrays.fill(password, '\u0000');
+        }
+
+        TlsMaterial material = new TlsMaterialService(mTemporaryDirectory.resolve("tls-root"))
+            .generateSelfSigned("localhost", java.util.List.of("localhost", "127.0.0.1"));
+        WebAccessHttpController controller = new WebAccessHttpController(accessService);
+        HttpsServer server = HttpsServer.create(
+            new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0);
+        server.setHttpsConfigurator(new HttpsConfigurator(material.createServerSslContext()));
+        ExecutorService executor = Executors.newCachedThreadPool();
+        server.setExecutor(executor);
+        controller.register(server);
+        server.start();
+
+        try
+        {
+            URI origin = URI.create("https://127.0.0.1:" + server.getAddress().getPort());
+            HttpClient client = HttpClient.newBuilder()
+                .sslContext(trustAllSslContext())
+                .connectTimeout(Duration.ofSeconds(5))
+                .build();
+            Login login = login(client, origin, "admin", ADMIN_PASSWORD);
+            assertTrue(login.setCookie().contains("; Secure"));
+        }
+        finally
+        {
+            server.stop(0);
+            controller.close();
+            executor.shutdownNow();
+        }
+    }
+
+    private static Login login(HttpClient client, URI origin, String username, String password) throws Exception
+    {
+        String body = OBJECT_MAPPER.writeValueAsString(Map.of("username", username, "password", password));
+        HttpResponse<String> response = send(client, request(origin, "/api/v1/auth/login")
+            .header("Origin", origin.toString())
+            .header("Content-Type", "application/json")
+            .POST(HttpRequest.BodyPublishers.ofString(body)));
+        assertEquals(200, response.statusCode(), response.body());
+        JsonNode json = json(response);
+        String setCookie = response.headers().firstValue("Set-Cookie").orElseThrow();
+        return new Login(json, setCookie.substring(0, setCookie.indexOf(';')), setCookie,
+            json.get("csrfToken").textValue());
+    }
+
+    private static HttpRequest.Builder mutation(URI origin, String path, Login login)
+    {
+        return request(origin, path)
+            .header("Origin", origin.toString())
+            .header("Cookie", login.cookieHeader())
+            .header(WebAccessHttpController.CSRF_HEADER_NAME, login.csrfToken())
+            .header("Content-Type", "application/json");
+    }
+
+    private static HttpRequest.Builder request(URI origin, String path)
+    {
+        return HttpRequest.newBuilder(origin.resolve(path)).timeout(Duration.ofSeconds(30));
+    }
+
+    private static HttpResponse<String> send(HttpClient client, HttpRequest.Builder builder) throws Exception
+    {
+        return client.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+    }
+
+    private static JsonNode json(HttpResponse<String> response) throws Exception
+    {
+        return OBJECT_MAPPER.readTree(response.body());
+    }
+
+    private static SSLContext trustAllSslContext() throws Exception
+    {
+        X509TrustManager trustManager = new X509TrustManager()
+        {
+            @Override
+            public java.security.cert.X509Certificate[] getAcceptedIssuers()
+            {
+                return new java.security.cert.X509Certificate[0];
+            }
+
+            @Override
+            public void checkClientTrusted(java.security.cert.X509Certificate[] chain, String authenticationType)
+            {
+            }
+
+            @Override
+            public void checkServerTrusted(java.security.cert.X509Certificate[] chain, String authenticationType)
+            {
+            }
+        };
+        SSLContext context = SSLContext.getInstance("TLS");
+        context.init(null, new TrustManager[]{trustManager}, new SecureRandom());
+        return context;
+    }
+
+    private record Login(JsonNode body, String cookieHeader, String setCookie, String csrfToken)
+    {
+    }
+}

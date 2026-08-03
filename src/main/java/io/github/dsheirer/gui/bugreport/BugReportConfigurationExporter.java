@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.dsheirer.database.SdrTrunkDatabase;
+import io.github.dsheirer.web.auth.WebAccessService;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -81,6 +82,14 @@ public class BugReportConfigurationExporter
 
             while(resultSet.next())
             {
+                // Password verifiers and salts are authentication material, not diagnostic configuration.  Omit
+                // the complete row so a future field-name change cannot accidentally include them in a report.
+                if("application_settings".equals(table) &&
+                    WebAccessService.SETTING_KEY.equals(resultSet.getString("key")))
+                {
+                    continue;
+                }
+
                 Map<String,Object> row = new LinkedHashMap<>();
 
                 for(int column = 1; column <= metadata.getColumnCount(); column++)

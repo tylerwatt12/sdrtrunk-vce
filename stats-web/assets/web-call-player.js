@@ -12,6 +12,7 @@ class WebCallPlayer {
     this.source = null;
     this.gainNode = null;
     this.audioContext = null;
+    this.events = null;
     this.loadToken = 0;
     this.dropped = 0;
     this.muted = true;
@@ -24,11 +25,30 @@ class WebCallPlayer {
   }
 
   connect(url) {
+    if (this.events) this.events.close();
     const events = new EventSource(url);
+    this.events = events;
     events.addEventListener('call', (event) => this.enqueue(JSON.parse(event.data)));
     events.onopen = () => this.setStatus(this.muted ? 'Muted' : this.current ? 'Listening' : 'Waiting');
-    events.onerror = () => this.setStatus('Reconnecting');
+    events.onerror = () => {
+      if (this.events === events) this.setStatus('Reconnecting');
+    };
     return events;
+  }
+
+  disconnect(status = 'Unavailable') {
+    if (this.events) {
+      this.events.close();
+      this.events = null;
+    }
+    this.muted = true;
+    this.queue = [];
+    this.avoids.clear();
+    this.holdTarget = null;
+    this.stopCurrent();
+    if (this.audioContext?.state === 'running') this.audioContext.suspend().catch(() => {});
+    this.setStatus(status);
+    this.render();
   }
 
   // Recorded-call pages can feed this same queue by providing the same call shape and an audio_url.
@@ -119,7 +139,7 @@ class WebCallPlayer {
     this.render();
 
     try {
-      const response = await fetch(this.current.audio_url, { cache: 'no-store' });
+      const response = await fetch(this.current.audio_url, { cache: 'no-store', credentials: 'same-origin' });
       if (!response.ok) throw new Error(`Audio returned ${response.status}`);
       this.ensureAudioContext();
       const data = await response.arrayBuffer();

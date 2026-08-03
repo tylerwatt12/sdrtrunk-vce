@@ -12,6 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
+import io.github.dsheirer.web.auth.WebAccessService;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -54,6 +55,11 @@ class BugReportConfigurationExporterTest
                 statement.setString(2,
                     "{\"user/test\":{\"vault.saved.password\":\"vault-password\",\"normal\":\"kept\"}}");
                 statement.executeUpdate();
+
+                statement.setString(1, WebAccessService.SETTING_KEY);
+                statement.setString(2,
+                    "{\"primaryAdmin\":{\"salt\":\"must-not-export\",\"verifier\":\"must-not-export\"}}");
+                statement.executeUpdate();
             }
         }
 
@@ -70,6 +76,8 @@ class BugReportConfigurationExporterTest
         assertEquals(BugReportRedactor.REDACTED,
             preferences.at("/user~1test/vault.saved.password").textValue());
         assertEquals("kept", preferences.at("/user~1test/normal").textValue());
+        assertEquals(1, snapshot.get("application_settings").size());
+        assertFalse(mapper.writeValueAsString(snapshot).contains("must-not-export"));
         assertTrue(snapshot.containsKey("alias_list"));
         assertTrue(snapshot.containsKey("alias"));
         assertFalse(snapshot.containsKey("alias_talkgroup"));

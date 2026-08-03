@@ -369,7 +369,8 @@ public class ChannelWebLinkPanel extends JPanel implements Listener<SelectedFreq
 
         try
         {
-            return new URI("http", null, "127.0.0.1", state.port(), "/", query.toString(), null);
+            return new URI(state.https() ? "https" : "http", null, "127.0.0.1", state.port(), "/",
+                query.toString(), null);
         }
         catch(URISyntaxException e)
         {

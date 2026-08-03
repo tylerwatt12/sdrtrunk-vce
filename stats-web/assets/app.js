@@ -12,6 +12,31 @@ const DECODE_DEGRADED_MINIMUM_PERCENT = 75;
 const VOICE_QUALITY_WARMUP_FRAMES = 50;
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
 const THEME_STORAGE_KEY = 'sdrtrunk_theme';
+const ACCESS_CAPABILITIES = Object.freeze({
+  DASHBOARD: 'dashboard',
+  LIVE: 'live',
+  SYSTEMS: 'systems',
+  CONVENTIONAL: 'conventional',
+  ALIASES: 'aliases',
+  CREDITS: 'credits',
+  CSV_EXPORT: 'csv-export',
+  CALL_AUDIO: 'call-audio',
+  ADMIN_USERS: 'admin-users',
+  ADMIN_ACCESS: 'admin-access'
+});
+const VIEW_ACCESS_CAPABILITY = Object.freeze({
+  dashboard: ACCESS_CAPABILITIES.DASHBOARD,
+  live: ACCESS_CAPABILITIES.LIVE,
+  systems: ACCESS_CAPABILITIES.SYSTEMS,
+  system: ACCESS_CAPABILITIES.SYSTEMS,
+  talkgroup: ACCESS_CAPABILITIES.SYSTEMS,
+  radio: ACCESS_CAPABILITIES.SYSTEMS,
+  site: ACCESS_CAPABILITIES.SYSTEMS,
+  conventional: ACCESS_CAPABILITIES.CONVENTIONAL,
+  'conventional-detail': ACCESS_CAPABILITIES.CONVENTIONAL,
+  aliases: ACCESS_CAPABILITIES.ALIASES,
+  credits: ACCESS_CAPABILITIES.CREDITS
+});
 const SIGNAL_RANGES = Object.freeze([
   ['1h', '1 hour'], ['6h', '6 hours'], ['24h', '24 hours'], ['7d', '7 days'], ['30d', '30 days']
 ]);
@@ -169,6 +194,9 @@ const ALIAS_CATALOG_DEFAULT_ENRICHMENT_COLUMNS = Object.freeze([
 let serviceStatus = null;
 let tableWidthPreferences = readTableWidthPreferences();
 let activeReadOnlyModal = null;
+let accessSession = anonymousAccessSession();
+let accessSessionAvailable = false;
+let playbackConnection = null;
 
 if (tableOnly) {
   document.body.classList.add('table-only');
@@ -327,6 +355,261 @@ function initializeThemeToggle() {
   if (!toggle) return;
   updateThemeToggle();
   toggle.addEventListener('click', () => setTheme(currentTheme() === 'dark' ? 'light' : 'dark'));
+}
+
+function normalizeAccessTier(value) {
+  const tier = String(value || 'PUBLIC').trim().toUpperCase();
+  return ['PUBLIC', 'USER', 'ADMIN'].includes(tier) ? tier : 'PUBLIC';
+}
+
+function accessTierRank(value) {
+  return ({ PUBLIC: 0, USER: 1, ADMIN: 2 })[normalizeAccessTier(value)];
+}
+
+function accessTierLabel(value) {
+  const tier = normalizeAccessTier(value);
+  return tier[0] + tier.slice(1).toLowerCase();
+}
+
+function anonymousAccessSession() {
+  return {
+    configured: false,
+    authenticated: false,
+    username: null,
+    tier: 'PUBLIC',
+    primary: false,
+    csrfToken: null,
+    capabilities: {}
+  };
+}
+
+function normalizeCapabilityMap(value) {
+  if (Array.isArray(value)) {
+    return Object.fromEntries(value.map((entry) => {
+      if (typeof entry === 'string') return [entry, true];
+      const id = String(entry?.id || entry?.capability || '').trim();
+      return id ? [id, entry?.allowed ?? entry?.enabled ?? entry?.requiredTier ?? false] : null;
+    }).filter(Boolean));
+  }
+  return value && typeof value === 'object' ? { ...value } : {};
+}
+
+function normalizedAccessSession(value) {
+  const authenticated = value?.authenticated === true;
+  return {
+    configured: value?.configured === true,
+    authenticated,
+    username: authenticated ? String(value.username || '').trim() : null,
+    tier: authenticated ? normalizeAccessTier(value.tier) : 'PUBLIC',
+    primary: authenticated && Boolean(value.primary ?? value.primaryAdmin),
+    csrfToken: authenticated && typeof value.csrfToken === 'string' ? value.csrfToken : null,
+    capabilities: normalizeCapabilityMap(value?.capabilities)
+  };
+}
+
+function capabilityAllowed(capability) {
+  if (!accessSessionAvailable) return false;
+  const values = accessSession.capabilities || {};
+  const entry = Object.prototype.hasOwnProperty.call(values, capability) ? values[capability] : undefined;
+  if (typeof entry === 'boolean') return entry;
+  if (typeof entry === 'number') return entry !== 0;
+  if (typeof entry === 'string') {
+    const normalized = entry.trim().toUpperCase();
+    if (normalized === 'TRUE') return true;
+    if (normalized === 'FALSE') return false;
+    if (['PUBLIC', 'USER', 'ADMIN'].includes(normalized)) {
+      return accessTierRank(accessSession.tier) >= accessTierRank(normalized);
+    }
+    return false;
+  }
+  if (entry && typeof entry === 'object') {
+    if (typeof entry.allowed === 'boolean') return entry.allowed;
+    if (typeof entry.enabled === 'boolean') return entry.enabled;
+    const requiredTier = String(entry.requiredTier || '').trim().toUpperCase();
+    if (['PUBLIC', 'USER', 'ADMIN'].includes(requiredTier)) {
+      return accessTierRank(accessSession.tier) >= accessTierRank(requiredTier);
+    }
+  }
+  return capability.startsWith('admin-') && accessSession.tier === 'ADMIN';
+}
+
+function viewAccessCapability(view) {
+  return VIEW_ACCESS_CAPABILITY[view] || null;
+}
+
+function viewAllowed(view) {
+  if (view === 'admin') {
+    return accessSession.tier === 'ADMIN' &&
+      (capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_USERS) ||
+        capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_ACCESS));
+  }
+  const capability = viewAccessCapability(view);
+  return !capability || capabilityAllowed(capability);
+}
+
+function accessSessionSignature() {
+  const capabilities = Object.entries(accessSession.capabilities || {})
+    .sort(([left], [right]) => left.localeCompare(right));
+  return JSON.stringify([accessSessionAvailable, accessSession.configured, accessSession.authenticated,
+    accessSession.username,
+    accessSession.tier, accessSession.primary, capabilities]);
+}
+
+function updateNavigationAccess() {
+  document.querySelectorAll('.primary-nav a[data-view]').forEach((link) => {
+    const allowed = viewAllowed(link.dataset.view);
+    link.hidden = !allowed;
+    link.setAttribute('aria-hidden', String(!allowed));
+  });
+}
+
+function updateAccessControls() {
+  const label = document.getElementById('auth-session-label');
+  const action = document.getElementById('auth-action');
+  if (!label || !action) return;
+  label.hidden = false;
+  if (!accessSessionAvailable) {
+    label.textContent = 'Access unavailable';
+    label.title = 'The receiver did not return its current access policy.';
+    action.textContent = 'Retry sign in';
+    action.disabled = false;
+  } else if (!accessSession.configured) {
+    label.textContent = 'Primary admin not set';
+    label.title = 'Set the primary administrator password from the local JavaFX Web Server settings.';
+    action.textContent = 'Sign In';
+    action.disabled = false;
+  } else if (accessSession.authenticated) {
+    label.textContent = `${accessSession.username} · ${accessTierLabel(accessSession.tier)}`;
+    label.title = accessSession.primary ? 'Primary administrator managed from the JavaFX interface' :
+      `Signed in with ${accessTierLabel(accessSession.tier)} access`;
+    action.textContent = 'Sign Out';
+    action.disabled = false;
+  } else {
+    label.textContent = 'Public';
+    label.title = 'Using public access';
+    action.textContent = 'Sign In';
+    action.disabled = false;
+  }
+  updateNavigationAccess();
+}
+
+function formField(labelText, control, detail = '') {
+  const label = node('label', 'admin-form-field');
+  label.append(node('span', 'admin-form-label', labelText), control);
+  if (detail) label.append(node('small', 'admin-form-help', detail));
+  return label;
+}
+
+function authenticationFailureMessage(error) {
+  if (error?.status === 401) return 'The username or password was not accepted.';
+  if (error?.status === 403 && window.location.protocol !== 'https:' && !['localhost', '127.0.0.1', '::1']
+    .includes(window.location.hostname)) {
+    return 'Remote sign-in requires HTTPS or a local connection.';
+  }
+  if (error?.status === 429) return 'Too many sign-in attempts. Wait a few minutes, then try again.';
+  if (error?.status === 503) return 'Sign-in is busy. Wait a moment, then try again.';
+  return error?.message || 'The receiver could not process sign-in.';
+}
+
+function showLoginModal(returnFocusSelector = '#auth-action') {
+  if (accessSessionAvailable && !accessSession.configured) {
+    const body = node('div', 'admin-confirmation');
+    body.append(node('p', '',
+      'Set the primary administrator password from the local JavaFX Web Server settings before signing in.'));
+    openReadOnlyModal('Sign-in is not configured', body, {
+      id: 'sign-in-setup', returnFocusSelector, className: 'admin-modal'
+    });
+    return;
+  }
+  const form = node('form', 'admin-form login-form');
+  const username = node('input');
+  username.name = 'username';
+  username.autocomplete = 'username';
+  username.maxLength = 64;
+  username.required = true;
+  const password = node('input');
+  password.type = 'password';
+  password.name = 'password';
+  password.autocomplete = 'current-password';
+  password.maxLength = 256;
+  password.required = true;
+  const message = node('div', 'admin-form-message');
+  message.setAttribute('role', 'alert');
+  const actions = node('div', 'admin-form-actions');
+  const submit = node('button', '', 'Sign In');
+  submit.type = 'submit';
+  actions.append(submit);
+  form.append(formField('Username', username), formField('Password', password), message, actions);
+  const modal = openReadOnlyModal('Sign in', form, {
+    id: 'sign-in', returnFocusSelector, className: 'admin-modal'
+  });
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (submit.disabled) return;
+    submit.disabled = true;
+    username.disabled = true;
+    password.disabled = true;
+    message.textContent = 'Signing in…';
+    try {
+      await requestJson('/api/v1/auth/login', {
+        method: 'POST', body: { username: username.value, password: password.value }, csrf: false
+      });
+      password.value = '';
+      await refreshAccessSession(false);
+      if (!accessSession.authenticated) throw new Error('The receiver did not create a session.');
+      modal.close();
+      await render();
+    } catch (error) {
+      password.value = '';
+      password.disabled = false;
+      username.disabled = false;
+      submit.disabled = false;
+      message.textContent = authenticationFailureMessage(error);
+      password.focus();
+    }
+  });
+  username.focus();
+}
+
+async function signOut() {
+  const action = document.getElementById('auth-action');
+  if (action) action.disabled = true;
+  try {
+    await requestJson('/api/v1/auth/logout', { method: 'POST', csrf: true });
+  } catch (error) {
+    openReadOnlyModal('Unable to sign out', node('div', 'error', error.message), {
+      id: 'sign-out-error', returnFocusSelector: '#auth-action', className: 'admin-modal'
+    });
+    if (action) action.disabled = false;
+    return;
+  }
+  await refreshAccessSession(false);
+  await render();
+}
+
+function initializeAccessControls() {
+  const action = document.getElementById('auth-action');
+  if (!action) return;
+  action.addEventListener('click', () => {
+    if (accessSession.authenticated) signOut();
+    else showLoginModal();
+  });
+}
+
+async function refreshAccessSession(refreshCurrentView = false) {
+  const previousSignature = accessSessionSignature();
+  try {
+    const session = await requestJson('/api/v1/auth/session', { csrf: false });
+    accessSession = normalizedAccessSession(session);
+    accessSessionAvailable = true;
+  } catch (error) {
+    accessSession = anonymousAccessSession();
+    accessSessionAvailable = false;
+  }
+  updateAccessControls();
+  synchronizePlaybackAccess();
+  if (refreshCurrentView && previousSignature !== accessSessionSignature()) await render();
+  return accessSession;
 }
 
 function fragment(...children) {
@@ -687,6 +970,13 @@ function exportCsvHref(dataset, context = {}) {
 }
 
 function exportCsvLink(dataset, context = {}) {
+  if (!capabilityAllowed(ACCESS_CAPABILITIES.CSV_EXPORT)) {
+    const disabled = node('span', 'button secondary disabled export-csv-action', 'Export CSV');
+    disabled.setAttribute('aria-disabled', 'true');
+    disabled.title = accessSession.authenticated ? 'CSV export is not available to this account.' :
+      'Sign in to use CSV export.';
+    return disabled;
+  }
   const link = anchor('Export CSV', exportCsvHref(dataset, context), 'button secondary export-csv-action');
   link.setAttribute('download', '');
   link.setAttribute('aria-label', `Export ${dataset.replace(/-/g, ' ')} as CSV`);
@@ -828,6 +1118,8 @@ function openReadOnlyModal(title, body, options = {}) {
   closeReadOnlyModal(false);
   const backdrop = node('div', 'modal-backdrop');
   const dialog = node('section', 'read-only-modal');
+  String(options.className || '').split(/\s+/).filter(Boolean)
+    .forEach((className) => dialog.classList.add(className));
   const titleId = `read-only-modal-title-${String(options.id || 'detail').replace(/[^a-z0-9-]/gi, '')}`;
   dialog.setAttribute('role', 'dialog');
   dialog.setAttribute('aria-modal', 'true');
@@ -924,7 +1216,8 @@ function detailedHistoryAvailable() {
 }
 
 function databaseLoggingNotice(view) {
-  if (tableOnly || ['live', 'credits'].includes(view)) return null;
+  if (tableOnly || ['live', 'admin', 'credits'].includes(view)) return null;
+  if (accessSessionAvailable && !capabilityAllowed(ACCESS_CAPABILITIES.DASHBOARD)) return null;
   const logging = statsLoggingState();
   if (!logging.available) return node('div', 'logging-notice warning',
     'Logging status is unavailable. Database-backed views may not be current.');
@@ -2974,15 +3267,46 @@ async function siteTopTalkgroupsSection(site) {
   return block;
 }
 
+async function requestJson(path, options = {}) {
+  const method = String(options.method || 'GET').toUpperCase();
+  const headers = new Headers(options.headers || {});
+  headers.set('Accept', 'application/json');
+  if (options.body !== undefined) headers.set('Content-Type', 'application/json');
+  if (options.csrf !== false && !['GET', 'HEAD', 'OPTIONS'].includes(method) && accessSession.csrfToken) {
+    headers.set('X-CSRF-Token', accessSession.csrfToken);
+  }
+  const response = await fetch(path, {
+    method,
+    headers,
+    body: options.body === undefined ? undefined : JSON.stringify(options.body),
+    cache: 'no-store',
+    credentials: 'same-origin'
+  });
+  const contentType = String(response.headers.get('Content-Type') || '').toLowerCase();
+  let result = null;
+  if (response.status !== 204) {
+    if (contentType.includes('json')) result = await response.json().catch(() => null);
+    else {
+      const message = await response.text().catch(() => '');
+      result = message ? { error: message } : null;
+    }
+  }
+  if (!response.ok) {
+    const error = new Error(result?.message || result?.error || `${path} returned ${response.status}`);
+    error.status = response.status;
+    error.code = result?.code || null;
+    error.path = path;
+    throw error;
+  }
+  return result;
+}
+
 async function api(path, parameters = {}) {
   const query = new URLSearchParams();
   Object.entries(parameters).forEach(([key, value]) => {
     if (value !== null && value !== undefined && value !== '') query.set(key, String(value));
   });
-  const response = await fetch(`${path}${query.size ? `?${query}` : ''}`, { cache: 'no-store' });
-  const result = await response.json();
-  if (!response.ok) throw new Error(result.error || `${path} returned ${response.status}`);
-  return result;
+  return requestJson(`${path}${query.size ? `?${query}` : ''}`, { csrf: false });
 }
 
 const liveConnections = new Set();
@@ -3037,23 +3361,60 @@ window.addEventListener('beforeunload', () => {
 
 function initializePlaybackHeader() {
   if (tableOnly) return;
-  window.sdrtrunkWebPlayer = new WebCallPlayer({
-    mute: 'playback-mute',
-    hold: 'playback-hold',
-    avoid: 'playback-avoid',
-    clear: 'playback-clear',
-    skip: 'playback-skip',
-    volume: 'playback-volume',
-    volumeValue: 'playback-volume-value',
-    current: 'playback-current',
-    queued: 'playback-queued',
-    dropped: 'playback-dropped',
-    queueList: 'playback-queue-list',
-    maximumQueued: 'playback-max-queued',
-    status: 'playback-status'
-  });
-  const source = window.sdrtrunkWebPlayer.connect('/live/web-calls');
-  liveConnections.add(source);
+  const bar = document.getElementById('playback-bar');
+  if (bar) {
+    bar.classList.add('access-unavailable');
+    bar.setAttribute('aria-disabled', 'true');
+    bar.querySelectorAll('button, input').forEach((control) => { control.disabled = true; });
+  }
+}
+
+function synchronizePlaybackAccess() {
+  if (tableOnly) return;
+  const allowed = capabilityAllowed(ACCESS_CAPABILITIES.CALL_AUDIO);
+  const bar = document.getElementById('playback-bar');
+  const status = document.getElementById('playback-status');
+  if (!bar || !status) return;
+  bar.classList.toggle('access-unavailable', !allowed);
+  bar.setAttribute('aria-disabled', String(!allowed));
+
+  if (!allowed) {
+    if (playbackConnection) {
+      playbackConnection.close();
+      liveConnections.delete(playbackConnection);
+      playbackConnection = null;
+    }
+    const unavailableMessage = !accessSessionAvailable ? 'Access unavailable' :
+      (accessSession.authenticated ? 'Web audio unavailable' : 'Sign in for web audio');
+    if (window.sdrtrunkWebPlayer) window.sdrtrunkWebPlayer.disconnect(unavailableMessage);
+    else status.textContent = unavailableMessage;
+    bar.querySelectorAll('button, input').forEach((control) => { control.disabled = true; });
+    return;
+  }
+
+  if (!window.sdrtrunkWebPlayer) {
+    window.sdrtrunkWebPlayer = new WebCallPlayer({
+      mute: 'playback-mute',
+      hold: 'playback-hold',
+      avoid: 'playback-avoid',
+      clear: 'playback-clear',
+      skip: 'playback-skip',
+      volume: 'playback-volume',
+      volumeValue: 'playback-volume-value',
+      current: 'playback-current',
+      queued: 'playback-queued',
+      dropped: 'playback-dropped',
+      queueList: 'playback-queue-list',
+      maximumQueued: 'playback-max-queued',
+      status: 'playback-status'
+    });
+  }
+  bar.querySelectorAll('button, input').forEach((control) => { control.disabled = false; });
+  window.sdrtrunkWebPlayer.render();
+  if (!playbackConnection) {
+    playbackConnection = window.sdrtrunkWebPlayer.connect('/live/web-calls');
+    liveConnections.add(playbackConnection);
+  }
 }
 
 function pageParameters(extra = {}) {
@@ -4937,6 +5298,407 @@ async function renderConventionalDetail() {
   }
 }
 
+function adminUserRecord(value) {
+  return {
+    username: String(value?.username || '').trim(),
+    tier: normalizeAccessTier(value?.tier),
+    passwordChangedAtEpochMillis: Number(value?.passwordChangedAtEpochMillis ||
+      value?.passwordChangedAtMs || 0),
+    credentialVersion: Number(value?.credentialVersion || 0),
+    primaryAdmin: Boolean(value?.primaryAdmin ?? value?.primary)
+  };
+}
+
+function adminUserEndpoint(username) {
+  return `/api/v1/admin/users/${encodeURIComponent(username)}`;
+}
+
+function adminStatusMessage(host, message, error = false) {
+  if (!host) return;
+  host.textContent = message || '';
+  host.classList.toggle('has-error', error);
+}
+
+function userIdentityCell(account) {
+  const wrapper = node('div', 'admin-user-identity');
+  wrapper.append(node('strong', '', account.username));
+  if (account.primaryAdmin) wrapper.append(badge('Primary', 'state-current',
+    'Primary administrator managed from the JavaFX interface'));
+  return wrapper;
+}
+
+function userTierControl(account, statusHost) {
+  if (account.primaryAdmin) {
+    const locked = node('span', 'admin-tier-locked', 'Admin');
+    locked.title = 'The primary administrator is managed from the JavaFX interface.';
+    return locked;
+  }
+  const select = node('select', 'admin-tier-select');
+  select.setAttribute('aria-label', `Access tier for ${account.username}`);
+  ['USER', 'ADMIN'].forEach((tier) => {
+    const option = node('option', '', accessTierLabel(tier));
+    option.value = tier;
+    option.selected = tier === account.tier;
+    select.append(option);
+  });
+  select.addEventListener('change', async () => {
+    const previous = account.tier;
+    const requested = normalizeAccessTier(select.value);
+    select.disabled = true;
+    adminStatusMessage(statusHost, `Updating ${account.username}…`);
+    try {
+      await requestJson(adminUserEndpoint(account.username), { method: 'PUT', body: { tier: requested } });
+      account.tier = requested;
+      adminStatusMessage(statusHost, `${account.username} now has ${accessTierLabel(requested)} access.`);
+      await refreshAccessSession(false);
+      if (!viewAllowed('admin')) await render();
+    } catch (error) {
+      select.value = previous;
+      adminStatusMessage(statusHost, error.message, true);
+    } finally {
+      select.disabled = false;
+    }
+  });
+  return select;
+}
+
+function normalizedManagedUsername(value) {
+  return String(value || '').normalize('NFKC').trim().toLowerCase();
+}
+
+function validateManagedUserInput(username, password, confirmation, creating) {
+  const normalizedUsername = normalizedManagedUsername(username);
+  if (creating && (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(normalizedUsername) || normalizedUsername === 'admin')) {
+    return 'Use 1–64 lowercase letters, numbers, dots, underscores, or hyphens. The name admin is reserved.';
+  }
+  if (password.length < 12 || password.length > 256) return 'Password must contain 12–256 characters.';
+  if (password !== confirmation) return 'Passwords do not match.';
+  return null;
+}
+
+function openManagedUserModal(account, statusHost, returnFocusSelector) {
+  const creating = !account;
+  const form = node('form', 'admin-form managed-user-form');
+  const username = node('input');
+  username.name = 'username';
+  username.autocomplete = 'username';
+  username.maxLength = 64;
+  username.required = true;
+  username.value = account?.username || '';
+  username.disabled = !creating;
+  const password = node('input');
+  password.type = 'password';
+  password.name = 'password';
+  password.autocomplete = 'new-password';
+  password.minLength = 12;
+  password.maxLength = 256;
+  password.required = true;
+  const confirmation = node('input');
+  confirmation.type = 'password';
+  confirmation.name = 'password-confirmation';
+  confirmation.autocomplete = 'new-password';
+  confirmation.minLength = 12;
+  confirmation.maxLength = 256;
+  confirmation.required = true;
+  const tier = node('select');
+  ['USER', 'ADMIN'].forEach((value) => {
+    const option = node('option', '', accessTierLabel(value));
+    option.value = value;
+    option.selected = value === (account?.tier || 'USER');
+    tier.append(option);
+  });
+  const message = node('div', 'admin-form-message');
+  message.setAttribute('role', 'alert');
+  const actions = node('div', 'admin-form-actions');
+  const submit = node('button', '', creating ? 'Create User' : 'Change Password');
+  submit.type = 'submit';
+  actions.append(submit);
+  form.append(formField('Username', username, creating ? 'Usernames are stored in lowercase.' : ''),
+    formField('Password', password, 'Use 12–256 characters.'),
+    formField('Confirm password', confirmation));
+  if (creating) form.append(formField('Access tier', tier));
+  form.append(message, actions);
+  const modal = openReadOnlyModal(creating ? 'Create user' : `Change password · ${account.username}`, form, {
+    id: creating ? 'create-user' : 'change-password', returnFocusSelector, className: 'admin-modal'
+  });
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (submit.disabled) return;
+    const validation = validateManagedUserInput(username.value, password.value, confirmation.value, creating);
+    if (validation) {
+      message.textContent = validation;
+      return;
+    }
+    submit.disabled = true;
+    username.disabled = true;
+    password.disabled = true;
+    confirmation.disabled = true;
+    tier.disabled = true;
+    message.textContent = creating ? 'Creating user…' : 'Changing password…';
+    try {
+      if (creating) {
+        await requestJson('/api/v1/admin/users', {
+          method: 'POST', body: { username: normalizedManagedUsername(username.value), password: password.value,
+            tier: normalizeAccessTier(tier.value) }
+        });
+      } else {
+        await requestJson(adminUserEndpoint(account.username), {
+          method: 'PUT', body: { password: password.value }
+        });
+      }
+      password.value = '';
+      confirmation.value = '';
+      modal.close();
+      adminStatusMessage(statusHost, creating ? 'User created.' : `Password changed for ${account.username}.`);
+      if (!creating) await refreshAccessSession(false);
+      await render();
+    } catch (error) {
+      password.value = '';
+      confirmation.value = '';
+      message.textContent = error.message;
+      submit.disabled = false;
+      username.disabled = !creating;
+      password.disabled = false;
+      confirmation.disabled = false;
+      tier.disabled = false;
+      password.focus();
+    }
+  });
+  (creating ? username : password).focus();
+}
+
+function openDeleteUserModal(account, statusHost, returnFocusSelector) {
+  const body = node('div', 'admin-confirmation');
+  body.append(node('p', '', `Delete ${account.username}? This immediately revokes that user’s active sessions.`));
+  const message = node('div', 'admin-form-message');
+  message.setAttribute('role', 'alert');
+  const actions = node('div', 'admin-form-actions');
+  const remove = node('button', 'danger', 'Delete User');
+  remove.type = 'button';
+  actions.append(remove);
+  body.append(message, actions);
+  const modal = openReadOnlyModal(`Delete user · ${account.username}`, body, {
+    id: 'delete-user', returnFocusSelector, className: 'admin-modal'
+  });
+  remove.addEventListener('click', async () => {
+    if (remove.disabled) return;
+    remove.disabled = true;
+    message.textContent = 'Deleting user…';
+    try {
+      await requestJson(adminUserEndpoint(account.username), { method: 'DELETE' });
+      modal.close();
+      adminStatusMessage(statusHost, `${account.username} was deleted.`);
+      await refreshAccessSession(false);
+      await render();
+    } catch (error) {
+      remove.disabled = false;
+      message.textContent = error.message;
+    }
+  });
+  remove.focus();
+}
+
+function userActions(account, statusHost) {
+  if (account.primaryAdmin) return node('span', 'admin-managed-note', 'Managed in JavaFX');
+  const actions = node('div', 'admin-row-actions');
+  const reset = node('button', 'secondary', 'Change Password');
+  reset.type = 'button';
+  reset.dataset.username = account.username;
+  const remove = node('button', 'secondary danger-outline', 'Delete');
+  remove.type = 'button';
+  remove.dataset.username = account.username;
+  reset.addEventListener('click', () => openManagedUserModal(account, statusHost,
+    `.admin-row-actions button[data-username="${account.username}"]`));
+  remove.addEventListener('click', () => openDeleteUserModal(account, statusHost,
+    `.admin-row-actions button[data-username="${account.username}"]`));
+  actions.append(reset, remove);
+  return actions;
+}
+
+async function renderAdminUsers() {
+  const response = await requestJson('/api/v1/admin/users', { csrf: false });
+  const users = (Array.isArray(response) ? response : response?.users || []).map(adminUserRecord)
+    .filter((account) => account.username)
+    .sort((left, right) => Number(right.primaryAdmin) - Number(left.primaryAdmin) ||
+      left.username.localeCompare(right.username));
+  const statusHost = node('div', 'admin-operation-status');
+  statusHost.setAttribute('role', 'status');
+  const create = node('button', '', 'Create User');
+  create.type = 'button';
+  create.id = 'admin-create-user';
+  const maximumUsers = Number(response?.maximumUsers || 0);
+  if (maximumUsers > 0 && users.filter((account) => !account.primaryAdmin).length >= maximumUsers) {
+    create.disabled = true;
+    create.title = `The limit of ${number(maximumUsers)} managed users has been reached.`;
+  }
+  create.addEventListener('click', () => openManagedUserModal(null, statusHost, '#admin-create-user'));
+  const body = node('div', 'admin-section-body');
+  body.append(statusHost, table(users, [
+    { id: 'username', label: 'Username', width: 230, render: userIdentityCell,
+      sortValue: (account) => account.username },
+    { id: 'access-tier', label: 'Access tier', width: 150,
+      render: (account) => userTierControl(account, statusHost),
+      sortValue: (account) => accessTierRank(account.tier) },
+    { id: 'password-changed', label: 'Password changed', width: 190,
+      render: (account) => dateTime(account.passwordChangedAtEpochMillis),
+      sortValue: (account) => account.passwordChangedAtEpochMillis },
+    { id: 'actions', label: 'Actions', width: 230, render: (account) => userActions(account, statusHost),
+      sortable: false }
+  ], 'No web users have been created', { type: 'admin-users', sortable: false }));
+  content.append(section('User management', body, create));
+}
+
+function adminAccessPolicies(response) {
+  const supplied = response?.capabilities ?? response?.policies ?? response;
+  if (Array.isArray(supplied)) {
+    return supplied.map((entry) => ({
+      id: String(entry?.id || entry?.capability || '').trim(),
+      displayName: String(entry?.displayName || entry?.name || entry?.id || entry?.capability || '').trim(),
+      requiredTier: normalizeAccessTier(entry?.requiredTier ?? entry?.tier),
+      defaultTier: normalizeAccessTier(entry?.defaultTier ?? entry?.requiredTier ?? entry?.tier),
+      configurable: entry?.configurable !== false
+    })).filter((entry) => entry.id);
+  }
+  if (supplied && typeof supplied === 'object') {
+    return Object.entries(supplied).map(([id, value]) => ({
+      id,
+      displayName: id.split('-').map((word) => word[0]?.toUpperCase() + word.slice(1)).join(' '),
+      requiredTier: normalizeAccessTier(value?.requiredTier ?? value?.tier ?? value),
+      defaultTier: normalizeAccessTier(value?.defaultTier ?? value?.requiredTier ?? value?.tier ?? value),
+      configurable: value?.configurable !== false
+    }));
+  }
+  return [];
+}
+
+function accessPolicyTierControl(policy, statusHost) {
+  const select = node('select', 'admin-tier-select');
+  select.setAttribute('aria-label', `Required access tier for ${policy.displayName || policy.id}`);
+  ['PUBLIC', 'USER', 'ADMIN'].forEach((tier) => {
+    const option = node('option', '', accessTierLabel(tier));
+    option.value = tier;
+    option.selected = tier === policy.requiredTier;
+    select.append(option);
+  });
+  const fixedAdmin = policy.id.startsWith('admin-');
+  select.disabled = !policy.configurable || fixedAdmin;
+  if (select.disabled) select.title = 'This capability is always administrator-only.';
+  select.addEventListener('change', async () => {
+    const previous = policy.requiredTier;
+    const requested = normalizeAccessTier(select.value);
+    select.disabled = true;
+    adminStatusMessage(statusHost, `Updating ${policy.displayName || policy.id}…`);
+    try {
+      await requestJson('/api/v1/admin/access', {
+        method: 'PUT', body: { capability: policy.id, tier: requested }
+      });
+      policy.requiredTier = requested;
+      adminStatusMessage(statusHost,
+        `${policy.displayName || policy.id} now requires ${accessTierLabel(requested)} access.`);
+      await refreshAccessSession(false);
+      updateNavigationAccess();
+    } catch (error) {
+      select.value = previous;
+      adminStatusMessage(statusHost, error.message, true);
+    } finally {
+      select.disabled = !policy.configurable || fixedAdmin;
+    }
+  });
+  return select;
+}
+
+function accessPolicyIdentity(policy) {
+  const wrapper = node('div', 'admin-capability-identity');
+  wrapper.append(node('strong', '', policy.displayName || policy.id),
+    node('code', '', policy.id));
+  return wrapper;
+}
+
+async function renderAdminAccess() {
+  const response = await requestJson('/api/v1/admin/access', { csrf: false });
+  const policies = adminAccessPolicies(response).sort((left, right) =>
+    (left.displayName || left.id).localeCompare(right.displayName || right.id));
+  const statusHost = node('div', 'admin-operation-status');
+  statusHost.setAttribute('role', 'status');
+  const body = node('div', 'admin-section-body');
+  body.append(node('p', 'admin-section-intro',
+    'Each capability protects its page and backing APIs together. New capabilities appear here automatically.'),
+    statusHost,
+    table(policies, [
+      { id: 'capability', label: 'Capability', width: 310, render: accessPolicyIdentity,
+        sortValue: (policy) => policy.displayName || policy.id },
+      { id: 'required-tier', label: 'Required tier', width: 170,
+        render: (policy) => accessPolicyTierControl(policy, statusHost),
+        sortValue: (policy) => accessTierRank(policy.requiredTier) },
+      { id: 'default-tier', label: 'Default', width: 120,
+        render: (policy) => accessTierLabel(policy.defaultTier),
+        sortValue: (policy) => accessTierRank(policy.defaultTier) },
+      { id: 'policy-status', label: 'Policy', width: 130,
+        render: (policy) => policy.configurable && !policy.id.startsWith('admin-') ? 'Configurable' : 'Fixed' }
+    ], 'No access capabilities were returned', { type: 'admin-access', sortable: false }));
+  content.append(section('Access policy', body));
+}
+
+async function renderAdmin() {
+  const availableTabs = [
+    { id: 'users', label: 'Users', capability: ACCESS_CAPABILITIES.ADMIN_USERS },
+    { id: 'access', label: 'Access', capability: ACCESS_CAPABILITIES.ADMIN_ACCESS }
+  ].filter((item) => capabilityAllowed(item.capability));
+  if (!availableTabs.length) throw Object.assign(new Error('Administrator access is unavailable.'), { status: 403 });
+  const requested = route.get('tab') || 'users';
+  const active = availableTabs.some((item) => item.id === requested) ? requested : availableTabs[0].id;
+  if (active !== requested) {
+    route.set('tab', active);
+    window.history.replaceState({}, '', currentHref());
+  }
+  content.append(pageHeader('Administration',
+    'Manage web users and the Public, User, and Admin access tiers'),
+    tabs(availableTabs.map((item) => ({ ...item, href: href('admin', { tab: item.id }) })), active));
+  if (active === 'access') await renderAdminAccess();
+  else await renderAdminUsers();
+}
+
+function routeViewLabel(view) {
+  return ({
+    dashboard: 'Dashboard', live: 'Live', systems: 'Systems & Sites', system: 'System details',
+    site: 'Site details', talkgroup: 'Talkgroup details', radio: 'Radio details',
+    conventional: 'Conventional', 'conventional-detail': 'Conventional details', aliases: 'Aliases',
+    admin: 'Administration'
+  })[view] || 'this page';
+}
+
+function renderAccessDenied(view) {
+  const panel = node('section', 'access-denied-card');
+  const heading = node('h2', '', accessSessionAvailable ? 'Access denied' : 'Access information unavailable');
+  const detail = !accessSessionAvailable ?
+    'The receiver did not return its access policy. Retry before opening protected pages.' :
+    (!accessSession.configured ?
+      'Set the primary administrator password from the local JavaFX Web Server settings before signing in.' :
+      (accessSession.authenticated ?
+      `${accessSession.username} is signed in with ${accessTierLabel(accessSession.tier)} access, which does not include ${routeViewLabel(view)}.` :
+      `${routeViewLabel(view)} is not available to public visitors. Sign in with an authorized account.`));
+  panel.append(heading, node('p', '', detail));
+  const actions = node('div', 'admin-form-actions');
+  const action = node('button', '', accessSession.authenticated ? 'Return to an available page' :
+    (accessSessionAvailable ? 'Sign In' : 'Retry'));
+  action.type = 'button';
+  action.addEventListener('click', async () => {
+    if (accessSession.authenticated) {
+      const first = [...document.querySelectorAll('.primary-nav a[data-view]')].find((link) => !link.hidden);
+      if (first) first.click();
+    } else if (!accessSessionAvailable) {
+      action.disabled = true;
+      await refreshAccessSession(false);
+      await render();
+    } else {
+      showLoginModal();
+    }
+  });
+  actions.append(action);
+  panel.append(actions);
+  content.append(pageHeader('Access', routeViewLabel(view)), panel);
+}
+
 function renderCredits() {
   content.append(pageHeader('Credits & Licensing', 'Open-source authorship, source lineage, and license terms'));
 
@@ -5007,6 +5769,11 @@ function loggingAvailabilitySignature() {
 
 async function loadStatus(refreshCurrentView = false) {
   const previousSignature = loggingAvailabilitySignature();
+  if (accessSessionAvailable && !capabilityAllowed(ACCESS_CAPABILITIES.DASHBOARD)) {
+    serviceStatus = null;
+    document.getElementById('server-status').textContent = 'Status restricted';
+    return;
+  }
   try {
     serviceStatus = await api('/api/status');
     const database = serviceStatus.database || {};
@@ -5025,7 +5792,7 @@ async function loadStatus(refreshCurrentView = false) {
 
   const currentView = route.get('view') || 'dashboard';
   if (refreshCurrentView && previousSignature !== loggingAvailabilitySignature() &&
-      !['live', 'credits'].includes(currentView)) {
+      !['live', 'admin', 'credits'].includes(currentView)) {
     render();
   }
 }
@@ -5051,16 +5818,30 @@ async function render() {
       conventional: renderConventional,
       'conventional-detail': renderConventionalDetail,
       aliases: renderAliases,
+      admin: renderAdmin,
       credits: renderCredits
     };
-    await (handlers[view] || renderDashboard)();
-    const notice = databaseLoggingNotice(view);
+    const effectiveView = handlers[view] ? view : 'dashboard';
+    if (!viewAllowed(effectiveView)) {
+      document.body.dataset.view = 'access-denied';
+      renderAccessDenied(effectiveView);
+      return;
+    }
+    await handlers[effectiveView]();
+    const notice = databaseLoggingNotice(effectiveView);
     if (notice) {
       const header = content.querySelector('.page-header');
       if (header) header.after(notice);
       else content.prepend(notice);
     }
   } catch (error) {
+    if (error?.status === 401 || error?.status === 403) {
+      await refreshAccessSession(false);
+      content.replaceChildren();
+      document.body.dataset.view = 'access-denied';
+      renderAccessDenied(view);
+      return;
+    }
     const notice = databaseLoggingNotice(view);
     content.replaceChildren(...[notice, node('div', 'error', error.message)].filter(Boolean));
   }
@@ -5083,8 +5864,14 @@ window.addEventListener('popstate', () => {
   render();
 });
 initializeThemeToggle();
+initializeAccessControls();
 initializePlaybackHeader();
-loadStatus().finally(render);
-window.setInterval(() => {
-  if (!document.hidden) loadStatus(true);
+refreshAccessSession(false)
+  .then(() => loadStatus(false))
+  .finally(render);
+window.setInterval(async () => {
+  if (!document.hidden) {
+    await refreshAccessSession(true);
+    await loadStatus(true);
+  }
 }, 10_000);

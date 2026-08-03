@@ -484,7 +484,6 @@ class StatsWebDatabase
     {
         Path path = getDatabasePath();
         Map<String,Object> status = new LinkedHashMap<>();
-        status.put("databasePath", path.toString());
         status.put("databaseExists", Files.isRegularFile(path));
         status.put("databaseBytes", fileBytes(path));
         status.put("walBytes", fileBytes(Path.of(path + "-wal")));
@@ -2761,7 +2760,13 @@ class StatsWebDatabase
 
     private List<Map<String,Object>> loggerStatus(Connection connection) throws SQLException
     {
-        return queryRows(connection, "SELECT key, value, updated_at_ms FROM logger_status ORDER BY key");
+        // This response is browser-visible.  Keep it to the one numeric value the UI uses so diagnostic exception
+        // text such as last_write_error cannot expose local paths or SQL details.
+        return queryRows(connection, """
+            SELECT key, CAST(value AS INTEGER) AS value, updated_at_ms
+            FROM logger_status
+            WHERE key = 'last_successful_write_ms'
+            """);
     }
 
     /**

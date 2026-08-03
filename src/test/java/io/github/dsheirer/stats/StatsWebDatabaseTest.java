@@ -1234,10 +1234,29 @@ class StatsWebDatabaseTest
 
     @Test
     void statusReportsRetainedDetailedHistory()
+        throws Exception
     {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            PreparedStatement statement = connection.prepareStatement("""
+                INSERT INTO logger_status(key, value, updated_at_ms) VALUES (?, ?, 3000)
+                """))
+        {
+            statement.setString(1, "last_successful_write_ms");
+            statement.setString(2, "2002");
+            statement.executeUpdate();
+            statement.setString(1, "last_write_error");
+            statement.setString(2, "/private/data/sdrtrunk.sqlite: database is locked");
+            statement.executeUpdate();
+        }
+
         Map<String,Object> status = mDatabase.status();
         assertTrue((Boolean)status.get("detailedHistoryAvailable"));
         assertEquals(2001L, number(status.get("lastDetailedHistoryMs")));
+        List<Map<String,Object>> logger = rowsFrom(status, "logger");
+        assertEquals(1, logger.size());
+        assertEquals("last_successful_write_ms", logger.getFirst().get("key"));
+        assertEquals(2002L, number(logger.getFirst().get("value")));
+        assertFalse(status.toString().contains("/private/data"));
     }
 
     @Test

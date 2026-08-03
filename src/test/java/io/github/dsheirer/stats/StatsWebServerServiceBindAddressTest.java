@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.sun.net.httpserver.Headers;
+import io.github.dsheirer.web.auth.WebCapability;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.util.List;
@@ -31,6 +32,16 @@ class StatsWebServerServiceBindAddressTest
     }
 
     @Test
+    void navigationStateUsesConfiguredTransportScheme()
+    {
+        StatsWebNavigationState http = new StatsWebNavigationState(true, 8090, false, true, true);
+        StatsWebNavigationState https = new StatsWebNavigationState(true, 8443, true, true, true);
+
+        assertEquals(URI.create("http://127.0.0.1:8090/"), http.baseUri());
+        assertEquals(URI.create("https://127.0.0.1:8443/"), https.baseUri());
+    }
+
+    @Test
     void acceptsOnlyRegisteredFixedPaths()
     {
         assertTrue(StatsWebServerService.hasExactPath(
@@ -46,6 +57,17 @@ class StatsWebServerServiceBindAddressTest
             URI.create("/api/export.csv?dataset=system-talkgroups"), "/api/export.csv"));
         assertFalse(StatsWebServerService.hasExactPath(
             URI.create("/api/export.csv/legacy"), "/api/export.csv"));
+    }
+
+    @Test
+    void decodesQualityScopeBeforeChoosingItsCapability()
+    {
+        assertEquals(WebCapability.DASHBOARD_VIEW,
+            StatsWebServerService.qualityCapability(URI.create("/api/quality?range=1h")));
+        assertEquals(WebCapability.SYSTEMS_VIEW,
+            StatsWebServerService.qualityCapability(URI.create("/api/quality?guid=site-1")));
+        assertEquals(WebCapability.SYSTEMS_VIEW,
+            StatsWebServerService.qualityCapability(URI.create("/api/quality?%67uid=site-1")));
     }
 
     @Test

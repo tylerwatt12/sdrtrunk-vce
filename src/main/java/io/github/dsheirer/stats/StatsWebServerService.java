@@ -15,18 +15,29 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.eventbus.Subscribe;
 import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
+import com.sun.net.httpserver.HttpsConfigurator;
+import com.sun.net.httpserver.HttpsServer;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.controller.NamingThreadFactory;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
+import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.nowplaying.NowPlayingPreference;
 import io.github.dsheirer.preference.application.ApplicationPreference;
+import io.github.dsheirer.portable.PortableApplicationPaths;
 import io.github.dsheirer.stats.activity.P25ActivityCommitListener;
 import io.github.dsheirer.stats.activity.P25ActivityLogPath;
 import io.github.dsheirer.stats.activity.P25ActivityLogService;
 import io.github.dsheirer.stats.activity.P25ActivityLogStatus;
+import io.github.dsheirer.web.tls.TlsMaterial;
+import io.github.dsheirer.web.tls.TlsMaterialException;
+import io.github.dsheirer.web.tls.WebTlsMaterialService;
+import io.github.dsheirer.web.auth.WebAccessService;
+import io.github.dsheirer.web.auth.WebCapability;
+import io.github.dsheirer.web.http.WebAccessHttpController;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetAddress;
@@ -36,6 +47,8 @@ import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.GeneralSecurityException;
+import java.sql.SQLException;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
@@ -67,6 +80,8 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
     private Path mAssetRoot;
     private int mPort;
     private boolean mAnyIpEnabled;
+    private boolean mHttpsEnabled;
+    private WebAccessHttpController mWebAccessHttpController;
 
     public StatsWebServerService(UserPreferences userPreferences)
     {
@@ -111,19 +126,20 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
 
         int requestedPort = preference.getStatsWebServerPort();
         boolean requestedAnyIp = preference.isStatsWebServerAnyIpEnabled();
+        boolean requestedHttps = preference.isStatsWebServerHttpsEnabled();
         Path requestedRoot = StatsWebPath.getAssetsPath();
 
         if(mServer != null && requestedPort == mPort && requestedAnyIp == mAnyIpEnabled &&
-            requestedRoot.equals(mAssetRoot))
+            requestedHttps == mHttpsEnabled && requestedRoot.equals(mAssetRoot))
         {
             return;
         }
 
         stop();
-        start(requestedRoot, requestedPort, requestedAnyIp);
+        start(requestedRoot, requestedPort, requestedAnyIp, requestedHttps);
     }
 
-    private void start(Path assetRoot, int port, boolean anyIpEnabled)
+    private void start(Path assetRoot, int port, boolean anyIpEnabled, boolean httpsEnabled)
     {
         try
         {
@@ -136,90 +152,133 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             mWebCallService.start();
 
             Files.createDirectories(assetRoot);
-            mServer = HttpServer.create(createBindAddress(port, anyIpEnabled), 0);
+            InetSocketAddress bindAddress = createBindAddress(port, anyIpEnabled);
+
+            if(httpsEnabled)
+            {
+                TlsMaterial material =
+                    new WebTlsMaterialService(PortableApplicationPaths.getDataRoot()).validateInstalledMaterial();
+                HttpsServer httpsServer = HttpsServer.create(bindAddress, 0);
+                httpsServer.setHttpsConfigurator(new HttpsConfigurator(material.createServerSslContext()));
+                mServer = httpsServer;
+            }
+            else
+            {
+                mServer = HttpServer.create(bindAddress, 0);
+            }
             mExecutorService = Executors.newCachedThreadPool(new NamingThreadFactory("stats web server"));
             mServer.setExecutor(mExecutorService);
             mAssetRoot = assetRoot;
             mPort = port;
             mAnyIpEnabled = anyIpEnabled;
+            mHttpsEnabled = httpsEnabled;
+            mWebAccessHttpController = new WebAccessHttpController(
+                new WebAccessService(SdrTrunkDatabasePath.getDatabasePath(mUserPreferences)));
+            mWebAccessHttpController.register(mServer);
 
-            mServer.createContext("/api/status", exchange -> handleJson(exchange, "/api/status", this::status));
-            mServer.createContext("/api/dashboard",
+            createProtectedContext("/api/status", WebCapability.DASHBOARD_VIEW,
+                exchange -> handleJson(exchange, "/api/status", this::status));
+            createProtectedContext("/api/dashboard", WebCapability.DASHBOARD_VIEW,
                 exchange -> handleJson(exchange, "/api/dashboard", mDatabase::dashboard));
-            mServer.createContext("/api/alias-lists",
+            createProtectedContext("/api/alias-lists", WebCapability.ALIASES_VIEW,
                 exchange -> handleJson(exchange, "/api/alias-lists", mDatabase::aliasLists));
-            mServer.createContext("/api/aliases", exchange -> handleJson(exchange, "/api/aliases",
+            createProtectedContext("/api/aliases", WebCapability.ALIASES_VIEW,
+                exchange -> handleJson(exchange, "/api/aliases",
                 () -> mDatabase.aliases(StatsRequest.from(exchange.getRequestURI()))));
-            mServer.createContext("/api/alias", exchange -> handleJson(exchange, "/api/alias",
+            createProtectedContext("/api/alias", WebCapability.ALIASES_VIEW,
+                exchange -> handleJson(exchange, "/api/alias",
                 () -> mDatabase.alias(StatsRequest.from(exchange.getRequestURI()))));
-            mServer.createContext("/api/quality", exchange -> handleJson(exchange, "/api/quality",
-                () -> mDatabase.qualityHistory(StatsRequest.from(exchange.getRequestURI()))));
-            mServer.createContext("/api/system-directory", exchange -> handleJson(exchange, "/api/system-directory",
+            mServer.createContext("/api/quality", exchange -> mWebAccessHttpController.protect(
+                qualityCapability(exchange.getRequestURI()),
+                protectedExchange -> handleJson(protectedExchange, "/api/quality",
+                    () -> mDatabase.qualityHistory(StatsRequest.from(protectedExchange.getRequestURI()))))
+                .handle(exchange));
+            createProtectedContext("/api/system-directory", WebCapability.SYSTEMS_VIEW,
+                exchange -> handleJson(exchange, "/api/system-directory",
                 () -> mDatabase.systemDirectory(StatsRequest.from(exchange.getRequestURI()))));
-            mServer.createContext("/api/system", exchange -> handleJson(exchange, "/api/system",
+            createProtectedContext("/api/system", WebCapability.SYSTEMS_VIEW,
+                exchange -> handleJson(exchange, "/api/system",
                 () -> mDatabase.system(StatsRequest.from(exchange.getRequestURI()))));
-            mServer.createContext("/api/system/sites", exchange -> handleJson(exchange, "/api/system/sites",
+            createProtectedContext("/api/system/sites", WebCapability.SYSTEMS_VIEW,
+                exchange -> handleJson(exchange, "/api/system/sites",
                 () -> mDatabase.systemSites(StatsRequest.from(exchange.getRequestURI()))));
-            mServer.createContext("/api/system/talkgroups", exchange -> handleJson(exchange, "/api/system/talkgroups",
+            createProtectedContext("/api/system/talkgroups", WebCapability.SYSTEMS_VIEW,
+                exchange -> handleJson(exchange, "/api/system/talkgroups",
                 () -> mDatabase.systemTalkgroups(StatsRequest.from(exchange.getRequestURI()))));
-            mServer.createContext("/api/system/radios", exchange -> handleJson(exchange, "/api/system/radios",
+            createProtectedContext("/api/system/radios", WebCapability.SYSTEMS_VIEW,
+                exchange -> handleJson(exchange, "/api/system/radios",
                 () -> mDatabase.systemRadios(StatsRequest.from(exchange.getRequestURI()))));
-            mServer.createContext("/api/system/talker-aliases",
+            createProtectedContext("/api/system/talker-aliases", WebCapability.SYSTEMS_VIEW,
                 exchange -> handleJson(exchange, "/api/system/talker-aliases",
                 () -> mDatabase.systemTalkerAliases(StatsRequest.from(exchange.getRequestURI()))));
-            mServer.createContext("/api/talkgroup", exchange -> handleJson(exchange, "/api/talkgroup",
+            createProtectedContext("/api/talkgroup", WebCapability.SYSTEMS_VIEW,
+                exchange -> handleJson(exchange, "/api/talkgroup",
                 () -> mDatabase.talkgroup(StatsRequest.from(exchange.getRequestURI()))));
-            mServer.createContext("/api/talkgroup/activity",
+            createProtectedContext("/api/talkgroup/activity", WebCapability.SYSTEMS_VIEW,
                 exchange -> handleJson(exchange, "/api/talkgroup/activity",
                 () -> mDatabase.talkgroupActivity(StatsRequest.from(exchange.getRequestURI()))));
-            mServer.createContext("/api/radio", exchange -> handleJson(exchange, "/api/radio",
+            createProtectedContext("/api/radio", WebCapability.SYSTEMS_VIEW,
+                exchange -> handleJson(exchange, "/api/radio",
                 () -> mDatabase.radio(StatsRequest.from(exchange.getRequestURI()))));
-            mServer.createContext("/api/affiliations", exchange -> handleJson(exchange, "/api/affiliations",
+            createProtectedContext("/api/affiliations", WebCapability.SYSTEMS_VIEW,
+                exchange -> handleJson(exchange, "/api/affiliations",
                 () -> mDatabase.currentAffiliations(StatsRequest.from(exchange.getRequestURI()))));
-            mServer.createContext("/api/relationships", exchange -> handleJson(exchange, "/api/relationships",
+            createProtectedContext("/api/relationships", WebCapability.SYSTEMS_VIEW,
+                exchange -> handleJson(exchange, "/api/relationships",
                 () -> mDatabase.radioTalkgroupRelationships(StatsRequest.from(exchange.getRequestURI()))));
-            mServer.createContext("/api/site", exchange -> handleJson(exchange, "/api/site",
+            createProtectedContext("/api/site", WebCapability.SYSTEMS_VIEW,
+                exchange -> handleJson(exchange, "/api/site",
                 () -> mDatabase.site(StatsRequest.from(exchange.getRequestURI()))));
-            mServer.createContext("/api/site/channels", exchange -> handleJson(exchange, "/api/site/channels",
+            createProtectedContext("/api/site/channels", WebCapability.SYSTEMS_VIEW,
+                exchange -> handleJson(exchange, "/api/site/channels",
                 () -> mDatabase.siteChannels(StatsRequest.from(exchange.getRequestURI()))));
-            mServer.createContext("/api/site/talkgroups", exchange -> handleJson(exchange, "/api/site/talkgroups",
+            createProtectedContext("/api/site/talkgroups", WebCapability.SYSTEMS_VIEW,
+                exchange -> handleJson(exchange, "/api/site/talkgroups",
                 () -> mDatabase.siteTalkgroups(StatsRequest.from(exchange.getRequestURI()))));
-            mServer.createContext("/api/site/quality", exchange -> handleJson(exchange, "/api/site/quality",
+            createProtectedContext("/api/site/quality", WebCapability.SYSTEMS_VIEW,
+                exchange -> handleJson(exchange, "/api/site/quality",
                 () -> mDatabase.siteQuality(StatsRequest.from(exchange.getRequestURI()))));
-            mServer.createContext("/api/site/bands", exchange -> handleJson(exchange, "/api/site/bands",
+            createProtectedContext("/api/site/bands", WebCapability.SYSTEMS_VIEW,
+                exchange -> handleJson(exchange, "/api/site/bands",
                 () -> mDatabase.siteBands(StatsRequest.from(exchange.getRequestURI()))));
-            mServer.createContext("/api/site/neighbors", exchange -> handleJson(exchange, "/api/site/neighbors",
+            createProtectedContext("/api/site/neighbors", WebCapability.SYSTEMS_VIEW,
+                exchange -> handleJson(exchange, "/api/site/neighbors",
                 () -> mDatabase.siteNeighbors(StatsRequest.from(exchange.getRequestURI()))));
-            mServer.createContext("/api/site/patches", exchange -> handleJson(exchange, "/api/site/patches",
+            createProtectedContext("/api/site/patches", WebCapability.SYSTEMS_VIEW,
+                exchange -> handleJson(exchange, "/api/site/patches",
                 () -> mDatabase.sitePatches(StatsRequest.from(exchange.getRequestURI()))));
-            mServer.createContext("/api/activity", exchange -> handleJson(exchange, "/api/activity",
+            createProtectedContext("/api/activity", WebCapability.SYSTEMS_VIEW,
+                exchange -> handleJson(exchange, "/api/activity",
                 () -> mDatabase.activity(StatsRequest.from(exchange.getRequestURI()))));
-            mServer.createContext("/api/activity/recent", exchange -> handleJson(exchange, "/api/activity/recent",
+            createProtectedContext("/api/activity/recent", WebCapability.SYSTEMS_VIEW,
+                exchange -> handleJson(exchange, "/api/activity/recent",
                 () -> mDatabase.activity(StatsRequest.from(exchange.getRequestURI()))));
-            mServer.createContext("/api/conventional", exchange -> handleJson(exchange, "/api/conventional",
+            createProtectedContext("/api/conventional", WebCapability.CONVENTIONAL_VIEW,
+                exchange -> handleJson(exchange, "/api/conventional",
                 () -> mDatabase.conventional(StatsRequest.from(exchange.getRequestURI()))));
-            mServer.createContext("/api/conventional/detail",
+            createProtectedContext("/api/conventional/detail", WebCapability.CONVENTIONAL_VIEW,
                 exchange -> handleJson(exchange, "/api/conventional/detail",
                 () -> mDatabase.conventionalDetail(StatsRequest.from(exchange.getRequestURI()))));
-            mServer.createContext("/api/conventional/talkgroups",
+            createProtectedContext("/api/conventional/talkgroups", WebCapability.CONVENTIONAL_VIEW,
                 exchange -> handleJson(exchange, "/api/conventional/talkgroups",
                 () -> mDatabase.conventionalTalkgroups(StatsRequest.from(exchange.getRequestURI()))));
-            mServer.createContext("/api/conventional/radios",
+            createProtectedContext("/api/conventional/radios", WebCapability.CONVENTIONAL_VIEW,
                 exchange -> handleJson(exchange, "/api/conventional/radios",
                 () -> mDatabase.conventionalRadios(StatsRequest.from(exchange.getRequestURI()))));
-            mServer.createContext("/api/export.csv", this::handleCsvExport);
-            mServer.createContext("/live/systems", this::handleSystemsSse);
-            mServer.createContext("/live/sites", this::handleSitesSse);
-            mServer.createContext("/live/web-calls", this::handleWebCallsSse);
-            mServer.createContext("/live/activity", this::handleActivitySse);
-            mServer.createContext("/api/web-player/calls/", this::handleWebCallAudio);
+            createProtectedContext("/api/export.csv", WebCapability.CSV_EXPORT, this::handleCsvExport);
+            createProtectedContext("/live/systems", WebCapability.LIVE_VIEW, this::handleSystemsSse);
+            createProtectedContext("/live/sites", WebCapability.LIVE_VIEW, this::handleSitesSse);
+            createProtectedContext("/live/web-calls", WebCapability.WEB_AUDIO_LISTEN, this::handleWebCallsSse);
+            createProtectedContext("/live/activity", WebCapability.SYSTEMS_VIEW, this::handleActivitySse);
+            createProtectedContext("/api/web-player/calls/", WebCapability.WEB_AUDIO_LISTEN,
+                this::handleWebCallAudio);
             mServer.createContext("/", this::handleStatic);
             mServer.start();
 
-            mLog.info("Stats web server started at http://{}:{}/ using assets [{}]",
-                anyIpEnabled ? "0.0.0.0" : "127.0.0.1", port, assetRoot);
+            mLog.info("Stats web server started at {}://{}:{}/ using assets [{}]",
+                httpsEnabled ? "https" : "http", anyIpEnabled ? "0.0.0.0" : "127.0.0.1", port, assetRoot);
         }
-        catch(IOException e)
+        catch(IOException | SQLException | GeneralSecurityException | TlsMaterialException e)
         {
             mLog.warn("Unable to start stats web server on port [{}]", port, e);
             stop();
@@ -244,13 +303,43 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             mExecutorService = null;
         }
 
+        if(mWebAccessHttpController != null)
+        {
+            mWebAccessHttpController.close();
+            mWebAccessHttpController = null;
+        }
+
         mAssetRoot = null;
         mPort = 0;
         mAnyIpEnabled = false;
+        mHttpsEnabled = false;
 
         if(mChannelProcessingManager != null)
         {
             mChannelProcessingManager.setChannelActivityEnabled("stats-web", false);
+        }
+    }
+
+    private void createProtectedContext(String path, WebCapability capability, HttpHandler handler)
+    {
+        mServer.createContext(path, mWebAccessHttpController.protect(capability, handler));
+    }
+
+    /**
+     * Site-scoped quality data belongs to the Systems capability; global quality belongs to Dashboard.  Parameter
+     * names must be decoded before authorization so percent-encoding cannot select a less restrictive policy.
+     */
+    static WebCapability qualityCapability(URI uri)
+    {
+        try
+        {
+            return StatsRequest.from(uri).text("guid") != null ? WebCapability.SYSTEMS_VIEW :
+                WebCapability.DASHBOARD_VIEW;
+        }
+        catch(RuntimeException exception)
+        {
+            // Malformed or ambiguous requests take the more restrictive route and are rejected by the handler.
+            return WebCapability.SYSTEMS_VIEW;
         }
     }
 
@@ -260,8 +349,8 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         status.put("server", Map.of(
             "enabled", mServer != null,
             "port", mPort,
+            "https", mHttpsEnabled,
             "accessMode", mAnyIpEnabled ? "any_ip" : "local_only",
-            "assetRoot", mAssetRoot != null ? mAssetRoot.toString() : "",
             "assetsAvailable", mAssetRoot != null && Files.isRegularFile(mAssetRoot.resolve("index.html")),
             "liveChannels", Map.of(
                 "systems", "/live/systems",
@@ -271,7 +360,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             )
         ));
         status.put("database", mDatabase.status());
-        status.put("statsLogging", statsLoggingStatus());
+        status.put("statsLogging", statsLoggingStatusResponse());
         status.put("webPlayer", mWebCallService.status());
         NowPlayingPreference nowPlaying = mUserPreferences.getNowPlayingPreference();
         status.put("decodeDisplay", Map.of(
@@ -281,6 +370,24 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             "mode", nowPlaying.getDecodeQualityDisplayMode().name().toLowerCase()
         ));
         return status;
+    }
+
+    private Map<String,Object> statsLoggingStatusResponse()
+    {
+        P25ActivityLogStatus current = statsLoggingStatus();
+        Map<String,Object> response = new LinkedHashMap<>();
+        response.put("summaryConfigured", current.summaryConfigured());
+        response.put("detailedHistoryConfigured", current.detailedHistoryConfigured());
+        response.put("summaryActive", current.summaryActive());
+        response.put("detailedHistoryActive", current.detailedHistoryActive());
+        response.put("retentionDays", current.retentionDays());
+        response.put("state", current.state());
+        response.put("lastSuccessfulWriteMs", current.lastSuccessfulWriteMs());
+        response.put("recordsWritten", current.recordsWritten());
+        response.put("recordsDropped", current.recordsDropped());
+        response.put("lastError", current.lastError() == null || current.lastError().isBlank() ? "" :
+            "Statistics logging failed; check the application log.");
+        return response;
     }
 
     private P25ActivityLogStatus statsLoggingStatus()
@@ -305,7 +412,9 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
     {
         P25ActivityLogStatus loggingStatus = statsLoggingStatus();
         int port = mPort > 0 ? mPort : mUserPreferences.getApplicationPreference().getStatsWebServerPort();
-        return new StatsWebNavigationState(mServer != null, port, loggingStatus.summaryActive(),
+        boolean https = mServer != null ? mHttpsEnabled :
+            mUserPreferences.getApplicationPreference().isStatsWebServerHttpsEnabled();
+        return new StatsWebNavigationState(mServer != null, port, https, loggingStatus.summaryActive(),
             loggingStatus.detailedHistoryActive());
     }
 
@@ -520,6 +629,15 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
                            Object initialData, java.util.function.Predicate<StatsLiveEventHub.LiveEvent> filter)
         throws IOException
     {
+        WebAccessHttpController accessController = mWebAccessHttpController;
+
+        if(accessController == null || !accessController.isRequestStillAuthorized(exchange))
+        {
+            subscription.close();
+            sendText(exchange, 403, "Access changed before the live stream started");
+            return;
+        }
+
         Headers headers = exchange.getResponseHeaders();
         headers.set("Content-Type", "text/event-stream; charset=utf-8");
         headers.set("Cache-Control", "no-store");
@@ -530,11 +648,24 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
 
         try(subscription; OutputStream outputStream = exchange.getResponseBody())
         {
+            if(!accessController.isRequestStillAuthorized(exchange))
+            {
+                return;
+            }
+
             writeSseEvent(outputStream, initialEvent, initialData);
 
-            while(mServer == server && !subscription.isClosed())
+            while(mServer == server && !subscription.isClosed() &&
+                accessController.isRequestStillAuthorized(exchange))
             {
                 StatsLiveEventHub.LiveEvent event = subscription.poll(15, TimeUnit.SECONDS);
+
+                // Revocation can happen while poll is blocked.  Recheck immediately before every heartbeat or
+                // event write so a demoted/deleted account cannot receive one final post-revocation event.
+                if(!accessController.isRequestStillAuthorized(exchange))
+                {
+                    break;
+                }
 
                 if(event == null)
                 {
@@ -684,6 +815,8 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
 
     private void handleStatic(HttpExchange exchange) throws IOException
     {
+        WebAccessHttpController.prepareSecurityHeaders(exchange);
+
         if(!requireMethod(exchange, "GET", "HEAD"))
         {
             return;

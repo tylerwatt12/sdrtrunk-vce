@@ -42,6 +42,7 @@ public class ApplicationPreference extends Preference
     private static final String PREFERENCE_KEY_STATS_WEB_SERVER_ENABLED = "stats.web.server.enabled";
     private static final String PREFERENCE_KEY_STATS_WEB_SERVER_PORT = "stats.web.server.port";
     private static final String PREFERENCE_KEY_STATS_WEB_SERVER_ANY_IP_ENABLED = "stats.web.server.any.ip.enabled";
+    private static final String PREFERENCE_KEY_STATS_WEB_SERVER_HTTPS_ENABLED = "stats.web.server.https.enabled";
     public static final boolean DEFAULT_STATS_LOGGING_ENABLED = false;
     public static final boolean DEFAULT_STATS_DETAILED_HISTORY_ENABLED = false;
     public static final int MIN_STATS_LOGGING_RETENTION_DAYS = 1;
@@ -62,6 +63,7 @@ public class ApplicationPreference extends Preference
     private Boolean mStatsWebServerEnabled;
     private Integer mStatsWebServerPort;
     private Boolean mStatsWebServerAnyIpEnabled;
+    private Boolean mStatsWebServerHttpsEnabled;
     private Theme mTheme;
     private Double mGuiScale;
 
@@ -248,6 +250,30 @@ public class ApplicationPreference extends Preference
     {
         mStatsWebServerAnyIpEnabled = enabled;
         mPreferences.putBoolean(PREFERENCE_KEY_STATS_WEB_SERVER_ANY_IP_ENABLED, enabled);
+        notifyPreferenceUpdated();
+    }
+
+    /**
+     * Indicates whether the embedded web server uses HTTPS.
+     */
+    public boolean isStatsWebServerHttpsEnabled()
+    {
+        if(mStatsWebServerHttpsEnabled == null)
+        {
+            mStatsWebServerHttpsEnabled =
+                mPreferences.getBoolean(PREFERENCE_KEY_STATS_WEB_SERVER_HTTPS_ENABLED, false);
+        }
+
+        return mStatsWebServerHttpsEnabled;
+    }
+
+    /**
+     * Enables or disables HTTPS for the embedded web server.
+     */
+    public void setStatsWebServerHttpsEnabled(boolean enabled)
+    {
+        mStatsWebServerHttpsEnabled = enabled;
+        mPreferences.putBoolean(PREFERENCE_KEY_STATS_WEB_SERVER_HTTPS_ENABLED, enabled);
         notifyPreferenceUpdated();
     }
 

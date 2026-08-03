@@ -436,7 +436,7 @@ public class StatusBox extends HBox
         mWebStatusLabel.setText(webActive ? "Web:" + state.port() : "Web OFF");
         mWebStatusLabel.setTextFill(webActive ? ACTIVE_COLOR : INACTIVE_COLOR);
         mWebStatusTooltip.setText(webActive ?
-            "Embedded web server is running at http://127.0.0.1:" + state.port() + "/" :
+            "Embedded web server is running at " + state.baseUri() :
             "Embedded web server is not running");
     }
 
