@@ -47,10 +47,13 @@ class Pbkdf2PasswordHasherTest
     @Test
     void rejectsUnsafeCredentialParametersAndPasswordLengths()
     {
+        assertEquals(7, Pbkdf2PasswordHasher.MINIMUM_PASSWORD_CHARACTERS);
         assertThrows(IllegalArgumentException.class,
             () -> new Pbkdf2PasswordHasher(WebAdminCredential.MINIMUM_ITERATIONS - 1));
         assertThrows(IllegalArgumentException.class,
-            () -> mHasher.createCredential("admin", "short".toCharArray(), 1));
+            () -> mHasher.createCredential("admin", "six666".toCharArray(), 1));
+        WebAdminCredential minimumLength = mHasher.createCredential("admin", "seven77".toCharArray(), 1);
+        assertTrue(mHasher.verify(minimumLength, "admin", "seven77".toCharArray()));
         assertThrows(IllegalArgumentException.class,
             () -> new WebAdminCredential(1, "admin", WebAdminCredential.PBKDF2_SHA256,
                 WebAdminCredential.MINIMUM_ITERATIONS - 1, 256, "invalid", "invalid", 1, 1));

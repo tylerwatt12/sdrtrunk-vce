@@ -5371,7 +5371,7 @@ function validateManagedUserInput(username, password, confirmation, creating) {
   if (creating && (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(normalizedUsername) || normalizedUsername === 'admin')) {
     return 'Use 1–64 lowercase letters, numbers, dots, underscores, or hyphens. The name admin is reserved.';
   }
-  if (password.length < 12 || password.length > 256) return 'Password must contain 12–256 characters.';
+  if (password.length < 7 || password.length > 256) return 'Password must contain 7–256 characters.';
   if (password !== confirmation) return 'Passwords do not match.';
   return null;
 }
@@ -5390,14 +5390,14 @@ function openManagedUserModal(account, statusHost, returnFocusSelector) {
   password.type = 'password';
   password.name = 'password';
   password.autocomplete = 'new-password';
-  password.minLength = 12;
+  password.minLength = 7;
   password.maxLength = 256;
   password.required = true;
   const confirmation = node('input');
   confirmation.type = 'password';
   confirmation.name = 'password-confirmation';
   confirmation.autocomplete = 'new-password';
-  confirmation.minLength = 12;
+  confirmation.minLength = 7;
   confirmation.maxLength = 256;
   confirmation.required = true;
   const tier = node('select');
@@ -5414,7 +5414,7 @@ function openManagedUserModal(account, statusHost, returnFocusSelector) {
   submit.type = 'submit';
   actions.append(submit);
   form.append(formField('Username', username, creating ? 'Usernames are stored in lowercase.' : ''),
-    formField('Password', password, 'Use 12–256 characters.'),
+    formField('Password', password, 'Use 7–256 characters.'),
     formField('Confirm password', confirmation));
   if (creating) form.append(formField('Access tier', tier));
   form.append(message, actions);

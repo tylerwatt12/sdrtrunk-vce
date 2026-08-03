@@ -22,7 +22,7 @@ public final class Pbkdf2PasswordHasher
 {
     public static final int DEFAULT_ITERATIONS = 600_000;
     public static final int SALT_BYTES = 32;
-    public static final int MINIMUM_PASSWORD_CHARACTERS = 12;
+    public static final int MINIMUM_PASSWORD_CHARACTERS = 7;
     public static final int MAXIMUM_PASSWORD_CHARACTERS = 256;
     private static final char[] INVALID_PASSWORD = {'\u0000'};
 
