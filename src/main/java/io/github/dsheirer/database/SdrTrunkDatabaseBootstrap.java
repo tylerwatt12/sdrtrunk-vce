@@ -269,13 +269,18 @@ public final class SdrTrunkDatabaseBootstrap
     {
         if(!previousBuilds.isEmpty())
         {
-            Object[] buttons = {"Migrate Previous Data", "Choose Another...", "Import Older XML...",
+            String legacySetupButton = legacyXml.isPresent() ? "Import Detected Legacy Setup" :
+                "Select Legacy Setup File...";
+            Object[] buttons = {"Migrate Previous Data", "Choose Another...", legacySetupButton,
                 "Set Up as New", "Quit"};
             String found = previousBuilds.size() == 1 ? previousBuilds.get(0).toString() :
                 previousBuilds.size() + " nearby data folders";
+            String detectedLegacySetup = legacyXml.map(path ->
+                "\n\nA legacy XML setup file was also detected:\n" + path).orElse("");
             int result = JOptionPane.showOptionDialog(null,
                 "We found data from a previous sdrtrunk-vce installation.\n\n" + found +
-                    "\n\nWe can copy it, update the copy, and leave your previous installation unchanged.",
+                    "\n\nWe can copy it, update the copy, and leave your previous installation unchanged." +
+                    detectedLegacySetup,
                 TITLE, JOptionPane.DEFAULT_OPTION, JOptionPane.QUESTION_MESSAGE, null, buttons, buttons[0]);
 
             return switch(result)
@@ -290,12 +295,13 @@ public final class SdrTrunkDatabaseBootstrap
 
         if(legacyXml.isPresent())
         {
-            Object[] buttons = {"Use Previous Data...", "Import Older XML", "Choose XML...", "Set Up as New",
-                "Quit"};
+            Object[] buttons = {"Use Previous Data...", "Import Detected Legacy Setup",
+                "Select Another Legacy Setup...", "Set Up as New", "Quit"};
             int result = JOptionPane.showOptionDialog(null,
-                "No previous portable database was found nearby. An older XML setup is available:\n\n" +
-                    legacyXml.get(), TITLE, JOptionPane.DEFAULT_OPTION, JOptionPane.QUESTION_MESSAGE, null, buttons,
-                buttons[1]);
+                "No previous portable database was found nearby. A legacy XML setup file was detected:\n\n" +
+                    legacyXml.get() + "\n\nImport the detected file, select a different legacy setup file, or " +
+                    "start with a new setup.", TITLE, JOptionPane.DEFAULT_OPTION, JOptionPane.QUESTION_MESSAGE,
+                    null, buttons, buttons[1]);
 
             return switch(result)
             {
@@ -307,10 +313,10 @@ public final class SdrTrunkDatabaseBootstrap
             };
         }
 
-        Object[] buttons = {"Use Previous Data...", "Import Older XML...", "Set Up as New", "Quit"};
+        Object[] buttons = {"Use Previous Data...", "Select Legacy Setup File...", "Set Up as New", "Quit"};
         int result = JOptionPane.showOptionDialog(null,
-            "No previous sdrtrunk-vce data was found nearby.\n\nYou can choose another installation, import an " +
-                "older XML playlist, or create a new setup.", TITLE, JOptionPane.DEFAULT_OPTION,
+            "No previous sdrtrunk-vce data was found nearby.\n\nYou can select a previous installation, " +
+                "select a legacy XML setup file, or start with a new setup.", TITLE, JOptionPane.DEFAULT_OPTION,
             JOptionPane.QUESTION_MESSAGE, null, buttons, buttons[0]);
 
         return switch(result)
