@@ -100,10 +100,10 @@ Click any screenshot to view it at full size.
 
 | Branch | Use it for |
 | --- | --- |
-| [`main`](https://github.com/tylerwatt12/sdrtrunk-vce/tree/main) | The supported Java desktop release branch and source of shared receiver, tuner, decoder, audio, recording, streaming, database, migration, and protocol work. |
-| [`webfirst`](https://github.com/tylerwatt12/sdrtrunk-vce/tree/webfirst) | The newer browser-first interface. New interface features will be added here, all configuration will be done through the web. The application is completely headless. |
+| [`main`](https://github.com/tylerwatt12/sdrtrunk-vce/tree/main) | The supported development and release branch for the desktop application, web interface, receivers, tuners, decoders, audio, recording, streaming, databases, migrations, and protocol support. |
 
-Features that improve reception, fix errors in decoding, data and statistics handling will be added to both branches.
+`webfirst` is no longer an active build or release branch. Useful completed work from it may be reviewed and
+selectively brought into `main`, but new fixes and features are developed, tested, and released from `main`.
 
 ## Coming From Regular SDRTrunk?
 
@@ -141,7 +141,7 @@ After importing:
 ## Updating VCE
 
 VCE checks for a newer release when the desktop app starts. You can also use **Help > Check for Updates**. If an update
-is available, the app opens the matching `main` or `webfirst` release page.
+is available, the app opens the `main` release page.
 
 The update check does **not** download, install, replace files, change the database, restart VCE, or switch branches.
 You always choose when to install an update.

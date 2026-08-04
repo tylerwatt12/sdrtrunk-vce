@@ -44,27 +44,18 @@ affiliations, site observations, identity evidence, and quality records remain i
 statistics history starts fresh. Both paths use a validated staged copy and rebase recognized portable paths when the
 data folder moves.
 
-## Recording Storage By Release Track
+## Recording Storage
 
-`main` and `webfirst` are separate product and database release tracks.
+`main` is the supported development and release track.
 
-`main` keeps classic call recording. Recorded audio remains administrator-owned in the configured recording
+Main releases keep classic call recording. Recorded audio remains administrator-owned in the configured recording
 directory. Main releases do not create or require the web recorded-call catalog and do not apply automatic time/space
 retention to recordings.
 
-`webfirst` keeps managed recordings under `<recording-directory>/calls/v1`, the recorded-call catalog, browser
-search/playback, and bounded age/space retention. Retention owns only files that validate against that managed layout.
-Existing classic recordings and unknown files remain untouched and are not automatically imported into the catalog or
-displayed by the web Recordings page.
-
-When the first public `webfirst` release is prepared from Alpha 7, its reviewed staged-copy transition must add DMR
-activity schema v1, store explicit Conventional/Trunked DMR modes, and create recorded-call catalog schema v3. The
-upgrade does not move, rename, index, or delete recordings from the earlier classic layout. Only new recordings written
-to the managed `calls/v1` layout enter the catalog unless a separate importer is designed later.
-
-Later migrations follow the immediately preceding public release on their own track. A database migrated to
-`webfirst` is not supported as a downgrade input to `main`. Keep separate portable data folders for the two release
-tracks, and never run both builds against the same database.
+The retired `webfirst` development branch used an incompatible managed-recording catalog. Its database is not a
+supported migration input for `main`, so an old `webfirst` data directory must remain separate. Features selected from
+that branch must be adapted to the current `main` storage and migration rules instead of copying its database contract
+into a release unintentionally.
 
 During unreleased development, test databases are converted once with a backed-up utility kept outside the repository.
 The next public release will receive one reviewed transition from the preceding public release. Ordinary application
