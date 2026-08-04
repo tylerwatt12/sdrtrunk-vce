@@ -121,6 +121,37 @@ public final class WebAccessHttpController implements AutoCloseable
     }
 
     /**
+     * Wraps an API resource with capability protection and adds same-origin and CSRF protection to unsafe methods.
+     */
+    public HttpHandler protectApi(WebCapability capability, HttpHandler next)
+    {
+        Objects.requireNonNull(capability, "Web capability cannot be null");
+        Objects.requireNonNull(next, "Protected HTTP handler cannot be null");
+        return exchange -> {
+            prepareSecurityHeaders(exchange);
+
+            if(!authorize(exchange, capability))
+            {
+                return;
+            }
+
+            boolean safeMethod = switch(exchange.getRequestMethod())
+            {
+                case "GET", "HEAD", "OPTIONS" -> true;
+                default -> false;
+            };
+
+            if(!safeMethod && !authorizeMutation(exchange, sessionCookie(exchange)))
+            {
+                sendError(exchange, 403, "request_rejected", "The change request was rejected");
+                return;
+            }
+
+            next.handle(exchange);
+        };
+    }
+
+    /**
      * Rechecks the session and current policy for a long-lived SSE request.
      */
     public boolean isRequestStillAuthorized(HttpExchange exchange)

@@ -21,6 +21,7 @@ const ACCESS_CAPABILITIES = Object.freeze({
   CREDITS: 'credits',
   CSV_EXPORT: 'csv-export',
   CALL_AUDIO: 'call-audio',
+  ADMIN_ALIASES: 'admin-aliases',
   ADMIN_USERS: 'admin-users',
   ADMIN_ACCESS: 'admin-access'
 });
@@ -194,6 +195,9 @@ const ALIAS_CATALOG_DEFAULT_ENRICHMENT_COLUMNS = Object.freeze([
 let serviceStatus = null;
 let tableWidthPreferences = readTableWidthPreferences();
 let activeReadOnlyModal = null;
+let aliasEditorSelection = new Set();
+let aliasEditorLastSelectionIndex = null;
+let aliasEditorContext = null;
 let accessSession = anonymousAccessSession();
 let accessSessionAvailable = false;
 let playbackConnection = null;
@@ -1099,11 +1103,13 @@ function pageHeader(title, subtitle) {
   return wrapper;
 }
 
-function closeReadOnlyModal(updateRoute = false) {
+function closeReadOnlyModal(updateRoute = false, force = false) {
   const active = activeReadOnlyModal;
-  if (!active) return;
+  if (!active) return true;
+  if (!force && active.isDirty?.() && !window.confirm('Discard your unsaved alias changes?')) return false;
   activeReadOnlyModal = null;
   document.removeEventListener('keydown', active.keydown);
+  active.cleanup?.();
   active.backdrop.remove();
   document.body.classList.remove('modal-open');
   if (updateRoute && route.has('alias')) {
@@ -1112,10 +1118,11 @@ function closeReadOnlyModal(updateRoute = false) {
   }
   const returnFocus = active.returnFocusSelector ? document.querySelector(active.returnFocusSelector) : null;
   if (returnFocus instanceof HTMLElement) returnFocus.focus();
+  return true;
 }
 
 function openReadOnlyModal(title, body, options = {}) {
-  closeReadOnlyModal(false);
+  if (!closeReadOnlyModal(false)) return null;
   const backdrop = node('div', 'modal-backdrop');
   const dialog = node('section', 'read-only-modal');
   String(options.className || '').split(/\s+/).filter(Boolean)
@@ -1138,8 +1145,9 @@ function openReadOnlyModal(title, body, options = {}) {
 
   const dismiss = () => closeReadOnlyModal(true);
   const focusable = () => [...dialog.querySelectorAll(
-    'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])')]
-    .filter((element) => !element.hidden);
+    'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), ' +
+    '[tabindex]:not([tabindex="-1"])')]
+    .filter((element) => !element.hidden && element.getClientRects().length > 0);
   const keydown = (event) => {
     if (event.key === 'Escape') {
       event.preventDefault();
@@ -1167,14 +1175,21 @@ function openReadOnlyModal(title, body, options = {}) {
   backdrop.addEventListener('click', (event) => {
     if (event.target === backdrop) dismiss();
   });
+  let dirty = false;
   activeReadOnlyModal = {
-    backdrop, keydown, returnFocusSelector: options.returnFocusSelector || null
+    backdrop, keydown, returnFocusSelector: options.returnFocusSelector || null,
+    isDirty: () => dirty,
+    cleanup: options.cleanup || null
   };
   document.addEventListener('keydown', keydown);
   document.body.classList.add('modal-open');
   document.body.append(backdrop);
   close.focus();
-  return { dialog, content: contentNode, close: dismiss, state: activeReadOnlyModal };
+  return {
+    dialog, content: contentNode, close: dismiss, state: activeReadOnlyModal,
+    setDirty: (value = true) => { dirty = Boolean(value); },
+    isDirty: () => dirty
+  };
 }
 
 function statsLoggingState() {
@@ -2008,6 +2023,39 @@ function aliasScopeBreakdownColumns() {
   ];
 }
 
+function aliasScopeMetricSummary(row, definitions, emptyText) {
+  const values = definitions.filter(([, field]) => Number(row[field] || 0) > 0)
+    .map(([label, field]) => badge(`${label} ${aliasMetricValue(row, field)}`));
+  return values.length ? badgeGroup(values) : node('span', 'muted', emptyText);
+}
+
+function aliasEditorScopeBreakdownColumns() {
+  const callUse = [['Calls', 'call_count'], ['Rec', 'recorded_count'], ['Sent', 'streamed_count'],
+    ['Enc', 'encrypted_evidence_count']];
+  const systemEvidence = [['Grants', 'grant_count'], ['Join', 'join_count'], ['Emergency', 'emergency_count'],
+    ['Register', 'register_count'], ['Logout', 'logout_count'], ['Denial', 'denial_count'],
+    ['Data', 'data_count'], ['Other', 'other_signaling_count'], ['Relationships', 'relationship_count'],
+    ['Join Rel.', 'join_relationship_count'], ['Current Affil.', 'current_affiliation_count']];
+  const total = (row, definitions) => definitions.reduce((sum, [, field]) => sum + Number(row[field] || 0), 0);
+  return [
+    { id: 'scope', label: 'Scope', width: 230, className: 'alias-cell', render: (row) => {
+      const value = node('div', 'alias-scope-identity');
+      value.append(node('strong', '', availableValue(row.scope_label)));
+      if (row.topology) value.append(node('span', 'muted', availableValue(row.topology)));
+      return value;
+    } },
+    { id: 'scope-call-use', label: 'Call Use', width: 210,
+      render: (row) => aliasScopeMetricSummary(row, callUse, 'No calls observed'),
+      sortValue: (row) => total(row, callUse) },
+    { id: 'scope-system-evidence', label: 'System Evidence', width: 320,
+      render: (row) => aliasScopeMetricSummary(row, systemEvidence, 'No signaling observed'),
+      sortValue: (row) => total(row, systemEvidence) },
+    { id: 'last-evidence', label: 'Last Evidence', width: 166,
+      render: (row) => aliasMetricTime(row, 'last_evidence_ms'),
+      sortValue: (row) => Number(row.last_evidence_ms || 0) }
+  ];
+}
+
 function aliasDetailContent(alias, breakdown) {
   const wrapper = node('div', 'alias-detail');
   wrapper.append(section('Configuration', keyValues([
@@ -2083,6 +2131,7 @@ async function renderAliasDetailModal(id) {
     id: `alias-${id}`,
     returnFocusSelector: `.alias-detail-link[data-alias-id="${id}"]`
   });
+  if (!modal) return;
   try {
     const response = await api('/api/alias', { id });
     if (activeReadOnlyModal !== modal.state || Number(route.get('alias')) !== id) return;
@@ -2095,71 +2144,1281 @@ async function renderAliasDetailModal(id) {
   }
 }
 
-async function renderAliases() {
-  const filters = {
-    list: route.get('list'), family: route.get('family'), type: route.get('type'),
-    matcher: route.get('matcher')
-  };
-  const [listResponse, page] = await Promise.all([
-    api('/api/alias-lists'),
-    api('/api/aliases', pageParameters(filters))
-  ]);
-  const selectedList = (listResponse.rows || []).find((row) =>
-    String(row.alias_list_id) === String(route.get('list') || ''));
-  const subtitle = selectedList ?
-    `${selectedList.name} · ${selectedList.family} · ${number(selectedList.alias_count)} configured aliases · ` +
-      `${number(selectedList.assigned_channel_count)} assigned channels` :
-    `${number(listResponse.count ?? (listResponse.rows || []).length)} alias lists · read-only`;
-  content.append(pageHeader('Alias Catalog', subtitle));
-  content.append(aliasCatalogFilterToolbar(listResponse));
+function aliasAdminAllowed() {
+  return capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_ALIASES);
+}
 
-  const definitions = aliasCatalogEnrichmentColumns();
-  const selected = readAliasCatalogColumnSelection(definitions);
-  const tableHost = node('div', 'alias-catalog-table-host');
-  const renderTable = () => {
-    const optional = definitions.filter((column) => selected.has(column.id));
-    tableHost.replaceChildren(table(page.rows || [], [...aliasCatalogCoreColumns(), ...optional],
-      'No configured aliases match these filters', {
-        type: 'alias-catalog', serverSort: true, sortable: false,
-        defaultSort: 'name', defaultDirection: 'asc'
-      }));
-  };
-  const sortIsVisible = () => {
-    const current = route.get('sort');
-    if (!current) return true;
-    return [...aliasCatalogCoreColumns(), ...definitions.filter((column) => selected.has(column.id))]
-      .some((column) => column.sort === current);
-  };
-  const onColumnChange = () => {
-    if (!sortIsVisible()) {
-      route.set('sort', 'name');
-      route.set('direction', 'asc');
-      route.delete('offset');
-      window.history.replaceState({}, '', currentHref());
-      render();
+function aliasListId(row) {
+  const value = Number(row?.alias_list_id ?? row?.id);
+  return Number.isInteger(value) && value > 0 ? value : null;
+}
+
+function aliasListFamily(row) {
+  return String(row?.family || '').trim().toUpperCase();
+}
+
+function mergedAliasLists(publicRows, adminRows = []) {
+  const adminById = new Map((adminRows || []).map((row) => [aliasListId(row), row]));
+  return (publicRows || []).map((row) => ({ ...row, ...(adminById.get(aliasListId(row)) || {}) }))
+    .sort((left, right) => String(left.name || '').localeCompare(String(right.name || ''), undefined,
+      { numeric: true, sensitivity: 'base' }));
+}
+
+function aliasListRail(lists, selectedList, admin) {
+  const rail = node('aside', 'alias-list-rail');
+  const header = node('div', 'alias-list-rail-header');
+  header.append(node('strong', '', 'Alias Lists'));
+  if (admin) {
+    const create = node('button', 'button alias-list-create', 'New');
+    create.type = 'button';
+    create.addEventListener('click', () => openAliasListCreateModal());
+    header.append(create);
+  }
+  const search = node('input', 'alias-list-search');
+  search.type = 'search';
+  search.placeholder = 'Find a list';
+  search.setAttribute('aria-label', 'Find an alias list');
+  const list = node('nav', 'alias-list-items');
+  list.setAttribute('aria-label', 'Alias lists');
+  const draw = () => {
+    const query = search.value.trim().toLowerCase();
+    const matches = lists.filter((row) => !query || String(row.name || '').toLowerCase().includes(query) ||
+      aliasListFamily(row).toLowerCase().includes(query));
+    list.replaceChildren();
+    if (!matches.length) {
+      list.append(node('div', 'empty alias-list-empty', 'No matching alias lists'));
       return;
     }
-    renderTable();
+    matches.forEach((row) => {
+      const id = aliasListId(row);
+      const link = anchor('', href('aliases', { list: id, aliasTab: 'configure' }), 'alias-list-item');
+      if (id === aliasListId(selectedList)) {
+        link.classList.add('active');
+        link.setAttribute('aria-current', 'page');
+      }
+      const label = node('span', 'alias-list-item-name', row.name || `Alias List ${identifierNumber(id)}`);
+      const detail = node('span', 'alias-list-item-detail');
+      detail.append(node('span', 'alias-list-family', aliasListFamily(row) || 'Unknown'),
+        node('span', '', `${number(row.alias_count || 0)} aliases`));
+      link.append(label, detail);
+      list.append(link);
+    });
   };
-  const chooser = aliasColumnChooser(definitions, selected, onColumnChange);
-  const exportContext = {};
-  ['list', 'family', 'type', 'matcher'].forEach((key) => {
+  search.addEventListener('input', draw);
+  draw();
+
+  const mobile = node('div', 'alias-list-mobile');
+  mobile.append(node('span', '', 'Alias List'));
+  const select = node('select');
+  select.setAttribute('aria-label', 'Alias list');
+  const prompt = node('option', '', 'Select an alias list');
+  prompt.value = '';
+  select.append(prompt);
+  lists.forEach((row) => {
+    const option = node('option', '', `${row.name} · ${aliasListFamily(row)} · ${number(row.alias_count || 0)}`);
+    option.value = String(aliasListId(row));
+    option.selected = aliasListId(row) === aliasListId(selectedList);
+    select.append(option);
+  });
+  select.addEventListener('change', () => {
+    if (select.value) window.location.assign(href('aliases', { list: select.value, aliasTab: 'configure' }));
+  });
+  mobile.append(select);
+  if (admin) {
+    const create = node('button', 'button secondary alias-list-mobile-create', 'New Alias List');
+    create.type = 'button';
+    create.addEventListener('click', () => openAliasListCreateModal());
+    mobile.append(create);
+  }
+  rail.append(header, search, list, mobile);
+  return rail;
+}
+
+function aliasEditorViewTabs(selectedList) {
+  const id = aliasListId(selectedList);
+  const active = ['configure', 'calls', 'evidence', 'custom'].includes(route.get('aliasTab')) ?
+    route.get('aliasTab') : 'configure';
+  return tabs([
+    { id: 'configure', label: 'Configure', href: href('aliases', { list: id, aliasTab: 'configure' }) },
+    { id: 'calls', label: 'Call Use', href: href('aliases', { list: id, aliasTab: 'calls' }) },
+    { id: 'evidence', label: 'System Evidence', href: href('aliases', { list: id, aliasTab: 'evidence' }) },
+    { id: 'custom', label: 'Custom', href: href('aliases', { list: id, aliasTab: 'custom' }) }
+  ], active);
+}
+
+function aliasLocalDateTimeValue(epoch) {
+  const value = Number(epoch);
+  if (!Number.isFinite(value) || value <= 0) return '';
+  const date = new Date(value - new Date(value).getTimezoneOffset() * 60_000);
+  return date.toISOString().slice(0, 16);
+}
+
+function aliasEditorFilterToolbar(listResponse, options = null) {
+  const form = node('form', 'toolbar alias-catalog-toolbar alias-editor-filter-toolbar');
+  form.method = 'get';
+  [['view', 'aliases'], ['list', route.get('list')], ['aliasTab', route.get('aliasTab') || 'configure'],
+    ['sort', route.get('sort')], ['direction', route.get('direction')]].forEach(([name, value]) => {
+    if (!value) return;
+    const hidden = node('input');
+    hidden.type = 'hidden';
+    hidden.name = name;
+    hidden.value = value;
+    form.append(hidden);
+  });
+  const selectFilter = (label, name, values) => {
+    const wrapper = node('label', 'alias-filter');
+    wrapper.append(node('span', '', label));
+    const select = node('select');
+    select.name = name;
+    values.forEach(([value, text]) => {
+      const option = node('option', '', text);
+      option.value = value;
+      option.selected = String(route.get(name) || '') === String(value);
+      select.append(option);
+    });
+    wrapper.append(select);
+    return wrapper;
+  };
+  const search = node('label', 'alias-filter alias-search-filter');
+  search.append(node('span', '', 'Search'));
+  const input = node('input');
+  input.type = 'search';
+  input.name = 'q';
+  input.value = route.get('q') || '';
+  input.placeholder = 'Alias, description, group, or identifier';
+  search.append(input);
+  const matcherOptions = (listResponse.matcher_types || []).map(aliasMatcherOption)
+    .filter((entry) => entry.value).sort((left, right) => left.label.localeCompare(right.label));
+  const groupNames = [...new Set((options?.groupNames || []).map((value) => String(value || '').trim())
+    .filter(Boolean))].sort((left, right) => left.localeCompare(right));
+  const groupFilter = aliasTextInput('group', route.get('group') || '');
+  groupFilter.placeholder = 'Exact group';
+  const groupList = node('datalist');
+  groupList.id = 'alias-editor-group-filter-options';
+  groupFilter.setAttribute('list', groupList.id);
+  groupNames.forEach((value) => {
+    const option = node('option');
+    option.value = value;
+    groupList.append(option);
+  });
+  const groupFilterWrapper = node('label', 'alias-filter');
+  groupFilterWrapper.append(node('span', '', 'Group'), groupFilter);
+  const lastAfter = aliasTextInput('', aliasLocalDateTimeValue(route.get('lastActivityAfter')),
+    'datetime-local');
+  const lastBefore = aliasTextInput('', aliasLocalDateTimeValue(route.get('lastActivityBefore')),
+    'datetime-local');
+  form.append(search,
+    selectFilter('Identity', 'type', [['', 'All identities'], ['talkgroup', 'Talkgroups'],
+      ['radio', 'Radios'], ['other', 'Other']]),
+    selectFilter('Matcher', 'matcher', [['', 'All matchers'],
+      ...matcherOptions.map((entry) => [entry.value, entry.label])]),
+    groupFilterWrapper, groupList,
+    selectFilter('Listen', 'listen', [['', 'Any'], ['enabled', 'Enabled'], ['disabled', 'Disabled']]),
+    selectFilter('Record', 'record', [['', 'Any'], ['enabled', 'Enabled'], ['disabled', 'Disabled']]),
+    selectFilter('Stream', 'stream', [['', 'Any'], ['present', 'Configured'], ['none', 'None']]),
+    selectFilter('Evidence', 'evidence', [['', 'Any'], ['observed', 'Observed'],
+      ['covered_no_evidence', 'Covered · no evidence'], ['not_collected', 'Not collected'],
+      ['unsupported', 'Unsupported']]),
+    selectFilter('Call use', 'use', [['', 'Any'], ['used', 'Has calls'],
+      ['unused', 'No calls observed']]),
+    (() => {
+      const wrapper = node('label', 'alias-filter');
+      wrapper.append(node('span', '', 'Active after'), lastAfter);
+      return wrapper;
+    })(),
+    (() => {
+      const wrapper = node('label', 'alias-filter');
+      wrapper.append(node('span', '', 'Active before'), lastBefore);
+      return wrapper;
+    })(),
+    node('button', '', 'Apply'));
+  const activeFilters = ['q', 'type', 'matcher', 'group', 'listen', 'record', 'stream', 'evidence', 'use',
+    'lastActivityAfter', 'lastActivityBefore'];
+  if (activeFilters.some((key) => route.get(key))) {
+    form.append(anchor('Clear', href('aliases', {
+      list: route.get('list'), aliasTab: route.get('aliasTab') || 'configure'
+    }), 'button secondary'));
+  }
+  form.addEventListener('submit', () => {
+    [[lastAfter, 'lastActivityAfter'], [lastBefore, 'lastActivityBefore']].forEach(([control, name]) => {
+      if (!control.value) return;
+      const hidden = node('input');
+      hidden.type = 'hidden';
+      hidden.name = name;
+      hidden.value = String(new Date(control.value).getTime());
+      form.append(hidden);
+    });
+    [...form.elements].forEach((control) => {
+      if (control.name && !['view', 'list', 'aliasTab'].includes(control.name) &&
+          !String(control.value || '').trim()) control.disabled = true;
+    });
+  });
+  return form;
+}
+
+function aliasEditorBaseColumns(admin, rows, onSelectionChange) {
+  const columns = [];
+  if (admin) {
+    columns.push({ id: 'select', label: 'Select', group: 'Selection', className: 'alias-select-cell',
+      render: (row) => {
+        const id = Number(row.alias_id);
+        const checkbox = node('input', 'alias-row-select');
+        checkbox.type = 'checkbox';
+        checkbox.checked = aliasEditorSelection.has(id);
+        checkbox.setAttribute('aria-label', `Select ${row.name || `alias ${id}`}`);
+        checkbox.addEventListener('click', (event) => {
+          const index = rows.findIndex((candidate) => Number(candidate.alias_id) === id);
+          if (event.shiftKey && aliasEditorLastSelectionIndex !== null) {
+            const start = Math.min(index, aliasEditorLastSelectionIndex);
+            const end = Math.max(index, aliasEditorLastSelectionIndex);
+            const select = checkbox.checked;
+            rows.slice(start, end + 1).forEach((candidate) => {
+              const candidateId = Number(candidate.alias_id);
+              if (select) aliasEditorSelection.add(candidateId);
+              else aliasEditorSelection.delete(candidateId);
+            });
+          } else if (checkbox.checked) aliasEditorSelection.add(id);
+          else aliasEditorSelection.delete(id);
+          aliasEditorLastSelectionIndex = index;
+          onSelectionChange();
+        });
+        return checkbox;
+      }, sortValue: (row) => aliasEditorSelection.has(Number(row.alias_id)) });
+  }
+  columns.push(
+    { id: 'alias', label: 'Alias', group: 'Configuration', render: aliasDetailLink,
+      className: 'alias-cell', sort: 'name', sortValue: (row) => row.name || '' },
+    { id: 'identifier', label: 'Identifier', group: 'Configuration', render: (row) =>
+      availableValue(row.identifier_display), sort: 'value', className: 'numeric',
+      sortValue: (row) => row.identifier_display || '' },
+    { id: 'matcher', label: 'Matcher', group: 'Configuration', render: (row) =>
+      availableValue(row.matcher_label || row.matcher_type), sort: 'matcher',
+      sortValue: (row) => row.matcher_label || row.matcher_type || '' },
+    { id: 'group', label: 'Group', group: 'Configuration', render: (row) =>
+      availableValue(row.group), className: 'alias-cell', sort: 'group' }
+  );
+  return columns;
+}
+
+function aliasEditorColumns(view, admin, rows, onSelectionChange, selectedCustom) {
+  const base = aliasEditorBaseColumns(admin, rows, onSelectionChange);
+  const enrichment = aliasCatalogEnrichmentColumns();
+  if (view === 'calls') {
+    return [...base, ...enrichment.filter((column) =>
+      ['calls', 'recorded', 'streamed', 'encrypted-evidence', 'last-evidence'].includes(column.id))];
+  }
+  if (view === 'evidence') {
+    return [...base, ...enrichment.filter((column) =>
+      ['grants', 'joins', 'emergency', 'register', 'logout', 'relationships', 'join-relationships',
+        'current-affiliations', 'evidence-state', 'last-evidence'].includes(column.id))];
+  }
+  if (view === 'custom') {
+    return [...base, ...enrichment.filter((column) => selectedCustom.has(column.id))];
+  }
+  return [...base,
+    { id: 'description', label: 'Description', group: 'Configuration', render: (row) =>
+      availableValue(row.description), className: 'alias-cell' },
+    { id: 'behavior', label: 'Behavior', group: 'Call Handling', render: aliasBehavior },
+    { id: 'overlap', label: 'Overlap', group: 'Validation', render: (row) => row.overlap ?
+      badge('Conflict', 'state-stale', 'This identifier overlaps another alias') : '—' }];
+}
+
+function aliasEditorEmptyState(lists, admin) {
+  const wrapper = node('section', 'alias-editor-welcome');
+  wrapper.append(node('h2', '', lists.length ? 'Select an alias list' : 'No alias lists are configured'),
+    node('p', '', lists.length ?
+      'Aliases load only after you select a list. This keeps large radio systems responsive.' :
+      'Create an alias list to begin organizing talkgroups, radio IDs, and other identifiers.'));
+  if (admin) {
+    const create = node('button', 'button', 'Create Alias List');
+    create.type = 'button';
+    create.addEventListener('click', () => openAliasListCreateModal());
+    wrapper.append(create);
+  }
+  return wrapper;
+}
+
+function aliasFormField(label, control, help = '') {
+  const wrapper = node('label', 'alias-editor-field');
+  wrapper.append(node('span', 'alias-editor-field-label', label), control);
+  if (help) wrapper.append(node('small', '', help));
+  return wrapper;
+}
+
+function aliasSelect(name, values, selectedValue = '', includeBlank = false) {
+  const select = node('select');
+  select.name = name;
+  if (includeBlank) {
+    const blank = node('option', '', 'None');
+    blank.value = '';
+    select.append(blank);
+  }
+  values.forEach((entry) => {
+    const value = typeof entry === 'object' ? entry.value : entry;
+    const label = typeof entry === 'object' ? entry.label : entry;
+    const option = node('option', '', label);
+    option.value = String(value ?? '');
+    option.selected = String(value ?? '') === String(selectedValue ?? '');
+    select.append(option);
+  });
+  return select;
+}
+
+function aliasTextInput(name, value = '', type = 'text') {
+  const input = node('input');
+  input.type = type;
+  input.name = name;
+  input.value = value ?? '';
+  return input;
+}
+
+function aliasModalFooter(...controls) {
+  const footer = node('footer', 'alias-modal-footer');
+  footer.append(...controls.filter(Boolean));
+  return footer;
+}
+
+function aliasMutationError(host, error, retry = null) {
+  host.replaceChildren();
+  const message = node('div', 'error', error.message);
+  host.append(message);
+  if (error?.status === 409 && error?.code === 'stale_revision') {
+    message.append(document.createTextNode(' No changes were saved.'));
+    if (retry) {
+      const reload = node('button', 'button secondary alias-conflict-reload', 'Reload current values');
+      reload.type = 'button';
+      reload.addEventListener('click', retry);
+      host.append(reload);
+    }
+  }
+}
+
+async function finishAliasMutation(modal, result, routeChanges = {}) {
+  if (modal) modal.setDirty(false);
+  closeReadOnlyModal(false, true);
+  aliasEditorSelection.clear();
+  aliasEditorLastSelectionIndex = null;
+  Object.entries(routeChanges).forEach(([key, value]) => {
+    if (value === null || value === undefined || value === '') route.delete(key);
+    else route.set(key, String(value));
+  });
+  route.delete('alias');
+  route.delete('offset');
+  window.history.replaceState({}, '', currentHref());
+  if (result?.revision !== undefined && aliasEditorContext) aliasEditorContext.revision = result.revision;
+  await render();
+}
+
+function openAliasListCreateModal() {
+  const form = node('form', 'alias-editor-form alias-list-form');
+  const name = aliasTextInput('name');
+  name.required = true;
+  name.maxLength = 25;
+  const family = aliasSelect('family', ['P25', 'DMR', 'NXDN', 'NBFM'], 'P25');
+  const errorHost = node('div', 'alias-form-message');
+  form.append(node('p', 'modal-introduction',
+    'A list owns one protocol family. Channels can share the list when their protocol matches.'),
+    aliasFormField('List name', name, 'Up to 25 characters'), aliasFormField('Protocol', family), errorHost);
+  const cancel = node('button', 'button secondary', 'Cancel');
+  cancel.type = 'button';
+  const submit = node('button', 'button', 'Create Alias List');
+  submit.type = 'submit';
+  form.append(aliasModalFooter(cancel, submit));
+  const modal = openReadOnlyModal('Create Alias List', form, { id: 'create-alias-list', className: 'alias-editor-modal' });
+  if (!modal) return;
+  cancel.addEventListener('click', modal.close);
+  form.addEventListener('input', () => modal.setDirty(true));
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    submit.disabled = true;
+    errorHost.replaceChildren();
+    try {
+      const result = await requestJson('/api/v1/admin/alias-lists', {
+        method: 'POST', body: {
+          revision: Number(aliasEditorContext?.revision ?? 0), name: name.value.trim(), family: family.value
+        }
+      });
+      await finishAliasMutation(modal, result, { list: result.aliasListId, aliasTab: 'configure' });
+    } catch (error) {
+      aliasMutationError(errorHost, error);
+      submit.disabled = false;
+    }
+  });
+  name.focus();
+}
+
+async function openAliasListDeleteModal(selectedList) {
+  const id = aliasListId(selectedList);
+  const loading = node('div', 'loading', 'Checking list usage');
+  const modal = openReadOnlyModal(`Delete ${selectedList.name}`, loading, {
+    id: `delete-alias-list-${id}`, className: 'alias-editor-modal alias-confirm-modal'
+  });
+  if (!modal) return;
+  try {
+    const impact = await requestJson(`/api/v1/admin/alias-lists/${id}/delete-impact`, { csrf: false });
+    if (activeReadOnlyModal !== modal.state) return;
+    const body = node('div', 'alias-confirmation');
+    body.append(node('p', '', `This permanently deletes ${number(impact.aliasCount || 0)} aliases.`));
+    if (Number(impact.channelCount || 0) > 0) {
+      body.append(node('div', 'logging-notice warning',
+        `${number(impact.channelCount)} configured channels use this list. Their alias-list assignment will be removed.`));
+    }
+    const confirm = node('label', 'alias-confirm-check');
+    const checkbox = node('input');
+    checkbox.type = 'checkbox';
+    confirm.append(checkbox, node('span', '', 'I understand this cannot be undone.'));
+    const errorHost = node('div', 'alias-form-message');
+    const cancel = node('button', 'button secondary', 'Cancel');
+    cancel.type = 'button';
+    const remove = node('button', 'danger', 'Delete Alias List');
+    remove.type = 'button';
+    remove.disabled = true;
+    checkbox.addEventListener('change', () => { remove.disabled = !checkbox.checked; });
+    cancel.addEventListener('click', modal.close);
+    remove.addEventListener('click', async () => {
+      remove.disabled = true;
+      try {
+        const result = await requestJson(`/api/v1/admin/alias-lists/${id}`, {
+          method: 'DELETE', body: { revision: Number(impact.revision), confirmed: true }
+        });
+        await finishAliasMutation(modal, result, { list: null, aliasTab: null });
+      } catch (error) {
+        aliasMutationError(errorHost, error, () => {
+          modal.setDirty(false);
+          closeReadOnlyModal(false, true);
+          openAliasListDeleteModal(selectedList);
+        });
+        remove.disabled = false;
+      }
+    });
+    body.append(confirm, errorHost, aliasModalFooter(cancel, remove));
+    modal.content.replaceChildren(body);
+  } catch (error) {
+    aliasMutationError(modal.content, error);
+  }
+}
+
+function aliasNumericValue(value) {
+  const text = String(value ?? '').trim();
+  if (!text) return null;
+  if (/^0x[0-9a-f]+$/i.test(text)) return Number.parseInt(text.slice(2), 16);
+  if (/^[0-9]+$/.test(text)) return Number.parseInt(text, 10);
+  if (/^[0-9a-f]+$/i.test(text) && /[a-f]/i.test(text)) return Number.parseInt(text, 16);
+  return Number.NaN;
+}
+
+function aliasHexNumericValue(value) {
+  const text = String(value ?? '').trim().replace(/^0x/i, '');
+  return /^[0-9a-f]+$/i.test(text) ? Number.parseInt(text, 16) : Number.NaN;
+}
+
+function aliasHexValue(value) {
+  const numeric = Number(value);
+  return Number.isInteger(numeric) && numeric >= 0 ? numeric.toString(16).toUpperCase() : '';
+}
+
+function aliasColorHex(value) {
+  const numeric = Number(value ?? -1) >>> 0;
+  return `#${numeric.toString(16).padStart(8, '0').slice(-6)}`;
+}
+
+function aliasColorInteger(value) {
+  return (0xFF000000 | Number.parseInt(String(value || '#ffffff').slice(1), 16)) | 0;
+}
+
+function aliasEditorColorValue(control) {
+  const currentHex = String(control?.value || '').toLowerCase();
+  const originalHex = String(control?.dataset.originalHex || '').toLowerCase();
+  const originalColor = Number(control?.dataset.originalColor);
+  return currentHex && currentHex === originalHex && Number.isInteger(originalColor) ?
+    originalColor : aliasColorInteger(currentHex);
+}
+
+function aliasMatcherKey(value) {
+  const type = String(value?.type || '');
+  const protocol = String(value?.protocol || '');
+  return protocol ? `${type}:${protocol}` : type;
+}
+
+function aliasMatcherDescriptor(options, keyOrType, protocol = '') {
+  const matchers = options?.matchers || [];
+  const key = String(keyOrType || '');
+  const exact = matchers.find((entry) => aliasMatcherKey(entry) === key);
+  if (exact) return exact;
+  const typed = matchers.find((entry) => String(entry.type) === key && (!protocol ||
+    String(entry.protocol) === String(protocol) ||
+    ['APCO25', 'APCO25_PHASE2'].includes(String(entry.protocol)) &&
+      ['APCO25', 'APCO25_PHASE2'].includes(String(protocol))));
+  return typed || matchers[0];
+}
+
+function aliasMatcherDefault(descriptor, options = {}) {
+  const matcher = { type: descriptor?.type };
+  if (descriptor?.protocol) matcher.protocol = descriptor.protocol;
+  (descriptor?.fields || []).forEach((field) => {
+    if (field === 'tones') matcher.tones = [{ tone: options.tones?.[0] || '', duration: 1 }];
+    else if (field === 'code') matcher.code = options.dcsCodes?.[0] || 'N023';
+    else if (field === 'esn') matcher.esn = '';
+    else matcher[field] = field === 'minimum' ? Number(descriptor.minimum || 0) :
+      (field === 'maximum' ? Number(descriptor.minimum || 0) : 0);
+  });
+  return matcher;
+}
+
+function aliasMatcherFields(host, descriptor, matcher, options) {
+  host.replaceChildren();
+  const fields = descriptor?.fields || [];
+  const numberField = (field, label, help = '') => {
+    const value = ['wacn', 'system'].includes(field) ? aliasHexValue(matcher?.[field]) : matcher?.[field] ?? '';
+    const input = aliasTextInput(`matcher-${field}`, value, 'text');
+    input.inputMode = ['wacn', 'system'].includes(field) ? 'text' : 'numeric';
+    input.required = true;
+    host.append(aliasFormField(label, input, help));
+  };
+  fields.forEach((field) => {
+    if (field === 'value') {
+      numberField(field, 'Identifier', descriptor?.minimum !== undefined ?
+        `${identifierNumber(descriptor.minimum)} through ${identifierNumber(descriptor.maximum)}` : 'Decimal value');
+    } else if (field === 'minimum') numberField(field, 'Minimum identifier');
+    else if (field === 'maximum') numberField(field, 'Maximum identifier');
+    else if (field === 'wacn') numberField(field, 'WACN', 'Hexadecimal (for example BEE00)');
+    else if (field === 'system') numberField(field, 'System ID', 'Hexadecimal (for example 348)');
+    else if (field === 'status') numberField(field, 'Status', '0 through 255');
+    else if (field === 'code') {
+      host.append(aliasFormField('DCS code', aliasSelect('matcher-code', options?.dcsCodes || [], matcher?.code)));
+    } else if (field === 'esn') {
+      const input = aliasTextInput('matcher-esn', matcher?.esn || '');
+      input.required = true;
+      host.append(aliasFormField('Electronic serial number', input));
+    } else if (field === 'tones') {
+      const toneHost = node('div', 'alias-tone-list');
+      const tones = Array.isArray(matcher?.tones) && matcher.tones.length ? matcher.tones :
+        [{ tone: options?.tones?.[0] || '', duration: 1 }];
+      const addTone = (tone = {}) => {
+        const row = node('div', 'alias-tone-row');
+        const toneSelect = aliasSelect('matcher-tone', options?.tones || [], tone.tone || options?.tones?.[0]);
+        const duration = aliasTextInput('matcher-tone-duration', tone.duration ?? 1, 'number');
+        duration.min = '1';
+        duration.max = '50';
+        duration.step = '1';
+        duration.required = true;
+        const remove = node('button', 'button secondary alias-tone-remove', 'Remove');
+        remove.type = 'button';
+        remove.addEventListener('click', () => row.remove());
+        row.append(toneSelect, duration, remove);
+        toneHost.append(row);
+      };
+      tones.forEach(addTone);
+      const add = node('button', 'button secondary alias-tone-add', 'Add tone');
+      add.type = 'button';
+      add.addEventListener('click', () => addTone());
+      host.append(aliasFormField('Tone sequence', toneHost, 'Tone and duration pairs in order'), add);
+    }
+  });
+}
+
+function aliasMatcherPayload(form, descriptor) {
+  const matcher = { type: descriptor.type };
+  if (descriptor.protocol) {
+    const selector = form.elements.matcherType;
+    const preserveProtocol = selector.value === selector.dataset.originalSelection &&
+      String(descriptor.type) === selector.dataset.originalType && selector.dataset.originalProtocol;
+    matcher.protocol = preserveProtocol ? selector.dataset.originalProtocol : descriptor.protocol;
+  }
+  (descriptor.fields || []).forEach((field) => {
+    if (field === 'tones') {
+      matcher.tones = [...form.querySelectorAll('.alias-tone-row')].map((row) => ({
+        tone: row.querySelector('[name="matcher-tone"]').value,
+        duration: Number(row.querySelector('[name="matcher-tone-duration"]').value)
+      }));
+    } else if (field === 'code') matcher.code = form.elements['matcher-code'].value;
+    else if (field === 'esn') matcher.esn = form.elements['matcher-esn'].value.trim();
+    else matcher[field] = ['wacn', 'system'].includes(field) ?
+      aliasHexNumericValue(form.elements[`matcher-${field}`].value) :
+      aliasNumericValue(form.elements[`matcher-${field}`].value);
+  });
+  return matcher;
+}
+
+function aliasUsageContent(response) {
+  const alias = response?.alias || {};
+  const scopeRows = response?.breakdown || [];
+  const wrapper = node('div', 'alias-usage-content');
+  wrapper.append(section('Call Use', aliasDetailMetricBand(alias, [
+    ['Calls', 'call_count'], ['Recorded', 'recorded_count'], ['Sent', 'streamed_count'],
+    ['Enc Obs.', 'encrypted_evidence_count']
+  ])));
+  wrapper.append(section('System Evidence', fragment(
+    aliasDetailMetricBand(alias, [
+      ['Grants', 'grant_count'], ['Join', 'join_count'], ['Emergency', 'emergency_count'],
+      ['Register', 'register_count'], ['Logout', 'logout_count'], ['Denial', 'denial_count'],
+      ['Data', 'data_count'], ['Other', 'other_signaling_count'], ['Relationships', 'relationship_count'],
+      ['Join Relationships', 'join_relationship_count'], ['Current Affiliations', 'current_affiliation_count']
+    ]),
+    keyValues([
+      ['Collection State', aliasMetricsState(alias.metrics_state)],
+      ['First Evidence', aliasMetricTime(alias, 'first_evidence_ms')],
+      ['Last Evidence', aliasMetricTime(alias, 'last_evidence_ms')]
+    ]),
+    node('p', 'metric-meaning-note',
+      'Calls and signaling are separate evidence. An em dash means unavailable or not collected; 0 means the ' +
+      'compatible scope was collected and the count was zero.')
+  )));
+  wrapper.append(section('Scope Breakdown', fragment(
+    table(scopeRows, aliasEditorScopeBreakdownColumns(), 'No compatible monitored scopes',
+      { type: 'alias-editor-scope-breakdown' }),
+    node('p', 'metric-meaning-note',
+      'Scope already includes the system and site. Per-scope cells show only positive counts; complete totals remain ' +
+      'above, including zero or unavailable metrics.'))));
+  return wrapper;
+}
+
+function aliasEditorModalTabs(panels, initial = 'basics') {
+  const navigation = node('nav', 'tabs alias-modal-tabs');
+  navigation.setAttribute('aria-label', 'Alias editor sections');
+  const activate = (id) => {
+    Object.entries(panels).forEach(([key, panel]) => { panel.hidden = key !== id; });
+    [...navigation.children].forEach((button) => {
+      const active = button.dataset.tab === id;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-selected', String(active));
+    });
+  };
+  [['basics', 'Basics'], ['identifier', 'Identifier'], ['audio', 'Audio & Streams'],
+    ['usage', 'Usage & Evidence']].forEach(([id, label]) => {
+    const button = node('button', 'secondary', label);
+    button.type = 'button';
+    button.dataset.tab = id;
+    button.setAttribute('role', 'tab');
+    button.addEventListener('click', () => activate(id));
+    navigation.append(button);
+  });
+  activate(initial);
+  return navigation;
+}
+
+function aliasEditorPayload(form, options) {
+  const matcherType = form.elements.matcherType.value;
+  const descriptor = aliasMatcherDescriptor(options, matcherType);
+  if (!descriptor) throw new Error('Select a supported identifier type');
+  const matcher = aliasMatcherPayload(form, descriptor);
+  Object.entries(matcher).forEach(([key, value]) => {
+    if (key !== 'protocol' && key !== 'type' && (value === null || Number.isNaN(value))) {
+      throw new Error('Enter a valid identifier value');
+    }
+  });
+  if (matcher.minimum !== undefined && matcher.maximum !== undefined && matcher.minimum > matcher.maximum) {
+    throw new Error('The minimum identifier cannot be greater than the maximum');
+  }
+  const listenEnabled = form.elements.listenEnabled.checked;
+  const priorityValue = form.elements.priority.value;
+  const streamValue = form.elements.streamAsTalkgroup.value.trim();
+  return {
+    aliasListId: Number(form.elements.aliasListId.value),
+    name: form.elements.name.value.trim(),
+    description: form.elements.description.value.trim(),
+    group: form.elements.group.value.trim(),
+    color: aliasEditorColorValue(form.elements.color),
+    iconName: form.elements.iconName.value || null,
+    listenEnabled,
+    priority: listenEnabled && priorityValue !== '' ? Number(priorityValue) : null,
+    recordable: form.elements.recordable.checked,
+    broadcastChannels: [...form.querySelectorAll('[name="broadcastChannel"]:checked')]
+      .map((checkbox) => checkbox.value),
+    streamAsTalkgroup: streamValue ? Number(streamValue) : null,
+    matcher
+  };
+}
+
+async function openAliasEditorModal(mode = 'create', id = null) {
+  const editing = mode === 'edit';
+  const cloning = mode === 'clone';
+  const selectedListId = Number(route.get('list'));
+  const loading = node('div', 'loading', editing || cloning ? 'Loading alias' : 'Preparing alias editor');
+  const modal = openReadOnlyModal(editing ? `Edit Alias ${identifierNumber(id)}` :
+    (cloning ? 'Clone Alias' : 'Add Alias'), loading, {
+      id: `${mode}-alias-${id || 'new'}`, className: 'alias-editor-modal alias-record-modal',
+      returnFocusSelector: id ? `.alias-detail-link[data-alias-id="${id}"]` : '.alias-add-button'
+    });
+  if (!modal) return;
+  try {
+    const recordPromise = editing || cloning ? requestJson(`/api/v1/admin/aliases/${id}`, { csrf: false }) :
+      Promise.resolve(null);
+    const initialOptionsPromise = requestJson(`/api/v1/admin/aliases/options?aliasListId=${selectedListId}`,
+      { csrf: false });
+    const analyticsPromise = editing || cloning ? api('/api/alias', { id }).catch(() => null) : Promise.resolve(null);
+    const [recordResponse, options, analytics] = await Promise.all([
+      recordPromise, initialOptionsPromise, analyticsPromise
+    ]);
+    if (activeReadOnlyModal !== modal.state) return;
+    const source = recordResponse?.alias || {};
+    if ((editing || cloning) && Number(source.aliasListId) !== selectedListId) {
+      throw new Error('This alias is no longer in the selected alias list. Reload the list and try again.');
+    }
+    const revision = Number(recordResponse?.revision ?? options?.revision ?? aliasEditorContext?.revision ?? 0);
+    const currentList = aliasEditorContext?.lists.find((row) => aliasListId(row) ===
+      Number(source.aliasListId || selectedListId)) || aliasEditorContext?.selectedList;
+    const family = aliasListFamily(currentList);
+    const compatibleLists = (aliasEditorContext?.lists || []).filter((row) => aliasListFamily(row) === family);
+    const descriptor = aliasMatcherDescriptor(options, source.matcher?.type, source.matcher?.protocol);
+    const initialMatcher = source.matcher || aliasMatcherDefault(descriptor, options);
+    const form = node('form', 'alias-editor-form');
+    const basics = node('section', 'alias-editor-panel');
+    const identifier = node('section', 'alias-editor-panel');
+    const audio = node('section', 'alias-editor-panel');
+    const usage = node('section', 'alias-editor-panel alias-editor-usage');
+
+    const listSelect = aliasSelect('aliasListId', compatibleLists.map((row) => ({
+      value: aliasListId(row), label: row.name
+    })), source.aliasListId || selectedListId);
+    const name = aliasTextInput('name', cloning ? `Copy of ${source.name || ''}` : source.name || '');
+    name.required = true;
+    name.maxLength = 256;
+    const description = node('textarea');
+    description.name = 'description';
+    description.value = source.description || '';
+    description.maxLength = 4096;
+    description.rows = 4;
+    const group = aliasTextInput('group', source.group || '');
+    group.maxLength = 256;
+    const groupListId = `alias-group-options-${id || 'new'}`;
+    group.setAttribute('list', groupListId);
+    const groupList = node('datalist');
+    groupList.id = groupListId;
+    (options.groupNames || []).forEach((value) => {
+      const option = node('option');
+      option.value = value;
+      groupList.append(option);
+    });
+    const originalColor = Number.isInteger(Number(source.color)) ? Number(source.color) : 0;
+    const color = aliasTextInput('color', aliasColorHex(originalColor), 'color');
+    color.dataset.originalColor = String(originalColor);
+    color.dataset.originalHex = aliasColorHex(originalColor);
+    const configuredIcons = new Set(options.iconNames || []);
+    const iconEntries = [...(options.iconNames || []).map((value) => ({ value, label: value }))];
+    if (source.iconName && !configuredIcons.has(source.iconName)) {
+      iconEntries.unshift({ value: source.iconName, label: `Missing: ${source.iconName}` });
+    }
+    const selectedIcon = cloning && source.iconName && !configuredIcons.has(source.iconName) ? '' :
+      source.iconName || '';
+    const icon = aliasSelect('iconName', iconEntries, selectedIcon, true);
+    const basicsGrid = node('div', 'alias-editor-grid');
+    basicsGrid.append(aliasFormField('Alias list', listSelect), aliasFormField('Alias name', name),
+      aliasFormField('Group', group), groupList, aliasFormField('Color', color),
+      aliasFormField('Icon', icon), aliasFormField('Description', description));
+    basics.append(basicsGrid);
+
+    const matcherType = aliasSelect('matcherType', (options.matchers || []).map((entry) => ({
+      value: aliasMatcherKey(entry), label: entry.label
+    })), aliasMatcherKey(descriptor));
+    matcherType.dataset.originalSelection = aliasMatcherKey(descriptor);
+    matcherType.dataset.originalType = String(source.matcher?.type || '');
+    matcherType.dataset.originalProtocol = String(source.matcher?.protocol || '');
+    const matcherNotice = node('div', 'alias-identifier-notice');
+    if (source.overlap) matcherNotice.append(node('div', 'logging-notice warning',
+      'This identifier overlaps another alias in the list. Review both aliases before saving.'));
+    const matcherHost = node('div', 'alias-matcher-fields alias-editor-grid');
+    let activeDescriptor = aliasMatcherDescriptor(options, matcherType.value);
+    aliasMatcherFields(matcherHost, activeDescriptor, initialMatcher, options);
+    matcherType.addEventListener('change', () => {
+      activeDescriptor = aliasMatcherDescriptor(options, matcherType.value);
+      aliasMatcherFields(matcherHost, activeDescriptor, aliasMatcherDefault(activeDescriptor, options), options);
+      matcherNotice.replaceChildren(node('div', 'logging-notice warning',
+        'Changing the identifier type resets the old identifier values.'));
+      modal.setDirty(true);
+    });
+    identifier.append(aliasFormField('Identifier type', matcherType), matcherNotice, matcherHost);
+
+    const listen = node('input');
+    listen.type = 'checkbox';
+    listen.name = 'listenEnabled';
+    listen.checked = source.listenEnabled !== false;
+    const priorityOptions = [{ value: '', label: 'Default' }, ...(options.playbackPriorities || [])
+      .filter((value) => Number(value) >= 0 && Number(value) < 100)
+      .map((value) => ({ value, label: `Priority ${value}` }))];
+    const priority = aliasSelect('priority', priorityOptions, source.priority ?? '');
+    priority.disabled = !listen.checked;
+    listen.addEventListener('change', () => { priority.disabled = !listen.checked; });
+    const record = node('input');
+    record.type = 'checkbox';
+    record.name = 'recordable';
+    record.checked = Boolean(source.recordable);
+    const audioGrid = node('div', 'alias-editor-grid');
+    audioGrid.append(aliasFormField('Listen', listen, 'Play matching calls through the receiver and web player'),
+      aliasFormField('Listen priority', priority), aliasFormField('Record calls', record));
+    const streams = node('fieldset', 'alias-stream-options');
+    streams.append(node('legend', '', 'Streaming destinations'));
+    const selectedStreams = new Set(source.broadcastChannels || []);
+    const configuredStreams = new Set(options.streamNames || []);
+    const streamNames = [...new Set([...(options.streamNames || []), ...(source.broadcastChannels || [])])];
+    if (!streamNames.length) streams.append(node('div', 'empty', 'No stream destinations configured'));
+    streamNames.forEach((streamName) => {
+      const label = node('label', 'alias-check-option');
+      const checkbox = node('input');
+      checkbox.type = 'checkbox';
+      checkbox.name = 'broadcastChannel';
+      checkbox.value = streamName;
+      checkbox.checked = selectedStreams.has(streamName) && (!cloning || configuredStreams.has(streamName));
+      const missing = !configuredStreams.has(streamName);
+      if (missing) label.classList.add('missing');
+      label.append(checkbox, node('span', '', missing ? `Missing: ${streamName}` : streamName));
+      streams.append(label);
+    });
+    const streamAs = aliasTextInput('streamAsTalkgroup', source.streamAsTalkgroup ?? '', 'number');
+    streamAs.min = '1';
+    streamAs.max = '65535';
+    streamAs.step = '1';
+    audio.append(audioGrid, streams, aliasFormField('Stream as talkgroup', streamAs,
+      'Optional talkgroup ID sent to configured streaming destinations'));
+
+    usage.append(analytics ? aliasUsageContent(analytics) :
+      node('div', 'empty', 'Usage and evidence become available after the alias is saved and observed.'));
+    const panels = { basics, identifier, audio, usage };
+    const tabBar = aliasEditorModalTabs(panels);
+    const errorHost = node('div', 'alias-form-message');
+    const cancel = node('button', 'button secondary', 'Cancel');
+    cancel.type = 'button';
+    cancel.addEventListener('click', modal.close);
+    const save = node('button', 'button', editing ? 'Save Changes' : (cloning ? 'Create Copy' : 'Create Alias'));
+    save.type = 'submit';
+    const clone = editing ? node('button', 'button secondary', 'Clone') : null;
+    const remove = editing ? node('button', 'button secondary danger-outline', 'Delete') : null;
+    if (clone) {
+      clone.type = 'button';
+      clone.addEventListener('click', () => {
+        if (modal.isDirty() && !window.confirm('Discard these edits and clone the saved alias?')) return;
+        modal.setDirty(false);
+        closeReadOnlyModal(false, true);
+        openAliasEditorModal('clone', id);
+      });
+    }
+    if (remove) {
+      remove.type = 'button';
+      remove.addEventListener('click', () => {
+        if (modal.isDirty() && !window.confirm('Discard these edits and delete the saved alias?')) return;
+        modal.setDirty(false);
+        closeReadOnlyModal(false, true);
+        openAliasDeleteModal(id, source.name, revision);
+      });
+    }
+    form.append(tabBar, basics, identifier, audio, usage, errorHost,
+      aliasModalFooter(remove, clone, node('span', 'alias-modal-footer-spacer'), cancel, save));
+    form.addEventListener('input', () => modal.setDirty(true));
+    form.addEventListener('change', () => modal.setDirty(true));
+    form.addEventListener('click', (event) => {
+      if (event.target.closest('.alias-tone-add, .alias-tone-remove')) modal.setDirty(true);
+    });
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      if (!form.reportValidity()) return;
+      errorHost.replaceChildren();
+      save.disabled = true;
+      try {
+        const payload = aliasEditorPayload(form, options);
+        const result = await requestJson(editing ? `/api/v1/admin/aliases/${id}` : '/api/v1/admin/aliases', {
+          method: editing ? 'PUT' : 'POST', body: { revision, alias: payload }
+        });
+        await finishAliasMutation(modal, result, { list: payload.aliasListId });
+      } catch (error) {
+        aliasMutationError(errorHost, error, () => {
+          modal.setDirty(false);
+          closeReadOnlyModal(false, true);
+          openAliasEditorModal(mode, id);
+        });
+        save.disabled = false;
+      }
+    });
+    modal.dialog.querySelector('.modal-header h2').textContent = editing ? `Edit ${source.name}` :
+      (cloning ? `Clone ${source.name}` : `Add Alias to ${currentList?.name || 'List'}`);
+    modal.content.replaceChildren(form);
+    modal.setDirty(false);
+    name.focus();
+  } catch (error) {
+    aliasMutationError(modal.content, error, () => {
+      closeReadOnlyModal(false, true);
+      openAliasEditorModal(mode, id);
+    });
+  }
+}
+
+function openAliasDeleteModal(id, name, revision) {
+  const body = node('div', 'alias-confirmation');
+  body.append(node('p', '', `Delete ${name || `Alias ${id}`} from this alias list?`),
+    node('p', 'muted', 'This removes its identifier and all Listen, recording, and streaming settings.'));
+  const errorHost = node('div', 'alias-form-message');
+  const cancel = node('button', 'button secondary', 'Cancel');
+  cancel.type = 'button';
+  const remove = node('button', 'danger', 'Delete Alias');
+  remove.type = 'button';
+  body.append(errorHost, aliasModalFooter(cancel, remove));
+  const modal = openReadOnlyModal(`Delete ${name || 'Alias'}`, body, {
+    id: `delete-alias-${id}`, className: 'alias-editor-modal alias-confirm-modal'
+  });
+  if (!modal) return;
+  cancel.addEventListener('click', modal.close);
+  remove.addEventListener('click', async () => {
+    remove.disabled = true;
+    try {
+      const result = await requestJson(`/api/v1/admin/aliases/${id}`, {
+        method: 'DELETE', body: { revision }
+      });
+      await finishAliasMutation(modal, result);
+    } catch (error) {
+      aliasMutationError(errorHost, error, () => {
+        closeReadOnlyModal(false, true);
+        render();
+      });
+      remove.disabled = false;
+    }
+  });
+}
+
+function aliasBulkBar(onClear) {
+  const bar = node('div', 'alias-bulk-bar');
+  bar.hidden = !aliasEditorSelection.size;
+  const count = node('strong', 'alias-bulk-count', `${number(aliasEditorSelection.size)} selected`);
+  const actions = [
+    ['move', 'Move'], ['group', 'Group'], ['listen', 'Listen'], ['record', 'Record'],
+    ['stream', 'Stream'], ['appearance', 'Appearance'], ['delete', 'Delete']
+  ];
+  bar.append(count);
+  actions.forEach(([kind, label]) => {
+    const button = node('button', kind === 'delete' ? 'button secondary danger-outline' : 'button secondary', label);
+    button.type = 'button';
+    button.addEventListener('click', () => openAliasBulkModal(kind));
+    bar.append(button);
+  });
+  const clear = node('button', 'button secondary alias-bulk-clear', 'Clear selection');
+  clear.type = 'button';
+  clear.addEventListener('click', onClear);
+  bar.append(clear);
+  bar.update = () => {
+    count.textContent = `${number(aliasEditorSelection.size)} selected`;
+    bar.hidden = !aliasEditorSelection.size;
+  };
+  return bar;
+}
+
+function aliasBulkStreamChoices(options) {
+  const fieldset = node('fieldset', 'alias-stream-options alias-bulk-streams');
+  fieldset.append(node('legend', '', 'Destinations'));
+  (options?.streamNames || []).forEach((streamName) => {
+    const label = node('label', 'alias-check-option');
+    const checkbox = node('input');
+    checkbox.type = 'checkbox';
+    checkbox.name = 'broadcastChannel';
+    checkbox.value = streamName;
+    label.append(checkbox, node('span', '', streamName));
+    fieldset.append(label);
+  });
+  if (!(options?.streamNames || []).length) fieldset.append(node('div', 'empty', 'No destinations configured'));
+  return fieldset;
+}
+
+function openAliasBulkModal(kind) {
+  const ids = [...aliasEditorSelection].filter((id) => Number.isInteger(id) && id > 0).slice(0, 500);
+  if (!ids.length) return;
+  const form = node('form', 'alias-editor-form alias-bulk-form');
+  form.append(node('p', 'modal-introduction',
+    `This change applies only to the ${number(ids.length)} explicitly selected aliases on this page.`));
+  const options = aliasEditorContext?.options || {};
+  const payload = { revision: Number(aliasEditorContext?.revision ?? options.revision ?? 0), aliasIds: ids };
+  let readChange;
+  let submitLabel = 'Apply Change';
+
+  if (kind === 'move') {
+    const current = aliasEditorContext.selectedList;
+    const targets = aliasEditorContext.lists.filter((row) => aliasListId(row) !== aliasListId(current) &&
+      aliasListFamily(row) === aliasListFamily(current));
+    const select = aliasSelect('aliasListId', [{ value: '', label: 'Leave unchanged' }, ...targets.map((row) => ({
+      value: aliasListId(row), label: `${row.name} · ${aliasListFamily(row)}`
+    }))], '');
+    form.append(aliasFormField('Move to alias list', select,
+      'Only lists with a compatible protocol are available.'));
+    readChange = () => {
+      if (!select.value) throw new Error('Choose a destination list');
+      return { aliasListId: Number(select.value) };
+    };
+  } else if (kind === 'group') {
+    const operation = aliasSelect('groupOperation', [
+      { value: '', label: 'Leave unchanged' }, { value: 'SET', label: 'Set group' },
+      { value: 'CLEAR', label: 'Clear group' }
+    ], '');
+    const group = aliasTextInput('group');
+    group.disabled = true;
+    operation.addEventListener('change', () => { group.disabled = operation.value !== 'SET'; });
+    form.append(aliasFormField('Group change', operation), aliasFormField('Group name', group));
+    readChange = () => {
+      if (!operation.value) throw new Error('Choose how the group should change');
+      if (operation.value === 'SET' && !group.value.trim()) throw new Error('Enter a group name');
+      return { groupOperation: operation.value, group: operation.value === 'SET' ? group.value.trim() : null };
+    };
+  } else if (kind === 'listen') {
+    const operation = aliasSelect('listenOperation', [
+      { value: '', label: 'Leave unchanged' }, { value: 'DEFAULT', label: 'Enable · default priority' },
+      { value: 'PRIORITY', label: 'Enable · selected priority' }, { value: 'DISABLE', label: 'Disable Listen' }
+    ], '');
+    const priority = aliasSelect('priority', (options.playbackPriorities || []).filter((value) =>
+      Number(value) >= 0 && Number(value) < 100).map((value) => ({ value, label: `Priority ${value}` })), '');
+    priority.disabled = true;
+    operation.addEventListener('change', () => { priority.disabled = operation.value !== 'PRIORITY'; });
+    form.append(aliasFormField('Listen change', operation), aliasFormField('Priority', priority));
+    readChange = () => {
+      if (!operation.value) throw new Error('Choose how Listen should change');
+      if (operation.value === 'DISABLE') return { listenEnabled: false, priority: null };
+      if (operation.value === 'DEFAULT') return { listenEnabled: true, priority: null };
+      if (!priority.value) throw new Error('Choose a priority');
+      return { listenEnabled: true, priority: Number(priority.value) };
+    };
+  } else if (kind === 'record') {
+    const operation = aliasSelect('recordOperation', [
+      { value: '', label: 'Leave unchanged' }, { value: 'ENABLE', label: 'Enable recording' },
+      { value: 'DISABLE', label: 'Disable recording' }
+    ], '');
+    form.append(aliasFormField('Recording change', operation));
+    readChange = () => {
+      if (!operation.value) throw new Error('Choose how recording should change');
+      return { recordable: operation.value === 'ENABLE' };
+    };
+  } else if (kind === 'stream') {
+    const operation = aliasSelect('streamOperation', [
+      { value: '', label: 'Leave unchanged' }, { value: 'ADD', label: 'Add destinations' },
+      { value: 'REMOVE', label: 'Remove destinations' }, { value: 'REPLACE', label: 'Replace destinations' },
+      { value: 'CLEAR', label: 'Clear all destinations' }
+    ], '');
+    const choices = aliasBulkStreamChoices(options);
+    operation.addEventListener('change', () => {
+      choices.disabled = operation.value === 'CLEAR' || !operation.value;
+      choices.querySelectorAll('input').forEach((input) => { input.disabled = choices.disabled; });
+    });
+    choices.disabled = true;
+    choices.querySelectorAll('input').forEach((input) => { input.disabled = true; });
+    form.append(aliasFormField('Stream change', operation), choices);
+    readChange = () => {
+      if (!operation.value) throw new Error('Choose how streams should change');
+      const channels = [...choices.querySelectorAll('input:checked')].map((input) => input.value);
+      if (operation.value !== 'CLEAR' && !channels.length) throw new Error('Select at least one destination');
+      return { streamOperation: operation.value,
+        broadcastChannels: operation.value === 'CLEAR' ? null : channels };
+    };
+  } else if (kind === 'appearance') {
+    const colorOperation = aliasSelect('colorOperation', [
+      { value: '', label: 'Leave color unchanged' }, { value: 'SET', label: 'Set color' },
+      { value: 'RESET', label: 'Reset to default' }
+    ], '');
+    const color = aliasTextInput('color', '#ffffff', 'color');
+    color.disabled = true;
+    colorOperation.addEventListener('change', () => { color.disabled = colorOperation.value !== 'SET'; });
+    const icon = aliasSelect('iconName', [{ value: '', label: 'Leave icon unchanged' },
+      ...(options.iconNames || []).map((value) => ({ value, label: value }))], '');
+    form.append(aliasFormField('Color change', colorOperation), aliasFormField('Color', color),
+      aliasFormField('Icon change', icon));
+    readChange = () => {
+      if (!colorOperation.value && !icon.value) throw new Error('Choose a color or icon change');
+      return { ...(colorOperation.value ? {
+        color: colorOperation.value === 'RESET' ? 0 : aliasColorInteger(color.value)
+      } : {}),
+        ...(icon.value ? { iconName: icon.value } : {}) };
+    };
+  } else if (kind === 'delete') {
+    submitLabel = `Delete ${number(ids.length)} Aliases`;
+    const confirm = node('label', 'alias-confirm-check');
+    const checkbox = node('input');
+    checkbox.type = 'checkbox';
+    confirm.append(checkbox, node('span', '',
+      `I understand this permanently deletes exactly ${number(ids.length)} selected aliases.`));
+    form.append(node('div', 'logging-notice warning',
+      'Deleting an alias also removes its identifier and its Listen, recording, and streaming settings.'), confirm);
+    readChange = () => {
+      if (!checkbox.checked) throw new Error('Confirm the deletion first');
+      return { delete: true };
+    };
+  }
+
+  const errorHost = node('div', 'alias-form-message');
+  const cancel = node('button', 'button secondary', 'Cancel');
+  cancel.type = 'button';
+  const submit = node('button', kind === 'delete' ? 'danger' : 'button', submitLabel);
+  submit.type = 'submit';
+  form.append(errorHost, aliasModalFooter(cancel, submit));
+  const modal = openReadOnlyModal(`${kind === 'delete' ? 'Delete' : 'Bulk'} · ${number(ids.length)} aliases`, form, {
+    id: `bulk-alias-${kind}`, className: 'alias-editor-modal alias-bulk-modal'
+  });
+  if (!modal) return;
+  cancel.addEventListener('click', modal.close);
+  form.addEventListener('input', () => modal.setDirty(true));
+  form.addEventListener('change', () => modal.setDirty(true));
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    errorHost.replaceChildren();
+    try {
+      Object.assign(payload, readChange());
+      submit.disabled = true;
+      const result = await requestJson('/api/v1/admin/aliases/bulk', {
+        method: 'POST', body: payload
+      });
+      await finishAliasMutation(modal, result, kind === 'move' ? { list: payload.aliasListId } : {});
+    } catch (error) {
+      aliasMutationError(errorHost, error, () => {
+        modal.setDirty(false);
+        closeReadOnlyModal(false, true);
+        render();
+      });
+      submit.disabled = false;
+    }
+  });
+}
+
+async function renderAliases() {
+  const admin = aliasAdminAllowed();
+  const publicListsPromise = api('/api/alias-lists');
+  const adminListsPromise = admin ? requestJson('/api/v1/admin/alias-lists', { csrf: false }) :
+    Promise.resolve({ revision: null, aliasLists: [] });
+  const [listResponse, adminCatalog] = await Promise.all([publicListsPromise, adminListsPromise]);
+  const lists = mergedAliasLists(listResponse.rows || [], adminCatalog.aliasLists || []);
+  const selectedList = lists.find((row) => aliasListId(row) === Number(route.get('list')));
+  aliasEditorContext = {
+    admin, revision: Number(adminCatalog.revision ?? 0), lists, selectedList, options: null, page: null
+  };
+
+  const subtitle = `${number(lists.length)} alias lists · ${admin ? 'administrator editing enabled' : 'read-only'}`;
+  content.append(pageHeader(admin ? 'Alias Editor' : 'Alias Catalog', subtitle));
+  const workspace = node('div', 'alias-editor-workspace');
+  workspace.append(aliasListRail(lists, selectedList, admin));
+  const main = node('div', 'alias-editor-main');
+  workspace.append(main);
+  content.append(workspace);
+
+  if (!selectedList) {
+    main.append(aliasEditorEmptyState(lists, admin));
+    return;
+  }
+
+  const filters = {
+    list: aliasListId(selectedList), type: route.get('type'), matcher: route.get('matcher'),
+    group: route.get('group'), listen: route.get('listen'), record: route.get('record'),
+    stream: route.get('stream'), evidence: route.get('evidence'), use: route.get('use'),
+    lastActivityBefore: route.get('lastActivityBefore'), lastActivityAfter: route.get('lastActivityAfter')
+  };
+  const pagePromise = api('/api/aliases', pageParameters(filters));
+  const optionsPromise = admin ? api('/api/v1/admin/aliases/options', { aliasListId: aliasListId(selectedList) }) :
+    Promise.resolve(null);
+  const [page, options] = await Promise.all([pagePromise, optionsPromise]);
+  aliasEditorContext.page = page;
+  aliasEditorContext.options = options;
+  if (options?.revision !== undefined) aliasEditorContext.revision = Number(options.revision);
+  const rows = page.rows || [];
+  const visibleIds = new Set(rows.map((row) => Number(row.alias_id)));
+  aliasEditorSelection = new Set([...aliasEditorSelection].filter((id) => visibleIds.has(id)));
+  aliasEditorLastSelectionIndex = null;
+
+  const summary = node('section', 'alias-list-summary');
+  const summaryCopy = node('div', 'alias-list-summary-copy');
+  summaryCopy.append(node('h2', '', selectedList.name), badge(aliasListFamily(selectedList), 'state-current'),
+    node('span', 'muted', `${number(selectedList.alias_count || 0)} aliases · ` +
+      `${number(selectedList.assigned_channel_count || 0)} assigned channels`));
+  summary.append(summaryCopy);
+  if (admin) {
+    const listActions = node('div', 'alias-list-summary-actions');
+    const add = node('button', 'button alias-add-button', 'Add Alias');
+    add.type = 'button';
+    add.addEventListener('click', () => openAliasEditorModal('create'));
+    const remove = node('button', 'button secondary danger-outline', 'Delete List');
+    remove.type = 'button';
+    remove.addEventListener('click', () => openAliasListDeleteModal(selectedList));
+    listActions.append(add, remove);
+    summary.append(listActions);
+  }
+  main.append(summary, aliasEditorViewTabs(selectedList), aliasEditorFilterToolbar(listResponse, options));
+
+  const view = ['configure', 'calls', 'evidence', 'custom'].includes(route.get('aliasTab')) ?
+    route.get('aliasTab') : 'configure';
+  const definitions = aliasCatalogEnrichmentColumns();
+  const selectedCustom = readAliasCatalogColumnSelection(definitions);
+  const tableHost = node('div', 'alias-catalog-table-host alias-editor-table-host');
+  let bulkBar = null;
+  const updateSelection = () => {
+    tableHost.querySelectorAll('.alias-row-select').forEach((checkbox) => {
+      const row = checkbox.closest('tr');
+      const id = Number(row?.dataset.id);
+      checkbox.checked = aliasEditorSelection.has(id);
+      row?.classList.toggle('selected', checkbox.checked);
+    });
+    bulkBar?.update();
+  };
+  const columnsForView = () => aliasEditorColumns(view, admin, rows, updateSelection, selectedCustom);
+  const renderTable = () => {
+    const aliasTable = table(rows, columnsForView(), 'No aliases match these filters', {
+      type: `alias-editor-${view}`, serverSort: true, sortable: false,
+      defaultSort: 'name', defaultDirection: 'asc', rowKey: (row) => row.alias_id
+    });
+    tableHost.replaceChildren(aliasTable);
+    aliasTable.querySelectorAll('tbody tr[data-id]').forEach((tableRow) => {
+      tableRow.addEventListener('click', (event) => {
+        if (event.target.closest('a, button, input, select, label')) return;
+        const id = Number(tableRow.dataset.id);
+        if (event.shiftKey || event.metaKey || event.ctrlKey) {
+          const index = rows.findIndex((row) => Number(row.alias_id) === id);
+          if (event.shiftKey && aliasEditorLastSelectionIndex !== null) {
+            const start = Math.min(index, aliasEditorLastSelectionIndex);
+            const end = Math.max(index, aliasEditorLastSelectionIndex);
+            rows.slice(start, end + 1).forEach((row) => aliasEditorSelection.add(Number(row.alias_id)));
+          } else if (aliasEditorSelection.has(id)) aliasEditorSelection.delete(id);
+          else aliasEditorSelection.add(id);
+          aliasEditorLastSelectionIndex = index;
+          updateSelection();
+          return;
+        }
+        window.location.assign(currentHref({ alias: id }));
+      });
+    });
+    updateSelection();
+  };
+
+  const actions = node('div', 'section-title-actions');
+  if (admin) {
+    const selectPage = node('button', 'button secondary', 'Select This Page');
+    selectPage.type = 'button';
+    selectPage.addEventListener('click', () => {
+      rows.forEach((row) => {
+        if (aliasEditorSelection.size < 500) aliasEditorSelection.add(Number(row.alias_id));
+      });
+      updateSelection();
+    });
+    actions.append(selectPage);
+  }
+  if (view === 'custom') {
+    actions.append(aliasColumnChooser(definitions, selectedCustom, () => renderTable()));
+  }
+  const exportContext = { list: aliasListId(selectedList) };
+  ['type', 'matcher', 'group', 'listen', 'record', 'stream', 'evidence', 'use',
+    'lastActivityBefore', 'lastActivityAfter'].forEach((key) => {
     if (route.get(key)) exportContext[key] = route.get(key);
   });
-  const actions = node('div', 'section-title-actions');
-  actions.append(chooser, exportCsvLink('aliases', exportContext));
-  const block = section('Configured Aliases', tableHost, actions);
-  block.classList.add('alias-catalog-section');
+  actions.append(exportCsvLink('aliases', exportContext));
+  const block = section(view === 'configure' ? 'Alias Configuration' :
+    (view === 'calls' ? 'Call Use' : (view === 'evidence' ? 'System Evidence' : 'Custom View')),
+  tableHost, actions);
+  block.classList.add('alias-catalog-section', 'alias-editor-table-section');
+  bulkBar = admin ? aliasBulkBar(() => {
+    aliasEditorSelection.clear();
+    aliasEditorLastSelectionIndex = null;
+    updateSelection();
+  }) : null;
+  if (bulkBar) block.append(bulkBar);
   renderTable();
-  block.append(node('p', 'metric-meaning-note alias-catalog-guide',
-    'Every configured alias is shown, including aliases never observed on the air. Calls are observations. ' +
-    'Logout means deregistration, not leaving a talkgroup. An em dash means unavailable or not collected; ' +
-    '0 means coverage was collected and the count was zero.'), pager(page));
-  content.append(block);
+  block.append(node('p', 'metric-meaning-note alias-catalog-guide', view === 'configure' ?
+    'Configuration controls what the alias matches and what happens to its calls. Open an alias to edit it.' :
+    'Calls and recordings are separate from system signaling. An em dash means unavailable or not collected; ' +
+      '0 means coverage was collected and the count was zero.'), pager(page));
+  main.append(block);
 
   if (route.has('alias')) {
-    const aliasId = Number(route.get('alias'));
-    if (Number.isInteger(aliasId) && aliasId > 0) await renderAliasDetailModal(aliasId);
+    const id = Number(route.get('alias'));
+    if (Number.isInteger(id) && id > 0) {
+      if (admin) await openAliasEditorModal('edit', id);
+      else await renderAliasDetailModal(id);
+    }
   }
 }
 
@@ -3294,7 +4553,7 @@ async function requestJson(path, options = {}) {
   if (!response.ok) {
     const error = new Error(result?.message || result?.error || `${path} returned ${response.status}`);
     error.status = response.status;
-    error.code = result?.code || null;
+    error.code = result?.code || result?.error || null;
     error.path = path;
     throw error;
   }
@@ -3354,7 +4613,11 @@ function closePageConnections() {
   pageTimers.clear();
 }
 
-window.addEventListener('beforeunload', () => {
+window.addEventListener('beforeunload', (event) => {
+  if (activeReadOnlyModal?.isDirty?.()) {
+    event.preventDefault();
+    event.returnValue = '';
+  }
   liveConnections.forEach((source) => source.close());
   liveConnections.clear();
 });
@@ -5799,7 +7062,7 @@ async function loadStatus(refreshCurrentView = false) {
 
 async function render() {
   const view = route.get('view') || 'dashboard';
-  closeReadOnlyModal(false);
+  if (!closeReadOnlyModal(false)) return;
   document.body.dataset.view = view;
   closePageConnections();
   activateNavigation(view);
@@ -5855,11 +7118,17 @@ document.addEventListener('click', (event) => {
   const target = new URL(link.href, window.location.href);
   if (target.origin !== window.location.origin || target.pathname !== '/') return;
   event.preventDefault();
+  if (!closeReadOnlyModal(false)) return;
   window.history.pushState({}, '', `${target.pathname}${target.search}${target.hash}`);
   route = new URLSearchParams(target.search);
   render();
 });
 window.addEventListener('popstate', () => {
+  const previous = `/?${route.toString()}`;
+  if (!closeReadOnlyModal(false)) {
+    window.history.pushState({}, '', previous);
+    return;
+  }
   route = new URLSearchParams(window.location.search);
   render();
 });

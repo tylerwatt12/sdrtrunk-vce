@@ -90,6 +90,15 @@ class WebAccessHttpControllerTest
                 outputStream.write(body);
             }
         }));
+        server.createContext("/admin-api", controller.protectApi(WebCapability.ADMIN_ALIASES, exchange -> {
+            byte[] body = "ok".getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, body.length);
+
+            try(OutputStream outputStream = exchange.getResponseBody())
+            {
+                outputStream.write(body);
+            }
+        }));
         server.start();
 
         try
@@ -103,10 +112,13 @@ class WebAccessHttpControllerTest
             assertFalse(anonymous.get("authenticated").booleanValue());
             assertFalse(anonymous.at("/capabilities/dashboard").booleanValue());
             assertFalse(anonymous.at("/capabilities/admin-users").booleanValue());
+            assertFalse(anonymous.at("/capabilities/admin-aliases").booleanValue());
 
             HttpResponse<String> anonymousProtected = send(client, request(origin, "/protected").GET());
             assertEquals(401, anonymousProtected.statusCode());
             assertTrue(anonymousProtected.headers().firstValue("Content-Security-Policy").isPresent());
+            assertEquals(401, send(client, request(origin, "/admin-api")
+                .POST(HttpRequest.BodyPublishers.noBody())).statusCode());
 
             Login admin = login(client, origin, "admin", ADMIN_PASSWORD);
             assertEquals("ADMIN", admin.body().get("tier").textValue());
@@ -114,8 +126,11 @@ class WebAccessHttpControllerTest
             assertTrue(admin.setCookie().contains("HttpOnly"));
             assertTrue(admin.setCookie().contains("SameSite=Strict"));
             assertFalse(admin.setCookie().contains("Secure"));
+            assertTrue(admin.body().at("/capabilities/admin-aliases").booleanValue());
 
             assertEquals(200, send(client, request(origin, "/protected")
+                .header("Cookie", admin.cookieHeader()).GET()).statusCode());
+            assertEquals(200, send(client, request(origin, "/admin-api")
                 .header("Cookie", admin.cookieHeader()).GET()).statusCode());
             assertEquals(200, send(client, request(origin, "/api/v1/admin/users")
                 .header("Cookie", admin.cookieHeader()).GET()).statusCode());
@@ -128,6 +143,17 @@ class WebAccessHttpControllerTest
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(createBody)));
             assertEquals(403, missingCsrf.statusCode());
+            assertEquals(403, send(client, request(origin, "/admin-api")
+                .header("Origin", origin.toString())
+                .header("Cookie", admin.cookieHeader())
+                .POST(HttpRequest.BodyPublishers.noBody())).statusCode());
+            assertEquals(403, send(client, request(origin, "/admin-api")
+                .header("Origin", "http://example.invalid")
+                .header("Cookie", admin.cookieHeader())
+                .header(WebAccessHttpController.CSRF_HEADER_NAME, admin.csrfToken())
+                .POST(HttpRequest.BodyPublishers.noBody())).statusCode());
+            assertEquals(200, send(client, mutation(origin, "/admin-api", admin)
+                .POST(HttpRequest.BodyPublishers.noBody())).statusCode());
 
             HttpResponse<String> created = send(client, mutation(origin, "/api/v1/admin/users", admin)
                 .POST(HttpRequest.BodyPublishers.ofString(createBody)));
@@ -138,6 +164,8 @@ class WebAccessHttpControllerTest
             assertEquals("USER", listener.body().get("tier").textValue());
             assertEquals(200, send(client, request(origin, "/protected")
                 .header("Cookie", listener.cookieHeader()).GET()).statusCode());
+            assertEquals(403, send(client, mutation(origin, "/admin-api", listener)
+                .POST(HttpRequest.BodyPublishers.noBody())).statusCode());
 
             String adminOnly = OBJECT_MAPPER.writeValueAsString(
                 Map.of("capability", "dashboard", "tier", "ADMIN"));

@@ -173,6 +173,18 @@ public class AliasModel
     }
 
     /**
+     * Discards an empty deleted list after its configuration transaction commits. Package-private so alias
+     * administration can retain the live lookup instance until a failed save can no longer require rollback.
+     */
+    void discardAliasListCache(String aliasListName)
+    {
+        if(aliasListName != null)
+        {
+            mAliasListMap.remove(aliasListName);
+        }
+    }
+
+    /**
      * Unmodifiable list of all aliases currently in the model
      */
     public List<Alias> getAliases()

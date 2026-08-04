@@ -171,6 +171,57 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void filtersAliasConfigurationAndEvidenceBeforePagingAndReportsOverlaps() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                UPDATE alias SET group_name='Operations', priority=-1, record_enabled=1 WHERE id=1
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias_broadcast_channel(alias_id, channel_name) VALUES(1, 'Primary')
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias(id, alias_list_id, name, matcher_type, protocol, value, min_value, max_value)
+                VALUES (3, 1, 'Dispatch Duplicate', 'TALKGROUP', 'APCO25_PHASE2', 56132, NULL, NULL),
+                       (4, 1, 'Range A', 'TALKGROUP_RANGE', 'APCO25', NULL, 57000, 57100),
+                       (5, 1, 'Range B', 'TALKGROUP_RANGE', 'APCO25_PHASE2', NULL, 57050, 57200),
+                       (6, 1, 'AAA No Calls', 'TALKGROUP', 'APCO25', 59000, NULL, NULL)
+                """);
+        }
+
+        List<Map<String,Object>> configured = rows(mDatabase.aliases(request(
+            "/api/aliases?list=1&group=operations&listen=disabled&record=enabled&stream=present")));
+        assertEquals(List.of("Dispatch"), configured.stream().map(row -> row.get("name")).toList());
+        assertEquals(true, configured.getFirst().get("overlap"));
+        assertEquals(List.of("overlap"), configured.getFirst().get("configuration_errors"));
+
+        List<Map<String,Object>> ranges = rows(mDatabase.aliases(request(
+            "/api/aliases?list=1&matcher=TALKGROUP_RANGE&sort=name")));
+        assertEquals(2, ranges.size());
+        assertTrue(ranges.stream().allMatch(row -> Boolean.TRUE.equals(row.get("overlap"))));
+
+        Map<String,Object> observedResponse = mDatabase.aliases(request(
+            "/api/aliases?list=1&type=talkgroup&evidence=observed&use=used&lastActivityAfter=2000&limit=1"));
+        List<Map<String,Object>> observed = rows(observedResponse);
+        assertEquals(List.of("Dispatch"), observed.stream().map(row -> row.get("name")).toList());
+        assertFalse((Boolean)observedResponse.get("hasMore"));
+
+        List<Map<String,Object>> noCalls = rows(mDatabase.aliases(request(
+            "/api/aliases?list=1&type=talkgroup&evidence=covered_no_evidence&use=unused&limit=10")));
+        assertEquals(List.of("AAA No Calls", "Dispatch Duplicate", "Range A", "Range B"),
+            noCalls.stream().map(row -> row.get("name")).toList());
+
+        assertTrue(rows(mDatabase.aliases(request(
+            "/api/aliases?list=1&evidence=observed&lastActivityBefore=1999"))).isEmpty());
+        assertEquals(400, assertThrows(StatsApiException.class, () ->
+            mDatabase.aliases(request("/api/aliases?list=1&listen=maybe"))).status());
+        assertEquals(400, assertThrows(StatsApiException.class, () ->
+            mDatabase.aliases(request("/api/aliases?list=1&evidence=unknown"))).status());
+    }
+
+    @Test
     void searchesOnlyRealFullyQualifiedIdentifiersAndSortsEveryMatcherByItsDisplayValue() throws Exception
     {
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);

@@ -19,6 +19,7 @@ import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 import com.sun.net.httpserver.HttpsConfigurator;
 import com.sun.net.httpserver.HttpsServer;
+import io.github.dsheirer.alias.AliasAdministrationService;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.controller.NamingThreadFactory;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
@@ -39,6 +40,7 @@ import io.github.dsheirer.web.auth.WebAccessAccount;
 import io.github.dsheirer.web.auth.WebAccessService;
 import io.github.dsheirer.web.auth.WebAuthenticationService;
 import io.github.dsheirer.web.auth.WebCapability;
+import io.github.dsheirer.web.http.AliasAdminHttpController;
 import io.github.dsheirer.web.http.WebAccessHttpController;
 import io.github.dsheirer.web.network.WebCertificateIdentity;
 import java.io.IOException;
@@ -83,6 +85,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
     private final StatsWebCallService mWebCallService = new StatsWebCallService();
     private final ChannelProcessingManager mChannelProcessingManager;
     private final P25ActivityLogService mActivityLogService;
+    private final AliasAdministrationService mAliasAdministrationService;
     private final Semaphore mCsvExportPermit = new Semaphore(1);
     private final Path mWebAccessDatabasePath;
     private final WebTlsMaterialService mTlsMaterialService;
@@ -97,20 +100,28 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
 
     public StatsWebServerService(UserPreferences userPreferences)
     {
-        this(userPreferences, null, null);
+        this(userPreferences, null, null, null);
     }
 
     public StatsWebServerService(UserPreferences userPreferences, ChannelProcessingManager channelProcessingManager)
     {
-        this(userPreferences, channelProcessingManager, null);
+        this(userPreferences, channelProcessingManager, null, null);
     }
 
     public StatsWebServerService(UserPreferences userPreferences, ChannelProcessingManager channelProcessingManager,
                                  P25ActivityLogService activityLogService)
     {
+        this(userPreferences, channelProcessingManager, activityLogService, null);
+    }
+
+    public StatsWebServerService(UserPreferences userPreferences, ChannelProcessingManager channelProcessingManager,
+                                 P25ActivityLogService activityLogService,
+                                 AliasAdministrationService aliasAdministrationService)
+    {
         mUserPreferences = userPreferences;
         mChannelProcessingManager = channelProcessingManager;
         mActivityLogService = activityLogService;
+        mAliasAdministrationService = aliasAdministrationService;
         mDatabase = new StatsWebDatabase(userPreferences);
         mLiveService = new StatsLiveService(mDatabase, channelProcessingManager);
         mWebAccessDatabasePath = SdrTrunkDatabasePath.getDatabasePath(mUserPreferences);
@@ -473,6 +484,16 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
     private void registerContexts(HttpServer server, Path assetRoot)
     {
         mWebAccessHttpController.register(server);
+
+        if(mAliasAdministrationService != null)
+        {
+            AliasAdminHttpController aliasController = new AliasAdminHttpController(mAliasAdministrationService);
+            HttpHandler protectedAliases = mWebAccessHttpController.protectApi(
+                WebCapability.ADMIN_ALIASES, aliasController::handle);
+            server.createContext(AliasAdminHttpController.ALIAS_LISTS_PATH, protectedAliases);
+            server.createContext(AliasAdminHttpController.ALIASES_PATH, protectedAliases);
+        }
+
         createProtectedContext(server, "/api/status", WebCapability.DASHBOARD_VIEW,
             exchange -> handleJson(exchange, "/api/status", this::status));
         createProtectedContext(server, "/api/dashboard", WebCapability.DASHBOARD_VIEW,

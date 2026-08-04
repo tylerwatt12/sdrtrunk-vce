@@ -19,6 +19,7 @@
 package io.github.dsheirer.gui;
 
 import com.jidesoft.swing.JideSplitPane;
+import io.github.dsheirer.alias.AliasAdministrationService;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.application.ApplicationInfo;
 import io.github.dsheirer.application.update.UpdateCheckResult;
@@ -260,7 +261,8 @@ public class SDRTrunk implements Listener<TunerEvent>
         mAudioStreamingManager.start();
 
         mStatsWebServerService = new StatsWebServerService(mUserPreferences,
-            mConfigurationManager.getChannelProcessingManager(), mP25ActivityLogService);
+            mConfigurationManager.getChannelProcessingManager(), mP25ActivityLogService,
+            new AliasAdministrationService(mConfigurationManager));
 
         if(mJavaFxWindowManager != null)
         {

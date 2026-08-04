@@ -32,7 +32,8 @@ public enum WebCapability
     WEB_AUDIO_LISTEN("call-audio", "Call audio", AccessTier.PUBLIC),
 
     ADMIN_USERS("admin-users", "User management", AccessTier.ADMIN, false),
-    ADMIN_ACCESS("admin-access", "Access management", AccessTier.ADMIN, false);
+    ADMIN_ACCESS("admin-access", "Access management", AccessTier.ADMIN, false),
+    ADMIN_ALIASES("admin-aliases", "Alias management", AccessTier.ADMIN, false);
 
     private static final Map<String,WebCapability> BY_ID;
     private final String mId;

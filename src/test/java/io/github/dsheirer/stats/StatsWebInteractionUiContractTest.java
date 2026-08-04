@@ -297,13 +297,13 @@ class StatsWebInteractionUiContractTest
         assertTrue(html.indexOf("localStorage.getItem('sdrtrunk_theme')") <
             html.indexOf("rel=\"stylesheet\""));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=27"));
-        assertTrue(html.contains("/assets/app.js?v=37"));
+        assertTrue(html.contains("/assets/app.css?v=29"));
+        assertTrue(html.contains("/assets/app.js?v=39"));
         assertTrue(source.contains("window.localStorage.setItem(THEME_STORAGE_KEY"));
         assertTrue(source.contains("toggle.setAttribute('aria-pressed'"));
         assertTrue(css.contains(":root[data-theme=\"dark\"]"));
         assertTrue(css.contains("--chart-call:"));
-        assertTrue(css.contains(":not(.table-sort-control):not(.systems-live-tab)"));
+        assertTrue(css.contains(":not(.auth-action):not(.table-sort-control):not(.systems-live-tab)"));
         assertFalse(css.contains("filter: invert("));
     }
 

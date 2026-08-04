@@ -54,6 +54,7 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import javafx.collections.ListChangeListener;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -77,9 +78,11 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     private ConfigurationDatabaseStore mConfigurationDatabaseStore;
     private AtomicBoolean mConfigurationSavePending = new AtomicBoolean();
     private AtomicBoolean mConfigurationDirty = new AtomicBoolean();
+    private final AtomicLong mAliasConfigurationRevision = new AtomicLong();
     private final Object mHeadlessWebConfigurationLock = new Object();
     private ScheduledFuture<?> mConfigurationSaveFuture;
     private boolean mConfigurationLoading = false;
+    private volatile boolean mInitialized = false;
     private volatile boolean mExternalConfigurationOperation = false;
     private List<IAliasListRefreshListener> mAliasListRefreshListeners = new ArrayList<>();
 
@@ -121,9 +124,9 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         //Register for alias and channel events so that we can save configuration changes.
         mChannelModel.addListener(this);
 
-        mAliasModel.aliasList().addListener((ListChangeListener.Change<? extends Alias> c) -> scheduleAliasSave());
+        mAliasModel.aliasList().addListener((ListChangeListener.Change<? extends Alias> c) -> aliasConfigurationChanged());
         mAliasModel.aliasListDefinitions().addListener(
-            (ListChangeListener.Change<? extends AliasListDefinition> c) -> scheduleAliasSave());
+            (ListChangeListener.Change<? extends AliasListDefinition> c) -> aliasConfigurationChanged());
 
         mBroadcastModel.addListener(broadcastEvent -> {
             switch(broadcastEvent.getEvent())
@@ -169,7 +172,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     /**
      * Notifies listeners that the alias list will be refreshed
      */
-    private void prepareForAliasListRefresh()
+    public void prepareForAliasListRefresh()
     {
         for(IAliasListRefreshListener editor : mAliasListRefreshListeners)
         {
@@ -252,6 +255,23 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     public void init()
     {
         transferStateToModels();
+        mInitialized = true;
+    }
+
+    /**
+     * Indicates that the persisted configuration has been loaded into the runtime models.
+     */
+    public boolean isInitialized()
+    {
+        return mInitialized;
+    }
+
+    /**
+     * Monotonic version for optimistic alias administration updates.
+     */
+    public long getAliasConfigurationRevision()
+    {
+        return mAliasConfigurationRevision.get();
     }
 
     /**
@@ -498,6 +518,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
                 case NOTIFICATION_ADD:
                 case NOTIFICATION_CONFIGURATION_CHANGE:
                 case NOTIFICATION_DELETE:
+                    mAliasConfigurationRevision.incrementAndGet();
                     scheduleConfigurationSave();
                     break;
             }
@@ -668,6 +689,12 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     public void scheduleAliasSave()
     {
         scheduleSave();
+    }
+
+    private void aliasConfigurationChanged()
+    {
+        mAliasConfigurationRevision.incrementAndGet();
+        scheduleAliasSave();
     }
 
     /**

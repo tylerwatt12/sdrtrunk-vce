@@ -45,6 +45,9 @@ final class StatsAliasCatalog
         "RADIO_ID", "RADIO_ID_RANGE", "P25_FULLY_QUALIFIED_RADIO_ID",
         "STATUS", "UNIT_STATUS", "TONES", "DCS", "ESN");
     private static final Set<String> IDENTITY_TYPES = Set.of("talkgroup", "radio", "other");
+    private static final Set<String> EVIDENCE_STATES = Set.of(
+        "observed", "covered_no_evidence", "not_collected", "unsupported");
+    private static final Set<String> USE_STATES = Set.of("used", "unused");
     private static final String IDENTIFIER_SORT_SQL = """
         CASE
             WHEN alias.matcher_type IN ('P25_FULLY_QUALIFIED_TALKGROUP',
@@ -135,23 +138,26 @@ final class StatsAliasCatalog
 
     Map<String,Object> aliases(Connection connection, StatsRequest request) throws SQLException
     {
-        if(metricSortField(request) != null)
+        if(metricSortField(request) != null || hasMetricFilters(request))
         {
             List<Map<String,Object>> allRows = queryAliasRows(connection, request,
                 MAX_METRIC_SORT_ALIASES + 1, 0, null);
 
             if(allRows.size() > MAX_METRIC_SORT_ALIASES)
             {
-                throw new StatsApiException(413, "Metric-sorted alias query exceeds the 25,000 row limit");
+                throw new StatsApiException(413, "Metric-sorted or filtered alias query exceeds the 25,000 row limit");
             }
 
             enrich(connection, allRows, false);
+            applyMetricFilters(allRows, request);
             sortMetricRows(allRows, request);
             int from = Math.min(request.offset(), allRows.size());
             int to = Math.min(from + request.limit(), allRows.size());
             boolean hasMore = to < allRows.size();
+            List<Map<String,Object>> rows = new ArrayList<>(allRows.subList(from, to));
+            applyConfigurationDiagnostics(connection, rows);
             Map<String,Object> response = new LinkedHashMap<>();
-            response.put("rows", new ArrayList<>(allRows.subList(from, to)));
+            response.put("rows", rows);
             response.put("limit", request.limit());
             response.put("offset", request.offset());
             response.put("hasMore", hasMore);
@@ -165,6 +171,7 @@ final class StatsAliasCatalog
         List<Map<String,Object>> rows = hasMore ?
             new ArrayList<>(queried.subList(0, request.limit())) : queried;
         enrich(connection, rows, false);
+        applyConfigurationDiagnostics(connection, rows);
         Map<String,Object> response = new LinkedHashMap<>();
         response.put("rows", rows);
         response.put("limit", request.limit());
@@ -189,6 +196,7 @@ final class StatsAliasCatalog
         }
 
         Map<Long,List<Map<String,Object>>> breakdown = enrich(connection, rows, true);
+        applyConfigurationDiagnostics(connection, rows);
         Map<String,Object> response = new LinkedHashMap<>();
         response.put("alias", rows.getFirst());
         response.put("breakdown", breakdown.getOrDefault(aliasId, List.of()));
@@ -198,20 +206,21 @@ final class StatsAliasCatalog
     List<Map<String,Object>> exportRows(Connection connection, StatsRequest request, int maximumRows)
         throws SQLException
     {
-        boolean metricSort = metricSortField(request) != null;
-        int queryLimit = metricSort ? Math.min(maximumRows, MAX_METRIC_SORT_ALIASES) + 1 : maximumRows + 1;
+        boolean metricProcessing = metricSortField(request) != null || hasMetricFilters(request);
+        int queryLimit = metricProcessing ? Math.min(maximumRows, MAX_METRIC_SORT_ALIASES) + 1 : maximumRows + 1;
         List<Map<String,Object>> rows = queryAliasRows(connection, request, queryLimit, 0, null);
 
-        if(metricSort && rows.size() > MAX_METRIC_SORT_ALIASES)
+        if(metricProcessing && rows.size() > MAX_METRIC_SORT_ALIASES)
         {
-            throw new StatsApiException(413, "Metric-sorted alias query exceeds the 25,000 row limit");
+            throw new StatsApiException(413, "Metric-filtered alias query exceeds the 25,000 row limit");
         }
 
         if(rows.size() <= maximumRows)
         {
             enrich(connection, rows, false);
+            applyMetricFilters(rows, request);
 
-            if(metricSort)
+            if(metricSortField(request) != null)
             {
                 sortMetricRows(rows, request);
             }
@@ -223,6 +232,69 @@ final class StatsAliasCatalog
     private static String metricSortField(StatsRequest request)
     {
         return METRIC_SORT_FIELDS.get(request.sort("name"));
+    }
+
+    private static boolean hasMetricFilters(StatsRequest request)
+    {
+        validateMetricFilters(request);
+        return request.text("evidence") != null || request.text("use") != null ||
+            request.text("lastActivityAfter") != null || request.text("lastActivityBefore") != null;
+    }
+
+    private static void validateMetricFilters(StatsRequest request)
+    {
+        String evidence = request.text("evidence");
+        if(evidence != null && !EVIDENCE_STATES.contains(evidence.toLowerCase(Locale.ROOT)))
+        {
+            throw new StatsApiException(400, "evidence is invalid");
+        }
+
+        String use = request.text("use");
+        if(use != null && !USE_STATES.contains(use.toLowerCase(Locale.ROOT)))
+        {
+            throw new StatsApiException(400, "use is invalid");
+        }
+
+        optionalTimestamp(request, "lastActivityAfter");
+        optionalTimestamp(request, "lastActivityBefore");
+    }
+
+    private static void applyMetricFilters(List<Map<String,Object>> rows, StatsRequest request)
+    {
+        validateMetricFilters(request);
+        String evidence = lower(request.text("evidence"));
+        String use = lower(request.text("use"));
+        Long after = optionalTimestamp(request, "lastActivityAfter");
+        Long before = optionalTimestamp(request, "lastActivityBefore");
+
+        rows.removeIf(row -> evidence != null && !evidence.equals(lower(text(row.get("metrics_state")))) ||
+            "used".equals(use) && !(row.get("call_count") instanceof Number count && count.longValue() > 0) ||
+            "unused".equals(use) && !(row.get("call_count") instanceof Number count && count.longValue() == 0) ||
+            after != null && !(row.get("last_evidence_ms") instanceof Number last && last.longValue() >= after) ||
+            before != null && !(row.get("last_evidence_ms") instanceof Number last && last.longValue() <= before));
+    }
+
+    private static Long optionalTimestamp(StatsRequest request, String name)
+    {
+        String value = request.text(name);
+        if(value == null)
+        {
+            return null;
+        }
+
+        try
+        {
+            long timestamp = Long.parseLong(value);
+            if(timestamp < 0)
+            {
+                throw new NumberFormatException();
+            }
+            return timestamp;
+        }
+        catch(NumberFormatException exception)
+        {
+            throw new StatsApiException(400, name + " is invalid");
+        }
     }
 
     private static void sortMetricRows(List<Map<String,Object>> rows, StatsRequest request)
@@ -396,6 +468,48 @@ final class StatsAliasCatalog
             }
         }
 
+        String group = request.text("group");
+        if(group != null)
+        {
+            sql.append(" AND alias.group_name = ? COLLATE NOCASE");
+            parameters.add(group);
+        }
+
+        String listen = lower(request.text("listen"));
+        if(listen != null)
+        {
+            switch(listen)
+            {
+                case "enabled" -> sql.append(" AND coalesce(alias.priority, 100) <> -1");
+                case "disabled" -> sql.append(" AND alias.priority = -1");
+                default -> throw new StatsApiException(400, "listen is invalid");
+            }
+        }
+
+        String record = lower(request.text("record"));
+        if(record != null)
+        {
+            switch(record)
+            {
+                case "enabled" -> sql.append(" AND alias.record_enabled = 1");
+                case "disabled" -> sql.append(" AND alias.record_enabled = 0");
+                default -> throw new StatsApiException(400, "record is invalid");
+            }
+        }
+
+        String stream = lower(request.text("stream"));
+        if(stream != null)
+        {
+            switch(stream)
+            {
+                case "present" -> sql.append(" AND EXISTS (SELECT 1 FROM alias_broadcast_channel route " +
+                    "WHERE route.alias_id = alias.id)");
+                case "none" -> sql.append(" AND NOT EXISTS (SELECT 1 FROM alias_broadcast_channel route " +
+                    "WHERE route.alias_id = alias.id)");
+                default -> throw new StatsApiException(400, "stream is invalid");
+            }
+        }
+
         String search = request.search();
 
         if(search != null)
@@ -440,6 +554,82 @@ final class StatsAliasCatalog
         String matcher = text(row.get("matcher_type"));
         row.put("matcher_label", matcherLabel(matcher));
         row.put("identifier_display", identifierDisplay(row));
+    }
+
+    /**
+     * Adds the same identifier-overlap warning shown by the desktop editor to only the bounded rows being returned.
+     * The correlated comparison still checks every sibling in the owning alias list, so paging and filters cannot
+     * hide a collision.
+     */
+    private static void applyConfigurationDiagnostics(Connection connection, List<Map<String,Object>> aliases)
+        throws SQLException
+    {
+        if(aliases.isEmpty())
+        {
+            return;
+        }
+
+        List<Long> aliasIds = aliases.stream().map(row -> nullableNumber(row.get("alias_id")))
+            .filter(java.util.Objects::nonNull).distinct().toList();
+
+        if(aliasIds.isEmpty())
+        {
+            return;
+        }
+
+        Set<Long> overlaps = new HashSet<>();
+
+        for(int start = 0; start < aliasIds.size(); start += 500)
+        {
+            List<Long> chunk = aliasIds.subList(start, Math.min(start + 500, aliasIds.size()));
+            List<Map<String,Object>> diagnostics = queryRows(connection, """
+                SELECT current.id AS alias_id,
+                    EXISTS (
+                        SELECT 1
+                        FROM alias other
+                        WHERE other.alias_list_id = current.alias_list_id
+                          AND other.id <> current.id
+                          AND other.matcher_type = current.matcher_type
+                          AND CASE
+                            WHEN current.matcher_type IN ('TALKGROUP', 'RADIO_ID') THEN
+                                (CASE WHEN other.protocol = 'APCO25_PHASE2' THEN 'APCO25' ELSE other.protocol END) =
+                                (CASE WHEN current.protocol = 'APCO25_PHASE2' THEN 'APCO25' ELSE current.protocol END)
+                                AND other.value = current.value
+                            WHEN current.matcher_type IN ('P25_FULLY_QUALIFIED_TALKGROUP',
+                                'P25_FULLY_QUALIFIED_RADIO_ID') THEN
+                                other.wacn = current.wacn AND other.p25_system_id = current.p25_system_id
+                                AND other.value = current.value
+                            WHEN current.matcher_type IN ('TALKGROUP_RANGE', 'RADIO_ID_RANGE') THEN
+                                (CASE WHEN other.protocol = 'APCO25_PHASE2' THEN 'APCO25' ELSE other.protocol END) =
+                                (CASE WHEN current.protocol = 'APCO25_PHASE2' THEN 'APCO25' ELSE current.protocol END)
+                                AND other.min_value <= current.max_value AND current.min_value <= other.max_value
+                            WHEN current.matcher_type IN ('STATUS', 'UNIT_STATUS') THEN
+                                other.numeric_value = current.numeric_value
+                            WHEN current.matcher_type = 'DCS' THEN other.text_value = current.text_value
+                            WHEN current.matcher_type = 'TONES' THEN other.tone_sequence = current.tone_sequence
+                            ELSE 0
+                          END
+                    ) AS overlap
+                FROM alias current
+                WHERE current.id IN (%s)
+                ORDER BY current.id
+                """.formatted(placeholders(chunk.size())), chunk.toArray());
+
+            for(Map<String,Object> diagnostic: diagnostics)
+            {
+                if(number(diagnostic.get("overlap")) != 0)
+                {
+                    overlaps.add(number(diagnostic.get("alias_id")));
+                }
+            }
+        }
+
+        for(Map<String,Object> alias: aliases)
+        {
+            boolean overlap = overlaps.contains(number(alias.get("alias_id")));
+            alias.put("overlap", overlap);
+            alias.put("configuration_errors", overlap ? List.of("overlap") : List.of());
+        }
     }
 
     private Map<Long,List<Map<String,Object>>> enrich(Connection connection, List<Map<String,Object>> aliases,
@@ -1110,6 +1300,11 @@ final class StatsAliasCatalog
     private static String text(Object value)
     {
         return value instanceof String string && !string.isBlank() ? string : null;
+    }
+
+    private static String lower(String value)
+    {
+        return value != null ? value.toLowerCase(Locale.ROOT) : null;
     }
 
     private static long number(Object value)

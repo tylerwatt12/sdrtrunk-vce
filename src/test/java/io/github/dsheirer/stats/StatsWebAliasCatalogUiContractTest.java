@@ -12,10 +12,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 
-/**
- * Protects the read-only Alias Catalog, its evidence semantics, and the quality CSV controls.  Interactive behavior
- * is also exercised during browser smoke testing; these source contracts prevent route and field drift.
- */
+/** Protects the bounded, list-focused web Alias Editor and its read-only catalog fallback. */
 class StatsWebAliasCatalogUiContractTest
 {
     private static final Path APP_JAVASCRIPT = Path.of("stats-web", "assets", "app.js");
@@ -23,161 +20,187 @@ class StatsWebAliasCatalogUiContractTest
     private static final Path INDEX_HTML = Path.of("stats-web", "index.html");
 
     @Test
-    void exposesAReadOnlyCatalogWithServerBackedFiltersAndCsv() throws Exception
+    void requiresAListBeforeLoadingBoundedAliases() throws Exception
     {
         String source = source();
-        String html = readText(INDEX_HTML);
         String renderer = function(source, "async function renderAliases()");
-        String filters = function(source, "function aliasCatalogFilterToolbar(listResponse)");
 
-        assertTrue(html.contains("data-view=\"aliases\" href=\"/?view=aliases\""));
+        assertTrue(readText(INDEX_HTML).contains("data-view=\"aliases\" href=\"/?view=aliases\""));
         assertTrue(source.contains("aliases: renderAliases"));
         assertTrue(renderer.contains("api('/api/alias-lists')"));
-        assertTrue(renderer.contains("api('/api/aliases', pageParameters(filters))"));
-        for(String parameter: new String[]{"list", "family", "type", "matcher"})
-        {
-            assertTrue(renderer.contains(parameter + ": route.get('" + parameter + "')"),
-                () -> "Missing Alias Catalog filter " + parameter);
-        }
-        assertTrue(filters.contains("input.name = 'q'"));
-        assertTrue(filters.contains("form.addEventListener('submit'"));
-        assertTrue(filters.contains("control.disabled = true"));
-        assertTrue(renderer.contains("['list', 'family', 'type', 'matcher'].forEach"));
-        assertTrue(renderer.contains("exportCsvLink('aliases', exportContext)"));
-        assertTrue(function(source, "function exportCsvHref(dataset, context = {})")
-            .contains("['q', 'sort', 'direction']"));
+        assertTrue(renderer.contains("if (!selectedList)"));
+        assertTrue(renderer.indexOf("if (!selectedList)") <
+            renderer.indexOf("api('/api/aliases', pageParameters(filters))"));
+        assertTrue(function(source, "function pageParameters(extra = {})").contains("limit: 100"));
+        assertFalse(renderer.contains("All alias lists"));
+        assertTrue(function(source, "function aliasListRail(lists, selectedList, admin)")
+            .contains("href('aliases', { list: id"));
     }
 
     @Test
-    void keepsConfigurationFixedAndPersistsOnlyOptionalEvidenceColumns() throws Exception
+    void separatesConfigurationCallsEvidenceAndCustomColumns() throws Exception
+    {
+        String source = source();
+        String tabs = function(source, "function aliasEditorViewTabs(selectedList)");
+        String columns = function(source, "function aliasEditorColumns(view, admin, rows, onSelectionChange, selectedCustom)");
+        String optional = function(source, "function aliasCatalogEnrichmentColumns()");
+
+        for(String label: new String[]{"Configure", "Call Use", "System Evidence", "Custom"})
+        {
+            assertTrue(tabs.contains("'" + label + "'"), () -> "Missing editor view " + label);
+        }
+        assertTrue(columns.contains("view === 'calls'"));
+        assertTrue(columns.contains("view === 'evidence'"));
+        assertTrue(columns.contains("view === 'custom'"));
+        assertTrue(source.contains("aliasColumnChooser(definitions, selectedCustom"));
+        assertTrue(source.contains("exportCsvLink('aliases', exportContext)"));
+        for(String field: new String[]{"call_count", "recorded_count", "streamed_count",
+            "encrypted_evidence_count", "grant_count", "join_count", "emergency_count", "register_count",
+            "logout_count", "relationship_count", "current_affiliation_count", "metrics_state",
+            "first_evidence_ms", "last_evidence_ms"})
+        {
+            assertTrue(optional.contains(field), () -> "Missing evidence field " + field);
+        }
+    }
+
+    @Test
+    void exposesAdminMutationsOnlyThroughTheAliasCapability() throws Exception
     {
         String source = source();
         String renderer = function(source, "async function renderAliases()");
-        String core = function(source, "function aliasCatalogCoreColumns()");
-        String optional = function(source, "function aliasCatalogEnrichmentColumns()");
-        String reader = function(source, "function readAliasCatalogColumnSelection(definitions)");
-        String widths = function(source,
-            "function addColumnResizers(element, columns, columnElements, headers, tableType)");
+        String editor = function(source, "async function openAliasEditorModal(mode = 'create', id = null)");
 
-        for(String label: new String[]{"Alias List", "Family", "Matcher", "Identifier", "Alias", "Description",
-            "Group", "Behavior"})
-        {
-            assertTrue(core.contains("label: '" + label + "'"), () -> "Missing fixed column " + label);
-        }
-        assertTrue(renderer.contains("[...aliasCatalogCoreColumns(), ...optional]"));
-        assertTrue(renderer.contains("serverSort: true, sortable: false"));
-        assertTrue(renderer.contains("aliasColumnChooser(definitions, selected, onColumnChange)"));
-        assertTrue(source.contains("sdrtrunk_alias_catalog_enrichment_columns_v1"));
-        assertTrue(reader.contains("parsed.filter((id) => valid.has(id))"));
-        assertTrue(reader.contains("ALIAS_CATALOG_DEFAULT_ENRICHMENT_COLUMNS"));
-        assertTrue(source.contains("'emergency', 'logout'"));
-        assertTrue(renderer.contains("route.set('sort', 'name')"));
-        assertTrue(renderer.contains("route.set('direction', 'asc')"));
-        assertTrue(widths.contains("{ ...current }"));
-        assertTrue(optional.contains("sort = field"));
-        assertTrue(optional.contains("sort: 'first_evidence_ms'"));
-        assertTrue(optional.contains("sort: 'last_evidence_ms'"));
-        assertTrue(optional.contains("'coverage_scope_count', evidence,\n      'Compatible monitored scopes where " +
-            "this alias could be resolved.', null"));
-        assertTrue(optional.contains("'observed_scope_count', evidence,\n      'Compatible scopes with retained " +
-            "activity or relationship evidence.', null"));
-        String chooser = function(source, "function aliasColumnChooser(definitions, selected, onChange)");
-        assertTrue(chooser.contains("chooser.open = false"));
-        assertTrue(chooser.contains("summary.focus()"));
-
-        for(String field: new String[]{"call_count", "recorded_count", "streamed_count",
-            "encrypted_evidence_count", "grant_count", "join_count", "emergency_count", "register_count",
-            "logout_count", "denial_count", "data_count", "other_signaling_count", "relationship_count",
-            "join_relationship_count", "current_affiliation_count", "coverage_scope_count", "observed_scope_count",
-            "metrics_state", "first_evidence_ms", "last_evidence_ms"})
-        {
-            assertTrue(optional.contains(field), () -> "Missing optional evidence field " + field);
-        }
+        assertTrue(source.contains("ADMIN_ALIASES: 'admin-aliases'"));
+        assertTrue(function(source, "function aliasAdminAllowed()")
+            .contains("ACCESS_CAPABILITIES.ADMIN_ALIASES"));
+        assertTrue(renderer.contains("const admin = aliasAdminAllowed()"));
+        assertTrue(renderer.contains("admin ? requestJson('/api/v1/admin/alias-lists'"));
+        assertTrue(editor.contains("/api/v1/admin/aliases/options?aliasListId="));
+        assertTrue(editor.contains("method: editing ? 'PUT' : 'POST'"));
+        assertTrue(source.contains("method: 'DELETE', body: { revision }"));
+        assertTrue(source.contains("/api/v1/admin/alias-lists/${id}/delete-impact"));
+        assertTrue(source.contains("code === 'stale_revision'"));
     }
 
     @Test
-    void distinguishesUnavailableEvidenceFromACollectedZero() throws Exception
+    void supportsCompleteMatcherAndFocusedModalEditing() throws Exception
     {
         String source = source();
-        String metric = function(source, "function aliasMetricValue(row, field)");
-        String behavior = function(source, "function aliasBehavior(row)");
-        String optional = function(source, "function aliasCatalogEnrichmentColumns()");
-        String detail = function(source, "function aliasDetailContent(alias, breakdown)");
+        String fields = function(source, "function aliasMatcherFields(host, descriptor, matcher, options)");
+        String payload = function(source, "function aliasMatcherPayload(form, descriptor)");
+        String tabs = function(source, "function aliasEditorModalTabs(panels, initial = 'basics')");
 
-        assertTrue(metric.contains("row[field] === null || row[field] === undefined"));
-        assertTrue(metric.contains("return '—'"));
-        assertTrue(metric.contains("Number.isFinite(value) ? number(value)"));
-        assertTrue(behavior.contains("row.priority === null || row.priority === undefined ? Number.NaN"));
-        assertTrue(optional.contains("'Enc Obs.'"));
-        assertTrue(optional.contains("Encrypted observations"));
-        assertTrue(optional.contains("count('logout', 'Logout', 'logout_count'"));
-        assertTrue(detail.contains("Logout means unit deregistration, not leaving a talkgroup"));
-        assertTrue(detail.contains("0 means coverage was collected and the count was zero"));
-        assertTrue(detail.contains("yesNoKnown(alias.ranged)"));
-        assertFalse(optional.contains("'Leave'"));
-    }
-
-    @Test
-    void providesAnAccessibleRouteAwareDetailDialogAndCompleteScopeBreakdown() throws Exception
-    {
-        String source = source();
-        String open = function(source, "function openReadOnlyModal(title, body, options = {})");
-        String close = function(source, "function closeReadOnlyModal(updateRoute = false)");
-        String detail = function(source, "async function renderAliasDetailModal(id)");
-        String breakdown = function(source, "function aliasScopeBreakdownColumns()");
-
-        assertTrue(open.contains("setAttribute('role', 'dialog')"));
-        assertTrue(open.contains("setAttribute('aria-modal', 'true')"));
-        assertTrue(open.contains("event.key === 'Escape'"));
-        assertTrue(open.contains("if (event.target === backdrop) dismiss()"));
-        assertTrue(close.contains("route.delete('alias')"));
-        assertTrue(close.contains("returnFocus.focus()"));
-        assertTrue(function(source, "function currentHref(overrides = {})")
-            .contains("parameters.delete('alias')"));
-        assertTrue(detail.contains("api('/api/alias', { id })"));
-        assertTrue(detail.contains("activeReadOnlyModal !== modal.state"));
-        assertTrue(detail.contains("Number(route.get('alias')) !== id"));
-        assertTrue(function(source, "async function render()").contains("closeReadOnlyModal(false)"));
-        for(String field: new String[]{"call_count", "recorded_count", "streamed_count",
-            "encrypted_evidence_count", "grant_count", "join_count", "emergency_count", "register_count",
-            "logout_count", "denial_count", "data_count", "other_signaling_count", "relationship_count",
-            "join_relationship_count", "current_affiliation_count", "first_evidence_ms", "last_evidence_ms"})
+        for(String label: new String[]{"Basics", "Identifier", "Audio & Streams", "Usage & Evidence"})
         {
-            assertTrue(breakdown.contains(field), () -> "Missing scope breakdown field " + field);
+            assertTrue(tabs.contains("'" + label + "'"), () -> "Missing modal tab " + label);
         }
+        for(String field: new String[]{"value", "minimum", "maximum", "wacn", "system", "status", "code",
+            "esn", "tones"})
+        {
+            assertTrue(fields.contains("field === '" + field + "'") ||
+                fields.contains("['wacn', 'system'].includes(field)"), () -> "Missing matcher field " + field);
+        }
+        assertTrue(fields.contains("duration.min = '1'"));
+        assertTrue(fields.contains("duration.max = '50'"));
+        assertTrue(payload.contains("aliasHexNumericValue"));
+        assertTrue(source.contains("value: aliasMatcherKey(entry), label: entry.label"));
+        assertTrue(source.contains("source.matcher?.type, source.matcher?.protocol"));
+        assertTrue(payload.contains("selector.dataset.originalProtocol"));
+        assertTrue(source.contains("aliasHexValue(matcher?.[field])"));
+        assertTrue(source.contains("options.dcsCodes?.[0] || 'N023'"));
+        assertTrue(source.contains("Missing: ${source.iconName}"));
+        assertTrue(source.contains("Missing: ${streamName}"));
+        assertTrue(source.contains("error.code = result?.code || result?.error || null"));
+        assertTrue(source.contains("color: aliasEditorColorValue(form.elements.color)"));
+        assertTrue(source.contains("color.dataset.originalColor"));
+        assertTrue(source.contains("value: 'RESET', label: 'Reset to default'"));
+        assertTrue(source.contains("Discard your unsaved alias changes?"));
+        assertTrue(function(source, "async function render()").contains("if (!closeReadOnlyModal(false)) return"));
+        assertTrue(source.contains("if (!closeReadOnlyModal(false)) return;\n  window.history.pushState"));
     }
 
     @Test
-    void linksContextAliasListsAndExportsOnlyApplicableQualityRanges() throws Exception
+    void keepsUsageScopeBreakdownFocusedAndRemovesRepeatedColumns() throws Exception
     {
         String source = source();
-        String siteInfo = function(source, "async function renderSiteInfo(site)");
-        String conventional = function(source, "async function renderConventionalDetail()");
-        String dashboardQuality = function(source, "async function signalHealthSection()");
-        String siteQuality = function(source, "async function siteSignalHistorySection(site)");
+        String columns = function(source, "function aliasEditorScopeBreakdownColumns()");
+        String usage = function(source, "function aliasUsageContent(response)");
 
-        assertTrue(siteInfo.contains("aliasListLink(site.alias_list_name, site.alias_list_id)"));
-        assertTrue(conventional.contains("aliasListLink(context.alias_list_name, context.alias_list_id)"));
-        assertTrue(dashboardQuality.contains("exportCsvLink('signal-health')"));
-        assertFalse(dashboardQuality.contains("exportCsvLink('signal-health',"));
-        assertTrue(siteQuality.contains("exportCsvLink('site-quality', { guid: site.guid, range: selectedRange })"));
-        assertTrue(siteQuality.contains("exportLink.href = exportCsvHref('site-quality'"));
+        assertTrue(columns.contains("availableValue(row.scope_label)"));
+        assertTrue(columns.contains("availableValue(row.topology)"));
+        assertTrue(columns.contains("Number(row.last_evidence_ms || 0)"));
+        assertTrue(columns.contains("aliasScopeMetricSummary(row, callUse, 'No calls observed')"));
+        assertTrue(columns.contains("aliasScopeMetricSummary(row, systemEvidence, 'No signaling observed')"));
+        for(String repeated: new String[]{"row.protocol", "row.system_name", "row.site_name", "row.metrics_state",
+            "first_evidence_ms"})
+        {
+            assertFalse(columns.contains(repeated), () -> "Repeated scope field remains " + repeated);
+        }
+        assertTrue(usage.contains("aliasEditorScopeBreakdownColumns()"));
+        assertTrue(usage.contains("complete totals remain"));
     }
 
     @Test
-    void keepsTheCatalogAndDialogUsableOnSmallScreensAndDarkThemes() throws Exception
+    void keepsBulkSelectionExplicitBoundedAndTriState() throws Exception
+    {
+        String source = source();
+        String bulk = function(source, "function openAliasBulkModal(kind)");
+        String columns = function(source, "function aliasEditorBaseColumns(admin, rows, onSelectionChange)");
+
+        assertTrue(bulk.contains("slice(0, 500)"));
+        assertTrue(bulk.contains("explicitly selected aliases"));
+        for(String operation: new String[]{"Leave unchanged", "groupOperation", "listenEnabled", "recordable",
+            "streamOperation", "broadcastChannels", "aliasListId", "iconName", "delete"})
+        {
+            assertTrue(bulk.contains(operation), () -> "Missing bulk contract " + operation);
+        }
+        assertTrue(source.contains("['move', 'Move'], ['group', 'Group'], ['listen', 'Listen']"));
+        assertTrue(source.contains("['stream', 'Stream'], ['appearance', 'Appearance'], ['delete', 'Delete']"));
+        assertTrue(columns.contains("event.shiftKey"));
+        assertTrue(source.contains("event.metaKey || event.ctrlKey"));
+    }
+
+    @Test
+    void retainsExactServerFiltersAndEvidenceSemantics() throws Exception
+    {
+        String source = source();
+        String renderer = function(source, "async function renderAliases()");
+        String filters = function(source, "function aliasEditorFilterToolbar(listResponse, options = null)");
+
+        for(String parameter: new String[]{"group", "listen", "record", "stream", "evidence", "use",
+            "lastActivityBefore", "lastActivityAfter"})
+        {
+            assertTrue(renderer.contains(parameter + ": route.get('" + parameter + "')"),
+                () -> "Missing server filter " + parameter);
+        }
+        assertTrue(filters.contains("'Call use'"));
+        assertTrue(filters.contains("'No calls observed'"));
+        assertTrue(filters.contains("hidden.value = String(new Date(control.value).getTime())"));
+        assertTrue(filters.contains("'lastActivityAfter', 'lastActivityBefore'"));
+        assertTrue(source.contains("An em dash means unavailable or not collected"));
+        assertTrue(source.contains("Logout means unit deregistration, not leaving a talkgroup"));
+    }
+
+    @Test
+    void providesResponsiveThemeAwareRailTableBulkBarAndModal() throws Exception
     {
         String css = readText(APP_CSS);
-        assertTrue(css.contains(".column-chooser-groups"));
-        assertTrue(css.contains(".read-only-modal"));
+        for(String selector: new String[]{".alias-editor-workspace", ".alias-list-rail", ".alias-list-mobile",
+            ".alias-list-summary", ".alias-editor-table-host", ".alias-bulk-bar", ".alias-editor-modal",
+            ".alias-modal-tabs", ".alias-editor-grid", ".alias-stream-options", ".alias-tone-row"})
+        {
+            assertTrue(css.contains(selector), () -> "Missing Alias Editor style " + selector);
+        }
+        assertTrue(css.contains(":root[data-theme=\"dark\"] .alias-editor-table-host"));
+        assertTrue(css.contains(":not(.auth-action):not(.table-sort-control)"));
+        assertTrue(function(source(), "function aliasEditorModalTabs(panels, initial = 'basics')")
+            .contains("node('button', 'secondary', label)"));
         assertTrue(css.contains("@media (max-width: 900px)"));
-        assertTrue(css.contains(".alias-detail,\n  .column-chooser-groups {\n    grid-template-columns: 1fr;"));
+        assertTrue(source().contains("alias-list-mobile-create"));
         assertTrue(css.contains("@media (max-width: 560px)"));
+        assertTrue(css.contains("grid-template-columns: 1fr;"));
         assertTrue(css.contains("width: 100vw;"));
         assertTrue(css.contains("height: 100dvh;"));
-        assertTrue(css.contains("color: var(--ink);"));
-        assertTrue(css.contains("background: var(--bg);"));
-        assertTrue(css.contains("background: var(--surface);"));
     }
 
     private static String source() throws Exception
@@ -201,7 +224,6 @@ class StatsWebAliasCatalogUiContractTest
         for(int index = openingBrace; index < source.length(); index++)
         {
             char character = source.charAt(index);
-
             if(character == '{')
             {
                 depth++;
@@ -211,7 +233,6 @@ class StatsWebAliasCatalogUiContractTest
                 return source.substring(start, index + 1);
             }
         }
-
         throw new AssertionError("Unterminated " + signature);
     }
 }
