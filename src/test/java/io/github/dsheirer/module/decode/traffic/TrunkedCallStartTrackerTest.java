@@ -13,6 +13,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
+import io.github.dsheirer.identifier.encryption.EncryptionKey;
+import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
 import io.github.dsheirer.module.decode.dmr.channel.DMRTier3Channel;
 import io.github.dsheirer.module.decode.dmr.channel.TimeslotFrequency;
@@ -120,6 +122,37 @@ class TrunkedCallStartTrackerTest
         assertTrue(target.attribution().destinationBecameKnown());
         assertTrue(target.attribution().encryptedBeforeObservation());
         assertFalse(target.attribution().encryptionBecameKnown());
+    }
+
+    @Test
+    void attributesLateEncryptionDetailsWithoutStartingAnotherDmrCall()
+    {
+        TrunkedCallStartTracker tracker = new TrunkedCallStartTracker(5_000);
+        Channel parent = new Channel("DMR Site", Channel.ChannelType.STANDARD);
+        parent.setDecodeConfiguration(new DecodeConfigDMR());
+        DMRTier3Channel channel = channel(451_012_500L, 1);
+
+        TrunkedCallStartTracker.ObservationResult initial = tracker.observeWithAttribution(parent, Protocol.DMR,
+            channel, 1, identifiers(101, 91), DecodeEventType.CALL_GROUP_ENCRYPTED, 1_000L);
+        MutableIdentifierCollection detailedIdentifiers = identifiers(101, 91);
+        detailedIdentifiers.update(EncryptionKeyIdentifier.create(Protocol.DMR, encryptedKey(0x84, 101)));
+        TrunkedCallStartTracker.ObservationResult detailed = tracker.observeWithAttribution(parent, Protocol.DMR,
+            channel, 1, detailedIdentifiers, DecodeEventType.CALL_GROUP_ENCRYPTED, 1_100L);
+        TrunkedCallStartTracker.ObservationResult repeated = tracker.observeWithAttribution(parent, Protocol.DMR,
+            channel, 1, detailedIdentifiers, DecodeEventType.CALL_GROUP_ENCRYPTED, 1_200L);
+
+        assertNotNull(initial.callStart());
+        assertNull(initial.attribution());
+        assertNull(detailed.callStart());
+        assertNotNull(detailed.attribution());
+        assertFalse(detailed.attribution().destinationBecameKnown());
+        assertFalse(detailed.attribution().sourceBecameKnown());
+        assertFalse(detailed.attribution().encryptionBecameKnown());
+        assertTrue(detailed.attribution().encryptedBeforeObservation());
+        assertEquals(0x84, detailed.attribution().encryptionAlgorithmId());
+        assertEquals(101, detailed.attribution().encryptionKeyId());
+        assertNull(repeated.callStart());
+        assertNull(repeated.attribution());
     }
 
     @Test
@@ -275,5 +308,17 @@ class TrunkedCallStartTrackerTest
         mapping.setDownlinkFrequency(frequency);
         channel.setTimeslotFrequency(mapping);
         return channel;
+    }
+
+    private static EncryptionKey encryptedKey(int algorithm, int key)
+    {
+        return new EncryptionKey(algorithm, key)
+        {
+            @Override
+            public boolean isEncrypted()
+            {
+                return true;
+            }
+        };
     }
 }

@@ -36,8 +36,11 @@ class CallAttributionTracker
         }
 
         cleanup(callStart.observedAtEpochMilliseconds());
+        boolean encrypted = callStart.encrypted() || callStart.encryptionAlgorithmId() != null ||
+            callStart.encryptionKeyId() != null;
         mActiveCalls.put(ResourceKey.from(callStart), new ActiveCall(
-            Destination.from(callStart), eligibleSource(callStart), callStart.encrypted(),
+            Destination.from(callStart), eligibleSource(callStart), encrypted,
+            callStart.encryptionAlgorithmId(), callStart.encryptionKeyId(),
             callStart.observedAtEpochMilliseconds(),
             callStart.observedAtEpochMilliseconds(), callStart.identityDomain()));
         trim();
@@ -73,7 +76,15 @@ class CallAttributionTracker
 
         boolean destinationBecameKnown = !previous.destination().isKnown() && observedDestination.isKnown();
         boolean sourceBecameKnown = previous.sourceRadioId() == null && observedSource != null;
-        boolean encryptionBecameKnown = !previous.encrypted() && continuation.encrypted();
+        boolean observedEncrypted = continuation.encrypted() || continuation.encryptionAlgorithmId() != null ||
+            continuation.encryptionKeyId() != null;
+        boolean encryptionBecameKnown = !previous.encrypted() && observedEncrypted;
+        Integer updatedEncryptionAlgorithm = firstKnown(previous.encryptionAlgorithmId(),
+            continuation.encryptionAlgorithmId());
+        Integer updatedEncryptionKey = firstKnown(previous.encryptionKeyId(), continuation.encryptionKeyId());
+        boolean encryptionDetailsBecameKnown =
+            !Objects.equals(previous.encryptionAlgorithmId(), updatedEncryptionAlgorithm) ||
+                !Objects.equals(previous.encryptionKeyId(), updatedEncryptionKey);
         Destination updatedDestination = observedDestination.isKnown() ?
             observedDestination : previous.destination();
         Integer updatedSource = previous.sourceRadioId() != null ? previous.sourceRadioId() : observedSource;
@@ -81,11 +92,13 @@ class CallAttributionTracker
             previous.identityDomain() != P25ActivityLogRecords.IdentityDomain.STANDARD ?
                 previous.identityDomain() : continuation.identityDomain();
         mActiveCalls.put(key, new ActiveCall(updatedDestination, updatedSource,
-            previous.encrypted() || continuation.encrypted(), previous.callStart(),
+            previous.encrypted() || observedEncrypted, updatedEncryptionAlgorithm, updatedEncryptionKey,
+            previous.callStart(),
             continuation.observedAtEpochMilliseconds(), updatedDomain));
         trim();
 
-        if(!destinationBecameKnown && !sourceBecameKnown && !encryptionBecameKnown)
+        if(!destinationBecameKnown && !sourceBecameKnown && !encryptionBecameKnown &&
+            !encryptionDetailsBecameKnown)
         {
             return AttributionResult.TRACKED_WITHOUT_CHANGE;
         }
@@ -94,6 +107,7 @@ class CallAttributionTracker
             continuation.contextKey(), continuation.guid(), continuation.frequencyHertz(), continuation.timeslot(),
             updatedDestination.identityId(),
             updatedDestination.kind(), updatedDestination.patchMembers(), updatedSource,
+            updatedEncryptionAlgorithm, updatedEncryptionKey,
             destinationBecameKnown, sourceBecameKnown, encryptionBecameKnown, previous.encrypted(),
             updatedDomain));
     }
@@ -178,6 +192,11 @@ class CallAttributionTracker
             source : null;
     }
 
+    private static Integer firstKnown(Integer existing, Integer observed)
+    {
+        return existing != null ? existing : observed;
+    }
+
     private record ResourceKey(String contextKey, String channel, int timeslot)
     {
         private static ResourceKey from(P25ActivityLogRecords.ActivityEvent activity)
@@ -191,6 +210,7 @@ class CallAttributionTracker
     }
 
     private record ActiveCall(Destination destination, Integer sourceRadioId, boolean encrypted,
+                              Integer encryptionAlgorithmId, Integer encryptionKeyId,
                               long callStart, long lastObservedAt,
                               P25ActivityLogRecords.IdentityDomain identityDomain)
     {

@@ -16,6 +16,7 @@ import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
+import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.event.DecodeEvent;
@@ -150,7 +151,9 @@ public class TrunkedCallStartTracker
             identifiers != null ? identifiers.getToIdentifier() : null);
         TargetIdentity source = TargetIdentity.fromSource(protocol, identityDomain,
             identifiers != null ? identifiers.getFromIdentifier() : null);
-        boolean encrypted = DecodeEventType.VOICE_CALLS_ENCRYPTED.contains(eventType);
+        EncryptionDetails observedEncryption = EncryptionDetails.from(identifiers);
+        boolean encrypted = DecodeEventType.VOICE_CALLS_ENCRYPTED.contains(eventType) ||
+            observedEncryption.isKnown();
         boolean targetChanged = previous != null && previous.target().isKnown() && target.isKnown() &&
             !previous.target().sameIdentity(target);
         boolean newCall = previous == null || targetChanged ||
@@ -163,7 +166,8 @@ public class TrunkedCallStartTracker
                 return ObservationResult.EMPTY;
             }
 
-            mObservations.put(resourceKey, new ActiveCall(target, source, encrypted, timestamp, timestamp));
+            mObservations.put(resourceKey, new ActiveCall(target, source, encrypted,
+                observedEncryption.algorithmId(), observedEncryption.keyId(), timestamp, timestamp));
             enforceMaximumSize(mObservations);
             return new ObservationResult(callStart(parentChannel, protocol, channelDescriptor, timeslot,
                 identifiers, eventType, timestamp), null);
@@ -172,23 +176,32 @@ public class TrunkedCallStartTracker
         boolean destinationBecameKnown = !previous.target().isKnown() && target.isKnown();
         boolean sourceBecameKnown = !previous.source().isKnown() && source.isKnown();
         boolean encryptionBecameKnown = !previous.encrypted() && encrypted;
+        Integer updatedEncryptionAlgorithm = firstKnown(previous.encryptionAlgorithmId(),
+            observedEncryption.algorithmId());
+        Integer updatedEncryptionKey = firstKnown(previous.encryptionKeyId(), observedEncryption.keyId());
+        boolean encryptionDetailsBecameKnown =
+            !Objects.equals(previous.encryptionAlgorithmId(), updatedEncryptionAlgorithm) ||
+                !Objects.equals(previous.encryptionKeyId(), updatedEncryptionKey);
         TargetIdentity updatedTarget = target.isKnown() ? target : previous.target();
         //The first known source owns the call attribution. Later talker changes enrich live display state but do not
         //create additional counted source identities.
         TargetIdentity updatedSource = previous.source().isKnown() ? previous.source() : source;
         IdentifierCollection mergedIdentifiers = mergedIdentifiers(identifiers, updatedTarget, updatedSource);
         mObservations.put(resourceKey, new ActiveCall(updatedTarget, updatedSource,
-            previous.encrypted() || encrypted, previous.callStartEpochMilliseconds(), timestamp));
+            previous.encrypted() || encrypted, updatedEncryptionAlgorithm, updatedEncryptionKey,
+            previous.callStartEpochMilliseconds(), timestamp));
         enforceMaximumSize(mObservations);
 
-        if(!destinationBecameKnown && !sourceBecameKnown && !encryptionBecameKnown)
+        if(!destinationBecameKnown && !sourceBecameKnown && !encryptionBecameKnown &&
+            !encryptionDetailsBecameKnown)
         {
             return ObservationResult.EMPTY;
         }
 
         return new ObservationResult(null, new TrunkedCallAttributionEvent(parentChannel, protocol,
             channelDescriptor, timeslot, previous.callStartEpochMilliseconds(), mergedIdentifiers,
-            destinationBecameKnown, sourceBecameKnown, encryptionBecameKnown, previous.encrypted()));
+            destinationBecameKnown, sourceBecameKnown, encryptionBecameKnown,
+            updatedEncryptionAlgorithm, updatedEncryptionKey, previous.encrypted()));
     }
 
     private static TrunkedCallStartEvent callStart(Channel parentChannel, Protocol protocol,
@@ -297,6 +310,7 @@ public class TrunkedCallStartTracker
         if(current != null && timestamp >= current.lastObservedAtMilliseconds())
         {
             mObservations.put(key, new ActiveCall(current.target(), current.source(), current.encrypted(),
+                current.encryptionAlgorithmId(), current.encryptionKeyId(),
                 current.callStartEpochMilliseconds(), timestamp));
         }
     }
@@ -349,6 +363,11 @@ public class TrunkedCallStartTracker
         }
     }
 
+    private static Integer firstKnown(Integer existing, Integer observed)
+    {
+        return existing != null ? existing : observed;
+    }
+
     private static TrunkedIdentityDomain identityDomain(Channel parentChannel, Protocol protocol,
                                                         IdentifierCollection identifiers)
     {
@@ -384,8 +403,33 @@ public class TrunkedCallStartTracker
     }
 
     private record ActiveCall(TargetIdentity target, TargetIdentity source, boolean encrypted,
+                              Integer encryptionAlgorithmId, Integer encryptionKeyId,
                               long callStartEpochMilliseconds, long lastObservedAtMilliseconds)
     {
+    }
+
+    private record EncryptionDetails(Integer algorithmId, Integer keyId)
+    {
+        private static final EncryptionDetails UNKNOWN = new EncryptionDetails(null, null);
+
+        private boolean isKnown()
+        {
+            return algorithmId != null || keyId != null;
+        }
+
+        private static EncryptionDetails from(IdentifierCollection identifiers)
+        {
+            Identifier identifier = identifiers != null ? identifiers.getEncryptionIdentifier() : null;
+
+            if(identifier instanceof EncryptionKeyIdentifier encryption && encryption.isEncrypted() &&
+                encryption.getValue() != null)
+            {
+                return new EncryptionDetails(encryption.getValue().getAlgorithm(),
+                    encryption.getValue().getKey());
+            }
+
+            return UNKNOWN;
+        }
     }
 
     private record TargetIdentity(Form form, String value, Identifier identifier)

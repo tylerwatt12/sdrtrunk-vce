@@ -137,6 +137,7 @@ final class P25ActivityLogRecords
                                   Long frequencyHertz, Integer timeslot,
                                   int destinationId, String destinationKind,
                                   List<Integer> patchMemberTalkgroupIds, Integer sourceRadioId,
+                                  Integer encryptionAlgorithmId, Integer encryptionKeyId,
                                   boolean destinationBecameKnown, boolean sourceBecameKnown,
                                   boolean encryptionBecameKnown, boolean encryptedBeforeObservation,
                                   IdentityDomain identityDomain)
@@ -153,11 +154,29 @@ final class P25ActivityLogRecords
                                int destinationId, String destinationKind,
                                List<Integer> patchMemberTalkgroupIds, Integer sourceRadioId,
                                boolean destinationBecameKnown, boolean sourceBecameKnown,
+                               boolean encryptionBecameKnown, boolean encryptedBeforeObservation,
+                               IdentityDomain identityDomain)
+        {
+            this(callStartEpochMilliseconds, contextKey, guid, frequencyHertz, timeslot, destinationId,
+                destinationKind, patchMemberTalkgroupIds, sourceRadioId, null, null, destinationBecameKnown,
+                sourceBecameKnown, encryptionBecameKnown, encryptedBeforeObservation, identityDomain);
+        }
+
+        TrunkedCallAttribution(long callStartEpochMilliseconds, String contextKey, String guid,
+                               Long frequencyHertz, Integer timeslot,
+                               int destinationId, String destinationKind,
+                               List<Integer> patchMemberTalkgroupIds, Integer sourceRadioId,
+                               boolean destinationBecameKnown, boolean sourceBecameKnown,
                                boolean encryptionBecameKnown, boolean encryptedBeforeObservation)
         {
             this(callStartEpochMilliseconds, contextKey, guid, frequencyHertz, timeslot, destinationId,
-                destinationKind, patchMemberTalkgroupIds, sourceRadioId, destinationBecameKnown,
+                destinationKind, patchMemberTalkgroupIds, sourceRadioId, null, null, destinationBecameKnown,
                 sourceBecameKnown, encryptionBecameKnown, encryptedBeforeObservation, IdentityDomain.STANDARD);
+        }
+
+        boolean hasEncryptionDetails()
+        {
+            return encryptionAlgorithmId != null || encryptionKeyId != null;
         }
 
         @Override

@@ -439,7 +439,7 @@ public class P25ActivityLogSchema
     {
         if(attribution == null || attribution.callStartEpochMilliseconds() <= 0 ||
             (!attribution.destinationBecameKnown() && !attribution.sourceBecameKnown() &&
-                !attribution.encryptionBecameKnown()))
+                !attribution.encryptionBecameKnown() && !attribution.hasEncryptionDetails()))
         {
             return false;
         }
@@ -573,6 +573,11 @@ public class P25ActivityLogSchema
             incrementSiteAttributionEncryption(connection, context, attribution, talkgroups, bucket);
         }
 
+        if(attribution.hasEncryptionDetails())
+        {
+            updateSiteAttributionEncryptionDetails(connection, context, attribution);
+        }
+
         TrunkedIdentitySchema.applyAttribution(connection, context.contextId(), attribution);
         enrichDetailedTrunkedCall(connection, context.contextId(), protocol, attribution);
         return true;
@@ -596,6 +601,7 @@ public class P25ActivityLogSchema
         boolean sourceKnown = attribution.sourceBecameKnown() && attribution.sourceRadioId() != null &&
             attribution.sourceRadioId() > 0;
         boolean destinationKnown = attribution.destinationBecameKnown() && attribution.destinationId() > 0;
+        boolean encryptionKnown = attribution.encryptionBecameKnown() || attribution.hasEncryptionDetails();
 
         try(PreparedStatement statement = connection.prepareStatement("""
             UPDATE p25_activity_event
@@ -611,7 +617,9 @@ public class P25ActivityLogSchema
                     WHEN ? = 1 AND target_kind_code IS NULL THEN ?
                     ELSE target_kind_code
                 END,
-                encrypted = CASE WHEN ? = 1 THEN 1 ELSE encrypted END
+                encrypted = CASE WHEN ? = 1 THEN 1 ELSE encrypted END,
+                encryption_algorithm_id = coalesce(encryption_algorithm_id, ?),
+                encryption_key_id = coalesce(encryption_key_id, ?)
             WHERE id = ?
             """))
         {
@@ -621,8 +629,10 @@ public class P25ActivityLogSchema
             setInteger(statement, 4, destinationKnown ? attribution.destinationId() : null);
             statement.setInt(5, destinationKnown ? 1 : 0);
             setInteger(statement, 6, destinationKnown ? targetKindCode(attribution.destinationKind()) : null);
-            statement.setInt(7, attribution.encryptionBecameKnown() ? 1 : 0);
-            statement.setLong(8, activityId);
+            statement.setInt(7, encryptionKnown ? 1 : 0);
+            setInteger(statement, 8, attribution.encryptionAlgorithmId());
+            setInteger(statement, 9, attribution.encryptionKeyId());
+            statement.setLong(10, activityId);
             statement.executeUpdate();
         }
 
@@ -796,6 +806,34 @@ public class P25ActivityLogSchema
                 statement.setInt(3, summaryTimeslot(attribution.timeslot()));
                 statement.executeUpdate();
             }
+        }
+    }
+
+    /**
+     * Fills encryption facts learned after call start without changing call or encrypted counters.
+     */
+    private static void updateSiteAttributionEncryptionDetails(
+        Connection connection, ReceiverContextIdentity context,
+        P25ActivityLogRecords.TrunkedCallAttribution attribution) throws SQLException
+    {
+        if(attribution.frequencyHertz() == null || attribution.frequencyHertz() <= 0)
+        {
+            return;
+        }
+
+        try(PreparedStatement statement = connection.prepareStatement("""
+            UPDATE p25_site_frequency_summary
+            SET last_encryption_algorithm_id = coalesce(last_encryption_algorithm_id, ?),
+                last_encryption_key_id = coalesce(last_encryption_key_id, ?)
+            WHERE context_id = ? AND frequency_hz = ? AND timeslot = ?
+            """))
+        {
+            setInteger(statement, 1, attribution.encryptionAlgorithmId());
+            setInteger(statement, 2, attribution.encryptionKeyId());
+            statement.setInt(3, context.contextId());
+            statement.setLong(4, attribution.frequencyHertz());
+            statement.setInt(5, summaryTimeslot(attribution.timeslot()));
+            statement.executeUpdate();
         }
     }
 

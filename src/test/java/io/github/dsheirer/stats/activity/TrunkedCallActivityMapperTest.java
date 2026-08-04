@@ -14,6 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
+import io.github.dsheirer.identifier.encryption.EncryptionKey;
 import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
 import io.github.dsheirer.module.decode.dmr.DMRChannelMode;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
@@ -221,6 +222,7 @@ class TrunkedCallActivityMapperTest
         MutableIdentifierCollection identified = new MutableIdentifierCollection();
         identified.update(DMRRadio.createFrom(101));
         identified.update(DMRTalkgroup.create(91));
+        identified.update(EncryptionKeyIdentifier.create(Protocol.DMR, encryptedKey(0x84, 101)));
         TrunkedCallStartTracker.ObservationResult enriched = tracker.observeWithAttribution(parent, Protocol.DMR,
             channel, 2, identified, DecodeEventType.CALL_GROUP_ENCRYPTED, 3_601_000L);
         TrunkedCallActivityMapper mapper = new TrunkedCallActivityMapper();
@@ -237,6 +239,8 @@ class TrunkedCallActivityMapperTest
         assertTrue(attribution.destinationBecameKnown());
         assertTrue(attribution.sourceBecameKnown());
         assertTrue(attribution.encryptionBecameKnown());
+        assertEquals(0x84, attribution.encryptionAlgorithmId());
+        assertEquals(101, attribution.encryptionKeyId());
 
         Path database = mTemporaryFolder.resolve("dmr-late-attribution.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
@@ -275,6 +279,10 @@ class TrunkedCallActivityMapperTest
                 "SELECT call_count FROM p25_site_frequency_summary WHERE frequency_hz=451012500"));
             assertEquals(1, scalar(connection,
                 "SELECT encrypted_count FROM p25_site_frequency_summary WHERE frequency_hz=451012500"));
+            assertEquals(0x84, scalar(connection,
+                "SELECT encryption_algorithm_id FROM p25_activity_event"));
+            assertEquals(101, scalar(connection,
+                "SELECT encryption_key_id FROM p25_activity_event"));
         }
     }
 
@@ -295,5 +303,17 @@ class TrunkedCallActivityMapperTest
             assertTrue(resultSet.next());
             return resultSet.getInt(1);
         }
+    }
+
+    private static EncryptionKey encryptedKey(int algorithm, int key)
+    {
+        return new EncryptionKey(algorithm, key)
+        {
+            @Override
+            public boolean isEncrypted()
+            {
+                return true;
+            }
+        };
     }
 }
