@@ -218,31 +218,7 @@ public class PacketMessage extends P25P1Message
     {
         if(mPayload == null)
         {
-            int octetCount = 0;
-
-            if(getHeader().isConfirmationRequired())
-            {
-                //Confirmed 3/4 rate encoded data blocks
-                octetCount += (16 * getHeader().getBlocksToFollowCount());
-            }
-            else
-            {
-                //Unconfirmed 1/2 rate encoded data blocks
-                octetCount += (12 * getHeader().getBlocksToFollowCount());
-            }
-
-            mPayload = new BinaryMessage(octetCount * 8);
-
-            int pointer = 0;
-
-            List<DataBlock> dataBlocks = getPDUSequence().getDataBlocks();
-
-            for(DataBlock dataBlock : dataBlocks)
-            {
-                BinaryMessage blockPayload = dataBlock.getMessage();
-                mPayload.load(pointer, blockPayload);
-                pointer += blockPayload.size();
-            }
+            mPayload = getPDUSequence().getDataBlockPayload();
         }
 
         return mPayload;

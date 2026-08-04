@@ -148,27 +148,16 @@ public enum DataUnitID
                 break;
         }
 
-        DataUnitID closest = DataUnitID.UNKNOWN;
-        int errorCount = 8;
-
         for(DataUnitID duid: VALID_VALUES)
         {
-            int mask = value ^ duid.getValueWithParity();
-            int maskErrorCount = Integer.bitCount(mask);
-
-            if(maskErrorCount < errorCount)
+            if(Integer.bitCount(value ^ duid.getValueWithParity()) == 1)
             {
-                errorCount = maskErrorCount;
-                closest = duid;
+                return duid;
             }
         }
 
-        //The encoding (8,4,4) should be able to detect up to 2 bit errors.  Anything more is ambiguous.
-        if(errorCount <= 2)
-        {
-            return closest;
-        }
-
+        //The (8,4,4) code corrects one bit. A two-bit value is equally close to multiple codewords and is
+        //ambiguous.
         return UNKNOWN;
     }
 }

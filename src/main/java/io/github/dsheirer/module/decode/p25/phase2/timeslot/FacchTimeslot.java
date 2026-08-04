@@ -250,10 +250,10 @@ public class FacchTimeslot extends AbstractSignalingTimeslot
                         binaryMessage.incrementCorrectedBitCount(Integer.bitCount((output[x] ^ input[x])));
                     }
                 }
-            }
 
-            mMacMessages = MacMessageFactory.create(getTimeslot(), getDataUnitID(), binaryMessage, getTimestamp(),
-                    MAX_OCTET_INDEX);
+                mMacMessages = MacMessageFactory.create(getTimeslot(), getDataUnitID(), binaryMessage, getTimestamp(),
+                        MAX_OCTET_INDEX);
+            }
         }
 
         return mMacMessages;

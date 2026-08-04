@@ -18,6 +18,9 @@
  */
 package io.github.dsheirer.module.decode.p25.phase1.message.pdu;
 
+import io.github.dsheirer.bits.BinaryMessage;
+import io.github.dsheirer.edac.CRC;
+import io.github.dsheirer.edac.CRCP25;
 import io.github.dsheirer.message.IBitErrorProvider;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.block.DataBlock;
 import java.util.ArrayList;
@@ -32,6 +35,7 @@ public class PDUSequence implements IBitErrorProvider
     private int mNAC;
     private PDUHeader mHeader;
     private List<DataBlock> mDataBlocks = new ArrayList<>();
+    private BinaryMessage mDataBlockPayload;
 
     public PDUSequence(PDUHeader pduHeader, long timestamp, int nac)
     {
@@ -65,6 +69,94 @@ public class PDUSequence implements IBitErrorProvider
     }
 
     /**
+     * Indicates if every received data block passed its block-level integrity check.  Confirmed data blocks carry a
+     * CRC-9; unconfirmed blocks rely on the final packet CRC-32.
+     */
+    public boolean hasValidDataBlocks()
+    {
+        for(DataBlock dataBlock : mDataBlocks)
+        {
+            if(!dataBlock.isValid())
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Indicates if this complete sequence passes all integrity checks required before its contents are parsed.
+     */
+    public boolean isValid()
+    {
+        if(!getHeader().isValid() || !isComplete() || !hasValidDataBlocks())
+        {
+            return false;
+        }
+
+        return !requiresPacketCRC() || passesPacketCRC();
+    }
+
+    /**
+     * Every PDU with data blocks carries the final four-octet packet CRC defined by TIA-102.BAAA-A section 6.3.3.
+     * This includes selective-retry response data blocks in section 6.5.  Header-only response packets do not.
+     */
+    private boolean requiresPacketCRC()
+    {
+        return getHeader().getBlocksToFollowCount() > 0;
+    }
+
+    /**
+     * Checks the final packet CRC over all data-block contents after the header.  The final 32 bits are the transmitted
+     * CRC.  Confirmed-block sequence and CRC-9 fields have already been removed by DataBlock.getMessage().
+     */
+    public boolean passesPacketCRC()
+    {
+        if(!isComplete())
+        {
+            return false;
+        }
+
+        BinaryMessage payload = getDataBlockPayload();
+
+        if(payload.size() <= 32)
+        {
+            return false;
+        }
+
+        return CRCP25.checkCRC32(payload, 0, payload.size() - 32) == CRC.PASSED;
+    }
+
+    /**
+     * Concatenated decoded data-block payload, including pad octets and the final packet CRC.
+     */
+    public BinaryMessage getDataBlockPayload()
+    {
+        if(mDataBlockPayload == null)
+        {
+            int bitCount = 0;
+
+            for(DataBlock dataBlock : mDataBlocks)
+            {
+                bitCount += dataBlock.getMessage().size();
+            }
+
+            mDataBlockPayload = new BinaryMessage(bitCount);
+            int pointer = 0;
+
+            for(DataBlock dataBlock : mDataBlocks)
+            {
+                BinaryMessage block = dataBlock.getMessage();
+                mDataBlockPayload.load(pointer, block);
+                pointer += block.size();
+            }
+        }
+
+        return mDataBlockPayload;
+    }
+
+    /**
      * Adds the deinterleaved, corrected binary message to this sequence as a datablock.  The data
      * block is decoded according to the header confirmed/unconfirmed indicator.
      *
@@ -75,6 +167,7 @@ public class PDUSequence implements IBitErrorProvider
         if(dataBlock != null)
         {
             mDataBlocks.add(dataBlock);
+            mDataBlockPayload = null;
         }
     }
 

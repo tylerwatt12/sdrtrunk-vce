@@ -101,6 +101,13 @@ public class PDUMessageFactory
      */
     public static P25P1Message create(PDUSequence pduSequence, int nac, long timestamp)
     {
+        if(!pduSequence.isValid())
+        {
+            PDUSequenceMessage invalid = new PDUSequenceMessage(pduSequence, nac, timestamp);
+            invalid.setValid(false);
+            return invalid;
+        }
+
         switch(pduSequence.getHeader().getFormat())
         {
             case ALTERNATE_MULTI_BLOCK_TRUNKING_CONTROL:
