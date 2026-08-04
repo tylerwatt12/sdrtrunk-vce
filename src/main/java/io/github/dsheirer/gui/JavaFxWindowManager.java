@@ -48,6 +48,7 @@ import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.stats.StatsWebNavigationState;
+import io.github.dsheirer.stats.StatsWebServerService;
 import java.net.URI;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
@@ -90,6 +91,7 @@ public class JavaFxWindowManager extends Application
     private UserPreferences mUserPreferences;
     private EncryptionKeyPreferenceEditor mEncryptionKeyPreferenceEditor;
     private UserPreferencesEditor mUserPreferencesEditor;
+    private volatile StatsWebServerService mStatsWebServerService;
     private MessageRecordingViewer mMessageRecordingViewer;
 
     private Stage mIconManagerStage;
@@ -125,6 +127,25 @@ public class JavaFxWindowManager extends Application
         mConfigurationManager = new ConfigurationManager(mUserPreferences, mTunerManager, aliasModel, eventLogManager, new IconModel());
         mConfigurationManager.init();
         setup();
+    }
+
+    /**
+     * Connects the preferences window to the live embedded web-server service after application startup has created
+     * it. The preferences editor is normally lazy, but an already-created editor is updated as well.
+     */
+    public void setStatsWebServerService(StatsWebServerService statsWebServerService)
+    {
+        mStatsWebServerService = statsWebServerService;
+
+        if(mUserPreferencesEditor != null)
+        {
+            execute(() -> {
+                if(mUserPreferencesEditor != null)
+                {
+                    mUserPreferencesEditor.setStatsWebServerService(statsWebServerService);
+                }
+            });
+        }
     }
 
     /**
@@ -366,7 +387,7 @@ public class JavaFxWindowManager extends Application
     {
         if(mUserPreferencesEditor == null)
         {
-            mUserPreferencesEditor = new UserPreferencesEditor(mUserPreferences);
+            mUserPreferencesEditor = new UserPreferencesEditor(mUserPreferences, mStatsWebServerService);
         }
 
         return mUserPreferencesEditor;

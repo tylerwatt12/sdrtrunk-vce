@@ -21,7 +21,9 @@ package io.github.dsheirer.gui.preference;
 
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.gui.configuration.ViewConfigurationRequest;
+import io.github.dsheirer.gui.preference.stats.WebServerPreferenceEditor;
 import io.github.dsheirer.preference.UserPreferences;
+import io.github.dsheirer.stats.StatsWebServerService;
 import java.util.EnumMap;
 import java.util.Map;
 import javafx.beans.value.ChangeListener;
@@ -52,6 +54,7 @@ public class UserPreferencesEditor extends BorderPane
 
     private Map<PreferenceEditorType,Node> mEditors = new EnumMap<>(PreferenceEditorType.class);
     private UserPreferences mUserPreferences;
+    private StatsWebServerService mStatsWebServerService;
     private MenuBar mMenuBar;
     private TreeView<Object> mEditorSelectionTreeView;
     private VBox mEditorAndButtonsBox;
@@ -65,7 +68,13 @@ public class UserPreferencesEditor extends BorderPane
      */
     public UserPreferencesEditor(UserPreferences userPreferences)
     {
+        this(userPreferences, null);
+    }
+
+    public UserPreferencesEditor(UserPreferences userPreferences, StatsWebServerService statsWebServerService)
+    {
         mUserPreferences = userPreferences;
+        mStatsWebServerService = statsWebServerService;
 
         setTop(getMenuBar());
 
@@ -73,6 +82,17 @@ public class UserPreferencesEditor extends BorderPane
         HBox.setHgrow(getEditorAndButtonsBox(), Priority.ALWAYS);
         contentBox.getChildren().addAll(getEditorSelectionTreeView(), getEditorAndButtonsBox());
         setCenter(contentBox);
+    }
+
+    public void setStatsWebServerService(StatsWebServerService statsWebServerService)
+    {
+        mStatsWebServerService = statsWebServerService;
+        Node editor = mEditors.get(PreferenceEditorType.WEB_SERVER);
+
+        if(editor instanceof WebServerPreferenceEditor webServerPreferenceEditor)
+        {
+            webServerPreferenceEditor.setStatsWebServerService(statsWebServerService);
+        }
     }
 
     /**
@@ -296,7 +316,7 @@ public class UserPreferencesEditor extends BorderPane
                 }
                 else
                 {
-                    editor = PreferenceEditorFactory.getEditor(type, getUserPreferences());
+                    editor = PreferenceEditorFactory.getEditor(type, getUserPreferences(), mStatsWebServerService);
                     mEditors.put(type, editor);
                 }
             }

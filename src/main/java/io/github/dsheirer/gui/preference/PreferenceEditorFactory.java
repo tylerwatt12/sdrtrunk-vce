@@ -34,6 +34,7 @@ import io.github.dsheirer.gui.preference.stats.StatsServerPreferenceEditor;
 import io.github.dsheirer.gui.preference.stats.WebServerPreferenceEditor;
 import io.github.dsheirer.gui.preference.tuner.TunerPreferenceEditor;
 import io.github.dsheirer.preference.UserPreferences;
+import io.github.dsheirer.stats.StatsWebServerService;
 import javafx.scene.Node;
 
 /**
@@ -46,6 +47,12 @@ public class PreferenceEditorFactory
     }
 
     public static Node getEditor(PreferenceEditorType preferenceEditorType, UserPreferences userPreferences)
+    {
+        return getEditor(preferenceEditorType, userPreferences, null);
+    }
+
+    public static Node getEditor(PreferenceEditorType preferenceEditorType, UserPreferences userPreferences,
+                                 StatsWebServerService statsWebServerService)
     {
         switch(preferenceEditorType)
         {
@@ -80,7 +87,7 @@ public class PreferenceEditorFactory
             case VECTOR_CALIBRATION:
                 return new VectorCalibrationPreferenceEditor(userPreferences);
             case WEB_SERVER:
-                return new WebServerPreferenceEditor(userPreferences);
+                return new WebServerPreferenceEditor(userPreferences, statsWebServerService);
         }
 
         return null;

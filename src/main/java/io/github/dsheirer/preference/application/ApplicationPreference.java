@@ -43,6 +43,8 @@ public class ApplicationPreference extends Preference
     private static final String PREFERENCE_KEY_STATS_WEB_SERVER_PORT = "stats.web.server.port";
     private static final String PREFERENCE_KEY_STATS_WEB_SERVER_ANY_IP_ENABLED = "stats.web.server.any.ip.enabled";
     private static final String PREFERENCE_KEY_STATS_WEB_SERVER_HTTPS_ENABLED = "stats.web.server.https.enabled";
+    private static final String PREFERENCE_KEY_STATS_WEB_SERVER_CERTIFICATE_MODE =
+        "stats.web.server.certificate.mode";
     public static final boolean DEFAULT_STATS_LOGGING_ENABLED = false;
     public static final boolean DEFAULT_STATS_DETAILED_HISTORY_ENABLED = false;
     public static final int MIN_STATS_LOGGING_RETENTION_DAYS = 1;
@@ -64,6 +66,7 @@ public class ApplicationPreference extends Preference
     private Integer mStatsWebServerPort;
     private Boolean mStatsWebServerAnyIpEnabled;
     private Boolean mStatsWebServerHttpsEnabled;
+    private WebCertificateMode mStatsWebServerCertificateMode;
     private Theme mTheme;
     private Double mGuiScale;
 
@@ -254,6 +257,20 @@ public class ApplicationPreference extends Preference
     }
 
     /**
+     * Selects whether the embedded web interface is reachable only from this computer or from other computers on
+     * connected networks. Network access always enables HTTPS; returning to local-only access returns to plain HTTP.
+     * Both values are saved before publishing one preference update so the listener is recycled only once.
+     */
+    public void setStatsWebServerNetworkAccessEnabled(boolean enabled)
+    {
+        mStatsWebServerAnyIpEnabled = enabled;
+        mStatsWebServerHttpsEnabled = enabled;
+        mPreferences.putBoolean(PREFERENCE_KEY_STATS_WEB_SERVER_ANY_IP_ENABLED, enabled);
+        mPreferences.putBoolean(PREFERENCE_KEY_STATS_WEB_SERVER_HTTPS_ENABLED, enabled);
+        notifyPreferenceUpdated();
+    }
+
+    /**
      * Indicates whether the embedded web server uses HTTPS.
      */
     public boolean isStatsWebServerHttpsEnabled()
@@ -274,6 +291,54 @@ public class ApplicationPreference extends Preference
     {
         mStatsWebServerHttpsEnabled = enabled;
         mPreferences.putBoolean(PREFERENCE_KEY_STATS_WEB_SERVER_HTTPS_ENABLED, enabled);
+        notifyPreferenceUpdated();
+    }
+
+    /**
+     * Certificate ownership mode for the embedded HTTPS listener.
+     */
+    public WebCertificateMode getStatsWebServerCertificateMode()
+    {
+        if(mStatsWebServerCertificateMode == null)
+        {
+            mStatsWebServerCertificateMode = WebCertificateMode.fromStoredValue(
+                mPreferences.get(PREFERENCE_KEY_STATS_WEB_SERVER_CERTIFICATE_MODE, null));
+        }
+
+        return mStatsWebServerCertificateMode;
+    }
+
+    /**
+     * Indicates whether this profile explicitly selected automatic or custom certificate ownership. Profiles created
+     * before certificate-mode tracking use the installed files to choose a non-destructive initial mode.
+     */
+    public boolean isStatsWebServerCertificateModeConfigured()
+    {
+        return mPreferences.get(PREFERENCE_KEY_STATS_WEB_SERVER_CERTIFICATE_MODE, null) != null;
+    }
+
+    /**
+     * Initializes certificate ownership for an older profile without publishing a listener-reload event. This is
+     * used only while preparing the listener's first secure startup.
+     */
+    public void initializeStatsWebServerCertificateMode(WebCertificateMode mode)
+    {
+        if(!isStatsWebServerCertificateModeConfigured())
+        {
+            mStatsWebServerCertificateMode = mode == null ? WebCertificateMode.AUTOMATIC : mode;
+            mPreferences.put(PREFERENCE_KEY_STATS_WEB_SERVER_CERTIFICATE_MODE,
+                mStatsWebServerCertificateMode.name());
+        }
+    }
+
+    /**
+     * Selects app-managed automatic certificate material or administrator-supplied custom material.
+     */
+    public void setStatsWebServerCertificateMode(WebCertificateMode mode)
+    {
+        mStatsWebServerCertificateMode = mode == null ? WebCertificateMode.AUTOMATIC : mode;
+        mPreferences.put(PREFERENCE_KEY_STATS_WEB_SERVER_CERTIFICATE_MODE,
+            mStatsWebServerCertificateMode.name());
         notifyPreferenceUpdated();
     }
 

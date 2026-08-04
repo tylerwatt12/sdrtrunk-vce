@@ -26,7 +26,9 @@ class StatsWebServerServiceBindAddressTest
         InetSocketAddress anyIp = StatsWebServerService.createBindAddress(8090, true);
 
         assertTrue(localOnly.getAddress().isLoopbackAddress());
+        assertEquals("127.0.0.1", localOnly.getAddress().getHostAddress());
         assertTrue(anyIp.getAddress().isAnyLocalAddress());
+        assertEquals("0.0.0.0", anyIp.getAddress().getHostAddress());
         assertEquals(8090, localOnly.getPort());
         assertEquals(8090, anyIp.getPort());
     }

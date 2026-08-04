@@ -83,7 +83,7 @@ public final class WebAccessHttpController implements AutoCloseable
         this(accessService, new WebAuthenticationService(accessService));
     }
 
-    WebAccessHttpController(WebAccessService accessService, WebAuthenticationService authenticationService)
+    public WebAccessHttpController(WebAccessService accessService, WebAuthenticationService authenticationService)
     {
         mAccessService = Objects.requireNonNull(accessService, "Web access service cannot be null");
         mAuthenticationService = Objects.requireNonNull(authenticationService,

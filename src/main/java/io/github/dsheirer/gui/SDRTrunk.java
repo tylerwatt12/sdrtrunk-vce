@@ -261,6 +261,11 @@ public class SDRTrunk implements Listener<TunerEvent>
 
         mStatsWebServerService = new StatsWebServerService(mUserPreferences,
             mConfigurationManager.getChannelProcessingManager(), mP25ActivityLogService);
+
+        if(mJavaFxWindowManager != null)
+        {
+            mJavaFxWindowManager.setStatsWebServerService(mStatsWebServerService);
+        }
         mControlChannelQualityRegistry = new ControlChannelQualityRegistry();
         mAudioCallCoordinator = new AudioCallCoordinator(mUserPreferences, mAudioPlaybackManager,
             mAudioRecordingManager,

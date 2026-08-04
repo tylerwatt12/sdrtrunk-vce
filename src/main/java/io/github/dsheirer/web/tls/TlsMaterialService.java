@@ -25,12 +25,15 @@ import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.PosixFilePermission;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.security.GeneralSecurityException;
+import java.security.Key;
 import java.security.KeyFactory;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
+import java.security.KeyStore;
 import java.security.PrivateKey;
 import java.security.SecureRandom;
 import java.security.Signature;
+import java.security.cert.Certificate;
 import java.security.cert.CertificateException;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
@@ -87,12 +90,18 @@ public final class TlsMaterialService
 {
     static final int MAXIMUM_CERTIFICATE_PEM_BYTES = 256 * 1024;
     static final int MAXIMUM_PRIVATE_KEY_PEM_BYTES = 64 * 1024;
+    static final int MAXIMUM_PKCS12_BYTES = 512 * 1024;
+    static final int MAXIMUM_PKCS12_ENTRY_COUNT = 64;
+    static final int MAXIMUM_PKCS12_PASSWORD_CHARACTERS = 1_024;
     static final int MAXIMUM_CERTIFICATE_COUNT = 8;
     static final int MAXIMUM_SAN_COUNT = 32;
     static final int MAXIMUM_SAN_CHARACTERS = 253;
     private static final int RSA_KEY_BITS = 2_048;
     private static final Duration SELF_SIGNED_VALIDITY = Duration.ofDays(365);
     private static final Duration SELF_SIGNED_CLOCK_SKEW = Duration.ofMinutes(5);
+    private static final String TLS_SERVER_AUTHENTICATION_OID = KeyPurposeId.id_kp_serverAuth.getId();
+    private static final int KEY_USAGE_DIGITAL_SIGNATURE = 0;
+    private static final int KEY_USAGE_CERTIFICATE_SIGNING = 5;
     private static final byte[] KEY_MATCH_CHALLENGE =
         "sdrtrunk-vce TLS private key validation".getBytes(StandardCharsets.US_ASCII);
     private static final Pattern CERTIFICATE_PATTERN = pemPattern("CERTIFICATE");
@@ -177,9 +186,10 @@ public final class TlsMaterialService
     }
 
     /**
-     * Imports a locally selected certificate PEM chain and matching unencrypted PKCS#8 private-key PEM.
+     * Reads and validates a locally selected certificate PEM chain and matching unencrypted PKCS#8 private-key PEM
+     * without changing the managed files.
      */
-    public synchronized TlsMaterial importPem(Path selectedCertificatePem, Path selectedPrivateKeyPem)
+    public synchronized TlsMaterial validatePem(Path selectedCertificatePem, Path selectedPrivateKeyPem)
         throws TlsMaterialException
     {
         byte[] certificatePem = readBounded(selectedCertificatePem, MAXIMUM_CERTIFICATE_PEM_BYTES,
@@ -189,14 +199,82 @@ public final class TlsMaterialService
 
         try
         {
-            TlsMaterial material = parseAndValidate(certificatePem, privateKeyPem);
-            install(material);
-            return material;
+            return parseAndValidate(certificatePem, privateKeyPem);
         }
         finally
         {
             Arrays.fill(privateKeyPem, (byte)0);
         }
+    }
+
+    /**
+     * Imports a locally selected certificate PEM chain and matching unencrypted PKCS#8 private-key PEM.
+     */
+    public synchronized TlsMaterial importPem(Path selectedCertificatePem, Path selectedPrivateKeyPem)
+        throws TlsMaterialException
+    {
+        return install(validatePem(selectedCertificatePem, selectedPrivateKeyPem));
+    }
+
+    /**
+     * Reads and validates a bounded PKCS#12/PFX bundle without changing the managed files. The bundle must contain
+     * exactly one private-key entry with an X.509 certificate chain. This method consumes and clears the supplied
+     * password array, including when validation fails.
+     */
+    public synchronized TlsMaterial validatePkcs12(Path selectedPkcs12, char[] password)
+        throws TlsMaterialException
+    {
+        if(password == null)
+        {
+            throw new TlsMaterialException("PKCS#12 password cannot be null");
+        }
+
+        char[] workingPassword = Arrays.copyOf(password, password.length);
+        Arrays.fill(password, '\0');
+        byte[] pkcs12 = null;
+
+        try
+        {
+            if(workingPassword.length > MAXIMUM_PKCS12_PASSWORD_CHARACTERS)
+            {
+                throw new TlsMaterialException("PKCS#12 password exceeds the maximum allowed length");
+            }
+
+            pkcs12 = readBounded(selectedPkcs12, MAXIMUM_PKCS12_BYTES, "Selected PKCS#12 TLS bundle");
+            return parseAndValidatePkcs12(pkcs12, workingPassword);
+        }
+        finally
+        {
+            Arrays.fill(workingPassword, '\0');
+
+            if(pkcs12 != null)
+            {
+                Arrays.fill(pkcs12, (byte)0);
+            }
+        }
+    }
+
+    /**
+     * Imports a bounded PKCS#12/PFX bundle. The password handling contract is the same as
+     * {@link #validatePkcs12(Path, char[])}.
+     */
+    public synchronized TlsMaterial importPkcs12(Path selectedPkcs12, char[] password)
+        throws TlsMaterialException
+    {
+        return install(validatePkcs12(selectedPkcs12, password));
+    }
+
+    /**
+     * Revalidates and atomically installs the supplied in-memory material. This supports a safe UI preview flow: the
+     * selected files are read once by a validate method, and only that returned material is installed after
+     * confirmation.
+     */
+    public synchronized TlsMaterial install(TlsMaterial material) throws TlsMaterialException
+    {
+        TlsMaterial selected = Objects.requireNonNull(material, "TLS material cannot be null");
+        validate(selected.certificateChain(), selected.privateKey());
+        installValidated(selected);
+        return selected;
     }
 
     /**
@@ -259,7 +337,7 @@ public final class TlsMaterialService
             X509CertificateHolder holder = builder.build(signer);
             X509Certificate certificate = new JcaX509CertificateConverter().getCertificate(holder);
             TlsMaterial material = validate(List.of(certificate), keyPair.getPrivate());
-            install(material);
+            installValidated(material);
             return material;
         }
         catch(GeneralSecurityException | IOException | OperatorCreationException exception)
@@ -290,6 +368,84 @@ public final class TlsMaterialService
         finally
         {
             privateKeyBlocks.forEach(block -> Arrays.fill(block, (byte)0));
+        }
+    }
+
+    private TlsMaterial parseAndValidatePkcs12(byte[] pkcs12, char[] password) throws TlsMaterialException
+    {
+        try
+        {
+            KeyStore keyStore = KeyStore.getInstance("PKCS12");
+
+            try(ByteArrayInputStream input = new ByteArrayInputStream(pkcs12))
+            {
+                keyStore.load(input, password);
+            }
+
+            int entryCount = 0;
+            int keyEntryCount = 0;
+            String keyAlias = null;
+            var aliases = keyStore.aliases();
+
+            while(aliases.hasMoreElements())
+            {
+                String alias = aliases.nextElement();
+                entryCount++;
+
+                if(entryCount > MAXIMUM_PKCS12_ENTRY_COUNT)
+                {
+                    throw new TlsMaterialException("PKCS#12 TLS bundle exceeds the allowed entry count");
+                }
+
+                if(keyStore.isKeyEntry(alias))
+                {
+                    keyEntryCount++;
+                    keyAlias = alias;
+                }
+            }
+
+            if(keyEntryCount != 1)
+            {
+                throw new TlsMaterialException("PKCS#12 TLS bundle must contain exactly one private-key entry");
+            }
+
+            Key key = keyStore.getKey(keyAlias, password);
+
+            if(!(key instanceof PrivateKey privateKey))
+            {
+                throw new TlsMaterialException("PKCS#12 TLS key entry does not contain a private key");
+            }
+
+            Certificate[] chain = keyStore.getCertificateChain(keyAlias);
+
+            if(chain == null || chain.length < 1 || chain.length > MAXIMUM_CERTIFICATE_COUNT)
+            {
+                throw new TlsMaterialException("PKCS#12 TLS certificate chain must contain between 1 and " +
+                    MAXIMUM_CERTIFICATE_COUNT + " certificates");
+            }
+
+            List<X509Certificate> certificates = new ArrayList<>(chain.length);
+
+            for(Certificate certificate: chain)
+            {
+                if(!(certificate instanceof X509Certificate x509Certificate))
+                {
+                    throw new TlsMaterialException("PKCS#12 TLS bundle contains a non-X.509 certificate");
+                }
+
+                certificates.add(x509Certificate);
+            }
+
+            return validate(certificates, privateKey);
+        }
+        catch(TlsMaterialException exception)
+        {
+            throw exception;
+        }
+        catch(GeneralSecurityException | IOException exception)
+        {
+            throw new TlsMaterialException(
+                "Unable to read the PKCS#12 TLS bundle or unlock it with the supplied password", exception);
         }
     }
 
@@ -368,6 +524,13 @@ public final class TlsMaterialService
                 certificate.checkValidity(now);
             }
 
+            validateLeafCertificatePurpose(certificates.getFirst());
+
+            for(int index = 1; index < certificates.size(); index++)
+            {
+                validateIssuerCertificatePurpose(certificates.get(index));
+            }
+
             for(int index = 0; index < certificates.size() - 1; index++)
             {
                 X509Certificate certificate = certificates.get(index);
@@ -389,6 +552,56 @@ public final class TlsMaterialService
         {
             throw new TlsMaterialException("TLS certificate chain validation failed", exception);
         }
+    }
+
+    private static void validateLeafCertificatePurpose(X509Certificate leaf)
+        throws GeneralSecurityException, TlsMaterialException
+    {
+        if(leaf.getBasicConstraints() >= 0)
+        {
+            throw new TlsMaterialException("TLS leaf certificate cannot be a certificate authority");
+        }
+
+        List<String> extendedKeyUsage = leaf.getExtendedKeyUsage();
+
+        if(extendedKeyUsage != null && !extendedKeyUsage.contains(TLS_SERVER_AUTHENTICATION_OID))
+        {
+            throw new TlsMaterialException("TLS leaf certificate is not valid for server authentication");
+        }
+
+        boolean[] keyUsage = leaf.getKeyUsage();
+
+        if(keyUsage == null)
+        {
+            return;
+        }
+
+        supportedKeyAlgorithm(leaf.getPublicKey().getAlgorithm());
+
+        if(!hasKeyUsage(keyUsage, KEY_USAGE_DIGITAL_SIGNATURE))
+        {
+            throw new TlsMaterialException("TLS leaf certificate is not permitted to create server signatures");
+        }
+    }
+
+    private static void validateIssuerCertificatePurpose(X509Certificate issuer) throws TlsMaterialException
+    {
+        if(issuer.getBasicConstraints() < 0)
+        {
+            throw new TlsMaterialException("TLS issuer certificate is not a certificate authority");
+        }
+
+        boolean[] keyUsage = issuer.getKeyUsage();
+
+        if(keyUsage != null && !hasKeyUsage(keyUsage, KEY_USAGE_CERTIFICATE_SIGNING))
+        {
+            throw new TlsMaterialException("TLS issuer certificate is not permitted to sign certificates");
+        }
+    }
+
+    private static boolean hasKeyUsage(boolean[] keyUsage, int index)
+    {
+        return index >= 0 && index < keyUsage.length && keyUsage[index];
     }
 
     private static void validateKeyMatch(X509Certificate leaf, PrivateKey privateKey)
@@ -439,19 +652,42 @@ public final class TlsMaterialService
         };
     }
 
-    private void install(TlsMaterial material) throws TlsMaterialException
+    private void installValidated(TlsMaterial material) throws TlsMaterialException
     {
         byte[] certificatePem;
         byte[] privateKeyPem;
+        byte[] privateKeyDer = material.privateKey().getEncoded();
+
+        if(privateKeyDer == null || privateKeyDer.length == 0)
+        {
+            throw new TlsMaterialException("TLS private key cannot be encoded for managed PEM storage");
+        }
+
+        if(privateKeyDer.length > MAXIMUM_PRIVATE_KEY_PEM_BYTES)
+        {
+            Arrays.fill(privateKeyDer, (byte)0);
+            throw new TlsMaterialException("TLS private key exceeds the managed PEM size limit");
+        }
 
         try
         {
             certificatePem = encodeCertificatePem(material.certificateChain());
-            privateKeyPem = encodePem("PRIVATE KEY", material.privateKey().getEncoded());
+            privateKeyPem = encodePem("PRIVATE KEY", privateKeyDer);
         }
         catch(GeneralSecurityException exception)
         {
             throw new TlsMaterialException("Unable to encode validated TLS material", exception);
+        }
+        finally
+        {
+            Arrays.fill(privateKeyDer, (byte)0);
+        }
+
+        if(certificatePem.length > MAXIMUM_CERTIFICATE_PEM_BYTES ||
+            privateKeyPem.length > MAXIMUM_PRIVATE_KEY_PEM_BYTES)
+        {
+            Arrays.fill(privateKeyPem, (byte)0);
+            throw new TlsMaterialException("Validated TLS material exceeds the managed PEM size limits");
         }
 
         boolean commitStarted = false;
