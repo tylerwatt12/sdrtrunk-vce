@@ -1941,6 +1941,64 @@ class P25ActivityLogWriterTest
     }
 
     @Test
+    void fillsLateEncryptionDetailsWithoutIncreasingCallOrEncryptionCounts() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("p25-late-encryption-details.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        String guid = "123e4567-e89b-12d3-a456-426614174000";
+        P25ActivityLogRecords.ActivityEvent encryptedCall = new P25ActivityLogRecords.ActivityEvent(
+            1_000L, "GUID:" + guid, guid, P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "APCO25",
+            P25ActivityLogRecords.Action.CALL, "CALL_GROUP_ENCRYPTED", "1811524", "56138", "TALKGROUP",
+            List.of(), 854_187_500L, "00-0509", 1, true, null, null, 0xBEE00, 0x348, 0x348, 2, 1,
+            "Example Site", "P25_PHASE1", null, true, null, null);
+        P25ActivityLogRecords.TrunkedCallAttribution details =
+            new P25ActivityLogRecords.TrunkedCallAttribution(1_000L, "GUID:" + guid, guid,
+                854_187_500L, 1, 56138, "TALKGROUP", List.of(), 1811524, 0x84, 101,
+                false, false, false, true, P25ActivityLogRecords.IdentityDomain.STANDARD);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            P25ActivityLogSchema.insertSite(connection, siteSnapshot(500L));
+            P25ActivityLogSchema.recordActivity(connection, encryptedCall, true);
+            assertTrue(P25ActivityLogSchema.applyTrunkedCallAttribution(connection, details));
+
+            assertEquals(0x84L, scalarLong(connection,
+                "SELECT encryption_algorithm_id FROM p25_activity_event"));
+            assertEquals(101L, scalarLong(connection,
+                "SELECT encryption_key_id FROM p25_activity_event"));
+            assertEquals(0x84L, scalarLong(connection,
+                "SELECT last_encryption_algorithm_id FROM p25_site_frequency_summary"));
+            assertEquals(101L, scalarLong(connection,
+                "SELECT last_encryption_key_id FROM p25_site_frequency_summary"));
+            assertEquals(2L, scalarLong(connection,
+                "SELECT COUNT(*) FROM trunked_identity_summary WHERE last_encryption_algorithm_id = 132"));
+            assertEquals(2L, scalarLong(connection,
+                "SELECT COUNT(*) FROM trunked_identity_summary WHERE last_encryption_key_id = 101"));
+            assertEquals(0x84L, scalarLong(connection,
+                "SELECT last_encryption_algorithm_id FROM trunked_radio_talkgroup_summary"));
+            assertEquals(101L, scalarLong(connection,
+                "SELECT last_encryption_key_id FROM trunked_radio_talkgroup_summary"));
+
+            assertEquals(1L, scalarLong(connection,
+                "SELECT call_count FROM p25_site_activity_bucket"));
+            assertEquals(1L, scalarLong(connection,
+                "SELECT encrypted_count FROM p25_site_activity_bucket"));
+            assertEquals(1L, scalarLong(connection,
+                "SELECT call_count FROM p25_site_frequency_summary"));
+            assertEquals(1L, scalarLong(connection,
+                "SELECT encrypted_count FROM p25_site_frequency_summary"));
+            assertEquals(2L, scalarLong(connection,
+                "SELECT SUM(call_count) FROM trunked_identity_summary"));
+            assertEquals(2L, scalarLong(connection,
+                "SELECT SUM(encrypted_count) FROM trunked_identity_summary"));
+            assertEquals(1L, scalarLong(connection,
+                "SELECT call_count FROM trunked_radio_talkgroup_summary"));
+            assertEquals(1L, scalarLong(connection,
+                "SELECT encrypted_count FROM trunked_radio_talkgroup_summary"));
+        }
+    }
+
+    @Test
     void lateP25PatchAttributionLinksRetainedActivityToEachValidMemberTalkgroup() throws Exception
     {
         Path database = mTemporaryFolder.resolve("p25-late-patch-attribution.sqlite");

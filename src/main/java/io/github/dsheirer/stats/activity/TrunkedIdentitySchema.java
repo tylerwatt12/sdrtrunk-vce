@@ -435,33 +435,38 @@ final class TrunkedIdentitySchema
             }
         }
 
-        if(attribution.encryptionBecameKnown())
+        if(attribution.encryptionBecameKnown() || attribution.hasEncryptionDetails())
         {
+            int newlyEncrypted = attribution.encryptionBecameKnown() ? 1 : 0;
+
             for(Identity destination: destinations)
             {
                 upsertIdentity(connection, scope.scopeId(), destination,
-                    attribution.callStartEpochMilliseconds(), null, false, false, false, 1, 0, 0,
+                    attribution.callStartEpochMilliseconds(), null, false, false, false, newlyEncrypted, 0, 0,
                     validSource ? new Identity(TrunkedIdentityPolicy.IDENTITY_KIND_RADIO, source) : null,
-                    null, null, null, null);
+                    attribution.encryptionAlgorithmId(), attribution.encryptionKeyId(), null, null);
             }
 
             if(validSource)
             {
                 upsertIdentity(connection, scope.scopeId(),
                     new Identity(TrunkedIdentityPolicy.IDENTITY_KIND_RADIO, source),
-                    attribution.callStartEpochMilliseconds(), null, false, false, false, 1, 0, 0,
-                    destinations.isEmpty() ? null : destinations.get(0), null, null, null, null);
+                    attribution.callStartEpochMilliseconds(), null, false, false, false, newlyEncrypted, 0, 0,
+                    destinations.isEmpty() ? null : destinations.get(0), attribution.encryptionAlgorithmId(),
+                    attribution.encryptionKeyId(), null, null);
 
                 for(Identity destination: groupDestinations(destinations))
                 {
                     upsertRelationship(connection, scope.scopeId(), source, destination,
-                        attribution.callStartEpochMilliseconds(), null, false, 1, 0, 0, null, null);
+                        attribution.callStartEpochMilliseconds(), null, false, newlyEncrypted, 0, 0,
+                        attribution.encryptionAlgorithmId(), attribution.encryptionKeyId());
                 }
             }
         }
 
         return attribution.destinationBecameKnown() && !destinations.isEmpty() ||
-            attribution.sourceBecameKnown() && validSource || attribution.encryptionBecameKnown();
+            attribution.sourceBecameKnown() && validSource || attribution.encryptionBecameKnown() ||
+            attribution.hasEncryptionDetails() && (!destinations.isEmpty() || validSource);
     }
 
     static boolean updateTalkerAlias(Connection connection, int contextId, int radioId, String talkerAlias,

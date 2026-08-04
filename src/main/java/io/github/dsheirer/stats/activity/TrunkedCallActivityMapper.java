@@ -108,7 +108,8 @@ class TrunkedCallActivityMapper
         if(attribution == null || attribution.channel() == null || attribution.protocol() == null ||
             attribution.callStartEpochMilliseconds() <= 0 ||
             (!attribution.destinationBecameKnown() && !attribution.sourceBecameKnown() &&
-                !attribution.encryptionBecameKnown()))
+                !attribution.encryptionBecameKnown() && attribution.encryptionAlgorithmId() == null &&
+                attribution.encryptionKeyId() == null))
         {
             return null;
         }
@@ -144,7 +145,8 @@ class TrunkedCallActivityMapper
             attribution.callStartEpochMilliseconds(), contextKey, guid,
             frequency, attribution.timeslot(),
             destinationId != null ? destinationId : 0, destinationKind, patchMemberTalkgroups(target),
-            sourceRadio, attribution.destinationBecameKnown(), attribution.sourceBecameKnown(),
+            sourceRadio, attribution.encryptionAlgorithmId(), attribution.encryptionKeyId(),
+            attribution.destinationBecameKnown(), attribution.sourceBecameKnown(),
             attribution.encryptionBecameKnown(), attribution.encryptedBeforeObservation(),
             identityDomain(channel, identifiers));
     }

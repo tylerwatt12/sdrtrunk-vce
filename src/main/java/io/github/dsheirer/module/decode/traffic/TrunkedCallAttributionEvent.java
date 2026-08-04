@@ -25,6 +25,8 @@ public record TrunkedCallAttributionEvent(Channel channel, Protocol protocol,
                                           boolean destinationBecameKnown,
                                           boolean sourceBecameKnown,
                                           boolean encryptionBecameKnown,
+                                          Integer encryptionAlgorithmId,
+                                          Integer encryptionKeyId,
                                           boolean encryptedBeforeObservation)
 {
     public TrunkedCallAttributionEvent
@@ -36,5 +38,16 @@ public record TrunkedCallAttributionEvent(Channel channel, Protocol protocol,
         {
             identifiers.setTimeslot(timeslot);
         }
+    }
+
+    public TrunkedCallAttributionEvent(Channel channel, Protocol protocol,
+                                       IChannelDescriptor channelDescriptor, Integer timeslot,
+                                       long callStartEpochMilliseconds, IdentifierCollection identifiers,
+                                       boolean destinationBecameKnown, boolean sourceBecameKnown,
+                                       boolean encryptionBecameKnown, boolean encryptedBeforeObservation)
+    {
+        this(channel, protocol, channelDescriptor, timeslot, callStartEpochMilliseconds, identifiers,
+            destinationBecameKnown, sourceBecameKnown, encryptionBecameKnown, null, null,
+            encryptedBeforeObservation);
     }
 }
