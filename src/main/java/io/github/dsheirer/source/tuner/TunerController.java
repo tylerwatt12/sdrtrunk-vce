@@ -25,6 +25,7 @@ import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.record.RecorderFactory;
 import io.github.dsheirer.record.wave.IRecordingStatusListener;
 import io.github.dsheirer.record.wave.NativeBufferWaveRecorder;
+import io.github.dsheirer.record.wave.RecordingStatusBroadcaster;
 import io.github.dsheirer.sample.Broadcaster;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.source.ISourceEventListener;
@@ -61,6 +62,7 @@ public abstract class TunerController implements Tunable, ISourceEventProcessor,
     private double mUsableBandwidthPercentage;
     private SourceEventListenerToProcessorAdapter mSourceEventListener;
     private NativeBufferWaveRecorder mRecorder;
+    private final RecordingStatusBroadcaster mRecordingStatusBroadcaster = new RecordingStatusBroadcaster();
     private ITunerErrorListener mTunerErrorListener;
     private volatile boolean mCenterFrequencyLocked;
     private static final DecimalFormat FREQUENCY_ERROR_PPM_FORMAT = new DecimalFormat("0.000");
@@ -121,6 +123,7 @@ public abstract class TunerController implements Tunable, ISourceEventProcessor,
     protected void dispose()
     {
         getTunerFrequencyErrorManager().dispose();
+        mRecordingStatusBroadcaster.dispose();
         mNativeBufferBroadcaster.clear();
         mFrequencyController.dispose();
         mSourceEventListener.dispose();
@@ -776,9 +779,13 @@ public abstract class TunerController implements Tunable, ISourceEventProcessor,
      */
     public void startRecorder(UserPreferences userPreferences, IRecordingStatusListener statusListener, String prefix)
     {
+        addRecordingStatusListener(statusListener);
+
         if(!isRecording())
         {
-            mRecorder = RecorderFactory.getTunerRecorder(prefix + "_" + getFrequency(), userPreferences, statusListener);
+            mRecordingStatusBroadcaster.clearStatus();
+            mRecorder = RecorderFactory.getTunerRecorder(prefix + "_" + getFrequency(), userPreferences,
+                    mRecordingStatusBroadcaster);
             mRecorder.setSampleRate((float)getSampleRate());
             mRecorder.start();
             addBufferListener(mRecorder);
@@ -795,7 +802,24 @@ public abstract class TunerController implements Tunable, ISourceEventProcessor,
             removeBufferListener(mRecorder);
             mRecorder.stop();
             mRecorder = null;
+            mRecordingStatusBroadcaster.clearStatus();
         }
+    }
+
+    /**
+     * Adds a listener for wideband recording status.  If a recording is active, the latest status is replayed.
+     */
+    public void addRecordingStatusListener(IRecordingStatusListener listener)
+    {
+        mRecordingStatusBroadcaster.addListener(listener);
+    }
+
+    /**
+     * Removes a listener for wideband recording status without stopping the recording.
+     */
+    public void removeRecordingStatusListener(IRecordingStatusListener listener)
+    {
+        mRecordingStatusBroadcaster.removeListener(listener);
     }
 
     /**
