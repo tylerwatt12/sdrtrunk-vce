@@ -85,6 +85,7 @@ public abstract class TunerEditor<T extends Tuner,C extends TunerConfiguration> 
     private JButton mNewSpectrumButton;
     private JButton mRestartTunerButton;
     private JToggleButton mRecordButton;
+    private final RecordingStatusListener mRecordingStatusListener = new RecordingStatusListener();
     private ButtonPanel mButtonsPanel;
     private FrequencyPanel mFrequencyPanel;
     private JLabel mTunerIdLabel;
@@ -124,6 +125,7 @@ public abstract class TunerEditor<T extends Tuner,C extends TunerConfiguration> 
             if(mDiscoveredTuner.hasTuner())
             {
                 mDiscoveredTuner.getTuner().addTunerEventListener(this);
+                mDiscoveredTuner.getTuner().getTunerController().addRecordingStatusListener(mRecordingStatusListener);
 
                 if(!mDiscoveredTuner.hasTunerConfiguration())
                 {
@@ -694,17 +696,6 @@ public abstract class TunerEditor<T extends Tuner,C extends TunerConfiguration> 
     }
 
     /**
-     * Turns off the recorder, if it's currently recording.
-     */
-    protected void turnOffRecorder()
-    {
-        if(getRecordButton().isSelected())
-        {
-            getRecordButton().setSelected(false);
-        }
-    }
-
-    /**
      * Records the tuner's wide-band sample stream.
      */
     protected JToggleButton getRecordButton()
@@ -722,12 +713,14 @@ public abstract class TunerEditor<T extends Tuner,C extends TunerConfiguration> 
                     {
                         getRecordingStatusLabel().setVisible(true);
                         getRecordingStatusLabel().setText(" ");
-                        getTuner().getTunerController().startRecorder(mUserPreferences, new RecordingStatusListener(),
+                        getTuner().getTunerController().startRecorder(mUserPreferences, mRecordingStatusListener,
                                 getDiscoveredTuner().getTunerClass().name());
                     }
                     else
                     {
                         getTuner().getTunerController().stopRecorder();
+                        getRecordingStatusLabel().setText(" ");
+                        getRecordingStatusLabel().setVisible(false);
                     }
                 }
             });
@@ -785,6 +778,7 @@ public abstract class TunerEditor<T extends Tuner,C extends TunerConfiguration> 
             if(current == TunerStatus.ENABLED && hasTuner())
             {
                 getTuner().addTunerEventListener(this);
+                getTuner().getTunerController().addRecordingStatusListener(mRecordingStatusListener);
             }
         });
     }
@@ -808,8 +802,6 @@ public abstract class TunerEditor<T extends Tuner,C extends TunerConfiguration> 
      */
     public void dispose()
     {
-        turnOffRecorder();
-
         getFrequencyControl().clearListeners();
         getFrequencyCorrectionSpinner().removeChangeListener(mFrequencyAndCorrectionChangeListener);
 
@@ -820,6 +812,7 @@ public abstract class TunerEditor<T extends Tuner,C extends TunerConfiguration> 
             if(mDiscoveredTuner.hasTuner())
             {
                 mDiscoveredTuner.getTuner().removeTunerEventListener(this);
+                mDiscoveredTuner.getTuner().getTunerController().removeRecordingStatusListener(mRecordingStatusListener);
             }
         }
     }
@@ -889,9 +882,17 @@ public abstract class TunerEditor<T extends Tuner,C extends TunerConfiguration> 
         public void updateControls()
         {
             TunerStatus tunerStatus = getDiscoveredTuner().getTunerStatus();
+            boolean recording = getDiscoveredTuner().hasTuner() &&
+                    getDiscoveredTuner().getTuner().getTunerController().isRecording();
 
             getRecordButton().setEnabled(tunerStatus.isAvailable() && getDiscoveredTuner().hasTuner());
-            getRecordingStatusLabel().setText(" ");
+            getRecordButton().setSelected(recording);
+            getRecordingStatusLabel().setVisible(recording);
+
+            if(!recording)
+            {
+                getRecordingStatusLabel().setText(" ");
+            }
             getViewSpectrumButton().setEnabled(tunerStatus.isAvailable() && getDiscoveredTuner().hasTuner());
             getNewSpectrumButton().setEnabled(tunerStatus.isAvailable() && getDiscoveredTuner().hasTuner());
             getRestartTunerButton().setVisible(tunerStatus == TunerStatus.ERROR);
@@ -1019,7 +1020,21 @@ public abstract class TunerEditor<T extends Tuner,C extends TunerConfiguration> 
             sb.append("Recording Size: ").append(humanReadableByteCount(size));
             sb.append(" File #").append(fileCount).append(": ").append(file);
             final String status = sb.toString();
-            EventQueue.invokeLater(() -> getRecordingStatusLabel().setText(status));
+            EventQueue.invokeLater(() ->
+            {
+                if(hasTuner() && getTuner().getTunerController().isRecording())
+                {
+                    getRecordButton().setSelected(true);
+                    getRecordingStatusLabel().setText(status);
+                    getRecordingStatusLabel().setVisible(true);
+                }
+                else
+                {
+                    getRecordButton().setSelected(false);
+                    getRecordingStatusLabel().setText(" ");
+                    getRecordingStatusLabel().setVisible(false);
+                }
+            });
         }
 
         public static String humanReadableByteCount(long bytes) {
