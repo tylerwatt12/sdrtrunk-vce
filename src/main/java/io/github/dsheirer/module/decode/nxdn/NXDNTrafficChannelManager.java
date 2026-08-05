@@ -63,6 +63,7 @@ import io.github.dsheirer.module.decode.traffic.TrunkedCallStartEvent;
 import io.github.dsheirer.module.decode.traffic.TrunkedCallStartTracker;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 import io.github.dsheirer.module.decode.traffic.TrunkedTalkerAliasEvent;
+import io.github.dsheirer.preference.encryption.VoiceEncryptionDisplay;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.source.config.SourceConfigTuner;
@@ -687,7 +688,8 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
 
                 if(encryption.isEncrypted())
                 {
-                    tracker.addDetails(encryption + " TIMER:" + callTimer + " " + audioCodec + " " + mode);
+                    tracker.addDetails(VoiceEncryptionDisplay.format(encryption) + " TIMER:" + callTimer + " " +
+                        audioCodec + " " + mode);
                 }
                 else
                 {

@@ -184,6 +184,7 @@ import io.github.dsheirer.module.decode.p25.reference.Direction;
 import io.github.dsheirer.module.decode.p25.reference.ServiceOptions;
 import io.github.dsheirer.module.decode.p25.reference.Response;
 import io.github.dsheirer.module.decode.p25.reference.VoiceServiceOptions;
+import io.github.dsheirer.preference.encryption.VoiceEncryptionDisplay;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.util.PacketUtil;
@@ -808,7 +809,9 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                 case OSP_ADJACENT_STATUS_BROADCAST_UNCOORDINATED_BAND_PLAN:
                     if(ambtc instanceof AMBTCProtectionParameterBroadcast ppb)
                     {
-                        broadcastEvent(ambtc, DecodeEventType.RESPONSE, "USE ENCRYPTION " + ppb.getEncryptionKey() +
+                        String encryptionDetails = VoiceEncryptionDisplay.format(ppb.getEncryptionKey());
+                        broadcastEvent(ambtc, DecodeEventType.RESPONSE, "USE ENCRYPTION " +
+                                (encryptionDetails != null ? encryptionDetails : ppb.getEncryptionKey()) +
                                 " OUTBOUND MI:" + ppb.getOutboundMessageIndicator() +
                                 " INBOUND MI:" + ppb.getInboundMessageIndicator());
                     }

@@ -25,6 +25,8 @@ import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.dmr.identifier.DMRTalkgroup;
 import io.github.dsheirer.module.decode.dmr.message.data.lc.LCOpcode;
 import io.github.dsheirer.module.decode.dmr.message.type.EncryptionAlgorithm;
+import io.github.dsheirer.preference.encryption.VoiceEncryptionDisplay;
+import io.github.dsheirer.protocol.Protocol;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -115,8 +117,8 @@ public class EncryptionParameters extends FullLCMessage
     public String getDetails()
     {
         StringBuilder sb = new StringBuilder();
-        sb.append("ENCRYPTION ALGORITHM:").append(getAlgorithm());
-        sb.append(" KEY:").append(getKeyId());
+        int algorithm = getAlgorithm() == EncryptionAlgorithm.UNKNOWN ? getOpcodeValue() : getAlgorithm().getValue();
+        sb.append("ENCRYPTION ").append(VoiceEncryptionDisplay.format(Protocol.DMR, algorithm, getKeyId()));
         sb.append(" IV:").append(getInitializationVector());
         sb.append(" VENDOR:").append(getVendor());
         return sb.toString();

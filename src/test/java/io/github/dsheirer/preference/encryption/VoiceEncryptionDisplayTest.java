@@ -75,6 +75,8 @@ class VoiceEncryptionDisplayTest
     @Test
     void formatsRawAndIdentifierDetails()
     {
+        assertEquals("BEEF", VoiceEncryptionDisplay.formatKeyId(0xBEEF));
+        assertNull(VoiceEncryptionDisplay.formatKeyId(null));
         assertEquals("AES256 K:65", VoiceEncryptionDisplay.format(Protocol.APCO25_PHASE2, 0x84, 0x65));
         assertEquals("AES-256 K:65", VoiceEncryptionDisplay.formatFull(Protocol.APCO25, 0x84, 0x65));
 

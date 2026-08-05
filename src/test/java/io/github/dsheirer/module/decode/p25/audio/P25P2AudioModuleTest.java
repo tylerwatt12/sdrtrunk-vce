@@ -26,6 +26,7 @@ import io.github.dsheirer.controller.channel.Channel.ChannelType;
 import io.github.dsheirer.identifier.IdentifierUpdateNotification;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.patch.PatchGroupManager;
+import io.github.dsheirer.module.decode.event.IDecodeEvent;
 import io.github.dsheirer.module.decode.p25.P25TrafficChannelManager;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25Nac;
 import io.github.dsheirer.module.decode.p25.identifier.channel.StandardChannel;
@@ -122,6 +123,28 @@ class P25P2AudioModuleTest
     }
 
     @Test
+    void encryptedPushToTalkDisplaysHexKeyIdInDecodeEvent()
+    {
+        int source = 1_880_997;
+        int group = 56_132;
+        P25TrafficChannelManager manager = new P25TrafficChannelManager(new Channel("Parent"));
+        List<IDecodeEvent> events = new ArrayList<>();
+        manager.addDecodeEventListener(events::add);
+        Channel traffic = new Channel("Traffic", ChannelType.TRAFFIC);
+        traffic.setDecodeConfiguration(new DecodeConfigP25Phase2());
+        P25P2DecoderState decoderState = new P25P2DecoderState(traffic, TIMESLOT, manager,
+            new PatchGroupManager());
+        decoderState.setCurrentFrequency(FREQUENCY);
+        MacMessage message = encryptedPushToTalk(1_000L, 0x84, 0xBEEF, source, group);
+
+        decoderState.receive(message);
+
+        assertEquals("AES256 K:BEEF", events.getLast().getDetails());
+        PushToTalk pushToTalk = (PushToTalk)message.getMacStructure();
+        assertEquals("ENCRYPTION:AES-256 KEY:48879", pushToTalk.getEncryptionKey().toString());
+    }
+
+    @Test
     void repeatedEndPushToTalkDoesNotCompleteAnotherCall()
     {
         mAudioModule.receive(pushToTalk(1_000L));
@@ -181,6 +204,16 @@ class P25P2AudioModuleTest
     {
         CorrectedBinaryMessage bits = messageBits(1);
         bits.setInt(0x80, IntField.length8(80)); //Unencrypted
+        return new MacMessage(TIMESLOT, DataUnitID.UNSCRAMBLED_FACCH, bits, timestamp, new PushToTalk(bits));
+    }
+
+    private static MacMessage encryptedPushToTalk(long timestamp, int algorithm, int keyId, int source, int group)
+    {
+        CorrectedBinaryMessage bits = messageBits(1);
+        bits.setInt(algorithm, IntField.length8(80));
+        bits.setInt(keyId, IntField.length16(88));
+        bits.setInt(source, SOURCE);
+        bits.setInt(group, GROUP);
         return new MacMessage(TIMESLOT, DataUnitID.UNSCRAMBLED_FACCH, bits, timestamp, new PushToTalk(bits));
     }
 

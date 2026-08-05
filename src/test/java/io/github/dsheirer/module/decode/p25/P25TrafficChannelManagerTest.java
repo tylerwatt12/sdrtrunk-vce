@@ -16,22 +16,25 @@ import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.alias.P25TalkerAliasIdentifier;
+import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.message.TimeslotMessage;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
-import io.github.dsheirer.module.decode.p25.phase1.message.IFrequencyBand;
-import io.github.dsheirer.module.decode.p25.phase1.message.P25FrequencyBand;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25System;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25Wacn;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
 import io.github.dsheirer.module.decode.p25.identifier.channel.StandardChannel;
+import io.github.dsheirer.module.decode.p25.identifier.encryption.APCO25EncryptionKey;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
+import io.github.dsheirer.module.decode.p25.phase1.message.IFrequencyBand;
+import io.github.dsheirer.module.decode.p25.phase1.message.P25FrequencyBand;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.Opcode;
 import io.github.dsheirer.module.decode.p25.reference.VoiceServiceOptions;
 import io.github.dsheirer.module.decode.traffic.TrunkedTalkerAliasEvent;
+import io.github.dsheirer.protocol.Protocol;
 import java.lang.reflect.Field;
 import java.util.List;
 import java.util.Map;
@@ -49,6 +52,25 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class P25TrafficChannelManagerTest
 {
+    @Test
+    void displaysEncryptionKeyIdAsHexadecimalInEventDetails() throws Exception
+    {
+        long frequency = 851_012_500L;
+        P25TrafficChannelManager manager = new P25TrafficChannelManager(new Channel("Control"));
+        P25ChannelGrantEvent event = P25ChannelGrantEvent.builder(DecodeEventType.CALL_GROUP_ENCRYPTED, 1_000L,
+                VoiceServiceOptions.createEncrypted())
+            .details("PHASE 1 CALL")
+            .identifiers(identifiers(1201, null))
+            .build();
+        trafficTrackers(manager).put(frequency, new P25TrafficChannelEventTracker(event));
+        EncryptionKeyIdentifier encryptionKey = EncryptionKeyIdentifier.create(Protocol.APCO25,
+            APCO25EncryptionKey.create(0x84, 0x65));
+
+        manager.processP1TrafficCurrentUser(frequency, encryptionKey, 1_100L);
+
+        assertEquals("PHASE 1 CALL AES256 K:65", event.getDetails());
+    }
+
     @Test
     void publishesOneCallStartForEachConventionalTrafficCall()
     {
