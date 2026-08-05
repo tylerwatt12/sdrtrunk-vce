@@ -78,6 +78,7 @@ import io.github.dsheirer.module.decode.traffic.TrafficChannelManager;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityEligibility;
 import io.github.dsheirer.module.decode.traffic.TrunkedTalkerAliasEvent;
+import io.github.dsheirer.preference.encryption.VoiceEncryptionDisplay;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.source.config.SourceConfigTuner;
@@ -1322,7 +1323,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                     P25EncryptionConfirmationTracker.observe(tracker.getEvent(), eki, timestamp);
                     P25EncryptionRepeatDiagnostic.observe(P25EncryptionRepeatDiagnostic.Phase.PHASE_1,
                         P25EncryptionRepeatDiagnostic.ObservationSource.LDU2, tracker.getEvent(), eki, timestamp);
-                    tracker.addDetailsIfMissing(eki.toString());
+                    tracker.addDetailsIfMissing(VoiceEncryptionDisplay.format(eki));
                 }
 
                 tracker.updateDurationTraffic(timestamp);
@@ -1511,7 +1512,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                     //Add the encryption key to the call event details.
                     if(identifier instanceof EncryptionKeyIdentifier eki && eki.isEncrypted())
                     {
-                        tracker.addDetailsIfMissing(eki.toString());
+                        tracker.addDetailsIfMissing(VoiceEncryptionDisplay.format(eki));
                     }
                 }
 
@@ -1532,7 +1533,8 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                             VoiceServiceOptions.createUnencrypted());
                     P25ChannelGrantEvent callEvent = P25ChannelGrantEvent.builder(decodeEventType, timestamp, serviceOptions)
                             .channelDescriptor(channelDescriptor)
-                            .details(PHASE_1_CALL_DETAILS + (eki.isEncrypted() ? eki.toString() : ""))
+                            .details(PHASE_1_CALL_DETAILS +
+                                (eki.isEncrypted() ? VoiceEncryptionDisplay.format(eki) : ""))
                             .identifiers(mic)
                             .build();
 

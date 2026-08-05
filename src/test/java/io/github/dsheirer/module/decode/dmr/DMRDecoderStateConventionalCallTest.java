@@ -20,6 +20,7 @@ import io.github.dsheirer.channel.state.DecoderStateEvent.Event;
 import io.github.dsheirer.channel.state.State;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.Channel.ChannelType;
+import io.github.dsheirer.edac.CRCDMR;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.integer.IntegerIdentifier;
@@ -29,11 +30,15 @@ import io.github.dsheirer.module.decode.dmr.channel.DMRLsn;
 import io.github.dsheirer.module.decode.dmr.event.DMRDecodeEvent;
 import io.github.dsheirer.module.decode.dmr.identifier.DMRRadio;
 import io.github.dsheirer.module.decode.dmr.identifier.DMRTalkgroup;
+import io.github.dsheirer.module.decode.dmr.message.data.lc.LCMessage;
+import io.github.dsheirer.module.decode.dmr.message.data.lc.full.EncryptionParameters;
 import io.github.dsheirer.module.decode.dmr.message.data.lc.full.GroupVoiceChannelUser;
 import io.github.dsheirer.module.decode.dmr.message.data.terminator.Terminator;
+import io.github.dsheirer.module.decode.dmr.message.voice.embedded.EmbeddedEncryptionParameters;
 import io.github.dsheirer.module.decode.dmr.sync.DMRSyncPattern;
 import io.github.dsheirer.module.decode.event.DecodeEvent;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
+import io.github.dsheirer.module.decode.event.IDecodeEvent;
 import java.lang.reflect.Method;
 import java.util.List;
 import java.util.Map;
@@ -44,6 +49,44 @@ import org.junit.jupiter.api.Test;
 
 class DMRDecoderStateConventionalCallTest
 {
+    @Test
+    void embeddedEncryptionUsesHexKeyIdInEventDetails() throws ReflectiveOperationException
+    {
+        DMRDecoderState state = new DMRDecoderState(
+            channel(DMRChannelMode.CONVENTIONAL, ChannelType.STANDARD), 1, null);
+        List<IDecodeEvent> events = new CopyOnWriteArrayList<>();
+        state.addDecodeEventListener(events::add);
+        CorrectedBinaryMessage bits = new CorrectedBinaryMessage(11);
+        bits.load(0, 8, 0xAB);
+        bits.load(8, 3, 5);
+        EmbeddedEncryptionParameters parameters = new EmbeddedEncryptionParameters(bits);
+
+        updateEncryptedCall(state, parameters, 1_000L);
+
+        assertEquals(1, events.size());
+        assertEquals("ENCRYPTION AES256 K:AB", events.getFirst().getDetails());
+        assertEquals("ENCRYPTION ALGORITHM:DMRA AES256 KEY:171", parameters.toString());
+    }
+
+    @Test
+    void fullEncryptionUsesHexKeyIdInEventDetails() throws ReflectiveOperationException
+    {
+        DMRDecoderState state = new DMRDecoderState(
+            channel(DMRChannelMode.CONVENTIONAL, ChannelType.STANDARD), 1, null);
+        DecodeEvent call = DMRDecodeEvent.builder(DecodeEventType.CALL_GROUP, 1_000L).timeslot(1).build();
+        state.setCurrentCallEvent(call);
+        CorrectedBinaryMessage bits = new CorrectedBinaryMessage(96);
+        bits.load(2, 6, 0x25);
+        bits.load(16, 8, 0xAB);
+        bits.load(80, 16, CRCDMR.calculateResidual(bits, 0, 80) ^ 0x9696);
+        EncryptionParameters parameters = new EncryptionParameters(bits, 1_100L, 1);
+
+        processLinkControl(state, parameters);
+
+        assertEquals("ENCRYPTION AES256 K:AB IV:00000000 VENDOR:STANDARD", call.getDetails());
+        assertTrue(parameters.toString().contains(" KEY:171 "));
+    }
+
     @Test
     void publishesOneImmutableCompletionForConventionalCall()
     {
@@ -283,6 +326,24 @@ class DMRDecoderStateConventionalCallTest
         Method method = DMRDecoderState.class.getDeclaredMethod("processTerminator", Terminator.class);
         method.setAccessible(true);
         method.invoke(state, terminator);
+    }
+
+    private static void updateEncryptedCall(DMRDecoderState state, EmbeddedEncryptionParameters parameters,
+                                            long timestamp) throws ReflectiveOperationException
+    {
+        Method method = DMRDecoderState.class.getDeclaredMethod("updateEncryptedCall",
+            EmbeddedEncryptionParameters.class, boolean.class, long.class);
+        method.setAccessible(true);
+        method.invoke(state, parameters, true, timestamp);
+    }
+
+    private static void processLinkControl(DMRDecoderState state, LCMessage message)
+        throws ReflectiveOperationException
+    {
+        Method method = DMRDecoderState.class.getDeclaredMethod("processLinkControl", LCMessage.class,
+            boolean.class);
+        method.setAccessible(true);
+        method.invoke(state, message, false);
     }
 
     private static Channel channel(DMRChannelMode mode, ChannelType type)

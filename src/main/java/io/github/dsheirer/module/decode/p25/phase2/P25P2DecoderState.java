@@ -141,6 +141,7 @@ import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.motorol
 import io.github.dsheirer.module.decode.p25.phase2.timeslot.AbstractVoiceTimeslot;
 import io.github.dsheirer.module.decode.p25.phase2.timeslot.DatchTimeslot;
 import io.github.dsheirer.module.decode.p25.reference.VoiceServiceOptions;
+import io.github.dsheirer.preference.encryption.VoiceEncryptionDisplay;
 import io.github.dsheirer.protocol.Protocol;
 import java.util.Collections;
 import java.util.List;
@@ -1257,7 +1258,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
             //First TCM call creates the tracked event and second call starts the call and updates the duration
             mTrafficChannelManager.processP2TrafficCurrentUser(getCurrentFrequency(), getTimeslot(), getCurrentChannel(), vso,
                     mac.getOpcode(), getIdentifierCollection().copyOf(), message.getTimestamp(),
-                    ptt.isEncrypted() ? ptt.getEncryptionKey().toString() : null);
+                    ptt.isEncrypted() ? VoiceEncryptionDisplay.format(ptt.getEncryptionKey()) : null);
 
             mTrafficChannelManager.processP2TrafficVoice(getCurrentFrequency(), getTimeslot(), message.getTimestamp());
 

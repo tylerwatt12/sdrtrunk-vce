@@ -153,6 +153,16 @@ public final class VoiceEncryptionDisplay
         return VoiceEncryptionAlgorithm.getFullLabel(protocol, algorithm);
     }
 
+    /**
+     * Formats a key identifier using the uppercase, unpadded hexadecimal convention used by activity displays.
+     *
+     * @return formatted key identifier, or null when no key is available
+     */
+    public static String formatKeyId(Integer key)
+    {
+        return key != null ? Integer.toHexString(key).toUpperCase() : null;
+    }
+
     private static String withKey(String algorithm, Integer key)
     {
         if(ENCRYPTED.equals(algorithm) || key == null)
@@ -160,6 +170,6 @@ public final class VoiceEncryptionDisplay
             return algorithm;
         }
 
-        return algorithm + " K:" + Integer.toHexString(key).toUpperCase();
+        return algorithm + " K:" + formatKeyId(key);
     }
 }

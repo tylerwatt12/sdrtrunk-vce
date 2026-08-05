@@ -108,6 +108,7 @@ import io.github.dsheirer.module.decode.ip.mototrbo.ars.ARSPacket;
 import io.github.dsheirer.module.decode.ip.mototrbo.lrrp.LRRPPacket;
 import io.github.dsheirer.module.decode.ip.mototrbo.tms.TMSPacket;
 import io.github.dsheirer.module.decode.ip.mototrbo.xcmp.XCMPPacket;
+import io.github.dsheirer.preference.encryption.VoiceEncryptionDisplay;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.source.tuner.channel.rotation.AddChannelRotationActiveStateRequest;
 import io.github.dsheirer.util.PacketUtil;
@@ -481,7 +482,7 @@ public class DMRDecoderState extends TimeslotDecoderState
             {
                 HyteraDataEncryptionHeader hdeh = (HyteraDataEncryptionHeader)hsdp.getPacketSequence().getProprietaryDataHeader();
                 sb.append(" ENCRYPTED ALGORITHM:").append(hdeh.getAlgorithm());
-                sb.append(" KEY:").append(hdeh.getKeyId());
+                sb.append(" KEY:").append(VoiceEncryptionDisplay.formatKeyId(hdeh.getKeyId()));
                 sb.append(" IV:").append(hdeh.getIV());
             }
 
@@ -1409,14 +1410,15 @@ public class DMRDecoderState extends TimeslotDecoderState
             mCurrentCallEvent.setDecodeEventType(encryptedCallType(
                 mCurrentCallEvent.getEventType(), isGroup));
             String details = mCurrentCallEvent.getDetails();
+            String encryptionDetails = embeddedEncryptionParameters.getEventDetails();
 
             if(details == null)
             {
-                details = embeddedEncryptionParameters.toString();
+                details = encryptionDetails;
             }
-            else if(!details.contains(embeddedEncryptionParameters.toString()) && !details.contains("ENCRYPTION"))
+            else if(!details.contains(encryptionDetails) && !details.contains("ENCRYPTION"))
             {
-                details += " " + embeddedEncryptionParameters;
+                details += " " + encryptionDetails;
             }
 
             mCurrentCallEvent.setDetails(details);
@@ -1429,7 +1431,7 @@ public class DMRDecoderState extends TimeslotDecoderState
             mCurrentCallEvent = DMRDecodeEvent.builder(isGroup ? DecodeEventType.CALL_GROUP_ENCRYPTED :
                             DecodeEventType.CALL_ENCRYPTED, timestamp)
                     .channel(getCurrentChannel())
-                    .details(embeddedEncryptionParameters.toString())
+                    .details(embeddedEncryptionParameters.getEventDetails())
                     .identifiers(getIdentifierCollection().copyOf())
                     .timeslot(getTimeslot())
                     .build();

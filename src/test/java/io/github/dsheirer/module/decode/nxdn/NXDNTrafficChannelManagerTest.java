@@ -17,15 +17,16 @@ import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
-import io.github.dsheirer.module.decode.nxdn.layer2.LICH;
-import io.github.dsheirer.module.decode.nxdn.channel.NXDNChannel;
+import io.github.dsheirer.module.decode.event.IDecodeEvent;
 import io.github.dsheirer.module.decode.nxdn.channel.ChannelFrequency;
+import io.github.dsheirer.module.decode.nxdn.channel.NXDNChannel;
 import io.github.dsheirer.module.decode.nxdn.channel.NXDNChannelFake;
 import io.github.dsheirer.module.decode.nxdn.channel.NXDNChannelLookup;
 import io.github.dsheirer.module.decode.nxdn.identifier.NXDNEncryptionKey;
 import io.github.dsheirer.module.decode.nxdn.identifier.NXDNRadioIdentifier;
 import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkerAliasIdentifier;
 import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkgroupIdentifier;
+import io.github.dsheirer.module.decode.nxdn.layer2.LICH;
 import io.github.dsheirer.module.decode.nxdn.layer3.NXDNMessageType;
 import io.github.dsheirer.module.decode.nxdn.layer3.call.VoiceCallAssignment;
 import io.github.dsheirer.module.decode.nxdn.layer3.type.CallTimer;
@@ -46,6 +47,27 @@ import org.junit.jupiter.api.Test;
 
 class NXDNTrafficChannelManagerTest
 {
+    @Test
+    void displaysEncryptionKeyIdAsHexadecimalInEventDetails()
+    {
+        Channel parent = new Channel("NXDN Site", Channel.ChannelType.STANDARD);
+        DecodeConfigNXDN config = new DecodeConfigNXDN();
+        config.setTrafficChannelPoolSize(1);
+        parent.setDecodeConfiguration(config);
+        NXDNTrafficChannelManager manager = new NXDNTrafficChannelManager(parent);
+        List<IDecodeEvent> events = new CopyOnWriteArrayList<>();
+        manager.addDecodeEventListener(events::add);
+        EncryptionKeyIdentifier encryption = EncryptionKeyIdentifier.create(Protocol.NXDN,
+            NXDNEncryptionKey.create(0x03, 0x2A));
+
+        manager.processVoiceCall(identifiers(101, 91, encryption), channel(452_012_500L),
+            CallType.GROUP_BROADCAST, encryption, 1_000L, new VoiceCallOption(0), CallTimer.UNSPECIFIED);
+
+        assertEquals(1, events.size());
+        assertEquals("AES256 K:2A TIMER:UNSPECIFIED AMBE+ HALF-RATE 4800", events.getFirst().getDetails());
+        assertEquals("AES KEY:42", encryption.toString());
+    }
+
     @Test
     void conventionalModeDoesNotCreateOrUseTrafficPool() throws Exception
     {

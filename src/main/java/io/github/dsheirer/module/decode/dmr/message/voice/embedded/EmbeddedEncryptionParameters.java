@@ -22,6 +22,8 @@ package io.github.dsheirer.module.decode.dmr.message.voice.embedded;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.module.decode.dmr.message.type.EncryptionAlgorithm;
+import io.github.dsheirer.preference.encryption.VoiceEncryptionDisplay;
+import io.github.dsheirer.protocol.Protocol;
 
 /**
  * Encryption parameters short burst payload.
@@ -74,6 +76,16 @@ public class EmbeddedEncryptionParameters extends ShortBurst
             case 5 -> EncryptionAlgorithm.DMRA_AES256;
             default -> EncryptionAlgorithm.UNKNOWN;
         };
+    }
+
+    /**
+     * User-facing encryption details for a decode event.  Raw message diagnostics retain the protocol-specific
+     * {@link #toString()} representation.
+     */
+    public String getEventDetails()
+    {
+        int algorithm = getAlgorithm() == EncryptionAlgorithm.UNKNOWN ? getAlgorithmValue() : getAlgorithm().getValue();
+        return "ENCRYPTION " + VoiceEncryptionDisplay.format(Protocol.DMR, algorithm, getKey());
     }
 
     @Override
