@@ -33,6 +33,9 @@ import java.util.List;
 
 public class TDULCMessage extends P25P1Message implements IFrequencyBandReceiver
 {
+    private static final int GOLAY_CODEWORD_LENGTH = 24;
+    private static final int GOLAY_CODEWORD_COUNT = 12;
+    private static final int GOLAY_PROTECTED_LENGTH = GOLAY_CODEWORD_LENGTH * GOLAY_CODEWORD_COUNT;
     private static final int[] LC_HEX_0 = {0, 1, 2, 3, 4, 5};
     private static final int[] LC_HEX_1 = {6, 7, 8, 9, 10, 11};
     private static final int[] LC_HEX_2 = {24, 25, 26, 27, 28, 29};
@@ -104,11 +107,12 @@ public class TDULCMessage extends P25P1Message implements IFrequencyBandReceiver
     {
         //Check the Golay codewords
         int codewordPointer = 0;
+        int golayLength = Math.min(getMessage().size(), GOLAY_PROTECTED_LENGTH);
 
-        while(codewordPointer < getMessage().size())
+        while(codewordPointer + GOLAY_CODEWORD_LENGTH <= golayLength)
         {
             Golay24.checkAndCorrect(getMessage(), codewordPointer);
-            codewordPointer += 24;
+            codewordPointer += GOLAY_CODEWORD_LENGTH;
         }
 
         //Check the Reed-Solomon parity bits. The RS decoder expects the link control data and reed solomon parity hex
@@ -161,7 +165,9 @@ public class TDULCMessage extends P25P1Message implements IFrequencyBandReceiver
         }
 
         mLinkControlWord = LinkControlWordFactory.create(binaryMessage, getTimestamp(), true);
-        mLinkControlWord.setValid(!irrecoverableErrors);
+        //A false or early sync can produce a shortened TDULC candidate. Never trust Reed-Solomon output assembled
+        //from missing Golay codewords, even if the zero-filled symbols happen to form a valid outer codeword.
+        mLinkControlWord.setValid(!irrecoverableErrors && getMessage().size() >= GOLAY_PROTECTED_LENGTH);
 
         //If we corrected any bit errors, update the original message with the bit error count
         for(int x = 0; x < 23; x++)
