@@ -22,6 +22,9 @@ import io.github.dsheirer.controller.channel.Channel.ChannelType;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.config.DecodeConfiguration;
 import io.github.dsheirer.module.decode.p25.phase1.message.P25P1Message;
+import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.Opcode;
+import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.TSBKMessage;
+import io.github.dsheirer.module.decode.p25.reference.Direction;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -79,10 +82,45 @@ class P25P1DecoderStateControlValidityTest
         P25P1DecoderState decoderState = new P25P1DecoderState(channel, null);
         List<DecoderStateEvent> events = new ArrayList<>();
         decoderState.setDecoderStateListener(events::add);
+
+        if(configuration instanceof DecodeConfigP25Phase1)
+        {
+            decoderState.receive(new NACAuthorityMessage(997L));
+            decoderState.receive(new NACAuthorityMessage(998L));
+            decoderState.receive(new NACAuthorityMessage(999L));
+            events.clear();
+        }
+
         TestMessage message = new TestMessage(dataUnit);
         message.setValid(valid);
         decoderState.receive(message);
         return events;
+    }
+
+    private static class NACAuthorityMessage extends TSBKMessage
+    {
+        private NACAuthorityMessage(long timestamp)
+        {
+            super(P25P1DataUnitID.TRUNKING_SIGNALING_BLOCK_1, new CorrectedBinaryMessage(96), 0x123, timestamp);
+        }
+
+        @Override
+        public Direction getDirection()
+        {
+            return Direction.OUTBOUND;
+        }
+
+        @Override
+        public Opcode getOpcode()
+        {
+            return Opcode.OSP_UNKNOWN;
+        }
+
+        @Override
+        public List<Identifier> getIdentifiers()
+        {
+            return List.of();
+        }
     }
 
     private static class TestMessage extends P25P1Message

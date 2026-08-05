@@ -92,6 +92,8 @@ public class P25P1DemodulatorC4FM
     private int mBufferPointer;
     private int mBufferReloadThreshold;
     private int mSymbolsSinceLastSync = 0;
+    private int mExpectedNAC = P25P1NIDValidator.NO_EXPECTED_NAC;
+    private boolean mRequireValidNID;
 
     /**
      * Constructs an instance
@@ -109,6 +111,55 @@ public class P25P1DemodulatorC4FM
     public void resetPLL()
     {
         mEqualizer.reset();
+    }
+
+    /**
+     * Clears source-specific synchronization and adaptive NAC history while retaining a fixed expected traffic NAC.
+     */
+    void resetForSourceFrequencyChange()
+    {
+        mNACTracker.reset();
+        mSyncDetector.reset();
+        mSyncDetectorLagging.reset();
+        mFineSync = false;
+        mSymbolsSinceLastSync = 0;
+        resetPLL();
+    }
+
+    /**
+     * Pins the early C4FM NID validator to the concrete NAC supplied by the controlling channel.
+     */
+    void setExpectedNAC(int expectedNAC)
+    {
+        if(!P25P1NACPreloadDataContent.isConcreteNAC(expectedNAC))
+        {
+            throw new IllegalArgumentException("Expected P25 Phase 1 traffic NAC must be a concrete 12-bit value");
+        }
+
+        mExpectedNAC = expectedNAC;
+        mNACTracker.reset();
+    }
+
+    /**
+     * Expected NAC or -1 when this decoder is operating in ordinary discovery mode.
+     */
+    int getExpectedNAC()
+    {
+        return mExpectedNAC;
+    }
+
+    /**
+     * Requires the early timing path to validate the received BCH codeword without tracked-NAC substitution.
+     */
+    void setRequireValidNID(boolean requireValidNID)
+    {
+        mRequireValidNID = requireValidNID;
+        mNACTracker.reset();
+    }
+
+    private boolean hasExpectedNAC()
+    {
+        return mExpectedNAC != P25P1NIDValidator.NO_EXPECTED_NAC;
     }
 
     /**
@@ -371,8 +422,26 @@ public class P25P1DemodulatorC4FM
             pointer += mSamplesPerSymbol;
         }
 
-        int trackedNAC = mNACTracker.getTrackedNAC();
-        mBCHDecoder.decode(candidateNID, trackedNAC);
+        decodeNID(candidateNID, correction);
+    }
+
+    /**
+     * Decodes and validates a captured NID for the early C4FM timing correction path. Package access supports
+     * deterministic protocol tests without synthetic RF samples.
+     */
+    void decodeNID(CorrectedBinaryMessage candidateNID, Correction correction)
+    {
+        boolean strictNID = hasExpectedNAC() || mRequireValidNID;
+        int trackedNAC = strictNID ? NACTracker.NO_TRACKED_NAC : mNACTracker.getTrackedNAC();
+
+        if(strictNID)
+        {
+            mBCHDecoder.decode(candidateNID);
+        }
+        else
+        {
+            mBCHDecoder.decode(candidateNID, trackedNAC);
+        }
 
         //If error correction fails, return the original correction candidate
         if(candidateNID.getCorrectedBitCount() < 0)
@@ -384,18 +453,42 @@ public class P25P1DemodulatorC4FM
         int nac = candidateNID.getInt(NAC_FIELD);
         P25P1DataUnitID duid = P25P1DataUnitID.fromValue(candidateNID.getInt(DUID_FIELD));
 
-        //The BCH decoder can over-correct the NID and produce an invalid NAC.  Compare it against the tracked NID to
-        //flag it as invalid NID when this happens.  The NAC tracker will give us a value of 0 until it has enough
-        //observations of a valid NID value.
-        mNACTracker.track(nac);
+        if(mRequireValidNID && duid == P25P1DataUnitID.UNKNOWN)
+        {
+            return;
+        }
 
-        if(trackedNAC > 0 && trackedNAC != nac)
+        int correctedBitCount;
+
+        if(hasExpectedNAC())
+        {
+            correctedBitCount = P25P1NIDValidator.validateExpectedNAC(candidateNID, mExpectedNAC);
+        }
+        else
+        {
+            correctedBitCount = P25P1NIDValidator.validate(candidateNID);
+
+            if(correctedBitCount < 0)
+            {
+                return;
+            }
+
+            //The BCH decoder can over-correct the NID and produce an invalid NAC. Compare it against the tracked NID.
+            mNACTracker.track(nac);
+
+            if(trackedNAC != NACTracker.NO_TRACKED_NAC && trackedNAC != nac)
+            {
+                return;
+            }
+        }
+
+        if(correctedBitCount < 0)
         {
             return;
         }
 
         correction.setNID(nac, duid);
-        correction.addCorrectedBitCount(candidateNID.getCorrectedBitCount());
+        correction.addCorrectedBitCount(correctedBitCount);
     }
 
     /**

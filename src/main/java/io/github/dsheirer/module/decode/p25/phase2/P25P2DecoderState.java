@@ -52,7 +52,9 @@ import io.github.dsheirer.module.decode.p25.IServiceOptionsProvider;
 import io.github.dsheirer.module.decode.p25.P25AffiliationEvent;
 import io.github.dsheirer.module.decode.p25.P25DecodeEvent;
 import io.github.dsheirer.module.decode.p25.P25FrequencyBandValidator;
+import io.github.dsheirer.module.decode.p25.P25NACAuthority;
 import io.github.dsheirer.module.decode.p25.P25TrafficChannelManager;
+import io.github.dsheirer.module.decode.p25.identifier.APCO25Nac;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshotProvider;
@@ -238,10 +240,16 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
      * Performs a full reset to prepare this object for reuse on a new channel
      */
     @Override
-    public void reset()
+    public synchronized void reset()
     {
         super.reset();
         resetState();
+        clearControlNAC();
+
+        if(mChannel.isStandardChannel())
+        {
+            mTrafficChannelManager.resetControlSourceState();
+        }
     }
 
     /**
@@ -281,10 +289,16 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
      * Primary message processing method.
      */
     @Override
-    public void receive(IMessage message)
+    public synchronized void receive(IMessage message)
     {
         if(message.isValid() && message.getTimeslot() == getTimeslot())
         {
+            if(mChannel.isStandardChannel() && !(message instanceof MacMessage) &&
+                !mTrafficChannelManager.isP2ControlNACGateOpen())
+            {
+                return;
+            }
+
             if(message instanceof MacMessage macMessage)
             {
                 processMacMessage(macMessage);
@@ -345,6 +359,33 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
      */
     private void processMacMessage(MacMessage message)
     {
+        if(mChannel.isTrafficChannel() && message.getDataUnitID().isLCCH())
+        {
+            return;
+        }
+
+        if(mChannel.isStandardChannel() && message.getDataUnitID().isLCCH())
+        {
+            getIdentifierCollection().remove(IdentifierClass.NETWORK, Form.NETWORK_ACCESS_CODE, Role.BROADCAST);
+            int nac = mTrafficChannelManager.observeP2ControlNAC(message);
+
+            if(nac != P25NACAuthority.NO_NAC)
+            {
+                getIdentifierCollection().update(APCO25Nac.create(nac));
+            }
+            else
+            {
+                //A valid LCCH keeps the control channel active while authority is being confirmed, but no payload
+                //from an unconfirmed or foreign NAC can change band plans or allocate traffic channels.
+                continueState(State.CONTROL);
+                return;
+            }
+        }
+        else if(mChannel.isStandardChannel() && !mTrafficChannelManager.isP2ControlNACGateOpen())
+        {
+            return;
+        }
+
         MacPduType macPduType = message.getMacPduType();
 
         if(macPduType == MacPduType.MAC_0_SIGNAL)
@@ -845,6 +886,11 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
      */
     private void processChannelGrant(MacMessage message, MacStructure mac)
     {
+        if(mChannel.isStandardChannel() && !message.getDataUnitID().isLCCH())
+        {
+            return;
+        }
+
         //TODO: will we ever see a channel grant on a non-control channel?
         MacPduType grantPduType = message.getMacPduType();
         if(grantPduType == MacPduType.MAC_3_IDLE || grantPduType == MacPduType.MAC_6_HANGTIME)
@@ -884,6 +930,11 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
      */
     private void processChannelGrantUpdate(MacMessage message, MacStructure mac)
     {
+        if(mChannel.isStandardChannel() && !message.getDataUnitID().isLCCH())
+        {
+            return;
+        }
+
         // MAC_3_IDLE and MAC_6_HANGTIME on a traffic channel do not mean the call has ended — the
         // infrastructure signals these on one timeslot while voice is active on the other.  Downgrading
         // to ACTIVE here would squelch the audio module and clear encrypted-call-established state.
@@ -1454,7 +1505,8 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
         }
 
         //Send the frequency bands to the traffic channel manager to use for traffic channel preload data
-        if(mac instanceof IFrequencyBand frequencyBand)
+        if(mChannel.isStandardChannel() && message.getDataUnitID().isLCCH() &&
+            mac instanceof IFrequencyBand frequencyBand)
         {
             mTrafficChannelManager.processFrequencyBand(frequencyBand);
         }
@@ -1970,7 +2022,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
     }
 
     @Override
-    public void receiveDecoderStateEvent(DecoderStateEvent event)
+    public synchronized void receiveDecoderStateEvent(DecoderStateEvent event)
     {
         if(event.getTimeslot() == getTimeslot())
         {
@@ -1986,6 +2038,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                     //Notify the TCM that our control frequency has changed.
                     if(mChannel.isStandardChannel())
                     {
+                        clearControlNAC();
                         mTrafficChannelManager.setCurrentControlFrequency(frequency, mChannel);
                     }
                     break;
@@ -1994,6 +2047,15 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
             }
         }
     }
+
+    private void clearControlNAC()
+    {
+        if(mChannel.isStandardChannel())
+        {
+            getIdentifierCollection().remove(IdentifierClass.NETWORK, Form.NETWORK_ACCESS_CODE, Role.BROADCAST);
+        }
+    }
+
 
     @Override
     public void start()

@@ -53,6 +53,17 @@ public class MotorolaTalkerAliasAssembler
     }
 
     /**
+     * Clears all fragments assembled from the current RF source.
+     */
+    public void reset()
+    {
+        mHeader = null;
+        mDataBlocks.clear();
+        mSequence = -1;
+        mMostRecentTimestamp = 0;
+    }
+
+    /**
      * Link control word to process.
      * @param mac to add
      * @return true if we can (now) assemble a complete talker alias from the header and data blocks.

@@ -19,6 +19,7 @@
 
 package io.github.dsheirer.module.decode.p25.phase1;
 
+import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.dsp.filter.FilterFactory;
 import io.github.dsheirer.dsp.filter.decimate.DecimationFilterFactory;
 import io.github.dsheirer.dsp.filter.decimate.IRealDecimationFilter;
@@ -58,7 +59,7 @@ public class P25P1DecoderLSM extends FeedbackDecoder implements IByteBufferProvi
 
     private final P25P1DemodulatorLSM mDemodulator;
     private final P25P1MessageFramer mMessageFramer = new P25P1MessageFramer();
-    private final P25P1MessageProcessor mMessageProcessor = new P25P1MessageProcessor();
+    private final P25P1MessageProcessor mMessageProcessor;
     private final PowerMonitor mPowerMonitor = new PowerMonitor();
     private IRealDecimationFilter mDecimationFilterI;
     private IRealDecimationFilter mDecimationFilterQ;
@@ -75,9 +76,28 @@ public class P25P1DecoderLSM extends FeedbackDecoder implements IByteBufferProvi
 
     public P25P1DecoderLSM(double initialSampleRate)
     {
+        this(initialSampleRate, false);
+    }
+
+    public P25P1DecoderLSM(double initialSampleRate, boolean controlNACGuardEnabled)
+    {
+        mMessageProcessor = new P25P1MessageProcessor(controlNACGuardEnabled);
         mMessageProcessor.setMessageListener(getMessageListener());
+        mMessageFramer.setRequireValidNID(controlNACGuardEnabled);
         mDemodulator = new P25P1DemodulatorLSM(mMessageFramer, this);
         setSampleRate(initialSampleRate);
+    }
+
+    /**
+     * Pins a dynamically allocated traffic decoder to the NAC from its controlling channel before samples arrive.
+     */
+    @Subscribe
+    public void process(P25P1NACPreloadDataContent preloadData)
+    {
+        if(preloadData != null && preloadData.hasData())
+        {
+            mMessageFramer.setExpectedNAC(preloadData.getNAC());
+        }
     }
 
     @Override
@@ -269,7 +289,12 @@ public class P25P1DecoderLSM extends FeedbackDecoder implements IByteBufferProvi
     {
         switch(sourceEvent.getEvent())
         {
-            case NOTIFICATION_FREQUENCY_CHANGE, NOTIFICATION_FREQUENCY_CORRECTION_CHANGE:
+            case NOTIFICATION_FREQUENCY_CHANGE:
+                mMessageFramer.resetForSourceFrequencyChange();
+                mDemodulator.resetPLL();
+                mMessageProcessor.resetForSourceFrequencyChange();
+                break;
+            case NOTIFICATION_FREQUENCY_CORRECTION_CHANGE:
                 mDemodulator.resetPLL();
                 break;
             case NOTIFICATION_SAMPLE_RATE_CHANGE:
@@ -278,6 +303,14 @@ public class P25P1DecoderLSM extends FeedbackDecoder implements IByteBufferProvi
             default:
                 break;
         }
+    }
+
+    @Override
+    public void reset()
+    {
+        mMessageFramer.resetForSourceFrequencyChange();
+        mDemodulator.resetPLL();
+        mMessageProcessor.resetForSourceFrequencyChange();
     }
 
     @Override

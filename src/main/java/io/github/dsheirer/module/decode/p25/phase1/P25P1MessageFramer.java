@@ -83,7 +83,9 @@ public class P25P1MessageFramer
     private P25P1MessageAssembler mMessageAssembler;
     private P25P1DataUnitID mPreviousDataUnitID = P25P1DataUnitID.PLACE_HOLDER;
     private P25P1DataUnitID mDetectedDataUnitID = P25P1DataUnitID.PLACE_HOLDER;
-    private int mDetectedNAC = 0;
+    private int mDetectedNAC = P25P1NIDValidator.NO_EXPECTED_NAC;
+    private int mExpectedNAC = P25P1NIDValidator.NO_EXPECTED_NAC;
+    private boolean mRequireValidNID;
     private int mDetectedSyncBitErrors = 0;
     private final P25P1ChannelStatusProcessor mChannelStatusProcessor = new P25P1ChannelStatusProcessor();
     private PDUSequence mPDUSequence;
@@ -210,7 +212,7 @@ public class P25P1MessageFramer
                 mMessageAssembler = new P25P1MessageAssembler(mDetectedNAC, mDetectedDataUnitID);
                 mMessageAssemblyRequired = false;
             }
-            else if(mDetectedNAC > 0)
+            else if(mDetectedNAC != P25P1NIDValidator.NO_EXPECTED_NAC && !hasExpectedNAC() && !mRequireValidNID)
             {
                 //Start a placeholder message assembly.  If it completes before another sync detect, throw it away
                 mDetectedDataUnitID = P25P1DataUnitID.PLACE_HOLDER;
@@ -774,13 +776,15 @@ public class P25P1MessageFramer
     {
         mDetectedDataUnitID = dataUnitID;
 
-        //If the DUID is UNKNOWN, use the PLACEHOLDER and don't overwrite the previously detected NAC
+        //If the DUID is UNKNOWN, use the PLACEHOLDER. Ordinary discovery retains the previous NAC, but a pinned
+        //traffic decoder has already verified the received NAC against its expected value and can safely retain it.
         if(mDetectedDataUnitID == P25P1DataUnitID.UNKNOWN)
         {
             mDetectedDataUnitID = P25P1DataUnitID.PLACE_HOLDER;
         }
 
-        if(mDetectedDataUnitID != P25P1DataUnitID.PLACE_HOLDER)
+        if(mDetectedDataUnitID != P25P1DataUnitID.PLACE_HOLDER ||
+            (hasExpectedNAC() && nac == mExpectedNAC))
         {
             mDetectedNAC = nac;
         }
@@ -861,6 +865,65 @@ public class P25P1MessageFramer
     }
 
     /**
+     * Pins this framer to the concrete NAC supplied by a controlling channel. Replacing the expected NAC also clears
+     * any partially assembled or previously detected unit so stale data cannot cross the authority boundary.
+     */
+    void setExpectedNAC(int expectedNAC)
+    {
+        if(!P25P1NACPreloadDataContent.isConcreteNAC(expectedNAC))
+        {
+            throw new IllegalArgumentException("Expected P25 Phase 1 traffic NAC must be a concrete 12-bit value");
+        }
+
+        mExpectedNAC = expectedNAC;
+        resetForSourceFrequencyChange();
+    }
+
+    /**
+     * Requires every emitted unit to begin with a fully decoded, recognized NID. This disables length-based recovery
+     * on a trunked control decoder so an inferred unit cannot become NAC authority.
+     */
+    void setRequireValidNID(boolean requireValidNID)
+    {
+        mRequireValidNID = requireValidNID;
+        resetForSourceFrequencyChange();
+    }
+
+    /**
+     * Clears adaptive NAC history and any partial unit when the RF source changes while retaining a traffic decoder's
+     * fixed expected NAC.
+     */
+    void resetForSourceFrequencyChange()
+    {
+        mNACTracker.reset();
+        mSoftSyncDetector.reset();
+        mSyncDetected = false;
+        mNIDPointer = 0;
+        mMessageAssembler = null;
+        mMessageAssemblyRequired = false;
+        mPDUSequence = null;
+        mPreviousDataUnitID = P25P1DataUnitID.PLACE_HOLDER;
+        mDetectedDataUnitID = P25P1DataUnitID.PLACE_HOLDER;
+        mDetectedNAC = P25P1NIDValidator.NO_EXPECTED_NAC;
+        mDetectedSyncBitErrors = 0;
+        mDibitCounter = 58;
+        mStatusSymbolDibitCounter = 36;
+    }
+
+    /**
+     * Expected NAC or -1 when this decoder is operating in ordinary discovery mode.
+     */
+    int getExpectedNAC()
+    {
+        return mExpectedNAC;
+    }
+
+    private boolean hasExpectedNAC()
+    {
+        return mExpectedNAC != P25P1NIDValidator.NO_EXPECTED_NAC;
+    }
+
+    /**
      * Calculates the timestamp accurate to the currently received dibit.
      * @return timestamp in milliseconds.
      */
@@ -892,9 +955,28 @@ public class P25P1MessageFramer
             }
         }
 
+        return decodeNID(nid);
+    }
 
-        int trackedNAC = mNACTracker.getTrackedNAC();
-        mBCHDecoder.decode(nid, trackedNAC);
+    /**
+     * Decodes and validates a captured NID. Package access supports deterministic protocol tests without synthetic RF.
+     */
+    boolean decodeNID(CorrectedBinaryMessage nid)
+    {
+        boolean strictNID = hasExpectedNAC() || mRequireValidNID;
+        int trackedNAC = strictNID ? NACTracker.NO_TRACKED_NAC : mNACTracker.getTrackedNAC();
+
+        if(strictNID)
+        {
+            //A guarded control or fixed traffic-channel NAC must be decoded from the received NID. Do not substitute
+            //a tracked/expected NAC into an otherwise uncorrectable codeword because that would turn an unknown NID
+            //into an assumed match.
+            mBCHDecoder.decode(nid);
+        }
+        else
+        {
+            mBCHDecoder.decode(nid, trackedNAC);
+        }
 
         int nac = nid.getInt(NAC_FIELD);
         P25P1DataUnitID duid = P25P1DataUnitID.fromValue(nid.getInt(DUID_FIELD));
@@ -905,11 +987,34 @@ public class P25P1MessageFramer
             return false;
         }
 
-        //The BCH decoder can over-correct the NID and produce an invalid NAC.  Compare it against the tracked NAC to
-        //flag it as invalid NID when this happens.  The NAC tracker will give us a value of 0 until it has enough
-        //observations of a valid NID value.
-        mNACTracker.track(nac);
-        nidDetected(nac, duid, nid.getCorrectedBitCount());
+        int correctedBitCount;
+
+        if(hasExpectedNAC())
+        {
+            correctedBitCount = P25P1NIDValidator.validateExpectedNAC(nid, mExpectedNAC);
+        }
+        else
+        {
+            correctedBitCount = P25P1NIDValidator.validate(nid);
+        }
+
+        if(correctedBitCount < 0)
+        {
+            return false;
+        }
+
+        if(mRequireValidNID && duid == P25P1DataUnitID.UNKNOWN)
+        {
+            return false;
+        }
+
+        if(!hasExpectedNAC())
+        {
+            //Ordinary control and conventional channels retain adaptive NAC discovery.
+            mNACTracker.track(nac);
+        }
+
+        nidDetected(nac, duid, correctedBitCount);
         return true;
     }
 }

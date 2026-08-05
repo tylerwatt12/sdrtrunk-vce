@@ -71,10 +71,18 @@ public class P25P2DecoderHDQPSK extends P25P2Decoder implements IdentifierUpdate
     protected IRealFilter mIBasebandFilter;
     protected IRealFilter mQBasebandFilter;
     private DecodeConfigP25Phase2 mDecodeConfigP25Phase2;
+    private final boolean mControlNACGuardEnabled;
 
     public P25P2DecoderHDQPSK(DecodeConfigP25Phase2 decodeConfigP25Phase2, double initialSampleRate)
     {
-        super(6000.0);
+        this(decodeConfigP25Phase2, initialSampleRate, false);
+    }
+
+    public P25P2DecoderHDQPSK(DecodeConfigP25Phase2 decodeConfigP25Phase2, double initialSampleRate,
+                              boolean controlNACGuardEnabled)
+    {
+        super(6000.0, controlNACGuardEnabled);
+        mControlNACGuardEnabled = controlNACGuardEnabled;
         mDecodeConfigP25Phase2 = decodeConfigP25Phase2;
         setSampleRate(initialSampleRate);
     }
@@ -125,6 +133,8 @@ public class P25P2DecoderHDQPSK extends P25P2Decoder implements IdentifierUpdate
         //The Costas Loop receives symbol-inversion correction requests when detected.
         //The PLL gain monitor receives sync detect/loss signals from the message framer
         mMessageFramer = new P25P2MessageFramer(mCostasLoop);
+        mMessageFramer.setAutomaticScrambleUpdatesEnabled(!mControlNACGuardEnabled);
+        getMessageProcessor().setScrambleParametersListener(mMessageFramer::setScrambleParameters);
 
         if(mDecodeConfigP25Phase2 !=null)
         {
@@ -203,6 +213,31 @@ public class P25P2DecoderHDQPSK extends P25P2Decoder implements IdentifierUpdate
             //without widening bandwidth.
             mCostasLoop.reset();
         }
+        else if(sourceEvent.getEvent() == SourceEvent.Event.NOTIFICATION_FREQUENCY_CHANGE)
+        {
+            resetForSourceFrequencyChange();
+        }
+    }
+
+    private void resetForSourceFrequencyChange()
+    {
+        mCostasLoop.reset();
+        mFrequencyCorrectionSyncMonitor.reset();
+        mMessageFramer.resetForSourceFrequencyChange();
+        getMessageProcessor().resetForSourceFrequencyChange();
+
+        if(mControlNACGuardEnabled)
+        {
+            //An authorized NSB can replace the runtime sequence without changing the saved configuration. Never let
+            //that learned sequence cross an RF source boundary.
+            mMessageFramer.clearScrambleParameters();
+
+            if(mDecodeConfigP25Phase2 != null && mDecodeConfigP25Phase2.getScrambleParameters() != null &&
+                !mDecodeConfigP25Phase2.isAutoDetectScrambleParameters())
+            {
+                mMessageFramer.setScrambleParameters(mDecodeConfigP25Phase2.getScrambleParameters());
+            }
+        }
     }
 
     /**
@@ -211,8 +246,7 @@ public class P25P2DecoderHDQPSK extends P25P2Decoder implements IdentifierUpdate
     @Override
     public void reset()
     {
-        mCostasLoop.reset();
-        mFrequencyCorrectionSyncMonitor.reset();
+        resetForSourceFrequencyChange();
     }
 
     @Override

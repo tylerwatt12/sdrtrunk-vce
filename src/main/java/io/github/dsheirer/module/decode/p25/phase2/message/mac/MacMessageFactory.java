@@ -235,8 +235,8 @@ public class MacMessageFactory
                 break;
         }
 
-        //Assign the nac value parsed from the LCCH MAC PDU content paylaod when it is non-zero
-        if(nac > 0)
+        //Assign the CRC-protected NAC parsed from every LCCH MAC PDU, including the valid value zero.
+        if(dataUnitID.isLCCH())
         {
             for(MacMessage macMessage: messages)
             {

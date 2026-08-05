@@ -31,6 +31,7 @@ import java.util.Map;
  */
 public class NACTracker
 {
+    public static final int NO_TRACKED_NAC = -1;
     private static final Comparator<Tracker> COUNT_DESCENDING_COMPARATOR = new CountDescendingSorter();
     private static final Comparator<Tracker> TIME_ASCENDING_COMPARATOR = new TimeAscendingSorter();
     private final Map<Integer, Tracker> mTrackerMap = new HashMap<>();
@@ -77,13 +78,13 @@ public class NACTracker
     /**
      * Identifies the dominant NAC value by sorting the tracked NAC values in count order with the highest count NAC
      * value identified as the dominant NAC.  The dominant NAC must have at least 3 observations to be the dominant NAC.
-     * @return dominant tracked NAC value.
+     * @return dominant tracked NAC value or {@link #NO_TRACKED_NAC} until the observation threshold is reached.
      */
     public int getTrackedNAC()
     {
         if(mTrackerMap.isEmpty())
         {
-            return 0;
+            return NO_TRACKED_NAC;
         }
 
         List<Tracker> trackers = new ArrayList<>(mTrackerMap.values());
@@ -95,7 +96,7 @@ public class NACTracker
             return highestCount.nac();
         }
 
-        return 0;
+        return NO_TRACKED_NAC;
     }
 
     /**

@@ -323,7 +323,11 @@ class P25TrafficChannelManagerTest
         long frequency = 853_875_000L;
         P25TrafficChannelManager manager = new P25TrafficChannelManager(new Channel("Control"));
         APCO25Channel channel = APCO25Channel.create(0, 459);
-        channel.setFrequencyBand(new P25FrequencyBand(0, 851_006_250L, -45_000_000L, 6_250L, 12_500, 1));
+        P25FrequencyBand frequencyBand =
+            new P25FrequencyBand(0, 851_006_250L, -45_000_000L, 6_250L, 12_500, 1);
+        manager.processFrequencyBand(frequencyBand);
+        manager.processFrequencyBand(frequencyBand);
+        channel.setFrequencyBand(frequencyBand);
         assertEquals(frequency, channel.getDownlinkFrequency());
         RadioIdentifier source = APCO25RadioIdentifier.createFrom(1234567);
         MutableIdentifierCollection grantIdentifiers = identifiers(1201, source);

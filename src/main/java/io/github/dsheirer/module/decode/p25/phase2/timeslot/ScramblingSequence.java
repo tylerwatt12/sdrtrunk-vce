@@ -39,6 +39,17 @@ public class ScramblingSequence
      */
     public ScramblingSequence()
     {
+        reset();
+    }
+
+    /**
+     * Clears a learned source-specific sequence back to an uninitialized all-zero state.
+     */
+    public synchronized void reset()
+    {
+        mShiftRegister = new LinearFeedbackShiftRegister();
+        mScramblingSegments.clear();
+
         for(int x = 0; x < 12; x++)
         {
             mScramblingSegments.add(new BinaryMessage(320));

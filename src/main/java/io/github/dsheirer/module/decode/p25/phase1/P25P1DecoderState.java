@@ -19,6 +19,7 @@
 package io.github.dsheirer.module.decode.p25.phase1;
 
 import com.google.common.eventbus.Subscribe;
+import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.channel.state.ChangeChannelTimeoutEvent;
 import io.github.dsheirer.channel.state.DecoderState;
 import io.github.dsheirer.channel.state.DecoderStateEvent;
@@ -60,11 +61,12 @@ import io.github.dsheirer.module.decode.p25.P25AffiliationEvent;
 import io.github.dsheirer.module.decode.p25.P25DecodeEvent;
 import io.github.dsheirer.module.decode.p25.P25FrequencyBandValidator;
 import io.github.dsheirer.module.decode.p25.P25TrafficChannelManager;
+import io.github.dsheirer.module.decode.p25.identifier.APCO25Nac;
+import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshotProvider;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationStabilizer;
 import io.github.dsheirer.module.decode.p25.telemetry.P25SiteMetadataPublisher;
-import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
 import io.github.dsheirer.module.decode.p25.phase1.message.IFrequencyBand;
 import io.github.dsheirer.module.decode.p25.phase1.message.P25P1Message;
 import io.github.dsheirer.module.decode.p25.phase1.message.hdu.HDUMessage;
@@ -225,6 +227,8 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     private final P25SiteMetadataPublisher mSiteMetadataPublisher;
     private final Listener<ChannelEvent> mChannelEventListener;
     private final P25TrafficChannelManager mTrafficChannelManager;
+    private final P25P1ControlNACAuthority mControlNACAuthority = new P25P1ControlNACAuthority();
+    private long mControlNACFrequency;
     private ServiceOptions mCurrentServiceOptions;
     private RadioIdentifier mHarrisTalkerAliasRadio;
     private boolean mHarrisTalkerAliasSourceInvalid;
@@ -339,11 +343,24 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
      * Primary message processing method.
      */
     @Override
-    public void receive(IMessage iMessage)
+    public synchronized void receive(IMessage iMessage)
     {
         if(iMessage instanceof P25P1Message message)
         {
-            getIdentifierCollection().update(message.getNAC());
+            if(mChannel.isTrafficChannel() && P25P1ControlNACAuthority.isControlFamily(message))
+            {
+                return;
+            }
+
+            if(!observeNAC(message))
+            {
+                return;
+            }
+
+            if(isTrunkedControlChannel())
+            {
+                mTrafficChannelManager.processP1ControlScrambleParameters(message);
+            }
 
             switch(message.getDUID())
             {
@@ -383,6 +400,12 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                     break;
             }
         }
+        else if(isTrunkedControlChannel())
+        {
+            //Derived voice/link-control messages do not carry their source NID. They are traffic-channel artifacts and
+            //must not bypass the control-channel NAC authority gate.
+            return;
+        }
         else if(iMessage instanceof LCHarrisTalkerAliasComplete talkerAlias)
         {
             processTalkerAlias(talkerAlias);
@@ -399,6 +422,78 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
         }
 
         publishSiteMetadata(iMessage.getTimestamp());
+    }
+
+    /**
+     * Establishes a stable NAC authority for a control channel before allowing it to take control actions. A traffic
+     * or conventional channel retains ordinary per-message NAC behavior. Once established, the control-channel NAC
+     * remains fixed until reset or a source-frequency change so a single foreign or overcorrected NID cannot repin a
+     * traffic decoder.
+     */
+    private synchronized boolean observeNAC(P25P1Message message)
+    {
+        if(!isTrunkedControlChannel())
+        {
+            getIdentifierCollection().update(message.getNAC());
+            return true;
+        }
+
+        P25P1ControlNACAuthority.Result result = mControlNACAuthority.observe(message);
+
+        if(result == P25P1ControlNACAuthority.Result.ESTABLISHED)
+        {
+            getIdentifierCollection().update(APCO25Nac.create(mControlNACAuthority.getNAC()));
+        }
+
+        if(result == P25P1ControlNACAuthority.Result.CANDIDATE ||
+            result == P25P1ControlNACAuthority.Result.ESTABLISHED)
+        {
+            //Keep a multi-frequency control channel from rotating while authority is confirmed, without processing
+            //the candidate payload.
+            broadcastControlState(message);
+        }
+
+        return result == P25P1ControlNACAuthority.Result.AUTHORIZED;
+    }
+
+    private boolean isTrunkedControlChannel()
+    {
+        return mChannel.isStandardChannel() && mDecoderType == DecoderType.P25_PHASE1;
+    }
+
+    /**
+     * Clears the control-channel NAC authority so it must be independently re-established for a new source.
+     */
+    private synchronized void resetControlNACAuthority()
+    {
+        if(isTrunkedControlChannel())
+        {
+            mControlNACAuthority.reset();
+            getIdentifierCollection().remove(IdentifierClass.NETWORK, Form.NETWORK_ACCESS_CODE, Role.BROADCAST);
+        }
+    }
+
+    private boolean isResolvedChannel(IChannelDescriptor channel)
+    {
+        if(isTrunkedControlChannel() && channel instanceof APCO25Channel apco25Channel)
+        {
+            return mTrafficChannelManager.resolveControlChannel(apco25Channel);
+        }
+
+        return P25FrequencyBandValidator.isResolvedChannel(channel);
+    }
+
+    private synchronized void updateControlNACFrequency(long frequency)
+    {
+        if(isTrunkedControlChannel() && frequency > 0)
+        {
+            if(mControlNACFrequency > 0 && mControlNACFrequency != frequency)
+            {
+                resetControlNACAuthority();
+            }
+
+            mControlNACFrequency = frequency;
+        }
     }
 
     private void observeNetworkConfiguration(P25NetworkConfigurationSnapshot observation, long timestamp)
@@ -482,7 +577,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     private void processControlTrafficGrant(APCO25Channel channel, ServiceOptions serviceOptions,
                                             List<Identifier> identifiers, Opcode opcode, long timestamp)
     {
-        if(mChannel.isStandardChannel() && P25FrequencyBandValidator.isResolvedChannel(channel))
+        if(isTrunkedControlChannel() && isResolvedChannel(channel))
         {
             MutableIdentifierCollection mic = getMutableIdentifierCollection(identifiers, timestamp);
             mTrafficChannelManager.getTalkerAliasManager().enrichMutable(mic);
@@ -501,7 +596,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     private void processControlAnnouncedTrafficUpdate(APCO25Channel channel, ServiceOptions serviceOptions,
                                                       List<Identifier> identifiers, Opcode opcode, long timestamp)
     {
-        if(!mChannel.isStandardChannel() || !P25FrequencyBandValidator.isResolvedChannel(channel))
+        if(!isTrunkedControlChannel() || !isResolvedChannel(channel))
         {
             return;
         }
@@ -731,9 +826,9 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                     observeNetworkConfiguration(mNetworkConfigurationMonitor.process(ambtc), ambtc.getTimestamp());
                     break;
                 case OSP_NETWORK_STATUS_BROADCAST:
-                    if((getCurrentChannel() == null || P25FrequencyBandValidator.isResolvedChannel(getCurrentChannel())) &&
+                    if((getCurrentChannel() == null || isResolvedChannel(getCurrentChannel())) &&
                             mChannel.isStandardChannel() && ambtc instanceof AMBTCNetworkStatusBroadcast nsb &&
-                            P25FrequencyBandValidator.isResolvedChannel(nsb.getChannel()))
+                            isResolvedChannel(nsb.getChannel()))
                     {
                         setCurrentChannel(nsb.getChannel());
                         DecoderLogicalChannelNameIdentifier channelID =
@@ -748,9 +843,9 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                     observeNetworkConfiguration(mNetworkConfigurationMonitor.process(ambtc), ambtc.getTimestamp());
                     break;
                 case OSP_RFSS_STATUS_BROADCAST:
-                    if((getCurrentChannel() == null || P25FrequencyBandValidator.isResolvedChannel(getCurrentChannel())) &&
+                    if((getCurrentChannel() == null || isResolvedChannel(getCurrentChannel())) &&
                             mChannel.isStandardChannel() && ambtc instanceof AMBTCRFSSStatusBroadcast rsb &&
-                            P25FrequencyBandValidator.isResolvedChannel(rsb.getChannel()))
+                            isResolvedChannel(rsb.getChannel()))
                     {
                         setCurrentChannel(rsb.getChannel());
                         DecoderLogicalChannelNameIdentifier channelID =
@@ -1395,15 +1490,15 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                     observeNetworkConfiguration(mNetworkConfigurationMonitor.process(tsbk), tsbk.getTimestamp());
 
                     //Send the frequency bands to the traffic channel manager to use for traffic channel preload data
-                    if(mChannel.isStandardChannel() && tsbk instanceof IFrequencyBand frequencyBand)
+                    if(isTrunkedControlChannel() && tsbk instanceof IFrequencyBand frequencyBand)
                     {
                         mTrafficChannelManager.processFrequencyBand(frequencyBand);
                     }
                     break;
                 case OSP_NETWORK_STATUS_BROADCAST:
-                    if((getCurrentChannel() == null || P25FrequencyBandValidator.isResolvedChannel(getCurrentChannel())) &&
+                    if((getCurrentChannel() == null || isResolvedChannel(getCurrentChannel())) &&
                             mChannel.isStandardChannel() && tsbk instanceof NetworkStatusBroadcast nsb &&
-                            P25FrequencyBandValidator.isResolvedChannel(nsb.getChannel()))
+                            isResolvedChannel(nsb.getChannel()))
                     {
                         setCurrentChannel(nsb.getChannel());
                         DecoderLogicalChannelNameIdentifier channelID =
@@ -1418,9 +1513,9 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                     observeNetworkConfiguration(mNetworkConfigurationMonitor.process(tsbk), tsbk.getTimestamp());
                     break;
                 case OSP_RFSS_STATUS_BROADCAST:
-                    if((getCurrentChannel() == null || P25FrequencyBandValidator.isResolvedChannel(getCurrentChannel())) &&
+                    if((getCurrentChannel() == null || isResolvedChannel(getCurrentChannel())) &&
                             mChannel.isStandardChannel() && tsbk instanceof RFSSStatusBroadcast rfss &&
-                            P25FrequencyBandValidator.isResolvedChannel(rfss.getChannel()))
+                            isResolvedChannel(rfss.getChannel()))
                     {
                         setCurrentChannel(rfss.getChannel());
                         DecoderLogicalChannelNameIdentifier channelID =
@@ -1743,7 +1838,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     {
         if(tsbk instanceof MotorolaExplicitTDMADataChannelAnnouncement tdma && tdma.hasChannel())
         {
-            if(mChannel.isStandardChannel())
+            if(isTrunkedControlChannel())
             {
                 mTrafficChannelManager.processP2DataChannel(tdma.getChannel(), tsbk.getTimestamp());
             }
@@ -2103,9 +2198,9 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
 
             //Network configuration messages
             case RFSS_STATUS_BROADCAST:
-                if((getCurrentChannel() == null || P25FrequencyBandValidator.isResolvedChannel(getCurrentChannel())) &&
+                if((getCurrentChannel() == null || isResolvedChannel(getCurrentChannel())) &&
                         mChannel.isStandardChannel() && lcw instanceof LCRFSSStatusBroadcast sb &&
-                        P25FrequencyBandValidator.isResolvedChannel(sb.getChannel()))
+                        isResolvedChannel(sb.getChannel()))
                 {
                     setCurrentChannel(sb.getChannel());
                     DecoderLogicalChannelNameIdentifier channelID =
@@ -2120,9 +2215,9 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                 observeNetworkConfiguration(mNetworkConfigurationMonitor.process(lcw), timestamp);
                 break;
             case RFSS_STATUS_BROADCAST_EXPLICIT:
-                if((getCurrentChannel() == null || P25FrequencyBandValidator.isResolvedChannel(getCurrentChannel())) &&
+                if((getCurrentChannel() == null || isResolvedChannel(getCurrentChannel())) &&
                         mChannel.isStandardChannel() && lcw instanceof LCRFSSStatusBroadcastExplicit sb &&
-                        P25FrequencyBandValidator.isResolvedChannel(sb.getChannel()))
+                        isResolvedChannel(sb.getChannel()))
                 {
                     setCurrentChannel(sb.getChannel());
                     DecoderLogicalChannelNameIdentifier channelID =
@@ -2138,9 +2233,9 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                 break;
 
             case NETWORK_STATUS_BROADCAST:
-                if((getCurrentChannel() == null || P25FrequencyBandValidator.isResolvedChannel(getCurrentChannel())) &&
+                if((getCurrentChannel() == null || isResolvedChannel(getCurrentChannel())) &&
                         mChannel.isStandardChannel() && lcw instanceof LCNetworkStatusBroadcast sb &&
-                        P25FrequencyBandValidator.isResolvedChannel(sb.getChannel()))
+                        isResolvedChannel(sb.getChannel()))
                 {
                     setCurrentChannel(sb.getChannel());
                     DecoderLogicalChannelNameIdentifier channelID =
@@ -2155,9 +2250,9 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                 observeNetworkConfiguration(mNetworkConfigurationMonitor.process(lcw), timestamp);
                 break;
             case NETWORK_STATUS_BROADCAST_EXPLICIT:
-                if((getCurrentChannel() == null || P25FrequencyBandValidator.isResolvedChannel(getCurrentChannel())) &&
+                if((getCurrentChannel() == null || isResolvedChannel(getCurrentChannel())) &&
                         mChannel.isStandardChannel() && lcw instanceof LCNetworkStatusBroadcastExplicit sb &&
-                        P25FrequencyBandValidator.isResolvedChannel(sb.getChannel()))
+                        isResolvedChannel(sb.getChannel()))
                 {
                     setCurrentChannel(sb.getChannel());
                     DecoderLogicalChannelNameIdentifier channelID =
@@ -2338,7 +2433,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     }
 
     @Override
-    public void receiveDecoderStateEvent(DecoderStateEvent event)
+    public synchronized void receiveDecoderStateEvent(DecoderStateEvent event)
     {
         switch(event.getEvent())
         {
@@ -2351,13 +2446,26 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                 long frequency = event.getFrequency();
 
                 //Notify the TCM that our control frequency has changed.
-                if(mChannel.isStandardChannel())
+                if(isTrunkedControlChannel())
                 {
+                    updateControlNACFrequency(frequency);
                     mTrafficChannelManager.setCurrentControlFrequency(frequency, mChannel);
                 }
                 break;
             default:
                 break;
+        }
+    }
+
+    @Override
+    public synchronized void reset()
+    {
+        super.reset();
+        resetControlNACAuthority();
+
+        if(isTrunkedControlChannel())
+        {
+            mTrafficChannelManager.resetControlSourceState();
         }
     }
 

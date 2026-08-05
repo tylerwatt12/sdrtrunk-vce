@@ -67,12 +67,24 @@ public class P25P2MessageFramer implements Listener<Dibit>
      * Sets or updates the scramble parameters for the current channel
      * @param scrambleParameters
      */
-    public void setScrambleParameters(ScrambleParameters scrambleParameters)
+    public boolean setScrambleParameters(ScrambleParameters scrambleParameters)
     {
         if(mSuperFrameDetector != null)
         {
-            mSuperFrameDetector.setScrambleParameters(scrambleParameters);
+            return mSuperFrameDetector.setScrambleParameters(scrambleParameters);
         }
+
+        return false;
+    }
+
+    public void setAutomaticScrambleUpdatesEnabled(boolean enabled)
+    {
+        mSuperFrameDetector.setAutomaticScrambleUpdatesEnabled(enabled);
+    }
+
+    public void clearScrambleParameters()
+    {
+        mSuperFrameDetector.clearScrambleParameters();
     }
 
     /**
@@ -81,6 +93,14 @@ public class P25P2MessageFramer implements Listener<Dibit>
     public void setSampleRate(double sampleRate)
     {
         mSuperFrameDetector.setSampleRate(sampleRate);
+    }
+
+    /**
+     * Clears acquisition buffers so no partial superframe can cross an RF source boundary.
+     */
+    public void resetForSourceFrequencyChange()
+    {
+        mSuperFrameDetector.reset();
     }
 
     /**

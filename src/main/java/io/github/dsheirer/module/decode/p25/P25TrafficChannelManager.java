@@ -63,13 +63,16 @@ import io.github.dsheirer.module.decode.p25.identifier.channel.P25P2ExplicitChan
 import io.github.dsheirer.module.decode.p25.identifier.channel.StandardChannel;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
+import io.github.dsheirer.module.decode.p25.phase1.P25P1NACPreloadDataContent;
 import io.github.dsheirer.module.decode.p25.phase1.message.IFrequencyBand;
+import io.github.dsheirer.module.decode.p25.phase1.message.P25P1Message;
 import io.github.dsheirer.module.decode.p25.phase1.message.pdu.ambtc.osp.AMBTCNetworkStatusBroadcast;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.Opcode;
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp.NetworkStatusBroadcast;
 import io.github.dsheirer.module.decode.p25.phase2.DecodeConfigP25Phase2;
 import io.github.dsheirer.module.decode.p25.phase2.P25P2ScrambleParametersPreloadData;
 import io.github.dsheirer.module.decode.p25.phase2.enumeration.ScrambleParameters;
+import io.github.dsheirer.module.decode.p25.phase2.message.mac.MacMessage;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.MacOpcode;
 import io.github.dsheirer.module.decode.p25.reference.DataServiceOptions;
 import io.github.dsheirer.module.decode.p25.reference.ServiceOptions;
@@ -139,6 +142,8 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     private Map<Integer, IFrequencyBand> mFrequencyBandMap = new ConcurrentHashMap<>();
     private final P25FrequencyBandConfirmationTracker mFrequencyBandConfirmationTracker =
         new P25FrequencyBandConfirmationTracker();
+    private final P25NACAuthority mP2ControlNACAuthority = new P25NACAuthority();
+    private volatile boolean mP2ControlNACGateOpen;
     private Listener<ChannelEvent> mChannelEventListener;
     private Listener<IDecodeEvent> mDecodeEventListener;
     private TrafficChannelTeardownMonitor mTrafficChannelTeardownMonitor = new TrafficChannelTeardownMonitor();
@@ -416,6 +421,89 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     }
 
     /**
+     * Resolves a control-channel grant exclusively from this manager's confirmed, NAC-gated band plan. Any band
+     * attached upstream is overwritten and cannot authorize a traffic-channel frequency by itself.
+     */
+    public boolean resolveControlChannel(APCO25Channel channel)
+    {
+        if(channel == null || channel.getValue() == null)
+        {
+            return false;
+        }
+
+        IFrequencyBand frequencyBand = mFrequencyBandMap.get(channel.getValue().getDownlinkBandIdentifier());
+
+        if(frequencyBand == null)
+        {
+            return false;
+        }
+
+        channel.setFrequencyBand(frequencyBand);
+        return P25FrequencyBandValidator.isResolvedChannel(channel);
+    }
+
+    /**
+     * Observes a CRC-valid Phase 2 LCCH physical unit and returns its frozen NAC only after three consecutive matching
+     * units. Multiple MAC structures from the same timeslot/timestamp count as one physical observation.
+     */
+    public int observeP2ControlNAC(MacMessage message)
+    {
+        if(!mParentChannel.isStandardChannel() ||
+            !(mParentChannel.getDecodeConfiguration() instanceof DecodeConfigP25Phase2) || message == null ||
+            !message.isValid() || !message.getDataUnitID().isLCCH() || !message.hasNAC())
+        {
+            return P25NACAuthority.NO_NAC;
+        }
+
+        Object value = message.getNAC().getValue();
+
+        if(!(value instanceof Number number) || !P25P1NACPreloadDataContent.isConcreteNAC(number.intValue()))
+        {
+            mP2ControlNACGateOpen = false;
+            return P25NACAuthority.NO_NAC;
+        }
+
+        mLock.lock();
+
+        try
+        {
+            int nac = number.intValue();
+
+            if(message.isNACAuthorityValidated())
+            {
+                mP2ControlNACGateOpen = mP2ControlNACAuthority.establishFromValidatedUpstream(nac);
+                return mP2ControlNACGateOpen ? mP2ControlNACAuthority.getNAC() : P25NACAuthority.NO_NAC;
+            }
+
+            P25NACAuthority.Result result =
+                mP2ControlNACAuthority.observe(nac, message.getTimestamp(), message.getTimeslot());
+            mP2ControlNACGateOpen = result == P25NACAuthority.Result.ESTABLISHED ||
+                result == P25NACAuthority.Result.MATCH;
+            return mP2ControlNACGateOpen ? mP2ControlNACAuthority.getNAC() : P25NACAuthority.NO_NAC;
+        }
+        finally
+        {
+            mLock.unlock();
+        }
+    }
+
+    /**
+     * Current frozen Phase 2 control NAC, or -1 until authority is established.
+     */
+    public int getP2ControlNAC()
+    {
+        return mP2ControlNACAuthority.getNAC();
+    }
+
+    /**
+     * Indicates that the most recently observed LCCH unit matched the frozen authority.
+     */
+    public boolean isP2ControlNACGateOpen()
+    {
+        return mP2ControlNACGateOpen;
+    }
+
+    /**
      * Notification that the control channel frequency is updated and removes any traffic channel that may be running
      * against the same frequency.
      * @param previous frequency (before this update)
@@ -447,9 +535,8 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
             mTS1ChannelGrantEventMap.clear();
             mTS2ChannelGrantEventMap.clear();
-            //Band identifiers are scoped to the current control channel.  Wait for fresh IDEN updates after a switch.
-            mFrequencyBandMap.clear();
-            mFrequencyBandConfirmationTracker.reset();
+            //All learned authority is scoped to the current control source.
+            resetControlSourceState();
 
             //Remove the control channel from the previous frequency
             mAllocatedTrafficChannelMap.remove(previous);
@@ -734,7 +821,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     public void processP2ChannelUpdate(APCO25Channel channel, ServiceOptions serviceOptions,
                                        IdentifierCollection ic, MacOpcode macOpcode, long timestamp)
     {
-        if(P25FrequencyBandValidator.isResolvedChannel(channel))
+        if(resolveControlChannel(channel))
         {
             mLock.lock();
 
@@ -1120,6 +1207,11 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
         try
         {
+            if(!resolveControlChannel(apco25Channel))
+            {
+                return;
+            }
+
             DecodeEventType decodeEventType = getEventType(macOpcode, serviceOptions, null);
             boolean isDataChannelGrant = macOpcode.isDataChannelGrant();
 
@@ -1182,6 +1274,11 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
         try
         {
+            if(!resolveControlChannel(apco25Channel))
+            {
+                return;
+            }
+
             DecodeEventType decodeEventType = getEventType(opcode, serviceOptions, null);
             boolean isDataChannelGrant = opcode != null && opcode.isDataChannelGrant();
 
@@ -1758,6 +1855,26 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     {
         if(P25FrequencyBandValidator.isResolvedChannel(apco25Channel) && getInterModuleEventBus() != null)
         {
+            P25P1NACPreloadDataContent nacPreloadData = null;
+
+            if(trafficChannel.getDecodeConfiguration() instanceof DecodeConfigP25Phase1)
+            {
+                Identifier nacIdentifier = identifierCollection.getIdentifier(IdentifierClass.NETWORK,
+                    Form.NETWORK_ACCESS_CODE, Role.BROADCAST);
+                Object nacValue = nacIdentifier != null ? nacIdentifier.getValue() : null;
+
+                if(!(nacValue instanceof Number number) ||
+                    !P25P1NACPreloadDataContent.isConcreteNAC(number.intValue()))
+                {
+                    mLog.warn("P25 Phase 1 traffic channel rejected - control grant has no concrete NAC for channel:{}",
+                        apco25Channel);
+                    returnTrafficChannelToPool(trafficChannel);
+                    return;
+                }
+
+                nacPreloadData = new P25P1NACPreloadDataContent(number.intValue());
+            }
+
             syncTrafficChannelIdentity(trafficChannel);
 
             if(mParentChannel.getSourceConfiguration() instanceof SourceConfigTunerMultipleFrequency parentMulti &&
@@ -1809,19 +1926,32 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                     apco25Channel, identifierCollection, this);
             startChannelRequest.addPreloadDataContent(new PatchGroupPreLoadDataContent(identifierCollection, timestamp));
             startChannelRequest.addPreloadDataContent(new P25FrequencyBandPreloadDataContent(mFrequencyBandMap.values()));
+
+            if(nacPreloadData != null)
+            {
+                startChannelRequest.addPreloadDataContent(nacPreloadData);
+            }
+
             getInterModuleEventBus().post(startChannelRequest);
         }
         else
         {
-            //Return the channel to the traffic channel pool since we didn't start it.
-            if(mManagedPhase1TrafficChannels.contains(trafficChannel))
-            {
-                mAvailablePhase1TrafficChannelQueue.add(trafficChannel);
-            }
-            else if(mManagedPhase2TrafficChannels.contains(trafficChannel))
-            {
-                mAvailablePhase2TrafficChannelQueue.add(trafficChannel);
-            }
+            returnTrafficChannelToPool(trafficChannel);
+        }
+    }
+
+    /**
+     * Returns an unstarted traffic channel to its owning pool.
+     */
+    private void returnTrafficChannelToPool(Channel trafficChannel)
+    {
+        if(mManagedPhase1TrafficChannels != null && mManagedPhase1TrafficChannels.contains(trafficChannel))
+        {
+            mAvailablePhase1TrafficChannelQueue.add(trafficChannel);
+        }
+        else if(mManagedPhase2TrafficChannels != null && mManagedPhase2TrafficChannels.contains(trafficChannel))
+        {
+            mAvailablePhase2TrafficChannelQueue.add(trafficChannel);
         }
     }
 
@@ -2299,7 +2429,44 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     @Override
     public void reset()
     {
-        // No reset action is required for this manager.
+        resetControlSourceState();
+    }
+
+    /**
+     * Clears all facts learned from the current control source. NAC authority, band plans and learned Phase 2
+     * scramble parameters must share the same lifetime so facts from one source cannot authorize another.
+     */
+    public void resetControlSourceState()
+    {
+        mLock.lock();
+
+        try
+        {
+            mFrequencyBandMap.clear();
+            mFrequencyBandConfirmationTracker.reset();
+            mP2ControlNACAuthority.reset();
+            mP2ControlNACGateOpen = false;
+
+            if(mPhase2ScrambleParameters != null)
+            {
+                mPhase2ScrambleParameters = null;
+
+                if(mManagedPhase2TrafficChannels != null)
+                {
+                    for(Channel trafficChannel : mManagedPhase2TrafficChannels)
+                    {
+                        if(trafficChannel.getDecodeConfiguration() instanceof DecodeConfigP25Phase2 phase2)
+                        {
+                            phase2.setScrambleParameters(null);
+                        }
+                    }
+                }
+            }
+        }
+        finally
+        {
+            mLock.unlock();
+        }
     }
 
     @Override
@@ -2324,8 +2491,57 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         mAvailablePhase2TrafficChannelQueue.clear();
         mTS1ChannelGrantEventMap.clear();
         mTS2ChannelGrantEventMap.clear();
-        mFrequencyBandMap.clear();
-        mFrequencyBandConfirmationTracker.reset();
+        resetControlSourceState();
+    }
+
+    /**
+     * Captures Phase 2 scramble parameters only after the Phase 1 decoder state has authorized the source NAC.
+     */
+    public void processP1ControlScrambleParameters(P25P1Message message)
+    {
+        if(message == null || !message.isValid())
+        {
+            return;
+        }
+
+        ScrambleParameters candidate = null;
+
+        if(message instanceof NetworkStatusBroadcast nsb)
+        {
+            candidate = nsb.getScrambleParameters();
+        }
+        else if(message instanceof AMBTCNetworkStatusBroadcast nsb)
+        {
+            candidate = nsb.getScrambleParameters();
+        }
+
+        Object nacValue = message.getNAC().getValue();
+
+        if(candidate == null || !(nacValue instanceof Number number) || candidate.getNAC() != number.intValue())
+        {
+            return;
+        }
+
+        boolean updated = false;
+        mLock.lock();
+
+        try
+        {
+            if(mPhase2ScrambleParameters == null)
+            {
+                mPhase2ScrambleParameters = candidate;
+                updated = true;
+            }
+        }
+        finally
+        {
+            mLock.unlock();
+        }
+
+        if(updated)
+        {
+            applyPhase2ScrambleParameters();
+        }
     }
 
     /**
@@ -2341,18 +2557,12 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         if(mMessageListener == null)
         {
             mMessageListener = message -> {
-                if(mPhase2ScrambleParameters == null && message.isValid())
+                //A standard Phase 1 control decoder dispatches candidate and rejected frames so its decoder state can
+                //establish NAC authority. Do not let this direct listener bypass that authority gate.
+                if(!(mParentChannel.isStandardChannel() &&
+                    mParentChannel.getDecodeConfiguration() instanceof DecodeConfigP25Phase1))
                 {
-                    if(message instanceof NetworkStatusBroadcast nsb)
-                    {
-                        mPhase2ScrambleParameters = nsb.getScrambleParameters();
-                        applyPhase2ScrambleParameters();
-                    }
-                    else if(message instanceof AMBTCNetworkStatusBroadcast nsb)
-                    {
-                        mPhase2ScrambleParameters = nsb.getScrambleParameters();
-                        applyPhase2ScrambleParameters();
-                    }
+                    processP1ControlScrambleParameters(message instanceof P25P1Message p25 ? p25 : null);
                 }
             };
         }

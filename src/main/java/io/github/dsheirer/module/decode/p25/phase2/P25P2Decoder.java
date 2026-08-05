@@ -50,8 +50,13 @@ public abstract class P25P2Decoder extends FeedbackDecoder implements ISourceEve
 
     protected P25P2Decoder(double symbolRate)
     {
+        this(symbolRate, false);
+    }
+
+    protected P25P2Decoder(double symbolRate, boolean controlNACGuardEnabled)
+    {
         mSymbolRate = symbolRate;
-        mMessageProcessor = new P25P2MessageProcessor();
+        mMessageProcessor = new P25P2MessageProcessor(controlNACGuardEnabled);
         mMessageProcessor.setMessageListener(getMessageListener());
         getDibitBroadcaster().addListener(mByteBufferAssembler);
     }

@@ -133,6 +133,7 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
     private SyncState mSyncState = SyncState.SEARCHING_SYNC;
     private ISyncDetectListener mSyncDetectListener;
     private boolean mObservedFirstDibit;
+    private boolean mAutomaticScrambleUpdatesEnabled = true;
 
     public P25P2SuperFrameDetector(IPhaseLockedLoop phaseLockedLoop)
     {
@@ -143,9 +144,19 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
      * Sets or updates the scrambling sequence parameters.
      * @param scramblingSequence containing updated parameters
      */
-    public void setScrambleParameters(ScrambleParameters scramblingSequence)
+    public boolean setScrambleParameters(ScrambleParameters scramblingSequence)
     {
-        mScramblingSequence.update(scramblingSequence);
+        return mScramblingSequence.update(scramblingSequence);
+    }
+
+    public void setAutomaticScrambleUpdatesEnabled(boolean enabled)
+    {
+        mAutomaticScrambleUpdatesEnabled = enabled;
+    }
+
+    public void clearScrambleParameters()
+    {
+        mScramblingSequence.reset();
     }
 
     /**
@@ -171,6 +182,11 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
 
     public void reset()
     {
+        mSyncDetector = new P25P2SyncDetector(this);
+        mSyncDetectionDelayBuffer = new DibitDelayBuffer(160 + FRAGMENT_BUFFER_OVERSIZE);
+        mFragmentBuffer = new DibitDelayBuffer(FRAGMENT_DIBIT_LENGTH + (2 * FRAGMENT_BUFFER_OVERSIZE));
+        mDibitsProcessed = 0;
+        mSyncState = SyncState.SEARCHING_SYNC;
         mObservedFirstDibit = false;
     }
 
@@ -267,7 +283,10 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
             return;
         }
 
-        updateScramblingCode(frameFragment);
+        if(mAutomaticScrambleUpdatesEnabled)
+        {
+            updateScramblingCode(frameFragment);
+        }
         broadcast(frameFragment);
     }
 
@@ -304,7 +323,10 @@ public class P25P2SuperFrameDetector implements Listener<Dibit>, ISyncDetectList
         message1.setCorrectedBitCount(bitErrors); //Not even sure what the correct bit error count is here?
         SuperFrameFragment frameFragment = new SuperFrameFragment(message1, getCurrentTimestamp(), mScramblingSequence);
 
-        updateScramblingCode(frameFragment);
+        if(mAutomaticScrambleUpdatesEnabled)
+        {
+            updateScramblingCode(frameFragment);
+        }
         broadcast(frameFragment);
     }
 

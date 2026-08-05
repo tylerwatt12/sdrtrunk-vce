@@ -44,6 +44,17 @@ public class LCMotorolaTalkerAliasAssembler
     private long mMostRecentTimestamp;
 
     /**
+     * Clears any partial alias assembled from a previous RF source.
+     */
+    public void reset()
+    {
+        mHeader = null;
+        mDataBlocks.clear();
+        mSequence = -1;
+        mMostRecentTimestamp = 0;
+    }
+
+    /**
      * Link control word to process.
      * @param lcw to add
      * @return true if we can (now) assemble a complete talker alias from the header and data blocks.

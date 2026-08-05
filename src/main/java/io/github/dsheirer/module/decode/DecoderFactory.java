@@ -200,7 +200,7 @@ public class DecoderFactory
                                          ChannelActivityModel channelActivityModel)
     {
         modules.add(new P25P2DecoderHDQPSK((DecodeConfigP25Phase2)channel.getDecodeConfiguration(),
-            initialSourceSampleRate));
+            initialSourceSampleRate, channel.getChannelType() == ChannelType.STANDARD));
 
         P25TrafficChannelManager p25TrafficChannelManager = null;
 
@@ -262,7 +262,7 @@ public class DecoderFactory
     {
         if(channel.getDecodeConfiguration() instanceof DecodeConfigP25Conventional conventional)
         {
-            addP25Phase1Decoder(modules, conventional.getModulation(), initialSourceSampleRate);
+            addP25Phase1Decoder(modules, conventional.getModulation(), initialSourceSampleRate, false);
         }
 
         modules.add(new P25P1DecoderState(channel, null));
@@ -283,7 +283,8 @@ public class DecoderFactory
     {
         if(channel.getDecodeConfiguration() instanceof DecodeConfigP25Phase1 p1)
         {
-            addP25Phase1Decoder(modules, p1.getModulation(), initialSourceSampleRate);
+            addP25Phase1Decoder(modules, p1.getModulation(), initialSourceSampleRate,
+                channel.getChannelType() == ChannelType.STANDARD);
         }
 
         if(channel.getChannelType() == ChannelType.STANDARD)
@@ -318,15 +319,16 @@ public class DecoderFactory
         }
     }
 
-    private static void addP25Phase1Decoder(List<Module> modules, Modulation modulation, double initialSourceSampleRate)
+    private static void addP25Phase1Decoder(List<Module> modules, Modulation modulation, double initialSourceSampleRate,
+                                            boolean controlNACGuardEnabled)
     {
         switch(modulation)
         {
             case C4FM:
-                modules.add(new P25P1DecoderC4FM(initialSourceSampleRate));
+                modules.add(new P25P1DecoderC4FM(initialSourceSampleRate, controlNACGuardEnabled));
                 break;
             case CQPSK:
-                modules.add(new P25P1DecoderLSM(initialSourceSampleRate));
+                modules.add(new P25P1DecoderLSM(initialSourceSampleRate, controlNACGuardEnabled));
                 break;
             default:
                 throw new IllegalArgumentException("Unrecognized P25 Phase 1 Modulation [" + modulation + "]");

@@ -26,6 +26,7 @@ import io.github.dsheirer.module.decode.p25.P25FrequencyBandConfirmationTracker;
 import io.github.dsheirer.module.decode.p25.P25FrequencyBandPreloadDataContent;
 import io.github.dsheirer.module.decode.p25.phase1.message.IFrequencyBand;
 import io.github.dsheirer.module.decode.p25.phase1.message.IFrequencyBandReceiver;
+import io.github.dsheirer.module.decode.p25.phase1.message.P25P1Message;
 import io.github.dsheirer.module.decode.p25.phase1.message.hdu.HDUMessage;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.IExtendedSourceMessage;
 import io.github.dsheirer.module.decode.p25.phase1.message.lc.LinkControlWord;
@@ -68,6 +69,8 @@ public class P25P1MessageProcessor implements Listener<IMessage>
     private Map<Integer,IFrequencyBand> mFrequencyBandMap = new TreeMap<>();
     private final P25FrequencyBandConfirmationTracker mFrequencyBandConfirmationTracker =
         new P25FrequencyBandConfirmationTracker();
+    private final boolean mControlNACGuardEnabled;
+    private final P25P1ControlNACAuthority mControlNACAuthority = new P25P1ControlNACAuthority();
 
     /**
      * Temporary holding for an extended source link control message while it awaits the extension message to arrive.
@@ -88,6 +91,16 @@ public class P25P1MessageProcessor implements Listener<IMessage>
      * Harris talker alias assembler for link control talker alias blocks
      */
     private HarrisTalkerAliasAssembler mHarrisTalkerAliasAssembler = new HarrisTalkerAliasAssembler();
+
+    public P25P1MessageProcessor()
+    {
+        this(false);
+    }
+
+    public P25P1MessageProcessor(boolean controlNACGuardEnabled)
+    {
+        mControlNACGuardEnabled = controlNACGuardEnabled;
+    }
 
     /**
      * Preloads frequency band information from the control channel.
@@ -110,8 +123,36 @@ public class P25P1MessageProcessor implements Listener<IMessage>
      * @param message to process
      */
     @Override
-    public void receive(IMessage message)
+    public synchronized void receive(IMessage message)
     {
+        if(mControlNACGuardEnabled && message instanceof P25P1Message p25P1Message)
+        {
+            P25P1ControlNACAuthority.Result result = mControlNACAuthority.observe(p25P1Message);
+
+            if(result != P25P1ControlNACAuthority.Result.AUTHORIZED)
+            {
+                if(result == P25P1ControlNACAuthority.Result.ESTABLISHED)
+                {
+                    clearSourceState();
+                }
+                else if(result == P25P1ControlNACAuthority.Result.REJECTED)
+                {
+                    clearReassemblyState();
+                }
+
+                //Control messages must reach the decoder state while authority is being established.  Everything
+                //else is source data and stays fail-closed so that direct listeners (audio/recorders) cannot consume
+                //a voice or data unit from a foreign NAC.
+                if(result == P25P1ControlNACAuthority.Result.CANDIDATE ||
+                    result == P25P1ControlNACAuthority.Result.ESTABLISHED)
+                {
+                    dispatchUnprocessed(message);
+                }
+
+                return;
+            }
+        }
+
         if(message.isValid())
         {
             //Reassemble extended source link control messages.
@@ -290,6 +331,45 @@ public class P25P1MessageProcessor implements Listener<IMessage>
         }
     }
 
+    private void dispatchUnprocessed(IMessage message)
+    {
+        if(message != null && mMessageListener != null)
+        {
+            mMessageListener.receive(message);
+        }
+    }
+
+    /**
+     * Clears source-specific NAC, band-plan and fragment history when the RF source changes.
+     */
+    public synchronized void resetForSourceFrequencyChange()
+    {
+        mControlNACAuthority.reset();
+        clearSourceState();
+    }
+
+    private void clearSourceState()
+    {
+        mFrequencyBandMap.clear();
+        mFrequencyBandConfirmationTracker.reset();
+        clearReassemblyState();
+    }
+
+    /**
+     * Clears partially assembled messages without discarding the frozen source authority or confirmed band plan.
+     */
+    private void clearReassemblyState()
+    {
+        mHeldTDULCMessage = null;
+        mHeldHDUMessage = null;
+        mHeldLDU1Message = null;
+        mHeldLDU2Message = null;
+        mHeldHarrisGPSBlock1 = null;
+        mHeldHarrisGPSBlock1Timestamp = 0;
+        mMotorolaTalkerAliasAssembler.reset();
+        mHarrisTalkerAliasAssembler.reset();
+    }
+
     /**
      * Captures IDEN_UPDATE messages and attaches them to messages with channel descriptors.
      * @param message to process for frequency band assembly.
@@ -331,8 +411,7 @@ public class P25P1MessageProcessor implements Listener<IMessage>
      */
     public void dispose()
     {
-        mFrequencyBandMap.clear();
-        mFrequencyBandConfirmationTracker.reset();
+        resetForSourceFrequencyChange();
         mMessageListener = null;
     }
 
