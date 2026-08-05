@@ -487,7 +487,8 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
 
         if(mAliasAdministrationService != null)
         {
-            AliasAdminHttpController aliasController = new AliasAdminHttpController(mAliasAdministrationService);
+            AliasAdminHttpController aliasController = new AliasAdminHttpController(mAliasAdministrationService,
+                mDatabase::invalidateAliasCache);
             HttpHandler protectedAliases = mWebAccessHttpController.protectApi(
                 WebCapability.ADMIN_ALIASES, aliasController::handle);
             server.createContext(AliasAdminHttpController.ALIAS_LISTS_PATH, protectedAliases);
@@ -503,6 +504,9 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         createProtectedContext(server, "/api/aliases", WebCapability.ALIASES_VIEW,
             exchange -> handleJson(exchange, "/api/aliases",
             () -> mDatabase.aliases(StatsRequest.from(exchange.getRequestURI()))));
+        createProtectedContext(server, "/api/alias-list/observed-talkgroups", WebCapability.ALIASES_VIEW,
+            exchange -> handleJson(exchange, "/api/alias-list/observed-talkgroups",
+            () -> mDatabase.observedTalkgroups(StatsRequest.from(exchange.getRequestURI()))));
         createProtectedContext(server, "/api/alias", WebCapability.ALIASES_VIEW,
             exchange -> handleJson(exchange, "/api/alias",
             () -> mDatabase.alias(StatsRequest.from(exchange.getRequestURI()))));

@@ -36,6 +36,15 @@ class StatsAliasResolver
     private volatile Snapshot mSnapshot = new Snapshot(List.of(), List.of(), List.of(), List.of(), List.of(),
         List.of(), 0);
 
+    /**
+     * Discards cached alias rules after an administrator changes alias configuration.  The next read reloads one
+     * coherent snapshot from SQLite instead of waiting for the normal polling cache to expire.
+     */
+    synchronized void invalidate()
+    {
+        mSnapshot = new Snapshot(List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), 0);
+    }
+
     void enrichTalkgroups(Connection connection, List<Map<String,Object>> rows) throws SQLException
     {
         enrichTalkgroups(connection, rows, "talkgroup_id", "alias_");
@@ -154,8 +163,9 @@ class StatsAliasResolver
      * one observation count against multiple aliases.
      *
      * <p>Expected row fields are {@code protocol_code}, {@code topology}, {@code identity_kind_code},
-     * {@code identity_id}, and the normal system or assigned-list lookup fields.  A row with no eligible rule keeps
-     * a null {@code resolved_alias_id}.</p>
+     * {@code identity_id}, and the normal system or assigned-list lookup fields. P25 talkgroup evidence also carries
+     * the compact identity state and, for a stable fully-qualified identity, its home tuple. A row with no eligible
+     * rule keeps a null {@code resolved_alias_id}; unknown or conflicting P25 identity evidence is never guessed.</p>
      */
     void resolveEvidenceAliases(Connection connection, List<Map<String,Object>> rows) throws SQLException
     {
@@ -206,11 +216,37 @@ class StatsAliasResolver
                 Integer wacn = integer(row.get("wacn"));
                 Integer system = integer(row.get("system_id"));
                 Integer systemKey = integer(row.get("system_key"));
+                Set<String> aliasLists = systemKey != null ?
+                    systemAliasLists.getOrDefault(systemKey, Set.of()) : Set.of();
 
-                if(wacn != null && system != null)
+                if(!radio)
                 {
-                    Set<String> aliasLists = systemKey != null ?
-                        systemAliasLists.getOrDefault(systemKey, Set.of()) : Set.of();
+                    Integer identityState = integer(row.get("p25_identity_state_code"));
+
+                    if(Integer.valueOf(1).equals(identityState))
+                    {
+                        best = bestSystemOrdinaryRule(rules.exact().getOrDefault(identifier, List.of()), null,
+                            identifier, aliasLists);
+                        best = bestSystemOrdinaryRule(rules.ranged(), best, identifier, aliasLists);
+                    }
+                    else if(Integer.valueOf(2).equals(identityState))
+                    {
+                        Integer homeWacn = integer(row.get("p25_home_wacn"));
+                        Integer homeSystem = integer(row.get("p25_home_system_id"));
+                        Integer homeTalkgroup = integer(row.get("p25_home_talkgroup_id"));
+
+                        if(homeWacn != null && homeSystem != null && homeTalkgroup != null)
+                        {
+                            best = bestSystemFullyQualifiedRule(
+                                rules.exact().getOrDefault(homeTalkgroup, List.of()), homeTalkgroup,
+                                homeWacn, homeSystem, aliasLists);
+                        }
+                    }
+                }
+                else if(wacn != null && system != null)
+                {
+                    //Radio summaries do not yet retain a fully-qualified identity state. Preserve their existing
+                    //system-qualified resolution while talkgroup evidence uses the safer state above.
                     best = bestSystemRule(rules.exact().getOrDefault(identifier, List.of()), null, identifier,
                         wacn, system, aliasLists);
                     best = bestSystemRule(rules.ranged(), best, identifier, wacn, system, aliasLists);
@@ -228,6 +264,127 @@ class StatsAliasResolver
                 row.put("resolved_alias_id", best.aliasId());
             }
         }
+    }
+
+    /**
+     * Resolves each observed talkgroup or patch identity only against the alias list named on that row.  Unlike the
+     * normal system enrichment, this projection deliberately does not consider another list assigned to a second
+     * receiver for the same P25 system: the Alias Editor needs to show whether the selected list itself has an exact
+     * definition, a range definition, or no definition for the observed identity.
+     *
+     * <p>Expected row fields are {@code protocol_code}, {@code topology}, {@code talkgroup_id}, and
+     * {@code alias_list_name}. Trunked P25 rows also carry the compact observed identity state and, when stable,
+     * the fully-qualified home identity. The method never infers a home identity from the monitored system.
+     * {@code promotion_supported} is false whenever the stored facts cannot safely create a matching Alias.</p>
+     */
+    void resolveObservedTalkgroups(Connection connection, List<Map<String,Object>> rows) throws SQLException
+    {
+        if(rows.isEmpty())
+        {
+            return;
+        }
+
+        Snapshot snapshot = snapshot(connection);
+        RuleIndex p25 = index(snapshot.talkgroups());
+        RuleIndex dmr = index(snapshot.dmrTalkgroups());
+        RuleIndex nxdn = index(snapshot.nxdnTalkgroups());
+
+        for(Map<String,Object> row: rows)
+        {
+            Integer identifier = integer(row.get("talkgroup_id"));
+            Integer protocol = integer(row.get("protocol_code"));
+            String aliasList = string(row.get("alias_list_name"));
+            RuleIndex rules = protocol != null ? switch(protocol)
+            {
+                case 1 -> p25;
+                case 3 -> dmr;
+                case 4 -> nxdn;
+                default -> null;
+            } : null;
+            Rule best = null;
+            boolean promotionSupported = protocol != null && protocol != 1;
+            String promotionReason = null;
+
+            if(identifier != null && aliasList != null && rules != null)
+            {
+                if(protocol == 1 && "TRUNKED".equals(row.get("topology")))
+                {
+                    Integer identityState = integer(row.get("p25_identity_state_code"));
+
+                    if(identityState != null && identityState == 1)
+                    {
+                        promotionSupported = true;
+                        best = bestAssignedRule(rules.exact().getOrDefault(identifier, List.of()), null,
+                            identifier, aliasList);
+                        best = bestAssignedRule(rules.ranged(), best, identifier, aliasList);
+                    }
+                    else if(identityState != null && identityState == 2)
+                    {
+                        Integer homeWacn = integer(row.get("p25_home_wacn"));
+                        Integer homeSystem = integer(row.get("p25_home_system_id"));
+                        Integer homeTalkgroup = integer(row.get("p25_home_talkgroup_id"));
+
+                        if(homeWacn != null && homeSystem != null && homeTalkgroup != null)
+                        {
+                            promotionSupported = true;
+                            best = bestSelectedListFullyQualifiedRule(
+                                rules.exact().getOrDefault(homeTalkgroup, List.of()), homeTalkgroup, homeWacn,
+                                homeSystem, aliasList);
+                        }
+                        else
+                        {
+                            promotionReason = "The stored fully-qualified P25 identity is incomplete";
+                        }
+                    }
+                    else if(identityState != null && identityState == 3)
+                    {
+                        promotionReason = "Multiple P25 identities used this local talkgroup number";
+                    }
+                    else
+                    {
+                        promotionReason = "This observation predates P25 identity qualification";
+                    }
+                }
+                else if(protocol == 1)
+                {
+                    //Conventional call buckets predate qualifier-aware P25 identity storage. They remain useful for
+                    //review, but creating an ordinary Alias from them could mislabel a fully-qualified destination.
+                    best = bestAssignedRule(rules.exact().getOrDefault(identifier, List.of()), null, identifier,
+                        aliasList);
+                    best = bestAssignedRule(rules.ranged(), best, identifier, aliasList);
+                    promotionReason = "Conventional P25 observations do not retain identity qualification yet";
+                }
+                else
+                {
+                    best = bestAssignedRule(rules.exact().getOrDefault(identifier, List.of()), null, identifier,
+                        aliasList);
+                    best = bestAssignedRule(rules.ranged(), best, identifier, aliasList);
+                }
+            }
+
+            row.put("match_kind", best == null ? "none" : best.ranged() ? "range" : "exact");
+            row.put("matched_alias_id", best != null ? best.aliasId() : null);
+            row.put("matched_alias_name", best != null ? best.name() : null);
+            row.put("promotion_supported", promotionSupported);
+            row.put("promotion_reason", promotionSupported ? null : promotionReason);
+        }
+    }
+
+    private static Rule bestSelectedListFullyQualifiedRule(List<Rule> rules, int identifier, int wacn, int system,
+                                                            String aliasList)
+    {
+        Rule best = null;
+
+        for(Rule rule: rules)
+        {
+            if(aliasList.equals(rule.aliasList()) && rule.fullyQualified() && !rule.ranged() &&
+                rule.matches(identifier, wacn, system) && (best == null || rule.isPreferredTo(best)))
+            {
+                best = rule;
+            }
+        }
+
+        return best;
     }
 
     /**
@@ -435,6 +592,38 @@ class StatsAliasResolver
         return best;
     }
 
+    private static Rule bestSystemOrdinaryRule(List<Rule> rules, Rule best, int identifier,
+                                                Set<String> aliasLists)
+    {
+        for(Rule rule: rules)
+        {
+            if(!rule.fullyQualified() && rule.matchesIdentifier(identifier) && rule.isEligible(aliasLists) &&
+                (best == null || rule.isPreferredTo(best)))
+            {
+                best = rule;
+            }
+        }
+
+        return best;
+    }
+
+    private static Rule bestSystemFullyQualifiedRule(List<Rule> rules, int identifier, int wacn, int system,
+                                                      Set<String> aliasLists)
+    {
+        Rule best = null;
+
+        for(Rule rule: rules)
+        {
+            if(rule.fullyQualified() && !rule.ranged() && rule.matches(identifier, wacn, system) &&
+                rule.isEligible(aliasLists) && (best == null || rule.isPreferredTo(best)))
+            {
+                best = rule;
+            }
+        }
+
+        return best;
+    }
+
     private static Rule bestAssignedRule(List<Rule> rules, Rule best, int identifier, String aliasList)
     {
         for(Rule rule: rules)
@@ -599,14 +788,42 @@ class StatsAliasResolver
         {
             int specificity = specificity();
             int otherSpecificity = other.specificity();
-            return specificity > otherSpecificity || (specificity == otherSpecificity && aliasId < other.aliasId);
+            if(specificity != otherSpecificity)
+            {
+                return specificity > otherSpecificity;
+            }
+            if(ranged)
+            {
+                return isPreferredRangeTo(other);
+            }
+
+            //AliasList keeps the first fully-qualified duplicate but the last ordinary exact duplicate.
+            return fullyQualified ? aliasId < other.aliasId : aliasId > other.aliasId;
         }
 
         boolean isPreferredAssignedListTo(Rule other)
         {
             int specificity = ranged ? 0 : 1;
             int otherSpecificity = other.ranged ? 0 : 1;
-            return specificity > otherSpecificity || (specificity == otherSpecificity && aliasId < other.aliasId);
+            if(specificity != otherSpecificity)
+            {
+                return specificity > otherSpecificity;
+            }
+            return ranged ? isPreferredRangeTo(other) : aliasId > other.aliasId;
+        }
+
+        private boolean isPreferredRangeTo(Rule other)
+        {
+            int minimumComparison = Integer.compare(minimum != null ? minimum : Integer.MIN_VALUE,
+                other.minimum != null ? other.minimum : Integer.MIN_VALUE);
+            if(minimumComparison != 0)
+            {
+                return minimumComparison > 0;
+            }
+
+            int maximumComparison = Integer.compare(maximum != null ? maximum : Integer.MIN_VALUE,
+                other.maximum != null ? other.maximum : Integer.MIN_VALUE);
+            return maximumComparison != 0 ? maximumComparison > 0 : aliasId > other.aliasId;
         }
 
         boolean matchesIdentifier(int identifier)

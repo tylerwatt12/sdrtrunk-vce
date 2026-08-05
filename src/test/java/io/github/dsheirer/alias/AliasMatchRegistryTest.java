@@ -154,6 +154,33 @@ class AliasMatchRegistryTest
         assertTrue(radioRange.isValid());
     }
 
+    @Test
+    void recognizesOnlyProtocolOwnedFullTalkgroupRangesAsRetiredCatchAlls()
+    {
+        AliasListDefinition p25 = definition(AliasListFamily.P25);
+        AliasListDefinition dmr = definition(AliasListFamily.DMR);
+        AliasListDefinition nxdn = definition(AliasListFamily.NXDN);
+        AliasListDefinition nbfm = definition(AliasListFamily.NBFM);
+
+        assertTrue(AliasMatchRegistry.isUnmatchedTalkgroupCatchAll(p25,
+            new TalkgroupRange(Protocol.APCO25, 0, 0xFFFF)));
+        assertTrue(AliasMatchRegistry.isUnmatchedTalkgroupCatchAll(p25,
+            new TalkgroupRange(Protocol.APCO25_PHASE2, 1, 0xFFFF)));
+        assertTrue(AliasMatchRegistry.isUnmatchedTalkgroupCatchAll(dmr,
+            new TalkgroupRange(Protocol.DMR, 1, 0xFFFFFF)));
+        assertTrue(AliasMatchRegistry.isUnmatchedTalkgroupCatchAll(nxdn,
+            new TalkgroupRange(Protocol.NXDN, 1, 0xFFFF)));
+
+        assertFalse(AliasMatchRegistry.isUnmatchedTalkgroupCatchAll(p25,
+            new TalkgroupRange(Protocol.APCO25, 2, 0xFFFF)));
+        assertFalse(AliasMatchRegistry.isUnmatchedTalkgroupCatchAll(dmr,
+            new TalkgroupRange(Protocol.DMR, 1, 0xFFFF)));
+        assertFalse(AliasMatchRegistry.isUnmatchedTalkgroupCatchAll(nbfm,
+            new TalkgroupRange(Protocol.NBFM, 1, 0xFFFF)));
+        assertFalse(AliasMatchRegistry.isUnmatchedTalkgroupCatchAll(dmr,
+            new TalkgroupRange(Protocol.APCO25, 1, 0xFFFF)));
+    }
+
     private static AliasListDefinition definition(AliasListFamily family)
     {
         return new AliasListDefinition("Test", family);

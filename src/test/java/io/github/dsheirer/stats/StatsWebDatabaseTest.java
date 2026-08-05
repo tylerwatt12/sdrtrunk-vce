@@ -121,6 +121,12 @@ class StatsWebDatabaseTest
                 WHERE id=1
                 """);
             statement.executeUpdate("""
+                UPDATE trunked_identity_summary
+                SET p25_identity_state_code=2, p25_home_wacn=0xBEE00,
+                    p25_home_system_id=0x348, p25_home_talkgroup_id=56132
+                WHERE scope_id=1 AND identity_kind_code=1 AND identity_id=56132
+                """);
+            statement.executeUpdate("""
                 UPDATE trunked_radio_talkgroup_summary SET join_count=2
                 WHERE scope_id=1 AND radio_id=1811332 AND talkgroup_id=56132
                 """);
@@ -171,6 +177,318 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void exposesObservedTalkgroupsIndividuallyWithoutLettingRangesHideDiscovery() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO alias (
+                    id, alias_list_id, name, matcher_type, protocol, min_value, max_value
+                ) VALUES (3, 1, 'County Range', 'TALKGROUP_RANGE', 'APCO25', 56000, 56200)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO trunked_identity_summary (
+                    scope_id, identity_kind_code, identity_id, p25_identity_state_code,
+                    first_seen_ms, last_seen_ms,
+                    call_count, target_call_count, grant_count, join_count, emergency_count,
+                    register_count, logout_count, denial_count, data_count, encrypted_count,
+                    recorded_count, streamed_count
+                ) VALUES
+                    (1, 1, 56180, 1, 2100, 3100, 7, 7, 6, 2, 1, 3, 1, 1, 4, 2, 3, 2),
+                    (1, 3, 56190, 1, 2200, 3200, 5, 5, 5, 1, 0, 0, 0, 0, 0, 0, 1, 1),
+                    (1, 1, 60000, 1, 2300, 3300, 4, 4, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+                """);
+        }
+
+        Map<String,Object> firstPage = mDatabase.observedTalkgroups(request(
+            "/api/alias-list/observed-talkgroups?list=1&sort=talkgroup&direction=asc&limit=2"));
+        List<Map<String,Object>> firstRows = rows(firstPage);
+        assertEquals(List.of(56180L, 56190L), firstRows.stream()
+            .map(row -> number(row.get("talkgroup_id"))).toList());
+        assertTrue((Boolean)firstPage.get("hasMore"));
+        assertEquals("range", firstRows.getFirst().get("match_kind"));
+        assertEquals("County Range", firstRows.getFirst().get("matched_alias_name"));
+        assertEquals(3L, number(firstRows.getFirst().get("matched_alias_id")));
+        assertEquals("TRUNKED", firstRows.getFirst().get("topology"));
+        assertEquals("P25", firstRows.getFirst().get("protocol"));
+        assertEquals(true, firstRows.getFirst().get("promotion_supported"));
+        assertEquals("p25:BEE00:348", firstRows.getFirst().get("scope_token"));
+        assertEquals(7L, number(firstRows.getFirst().get("call_count")));
+        assertEquals(3L, number(firstRows.getFirst().get("recorded_count")));
+        assertEquals(2L, number(firstRows.getFirst().get("streamed_count")));
+        assertEquals(6L, number(firstRows.getFirst().get("grant_count")));
+        assertEquals(2L, number(firstRows.getFirst().get("join_count")));
+        assertEquals("Patch Group", firstRows.getLast().get("identity_kind"));
+
+        Map<String,Object> secondPage = mDatabase.observedTalkgroups(request(
+            "/api/alias-list/observed-talkgroups?list=1&sort=talkgroup&direction=asc&limit=2&offset=2"));
+        assertEquals(List.of(60000L), rows(secondPage).stream()
+            .map(row -> number(row.get("talkgroup_id"))).toList());
+        assertEquals("none", rows(secondPage).getFirst().get("match_kind"));
+        assertNull(rows(secondPage).getFirst().get("matched_alias_id"));
+        assertFalse((Boolean)secondPage.get("hasMore"));
+        assertEquals("County", map(firstPage, "alias_list").get("name"));
+        assertEquals(false, firstPage.get("include_exact"));
+
+        List<Map<String,Object>> exact = rows(mDatabase.observedTalkgroups(request(
+            "/api/alias-list/observed-talkgroups?list=1&include_exact=true&q=56132")));
+        assertEquals(1, exact.size());
+        assertEquals("exact", exact.getFirst().get("match_kind"));
+        assertEquals("Dispatch", exact.getFirst().get("matched_alias_name"));
+
+        assertEquals(400, assertThrows(StatsApiException.class, () -> mDatabase.observedTalkgroups(request(
+            "/api/alias-list/observed-talkgroups?list=1&include_exact=maybe"))).status());
+        assertEquals(404, assertThrows(StatsApiException.class, () -> mDatabase.observedTalkgroups(request(
+            "/api/alias-list/observed-talkgroups?list=999"))).status());
+    }
+
+    @Test
+    void preservesP25FullyQualifiedIdentityWhenDiscoveringAndCreatingAliases() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO alias (
+                    id, alias_list_id, name, matcher_type, protocol, value, wacn, p25_system_id
+                ) VALUES (90, 1, 'ISSI Dispatch', 'P25_FULLY_QUALIFIED_TALKGROUP', 'APCO25',
+                    700, 0xABCDE, 0x123)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO trunked_identity_summary (
+                    scope_id, identity_kind_code, identity_id, p25_identity_state_code,
+                    p25_home_wacn, p25_home_system_id, p25_home_talkgroup_id,
+                    first_seen_ms, last_seen_ms, call_count, target_call_count
+                ) VALUES
+                    (1, 1, 700, 1, NULL, NULL, NULL, 1000, 2000, 1, 1),
+                    (1, 1, 1700, 2, 0xABCDE, 0x123, 700, 1000, 2000, 1, 1),
+                    (1, 1, 1701, 2, 0xABCDE, 0x123, 701, 1000, 2000, 1, 1),
+                    (1, 1, 1702, 3, NULL, NULL, NULL, 1000, 2000, 1, 1),
+                    (1, 1, 1703, 0, NULL, NULL, NULL, 1000, 2000, 1, 1)
+                """);
+        }
+
+        List<Map<String,Object>> rows = rows(mDatabase.observedTalkgroups(request(
+            "/api/alias-list/observed-talkgroups?list=1&sort=talkgroup&direction=asc&limit=100")));
+        Map<String,Object> ordinary = rows.stream()
+            .filter(row -> number(row.get("talkgroup_id")) == 700L).findFirst().orElseThrow();
+        assertEquals("none", ordinary.get("match_kind"),
+            "A fully-qualified Alias must not claim an ordinary destination with the same number");
+        assertEquals(true, ordinary.get("promotion_supported"));
+
+        Map<String,Object> qualified = rows.stream()
+            .filter(row -> number(row.get("talkgroup_id")) == 1701L).findFirst().orElseThrow();
+        assertEquals(2L, number(qualified.get("p25_identity_state_code")));
+        assertEquals(0xABCDEL, number(qualified.get("p25_home_wacn")));
+        assertEquals(0x123L, number(qualified.get("p25_home_system_id")));
+        assertEquals(701L, number(qualified.get("p25_home_talkgroup_id")));
+        assertEquals(true, qualified.get("promotion_supported"));
+        assertEquals("none", qualified.get("match_kind"));
+
+        Map<String,Object> ambiguous = rows.stream()
+            .filter(row -> number(row.get("talkgroup_id")) == 1702L).findFirst().orElseThrow();
+        assertEquals(false, ambiguous.get("promotion_supported"));
+        assertEquals("Multiple P25 identities used this local talkgroup number", ambiguous.get("promotion_reason"));
+        Map<String,Object> historical = rows.stream()
+            .filter(row -> number(row.get("talkgroup_id")) == 1703L).findFirst().orElseThrow();
+        assertEquals(false, historical.get("promotion_supported"));
+
+        List<Map<String,Object>> exact = rows(mDatabase.observedTalkgroups(request(
+            "/api/alias-list/observed-talkgroups?list=1&include_exact=true&q=1700")));
+        assertEquals(1, exact.size());
+        assertEquals("exact", exact.getFirst().get("match_kind"));
+        assertEquals("ISSI Dispatch", exact.getFirst().get("matched_alias_name"));
+        List<Map<String,Object>> qualifiedSearch = rows(mDatabase.observedTalkgroups(request(
+            "/api/alias-list/observed-talkgroups?list=1&q=ABCDE-123-701")));
+        assertEquals(1, qualifiedSearch.size(), "The displayed fully-qualified identity is searchable");
+        assertEquals(1701L, number(qualifiedSearch.getFirst().get("talkgroup_id")));
+
+        List<Map<String,Object>> aliases = rows(mDatabase.aliases(request(
+            "/api/aliases?list=1&q=ISSI%20Dispatch")));
+        assertEquals(1, aliases.size());
+        assertEquals(1L, number(aliases.getFirst().get("call_count")),
+            "Only the matching fully-qualified observation contributes; the ordinary TG 700 row does not");
+    }
+
+    @Test
+    void includesConventionalDmrUnknownTalkgroupsWithoutDuplicatingTimeslots() throws Exception
+    {
+        seedDmrConventionalRows(mDatabasePath);
+        long bucket = Math.floorDiv(System.currentTimeMillis(), 3_600_000L) * 3_600_000L;
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO dmr_conventional_talkgroup_summary (
+                    context_id, frequency_hz, timeslot, talkgroup_id, first_seen_ms, last_seen_ms,
+                    call_count, encrypted_count
+                ) VALUES (5, 451012500, 1, 93, 3000, 5000, 4, 1),
+                         (5, 451012500, 2, 93, 4000, 6000, 6, 2)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO call_identity_bucket (
+                    context_id, bucket_start_ms, identity_role_code, identity_kind_code, identity_id,
+                    call_count, encrypted_count, recorded_count, streamed_count
+                ) VALUES (5, %d, 1, 1, 93, 10, 3, 4, 5)
+                """.formatted(bucket));
+        }
+        mDatabase = new StatsWebDatabase(new UserPreferences(), mDatabasePath);
+
+        List<Map<String,Object>> rows = rows(mDatabase.observedTalkgroups(request(
+            "/api/alias-list/observed-talkgroups?list=100&sort=talkgroup&direction=asc")));
+        assertEquals(1, rows.size(), "The two timeslots belong to one context/talkgroup identity");
+        Map<String,Object> row = rows.getFirst();
+        assertEquals(93L, number(row.get("talkgroup_id")));
+        assertEquals("CONVENTIONAL", row.get("topology"));
+        assertEquals("none", row.get("match_kind"));
+        assertEquals(10L, number(row.get("call_count")));
+        assertEquals(3L, number(row.get("encrypted_count")));
+        assertEquals(4L, number(row.get("recorded_count")));
+        assertEquals(5L, number(row.get("streamed_count")));
+        assertEquals(2L, number(row.get("timeslot_count")));
+        assertNull(row.get("timeslot"));
+        assertNull(row.get("grant_count"), "Conventional DMR does not collect grant signaling");
+    }
+
+    @Test
+    void includesConventionalP25AndNxdnTalkgroupsFromCompactCallBuckets() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO receiver_context (
+                    id, context_key, guid, kind_code, protocol_code, channel_name, alias_list_name,
+                    decoder, first_seen_ms, last_seen_ms, primary_frequency_hz
+                ) VALUES
+                    (210, 'conventional-p25-discovery', 'conventional-p25-discovery-guid', 2, 2,
+                        'P25 Conventional', 'County', 'P25-2', 1000, 9000, 154875000),
+                    (211, 'conventional-nxdn-discovery', 'conventional-nxdn-discovery-guid', 4, 4,
+                        'NXDN Conventional', 'County NXDN', 'NXDN', 1000, 9000, 452125000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias_list (id, name, family)
+                VALUES (210, 'County NXDN', 'NXDN')
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias (
+                    id, alias_list_id, name, matcher_type, protocol, min_value, max_value
+                ) VALUES
+                    (210, 1, 'P25 Discovery Range', 'TALKGROUP_RANGE', 'APCO25', 61000, 62000),
+                    (211, 210, 'NXDN Discovery Range', 'TALKGROUP_RANGE', 'NXDN', 200, 300)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO call_identity_bucket (
+                    context_id, bucket_start_ms, identity_role_code, identity_kind_code, identity_id,
+                    call_count, encrypted_count, recorded_count, streamed_count
+                ) VALUES
+                    (210, 3600000, 1, 1, 61001, 3, 1, 1, 0),
+                    (210, 7200000, 1, 1, 61001, 2, 0, 0, 2),
+                    (210, 7200000, 1, 1, 56132, 9, 0, 0, 0),
+                    (210, 7200000, 2, 2, 900001, 9, 0, 0, 0),
+                    (211, 3600000, 1, 1, 250, 4, 2, 3, 1)
+                """);
+        }
+        mDatabase = new StatsWebDatabase(new UserPreferences(), mDatabasePath);
+
+        List<Map<String,Object>> p25Rows = rows(mDatabase.observedTalkgroups(request(
+            "/api/alias-list/observed-talkgroups?list=1&sort=talkgroup&direction=asc")));
+        assertEquals(1, p25Rows.size(), "Exact and source-radio identities stay out of discovery by default");
+        Map<String,Object> p25 = p25Rows.getFirst();
+        assertEquals("P25", p25.get("protocol"));
+        assertEquals("CONVENTIONAL", p25.get("topology"));
+        assertEquals(61001L, number(p25.get("talkgroup_id")));
+        assertEquals("range", p25.get("match_kind"));
+        assertEquals("P25 Discovery Range", p25.get("matched_alias_name"));
+        assertEquals(5L, number(p25.get("call_count")));
+        assertEquals(1L, number(p25.get("encrypted_count")));
+        assertEquals(1L, number(p25.get("recorded_count")));
+        assertEquals(2L, number(p25.get("streamed_count")));
+        assertEquals(3_600_000L, number(p25.get("first_seen_ms")));
+        assertEquals(7_200_000L, number(p25.get("last_seen_ms")));
+        assertEquals(154_875_000L, number(p25.get("frequency_hz")));
+        assertEquals(1L, number(p25.get("frequency_count")));
+        assertNull(p25.get("grant_count"));
+
+        List<Map<String,Object>> nxdnRows = rows(mDatabase.observedTalkgroups(request(
+            "/api/alias-list/observed-talkgroups?list=210")));
+        assertEquals(1, nxdnRows.size());
+        Map<String,Object> nxdn = nxdnRows.getFirst();
+        assertEquals("NXDN", nxdn.get("protocol"));
+        assertEquals("CONVENTIONAL", nxdn.get("topology"));
+        assertEquals(250L, number(nxdn.get("talkgroup_id")));
+        assertEquals("range", nxdn.get("match_kind"));
+        assertEquals("NXDN Discovery Range", nxdn.get("matched_alias_name"));
+        assertEquals(4L, number(nxdn.get("call_count")));
+        assertEquals(2L, number(nxdn.get("encrypted_count")));
+        assertEquals(3L, number(nxdn.get("recorded_count")));
+        assertEquals(1L, number(nxdn.get("streamed_count")));
+    }
+
+    @Test
+    void includesTrunkedDmrAndNxdnTalkgroupsForTheirAssignedLists() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
+        {
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("observed-dmr",
+                TrunkedSiteSchema.PROTOCOL_DMR, 1, 0, "Observed DMR System", "DMR Site",
+                10, 20, 1, null, List.of(), List.of()));
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("observed-nxdn",
+                TrunkedSiteSchema.PROTOCOL_NXDN, 1, 0, "Observed NXDN System", "NXDN Site",
+                30, 40, 2, 3, List.of(), List.of()));
+            seedContextScope(connection, 201, 201, "observed-dmr", TrunkedSiteSchema.PROTOCOL_DMR, 0);
+            seedContextScope(connection, 202, 202, "observed-nxdn", TrunkedSiteSchema.PROTOCOL_NXDN, 0);
+
+            try(Statement statement = connection.createStatement())
+            {
+                statement.executeUpdate("""
+                    INSERT INTO alias_list (id, name, family)
+                    VALUES (200, 'Observed DMR', 'DMR'), (201, 'Observed NXDN', 'NXDN')
+                    """);
+                statement.executeUpdate("""
+                    UPDATE receiver_context
+                    SET alias_list_name = CASE id
+                        WHEN 201 THEN 'Observed DMR'
+                        WHEN 202 THEN 'Observed NXDN'
+                    END
+                    WHERE id IN (201, 202)
+                    """);
+                statement.executeUpdate("""
+                    INSERT INTO alias (
+                        id, alias_list_id, name, matcher_type, protocol, min_value, max_value
+                    ) VALUES (200, 200, 'DMR Range', 'TALKGROUP_RANGE', 'DMR', 100, 200)
+                    """);
+                statement.executeUpdate("""
+                    INSERT INTO trunked_identity_summary (
+                        scope_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms,
+                        call_count, target_call_count, grant_count, encrypted_count,
+                        recorded_count, streamed_count
+                    ) VALUES (201, 1, 150, 1000, 3000, 4, 4, 4, 1, 2, 3),
+                             (202, 1, 250, 1000, 3000, 5, 5, 5, 0, 1, 2)
+                    """);
+            }
+        }
+        mDatabase = new StatsWebDatabase(new UserPreferences(), mDatabasePath);
+
+        Map<String,Object> dmr = rows(mDatabase.observedTalkgroups(request(
+            "/api/alias-list/observed-talkgroups?list=200"))).getFirst();
+        assertEquals("DMR", dmr.get("protocol"));
+        assertEquals("TRUNKED", dmr.get("topology"));
+        assertEquals("range", dmr.get("match_kind"));
+        assertEquals("DMR Range", dmr.get("matched_alias_name"));
+        assertEquals("Observed DMR System", dmr.get("system_name"));
+
+        Map<String,Object> nxdn = rows(mDatabase.observedTalkgroups(request(
+            "/api/alias-list/observed-talkgroups?list=201"))).getFirst();
+        assertEquals("NXDN", nxdn.get("protocol"));
+        assertEquals("none", nxdn.get("match_kind"));
+        assertEquals(250L, number(nxdn.get("talkgroup_id")));
+        assertEquals("Observed NXDN System", nxdn.get("system_name"));
+    }
+
+    @Test
     void filtersAliasConfigurationAndEvidenceBeforePagingAndReportsOverlaps() throws Exception
     {
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
@@ -205,12 +523,13 @@ class StatsWebDatabaseTest
         Map<String,Object> observedResponse = mDatabase.aliases(request(
             "/api/aliases?list=1&type=talkgroup&evidence=observed&use=used&lastActivityAfter=2000&limit=1"));
         List<Map<String,Object>> observed = rows(observedResponse);
-        assertEquals(List.of("Dispatch"), observed.stream().map(row -> row.get("name")).toList());
+        assertEquals(List.of("Dispatch Duplicate"), observed.stream().map(row -> row.get("name")).toList(),
+            "Catalog evidence must follow the same later-exact-alias precedence as runtime");
         assertFalse((Boolean)observedResponse.get("hasMore"));
 
         List<Map<String,Object>> noCalls = rows(mDatabase.aliases(request(
             "/api/aliases?list=1&type=talkgroup&evidence=covered_no_evidence&use=unused&limit=10")));
-        assertEquals(List.of("AAA No Calls", "Dispatch Duplicate", "Range A", "Range B"),
+        assertEquals(List.of("AAA No Calls", "Dispatch", "Range A", "Range B"),
             noCalls.stream().map(row -> row.get("name")).toList());
 
         assertTrue(rows(mDatabase.aliases(request(
@@ -3236,10 +3555,11 @@ class StatsWebDatabaseTest
                 """);
             statement.executeUpdate("""
                 INSERT INTO trunked_identity_summary (
-                    scope_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms,
+                    scope_id, identity_kind_code, identity_id, p25_identity_state_code,
+                    first_seen_ms, last_seen_ms,
                     call_count, target_call_count, grant_count, encrypted_count,
                     last_counterpart_kind_code, last_counterpart_id
-                ) VALUES (1, 1, 56132, 1000, 2000, 12, 12, 12, 2, 2, 1811332)
+                ) VALUES (1, 1, 56132, 1, 1000, 2000, 12, 12, 12, 2, 2, 1811332)
                 """);
             statement.executeUpdate("""
                 INSERT INTO trunked_identity_summary (

@@ -21,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasListFamily;
+import io.github.dsheirer.alias.UnmatchedTalkgroupPolicy;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.audio.broadcast.radioresolve.RadioResolveConfiguration;
 import io.github.dsheirer.configuration.ConfigurationState;
@@ -46,6 +47,8 @@ class LegacyXmlConfigurationMergerTest
         existing.getBroadcastConfigurations().getFirst().setConfigurationId(EXISTING_CONFIGURATION_ID);
 
         ConfigurationState imported = state("county", "control", "calls", 200);
+        imported.getAliasListDefinitions().getFirst().setUnmatchedTalkgroupPolicy(
+            new UnmatchedTalkgroupPolicy(-1, true, List.of("calls")));
         Alias importedSourceAlias = imported.getAliases().getFirst();
         Channel importedSourceChannel = imported.getChannels().getFirst();
         RadioResolveConfiguration importedSourceStream =
@@ -78,6 +81,10 @@ class LegacyXmlConfigurationMergerTest
         assertEquals("county (Imported)", importedDefinition.getName());
         assertEquals(AliasListFamily.P25, importedDefinition.getFamily());
         assertEquals(AliasListDefinition.UNASSIGNED_ID, importedDefinition.getId());
+        assertEquals(-1, importedDefinition.getUnmatchedTalkgroupPolicy().getPlaybackPriority());
+        assertTrue(importedDefinition.getUnmatchedTalkgroupPolicy().isRecordEnabled());
+        assertEquals(List.of("calls (Imported)"),
+            importedDefinition.getUnmatchedTalkgroupPolicy().getStreamDestinationNames());
 
         Alias importedAlias = merged.getAliases().get(1);
         assertNotSame(importedSourceAlias, importedAlias);

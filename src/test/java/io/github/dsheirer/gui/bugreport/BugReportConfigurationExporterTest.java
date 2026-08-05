@@ -79,6 +79,7 @@ class BugReportConfigurationExporterTest
         assertEquals(1, snapshot.get("application_settings").size());
         assertFalse(mapper.writeValueAsString(snapshot).contains("must-not-export"));
         assertTrue(snapshot.containsKey("alias_list"));
+        assertTrue(snapshot.containsKey("alias_list_unmatched_talkgroup_stream"));
         assertTrue(snapshot.containsKey("alias"));
         assertFalse(snapshot.containsKey("alias_talkgroup"));
         assertFalse(snapshot.containsKey("alias_radio"));

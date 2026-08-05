@@ -16,7 +16,9 @@ import io.github.dsheirer.alias.AliasFactory;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.alias.AliasMatchRegistry;
+import io.github.dsheirer.alias.UnmatchedTalkgroupPolicy;
 import io.github.dsheirer.alias.id.AliasID;
+import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.configuration.ConfigurationState;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.module.decode.DecoderType;
@@ -158,8 +160,47 @@ public final class AliasListDefinitionResolver
             }
         }
 
+        convertUnambiguousCatchAllAliases(importedAliases, definitions);
+
         state.setAliases(importedAliases);
         state.setAliasListDefinitions(definitions);
+    }
+
+    /**
+     * Converts the old full-range alias convention into the list-owned unmatched talkgroup policy.  A normal range
+     * remains a normal alias.  Ambiguous legacy configurations are also left untouched so import never guesses which
+     * behavior the administrator intended.
+     */
+    private static void convertUnambiguousCatchAllAliases(List<Alias> aliases,
+                                                           List<AliasListDefinition> definitions)
+    {
+        for(AliasListDefinition definition: definitions)
+        {
+            List<Alias> candidates = aliases.stream()
+                .filter(alias -> definition.getName().equals(alias.getAliasListName()))
+                .filter(alias -> AliasMatchRegistry.isUnmatchedTalkgroupCatchAll(definition,
+                    alias.getMatchIdentifier()))
+                .toList();
+
+            if(candidates.size() != 1)
+            {
+                continue;
+            }
+
+            Alias catchAll = candidates.getFirst();
+
+            //A fixed Stream As value would collapse every received talkgroup into one false identity.  The new policy
+            //deliberately has no equivalent, so preserve this unusual legacy row for manual review.
+            if(catchAll.getStreamTalkgroupAlias() != null)
+            {
+                continue;
+            }
+
+            definition.setUnmatchedTalkgroupPolicy(new UnmatchedTalkgroupPolicy(catchAll.getPlaybackPriority(),
+                catchAll.isRecordable(), catchAll.getBroadcastChannels().stream()
+                    .map(BroadcastChannel::getChannelName).toList()));
+            aliases.remove(catchAll);
+        }
     }
 
     private static Set<String> reserveSingleFamilyNames(Iterable<LegacyListGroup> groups)

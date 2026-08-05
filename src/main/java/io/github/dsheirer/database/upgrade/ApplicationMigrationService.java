@@ -41,7 +41,6 @@ import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.List;
 import java.util.Objects;
-import java.util.Set;
 import java.util.UUID;
 import org.sqlite.SQLiteConfig;
 
@@ -54,13 +53,8 @@ import org.sqlite.SQLiteConfig;
  */
 public final class ApplicationMigrationService
 {
-    public static final int ALPHA_7_P25_VERSION = 21;
-    public static final int ALPHA_7_ALIAS_VERSION = 3;
-    public static final Set<Integer> SUPPORTED_P25_VERSIONS =
-        Set.of(ALPHA_7_P25_VERSION, P25ActivityLogSchema.SCHEMA_VERSION);
-    public static final Set<Integer> SUPPORTED_ALIAS_VERSIONS = Set.of(ALPHA_7_ALIAS_VERSION, 4);
     public static final int CURRENT_P25_VERSION = P25ActivityLogSchema.SCHEMA_VERSION;
-    public static final int CURRENT_ALIAS_VERSION = 4;
+    public static final int CURRENT_ALIAS_VERSION = SdrTrunkDatabaseSchema.ALIAS_SCHEMA_VERSION;
     public static final int CURRENT_DMR_VERSION = DmrActivitySchema.SCHEMA_VERSION;
 
     private static final String P25_VERSION_KEY = "p25_activity_schema_version";
@@ -116,7 +110,7 @@ public final class ApplicationMigrationService
         }
 
         Files.createDirectories(targetParent);
-        ensureFreeSpace(targetParent, requiredImportSpace(sourceRoot, sourceState));
+        ensureFreeSpace(targetParent, requiredImportSpace(sourceRoot));
         Path stageRoot = targetParent.resolve("." + targetRoot.getFileName() + ".migration-" + UUID.randomUUID());
         boolean promoted = false;
 
@@ -175,10 +169,8 @@ public final class ApplicationMigrationService
         MigrationState sourceState = requireSupportedState(database);
 
         Path databaseDirectory = database.getParent();
-        int databaseCopies = sourceState.alpha7() ? 4 : 2;
-        long requiredDatabaseSpace = sourceState.alpha7() ?
-            alpha7DatabaseWorkingSpace(database, databaseCopies) :
-            safeMultiply(sqliteFootprint(database), databaseCopies);
+        int databaseCopies = 2;
+        long requiredDatabaseSpace = safeMultiply(sqliteFootprint(database), databaseCopies);
         ensureFreeSpace(databaseDirectory, safeAdd(requiredDatabaseSpace, FREE_SPACE_MARGIN_BYTES));
         Path backupDirectory = databaseDirectory.resolve("backups");
         Files.createDirectories(backupDirectory);
@@ -329,10 +321,11 @@ public final class ApplicationMigrationService
 
         if(!state.supported())
         {
-            throw new IOException("This release accepts only the complete Alpha 7 database (Alias v3, P25 " +
-                "activity v21, trunked-site v2, and no DMR activity schema) or its complete current database " +
-                "(Alias v4, P25 activity v" + CURRENT_P25_VERSION + ", trunked-site v2, and DMR activity v" +
-                CURRENT_DMR_VERSION + "). Found " + state.description() + ".");
+            throw new IOException("This development build accepts only the complete current database (Alias v" +
+                CURRENT_ALIAS_VERSION + ", " +
+                "P25 activity v" + CURRENT_P25_VERSION + ", trunked-site v2, and DMR activity v" +
+                CURRENT_DMR_VERSION + "). Found " + state.description() + ". A transition from the immediately " +
+                "preceding public release is added during numbered release preparation.");
         }
 
         ApplicationDatabaseMigrator.validateAcceptedSource(database, state);
@@ -688,13 +681,10 @@ public final class ApplicationMigrationService
         }
     }
 
-    private static long requiredImportSpace(Path sourceRoot, MigrationState sourceState)
-        throws IOException, SQLException
+    private static long requiredImportSpace(Path sourceRoot) throws IOException
     {
         long databaseFootprint = sqliteFootprint(SdrTrunkDatabasePath.getDatabasePath(sourceRoot));
-        long required = sourceState.alpha7() ?
-            alpha7DatabaseWorkingSpace(SdrTrunkDatabasePath.getDatabasePath(sourceRoot), 3) :
-            databaseFootprint;
+        long required = databaseFootprint;
         Path vault = EncryptionKeyVaultPath.getVaultPath(sourceRoot);
 
         if(Files.isRegularFile(vault))
@@ -719,94 +709,6 @@ public final class ApplicationMigrationService
         }
 
         return safeAdd(required, FREE_SPACE_MARGIN_BYTES);
-    }
-
-    /**
-     * Conservative extra working-space bound for Alias-v3's matcher-row and protocol-family split rewrite. The
-     * estimate is driven by the actual duplicated text, matcher and route counts, and SQLite page size instead of
-     * relying only on a fixed database-size multiplier.
-     */
-    static long alpha7AliasExpansionEstimate(Path database) throws SQLException
-    {
-        try(Connection connection = openReadOnly(database);
-            Statement pageStatement = connection.createStatement();
-            ResultSet pageResult = pageStatement.executeQuery("PRAGMA page_size"))
-        {
-            if(!pageResult.next())
-            {
-                throw new SQLException("Unable to read the Alpha 7 database page size");
-            }
-            long pageSize = pageResult.getLong(1);
-            long estimate = 0L;
-            try(Statement statement = connection.createStatement(); ResultSet resultSet = statement.executeQuery("""
-                WITH matcher_payload AS (
-                    SELECT alias_id, length(CAST(coalesce(protocol, '') AS BLOB)) AS bytes
-                    FROM alias_talkgroup
-                    UNION ALL
-                    SELECT alias_id, length(CAST(coalesce(protocol, '') AS BLOB)) FROM alias_radio
-                    UNION ALL
-                    SELECT alias_id, 0 FROM alias_status
-                    UNION ALL
-                    SELECT alias_id, length(CAST(coalesce(tone_sequence, '') AS BLOB))
-                    FROM alias_tone_sequence
-                    UNION ALL
-                    SELECT alias_id,
-                           length(CAST(coalesce(identifier_type, '') AS BLOB)) +
-                           length(CAST(coalesce(text_value, '') AS BLOB)) +
-                           length(CAST(coalesce(text_value_2, '') AS BLOB))
-                    FROM alias_text_identifier
-                ), matcher AS (
-                    SELECT alias_id, count(*) AS matcher_count, coalesce(sum(bytes), 0) AS matcher_bytes
-                    FROM matcher_payload GROUP BY alias_id
-                ), route AS (
-                    SELECT alias_id, count(*) AS route_count,
-                           coalesce(sum(length(CAST(coalesce(channel_name, '') AS BLOB))), 0) AS route_bytes
-                    FROM alias_broadcast_channel GROUP BY alias_id
-                )
-                SELECT
-                    length(CAST(coalesce(alias.name, '') AS BLOB)) +
-                    length(CAST(coalesce(alias.description, '') AS BLOB)) +
-                    length(CAST(coalesce(alias.alias_list_name, '') AS BLOB)) +
-                    length(CAST(coalesce(alias.group_name, '') AS BLOB)) +
-                    length(CAST(coalesce(alias.icon_name, '') AS BLOB)) AS alias_bytes,
-                    coalesce(matcher.matcher_count, 0), coalesce(matcher.matcher_bytes, 0),
-                    coalesce(route.route_count, 0), coalesce(route.route_bytes, 0)
-                FROM alias
-                LEFT JOIN matcher ON matcher.alias_id=alias.id
-                LEFT JOIN route ON route.alias_id=alias.id
-                """))
-            {
-                while(resultSet.next())
-                {
-                    //A crossing P25 range can split in two and each result can be preserved in up to four families.
-                    long targetRows = safeMultiply(resultSet.getLong(2), 8L);
-                    long aliasPayload = safeAdd(safeMultiply(targetRows, resultSet.getLong(1)),
-                        safeMultiply(resultSet.getLong(3), 8L));
-                    //One table page and up to one page in each of the four Alias-v4 matcher indexes per target row.
-                    long aliasPages = safeMultiply(safeMultiply(targetRows, pageSize), 5L);
-                    long targetRoutes = safeMultiply(targetRows, resultSet.getLong(4));
-                    //The channel name is stored in the table, UNIQUE autoindex, and explicit name index.
-                    long routePayload = safeMultiply(
-                        safeMultiply(targetRows, resultSet.getLong(5)), 3L);
-                    long routePages = safeMultiply(safeMultiply(targetRoutes, pageSize), 3L);
-                    estimate = safeAdd(estimate,
-                        safeAdd(safeAdd(aliasPayload, aliasPages), safeAdd(routePayload, routePages)));
-                }
-            }
-            return estimate;
-        }
-    }
-
-    static long alpha7AliasWorkingSpace(Path database) throws SQLException
-    {
-        //Expanded alias pages can coexist in the database and WAL until the migrator's final checkpoint.
-        return safeMultiply(alpha7AliasExpansionEstimate(database), 2L);
-    }
-
-    static long alpha7DatabaseWorkingSpace(Path database, int databaseCopies) throws IOException, SQLException
-    {
-        long footprint = sqliteFootprint(database);
-        return safeAdd(safeMultiply(footprint, databaseCopies), alpha7AliasWorkingSpace(database));
     }
 
     private static void requireSeparatePhysicalRoots(Path sourceRoot, Path targetRoot) throws IOException
@@ -890,19 +792,6 @@ public final class ApplicationMigrationService
         return value > Long.MAX_VALUE / multiplier ? Long.MAX_VALUE : value * multiplier;
     }
 
-    private static long safeMultiply(long left, long right)
-    {
-        if(left < 0 || right < 0)
-        {
-            throw new IllegalArgumentException("Safe size multiplication requires non-negative values");
-        }
-        if(left == 0 || right == 0)
-        {
-            return 0;
-        }
-        return left > Long.MAX_VALUE / right ? Long.MAX_VALUE : left * right;
-    }
-
     private static String humanSize(long bytes)
     {
         long mebibytes = Math.max(1, bytes / (1024L * 1024L));
@@ -967,7 +856,7 @@ public final class ApplicationMigrationService
 
         public boolean supported()
         {
-            return current() || alpha7();
+            return current();
         }
 
         public boolean current()
@@ -977,15 +866,9 @@ public final class ApplicationMigrationService
                 Integer.valueOf(CURRENT_DMR_VERSION).equals(dmrVersion);
         }
 
-        public boolean alpha7()
-        {
-            return aliasVersion == ALPHA_7_ALIAS_VERSION && p25Version == ALPHA_7_P25_VERSION &&
-                Integer.valueOf(TrunkedSiteSchema.SCHEMA_VERSION).equals(trunkedSiteVersion) && dmrVersion == null;
-        }
-
         public boolean requiresMigration()
         {
-            return alpha7();
+            return false;
         }
 
         public String description()
@@ -1000,10 +883,6 @@ public final class ApplicationMigrationService
             if(current())
             {
                 return "";
-            }
-            if(alpha7())
-            {
-                return "convert Alpha 7 channels and aliases and start activity/statistics history fresh";
             }
             return "no bundled transition exists for this schema combination";
         }

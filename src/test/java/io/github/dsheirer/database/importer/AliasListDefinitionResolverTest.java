@@ -20,11 +20,14 @@ import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.alias.AliasMatchRegistry;
+import io.github.dsheirer.alias.UnmatchedTalkgroupPolicy;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.dcs.Dcs;
 import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.alias.id.status.UnitStatusID;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
+import io.github.dsheirer.alias.id.talkgroup.StreamAsTalkgroup;
+import io.github.dsheirer.alias.id.talkgroup.TalkgroupRange;
 import io.github.dsheirer.configuration.ConfigurationState;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.module.decode.DecoderType;
@@ -310,6 +313,98 @@ class AliasListDefinitionResolverTest
         assertTrue(aliases(state, "Dispatch").stream()
             .allMatch(alias -> alias.hasBroadcastChannel("Calls")));
         assertEquals("Imported Unassigned [NXDN]", aliases(state, "Orphan").getFirst().getAliasListName());
+    }
+
+    @Test
+    void convertsSingleFullRangeAliasIntoUnmatchedTalkgroupPolicy()
+    {
+        ConfigurationState state = new ConfigurationState();
+        state.setChannels(List.of(channel("Metro P25", "Metro", new DecodeConfigP25Phase1())));
+        Alias catchAll = alias("Unknown Talkgroups", "Metro",
+            new TalkgroupRange(Protocol.APCO25, 1, 0xFFFF));
+        catchAll.setCallPriority(-1);
+        catchAll.setRecordable(true);
+        catchAll.addBroadcastChannel("Calls");
+        state.setAliases(List.of(catchAll));
+
+        AliasListDefinitionResolver.normalizeLegacyState(state);
+
+        assertTrue(state.getAliases().isEmpty());
+        UnmatchedTalkgroupPolicy policy = state.getAliasListDefinitions().getFirst()
+            .getUnmatchedTalkgroupPolicy();
+        assertEquals(-1, policy.getPlaybackPriority());
+        assertTrue(policy.isRecordEnabled());
+        assertEquals(List.of("Calls"), policy.getStreamDestinationNames());
+    }
+
+    @Test
+    void convertsDmrAndNxdnFullRangeAliases()
+    {
+        ConfigurationState state = new ConfigurationState();
+        Alias dmr = alias("Unknown DMR", "DMR List", new TalkgroupRange(Protocol.DMR, 1, 0xFFFFFF));
+        dmr.setRecordable(true);
+        Alias nxdn = alias("Unknown NXDN", "NXDN List", new TalkgroupRange(Protocol.NXDN, 1, 0xFFFF));
+        nxdn.setCallPriority(-1);
+        state.setAliases(List.of(dmr, nxdn));
+
+        AliasListDefinitionResolver.normalizeLegacyState(state);
+
+        assertTrue(state.getAliases().isEmpty());
+        assertTrue(definition(state, "DMR List").getUnmatchedTalkgroupPolicy().isRecordEnabled());
+        assertEquals(-1, definition(state, "NXDN List").getUnmatchedTalkgroupPolicy().getPlaybackPriority());
+    }
+
+    @Test
+    void preservesOrdinaryRangeAlias()
+    {
+        ConfigurationState state = new ConfigurationState();
+        state.setChannels(List.of(channel("Metro P25", "Metro", new DecodeConfigP25Phase1())));
+        state.setAliases(List.of(alias("Operations", "Metro",
+            new TalkgroupRange(Protocol.APCO25, 100, 199))));
+
+        AliasListDefinitionResolver.normalizeLegacyState(state);
+
+        assertEquals(1, state.getAliases().size());
+        assertEquals(UnmatchedTalkgroupPolicy.DEFAULT,
+            state.getAliasListDefinitions().getFirst().getUnmatchedTalkgroupPolicy());
+    }
+
+    @Test
+    void preservesFullRangeAliasWithFixedStreamAsIdentity()
+    {
+        ConfigurationState state = new ConfigurationState();
+        state.setChannels(List.of(channel("Metro P25", "Metro", new DecodeConfigP25Phase1())));
+        Alias catchAll = alias("Unknown Talkgroups", "Metro",
+            new TalkgroupRange(Protocol.APCO25, 1, 0xFFFF));
+        catchAll.setStreamTalkgroupAlias(new StreamAsTalkgroup(123));
+        state.setAliases(List.of(catchAll));
+
+        AliasListDefinitionResolver.normalizeLegacyState(state);
+
+        assertEquals(1, state.getAliases().size());
+        assertEquals(123, state.getAliases().getFirst().getStreamTalkgroupAlias().getValue());
+        assertEquals(UnmatchedTalkgroupPolicy.DEFAULT,
+            state.getAliasListDefinitions().getFirst().getUnmatchedTalkgroupPolicy());
+    }
+
+    @Test
+    void preservesMultipleCatchAllAliasesRatherThanGuessing()
+    {
+        ConfigurationState state = new ConfigurationState();
+        state.setChannels(List.of(channel("Metro P25", "Metro", new DecodeConfigP25Phase1())));
+        Alias first = alias("Unknown One", "Metro", new TalkgroupRange(Protocol.APCO25, 0, 0xFFFF));
+        first.setRecordable(true);
+        Alias second = alias("Unknown Two", "Metro", new TalkgroupRange(Protocol.APCO25, 1, 0xFFFF));
+        second.setCallPriority(-1);
+        state.setAliases(List.of(first, second));
+
+        AliasListDefinitionResolver.normalizeLegacyState(state);
+
+        assertEquals(2, state.getAliases().size());
+        assertEquals(UnmatchedTalkgroupPolicy.DEFAULT,
+            state.getAliasListDefinitions().getFirst().getUnmatchedTalkgroupPolicy());
+        assertTrue(state.getAliases().stream().anyMatch(Alias::isRecordable));
+        assertTrue(state.getAliases().stream().anyMatch(alias -> alias.getPlaybackPriority() == -1));
     }
 
     private static Alias alias(String name, String aliasList, AliasID matcher)

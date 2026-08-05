@@ -2750,6 +2750,10 @@ th.center {
   width: min(620px, 96vw);
 }
 
+.alias-editor-modal.alias-policy-modal {
+  width: min(720px, 96vw);
+}
+
 .alias-editor-form {
   min-width: 0;
   display: grid;
@@ -2943,6 +2947,60 @@ th.center {
   gap: 2px;
 }
 
+.observed-talkgroup-table-host tbody tr[data-id] {
+  cursor: pointer;
+}
+
+.observed-talkgroup-system,
+.observed-talkgroup-match {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.observed-talkgroup-system strong,
+.observed-talkgroup-match strong,
+.observed-talkgroup-system small,
+.observed-talkgroup-match small {
+  overflow-wrap: anywhere;
+}
+
+.observed-talkgroup-system small,
+.observed-talkgroup-match small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.observed-talkgroup-counts {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 8px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.observed-talkgroup-create {
+  white-space: nowrap;
+}
+
+.observed-talkgroup-detail {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.observed-talkgroup-detail > .section {
+  margin: 0;
+}
+
+.observed-talkgroup-detail-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+}
+
 [data-table-type="alias-editor-scope-breakdown"] .badge-group {
   align-items: flex-start;
 }
@@ -3011,6 +3069,14 @@ th.center {
 
   .alias-editor-grid {
     grid-template-columns: 1fr;
+  }
+
+  .observed-talkgroup-detail {
+    grid-template-columns: 1fr;
+  }
+
+  .observed-talkgroup-detail-actions {
+    grid-column: 1;
   }
 
   .alias-modal-tabs button {

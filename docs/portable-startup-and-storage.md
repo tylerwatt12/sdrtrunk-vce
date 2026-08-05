@@ -31,18 +31,16 @@ streaming output remain in the previous data folder instead of being duplicated.
 Saved output and library paths that point inside the previous data folder are changed to the matching location inside
 the new data folder. Deliberately shared paths outside the previous data folder are left alone.
 
-Alpha 9 retains the preceding release migrator and accepts either an exact Alpha 7 database (Alias v3, P25 activity
-v21, trunked-site v2, and no DMR activity schema) or the exact Alpha 8/current database tuple (Alias v4, P25 activity
-v24, trunked-site v2, and DMR activity v1). It does not accept Alpha 1 through Alpha 6 databases, mixed schema
-combinations, or intermediate development schemas; those older public releases must be upgraded sequentially through
-Alpha 7.
+The published Alpha 9 release accepts its documented Alpha 7 and Alpha 8 inputs. The current unreleased source tree
+does not keep that older release transition active while its schema is changing: it accepts only an exact database
+created by the same development schema. A reviewed Alpha 9-to-next-release transition will be added to the bundled
+Application Migrator during numbered release preparation. Mixed schemas, intermediate development schemas, and
+`webfirst` databases remain unsupported.
 
-Alpha 8 and Alpha 9 use the same schema, so an Alpha 8 profile has no database conversion or history reset.
-Application and tuner settings, channels, channel maps, broadcast streams, icons, aliases, calls, counts,
-affiliations, site observations, identity evidence, and quality records remain in the copied database. An exact Alpha
-7 profile still uses the existing conversion: supported configuration is preserved or converted, while activity and
-statistics history starts fresh. Both paths use a validated staged copy and rebase recognized portable paths when the
-data folder moves.
+Alpha 8 and Alpha 9 use the same published schema, so an Alpha 8 profile carries forward to Alpha 9 without a
+database conversion or history reset. See the version-matched Alpha 9 What's New document for that release's exact
+upgrade behavior. Development test profiles use the backed-up external migration candidate for their exact source
+state; that candidate is not a public or alternate deployed migration path.
 
 ## Recording Storage
 

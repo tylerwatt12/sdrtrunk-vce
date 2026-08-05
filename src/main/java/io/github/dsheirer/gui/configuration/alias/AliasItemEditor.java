@@ -321,8 +321,13 @@ public class AliasItemEditor extends Editor<Alias>
         AliasID matcher = getIdentifiersList().getItems().isEmpty() ? null :
             getIdentifiersList().getItems().getFirst();
 
+        AliasID savedMatcher = alias != null ? alias.getMatchIdentifier() : null;
+        boolean retainedCatchAll = alias != null && alias.getId() > Alias.UNASSIGNED_ID &&
+            savedMatcher != null && savedMatcher.matches(matcher);
+
         mMatcherMissing.set(alias != null && definition != null &&
-            !AliasMatchRegistry.isOperational(definition, matcher));
+            (!AliasMatchRegistry.isOperational(definition, matcher) ||
+                AliasMatchRegistry.isUnmatchedTalkgroupCatchAll(definition, matcher) && !retainedCatchAll));
     }
 
     private void replaceMatcher(AliasMatchDescriptor descriptor, AliasListDefinition definition)
@@ -1127,6 +1132,17 @@ public class AliasItemEditor extends Editor<Alias>
                     sb.append("Talkgroup Range:").append(formattedMin).append(" to ").append(formattedMax);
                     appendProtocol(sb, talkgroupRange.getProtocol());
                     appendValidationState(sb, talkgroupRange.overlapProperty().get(), talkgroupRange.isValid());
+
+                    Alias alias = AliasItemEditor.this.getItem();
+                    AliasListDefinition definition = alias != null ?
+                        mConfigurationManager.getAliasModel().getAliasListDefinition(alias) : null;
+                    AliasID savedMatcher = alias != null ? alias.getMatchIdentifier() : null;
+                    if(AliasMatchRegistry.isUnmatchedTalkgroupCatchAll(definition, talkgroupRange) &&
+                        (alias == null || alias.getId() <= Alias.UNASSIGNED_ID || savedMatcher == null ||
+                            !savedMatcher.matches(talkgroupRange)))
+                    {
+                        sb.append(" - Use Unmatched Talkgroups instead");
+                    }
                     setText(sb.toString());
                 }
                 else if(item instanceof P25FullyQualifiedRadio fqr)

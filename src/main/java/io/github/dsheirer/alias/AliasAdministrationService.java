@@ -120,6 +120,34 @@ public final class AliasAdministrationService
         });
     }
 
+    /**
+     * Replaces the action-only policy used when a talkgroup or patch group has no configured exact or range Alias.
+     */
+    public MutationResult updateUnmatchedTalkgroupPolicy(long aliasListId, UnmatchedTalkgroupPolicy policy,
+                                                          long expectedRevision)
+    {
+        Objects.requireNonNull(policy, "Unmatched talkgroup policy cannot be null");
+
+        return mutate(expectedRevision, () ->
+        {
+            AliasListDefinition definition = requireAliasList(aliasListId);
+            if(!supportsUnmatchedTalkgroups(definition.getFamily()))
+            {
+                throw new IllegalArgumentException("Unmatched talkgroup behavior is available only for P25, DMR, " +
+                    "and NXDN alias lists");
+            }
+            UnmatchedTalkgroupPolicy previous = definition.getUnmatchedTalkgroupPolicy();
+            validatePolicyStreams(policy, previous);
+            definition.setUnmatchedTalkgroupPolicy(policy);
+            mConfigurationManager.aliasListDefinitionChanged();
+            return new MutationTarget(definition, List.of(), 1, () ->
+            {
+                definition.setUnmatchedTalkgroupPolicy(previous);
+                mConfigurationManager.aliasListDefinitionChanged();
+            }, null);
+        });
+    }
+
     public DeleteImpact aliasListDeleteImpact(long aliasListId)
     {
         return onConfigurationThread(() -> deleteImpact(requireAliasList(aliasListId)));
@@ -237,6 +265,12 @@ public final class AliasAdministrationService
                     {
                         throw new IllegalArgumentException("Alias [" + alias.getName() +
                             "] is not compatible with alias list [" + target.getName() + "]");
+                    }
+
+                    if(AliasMatchRegistry.isUnmatchedTalkgroupCatchAll(target, alias.getMatchIdentifier()) &&
+                        !belongsTo(alias, target))
+                    {
+                        throw unmatchedTalkgroupCatchAllException(target);
                     }
                 }
             }
@@ -397,6 +431,12 @@ public final class AliasAdministrationService
                 definition.getName() + "]");
         }
 
+        if(AliasMatchRegistry.isUnmatchedTalkgroupCatchAll(definition, matcher) &&
+            !retainsExistingCatchAll(previous, definition, matcher))
+        {
+            throw unmatchedTalkgroupCatchAllException(definition);
+        }
+
         for(BroadcastChannel channel: alias.getBroadcastChannels())
         {
             if(channel == null || channel.getChannelName() == null || channel.getChannelName().isBlank())
@@ -419,10 +459,58 @@ public final class AliasAdministrationService
         }
     }
 
+    private static boolean retainsExistingCatchAll(Alias previous, AliasListDefinition definition, AliasID matcher)
+    {
+        AliasID previousMatcher = previous != null ? previous.getMatchIdentifier() : null;
+        return previousMatcher != null && belongsTo(previous, definition) && previousMatcher.matches(matcher);
+    }
+
+    private static boolean belongsTo(Alias alias, AliasListDefinition definition)
+    {
+        if(alias == null || definition == null)
+        {
+            return false;
+        }
+
+        if(alias.getAliasListId() > AliasListDefinition.UNASSIGNED_ID &&
+            definition.getId() > AliasListDefinition.UNASSIGNED_ID)
+        {
+            return alias.getAliasListId() == definition.getId();
+        }
+
+        return alias.getAliasListName() != null && definition.getName() != null &&
+            alias.getAliasListName().equalsIgnoreCase(definition.getName());
+    }
+
+    private static IllegalArgumentException unmatchedTalkgroupCatchAllException(AliasListDefinition definition)
+    {
+        return new IllegalArgumentException("A full talkgroup range cannot be stored as a normal alias in [" +
+            definition.getName() + "]. Use the alias list's Unmatched Talkgroups settings instead.");
+    }
+
     private boolean isConfiguredStream(String channelName)
     {
         return channelName != null && mConfigurationManager.getBroadcastModel().getBroadcastConfigurations().stream()
             .anyMatch(configuration -> channelName.equals(configuration.getName()));
+    }
+
+    private void validatePolicyStreams(UnmatchedTalkgroupPolicy policy, UnmatchedTalkgroupPolicy previous)
+    {
+        Set<String> previousNames = previous != null ?
+            Set.copyOf(previous.getStreamDestinationNames()) : Set.of();
+
+        for(String channelName: policy.getStreamDestinationNames())
+        {
+            if(!isConfiguredStream(channelName) && !previousNames.contains(channelName))
+            {
+                throw new IllegalArgumentException("Broadcast channel [" + channelName + "] does not exist");
+            }
+        }
+    }
+
+    private static boolean supportsUnmatchedTalkgroups(AliasListFamily family)
+    {
+        return family == AliasListFamily.P25 || family == AliasListFamily.DMR || family == AliasListFamily.NXDN;
     }
 
     private void validateBulkStreams(BulkEdit edit)
@@ -750,7 +838,8 @@ public final class AliasAdministrationService
 
     private static AliasListDefinition copyDefinition(AliasListDefinition source)
     {
-        AliasListDefinition copy = new AliasListDefinition(source.getName(), source.getFamily());
+        AliasListDefinition copy = new AliasListDefinition(source.getName(), source.getFamily(),
+            source.getUnmatchedTalkgroupPolicy());
         copy.setId(source.getId());
         return copy;
     }

@@ -141,7 +141,11 @@ public abstract class AbstractBroadcastEditor<T extends BroadcastConfiguration> 
                     alert.showAndWait().ifPresent(buttonType -> {
                         if(buttonType == ButtonType.YES)
                         {
-                            getConfigurationManager().getAliasModel().updateBroadcastChannel(previousName, updatedName);
+                            if(getConfigurationManager().getAliasModel()
+                                .updateBroadcastChannel(previousName, updatedName))
+                            {
+                                getConfigurationManager().aliasListDefinitionChanged();
+                            }
                         }
                     });
             }

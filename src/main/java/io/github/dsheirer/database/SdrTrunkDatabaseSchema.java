@@ -21,7 +21,7 @@ import java.util.List;
  */
 public final class SdrTrunkDatabaseSchema
 {
-    public static final int ALIAS_SCHEMA_VERSION = 4;
+    public static final int ALIAS_SCHEMA_VERSION = 5;
     public static final int CONFIGURATION_SCHEMA_VERSION = 2;
     public static final int SETTINGS_SCHEMA_VERSION = 2;
     public static final int ICON_SCHEMA_VERSION = 2;
@@ -33,6 +33,13 @@ public final class SdrTrunkDatabaseSchema
             family TEXT NOT NULL CHECK(family IN (
                 'P25', 'DMR', 'NXDN', 'NBFM'
             )),
+            unmatched_talkgroup_priority INTEGER NOT NULL DEFAULT 100 CHECK(
+                unmatched_talkgroup_priority = -1 OR
+                unmatched_talkgroup_priority BETWEEN 1 AND 100
+            ),
+            unmatched_talkgroup_record_enabled INTEGER NOT NULL DEFAULT 0 CHECK(
+                unmatched_talkgroup_record_enabled IN (0, 1)
+            ),
             UNIQUE(name)
         )
         """;
@@ -80,11 +87,21 @@ public final class SdrTrunkDatabaseSchema
             UNIQUE(alias_id, channel_name)
         )
         """;
+    private static final String ALIAS_LIST_UNMATCHED_TALKGROUP_STREAM_TABLE_SQL = """
+        CREATE TABLE IF NOT EXISTS alias_list_unmatched_talkgroup_stream (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            alias_list_id INTEGER NOT NULL REFERENCES alias_list(id) ON DELETE CASCADE,
+            channel_name TEXT NOT NULL CHECK(length(trim(channel_name)) > 0),
+            UNIQUE(alias_list_id, channel_name)
+        )
+        """;
     private static final List<SqliteSchemaValidator.Definition> EXACT_ALIAS_OBJECTS = List.of(
         new SqliteSchemaValidator.Definition("table", "alias_list", ALIAS_LIST_TABLE_SQL),
         new SqliteSchemaValidator.Definition("table", "alias", ALIAS_TABLE_SQL),
         new SqliteSchemaValidator.Definition("table", "alias_broadcast_channel",
             ALIAS_BROADCAST_CHANNEL_TABLE_SQL),
+        new SqliteSchemaValidator.Definition("table", "alias_list_unmatched_talkgroup_stream",
+            ALIAS_LIST_UNMATCHED_TALKGROUP_STREAM_TABLE_SQL),
         new SqliteSchemaValidator.Definition("index", "idx_alias_talkgroup_value", """
             CREATE INDEX IF NOT EXISTS idx_alias_talkgroup_value
             ON alias(protocol, value, wacn, p25_system_id, alias_list_id, id)
@@ -108,6 +125,9 @@ public final class SdrTrunkDatabaseSchema
         new SqliteSchemaValidator.Definition("index", "idx_alias_broadcast_channel_name",
             "CREATE INDEX IF NOT EXISTS idx_alias_broadcast_channel_name " +
                 "ON alias_broadcast_channel(channel_name)"),
+        new SqliteSchemaValidator.Definition("index", "idx_alias_list_unmatched_talkgroup_stream_name",
+            "CREATE INDEX IF NOT EXISTS idx_alias_list_unmatched_talkgroup_stream_name " +
+                "ON alias_list_unmatched_talkgroup_stream(channel_name)"),
         new SqliteSchemaValidator.Definition("view", "alias_talkgroup", """
             CREATE VIEW IF NOT EXISTS alias_talkgroup AS
             SELECT alias.id AS alias_id,
@@ -156,6 +176,7 @@ public final class SdrTrunkDatabaseSchema
         "idx_alias_radio_value",
         "idx_alias_radio_range",
         "idx_alias_broadcast_channel_name",
+        "idx_alias_list_unmatched_talkgroup_stream_name",
         "idx_configuration_channel_sort",
         "idx_configuration_channel_alias_list",
         "idx_configuration_channel_decoder",
@@ -175,13 +196,16 @@ public final class SdrTrunkDatabaseSchema
     {
         return List.of(
             new SqliteSchemaValidator.Table("database_metadata", "key", "value", "updated_at_ms"),
-            new SqliteSchemaValidator.Table("alias_list", "id", "name", "family"),
+            new SqliteSchemaValidator.Table("alias_list", "id", "name", "family",
+                "unmatched_talkgroup_priority", "unmatched_talkgroup_record_enabled"),
             new SqliteSchemaValidator.Table("alias", "id", "alias_list_id", "name", "description",
                 "group_name", "color", "icon_name", "stream_as_talkgroup", "record_enabled",
                 "priority", "matcher_type", "protocol", "value", "min_value",
                 "max_value", "wacn", "p25_system_id", "text_value", "numeric_value",
                 "tone_sequence"),
             new SqliteSchemaValidator.Table("alias_broadcast_channel", "id", "alias_id", "channel_name"),
+            new SqliteSchemaValidator.Table("alias_list_unmatched_talkgroup_stream", "id", "alias_list_id",
+                "channel_name"),
             new SqliteSchemaValidator.Table("configuration_channel", "id", "sort_order", "system_name", "site_name",
                 "name", "alias_list_name", "radres_guid", "auto_start", "auto_start_order", "decoder_type",
                 "source_type", "primary_frequency_hz", "frequency_count", "recording_enabled",

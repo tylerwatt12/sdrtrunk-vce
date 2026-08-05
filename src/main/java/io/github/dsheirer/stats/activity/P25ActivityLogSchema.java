@@ -36,13 +36,13 @@ import java.util.stream.Collectors;
 /**
  * SQLite schema and writes for SDRTrunk receiver activity history.
  *
- * The v24 shape is summary-first. Trunked P25, DMR and NXDN share one protocol-neutral identity projection while
+ * The v25 shape is summary-first. Trunked P25, DMR and NXDN share one protocol-neutral identity projection while
  * receiver contexts own site observations. Detailed event rows are optional, while compact identity and hourly
  * summaries are always updated when stats logging is enabled.
  */
 public class P25ActivityLogSchema
 {
-    public static final int SCHEMA_VERSION = 24;
+    public static final int SCHEMA_VERSION = 25;
     private static final String SCHEMA_VERSION_KEY = "p25_activity_schema_version";
     public static final String CALL_OUTPUT_METRICS_STARTED_AT_KEY = "p25_call_output_metrics_started_at_ms";
     public static final String ALL_MODE_CALL_OUTPUT_METRICS_STARTED_AT_KEY =
@@ -439,7 +439,8 @@ public class P25ActivityLogSchema
     {
         if(attribution == null || attribution.callStartEpochMilliseconds() <= 0 ||
             (!attribution.destinationBecameKnown() && !attribution.sourceBecameKnown() &&
-                !attribution.encryptionBecameKnown() && !attribution.hasEncryptionDetails()))
+                !attribution.encryptionBecameKnown() && !attribution.hasEncryptionDetails() &&
+                !attribution.hasP25TargetIdentity()))
         {
             return false;
         }
@@ -740,7 +741,9 @@ public class P25ActivityLogSchema
             attribution.destinationId() > 0 ? Integer.toString(attribution.destinationId()) : null,
             attribution.destinationKind(), attribution.patchMemberTalkgroupIds(), attribution.frequencyHertz(),
             null, attribution.timeslot(), attribution.encryptedBeforeObservation(), null, null,
-            null, null, null, null, null, null, null, null, true, null, null);
+            null, null, null, null, null, null, null, null, true, null, null,
+            attribution.identityDomain(), attribution.p25TargetIdentity(),
+            attribution.p25PatchMemberIdentities());
     }
 
     private static List<TalkgroupTarget> talkgroupTargets(int destinationId, String destinationKind,

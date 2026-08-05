@@ -19,6 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
+import io.github.dsheirer.alias.id.talkgroup.TalkgroupRange;
 import io.github.dsheirer.audio.broadcast.BroadcastFormat;
 import io.github.dsheirer.audio.broadcast.broadcastify.BroadcastifyCallConfiguration;
 import io.github.dsheirer.configuration.ConfigurationManager;
@@ -89,12 +90,31 @@ class AliasAdministrationServiceTest
             assertNotEquals(Alias.UNASSIGNED_ID, firstAliasId);
             assertNotEquals(Alias.UNASSIGNED_ID, secondAliasId);
 
+            Alias retiredCatchAll = alias("Unknown talkgroups", aliasListId, 1);
+            retiredCatchAll.setMatchIdentifier(new TalkgroupRange(Protocol.APCO25, 1, 0xFFFF));
+            IllegalArgumentException catchAllFailure = assertThrows(IllegalArgumentException.class,
+                () -> service.createAlias(retiredCatchAll, second.revision()));
+            assertTrue(catchAllFailure.getMessage().contains("Unmatched Talkgroups"));
+
             BroadcastifyCallConfiguration primary = new BroadcastifyCallConfiguration(BroadcastFormat.MP3);
             primary.setName("Primary");
             manager.getBroadcastModel().addBroadcastConfiguration(primary);
             BroadcastifyCallConfiguration archive = new BroadcastifyCallConfiguration(BroadcastFormat.MP3);
             archive.setName("Archive");
             manager.getBroadcastModel().addBroadcastConfiguration(archive);
+
+            AliasAdministrationService.MutationResult policyChanged = service.updateUnmatchedTalkgroupPolicy(
+                aliasListId, new UnmatchedTalkgroupPolicy(io.github.dsheirer.alias.id.priority.Priority.DO_NOT_MONITOR,
+                    true, List.of("Primary")), service.catalog().revision());
+            UnmatchedTalkgroupPolicy livePolicy = manager.getAliasModel()
+                .getAliasListDefinition(aliasListId).getUnmatchedTalkgroupPolicy();
+            assertEquals(io.github.dsheirer.alias.id.priority.Priority.DO_NOT_MONITOR,
+                livePolicy.getPlaybackPriority());
+            assertTrue(livePolicy.isRecordEnabled());
+            assertEquals(List.of("Primary"), livePolicy.getStreamDestinationNames());
+            assertEquals(livePolicy, service.catalog().aliasLists().getFirst().getUnmatchedTalkgroupPolicy());
+            assertThrows(IllegalArgumentException.class, () -> service.updateUnmatchedTalkgroupPolicy(aliasListId,
+                new UnmatchedTalkgroupPolicy(100, false, List.of("Missing")), policyChanged.revision()));
 
             long bulkRevision = service.catalog().revision();
             AliasAdministrationService.MutationResult configured = service.bulkEdit(
@@ -165,6 +185,7 @@ class AliasAdministrationServiceTest
             List<Alias> storedAliases = aliasStore.loadAliases(storedDefinitions);
             assertEquals(1, storedDefinitions.size());
             assertEquals(aliasListId, storedDefinitions.getFirst().getId());
+            assertEquals(livePolicy, storedDefinitions.getFirst().getUnmatchedTalkgroupPolicy());
             assertEquals(2, storedAliases.size());
             assertTrue(storedAliases.stream().anyMatch(alias -> alias.getId() == firstAliasId));
             assertTrue(storedAliases.stream().anyMatch(alias -> alias.getId() == secondAliasId));

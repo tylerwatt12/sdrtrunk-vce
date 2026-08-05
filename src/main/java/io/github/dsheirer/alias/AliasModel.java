@@ -463,6 +463,14 @@ public class AliasModel
             }
         }
 
+        for(AliasListDefinition definition: mAliasListDefinitions)
+        {
+            if(definition.getUnmatchedTalkgroupPolicy().getStreamDestinationNames().contains(broadcastChannel))
+            {
+                return true;
+            }
+        }
+
         return false;
     }
 
@@ -471,12 +479,14 @@ public class AliasModel
      * @param previousStreamName to be removed
      * @param updatedStreamName to be added
      */
-    public void updateBroadcastChannel(String previousStreamName, String updatedStreamName)
+    public boolean updateBroadcastChannel(String previousStreamName, String updatedStreamName)
     {
         if(previousStreamName == null || previousStreamName.isEmpty() || updatedStreamName == null || updatedStreamName.isEmpty())
         {
-            return;
+            return false;
         }
+
+        boolean policyUpdated = false;
 
         for(Alias alias: mAliases)
         {
@@ -496,6 +506,28 @@ public class AliasModel
                 }
             }
         }
+
+        for(AliasListDefinition definition: mAliasListDefinitions)
+        {
+            UnmatchedTalkgroupPolicy policy = definition.getUnmatchedTalkgroupPolicy();
+            if(policy.getStreamDestinationNames().contains(previousStreamName))
+            {
+                List<String> destinations = new ArrayList<>();
+                for(String destination: policy.getStreamDestinationNames())
+                {
+                    String replacement = destination.equals(previousStreamName) ? updatedStreamName : destination;
+                    if(!destinations.contains(replacement))
+                    {
+                        destinations.add(replacement);
+                    }
+                }
+                definition.setUnmatchedTalkgroupPolicy(new UnmatchedTalkgroupPolicy(policy.getPlaybackPriority(),
+                    policy.isRecordEnabled(), destinations));
+                policyUpdated = true;
+            }
+        }
+
+        return policyUpdated;
     }
 
     /**

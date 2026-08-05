@@ -68,7 +68,7 @@ class StatsWebAliasCatalogUiContractTest
     {
         String source = source();
         String renderer = function(source, "async function renderAliases()");
-        String editor = function(source, "async function openAliasEditorModal(mode = 'create', id = null)");
+        String editor = function(source, "async function openAliasEditorModal(mode = 'create', id = null, prefill = null)");
 
         assertTrue(source.contains("ADMIN_ALIASES: 'admin-aliases'"));
         assertTrue(function(source, "function aliasAdminAllowed()")
@@ -182,12 +182,78 @@ class StatsWebAliasCatalogUiContractTest
     }
 
     @Test
+    void exposesUnmatchedPolicyAndBoundedObservedTalkgroupDiscovery() throws Exception
+    {
+        String source = source();
+        String tabs = function(source, "function aliasEditorViewTabs(selectedList)");
+        String renderer = function(source, "async function renderAliases()");
+        String policy = function(source, "function openUnmatchedTalkgroupPolicyModal(selectedList)");
+        String observed = function(source, "function renderObservedTalkgroups(main, page, selectedList)");
+        String prefill = function(source, "function observedTalkgroupPrefill(row, selectedList)");
+        String identity = function(source, "function observedTalkgroupIdentity(row)");
+        String key = function(source, "function observedTalkgroupKey(row)");
+        String create = function(source, "function observedTalkgroupCreateButton(row, selectedList)");
+        String detail = function(source, "function observedTalkgroupDetail(row, selectedList)");
+        String editor = function(source,
+            "async function openAliasEditorModal(mode = 'create', id = null, prefill = null)");
+
+        assertTrue(tabs.contains("'Discover'"));
+        assertTrue(renderer.contains("api('/api/alias-list/observed-talkgroups'"));
+        assertTrue(renderer.contains("include_exact: false"));
+        assertTrue(renderer.contains("options?.aliasList && options?.revision !== undefined"));
+        assertTrue(renderer.contains("aliasEditorContext.selectedList = selectedList"));
+        assertTrue(source.contains("aliasTab: 'discover'"));
+        assertTrue(observed.contains("observedTalkgroupMatchKind(row) !== 'exact'"));
+        assertTrue(observed.contains("defaultSort: 'last_seen'"));
+        assertTrue(observed.contains("pager({ ...page, rows })"));
+
+        assertTrue(source.contains("unmatchedTalkgroupPolicy"));
+        assertTrue(policy.contains("/unmatched-talkgroups"));
+        for(String field: new String[]{"listenEnabled", "priority", "recordable", "broadcastChannels"})
+        {
+            assertTrue(policy.contains(field), () -> "Missing unmatched policy field " + field);
+        }
+
+        assertTrue(prefill.contains("name: ''"));
+        assertTrue(prefill.contains("type: 'TALKGROUP'"));
+        assertTrue(prefill.contains("type: 'P25_FULLY_QUALIFIED_TALKGROUP', protocol: 'APCO25'"));
+        assertTrue(prefill.contains("!observedTalkgroupPromotionSupported(row)"));
+        assertTrue(prefill.contains("observedP25IdentityState(row) === 2"));
+        assertTrue(prefill.contains("observedP25IdentityState(row) === 1"));
+        assertTrue(prefill.contains("topology || '').toUpperCase() === 'CONVENTIONAL'"));
+        for(String field: new String[]{"p25_home_wacn", "p25_home_system_id", "p25_home_talkgroup_id"})
+        {
+            assertTrue(source.contains(field), () -> "Missing qualifier-safe discovery field " + field);
+            assertTrue(key.contains(field), () -> "Observed row key omits qualifier " + field);
+        }
+        assertTrue(key.contains("row?.topology"));
+        assertTrue(key.contains("observedTalkgroupProtocol(row)"));
+        assertTrue(key.contains("scope-id:"));
+        assertTrue(key.contains("context-id:"));
+        assertTrue(identity.contains("Local TG"));
+        assertTrue(identity.contains("FQ ${hex(home.wacn, 5)}-${hex(home.system, 3)}"));
+        assertTrue(detail.contains("'Fully Qualified Home'"));
+        assertTrue(detail.contains("'Local Talkgroup'"));
+        assertTrue(create.contains("!observedTalkgroupPromotionSupported(row)"));
+        assertTrue(create.contains("'Review only'"));
+        assertTrue(create.contains("observedTalkgroupPromotionReason(row)"));
+        assertTrue(detail.contains("observedTalkgroupPromotionSupported(row)"));
+        assertTrue(prefill.contains("streamAsTalkgroup: null"));
+        assertTrue(prefill.contains("copyActionsFromAliasId"));
+        assertTrue(editor.contains("rangeActionsPromise"));
+        assertTrue(editor.contains("/api/v1/admin/aliases/${Number(prefill.copyActionsFromAliasId)}"));
+        assertTrue(editor.contains("['listenEnabled', 'priority', 'recordable', 'broadcastChannels']"));
+        assertTrue(editor.contains("selectedStreams.has(streamName) && (editing || configuredStreams.has(streamName))"));
+    }
+
+    @Test
     void providesResponsiveThemeAwareRailTableBulkBarAndModal() throws Exception
     {
         String css = readText(APP_CSS);
         for(String selector: new String[]{".alias-editor-workspace", ".alias-list-rail", ".alias-list-mobile",
             ".alias-list-summary", ".alias-editor-table-host", ".alias-bulk-bar", ".alias-editor-modal",
-            ".alias-modal-tabs", ".alias-editor-grid", ".alias-stream-options", ".alias-tone-row"})
+            ".alias-modal-tabs", ".alias-editor-grid", ".alias-stream-options", ".alias-tone-row",
+            ".observed-talkgroup-table-host", ".observed-talkgroup-detail", ".alias-policy-modal"})
         {
             assertTrue(css.contains(selector), () -> "Missing Alias Editor style " + selector);
         }

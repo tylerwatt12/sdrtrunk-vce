@@ -2236,14 +2236,23 @@ function aliasListRail(lists, selectedList, admin) {
 
 function aliasEditorViewTabs(selectedList) {
   const id = aliasListId(selectedList);
-  const active = ['configure', 'calls', 'evidence', 'custom'].includes(route.get('aliasTab')) ?
+  const supportsDiscovery = unmatchedTalkgroupsSupported(selectedList);
+  const allowed = supportsDiscovery ? ['configure', 'discover', 'calls', 'evidence', 'custom'] :
+    ['configure', 'calls', 'evidence', 'custom'];
+  const active = allowed.includes(route.get('aliasTab')) ?
     route.get('aliasTab') : 'configure';
-  return tabs([
-    { id: 'configure', label: 'Configure', href: href('aliases', { list: id, aliasTab: 'configure' }) },
+  const entries = [
+    { id: 'configure', label: 'Configure', href: href('aliases', { list: id, aliasTab: 'configure' }) }
+  ];
+  if (supportsDiscovery) {
+    entries.push({ id: 'discover', label: 'Discover', href: href('aliases', { list: id, aliasTab: 'discover' }) });
+  }
+  entries.push(
     { id: 'calls', label: 'Call Use', href: href('aliases', { list: id, aliasTab: 'calls' }) },
     { id: 'evidence', label: 'System Evidence', href: href('aliases', { list: id, aliasTab: 'evidence' }) },
     { id: 'custom', label: 'Custom', href: href('aliases', { list: id, aliasTab: 'custom' }) }
-  ], active);
+  );
+  return tabs(entries, active);
 }
 
 function aliasLocalDateTimeValue(epoch) {
@@ -2645,10 +2654,14 @@ function aliasMatcherDescriptor(options, keyOrType, protocol = '') {
   const key = String(keyOrType || '');
   const exact = matchers.find((entry) => aliasMatcherKey(entry) === key);
   if (exact) return exact;
-  const typed = matchers.find((entry) => String(entry.type) === key && (!protocol ||
-    String(entry.protocol) === String(protocol) ||
-    ['APCO25', 'APCO25_PHASE2'].includes(String(entry.protocol)) &&
-      ['APCO25', 'APCO25_PHASE2'].includes(String(protocol))));
+  const typed = matchers.find((entry) => {
+    if (String(entry.type) !== key) return false;
+    if (!protocol || String(entry.protocol) === String(protocol)) return true;
+    const p25Protocols = ['APCO25', 'APCO25_PHASE2'];
+    if (p25Protocols.includes(String(entry.protocol)) && p25Protocols.includes(String(protocol))) return true;
+    return ['P25_FULLY_QUALIFIED_TALKGROUP', 'P25_FULLY_QUALIFIED_RADIO_ID'].includes(key) &&
+      !entry.protocol && p25Protocols.includes(String(protocol));
+  });
   return typed || matchers[0];
 }
 
@@ -2830,15 +2843,18 @@ function aliasEditorPayload(form, options) {
   };
 }
 
-async function openAliasEditorModal(mode = 'create', id = null) {
+async function openAliasEditorModal(mode = 'create', id = null, prefill = null) {
   const editing = mode === 'edit';
   const cloning = mode === 'clone';
-  const selectedListId = Number(route.get('list'));
-  const loading = node('div', 'loading', editing || cloning ? 'Loading alias' : 'Preparing alias editor');
+  const selectedListId = Number(prefill?.aliasListId || route.get('list'));
+  const copyingRangeActions = !editing && !cloning && Number(prefill?.copyActionsFromAliasId) > 0;
+  const loading = node('div', 'loading', editing || cloning || copyingRangeActions ?
+    'Loading alias settings' : 'Preparing alias editor');
   const modal = openReadOnlyModal(editing ? `Edit Alias ${identifierNumber(id)}` :
     (cloning ? 'Clone Alias' : 'Add Alias'), loading, {
       id: `${mode}-alias-${id || 'new'}`, className: 'alias-editor-modal alias-record-modal',
-      returnFocusSelector: id ? `.alias-detail-link[data-alias-id="${id}"]` : '.alias-add-button'
+      returnFocusSelector: prefill?.returnFocusSelector ||
+        (id ? `.alias-detail-link[data-alias-id="${id}"]` : '.alias-add-button')
     });
   if (!modal) return;
   try {
@@ -2847,15 +2863,27 @@ async function openAliasEditorModal(mode = 'create', id = null) {
     const initialOptionsPromise = requestJson(`/api/v1/admin/aliases/options?aliasListId=${selectedListId}`,
       { csrf: false });
     const analyticsPromise = editing || cloning ? api('/api/alias', { id }).catch(() => null) : Promise.resolve(null);
-    const [recordResponse, options, analytics] = await Promise.all([
-      recordPromise, initialOptionsPromise, analyticsPromise
+    const rangeActionsPromise = copyingRangeActions ?
+      requestJson(`/api/v1/admin/aliases/${Number(prefill.copyActionsFromAliasId)}`, { csrf: false }) :
+      Promise.resolve(null);
+    const [recordResponse, options, analytics, rangeActionsResponse] = await Promise.all([
+      recordPromise, initialOptionsPromise, analyticsPromise, rangeActionsPromise
     ]);
     if (activeReadOnlyModal !== modal.state) return;
-    const source = recordResponse?.alias || {};
+    const source = editing || cloning ? { ...(recordResponse?.alias || {}) } : { ...(prefill || {}) };
+    if (rangeActionsResponse?.alias) {
+      if (Number(rangeActionsResponse.alias.aliasListId) !== selectedListId) {
+        throw new Error('The covering range alias changed lists. Reload Discover and try again.');
+      }
+      ['listenEnabled', 'priority', 'recordable', 'broadcastChannels'].forEach((field) => {
+        source[field] = rangeActionsResponse.alias[field];
+      });
+    }
     if ((editing || cloning) && Number(source.aliasListId) !== selectedListId) {
       throw new Error('This alias is no longer in the selected alias list. Reload the list and try again.');
     }
-    const revision = Number(recordResponse?.revision ?? options?.revision ?? aliasEditorContext?.revision ?? 0);
+    const revision = Number(recordResponse?.revision ?? rangeActionsResponse?.revision ?? options?.revision ??
+      aliasEditorContext?.revision ?? 0);
     const currentList = aliasEditorContext?.lists.find((row) => aliasListId(row) ===
       Number(source.aliasListId || selectedListId)) || aliasEditorContext?.selectedList;
     const family = aliasListFamily(currentList);
@@ -2958,7 +2986,7 @@ async function openAliasEditorModal(mode = 'create', id = null) {
       checkbox.type = 'checkbox';
       checkbox.name = 'broadcastChannel';
       checkbox.value = streamName;
-      checkbox.checked = selectedStreams.has(streamName) && (!cloning || configuredStreams.has(streamName));
+      checkbox.checked = selectedStreams.has(streamName) && (editing || configuredStreams.has(streamName));
       const missing = !configuredStreams.has(streamName);
       if (missing) label.classList.add('missing');
       label.append(checkbox, node('span', '', missing ? `Missing: ${streamName}` : streamName));
@@ -3023,7 +3051,7 @@ async function openAliasEditorModal(mode = 'create', id = null) {
         aliasMutationError(errorHost, error, () => {
           modal.setDirty(false);
           closeReadOnlyModal(false, true);
-          openAliasEditorModal(mode, id);
+          openAliasEditorModal(mode, id, prefill);
         });
         save.disabled = false;
       }
@@ -3036,7 +3064,7 @@ async function openAliasEditorModal(mode = 'create', id = null) {
   } catch (error) {
     aliasMutationError(modal.content, error, () => {
       closeReadOnlyModal(false, true);
-      openAliasEditorModal(mode, id);
+      openAliasEditorModal(mode, id, prefill);
     });
   }
 }
@@ -3269,6 +3297,401 @@ function openAliasBulkModal(kind) {
   });
 }
 
+function unmatchedTalkgroupPolicy(selectedList) {
+  const policy = selectedList?.unmatchedTalkgroupPolicy || selectedList?.unmatched_talkgroup_policy || {};
+  const playbackPriority = Number(policy.playbackPriority ?? policy.playback_priority ?? 100);
+  return {
+    playbackPriority: Number.isInteger(playbackPriority) ? playbackPriority : 100,
+    recordEnabled: Boolean(policy.recordEnabled ?? policy.record_enabled),
+    streamDestinationNames: [...(policy.streamDestinationNames || policy.stream_destination_names || [])]
+  };
+}
+
+function unmatchedTalkgroupsSupported(selectedList) {
+  return ['P25', 'DMR', 'NXDN'].includes(aliasListFamily(selectedList));
+}
+
+function openUnmatchedTalkgroupPolicyModal(selectedList) {
+  const listId = aliasListId(selectedList);
+  const options = aliasEditorContext?.options || {};
+  const policy = unmatchedTalkgroupPolicy(selectedList);
+  const form = node('form', 'alias-editor-form alias-policy-form');
+  form.append(node('p', 'modal-introduction',
+    'These settings apply only when a received talkgroup has no exact alias or covering range in this list.'));
+
+  const listen = node('input');
+  listen.type = 'checkbox';
+  listen.name = 'listenEnabled';
+  listen.checked = policy.playbackPriority !== -1;
+  const priorityValues = (options.playbackPriorities || []).filter((value) =>
+    Number(value) >= 1 && Number(value) < 100).map((value) => ({ value, label: `Priority ${value}` }));
+  const selectedPriority = policy.playbackPriority >= 1 && policy.playbackPriority < 100 ?
+    policy.playbackPriority : '';
+  const priority = aliasSelect('priority', [{ value: '', label: 'Default' }, ...priorityValues], selectedPriority);
+  priority.disabled = !listen.checked;
+  listen.addEventListener('change', () => { priority.disabled = !listen.checked; });
+  const record = node('input');
+  record.type = 'checkbox';
+  record.name = 'recordable';
+  record.checked = policy.recordEnabled;
+  const behavior = node('div', 'alias-editor-grid');
+  behavior.append(aliasFormField('Listen', listen, 'Play unmatched talkgroup calls'),
+    aliasFormField('Listen priority', priority), aliasFormField('Record calls', record));
+
+  const streams = node('fieldset', 'alias-stream-options');
+  streams.append(node('legend', '', 'Streaming destinations'));
+  const selectedStreams = new Set(policy.streamDestinationNames);
+  const configuredStreams = new Set(options.streamNames || []);
+  const streamNames = [...new Set([...(options.streamNames || []), ...policy.streamDestinationNames])];
+  if (!streamNames.length) streams.append(node('div', 'empty', 'No stream destinations configured'));
+  streamNames.forEach((streamName) => {
+    const label = node('label', 'alias-check-option');
+    const checkbox = node('input');
+    checkbox.type = 'checkbox';
+    checkbox.name = 'broadcastChannel';
+    checkbox.value = streamName;
+    checkbox.checked = selectedStreams.has(streamName);
+    const missing = !configuredStreams.has(streamName);
+    if (missing) label.classList.add('missing');
+    label.append(checkbox, node('span', '', missing ? `Missing: ${streamName}` : streamName));
+    streams.append(label);
+  });
+
+  const errorHost = node('div', 'alias-form-message');
+  const cancel = node('button', 'button secondary', 'Cancel');
+  cancel.type = 'button';
+  const save = node('button', 'button', 'Save Unmatched Policy');
+  save.type = 'submit';
+  form.append(behavior, streams, errorHost, aliasModalFooter(cancel, save));
+  const modal = openReadOnlyModal(`Unmatched Talkgroups · ${selectedList.name}`, form, {
+    id: `unmatched-talkgroups-${listId}`,
+    className: 'alias-editor-modal alias-policy-modal',
+    returnFocusSelector: '.alias-policy-button'
+  });
+  if (!modal) return;
+  cancel.addEventListener('click', modal.close);
+  form.addEventListener('input', () => modal.setDirty(true));
+  form.addEventListener('change', () => modal.setDirty(true));
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    errorHost.replaceChildren();
+    save.disabled = true;
+    try {
+      const result = await requestJson(`/api/v1/admin/alias-lists/${listId}/unmatched-talkgroups`, {
+        method: 'PUT', body: {
+          revision: Number(aliasEditorContext?.revision ?? options.revision ?? 0),
+          listenEnabled: listen.checked,
+          priority: listen.checked && priority.value ? Number(priority.value) : null,
+          recordable: record.checked,
+          broadcastChannels: [...streams.querySelectorAll('[name="broadcastChannel"]:checked')]
+            .map((checkbox) => checkbox.value)
+        }
+      });
+      await finishAliasMutation(modal, result);
+    } catch (error) {
+      aliasMutationError(errorHost, error, () => {
+        modal.setDirty(false);
+        closeReadOnlyModal(false, true);
+        render();
+      });
+      save.disabled = false;
+    }
+  });
+}
+
+function observedTalkgroupProtocol(row) {
+  const raw = String(row?.protocol || protocolFamily(row) || '').trim().toUpperCase();
+  if (['P25', 'P25_PHASE1'].includes(raw)) return 'APCO25';
+  if (raw === 'P25_PHASE2') return 'APCO25_PHASE2';
+  return raw;
+}
+
+function observedTalkgroupMatchKind(row) {
+  const kind = String(row?.match_kind || row?.alias_match_kind || 'none').trim().toLowerCase();
+  return ['exact', 'range'].includes(kind) ? kind : 'none';
+}
+
+function observedP25IdentityState(row) {
+  const state = Number(row?.p25_identity_state_code);
+  return Number.isInteger(state) && state >= 0 && state <= 3 ? state : 0;
+}
+
+function observedP25HomeIdentity(row) {
+  if (observedP25IdentityState(row) !== 2) return null;
+  const wacn = Number(row?.p25_home_wacn);
+  const system = Number(row?.p25_home_system_id);
+  const talkgroup = Number(row?.p25_home_talkgroup_id);
+  return Number.isInteger(wacn) && wacn >= 0 && wacn <= 0xFFFFF &&
+    Number.isInteger(system) && system >= 0 && system <= 0xFFF &&
+    Number.isInteger(talkgroup) && talkgroup >= 0 && talkgroup <= 0xFFFF ?
+      { wacn, system, talkgroup } : null;
+}
+
+function observedTalkgroupPromotionSupported(row) {
+  return row?.promotion_supported === true || row?.promotion_supported === 1 ||
+    String(row?.promotion_supported).toLowerCase() === 'true';
+}
+
+function observedTalkgroupPromotionReason(row) {
+  return String(row?.promotion_reason ||
+    'This observation does not contain enough identity information to create a safe alias.');
+}
+
+function observedTalkgroupIdentity(row) {
+  const home = observedP25HomeIdentity(row);
+  if (!home) return identityNumber(row, row.talkgroup_id);
+  const wrapper = node('div', 'observed-talkgroup-match');
+  wrapper.append(node('strong', '',
+    `FQ ${hex(home.wacn, 5)}-${hex(home.system, 3)}-${identifierNumber(home.talkgroup)}`),
+    node('small', '', `Local TG ${identifierNumber(row.talkgroup_id)}`));
+  return wrapper;
+}
+
+function observedTalkgroupSystem(row) {
+  const wrapper = node('div', 'observed-talkgroup-system');
+  const label = row.system_name || row.site_names || row.scope_key || row.context_key || 'Unknown system';
+  const details = [protocolFamily(row), row.topology, row.site_names && row.site_names !== label ? row.site_names : null]
+    .filter(Boolean).join(' · ');
+  wrapper.append(node('strong', '', label));
+  if (details) wrapper.append(node('small', '', details));
+  return wrapper;
+}
+
+function observedTalkgroupMatch(row) {
+  const kind = observedTalkgroupMatchKind(row);
+  if (kind === 'none') return badge('No match', 'state-stale', 'No exact alias or covering range exists');
+  const wrapper = node('div', 'observed-talkgroup-match');
+  wrapper.append(node('strong', '', row.matched_alias_name || `Alias ${identifierNumber(row.matched_alias_id)}`),
+    node('small', '', kind === 'range' ? 'Covered by range' : 'Exact alias'));
+  return wrapper;
+}
+
+function observedTalkgroupCounts(definitions) {
+  const wrapper = node('div', 'observed-talkgroup-counts');
+  definitions.forEach(([label, value]) => {
+    wrapper.append(node('span', '', `${label} ${value === null || value === undefined ? '—' : number(value)}`));
+  });
+  return wrapper;
+}
+
+function observedTalkgroupTime(row, value) {
+  const rendered = dateTime(value);
+  return value !== null && value !== undefined && String(row?.topology || '').toUpperCase() === 'CONVENTIONAL' &&
+    ['P25', 'NXDN'].includes(protocolFamily(row)) ? `${rendered} (hour beginning)` : rendered;
+}
+
+function observedTalkgroupKey(row) {
+  const topology = String(row?.topology || 'UNKNOWN').trim().toUpperCase() || 'UNKNOWN';
+  const protocol = observedTalkgroupProtocol(row) || 'UNKNOWN';
+  let source = 'source:unknown';
+  if (row?.scope_id !== null && row?.scope_id !== undefined) source = `scope-id:${row.scope_id}`;
+  else if (row?.context_id !== null && row?.context_id !== undefined) source = `context-id:${row.context_id}`;
+  else if (row?.scope_key) source = `scope-key:${row.scope_key}`;
+  else if (row?.context_key) source = `context-key:${row.context_key}`;
+  return `${topology}|${protocol}|${source}|${row.target_kind_code ?? 1}-${
+    row.talkgroup_id}-${observedP25IdentityState(row)}-${
+    row.p25_home_wacn ?? 'x'}-${row.p25_home_system_id ?? 'x'}-${row.p25_home_talkgroup_id ?? 'x'}`;
+}
+
+function observedTalkgroupPrefill(row, selectedList) {
+  if (!observedTalkgroupPromotionSupported(row)) {
+    throw new Error(observedTalkgroupPromotionReason(row));
+  }
+  const policy = unmatchedTalkgroupPolicy(selectedList);
+  const priority = policy.playbackPriority >= 1 && policy.playbackPriority < 100 ?
+    policy.playbackPriority : null;
+  const matchedAliasId = Number(row.matched_alias_id ?? row.alias_id);
+  const talkgroupId = Number(row.talkgroup_id);
+  const home = observedP25HomeIdentity(row);
+  let matcher;
+  if (isP25(row)) {
+    if (String(row?.topology || '').toUpperCase() === 'CONVENTIONAL') {
+      throw new Error('Conventional P25 observations cannot be promoted until identity qualification is retained.');
+    }
+    if (observedP25IdentityState(row) === 2 && home) {
+      matcher = {
+        type: 'P25_FULLY_QUALIFIED_TALKGROUP', protocol: 'APCO25',
+        wacn: home.wacn, system: home.system, value: home.talkgroup
+      };
+    } else if (observedP25IdentityState(row) === 1) {
+      matcher = { type: 'TALKGROUP', protocol: observedTalkgroupProtocol(row), value: talkgroupId };
+    } else {
+      throw new Error('This P25 observation does not have a stable alias identity.');
+    }
+  } else {
+    matcher = { type: 'TALKGROUP', protocol: observedTalkgroupProtocol(row), value: talkgroupId };
+  }
+  return {
+    aliasListId: aliasListId(selectedList),
+    name: '',
+    description: '',
+    group: '',
+    color: 0,
+    iconName: null,
+    listenEnabled: policy.playbackPriority !== -1,
+    priority,
+    recordable: policy.recordEnabled,
+    broadcastChannels: policy.streamDestinationNames,
+    streamAsTalkgroup: null,
+    matcher,
+    copyActionsFromAliasId: observedTalkgroupMatchKind(row) === 'range' && Number.isInteger(matchedAliasId) &&
+      matchedAliasId > 0 ? matchedAliasId : null,
+    returnFocusSelector: `.observed-talkgroup-create[data-talkgroup-id="${talkgroupId}"]`
+  };
+}
+
+function openObservedTalkgroupAliasEditor(row, selectedList) {
+  if (observedTalkgroupMatchKind(row) === 'exact' || !observedTalkgroupPromotionSupported(row)) return;
+  openAliasEditorModal('create', null, observedTalkgroupPrefill(row, selectedList));
+}
+
+function observedTalkgroupCreateButton(row, selectedList) {
+  if (!aliasAdminAllowed() || observedTalkgroupMatchKind(row) === 'exact') return '—';
+  if (!observedTalkgroupPromotionSupported(row)) {
+    return badge('Review only', 'state-stale', observedTalkgroupPromotionReason(row));
+  }
+  const button = node('button', 'button secondary observed-talkgroup-create', 'Create Alias');
+  button.type = 'button';
+  button.dataset.talkgroupId = String(row.talkgroup_id);
+  button.addEventListener('click', () => openObservedTalkgroupAliasEditor(row, selectedList));
+  return button;
+}
+
+function observedTalkgroupDetail(row, selectedList) {
+  const wrapper = node('div', 'observed-talkgroup-detail');
+  const home = observedP25HomeIdentity(row);
+  const identity = [
+    [home ? 'Local Talkgroup' : (row.identity_kind || 'Talkgroup'), identityNumber(row, row.talkgroup_id)],
+    ['Protocol', protocolFamily(row) || row.protocol],
+    ['System', row.system_name || '—'],
+    ['Sites', row.site_names || '—'],
+    ['Topology', row.topology || '—'],
+    ['WACN', row.wacn === null || row.wacn === undefined ? '—' : hexDecimalPair(row.wacn, 5)],
+    ['System ID', row.system_id === null || row.system_id === undefined ? '—' : hexDecimalPair(row.system_id, 3)],
+    ['Network ID', row.network_id === null || row.network_id === undefined ? '—' : identifierNumber(row.network_id)],
+    ['Frequency', row.frequency_count === null || row.frequency_count === undefined ||
+      Number(row.frequency_count) <= 0 ? '—' :
+      Number(row.frequency_count) === 1 ? frequency(row.frequency_hz) :
+        `${number(row.frequency_count)} frequencies`],
+    ['Timeslot', row.timeslot_count === null || row.timeslot_count === undefined ||
+      Number(row.timeslot_count) <= 0 ? '—' :
+      Number(row.timeslot_count) === 1 ? identifierNumber(row.timeslot) :
+        `${number(row.timeslot_count)} timeslots`]
+  ];
+  if (home) {
+    identity.splice(1, 0,
+      ['Fully Qualified Home', `${hex(home.wacn, 5)}-${hex(home.system, 3)}-${identifierNumber(home.talkgroup)}`],
+      ['Home WACN', hexDecimalPair(home.wacn, 5)], ['Home System ID', hexDecimalPair(home.system, 3)]);
+  }
+  wrapper.append(section('Identity', keyValues(identity)));
+  const coverage = [['Match', observedTalkgroupMatch(row)]];
+  if (!observedTalkgroupPromotionSupported(row)) {
+    coverage.push(['Promotion', badge('Review only', 'state-stale', observedTalkgroupPromotionReason(row))],
+      ['Reason', observedTalkgroupPromotionReason(row)]);
+  }
+  wrapper.append(section('Alias Coverage', keyValues(coverage)));
+  wrapper.append(section('Call Use', aliasDetailMetricBand(row, [
+    ['Calls', 'call_count'], ['Recorded', 'recorded_count'], ['Sent', 'streamed_count'],
+    ['Encrypted', 'encrypted_count']
+  ])));
+  wrapper.append(section('System Evidence', aliasDetailMetricBand(row, [
+    ['Grants', 'grant_count'], ['Join', 'join_count'], ['Emergency', 'emergency_count'],
+    ['Register', 'register_count'], ['Logout', 'logout_count'], ['Denial', 'denial_count'],
+    ['Data', 'data_count'], ['Other', 'other_signaling_count']
+  ])));
+  wrapper.append(section('Observed', keyValues([
+    ['First Activity', observedTalkgroupTime(row, row.first_seen_ms)],
+    ['Latest Activity', observedTalkgroupTime(row, row.last_seen_ms)]
+  ])));
+  if (aliasAdminAllowed() && observedTalkgroupMatchKind(row) !== 'exact' &&
+      observedTalkgroupPromotionSupported(row)) {
+    const actions = node('div', 'observed-talkgroup-detail-actions');
+    actions.append(observedTalkgroupCreateButton(row, selectedList));
+    wrapper.append(actions);
+  }
+  return wrapper;
+}
+
+function openObservedTalkgroupDetail(row, selectedList) {
+  const id = identityNumber(row, row.talkgroup_id);
+  openReadOnlyModal(`Observed ${row.identity_kind || 'Talkgroup'} ${id}`,
+    observedTalkgroupDetail(row, selectedList), {
+    id: `observed-talkgroup-${id}`, className: 'alias-editor-modal observed-talkgroup-modal'
+  });
+}
+
+function observedTalkgroupToolbar(selectedList) {
+  const form = node('form', 'toolbar alias-catalog-toolbar observed-talkgroup-toolbar');
+  form.method = 'get';
+  [['view', 'aliases'], ['list', aliasListId(selectedList)], ['aliasTab', 'discover'],
+    ['sort', route.get('sort')], ['direction', route.get('direction')]].forEach(([name, value]) => {
+    if (!value) return;
+    const hidden = node('input');
+    hidden.type = 'hidden';
+    hidden.name = name;
+    hidden.value = String(value);
+    form.append(hidden);
+  });
+  const search = node('label', 'alias-filter alias-search-filter');
+  search.append(node('span', '', 'Search'));
+  const input = node('input');
+  input.type = 'search';
+  input.name = 'q';
+  input.value = route.get('q') || '';
+  input.placeholder = 'Talkgroup, system, or site';
+  search.append(input);
+  form.append(search, node('button', '', 'Search'));
+  if (route.get('q')) {
+    form.append(anchor('Clear', href('aliases', {
+      list: aliasListId(selectedList), aliasTab: 'discover', sort: route.get('sort'),
+      direction: route.get('direction')
+    }), 'button secondary'));
+  }
+  return form;
+}
+
+function renderObservedTalkgroups(main, page, selectedList) {
+  const rows = (page.rows || []).filter((row) => observedTalkgroupMatchKind(row) !== 'exact');
+  const columns = [
+    { id: 'talkgroup-id', label: 'TG', fullLabel: 'Talkgroup', sort: 'talkgroup', className: 'numeric',
+      render: observedTalkgroupIdentity },
+    { id: 'system', label: 'System', sort: 'system', className: 'alias-cell', render: observedTalkgroupSystem },
+    { id: 'match', label: 'Alias Match', className: 'alias-cell', render: observedTalkgroupMatch },
+    { id: 'call-use', label: 'Call Use', sort: 'calls', render: (row) => observedTalkgroupCounts([
+      ['Calls', row.call_count], ['Rec', row.recorded_count], ['Sent', row.streamed_count]
+    ]) },
+    { id: 'evidence', label: 'Evidence', render: (row) => observedTalkgroupCounts([
+      ['Enc', row.encrypted_count], ['Signal', row.signaling_count]
+    ]) },
+    { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', sort: 'last_seen',
+      render: (row) => observedTalkgroupTime(row, row.last_seen_ms) },
+    { id: 'action', label: '', render: (row) => observedTalkgroupCreateButton(row, selectedList) }
+  ];
+  const host = node('div', 'alias-catalog-table-host observed-talkgroup-table-host');
+  const observedTable = table(rows, columns,
+    'No observed talkgroups without an exact alias are available for this list', {
+      type: 'alias-observed-talkgroups', serverSort: true, sortable: false,
+      defaultSort: 'last_seen', defaultDirection: 'desc',
+      rowKey: observedTalkgroupKey
+    });
+  host.append(observedTable);
+  const rowsByKey = new Map(rows.map((row) => [observedTalkgroupKey(row), row]));
+  observedTable.querySelectorAll('tbody tr[data-id]').forEach((tableRow) => {
+    tableRow.classList.add('observed-talkgroup-row');
+    tableRow.addEventListener('click', (event) => {
+      if (event.target.closest('a, button, input, select, label')) return;
+      const row = rowsByKey.get(tableRow.dataset.id);
+      if (row) openObservedTalkgroupDetail(row, selectedList);
+    });
+  });
+  const block = section('Observed Talkgroups', host);
+  block.classList.add('alias-catalog-section', 'alias-editor-table-section', 'observed-talkgroup-section');
+  block.append(node('p', 'metric-meaning-note alias-catalog-guide',
+    'This list contains talkgroups observed on its assigned systems that do not have an exact alias. Range matches ' +
+    'are shown so you can decide whether a dedicated alias is useful.'), pager({ ...page, rows }));
+  main.append(block);
+}
+
 async function renderAliases() {
   const admin = aliasAdminAllowed();
   const publicListsPromise = api('/api/alias-lists');
@@ -3276,7 +3699,7 @@ async function renderAliases() {
     Promise.resolve({ revision: null, aliasLists: [] });
   const [listResponse, adminCatalog] = await Promise.all([publicListsPromise, adminListsPromise]);
   const lists = mergedAliasLists(listResponse.rows || [], adminCatalog.aliasLists || []);
-  const selectedList = lists.find((row) => aliasListId(row) === Number(route.get('list')));
+  let selectedList = lists.find((row) => aliasListId(row) === Number(route.get('list')));
   aliasEditorContext = {
     admin, revision: Number(adminCatalog.revision ?? 0), lists, selectedList, options: null, page: null
   };
@@ -3294,19 +3717,32 @@ async function renderAliases() {
     return;
   }
 
+  const allowedViews = unmatchedTalkgroupsSupported(selectedList) ?
+    ['configure', 'discover', 'calls', 'evidence', 'custom'] : ['configure', 'calls', 'evidence', 'custom'];
+  const view = allowedViews.includes(route.get('aliasTab')) ?
+    route.get('aliasTab') : 'configure';
   const filters = {
     list: aliasListId(selectedList), type: route.get('type'), matcher: route.get('matcher'),
     group: route.get('group'), listen: route.get('listen'), record: route.get('record'),
     stream: route.get('stream'), evidence: route.get('evidence'), use: route.get('use'),
     lastActivityBefore: route.get('lastActivityBefore'), lastActivityAfter: route.get('lastActivityAfter')
   };
-  const pagePromise = api('/api/aliases', pageParameters(filters));
+  const pagePromise = view === 'discover' ? api('/api/alias-list/observed-talkgroups', pageParameters({
+    list: aliasListId(selectedList), include_exact: false
+  })) : api('/api/aliases', pageParameters(filters));
   const optionsPromise = admin ? api('/api/v1/admin/aliases/options', { aliasListId: aliasListId(selectedList) }) :
     Promise.resolve(null);
   const [page, options] = await Promise.all([pagePromise, optionsPromise]);
   aliasEditorContext.page = page;
   aliasEditorContext.options = options;
-  if (options?.revision !== undefined) aliasEditorContext.revision = Number(options.revision);
+  if (options?.aliasList && options?.revision !== undefined &&
+      aliasListId(options.aliasList) === aliasListId(selectedList)) {
+    selectedList = { ...selectedList, ...options.aliasList };
+    const selectedIndex = lists.findIndex((row) => aliasListId(row) === aliasListId(selectedList));
+    if (selectedIndex >= 0) lists[selectedIndex] = selectedList;
+    aliasEditorContext.selectedList = selectedList;
+    aliasEditorContext.revision = Number(options.revision);
+  }
   const rows = page.rows || [];
   const visibleIds = new Set(rows.map((row) => Number(row.alias_id)));
   aliasEditorSelection = new Set([...aliasEditorSelection].filter((id) => visibleIds.has(id)));
@@ -3326,13 +3762,26 @@ async function renderAliases() {
     const remove = node('button', 'button secondary danger-outline', 'Delete List');
     remove.type = 'button';
     remove.addEventListener('click', () => openAliasListDeleteModal(selectedList));
-    listActions.append(add, remove);
+    listActions.append(add);
+    if (unmatchedTalkgroupsSupported(selectedList)) {
+      const policy = node('button', 'button secondary alias-policy-button', 'Unmatched Talkgroups');
+      policy.type = 'button';
+      policy.addEventListener('click', () => openUnmatchedTalkgroupPolicyModal(selectedList));
+      listActions.append(policy);
+    }
+    listActions.append(remove);
     summary.append(listActions);
   }
-  main.append(summary, aliasEditorViewTabs(selectedList), aliasEditorFilterToolbar(listResponse, options));
+  main.append(summary, aliasEditorViewTabs(selectedList), view === 'discover' ?
+    observedTalkgroupToolbar(selectedList) : aliasEditorFilterToolbar(listResponse, options));
 
-  const view = ['configure', 'calls', 'evidence', 'custom'].includes(route.get('aliasTab')) ?
-    route.get('aliasTab') : 'configure';
+  if (view === 'discover') {
+    aliasEditorSelection.clear();
+    aliasEditorLastSelectionIndex = null;
+    renderObservedTalkgroups(main, page, selectedList);
+    return;
+  }
+
   const definitions = aliasCatalogEnrichmentColumns();
   const selectedCustom = readAliasCatalogColumnSelection(definitions);
   const tableHost = node('div', 'alias-catalog-table-host alias-editor-table-host');

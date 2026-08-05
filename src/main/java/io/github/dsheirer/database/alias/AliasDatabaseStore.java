@@ -15,6 +15,7 @@ import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.alias.AliasMatchRegistry;
+import io.github.dsheirer.alias.UnmatchedTalkgroupPolicy;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.AliasIDType;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
@@ -58,9 +59,9 @@ import java.util.StringJoiner;
 /**
  * SQLite persistence for alias-list definitions and their aliases.
  *
- * <p>Alias schema v4 gives both lists and aliases durable identities. Each alias row contains exactly one operational
- * matcher. Recording, playback, and streaming routes remain behavior attached to that matcher and are not represented
- * as additional match identifiers.</p>
+ * <p>Alias schema v5 gives both lists and aliases durable identities. Each alias row contains exactly one operational
+ * matcher. Recording, playback, and streaming routes remain behavior attached to that matcher. A list-level unmatched
+ * talkgroup policy carries actions only and is never represented as an alias or match identifier.</p>
  */
 public class AliasDatabaseStore
 {
@@ -134,9 +135,12 @@ public class AliasDatabaseStore
     private List<AliasListDefinition> loadAliasListDefinitions(Connection connection) throws SQLException
     {
         List<AliasListDefinition> definitions = new ArrayList<>();
+        Map<Long,List<String>> streamDestinations = loadUnmatchedTalkgroupStreams(connection);
+        Set<Long> loadedDefinitionIds = new HashSet<>();
 
         try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT id, name, family
+            SELECT id, name, family, unmatched_talkgroup_priority,
+                   unmatched_talkgroup_record_enabled
             FROM alias_list
             ORDER BY id
             """);
@@ -149,11 +153,34 @@ public class AliasDatabaseStore
                 {
                     throw new SQLException("Persisted alias-list IDs must be greater than zero");
                 }
-                AliasListDefinition definition = new AliasListDefinition(
-                    resultSet.getString("name"),
-                    requireEnum(AliasListFamily.class, resultSet.getString("family"), "alias_list.family"));
+                UnmatchedTalkgroupPolicy policy;
+                try
+                {
+                    policy = new UnmatchedTalkgroupPolicy(
+                        resultSet.getInt("unmatched_talkgroup_priority"),
+                        getBoolean(resultSet, "unmatched_talkgroup_record_enabled"),
+                        streamDestinations.getOrDefault(definitionId, List.of()));
+                }
+                catch(IllegalArgumentException e)
+                {
+                    throw new SQLException("Alias list [" + definitionId +
+                        "] has an invalid unmatched talkgroup policy", e);
+                }
+
+                AliasListDefinition definition = new AliasListDefinition(resultSet.getString("name"),
+                    requireEnum(AliasListFamily.class, resultSet.getString("family"), "alias_list.family"), policy);
                 definition.setId(definitionId);
                 definitions.add(definition);
+                loadedDefinitionIds.add(definitionId);
+            }
+        }
+
+        for(Long aliasListId: streamDestinations.keySet())
+        {
+            if(!loadedDefinitionIds.contains(aliasListId))
+            {
+                throw new SQLException("Unmatched talkgroup stream route references unknown alias_list_id [" +
+                    aliasListId + "]");
             }
         }
 
@@ -284,6 +311,21 @@ public class AliasDatabaseStore
                 throw new SQLException("Alias list [" + definition.getName() +
                     "] must declare a protocol family");
             }
+            UnmatchedTalkgroupPolicy policy = definition.getUnmatchedTalkgroupPolicy();
+            if(policy == null || !UnmatchedTalkgroupPolicy.isValidPlaybackPriority(policy.getPlaybackPriority()))
+            {
+                throw new SQLException("Alias list [" + definition.getName() +
+                    "] has an invalid unmatched talkgroup policy");
+            }
+            Set<String> streamDestinations = new HashSet<>();
+            for(String destination: policy.getStreamDestinationNames())
+            {
+                if(destination == null || destination.isBlank() || !streamDestinations.add(destination))
+                {
+                    throw new SQLException("Alias list [" + definition.getName() +
+                        "] has invalid unmatched talkgroup stream destinations");
+                }
+            }
         }
 
         Set<Long> aliasIds = new HashSet<>();
@@ -356,8 +398,9 @@ public class AliasDatabaseStore
             {
                 try(PreparedStatement statement = connection.prepareStatement("""
                     INSERT INTO alias_list (
-                        name, family
-                    ) VALUES (?, ?)
+                        name, family, unmatched_talkgroup_priority,
+                        unmatched_talkgroup_record_enabled
+                    ) VALUES (?, ?, ?, ?)
                     """, Statement.RETURN_GENERATED_KEYS))
                 {
                     bindDefinition(statement, definition, 1);
@@ -376,8 +419,9 @@ public class AliasDatabaseStore
             {
                 try(PreparedStatement statement = connection.prepareStatement("""
                     INSERT INTO alias_list (
-                        id, name, family
-                    ) VALUES (?, ?, ?)
+                        id, name, family, unmatched_talkgroup_priority,
+                        unmatched_talkgroup_record_enabled
+                    ) VALUES (?, ?, ?, ?, ?)
                     """))
                 {
                     statement.setLong(1, definition.getId());
@@ -385,6 +429,8 @@ public class AliasDatabaseStore
                     statement.executeUpdate();
                 }
             }
+
+            insertUnmatchedTalkgroupStreams(connection, definition);
         }
     }
 
@@ -393,6 +439,56 @@ public class AliasDatabaseStore
     {
         statement.setString(offset, definition.getName());
         statement.setString(offset + 1, definition.getFamily().name());
+        UnmatchedTalkgroupPolicy policy = definition.getUnmatchedTalkgroupPolicy();
+        statement.setInt(offset + 2, policy.getPlaybackPriority());
+        statement.setInt(offset + 3, policy.isRecordEnabled() ? 1 : 0);
+    }
+
+    private void insertUnmatchedTalkgroupStreams(Connection connection, AliasListDefinition definition)
+        throws SQLException
+    {
+        for(String destination: definition.getUnmatchedTalkgroupPolicy().getStreamDestinationNames())
+        {
+            try(PreparedStatement statement = connection.prepareStatement("""
+                INSERT INTO alias_list_unmatched_talkgroup_stream (alias_list_id, channel_name)
+                VALUES (?, ?)
+                """))
+            {
+                statement.setLong(1, definition.getId());
+                statement.setString(2, destination);
+                statement.executeUpdate();
+            }
+        }
+    }
+
+    private Map<Long,List<String>> loadUnmatchedTalkgroupStreams(Connection connection) throws SQLException
+    {
+        Map<Long,List<String>> destinations = new LinkedHashMap<>();
+        try(PreparedStatement statement = connection.prepareStatement("""
+            SELECT alias_list_id, channel_name
+            FROM alias_list_unmatched_talkgroup_stream
+            ORDER BY alias_list_id, id
+            """);
+            ResultSet resultSet = statement.executeQuery())
+        {
+            while(resultSet.next())
+            {
+                long aliasListId = resultSet.getLong("alias_list_id");
+                if(resultSet.wasNull() || aliasListId <= AliasListDefinition.UNASSIGNED_ID)
+                {
+                    throw new SQLException("Unmatched talkgroup stream route has no valid alias_list_id");
+                }
+
+                String destination = resultSet.getString("channel_name");
+                if(destination == null || destination.isBlank())
+                {
+                    throw new SQLException("Unmatched talkgroup stream route for alias list [" + aliasListId +
+                        "] must have a nonblank name");
+                }
+                destinations.computeIfAbsent(aliasListId, ignored -> new ArrayList<>()).add(destination);
+            }
+        }
+        return destinations;
     }
 
     private void attachDefinitions(List<Alias> aliases, List<AliasListDefinition> definitions) throws SQLException

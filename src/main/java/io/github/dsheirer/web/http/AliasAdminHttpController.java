@@ -16,6 +16,7 @@ import io.github.dsheirer.alias.AliasAdministrationService;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.alias.AliasMatchDescriptor;
+import io.github.dsheirer.alias.UnmatchedTalkgroupPolicy;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.AliasIDType;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
@@ -82,10 +83,17 @@ public final class AliasAdminHttpController
         .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
 
     private final AliasAdministrationService mService;
+    private final Runnable mAliasChanged;
 
     public AliasAdminHttpController(AliasAdministrationService service)
     {
+        this(service, () -> {});
+    }
+
+    public AliasAdminHttpController(AliasAdministrationService service, Runnable aliasChanged)
+    {
         mService = Objects.requireNonNull(service, "Alias administration service cannot be null");
+        mAliasChanged = Objects.requireNonNull(aliasChanged, "Alias change callback cannot be null");
     }
 
     /** Handles all alias-administration contexts. */
@@ -186,9 +194,9 @@ public final class AliasAdminHttpController
                 }
                 case "POST" -> {
                     CreateListRequest request = readJson(exchange, CreateListRequest.class);
-                    AliasAdministrationService.MutationResult result = mService.createAliasList(
+                    AliasAdministrationService.MutationResult result = changed(mService.createAliasList(
                         requiredText(request.name(), "name", MAXIMUM_TEXT_CHARACTERS),
-                        required(request.family(), "family"), requiredRevision(request.revision()));
+                        required(request.family(), "family"), requiredRevision(request.revision())));
                     exchange.getResponseHeaders().set("Location", ALIAS_LISTS_PATH + "/" + result.aliasListId());
                     sendJson(exchange, 201, result);
                 }
@@ -197,9 +205,13 @@ public final class AliasAdminHttpController
             return;
         }
 
-        String suffix = "/delete-impact";
-        boolean impact = path.endsWith(suffix);
-        long aliasListId = requiredItemId(impact ? path.substring(0, path.length() - suffix.length()) : path,
+        String impactSuffix = "/delete-impact";
+        String policySuffix = "/unmatched-talkgroups";
+        boolean impact = path.endsWith(impactSuffix);
+        boolean policy = path.endsWith(policySuffix);
+        String itemPath = impact ? path.substring(0, path.length() - impactSuffix.length()) :
+            policy ? path.substring(0, path.length() - policySuffix.length()) : path;
+        long aliasListId = requiredItemId(itemPath,
             ALIAS_LISTS_PATH);
         requireNoQuery(exchange);
 
@@ -211,12 +223,24 @@ public final class AliasAdminHttpController
             return;
         }
 
+        if(policy)
+        {
+            requireMethod(exchange, "PUT");
+            UnmatchedPolicyRequest request = readJson(exchange, UnmatchedPolicyRequest.class);
+            UnmatchedTalkgroupPolicy replacement = new UnmatchedTalkgroupPolicy(
+                unmatchedPlaybackPriority(required(request.listenEnabled(), "listenEnabled"), request.priority()),
+                required(request.recordable(), "recordable"), requiredChannels(request.broadcastChannels()));
+            sendJson(exchange, 200, changed(mService.updateUnmatchedTalkgroupPolicy(aliasListId, replacement,
+                requiredRevision(request.revision()))));
+            return;
+        }
+
         switch(exchange.getRequestMethod())
         {
             case "DELETE" -> {
                 DeleteListRequest request = readJson(exchange, DeleteListRequest.class);
-                AliasAdministrationService.MutationResult result = mService.deleteAliasList(aliasListId,
-                    requiredRevision(request.revision()), required(request.confirmed(), "confirmed"));
+                AliasAdministrationService.MutationResult result = changed(mService.deleteAliasList(aliasListId,
+                    requiredRevision(request.revision()), required(request.confirmed(), "confirmed")));
                 sendJson(exchange, 200, result);
             }
             default -> methodNotAllowed(exchange, "DELETE");
@@ -233,8 +257,8 @@ public final class AliasAdminHttpController
             {
                 case "POST" -> {
                     AliasRequest request = readJson(exchange, AliasRequest.class);
-                    AliasAdministrationService.MutationResult result = mService.createAlias(
-                        toAlias(request.alias()), requiredRevision(request.revision()));
+                    AliasAdministrationService.MutationResult result = changed(mService.createAlias(
+                        toAlias(request.alias()), requiredRevision(request.revision())));
 
                     if(!result.aliasIds().isEmpty())
                     {
@@ -260,12 +284,13 @@ public final class AliasAdminHttpController
             }
             case "PUT" -> {
                 AliasRequest request = readJson(exchange, AliasRequest.class);
-                sendJson(exchange, 200, mService.replaceAlias(aliasId, toAlias(request.alias()),
-                    requiredRevision(request.revision())));
+                sendJson(exchange, 200, changed(mService.replaceAlias(aliasId, toAlias(request.alias()),
+                    requiredRevision(request.revision()))));
             }
             case "DELETE" -> {
                 RevisionRequest request = readJson(exchange, RevisionRequest.class);
-                sendJson(exchange, 200, mService.deleteAlias(aliasId, requiredRevision(request.revision())));
+                sendJson(exchange, 200, changed(mService.deleteAlias(aliasId,
+                    requiredRevision(request.revision()))));
             }
             default -> methodNotAllowed(exchange, "GET, PUT, DELETE");
         }
@@ -310,7 +335,13 @@ public final class AliasAdminHttpController
             request.groupOperation(), optionalText(request.group(), "group", MAXIMUM_TEXT_CHARACTERS),
             request.streamOperation(), optionalChannels(request.broadcastChannels()),
             Boolean.TRUE.equals(request.delete()));
-        sendJson(exchange, 200, mService.bulkEdit(edit, requiredRevision(request.revision())));
+        sendJson(exchange, 200, changed(mService.bulkEdit(edit, requiredRevision(request.revision()))));
+    }
+
+    private AliasAdministrationService.MutationResult changed(AliasAdministrationService.MutationResult result)
+    {
+        mAliasChanged.run();
+        return result;
     }
 
     private static Alias toAlias(AliasPayload payload) throws RequestException
@@ -562,6 +593,20 @@ public final class AliasAdminHttpController
             return null;
         }
         return playbackPriority(listenEnabled, priority);
+    }
+
+    private static int unmatchedPlaybackPriority(boolean listenEnabled, Integer priority) throws RequestException
+    {
+        if(!listenEnabled)
+        {
+            if(priority != null)
+            {
+                throw invalid("priority must be null when listening is disabled");
+            }
+            return Priority.DO_NOT_MONITOR;
+        }
+        return priority == null ? Priority.DEFAULT_PRIORITY : bounded(priority, "priority", Priority.MIN_PRIORITY,
+            Priority.MAX_PRIORITY);
     }
 
     private static Protocol requiredProtocol(Protocol protocol) throws RequestException
@@ -847,6 +892,8 @@ public final class AliasAdminHttpController
 
     private record CreateListRequest(Long revision, String name, AliasListFamily family) {}
     private record DeleteListRequest(Long revision, Boolean confirmed) {}
+    private record UnmatchedPolicyRequest(Long revision, Boolean listenEnabled, Integer priority,
+                                          Boolean recordable, List<String> broadcastChannels) {}
     private record RevisionRequest(Long revision) {}
     private record AliasRequest(Long revision, AliasPayload alias) {}
     private record BulkRequest(Long revision, List<Long> aliasIds, Long aliasListId, Integer color, String iconName,

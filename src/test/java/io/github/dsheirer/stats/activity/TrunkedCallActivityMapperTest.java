@@ -30,6 +30,9 @@ import io.github.dsheirer.module.decode.nxdn.identifier.NXDNEncryptionKey;
 import io.github.dsheirer.module.decode.nxdn.identifier.NXDNRadioIdentifier;
 import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.nxdn.layer3.type.TransmissionMode;
+import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25FullyQualifiedTalkgroupIdentifier;
+import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
+import io.github.dsheirer.module.decode.traffic.TrunkedCallAttributionEvent;
 import io.github.dsheirer.module.decode.traffic.TrunkedCallStartEvent;
 import io.github.dsheirer.module.decode.traffic.TrunkedCallStartTracker;
 import io.github.dsheirer.protocol.Protocol;
@@ -284,6 +287,29 @@ class TrunkedCallActivityMapperTest
             assertEquals(101, scalar(connection,
                 "SELECT encryption_key_id FROM p25_activity_event"));
         }
+    }
+
+    @Test
+    void preservesFullyQualifiedP25LateAttribution()
+    {
+        Channel parent = new Channel("P25 Site", Channel.ChannelType.TRAFFIC);
+        parent.setDecodeConfiguration(new DecodeConfigP25Phase1());
+        parent.setRadresGuid("123e4567-e89b-12d3-a456-426614174003");
+        MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
+        identifiers.update(APCO25FullyQualifiedTalkgroupIdentifier.createTo(56_138, 0xABCDE, 0x321, 1_200));
+        TrunkedCallAttributionEvent event = new TrunkedCallAttributionEvent(parent, Protocol.APCO25,
+            null, 1, 1_000L, identifiers, true, false, false, false);
+
+        P25ActivityLogRecords.TrunkedCallAttribution attribution =
+            new TrunkedCallActivityMapper().map(event);
+
+        assertNotNull(attribution);
+        assertEquals(56_138, attribution.destinationId());
+        assertEquals(P25ActivityLogRecords.P25IdentityState.STABLE_FULLY_QUALIFIED,
+            attribution.p25TargetIdentity().state());
+        assertEquals(0xABCDE, attribution.p25TargetIdentity().homeWacn());
+        assertEquals(0x321, attribution.p25TargetIdentity().homeSystemId());
+        assertEquals(1_200, attribution.p25TargetIdentity().homeTalkgroupId());
     }
 
     private static DMRTier3Channel dmrChannel(long frequency, int timeslot)

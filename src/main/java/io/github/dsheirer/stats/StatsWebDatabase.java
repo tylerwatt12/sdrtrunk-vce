@@ -32,6 +32,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -304,6 +305,12 @@ class StatsWebDatabase
     private static final String TALKGROUP_SIGNALING_COUNT_SQL = IDENTITY_EVIDENCE_FIELDS.stream()
         .map(field -> "summary." + field)
         .collect(java.util.stream.Collectors.joining(" + "));
+    private static final String OTHER_TALKGROUP_SIGNALING_COUNT_SQL =
+        "summary.acknowledge_count + summary.active_count + summary.busy_count + " +
+            "summary.check_count + summary.check_ack_count + summary.continue_count + " +
+            "summary.gps_count + summary.page_count + summary.patch_count + " +
+            "summary.patch_cancel_count + summary.patch_create_count + summary.queued_count + " +
+            "summary.request_count + summary.status_count + summary.unknown_count";
     private static final Map<String,String> SYSTEM_SORT_COLUMNS = Map.ofEntries(
         Map.entry("wacn", "wacn"),
         Map.entry("system_id", "system_id"),
@@ -441,6 +448,24 @@ class StatsWebDatabase
         Map.entry("last_peer_name", dmrAliasSortExpression("alias_radio", "summary.last_peer_radio_id", "name")),
         Map.entry("first_seen", "summary.first_seen_ms"),
         Map.entry("last_seen", "summary.last_seen_ms")
+    );
+    private static final Map<String,String> OBSERVED_TALKGROUP_SORT_COLUMNS = Map.ofEntries(
+        Map.entry("system", "lower(coalesce(system_name, scope_key))"),
+        Map.entry("protocol", "protocol_code"),
+        Map.entry("topology", "topology"),
+        Map.entry("id", "talkgroup_id"),
+        Map.entry("talkgroup", "talkgroup_id"),
+        Map.entry("kind", "target_kind_code"),
+        Map.entry("calls", "call_count"),
+        Map.entry("recorded", "recorded_count"),
+        Map.entry("streamed", "streamed_count"),
+        Map.entry("encrypted", "encrypted_count"),
+        Map.entry("grants", "grant_count"),
+        Map.entry("joins", "join_count"),
+        Map.entry("emergencies", "emergency_count"),
+        Map.entry("registrations", "register_count"),
+        Map.entry("first_seen", "first_seen_ms"),
+        Map.entry("last_seen", "last_seen_ms")
     );
 
     private final UserPreferences mUserPreferences;
@@ -625,6 +650,279 @@ class StatsWebDatabase
     Map<String,Object> alias(StatsRequest request)
     {
         return readSnapshot(connection -> mAliasCatalog.alias(connection, request.requiredIdentifier("id")));
+    }
+
+    /**
+     * Invalidates read-model alias rules after a committed administrator edit.  Package visibility keeps mutation
+     * ownership in the web service while still making the refresh explicit and testable.
+     */
+    void invalidateAliasCache()
+    {
+        mAliasResolver.invalidate();
+    }
+
+    /**
+     * Returns one bounded row per observed P25, DMR, or NXDN talkgroup (or patch) assigned to one durable alias
+     * list.  The default excludes identities with an exact definition so an ordinary range cannot hide talkgroups
+     * that still need names.
+     */
+    Map<String,Object> observedTalkgroups(StatsRequest request)
+    {
+        int aliasListId = request.requiredIdentifier("list");
+
+        if(aliasListId <= 0)
+        {
+            throw new StatsApiException(400, "list is invalid");
+        }
+
+        boolean includeExact = booleanParameter(request, "include_exact", false);
+
+        return readSnapshot(connection -> {
+            Map<String,Object> aliasList = first(queryRows(connection, """
+                SELECT id AS alias_list_id, name, family
+                FROM alias_list
+                WHERE id = ?
+                """, aliasListId), "Alias list not found");
+            if(!Set.of("P25", "DMR", "NXDN").contains(aliasList.get("family")))
+            {
+                throw new StatsApiException(400,
+                    "Observed talkgroup discovery is available only for P25, DMR, and NXDN alias lists");
+            }
+            String aliasListName = String.valueOf(aliasList.get("name"));
+            StringBuilder sql = new StringBuilder("""
+                WITH scoped AS (
+                    %s
+                ), observed AS (
+                    SELECT ? AS alias_list_id, ? AS alias_list_name, scoped.family,
+                        scoped.scope_id, scoped.scope_token, scoped.scope_token AS scope_key,
+                        NULL AS context_id, NULL AS context_key,
+                        scoped.protocol_code, scoped.protocol, scoped.identity_domain_code,
+                        summary.p25_identity_state_code, summary.p25_home_wacn,
+                        summary.p25_home_system_id, summary.p25_home_talkgroup_id,
+                        'TRUNKED' AS topology,
+                        coalesce(scoped.configured_system, scoped.site_names, scoped.scope_token) AS system_name,
+                        scoped.site_names, scoped.system_key, scoped.wacn, scoped.system_id,
+                        scoped.network_id, NULL AS frequency_hz, NULL AS timeslot,
+                        NULL AS frequency_count, NULL AS timeslot_count,
+                        summary.identity_id AS talkgroup_id,
+                        summary.identity_kind_code AS target_kind_code,
+                        CASE summary.identity_kind_code WHEN 3 THEN 'Patch Group' ELSE 'Talkgroup' END
+                            AS identity_kind,
+                        summary.first_seen_ms, summary.last_seen_ms, summary.call_count,
+                        summary.recorded_count, summary.streamed_count, summary.encrypted_count,
+                        summary.grant_count, summary.join_count, summary.emergency_count,
+                        summary.register_count, summary.logout_count, summary.denial_count,
+                        summary.data_count, %s AS other_signaling_count,
+                        %s AS signaling_count,
+                        EXISTS (
+                            SELECT 1
+                            FROM alias definition
+                            WHERE definition.alias_list_id = ?
+                              AND (
+                                (scoped.protocol_code = 1
+                                  AND definition.protocol IN ('APCO25', 'APCO25_PHASE2')
+                                  AND (
+                                    (summary.p25_identity_state_code = 1
+                                      AND definition.matcher_type = 'TALKGROUP'
+                                      AND definition.value = summary.identity_id)
+                                    OR
+                                    (summary.p25_identity_state_code = 2
+                                      AND definition.matcher_type = 'P25_FULLY_QUALIFIED_TALKGROUP'
+                                      AND definition.value = summary.p25_home_talkgroup_id
+                                      AND definition.wacn = summary.p25_home_wacn
+                                      AND definition.p25_system_id = summary.p25_home_system_id)))
+                                OR
+                                (scoped.protocol_code = 3
+                                  AND definition.matcher_type = 'TALKGROUP'
+                                  AND definition.protocol = 'DMR'
+                                  AND definition.value = summary.identity_id)
+                                OR
+                                (scoped.protocol_code = 4
+                                  AND definition.matcher_type = 'TALKGROUP'
+                                  AND definition.protocol = 'NXDN'
+                                  AND definition.value = summary.identity_id)
+                              )
+                        ) AS has_exact_definition
+                    FROM (
+                        SELECT scoped.*, ? AS family
+                        FROM scoped
+                        WHERE ((? = 'P25' AND scoped.protocol_code = 1)
+                            OR (? = 'DMR' AND scoped.protocol_code = 3)
+                            OR (? = 'NXDN' AND scoped.protocol_code = 4))
+                          AND EXISTS (
+                            SELECT 1
+                            FROM trunked_identity_scope_context ownership
+                            JOIN receiver_context context ON context.id = ownership.context_id
+                            LEFT JOIN p25_site_snapshot p25 ON p25.guid = context.guid
+                            LEFT JOIN trunked_site_snapshot trunked ON trunked.guid = context.guid
+                            WHERE ownership.scope_id = scoped.scope_id
+                              AND coalesce(context.alias_list_name, p25.alias_list_name,
+                                trunked.alias_list_name) = ? COLLATE NOCASE
+                          )
+                    ) scoped
+                    JOIN trunked_identity_summary summary ON summary.scope_id = scoped.scope_id
+                    WHERE summary.identity_kind_code IN (1, 3)
+
+                    UNION ALL
+
+                    SELECT ? AS alias_list_id, ? AS alias_list_name, 'DMR' AS family,
+                        NULL AS scope_id, NULL AS scope_token, context.context_key AS scope_key,
+                        context.id AS context_id, context.context_key,
+                        3 AS protocol_code, 'DMR' AS protocol, NULL AS identity_domain_code,
+                        0 AS p25_identity_state_code, NULL AS p25_home_wacn,
+                        NULL AS p25_home_system_id, NULL AS p25_home_talkgroup_id,
+                        'CONVENTIONAL' AS topology,
+                        coalesce((SELECT nullif(trim(config.system_name), '')
+                                  FROM configuration_channel config
+                                  WHERE config.radres_guid = context.guid
+                                  ORDER BY config.sort_order, config.id LIMIT 1), context.channel_name,
+                            context.context_key) AS system_name,
+                        context.channel_name AS site_names, NULL AS system_key, NULL AS wacn,
+                        NULL AS system_id, NULL AS network_id,
+                        CASE WHEN min(summary.frequency_hz) = max(summary.frequency_hz)
+                            THEN min(summary.frequency_hz) END AS frequency_hz,
+                        CASE WHEN min(summary.timeslot) = max(summary.timeslot)
+                            THEN min(summary.timeslot) END AS timeslot,
+                        count(DISTINCT summary.frequency_hz) AS frequency_count,
+                        count(DISTINCT summary.timeslot) AS timeslot_count,
+                        summary.talkgroup_id, 1 AS target_kind_code, 'Talkgroup' AS identity_kind,
+                        min(summary.first_seen_ms) AS first_seen_ms,
+                        max(summary.last_seen_ms) AS last_seen_ms,
+                        sum(summary.call_count) AS call_count,
+                        coalesce((SELECT sum(bucket.recorded_count)
+                            FROM call_identity_bucket bucket
+                            WHERE bucket.context_id = context.id AND bucket.identity_role_code = 1
+                              AND bucket.identity_kind_code = 1
+                              AND bucket.identity_id = summary.talkgroup_id), 0) AS recorded_count,
+                        coalesce((SELECT sum(bucket.streamed_count)
+                            FROM call_identity_bucket bucket
+                            WHERE bucket.context_id = context.id AND bucket.identity_role_code = 1
+                              AND bucket.identity_kind_code = 1
+                              AND bucket.identity_id = summary.talkgroup_id), 0) AS streamed_count,
+                        sum(summary.encrypted_count) AS encrypted_count,
+                        NULL AS grant_count, NULL AS join_count, NULL AS emergency_count,
+                        NULL AS register_count, NULL AS logout_count, NULL AS denial_count,
+                        NULL AS data_count, NULL AS other_signaling_count, NULL AS signaling_count,
+                        EXISTS (
+                            SELECT 1 FROM alias definition
+                            WHERE definition.alias_list_id = ?
+                              AND definition.matcher_type = 'TALKGROUP'
+                              AND definition.protocol = 'DMR'
+                              AND definition.value = summary.talkgroup_id
+                        ) AS has_exact_definition
+                    FROM receiver_context context
+                    JOIN dmr_conventional_talkgroup_summary summary ON summary.context_id = context.id
+                    WHERE ? = 'DMR' AND context.kind_code = 3 AND context.protocol_code = 3
+                      AND context.alias_list_name = ? COLLATE NOCASE
+                    GROUP BY context.id, context.context_key, context.channel_name, summary.talkgroup_id
+
+                    UNION ALL
+
+                    SELECT ? AS alias_list_id, ? AS alias_list_name, ? AS family,
+                        NULL AS scope_id, NULL AS scope_token, context.context_key AS scope_key,
+                        context.id AS context_id, context.context_key,
+                        CASE WHEN context.protocol_code IN (1, 2) THEN 1 ELSE 4 END AS protocol_code,
+                        CASE WHEN context.protocol_code IN (1, 2) THEN 'P25' ELSE 'NXDN' END AS protocol,
+                        NULL AS identity_domain_code,
+                        0 AS p25_identity_state_code, NULL AS p25_home_wacn,
+                        NULL AS p25_home_system_id, NULL AS p25_home_talkgroup_id,
+                        'CONVENTIONAL' AS topology,
+                        coalesce((SELECT nullif(trim(config.system_name), '')
+                                  FROM configuration_channel config
+                                  WHERE config.radres_guid = context.guid
+                                  ORDER BY config.sort_order, config.id LIMIT 1), context.channel_name,
+                            context.context_key) AS system_name,
+                        context.channel_name AS site_names, NULL AS system_key, NULL AS wacn,
+                        NULL AS system_id, NULL AS network_id,
+                        context.primary_frequency_hz AS frequency_hz, NULL AS timeslot,
+                        CASE WHEN context.primary_frequency_hz IS NULL THEN 0 ELSE 1 END AS frequency_count,
+                        NULL AS timeslot_count,
+                        bucket.identity_id AS talkgroup_id,
+                        bucket.identity_kind_code AS target_kind_code,
+                        CASE bucket.identity_kind_code WHEN 3 THEN 'Patch Group' ELSE 'Talkgroup' END
+                            AS identity_kind,
+                        min(bucket.bucket_start_ms) AS first_seen_ms,
+                        max(bucket.bucket_start_ms) AS last_seen_ms,
+                        sum(bucket.call_count) AS call_count,
+                        sum(bucket.recorded_count) AS recorded_count,
+                        sum(bucket.streamed_count) AS streamed_count,
+                        sum(bucket.encrypted_count) AS encrypted_count,
+                        NULL AS grant_count, NULL AS join_count, NULL AS emergency_count,
+                        NULL AS register_count, NULL AS logout_count, NULL AS denial_count,
+                        NULL AS data_count, NULL AS other_signaling_count, NULL AS signaling_count,
+                        EXISTS (
+                            SELECT 1 FROM alias definition
+                            WHERE definition.alias_list_id = ?
+                              AND definition.matcher_type = 'TALKGROUP'
+                              AND definition.value = bucket.identity_id
+                              AND (
+                                (context.protocol_code IN (1, 2)
+                                  AND definition.protocol IN ('APCO25', 'APCO25_PHASE2'))
+                                OR
+                                (context.protocol_code = 4 AND definition.protocol = 'NXDN')
+                              )
+                        ) AS has_exact_definition
+                    FROM receiver_context context
+                    JOIN call_identity_bucket bucket ON bucket.context_id = context.id
+                    WHERE context.alias_list_name = ? COLLATE NOCASE
+                      AND ((? = 'P25' AND context.kind_code = 2
+                            AND context.protocol_code IN (1, 2))
+                        OR (? = 'NXDN' AND context.kind_code = 4 AND context.protocol_code = 4))
+                      AND bucket.identity_role_code = 1
+                      AND bucket.identity_kind_code IN (1, 3)
+                    GROUP BY context.id, context.context_key, context.protocol_code, context.channel_name,
+                        context.primary_frequency_hz, bucket.identity_kind_code, bucket.identity_id
+                )
+                SELECT * FROM observed
+                WHERE 1 = 1
+                """.formatted(scopeSummarySelect(), OTHER_TALKGROUP_SIGNALING_COUNT_SQL,
+                TALKGROUP_SIGNALING_COUNT_SQL));
+            List<Object> parameters = new ArrayList<>(List.of(
+                aliasListId, aliasListName, aliasListId,
+                aliasList.get("family"), aliasList.get("family"), aliasList.get("family"),
+                aliasList.get("family"), aliasListName,
+                aliasListId, aliasListName, aliasListId, aliasList.get("family"), aliasListName,
+                aliasListId, aliasListName, aliasList.get("family"), aliasListId, aliasListName,
+                aliasList.get("family"), aliasList.get("family")));
+
+            if(!includeExact)
+            {
+                sql.append(" AND has_exact_definition = 0");
+            }
+
+            if(request.search() != null)
+            {
+                sql.append("""
+                     AND lower(coalesce(system_name, '') || ' ' || coalesce(site_names, '') || ' ' ||
+                       coalesce(scope_key, '') || ' ' || protocol || ' ' || topology || ' ' ||
+                       identity_kind || ' ' || CAST(talkgroup_id AS TEXT) || ' ' ||
+                       coalesce(CAST(p25_home_wacn AS TEXT), '') || ' ' ||
+                       coalesce(CAST(p25_home_system_id AS TEXT), '') || ' ' ||
+                       coalesce(CAST(p25_home_talkgroup_id AS TEXT), '') || ' ' ||
+                       CASE WHEN p25_identity_state_code = 2
+                         THEN printf('%05X-%03X-%d', p25_home_wacn, p25_home_system_id,
+                           p25_home_talkgroup_id)
+                         ELSE '' END) LIKE ?
+                    """);
+                parameters.add(like(request.search()));
+            }
+
+            sql.append(" ORDER BY ").append(order(request, OBSERVED_TALKGROUP_SORT_COLUMNS, "last_seen"))
+                .append(", topology, protocol_code, scope_key, target_kind_code, talkgroup_id LIMIT ? OFFSET ?");
+            addPageParameters(parameters, request);
+            List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
+            mAliasResolver.resolveObservedTalkgroups(connection, rows);
+
+            for(Map<String,Object> row: rows)
+            {
+                row.remove("has_exact_definition");
+            }
+
+            Map<String,Object> response = page(rows, request);
+            response.put("alias_list", aliasList);
+            response.put("include_exact", includeExact);
+            return response;
+        });
     }
 
     /**
@@ -3292,6 +3590,26 @@ class StatsWebDatabase
         }
 
         throw new StatsApiException(400, "kind must be talkgroup or patch");
+    }
+
+    private static boolean booleanParameter(StatsRequest request, String name, boolean defaultValue)
+    {
+        String value = request.text(name);
+
+        if(value == null)
+        {
+            return defaultValue;
+        }
+        else if("true".equalsIgnoreCase(value))
+        {
+            return true;
+        }
+        else if("false".equalsIgnoreCase(value))
+        {
+            return false;
+        }
+
+        throw new StatsApiException(400, name + " must be true or false");
     }
 
     private static Map<String,Boolean> systemCapabilities(int protocolCode)

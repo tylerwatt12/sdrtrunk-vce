@@ -30,7 +30,9 @@ import io.github.dsheirer.alias.id.talkgroup.P25FullyQualifiedTalkgroup;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.alias.id.talkgroup.TalkgroupRange;
 import io.github.dsheirer.alias.id.tone.TonesID;
+import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
+import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.dcs.DCSIdentifier;
 import io.github.dsheirer.identifier.esn.ESNIdentifier;
 import io.github.dsheirer.identifier.patch.PatchGroup;
@@ -823,6 +825,85 @@ public class AliasList
         }
 
         return Collections.emptyList();
+    }
+
+    /**
+     * Returns this list's action-only fallback when the supplied talkgroup destination has no matching real alias.
+     * A patch group is considered matched when its patch talkgroup or any patched talkgroup has an exact or range
+     * alias. Patched radio aliases do not turn an unknown talkgroup into a known talkgroup.
+     *
+     * @return immutable unmatched-talkgroup policy, or null when this is not a talkgroup destination or a real
+     * alias already matches
+     */
+    public UnmatchedTalkgroupPolicy getUnmatchedTalkgroupPolicy(Identifier<?> identifier)
+    {
+        if(mDefinition == null || identifier == null || identifier.getRole() != Role.TO ||
+            !supportsUnmatchedTalkgroup(mDefinition.getFamily(), identifier.getProtocol()))
+        {
+            return null;
+        }
+
+        LookupIndex index = mLookupIndex;
+
+        if(identifier.getForm() == Form.TALKGROUP &&
+            identifier instanceof TalkgroupIdentifier talkgroupIdentifier)
+        {
+            TalkgroupAliasList talkgroups =
+                index.mTalkgroupProtocolMap.get(lookupProtocol(identifier.getProtocol()));
+            return talkgroups == null || talkgroups.getAlias(talkgroupIdentifier) == null ?
+                mDefinition.getUnmatchedTalkgroupPolicy() : null;
+        }
+
+        if(identifier.getForm() == Form.PATCH_GROUP &&
+            identifier instanceof PatchGroupIdentifier patchGroupIdentifier)
+        {
+            PatchGroup patchGroup = patchGroupIdentifier.getValue();
+            if(patchGroup == null || patchGroup.getPatchGroup() == null)
+            {
+                return null;
+            }
+
+            TalkgroupAliasList talkgroups =
+                index.mTalkgroupProtocolMap.get(lookupProtocol(patchGroupIdentifier.getProtocol()));
+
+            if(talkgroups == null)
+            {
+                return mDefinition.getUnmatchedTalkgroupPolicy();
+            }
+
+            if(talkgroups.getAlias(patchGroup.getPatchGroup()) != null)
+            {
+                return null;
+            }
+
+            for(TalkgroupIdentifier patchedTalkgroup: patchGroup.getPatchedTalkgroupIdentifiers())
+            {
+                if(talkgroups.getAlias(patchedTalkgroup) != null)
+                {
+                    return null;
+                }
+            }
+
+            return mDefinition.getUnmatchedTalkgroupPolicy();
+        }
+
+        return null;
+    }
+
+    private static boolean supportsUnmatchedTalkgroup(AliasListFamily family, Protocol protocol)
+    {
+        if(family == null || protocol == null)
+        {
+            return false;
+        }
+
+        return switch(family)
+        {
+            case P25 -> protocol == Protocol.APCO25 || protocol == Protocol.APCO25_PHASE2;
+            case DMR -> protocol == Protocol.DMR;
+            case NXDN -> protocol == Protocol.NXDN;
+            default -> false;
+        };
     }
 
     private static List<Alias> toList(Alias alias)

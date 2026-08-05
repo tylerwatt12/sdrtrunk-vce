@@ -208,9 +208,19 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
             getAliasBulkEditor().setItem(aliases);
         }
 
-        getCloneAliasButton().setDisable(aliases.size() != 1);
+        boolean containsUnmatchedTalkgroupCatchAll = aliases.stream()
+            .anyMatch(this::isUnmatchedTalkgroupCatchAll);
+        getCloneAliasButton().setDisable(aliases.size() != 1 || containsUnmatchedTalkgroupCatchAll);
         getDeleteAliasButton().setDisable(aliases.isEmpty());
-        getMoveToAliasButton().setDisable(aliases.isEmpty());
+        getMoveToAliasButton().setDisable(aliases.isEmpty() || containsUnmatchedTalkgroupCatchAll);
+    }
+
+    private boolean isUnmatchedTalkgroupCatchAll(Alias alias)
+    {
+        AliasListDefinition definition = alias != null ?
+            mConfigurationManager.getAliasModel().getAliasListDefinition(alias) : null;
+        return alias != null && AliasMatchRegistry.isUnmatchedTalkgroupCatchAll(definition,
+            alias.getMatchIdentifier());
     }
 
     private AliasItemEditor getAliasItemEditor()
@@ -655,6 +665,12 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
             mCloneAliasButton.setOnAction(event ->
             {
                 Alias original = getAliasTableView().getSelectionModel().getSelectedItem();
+
+                if(original == null || isUnmatchedTalkgroupCatchAll(original))
+                {
+                    return;
+                }
+
                 Alias copy = AliasFactory.copyOf(original);
                 mConfigurationManager.getAliasModel().addAlias(copy);
                 getAliasTableView().getSelectionModel().clearSelection();
@@ -723,6 +739,12 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
             setOnAction(event ->
             {
                 List<Alias> selectedAliases = new ArrayList<>(getAliasTableView().getSelectionModel().getSelectedItems());
+
+                if(selectedAliases.stream().anyMatch(AliasConfigurationEditor.this::isUnmatchedTalkgroupCatchAll))
+                {
+                    return;
+                }
+
                 for(Alias selected : selectedAliases)
                 {
                     moveAlias(selected, mDefinition);

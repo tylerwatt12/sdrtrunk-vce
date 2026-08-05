@@ -18,6 +18,7 @@ import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.encryption.EncryptionKey;
 import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
+import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
@@ -28,6 +29,7 @@ import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.traffic.TrunkedCallStartEvent;
 import io.github.dsheirer.module.decode.traffic.TrunkedCallAttributionEvent;
 import io.github.dsheirer.protocol.Protocol;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -148,7 +150,8 @@ class TrunkedCallActivityMapper
             sourceRadio, attribution.encryptionAlgorithmId(), attribution.encryptionKeyId(),
             attribution.destinationBecameKnown(), attribution.sourceBecameKnown(),
             attribution.encryptionBecameKnown(), attribution.encryptedBeforeObservation(),
-            identityDomain(channel, identifiers));
+            identityDomain(channel, identifiers), p25TargetIdentity(target, protocol),
+            p25PatchMemberIdentities(target, protocol));
     }
 
     private static String contextKey(String guid, String configurationId)
@@ -185,6 +188,59 @@ class TrunkedCallActivityMapper
             .distinct()
             .sorted()
             .toList();
+    }
+
+    private static P25ActivityLogRecords.P25TargetIdentity p25TargetIdentity(Identifier identifier,
+                                                                              Protocol protocol)
+    {
+        if(protocol != Protocol.APCO25)
+        {
+            return P25ActivityLogRecords.P25TargetIdentity.UNKNOWN;
+        }
+
+        Identifier primary = identifier;
+
+        if(identifier instanceof PatchGroupIdentifier patch && patch.getValue() != null)
+        {
+            primary = patch.getValue().getPatchGroup();
+        }
+
+        if(primary instanceof FullyQualifiedTalkgroupIdentifier fullyQualified)
+        {
+            return P25ActivityLogRecords.P25TargetIdentity.fullyQualified(fullyQualified.getWacn(),
+                fullyQualified.getSystem(), fullyQualified.getTalkgroup());
+        }
+
+        return primary instanceof TalkgroupIdentifier ? P25ActivityLogRecords.P25TargetIdentity.ORDINARY :
+            P25ActivityLogRecords.P25TargetIdentity.UNKNOWN;
+    }
+
+    private static List<P25ActivityLogRecords.P25PatchMemberIdentity> p25PatchMemberIdentities(
+        Identifier identifier, Protocol protocol)
+    {
+        if(protocol != Protocol.APCO25 || !(identifier instanceof PatchGroupIdentifier patch) ||
+            patch.getValue() == null)
+        {
+            return List.of();
+        }
+
+        List<P25ActivityLogRecords.P25PatchMemberIdentity> identities = new ArrayList<>();
+        for(TalkgroupIdentifier member: patch.getValue().getPatchedTalkgroupIdentifiers())
+        {
+            if(member == null || member.getValue() == null || member.getValue() <= 0 ||
+                member.getProtocol() != Protocol.APCO25)
+            {
+                continue;
+            }
+
+            P25ActivityLogRecords.P25TargetIdentity targetIdentity = p25TargetIdentity(member, protocol);
+            if(targetIdentity.state() != P25ActivityLogRecords.P25IdentityState.UNKNOWN)
+            {
+                identities.add(new P25ActivityLogRecords.P25PatchMemberIdentity(member.getValue(), targetIdentity));
+            }
+        }
+
+        return List.copyOf(identities);
     }
 
     private static EncryptionKeyIdentifier encryptionIdentifier(IdentifierCollection identifiers)
@@ -288,7 +344,9 @@ class TrunkedCallActivityMapper
         private boolean matches()
         {
             return protocol == Protocol.DMR && decoderType == DecoderType.DMR ||
-                protocol == Protocol.NXDN && decoderType == DecoderType.NXDN;
+                protocol == Protocol.NXDN && decoderType == DecoderType.NXDN ||
+                protocol == Protocol.APCO25 &&
+                    (decoderType == DecoderType.P25_PHASE1 || decoderType == DecoderType.P25_PHASE2);
         }
     }
 }

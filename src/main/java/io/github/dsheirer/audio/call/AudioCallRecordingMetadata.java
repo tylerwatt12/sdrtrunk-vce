@@ -12,6 +12,7 @@ package io.github.dsheirer.audio.call;
 
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasList;
+import io.github.dsheirer.alias.UnmatchedTalkgroupPolicy;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.talkgroup.P25FullyQualifiedTalkgroup;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
@@ -148,8 +149,14 @@ public record AudioCallRecordingMetadata(String systemName, String systemIdentit
             }
         }
 
-        return firstMatch != null ? firstMatch :
-            new DestinationDecision(protocol(destination), value, fallbackIdentity, null, fallbackIdentity, false);
+        if(firstMatch != null)
+        {
+            return firstMatch;
+        }
+
+        UnmatchedTalkgroupPolicy unmatchedPolicy = aliasList.getUnmatchedTalkgroupPolicy(destination);
+        return new DestinationDecision(protocol(destination), value, fallbackIdentity, null, fallbackIdentity,
+            unmatchedPolicy != null && unmatchedPolicy.isRecordEnabled());
     }
 
     public static SourceDecision captureSource(AliasList aliasList, Identifier<?> source)

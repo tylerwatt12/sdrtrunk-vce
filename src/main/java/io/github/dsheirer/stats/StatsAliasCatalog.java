@@ -814,12 +814,9 @@ final class StatsAliasCatalog
 
         if(scope.trunked && protocol == 1)
         {
-            if(fullyQualified && (!sameNumber(alias.get("wacn"), scope.wacn) ||
-                !sameNumber(alias.get("p25_system_id"), scope.systemId)))
-            {
-                return false;
-            }
-
+            //A fully-qualified Alias names the destination's home system, not necessarily the monitored system.
+            //List assignment still limits normal scope coverage; the empty-list fallback preserves existing P25
+            //behavior for an otherwise unassigned scope.
             return scope.aliasLists.contains(listName) || fullyQualified && scope.aliasLists.isEmpty();
         }
 
@@ -837,6 +834,8 @@ final class StatsAliasCatalog
 
         String sql = """
             SELECT summary.scope_id, summary.identity_kind_code, summary.identity_id,
+                summary.p25_identity_state_code, summary.p25_home_wacn,
+                summary.p25_home_system_id, summary.p25_home_talkgroup_id,
                 summary.first_seen_ms, summary.last_seen_ms, summary.call_count,
                 summary.recorded_count, summary.streamed_count,
                 summary.encrypted_count AS encrypted_evidence_count,
@@ -1012,10 +1011,16 @@ final class StatsAliasCatalog
             SELECT relationship.scope_id, relationship.radio_id, relationship.talkgroup_id,
                 relationship.target_kind_code, relationship.first_seen_ms, relationship.last_seen_ms,
                 relationship.join_count, scope.protocol_code,
-                scope.p25_system_key AS system_key, system.wacn, system.system_id
+                scope.p25_system_key AS system_key, system.wacn, system.system_id,
+                target.p25_identity_state_code, target.p25_home_wacn,
+                target.p25_home_system_id, target.p25_home_talkgroup_id
             FROM trunked_radio_talkgroup_summary relationship
             JOIN trunked_identity_scope scope ON scope.scope_id = relationship.scope_id
             LEFT JOIN p25_system system ON system.system_key = scope.p25_system_key
+            LEFT JOIN trunked_identity_summary target
+              ON target.scope_id = relationship.scope_id
+             AND target.identity_kind_code = relationship.target_kind_code
+             AND target.identity_id = relationship.talkgroup_id
             WHERE relationship.scope_id IN (%s)
             ORDER BY relationship.scope_id, relationship.radio_id, relationship.talkgroup_id,
                 relationship.target_kind_code
@@ -1088,10 +1093,16 @@ final class StatsAliasCatalog
         parameters.add(MAX_EVIDENCE_ROWS + 1);
         List<Map<String,Object>> affiliations = queryRows(connection, """
             SELECT scope.scope_id, affiliation.radio_id, affiliation.talkgroup_id, affiliation.updated_at_ms,
-                scope.protocol_code, scope.p25_system_key AS system_key, system.wacn, system.system_id
+                scope.protocol_code, scope.p25_system_key AS system_key, system.wacn, system.system_id,
+                target.p25_identity_state_code, target.p25_home_wacn,
+                target.p25_home_system_id, target.p25_home_talkgroup_id
             FROM trunked_identity_scope scope
             JOIN p25_radio_affiliation affiliation ON affiliation.system_key = scope.p25_system_key
             JOIN p25_system system ON system.system_key = scope.p25_system_key
+            LEFT JOIN trunked_identity_summary target
+              ON target.scope_id = scope.scope_id
+             AND target.identity_kind_code = 1
+             AND target.identity_id = affiliation.talkgroup_id
             WHERE scope.scope_id IN (%s)
             ORDER BY scope.scope_id, affiliation.radio_id
             LIMIT ?
@@ -1144,6 +1155,13 @@ final class StatsAliasCatalog
         row.put("system_key", source.get("system_key"));
         row.put("wacn", source.get("wacn"));
         row.put("system_id", source.get("system_id"));
+        if(kind != 2)
+        {
+            row.put("p25_identity_state_code", source.get("p25_identity_state_code"));
+            row.put("p25_home_wacn", source.get("p25_home_wacn"));
+            row.put("p25_home_system_id", source.get("p25_home_system_id"));
+            row.put("p25_home_talkgroup_id", source.get("p25_home_talkgroup_id"));
+        }
         scope.decorateEvidence(row);
         return row;
     }
@@ -1285,11 +1303,6 @@ final class StatsAliasCatalog
     {
         return value instanceof Number number ? String.format(Locale.ROOT, "%0" + digits + "X", number.longValue()) :
             "";
-    }
-
-    private static boolean sameNumber(Object left, Long right)
-    {
-        return left instanceof Number number && right != null && number.longValue() == right;
     }
 
     private static String placeholders(int count)

@@ -275,6 +275,16 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     }
 
     /**
+     * Marks a mutable alias-list definition setting as changed. Alias rows and list membership are observable, but
+     * list-owned policy values are intentionally plain immutable snapshots and therefore require an explicit change
+     * notification from their editor.
+     */
+    public void aliasListDefinitionChanged()
+    {
+        aliasConfigurationChanged();
+    }
+
+    /**
      * Completes any pending save before an external configuration operation accesses the SQLite database.
      * This method should be invoked on the JavaFX application thread.
      */

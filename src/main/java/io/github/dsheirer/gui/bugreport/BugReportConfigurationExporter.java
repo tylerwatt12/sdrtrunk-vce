@@ -30,6 +30,7 @@ public class BugReportConfigurationExporter
     private static final List<String> CONFIGURATION_TABLES = List.of(
         "database_metadata",
         "alias_list",
+        "alias_list_unmatched_talkgroup_stream",
         "alias",
         "alias_broadcast_channel",
         "configuration_channel",

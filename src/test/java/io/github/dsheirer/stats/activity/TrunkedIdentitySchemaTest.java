@@ -18,6 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.channel.metadata.activity.ChannelTag;
+import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
@@ -46,7 +47,7 @@ class TrunkedIdentitySchemaTest
         try(Connection connection = open(database))
         {
             P25ActivityLogSchema.validate(connection);
-            assertEquals("24", scalarString(connection, """
+            assertEquals("25", scalarString(connection, """
                 SELECT value FROM database_metadata WHERE key='p25_activity_schema_version'
                 """));
             assertTrue(Long.parseLong(scalarString(connection, """
@@ -57,6 +58,221 @@ class TrunkedIdentitySchemaTest
             assertFalse(objectExists(connection, "table", "p25_radio_summary"));
             assertFalse(objectExists(connection, "table", "p25_radio_talkgroup_summary"));
             assertTrue(objectExists(connection, "table", "p25_radio_affiliation"));
+        }
+    }
+
+    @Test
+    void keepsOrdinaryStableAndAmbiguousP25IdentityEvidenceOnOneBoundedRow() throws Exception
+    {
+        Path database = activityDatabase("p25-identity-state.sqlite");
+        String guid = "p25-identity-state";
+
+        try(Connection connection = open(database);
+            Statement statement = connection.createStatement())
+        {
+            P25ActivityLogSchema.insertSite(connection,
+                p25SiteSnapshot(1_000L, guid, 0x348, "identity", "00-0500", 855_000_000L));
+            P25ActivityLogSchema.recordActivity(connection,
+                activity(2_000L, guid, "APCO25", 100, 200, Form.TALKGROUP.name(),
+                    P25ActivityLogRecords.IdentityDomain.STANDARD, true, 855_000_000L,
+                    P25ActivityLogRecords.P25TargetIdentity.ORDINARY), false);
+            P25ActivityLogSchema.recordActivity(connection,
+                activity(3_000L, guid, "APCO25", 101, 201, Form.TALKGROUP.name(),
+                    P25ActivityLogRecords.IdentityDomain.STANDARD, true, 855_000_000L,
+                    P25ActivityLogRecords.P25TargetIdentity.fullyQualified(0xABCDE, 0x321, 1_200)), false);
+            assertTrue(P25ActivityLogSchema.applyCompletedCallOutput(connection,
+                new P25ActivityLogRecords.CompletedCallOutput(3_000L, "GUID:" + guid, guid,
+                    855_000_000L, 1, 101, Form.TALKGROUP.name(), List.of(), 201,
+                    P25ActivityLogRecords.CallOutput.RECORDED, P25ActivityLogRecords.IdentityDomain.STANDARD,
+                    P25ActivityLogRecords.P25TargetIdentity.fullyQualified(0xABCDE, 0x321, 1_200))));
+
+            assertEquals(P25ActivityLogRecords.P25IdentityState.ORDINARY.code(), scalarLong(connection, """
+                SELECT p25_identity_state_code FROM trunked_identity_summary
+                WHERE identity_kind_code=1 AND identity_id=100
+                """));
+            assertEquals(P25ActivityLogRecords.P25IdentityState.STABLE_FULLY_QUALIFIED.code(),
+                scalarLong(connection, """
+                    SELECT p25_identity_state_code FROM trunked_identity_summary
+                    WHERE identity_kind_code=1 AND identity_id=101
+                    """));
+            assertEquals(0xABCDE, scalarLong(connection, """
+                SELECT p25_home_wacn FROM trunked_identity_summary
+                WHERE identity_kind_code=1 AND identity_id=101
+                """));
+            assertEquals(0x321, scalarLong(connection, """
+                SELECT p25_home_system_id FROM trunked_identity_summary
+                WHERE identity_kind_code=1 AND identity_id=101
+                """));
+            assertEquals(1_200, scalarLong(connection, """
+                SELECT p25_home_talkgroup_id FROM trunked_identity_summary
+                WHERE identity_kind_code=1 AND identity_id=101
+                """));
+
+            P25ActivityLogSchema.recordActivity(connection,
+                activity(4_000L, guid, "APCO25", 101, 202, Form.TALKGROUP.name(),
+                    P25ActivityLogRecords.IdentityDomain.STANDARD, true, 855_000_000L,
+                    P25ActivityLogRecords.P25TargetIdentity.fullyQualified(0xABCDE, 0x322, 1_201)), false);
+
+            assertEquals(P25ActivityLogRecords.P25IdentityState.AMBIGUOUS.code(), scalarLong(connection, """
+                SELECT p25_identity_state_code FROM trunked_identity_summary
+                WHERE identity_kind_code=1 AND identity_id=101
+                """));
+            assertEquals(0, scalarLong(connection, """
+                SELECT COUNT(*) FROM trunked_identity_summary
+                WHERE identity_kind_code=1 AND identity_id=101
+                  AND (p25_home_wacn IS NOT NULL OR p25_home_system_id IS NOT NULL
+                       OR p25_home_talkgroup_id IS NOT NULL)
+                """));
+
+            statement.executeUpdate("""
+                INSERT INTO trunked_identity_summary(
+                    scope_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms
+                ) VALUES((SELECT scope_id FROM trunked_identity_scope LIMIT 1), 1, 102, 1, 1)
+                """);
+            assertEquals(P25ActivityLogRecords.P25IdentityState.UNKNOWN.code(), scalarLong(connection, """
+                SELECT p25_identity_state_code FROM trunked_identity_summary
+                WHERE identity_kind_code=1 AND identity_id=102
+                """));
+        }
+    }
+
+    @Test
+    void sameCallAttributionRefinesOrdinaryP25IdentityButIndependentEvidenceStillConflicts() throws Exception
+    {
+        Path database = activityDatabase("p25-same-call-refinement.sqlite");
+        String guid = "p25-same-call-refinement";
+        P25ActivityLogRecords.P25TargetIdentity qualified =
+            P25ActivityLogRecords.P25TargetIdentity.fullyQualified(0xABCDE, 0x321, 1_200);
+
+        try(Connection connection = open(database))
+        {
+            P25ActivityLogSchema.insertSite(connection,
+                p25SiteSnapshot(1_000L, guid, 0x348, "identity", "00-0500", 855_000_000L));
+            P25ActivityLogRecords.ActivityEvent callStart = p25Activity(2_000L, guid,
+                P25ActivityLogRecords.Action.CALL, 100, 200, Form.TALKGROUP.name(), List.of(), true,
+                P25ActivityLogRecords.P25TargetIdentity.ORDINARY, List.of());
+            P25ActivityLogRecords.ActivityEvent continuation = p25Activity(2_100L, guid,
+                P25ActivityLogRecords.Action.CONTINUE, 100, 200, Form.TALKGROUP.name(), List.of(), false,
+                qualified, List.of());
+            CallAttributionTracker tracker = new CallAttributionTracker();
+            tracker.register(callStart);
+
+            P25ActivityLogSchema.recordActivity(connection, callStart, false);
+            P25ActivityLogSchema.recordActivity(connection, continuation, false);
+            assertEquals(P25ActivityLogRecords.P25IdentityState.ORDINARY.code(), scalarLong(connection, """
+                SELECT p25_identity_state_code FROM trunked_identity_summary
+                WHERE identity_kind_code=1 AND identity_id=100
+                """));
+
+            CallAttributionTracker.AttributionResult result = tracker.enrich(continuation);
+            assertTrue(result.tracked());
+            assertTrue(P25ActivityLogSchema.applyTrunkedCallAttribution(connection, result.attribution()));
+            assertEquals(P25ActivityLogRecords.P25IdentityState.STABLE_FULLY_QUALIFIED.code(),
+                scalarLong(connection, """
+                    SELECT p25_identity_state_code FROM trunked_identity_summary
+                    WHERE identity_kind_code=1 AND identity_id=100
+                    """));
+            assertEquals(1_200, scalarLong(connection, """
+                SELECT p25_home_talkgroup_id FROM trunked_identity_summary
+                WHERE identity_kind_code=1 AND identity_id=100
+                """));
+
+            P25ActivityLogSchema.recordActivity(connection,
+                p25Activity(3_000L, guid, P25ActivityLogRecords.Action.CALL, 100, 201,
+                    Form.TALKGROUP.name(), List.of(), true,
+                    P25ActivityLogRecords.P25TargetIdentity.fullyQualified(0xABCDE, 0x322, 1_201), List.of()),
+                false);
+            assertEquals(P25ActivityLogRecords.P25IdentityState.AMBIGUOUS.code(), scalarLong(connection, """
+                SELECT p25_identity_state_code FROM trunked_identity_summary
+                WHERE identity_kind_code=1 AND identity_id=100
+                """));
+        }
+    }
+
+    @Test
+    void completedOutputRefinesOnlyAnOrdinaryIdentityFromTheSameCallStart() throws Exception
+    {
+        Path database = activityDatabase("p25-completed-refinement.sqlite");
+        String guid = "p25-completed-refinement";
+        P25ActivityLogRecords.P25TargetIdentity qualified =
+            P25ActivityLogRecords.P25TargetIdentity.fullyQualified(0xABCDE, 0x321, 1_200);
+
+        try(Connection connection = open(database))
+        {
+            P25ActivityLogSchema.insertSite(connection,
+                p25SiteSnapshot(1_000L, guid, 0x348, "identity", "00-0500", 855_000_000L));
+            P25ActivityLogSchema.recordActivity(connection,
+                p25Activity(2_000L, guid, P25ActivityLogRecords.Action.CALL, 110, 210,
+                    Form.TALKGROUP.name(), List.of(), true,
+                    P25ActivityLogRecords.P25TargetIdentity.ORDINARY, List.of()), false);
+            assertTrue(P25ActivityLogSchema.applyCompletedCallOutput(connection,
+                new P25ActivityLogRecords.CompletedCallOutput(2_000L, "GUID:" + guid, guid,
+                    855_000_000L, 1, 110, Form.TALKGROUP.name(), List.of(), 210,
+                    P25ActivityLogRecords.CallOutput.RECORDED,
+                    P25ActivityLogRecords.IdentityDomain.STANDARD, qualified)));
+            assertEquals(P25ActivityLogRecords.P25IdentityState.STABLE_FULLY_QUALIFIED.code(),
+                scalarLong(connection, """
+                    SELECT p25_identity_state_code FROM trunked_identity_summary
+                    WHERE identity_kind_code=1 AND identity_id=110
+                    """));
+
+            P25ActivityLogSchema.recordActivity(connection,
+                p25Activity(3_000L, guid, P25ActivityLogRecords.Action.CALL, 111, 211,
+                    Form.TALKGROUP.name(), List.of(), true,
+                    P25ActivityLogRecords.P25TargetIdentity.ORDINARY, List.of()), false);
+            P25ActivityLogSchema.recordActivity(connection,
+                p25Activity(4_000L, guid, P25ActivityLogRecords.Action.CALL, 111, 212,
+                    Form.TALKGROUP.name(), List.of(), true,
+                    P25ActivityLogRecords.P25TargetIdentity.ORDINARY, List.of()), false);
+            assertTrue(P25ActivityLogSchema.applyCompletedCallOutput(connection,
+                new P25ActivityLogRecords.CompletedCallOutput(4_000L, "GUID:" + guid, guid,
+                    855_000_000L, 1, 111, Form.TALKGROUP.name(), List.of(), 212,
+                    P25ActivityLogRecords.CallOutput.RECORDED,
+                    P25ActivityLogRecords.IdentityDomain.STANDARD, qualified)));
+            assertEquals(P25ActivityLogRecords.P25IdentityState.AMBIGUOUS.code(), scalarLong(connection, """
+                SELECT p25_identity_state_code FROM trunked_identity_summary
+                WHERE identity_kind_code=1 AND identity_id=111
+                """));
+        }
+    }
+
+    @Test
+    void projectsQualifiedPatchMembersWithoutGuessingFlattenedMembers() throws Exception
+    {
+        Path database = activityDatabase("p25-patch-member-identities.sqlite");
+        String guid = "p25-patch-member-identities";
+
+        try(Connection connection = open(database))
+        {
+            P25ActivityLogSchema.insertSite(connection,
+                p25SiteSnapshot(1_000L, guid, 0x348, "identity", "00-0500", 855_000_000L));
+            P25ActivityLogSchema.recordActivity(connection,
+                p25Activity(2_000L, guid, P25ActivityLogRecords.Action.CALL, 500, 200,
+                    Form.PATCH_GROUP.name(), List.of(501, 502, 503), true,
+                    P25ActivityLogRecords.P25TargetIdentity.ORDINARY, List.of(
+                        new P25ActivityLogRecords.P25PatchMemberIdentity(501,
+                            P25ActivityLogRecords.P25TargetIdentity.ORDINARY),
+                        new P25ActivityLogRecords.P25PatchMemberIdentity(502,
+                            P25ActivityLogRecords.P25TargetIdentity.fullyQualified(
+                                0xABCDE, 0x321, 1_202)))), false);
+
+            assertEquals(P25ActivityLogRecords.P25IdentityState.ORDINARY.code(), scalarLong(connection, """
+                SELECT p25_identity_state_code FROM trunked_identity_summary
+                WHERE identity_kind_code=1 AND identity_id=501
+                """));
+            assertEquals(P25ActivityLogRecords.P25IdentityState.STABLE_FULLY_QUALIFIED.code(),
+                scalarLong(connection, """
+                    SELECT p25_identity_state_code FROM trunked_identity_summary
+                    WHERE identity_kind_code=1 AND identity_id=502
+                    """));
+            assertEquals(1_202, scalarLong(connection, """
+                SELECT p25_home_talkgroup_id FROM trunked_identity_summary
+                WHERE identity_kind_code=1 AND identity_id=502
+                """));
+            assertEquals(P25ActivityLogRecords.P25IdentityState.UNKNOWN.code(), scalarLong(connection, """
+                SELECT p25_identity_state_code FROM trunked_identity_summary
+                WHERE identity_kind_code=1 AND identity_id=503
+                """));
         }
     }
 
@@ -1205,6 +1421,23 @@ class TrunkedIdentitySchemaTest
         return database;
     }
 
+    private Path activityDatabase(String name) throws Exception
+    {
+        Path database = mTemporaryFolder.resolve(name);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            statement.execute("PRAGMA foreign_keys=ON");
+            SdrTrunkDatabaseSchema.create(connection);
+            P25ActivityLogSchema.create(connection);
+            DmrActivitySchema.create(connection);
+            TrunkedSiteSchema.create(connection);
+        }
+
+        return database;
+    }
+
     private static Connection open(Path database) throws Exception
     {
         Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
@@ -1229,11 +1462,33 @@ class TrunkedIdentitySchemaTest
         long timestamp, String guid, String protocol, Integer target, Integer source, String targetKind,
         P25ActivityLogRecords.IdentityDomain identityDomain, boolean countedCall, Long frequency)
     {
+        return activity(timestamp, guid, protocol, target, source, targetKind, identityDomain, countedCall,
+            frequency, P25ActivityLogRecords.P25TargetIdentity.UNKNOWN);
+    }
+
+    private static P25ActivityLogRecords.ActivityEvent activity(
+        long timestamp, String guid, String protocol, Integer target, Integer source, String targetKind,
+        P25ActivityLogRecords.IdentityDomain identityDomain, boolean countedCall, Long frequency,
+        P25ActivityLogRecords.P25TargetIdentity p25TargetIdentity)
+    {
         return new P25ActivityLogRecords.ActivityEvent(timestamp, "GUID:" + guid, guid,
             P25ActivityLogRecords.ContextKind.TRUNKED_SITE, protocol, P25ActivityLogRecords.Action.CALL,
             "CALL", source != null ? source.toString() : null, target != null ? target.toString() : null,
             targetKind, List.of(), frequency, null, 1, false, null, null, null, null, null, null, null,
-            guid, protocol, null, countedCall, null, null, identityDomain);
+            guid, protocol, null, countedCall, null, null, identityDomain, p25TargetIdentity);
+    }
+
+    private static P25ActivityLogRecords.ActivityEvent p25Activity(
+        long timestamp, String guid, P25ActivityLogRecords.Action action, int target, int source,
+        String targetKind, List<Integer> patchMembers, boolean countedCall,
+        P25ActivityLogRecords.P25TargetIdentity p25TargetIdentity,
+        List<P25ActivityLogRecords.P25PatchMemberIdentity> p25PatchMemberIdentities)
+    {
+        return new P25ActivityLogRecords.ActivityEvent(timestamp, "GUID:" + guid, guid,
+            P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "APCO25", action, "CALL_GROUP",
+            Integer.toString(source), Integer.toString(target), targetKind, patchMembers, 855_000_000L, null, 1,
+            false, null, null, null, null, null, null, null, guid, "APCO25", null, countedCall, null, null,
+            P25ActivityLogRecords.IdentityDomain.STANDARD, p25TargetIdentity, p25PatchMemberIdentities);
     }
 
     private static P25ActivityLogRecords.CompletedCallOutput output(

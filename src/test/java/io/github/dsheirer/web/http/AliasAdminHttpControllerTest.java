@@ -32,6 +32,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -56,7 +57,8 @@ class AliasAdminHttpControllerTest
         primary.setName("Primary");
         manager.getBroadcastModel().addBroadcastConfiguration(primary);
         AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
-        AliasAdminHttpController controller = new AliasAdminHttpController(service);
+        AtomicInteger aliasChanges = new AtomicInteger();
+        AliasAdminHttpController controller = new AliasAdminHttpController(service, aliasChanges::incrementAndGet);
         HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
         server.createContext(AliasAdminHttpController.ALIAS_LISTS_PATH, controller::handle);
         server.createContext(AliasAdminHttpController.ALIASES_PATH, controller::handle);
@@ -74,6 +76,31 @@ class AliasAdminHttpControllerTest
                     "revision", revision, "name", "County P25", "family", "P25"))))));
             long aliasListId = createdList.get("aliasListId").longValue();
             revision = createdList.get("revision").longValue();
+
+            JsonNode policyChanged = json(send(client, jsonRequest(origin,
+                AliasAdminHttpController.ALIAS_LISTS_PATH + "/" + aliasListId + "/unmatched-talkgroups")
+                .PUT(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(Map.of(
+                    "revision", revision, "listenEnabled", false, "recordable", true,
+                    "broadcastChannels", java.util.List.of("Primary")))))));
+            revision = policyChanged.get("revision").longValue();
+            JsonNode policyCatalog = json(send(client,
+                request(origin, AliasAdminHttpController.ALIAS_LISTS_PATH).GET()));
+            JsonNode policy = policyCatalog.at("/aliasLists/0/unmatchedTalkgroupPolicy");
+            assertEquals(-1, policy.get("playbackPriority").intValue());
+            assertTrue(policy.get("recordEnabled").booleanValue());
+            assertEquals("Primary", policy.at("/streamDestinationNames/0").textValue());
+            assertTrue(aliasChanges.get() >= 2);
+
+            JsonNode defaultPolicyChanged = json(send(client, jsonRequest(origin,
+                AliasAdminHttpController.ALIAS_LISTS_PATH + "/" + aliasListId + "/unmatched-talkgroups")
+                .PUT(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(Map.of(
+                    "revision", revision, "listenEnabled", true, "priority", 100, "recordable", true,
+                    "broadcastChannels", java.util.List.of("Primary")))))));
+            revision = defaultPolicyChanged.get("revision").longValue();
+            policyCatalog = json(send(client,
+                request(origin, AliasAdminHttpController.ALIAS_LISTS_PATH).GET()));
+            assertEquals(100,
+                policyCatalog.at("/aliasLists/0/unmatchedTalkgroupPolicy/playbackPriority").intValue());
 
             JsonNode p25Options = json(send(client, request(origin,
                 AliasAdminHttpController.OPTIONS_PATH + "?aliasListId=" + aliasListId).GET()));
@@ -184,6 +211,11 @@ class AliasAdminHttpControllerTest
                 AliasAdminHttpController.OPTIONS_PATH + "?aliasListId=" + nbfmListId).GET()));
             assertTrue(java.util.stream.StreamSupport.stream(options.get("dcsCodes").spliterator(), false)
                 .noneMatch(node -> "UNKNOWN".equals(node.textValue())));
+            assertEquals(400, send(client, jsonRequest(origin,
+                AliasAdminHttpController.ALIAS_LISTS_PATH + "/" + nbfmListId + "/unmatched-talkgroups")
+                .PUT(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(Map.of(
+                    "revision", revision, "listenEnabled", true, "recordable", false,
+                    "broadcastChannels", java.util.List.of()))))).statusCode());
 
             Map<String,Object> invalidDcs = new java.util.LinkedHashMap<>(alias(nbfmListId, "Invalid DCS", false));
             invalidDcs.put("matcher", Map.of("type", "DCS", "code", "UNKNOWN"));

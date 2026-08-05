@@ -51,7 +51,7 @@ public class LegacyPlaylistImportService
 {
     private static final DateTimeFormatter BACKUP_TIMESTAMP = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
     private static final List<String> CONFIGURATION_TABLES = List.of(
-        "alias_list", "alias", "alias_broadcast_channel",
+        "alias_list", "alias", "alias_broadcast_channel", "alias_list_unmatched_talkgroup_stream",
         "configuration_channel", "configuration_broadcast_stream");
     private final Path mDatabasePath;
 

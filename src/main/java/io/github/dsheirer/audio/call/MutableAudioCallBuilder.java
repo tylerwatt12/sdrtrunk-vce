@@ -21,6 +21,7 @@ package io.github.dsheirer.audio.call;
 
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasList;
+import io.github.dsheirer.alias.UnmatchedTalkgroupPolicy;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.alias.id.priority.Priority;
 import io.github.dsheirer.identifier.Identifier;
@@ -59,6 +60,7 @@ public class MutableAudioCallBuilder implements Listener<IdentifierUpdateNotific
     private boolean mComplete;
     private boolean mDuplicate;
     private boolean mEncrypted;
+    private boolean mRecordAudioOverride;
     private boolean mRecordAudio;
     private int mMonitorPriority = Priority.DEFAULT_PRIORITY;
     private int mBurstCount;
@@ -143,7 +145,8 @@ public class MutableAudioCallBuilder implements Listener<IdentifierUpdateNotific
 
     public void setRecordAudio(boolean recordAudio)
     {
-        mRecordAudio = recordAudio;
+        mRecordAudioOverride = recordAudio;
+        recomputeAliasActions();
     }
 
     public int getMonitorPriority()
@@ -162,8 +165,9 @@ public class MutableAudioCallBuilder implements Listener<IdentifierUpdateNotific
     }
 
     /**
-     * Immutable recording metadata. Destination and source Alias decisions are frozen when those identifiers first
-     * join the call so later administrator edits cannot change the historical call.
+     * Immutable recording metadata. Destination and source Alias decisions follow identifier attribution updates,
+     * then remain frozen unless another identifier update arrives; an administrator edit alone cannot rewrite the
+     * historical call.
      */
     public AudioCallRecordingMetadata getRecordingMetadata()
     {
@@ -302,14 +306,27 @@ public class MutableAudioCallBuilder implements Listener<IdentifierUpdateNotific
 
     private void addIdentifier(Identifier<?> identifier)
     {
+        if(AudioCallRecordingMetadata.isDestination(identifier))
+        {
+            //A destination can be promoted between a talkgroup and a patch group, and patch updates can keep the same
+            //primary group while adding members. Retain only the newest destination object so withdrawn fallback
+            //actions cannot remain latched onto the call.
+            for(Identifier<?> previous: List.copyOf(mIdentifierCollection.getIdentifiers()))
+            {
+                if(previous != identifier && AudioCallRecordingMetadata.isDestination(previous))
+                {
+                    mIdentifierCollection.silentRemove(previous);
+                }
+            }
+        }
         mIdentifierCollection.update(identifier);
 
-        if(mRecordingDestination == null && AudioCallRecordingMetadata.isDestination(identifier))
+        if(AudioCallRecordingMetadata.isDestination(identifier))
         {
             mRecordingDestination = AudioCallRecordingMetadata.captureDestination(mAliasList, identifier);
         }
 
-        if(mRecordingSource == null && AudioCallRecordingMetadata.isSource(identifier))
+        if(AudioCallRecordingMetadata.isSource(identifier))
         {
             mRecordingSource = AudioCallRecordingMetadata.captureSource(mAliasList, identifier);
         }
@@ -321,23 +338,65 @@ public class MutableAudioCallBuilder implements Listener<IdentifierUpdateNotific
             mEncrypted = encryptionKeyIdentifier.isEncrypted();
         }
 
-        List<Alias> aliases = mAliasList.getAliases(identifier);
+        recomputeAliasActions();
+    }
 
-        for(Alias alias : aliases)
+    /**
+     * Rebuilds action contributions from the current identifiers so late destination/patch attribution can replace
+     * unmatched behavior instead of permanently latching it onto the call. The explicit channel recording override
+     * remains independent and cannot be withdrawn by an alias update.
+     */
+    private void recomputeAliasActions()
+    {
+        boolean recordAudio = mRecordAudioOverride;
+        int monitorPriority = Priority.DEFAULT_PRIORITY;
+        Set<BroadcastChannel> broadcastChannels = new HashSet<>();
+
+        for(Identifier<?> identifier: mIdentifierCollection.getIdentifiers())
         {
-            if(alias.isRecordable())
+            List<Alias> aliases = mAliasList.getAliases(identifier);
+
+            for(Alias alias : aliases)
             {
-                mRecordAudio = true;
+                if(alias.isRecordable())
+                {
+                    recordAudio = true;
+                }
+
+                broadcastChannels.addAll(alias.getBroadcastChannels());
+
+                int playbackPriority = alias.getPlaybackPriority();
+
+                if(playbackPriority < monitorPriority)
+                {
+                    monitorPriority = playbackPriority;
+                }
             }
 
-            mBroadcastChannels.addAll(alias.getBroadcastChannels());
+            UnmatchedTalkgroupPolicy unmatchedPolicy = mAliasList.getUnmatchedTalkgroupPolicy(identifier);
 
-            int playbackPriority = alias.getPlaybackPriority();
-
-            if(playbackPriority < mMonitorPriority)
+            if(unmatchedPolicy != null)
             {
-                mMonitorPriority = playbackPriority;
+                if(unmatchedPolicy.isRecordEnabled())
+                {
+                    recordAudio = true;
+                }
+
+                for(String destination: unmatchedPolicy.getStreamDestinationNames())
+                {
+                    broadcastChannels.add(new BroadcastChannel(destination));
+                }
+
+                if(unmatchedPolicy.getPlaybackPriority() < monitorPriority)
+                {
+                    monitorPriority = unmatchedPolicy.getPlaybackPriority();
+                }
             }
         }
+
+        mRecordAudio = recordAudio;
+        mMonitorPriority = monitorPriority;
+        mBroadcastChannels.clear();
+        mBroadcastChannels.addAll(broadcastChannels);
     }
 }

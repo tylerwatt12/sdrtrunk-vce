@@ -7,6 +7,7 @@ package io.github.dsheirer.stats;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import java.nio.file.Path;
@@ -24,6 +25,79 @@ class StatsAliasResolverTest
 {
     @TempDir
     Path mTemporaryFolder;
+
+    @Test
+    void classifiesObservedTalkgroupsWithinOnlyTheSelectedAliasListAndInvalidatesImmediately() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("observed-talkgroups.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO alias_list (id, name, family)
+                VALUES (1, 'Selected', 'P25'), (2, 'Other', 'P25')
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias (
+                    id, alias_list_id, name, matcher_type, protocol, value, min_value, max_value,
+                    wacn, p25_system_id
+                ) VALUES
+                    (1, 1, 'Selected Range', 'TALKGROUP_RANGE', 'APCO25', NULL, 1, 1000,
+                        NULL, NULL),
+                    (2, 1, 'Selected Exact', 'P25_FULLY_QUALIFIED_TALKGROUP', 'APCO25', 700,
+                        NULL, NULL, 0xBEE00, 0x348),
+                    (3, 2, 'Other Exact', 'TALKGROUP', 'APCO25', 800, NULL, NULL, NULL, NULL),
+                    (4, 1, 'Selected Narrow Range', 'TALKGROUP_RANGE', 'APCO25', NULL, 500, 900,
+                        NULL, NULL)
+                """);
+
+            StatsAliasResolver resolver = new StatsAliasResolver();
+            Map<String,Object> exact = observedP25Row(1700);
+            exact.put("p25_identity_state_code", 2);
+            exact.put("p25_home_wacn", 0xBEE00);
+            exact.put("p25_home_system_id", 0x348);
+            exact.put("p25_home_talkgroup_id", 700);
+            Map<String,Object> ordinarySameNumber = observedP25Row(700);
+            Map<String,Object> range = observedP25Row(800);
+            Map<String,Object> none = observedP25Row(1200);
+            Map<String,Object> unknown = observedP25Row(701);
+            unknown.put("p25_identity_state_code", 0);
+            List<Map<String,Object>> rows = rows(exact, ordinarySameNumber, range, none, unknown);
+            resolver.resolveObservedTalkgroups(connection, rows);
+
+            assertEquals("exact", exact.get("match_kind"));
+            assertEquals(2L, ((Number)exact.get("matched_alias_id")).longValue());
+            assertEquals("Selected Exact", exact.get("matched_alias_name"));
+            assertEquals(true, exact.get("promotion_supported"));
+            assertEquals("range", ordinarySameNumber.get("match_kind"),
+                "An ordinary P25 destination must not be claimed by a fully-qualified alias");
+            assertEquals(4L, ((Number)ordinarySameNumber.get("matched_alias_id")).longValue());
+            assertEquals("range", range.get("match_kind"),
+                "An exact definition in another alias list must not claim this row");
+            assertEquals(4L, ((Number)range.get("matched_alias_id")).longValue(),
+                "Discovery must copy actions from the same covering range runtime selects");
+            assertEquals("none", none.get("match_kind"));
+            assertNull(none.get("matched_alias_id"));
+            assertNull(none.get("matched_alias_name"));
+            assertEquals(false, unknown.get("promotion_supported"));
+            assertEquals("none", unknown.get("match_kind"));
+            assertEquals("This observation predates P25 identity qualification", unknown.get("promotion_reason"));
+
+            statement.executeUpdate("""
+                INSERT INTO alias (
+                    id, alias_list_id, name, matcher_type, protocol, value
+                ) VALUES (5, 1, 'New Exact', 'TALKGROUP', 'APCO25', 800)
+                """);
+            resolver.resolveObservedTalkgroups(connection, rows(range));
+            assertEquals("range", range.get("match_kind"), "The normal polling cache remains bounded");
+            resolver.invalidate();
+            resolver.resolveObservedTalkgroups(connection, rows(range));
+            assertEquals("exact", range.get("match_kind"));
+            assertEquals("New Exact", range.get("matched_alias_name"));
+        }
+    }
 
     @Test
     void resolvesAssignedListDescriptionsWithoutChangingAliasPrecedence() throws Exception
@@ -209,6 +283,17 @@ class StatsAliasResolverTest
         row.put("wacn", 0xBEE00);
         row.put("system_id", 0x348);
         row.put("system_key", 77);
+        return row;
+    }
+
+    private static Map<String,Object> observedP25Row(int talkgroup)
+    {
+        Map<String,Object> row = p25Row();
+        row.put("topology", "TRUNKED");
+        row.put("alias_list_name", "Selected");
+        row.put("talkgroup_id", talkgroup);
+        row.put("protocol_code", 1);
+        row.put("p25_identity_state_code", 1);
         return row;
     }
 
