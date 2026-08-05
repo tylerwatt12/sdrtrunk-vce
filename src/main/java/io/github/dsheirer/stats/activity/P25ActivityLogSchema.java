@@ -1336,6 +1336,10 @@ public class P25ActivityLogSchema
                               WHERE identity.scope_id = ownership.scope_id
                           )
                           AND NOT EXISTS (
+                              SELECT 1 FROM p25_zero_local_fq_talkgroup_summary identity
+                              WHERE identity.scope_id = ownership.scope_id
+                          )
+                          AND NOT EXISTS (
                               SELECT 1 FROM trunked_radio_talkgroup_summary relationship
                               WHERE relationship.scope_id = ownership.scope_id
                           )

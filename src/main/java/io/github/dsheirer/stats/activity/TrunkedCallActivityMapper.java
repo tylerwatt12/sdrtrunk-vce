@@ -108,10 +108,7 @@ class TrunkedCallActivityMapper
     P25ActivityLogRecords.TrunkedCallAttribution map(TrunkedCallAttributionEvent attribution)
     {
         if(attribution == null || attribution.channel() == null || attribution.protocol() == null ||
-            attribution.callStartEpochMilliseconds() <= 0 ||
-            (!attribution.destinationBecameKnown() && !attribution.sourceBecameKnown() &&
-                !attribution.encryptionBecameKnown() && attribution.encryptionAlgorithmId() == null &&
-                attribution.encryptionKeyId() == null))
+            attribution.callStartEpochMilliseconds() <= 0)
         {
             return null;
         }
@@ -131,6 +128,7 @@ class TrunkedCallActivityMapper
         Integer destinationId = identityId(target);
         String destinationKind = target != null && target.getForm() != null ? target.getForm().name() : null;
         Integer sourceRadio = source != null && source.getForm() == Form.RADIO ? identityId(source) : null;
+        P25ActivityLogRecords.P25TargetIdentity targetIdentity = p25TargetIdentity(target, protocol);
         String guid = blankToNull(channel.getRadresGuid());
         String configurationId = blankToNull(channel.getConfigurationId());
         String contextKey = contextKey(guid, configurationId);
@@ -143,6 +141,13 @@ class TrunkedCallActivityMapper
             return null;
         }
 
+        if(!attribution.destinationBecameKnown() && !attribution.sourceBecameKnown() &&
+            !attribution.encryptionBecameKnown() && attribution.encryptionAlgorithmId() == null &&
+            attribution.encryptionKeyId() == null && !targetIdentity.isStableFullyQualified())
+        {
+            return null;
+        }
+
         return new P25ActivityLogRecords.TrunkedCallAttribution(
             attribution.callStartEpochMilliseconds(), contextKey, guid,
             frequency, attribution.timeslot(),
@@ -150,7 +155,7 @@ class TrunkedCallActivityMapper
             sourceRadio, attribution.encryptionAlgorithmId(), attribution.encryptionKeyId(),
             attribution.destinationBecameKnown(), attribution.sourceBecameKnown(),
             attribution.encryptionBecameKnown(), attribution.encryptedBeforeObservation(),
-            identityDomain(channel, identifiers), p25TargetIdentity(target, protocol),
+            identityDomain(channel, identifiers), targetIdentity,
             p25PatchMemberIdentities(target, protocol));
     }
 

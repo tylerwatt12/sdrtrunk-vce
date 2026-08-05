@@ -59,7 +59,10 @@ One mutable row per `(scope, identity kind, numeric ID)`. Kinds are talkgroup, r
 contains first/last observation times; fixed integer counters for the supported Activity actions; source and target
 call counts; encrypted, recorded, and streamed counts; the latest counterpart and encryption facts; and the latest
 typed over-the-air talker alias for a radio. Manual aliases, descriptions, and groups remain administrator-owned
-configuration and are joined at read time.
+configuration and are joined at read time. P25 schema v25 also stores a compact identity-evidence state and nullable
+home WACN/System/talkgroup values so ordinary, stable fully-qualified, and conflicting observations are not collapsed
+into one false alias identity for positive local talkgroup IDs. Those four fields add no rows or indexes; see
+[Alias Discovery and Unmatched Talkgroup Storage](alias-discovery-storage.md).
 
 The fixed action columns avoid a high-cardinality evidence table. The displayed Evidence total sums meaningful
 signaling counters and excludes `call_count`, `continue_count`, and `unknown_count`. Unclassified `UNKNOWN` signaling
@@ -81,7 +84,39 @@ recent directory. Sorts by a counter are restricted to one capped scope and neve
 Normal steady-state row creation approaches zero after a system's identities are learned. Initial discovery is
 normally tens to thousands of new identities per hour. Defensive admission is capped at 100,000 identity rows per
 scope. Existing identities continue updating after the cap; only new keys are refused. Budgeting approximately
-300–450 bytes per row including both indexes gives a conservative saturated estimate of 30–45 MiB per scope.
+320–480 bytes per row including both indexes and the optional P25 qualifier fields gives a conservative saturated
+estimate of 32–48 MiB per scope.
+
+### `p25_zero_local_fq_talkgroup_summary`
+
+One mutable row per fully-qualified P25 talkgroup observed with local talkgroup ID zero. The normal identity key
+`(scope_id, identity_kind_code, identity_id)` cannot preserve more than one fully-qualified tuple at local ID zero,
+so storing these facts there would collide unrelated home systems or talkgroups. This dedicated `WITHOUT ROWID` table
+instead uses `(scope_id, home_wacn, home_system_id, home_talkgroup_id)` as its primary key and cascades from the owning
+scope. WACN is limited to `0..0xFFFFF`, System ID to `0..0xFFF`, and home talkgroup to `1..0xFFFE`; local zero is the
+only local value routed here, while reserved or incomplete home identities are rejected as stable evidence.
+
+Each row stores first/last observation times, the same fixed Activity action counters (including `call_count`), and
+encrypted, recorded, and streamed counts. Initial activity, late attribution, and completed output each update the
+summary once. It does not store a raw message, JSON payload, detailed Activity event, relationship row, or immutable
+row per call. Existing tuples continue updating after the independent 100,000-row-per-scope admission cap; only new
+tuples are refused. Budgeting approximately 250–400 bytes per row and both indexes gives a conservative saturated
+estimate of 25–40 MiB per scope.
+
+Concrete queries are a primary-key tuple lookup and the bounded scope discovery scan:
+
+```sql
+SELECT ... FROM p25_zero_local_fq_talkgroup_summary
+WHERE scope_id = ?
+ORDER BY last_seen_ms DESC, home_wacn, home_system_id, home_talkgroup_id
+LIMIT ?
+```
+
+`idx_p25_zero_local_fq_scope_last_seen(scope_id, last_seen_ms DESC, home_wacn, home_system_id,
+home_talkgroup_id)` supports that scan. Discover unions these rows as local talkgroup ID zero with stable
+fully-qualified state and the complete tuple. Alias creation promotes that tuple to a
+`P25_FULLY_QUALIFIED_TALKGROUP` matcher. Different zero-local tuples remain distinct, as does an ordinary talkgroup
+whose local number happens to equal a tuple's home talkgroup.
 
 ### `trunked_radio_talkgroup_summary`
 
@@ -98,16 +133,18 @@ few thousand new relationships per hour during discovery and few new rows once s
 500,000 rows per scope, with existing rows continuing to update. Budgeting approximately 180–280 bytes per row and
 indexes gives a conservative saturated estimate of 90–140 MiB per scope.
 
-Together, the two saturated identity tables are conservatively bounded at roughly 120–185 MiB per scope. Normal
-systems should remain far below those defensive limits. The admission checks use the scope prefix of each table's
-primary key and run only for a previously unseen key.
+Together, the three saturated identity and relationship summaries are conservatively bounded at roughly 145–230 MiB
+per scope. Normal systems should remain far below those defensive limits. The admission checks use the scope prefix
+of each table's primary key and run only for a previously unseen key.
 
 ### Protocol identity limits
 
 The writer applies the same protocol policy to initial calls, late attribution, completed recording/streaming output,
 site buckets, directory summaries, and relationships:
 
-- P25 excludes talkgroup zero/`0xFFFF` and radio zero/`0xFFFFFC–0xFFFFFF` from normal directory rows.
+- P25 excludes talkgroup zero/`0xFFFF` and radio zero/`0xFFFFFC–0xFFFFFF` from normal directory rows. The one bounded
+  exception is a stable fully-qualified talkgroup with local ID zero: it is retained in the tuple-keyed summary only
+  when its WACN and System ID are in range and its home talkgroup is `1..0xFFFE`.
 - DMR accepts real 24-bit talkgroups and radios, including IDs above 65,534, but excludes documented Tier III
   gateway and all-radio addresses.
 - NXDN Type-C excludes its reserved/all-group and special infrastructure addresses. NXDN Type-D retains its encoded
@@ -257,11 +294,12 @@ bucket is stored.
 
 Decoder threads publish immutable snapshots only. The existing bounded statistics queue and single background writer
 own all SQLite work. One writer batch transaction updates physical site/hour totals, the existing hourly identity
-bucket, the lifetime identity summaries, relationships, and completed output counters together. A call increments
-each applicable identity once; retry/fan-out handling occurs before the database writer. Late attribution moves the
-already-counted hourly call from unknown to the newly valid identity and enriches the same lifetime summaries without
-adding another physical call. Recorded and streamed completion increment output counters without inferring another
-call. P25 patch calls intentionally increment the patch and each valid member talkgroup.
+bucket, the lifetime identity summaries, zero-local P25 tuples, relationships, and completed output counters together.
+A call increments each applicable identity once; retry/fan-out handling occurs before the database writer. Late
+attribution moves the already-counted hourly call from unknown to the newly valid identity and enriches the applicable
+lifetime or zero-local tuple summary without adding another physical call. Recorded and streamed completion increment
+output counters without inferring another call. P25 patch calls intentionally increment the patch and each valid
+member talkgroup.
 
 A changed metadata snapshot writes the site summary, ensures its scope mapping, and upserts its bounded channel and
 neighbor facts in one transaction. Each child carries its own last-observed timestamp, so replaying a cumulative site
@@ -301,20 +339,26 @@ immutable rows.
 No normal runtime path creates or repairs these tables or indexes. New databases create the independent
 `trunked_site_schema_version=2` subsystem in the single startup schema routine. The subsystem was introduced publicly
 at v2, so no public v1 migration is supported. Conventional DMR summaries use the independent
-`dmr_activity_schema_version=1` subsystem. Protocol-neutral identity storage is part of P25 activity schema v24 and
+`dmr_activity_schema_version=1` subsystem. Protocol-neutral identity storage entered P25 activity schema v24 and
 records the positive `trunked_identity_metrics_started_at_ms` boundary so pages do not imply that partially backfilled
-DMR/NXDN totals cover time before collection began. New databases create every current subsystem in the same global
-routine; existing databases remain validation-only.
+DMR/NXDN totals cover time before collection began. The current unreleased P25 activity schema is v25 because those
+same bounded identity rows now retain qualifier-safe P25 talkgroup evidence. New databases create every current
+subsystem in the same global routine; existing databases remain validation-only.
 
-Schema v24 removes the obsolete `p25_talkgroup_summary`, `p25_radio_summary`, and
+Validation includes the exact zero-local tuple table DDL and column set, its four-column primary key, its cascading
+scope foreign key, and the ordered definitions of both tuple indexes. A missing or mismatched table, constraint, key,
+or index is rejected; normal runtime paths do not create or repair it.
+
+Schema v24 removed the obsolete `p25_talkgroup_summary`, `p25_radio_summary`, and
 `p25_radio_talkgroup_summary` tables rather than permanently dual-writing two directory models. P25 identity data is
 projected into the shared tables; `p25_system`, P25 site/band/patch facts, and `p25_radio_affiliation` remain as
 protocol capabilities.
 
-Alpha 8 made these DMR changes part of the numbered `main` release boundary. Alpha 9 accepts the exact Alpha 8/current
-tuple and preserves its configuration and collected history on a backed-up staged copy. It also retains the exact
-Alpha 7 conversion path, which converts supported configuration and starts the current P25 v24, DMR v1, and
-trunked-site v2 activity schemas empty. Intermediate development schemas are not accepted.
+Alpha 9 shipped P25 activity schema v24. The external Alpha 9-to-current development candidate resets the four
+pre-existing identity-projection tables and starts the new zero-local tuple projection empty rather than presenting
+old unqualified summaries as reliable history; other activity and administrator-owned configuration are preserved.
+The exact public transition is consolidated into the bundled Application Migrator during numbered release
+preparation. Intermediate development schemas are not accepted.
 
 ## Retention
 
@@ -326,6 +370,7 @@ These are mutable summaries, not time-series events, and they use the existing S
   removing any remaining descendants.
 - conventional DMR talkgroup and radio summaries with `last_seen_ms` older than the cutoff are deleted independently.
 - trunked identity and relationship rows with `last_seen_ms` older than the cutoff are deleted independently;
+- zero-local P25 tuple rows with `last_seen_ms` older than the cutoff are deleted independently;
 - scope and mapping rows follow their configured context/system ownership lifecycle instead of call-history retention.
 
 After all retention passes, an unconfigured trunked receiver context is removed only when no retained context, GUID,
@@ -341,8 +386,8 @@ eventually disappears.
 
 Site-specific clear and full statistics reset remove these learned rows consistently with P25. They do not delete
 administrator-owned channels, aliases, preferences, or settings. Clearing the last mapped context removes its
-identity scope and cascades its directory/relationship rows. No raw messages, JSON payloads, or permanent per-call
-history are added.
+identity scope and cascades its directory, zero-local tuple, and relationship rows. No raw messages, JSON payloads,
+or permanent per-call history are added.
 
 ## Query-plan verification
 
@@ -357,6 +402,9 @@ Representative-volume tests must populate 100 sites, 102,400 channel facts, and 
   or 32,768 radios per context;
 - scope-token lookup uses the unique scope-token index, and reverse site lookup uses
   `idx_trunked_identity_scope_context_scope`;
+- observed-talkgroup discovery uses that reverse ownership index, the scope/context-leading summary primary keys,
+  `idx_p25_zero_local_fq_scope_last_seen` for zero-local tuple discovery, `idx_alias_talkgroup_value` for exact
+  aliases, and never reads optional `p25_activity_event` rows;
 - identity directory lookup uses `idx_trunked_identity_scope_kind_last_seen`;
 - radio-to-group lookup uses the relationship primary key, while group-to-radio lookup uses
   `idx_trunked_radio_talkgroup_reverse`;
@@ -364,10 +412,12 @@ Representative-volume tests must populate 100 sites, 102,400 channel facts, and 
   `idx_activity_event_member_talkgroup_event(talkgroup_id, event_id)` and then the parent event primary key;
 - bounded identity cleanup uses
   `idx_trunked_identity_retention(last_seen_ms, scope_id, identity_kind_code, identity_id)`;
+- bounded zero-local tuple cleanup uses
+  `idx_p25_zero_local_fq_retention(last_seen_ms, scope_id, home_wacn, home_system_id, home_talkgroup_id)`;
 - bounded relationship cleanup uses
   `idx_trunked_radio_talkgroup_retention(last_seen_ms, scope_id, radio_id, talkgroup_id, target_kind_code)`;
 - admission checks use the scope prefix of each primary key, existing rows continue updating at the cap, and new rows
-  cannot exceed 100,000 identities or 500,000 relationships per scope;
+  cannot exceed 100,000 ordinary identities, 100,000 zero-local tuples, or 500,000 relationships per scope;
 - every API limit is bounded even when the database contains more rows.
 
 The directory's bounded summary-table scan is intentional: it reads at most one compact row per configured site and
@@ -378,10 +428,10 @@ The conventional DMR plan fixture fills one context to both admission caps. SQLi
 `SEARCH ... USING COVERING INDEX idx_dmr_conventional_*_last_seen (last_seen_ms<?)` for retention selection. These
 plans avoid full summary-table scans at the documented worst-case per-context volume.
 
-The trunked identity plan fixture verifies exact primary-key lookup, both bounded directory directions, both
-time-first retention selections, and scope-prefix admission. `EXPLAIN QUERY PLAN` must report indexed searches for
-each access path; a scan of optional detailed Activity is never acceptable for a system, talkgroup, radio, or
-dashboard summary.
+The trunked identity plan fixture verifies exact primary-key lookup, both bounded directory directions, all
+time-first retention selections including the zero-local tuple path, and scope-prefix admission. `EXPLAIN QUERY PLAN`
+must report indexed searches for each access path; a scan of optional detailed Activity is never acceptable for a
+system, talkgroup, radio, or dashboard summary.
 
 ## Shared control-channel quality buckets
 

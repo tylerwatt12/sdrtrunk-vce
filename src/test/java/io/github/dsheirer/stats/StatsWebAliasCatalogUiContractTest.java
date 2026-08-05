@@ -88,6 +88,7 @@ class StatsWebAliasCatalogUiContractTest
         String source = source();
         String fields = function(source, "function aliasMatcherFields(host, descriptor, matcher, options)");
         String payload = function(source, "function aliasMatcherPayload(form, descriptor)");
+        String editorPayload = function(source, "function aliasEditorPayload(form, options)");
         String tabs = function(source, "function aliasEditorModalTabs(panels, initial = 'basics')");
 
         for(String label: new String[]{"Basics", "Identifier", "Audio & Streams", "Usage & Evidence"})
@@ -106,6 +107,8 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(source.contains("value: aliasMatcherKey(entry), label: entry.label"));
         assertTrue(source.contains("source.matcher?.type, source.matcher?.protocol"));
         assertTrue(payload.contains("selector.dataset.originalProtocol"));
+        assertTrue(editorPayload.contains("descriptor.minimum"));
+        assertTrue(editorPayload.contains("descriptor.maximum"));
         assertTrue(source.contains("aliasHexValue(matcher?.[field])"));
         assertTrue(source.contains("options.dcsCodes?.[0] || 'N023'"));
         assertTrue(source.contains("Missing: ${source.iconName}"));
@@ -192,6 +195,8 @@ class StatsWebAliasCatalogUiContractTest
         String prefill = function(source, "function observedTalkgroupPrefill(row, selectedList)");
         String identity = function(source, "function observedTalkgroupIdentity(row)");
         String key = function(source, "function observedTalkgroupKey(row)");
+        String focusKey = function(source, "function observedTalkgroupFocusKey(row)");
+        String homeIdentity = function(source, "function observedP25HomeIdentity(row)");
         String create = function(source, "function observedTalkgroupCreateButton(row, selectedList)");
         String detail = function(source, "function observedTalkgroupDetail(row, selectedList)");
         String editor = function(source,
@@ -230,6 +235,11 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(key.contains("observedTalkgroupProtocol(row)"));
         assertTrue(key.contains("scope-id:"));
         assertTrue(key.contains("context-id:"));
+        assertTrue(homeIdentity.contains("talkgroup > 0"));
+        assertTrue(homeIdentity.contains("talkgroup < 0xFFFF"));
+        assertTrue(focusKey.contains("encodeURIComponent(observedTalkgroupKey(row))"));
+        assertTrue(prefill.contains("observedTalkgroupFocusKey(row)"));
+        assertTrue(create.contains("dataset.observedKey = observedTalkgroupFocusKey(row)"));
         assertTrue(identity.contains("Local TG"));
         assertTrue(identity.contains("FQ ${hex(home.wacn, 5)}-${hex(home.system, 3)}"));
         assertTrue(detail.contains("'Fully Qualified Home'"));

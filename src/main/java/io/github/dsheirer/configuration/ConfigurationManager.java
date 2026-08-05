@@ -55,6 +55,7 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Supplier;
 import javafx.collections.ListChangeListener;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -301,6 +302,15 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         {
             throw new IllegalStateException("Unable to save the current configuration");
         }
+    }
+
+    /**
+     * Runs one live-model configuration mutation, its synchronous save, and any failure rollback while excluding the
+     * delayed saver. The caller remains responsible for performing the save and rollback inside the supplied task.
+     */
+    public synchronized <T> T applyConfigurationMutation(Supplier<T> task)
+    {
+        return Objects.requireNonNull(task, "Configuration mutation cannot be null").get();
     }
 
     /**
@@ -659,7 +669,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         }
     }
 
-    private boolean saveConfigurationSnapshotToDatabase()
+    boolean saveConfigurationSnapshotToDatabase()
     {
         try
         {

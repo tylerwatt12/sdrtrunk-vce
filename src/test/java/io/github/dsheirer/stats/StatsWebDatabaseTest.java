@@ -28,6 +28,7 @@ import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVParser;
 import org.apache.commons.csv.CSVRecord;
@@ -267,6 +268,14 @@ class StatsWebDatabaseTest
                     (1, 1, 1702, 3, NULL, NULL, NULL, 1000, 2000, 1, 1),
                     (1, 1, 1703, 0, NULL, NULL, NULL, 1000, 2000, 1, 1)
                 """);
+            statement.executeUpdate("""
+                INSERT INTO p25_zero_local_fq_talkgroup_summary (
+                    scope_id, home_wacn, home_system_id, home_talkgroup_id,
+                    first_seen_ms, last_seen_ms, call_count, recorded_count
+                ) VALUES
+                    (1, 0xABCDE, 0x123, 700, 1000, 2100, 4, 2),
+                    (1, 0xABCDE, 0x124, 700, 1100, 2200, 3, 1)
+                """);
         }
 
         List<Map<String,Object>> rows = rows(mDatabase.observedTalkgroups(request(
@@ -286,6 +295,15 @@ class StatsWebDatabaseTest
         assertEquals(true, qualified.get("promotion_supported"));
         assertEquals("none", qualified.get("match_kind"));
 
+        Map<String,Object> zeroLocal = rows.stream()
+            .filter(row -> number(row.get("talkgroup_id")) == 0L).findFirst().orElseThrow();
+        assertEquals(2L, number(zeroLocal.get("p25_identity_state_code")));
+        assertEquals(0xABCDEL, number(zeroLocal.get("p25_home_wacn")));
+        assertEquals(0x124L, number(zeroLocal.get("p25_home_system_id")));
+        assertEquals(700L, number(zeroLocal.get("p25_home_talkgroup_id")));
+        assertEquals(true, zeroLocal.get("promotion_supported"));
+        assertEquals("none", zeroLocal.get("match_kind"));
+
         Map<String,Object> ambiguous = rows.stream()
             .filter(row -> number(row.get("talkgroup_id")) == 1702L).findFirst().orElseThrow();
         assertEquals(false, ambiguous.get("promotion_supported"));
@@ -299,6 +317,15 @@ class StatsWebDatabaseTest
         assertEquals(1, exact.size());
         assertEquals("exact", exact.getFirst().get("match_kind"));
         assertEquals("ISSI Dispatch", exact.getFirst().get("matched_alias_name"));
+        List<Map<String,Object>> zeroLocalExact = rows(mDatabase.observedTalkgroups(request(
+            "/api/alias-list/observed-talkgroups?list=1&include_exact=true&q=ABCDE-123-700&limit=100")));
+        assertEquals(2, zeroLocalExact.size(),
+            "The ordinary local row remains separate while both local 1700 and local 0 can use the same home tuple");
+        Map<String,Object> exactZero = zeroLocalExact.stream()
+            .filter(row -> number(row.get("talkgroup_id")) == 0L).findFirst().orElseThrow();
+        assertEquals("exact", exactZero.get("match_kind"));
+        assertEquals(4L, number(exactZero.get("call_count")));
+        assertEquals(2L, number(exactZero.get("recorded_count")));
         List<Map<String,Object>> qualifiedSearch = rows(mDatabase.observedTalkgroups(request(
             "/api/alias-list/observed-talkgroups?list=1&q=ABCDE-123-701")));
         assertEquals(1, qualifiedSearch.size(), "The displayed fully-qualified identity is searchable");
@@ -307,8 +334,8 @@ class StatsWebDatabaseTest
         List<Map<String,Object>> aliases = rows(mDatabase.aliases(request(
             "/api/aliases?list=1&q=ISSI%20Dispatch")));
         assertEquals(1, aliases.size());
-        assertEquals(1L, number(aliases.getFirst().get("call_count")),
-            "Only the matching fully-qualified observation contributes; the ordinary TG 700 row does not");
+        assertEquals(5L, number(aliases.getFirst().get("call_count")),
+            "Both matching fully-qualified observations contribute; the ordinary TG 700 row does not");
     }
 
     @Test
@@ -700,6 +727,172 @@ class StatsWebDatabaseTest
             assertTrue(relationshipPlan.stream().anyMatch(detail -> detail.contains("PRIMARY KEY")),
                 () -> "Expected scope-leading relationship lookup, plan was: " + relationshipPlan);
             assertTrue(relationshipPlan.stream().noneMatch(detail -> detail.contains("p25_activity_event")));
+        }
+    }
+
+    @Test
+    void observedTalkgroupQueryUsesBoundedSummaryIndexesAtRepresentativeVolume() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
+        {
+            connection.setAutoCommit(false);
+            try(PreparedStatement trunkedContexts = connection.prepareStatement("""
+                INSERT INTO receiver_context (
+                    id, context_key, guid, kind_code, protocol_code, alias_list_name,
+                    first_seen_ms, last_seen_ms, system_key
+                ) VALUES (?, ?, ?, 1, 1, 'County', 1000, 2000, 1)
+                """);
+                PreparedStatement ownership = connection.prepareStatement("""
+                INSERT INTO trunked_identity_scope_context (
+                    context_id, scope_id, first_seen_ms, last_seen_ms
+                ) VALUES (?, 1, 1000, 2000)
+                """);
+                PreparedStatement trunkedIdentities = connection.prepareStatement("""
+                INSERT INTO trunked_identity_summary (
+                    scope_id, identity_kind_code, identity_id, p25_identity_state_code,
+                    first_seen_ms, last_seen_ms, call_count, target_call_count
+                ) VALUES (1, 1, ?, 1, 1000, 2000, 1, 1)
+                """);
+                PreparedStatement zeroLocalIdentity = connection.prepareStatement("""
+                INSERT INTO p25_zero_local_fq_talkgroup_summary (
+                    scope_id, home_wacn, home_system_id, home_talkgroup_id,
+                    first_seen_ms, last_seen_ms, call_count
+                ) VALUES (1, 0xABCDE, 0x123, 1200, 1000, 2000, 1)
+                """);
+                PreparedStatement conventionalContexts = connection.prepareStatement("""
+                INSERT INTO receiver_context (
+                    id, context_key, guid, kind_code, protocol_code, alias_list_name,
+                    first_seen_ms, last_seen_ms, primary_frequency_hz
+                ) VALUES (?, ?, ?, ?, ?, 'County', 1000, 2000, ?)
+                """);
+                PreparedStatement dmrIdentities = connection.prepareStatement("""
+                INSERT INTO dmr_conventional_talkgroup_summary (
+                    context_id, frequency_hz, timeslot, talkgroup_id,
+                    first_seen_ms, last_seen_ms, call_count, encrypted_count
+                ) VALUES (?, ?, ?, ?, 1000, 2000, 1, 0)
+                """);
+                PreparedStatement callIdentities = connection.prepareStatement("""
+                INSERT INTO call_identity_bucket (
+                    context_id, bucket_start_ms, identity_role_code, identity_kind_code,
+                    identity_id, call_count
+                ) VALUES (?, 0, 1, 1, ?, 1)
+                """);
+                PreparedStatement aliases = connection.prepareStatement("""
+                INSERT INTO alias (
+                    id, alias_list_id, name, matcher_type, protocol, value
+                ) VALUES (?, 1, ?, 'TALKGROUP', 'APCO25', ?)
+                """))
+            {
+                for(int contextId = 5_000; contextId < 5_050; contextId++)
+                {
+                    trunkedContexts.setInt(1, contextId);
+                    trunkedContexts.setString(2, "plan-trunked-" + contextId);
+                    trunkedContexts.setString(3, "plan-trunked-guid-" + contextId);
+                    trunkedContexts.addBatch();
+                    ownership.setInt(1, contextId);
+                    ownership.addBatch();
+                }
+
+                for(int identityId = 10_000; identityId < 15_000; identityId++)
+                {
+                    trunkedIdentities.setInt(1, identityId);
+                    trunkedIdentities.addBatch();
+                }
+
+                for(int offset = 0; offset < 25; offset++)
+                {
+                    int dmrContextId = 6_000 + offset;
+                    conventionalContexts.setInt(1, dmrContextId);
+                    conventionalContexts.setString(2, "plan-dmr-" + offset);
+                    conventionalContexts.setString(3, "plan-dmr-guid-" + offset);
+                    conventionalContexts.setInt(4, 3);
+                    conventionalContexts.setInt(5, 3);
+                    conventionalContexts.setLong(6, 451_000_000L + offset * 12_500L);
+                    conventionalContexts.addBatch();
+
+                    int p25ContextId = 7_000 + offset;
+                    conventionalContexts.setInt(1, p25ContextId);
+                    conventionalContexts.setString(2, "plan-p25-" + offset);
+                    conventionalContexts.setString(3, "plan-p25-guid-" + offset);
+                    conventionalContexts.setInt(4, 2);
+                    conventionalContexts.setInt(5, 2);
+                    conventionalContexts.setLong(6, 154_000_000L + offset * 12_500L);
+                    conventionalContexts.addBatch();
+
+                    for(int identityOffset = 0; identityOffset < 100; identityOffset++)
+                    {
+                        int identityId = 20_000 + offset * 100 + identityOffset;
+                        dmrIdentities.setInt(1, dmrContextId);
+                        dmrIdentities.setLong(2, 451_000_000L + offset * 12_500L);
+                        dmrIdentities.setInt(3, identityOffset % 2 + 1);
+                        dmrIdentities.setInt(4, identityId);
+                        dmrIdentities.addBatch();
+
+                        callIdentities.setInt(1, dmrContextId);
+                        callIdentities.setInt(2, identityId);
+                        callIdentities.addBatch();
+                        callIdentities.setInt(1, p25ContextId);
+                        callIdentities.setInt(2, identityId);
+                        callIdentities.addBatch();
+                    }
+                }
+
+                for(int aliasOffset = 0; aliasOffset < 5_000; aliasOffset++)
+                {
+                    aliases.setInt(1, 100_000 + aliasOffset);
+                    aliases.setString(2, "Plan Alias " + aliasOffset);
+                    aliases.setInt(3, aliasOffset + 1);
+                    aliases.addBatch();
+                }
+
+                trunkedContexts.executeBatch();
+                ownership.executeBatch();
+                trunkedIdentities.executeBatch();
+                zeroLocalIdentity.executeUpdate();
+                conventionalContexts.executeBatch();
+                dmrIdentities.executeBatch();
+                callIdentities.executeBatch();
+                aliases.executeBatch();
+            }
+            connection.commit();
+        }
+
+        AtomicReference<StatsWebDatabase.ObservedTalkgroupQuery> captured = new AtomicReference<>();
+        mDatabase.observedTalkgroups(request(
+            "/api/alias-list/observed-talkgroups?list=1&sort=last_seen&direction=desc&limit=100"),
+            captured::set);
+        StatsWebDatabase.ObservedTalkgroupQuery query = captured.get();
+        assertNotNull(query);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.execute("ANALYZE");
+            List<String> plan = explain(connection, query.sql(), query.parameters().toArray());
+            assertTrue(plan.stream().anyMatch(detail ->
+                    detail.contains("idx_trunked_identity_scope_context_scope")),
+                () -> "Expected scope-owned context lookup, plan was: " + plan);
+            assertTrue(plan.stream().anyMatch(detail ->
+                    detail.contains("idx_trunked_identity_scope_kind_last_seen") ||
+                        detail.contains("SEARCH summary USING PRIMARY KEY (scope_id=?")),
+                () -> "Expected scope-leading trunked identity lookup, plan was: " + plan);
+            assertTrue(plan.stream().anyMatch(detail ->
+                    detail.contains("idx_p25_zero_local_fq_scope_last_seen")),
+                () -> "Expected indexed zero-local fully-qualified P25 lookup, plan was: " + plan);
+            assertTrue(plan.stream().anyMatch(detail ->
+                    detail.contains("SEARCH summary USING PRIMARY KEY (context_id=?")),
+                () -> "Expected context-leading DMR identity lookup, plan was: " + plan);
+            assertTrue(plan.stream().anyMatch(detail ->
+                    detail.contains("SEARCH bucket USING PRIMARY KEY (context_id=?")),
+                () -> "Expected context-leading compact call-bucket lookup, plan was: " + plan);
+            assertTrue(plan.stream().anyMatch(detail -> detail.contains("idx_alias_talkgroup_value")),
+                () -> "Expected indexed exact-alias lookup, plan was: " + plan);
+            assertTrue(plan.stream().noneMatch(detail -> detail.startsWith("SCAN summary") ||
+                    detail.startsWith("SCAN ownership") || detail.startsWith("SCAN bucket") ||
+                    detail.startsWith("SCAN definition")),
+                () -> "High-cardinality discovery tables must use scoped lookups, plan was: " + plan);
+            assertTrue(plan.stream().noneMatch(detail -> detail.contains("p25_activity_event")),
+                () -> "Discovery must not read detailed P25 events, plan was: " + plan);
         }
     }
 

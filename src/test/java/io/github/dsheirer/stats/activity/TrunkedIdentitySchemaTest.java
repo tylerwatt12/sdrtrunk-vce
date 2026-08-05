@@ -58,6 +58,7 @@ class TrunkedIdentitySchemaTest
             assertFalse(objectExists(connection, "table", "p25_radio_summary"));
             assertFalse(objectExists(connection, "table", "p25_radio_talkgroup_summary"));
             assertTrue(objectExists(connection, "table", "p25_radio_affiliation"));
+            assertTrue(objectExists(connection, "table", "p25_zero_local_fq_talkgroup_summary"));
         }
     }
 
@@ -132,6 +133,113 @@ class TrunkedIdentitySchemaTest
             assertEquals(P25ActivityLogRecords.P25IdentityState.UNKNOWN.code(), scalarLong(connection, """
                 SELECT p25_identity_state_code FROM trunked_identity_summary
                 WHERE identity_kind_code=1 AND identity_id=102
+                """));
+        }
+    }
+
+    @Test
+    void preservesZeroLocalFullyQualifiedTalkgroupsByHomeTupleWithoutCreatingLocalIdentityZero() throws Exception
+    {
+        assertEquals(P25ActivityLogRecords.P25IdentityState.UNKNOWN,
+            P25ActivityLogRecords.P25TargetIdentity.fullyQualified(0xABCDE, 0x321, 0).state());
+        assertEquals(P25ActivityLogRecords.P25IdentityState.UNKNOWN,
+            P25ActivityLogRecords.P25TargetIdentity.fullyQualified(0xABCDE, 0x321, 0xFFFF).state());
+        assertEquals(P25ActivityLogRecords.P25IdentityState.UNKNOWN,
+            P25ActivityLogRecords.P25TargetIdentity.fullyQualified(0x100000, 0x321, 1).state());
+        assertEquals(P25ActivityLogRecords.P25IdentityState.UNKNOWN,
+            P25ActivityLogRecords.P25TargetIdentity.fullyQualified(0xABCDE, 0x1000, 1).state());
+
+        Path database = activityDatabase("p25-zero-local-fq.sqlite");
+        String guid = "p25-zero-local-fq";
+        P25ActivityLogRecords.P25TargetIdentity first =
+            P25ActivityLogRecords.P25TargetIdentity.fullyQualified(0xABCDE, 0x321, 1_200);
+        P25ActivityLogRecords.P25TargetIdentity second =
+            P25ActivityLogRecords.P25TargetIdentity.fullyQualified(0xABCDE, 0x322, 1_200);
+        P25ActivityLogRecords.P25TargetIdentity late =
+            P25ActivityLogRecords.P25TargetIdentity.fullyQualified(0xBBCDE, 0x321, 1_201);
+        P25ActivityLogRecords.P25TargetIdentity midCall =
+            P25ActivityLogRecords.P25TargetIdentity.fullyQualified(0xCBCDE, 0x323, 1_202);
+
+        try(Connection connection = open(database))
+        {
+            P25ActivityLogSchema.insertSite(connection,
+                p25SiteSnapshot(1_000L, guid, 0x348, "identity", "00-0500", 855_000_000L));
+            P25ActivityLogSchema.recordActivity(connection,
+                p25Activity(2_000L, guid, P25ActivityLogRecords.Action.CALL, 0, 200,
+                    Form.TALKGROUP.name(), List.of(), true, first, List.of()), false);
+            P25ActivityLogSchema.recordActivity(connection,
+                p25Activity(3_000L, guid, P25ActivityLogRecords.Action.CALL, 0, 201,
+                    Form.TALKGROUP.name(), List.of(), true, second, List.of()), false);
+            P25ActivityLogSchema.recordActivity(connection,
+                p25Activity(4_000L, guid, P25ActivityLogRecords.Action.CALL, 1_200, 202,
+                    Form.TALKGROUP.name(), List.of(), true,
+                    P25ActivityLogRecords.P25TargetIdentity.ORDINARY, List.of()), false);
+            assertTrue(P25ActivityLogSchema.applyCompletedCallOutput(connection,
+                new P25ActivityLogRecords.CompletedCallOutput(2_000L, "GUID:" + guid, guid,
+                    855_000_000L, 1, 0, Form.TALKGROUP.name(), List.of(), 200,
+                    P25ActivityLogRecords.CallOutput.RECORDED,
+                    P25ActivityLogRecords.IdentityDomain.STANDARD, first)));
+
+            P25ActivityLogRecords.ActivityEvent unknownStart = activity(5_000L, guid, "APCO25", null, 203,
+                null, P25ActivityLogRecords.IdentityDomain.STANDARD, true, 855_000_000L,
+                P25ActivityLogRecords.P25TargetIdentity.UNKNOWN);
+            P25ActivityLogRecords.ActivityEvent continuation = p25Activity(5_100L, guid,
+                P25ActivityLogRecords.Action.CONTINUE, 0, 203, Form.TALKGROUP.name(), List.of(), false,
+                late, List.of());
+            CallAttributionTracker tracker = new CallAttributionTracker();
+            tracker.register(unknownStart);
+            P25ActivityLogSchema.recordActivity(connection, unknownStart, false);
+            P25ActivityLogSchema.recordActivity(connection, continuation, false);
+            CallAttributionTracker.AttributionResult attribution = tracker.enrich(continuation);
+            assertTrue(attribution.tracked());
+            assertTrue(P25ActivityLogSchema.applyTrunkedCallAttribution(connection,
+                attribution.attribution()));
+            P25ActivityLogSchema.recordActivity(connection,
+                p25Activity(5_200L, guid, P25ActivityLogRecords.Action.CONTINUE, 0, 204,
+                    Form.TALKGROUP.name(), List.of(), false, midCall, List.of()), false);
+
+            assertEquals(4, scalarLong(connection,
+                "SELECT COUNT(*) FROM p25_zero_local_fq_talkgroup_summary"));
+            assertEquals(0, scalarLong(connection,
+                "SELECT COUNT(*) FROM trunked_identity_summary WHERE identity_id=0"));
+            assertEquals(0, scalarLong(connection,
+                "SELECT COUNT(*) FROM trunked_radio_talkgroup_summary WHERE talkgroup_id=0"));
+            assertEquals(1, scalarLong(connection, """
+                SELECT call_count FROM p25_zero_local_fq_talkgroup_summary
+                WHERE home_wacn=0xABCDE AND home_system_id=0x321 AND home_talkgroup_id=1200
+                """));
+            assertEquals(1, scalarLong(connection, """
+                SELECT recorded_count FROM p25_zero_local_fq_talkgroup_summary
+                WHERE home_wacn=0xABCDE AND home_system_id=0x321 AND home_talkgroup_id=1200
+                """));
+            assertEquals(1, scalarLong(connection, """
+                SELECT call_count FROM p25_zero_local_fq_talkgroup_summary
+                WHERE home_wacn=0xBBCDE AND home_system_id=0x321 AND home_talkgroup_id=1201
+                """), "The continuation and late attribution must count the call exactly once");
+            assertEquals(1, scalarLong(connection, """
+                SELECT continue_count FROM p25_zero_local_fq_talkgroup_summary
+                WHERE home_wacn=0xCBCDE AND home_system_id=0x323 AND home_talkgroup_id=1202
+                """), "An untracked mid-call tuple must remain discoverable");
+            assertEquals(0, scalarLong(connection, """
+                SELECT call_count FROM p25_zero_local_fq_talkgroup_summary
+                WHERE home_wacn=0xCBCDE AND home_system_id=0x323 AND home_talkgroup_id=1202
+                """), "A continuation must not invent a physical call count");
+            assertEquals(1, scalarLong(connection, """
+                SELECT call_count FROM trunked_identity_summary
+                WHERE identity_kind_code=1 AND identity_id=1200
+                """), "The ordinary local talkgroup remains a separate identity");
+
+            P25ActivityLogSchema.recordActivity(connection,
+                p25Activity(6_000L, guid, P25ActivityLogRecords.Action.CALL, 0, 204,
+                    Form.TALKGROUP.name(), List.of(), true,
+                    P25ActivityLogRecords.P25TargetIdentity.fullyQualified(0xABCDE, 0x321, 0xFFFF),
+                    List.of()), false);
+            assertEquals(4, scalarLong(connection,
+                "SELECT COUNT(*) FROM p25_zero_local_fq_talkgroup_summary"));
+            assertThrows(SQLException.class, () -> connection.createStatement().executeUpdate("""
+                INSERT INTO p25_zero_local_fq_talkgroup_summary(
+                    scope_id, home_wacn, home_system_id, home_talkgroup_id, first_seen_ms, last_seen_ms
+                ) VALUES((SELECT scope_id FROM trunked_identity_scope LIMIT 1), 0xABCDE, 0x321, 65535, 1, 1)
                 """));
         }
     }
@@ -1199,11 +1307,29 @@ class TrunkedIdentitySchemaTest
                     P25ActivityLogRecords.IdentityDomain.STANDARD, true), false);
             int scopeId = (int)scalarLong(connection,
                 "SELECT scope_id FROM trunked_identity_scope WHERE scope_token='dmr:guid:retention'");
+            statement.executeUpdate("""
+                INSERT INTO p25_system(system_key,wacn,system_id,first_seen_ms,last_seen_ms)
+                VALUES(50, 781824, 840, 1, 1)
+                """);
+            insertContext(connection, 50, "retention-p25", 1, 1, 50);
+            int p25ScopeId = TrunkedIdentitySchema.ensureScope(connection, 50, 1,
+                P25ActivityLogRecords.IdentityDomain.STANDARD).scopeId();
+            statement.executeUpdate("""
+                INSERT INTO p25_zero_local_fq_talkgroup_summary(
+                    scope_id,home_wacn,home_system_id,home_talkgroup_id,first_seen_ms,last_seen_ms
+                ) VALUES
+                    (%d, 0xABCDE, 0x321, 1200, 1000, 1000),
+                    (%d, 0xABCDE, 0x322, 1201, 10000, 10000)
+                """.formatted(p25ScopeId, p25ScopeId));
 
             assertTrue(TrunkedIdentitySchema.hasScopeCapacity(connection, "trunked_identity_summary",
                 scopeId, 5));
             assertFalse(TrunkedIdentitySchema.hasScopeCapacity(connection, "trunked_identity_summary",
                 scopeId, 4));
+            assertTrue(TrunkedIdentitySchema.hasScopeCapacity(connection,
+                "p25_zero_local_fq_talkgroup_summary", p25ScopeId, 3));
+            assertFalse(TrunkedIdentitySchema.hasScopeCapacity(connection,
+                "p25_zero_local_fq_talkgroup_summary", p25ScopeId, 2));
             assertIndexedSearch(connection, """
                 EXPLAIN QUERY PLAN
                 SELECT scope_id, identity_kind_code, identity_id
@@ -1221,17 +1347,32 @@ class TrunkedIdentitySchemaTest
                 LIMIT 1000
                 """);
             assertIndexedSearch(connection, """
+                EXPLAIN QUERY PLAN
+                SELECT scope_id, home_wacn, home_system_id, home_talkgroup_id
+                FROM p25_zero_local_fq_talkgroup_summary INDEXED BY idx_p25_zero_local_fq_retention
+                WHERE last_seen_ms < 5000
+                ORDER BY last_seen_ms, scope_id, home_wacn, home_system_id, home_talkgroup_id
+                LIMIT 1000
+                """);
+            assertIndexedSearch(connection, """
                 EXPLAIN QUERY PLAN SELECT 1 FROM trunked_identity_summary
                 WHERE scope_id=1 LIMIT 1 OFFSET 99999
                 """);
 
-            assertEquals(3, TrunkedIdentitySchema.deleteOlderThan(connection, 5_000L));
+            assertEquals(4, TrunkedIdentitySchema.deleteOlderThan(connection, 5_000L));
             assertEquals(2, scalarLong(connection, """
                 SELECT COUNT(*) FROM trunked_identity_summary WHERE last_seen_ms=10000
                 """));
             assertEquals(1, scalarLong(connection, """
                 SELECT COUNT(*) FROM trunked_radio_talkgroup_summary WHERE last_seen_ms=10000
                 """));
+            assertEquals(1, scalarLong(connection, """
+                SELECT COUNT(*) FROM p25_zero_local_fq_talkgroup_summary WHERE last_seen_ms=10000
+                """));
+
+            TrunkedIdentitySchema.reset(connection);
+            assertEquals(0, scalarLong(connection,
+                "SELECT COUNT(*) FROM p25_zero_local_fq_talkgroup_summary"));
 
             try(ResultSet resultSet = statement.executeQuery("PRAGMA quick_check"))
             {
@@ -1259,11 +1400,20 @@ class TrunkedIdentitySchemaTest
                 P25ActivityLogRecords.IdentityDomain.STANDARD);
             TrunkedIdentitySchema.ensureScope(connection, 11, 1,
                 P25ActivityLogRecords.IdentityDomain.STANDARD);
+            statement.executeUpdate("""
+                INSERT INTO p25_zero_local_fq_talkgroup_summary(
+                    scope_id,home_wacn,home_system_id,home_talkgroup_id,first_seen_ms,last_seen_ms
+                ) VALUES((SELECT scope_id FROM trunked_identity_scope LIMIT 1), 0xABCDE, 0x321, 1200, 1, 1)
+                """);
 
             TrunkedIdentitySchema.clearContext(connection, 10);
             assertEquals(1, scalarLong(connection, "SELECT COUNT(*) FROM trunked_identity_scope"));
+            assertEquals(1, scalarLong(connection,
+                "SELECT COUNT(*) FROM p25_zero_local_fq_talkgroup_summary"));
             TrunkedIdentitySchema.clearContext(connection, 11);
             assertEquals(0, scalarLong(connection, "SELECT COUNT(*) FROM trunked_identity_scope"));
+            assertEquals(0, scalarLong(connection,
+                "SELECT COUNT(*) FROM p25_zero_local_fq_talkgroup_summary"));
         }
     }
 
@@ -1333,6 +1483,23 @@ class TrunkedIdentitySchemaTest
                 () -> P25ActivityLogSchema.validate(connection));
             assertTrue(exception.getMessage().contains("index"));
         }
+
+        Path zeroLocalIndexDatabase = database("wrong-zero-local-index.sqlite");
+
+        try(Connection connection = open(zeroLocalIndexDatabase);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("DROP INDEX idx_p25_zero_local_fq_retention");
+            statement.executeUpdate("""
+                CREATE INDEX idx_p25_zero_local_fq_retention
+                ON p25_zero_local_fq_talkgroup_summary(
+                    scope_id, last_seen_ms, home_wacn, home_system_id, home_talkgroup_id
+                )
+                """);
+            SQLException exception = assertThrows(SQLException.class,
+                () -> P25ActivityLogSchema.validate(connection));
+            assertTrue(exception.getMessage().contains("index"));
+        }
     }
 
     @Test
@@ -1374,9 +1541,9 @@ class TrunkedIdentitySchemaTest
             TrunkedIdentitySchema.ensureScope(connection, 14, 1,
                 P25ActivityLogRecords.IdentityDomain.STANDARD);
             statement.executeUpdate("""
-                INSERT INTO trunked_identity_summary(
-                    scope_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms
-                ) VALUES(%d, 1, 200, 1, 1)
+                INSERT INTO p25_zero_local_fq_talkgroup_summary(
+                    scope_id, home_wacn, home_system_id, home_talkgroup_id, first_seen_ms, last_seen_ms
+                ) VALUES(%d, 0xABCDE, 0x321, 1200, 1, 1)
                 """.formatted(shared.scopeId()));
 
             P25ActivityLogSchema.pruneInactiveTrunkedContexts(connection);
@@ -1403,8 +1570,12 @@ class TrunkedIdentitySchemaTest
 
             statement.executeUpdate("""
                 DELETE FROM trunked_identity_summary
-                WHERE scope_id IN (%d, %d)
-                """.formatted(removedHistory.scopeId(), shared.scopeId()));
+                WHERE scope_id=%d
+                """.formatted(removedHistory.scopeId()));
+            statement.executeUpdate("""
+                DELETE FROM p25_zero_local_fq_talkgroup_summary
+                WHERE scope_id=%d
+                """.formatted(shared.scopeId()));
             P25ActivityLogSchema.pruneInactiveTrunkedContexts(connection);
 
             assertEquals(1, scalarLong(connection, "SELECT COUNT(*) FROM receiver_context"));

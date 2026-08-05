@@ -235,7 +235,7 @@ class StatsAliasResolver
                         Integer homeSystem = integer(row.get("p25_home_system_id"));
                         Integer homeTalkgroup = integer(row.get("p25_home_talkgroup_id"));
 
-                        if(homeWacn != null && homeSystem != null && homeTalkgroup != null)
+                        if(validP25FullyQualifiedIdentity(homeWacn, homeSystem, homeTalkgroup))
                         {
                             best = bestSystemFullyQualifiedRule(
                                 rules.exact().getOrDefault(homeTalkgroup, List.of()), homeTalkgroup,
@@ -324,7 +324,7 @@ class StatsAliasResolver
                         Integer homeSystem = integer(row.get("p25_home_system_id"));
                         Integer homeTalkgroup = integer(row.get("p25_home_talkgroup_id"));
 
-                        if(homeWacn != null && homeSystem != null && homeTalkgroup != null)
+                        if(validP25FullyQualifiedIdentity(homeWacn, homeSystem, homeTalkgroup))
                         {
                             promotionSupported = true;
                             best = bestSelectedListFullyQualifiedRule(
@@ -385,6 +385,13 @@ class StatsAliasResolver
         }
 
         return best;
+    }
+
+    private static boolean validP25FullyQualifiedIdentity(Integer wacn, Integer system, Integer talkgroup)
+    {
+        return wacn != null && wacn >= 0 && wacn <= 0xFFFFF &&
+            system != null && system >= 0 && system <= 0xFFF &&
+            talkgroup != null && talkgroup > 0 && talkgroup < 0xFFFF;
     }
 
     /**

@@ -84,6 +84,17 @@ public class P25FullyQualifiedTalkgroup extends Talkgroup
     }
 
     /**
+     * P25 reserves home talkgroup IDs zero and 0xFFFF. A fully-qualified alias also needs complete bounded home
+     * system coordinates before it can safely match traffic.
+     */
+    @Override
+    public boolean isValid()
+    {
+        return getWacn() >= 0 && getWacn() <= 0xFFFFF && getSystem() >= 0 && getSystem() <= 0xFFF &&
+            getValue() > 0 && getValue() < 0xFFFF;
+    }
+
+    /**
      * Sets the system for this radio
      * @param system for this radio
      */

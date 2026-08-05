@@ -398,7 +398,7 @@ public final class AliasAdminHttpController
                 required(payload.minimum(), "minimum"), required(payload.maximum(), "maximum"));
             case P25_FULLY_QUALIFIED_TALKGROUP -> new P25FullyQualifiedTalkgroup(
                 bounded(payload.wacn(), "wacn", 0, 0xFFFFF), bounded(payload.system(), "system", 0, 0xFFF),
-                bounded(payload.value(), "value", 0, 0xFFFF));
+                bounded(payload.value(), "value", 1, 0xFFFE));
             case P25_FULLY_QUALIFIED_RADIO_ID -> new P25FullyQualifiedRadio(
                 bounded(payload.wacn(), "wacn", 0, 0xFFFFF), bounded(payload.system(), "system", 0, 0xFFF),
                 bounded(payload.value(), "value", 0, 0xFFFFFF));
@@ -548,6 +548,16 @@ public final class AliasAdminHttpController
             RadioFormat format = RadioFormat.get(range.getProtocol());
             response.put("minimum", format.getMinimumValidValue());
             response.put("maximum", format.getMaximumValidValue());
+        }
+        else if(descriptor.type() == AliasIDType.P25_FULLY_QUALIFIED_TALKGROUP)
+        {
+            response.put("minimum", 1);
+            response.put("maximum", 0xFFFE);
+        }
+        else if(descriptor.type() == AliasIDType.P25_FULLY_QUALIFIED_RADIO_ID)
+        {
+            response.put("minimum", 0);
+            response.put("maximum", 0xFFFFFF);
         }
         return response;
     }

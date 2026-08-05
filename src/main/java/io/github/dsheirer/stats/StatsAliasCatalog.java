@@ -847,10 +847,30 @@ final class StatsAliasCatalog
             JOIN trunked_identity_scope scope ON scope.scope_id = summary.scope_id
             LEFT JOIN p25_system system ON system.system_key = scope.p25_system_key
             WHERE summary.scope_id IN (%s)
-            ORDER BY summary.scope_id, summary.identity_kind_code, summary.identity_id
+
+            UNION ALL
+
+            SELECT summary.scope_id, 1 AS identity_kind_code, 0 AS identity_id,
+                2 AS p25_identity_state_code, summary.home_wacn AS p25_home_wacn,
+                summary.home_system_id AS p25_home_system_id,
+                summary.home_talkgroup_id AS p25_home_talkgroup_id,
+                summary.first_seen_ms, summary.last_seen_ms, summary.call_count,
+                summary.recorded_count, summary.streamed_count,
+                summary.encrypted_count AS encrypted_evidence_count,
+                summary.grant_count, summary.join_count, summary.emergency_count,
+                summary.register_count, summary.logout_count, summary.denial_count, summary.data_count,
+                %s AS other_signaling_count, scope.protocol_code, scope.p25_system_key AS system_key,
+                system.wacn, system.system_id
+            FROM p25_zero_local_fq_talkgroup_summary summary
+            JOIN trunked_identity_scope scope ON scope.scope_id = summary.scope_id
+            LEFT JOIN p25_system system ON system.system_key = scope.p25_system_key
+            WHERE summary.scope_id IN (%s)
+            ORDER BY 1, 2, 3, 5, 6, 7
             LIMIT ?
-            """.formatted(OTHER_SIGNALING_SQL, placeholders(scopeIds.size()));
+            """.formatted(OTHER_SIGNALING_SQL, placeholders(scopeIds.size()), OTHER_SIGNALING_SQL,
+            placeholders(scopeIds.size()));
         List<Object> parameters = new ArrayList<>(scopeIds);
+        parameters.addAll(scopeIds);
         parameters.add(MAX_EVIDENCE_ROWS + 1);
         List<Map<String,Object>> evidence = queryRows(connection, sql, parameters.toArray());
         requireEvidenceBound(evidence);

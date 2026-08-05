@@ -2823,6 +2823,11 @@ function aliasEditorPayload(form, options) {
   if (matcher.minimum !== undefined && matcher.maximum !== undefined && matcher.minimum > matcher.maximum) {
     throw new Error('The minimum identifier cannot be greater than the maximum');
   }
+  if (matcher.value !== undefined && descriptor.minimum !== undefined && descriptor.maximum !== undefined &&
+      (matcher.value < Number(descriptor.minimum) || matcher.value > Number(descriptor.maximum))) {
+    throw new Error(`The identifier must be between ${identifierNumber(descriptor.minimum)} and ${
+      identifierNumber(descriptor.maximum)}`);
+  }
   const listenEnabled = form.elements.listenEnabled.checked;
   const priorityValue = form.elements.priority.value;
   const streamValue = form.elements.streamAsTalkgroup.value.trim();
@@ -3423,7 +3428,7 @@ function observedP25HomeIdentity(row) {
   const talkgroup = Number(row?.p25_home_talkgroup_id);
   return Number.isInteger(wacn) && wacn >= 0 && wacn <= 0xFFFFF &&
     Number.isInteger(system) && system >= 0 && system <= 0xFFF &&
-    Number.isInteger(talkgroup) && talkgroup >= 0 && talkgroup <= 0xFFFF ?
+    Number.isInteger(talkgroup) && talkgroup > 0 && talkgroup < 0xFFFF ?
       { wacn, system, talkgroup } : null;
 }
 
@@ -3493,6 +3498,10 @@ function observedTalkgroupKey(row) {
     row.p25_home_wacn ?? 'x'}-${row.p25_home_system_id ?? 'x'}-${row.p25_home_talkgroup_id ?? 'x'}`;
 }
 
+function observedTalkgroupFocusKey(row) {
+  return encodeURIComponent(observedTalkgroupKey(row));
+}
+
 function observedTalkgroupPrefill(row, selectedList) {
   if (!observedTalkgroupPromotionSupported(row)) {
     throw new Error(observedTalkgroupPromotionReason(row));
@@ -3536,7 +3545,7 @@ function observedTalkgroupPrefill(row, selectedList) {
     matcher,
     copyActionsFromAliasId: observedTalkgroupMatchKind(row) === 'range' && Number.isInteger(matchedAliasId) &&
       matchedAliasId > 0 ? matchedAliasId : null,
-    returnFocusSelector: `.observed-talkgroup-create[data-talkgroup-id="${talkgroupId}"]`
+    returnFocusSelector: `.observed-talkgroup-create[data-observed-key="${observedTalkgroupFocusKey(row)}"]`
   };
 }
 
@@ -3553,6 +3562,7 @@ function observedTalkgroupCreateButton(row, selectedList) {
   const button = node('button', 'button secondary observed-talkgroup-create', 'Create Alias');
   button.type = 'button';
   button.dataset.talkgroupId = String(row.talkgroup_id);
+  button.dataset.observedKey = observedTalkgroupFocusKey(row);
   button.addEventListener('click', () => openObservedTalkgroupAliasEditor(row, selectedList));
   return button;
 }

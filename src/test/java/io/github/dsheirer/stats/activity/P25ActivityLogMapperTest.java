@@ -668,6 +668,34 @@ class P25ActivityLogMapperTest
         assertNotNull(output);
         assertEquals(56_138, output.destinationId());
         assertFullyQualified(output.p25TargetIdentity(), 0xABCDE, 0x321, 1_200);
+
+        MutableIdentifierCollection zeroLocalIdentifiers = new MutableIdentifierCollection();
+        zeroLocalIdentifiers.update(APCO25RadioIdentifier.createFrom(1_811_524));
+        zeroLocalIdentifiers.update(APCO25FullyQualifiedTalkgroupIdentifier.createTo(
+            0, 0xABCDE, 0x321, 1_201));
+        zeroLocalIdentifiers.update(FrequencyConfigurationIdentifier.create(854_187_500L));
+        zeroLocalIdentifiers.update(SiteGuidConfigurationIdentifier.create(GUID));
+        zeroLocalIdentifiers.update(DecoderTypeConfigurationIdentifier.create(DecoderType.P25_PHASE1));
+        DecodeEvent zeroLocalEvent = P25DecodeEvent.builder(DecodeEventType.CALL_GROUP, 2_000L)
+            .duration(1_000L)
+            .identifiers(zeroLocalIdentifiers)
+            .build();
+        P25ActivityLogRecords.ActivityEvent zeroLocalActivity = mapper.map(
+            channel(DecoderType.P25_PHASE1), zeroLocalEvent);
+        AudioCallSnapshot zeroLocalSnapshot = new AudioCallSnapshot(new AudioCallId(2L, 3L, 1), null, null,
+            zeroLocalIdentifiers, Set.of(), 2_000L, 3_000L, 1, 1, 2_000L, 3_000L,
+            false, true, false, true, 100, false);
+        P25ActivityLogRecords.CompletedCallOutput zeroLocalOutput = mapper.mapCompletedCallOutput(
+            new CompletedAudioCall(zeroLocalSnapshot, List.of(new float[800])),
+            P25ActivityLogRecords.CallOutput.RECORDED);
+
+        assertNotNull(zeroLocalActivity);
+        assertEquals("0", zeroLocalActivity.targetId());
+        assertFullyQualified(zeroLocalActivity.p25TargetIdentity(), 0xABCDE, 0x321, 1_201);
+        assertNotNull(zeroLocalOutput);
+        assertEquals(0, zeroLocalOutput.destinationId());
+        assertEquals(Form.TALKGROUP.name(), zeroLocalOutput.targetKind());
+        assertFullyQualified(zeroLocalOutput.p25TargetIdentity(), 0xABCDE, 0x321, 1_201);
     }
 
     @Test

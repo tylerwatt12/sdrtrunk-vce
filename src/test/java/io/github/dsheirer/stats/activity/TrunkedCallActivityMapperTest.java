@@ -310,6 +310,20 @@ class TrunkedCallActivityMapperTest
         assertEquals(0xABCDE, attribution.p25TargetIdentity().homeWacn());
         assertEquals(0x321, attribution.p25TargetIdentity().homeSystemId());
         assertEquals(1_200, attribution.p25TargetIdentity().homeTalkgroupId());
+
+        MutableIdentifierCollection zeroLocalIdentifiers = new MutableIdentifierCollection();
+        zeroLocalIdentifiers.update(APCO25FullyQualifiedTalkgroupIdentifier.createTo(
+            0, 0xABCDE, 0x321, 1_201));
+        TrunkedCallAttributionEvent zeroLocalEvent = new TrunkedCallAttributionEvent(parent, Protocol.APCO25,
+            null, 1, 1_100L, zeroLocalIdentifiers, true, false, false, false);
+        P25ActivityLogRecords.TrunkedCallAttribution zeroLocal =
+            new TrunkedCallActivityMapper().map(zeroLocalEvent);
+
+        assertNotNull(zeroLocal);
+        assertEquals(0, zeroLocal.destinationId());
+        assertEquals(P25ActivityLogRecords.P25IdentityState.STABLE_FULLY_QUALIFIED,
+            zeroLocal.p25TargetIdentity().state());
+        assertEquals(1_201, zeroLocal.p25TargetIdentity().homeTalkgroupId());
     }
 
     private static DMRTier3Channel dmrChannel(long frequency, int timeslot)

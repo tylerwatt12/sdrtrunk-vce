@@ -36,9 +36,22 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class P25AliasTest
 {
+    @Test
+    void fullyQualifiedTalkgroupAliasRejectsReservedHomeTalkgroups()
+    {
+        assertFalse(new P25FullyQualifiedTalkgroup(0xBEE00, 0x348, 0).isValid());
+        assertTrue(new P25FullyQualifiedTalkgroup(0xBEE00, 0x348, 1).isValid());
+        assertTrue(new P25FullyQualifiedTalkgroup(0xBEE00, 0x348, 0xFFFE).isValid());
+        assertFalse(new P25FullyQualifiedTalkgroup(0xBEE00, 0x348, 0xFFFF).isValid());
+        assertFalse(new P25FullyQualifiedTalkgroup(0x100000, 0x348, 1).isValid());
+        assertFalse(new P25FullyQualifiedTalkgroup(0xBEE00, 0x1000, 1).isValid());
+    }
+
     @Test
     void aliasP25Talkgroup()
     {

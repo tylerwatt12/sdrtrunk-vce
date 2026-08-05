@@ -12,6 +12,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.dsheirer.alias.AliasAdministrationService;
+import io.github.dsheirer.alias.AliasAdministrationServiceTestSupport;
+import io.github.dsheirer.alias.AliasListFamily;
+import io.github.dsheirer.alias.AliasModel;
+import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.preference.PreferenceType;
@@ -61,11 +66,19 @@ class StatsWebServerServiceLifecycleTest
         TestApplicationPreference applicationPreference = new TestApplicationPreference(0, false, false, true);
         TestUserPreferences preferences = new TestUserPreferences(applicationPreference,
             new TestDirectoryPreference(dataRoot));
+        ConfigurationManager configurationManager = new ConfigurationManager(preferences, null,
+            new AliasModel(), null, null);
+        configurationManager.init();
+        AliasAdministrationService aliasAdministrationService =
+            AliasAdministrationServiceTestSupport.create(configurationManager);
+        AliasAdministrationService.MutationResult createdList = aliasAdministrationService.createAliasList(
+            "Lifecycle P25", AliasListFamily.P25, aliasAdministrationService.catalog().revision());
+        long aliasListId = createdList.aliasListId();
         StatsWebServerService service = null;
 
         try
         {
-            service = new StatsWebServerService(preferences);
+            service = new StatsWebServerService(preferences, null, null, aliasAdministrationService);
             WebServerRuntimeState initial = service.getRuntimeState();
             assertTrue(initial.running());
             assertTrue(initial.port() > 0);
@@ -89,6 +102,7 @@ class StatsWebServerServiceLifecycleTest
             URI initialOrigin = origin(initial.port());
             String cookie = login(client, initialOrigin, "primary-admin-password");
             assertAuthenticated(client, initialOrigin, cookie, true);
+            assertAliasRoutes(client, initialOrigin, cookie, aliasListId);
 
             int replacementPort = availableLoopbackPort();
             applicationPreference.setPort(replacementPort);
@@ -97,11 +111,13 @@ class StatsWebServerServiceLifecycleTest
             assertTrue(rebound.running());
             assertEquals(replacementPort, rebound.port());
             assertAuthenticated(client, origin(replacementPort), cookie, true);
+            assertAliasRoutes(client, origin(replacementPort), cookie, aliasListId);
 
             WebServerRuntimeState recycled = service.reloadActiveListener();
             assertTrue(recycled.running());
             assertEquals(replacementPort, recycled.port());
             assertAuthenticated(client, origin(replacementPort), cookie, true);
+            assertAliasRoutes(client, origin(replacementPort), cookie, aliasListId);
 
             try(ServerSocket occupied = new ServerSocket(0, 50, InetAddress.getLoopbackAddress()))
             {
@@ -113,6 +129,7 @@ class StatsWebServerServiceLifecycleTest
                 assertTrue(retained.statusMessage().contains("previous listener remains active"));
                 assertFalse(retained.statusMessage().contains("\n"));
                 assertAuthenticated(client, origin(replacementPort), cookie, true);
+                assertAliasRoutes(client, origin(replacementPort), cookie, aliasListId);
             }
 
             applicationPreference.setEnabled(false);
@@ -173,11 +190,19 @@ class StatsWebServerServiceLifecycleTest
         TestApplicationPreference applicationPreference = new TestApplicationPreference(0, true, false, true);
         TestUserPreferences preferences = new TestUserPreferences(applicationPreference,
             new TestDirectoryPreference(dataRoot));
+        ConfigurationManager configurationManager = new ConfigurationManager(preferences, null,
+            new AliasModel(), null, null);
+        configurationManager.init();
+        AliasAdministrationService aliasAdministrationService =
+            AliasAdministrationServiceTestSupport.create(configurationManager);
+        AliasAdministrationService.MutationResult createdList = aliasAdministrationService.createAliasList(
+            "HTTPS Lifecycle P25", AliasListFamily.P25, aliasAdministrationService.catalog().revision());
+        long aliasListId = createdList.aliasListId();
         StatsWebServerService service = null;
 
         try
         {
-            service = new StatsWebServerService(preferences);
+            service = new StatsWebServerService(preferences, null, null, aliasAdministrationService);
             WebServerRuntimeState state = service.getRuntimeState();
             assertTrue(state.running(), state.statusMessage());
             assertTrue(state.anyIpEnabled());
@@ -198,6 +223,21 @@ class StatsWebServerServiceLifecycleTest
                 mTemporaryDirectory.resolve("custom-certificate-source"));
             TlsMaterial replacement = customSource.generateSelfSigned("replacement.receiver.test",
                 List.of("replacement.receiver.test", "127.0.0.1"));
+            HttpClient client = httpsClient(material, replacement);
+            URI origin = httpsOrigin(state.port());
+            char[] password = "automatic-https-admin-password".toCharArray();
+
+            try
+            {
+                service.provisionOrResetPrimaryAdmin(password);
+            }
+            finally
+            {
+                Arrays.fill(password, '\u0000');
+            }
+
+            String cookie = login(client, origin, "automatic-https-admin-password");
+            assertAliasRoutes(client, origin, cookie, aliasListId);
             StatsWebServerService.TlsActivation activation =
                 service.installAndActivateCustomCertificate(replacement);
             WebServerRuntimeState reloaded = activation.runtimeState();
@@ -206,6 +246,8 @@ class StatsWebServerServiceLifecycleTest
             assertEquals(replacement.leafSha256Fingerprint(), reloaded.certificateFingerprint());
             assertEquals(WebCertificateMode.CUSTOM, applicationPreference.getStatsWebServerCertificateMode());
             assertHttpsIndex(replacement, reloaded.port());
+            assertAuthenticated(client, httpsOrigin(reloaded.port()), cookie, true);
+            assertAliasRoutes(client, httpsOrigin(reloaded.port()), cookie, aliasListId);
         }
         finally
         {
@@ -286,6 +328,29 @@ class StatsWebServerServiceLifecycleTest
         assertEquals(expected, body.get("authenticated").booleanValue());
     }
 
+    private static void assertAliasRoutes(HttpClient client, URI origin, String cookie, long aliasListId)
+        throws Exception
+    {
+        HttpResponse<String> catalog = client.send(HttpRequest.newBuilder(origin.resolve(
+                "/api/v1/admin/alias-lists"))
+            .timeout(Duration.ofSeconds(10))
+            .header("Cookie", cookie)
+            .GET()
+            .build(), HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, catalog.statusCode(), catalog.body());
+        assertEquals(aliasListId,
+            OBJECT_MAPPER.readTree(catalog.body()).at("/aliasLists/0/id").longValue());
+
+        HttpResponse<String> observed = client.send(HttpRequest.newBuilder(origin.resolve(
+                "/api/alias-list/observed-talkgroups?list=" + aliasListId))
+            .timeout(Duration.ofSeconds(10))
+            .header("Cookie", cookie)
+            .GET()
+            .build(), HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, observed.statusCode(), observed.body());
+        assertTrue(OBJECT_MAPPER.readTree(observed.body()).get("rows").isArray());
+    }
+
     private static String login(HttpClient client, URI origin, String password) throws Exception
     {
         HttpResponse<String> response = client.send(HttpRequest.newBuilder(origin.resolve(
@@ -306,23 +371,37 @@ class StatsWebServerServiceLifecycleTest
         return URI.create("http://127.0.0.1:" + port);
     }
 
+    private static URI httpsOrigin(int port)
+    {
+        return URI.create("https://127.0.0.1:" + port);
+    }
+
     private static void assertHttpsIndex(TlsMaterial material, int port) throws Exception
+    {
+        HttpClient client = httpsClient(material);
+        HttpResponse<String> response = client.send(HttpRequest.newBuilder(httpsOrigin(port).resolve("/"))
+            .timeout(Duration.ofSeconds(10)).GET().build(), HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, response.statusCode(), response.body());
+        assertTrue(response.body().contains("<title>test</title>"), response.body());
+    }
+
+    private static HttpClient httpsClient(TlsMaterial... materials) throws Exception
     {
         KeyStore trustStore = KeyStore.getInstance(KeyStore.getDefaultType());
         trustStore.load(null, null);
-        trustStore.setCertificateEntry("web-listener", material.leafCertificate());
+
+        for(int x = 0; x < materials.length; x++)
+        {
+            trustStore.setCertificateEntry("web-listener-" + x, materials[x].leafCertificate());
+        }
+
         TrustManagerFactory trustManagerFactory =
             TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
         trustManagerFactory.init(trustStore);
         SSLContext sslContext = SSLContext.getInstance("TLS");
         sslContext.init(null, trustManagerFactory.getTrustManagers(), null);
-        HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5))
+        return HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5))
             .sslContext(sslContext).build();
-        HttpResponse<String> response = client.send(HttpRequest.newBuilder(
-                URI.create("https://127.0.0.1:" + port + "/"))
-            .timeout(Duration.ofSeconds(10)).GET().build(), HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, response.statusCode(), response.body());
-        assertTrue(response.body().contains("<title>test</title>"), response.body());
     }
 
     private static int availableLoopbackPort() throws Exception

@@ -336,31 +336,31 @@ public final class AliasAdministrationService
 
     private MutationResult mutate(long expectedRevision, Supplier<MutationTarget> operation)
     {
-        return onConfigurationThread(() ->
-        {
-            requireRevision(expectedRevision);
-            MutationTarget target = operation.get();
-
-            try
+        return onConfigurationThread(() -> mConfigurationManager.applyConfigurationMutation(() ->
             {
-                mConfigurationManager.flushConfiguration();
-            }
-            catch(RuntimeException exception)
-            {
-                rollback(target, exception);
-                throw new PersistenceException("Unable to save alias configuration", exception);
-            }
+                requireRevision(expectedRevision);
+                MutationTarget target = operation.get();
 
-            if(target.afterCommit() != null)
-            {
-                target.afterCommit().run();
-            }
+                try
+                {
+                    mConfigurationManager.flushConfiguration();
+                }
+                catch(RuntimeException exception)
+                {
+                    rollback(target, exception);
+                    throw new PersistenceException("Unable to save alias configuration", exception);
+                }
 
-            List<Long> ids = target.aliases().isEmpty() && target.alias() != null ?
-                List.of(target.alias().getId()) : target.aliases();
-            Long aliasListId = target.aliasList() != null ? target.aliasList().getId() : null;
-            return new MutationResult(revision(), aliasListId, ids, target.affected());
-        });
+                if(target.afterCommit() != null)
+                {
+                    target.afterCommit().run();
+                }
+
+                List<Long> ids = target.aliases().isEmpty() && target.alias() != null ?
+                    List.of(target.alias().getId()) : target.aliases();
+                Long aliasListId = target.aliasList() != null ? target.aliasList().getId() : null;
+                return new MutationResult(revision(), aliasListId, ids, target.affected());
+            }));
     }
 
     private Catalog catalogOnConfigurationThread()

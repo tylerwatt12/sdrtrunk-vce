@@ -189,9 +189,10 @@ public final class AliasListDefinitionResolver
 
             Alias catchAll = candidates.getFirst();
 
-            //A fixed Stream As value would collapse every received talkgroup into one false identity.  The new policy
-            //deliberately has no equivalent, so preserve this unusual legacy row for manual review.
-            if(catchAll.getStreamTalkgroupAlias() != null)
+            //A fixed Stream As value would collapse every received talkgroup into one false identity.  List-owned
+            //policy also has no appearance fields, so preserve styled legacy rows rather than silently discard
+            //administrator-owned description, grouping, color, or icon metadata.
+            if(catchAll.getStreamTalkgroupAlias() != null || hasCustomAppearance(catchAll))
             {
                 continue;
             }
@@ -201,6 +202,13 @@ public final class AliasListDefinitionResolver
                     .map(BroadcastChannel::getChannelName).toList()));
             aliases.remove(catchAll);
         }
+    }
+
+    private static boolean hasCustomAppearance(Alias alias)
+    {
+        return (alias.getDescription() != null && !alias.getDescription().isBlank()) ||
+            (alias.getGroup() != null && !alias.getGroup().isBlank()) || alias.getColor() != 0 ||
+            (alias.getIconName() != null && !alias.getIconName().isBlank());
     }
 
     private static Set<String> reserveSingleFamilyNames(Iterable<LegacyListGroup> groups)

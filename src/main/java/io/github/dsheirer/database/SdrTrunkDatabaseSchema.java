@@ -125,9 +125,6 @@ public final class SdrTrunkDatabaseSchema
         new SqliteSchemaValidator.Definition("index", "idx_alias_broadcast_channel_name",
             "CREATE INDEX IF NOT EXISTS idx_alias_broadcast_channel_name " +
                 "ON alias_broadcast_channel(channel_name)"),
-        new SqliteSchemaValidator.Definition("index", "idx_alias_list_unmatched_talkgroup_stream_name",
-            "CREATE INDEX IF NOT EXISTS idx_alias_list_unmatched_talkgroup_stream_name " +
-                "ON alias_list_unmatched_talkgroup_stream(channel_name)"),
         new SqliteSchemaValidator.Definition("view", "alias_talkgroup", """
             CREATE VIEW IF NOT EXISTS alias_talkgroup AS
             SELECT alias.id AS alias_id,
@@ -176,7 +173,6 @@ public final class SdrTrunkDatabaseSchema
         "idx_alias_radio_value",
         "idx_alias_radio_range",
         "idx_alias_broadcast_channel_name",
-        "idx_alias_list_unmatched_talkgroup_stream_name",
         "idx_configuration_channel_sort",
         "idx_configuration_channel_alias_list",
         "idx_configuration_channel_decoder",

@@ -124,9 +124,12 @@ final class P25ActivityLogRecords
             {
                 if(homeWacn == null || homeWacn < 0 || homeWacn > 0xFFFFF ||
                     homeSystemId == null || homeSystemId < 0 || homeSystemId > 0xFFF ||
-                    homeTalkgroupId == null || homeTalkgroupId < 0 || homeTalkgroupId > 0xFFFF)
+                    homeTalkgroupId == null || homeTalkgroupId <= 0 || homeTalkgroupId >= 0xFFFF)
                 {
-                    throw new IllegalArgumentException("Invalid P25 fully-qualified talkgroup identity");
+                    state = P25IdentityState.UNKNOWN;
+                    homeWacn = null;
+                    homeSystemId = null;
+                    homeTalkgroupId = null;
                 }
             }
             else
@@ -146,6 +149,11 @@ final class P25ActivityLogRecords
         int stateCode()
         {
             return state.code();
+        }
+
+        boolean isStableFullyQualified()
+        {
+            return state == P25IdentityState.STABLE_FULLY_QUALIFIED;
         }
     }
 

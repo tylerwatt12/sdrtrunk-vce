@@ -201,6 +201,24 @@ class CallAttributionTracker
         }
     }
 
+    private static Integer nonNegative(String value)
+    {
+        if(value == null || value.isBlank())
+        {
+            return null;
+        }
+
+        try
+        {
+            int parsed = Integer.parseInt(value);
+            return parsed >= 0 ? parsed : null;
+        }
+        catch(NumberFormatException e)
+        {
+            return null;
+        }
+    }
+
     private static Integer eligibleSource(P25ActivityLogRecords.ActivityEvent activity)
     {
         Integer source = activity != null ? positive(activity.sourceRadioId()) : null;
@@ -311,12 +329,15 @@ class CallAttributionTracker
         private boolean isKnown()
         {
             return identityId > 0 && (Form.TALKGROUP.name().equals(kind) ||
-                Form.PATCH_GROUP.name().equals(kind) || Form.RADIO.name().equals(kind));
+                Form.PATCH_GROUP.name().equals(kind) || Form.RADIO.name().equals(kind)) ||
+                identityId == 0 && Form.TALKGROUP.name().equals(kind) &&
+                    p25TargetIdentity.isStableFullyQualified();
         }
 
         private boolean sameIdentity(Destination other)
         {
-            return other != null && identityId == other.identityId() && Objects.equals(kind, other.kind());
+            return other != null && identityId == other.identityId() && Objects.equals(kind, other.kind()) &&
+                (identityId != 0 || Objects.equals(p25TargetIdentity, other.p25TargetIdentity()));
         }
 
         private Destination withP25IdentityEvidence(List<Integer> patchMemberIds,
@@ -329,12 +350,18 @@ class CallAttributionTracker
 
         private static Destination from(P25ActivityLogRecords.ActivityEvent activity)
         {
-            Integer identity = activity != null ? positive(activity.targetId()) : null;
+            Integer identity = activity != null ? nonNegative(activity.targetId()) : null;
             Integer kind = activity != null ? TrunkedIdentityPolicy.identityKindCode(activity.targetKind()) : null;
             int protocol = activity != null ? TrunkedIdentityPolicy.protocolFamilyCode(activity.protocol()) : 0;
 
-            if(identity != null && kind != null &&
-                TrunkedIdentityPolicy.isDirectoryIdentity(protocol, activity.identityDomain(), kind, identity))
+            boolean directoryIdentity = identity != null && identity > 0 && kind != null &&
+                TrunkedIdentityPolicy.isDirectoryIdentity(protocol, activity.identityDomain(), kind, identity);
+            boolean zeroLocalFullyQualified = identity != null && identity == 0 &&
+                protocol == TrunkedIdentityPolicy.PROTOCOL_P25 &&
+                Integer.valueOf(TrunkedIdentityPolicy.IDENTITY_KIND_TALKGROUP).equals(kind) &&
+                activity.p25TargetIdentity().isStableFullyQualified();
+
+            if(directoryIdentity || zeroLocalFullyQualified)
             {
                 return new Destination(identity, activity.targetKind(),
                     activity.patchMemberTalkgroupIds() != null ?

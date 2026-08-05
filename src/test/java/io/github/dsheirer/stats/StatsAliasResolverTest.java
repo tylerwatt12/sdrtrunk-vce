@@ -64,7 +64,18 @@ class StatsAliasResolverTest
             Map<String,Object> none = observedP25Row(1200);
             Map<String,Object> unknown = observedP25Row(701);
             unknown.put("p25_identity_state_code", 0);
-            List<Map<String,Object>> rows = rows(exact, ordinarySameNumber, range, none, unknown);
+            Map<String,Object> reservedZero = observedP25Row(0);
+            reservedZero.put("p25_identity_state_code", 2);
+            reservedZero.put("p25_home_wacn", 0xBEE00);
+            reservedZero.put("p25_home_system_id", 0x348);
+            reservedZero.put("p25_home_talkgroup_id", 0);
+            Map<String,Object> reservedMaximum = observedP25Row(0);
+            reservedMaximum.put("p25_identity_state_code", 2);
+            reservedMaximum.put("p25_home_wacn", 0xBEE00);
+            reservedMaximum.put("p25_home_system_id", 0x348);
+            reservedMaximum.put("p25_home_talkgroup_id", 0xFFFF);
+            List<Map<String,Object>> rows = rows(exact, ordinarySameNumber, range, none, unknown,
+                reservedZero, reservedMaximum);
             resolver.resolveObservedTalkgroups(connection, rows);
 
             assertEquals("exact", exact.get("match_kind"));
@@ -84,6 +95,12 @@ class StatsAliasResolverTest
             assertEquals(false, unknown.get("promotion_supported"));
             assertEquals("none", unknown.get("match_kind"));
             assertEquals("This observation predates P25 identity qualification", unknown.get("promotion_reason"));
+            assertEquals(false, reservedZero.get("promotion_supported"));
+            assertEquals("none", reservedZero.get("match_kind"));
+            assertEquals("The stored fully-qualified P25 identity is incomplete",
+                reservedZero.get("promotion_reason"));
+            assertEquals(false, reservedMaximum.get("promotion_supported"));
+            assertEquals("none", reservedMaximum.get("match_kind"));
 
             statement.executeUpdate("""
                 INSERT INTO alias (

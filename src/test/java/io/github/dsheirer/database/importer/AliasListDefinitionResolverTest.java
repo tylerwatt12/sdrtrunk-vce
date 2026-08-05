@@ -388,6 +388,31 @@ class AliasListDefinitionResolverTest
     }
 
     @Test
+    void preservesStyledFullRangeAliasForManualReview()
+    {
+        ConfigurationState state = new ConfigurationState();
+        state.setChannels(List.of(channel("Metro P25", "Metro", new DecodeConfigP25Phase1())));
+        Alias catchAll = alias("Styled Unknown Talkgroups", "Metro",
+            new TalkgroupRange(Protocol.APCO25, 1, 0xFFFF));
+        catchAll.setDescription("Keep this administrator note");
+        catchAll.setGroup("Legacy Rules");
+        catchAll.setColor(0x123456);
+        catchAll.setIconName("Question");
+        state.setAliases(List.of(catchAll));
+
+        AliasListDefinitionResolver.normalizeLegacyState(state);
+
+        assertEquals(1, state.getAliases().size());
+        Alias preserved = state.getAliases().getFirst();
+        assertEquals("Keep this administrator note", preserved.getDescription());
+        assertEquals("Legacy Rules", preserved.getGroup());
+        assertEquals(0x123456, preserved.getColor());
+        assertEquals("Question", preserved.getIconName());
+        assertEquals(UnmatchedTalkgroupPolicy.DEFAULT,
+            state.getAliasListDefinitions().getFirst().getUnmatchedTalkgroupPolicy());
+    }
+
+    @Test
     void preservesMultipleCatchAllAliasesRatherThanGuessing()
     {
         ConfigurationState state = new ConfigurationState();

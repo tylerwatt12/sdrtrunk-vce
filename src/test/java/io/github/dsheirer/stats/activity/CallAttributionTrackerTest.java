@@ -178,6 +178,40 @@ class CallAttributionTrackerTest
     }
 
     @Test
+    void treatsZeroLocalP25TalkgroupAsKnownOnlyWithOneStableHomeTuple()
+    {
+        CallAttributionTracker tracker = new CallAttributionTracker();
+        tracker.register(activity(5_500L, null, 101, false, true));
+        P25ActivityLogRecords.P25TargetIdentity firstIdentity =
+            P25ActivityLogRecords.P25TargetIdentity.fullyQualified(0xABCDE, 0x321, 1_200);
+
+        CallAttributionTracker.AttributionResult identified = tracker.enrich(
+            activity(5_600L, 0, 101, false, false,
+                P25ActivityLogRecords.IdentityDomain.STANDARD, null, null, firstIdentity));
+
+        assertTrue(identified.tracked());
+        assertNotNull(identified.attribution());
+        assertTrue(identified.attribution().destinationBecameKnown());
+        assertEquals(0, identified.attribution().destinationId());
+        assertEquals(firstIdentity, identified.attribution().p25TargetIdentity());
+
+        CallAttributionTracker.AttributionResult repeated = tracker.enrich(
+            activity(5_700L, 0, 101, false, false,
+                P25ActivityLogRecords.IdentityDomain.STANDARD, null, null, firstIdentity));
+        assertTrue(repeated.tracked());
+        assertNull(repeated.attribution());
+
+        CallAttributionTracker.AttributionResult conflicting = tracker.enrich(
+            activity(5_800L, 0, 101, false, false,
+                P25ActivityLogRecords.IdentityDomain.STANDARD, null, null,
+                P25ActivityLogRecords.P25TargetIdentity.fullyQualified(0xABCDE, 0x322, 1_201)));
+        assertTrue(conflicting.tracked());
+        assertNull(conflicting.attribution(), "A different home tuple is a different physical call");
+        assertFalse(tracker.enrich(activity(5_900L, 0, 101, false, false,
+            P25ActivityLogRecords.IdentityDomain.STANDARD, null, null, firstIdentity)).tracked());
+    }
+
+    @Test
     void mergesPatchMemberEvidenceByLocalIdentityWithoutDowngradingIt()
     {
         CallAttributionTracker tracker = new CallAttributionTracker();
