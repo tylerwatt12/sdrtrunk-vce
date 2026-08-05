@@ -56,11 +56,6 @@ final class P25P1ControlNACAuthority
         };
     }
 
-    int getNAC()
-    {
-        return mAuthority.getNAC();
-    }
-
     void reset()
     {
         mAuthority.reset();

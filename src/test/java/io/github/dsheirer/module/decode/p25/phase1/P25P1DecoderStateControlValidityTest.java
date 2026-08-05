@@ -67,33 +67,55 @@ class P25P1DecoderStateControlValidityTest
     {
         for(P25P1DataUnitID dataUnit: CONTROL_DATA_UNITS)
         {
-            List<DecoderStateEvent> events = receive(new DecodeConfigP25Phase1(), dataUnit, false);
+            List<DecoderStateEvent> events = receive(new DecodeConfigP25Phase1(), dataUnit, false, 0x123);
 
             assertEquals(1, events.size(), dataUnit::toString);
             assertEquals(State.CONTROL, events.getFirst().getState(), dataUnit::toString);
         }
     }
 
+    @Test
+    void foreignInvalidControlFramesCannotHoldTrunkedChannel()
+    {
+        for(P25P1DataUnitID dataUnit: CONTROL_DATA_UNITS)
+        {
+            List<DecoderStateEvent> events = receive(new DecodeConfigP25Phase1(), dataUnit, false, 0x456);
+
+            assertTrue(events.isEmpty(),
+                () -> dataUnit + " from a foreign NAC emitted control-channel activity");
+        }
+    }
+
     private static List<DecoderStateEvent> receive(DecodeConfiguration configuration,
                                                     P25P1DataUnitID dataUnit, boolean valid)
+    {
+        return receive(configuration, dataUnit, valid, 0x123);
+    }
+
+    private static List<DecoderStateEvent> receive(DecodeConfiguration configuration,
+                                                    P25P1DataUnitID dataUnit, boolean valid, int nac)
     {
         Channel channel = new Channel("Test", ChannelType.STANDARD);
         channel.setDecodeConfiguration(configuration);
         P25P1DecoderState decoderState = new P25P1DecoderState(channel, null);
+        P25P1MessageProcessor processor =
+            new P25P1MessageProcessor(configuration instanceof DecodeConfigP25Phase1);
         List<DecoderStateEvent> events = new ArrayList<>();
         decoderState.setDecoderStateListener(events::add);
+        processor.setDecoderStateListener(events::add);
+        processor.setMessageListener(decoderState::receive);
 
         if(configuration instanceof DecodeConfigP25Phase1)
         {
-            decoderState.receive(new NACAuthorityMessage(997L));
-            decoderState.receive(new NACAuthorityMessage(998L));
-            decoderState.receive(new NACAuthorityMessage(999L));
+            processor.receive(new NACAuthorityMessage(997L));
+            processor.receive(new NACAuthorityMessage(998L));
+            processor.receive(new NACAuthorityMessage(999L));
             events.clear();
         }
 
-        TestMessage message = new TestMessage(dataUnit);
+        TestMessage message = new TestMessage(dataUnit, nac);
         message.setValid(valid);
-        decoderState.receive(message);
+        processor.receive(message);
         return events;
     }
 
@@ -127,9 +149,9 @@ class P25P1DecoderStateControlValidityTest
     {
         private final P25P1DataUnitID mDataUnit;
 
-        private TestMessage(P25P1DataUnitID dataUnit)
+        private TestMessage(P25P1DataUnitID dataUnit, int nac)
         {
-            super(new CorrectedBinaryMessage(0), 0x123, 1_000L);
+            super(new CorrectedBinaryMessage(0), nac, 1_000L);
             mDataUnit = dataUnit;
         }
 

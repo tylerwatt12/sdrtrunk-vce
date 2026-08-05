@@ -20,6 +20,8 @@
 package io.github.dsheirer.module.decode.p25.phase1;
 
 import com.google.common.eventbus.Subscribe;
+import io.github.dsheirer.channel.state.DecoderStateEvent;
+import io.github.dsheirer.channel.state.IDecoderStateEventProvider;
 import io.github.dsheirer.dsp.filter.FilterFactory;
 import io.github.dsheirer.dsp.filter.decimate.DecimationFilterFactory;
 import io.github.dsheirer.dsp.filter.decimate.IRealDecimationFilter;
@@ -51,7 +53,7 @@ import org.slf4j.LoggerFactory;
  * correction.  It also provides a stream of demodulated soft symbols (in radians) for display to the user.
  */
 public class P25P1DecoderLSM extends FeedbackDecoder implements IByteBufferProvider, IComplexSamplesListener, ISourceEventListener,
-    Listener<ComplexSamples>
+    Listener<ComplexSamples>, IDecoderStateEventProvider
 {
     private static final Logger LOGGER = LoggerFactory.getLogger(P25P1DecoderLSM.class);
     private static final Map<Double,float[]> BASEBAND_FILTERS = new HashMap<>();
@@ -311,6 +313,18 @@ public class P25P1DecoderLSM extends FeedbackDecoder implements IByteBufferProvi
         mMessageFramer.resetForSourceFrequencyChange();
         mDemodulator.resetPLL();
         mMessageProcessor.resetForSourceFrequencyChange();
+    }
+
+    @Override
+    public void setDecoderStateListener(Listener<DecoderStateEvent> listener)
+    {
+        mMessageProcessor.setDecoderStateListener(listener);
+    }
+
+    @Override
+    public void removeDecoderStateListener()
+    {
+        mMessageProcessor.removeDecoderStateListener();
     }
 
     @Override

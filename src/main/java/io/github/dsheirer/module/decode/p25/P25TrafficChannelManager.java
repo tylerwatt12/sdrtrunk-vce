@@ -72,7 +72,6 @@ import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.standard.osp.Net
 import io.github.dsheirer.module.decode.p25.phase2.DecodeConfigP25Phase2;
 import io.github.dsheirer.module.decode.p25.phase2.P25P2ScrambleParametersPreloadData;
 import io.github.dsheirer.module.decode.p25.phase2.enumeration.ScrambleParameters;
-import io.github.dsheirer.module.decode.p25.phase2.message.mac.MacMessage;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.MacOpcode;
 import io.github.dsheirer.module.decode.p25.reference.DataServiceOptions;
 import io.github.dsheirer.module.decode.p25.reference.ServiceOptions;
@@ -142,8 +141,6 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     private Map<Integer, IFrequencyBand> mFrequencyBandMap = new ConcurrentHashMap<>();
     private final P25FrequencyBandConfirmationTracker mFrequencyBandConfirmationTracker =
         new P25FrequencyBandConfirmationTracker();
-    private final P25NACAuthority mP2ControlNACAuthority = new P25NACAuthority();
-    private volatile boolean mP2ControlNACGateOpen;
     private Listener<ChannelEvent> mChannelEventListener;
     private Listener<IDecodeEvent> mDecodeEventListener;
     private TrafficChannelTeardownMonitor mTrafficChannelTeardownMonitor = new TrafficChannelTeardownMonitor();
@@ -440,67 +437,6 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
         channel.setFrequencyBand(frequencyBand);
         return P25FrequencyBandValidator.isResolvedChannel(channel);
-    }
-
-    /**
-     * Observes a CRC-valid Phase 2 LCCH physical unit and returns its frozen NAC only after three consecutive matching
-     * units. Multiple MAC structures from the same timeslot/timestamp count as one physical observation.
-     */
-    public int observeP2ControlNAC(MacMessage message)
-    {
-        if(!mParentChannel.isStandardChannel() ||
-            !(mParentChannel.getDecodeConfiguration() instanceof DecodeConfigP25Phase2) || message == null ||
-            !message.isValid() || !message.getDataUnitID().isLCCH() || !message.hasNAC())
-        {
-            return P25NACAuthority.NO_NAC;
-        }
-
-        Object value = message.getNAC().getValue();
-
-        if(!(value instanceof Number number) || !P25P1NACPreloadDataContent.isConcreteNAC(number.intValue()))
-        {
-            mP2ControlNACGateOpen = false;
-            return P25NACAuthority.NO_NAC;
-        }
-
-        mLock.lock();
-
-        try
-        {
-            int nac = number.intValue();
-
-            if(message.isNACAuthorityValidated())
-            {
-                mP2ControlNACGateOpen = mP2ControlNACAuthority.establishFromValidatedUpstream(nac);
-                return mP2ControlNACGateOpen ? mP2ControlNACAuthority.getNAC() : P25NACAuthority.NO_NAC;
-            }
-
-            P25NACAuthority.Result result =
-                mP2ControlNACAuthority.observe(nac, message.getTimestamp(), message.getTimeslot());
-            mP2ControlNACGateOpen = result == P25NACAuthority.Result.ESTABLISHED ||
-                result == P25NACAuthority.Result.MATCH;
-            return mP2ControlNACGateOpen ? mP2ControlNACAuthority.getNAC() : P25NACAuthority.NO_NAC;
-        }
-        finally
-        {
-            mLock.unlock();
-        }
-    }
-
-    /**
-     * Current frozen Phase 2 control NAC, or -1 until authority is established.
-     */
-    public int getP2ControlNAC()
-    {
-        return mP2ControlNACAuthority.getNAC();
-    }
-
-    /**
-     * Indicates that the most recently observed LCCH unit matched the frozen authority.
-     */
-    public boolean isP2ControlNACGateOpen()
-    {
-        return mP2ControlNACGateOpen;
     }
 
     /**
@@ -2433,8 +2369,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     }
 
     /**
-     * Clears all facts learned from the current control source. NAC authority, band plans and learned Phase 2
-     * scramble parameters must share the same lifetime so facts from one source cannot authorize another.
+     * Clears band plans and learned Phase 2 scramble parameters from the current control source.
      */
     public void resetControlSourceState()
     {
@@ -2444,8 +2379,6 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         {
             mFrequencyBandMap.clear();
             mFrequencyBandConfirmationTracker.reset();
-            mP2ControlNACAuthority.reset();
-            mP2ControlNACGateOpen = false;
 
             if(mPhase2ScrambleParameters != null)
             {
@@ -2495,7 +2428,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     }
 
     /**
-     * Captures Phase 2 scramble parameters only after the Phase 1 decoder state has authorized the source NAC.
+     * Captures Phase 2 scramble parameters from the Phase 1 processor's authorized message stream.
      */
     public void processP1ControlScrambleParameters(P25P1Message message)
     {
@@ -2515,9 +2448,14 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             candidate = nsb.getScrambleParameters();
         }
 
+        if(candidate == null)
+        {
+            return;
+        }
+
         Object nacValue = message.getNAC().getValue();
 
-        if(candidate == null || !(nacValue instanceof Number number) || candidate.getNAC() != number.intValue())
+        if(!(nacValue instanceof Number number) || candidate.getNAC() != number.intValue())
         {
             return;
         }
@@ -2556,15 +2494,10 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     {
         if(mMessageListener == null)
         {
-            mMessageListener = message -> {
-                //A standard Phase 1 control decoder dispatches candidate and rejected frames so its decoder state can
-                //establish NAC authority. Do not let this direct listener bypass that authority gate.
-                if(!(mParentChannel.isStandardChannel() &&
-                    mParentChannel.getDecodeConfiguration() instanceof DecodeConfigP25Phase1))
-                {
-                    processP1ControlScrambleParameters(message instanceof P25P1Message p25 ? p25 : null);
-                }
-            };
+            //Standard control decoders only publish messages after the processor's NAC gate, so this listener can
+            //trust the shared stream without maintaining a second authority counter.
+            mMessageListener = message ->
+                processP1ControlScrambleParameters(message instanceof P25P1Message p25 ? p25 : null);
         }
 
         return mMessageListener;

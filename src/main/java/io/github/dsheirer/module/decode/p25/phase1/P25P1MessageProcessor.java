@@ -19,6 +19,9 @@
 package io.github.dsheirer.module.decode.p25.phase1;
 
 import io.github.dsheirer.channel.IChannelDescriptor;
+import io.github.dsheirer.channel.state.DecoderStateEvent;
+import io.github.dsheirer.channel.state.IDecoderStateEventProvider;
+import io.github.dsheirer.channel.state.State;
 import io.github.dsheirer.message.AbstractMessage;
 import io.github.dsheirer.message.IMessage;
 import io.github.dsheirer.module.decode.p25.P25FrequencyBandValidator;
@@ -53,7 +56,7 @@ import org.slf4j.LoggerFactory;
  *
  * Performs post-message creation processing and enrichment before the message is sent downstream.
  */
-public class P25P1MessageProcessor implements Listener<IMessage>
+public class P25P1MessageProcessor implements Listener<IMessage>, IDecoderStateEventProvider
 {
     private static final Logger mLog = LoggerFactory.getLogger(P25P1MessageProcessor.class);
 
@@ -61,6 +64,7 @@ public class P25P1MessageProcessor implements Listener<IMessage>
      * Downstream message listener
      */
     private Listener<IMessage> mMessageListener;
+    private Listener<DecoderStateEvent> mDecoderStateEventListener;
 
     /**
      * Map of up to 16 band identifiers per RFSS.  These identifier update messages are inserted into any message that
@@ -129,27 +133,30 @@ public class P25P1MessageProcessor implements Listener<IMessage>
         {
             P25P1ControlNACAuthority.Result result = mControlNACAuthority.observe(p25P1Message);
 
-            if(result != P25P1ControlNACAuthority.Result.AUTHORIZED)
+            if(result == P25P1ControlNACAuthority.Result.CANDIDATE)
             {
-                if(result == P25P1ControlNACAuthority.Result.ESTABLISHED)
+                if(mDecoderStateEventListener != null)
                 {
-                    clearSourceState();
-                }
-                else if(result == P25P1ControlNACAuthority.Result.REJECTED)
-                {
-                    clearReassemblyState();
-                }
-
-                //Control messages must reach the decoder state while authority is being established.  Everything
-                //else is source data and stays fail-closed so that direct listeners (audio/recorders) cannot consume
-                //a voice or data unit from a foreign NAC.
-                if(result == P25P1ControlNACAuthority.Result.CANDIDATE ||
-                    result == P25P1ControlNACAuthority.Result.ESTABLISHED)
-                {
-                    dispatchUnprocessed(message);
+                    //Hold a multi-frequency control channel while authority is being established without exposing the
+                    //candidate message to audio, recording, streaming, or other shared message listeners.
+                    mDecoderStateEventListener.receive(
+                        new DecoderStateEvent(this, DecoderStateEvent.Event.DECODE, State.CONTROL));
                 }
 
                 return;
+            }
+
+            if(result == P25P1ControlNACAuthority.Result.REJECTED)
+            {
+                clearReassemblyState();
+                return;
+            }
+
+            if(result == P25P1ControlNACAuthority.Result.ESTABLISHED)
+            {
+                //The third matching control unit establishes this source. Clear anything assembled before trust was
+                //earned, then process this unit normally so channel startup does not wait for a fourth message.
+                clearSourceState();
             }
         }
 
@@ -331,14 +338,6 @@ public class P25P1MessageProcessor implements Listener<IMessage>
         }
     }
 
-    private void dispatchUnprocessed(IMessage message)
-    {
-        if(message != null && mMessageListener != null)
-        {
-            mMessageListener.receive(message);
-        }
-    }
-
     /**
      * Clears source-specific NAC, band-plan and fragment history when the RF source changes.
      */
@@ -412,7 +411,20 @@ public class P25P1MessageProcessor implements Listener<IMessage>
     public void dispose()
     {
         resetForSourceFrequencyChange();
+        mDecoderStateEventListener = null;
         mMessageListener = null;
+    }
+
+    @Override
+    public void setDecoderStateListener(Listener<DecoderStateEvent> listener)
+    {
+        mDecoderStateEventListener = listener;
+    }
+
+    @Override
+    public void removeDecoderStateListener()
+    {
+        mDecoderStateEventListener = null;
     }
 
     /**

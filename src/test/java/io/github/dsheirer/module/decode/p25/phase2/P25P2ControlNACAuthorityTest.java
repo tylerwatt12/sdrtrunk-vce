@@ -23,13 +23,13 @@ import io.github.dsheirer.channel.state.DecoderStateEvent;
 import io.github.dsheirer.channel.state.State;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.Channel.ChannelType;
+import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.IdentifierCollection;
-import io.github.dsheirer.identifier.Form;
+import io.github.dsheirer.identifier.IdentifierUpdateNotification;
 import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.patch.PatchGroupManager;
-import io.github.dsheirer.module.decode.p25.P25NACAuthority;
 import io.github.dsheirer.module.decode.p25.P25TrafficChannelManager;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
@@ -86,51 +86,6 @@ class P25P2ControlNACAuthorityTest
     }
 
     @Test
-    void sharedAuthorityCountsPhysicalLcchUnitsAndFreezes()
-    {
-        Channel parent = parent();
-        P25TrafficChannelManager manager = new P25TrafficChannelManager(parent);
-
-        assertEquals(P25NACAuthority.NO_NAC, manager.observeP2ControlNAC(message(NAC, 0, 1_000L, null)));
-        assertEquals(P25NACAuthority.NO_NAC, manager.observeP2ControlNAC(message(NAC, 0, 1_000L, null)),
-            "multiple structures from one physical LCCH unit must count once");
-        assertEquals(P25NACAuthority.NO_NAC, manager.observeP2ControlNAC(message(NAC, 1, 1_000L, null)),
-            "the other simultaneous timeslot is a distinct physical unit");
-        assertEquals(NAC, manager.observeP2ControlNAC(message(NAC, 0, 1_001L, null)));
-        assertEquals(P25NACAuthority.NO_NAC, manager.observeP2ControlNAC(message(FOREIGN_NAC, 0, 1_002L, null)));
-        assertEquals(NAC, manager.observeP2ControlNAC(message(NAC, 0, 1_003L, null)));
-        assertEquals(P25NACAuthority.NO_NAC, manager.observeP2ControlNAC(message(0xF7E, 0, 1_004L, null)));
-    }
-
-    @Test
-    void allThreeAuthorityObservationsMustFitWithinOneSecond()
-    {
-        P25TrafficChannelManager manager = new P25TrafficChannelManager(parent());
-
-        assertEquals(P25NACAuthority.NO_NAC, manager.observeP2ControlNAC(message(NAC, 0, 0L, null)));
-        assertEquals(P25NACAuthority.NO_NAC, manager.observeP2ControlNAC(message(NAC, 0, 1_000L, null)));
-        assertEquals(P25NACAuthority.NO_NAC, manager.observeP2ControlNAC(message(NAC, 0, 2_000L, null)));
-        assertEquals(P25NACAuthority.NO_NAC, manager.observeP2ControlNAC(message(NAC, 0, 2_001L, null)));
-        assertEquals(NAC, manager.observeP2ControlNAC(message(NAC, 0, 2_002L, null)));
-    }
-
-    @Test
-    void sourceFrequencyChangeRequiresFreshSharedAuthority()
-    {
-        Channel parent = parent();
-        P25TrafficChannelManager manager = new P25TrafficChannelManager(parent);
-        manager.setCurrentControlFrequency(851_000_000L, parent);
-        manager.observeP2ControlNAC(message(NAC, 0, 1_000L, null));
-        manager.observeP2ControlNAC(message(NAC, 0, 1_001L, null));
-        assertEquals(NAC, manager.observeP2ControlNAC(message(NAC, 0, 1_002L, null)));
-
-        manager.setCurrentControlFrequency(852_000_000L, parent);
-        assertEquals(P25NACAuthority.NO_NAC, manager.observeP2ControlNAC(message(FOREIGN_NAC, 0, 2_000L, null)));
-        assertEquals(P25NACAuthority.NO_NAC, manager.observeP2ControlNAC(message(FOREIGN_NAC, 0, 2_001L, null)));
-        assertEquals(FOREIGN_NAC, manager.observeP2ControlNAC(message(FOREIGN_NAC, 0, 2_002L, null)));
-    }
-
-    @Test
     void decoderStatePassesOnlyConfirmedMatchingNACIntoGrants()
     {
         assertConfirmedStateGrant(NAC);
@@ -144,11 +99,13 @@ class P25P2ControlNACAuthorityTest
         P25TrafficChannelManager controlManager = new P25TrafficChannelManager(control);
         P25P2DecoderState controlState =
             new P25P2DecoderState(control, 0, controlManager, new PatchGroupManager());
-        controlState.receive(message(NAC, 0, 1_000L, new Grant()));
-        controlState.receive(message(NAC, 0, 1_001L, new Grant()));
-        controlState.receive(message(NAC, 0, 1_002L, new Grant()));
-        controlState.receive(message(NAC, 0, 1_003L, new Band()));
-        controlState.receive(message(NAC, 0, 1_004L, new Band()));
+        P25P2MessageProcessor processor = new P25P2MessageProcessor(true);
+        processor.setMessageListener(controlState::receive);
+        processor.receive(fragment(signaling(message(NAC, 0, 1_000L, new Grant()))));
+        processor.receive(fragment(signaling(message(NAC, 0, 1_001L, new Grant()))));
+        processor.receive(fragment(signaling(message(NAC, 0, 1_002L, new Grant()))));
+        processor.receive(fragment(signaling(message(NAC, 0, 1_003L, new Band()))));
+        processor.receive(fragment(signaling(message(NAC, 0, 1_004L, new Band()))));
 
         APCO25Channel controlGrant = APCO25Channel.create(0, 1);
         assertTrue(controlManager.resolveControlChannel(controlGrant));
@@ -171,9 +128,6 @@ class P25P2ControlNACAuthorityTest
         Channel parent = parent();
         RecordingTrafficChannelManager manager = new RecordingTrafficChannelManager(parent);
         P25P2DecoderState state = new P25P2DecoderState(parent, 0, manager, new PatchGroupManager());
-        state.receive(message(NAC, 0, 1_000L, new NoOp()));
-        state.receive(message(NAC, 0, 1_001L, new NoOp()));
-        state.receive(message(NAC, 0, 1_002L, new NoOp()));
 
         state.receive(message(NAC, 0, 1_003L, DataUnitID.UNSCRAMBLED_FACCH, new Grant()));
         assertEquals(0, manager.mGrantCount, "FACCH traffic signaling cannot allocate from a control decoder");
@@ -206,18 +160,45 @@ class P25P2ControlNACAuthorityTest
         Channel parent = parent();
         P25TrafficChannelManager manager = new P25TrafficChannelManager(parent);
         P25P2DecoderState state = new P25P2DecoderState(parent, 0, manager, new PatchGroupManager());
-        state.receive(message(NAC, 0, 1_000L, new NoOp()));
-        state.receive(message(NAC, 0, 1_001L, new NoOp()));
-        state.receive(message(NAC, 0, 1_002L, new NoOp()));
+        P25P2MessageProcessor processor = new P25P2MessageProcessor(true);
+        processor.setMessageListener(state::receive);
+        processor.receive(fragment(signaling(message(NAC, 0, 1_000L, new NoOp()))));
+        processor.receive(fragment(signaling(message(NAC, 0, 1_001L, new NoOp()))));
+        processor.receive(fragment(signaling(message(NAC, 0, 1_002L, new NoOp()))));
 
         state.receiveDecoderStateEvent(new DecoderStateEvent(this, DecoderStateEvent.Event.REQUEST_RESET,
             State.IDLE, 0));
 
-        assertTrue(manager.isP2ControlNACGateOpen());
         Identifier nac = state.getIdentifierCollection().getIdentifier(IdentifierClass.NETWORK,
             Form.NETWORK_ACCESS_CODE, Role.BROADCAST);
         assertNotNull(nac);
         assertEquals(NAC, nac.getValue());
+    }
+
+    @Test
+    void repeatedAuthorizedNacDoesNotChurnIdentifierUpdates()
+    {
+        Channel parent = parent();
+        P25P2DecoderState state = new P25P2DecoderState(parent, 0,
+            new P25TrafficChannelManager(parent), new PatchGroupManager());
+        P25P2MessageProcessor processor = new P25P2MessageProcessor(true);
+        List<IdentifierUpdateNotification> updates = new ArrayList<>();
+        state.setIdentifierUpdateListener(notification ->
+        {
+            if(notification.getIdentifier().getForm() == Form.NETWORK_ACCESS_CODE)
+            {
+                updates.add(notification);
+            }
+        });
+        processor.setMessageListener(state::receive);
+
+        processor.receive(fragment(signaling(message(NAC, 0, 1_000L, new NoOp()))));
+        processor.receive(fragment(signaling(message(NAC, 0, 1_001L, new NoOp()))));
+        processor.receive(fragment(signaling(message(NAC, 0, 1_002L, new NoOp()))));
+        processor.receive(fragment(signaling(message(NAC, 0, 1_003L, new NoOp()))));
+
+        assertEquals(1, updates.size());
+        assertTrue(updates.getFirst().isAdd());
     }
 
     @Test
@@ -244,7 +225,6 @@ class P25P2ControlNACAuthorityTest
         MacMessage established = message(NAC, 0, 1_002L, new NoOp());
         processor.receive(fragment(signaling(established)));
         assertTrue(received.contains(established));
-        assertTrue(established.isNACAuthorityValidated());
 
         received.clear();
         MacMessage foreign = message(FOREIGN_NAC, 0, 1_003L, new NoOp());
@@ -259,6 +239,100 @@ class P25P2ControlNACAuthorityTest
         processor.receive(new TestSuperFrameFragment(List.of(
             signaling(message(NAC, 0, 1_005L, new NoOp())), reopenedVoice)));
         assertTrue(received.contains(reopenedVoice));
+    }
+
+    @Test
+    void multipleMacStructuresInOneLcchCountAsOneObservation()
+    {
+        P25P2MessageProcessor processor = new P25P2MessageProcessor(true);
+        List<IMessage> received = new ArrayList<>();
+        processor.setMessageListener(candidate ->
+        {
+            if(candidate != null)
+            {
+                received.add(candidate);
+            }
+        });
+
+        processor.receive(fragment(signaling(List.of(
+            message(NAC, 0, 1_000L, new NoOp()), message(NAC, 0, 1_000L, new NoOp())))));
+        processor.receive(fragment(signaling(message(NAC, 0, 1_001L, new NoOp()))));
+        assertEquals(0, received.stream().filter(MacMessage.class::isInstance).count(),
+            "two structures protected by one LCCH CRC are only one observation");
+
+        processor.receive(fragment(signaling(message(NAC, 0, 1_002L, new NoOp()))));
+        assertEquals(1, received.stream().filter(MacMessage.class::isInstance).count());
+    }
+
+    @Test
+    void physicalLcchPositionsCountSeparatelyWhenTimestampAndLogicalSlotMatch()
+    {
+        P25P2MessageProcessor processor = new P25P2MessageProcessor(true);
+        List<IMessage> received = new ArrayList<>();
+        processor.setMessageListener(candidate ->
+        {
+            if(candidate != null)
+            {
+                received.add(candidate);
+            }
+        });
+        MacMessage first = message(NAC, 0, 1_000L, new NoOp());
+        MacMessage second = message(NAC, 0, 1_000L, new NoOp());
+        MacMessage third = message(NAC, 0, 1_000L, new NoOp());
+
+        processor.receive(new TestSuperFrameFragment(List.of(
+            signaling(first), signaling(second), signaling(third))));
+
+        assertTrue(received.contains(first));
+        assertTrue(received.contains(second));
+        assertTrue(received.contains(third));
+    }
+
+    @Test
+    void rejectedFragmentDoesNotContributeAnAuthorityObservation()
+    {
+        P25P2MessageProcessor processor = new P25P2MessageProcessor(true);
+        List<IMessage> received = new ArrayList<>();
+        processor.setMessageListener(candidate ->
+        {
+            if(candidate != null)
+            {
+                received.add(candidate);
+            }
+        });
+        MacMessage valid = message(NAC, 0, 1_000L, new NoOp());
+        MacMessage inconsistent = message(NAC, 0, 1_000L,
+            new TestNetworkStatus(new ScrambleParameters(0xABCDE, 0x234, FOREIGN_NAC)));
+
+        processor.receive(new TestSuperFrameFragment(List.of(signaling(valid), signaling(inconsistent))));
+        processor.receive(fragment(signaling(message(NAC, 0, 1_001L, new NoOp()))));
+        MacMessage secondCandidate = message(NAC, 0, 1_002L, new NoOp());
+        processor.receive(fragment(signaling(secondCandidate)));
+        assertFalse(received.contains(secondCandidate),
+            "an LCCH from a rejected fragment must not help establish authority");
+
+        MacMessage established = message(NAC, 0, 1_003L, new NoOp());
+        processor.receive(fragment(signaling(established)));
+        assertTrue(received.contains(established));
+    }
+
+    @Test
+    void unguardedTrafficProcessorPassesVoiceWithoutNacAuthority()
+    {
+        P25P2MessageProcessor processor = new P25P2MessageProcessor(false);
+        List<IMessage> received = new ArrayList<>();
+        processor.setMessageListener(candidate ->
+        {
+            if(candidate != null)
+            {
+                received.add(candidate);
+            }
+        });
+        Voice4Timeslot voice = voice(1_000L);
+
+        processor.receive(fragment(voice));
+
+        assertTrue(received.contains(voice));
     }
 
     @Test
@@ -357,34 +431,69 @@ class P25P2ControlNACAuthorityTest
     void messageProcessorGuardsFragmentsAndResetsAtSourceBoundary()
     {
         P25P2MessageProcessor processor = new P25P2MessageProcessor(true);
-        assertFalse(processor.isAuthorizedForProcessing(message(NAC, 0, 1_000L, new NoOp())));
-        assertFalse(processor.isAuthorizedForProcessing(message(NAC, 0, 1_001L, new NoOp())));
-        assertTrue(processor.isAuthorizedForProcessing(message(NAC, 0, 1_002L, new NoOp())));
-        assertFalse(processor.isAuthorizedForProcessing(message(FOREIGN_NAC, 0, 1_003L, new Band())));
-        assertTrue(processor.isAuthorizedForProcessing(message(NAC, 0, 1_004L, new Band())));
+        List<IMessage> received = new ArrayList<>();
+        processor.setMessageListener(candidate ->
+        {
+            if(candidate != null)
+            {
+                received.add(candidate);
+            }
+        });
+
+        MacMessage first = message(NAC, 0, 1_000L, new NoOp());
+        MacMessage second = message(NAC, 0, 1_001L, new NoOp());
+        MacMessage established = message(NAC, 0, 1_002L, new NoOp());
+        processor.receive(fragment(signaling(first)));
+        processor.receive(fragment(signaling(second)));
+        assertFalse(received.contains(first));
+        assertFalse(received.contains(second));
+        processor.receive(fragment(signaling(established)));
+        assertTrue(received.contains(established));
+
+        MacMessage foreign = message(FOREIGN_NAC, 0, 1_003L, new Band());
+        processor.receive(fragment(signaling(foreign)));
+        assertFalse(received.contains(foreign));
+
+        MacMessage matching = message(NAC, 0, 1_004L, new Band());
+        processor.receive(fragment(signaling(matching)));
+        assertTrue(received.contains(matching));
 
         processor.resetForSourceFrequencyChange();
-        assertFalse(processor.isAuthorizedForProcessing(
-            message(NAC, 0, 2_000L, DataUnitID.UNSCRAMBLED_FACCH, new Grant())),
-            "non-LCCH fragments cannot survive or act before the new source is authorized");
+        received.clear();
+        MacMessage facch = message(NAC, 0, 2_000L, DataUnitID.UNSCRAMBLED_FACCH, new Grant());
+        processor.receive(fragment(signaling(facch)));
+        assertFalse(received.contains(facch), "non-LCCH fragments cannot act before the new source is authorized");
+
+        processor.receive(fragment(signaling(message(FOREIGN_NAC, 0, 2_001L, new NoOp()))));
+        processor.receive(fragment(signaling(message(FOREIGN_NAC, 0, 2_002L, new NoOp()))));
+        MacMessage replacement = message(FOREIGN_NAC, 0, 2_003L, new NoOp());
+        processor.receive(fragment(signaling(replacement)));
+        assertTrue(received.contains(replacement));
     }
 
     @Test
     void rejectedLcchDiscardsPartialAssemblyWithoutResettingAuthority() throws Exception
     {
-        P25P2MessageProcessor processor = new P25P2MessageProcessor(true);
-        processor.isAuthorizedForProcessing(message(NAC, 0, 1_000L, new NoOp()));
-        processor.isAuthorizedForProcessing(message(NAC, 0, 1_001L, new NoOp()));
-        assertTrue(processor.isAuthorizedForProcessing(message(NAC, 0, 1_002L, new NoOp())));
+        P25P2MessageProcessor processor = authorizedProcessor();
 
         Field heldMessage = P25P2MessageProcessor.class.getDeclaredField("mMacMessageWithMultiFragment1");
         heldMessage.setAccessible(true);
         heldMessage.set(processor, message(NAC, 0, 1_003L, new NoOp()));
 
-        assertFalse(processor.isAuthorizedForProcessing(message(FOREIGN_NAC, 0, 1_004L, new NoOp())));
+        processor.receive(fragment(signaling(message(FOREIGN_NAC, 0, 1_004L, new NoOp()))));
         assertNull(heldMessage.get(processor));
-        assertTrue(processor.isAuthorizedForProcessing(message(NAC, 0, 1_005L, new NoOp())),
-            "a rejected source must not reset the frozen NAC authority");
+
+        List<IMessage> received = new ArrayList<>();
+        processor.setMessageListener(candidate ->
+        {
+            if(candidate != null)
+            {
+                received.add(candidate);
+            }
+        });
+        MacMessage matching = message(NAC, 0, 1_005L, new NoOp());
+        processor.receive(fragment(signaling(matching)));
+        assertTrue(received.contains(matching), "a rejected source must not reset the frozen NAC authority");
     }
 
     @Test
@@ -407,11 +516,13 @@ class P25P2ControlNACAuthorityTest
         Channel parent = parent();
         RecordingTrafficChannelManager manager = new RecordingTrafficChannelManager(parent);
         P25P2DecoderState decoderState = new P25P2DecoderState(parent, 0, manager, new PatchGroupManager());
+        P25P2MessageProcessor processor = new P25P2MessageProcessor(true);
+        processor.setMessageListener(decoderState::receive);
 
-        decoderState.receive(message(nac, 0, 1_000L, new Grant()));
-        decoderState.receive(message(nac, 0, 1_001L, new Grant()));
+        processor.receive(fragment(signaling(message(nac, 0, 1_000L, new Grant()))));
+        processor.receive(fragment(signaling(message(nac, 0, 1_001L, new Grant()))));
         assertEquals(0, manager.mGrantCount);
-        decoderState.receive(message(nac, 0, 1_002L, new Grant()));
+        processor.receive(fragment(signaling(message(nac, 0, 1_002L, new Grant()))));
         assertEquals(1, manager.mGrantCount);
         assertNotNull(manager.mIdentifiers);
         Identifier identifier = manager.mIdentifiers.getIdentifier(IdentifierClass.NETWORK,
@@ -419,9 +530,9 @@ class P25P2ControlNACAuthorityTest
         assertNotNull(identifier);
         assertEquals(nac, identifier.getValue());
 
-        decoderState.receive(message(FOREIGN_NAC, 0, 1_003L, new Grant()));
+        processor.receive(fragment(signaling(message(FOREIGN_NAC, 0, 1_003L, new Grant()))));
         assertEquals(1, manager.mGrantCount);
-        decoderState.receive(message(nac, 0, 1_004L, new Grant()));
+        processor.receive(fragment(signaling(message(nac, 0, 1_004L, new Grant()))));
         assertEquals(2, manager.mGrantCount);
     }
 
@@ -456,6 +567,11 @@ class P25P2ControlNACAuthorityTest
         return new TestSignalingTimeslot(message);
     }
 
+    private static AbstractSignalingTimeslot signaling(List<MacMessage> messages)
+    {
+        return new TestSignalingTimeslot(messages);
+    }
+
     private static Voice4Timeslot voice(long timestamp)
     {
         return voice(1, timestamp);
@@ -469,9 +585,10 @@ class P25P2ControlNACAuthorityTest
     private static P25P2MessageProcessor authorizedProcessor()
     {
         P25P2MessageProcessor processor = new P25P2MessageProcessor(true);
-        processor.isAuthorizedForProcessing(message(NAC, 0, 1_000L, new NoOp()));
-        processor.isAuthorizedForProcessing(message(NAC, 0, 1_001L, new NoOp()));
-        assertTrue(processor.isAuthorizedForProcessing(message(NAC, 0, 1_002L, new NoOp())));
+        processor.setMessageListener(message -> {});
+        processor.receive(fragment(signaling(message(NAC, 0, 1_000L, new NoOp()))));
+        processor.receive(fragment(signaling(message(NAC, 0, 1_001L, new NoOp()))));
+        processor.receive(fragment(signaling(message(NAC, 0, 1_002L, new NoOp()))));
         return processor;
     }
 
@@ -618,9 +735,14 @@ class P25P2ControlNACAuthorityTest
 
         private TestSignalingTimeslot(MacMessage message)
         {
-            super(new CorrectedBinaryMessage(320), message.getDataUnitID(), message.getTimeslot(),
-                message.getTimestamp());
-            mMessages = List.of(message);
+            this(List.of(message));
+        }
+
+        private TestSignalingTimeslot(List<MacMessage> messages)
+        {
+            super(new CorrectedBinaryMessage(320), messages.getFirst().getDataUnitID(),
+                messages.getFirst().getTimeslot(), messages.getFirst().getTimestamp());
+            mMessages = messages;
         }
 
         @Override

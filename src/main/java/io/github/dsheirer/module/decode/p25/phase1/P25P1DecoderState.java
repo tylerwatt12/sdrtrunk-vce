@@ -61,7 +61,6 @@ import io.github.dsheirer.module.decode.p25.P25AffiliationEvent;
 import io.github.dsheirer.module.decode.p25.P25DecodeEvent;
 import io.github.dsheirer.module.decode.p25.P25FrequencyBandValidator;
 import io.github.dsheirer.module.decode.p25.P25TrafficChannelManager;
-import io.github.dsheirer.module.decode.p25.identifier.APCO25Nac;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshotProvider;
@@ -227,7 +226,6 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     private final P25SiteMetadataPublisher mSiteMetadataPublisher;
     private final Listener<ChannelEvent> mChannelEventListener;
     private final P25TrafficChannelManager mTrafficChannelManager;
-    private final P25P1ControlNACAuthority mControlNACAuthority = new P25P1ControlNACAuthority();
     private long mControlNACFrequency;
     private ServiceOptions mCurrentServiceOptions;
     private RadioIdentifier mHarrisTalkerAliasRadio;
@@ -352,15 +350,9 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                 return;
             }
 
-            if(!observeNAC(message))
-            {
-                return;
-            }
-
-            if(isTrunkedControlChannel())
-            {
-                mTrafficChannelManager.processP1ControlScrambleParameters(message);
-            }
+            //The standard control-channel message processor is the sole NAC authority. Any message reaching this
+            //state has already passed that gate; traffic and conventional decoders retain their normal NAC behavior.
+            getIdentifierCollection().update(message.getNAC());
 
             switch(message.getDUID())
             {
@@ -424,51 +416,15 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
         publishSiteMetadata(iMessage.getTimestamp());
     }
 
-    /**
-     * Establishes a stable NAC authority for a control channel before allowing it to take control actions. A traffic
-     * or conventional channel retains ordinary per-message NAC behavior. Once established, the control-channel NAC
-     * remains fixed until reset or a source-frequency change so a single foreign or overcorrected NID cannot repin a
-     * traffic decoder.
-     */
-    private synchronized boolean observeNAC(P25P1Message message)
-    {
-        if(!isTrunkedControlChannel())
-        {
-            getIdentifierCollection().update(message.getNAC());
-            return true;
-        }
-
-        P25P1ControlNACAuthority.Result result = mControlNACAuthority.observe(message);
-
-        if(result == P25P1ControlNACAuthority.Result.ESTABLISHED)
-        {
-            getIdentifierCollection().update(APCO25Nac.create(mControlNACAuthority.getNAC()));
-        }
-
-        if(result == P25P1ControlNACAuthority.Result.CANDIDATE ||
-            result == P25P1ControlNACAuthority.Result.ESTABLISHED)
-        {
-            //Keep a multi-frequency control channel from rotating while authority is confirmed, without processing
-            //the candidate payload.
-            broadcastControlState(message);
-        }
-
-        return result == P25P1ControlNACAuthority.Result.AUTHORIZED;
-    }
-
     private boolean isTrunkedControlChannel()
     {
         return mChannel.isStandardChannel() && mDecoderType == DecoderType.P25_PHASE1;
     }
 
-    /**
-     * Clears the control-channel NAC authority so it must be independently re-established for a new source.
-     */
-    private synchronized void resetControlNACAuthority()
+    private void clearControlNAC()
     {
         if(isTrunkedControlChannel())
         {
-            mControlNACAuthority.reset();
             getIdentifierCollection().remove(IdentifierClass.NETWORK, Form.NETWORK_ACCESS_CODE, Role.BROADCAST);
         }
     }
@@ -483,13 +439,13 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
         return P25FrequencyBandValidator.isResolvedChannel(channel);
     }
 
-    private synchronized void updateControlNACFrequency(long frequency)
+    private void updateControlNACFrequency(long frequency)
     {
         if(isTrunkedControlChannel() && frequency > 0)
         {
             if(mControlNACFrequency > 0 && mControlNACFrequency != frequency)
             {
-                resetControlNACAuthority();
+                clearControlNAC();
             }
 
             mControlNACFrequency = frequency;
@@ -2461,7 +2417,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     public synchronized void reset()
     {
         super.reset();
-        resetControlNACAuthority();
+        clearControlNAC();
 
         if(isTrunkedControlChannel())
         {

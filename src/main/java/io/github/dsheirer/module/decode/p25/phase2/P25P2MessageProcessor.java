@@ -47,7 +47,6 @@ import io.github.dsheirer.module.decode.p25.phase2.timeslot.DatchTimeslot;
 import io.github.dsheirer.module.decode.p25.phase2.timeslot.Timeslot;
 import io.github.dsheirer.module.decode.p25.phase2.timeslot.Voice2Timeslot;
 import io.github.dsheirer.sample.Listener;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -69,7 +68,6 @@ public class P25P2MessageProcessor implements Listener<IMessage>
     private Listener<IMessage> mMessageListener;
     private final boolean mControlNACGuardEnabled;
     private final P25NACAuthority mControlNACAuthority = new P25NACAuthority();
-    private boolean mControlSourceOpen;
     private Predicate<ScrambleParameters> mScrambleParametersListener;
 
     //Map of up to 16 band identifiers per RFSS.  These identifier update messages are inserted into any message that
@@ -117,12 +115,12 @@ public class P25P2MessageProcessor implements Listener<IMessage>
                 {
                     ControlPrepassResult prepass = preAuthorizeControl(timeslots);
 
-                    if(!prepass.authorized())
+                    if(prepass == ControlPrepassResult.REJECTED)
                     {
                         return;
                     }
 
-                    if(prepass.scrambleParametersPublished())
+                    if(prepass == ControlPrepassResult.AUTHORIZED_WITH_SCRAMBLE)
                     {
                         //The fragment cached its scrambled timeslots before the authorized LCCH supplied the new
                         //sequence. Recreate them before any voice or signaling can reach a shared listener.
@@ -131,20 +129,14 @@ public class P25P2MessageProcessor implements Listener<IMessage>
                     }
                 }
 
-                if(!mControlNACGuardEnabled || mControlSourceOpen)
-                {
-                    mMessageListener.receive(sff.getIISCH1());
-                    mMessageListener.receive(sff.getIISCH2());
-                }
+                mMessageListener.receive(sff.getIISCH1());
+                mMessageListener.receive(sff.getIISCH2());
 
                 for(Timeslot timeslot: timeslots)
                 {
                     if(timeslot instanceof DatchTimeslot)
                     {
-                        if(!mControlNACGuardEnabled || mControlSourceOpen)
-                        {
-                            mMessageListener.receive(timeslot);
-                        }
+                        mMessageListener.receive(timeslot);
                     }
                     else if(timeslot instanceof AbstractSignalingTimeslot)
                     {
@@ -152,13 +144,6 @@ public class P25P2MessageProcessor implements Listener<IMessage>
 
                         for(MacMessage macMessage: ast.getMacMessages())
                         {
-                            if(!isAuthorizedForProcessing(macMessage))
-                            {
-                                //Do not expose candidate or foreign-source content to state, audio, recording, or
-                                //streaming listeners. Authority is established here before the shared broadcaster.
-                                continue;
-                            }
-
                             switch(macMessage.getMacPduType())
                             {
                                 case MAC_1_PTT:
@@ -299,11 +284,6 @@ public class P25P2MessageProcessor implements Listener<IMessage>
                     }
                     else if(timeslot instanceof AbstractVoiceTimeslot)
                     {
-                        if(mControlNACGuardEnabled && !mControlSourceOpen)
-                        {
-                            continue;
-                        }
-
                         mMessageListener.receive(timeslot);
 
                         if(timeslot.getTimeslot() == P25P2Message.TIMESLOT_1)
@@ -342,10 +322,7 @@ public class P25P2MessageProcessor implements Listener<IMessage>
                     }
                     else
                     {
-                        if(!mControlNACGuardEnabled || mControlSourceOpen)
-                        {
-                            mMessageListener.receive(timeslot);
-                        }
+                        mMessageListener.receive(timeslot);
                     }
                 }
             }
@@ -356,142 +333,150 @@ public class P25P2MessageProcessor implements Listener<IMessage>
         }
     }
 
-    synchronized boolean isAuthorizedForProcessing(MacMessage message)
-    {
-        if(!mControlNACGuardEnabled)
-        {
-            return true;
-        }
-
-        if(!message.getDataUnitID().isLCCH())
-        {
-            return mControlNACAuthority.getNAC() != P25NACAuthority.NO_NAC && mControlSourceOpen;
-        }
-
-        if(!message.isValid() || !message.hasNAC() || !(message.getNAC().getValue() instanceof Number number) ||
-            !P25P1NACPreloadDataContent.isConcreteNAC(number.intValue()))
-        {
-            closeControlSource();
-            return false;
-        }
-
-        P25NACAuthority.Result result = mControlNACAuthority.observe(number.intValue(), message.getTimestamp(),
-            message.getTimeslot());
-
-        if(result == P25NACAuthority.Result.ESTABLISHED)
-        {
-            clearDecodedSourceState();
-            mControlSourceOpen = true;
-            message.setNACAuthorityValidated(true);
-            return true;
-        }
-
-        if(result == P25NACAuthority.Result.MATCH)
-        {
-            mControlSourceOpen = true;
-            message.setNACAuthorityValidated(true);
-            return true;
-        }
-
-        if(result == P25NACAuthority.Result.REJECTED)
-        {
-            closeControlSource();
-        }
-
-        return false;
-    }
-
     /**
-     * Validates every LCCH before any content from the enclosing fragment is emitted. This prevents an earlier voice
-     * slot from escaping before a later foreign LCCH closes the source gate.
+     * Validates each protected LCCH unit before any content from the enclosing fragment is emitted. Multiple MAC
+     * structures in one physical LCCH count as one authority observation. The physical fragment position is the
+     * discriminator because two independently protected units can share both a timestamp and logical timeslot.
      */
     private ControlPrepassResult preAuthorizeControl(List<Timeslot> timeslots)
     {
-        boolean lcchObserved = false;
-        List<MacMessage> authorizedMessages = new ArrayList<>();
+        boolean authorityEstablished = false;
+        int fragmentNAC = P25NACAuthority.NO_NAC;
+        ScrambleParameters scrambleParameters = null;
 
-        for(Timeslot timeslot : timeslots)
+        for(int position = 0; position < timeslots.size(); position++)
         {
+            Timeslot timeslot = timeslots.get(position);
+
             if(timeslot instanceof AbstractSignalingTimeslot signaling && timeslot.getDataUnitID().isLCCH())
             {
-                lcchObserved = true;
                 List<MacMessage> macMessages = signaling.getMacMessages();
 
                 if(macMessages.isEmpty())
                 {
-                    closeControlSource();
+                    rejectControlSource();
                     return ControlPrepassResult.REJECTED;
                 }
 
+                int unitNAC = P25NACAuthority.NO_NAC;
+
                 for(MacMessage macMessage : macMessages)
                 {
-                    if(!hasConsistentScrambleNAC(macMessage) || !isAuthorizedForProcessing(macMessage))
+                    if(!macMessage.isValid() || !macMessage.hasNAC() ||
+                        !(macMessage.getNAC().getValue() instanceof Number number) ||
+                        !P25P1NACPreloadDataContent.isConcreteNAC(number.intValue()))
                     {
-                        closeControlSource();
+                        rejectControlSource();
                         return ControlPrepassResult.REJECTED;
                     }
 
-                    authorizedMessages.add(macMessage);
+                    int messageNAC = number.intValue();
+
+                    if(unitNAC != P25NACAuthority.NO_NAC && unitNAC != messageNAC)
+                    {
+                        rejectControlSource();
+                        return ControlPrepassResult.REJECTED;
+                    }
+
+                    unitNAC = messageNAC;
+                    ScrambleParameters candidate = getScrambleParameters(macMessage);
+
+                    if(candidate != null)
+                    {
+                        if(candidate.getNAC() != messageNAC ||
+                            (scrambleParameters != null && !matches(scrambleParameters, candidate)))
+                        {
+                            rejectControlSource();
+                            return ControlPrepassResult.REJECTED;
+                        }
+
+                        scrambleParameters = candidate;
+                    }
+                }
+
+                if(fragmentNAC != P25NACAuthority.NO_NAC && fragmentNAC != unitNAC)
+                {
+                    rejectControlSource();
+                    return ControlPrepassResult.REJECTED;
+                }
+
+                fragmentNAC = unitNAC;
+            }
+        }
+
+        if(fragmentNAC == P25NACAuthority.NO_NAC)
+        {
+            rejectControlSource();
+            return ControlPrepassResult.REJECTED;
+        }
+
+        int authorityNAC = mControlNACAuthority.getNAC();
+
+        if(authorityNAC != P25NACAuthority.NO_NAC && authorityNAC != fragmentNAC)
+        {
+            rejectControlSource();
+            return ControlPrepassResult.REJECTED;
+        }
+
+        if(authorityNAC == P25NACAuthority.NO_NAC)
+        {
+            //Only count observations after the complete fragment has passed validation. This keeps a rejected
+            //fragment from partially advancing the authority candidate.
+            for(int position = 0; position < timeslots.size(); position++)
+            {
+                Timeslot timeslot = timeslots.get(position);
+
+                if(timeslot instanceof AbstractSignalingTimeslot signaling && timeslot.getDataUnitID().isLCCH())
+                {
+                    int unitNAC = ((Number)signaling.getMacMessages().getFirst().getNAC().getValue()).intValue();
+                    P25NACAuthority.Result result =
+                        mControlNACAuthority.observe(unitNAC, timeslot.getTimestamp(), position);
+
+                    if(result == P25NACAuthority.Result.REJECTED)
+                    {
+                        rejectControlSource();
+                        return ControlPrepassResult.REJECTED;
+                    }
+
+                    authorityEstablished |= result == P25NACAuthority.Result.ESTABLISHED;
                 }
             }
         }
 
-        if(!lcchObserved)
+        if(mControlNACAuthority.getNAC() != fragmentNAC)
         {
-            closeControlSource();
+            rejectControlSource();
             return ControlPrepassResult.REJECTED;
         }
 
-        boolean published = false;
-
-        for(MacMessage macMessage : authorizedMessages)
+        if(authorityEstablished)
         {
-            published |= publishAuthorizedScrambleParameters(macMessage);
+            clearDecodedSourceState();
         }
 
-        return published ? ControlPrepassResult.AUTHORIZED_WITH_SCRAMBLE : ControlPrepassResult.AUTHORIZED;
+        boolean updated = scrambleParameters != null && mScrambleParametersListener != null &&
+            mScrambleParametersListener.test(scrambleParameters);
+        return updated ? ControlPrepassResult.AUTHORIZED_WITH_SCRAMBLE : ControlPrepassResult.AUTHORIZED;
     }
 
-    private boolean hasConsistentScrambleNAC(MacMessage message)
+    private static ScrambleParameters getScrambleParameters(MacMessage message)
     {
-        ScrambleParameters parameters = null;
-
         if(message.getMacStructure() instanceof NetworkStatusBroadcastImplicit nsb)
         {
-            parameters = nsb.getScrambleParameters();
+            return nsb.getScrambleParameters();
         }
         else if(message.getMacStructure() instanceof NetworkStatusBroadcastExplicit nsb)
         {
-            parameters = nsb.getScrambleParameters();
+            return nsb.getScrambleParameters();
         }
 
-        if(parameters == null)
-        {
-            return true;
-        }
-
-        return message.hasNAC() && message.getNAC().getValue() instanceof Number number &&
-            parameters.getNAC() == number.intValue();
+        return null;
     }
 
-    private boolean publishAuthorizedScrambleParameters(MacMessage message)
+    private static boolean matches(ScrambleParameters first, ScrambleParameters second)
     {
-        if(mScrambleParametersListener == null || !message.getDataUnitID().isLCCH() ||
-            !message.isNACAuthorityValidated())
-        {
-            return false;
-        }
-
-        if(message.getMacStructure() instanceof NetworkStatusBroadcastImplicit nsb)
-        {
-            return mScrambleParametersListener.test(nsb.getScrambleParameters());
-        }
-        else if(message.getMacStructure() instanceof NetworkStatusBroadcastExplicit nsb)
-        {
-            return mScrambleParametersListener.test(nsb.getScrambleParameters());
-        }
-
-        return false;
+        return first.getWACN() == second.getWACN() && first.getSystem() == second.getSystem() &&
+            first.getNAC() == second.getNAC();
     }
 
     public void setScrambleParametersListener(Predicate<ScrambleParameters> listener)
@@ -505,7 +490,6 @@ public class P25P2MessageProcessor implements Listener<IMessage>
     public synchronized void resetForSourceFrequencyChange()
     {
         mControlNACAuthority.reset();
-        mControlSourceOpen = false;
         clearDecodedSourceState();
     }
 
@@ -519,9 +503,8 @@ public class P25P2MessageProcessor implements Listener<IMessage>
     /**
      * Closes output and discards partial source content while retaining the frozen NAC and confirmed band plan.
      */
-    private void closeControlSource()
+    private void rejectControlSource()
     {
-        mControlSourceOpen = false;
         clearReassemblyState();
     }
 
@@ -581,10 +564,10 @@ public class P25P2MessageProcessor implements Listener<IMessage>
         }
     }
 
-    private record ControlPrepassResult(boolean authorized, boolean scrambleParametersPublished)
+    private enum ControlPrepassResult
     {
-        private static final ControlPrepassResult REJECTED = new ControlPrepassResult(false, false);
-        private static final ControlPrepassResult AUTHORIZED = new ControlPrepassResult(true, false);
-        private static final ControlPrepassResult AUTHORIZED_WITH_SCRAMBLE = new ControlPrepassResult(true, true);
+        REJECTED,
+        AUTHORIZED,
+        AUTHORIZED_WITH_SCRAMBLE
     }
 }

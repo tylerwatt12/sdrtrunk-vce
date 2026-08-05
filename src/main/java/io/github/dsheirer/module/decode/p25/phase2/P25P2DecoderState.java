@@ -52,9 +52,7 @@ import io.github.dsheirer.module.decode.p25.IServiceOptionsProvider;
 import io.github.dsheirer.module.decode.p25.P25AffiliationEvent;
 import io.github.dsheirer.module.decode.p25.P25DecodeEvent;
 import io.github.dsheirer.module.decode.p25.P25FrequencyBandValidator;
-import io.github.dsheirer.module.decode.p25.P25NACAuthority;
 import io.github.dsheirer.module.decode.p25.P25TrafficChannelManager;
-import io.github.dsheirer.module.decode.p25.identifier.APCO25Nac;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshotProvider;
@@ -240,7 +238,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
      * Performs a full reset to prepare this object for reuse on a new channel
      */
     @Override
-    public synchronized void reset()
+    public void reset()
     {
         super.reset();
         resetState();
@@ -289,16 +287,10 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
      * Primary message processing method.
      */
     @Override
-    public synchronized void receive(IMessage message)
+    public void receive(IMessage message)
     {
         if(message.isValid() && message.getTimeslot() == getTimeslot())
         {
-            if(mChannel.isStandardChannel() && !(message instanceof MacMessage) &&
-                !mTrafficChannelManager.isP2ControlNACGateOpen())
-            {
-                return;
-            }
-
             if(message instanceof MacMessage macMessage)
             {
                 processMacMessage(macMessage);
@@ -366,24 +358,9 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
 
         if(mChannel.isStandardChannel() && message.getDataUnitID().isLCCH())
         {
-            getIdentifierCollection().remove(IdentifierClass.NETWORK, Form.NETWORK_ACCESS_CODE, Role.BROADCAST);
-            int nac = mTrafficChannelManager.observeP2ControlNAC(message);
-
-            if(nac != P25NACAuthority.NO_NAC)
-            {
-                getIdentifierCollection().update(APCO25Nac.create(nac));
-            }
-            else
-            {
-                //A valid LCCH keeps the control channel active while authority is being confirmed, but no payload
-                //from an unconfirmed or foreign NAC can change band plans or allocate traffic channels.
-                continueState(State.CONTROL);
-                return;
-            }
-        }
-        else if(mChannel.isStandardChannel() && !mTrafficChannelManager.isP2ControlNACGateOpen())
-        {
-            return;
+            //The standard control-channel message processor is the sole NAC authority. LCCH messages only reach this
+            //state after that source is established and the complete enclosing fragment has passed its NAC gate.
+            getIdentifierCollection().update(message.getNAC());
         }
 
         MacPduType macPduType = message.getMacPduType();
@@ -2022,7 +1999,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
     }
 
     @Override
-    public synchronized void receiveDecoderStateEvent(DecoderStateEvent event)
+    public void receiveDecoderStateEvent(DecoderStateEvent event)
     {
         if(event.getTimeslot() == getTimeslot())
         {

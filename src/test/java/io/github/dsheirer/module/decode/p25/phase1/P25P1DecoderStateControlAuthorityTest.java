@@ -133,20 +133,26 @@ class P25P1DecoderStateControlAuthorityTest
         channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
         P25TrafficChannelManager manager = new P25TrafficChannelManager(channel);
         P25P1DecoderState state = new P25P1DecoderState(channel, manager);
-        TestNetworkStatusBroadcast foreign = new TestNetworkStatusBroadcast(0x456, TIMESTAMP);
+        P25P1MessageProcessor processor = new P25P1MessageProcessor(true);
+        processor.setMessageListener(message -> {
+            state.receive(message);
+            manager.getMessageListener().receive(message);
+        });
+        TestNetworkStatusBroadcast foreign = new TestNetworkStatusBroadcast(0x456, TIMESTAMP - 1);
 
-        manager.getMessageListener().receive(foreign);
-        assertNull(scrambleParameters(manager), "the direct module listener cannot bypass NAC authority");
+        processor.receive(foreign);
+        assertNull(scrambleParameters(manager), "an unconfirmed source cannot publish scramble parameters");
 
-        state.receive(new TestNACObservation(NAC, TIMESTAMP));
-        state.receive(new TestNACObservation(NAC, TIMESTAMP + 1));
-        state.receive(new TestNACObservation(NAC, TIMESTAMP + 2));
-        state.receive(new TestNetworkStatusBroadcast(NAC, 0x456, TIMESTAMP + 3));
+        processor.receive(new TestNACObservation(NAC, TIMESTAMP));
+        processor.receive(new TestNACObservation(NAC, TIMESTAMP + 1));
+        processor.receive(new TestNACObservation(NAC, TIMESTAMP + 2));
+        assertEquals(NAC, controlNAC(state));
+        processor.receive(new TestNetworkStatusBroadcast(NAC, 0x456, TIMESTAMP + 3));
         assertNull(scrambleParameters(manager), "an inconsistent inner NAC cannot repoint traffic descrambling");
-        state.receive(new TestNetworkStatusBroadcast(NAC, TIMESTAMP + 3));
+        processor.receive(new TestNetworkStatusBroadcast(NAC, TIMESTAMP + 3));
         assertEquals(NAC, scrambleParameters(manager).getNAC());
 
-        state.receive(foreign);
+        processor.receive(foreign);
         assertEquals(NAC, scrambleParameters(manager).getNAC(), "a foreign NSB cannot repoint traffic descrambling");
 
         state.reset();
@@ -154,28 +160,30 @@ class P25P1DecoderStateControlAuthorityTest
     }
 
     @Test
-    void standardChannelFreezesConfirmedNACAuthorityUntilReset()
+    void processorFreezesConfirmedNACAuthorityUntilReset()
     {
         Channel channel = new Channel("Test", ChannelType.STANDARD);
         channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
         RecordingTrafficChannelManager manager = new RecordingTrafficChannelManager();
         P25P1DecoderState decoderState = new P25P1DecoderState(channel, manager);
+        P25P1MessageProcessor processor = new P25P1MessageProcessor(true);
+        processor.setMessageListener(decoderState::receive);
 
-        decoderState.receive(new TestNACObservation(NAC, TIMESTAMP));
-        decoderState.receive(new TestNACObservation(NAC, TIMESTAMP + 1));
+        processor.receive(new TestNACObservation(NAC, TIMESTAMP));
+        processor.receive(new TestNACObservation(NAC, TIMESTAMP + 1));
         assertNull(controlNAC(decoderState), "two observations must not establish authority");
 
-        decoderState.receive(new TestNACObservation(NAC, TIMESTAMP + 2));
+        processor.receive(new TestNACObservation(NAC, TIMESTAMP + 2));
         assertEquals(NAC, controlNAC(decoderState));
 
         for(int x = 0; x < 5; x++)
         {
-            decoderState.receive(new TestTSBKGrant(resolvedChannel(), 0x456));
+            processor.receive(new TestTSBKGrant(resolvedChannel(), 0x456));
         }
 
         assertEquals(0, manager.mDirectedGrantCount, "foreign NAC must not dispatch a control grant");
 
-        decoderState.receive(new TestTSBKGrant(resolvedChannel(), NAC));
+        processor.receive(new TestTSBKGrant(resolvedChannel(), NAC));
         assertEquals(1, manager.mDirectedGrantCount);
         assertNotNull(manager.mLastIdentifiers);
         Identifier grantNAC = manager.mLastIdentifiers.getIdentifier(IdentifierClass.NETWORK,
@@ -183,17 +191,18 @@ class P25P1DecoderStateControlAuthorityTest
         assertNotNull(grantNAC);
         assertEquals(NAC, grantNAC.getValue());
 
+        processor.resetForSourceFrequencyChange();
         decoderState.reset();
         assertNull(controlNAC(decoderState), "reset must clear the old control authority");
-        decoderState.receive(new TestTSBKGrant(resolvedChannel(), NAC));
+        processor.receive(new TestTSBKGrant(resolvedChannel(), NAC));
         assertEquals(1, manager.mDirectedGrantCount, "a reset source must establish authority again");
 
-        decoderState.receive(new TestNACObservation(0x456, TIMESTAMP + 1));
-        decoderState.receive(new TestNACObservation(0x456, TIMESTAMP + 2));
+        processor.receive(new TestNACObservation(0x456, TIMESTAMP + 1));
+        processor.receive(new TestNACObservation(0x456, TIMESTAMP + 2));
         assertNull(controlNAC(decoderState));
-        decoderState.receive(new TestNACObservation(0x456, TIMESTAMP + 3));
+        processor.receive(new TestNACObservation(0x456, TIMESTAMP + 3));
         assertEquals(0x456, controlNAC(decoderState));
-        decoderState.receive(new TestTSBKGrant(resolvedChannel(), 0x456));
+        processor.receive(new TestTSBKGrant(resolvedChannel(), 0x456));
         assertEquals(2, manager.mDirectedGrantCount, "the reset source can establish a new authority");
     }
 
@@ -204,11 +213,13 @@ class P25P1DecoderStateControlAuthorityTest
         channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
         RecordingTrafficChannelManager manager = new RecordingTrafficChannelManager();
         P25P1DecoderState decoderState = new P25P1DecoderState(channel, manager);
+        P25P1MessageProcessor processor = new P25P1MessageProcessor(true);
+        processor.setMessageListener(decoderState::receive);
 
-        decoderState.receive(new TestNACObservation(0, TIMESTAMP));
-        decoderState.receive(new TestNACObservation(0, TIMESTAMP + 1));
-        decoderState.receive(new TestNACObservation(0, TIMESTAMP + 2));
-        decoderState.receive(new TestTSBKGrant(resolvedChannel(), 0, TIMESTAMP + 3));
+        processor.receive(new TestNACObservation(0, TIMESTAMP));
+        processor.receive(new TestNACObservation(0, TIMESTAMP + 1));
+        processor.receive(new TestNACObservation(0, TIMESTAMP + 2));
+        processor.receive(new TestTSBKGrant(resolvedChannel(), 0, TIMESTAMP + 3));
 
         assertEquals(0, controlNAC(decoderState));
         assertEquals(1, manager.mDirectedGrantCount);
@@ -224,25 +235,28 @@ class P25P1DecoderStateControlAuthorityTest
         Channel channel = new Channel("Test", ChannelType.STANDARD);
         channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
         P25P1DecoderState decoderState = new P25P1DecoderState(channel, new RecordingTrafficChannelManager());
+        P25P1MessageProcessor processor = new P25P1MessageProcessor(true);
+        processor.setMessageListener(decoderState::receive);
 
-        decoderState.receive(new TestNACObservation(NAC, TIMESTAMP,
+        processor.receive(new TestNACObservation(NAC, TIMESTAMP,
             P25P1DataUnitID.TRUNKING_SIGNALING_BLOCK_1));
-        decoderState.receive(new TestNACObservation(NAC, TIMESTAMP + 1,
+        processor.receive(new TestNACObservation(NAC, TIMESTAMP + 1,
             P25P1DataUnitID.TRUNKING_SIGNALING_BLOCK_2));
-        decoderState.receive(new TestNACObservation(NAC, TIMESTAMP + 2,
+        processor.receive(new TestNACObservation(NAC, TIMESTAMP + 2,
             P25P1DataUnitID.TRUNKING_SIGNALING_BLOCK_3));
         assertNull(controlNAC(decoderState), "TSBK continuation blocks must not count as additional NIDs");
 
-        decoderState.receive(new TestNACObservation(NAC, TIMESTAMP + 3));
+        processor.receive(new TestNACObservation(NAC, TIMESTAMP + 3));
         assertNull(controlNAC(decoderState));
-        decoderState.receive(new TestNACObservation(NAC, TIMESTAMP + 4));
+        processor.receive(new TestNACObservation(NAC, TIMESTAMP + 4));
         assertEquals(NAC, controlNAC(decoderState));
 
+        processor.resetForSourceFrequencyChange();
         decoderState.reset();
 
-        decoderState.receive(new TestNonControlObservation(NAC, TIMESTAMP + 5));
-        decoderState.receive(new TestNonControlObservation(NAC, TIMESTAMP + 6));
-        decoderState.receive(new TestNonControlObservation(NAC, TIMESTAMP + 7));
+        processor.receive(new TestNonControlObservation(NAC, TIMESTAMP + 5));
+        processor.receive(new TestNonControlObservation(NAC, TIMESTAMP + 6));
+        processor.receive(new TestNonControlObservation(NAC, TIMESTAMP + 7));
         assertNull(controlNAC(decoderState), "voice-family units cannot establish control authority");
     }
 
@@ -252,28 +266,36 @@ class P25P1DecoderStateControlAuthorityTest
         Channel channel = new Channel("Test", ChannelType.STANDARD);
         channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
         P25P1DecoderState decoderState = new P25P1DecoderState(channel, new RecordingTrafficChannelManager());
+        P25P1MessageProcessor processor = new P25P1MessageProcessor(true);
+        processor.setMessageListener(decoderState::receive);
 
         decoderState.receiveDecoderStateEvent(new DecoderStateEvent(this,
             DecoderStateEvent.Event.NOTIFICATION_SOURCE_FREQUENCY, State.IDLE, 851_000_000L));
-        decoderState.receive(new TestNACObservation(NAC, TIMESTAMP));
-        decoderState.receive(new TestNACObservation(NAC, TIMESTAMP + 1));
-        decoderState.receive(new TestNACObservation(NAC, TIMESTAMP + 2));
+        processor.receive(new TestNACObservation(NAC, TIMESTAMP));
+        processor.receive(new TestNACObservation(NAC, TIMESTAMP + 1));
+        processor.receive(new TestNACObservation(NAC, TIMESTAMP + 2));
         assertEquals(NAC, controlNAC(decoderState));
 
+        decoderState.receiveDecoderStateEvent(new DecoderStateEvent(this,
+            DecoderStateEvent.Event.NOTIFICATION_SOURCE_FREQUENCY, State.IDLE, 851_000_000L));
+        assertEquals(NAC, controlNAC(decoderState), "a repeated notification for the same RF source must not clear NAC");
+
+        processor.resetForSourceFrequencyChange();
         decoderState.reset();
-        decoderState.receive(new TestNACObservation(NAC, TIMESTAMP + 3));
-        decoderState.receive(new TestNACObservation(NAC, TIMESTAMP + 4));
-        decoderState.receive(new TestNACObservation(NAC, TIMESTAMP + 5));
+        processor.receive(new TestNACObservation(NAC, TIMESTAMP + 3));
+        processor.receive(new TestNACObservation(NAC, TIMESTAMP + 4));
+        processor.receive(new TestNACObservation(NAC, TIMESTAMP + 5));
         assertEquals(NAC, controlNAC(decoderState));
 
+        processor.resetForSourceFrequencyChange();
         decoderState.receiveDecoderStateEvent(new DecoderStateEvent(this,
             DecoderStateEvent.Event.NOTIFICATION_SOURCE_FREQUENCY, State.IDLE, 852_000_000L));
         assertNull(controlNAC(decoderState));
 
-        decoderState.receive(new TestNACObservation(0x456, TIMESTAMP + 6));
-        decoderState.receive(new TestNACObservation(0x456, TIMESTAMP + 7));
+        processor.receive(new TestNACObservation(0x456, TIMESTAMP + 6));
+        processor.receive(new TestNACObservation(0x456, TIMESTAMP + 7));
         assertNull(controlNAC(decoderState));
-        decoderState.receive(new TestNACObservation(0x456, TIMESTAMP + 8));
+        processor.receive(new TestNACObservation(0x456, TIMESTAMP + 8));
         assertEquals(0x456, controlNAC(decoderState));
     }
 
@@ -283,22 +305,25 @@ class P25P1DecoderStateControlAuthorityTest
         Channel channel = new Channel("Test", ChannelType.STANDARD);
         channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
         P25P1DecoderState decoderState = new P25P1DecoderState(channel, new RecordingTrafficChannelManager());
+        P25P1MessageProcessor processor = new P25P1MessageProcessor(true);
+        processor.setMessageListener(decoderState::receive);
 
-        decoderState.receive(new TestNACObservation(NAC, TIMESTAMP));
-        decoderState.receive(new TestNACObservation(NAC, TIMESTAMP + 1));
-        decoderState.receive(new TestNACObservation(NAC, TIMESTAMP + 2_000));
+        processor.receive(new TestNACObservation(NAC, TIMESTAMP));
+        processor.receive(new TestNACObservation(NAC, TIMESTAMP + 1));
+        processor.receive(new TestNACObservation(NAC, TIMESTAMP + 2_000));
         assertNull(controlNAC(decoderState), "old observations must expire");
-        decoderState.receive(new TestNACObservation(NAC, TIMESTAMP + 2_001));
-        decoderState.receive(new TestNACObservation(NAC, TIMESTAMP + 2_002));
+        processor.receive(new TestNACObservation(NAC, TIMESTAMP + 2_001));
+        processor.receive(new TestNACObservation(NAC, TIMESTAMP + 2_002));
         assertEquals(NAC, controlNAC(decoderState));
 
+        processor.resetForSourceFrequencyChange();
         decoderState.reset();
-        decoderState.receive(new TestNACObservation(NAC, TIMESTAMP + 3_000));
-        decoderState.receive(new TestNACObservation(0x456, TIMESTAMP + 3_001));
-        decoderState.receive(new TestNACObservation(NAC, TIMESTAMP + 3_002));
-        decoderState.receive(new TestNACObservation(NAC, TIMESTAMP + 3_003));
+        processor.receive(new TestNACObservation(NAC, TIMESTAMP + 3_000));
+        processor.receive(new TestNACObservation(0x456, TIMESTAMP + 3_001));
+        processor.receive(new TestNACObservation(NAC, TIMESTAMP + 3_002));
+        processor.receive(new TestNACObservation(NAC, TIMESTAMP + 3_003));
         assertNull(controlNAC(decoderState), "an interleaved NAC must restart confirmation");
-        decoderState.receive(new TestNACObservation(NAC, TIMESTAMP + 3_004));
+        processor.receive(new TestNACObservation(NAC, TIMESTAMP + 3_004));
         assertEquals(NAC, controlNAC(decoderState));
     }
 
@@ -309,10 +334,12 @@ class P25P1DecoderStateControlAuthorityTest
         channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
         RecordingTrafficChannelManager manager = new RecordingTrafficChannelManager();
         P25P1DecoderState decoderState = new P25P1DecoderState(channel, manager);
+        P25P1MessageProcessor processor = new P25P1MessageProcessor(true);
         List<DecoderStateEvent> events = new ArrayList<>();
-        decoderState.setDecoderStateListener(events::add);
+        processor.setDecoderStateListener(events::add);
+        processor.setMessageListener(decoderState::receive);
 
-        decoderState.receive(new TestTSBKGrant(resolvedChannel(), NAC, TIMESTAMP));
+        processor.receive(new TestTSBKGrant(resolvedChannel(), NAC, TIMESTAMP));
 
         assertEquals(1, events.size());
         assertEquals(State.CONTROL, events.getFirst().getState());
@@ -340,22 +367,24 @@ class P25P1DecoderStateControlAuthorityTest
         Channel channel = new Channel("Test", ChannelType.STANDARD);
         channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
         P25P1DecoderState decoderState = new P25P1DecoderState(channel, new RecordingTrafficChannelManager());
-        decoderState.receive(new TestNACObservation(NAC, TIMESTAMP));
-        decoderState.receive(new TestNACObservation(NAC, TIMESTAMP + 1));
-        decoderState.receive(new TestNACObservation(NAC, TIMESTAMP + 2));
+        P25P1MessageProcessor processor = new P25P1MessageProcessor(true);
+        processor.setMessageListener(decoderState::receive);
+        processor.receive(new TestNACObservation(NAC, TIMESTAMP));
+        processor.receive(new TestNACObservation(NAC, TIMESTAMP + 1));
+        processor.receive(new TestNACObservation(NAC, TIMESTAMP + 2));
 
         List<DecoderStateEvent> events = new ArrayList<>();
         decoderState.setDecoderStateListener(events::add);
         TestNACObservation matching = new TestNACObservation(NAC, TIMESTAMP + 3);
         matching.setValid(false);
-        decoderState.receive(matching);
+        processor.receive(matching);
 
         assertEquals(1, events.size());
         assertEquals(State.CONTROL, events.getFirst().getState());
 
         TestNACObservation foreign = new TestNACObservation(0x456, TIMESTAMP + 4);
         foreign.setValid(false);
-        decoderState.receive(foreign);
+        processor.receive(foreign);
         assertEquals(1, events.size(), "foreign invalid control frame must not hold the channel");
     }
 
@@ -366,9 +395,11 @@ class P25P1DecoderStateControlAuthorityTest
         channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
         RecordingTrafficChannelManager manager = new RecordingTrafficChannelManager();
         P25P1DecoderState decoderState = new P25P1DecoderState(channel, manager);
-        decoderState.receive(new TestNACObservation(NAC, TIMESTAMP));
-        decoderState.receive(new TestNACObservation(NAC, TIMESTAMP + 1));
-        decoderState.receive(new TestNACObservation(NAC, TIMESTAMP + 2));
+        P25P1MessageProcessor processor = new P25P1MessageProcessor(true);
+        processor.setMessageListener(decoderState::receive);
+        processor.receive(new TestNACObservation(NAC, TIMESTAMP));
+        processor.receive(new TestNACObservation(NAC, TIMESTAMP + 1));
+        processor.receive(new TestNACObservation(NAC, TIMESTAMP + 2));
 
         MotorolaTalkerAliasComplete alias = new MotorolaTalkerAliasComplete(new CorrectedBinaryMessage(80),
             APCO25Talkgroup.create(1_201), 1, TimeslotMessage.TIMESLOT_0, TIMESTAMP + 3, Protocol.APCO25);
@@ -384,11 +415,13 @@ class P25P1DecoderStateControlAuthorityTest
         channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
         RecordingTrafficChannelManager manager = new RecordingTrafficChannelManager();
         P25P1DecoderState decoderState = new P25P1DecoderState(channel, manager);
+        P25P1MessageProcessor processor = new P25P1MessageProcessor(channelType == ChannelType.STANDARD);
+        processor.setMessageListener(decoderState::receive);
         APCO25Channel trafficChannel = resolvedChannel();
 
-        decoderState.receive(new TestNACObservation(NAC, TIMESTAMP));
-        decoderState.receive(new TestNACObservation(NAC, TIMESTAMP + 1));
-        decoderState.receive(new TestNACObservation(NAC, TIMESTAMP + 2));
+        processor.receive(new TestNACObservation(NAC, TIMESTAMP));
+        processor.receive(new TestNACObservation(NAC, TIMESTAMP + 1));
+        processor.receive(new TestNACObservation(NAC, TIMESTAMP + 2));
 
         List<P25P1Message> messages = List.of(
             new TestTSBKGrant(trafficChannel),
@@ -398,7 +431,7 @@ class P25P1DecoderStateControlAuthorityTest
             new TestMotorolaTDMADataChannel(trafficChannel),
             new TestFrequencyBandUpdate());
 
-        messages.forEach(decoderState::receive);
+        messages.forEach(processor::receive);
         return manager;
     }
 
@@ -449,6 +482,12 @@ class P25P1DecoderStateControlAuthorityTest
         {
             super(P25P1DataUnitID.TRUNKING_SIGNALING_BLOCK_1, new CorrectedBinaryMessage(96), nac, timestamp);
             mChannel = channel;
+        }
+
+        @Override
+        public Direction getDirection()
+        {
+            return Direction.OUTBOUND;
         }
 
         @Override

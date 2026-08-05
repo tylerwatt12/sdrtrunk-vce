@@ -27,10 +27,10 @@ public class P25NACAuthority
     private int mLastDiscriminator = Integer.MIN_VALUE;
 
     /**
-     * Observes one independently protected physical unit. The discriminator distinguishes simultaneous units that
-     * share a timestamp, such as the two P25 Phase 2 timeslots.
+     * Observes one independently protected physical unit. The discriminator distinguishes physical fragment
+     * positions that can share both a timestamp and logical timeslot.
      */
-    public synchronized Result observe(int nac, long timestamp, int discriminator)
+    public Result observe(int nac, long timestamp, int discriminator)
     {
         if(mNAC != NO_NAC)
         {
@@ -68,27 +68,12 @@ public class P25NACAuthority
         return Result.PENDING;
     }
 
-    /**
-     * Establishes authority from an upstream unit that has already passed this same confirmation policy.
-     */
-    public synchronized boolean establishFromValidatedUpstream(int nac)
-    {
-        if(mNAC == NO_NAC)
-        {
-            mCandidateNAC = nac;
-            mCandidateCount = REQUIRED_OBSERVATIONS;
-            mNAC = nac;
-        }
-
-        return mNAC == nac;
-    }
-
-    public synchronized int getNAC()
+    public int getNAC()
     {
         return mNAC;
     }
 
-    public synchronized void reset()
+    public void reset()
     {
         mCandidateNAC = NO_NAC;
         mCandidateCount = 0;

@@ -40,7 +40,6 @@ public class MacMessage extends P25P2Message
     private DataUnitID mDataUnitID;
     private MacStructure mMacStructure;
     private Identifier mNAC;
-    private boolean mNACAuthorityValidated;
 
     /**
      * Constructs the message
@@ -83,19 +82,6 @@ public class MacMessage extends P25P2Message
     public boolean hasNAC()
     {
         return mNAC != null;
-    }
-
-    /**
-     * Marks this LCCH unit as having passed the control decoder's repeated-NAC authority gate.
-     */
-    public void setNACAuthorityValidated(boolean validated)
-    {
-        mNACAuthorityValidated = validated;
-    }
-
-    public boolean isNACAuthorityValidated()
-    {
-        return mNACAuthorityValidated;
     }
 
     /**
