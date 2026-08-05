@@ -482,7 +482,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     private void processControlTrafficGrant(APCO25Channel channel, ServiceOptions serviceOptions,
                                             List<Identifier> identifiers, Opcode opcode, long timestamp)
     {
-        if(P25FrequencyBandValidator.isResolvedChannel(channel))
+        if(mChannel.isStandardChannel() && P25FrequencyBandValidator.isResolvedChannel(channel))
         {
             MutableIdentifierCollection mic = getMutableIdentifierCollection(identifiers, timestamp);
             mTrafficChannelManager.getTalkerAliasManager().enrichMutable(mic);
@@ -501,7 +501,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     private void processControlAnnouncedTrafficUpdate(APCO25Channel channel, ServiceOptions serviceOptions,
                                                       List<Identifier> identifiers, Opcode opcode, long timestamp)
     {
-        if(!P25FrequencyBandValidator.isResolvedChannel(channel))
+        if(!mChannel.isStandardChannel() || !P25FrequencyBandValidator.isResolvedChannel(channel))
         {
             return;
         }
@@ -1395,7 +1395,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                     observeNetworkConfiguration(mNetworkConfigurationMonitor.process(tsbk), tsbk.getTimestamp());
 
                     //Send the frequency bands to the traffic channel manager to use for traffic channel preload data
-                    if(tsbk instanceof IFrequencyBand frequencyBand)
+                    if(mChannel.isStandardChannel() && tsbk instanceof IFrequencyBand frequencyBand)
                     {
                         mTrafficChannelManager.processFrequencyBand(frequencyBand);
                     }
@@ -1743,7 +1743,11 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     {
         if(tsbk instanceof MotorolaExplicitTDMADataChannelAnnouncement tdma && tdma.hasChannel())
         {
-            mTrafficChannelManager.processP2DataChannel(tdma.getChannel(), tsbk.getTimestamp());
+            if(mChannel.isStandardChannel())
+            {
+                mTrafficChannelManager.processP2DataChannel(tdma.getChannel(), tsbk.getTimestamp());
+            }
+
             observeNetworkConfiguration(mNetworkConfigurationMonitor.process(tsbk), tsbk.getTimestamp());
         }
     }
