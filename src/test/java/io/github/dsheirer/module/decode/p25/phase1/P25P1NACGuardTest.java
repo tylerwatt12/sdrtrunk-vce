@@ -191,6 +191,45 @@ class P25P1NACGuardTest
     }
 
     @Test
+    void pinnedFramerRecoversOnlyNearLimitVoiceNIDWithAuthoritativeNAC() throws Exception
+    {
+        P25P1MessageFramer framer = new P25P1MessageFramer();
+        framer.setExpectedNAC(EXPECTED_NAC);
+        setField(framer, "mPreviousDataUnitID", P25P1DataUnitID.LOGICAL_LINK_DATA_UNIT_2);
+
+        CorrectedBinaryMessage recoverableVoice =
+            nid(FOREIGN_NAC, P25P1DataUnitID.LOGICAL_LINK_DATA_UNIT_1);
+
+        for(int bit = 16; bit < 26; bit++)
+        {
+            recoverableVoice.flip(bit);
+        }
+
+        assertTrue(framer.decodeNID(recoverableVoice));
+        assertEquals(EXPECTED_NAC, field(framer, "mDetectedNAC", Integer.class));
+
+        CorrectedBinaryMessage lightlyDamagedVoice =
+            nid(FOREIGN_NAC, P25P1DataUnitID.LOGICAL_LINK_DATA_UNIT_1);
+
+        for(int bit = 16; bit < 23; bit++)
+        {
+            lightlyDamagedVoice.flip(bit);
+        }
+
+        assertFalse(framer.decodeNID(lightlyDamagedVoice));
+
+        CorrectedBinaryMessage nearLimitControl =
+            nid(FOREIGN_NAC, P25P1DataUnitID.TRUNKING_SIGNALING_BLOCK_1);
+
+        for(int bit = 16; bit < 26; bit++)
+        {
+            nearLimitControl.flip(bit);
+        }
+
+        assertFalse(framer.decodeNID(nearLimitControl));
+    }
+
+    @Test
     void matchingNACWithUnknownDUIDMayStillInferOnlyTheUnitType() throws Exception
     {
         P25P1MessageFramer framer = new P25P1MessageFramer();

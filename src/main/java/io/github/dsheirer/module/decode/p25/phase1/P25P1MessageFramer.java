@@ -57,6 +57,7 @@ public class P25P1MessageFramer
     private static final int PDU_BLOCK_DIBITS = 98; //196-bit 1/2-rate trellis block = 98 dibits
     private static final int TSBK_BLOCK_BITS = 196;
     private static final int TSBK_BLOCK_DIBITS = TSBK_BLOCK_BITS / 2;
+    private static final int MIN_VOICE_NID_RECOVERY_CORRECTED_BITS = 8;
     private static final int[] TSBK_BIT_OFFSETS = {0, TSBK_BLOCK_BITS, TSBK_BLOCK_BITS * 2};
     private static final P25P1DataUnitID[] TSBK_DUIDS = {
         P25P1DataUnitID.TRUNKING_SIGNALING_BLOCK_1,
@@ -991,7 +992,22 @@ public class P25P1MessageFramer
 
         if(hasExpectedNAC())
         {
-            correctedBitCount = P25P1NIDValidator.validateExpectedNAC(nid, mExpectedNAC);
+            correctedBitCount = P25P1NIDValidator.validate(nid);
+
+            if(correctedBitCount >= 0 && nac != mExpectedNAC)
+            {
+                if(isRecoverableVoiceNID(duid, correctedBitCount))
+                {
+                    //A near-limit BCH correction can select the wrong valid NID and would otherwise discard all nine
+                    //IMBE frames in this LDU.  The traffic channel's preloaded NAC remains authoritative: recover only
+                    //the voice-bearing unit type and never publish or train on the decoded foreign NAC.
+                    nac = mExpectedNAC;
+                }
+                else
+                {
+                    correctedBitCount = -1;
+                }
+            }
         }
         else
         {
@@ -1016,5 +1032,19 @@ public class P25P1MessageFramer
 
         nidDetected(nac, duid, correctedBitCount);
         return true;
+    }
+
+    /**
+     * Indicates when a BCH-valid but NAC-mismatched NID is sufficiently damaged to be treated as an over-correction
+     * for voice continuity.  Control, packet, header and terminator units remain fail-closed.
+     */
+    private boolean isRecoverableVoiceNID(P25P1DataUnitID duid, int correctedBitCount)
+    {
+        boolean alternatingVoiceSequence =
+            (mPreviousDataUnitID == P25P1DataUnitID.LOGICAL_LINK_DATA_UNIT_1 &&
+                duid == P25P1DataUnitID.LOGICAL_LINK_DATA_UNIT_2) ||
+            (mPreviousDataUnitID == P25P1DataUnitID.LOGICAL_LINK_DATA_UNIT_2 &&
+                duid == P25P1DataUnitID.LOGICAL_LINK_DATA_UNIT_1);
+        return correctedBitCount >= MIN_VOICE_NID_RECOVERY_CORRECTED_BITS && alternatingVoiceSequence;
     }
 }
