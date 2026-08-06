@@ -508,7 +508,8 @@ class P25ActivityLogMapper
 
         return new P25ActivityLogRecords.SiteSnapshot(event.observedAtEpochMilliseconds(), guid,
             P25ActivityLogRecords.ContextKind.TRUNKED_SITE, hash, Protocol.APCO25.name(),
-            blankToNull(channel.getName()), blankToNull(channel.getAliasListName()), snapshot.decoder(), wacn,
+            TrunkedSiteMetadataMapper.configuredSiteName(channel), blankToNull(channel.getAliasListName()),
+            snapshot.decoder(), wacn,
             system, nac, rfss, site, lra, tdma, snapshot.siteStatus(), currentControl, currentControl,
             snapshot.channels(), snapshot.neighborSites(),
             snapshot.frequencyBands(), snapshot.patchGroups(), snapshot.foreignSystemBands());

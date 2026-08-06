@@ -923,7 +923,8 @@ class P25ActivityLogMapperTest
     @Test
     void mapsSiteSnapshot()
     {
-        Channel channel = new Channel("Example Site", ChannelType.STANDARD);
+        Channel channel = new Channel("Control", ChannelType.STANDARD);
+        channel.setSite(" Example Site ");
         channel.setAliasListName("Example System");
         channel.setRadresGuid(GUID);
 
@@ -947,6 +948,7 @@ class P25ActivityLogMapperTest
 
         assertNotNull(record);
         assertEquals(GUID, record.guid());
+        assertEquals("Example Site", record.channelName());
         assertEquals(856137500L, record.currentControlHertz());
         assertEquals(0xBEE00, record.wacn());
         assertEquals(0x348, record.systemId());
@@ -959,6 +961,20 @@ class P25ActivityLogMapperTest
         assertEquals(1, record.foreignSystemBands().size());
         assertEquals(0x9EF, record.foreignSystemBands().getFirst().system());
         assertNotNull(record.snapshotHash());
+    }
+
+    @Test
+    void siteSnapshotFallsBackToChannelNameWhenConfiguredSiteIsBlank()
+    {
+        Channel channel = new Channel(" Control ", ChannelType.STANDARD);
+        channel.setSite(" ");
+        channel.setRadresGuid(GUID);
+
+        P25ActivityLogRecords.SiteSnapshot record = new P25ActivityLogMapper().map(
+            new SiteMetadataEvent(channel, siteMetadataSnapshot(1_000L, true), 1_000L));
+
+        assertNotNull(record);
+        assertEquals("Control", record.channelName());
     }
 
     @Test
