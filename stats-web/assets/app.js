@@ -5845,8 +5845,6 @@ function liveChannelPane() {
   let symbolSequence = 0;
   let signalValues = [];
   let symbolValues = [];
-  let signalObservedAtMs = 0;
-  let symbolObservedAtMs = 0;
   let drawPending = false;
 
   const pane = node('div', 'live-details-pane live-channel-pane');
@@ -5878,13 +5876,6 @@ function liveChannelPane() {
     connection.className = `badge ${className}`;
   };
 
-  const ageText = (observedAtMs) => {
-    const age = observedAtMs > 0 ? Math.max(0, Date.now() - observedAtMs) : null;
-    if (age === null) return '—';
-    if (age < 1000) return `${age} ms`;
-    return `${(age / 1000).toFixed(1)} s`;
-  };
-
   const setReadouts = (target, values) => {
     target.replaceChildren(...values.map(([label, value]) => {
       const item = node('span', 'channel-diagnostic-readout');
@@ -5898,17 +5889,10 @@ function liveChannelPane() {
     const peak = finiteSignalValues.length ? Math.max(...finiteSignalValues) : null;
     setReadouts(signalDiagnostic.readouts, [
       ['Center', state?.frequencyHz ? `${frequency(state.frequencyHz)} MHz` : '—'],
-      ['Span', state?.sampleRateHz ? `${(Number(state.sampleRateHz) / 1000).toFixed(1)} kHz` : '—'],
-      ['Bins', signalValues.length ? String(signalValues.length) : '—'],
-      ['Peak', Number.isFinite(peak) ? `${peak.toFixed(1)} dB` : '—'],
-      ['Age', ageText(signalObservedAtMs)]
+      ['Peak', Number.isFinite(peak) ? `${peak.toFixed(1)} dB` : '—']
     ]);
     setReadouts(symbolDiagnostic.readouts, [
-      ['Protocol', state?.protocol || '—'],
-      ['Selected TS', state?.timeslot == null ? '—' : String(state.timeslot)],
-      ['Visible', String(symbolValues.length)],
-      ['Range', '−π to π'],
-      ['Age', ageText(symbolObservedAtMs)]
+      ['Protocol', state?.protocol || '—']
     ]);
   };
 
@@ -5983,8 +5967,6 @@ function liveChannelPane() {
     symbolSequence = 0;
     signalValues = [];
     symbolValues = [];
-    signalObservedAtMs = 0;
-    symbolObservedAtMs = 0;
     [signalDiagnostic, symbolDiagnostic].forEach((target) => {
       target.overlay.textContent = message || '';
       target.overlay.hidden = !message;
@@ -6044,8 +6026,6 @@ function liveChannelPane() {
       symbolSequence = 0;
       signalValues = [];
       symbolValues = [];
-      signalObservedAtMs = 0;
-      symbolObservedAtMs = 0;
       updateDiagnosticState(signalDiagnostic, state.signalState, state.signalReason,
         'Signal diagnostics are unavailable.');
       updateDiagnosticState(symbolDiagnostic, state.symbolsState, state.symbolsReason,
@@ -6062,7 +6042,6 @@ function liveChannelPane() {
       if (Number(frame.generation) !== generation || Number(frame.sequence) <= signalSequence ||
           !Array.isArray(frame.values)) return;
       signalSequence = Number(frame.sequence);
-      signalObservedAtMs = Number(frame.observedAtMs) || Date.now();
       signalValues = frame.values.slice(0, 1024).map(Number).filter(Number.isFinite);
       scheduleDraw();
     });
@@ -6072,7 +6051,6 @@ function liveChannelPane() {
       if (Number(frame.generation) !== generation || Number(frame.sequence) <= symbolSequence ||
           !Array.isArray(frame.values)) return;
       symbolSequence = Number(frame.sequence);
-      symbolObservedAtMs = Number(frame.observedAtMs) || Date.now();
       const incoming = frame.values.map(Number).filter(Number.isFinite);
       const maximum = Math.max(1, Number(state?.maximumVisibleSymbols) || 4800);
       if (symbolValues.length >= maximum) symbolValues = [];
@@ -6113,9 +6091,6 @@ function liveChannelPane() {
 
   const onVisibilityChange = () => sync();
   const onResize = () => scheduleDraw();
-  const ageTimer = window.setInterval(() => {
-    if (active && !collapsed && !document.hidden) updateReadouts();
-  }, 1000);
   document.addEventListener('visibilitychange', onVisibilityChange);
   window.addEventListener('resize', onResize);
   clearPlots('Select a live row above');
@@ -6126,7 +6101,6 @@ function liveChannelPane() {
     setCollapsed(value) { collapsed = value; sync(); },
     close() {
       closeStream();
-      window.clearInterval(ageTimer);
       document.removeEventListener('visibilitychange', onVisibilityChange);
       window.removeEventListener('resize', onResize);
     }
