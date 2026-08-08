@@ -60,6 +60,22 @@ class StatsWebDatabase
     private static final int IDENTITY_KIND_TALKGROUP = P25ActivityLogSchema.IDENTITY_KIND_TALKGROUP;
     private static final int IDENTITY_KIND_RADIO = P25ActivityLogSchema.IDENTITY_KIND_RADIO;
     private static final int IDENTITY_KIND_PATCH_GROUP = P25ActivityLogSchema.IDENTITY_KIND_PATCH_GROUP;
+    private static final String FIRST_CONFIGURATION_CHANNEL_CTE = """
+        first_configuration_channel AS MATERIALIZED (
+            SELECT radres_guid, system_name AS configured_system,
+                nullif(trim(site_name), '') AS configured_site,
+                nullif(trim(name), '') AS configured_name
+            FROM (
+                SELECT radres_guid, system_name, site_name, name,
+                    row_number() OVER (
+                        PARTITION BY radres_guid ORDER BY sort_order, id
+                    ) AS configuration_rank
+                FROM configuration_channel
+                WHERE radres_guid IS NOT NULL
+            ) ranked_configuration
+            WHERE configuration_rank = 1
+        )
+        """;
     static final String DASHBOARD_CALL_ACTIVITY_SQL = """
         SELECT bucket.bucket_start_ms AS time_ms,
             CASE
@@ -108,8 +124,8 @@ class StatsWebDatabase
             END
         ORDER BY time_ms, protocol_code, channel_kind
         """;
-    static final String DASHBOARD_SOURCE_ACTIVITY_SQL = """
-        WITH source_activity AS (
+    static final String DASHBOARD_SOURCE_ACTIVITY_SQL = "WITH " + FIRST_CONFIGURATION_CHANNEL_CTE + """
+        , source_activity AS (
             SELECT context.id AS context_id, context.context_key, context.guid,
                 CASE
                     WHEN context.protocol_code IN (1, 2) THEN 1
@@ -180,6 +196,8 @@ class StatsWebDatabase
                 context.rfss, context.site
         )
         SELECT source_activity.*,
+            CASE WHEN channel_kind = 'TRUNKED' THEN config.configured_site END AS configured_site,
+            CASE WHEN channel_kind = 'TRUNKED' THEN config.configured_name END AS configured_name,
             CASE protocol_code
                 WHEN 1 THEN 'P25'
                 WHEN 3 THEN 'DMR'
@@ -189,10 +207,11 @@ class StatsWebDatabase
             END AS protocol,
             SUM(call_count) OVER () AS total_call_count
         FROM source_activity
+        LEFT JOIN first_configuration_channel config ON config.radres_guid = source_activity.guid
         WHERE call_count > 0
         ORDER BY call_count DESC, protocol_code, channel_kind, lower(coalesce(channel_name, context_key))
         """;
-    static final String DASHBOARD_IDENTITY_ACTIVITY_SQL = """
+    static final String DASHBOARD_IDENTITY_ACTIVITY_SQL = "WITH " + FIRST_CONFIGURATION_CHANNEL_CTE + """
         SELECT bucket.context_id, context.context_key, context.guid,
             CASE
                 WHEN context.protocol_code IN (1, 2) THEN 1
@@ -208,6 +227,7 @@ class StatsWebDatabase
             END AS protocol,
             CASE WHEN context.kind_code = 1 THEN 'TRUNKED' ELSE 'CONVENTIONAL' END AS channel_kind,
             coalesce(context.channel_name, trunked.channel_name) AS channel_name,
+            config.configured_site, config.configured_name,
             coalesce(context.alias_list_name, trunked.alias_list_name) AS alias_list_name,
             context.decoder, context.primary_frequency_hz,
             context.current_control_hz, context.system_key, system.wacn, system.system_id,
@@ -246,9 +266,11 @@ class StatsWebDatabase
          AND radio.identity_kind_code = 2
          AND radio.identity_id = bucket.identity_id
         LEFT JOIN trunked_site_snapshot trunked ON trunked.guid = context.guid
+        LEFT JOIN first_configuration_channel config ON config.radres_guid = context.guid
         WHERE bucket.bucket_start_ms >= ? AND bucket.bucket_start_ms < ?
           AND bucket.identity_role_code = ?
-        GROUP BY bucket.context_id, scope.scope_token, bucket.identity_kind_code, bucket.identity_id
+        GROUP BY bucket.context_id, scope.scope_token, bucket.identity_kind_code, bucket.identity_id,
+            config.configured_site, config.configured_name
         ORDER BY call_count DESC, last_active_ms DESC, protocol_code, channel_kind,
             bucket.identity_kind_code, bucket.identity_id
         LIMIT ?
@@ -327,7 +349,7 @@ class StatsWebDatabase
         Map.entry("system", "scope_token"),
         Map.entry("rfss", "rfss"),
         Map.entry("site", "coalesce(site, site_id)"),
-        Map.entry("name", "lower(channel_name)"),
+        Map.entry("name", "lower(coalesce(configured_name, configured_site, channel_name))"),
         Map.entry("protocol", "protocol_code"),
         Map.entry("decoder", "lower(decoder)"),
         Map.entry("control", "current_control_hz"),
@@ -1126,6 +1148,8 @@ class StatsWebDatabase
             row.put("bucket_end_ms", number(row.get("time_ms")) + bucketMilliseconds);
             row.put("protocol", site.get("protocol"));
             row.put("configured_system", site.get("configured_system"));
+            row.put("configured_site", site.get("configured_site"));
+            row.put("configured_name", site.get("configured_name"));
             row.put("channel_name", site.get("channel_name"));
             for(String field: List.of("wacn", "system_id", "network_id", "rfss", "site", "site_id", "nac",
                 "ran"))
@@ -1493,6 +1517,8 @@ class StatsWebDatabase
                                  coalesce(trunked.channel_name, '') || ' ' ||
                                  coalesce(trunked.configured_system, '') || ' ' ||
                                  coalesce(config.system_name, '') || ' ' ||
+                                 coalesce(config.site_name, '') || ' ' ||
+                                 coalesce(config.name, '') || ' ' ||
                                  coalesce(CAST(trunked.network_id AS TEXT), '') || ' ' ||
                                  coalesce(CAST(trunked.system_id AS TEXT), '') || ' ' ||
                                  coalesce(CAST(trunked.site_id AS TEXT), '') || ' ' ||
@@ -2067,7 +2093,16 @@ class StatsWebDatabase
             if(site == null && currentProtocol != 0)
             {
                 List<Map<String,Object>> fallback = queryRows(connection, """
-                    SELECT context.guid, context.channel_name, context.alias_list_name,
+                    SELECT context.guid, context.channel_name,
+                        (SELECT nullif(trim(config.site_name), '')
+                         FROM configuration_channel config
+                         WHERE config.radres_guid = context.guid
+                         ORDER BY config.sort_order, config.id LIMIT 1) AS configured_site,
+                        (SELECT nullif(trim(config.name), '')
+                         FROM configuration_channel config
+                         WHERE config.radres_guid = context.guid
+                         ORDER BY config.sort_order, config.id LIMIT 1) AS configured_name,
+                        context.alias_list_name,
                         (SELECT list.id FROM alias_list list
                          WHERE list.name = context.alias_list_name COLLATE NOCASE LIMIT 1) AS alias_list_id,
                         context.decoder,
@@ -2349,7 +2384,7 @@ class StatsWebDatabase
 
         if(isTrunkedSite(connection, guid))
         {
-            return queryRows(connection, """
+            return queryRows(connection, "WITH " + FIRST_CONFIGURATION_CHANNEL_CTE + """
                     SELECT 'SITE' AS entry_type, neighbor.variant_code, neighbor.identity_domain_code,
                         NULLIF(neighbor.network_id, -1) AS network_id,
                         NULLIF(neighbor.system_id, -1) AS system_id,
@@ -2360,6 +2395,8 @@ class StatsWebDatabase
                         NULLIF(neighbor.frequency_hz, -1) AS downlink_hz, neighbor.status_flags,
                         neighbor.first_seen_ms, neighbor.last_seen_ms, neighbor.observation_count,
                         NULLIF(trim(resolved.channel_name), '') AS neighbor_name,
+                        config.configured_site AS neighbor_configured_site,
+                        config.configured_name AS neighbor_configured_name,
                         resolved.guid AS neighbor_guid,
                         CASE WHEN neighbor.last_seen_ms >= ? THEN 'CURRENT' ELSE 'HISTORICAL' END AS state
                     FROM trunked_site_neighbor_summary neighbor
@@ -2394,6 +2431,7 @@ class StatsWebDatabase
                           )
                         HAVING count(*) = 1
                     )
+                    LEFT JOIN first_configuration_channel config ON config.radres_guid = resolved.guid
                     WHERE neighbor.guid = ?
                     ORDER BY neighbor.identity_domain_code,
                         neighbor.network_id = -1, neighbor.network_id,
@@ -2405,8 +2443,8 @@ class StatsWebDatabase
                     """, currentSince, guid, limit, offset);
         }
 
-        return queryRows(connection, """
-                WITH combined AS (
+        return queryRows(connection, "WITH " + FIRST_CONFIGURATION_CHANNEL_CTE + """
+                , combined AS (
                     SELECT 0 AS entry_order,
                         CASE WHEN current.neighbor_key IS NULL THEN 1 ELSE 0 END AS current_order,
                         'SITE' AS entry_type, source_system.wacn AS wacn, summary.neighbor_key,
@@ -2485,9 +2523,12 @@ class StatsWebDatabase
                 )
                 SELECT entry_type, wacn, neighbor_key, system_id, rfss, site, lra, channel_descriptor,
                     downlink_hz, uplink_hz, status, confirmed_at_ms, first_seen_ms, last_seen_ms,
-                    observation_count, neighbor_name, neighbor_guid, band_count, has_fdma, has_tdma,
-                    has_unknown, state
+                    observation_count, neighbor_name,
+                    config.configured_site AS neighbor_configured_site,
+                    config.configured_name AS neighbor_configured_name,
+                    neighbor_guid, band_count, has_fdma, has_tdma, has_unknown, state
                 FROM combined
+                LEFT JOIN first_configuration_channel config ON config.radres_guid = combined.neighbor_guid
                 ORDER BY entry_order, current_order, system_id, rfss, site, neighbor_key
                 LIMIT ? OFFSET ?
                 """, currentSince, guid, currentSince, currentSince, guid,
@@ -2888,8 +2929,8 @@ class StatsWebDatabase
     private static List<Map<String,Object>> queryScopeSites(Connection connection, long scopeId, StatsRequest request)
         throws SQLException
     {
-        StringBuilder sql = new StringBuilder("""
-            WITH scoped_sites AS (
+        StringBuilder sql = new StringBuilder("WITH " + FIRST_CONFIGURATION_CHANNEL_CTE + """
+            , scoped_sites AS (
                 SELECT scope.scope_id, scope.scope_token, 1 AS protocol_code, 'P25' AS protocol,
                     'p25' AS site_kind, context.guid, scope.p25_system_key AS system_key,
                     system.wacn, system.system_id, NULL AS network_id, NULL AS configured_system,
@@ -2953,13 +2994,19 @@ class StatsWebDatabase
                 LEFT JOIN trunked_site_snapshot site ON site.guid = context.guid
                 WHERE ownership.scope_id = ? AND scope.protocol_code IN (3, 4)
             )
-            SELECT * FROM scoped_sites WHERE 1=1
+            SELECT scoped_sites.*, config.configured_site, config.configured_name
+            FROM scoped_sites
+            LEFT JOIN first_configuration_channel config ON config.radres_guid = scoped_sites.guid
+            WHERE 1=1
             """);
         List<Object> parameters = new ArrayList<>(List.of(scopeId, scopeId));
 
         if(request.search() != null)
         {
-            sql.append(" AND (lower(channel_name) LIKE ? OR lower(guid) LIKE ?)");
+            sql.append(" AND (lower(channel_name) LIKE ? OR lower(config.configured_site) LIKE ? " +
+                "OR lower(config.configured_name) LIKE ? OR lower(guid) LIKE ?)");
+            parameters.add(like(request.search()));
+            parameters.add(like(request.search()));
             parameters.add(like(request.search()));
             parameters.add(like(request.search()));
         }
@@ -2974,7 +3021,16 @@ class StatsWebDatabase
     private static String siteSelect()
     {
         return """
-            SELECT site.guid, site.system_key, site.protocol, site.channel_name, site.alias_list_name,
+            SELECT site.guid, site.system_key, site.protocol, site.channel_name,
+                (SELECT nullif(trim(config.site_name), '')
+                 FROM configuration_channel config
+                 WHERE config.radres_guid = site.guid
+                 ORDER BY config.sort_order, config.id LIMIT 1) AS configured_site,
+                (SELECT nullif(trim(config.name), '')
+                 FROM configuration_channel config
+                 WHERE config.radres_guid = site.guid
+                 ORDER BY config.sort_order, config.id LIMIT 1) AS configured_name,
+                site.alias_list_name,
                 (SELECT list.id FROM alias_list list
                  WHERE list.name = site.alias_list_name COLLATE NOCASE LIMIT 1) AS alias_list_id,
                 site.decoder, system.wacn, system.system_id, site.nac, site.rfss, site.site,
@@ -3009,43 +3065,45 @@ class StatsWebDatabase
      */
     private static String qualitySiteSelect()
     {
-        String candidates = """
-            SELECT site.guid, site.channel_name, site.nac, site.rfss, site.site, site.current_control_hz,
-                site.last_seen_ms AS site_last_seen_ms, system.wacn, system.system_id,
-                1 AS protocol_code, 'P25' AS protocol, 'p25' AS site_kind,
-                (SELECT config.system_name FROM configuration_channel config
-                 WHERE config.radres_guid = site.guid ORDER BY config.sort_order LIMIT 1) AS configured_system,
-                NULL AS network_id, NULL AS site_id, NULL AS ran,
-                NULL AS variant_code, NULL AS identity_domain_code
-            FROM p25_site_snapshot site
-            LEFT JOIN p25_system system ON system.system_key = site.system_key
+        return "WITH " + FIRST_CONFIGURATION_CHANNEL_CTE + """
+            , candidates AS (
+                SELECT site.guid, site.channel_name, site.nac, site.rfss, site.site,
+                    site.current_control_hz, site.last_seen_ms AS site_last_seen_ms,
+                    system.wacn, system.system_id, 1 AS protocol_code, 'P25' AS protocol,
+                    'p25' AS site_kind, NULL AS configured_system, NULL AS network_id,
+                    NULL AS site_id, NULL AS ran, NULL AS variant_code, NULL AS identity_domain_code
+                FROM p25_site_snapshot site
+                LEFT JOIN p25_system system ON system.system_key = site.system_key
 
-            UNION ALL
+                UNION ALL
 
-            SELECT site.guid, site.channel_name, NULL AS nac, NULL AS rfss, NULL AS site,
-                site.current_control_hz,
-                site.last_seen_ms AS site_last_seen_ms, NULL AS wacn, site.system_id,
-                site.protocol_code,
-                CASE site.protocol_code WHEN 3 THEN 'DMR' WHEN 4 THEN 'NXDN' ELSE 'Unknown' END AS protocol,
-                'trunked' AS site_kind, site.configured_system, site.network_id, site.site_id, site.ran,
-                site.variant_code, site.identity_domain_code
-            FROM trunked_site_snapshot site
-            """;
-        return """
-            SELECT guid, channel_name, nac, rfss, site, current_control_hz, site_last_seen_ms, wacn,
-                system_id, protocol_code, protocol, site_kind, configured_system, network_id, site_id, ran,
-                variant_code, identity_domain_code
-            FROM (
+                SELECT site.guid, site.channel_name, NULL AS nac, NULL AS rfss, NULL AS site,
+                    site.current_control_hz, site.last_seen_ms AS site_last_seen_ms,
+                    NULL AS wacn, site.system_id, site.protocol_code,
+                    CASE site.protocol_code WHEN 3 THEN 'DMR' WHEN 4 THEN 'NXDN'
+                        ELSE 'Unknown' END AS protocol,
+                    'trunked' AS site_kind, site.configured_system, site.network_id,
+                    site.site_id, site.ran, site.variant_code, site.identity_domain_code
+                FROM trunked_site_snapshot site
+            ),
+            ranked AS (
                 SELECT candidate.*, row_number() OVER (
                     PARTITION BY candidate.guid
                     ORDER BY candidate.site_last_seen_ms DESC, candidate.protocol_code ASC
                 ) AS identity_rank
-                FROM (
-                    %s
-                ) candidate
-            ) ranked
-            WHERE identity_rank = 1
-            """.formatted(candidates);
+                FROM candidates candidate
+            )
+            SELECT ranked.guid, ranked.channel_name, ranked.nac, ranked.rfss, ranked.site,
+                ranked.current_control_hz, ranked.site_last_seen_ms, ranked.wacn, ranked.system_id,
+                ranked.protocol_code, ranked.protocol, ranked.site_kind,
+                CASE WHEN ranked.protocol_code = 1 THEN config.configured_system
+                    ELSE ranked.configured_system END AS configured_system,
+                config.configured_site, config.configured_name, ranked.network_id, ranked.site_id,
+                ranked.ran, ranked.variant_code, ranked.identity_domain_code
+            FROM ranked
+            LEFT JOIN first_configuration_channel config ON config.radres_guid = ranked.guid
+            WHERE ranked.identity_rank = 1
+            """;
     }
 
     private static Map<String,Boolean> siteCapabilities(boolean p25)
@@ -3080,7 +3138,16 @@ class StatsWebDatabase
             SELECT site.guid, site.snapshot_hash, site.protocol_code,
                 CASE site.protocol_code WHEN 3 THEN 'DMR' WHEN 4 THEN 'NXDN' ELSE 'Unknown' END AS protocol,
                 'trunked' AS site_kind, site.variant_code, site.identity_domain_code, site.configured_system,
-                site.channel_name, site.alias_list_name,
+                site.channel_name,
+                (SELECT nullif(trim(config.site_name), '')
+                 FROM configuration_channel config
+                 WHERE config.radres_guid = site.guid
+                 ORDER BY config.sort_order, config.id LIMIT 1) AS configured_site,
+                (SELECT nullif(trim(config.name), '')
+                 FROM configuration_channel config
+                 WHERE config.radres_guid = site.guid
+                 ORDER BY config.sort_order, config.id LIMIT 1) AS configured_name,
+                site.alias_list_name,
                 (SELECT list.id FROM alias_list list
                  WHERE list.name = site.alias_list_name COLLATE NOCASE LIMIT 1) AS alias_list_id,
                 site.decoder, site.network_id, site.system_id, site.site_id,
@@ -3278,8 +3345,8 @@ class StatsWebDatabase
      */
     private static List<Map<String,Object>> recentReceivers(Connection connection) throws SQLException
     {
-        return queryRows(connection, """
-            WITH candidates AS (
+        return queryRows(connection, "WITH " + FIRST_CONFIGURATION_CHANNEL_CTE + """
+            , candidates AS (
                 SELECT coalesce(context.context_key, 'site:' || site.guid) AS receiver_key,
                     context.id AS context_id, context.context_key, site.guid,
                     1 AS protocol_code, 'P25' AS protocol, 'TRUNKED' AS channel_kind,
@@ -3387,11 +3454,15 @@ class StatsWebDatabase
                 FROM candidates
             )
             SELECT context_id, context_key, guid, protocol_code, protocol, channel_kind, channel_name,
-                alias_list_name, decoder, configured_system, wacn, system_id, network_id, nac, rfss, site,
+                CASE WHEN channel_kind = 'TRUNKED' THEN config.configured_site END AS configured_site,
+                CASE WHEN channel_kind = 'TRUNKED' THEN config.configured_name END AS configured_name,
+                alias_list_name, decoder, ranked.configured_system, wacn,
+                system_id, network_id, nac, rfss, site,
                 site_id, ran, variant_code, identity_domain_code, primary_frequency_hz,
                 current_control_hz, first_seen_ms, last_seen_ms, observation_count, channels, neighbors,
                 detail_available
             FROM ranked
+            LEFT JOIN first_configuration_channel config ON config.radres_guid = ranked.guid
             WHERE receiver_rank = 1
             ORDER BY last_seen_ms DESC, protocol_code, channel_kind,
                 lower(coalesce(channel_name, context_key, guid))

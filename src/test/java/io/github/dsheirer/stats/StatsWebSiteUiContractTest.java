@@ -37,7 +37,7 @@ class StatsWebSiteUiContractTest
     {
         String source = source();
 
-        for(String capability: new String[]{"channels", "quality", "quality-live", "quality-history",
+        for(String capability: new String[]{"channels", "quality", "quality-history",
             "neighbors", "band-plan", "patches", "activity", "top-talkgroups"})
         {
             assertTrue(source.contains("siteCapability(site, '" + capability + "')"),
@@ -74,10 +74,17 @@ class StatsWebSiteUiContractTest
     {
         String source = source();
         String siteInfo = function(source, "async function renderSiteInfo(site)");
+        String configuredSite = function(source, "function configuredSiteValue(row)");
+        String siteInfoSite = function(source, "function siteInfoSiteValue(row)");
         String talkgroups = function(source, "async function siteTopTalkgroupsSection(site)");
         String channels = function(source, "function trunkedSiteChannelColumns()");
         assertTrue(siteInfo.contains("['Metadata Updates', site.observation_count]"));
         assertTrue(siteInfo.contains("['Decoder', decoderDisplay(site.decoder)]"));
+        assertTrue(siteInfo.contains("['Site', siteInfoSiteValue(site)]"));
+        assertTrue(siteInfo.contains("['Name', configuredNameValue(site)]"));
+        assertFalse(siteInfo.contains("['Name', site.channel_name]"));
+        assertFalse(configuredSite.contains("channel_name"));
+        assertTrue(siteInfoSite.contains("configuredNameValue(row) ? ''"));
         assertTrue(talkgroups.contains("section('Talkgroup Call Activity'"));
         assertTrue(talkgroups.contains("label: 'Calls'"));
         assertTrue(talkgroups.contains("label: 'Rec'"));
@@ -87,6 +94,38 @@ class StatsWebSiteUiContractTest
         assertTrue(channels.contains("label: 'Seen'"));
         assertTrue(channels.contains("fullLabel: 'Last Seen'"));
         assertFalse(channels.contains("Last Recorded"));
+    }
+
+    @Test
+    void usesNameAsTheSiteTitleAndSiteAsSeparateContext() throws Exception
+    {
+        String source = source();
+        String renderer = function(source, "async function renderSite()");
+        String display = function(source, "function siteDisplayParts(row)");
+        assertTrue(display.contains("const primary = name || site"));
+        assertTrue(display.contains("secondary: site && !sameSiteText(site, primary)"));
+        assertTrue(renderer.contains("const display = siteDisplayParts(site)"));
+        assertTrue(renderer.contains("[display.secondary, protocolFamily(site)"));
+        assertTrue(renderer.contains("pageHeader(siteValue(site), subtitle)"));
+    }
+
+    @Test
+    void keepsSiteViewsInsideTheSystemsAccessBoundary() throws Exception
+    {
+        String source = source();
+        String tabItems = function(source, "function siteTabItems(site)");
+        String siteInfo = function(source, "async function renderSiteInfo(site)");
+        String site = function(source, "async function renderSite()");
+
+        assertFalse(source.contains("function liveSiteReceiverSection(site)"));
+        assertFalse(source.contains("liveConnection('/live/sites')"));
+        assertFalse(source.contains("section('Live Receiver'"));
+        assertFalse(source.contains("siteCapability(site, 'quality-live')"));
+        assertTrue(tabItems.contains(
+            "siteCapability(site, 'quality') && siteCapability(site, 'quality-history')"));
+        assertTrue(tabItems.contains("siteCapability(site, 'quality-history')"));
+        assertTrue(siteInfo.contains("siteTopTalkgroupsSection(site)"));
+        assertTrue(site.contains("content.append(await siteSignalHistorySection(site))"));
     }
 
     private static String source() throws Exception

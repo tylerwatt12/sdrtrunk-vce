@@ -123,10 +123,29 @@ class StatsWebDashboardUiContractTest
         String receiverLink = function(source, "function callSourceLink(row)");
         String identityLink = function(source, "function dashboardIdentityLink(row, label = dashboardIdentityId(row))");
         assertTrue(receiverLink.contains("detail_available ?? row.receiver_detail_available"));
+        assertTrue(receiverLink.contains("dashboardChannelKind(row) === 'TRUNKED'"));
+        assertTrue(receiverLink.contains("siteNameSummary(row"));
         assertTrue(receiverLink.contains("return label"));
         assertTrue(identityLink.contains("identity_detail_available"));
         assertTrue(identityLink.contains("identity_detail_view"));
         assertTrue(identityLink.contains("return label"));
+    }
+
+    @Test
+    void summarizesTrunkedNameAndSiteWithoutChangingConventionalLabels() throws Exception
+    {
+        String source = Files.readString(APP_JAVASCRIPT);
+        String parts = function(source, "function siteDisplayParts(row)");
+        String summary = function(source, "function siteNameSummaryValue(primary, secondary, target = '')");
+        String sourceLabel = function(source, "function callSourceLabel(row)");
+        assertTrue(parts.contains("configuredNameValue(row)"));
+        assertTrue(parts.contains("configuredSiteValue(row)"));
+        assertTrue(parts.contains("!sameSiteText(site, primary)"));
+        assertTrue(summary.contains("site-name-summary-primary"));
+        assertTrue(summary.contains("site-name-summary-context"));
+        assertTrue(sourceLabel.indexOf("dashboardChannelKind(row) === 'TRUNKED'") <
+            sourceLabel.indexOf("row.channel_name"));
+        assertTrue(sourceLabel.contains("if (row.channel_name) return row.channel_name"));
     }
 
     @Test
@@ -156,6 +175,7 @@ class StatsWebDashboardUiContractTest
         assertFalse(section.contains("Highest decode"));
         assertFalse(section.contains("Weakest signal"));
         String tile = function(source, "function updateSignalCurrentTile(tile, site)");
+        assertTrue(tile.contains("siteNameSummary(site)"));
         assertTrue(tile.contains("dashboardReceiverSystemDetails(site)"));
         String identifiers = function(source, "function dashboardReceiverIdentifiers(row)");
         assertTrue(identifiers.contains("`RFSS ${rfss}`"));
@@ -174,6 +194,8 @@ class StatsWebDashboardUiContractTest
         assertTrue(css.contains(".dashboard-summary-section .summary-band"));
         assertTrue(css.contains(".dashboard-identity-context"));
         assertTrue(css.contains(".dashboard-mode"));
+        assertTrue(css.contains(".site-name-summary"));
+        assertTrue(css.contains(".site-name-summary-context"));
         assertFalse(css.contains(".site-activity-pie"));
     }
 

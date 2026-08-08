@@ -6,7 +6,6 @@ const ALIAS_CATALOG_COLUMNS_STORAGE_KEY = 'sdrtrunk_alias_catalog_enrichment_col
 const TABLE_WIDTH_MINIMUM = 48;
 const TABLE_WIDTH_MAXIMUM = 1200;
 const SIGNAL_OFFLINE_MILLISECONDS = 45_000;
-const SITE_METADATA_OFFLINE_MILLISECONDS = 30_000;
 const DECODE_HEALTHY_MINIMUM_PERCENT = 90;
 const DECODE_DEGRADED_MINIMUM_PERCENT = 75;
 const VOICE_QUALITY_WARMUP_FRAMES = 50;
@@ -765,10 +764,71 @@ function systemInfoValue(row) {
   return result;
 }
 
-function siteLabel(row) {
+function observedSiteLabel(row) {
   if (!isP25(row)) return trunkedSiteLabel(row);
   const identity = `${hex(row.rfss, 2)}-${hex(row.site, 2)}`;
   return row.channel_name || `${systemLabel(row)} ${identity}`;
+}
+
+function normalizedSiteText(value) {
+  return String(value || '').trim();
+}
+
+function sameSiteText(left, right) {
+  return Boolean(left && right) && left.localeCompare(right, undefined, { sensitivity: 'base' }) === 0;
+}
+
+function configuredSiteValue(row) {
+  return normalizedSiteText(row?.configured_site);
+}
+
+function configuredNameValue(row) {
+  const configured = normalizedSiteText(row?.configured_name);
+  if (configured || !row || Object.prototype.hasOwnProperty.call(row, 'configured_name')) return configured;
+  return normalizedSiteText(row.configured_site) ? normalizedSiteText(row.channel_name) : '';
+}
+
+function siteInfoSiteValue(row) {
+  const site = configuredSiteValue(row);
+  return site || (configuredNameValue(row) ? '' : normalizedSiteText(row?.channel_name));
+}
+
+function siteDisplayParts(row) {
+  const site = configuredSiteValue(row);
+  const name = configuredNameValue(row);
+  const primary = name || site || normalizedSiteText(row?.source_label) || observedSiteLabel(row);
+  return { primary, secondary: site && !sameSiteText(site, primary) ? site : '' };
+}
+
+function neighborSiteDisplayParts(row) {
+  const site = normalizedSiteText(row?.neighbor_configured_site) ||
+    normalizedSiteText(row?.neighbor_site_name) || normalizedSiteText(row?.neighbor_channel_name) ||
+    normalizedSiteText(row?.neighbor_name);
+  const name = normalizedSiteText(row?.neighbor_configured_name);
+  const primary = name || site;
+  return { primary, secondary: site && !sameSiteText(site, primary) ? site : '' };
+}
+
+function siteNameSummaryValue(primary, secondary, target = '') {
+  if (!primary) return '';
+  const summary = node('span', 'site-name-summary');
+  summary.title = [primary, secondary].filter(Boolean).join(' · ');
+  const heading = node('span', 'site-name-summary-primary');
+  heading.append(target ? anchor(primary, target) : valueNode(primary));
+  summary.append(heading);
+  if (secondary) summary.append(node('small', 'site-name-summary-context', secondary));
+  return summary;
+}
+
+function siteNameSummary(row, linked = true) {
+  const labels = siteDisplayParts(row);
+  const target = linked && row?.guid && capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS) ?
+    href('site', { guid: row.guid, tab: 'info' }) : '';
+  return siteNameSummaryValue(labels.primary, labels.secondary, target);
+}
+
+function siteLabel(row) {
+  return siteDisplayParts(row).primary;
 }
 
 function siteValue(row) {
@@ -990,8 +1050,9 @@ function exportCsvLink(dataset, context = {}) {
 function aliasListLink(name, id) {
   const label = String(name || '').trim();
   const aliasListId = Number(id);
-  return label && Number.isInteger(aliasListId) && aliasListId > 0 ?
-    anchor(label, href('aliases', { list: aliasListId })) : label;
+  if (!label || !Number.isInteger(aliasListId) || aliasListId <= 0 ||
+      !capabilityAllowed(ACCESS_CAPABILITIES.ALIASES)) return label;
+  return anchor(label, href('aliases', { list: aliasListId }));
 }
 
 function externalAnchor(label, target) {
@@ -1008,22 +1069,25 @@ function callsignLink(value) {
 }
 
 function systemLink(row, label = systemValue(row)) {
-  if (!row?.scope_token) return label;
+  if (!row?.scope_token || !capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS)) return label;
   return anchor(label, href('system', { ...scope(row), tab: 'info' }));
 }
 
 function siteLink(row, label = siteValue(row)) {
+  if (!row?.guid || !capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS)) return label;
   return anchor(label, href('site', { guid: row.guid, tab: 'info' }));
 }
 
 function neighborSiteLink(row) {
-  const label = row.neighbor_name || row.neighbor_site_name || row.neighbor_channel_name || '';
-  return label && row.neighbor_guid ?
-    anchor(label, href('site', { guid: row.neighbor_guid, tab: 'info' })) : label;
+  const labels = neighborSiteDisplayParts(row);
+  const target = labels.primary && row.neighbor_guid && capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS) ?
+    href('site', { guid: row.neighbor_guid, tab: 'info' }) : '';
+  return siteNameSummaryValue(labels.primary, labels.secondary, target);
 }
 
 function talkgroupLink(row, id = row.talkgroup_id, label, explicitKindCode) {
-  if (id === null || id === undefined || !row?.scope_token) return label || identityNumber(row, id);
+  if (id === null || id === undefined || !row?.scope_token ||
+      !capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS)) return label || identityNumber(row, id);
   const kindCode = Number(explicitKindCode ?? row.identity_kind_code ?? row.target_kind_code);
   const kind = kindCode === 3 ? 'patch' : null;
   return anchor(label || identityNumber(row, id),
@@ -1031,7 +1095,8 @@ function talkgroupLink(row, id = row.talkgroup_id, label, explicitKindCode) {
 }
 
 function radioLink(row, id = row.radio_id, label) {
-  if (id === null || id === undefined || !row?.scope_token) return label || identityNumber(row, id);
+  if (id === null || id === undefined || !row?.scope_token ||
+      !capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS)) return label || identityNumber(row, id);
   return anchor(label || identityNumber(row, id), href('radio', { ...scope(row), id, tab: 'info' }));
 }
 
@@ -1248,9 +1313,7 @@ function databaseLoggingNotice(view) {
       ` Activity pages show retained history${logging.lastHistoryMs ?
         ` through ${exactDateTime(logging.lastHistoryMs)}` : ''} and are not updating.` :
       ' Activity pages require detailed history and are unavailable.';
-    return node('div', 'logging-notice warning',
-      `${message}${detail}${lastWrite}${activityState} ` +
-      'Live Systems and audio playback do not require logging and remain available.');
+    return node('div', 'logging-notice warning', `${message}${detail}${lastWrite}${activityState}`);
   }
   if (!logging.historyActive) {
     const reason = logging.historyConfigured ? 'not currently running' : 'off';
@@ -3940,9 +4003,9 @@ function dashboardMode(row) {
 }
 
 function callSourceLabel(row) {
+  if (dashboardChannelKind(row) === 'TRUNKED') return siteLabel(row);
   if (row.source_label) return row.source_label;
   if (row.channel_name) return row.channel_name;
-  if (dashboardChannelKind(row) === 'TRUNKED') return siteLabel(row);
   if (row.context_key) return row.context_key;
   if (row.frequency_hz) return `${frequency(row.frequency_hz)} MHz`;
   return 'Unknown receiver';
@@ -3950,9 +4013,13 @@ function callSourceLabel(row) {
 
 function callSourceLink(row) {
   const label = callSourceLabel(row);
-  if (!Number(row.detail_available ?? row.receiver_detail_available)) return label;
-  if (dashboardChannelKind(row) === 'TRUNKED' && row.guid) return siteLink(row, label);
-  if (dashboardChannelKind(row) === 'CONVENTIONAL' && row.context_key) {
+  const detailAvailable = Number(row.detail_available ?? row.receiver_detail_available);
+  if (dashboardChannelKind(row) === 'TRUNKED') {
+    return siteNameSummary(row, Boolean(detailAvailable && row.guid));
+  }
+  if (!detailAvailable) return label;
+  if (dashboardChannelKind(row) === 'CONVENTIONAL' && row.context_key &&
+      capabilityAllowed(ACCESS_CAPABILITIES.CONVENTIONAL)) {
     return anchor(label, href('conventional-detail', { context: row.context_key, tab: 'info' }));
   }
   return label;
@@ -4643,7 +4710,7 @@ function updateSignalCurrentTile(tile, site) {
   const state = signalSiteState(site);
   const header = node('div', 'signal-current-header');
   const labels = node('div', 'signal-current-labels');
-  labels.append(siteLink(site));
+  labels.append(siteNameSummary(site));
   const system = node('div', 'signal-current-system');
   system.append(dashboardReceiverSystemDetails(site));
   labels.append(system);
@@ -4774,8 +4841,10 @@ async function signalHealthSection() {
   if (logging.available && !logging.summaryActive) {
     currentToolbar.hidden = true;
     const message = node('div', 'empty signal-disabled');
-    message.append('Signal health requires Stats Logging. ', anchor('Live signal levels remain available',
-      href('live')), '.');
+    message.append('Signal health requires Stats Logging.');
+    if (capabilityAllowed(ACCESS_CAPABILITIES.LIVE)) {
+      message.append(' ', anchor('Open Live signal levels', href('live')), '.');
+    }
     tiles.append(message);
   } else {
     const loadCurrent = async (initial = false) => {
@@ -5206,7 +5275,6 @@ function entityTabs(view, system, id, active, radio, kind = null) {
 const SITE_CAPABILITY_ALIASES = Object.freeze({
   channels: ['channels'],
   quality: ['quality'],
-  'quality-live': ['quality-live', 'quality_live', 'qualityLive'],
   'quality-history': ['quality-history', 'quality_history', 'qualityHistory'],
   neighbors: ['neighbors'],
   'band-plan': ['band-plan', 'band_plan', 'bandPlan', 'bands'],
@@ -5249,7 +5317,7 @@ function explicitSiteCapability(site, capability) {
 function siteCapability(site, capability) {
   const explicit = explicitSiteCapability(site, capability);
   if (explicit !== undefined) return explicit;
-  return ['channels', 'quality', 'quality-live', 'quality-history', 'neighbors'].includes(capability) ||
+  return ['channels', 'quality', 'quality-history', 'neighbors'].includes(capability) ||
     isP25(site);
 }
 
@@ -5261,8 +5329,7 @@ function siteTabItems(site) {
   if (siteCapability(site, 'channels')) {
     items.push({ id: 'channels', label: 'Channels', href: href('site', { ...values, tab: 'channels' }) });
   }
-  const hasQuality = siteCapability(site, 'quality') &&
-    (siteCapability(site, 'quality-live') || siteCapability(site, 'quality-history'));
+  const hasQuality = siteCapability(site, 'quality') && siteCapability(site, 'quality-history');
   if (hasQuality) {
     items.push({ id: 'quality', label: 'Quality', href: href('site', { ...values, tab: 'quality' }) });
   }
@@ -5334,73 +5401,11 @@ function nxdnRepeaterMode(value) {
   return ({ 1: 'Idle', 2: 'Free', 3: 'Halted / CWID' })[Number(value)] || '';
 }
 
-function liveSiteReceiverSection(site) {
-  const connection = badge('Waiting', 'state-stale');
-  const signal = node('span', '', '—');
-  const decode = node('span', '', '—');
-  const observed = node('span', '', 'No live metadata received');
-  const protocolVariant = node('span', '',
-    [protocolFamily(site), trunkedVariant(site)].filter(Boolean).join(' · '));
-  const details = keyValues([
-    ['Connection', connection], ['Protocol', protocolVariant], ['Signal', signal], ['Decode', decode],
-    ['Live Observation', observed]
-  ]);
-  let current = null;
-  let reconnecting = false;
-  const refresh = () => {
-    const live = current && Date.now() - Number(current.live_received_at_ms || current.observed_at_ms || 0) <=
-      SITE_METADATA_OFFLINE_MILLISECONDS;
-    connection.textContent = reconnecting ? 'Reconnecting' : (live ? 'Live' : (current ? 'Stale' : 'Waiting'));
-    connection.className = `badge ${live && !reconnecting ? 'state-current' : 'state-stale'}`;
-    const qualityLive = live && Date.now() -
-      Number(current?.quality_received_at_ms || current?.quality_observed_at_ms || 0) <=
-      SIGNAL_OFFLINE_MILLISECONDS;
-    signal.textContent = qualityLive ? signalNumber(current.signal_dbfs) : '—';
-    decode.textContent = qualityLive ? percentNumber(current.decode_health_pct) : '—';
-  };
-  const apply = (value) => {
-    if (!value || value.guid !== site.guid) return;
-    current = value;
-    protocolVariant.textContent = [
-      protocolFamily(value) || protocolFamily(site),
-      trunkedVariant(value) || trunkedVariant(site)
-    ].filter(Boolean).join(' · ');
-    observed.replaceChildren(valueNode(dateTime(value.observed_at_ms)));
-    refresh();
-  };
-  const source = liveConnection('/live/sites');
-  source.addEventListener('snapshot', (event) => {
-    const snapshot = JSON.parse(event.data);
-    current = null;
-    (snapshot.sites || []).forEach(apply);
-    if (!current) observed.textContent = 'No live metadata received';
-    refresh();
-  });
-  source.addEventListener('site_metadata', (event) => apply(JSON.parse(event.data)));
-  source.addEventListener('site_removed', (event) => {
-    if (JSON.parse(event.data)?.guid === site.guid) {
-      current = null;
-      observed.textContent = 'No live metadata received';
-      refresh();
-    }
-  });
-  source.onopen = () => {
-    reconnecting = false;
-    refresh();
-  };
-  source.onerror = () => {
-    reconnecting = true;
-    refresh();
-  };
-  pageInterval(refresh, 5_000);
-  return section('Live Receiver', details);
-}
-
 const siteColumns = [
   { id: 'system', label: 'Sys', fullLabel: 'System', render: systemLink, sort: 'system', sortValue: systemLabel },
   { id: 'rfss', label: 'RFSS', key: 'rfss', render: (row) => hex(row.rfss, 2), className: 'numeric', sort: 'rfss' },
   { id: 'site', label: 'Site', key: 'site', render: (row) => hex(row.site, 2), className: 'numeric', sort: 'site' },
-  { id: 'name', label: 'Name', render: (row) => siteLink(row), className: 'alias-cell', sort: 'name', sortValue: siteLabel },
+  { id: 'name', label: 'Name / Site', render: siteNameSummary, className: 'alias-cell', sort: 'name', sortValue: siteLabel },
   { id: 'control-frequency', label: 'CC MHz', fullLabel: 'Control Frequency MHz', render: (row) => frequency(row.current_control_hz), className: 'numeric', sort: 'control', sortValue: (row) => Number(row.current_control_hz || 0) },
   { label: 'Ch', fullLabel: 'Channels', key: 'channels', className: 'numeric', sort: 'channels' },
   { label: 'Nbrs', fullLabel: 'Neighbors', key: 'neighbors', className: 'numeric', sort: 'neighbors' },
@@ -5476,10 +5481,12 @@ function dashboardIdentityLink(row, label = dashboardIdentityId(row)) {
   if (row.identity_detail_view === 'radio') {
     return radioLink(row, row.identity_id, label);
   }
-  if (row.identity_detail_view === 'conventional-talkgroups' && row.context_key) {
+  if (row.identity_detail_view === 'conventional-talkgroups' && row.context_key &&
+      capabilityAllowed(ACCESS_CAPABILITIES.CONVENTIONAL)) {
     return anchor(label, href('conventional-detail', { context: row.context_key, tab: 'talkgroups' }));
   }
-  if (row.identity_detail_view === 'conventional-radios' && row.context_key) {
+  if (row.identity_detail_view === 'conventional-radios' && row.context_key &&
+      capabilityAllowed(ACCESS_CAPABILITIES.CONVENTIONAL)) {
     return anchor(label, href('conventional-detail', { context: row.context_key, tab: 'radios' }));
   }
   return label;
@@ -5994,7 +6001,7 @@ async function renderSystems() {
         wrapper.append(heading);
       } else {
         wrapper.append(node('span', 'directory-branch', '↳'),
-          siteLink(row, siteValue(row)));
+          siteNameSummary(row));
       }
       return wrapper;
     } },
@@ -6025,7 +6032,7 @@ async function renderSystems() {
       row.directory_type === 'system' ? number(row.radios) : '' },
     { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms) }
   ];
-  content.append(searchBar('Search protocol, system, site name, or GUID'));
+  content.append(searchBar('Search protocol, system, site, name, or GUID'));
   const directory = section('System Directory', table(rows, columns, 'No systems or sites recorded', {
     type: 'system-directory',
     sortable: false,
@@ -6113,7 +6120,7 @@ async function renderSystem() {
     const sitesPage = await api('/api/system/sites', pageParameters(systemScope));
     const sitesColumn = node('div', 'entity-info-column system-sites-column');
     sitesColumn.append(pagedSection('Sites', sitesPage, scopedSiteColumns,
-      'Search site name or GUID', 'sites'));
+      'Search site, name, or GUID', 'sites'));
     const layout = node('div', 'entity-info-layout system-info-layout');
     layout.append(infoColumn, sitesColumn);
     content.append(layout);
@@ -6412,9 +6419,9 @@ function p25SiteNeighborColumns() {
     { id: 'state', label: 'State', render: (row) => stateBadge(row.state),
       sortValue: (row) => row.state || '' },
     { id: 'type', label: 'Type', render: (row) => row.entry_type === 'ISSI' ? 'ISSI System' : 'Site' },
-    { id: 'neighbor-name', label: 'Name', fullLabel: 'Monitored Site Name',
+    { id: 'neighbor-name', label: 'Name / Site', fullLabel: 'Monitored Name and Site',
       render: neighborSiteLink,
-      sortValue: (row) => row.neighbor_name || row.neighbor_site_name || row.neighbor_channel_name || '' },
+      sortValue: (row) => neighborSiteDisplayParts(row).primary },
     { id: 'wacn', label: 'WACN', render: (row) => hex(row.wacn, 5),
       sortValue: (row) => Number(row.wacn || 0) },
     { id: 'system', label: 'Sys', fullLabel: 'System', render: (row) => hex(row.system_id, 3),
@@ -6449,9 +6456,9 @@ function trunkedSiteNeighborColumns(site) {
       protocol_code: site.protocol_code,
       identity_domain_code: row.identity_domain_code
     }) },
-    { id: 'neighbor-name', label: 'Name', fullLabel: 'Monitored Site Name',
+    { id: 'neighbor-name', label: 'Name / Site', fullLabel: 'Monitored Name and Site',
       render: neighborSiteLink,
-      sortValue: (row) => row.neighbor_name || row.neighbor_site_name || row.neighbor_channel_name || '' },
+      sortValue: (row) => neighborSiteDisplayParts(row).primary },
     { label: 'Network', key: 'network_id', className: 'numeric',
       render: (row) => identifierNumber(row.network_id) },
     { label: 'System', key: 'system_id', className: 'numeric',
@@ -6491,7 +6498,8 @@ async function renderSiteInfo(site) {
   const infoColumn = node('div', 'entity-info-column');
   infoColumn.append(section('Site Info', keyValues([
     ['System', systemLink(site, systemInfoValue(site))],
-    ['GUID', site.guid], ['Name', site.channel_name],
+    ['Site', siteInfoSiteValue(site)], ['Name', configuredNameValue(site)],
+    ['GUID', site.guid],
     ['Alias List', aliasListLink(site.alias_list_name, site.alias_list_id)],
     ['Protocol', protocolFamily(site)], ['Decoder', decoderDisplay(site.decoder)],
     ['Configured Frequency', frequency(site.primary_frequency_hz)],
@@ -6503,16 +6511,13 @@ async function renderSiteInfo(site) {
     infoColumn.append(section(`${protocolFamily(site)} Details`, keyValues(protocolDetails)));
   }
 
-  const receiverColumn = node('div', 'entity-info-column');
-  if (siteCapability(site, 'quality-live')) {
-    receiverColumn.append(liveSiteReceiverSection(site));
-  }
+  const activityColumn = node('div', 'entity-info-column');
   if (siteCapability(site, 'top-talkgroups')) {
-    receiverColumn.append(await siteTopTalkgroupsSection(site));
+    activityColumn.append(await siteTopTalkgroupsSection(site));
   }
   const layout = node('div', 'entity-info-layout');
   layout.append(infoColumn);
-  if (receiverColumn.childNodes.length) layout.append(receiverColumn);
+  if (activityColumn.childNodes.length) layout.append(activityColumn);
   content.append(metrics(summary), layout);
 }
 
@@ -6524,12 +6529,13 @@ async function renderSite() {
   const requestedTab = route.get('tab') || 'info';
   const tabItems = siteTabItems(site);
   const tab = tabItems.some((item) => item.id === requestedTab) ? requestedTab : 'info';
-  const subtitle = [protocolFamily(site), trunkedVariant(site), siteIdentity(site)].filter(Boolean).join(' · ');
+  const display = siteDisplayParts(site);
+  const subtitle = [display.secondary, protocolFamily(site), trunkedVariant(site), siteIdentity(site)]
+    .filter(Boolean).join(' · ');
   content.append(pageHeader(siteValue(site), subtitle), siteTabs(site, tab));
 
   if (tab === 'quality') {
-    if (siteCapability(site, 'quality-live')) content.append(liveSiteReceiverSection(site));
-    if (siteCapability(site, 'quality-history')) content.append(await siteSignalHistorySection(site));
+    content.append(await siteSignalHistorySection(site));
   } else if (tab === 'channels') {
     await renderSiteChannels(site);
   } else if (tab === 'neighbors') {
@@ -6757,8 +6763,7 @@ function activityColumns() {
 
 async function renderActivity(scopeParameters, title = 'Activity') {
   if (!detailedHistoryAvailable()) {
-    content.append(section(title, node('div', 'empty',
-      'Detailed history logging is not running. Summary views and Live Systems remain available.')));
+    content.append(section(title, node('div', 'empty', 'Detailed history logging is not running.')));
     return;
   }
   const data = await api('/api/activity', {
@@ -6878,7 +6883,7 @@ function conventionalTabItems(context) {
     items.push({ id: 'radios', label: 'Radios',
       href: href('conventional-detail', { ...values, tab: 'radios' }) });
   }
-  if (conventionalCapability(context, 'activity')) {
+  if (conventionalCapability(context, 'activity') && capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS)) {
     items.push({ id: 'activity', label: 'Activity',
       href: href('conventional-detail', { ...values, tab: 'activity' }),
       disabled: !detailedHistoryAvailable(), disabledReason: 'Detailed history logging is not running' });

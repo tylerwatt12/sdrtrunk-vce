@@ -2648,6 +2648,107 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void exposesConfiguredSiteAndNameAcrossP25SiteSummaries() throws Exception
+    {
+        long currentHour = Math.floorDiv(System.currentTimeMillis(), 3_600_000L) * 3_600_000L;
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO configuration_channel (
+                    sort_order, system_name, site_name, name, radres_guid, decoder_type, config_json
+                ) VALUES (1, 'Ohio MARCS', 'Cuyahoga County', 'MARCS Cleveland Simulcast',
+                    'test-site-guid', 'P25-1', '{}')
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_site_activity_bucket (context_id, bucket_start_ms, call_count)
+                VALUES (1, %d, 3)
+                """.formatted(currentHour));
+            statement.executeUpdate("""
+                INSERT INTO call_identity_bucket (
+                    context_id, bucket_start_ms, identity_role_code, identity_kind_code,
+                    identity_id, call_count
+                ) VALUES (1, %d, 1, 1, 56132, 3)
+                """.formatted(currentHour));
+            statement.executeUpdate("""
+                INSERT INTO p25_site_snapshot (
+                    guid, snapshot_hash, first_seen_ms, last_seen_ms, observation_count, protocol,
+                    channel_name, alias_list_name, decoder, system_key, nac, rfss, site
+                ) VALUES ('configured-neighbor-guid', 'configured-neighbor-hash', 1000, 3000, 1,
+                    'APCO25', 'Legacy Neighbor Label', 'County', 'P25-1', 1, 0x49F, 1, 2)
+                """);
+            seedP25Context(connection, 201, "configured-neighbor-guid", 1);
+            statement.executeUpdate("""
+                INSERT INTO configuration_channel (
+                    sort_order, system_name, site_name, name, radres_guid, decoder_type, config_json
+                ) VALUES (2, 'Ohio MARCS', 'Lake County', 'Painesville Simulcast',
+                    'configured-neighbor-guid', 'P25-1', '{}')
+                """);
+        }
+
+        Map<String,Object> site = map(mDatabase.site(request("/api/site?guid=" + GUID)), "site");
+        assertEquals("Cuyahoga County", site.get("configured_site"));
+        assertEquals("MARCS Cleveland Simulcast", site.get("configured_name"));
+        assertEquals("Cleveland Simulcast", site.get("channel_name"));
+
+        Map<String,Object> quality = rowsFrom(mDatabase.qualityHistory(request(
+            "/api/quality?guid=" + GUID + "&include_history=false")), "sites").getFirst();
+        assertEquals("Cuyahoga County", quality.get("configured_site"));
+        assertEquals("MARCS Cleveland Simulcast", quality.get("configured_name"));
+
+        Map<String,Object> dashboard = mDatabase.dashboard();
+        Map<String,Object> recent = rowsFrom(dashboard, "recentReceivers").stream()
+            .filter(row -> GUID.equals(row.get("guid"))).findFirst().orElseThrow();
+        assertEquals("Cuyahoga County", recent.get("configured_site"));
+        assertEquals("MARCS Cleveland Simulcast", recent.get("configured_name"));
+        Map<String,Object> sourceActivity = rows(map(dashboard, "sourceActivity24h")).stream()
+            .filter(row -> GUID.equals(row.get("guid"))).findFirst().orElseThrow();
+        assertEquals("Cuyahoga County", sourceActivity.get("configured_site"));
+        assertEquals("MARCS Cleveland Simulcast", sourceActivity.get("configured_name"));
+        Map<String,Object> destination = rowsFrom(dashboard, "topDestinations").stream()
+            .filter(row -> GUID.equals(row.get("guid"))).findFirst().orElseThrow();
+        assertEquals("Cuyahoga County", destination.get("configured_site"));
+        assertEquals("MARCS Cleveland Simulcast", destination.get("configured_name"));
+
+        Map<String,Object> directoryChild = rows(mDatabase.systemDirectory(request(
+            "/api/system-directory?q=MARCS%20Cleveland%20Simulcast"))).stream()
+            .flatMap(parent -> rowsFrom(parent, "children").stream())
+            .filter(row -> GUID.equals(row.get("guid"))).findFirst().orElseThrow();
+        assertEquals("Cuyahoga County", directoryChild.get("configured_site"));
+        assertEquals("MARCS Cleveland Simulcast", directoryChild.get("configured_name"));
+        Map<String,Object> systemSite = rows(mDatabase.systemSites(request(
+            "/api/system/sites?scope=p25:BEE00:348"))).stream()
+            .filter(row -> GUID.equals(row.get("guid"))).findFirst().orElseThrow();
+        assertEquals("Cuyahoga County", systemSite.get("configured_site"));
+        assertEquals("MARCS Cleveland Simulcast", systemSite.get("configured_name"));
+
+        Map<String,Object> neighbor = rows(mDatabase.siteNeighbors(request(
+            "/api/site/neighbors?guid=" + GUID))).stream()
+            .filter(row -> "configured-neighbor-guid".equals(row.get("neighbor_guid")))
+            .findFirst().orElseThrow();
+        assertEquals("Legacy Neighbor Label", neighbor.get("neighbor_name"));
+        assertEquals("Lake County", neighbor.get("neighbor_configured_site"));
+        assertEquals("Painesville Simulcast", neighbor.get("neighbor_configured_name"));
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                UPDATE configuration_channel
+                SET name = CASE radres_guid
+                    WHEN 'test-site-guid' THEN 'Zulu Site'
+                    WHEN 'configured-neighbor-guid' THEN 'Alpha Site'
+                    ELSE name END
+                """);
+        }
+
+        List<Map<String,Object>> sortedSites = rows(mDatabase.systemSites(request(
+            "/api/system/sites?scope=p25:BEE00:348&sort=name&direction=asc")));
+        assertEquals("configured-neighbor-guid", sortedSites.getFirst().get("guid"));
+    }
+
+    @Test
     void dashboardQualityAggregatesBoundedSiteSeries() throws Exception
     {
         long minute = Math.floorDiv(System.currentTimeMillis(), 60_000L) * 60_000L;
@@ -2750,6 +2851,87 @@ class StatsWebDatabaseTest
         assertTrue(allSites.stream().anyMatch(row -> "P25".equals(row.get("protocol"))));
         assertTrue(allSites.stream().anyMatch(row -> "DMR".equals(row.get("protocol"))));
         assertTrue(allSites.stream().anyMatch(row -> "NXDN".equals(row.get("protocol"))));
+    }
+
+    @Test
+    void exposesConfiguredSiteAndNameAcrossDmrAndNxdnSiteSummaries() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("configured-dmr",
+                TrunkedSiteSchema.PROTOCOL_DMR, 1, 2, "Metro DMR", "Legacy DMR Label",
+                10, 20, 1, null, List.of(),
+                List.of(new TrunkedSiteSchema.Neighbor(1, 2, 10, 20, 2, 42, 451_012_500L, 1))));
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("configured-dmr-neighbor",
+                TrunkedSiteSchema.PROTOCOL_DMR, 1, 2, "Metro DMR", "Legacy DMR Neighbor",
+                10, 20, 2, null, List.of(), List.of()));
+            TrunkedSiteSchema.upsert(connection, trunkedSnapshot("configured-nxdn",
+                TrunkedSiteSchema.PROTOCOL_NXDN, 2, 4, "Regional NXDN", "Legacy NXDN Label",
+                7, 8, 9, 5, List.of(), List.of()));
+            seedContextScope(connection, 211, 211, "configured-dmr", TrunkedSiteSchema.PROTOCOL_DMR, 2);
+            seedContextScope(connection, 212, 212, "configured-dmr-neighbor",
+                TrunkedSiteSchema.PROTOCOL_DMR, 2);
+            seedContextScope(connection, 213, 213, "configured-nxdn", TrunkedSiteSchema.PROTOCOL_NXDN, 2);
+            statement.executeUpdate("""
+                INSERT INTO configuration_channel (
+                    sort_order, system_name, site_name, name, radres_guid, decoder_type, config_json
+                ) VALUES
+                    (211, 'Metro DMR', 'Cuyahoga County', 'Downtown DMR',
+                        'configured-dmr', 'DMR', '{}'),
+                    (212, 'Metro DMR', 'Lake County', 'East DMR',
+                        'configured-dmr-neighbor', 'DMR', '{}'),
+                    (213, 'Regional NXDN', 'Geauga County', 'Chardon NXDN',
+                        'configured-nxdn', 'NXDN', '{}')
+                """);
+        }
+
+        Map<String,Object> dmrSite = map(mDatabase.site(request(
+            "/api/site?guid=configured-dmr")), "site");
+        assertEquals("Cuyahoga County", dmrSite.get("configured_site"));
+        assertEquals("Downtown DMR", dmrSite.get("configured_name"));
+        assertEquals("Legacy DMR Label", dmrSite.get("channel_name"));
+        Map<String,Object> nxdnSite = map(mDatabase.site(request(
+            "/api/site?guid=configured-nxdn")), "site");
+        assertEquals("Geauga County", nxdnSite.get("configured_site"));
+        assertEquals("Chardon NXDN", nxdnSite.get("configured_name"));
+        assertEquals("Legacy NXDN Label", nxdnSite.get("channel_name"));
+
+        Map<String,Object> dmrQuality = rowsFrom(mDatabase.qualityHistory(request(
+            "/api/quality?guid=configured-dmr&include_history=false")), "sites").getFirst();
+        assertEquals("Cuyahoga County", dmrQuality.get("configured_site"));
+        assertEquals("Downtown DMR", dmrQuality.get("configured_name"));
+        Map<String,Object> nxdnQuality = rowsFrom(mDatabase.qualityHistory(request(
+            "/api/quality?guid=configured-nxdn&include_history=false")), "sites").getFirst();
+        assertEquals("Geauga County", nxdnQuality.get("configured_site"));
+        assertEquals("Chardon NXDN", nxdnQuality.get("configured_name"));
+
+        List<Map<String,Object>> recent = rowsFrom(mDatabase.dashboard(), "recentReceivers");
+        Map<String,Object> dmrRecent = recent.stream()
+            .filter(row -> "configured-dmr".equals(row.get("guid"))).findFirst().orElseThrow();
+        assertEquals("Cuyahoga County", dmrRecent.get("configured_site"));
+        assertEquals("Downtown DMR", dmrRecent.get("configured_name"));
+        Map<String,Object> nxdnRecent = recent.stream()
+            .filter(row -> "configured-nxdn".equals(row.get("guid"))).findFirst().orElseThrow();
+        assertEquals("Geauga County", nxdnRecent.get("configured_site"));
+        assertEquals("Chardon NXDN", nxdnRecent.get("configured_name"));
+
+        Map<String,Object> dmrChild = rows(mDatabase.systemDirectory(request(
+            "/api/system-directory?q=Downtown%20DMR"))).stream()
+            .flatMap(parent -> rowsFrom(parent, "children").stream())
+            .filter(row -> "configured-dmr".equals(row.get("guid"))).findFirst().orElseThrow();
+        assertEquals("Cuyahoga County", dmrChild.get("configured_site"));
+        assertEquals("Downtown DMR", dmrChild.get("configured_name"));
+        Map<String,Object> nxdnChild = rows(mDatabase.systemSites(request(
+            "/api/system/sites?scope=nxdn:guid:configured-nxdn"))).getFirst();
+        assertEquals("Geauga County", nxdnChild.get("configured_site"));
+        assertEquals("Chardon NXDN", nxdnChild.get("configured_name"));
+
+        Map<String,Object> neighbor = rows(mDatabase.siteNeighbors(request(
+            "/api/site/neighbors?guid=configured-dmr"))).getFirst();
+        assertEquals("Legacy DMR Neighbor", neighbor.get("neighbor_name"));
+        assertEquals("Lake County", neighbor.get("neighbor_configured_site"));
+        assertEquals("East DMR", neighbor.get("neighbor_configured_name"));
     }
 
     @Test
@@ -3372,8 +3554,9 @@ class StatsWebDatabaseTest
                 """);
             statement.executeUpdate("""
                 INSERT INTO configuration_channel(
-                    sort_order, system_name, name, radres_guid, decoder_type, config_json
-                ) VALUES(150, 'Quiet Network', 'Quiet DMR', 'quiet-dmr', 'DMR', '{}')
+                    sort_order, system_name, site_name, name, radres_guid, decoder_type, config_json
+                ) VALUES(150, 'Quiet Network', 'Summit County', 'Quiet DMR Site',
+                    'quiet-dmr', 'DMR', '{}')
                 """);
         }
 
@@ -3385,13 +3568,22 @@ class StatsWebDatabaseTest
         Map<String,Object> child = rowsFrom(quietSystem, "children").getFirst();
         assertEquals("quiet-dmr", child.get("guid"));
         assertEquals("Quiet DMR", child.get("channel_name"));
+        assertEquals("Summit County", child.get("configured_site"));
+        assertEquals("Quiet DMR Site", child.get("configured_name"));
         assertEquals(0, number(child.get("observation_count")));
 
         Map<String,Object> site = map(mDatabase.site(request("/api/site?guid=quiet-dmr")), "site");
         assertEquals("DMR", site.get("protocol"));
         assertEquals("trunked", site.get("site_kind"));
         assertEquals("Quiet DMR", site.get("channel_name"));
+        assertEquals("Summit County", site.get("configured_site"));
+        assertEquals("Quiet DMR Site", site.get("configured_name"));
         assertEquals(451_012_500L, number(site.get("primary_frequency_hz")));
+
+        Map<String,Object> recent = rowsFrom(mDatabase.dashboard(), "recentReceivers").stream()
+            .filter(row -> "quiet-dmr".equals(row.get("guid"))).findFirst().orElseThrow();
+        assertEquals("Summit County", recent.get("configured_site"));
+        assertEquals("Quiet DMR Site", recent.get("configured_name"));
     }
 
     @Test

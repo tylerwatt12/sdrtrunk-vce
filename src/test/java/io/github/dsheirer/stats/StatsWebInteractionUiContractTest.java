@@ -55,11 +55,67 @@ class StatsWebInteractionUiContractTest
     }
 
     @Test
+    void avoidsAdvertisingSeparatelyRestrictedLiveFeatures() throws Exception
+    {
+        String source = source();
+        String loggingNotice = function(source, "function databaseLoggingNotice(view)");
+        String signalHealth = function(source, "async function signalHealthSection()");
+        String activity = function(source, "async function renderActivity(scopeParameters, title = 'Activity')");
+
+        assertFalse(loggingNotice.contains("Live Systems"));
+        assertFalse(loggingNotice.contains("audio playback"));
+        assertTrue(signalHealth.contains("capabilityAllowed(ACCESS_CAPABILITIES.LIVE)"));
+        assertTrue(signalHealth.contains("anchor('Open Live signal levels', href('live'))"));
+        assertFalse(activity.contains("Live Systems remain available"));
+    }
+
+    @Test
+    void keepsCrossPageLinksInsideTheirAccessBoundaries() throws Exception
+    {
+        String source = source();
+        assertTrue(function(source, "function aliasListLink(name, id)")
+            .contains("capabilityAllowed(ACCESS_CAPABILITIES.ALIASES)"));
+        assertTrue(function(source, "function systemLink(row, label = systemValue(row))")
+            .contains("capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS)"));
+        assertTrue(function(source, "function siteLink(row, label = siteValue(row))")
+            .contains("capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS)"));
+        assertTrue(function(source, "function siteNameSummary(row, linked = true)")
+            .contains("capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS)"));
+        assertTrue(function(source, "function neighborSiteLink(row)")
+            .contains("capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS)"));
+        assertTrue(function(source, "function talkgroupLink(row, id = row.talkgroup_id, label, explicitKindCode)")
+            .contains("capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS)"));
+        assertTrue(function(source, "function radioLink(row, id = row.radio_id, label)")
+            .contains("capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS)"));
+        assertTrue(function(source, "function callSourceLink(row)")
+            .contains("capabilityAllowed(ACCESS_CAPABILITIES.CONVENTIONAL)"));
+        assertTrue(function(source, "function dashboardIdentityLink(row, label = dashboardIdentityId(row))")
+            .contains("capabilityAllowed(ACCESS_CAPABILITIES.CONVENTIONAL)"));
+    }
+
+    @Test
+    void keepsSharedMetricsAndFittingTablesInsideTheirContainers() throws Exception
+    {
+        String source = source();
+        String css = Files.readString(APP_CSS);
+        assertTrue(css.contains("grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));"));
+        assertTrue(css.contains(".metric {\n  min-width: 0;"));
+        assertTrue(css.contains("font-variant-numeric: tabular-nums;\n  overflow-wrap: anywhere;"));
+        assertTrue(css.contains(".resizable-table th:last-child .column-resizer {\n  right: 0;"));
+        assertFalse(css.contains("[data-table-type=\"alias-editor-scope-breakdown\"] th:last-child .column-resizer"));
+        assertTrue(css.contains(".table-wrap {"));
+        assertTrue(css.contains("overflow-x: auto;"));
+        assertTrue(function(source, "function setTableColumnWidths(element, columnElements, widths)")
+            .contains("element.style.minWidth = `${Math.round(total)}px`"));
+    }
+
+    @Test
     void showsConfiguredSystemHeadingsAndLinksEveryTrunkedParent() throws Exception
     {
         String systems = function(source(), "async function renderSystems()");
         assertTrue(systems.contains("row.configured_system || `${protocolFamily(row)} System`"));
         assertTrue(systems.contains("heading.append(systemLink(row, label))"));
+        assertTrue(systems.contains("siteNameSummary(row)"));
         assertFalse(systems.contains("directory-secondary"));
         assertFalse(systems.contains("row.site_names && row.site_names"));
         assertFalse(systems.contains("isP25(row) ? 'P25 System'"));
@@ -272,7 +328,10 @@ class StatsWebInteractionUiContractTest
         assertTrue(source.contains("render: (row) => callsignLink(row.callsign)"));
         assertTrue(neighbor.contains("row.neighbor_guid"));
         assertTrue(neighbor.contains("href('site', { guid: row.neighbor_guid"));
-        assertTrue(source.contains("fullLabel: 'Monitored Site Name'"));
+        assertTrue(neighbor.contains("neighborSiteDisplayParts(row)"));
+        assertTrue(source.contains("fullLabel: 'Monitored Name and Site'"));
+        assertTrue(source.contains("row?.neighbor_configured_site"));
+        assertTrue(source.contains("row?.neighbor_configured_name"));
         assertTrue(trunkedNeighbors.contains("render: neighborSiteLink"));
     }
 
@@ -297,8 +356,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(html.indexOf("localStorage.getItem('sdrtrunk_theme')") <
             html.indexOf("rel=\"stylesheet\""));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=29"));
-        assertTrue(html.contains("/assets/app.js?v=39"));
+        assertTrue(html.contains("/assets/app.css?v=31"));
+        assertTrue(html.contains("/assets/app.js?v=42"));
         assertTrue(source.contains("window.localStorage.setItem(THEME_STORAGE_KEY"));
         assertTrue(source.contains("toggle.setAttribute('aria-pressed'"));
         assertTrue(css.contains(":root[data-theme=\"dark\"]"));
