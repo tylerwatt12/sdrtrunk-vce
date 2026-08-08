@@ -22,7 +22,6 @@ package io.github.dsheirer.alias;
 import io.github.dsheirer.alias.id.radio.P25FullyQualifiedRadio;
 import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.alias.id.radio.RadioRange;
-import io.github.dsheirer.alias.id.talkgroup.P25FullyQualifiedTalkgroup;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.alias.id.talkgroup.TalkgroupRange;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
@@ -43,20 +42,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 public class P25AliasTest
 {
     @Test
-    void fullyQualifiedTalkgroupAliasRejectsReservedHomeTalkgroups()
-    {
-        assertFalse(new P25FullyQualifiedTalkgroup(0xBEE00, 0x348, 0).isValid());
-        assertTrue(new P25FullyQualifiedTalkgroup(0xBEE00, 0x348, 1).isValid());
-        assertTrue(new P25FullyQualifiedTalkgroup(0xBEE00, 0x348, 0xFFFE).isValid());
-        assertFalse(new P25FullyQualifiedTalkgroup(0xBEE00, 0x348, 0xFFFF).isValid());
-        assertFalse(new P25FullyQualifiedTalkgroup(0x100000, 0x348, 1).isValid());
-        assertFalse(new P25FullyQualifiedTalkgroup(0xBEE00, 0x1000, 1).isValid());
-        P25FullyQualifiedTalkgroup wrongProtocol = new P25FullyQualifiedTalkgroup(0xBEE00, 0x348, 1);
-        wrongProtocol.setProtocol(Protocol.DMR);
-        assertFalse(wrongProtocol.isValid());
-    }
-
-    @Test
     void fullyQualifiedRadioValidatesTheCompleteIdentity()
     {
         assertTrue(new P25FullyQualifiedRadio(0xBEE00, 0x348, 0).isValid());
@@ -71,19 +56,8 @@ public class P25AliasTest
     }
 
     @Test
-    void fullyQualifiedIdentitiesCompareTheCompleteTuple()
+    void fullyQualifiedRadioIdentitiesCompareTheCompleteTuple()
     {
-        P25FullyQualifiedTalkgroup firstTalkgroup = new P25FullyQualifiedTalkgroup(1, 2, 300);
-        P25FullyQualifiedTalkgroup otherTalkgroup = new P25FullyQualifiedTalkgroup(3, 4, 300);
-        Talkgroup localTalkgroup = new Talkgroup(Protocol.APCO25, 300);
-        assertFalse(firstTalkgroup.matches(otherTalkgroup));
-        assertFalse(firstTalkgroup.matches(localTalkgroup));
-        assertFalse(localTalkgroup.matches(firstTalkgroup));
-        assertNotEquals(firstTalkgroup, otherTalkgroup);
-        assertNotEquals(firstTalkgroup, localTalkgroup);
-        assertNotEquals(0, firstTalkgroup.compareTo(otherTalkgroup));
-        assertTrue(firstTalkgroup.toString().startsWith("Fully Qualified Talkgroup:"));
-
         P25FullyQualifiedRadio firstRadio = new P25FullyQualifiedRadio(1, 2, 300);
         P25FullyQualifiedRadio otherRadio = new P25FullyQualifiedRadio(3, 4, 300);
         Radio localRadio = new Radio(Protocol.APCO25, 300);
@@ -148,50 +122,9 @@ public class P25AliasTest
         assertEquals(radioAlias, aliasList.getAliases(APCO25RadioIdentifier.createFrom(202)).getFirst());
     }
 
-    /**
-     * Tests that a fully qualified P25 talkgroup aliases correctly when there is a matching fully qualified talkgroup
-     * alias ID along with a simple talkgroup that has the same talkgroup value, that is shadowing the fully qualified
-     * version.
-     */
     @Test
-    void aliasP25FullyQualifiedTalkgroup()
+    void decodedFullyQualifiedTalkgroupsUseTheLocalTalkgroupAlias()
     {
-        int wacn = 100;
-        int system = 200;
-        int originalGroup = 300;
-        int aliasGroup = 1;
-        String correctAliasName = "Alias Fully Qualified Talkgroup 1";
-
-        AliasList aliasList = p25AliasList();
-
-        Alias aliasTalkgroup1 = new Alias();
-        aliasTalkgroup1.setName("Alias Talkgroup 1");
-        aliasTalkgroup1.setMatchIdentifier(new Talkgroup(Protocol.APCO25, aliasGroup)); //Shadows the fully qualified variant
-        aliasList.addAlias(aliasTalkgroup1);
-
-        Alias aliasFullyQualifiedTalkgroup1 = new Alias();
-        aliasFullyQualifiedTalkgroup1.setName(correctAliasName);
-        aliasFullyQualifiedTalkgroup1.setMatchIdentifier(new P25FullyQualifiedTalkgroup(wacn, system, originalGroup));
-        aliasList.addAlias(aliasFullyQualifiedTalkgroup1);
-
-        //Identifier transmitted over the air that we want to alias
-        APCO25FullyQualifiedTalkgroupIdentifier p25FQTG1 = APCO25FullyQualifiedTalkgroupIdentifier.createTo(aliasGroup, wacn, system, originalGroup);
-
-        List<Alias> aliases = aliasList.getAliases(p25FQTG1);
-        assertEquals(1, aliases.size(), "Expected 1 matching alias");
-        assertEquals(correctAliasName, aliases.getFirst().getName(), "Unexpected alias name");
-    }
-
-    /**
-     * Tests that a fully qualified P25 talkgroup aliases correctly to a simple talkgroup alias for the local talkgroup
-     * value, when the user has not explicitly added a fully qualified talkgroup alias ID..
-     */
-    @Test
-    void aliasP25FullyQualifiedTalkgroupToBasicTalkgroupAlias()
-    {
-        int wacn = 100;
-        int system = 200;
-        int originalGroup = 300;
         int aliasGroup = 1;
         String correctAliasName = "Alias Talkgroup 1";
 
@@ -202,19 +135,17 @@ public class P25AliasTest
         aliasTalkgroup1.setMatchIdentifier(new Talkgroup(Protocol.APCO25, aliasGroup));
         aliasList.addAlias(aliasTalkgroup1);
 
-        //Identifier transmitted over the air that we want to alias
-        APCO25FullyQualifiedTalkgroupIdentifier p25FQTG1 = APCO25FullyQualifiedTalkgroupIdentifier.createTo(aliasGroup, wacn, system, originalGroup);
-
-        List<Alias> aliases = aliasList.getAliases(p25FQTG1);
-        assertEquals(0, aliases.size(), "Expected 0 matching alias");
+        List<Alias> first = aliasList.getAliases(
+            APCO25FullyQualifiedTalkgroupIdentifier.createTo(aliasGroup, 100, 200, 300));
+        List<Alias> second = aliasList.getAliases(
+            APCO25FullyQualifiedTalkgroupIdentifier.createTo(aliasGroup, 101, 201, 301));
+        assertEquals(correctAliasName, first.getFirst().getName());
+        assertEquals(correctAliasName, second.getFirst().getName(),
+            "The decoded home tuple must not change alias matching");
     }
 
-    /**
-     * Tests that a fully qualified P25 talkgroup aliases correctly to a simple talkgroup alias for the local talkgroup
-     * value, when the user has not explicitly added a fully qualified talkgroup alias ID..
-     */
     @Test
-    void aliasP25FullyQualifiedTalkgroupToTalkgroupRangeAlias()
+    void decodedFullyQualifiedTalkgroupsUseTheLocalRangeFallback()
     {
         int wacn = 100;
         int system = 200;
@@ -229,11 +160,9 @@ public class P25AliasTest
         aliasTalkgroupRange.setMatchIdentifier(new TalkgroupRange(Protocol.APCO25, 1, 0xFFFF));
         aliasList.addAlias(aliasTalkgroupRange);
 
-        //Identifier transmitted over the air that we want to alias
-        APCO25FullyQualifiedTalkgroupIdentifier p25FQTG1 = APCO25FullyQualifiedTalkgroupIdentifier.createTo(aliasGroup, wacn, system, originalGroup);
-
-        List<Alias> aliases = aliasList.getAliases(p25FQTG1);
-        assertEquals(0, aliases.size(), "Expected 0 matching aliases");
+        List<Alias> aliases = aliasList.getAliases(
+            APCO25FullyQualifiedTalkgroupIdentifier.createTo(aliasGroup, wacn, system, originalGroup));
+        assertEquals(correctAliasName, aliases.getFirst().getName());
     }
 
     @Test

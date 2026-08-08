@@ -2722,7 +2722,7 @@ function aliasMatcherDescriptor(options, keyOrType, protocol = '') {
     if (!protocol || String(entry.protocol) === String(protocol)) return true;
     const p25Protocols = ['APCO25', 'APCO25_PHASE2'];
     if (p25Protocols.includes(String(entry.protocol)) && p25Protocols.includes(String(protocol))) return true;
-    return ['P25_FULLY_QUALIFIED_TALKGROUP', 'P25_FULLY_QUALIFIED_RADIO_ID'].includes(key) &&
+    return key === 'P25_FULLY_QUALIFIED_RADIO_ID' &&
       !entry.protocol && p25Protocols.includes(String(protocol));
   });
   return typed || matchers[0];
@@ -3506,13 +3506,7 @@ function observedTalkgroupPromotionReason(row) {
 }
 
 function observedTalkgroupIdentity(row) {
-  const home = observedP25HomeIdentity(row);
-  if (!home) return identityNumber(row, row.talkgroup_id);
-  const wrapper = node('div', 'observed-talkgroup-match');
-  wrapper.append(node('strong', '',
-    `FQ ${hex(home.wacn, 5)}-${hex(home.system, 3)}-${identifierNumber(home.talkgroup)}`),
-    node('small', '', `Local TG ${identifierNumber(row.talkgroup_id)}`));
-  return wrapper;
+  return identityNumber(row, row.talkgroup_id);
 }
 
 function observedTalkgroupSystem(row) {
@@ -3574,21 +3568,16 @@ function observedTalkgroupPrefill(row, selectedList) {
     policy.playbackPriority : null;
   const matchedAliasId = Number(row.matched_alias_id ?? row.alias_id);
   const talkgroupId = Number(row.talkgroup_id);
-  const home = observedP25HomeIdentity(row);
   let matcher;
   if (isP25(row)) {
     if (String(row?.topology || '').toUpperCase() === 'CONVENTIONAL') {
       throw new Error('Conventional P25 observations cannot be promoted until identity qualification is retained.');
     }
-    if (observedP25IdentityState(row) === 2 && home) {
-      matcher = {
-        type: 'P25_FULLY_QUALIFIED_TALKGROUP', protocol: 'APCO25',
-        wacn: home.wacn, system: home.system, value: home.talkgroup
-      };
-    } else if (observedP25IdentityState(row) === 1) {
+    if ([1, 2].includes(observedP25IdentityState(row)) && Number.isInteger(talkgroupId) &&
+        talkgroupId > 0 && talkgroupId < 0xFFFF) {
       matcher = { type: 'TALKGROUP', protocol: observedTalkgroupProtocol(row), value: talkgroupId };
     } else {
-      throw new Error('This P25 observation does not have a stable alias identity.');
+      throw new Error('This P25 observation does not have a usable local talkgroup ID.');
     }
   } else {
     matcher = { type: 'TALKGROUP', protocol: observedTalkgroupProtocol(row), value: talkgroupId };
@@ -3653,7 +3642,7 @@ function observedTalkgroupDetail(row, selectedList) {
   ];
   if (home) {
     identity.splice(1, 0,
-      ['Fully Qualified Home', `${hex(home.wacn, 5)}-${hex(home.system, 3)}-${identifierNumber(home.talkgroup)}`],
+      ['Decoded Home', `${hex(home.wacn, 5)}-${hex(home.system, 3)}-${identifierNumber(home.talkgroup)}`],
       ['Home WACN', hexDecimalPair(home.wacn, 5)], ['Home System ID', hexDecimalPair(home.system, 3)]);
   }
   wrapper.append(section('Identity', keyValues(identity)));

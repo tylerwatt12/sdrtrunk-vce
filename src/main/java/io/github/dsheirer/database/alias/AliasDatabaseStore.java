@@ -27,7 +27,6 @@ import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.alias.id.radio.RadioRange;
 import io.github.dsheirer.alias.id.status.UnitStatusID;
 import io.github.dsheirer.alias.id.status.UserStatusID;
-import io.github.dsheirer.alias.id.talkgroup.P25FullyQualifiedTalkgroup;
 import io.github.dsheirer.alias.id.talkgroup.StreamAsTalkgroup;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.alias.id.talkgroup.TalkgroupRange;
@@ -635,13 +634,6 @@ public class AliasDatabaseStore
                 minimum = range.getMinTalkgroup();
                 maximum = range.getMaxTalkgroup();
             }
-            case P25_FULLY_QUALIFIED_TALKGROUP -> {
-                P25FullyQualifiedTalkgroup talkgroup = (P25FullyQualifiedTalkgroup)matcher;
-                protocol = protocol(talkgroup.getProtocol());
-                value = talkgroup.getValue();
-                wacn = talkgroup.getWacn();
-                p25SystemId = talkgroup.getSystem();
-            }
             case RADIO_ID -> {
                 Radio radio = (Radio)matcher;
                 protocol = protocol(radio.getProtocol());
@@ -708,13 +700,6 @@ public class AliasDatabaseStore
                     toneSequence);
                 yield new TalkgroupRange(protocol, requireInteger(minimum, "alias.min_value", type),
                     requireInteger(maximum, "alias.max_value", type));
-            }
-            case P25_FULLY_QUALIFIED_TALKGROUP -> {
-                requireP25Protocol(protocol, type);
-                requireNullPayload(type, minimum, maximum, textValue, numericValue, toneSequence);
-                yield new P25FullyQualifiedTalkgroup(requireInteger(wacn, "alias.wacn", type),
-                    requireInteger(p25SystemId, "alias.p25_system_id", type),
-                    requireInteger(value, "alias.value", type));
             }
             case RADIO_ID -> {
                 requireNullPayload(type, minimum, maximum, wacn, p25SystemId, textValue,

@@ -21,7 +21,6 @@ import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.alias.id.radio.RadioRange;
 import io.github.dsheirer.alias.id.status.UnitStatusID;
 import io.github.dsheirer.alias.id.status.UserStatusID;
-import io.github.dsheirer.alias.id.talkgroup.P25FullyQualifiedTalkgroup;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.alias.id.talkgroup.TalkgroupRange;
 import io.github.dsheirer.identifier.Role;
@@ -31,7 +30,6 @@ import io.github.dsheirer.identifier.status.UserStatusIdentifier;
 import io.github.dsheirer.module.decode.dcs.DCSCode;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
-import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.protocol.Protocol;
 import java.util.List;
@@ -76,40 +74,26 @@ class AliasListMutationTest
     }
 
     @Test
-    void fullyQualifiedEditsAndRemovalDoNotLeaveStaleMatches()
+    void fullyQualifiedRadioEditsAndRemovalDoNotLeaveStaleMatches()
     {
         AliasList aliasList = p25AliasList();
-        P25FullyQualifiedTalkgroup talkgroup = new P25FullyQualifiedTalkgroup(1, 2, 300);
-        Alias talkgroupAlias = alias("fq talkgroup", talkgroup);
         P25FullyQualifiedRadio radio = new P25FullyQualifiedRadio(4, 5, 600);
         Alias radioAlias = alias("fq radio", radio);
-        aliasList.addAliases(List.of(talkgroupAlias, radioAlias));
+        aliasList.addAlias(radioAlias);
 
-        assertSame(talkgroupAlias, only(aliasList.getAliases(
-            APCO25FullyQualifiedTalkgroupIdentifier.createTo(30, 1, 2, 300))));
         assertSame(radioAlias, only(aliasList.getAliases(
             APCO25FullyQualifiedRadioIdentifier.createFrom(60, 4, 5, 600))));
 
-        talkgroup.setWacn(7);
-        talkgroup.setSystem(8);
-        talkgroup.setValue(900);
         radio.setWacn(10);
         radio.setSystem(11);
         radio.setValue(1200);
 
         assertTrue(aliasList.getAliases(
-            APCO25FullyQualifiedTalkgroupIdentifier.createTo(30, 1, 2, 300)).isEmpty());
-        assertTrue(aliasList.getAliases(
             APCO25FullyQualifiedRadioIdentifier.createFrom(60, 4, 5, 600)).isEmpty());
-        assertSame(talkgroupAlias, only(aliasList.getAliases(
-            APCO25FullyQualifiedTalkgroupIdentifier.createTo(30, 7, 8, 900))));
         assertSame(radioAlias, only(aliasList.getAliases(
             APCO25FullyQualifiedRadioIdentifier.createFrom(60, 10, 11, 1200))));
 
-        aliasList.removeAlias(talkgroupAlias);
         aliasList.removeAlias(radioAlias);
-        assertTrue(aliasList.getAliases(
-            APCO25FullyQualifiedTalkgroupIdentifier.createTo(30, 7, 8, 900)).isEmpty());
         assertTrue(aliasList.getAliases(
             APCO25FullyQualifiedRadioIdentifier.createFrom(60, 10, 11, 1200)).isEmpty());
     }
@@ -221,14 +205,10 @@ class AliasListMutationTest
     }
 
     @Test
-    void fullyQualifiedAndDcsCollisionRemovalRevealsTheSurvivingAlias()
+    void fullyQualifiedRadioAndDcsCollisionRemovalRevealsTheSurvivingAlias()
     {
         AliasList p25AliasList = p25AliasList();
         AliasList nbfmAliasList = nbfmAliasList();
-        P25FullyQualifiedTalkgroup firstTalkgroup = new P25FullyQualifiedTalkgroup(1, 2, 300);
-        P25FullyQualifiedTalkgroup secondTalkgroup = new P25FullyQualifiedTalkgroup(1, 2, 300);
-        Alias firstTalkgroupAlias = alias("first fq talkgroup", firstTalkgroup);
-        Alias secondTalkgroupAlias = alias("second fq talkgroup", secondTalkgroup);
         P25FullyQualifiedRadio firstRadio = new P25FullyQualifiedRadio(4, 5, 600);
         P25FullyQualifiedRadio secondRadio = new P25FullyQualifiedRadio(4, 5, 600);
         Alias firstRadioAlias = alias("first fq radio", firstRadio);
@@ -239,27 +219,20 @@ class AliasListMutationTest
         secondDcs.setDCSCode(DCSCode.N023);
         Alias firstDcsAlias = alias("first dcs", firstDcs);
         Alias secondDcsAlias = alias("second dcs", secondDcs);
-        p25AliasList.addAliases(List.of(firstTalkgroupAlias, secondTalkgroupAlias, firstRadioAlias, secondRadioAlias));
+        p25AliasList.addAliases(List.of(firstRadioAlias, secondRadioAlias));
         nbfmAliasList.addAliases(List.of(firstDcsAlias, secondDcsAlias));
 
-        assertSame(firstTalkgroupAlias, only(p25AliasList.getAliases(
-            APCO25FullyQualifiedTalkgroupIdentifier.createTo(30, 1, 2, 300))));
         assertSame(firstRadioAlias, only(p25AliasList.getAliases(
             APCO25FullyQualifiedRadioIdentifier.createFrom(60, 4, 5, 600))));
         assertSame(secondDcsAlias, only(nbfmAliasList.getAliases(new DCSIdentifier(DCSCode.N023))));
-        assertTrue(firstTalkgroup.overlapProperty().get());
-        assertTrue(secondTalkgroup.overlapProperty().get());
         assertTrue(firstRadio.overlapProperty().get());
         assertTrue(secondRadio.overlapProperty().get());
 
-        p25AliasList.removeAliases(List.of(firstTalkgroupAlias, firstRadioAlias));
+        p25AliasList.removeAlias(firstRadioAlias);
         nbfmAliasList.removeAlias(secondDcsAlias);
-        assertSame(secondTalkgroupAlias, only(p25AliasList.getAliases(
-            APCO25FullyQualifiedTalkgroupIdentifier.createTo(30, 1, 2, 300))));
         assertSame(secondRadioAlias, only(p25AliasList.getAliases(
             APCO25FullyQualifiedRadioIdentifier.createFrom(60, 4, 5, 600))));
         assertSame(firstDcsAlias, only(nbfmAliasList.getAliases(new DCSIdentifier(DCSCode.N023))));
-        assertFalse(secondTalkgroup.overlapProperty().get());
         assertFalse(secondRadio.overlapProperty().get());
         assertFalse(firstDcs.overlapProperty().get());
     }

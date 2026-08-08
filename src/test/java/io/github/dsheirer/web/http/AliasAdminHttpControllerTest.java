@@ -106,17 +106,13 @@ class AliasAdminHttpControllerTest
                 AliasAdminHttpController.OPTIONS_PATH + "?aliasListId=" + aliasListId).GET()));
             assertEquals("APCO25", matcher(p25Options, "TALKGROUP_RANGE").get("protocol").textValue());
             assertEquals("APCO25", matcher(p25Options, "RADIO_ID_RANGE").get("protocol").textValue());
-            assertTrue(!matcher(p25Options, "P25_FULLY_QUALIFIED_TALKGROUP").has("protocol"));
             assertTrue(!matcher(p25Options, "P25_FULLY_QUALIFIED_RADIO_ID").has("protocol"));
-            assertEquals(1, matcher(p25Options, "P25_FULLY_QUALIFIED_TALKGROUP").get("minimum").intValue());
-            assertEquals(0xFFFE,
-                matcher(p25Options, "P25_FULLY_QUALIFIED_TALKGROUP").get("maximum").intValue());
+            assertTrue(java.util.stream.StreamSupport.stream(p25Options.get("matchers").spliterator(), false)
+                .noneMatch(node -> "P25_FULLY_QUALIFIED_TALKGROUP".equals(node.get("type").textValue())));
 
             for(Map<String,Object> matcher: java.util.List.<Map<String,Object>>of(
                 Map.of("type", "TALKGROUP_RANGE", "protocol", "APCO25", "minimum", 200, "maximum", 210),
                 Map.of("type", "RADIO_ID_RANGE", "protocol", "APCO25", "minimum", 300, "maximum", 310),
-                Map.of("type", "P25_FULLY_QUALIFIED_TALKGROUP", "wacn", 0xBEE00, "system", 0x348,
-                    "value", 201),
                 Map.of("type", "P25_FULLY_QUALIFIED_RADIO_ID", "wacn", 0xBEE00, "system", 0x348,
                     "value", 301)))
             {
@@ -156,15 +152,12 @@ class AliasAdminHttpControllerTest
                 Map.of("revision", revision, "alias", decimalAlias));
             assertEquals(400, send(client, jsonRequest(origin, AliasAdminHttpController.ALIASES_PATH)
                 .POST(HttpRequest.BodyPublishers.ofString(decimalMatcher))).statusCode());
-            for(int reservedTalkgroup: new int[]{0, 0xFFFF})
-            {
-                Map<String,Object> reservedAlias = new java.util.LinkedHashMap<>(aliasPayload);
-                reservedAlias.put("matcher", Map.of("type", "P25_FULLY_QUALIFIED_TALKGROUP",
-                    "wacn", 0xBEE00, "system", 0x348, "value", reservedTalkgroup));
-                assertEquals(400, send(client, jsonRequest(origin, AliasAdminHttpController.ALIASES_PATH)
-                    .POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(
-                        Map.of("revision", revision, "alias", reservedAlias))))).statusCode());
-            }
+            Map<String,Object> retiredMatcher = new java.util.LinkedHashMap<>(aliasPayload);
+            retiredMatcher.put("matcher", Map.of("type", "P25_FULLY_QUALIFIED_TALKGROUP",
+                "wacn", 0xBEE00, "system", 0x348, "value", 201));
+            assertEquals(400, send(client, jsonRequest(origin, AliasAdminHttpController.ALIASES_PATH)
+                .POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(
+                    Map.of("revision", revision, "alias", retiredMatcher))))).statusCode());
 
             Map<String,Object> update = Map.of("revision", revision,
                 "alias", alias(aliasListId, "Dispatch Updated", true));

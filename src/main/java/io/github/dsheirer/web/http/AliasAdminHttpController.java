@@ -29,7 +29,6 @@ import io.github.dsheirer.alias.id.radio.RadioFormat;
 import io.github.dsheirer.alias.id.radio.RadioRange;
 import io.github.dsheirer.alias.id.status.UnitStatusID;
 import io.github.dsheirer.alias.id.status.UserStatusID;
-import io.github.dsheirer.alias.id.talkgroup.P25FullyQualifiedTalkgroup;
 import io.github.dsheirer.alias.id.talkgroup.StreamAsTalkgroup;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.alias.id.talkgroup.TalkgroupFormat;
@@ -379,7 +378,7 @@ public final class AliasAdminHttpController
         {
             case TALKGROUP, RADIO_ID -> 2;
             case TALKGROUP_RANGE, RADIO_ID_RANGE -> 3;
-            case P25_FULLY_QUALIFIED_TALKGROUP, P25_FULLY_QUALIFIED_RADIO_ID -> 3;
+            case P25_FULLY_QUALIFIED_RADIO_ID -> 3;
             case STATUS, UNIT_STATUS, DCS, ESN, TONES -> 1;
             default -> throw invalid("matcher type is invalid");
         };
@@ -396,9 +395,6 @@ public final class AliasAdminHttpController
                 required(payload.minimum(), "minimum"), required(payload.maximum(), "maximum"));
             case RADIO_ID_RANGE -> new RadioRange(requiredProtocol(payload.protocol()),
                 required(payload.minimum(), "minimum"), required(payload.maximum(), "maximum"));
-            case P25_FULLY_QUALIFIED_TALKGROUP -> new P25FullyQualifiedTalkgroup(
-                bounded(payload.wacn(), "wacn", 0, 0xFFFFF), bounded(payload.system(), "system", 0, 0xFFF),
-                bounded(payload.value(), "value", 1, 0xFFFE));
             case P25_FULLY_QUALIFIED_RADIO_ID -> new P25FullyQualifiedRadio(
                 bounded(payload.wacn(), "wacn", 0, 0xFFFFF), bounded(payload.system(), "system", 0, 0xFFF),
                 bounded(payload.value(), "value", 0, 0xFFFFFF));
@@ -474,11 +470,6 @@ public final class AliasAdminHttpController
 
         switch(matcher)
         {
-            case P25FullyQualifiedTalkgroup value -> {
-                response.put("wacn", value.getWacn());
-                response.put("system", value.getSystem());
-                response.put("value", value.getValue());
-            }
             case P25FullyQualifiedRadio value -> {
                 response.put("wacn", value.getWacn());
                 response.put("system", value.getSystem());
@@ -549,11 +540,6 @@ public final class AliasAdminHttpController
             response.put("minimum", format.getMinimumValidValue());
             response.put("maximum", format.getMaximumValidValue());
         }
-        else if(descriptor.type() == AliasIDType.P25_FULLY_QUALIFIED_TALKGROUP)
-        {
-            response.put("minimum", 1);
-            response.put("maximum", 0xFFFE);
-        }
         else if(descriptor.type() == AliasIDType.P25_FULLY_QUALIFIED_RADIO_ID)
         {
             response.put("minimum", 0);
@@ -568,8 +554,7 @@ public final class AliasAdminHttpController
         {
             case TALKGROUP, RADIO_ID -> List.of("value");
             case TALKGROUP_RANGE, RADIO_ID_RANGE -> List.of("minimum", "maximum");
-            case P25_FULLY_QUALIFIED_TALKGROUP, P25_FULLY_QUALIFIED_RADIO_ID ->
-                List.of("wacn", "system", "value");
+            case P25_FULLY_QUALIFIED_RADIO_ID -> List.of("wacn", "system", "value");
             case STATUS, UNIT_STATUS -> List.of("status");
             case TONES -> List.of("tones");
             case DCS -> List.of("code");

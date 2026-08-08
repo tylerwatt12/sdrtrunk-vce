@@ -96,7 +96,7 @@ class AliasMatchRegistryTest
     void eachFamilyOffersOnlyItsSupportedMatchers()
     {
         assertEquals(Set.of("P25 Talkgroup", "P25 Talkgroup Range", "P25 Radio ID", "P25 Radio ID Range",
-                "P25 Fully Qualified Talkgroup", "P25 Fully Qualified Radio ID", "Tone Sequence", "User Status",
+                "P25 Fully Qualified Radio ID", "Tone Sequence", "User Status",
                 "Unit Status"),
             labels(AliasListFamily.P25));
         assertEquals(Set.of("DMR Talkgroup", "DMR Talkgroup Range", "DMR Radio ID", "DMR Radio ID Range",

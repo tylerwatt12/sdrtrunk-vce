@@ -138,9 +138,6 @@ public final class AliasMatchRegistry
         List<AliasMatchDescriptor> descriptors = new ArrayList<>();
 
         addProtocolMatchers(descriptors, AliasListFamily.P25, Protocol.APCO25, "P25");
-        descriptors.add(descriptor("P25 Fully Qualified Talkgroup",
-            AliasIDType.P25_FULLY_QUALIFIED_TALKGROUP, Set.of(AliasListFamily.P25),
-            _ -> new P25FullyQualifiedTalkgroup(0, 0, 0), P25FullyQualifiedTalkgroup.class::isInstance));
         descriptors.add(descriptor("P25 Fully Qualified Radio ID",
             AliasIDType.P25_FULLY_QUALIFIED_RADIO_ID, Set.of(AliasListFamily.P25),
             _ -> new P25FullyQualifiedRadio(0, 0, 0), P25FullyQualifiedRadio.class::isInstance));

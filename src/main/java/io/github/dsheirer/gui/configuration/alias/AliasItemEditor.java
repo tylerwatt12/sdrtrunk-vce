@@ -33,7 +33,6 @@ import io.github.dsheirer.alias.id.radio.P25FullyQualifiedRadio;
 import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.alias.id.radio.RadioFormatter;
 import io.github.dsheirer.alias.id.radio.RadioRange;
-import io.github.dsheirer.alias.id.talkgroup.P25FullyQualifiedTalkgroup;
 import io.github.dsheirer.alias.id.talkgroup.StreamAsTalkgroup;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.alias.id.talkgroup.TalkgroupFormatter;
@@ -1096,16 +1095,7 @@ public class AliasItemEditor extends Editor<Alias>
 
             if(item != null)
             {
-                if(item instanceof P25FullyQualifiedTalkgroup fqt)
-                {
-                    StringBuilder sb = new StringBuilder();
-                    sb.append("APCO-25 Fully Qualified Talkgroup:").append(fqt.getWacn());
-                    sb.append(".").append(fqt.getSystem());
-                    sb.append(".").append(fqt.getValue());
-                    appendValidationState(sb, fqt.overlapProperty().get(), fqt.isValid());
-                    setText(sb.toString());
-                }
-                else if(item instanceof Talkgroup)
+                if(item instanceof Talkgroup)
                 {
                     Talkgroup talkgroup = (Talkgroup)item;
                     Protocol protocol = talkgroup.getProtocol();

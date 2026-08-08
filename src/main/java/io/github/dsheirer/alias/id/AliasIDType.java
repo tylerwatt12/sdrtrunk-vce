@@ -30,6 +30,7 @@ public enum AliasIDType
     INVERT("Audio Inversion"),
     LOJACK("LoJack"),
     P25_FULLY_QUALIFIED_RADIO_ID("P25 Fully Qualified Radio ID"),
+    //Legacy import type. Runtime talkgroup aliases use TALKGROUP or TALKGROUP_RANGE.
     P25_FULLY_QUALIFIED_TALKGROUP("P25 Fully Qualified Talkgroup"),
     PRIORITY("Audio Priority"),
     RADIO_ID("Radio ID"),
@@ -59,7 +60,7 @@ public enum AliasIDType
     //Values used by the View-By alias editor
     public static final Set<AliasIDType> VIEW_BY_VALUES = Collections.unmodifiableSet(EnumSet.of(TALKGROUP,
         TALKGROUP_RANGE, RADIO_ID, RADIO_ID_RANGE, P25_FULLY_QUALIFIED_RADIO_ID,
-        P25_FULLY_QUALIFIED_TALKGROUP, UNIT_STATUS, STATUS, TONES));
+        UNIT_STATUS, STATUS, TONES));
 
     @Override
     public String toString()

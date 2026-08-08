@@ -26,7 +26,6 @@ import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.alias.id.radio.RadioRange;
 import io.github.dsheirer.alias.id.status.UnitStatusID;
 import io.github.dsheirer.alias.id.status.UserStatusID;
-import io.github.dsheirer.alias.id.talkgroup.P25FullyQualifiedTalkgroup;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.alias.id.talkgroup.TalkgroupRange;
 import io.github.dsheirer.alias.id.tone.TonesID;
@@ -41,7 +40,6 @@ import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.identifier.status.UnitStatusIdentifier;
 import io.github.dsheirer.identifier.status.UserStatusIdentifier;
-import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import io.github.dsheirer.identifier.tone.ToneIdentifier;
 import io.github.dsheirer.identifier.tone.ToneSequence;
@@ -226,21 +224,6 @@ public class AliasList
                         }
 
                         p25RadioAliasList.add(qualifiedRadio, alias);
-                        break;
-                    case P25_FULLY_QUALIFIED_TALKGROUP:
-                        P25FullyQualifiedTalkgroup qualifiedTalkgroup = (P25FullyQualifiedTalkgroup) id;
-                        Protocol qualifiedTalkgroupProtocol =
-                            lookupProtocol(Objects.requireNonNull(qualifiedTalkgroup.getProtocol()));
-
-                        TalkgroupAliasList p25TalkgroupAliasList = index.mTalkgroupProtocolMap.get(qualifiedTalkgroupProtocol);
-
-                        if(p25TalkgroupAliasList == null)
-                        {
-                            p25TalkgroupAliasList = new TalkgroupAliasList();
-                            index.mTalkgroupProtocolMap.put(qualifiedTalkgroupProtocol, p25TalkgroupAliasList);
-                        }
-
-                        p25TalkgroupAliasList.add(qualifiedTalkgroup, alias);
                         break;
                     case RADIO_ID:
                         Radio radio = (Radio)id;
@@ -931,20 +914,14 @@ public class AliasList
      */
     public class TalkgroupAliasList
     {
-        private final Map<String,Alias> mFullyQualifiedTalkgroupAliasMap = new HashMap<>();
         private final Map<Integer,Alias> mTalkgroupAliasMap = new HashMap<>();
         private final List<TalkgroupRangeEntry> mTalkgroupRanges = new ArrayList<>();
         private int[] mTalkgroupRangePrefixMaximums = new int[0];
 
         public Alias getAlias(TalkgroupIdentifier identifier)
         {
-            //Attempt to do a fully qualified identifier match only
-            if(identifier instanceof FullyQualifiedTalkgroupIdentifier fqti)
-            {
-                return mFullyQualifiedTalkgroupAliasMap.get(fqti.getFullyQualifiedTalkgroupAddress());
-            }
-
-            //Attempt to match the talkgroup value
+            //P25 fully-qualified signaling carries a local talkgroup address in getValue(). Alias matching uses that
+            //local address just like every other P25 talkgroup and deliberately ignores the rarely used home tuple.
             int value = identifier.getValue();
 
             Alias mapValue = mTalkgroupAliasMap.get(value);
@@ -973,47 +950,24 @@ public class AliasList
 
         public void add(Talkgroup talkgroup, Alias alias)
         {
-            if(talkgroup instanceof P25FullyQualifiedTalkgroup fqt)
+            Alias existingTalkgroupAlias = mTalkgroupAliasMap.computeIfAbsent(talkgroup.getValue(), key -> alias);
+
+            //Detect collisions and set overlap flag for both
+            if(!existingTalkgroupAlias.equals(alias))
             {
-                Alias existingFullyQualifiedTalkgroupAlias =
-                    mFullyQualifiedTalkgroupAliasMap.computeIfAbsent(fqt.getHashKey(), key -> alias);
+                talkgroup.setOverlap(true);
 
-                //Detect collisions
-                if(!existingFullyQualifiedTalkgroupAlias.equals(alias))
+                AliasID aliasID = existingTalkgroupAlias.getMatchIdentifier();
+
+                if(aliasID instanceof Talkgroup existingTalkgroup &&
+                    lookupProtocol(existingTalkgroup.getProtocol()) == lookupProtocol(talkgroup.getProtocol()) &&
+                    existingTalkgroup.getValue() == talkgroup.getValue())
                 {
-                    fqt.setOverlap(true);
-
-                    AliasID aliasID = existingFullyQualifiedTalkgroupAlias.getMatchIdentifier();
-
-                    if(aliasID instanceof P25FullyQualifiedTalkgroup existingFqt &&
-                        existingFqt.getHashKey().contentEquals(fqt.getHashKey()))
-                    {
-                        aliasID.setOverlap(true);
-                    }
+                    aliasID.setOverlap(true);
                 }
             }
-            else
-            {
-                Alias existingTalkgroupAlias = mTalkgroupAliasMap.computeIfAbsent(talkgroup.getValue(), key -> alias);
 
-                //Detect talkgroup collisions and set overlap flag for both
-                if(!existingTalkgroupAlias.equals(alias))
-                {
-                    talkgroup.setOverlap(true);
-
-                    AliasID aliasID = existingTalkgroupAlias.getMatchIdentifier();
-
-                    if(aliasID instanceof Talkgroup existingTalkgroup &&
-                        !(existingTalkgroup instanceof P25FullyQualifiedTalkgroup) &&
-                        lookupProtocol(existingTalkgroup.getProtocol()) == lookupProtocol(talkgroup.getProtocol()) &&
-                        existingTalkgroup.getValue() == talkgroup.getValue())
-                    {
-                        aliasID.setOverlap(true);
-                    }
-                }
-
-                mTalkgroupAliasMap.put(talkgroup.getValue(), alias);
-            }
+            mTalkgroupAliasMap.put(talkgroup.getValue(), alias);
         }
 
         public void add(TalkgroupRange talkgroupRange, Alias alias)
@@ -1157,7 +1111,6 @@ public class AliasList
          */
         public void remove(Alias alias)
         {
-            mFullyQualifiedTalkgroupAliasMap.values().removeAll(Collections.singleton(alias));
             mTalkgroupAliasMap.values().removeAll(Collections.singleton(alias));
             mTalkgroupRanges.removeIf(entry -> entry.alias().equals(alias));
         }

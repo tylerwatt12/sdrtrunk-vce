@@ -41,7 +41,7 @@ final class StatsAliasCatalog
     private static final String BROADCAST_SEPARATOR = "\u001f";
     private static final Set<String> FAMILIES = Set.of("P25", "DMR", "NXDN", "NBFM");
     private static final Set<String> MATCHERS = Set.of(
-        "TALKGROUP", "TALKGROUP_RANGE", "P25_FULLY_QUALIFIED_TALKGROUP",
+        "TALKGROUP", "TALKGROUP_RANGE",
         "RADIO_ID", "RADIO_ID_RANGE", "P25_FULLY_QUALIFIED_RADIO_ID",
         "STATUS", "UNIT_STATUS", "TONES", "DCS", "ESN");
     private static final Set<String> IDENTITY_TYPES = Set.of("talkgroup", "radio", "other");
@@ -50,8 +50,7 @@ final class StatsAliasCatalog
     private static final Set<String> USE_STATES = Set.of("used", "unused");
     private static final String IDENTIFIER_SORT_SQL = """
         CASE
-            WHEN alias.matcher_type IN ('P25_FULLY_QUALIFIED_TALKGROUP',
-                'P25_FULLY_QUALIFIED_RADIO_ID')
+            WHEN alias.matcher_type = 'P25_FULLY_QUALIFIED_RADIO_ID'
                 THEN printf('%05X-%03X-%020d', alias.wacn, alias.p25_system_id, alias.value)
             WHEN alias.matcher_type IN ('TALKGROUP_RANGE', 'RADIO_ID_RANGE')
                 THEN printf('%020d–%020d', alias.min_value, alias.max_value)
@@ -342,8 +341,7 @@ final class StatsAliasCatalog
                 alias.icon_name, alias.stream_as_talkgroup, alias.record_enabled, alias.priority,
                 alias.matcher_type,
                 CASE
-                    WHEN alias.matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE',
-                        'P25_FULLY_QUALIFIED_TALKGROUP') THEN 'talkgroup'
+                    WHEN alias.matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE') THEN 'talkgroup'
                     WHEN alias.matcher_type IN ('RADIO_ID', 'RADIO_ID_RANGE',
                         'P25_FULLY_QUALIFIED_RADIO_ID') THEN 'radio'
                     ELSE 'other'
@@ -351,8 +349,7 @@ final class StatsAliasCatalog
                 alias.protocol, alias.value, alias.min_value, alias.max_value, alias.wacn,
                 alias.p25_system_id, alias.text_value, alias.numeric_value, alias.tone_sequence,
                 CASE WHEN alias.matcher_type IN ('TALKGROUP_RANGE', 'RADIO_ID_RANGE') THEN 1 ELSE 0 END AS ranged,
-                CASE WHEN alias.matcher_type IN ('P25_FULLY_QUALIFIED_TALKGROUP',
-                    'P25_FULLY_QUALIFIED_RADIO_ID') THEN 1 ELSE 0 END AS fully_qualified,
+                CASE WHEN alias.matcher_type = 'P25_FULLY_QUALIFIED_RADIO_ID' THEN 1 ELSE 0 END AS fully_qualified,
                 CASE WHEN alias.matcher_type NOT IN ('TALKGROUP_RANGE', 'RADIO_ID_RANGE') THEN 1 ELSE 0 END AS exact,
                 (SELECT group_concat(route.channel_name, char(31))
                  FROM (SELECT channel_name FROM alias_broadcast_channel
@@ -420,12 +417,11 @@ final class StatsAliasCatalog
 
             sql.append(switch(identityType)
             {
-                case "talkgroup" -> " AND alias.matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE', " +
-                    "'P25_FULLY_QUALIFIED_TALKGROUP')";
+                case "talkgroup" -> " AND alias.matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE')";
                 case "radio" -> " AND alias.matcher_type IN ('RADIO_ID', 'RADIO_ID_RANGE', " +
                     "'P25_FULLY_QUALIFIED_RADIO_ID')";
                 default -> " AND alias.matcher_type NOT IN ('TALKGROUP', 'TALKGROUP_RANGE', " +
-                    "'P25_FULLY_QUALIFIED_TALKGROUP', 'RADIO_ID', 'RADIO_ID_RANGE', " +
+                    "'RADIO_ID', 'RADIO_ID_RANGE', " +
                     "'P25_FULLY_QUALIFIED_RADIO_ID')";
             });
         }
@@ -527,14 +523,12 @@ final class StatsAliasCatalog
                    OR lower(coalesce(alias.tone_sequence, '')) LIKE ?
                    OR CAST(alias.wacn AS TEXT) LIKE ?
                    OR CAST(alias.p25_system_id AS TEXT) LIKE ?
-                   OR (alias.matcher_type IN ('P25_FULLY_QUALIFIED_TALKGROUP',
-                         'P25_FULLY_QUALIFIED_RADIO_ID')
+                   OR (alias.matcher_type = 'P25_FULLY_QUALIFIED_RADIO_ID'
                        AND alias.wacn IS NOT NULL AND alias.p25_system_id IS NOT NULL
                        AND alias.value IS NOT NULL
                        AND lower(printf('%05X-%03X-%d', alias.wacn, alias.p25_system_id,
                            alias.value)) LIKE ?)
-                   OR (alias.matcher_type IN ('P25_FULLY_QUALIFIED_TALKGROUP',
-                         'P25_FULLY_QUALIFIED_RADIO_ID')
+                   OR (alias.matcher_type = 'P25_FULLY_QUALIFIED_RADIO_ID'
                        AND alias.wacn IS NOT NULL AND alias.p25_system_id IS NOT NULL
                        AND alias.value IS NOT NULL
                        AND printf('%d-%d-%d', alias.wacn, alias.p25_system_id, alias.value) LIKE ?))
@@ -595,8 +589,7 @@ final class StatsAliasCatalog
                                 (CASE WHEN other.protocol = 'APCO25_PHASE2' THEN 'APCO25' ELSE other.protocol END) =
                                 (CASE WHEN current.protocol = 'APCO25_PHASE2' THEN 'APCO25' ELSE current.protocol END)
                                 AND other.value = current.value
-                            WHEN current.matcher_type IN ('P25_FULLY_QUALIFIED_TALKGROUP',
-                                'P25_FULLY_QUALIFIED_RADIO_ID') THEN
+                            WHEN current.matcher_type = 'P25_FULLY_QUALIFIED_RADIO_ID' THEN
                                 other.wacn = current.wacn AND other.p25_system_id = current.p25_system_id
                                 AND other.value = current.value
                             WHEN current.matcher_type IN ('TALKGROUP_RANGE', 'RADIO_ID_RANGE') THEN
@@ -1282,7 +1275,6 @@ final class StatsAliasCatalog
         {
             case "TALKGROUP" -> "Talkgroup";
             case "TALKGROUP_RANGE" -> "Talkgroup range";
-            case "P25_FULLY_QUALIFIED_TALKGROUP" -> "P25 fully-qualified talkgroup";
             case "RADIO_ID" -> "Radio ID";
             case "RADIO_ID_RANGE" -> "Radio ID range";
             case "P25_FULLY_QUALIFIED_RADIO_ID" -> "P25 fully-qualified radio ID";
@@ -1301,8 +1293,7 @@ final class StatsAliasCatalog
             return displayNumber(row.get("min_value")) + "–" + displayNumber(row.get("max_value"));
         }
 
-        if("P25_FULLY_QUALIFIED_TALKGROUP".equals(matcher) ||
-            "P25_FULLY_QUALIFIED_RADIO_ID".equals(matcher))
+        if("P25_FULLY_QUALIFIED_RADIO_ID".equals(matcher))
         {
             return hex(row.get("wacn"), 5) + "-" + hex(row.get("p25_system_id"), 3) + "-" +
                 displayNumber(row.get("value"));

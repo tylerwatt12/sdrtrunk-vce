@@ -26,7 +26,8 @@ import io.github.dsheirer.protocol.Protocol;
 import java.util.Objects;
 
 /**
- * Fully qualified talkgroup.  Note: this is only for P25.
+ * Legacy import representation for the retired P25 fully-qualified talkgroup alias matcher. Runtime alias lists do
+ * not accept this matcher, and playlist import drops it.
  */
 public class P25FullyQualifiedTalkgroup extends Talkgroup
 {

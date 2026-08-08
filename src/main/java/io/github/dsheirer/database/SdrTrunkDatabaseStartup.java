@@ -34,7 +34,7 @@ import org.sqlite.SQLiteConfig;
 public final class SdrTrunkDatabaseStartup
 {
     private static final String CURRENT_GLOBAL_SCHEMA_FINGERPRINT =
-        "cec72fb1e4f3438738c9187953f3a3ad84ad0ca176ac0b5b710b3173382fb834";
+        "185142536870e4ae6ce9bc1bf55c4d21e9ece966d69cf1ad4df36cb76455093f";
     private SdrTrunkDatabaseStartup()
     {
     }

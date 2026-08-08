@@ -747,33 +747,17 @@ class StatsWebDatabase
                         %s AS signaling_count,
                         -- Repeating the partial-index predicate lets SQLite prove each forced lookup is valid.
                         (
-                            (scoped.protocol_code = 1 AND summary.p25_identity_state_code = 1 AND EXISTS (
+                            (scoped.protocol_code = 1 AND EXISTS (
                                 SELECT 1 FROM alias definition INDEXED BY idx_alias_talkgroup_value
                                 WHERE definition.alias_list_id = ?
-                                  AND definition.matcher_type IN
-                                    ('TALKGROUP', 'P25_FULLY_QUALIFIED_TALKGROUP')
                                   AND definition.matcher_type = 'TALKGROUP'
                                   AND definition.protocol IN ('APCO25', 'APCO25_PHASE2')
                                   AND definition.value = summary.identity_id
                             ))
                             OR
-                            (scoped.protocol_code = 1 AND summary.p25_identity_state_code = 2 AND EXISTS (
-                                SELECT 1 FROM alias definition INDEXED BY idx_alias_talkgroup_value
-                                WHERE definition.alias_list_id = ?
-                                  AND definition.matcher_type IN
-                                    ('TALKGROUP', 'P25_FULLY_QUALIFIED_TALKGROUP')
-                                  AND definition.matcher_type = 'P25_FULLY_QUALIFIED_TALKGROUP'
-                                  AND definition.protocol IN ('APCO25', 'APCO25_PHASE2')
-                                  AND definition.value = summary.p25_home_talkgroup_id
-                                  AND definition.wacn = summary.p25_home_wacn
-                                  AND definition.p25_system_id = summary.p25_home_system_id
-                            ))
-                            OR
                             (scoped.protocol_code = 3 AND EXISTS (
                                 SELECT 1 FROM alias definition INDEXED BY idx_alias_talkgroup_value
                                 WHERE definition.alias_list_id = ?
-                                  AND definition.matcher_type IN
-                                    ('TALKGROUP', 'P25_FULLY_QUALIFIED_TALKGROUP')
                                   AND definition.matcher_type = 'TALKGROUP'
                                   AND definition.protocol = 'DMR'
                                   AND definition.value = summary.identity_id
@@ -782,8 +766,6 @@ class StatsWebDatabase
                             (scoped.protocol_code = 4 AND EXISTS (
                                 SELECT 1 FROM alias definition INDEXED BY idx_alias_talkgroup_value
                                 WHERE definition.alias_list_id = ?
-                                  AND definition.matcher_type IN
-                                    ('TALKGROUP', 'P25_FULLY_QUALIFIED_TALKGROUP')
                                   AND definition.matcher_type = 'TALKGROUP'
                                   AND definition.protocol = 'NXDN'
                                   AND definition.value = summary.identity_id
@@ -830,17 +812,7 @@ class StatsWebDatabase
                         summary.register_count, summary.logout_count, summary.denial_count,
                         summary.data_count, %s AS other_signaling_count,
                         %s AS signaling_count,
-                        EXISTS (
-                            SELECT 1 FROM alias definition INDEXED BY idx_alias_talkgroup_value
-                            WHERE definition.alias_list_id = ?
-                              AND definition.matcher_type IN
-                                ('TALKGROUP', 'P25_FULLY_QUALIFIED_TALKGROUP')
-                              AND definition.matcher_type = 'P25_FULLY_QUALIFIED_TALKGROUP'
-                              AND definition.protocol IN ('APCO25', 'APCO25_PHASE2')
-                              AND definition.value = summary.home_talkgroup_id
-                              AND definition.wacn = summary.home_wacn
-                              AND definition.p25_system_id = summary.home_system_id
-                        ) AS has_exact_definition
+                        0 AS has_exact_definition
                     FROM (
                         SELECT scoped.*
                         FROM scoped
@@ -903,8 +875,6 @@ class StatsWebDatabase
                         EXISTS (
                             SELECT 1 FROM alias definition INDEXED BY idx_alias_talkgroup_value
                             WHERE definition.alias_list_id = ?
-                              AND definition.matcher_type IN
-                                ('TALKGROUP', 'P25_FULLY_QUALIFIED_TALKGROUP')
                               AND definition.matcher_type = 'TALKGROUP'
                               AND definition.protocol = 'DMR'
                               AND definition.value = summary.talkgroup_id
@@ -953,8 +923,6 @@ class StatsWebDatabase
                             (context.protocol_code IN (1, 2) AND EXISTS (
                                 SELECT 1 FROM alias definition INDEXED BY idx_alias_talkgroup_value
                                 WHERE definition.alias_list_id = ?
-                                  AND definition.matcher_type IN
-                                    ('TALKGROUP', 'P25_FULLY_QUALIFIED_TALKGROUP')
                                   AND definition.matcher_type = 'TALKGROUP'
                                   AND definition.protocol IN ('APCO25', 'APCO25_PHASE2')
                                   AND definition.value = bucket.identity_id
@@ -963,8 +931,6 @@ class StatsWebDatabase
                             (context.protocol_code = 4 AND EXISTS (
                                 SELECT 1 FROM alias definition INDEXED BY idx_alias_talkgroup_value
                                 WHERE definition.alias_list_id = ?
-                                  AND definition.matcher_type IN
-                                    ('TALKGROUP', 'P25_FULLY_QUALIFIED_TALKGROUP')
                                   AND definition.matcher_type = 'TALKGROUP'
                                   AND definition.protocol = 'NXDN'
                                   AND definition.value = bucket.identity_id
@@ -987,10 +953,10 @@ class StatsWebDatabase
                 TALKGROUP_SIGNALING_COUNT_SQL, OTHER_TALKGROUP_SIGNALING_COUNT_SQL,
                 TALKGROUP_SIGNALING_COUNT_SQL));
             List<Object> parameters = new ArrayList<>(List.of(
-                aliasListId, aliasListName, aliasListId, aliasListId, aliasListId, aliasListId,
+                aliasListId, aliasListName, aliasListId, aliasListId, aliasListId,
                 aliasList.get("family"), aliasList.get("family"), aliasList.get("family"),
                 aliasList.get("family"), aliasListName,
-                aliasListId, aliasListName, aliasListId, aliasList.get("family"), aliasListName,
+                aliasListId, aliasListName, aliasList.get("family"), aliasListName,
                 aliasListId, aliasListName, aliasListId, aliasList.get("family"), aliasListName,
                 aliasListId, aliasListName, aliasList.get("family"), aliasListId, aliasListId, aliasListName,
                 aliasList.get("family"), aliasList.get("family")));

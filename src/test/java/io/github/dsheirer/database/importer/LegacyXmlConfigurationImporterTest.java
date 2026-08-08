@@ -125,6 +125,36 @@ class LegacyXmlConfigurationImporterTest
     }
 
     @Test
+    void dropsRetiredFullyQualifiedTalkgroupAliases() throws Exception
+    {
+        Path xml = mTemporaryFolder.resolve("retired-fq-talkgroup.xml");
+        Files.writeString(xml, """
+            <playlist version="4">
+              <alias name="ISSI Dispatch" list="County">
+                <id type="p25FullyQualifiedTalkgroup" protocol="APCO25" value="700"
+                    wacn="781824" system="840"/>
+                <id type="broadcastChannel" channel="Primary"/>
+              </alias>
+              <channel system="County" site="Site" name="Control">
+                <alias_list_name>County</alias_list_name>
+                <source_configuration type="sourceConfigTuner" source_type="TUNER" frequency="851000000"/>
+                <aux_decode_configuration/>
+                <decode_configuration type="decodeConfigP25Phase1" modulation="CQPSK"
+                    ignore_data_calls="false"/>
+                <event_log_configuration/>
+                <record_configuration/>
+              </channel>
+            </playlist>
+            """);
+        Path database = mTemporaryFolder.resolve("retired-fq-talkgroup.sqlite");
+
+        LegacyXmlConfigurationImporter.importPlaylist(xml, database);
+
+        AliasDatabaseStore aliasStore = new AliasDatabaseStore(database);
+        assertTrue(aliasStore.loadAliases(aliasStore.loadAliasListDefinitions()).isEmpty());
+    }
+
+    @Test
     void refusesToOverwriteExistingDatabase() throws Exception
     {
         Path xml = writePlaylistXml();

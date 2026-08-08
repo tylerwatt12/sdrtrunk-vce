@@ -46,8 +46,8 @@ class StatsAliasResolverTest
                 ) VALUES
                     (1, 1, 'Selected Range', 'TALKGROUP_RANGE', 'APCO25', NULL, 1, 1000,
                         NULL, NULL),
-                    (2, 1, 'Selected Exact', 'P25_FULLY_QUALIFIED_TALKGROUP', 'APCO25', 700,
-                        NULL, NULL, 0xBEE00, 0x348),
+                    (2, 1, 'Selected Exact', 'TALKGROUP', 'APCO25', 1700,
+                        NULL, NULL, NULL, NULL),
                     (3, 2, 'Other Exact', 'TALKGROUP', 'APCO25', 800, NULL, NULL, NULL, NULL),
                     (4, 1, 'Selected Narrow Range', 'TALKGROUP_RANGE', 'APCO25', NULL, 500, 900,
                         NULL, NULL)
@@ -62,14 +62,14 @@ class StatsAliasResolverTest
             Map<String,Object> ordinarySameNumber = observedP25Row(700);
             Map<String,Object> range = observedP25Row(800);
             Map<String,Object> none = observedP25Row(1200);
-            Map<String,Object> unknown = observedP25Row(701);
+            Map<String,Object> unknown = observedP25Row(1201);
             unknown.put("p25_identity_state_code", 0);
             Map<String,Object> reservedZero = observedP25Row(0);
             reservedZero.put("p25_identity_state_code", 2);
             reservedZero.put("p25_home_wacn", 0xBEE00);
             reservedZero.put("p25_home_system_id", 0x348);
             reservedZero.put("p25_home_talkgroup_id", 0);
-            Map<String,Object> reservedMaximum = observedP25Row(0);
+            Map<String,Object> reservedMaximum = observedP25Row(0xFFFF);
             reservedMaximum.put("p25_identity_state_code", 2);
             reservedMaximum.put("p25_home_wacn", 0xBEE00);
             reservedMaximum.put("p25_home_system_id", 0x348);
@@ -82,8 +82,7 @@ class StatsAliasResolverTest
             assertEquals(2L, ((Number)exact.get("matched_alias_id")).longValue());
             assertEquals("Selected Exact", exact.get("matched_alias_name"));
             assertEquals(true, exact.get("promotion_supported"));
-            assertEquals("range", ordinarySameNumber.get("match_kind"),
-                "An ordinary P25 destination must not be claimed by a fully-qualified alias");
+            assertEquals("range", ordinarySameNumber.get("match_kind"));
             assertEquals(4L, ((Number)ordinarySameNumber.get("matched_alias_id")).longValue());
             assertEquals("range", range.get("match_kind"),
                 "An exact definition in another alias list must not claim this row");
@@ -92,12 +91,12 @@ class StatsAliasResolverTest
             assertEquals("none", none.get("match_kind"));
             assertNull(none.get("matched_alias_id"));
             assertNull(none.get("matched_alias_name"));
-            assertEquals(false, unknown.get("promotion_supported"));
+            assertEquals(true, unknown.get("promotion_supported"));
             assertEquals("none", unknown.get("match_kind"));
-            assertEquals("This observation predates P25 identity qualification", unknown.get("promotion_reason"));
+            assertNull(unknown.get("promotion_reason"));
             assertEquals(false, reservedZero.get("promotion_supported"));
             assertEquals("none", reservedZero.get("match_kind"));
-            assertEquals("The stored fully-qualified P25 identity is incomplete",
+            assertEquals("The local P25 talkgroup address is reserved",
                 reservedZero.get("promotion_reason"));
             assertEquals(false, reservedMaximum.get("promotion_supported"));
             assertEquals("none", reservedMaximum.get("match_kind"));
@@ -147,8 +146,8 @@ class StatsAliasResolverTest
                         'TALKGROUP', 'APCO25', 101, NULL, NULL, NULL, NULL),
                     (5, 3, 'P25 Unit', 'Local conventional unit', 'Units',
                         'RADIO_ID', 'APCO25', 456, NULL, NULL, NULL, NULL),
-                    (6, 3, 'Qualified Only', 'Trunked-only dispatch', 'Qualified',
-                        'P25_FULLY_QUALIFIED_TALKGROUP', 'APCO25', 102, NULL, NULL, 0xBEE00, 0x348),
+                    (6, 3, 'P25 Secondary', 'Secondary dispatch', 'Dispatch',
+                        'TALKGROUP', 'APCO25', 102, NULL, NULL, NULL, NULL),
                     (7, 1, 'NXDN Range', 'Range fallback description', 'Range',
                         'TALKGROUP_RANGE', 'NXDN', NULL, 1, 200, NULL, NULL),
                     (8, 4, 'DMR Dispatch', 'DMR county dispatch', 'Dispatch',
@@ -192,8 +191,8 @@ class StatsAliasResolverTest
             assertEquals("P25 Local", p25Talkgroups.getFirst().get("alias_name"));
             assertEquals("Local conventional dispatch",
                 p25Talkgroups.getFirst().get("alias_description"));
-            assertFalse(p25Talkgroups.get(1).containsKey("alias_name"),
-                "A conventional receiver cannot validate a fully-qualified P25 rule");
+            assertEquals("P25 Secondary", p25Talkgroups.get(1).get("alias_name"));
+            assertEquals("Secondary dispatch", p25Talkgroups.get(1).get("alias_description"));
             assertEquals("P25 Unit", p25Radios.getFirst().get("alias_name"));
             assertEquals("Local conventional unit", p25Radios.getFirst().get("alias_description"));
             assertEquals("DMR Dispatch", dmrTalkgroups.getFirst().get("talkgroup_alias_name"));
@@ -230,8 +229,6 @@ class StatsAliasResolverTest
                 ) VALUES
                     (1, 1, 'Local Dispatch', 'Local fallback description', 'Dispatch',
                         'TALKGROUP', 'APCO25', 700, NULL, NULL),
-                    (2, 1, 'Qualified Dispatch', 'Full dispatch description', 'Dispatch',
-                        'P25_FULLY_QUALIFIED_TALKGROUP', 'APCO25', 700, 0xBEE00, 0x348),
                     (3, 1, 'Local Unit', 'Local radio fallback', 'Units',
                         'RADIO_ID', 'APCO25', 800, NULL, NULL),
                     (4, 1, 'Qualified Unit', 'Full radio description', 'Units',
@@ -241,6 +238,25 @@ class StatsAliasResolverTest
                 INSERT INTO p25_site_snapshot (
                     guid, first_seen_ms, last_seen_ms, system_key, alias_list_name
                 ) VALUES ('alias-prefix-test', 1, 2, 77, 'P25 Trunked')
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_system (system_key, wacn, system_id, first_seen_ms, last_seen_ms)
+                VALUES (77, 0xBEE00, 0x348, 1, 2)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO receiver_context (
+                    id, context_key, guid, kind_code, protocol_code, first_seen_ms, last_seen_ms, system_key
+                ) VALUES (77, 'alias-prefix-context', 'alias-prefix-test', 1, 1, 1, 2, 77)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO trunked_identity_scope (
+                    scope_id, scope_token, protocol_code, scope_kind_code, p25_system_key,
+                    first_seen_ms, last_seen_ms
+                ) VALUES (77, 'p25:BEE00:348', 1, 1, 77, 1, 2)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO trunked_identity_scope_context (context_id, scope_id, first_seen_ms, last_seen_ms)
+                VALUES (77, 77, 1, 2)
                 """);
 
             StatsAliasResolver resolver = new StatsAliasResolver();
@@ -264,16 +280,16 @@ class StatsAliasResolverTest
             resolver.enrichActivity(connection, activity);
             resolver.enrichRelationships(connection, relationships);
 
-            assertEquals("Qualified Dispatch", talkgroups.getFirst().get("alias_name"));
-            assertEquals("Full dispatch description", talkgroups.getFirst().get("alias_description"));
+            assertEquals("Local Dispatch", talkgroups.getFirst().get("alias_name"));
+            assertEquals("Local fallback description", talkgroups.getFirst().get("alias_description"));
             assertEquals("Qualified Unit", radios.getFirst().get("alias_name"));
             assertEquals("Full radio description", radios.getFirst().get("alias_description"));
             assertEquals("Full radio description", activity.get(0).get("source_alias_description"));
-            assertEquals("Full dispatch description", activity.get(0).get("target_alias_description"));
+            assertEquals("Local fallback description", activity.get(0).get("target_alias_description"));
             assertEquals("Full radio description", activity.get(1).get("target_alias_description"));
             assertEquals("Full radio description",
                 relationships.getFirst().get("radio_alias_description"));
-            assertEquals("Full dispatch description",
+            assertEquals("Local fallback description",
                 relationships.getFirst().get("talkgroup_alias_description"));
         }
     }

@@ -14,7 +14,6 @@ import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.UnmatchedTalkgroupPolicy;
 import io.github.dsheirer.alias.id.AliasID;
-import io.github.dsheirer.alias.id.talkgroup.P25FullyQualifiedTalkgroup;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.alias.id.talkgroup.TalkgroupRange;
 import io.github.dsheirer.identifier.Form;
@@ -186,19 +185,7 @@ public record AudioCallRecordingMetadata(String systemName, String systemIdentit
     {
         AliasID aliasID = alias != null ? alias.getMatchIdentifier() : null;
 
-        if(destination instanceof FullyQualifiedTalkgroupIdentifier fullyQualified &&
-            aliasID instanceof P25FullyQualifiedTalkgroup matcher)
-        {
-            if(protocolsMatch(matcher.getProtocol(), destination.getProtocol()) &&
-                matcher.getWacn() == fullyQualified.getWacn() &&
-                matcher.getSystem() == fullyQualified.getSystem() &&
-                matcher.getValue() == fullyQualified.getTalkgroup())
-            {
-                return matcher;
-            }
-        }
-
-        if(aliasID instanceof Talkgroup matcher && !(matcher instanceof P25FullyQualifiedTalkgroup) &&
+        if(aliasID instanceof Talkgroup matcher &&
             protocolsMatch(matcher.getProtocol(), destination.getProtocol()) &&
             matcher.getValue() == destination.getValue())
         {
@@ -227,12 +214,7 @@ public record AudioCallRecordingMetadata(String systemName, String systemIdentit
 
     private static String matcherIdentity(AliasID matcher)
     {
-        if(matcher instanceof P25FullyQualifiedTalkgroup fullyQualified)
-        {
-            return "p25-fq:" + fullyQualified.getWacn() + ':' + fullyQualified.getSystem() + ':' +
-                fullyQualified.getValue();
-        }
-        else if(matcher instanceof TalkgroupRange range)
+        if(matcher instanceof TalkgroupRange range)
         {
             return "range:" + range.getProtocol() + ':' + range.getMinTalkgroup() + ':' + range.getMaxTalkgroup();
         }
@@ -265,11 +247,7 @@ public record AudioCallRecordingMetadata(String systemName, String systemIdentit
 
     private static String destinationValue(Identifier<?> destination)
     {
-        if(destination instanceof FullyQualifiedTalkgroupIdentifier fullyQualified)
-        {
-            return Integer.toString(fullyQualified.getTalkgroup());
-        }
-        else if(destination instanceof PatchGroupIdentifier patchGroupIdentifier)
+        if(destination instanceof PatchGroupIdentifier patchGroupIdentifier)
         {
             return destinationValue(patchGroupIdentifier.getValue().getPatchGroup());
         }

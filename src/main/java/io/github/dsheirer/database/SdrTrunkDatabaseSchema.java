@@ -58,7 +58,6 @@ public final class SdrTrunkDatabaseSchema
             matcher_type TEXT NOT NULL CHECK(matcher_type IN (
                 'TALKGROUP',
                 'TALKGROUP_RANGE',
-                'P25_FULLY_QUALIFIED_TALKGROUP',
                 'RADIO_ID',
                 'RADIO_ID_RANGE',
                 'P25_FULLY_QUALIFIED_RADIO_ID',
@@ -104,8 +103,8 @@ public final class SdrTrunkDatabaseSchema
             ALIAS_LIST_UNMATCHED_TALKGROUP_STREAM_TABLE_SQL),
         new SqliteSchemaValidator.Definition("index", "idx_alias_talkgroup_value", """
             CREATE INDEX IF NOT EXISTS idx_alias_talkgroup_value
-            ON alias(protocol, value, wacn, p25_system_id, alias_list_id, id)
-            WHERE matcher_type IN ('TALKGROUP', 'P25_FULLY_QUALIFIED_TALKGROUP')
+            ON alias(protocol, value, alias_list_id, id)
+            WHERE matcher_type = 'TALKGROUP'
             """),
         new SqliteSchemaValidator.Definition("index", "idx_alias_talkgroup_range", """
             CREATE INDEX IF NOT EXISTS idx_alias_talkgroup_range
@@ -134,15 +133,14 @@ public final class SdrTrunkDatabaseSchema
                    alias.max_value,
                    alias.wacn,
                    alias.p25_system_id AS system_id,
-                   CASE WHEN alias.matcher_type = 'P25_FULLY_QUALIFIED_TALKGROUP' THEN 1 ELSE 0 END AS fully_qualified,
+                   0 AS fully_qualified,
                    CASE WHEN alias.matcher_type = 'TALKGROUP_RANGE' THEN 1 ELSE 0 END AS ranged,
                    alias_list.name AS alias_list_name
             FROM alias
             JOIN alias_list ON alias_list.id = alias.alias_list_id
             WHERE alias.matcher_type IN (
                   'TALKGROUP',
-                  'TALKGROUP_RANGE',
-                  'P25_FULLY_QUALIFIED_TALKGROUP'
+                  'TALKGROUP_RANGE'
               )
             """),
         new SqliteSchemaValidator.Definition("view", "alias_radio", """

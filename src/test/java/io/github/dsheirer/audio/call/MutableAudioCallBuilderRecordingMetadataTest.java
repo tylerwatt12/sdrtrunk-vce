@@ -22,6 +22,7 @@ import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.alias.id.talkgroup.TalkgroupRange;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
+import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.protocol.Protocol;
 import java.util.List;
@@ -81,5 +82,24 @@ class MutableAudioCallBuilderRecordingMetadataTest
         AudioCallRecordingMetadata.DestinationDecision range =
             AudioCallRecordingMetadata.captureDestination(rangeList, APCO25Talkgroup.create(250));
         assertEquals("range:APCO-25 P2:200:299", range.matcherIdentity());
+    }
+
+    @Test
+    void decodedHomeIdentityUsesTheLocalTalkgroupMatcherAndValue()
+    {
+        Alias alias = new Alias("ISSI Dispatch");
+        alias.setMatchIdentifier(new Talkgroup(Protocol.APCO25, 99));
+        alias.setRecordable(true);
+        AliasList aliasList = new AliasList(new AliasListDefinition("P25", AliasListFamily.P25));
+        aliasList.addAlias(alias);
+
+        AudioCallRecordingMetadata.DestinationDecision decision = AudioCallRecordingMetadata.captureDestination(
+            aliasList, APCO25FullyQualifiedTalkgroupIdentifier.createTo(99, 0xABCDE, 0x321, 1200));
+
+        assertEquals("ISSI Dispatch", decision.aliasName());
+        assertEquals("99", decision.value());
+        assertEquals("APCO25:fq:703710:801:1200", decision.receivedIdentity());
+        assertEquals("exact:APCO-25:99", decision.matcherIdentity());
+        assertTrue(decision.recordEnabled());
     }
 }

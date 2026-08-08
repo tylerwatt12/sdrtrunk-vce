@@ -38,6 +38,7 @@ import io.github.dsheirer.alias.id.priority.Priority;
 import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.alias.id.radio.RadioRange;
 import io.github.dsheirer.alias.id.record.Record;
+import io.github.dsheirer.alias.id.talkgroup.P25FullyQualifiedTalkgroup;
 import io.github.dsheirer.alias.id.talkgroup.StreamAsTalkgroup;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.alias.id.talkgroup.TalkgroupRange;
@@ -613,6 +614,13 @@ public class LegacyXmlConfigurationImporter
          */
         private static List<AliasID> upgradeMatcher(AliasID identifier, int playlistVersion)
         {
+            //Fully-qualified talkgroup matching is retired. Drop this matcher instead of guessing that its stored
+            //home talkgroup is the correct local talkgroup on every monitored system.
+            if(identifier instanceof P25FullyQualifiedTalkgroup)
+            {
+                return List.of();
+            }
+
             if(playlistVersion <= 2 && identifier instanceof SiteID)
             {
                 return List.of();

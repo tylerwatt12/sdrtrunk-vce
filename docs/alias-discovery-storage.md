@@ -81,9 +81,9 @@ context configured with that list, using
 `idx_p25_zero_local_fq_scope_last_seen(scope_id, last_seen_ms DESC, home_wacn, home_system_id,
 home_talkgroup_id)` and returns them as local talkgroup ID zero with stable fully-qualified state and the complete home
 tuple. Two different tuples remain separate, and an ordinary talkgroup whose local number equals one tuple's home
-talkgroup remains a separate observation. Discover can promote a tuple into a normal
-`P25_FULLY_QUALIFIED_TALKGROUP` alias using the home WACN/System/talkgroup fields; it never creates a plain talkgroup
-zero alias. Conventional DMR reads the
+talkgroup remains a separate observation. The decoded home tuple remains diagnostic evidence only. Discover creates
+ordinary P25 aliases from usable local talkgroup IDs; zero-local tuples remain review-only and can never create a
+talkgroup-zero alias. Conventional DMR reads the
 `dmr_conventional_talkgroup_summary` context-key primary key. Conventional P25 and NXDN read the
 `call_identity_bucket` context-key primary key. Exact-alias checks use the existing alias matcher indexes.
 
@@ -107,4 +107,6 @@ intact.
 
 That external candidate is for unreleased development profiles only. During the next numbered release, the exact
 preceding public schema is compared with the final release schema and the required transition is consolidated into
-the bundled Application Migrator.
+the bundled Application Migrator. If that release boundary contains stored P25 fully-qualified talkgroup aliases,
+the migration removes those alias rows and their dependent routes; it does not convert their home talkgroup values
+into ordinary local talkgroup aliases.

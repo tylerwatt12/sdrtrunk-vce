@@ -138,6 +138,14 @@ class AliasDatabaseStoreTest
             assertFalse(indexes(connection).contains("idx_alias_action_alias"));
             assertFalse(columns(connection, "alias_talkgroup").contains("id"));
             assertFalse(columns(connection, "alias_talkgroup").contains("sort_order"));
+
+            try(Statement statement = connection.createStatement();
+                ResultSet resultSet = statement.executeQuery(
+                    "SELECT sql FROM sqlite_master WHERE type='table' AND name='alias'"))
+            {
+                assertTrue(resultSet.next());
+                assertFalse(resultSet.getString("sql").contains("P25_FULLY_QUALIFIED_TALKGROUP"));
+            }
         }
     }
 

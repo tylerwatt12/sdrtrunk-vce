@@ -114,9 +114,10 @@ LIMIT ?
 
 `idx_p25_zero_local_fq_scope_last_seen(scope_id, last_seen_ms DESC, home_wacn, home_system_id,
 home_talkgroup_id)` supports that scan. Discover unions these rows as local talkgroup ID zero with stable
-fully-qualified state and the complete tuple. Alias creation promotes that tuple to a
-`P25_FULLY_QUALIFIED_TALKGROUP` matcher. Different zero-local tuples remain distinct, as does an ordinary talkgroup
-whose local number happens to equal a tuple's home talkgroup.
+fully-qualified state and the complete tuple. These rows are diagnostic and review-only because no usable local
+talkgroup exists. Qualified observations with a usable local address create an ordinary P25 talkgroup alias.
+Different zero-local tuples remain distinct, as does an ordinary talkgroup whose local number happens to equal a
+tuple's home talkgroup.
 
 ### `trunked_radio_talkgroup_summary`
 

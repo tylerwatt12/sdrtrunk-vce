@@ -221,10 +221,9 @@ class StatsWebAliasCatalogUiContractTest
 
         assertTrue(prefill.contains("name: ''"));
         assertTrue(prefill.contains("type: 'TALKGROUP'"));
-        assertTrue(prefill.contains("type: 'P25_FULLY_QUALIFIED_TALKGROUP', protocol: 'APCO25'"));
+        assertFalse(source.contains("P25_FULLY_QUALIFIED_TALKGROUP"));
         assertTrue(prefill.contains("!observedTalkgroupPromotionSupported(row)"));
-        assertTrue(prefill.contains("observedP25IdentityState(row) === 2"));
-        assertTrue(prefill.contains("observedP25IdentityState(row) === 1"));
+        assertTrue(prefill.contains("[1, 2].includes(observedP25IdentityState(row))"));
         assertTrue(prefill.contains("topology || '').toUpperCase() === 'CONVENTIONAL'"));
         for(String field: new String[]{"p25_home_wacn", "p25_home_system_id", "p25_home_talkgroup_id"})
         {
@@ -240,9 +239,8 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(focusKey.contains("encodeURIComponent(observedTalkgroupKey(row))"));
         assertTrue(prefill.contains("observedTalkgroupFocusKey(row)"));
         assertTrue(create.contains("dataset.observedKey = observedTalkgroupFocusKey(row)"));
-        assertTrue(identity.contains("Local TG"));
-        assertTrue(identity.contains("FQ ${hex(home.wacn, 5)}-${hex(home.system, 3)}"));
-        assertTrue(detail.contains("'Fully Qualified Home'"));
+        assertTrue(identity.contains("identityNumber(row, row.talkgroup_id)"));
+        assertTrue(detail.contains("'Decoded Home'"));
         assertTrue(detail.contains("'Local Talkgroup'"));
         assertTrue(create.contains("!observedTalkgroupPromotionSupported(row)"));
         assertTrue(create.contains("'Review only'"));

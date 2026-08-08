@@ -117,11 +117,6 @@ class StatsWebDatabaseTest
                 VALUES (3, 1, 'County Range', 'TALKGROUP_RANGE', 'APCO25', 56000, 56200)
                 """);
             statement.executeUpdate("""
-                UPDATE alias
-                SET matcher_type='P25_FULLY_QUALIFIED_TALKGROUP', wacn=0xBEE00, p25_system_id=0x348
-                WHERE id=1
-                """);
-            statement.executeUpdate("""
                 UPDATE trunked_identity_summary
                 SET p25_identity_state_code=2, p25_home_wacn=0xBEE00,
                     p25_home_system_id=0x348, p25_home_talkgroup_id=56132
@@ -174,7 +169,7 @@ class StatsWebDatabaseTest
         List<CSVRecord> csv = csvRows(mDatabase.csvExport(request(
             "/api/export.csv?dataset=aliases&list=County&type=talkgroup&sort=call_count&direction=desc")));
         assertEquals(List.of("Dispatch", "County Range"), csv.stream().map(row -> row.get("name")).toList());
-        assertEquals("BEE00", csv.getFirst().get("wacn_hex"));
+        assertEquals("", csv.getFirst().get("wacn_hex"));
     }
 
     @Test
@@ -245,16 +240,15 @@ class StatsWebDatabaseTest
     }
 
     @Test
-    void preservesP25FullyQualifiedIdentityWhenDiscoveringAndCreatingAliases() throws Exception
+    void retainsDecodedP25HomeIdentityWhileMatchingTheLocalTalkgroup() throws Exception
     {
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
                 INSERT INTO alias (
-                    id, alias_list_id, name, matcher_type, protocol, value, wacn, p25_system_id
-                ) VALUES (90, 1, 'ISSI Dispatch', 'P25_FULLY_QUALIFIED_TALKGROUP', 'APCO25',
-                    700, 0xABCDE, 0x123)
+                    id, alias_list_id, name, matcher_type, protocol, value
+                ) VALUES (90, 1, 'ISSI Dispatch', 'TALKGROUP', 'APCO25', 1700)
                 """);
             statement.executeUpdate("""
                 INSERT INTO trunked_identity_summary (
@@ -282,8 +276,7 @@ class StatsWebDatabaseTest
             "/api/alias-list/observed-talkgroups?list=1&sort=talkgroup&direction=asc&limit=100")));
         Map<String,Object> ordinary = rows.stream()
             .filter(row -> number(row.get("talkgroup_id")) == 700L).findFirst().orElseThrow();
-        assertEquals("none", ordinary.get("match_kind"),
-            "A fully-qualified Alias must not claim an ordinary destination with the same number");
+        assertEquals("none", ordinary.get("match_kind"));
         assertEquals(true, ordinary.get("promotion_supported"));
 
         Map<String,Object> qualified = rows.stream()
@@ -296,21 +289,21 @@ class StatsWebDatabaseTest
         assertEquals("none", qualified.get("match_kind"));
 
         Map<String,Object> zeroLocal = rows.stream()
-            .filter(row -> number(row.get("talkgroup_id")) == 0L).findFirst().orElseThrow();
+            .filter(row -> number(row.get("talkgroup_id")) == 0L &&
+                number(row.get("p25_home_system_id")) == 0x124L).findFirst().orElseThrow();
         assertEquals(2L, number(zeroLocal.get("p25_identity_state_code")));
         assertEquals(0xABCDEL, number(zeroLocal.get("p25_home_wacn")));
         assertEquals(0x124L, number(zeroLocal.get("p25_home_system_id")));
         assertEquals(700L, number(zeroLocal.get("p25_home_talkgroup_id")));
-        assertEquals(true, zeroLocal.get("promotion_supported"));
+        assertEquals(false, zeroLocal.get("promotion_supported"));
         assertEquals("none", zeroLocal.get("match_kind"));
 
         Map<String,Object> ambiguous = rows.stream()
             .filter(row -> number(row.get("talkgroup_id")) == 1702L).findFirst().orElseThrow();
-        assertEquals(false, ambiguous.get("promotion_supported"));
-        assertEquals("Multiple P25 identities used this local talkgroup number", ambiguous.get("promotion_reason"));
+        assertEquals(true, ambiguous.get("promotion_supported"));
         Map<String,Object> historical = rows.stream()
             .filter(row -> number(row.get("talkgroup_id")) == 1703L).findFirst().orElseThrow();
-        assertEquals(false, historical.get("promotion_supported"));
+        assertEquals(true, historical.get("promotion_supported"));
 
         List<Map<String,Object>> exact = rows(mDatabase.observedTalkgroups(request(
             "/api/alias-list/observed-talkgroups?list=1&include_exact=true&q=1700")));
@@ -323,7 +316,7 @@ class StatsWebDatabaseTest
             "The ordinary local row remains separate while both local 1700 and local 0 can use the same home tuple");
         Map<String,Object> exactZero = zeroLocalExact.stream()
             .filter(row -> number(row.get("talkgroup_id")) == 0L).findFirst().orElseThrow();
-        assertEquals("exact", exactZero.get("match_kind"));
+        assertEquals("none", exactZero.get("match_kind"));
         assertEquals(4L, number(exactZero.get("call_count")));
         assertEquals(2L, number(exactZero.get("recorded_count")));
         List<Map<String,Object>> qualifiedSearch = rows(mDatabase.observedTalkgroups(request(
@@ -334,8 +327,8 @@ class StatsWebDatabaseTest
         List<Map<String,Object>> aliases = rows(mDatabase.aliases(request(
             "/api/aliases?list=1&q=ISSI%20Dispatch")));
         assertEquals(1, aliases.size());
-        assertEquals(5L, number(aliases.getFirst().get("call_count")),
-            "Both matching fully-qualified observations contribute; the ordinary TG 700 row does not");
+        assertEquals(1L, number(aliases.getFirst().get("call_count")),
+            "Only observations using the configured local talkgroup contribute");
     }
 
     @Test
@@ -568,7 +561,7 @@ class StatsWebDatabaseTest
     }
 
     @Test
-    void searchesOnlyRealFullyQualifiedIdentifiersAndSortsEveryMatcherByItsDisplayValue() throws Exception
+    void searchesFullyQualifiedRadioIdentifiersAndSortsEveryMatcherByItsDisplayValue() throws Exception
     {
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
             Statement statement = connection.createStatement())
@@ -578,9 +571,9 @@ class StatsWebDatabaseTest
                     id, alias_list_id, name, matcher_type, protocol, value, min_value, max_value,
                     wacn, p25_system_id, text_value, numeric_value, tone_sequence
                 ) VALUES
-                    (3, 1, 'Qualified B', 'P25_FULLY_QUALIFIED_TALKGROUP', 'APCO25', 7,
+                    (3, 1, 'Qualified B', 'P25_FULLY_QUALIFIED_RADIO_ID', 'APCO25', 7,
                         NULL, NULL, 0xBEE01, 0x100, NULL, NULL, NULL),
-                    (4, 1, 'Qualified A', 'P25_FULLY_QUALIFIED_TALKGROUP', 'APCO25', 8,
+                    (4, 1, 'Qualified A', 'P25_FULLY_QUALIFIED_RADIO_ID', 'APCO25', 8,
                         NULL, NULL, 0xBEE00, 0x400, NULL, NULL, NULL),
                     (5, 1, 'Small Range', 'TALKGROUP_RANGE', 'APCO25', NULL,
                         20, 30, NULL, NULL, NULL, NULL, NULL),
