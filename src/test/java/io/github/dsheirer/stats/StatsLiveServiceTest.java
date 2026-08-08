@@ -141,12 +141,12 @@ class StatsLiveServiceTest
 
     private static ChannelActivityEvent activity(String guid, boolean withQuality)
     {
-        ChannelActivitySnapshot.Row row = new ChannelActivitySnapshot.Row("control", null, "CONTROL",
+        ChannelActivitySnapshot.Row row = new ChannelActivitySnapshot.Row("control", null, null, "CONTROL",
             List.of("CONTROL"), "42", 451_000_000L, null, withQuality ? -25.5 : null,
             withQuality ? 98.0 : null, withQuality ? 1_000L : 0L, 0L, 0L, 0L, 0L, 0L, null,
             null, null, null, null, null, null, null, "DMR", null);
-        ChannelActivitySnapshot snapshot = new ChannelActivitySnapshot("channel-1", "DMR", "Control", guid,
-            false, true, List.of(row));
+        ChannelActivitySnapshot snapshot = new ChannelActivitySnapshot("channel-1", "DMR", "Control", null,
+            guid, false, true, List.of(row));
         return new ChannelActivityEvent(ChannelActivityEvent.Operation.UPSERT, snapshot);
     }
 

@@ -47,13 +47,13 @@ public abstract class HistoryModule<T> extends Module implements Listener<T>
     /**
      * Access a copy of the events from this event history
      */
-    public List<T> getItems()
+    public synchronized List<T> getItems()
     {
         return new ArrayList<>(mItems);
     }
 
     @Override
-    public void reset()
+    public synchronized void reset()
     {
         mItems.clear();
     }
@@ -64,7 +64,7 @@ public abstract class HistoryModule<T> extends Module implements Listener<T>
     }
 
     @Override
-    public void stop()
+    public synchronized void stop()
     {
         mItems.clear();
         mBroadcaster.clear();
@@ -94,14 +94,17 @@ public abstract class HistoryModule<T> extends Module implements Listener<T>
     @Override
     public void receive(T item)
     {
-        while(mItems.size() > mMaximumHistorySize)
+        synchronized(this)
         {
-            mItems.remove(0);
-        }
+            if(!mItems.contains(item) && mMaximumHistorySize > 0)
+            {
+                while(mItems.size() >= mMaximumHistorySize)
+                {
+                    mItems.remove(0);
+                }
 
-        if(!mItems.contains(item))
-        {
-            mItems.add(item);
+                mItems.add(item);
+            }
         }
 
         mBroadcaster.broadcast(item);

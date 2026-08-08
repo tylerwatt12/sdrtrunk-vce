@@ -17,6 +17,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Predicate;
 
 /**
  * Bounded fan-out for server-sent events. Slow clients lose their oldest pending update and never block producers.
@@ -36,6 +37,11 @@ final class StatsLiveEventHub implements AutoCloseable
 
     Subscription subscribe()
     {
+        return subscribe(event -> true);
+    }
+
+    Subscription subscribe(Predicate<LiveEvent> filter)
+    {
         while(true)
         {
             int current = mSubscriberCount.get();
@@ -51,7 +57,7 @@ final class StatsLiveEventHub implements AutoCloseable
             }
         }
 
-        Subscription subscription = new Subscription();
+        Subscription subscription = new Subscription(filter != null ? filter : event -> true);
         mSubscriptions.add(subscription);
         return subscription;
     }
@@ -89,11 +95,17 @@ final class StatsLiveEventHub implements AutoCloseable
     final class Subscription implements AutoCloseable
     {
         private final ArrayBlockingQueue<LiveEvent> mQueue = new ArrayBlockingQueue<>(mQueueCapacity);
+        private final Predicate<LiveEvent> mFilter;
         private final AtomicBoolean mClosed = new AtomicBoolean();
+
+        private Subscription(Predicate<LiveEvent> filter)
+        {
+            mFilter = filter;
+        }
 
         private void offer(LiveEvent event)
         {
-            if(mClosed.get() || mQueue.offer(event))
+            if(mClosed.get() || !mFilter.test(event) || mQueue.offer(event))
             {
                 return;
             }

@@ -52,7 +52,7 @@ public class NativeBufferManager<T extends INativeBuffer>
     private List<T> mConsumerQueue = new ArrayList<>();
     //Single-consumer scratch list reused by get() to avoid a throwaway drained-list allocation on every request.
     private List<T> mDrainedQueue = new ArrayList<>();
-    private int mRequestSize;
+    private volatile int mRequestSize;
     private int mProducerAvailable;
 
     /**

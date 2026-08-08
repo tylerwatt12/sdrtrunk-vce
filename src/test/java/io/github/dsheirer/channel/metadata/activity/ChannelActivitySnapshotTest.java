@@ -16,12 +16,13 @@ class ChannelActivitySnapshotTest
     @Test
     void normalizesNullTopLevelValues()
     {
-        ChannelActivitySnapshot snapshot = new ChannelActivitySnapshot(null, null, null, null,
+        ChannelActivitySnapshot snapshot = new ChannelActivitySnapshot(null, null, null, null, null,
             false, false, null);
 
         assertEquals("", snapshot.tableId());
         assertEquals("", snapshot.title());
         assertEquals("", snapshot.channelName());
+        assertEquals("", snapshot.configurationId());
         assertEquals(List.of(), snapshot.rows());
     }
 

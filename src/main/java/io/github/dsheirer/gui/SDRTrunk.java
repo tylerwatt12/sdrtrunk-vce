@@ -52,6 +52,7 @@ import io.github.dsheirer.icon.IconModel;
 import io.github.dsheirer.log.ApplicationLog;
 import io.github.dsheirer.map.MapService;
 import io.github.dsheirer.metadata.site.SiteControlChannelLearner;
+import io.github.dsheirer.module.decode.event.DecodeEventViewService;
 import io.github.dsheirer.module.log.EventLogger;
 import io.github.dsheirer.module.log.EventLogManager;
 import io.github.dsheirer.monitor.ResourceMonitor;
@@ -154,6 +155,7 @@ public class SDRTrunk implements Listener<TunerEvent>
     private AudioCallCoordinator mAudioCallCoordinator;
     private AudioPlaybackManager mAudioPlaybackManager;
     private P25ActivityLogService mP25ActivityLogService;
+    private DecodeEventViewService mDecodeEventViewService;
     private StatsWebServerService mStatsWebServerService;
     private AudioRecordingManager mAudioRecordingManager;
     private AudioStreamingManager mAudioStreamingManager;
@@ -260,9 +262,14 @@ public class SDRTrunk implements Listener<TunerEvent>
             mUserPreferences, mP25ActivityLogService::receiveStreamedCall);
         mAudioStreamingManager.start();
 
+        mDecodeEventViewService = new DecodeEventViewService(
+            mConfigurationManager.getChannelProcessingManager(), mConfigurationManager.getAliasModel());
+        mConfigurationManager.getChannelProcessingManager().addChannelDecodeEventListener(
+            mDecodeEventViewService.getDecodeEventListener());
+
         mStatsWebServerService = new StatsWebServerService(mUserPreferences,
             mConfigurationManager.getChannelProcessingManager(), mP25ActivityLogService,
-            new AliasAdministrationService(mConfigurationManager));
+            new AliasAdministrationService(mConfigurationManager), mDecodeEventViewService);
 
         if(mJavaFxWindowManager != null)
         {
@@ -880,6 +887,12 @@ public class SDRTrunk implements Listener<TunerEvent>
             mConfigurationManager.getChannelProcessingManager()
                 .removeProtocolSiteMetadataListener(mP25ActivityLogService);
             mP25ActivityLogService.dispose();
+        }
+        if(mDecodeEventViewService != null)
+        {
+            mConfigurationManager.getChannelProcessingManager().removeChannelDecodeEventListener(
+                mDecodeEventViewService.getDecodeEventListener());
+            mDecodeEventViewService.close();
         }
         EventLogger.flushPendingWrites();
         if(mAudioCallCoordinator != null)

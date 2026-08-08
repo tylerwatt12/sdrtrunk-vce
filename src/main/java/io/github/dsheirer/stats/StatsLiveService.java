@@ -444,6 +444,7 @@ final class StatsLiveService implements AutoCloseable, ProtocolSiteMetadataListe
         table.put("table_id", snapshot.tableId());
         table.put("title", snapshot.title());
         table.put("channel_name", snapshot.channelName());
+        put(table, "configuration_id", snapshot.configurationId());
         put(table, "guid", snapshot.guid());
         table.put("closeable", snapshot.closeable());
         table.put("control_active", snapshot.controlActive());
@@ -456,6 +457,7 @@ final class StatsLiveService implements AutoCloseable, ProtocolSiteMetadataListe
         LinkedHashMap<String,Object> row = new LinkedHashMap<>();
         row.put("key", snapshot.key());
         put(row, "channel_name", snapshot.channelName());
+        put(row, "configuration_id", snapshot.configurationId());
         row.put("status", snapshot.status());
         row.put("tags", snapshot.tags());
         put(row, "lcn", snapshot.lcn());

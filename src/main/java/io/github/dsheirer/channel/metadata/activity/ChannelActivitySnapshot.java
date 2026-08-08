@@ -16,14 +16,15 @@ import java.util.stream.Collectors;
 /**
  * Immutable renderer-neutral snapshot of one Systems activity table.
  */
-public record ChannelActivitySnapshot(String tableId, String title, String channelName, String guid,
-                                      boolean closeable, boolean controlActive, List<Row> rows)
+public record ChannelActivitySnapshot(String tableId, String title, String channelName, String configurationId,
+                                      String guid, boolean closeable, boolean controlActive, List<Row> rows)
 {
     public ChannelActivitySnapshot
     {
         tableId = tableId != null ? tableId : "";
         title = title != null ? title : "";
         channelName = channelName != null ? channelName : "";
+        configurationId = configurationId != null ? configurationId : "";
         rows = rows != null ? List.copyOf(rows) : List.of();
     }
 
@@ -34,12 +35,12 @@ public record ChannelActivitySnapshot(String tableId, String title, String chann
         String guid = owner != null && owner.hasRadresGuid() ? owner.getRadresGuid() : null;
         List<Row> rows = table != null ? table.getRows().stream().map(Row::from).toList() : List.of();
         return new ChannelActivitySnapshot(tableId, table != null ? table.getTitle() : "",
-            owner != null ? owner.getName() : "Conventional", guid, table != null && table.isCloseable(),
-            table != null && table.isControlActive(), rows);
+            owner != null ? owner.getName() : "Conventional", owner != null ? owner.getConfigurationId() : null,
+            guid, table != null && table.isCloseable(), table != null && table.isControlActive(), rows);
     }
 
-    public record Row(String key, String channelName, String status, List<String> tags, String lcn,
-                      long frequencyHz, String callsign,
+    public record Row(String key, String channelName, String configurationId, String status, List<String> tags,
+                      String lcn, long frequencyHz, String callsign,
                       Double signalDbfs, Double decodeHealthPercent, long qualityObservedAtMs,
                       long controlValidFrames, long controlInvalidFrames, long controlCorrectedBits,
                       long controlSyncLossBits, long controlDroppedBits, VoiceCallQuality voiceQuality,
@@ -50,8 +51,9 @@ public record ChannelActivitySnapshot(String tableId, String title, String chann
         private static Row from(ChannelActivityRow row)
         {
             String channelName = row.getRole() == ChannelActivityRow.Role.CONVENTIONAL ? row.getChannelName() : null;
+            String configurationId = row.getChannel() != null ? row.getChannel().getConfigurationId() : null;
             ChannelActivityDecodeQuality quality = row.getDecodeQuality();
-            return new Row(row.getKey(), channelName, row.getState().name(),
+            return new Row(row.getKey(), channelName, configurationId, row.getState().name(),
                 row.getTags().stream().map(Enum::name).toList(), row.getLcn(),
                 row.getFrequency(), row.getCallsign(), row.getSignalDbfs(),
                 row.getDecodeHealthPercent(), row.getQualityObservedAt(),

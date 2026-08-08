@@ -99,7 +99,7 @@ class StatsWebDashboardUiContractTest
         String modeLabel = function(source, "function dashboardModeLabel(row)");
         String mode = function(source, "function dashboardMode(row)");
         String decoder = function(source, "function decoderLabel(value, compact = false)");
-        String live = function(source, "function liveSystemsSection()");
+        String live = function(source, "function liveSystemsSection(onSelectionChange)");
         assertTrue(modeLabel.contains("`${family}-T`"));
         assertTrue(modeLabel.contains("`${family}-C`"));
         assertTrue(modeLabel.contains("!['P25', 'DMR', 'NXDN'].includes(family)"));

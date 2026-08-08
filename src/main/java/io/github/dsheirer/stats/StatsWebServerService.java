@@ -24,11 +24,15 @@ import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.controller.NamingThreadFactory;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
+import io.github.dsheirer.eventbus.MyEventBus;
+import io.github.dsheirer.message.DecodeMessageViewService;
+import io.github.dsheirer.module.decode.event.DecodeEventViewService;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.nowplaying.NowPlayingPreference;
 import io.github.dsheirer.preference.application.ApplicationPreference;
 import io.github.dsheirer.preference.application.WebCertificateMode;
+import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.stats.activity.P25ActivityCommitListener;
 import io.github.dsheirer.stats.activity.P25ActivityLogPath;
 import io.github.dsheirer.stats.activity.P25ActivityLogService;
@@ -58,6 +62,7 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -66,7 +71,6 @@ import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import io.github.dsheirer.eventbus.MyEventBus;
 
 /**
  * Embedded stats web server. Static assets are served only from an external filesystem folder.
@@ -82,7 +86,15 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
     private final UserPreferences mUserPreferences;
     private final StatsWebDatabase mDatabase;
     private final StatsLiveService mLiveService;
+    private final DecodeEventViewService mDecodeEventViewService;
+    private final DecodeMessageViewService mDecodeMessageViewService;
+    private final ChannelDiagnosticService mChannelDiagnosticService;
+    private final StatsLiveEventHub mDecodeEventHub = new StatsLiveEventHub(32, 256);
+    private final Object mDecodeEventSubscriptionLock = new Object();
+    private final Listener<DecodeEventViewService.EventView> mDecodeEventViewListener =
+        event -> mDecodeEventHub.publish("decode_event", event);
     private final StatsWebCallService mWebCallService = new StatsWebCallService();
+    private final Semaphore mDecodeMessageClients = new Semaphore(16);
     private final ChannelProcessingManager mChannelProcessingManager;
     private final P25ActivityLogService mActivityLogService;
     private final AliasAdministrationService mAliasAdministrationService;
@@ -118,10 +130,23 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
                                  P25ActivityLogService activityLogService,
                                  AliasAdministrationService aliasAdministrationService)
     {
+        this(userPreferences, channelProcessingManager, activityLogService, aliasAdministrationService, null);
+    }
+
+    public StatsWebServerService(UserPreferences userPreferences, ChannelProcessingManager channelProcessingManager,
+                                 P25ActivityLogService activityLogService,
+                                 AliasAdministrationService aliasAdministrationService,
+                                 DecodeEventViewService decodeEventViewService)
+    {
         mUserPreferences = userPreferences;
         mChannelProcessingManager = channelProcessingManager;
         mActivityLogService = activityLogService;
         mAliasAdministrationService = aliasAdministrationService;
+        mDecodeEventViewService = decodeEventViewService;
+        mDecodeMessageViewService = channelProcessingManager != null ?
+            new DecodeMessageViewService(channelProcessingManager) : null;
+        mChannelDiagnosticService = channelProcessingManager != null ?
+            new ChannelDiagnosticService(channelProcessingManager) : null;
         mDatabase = new StatsWebDatabase(userPreferences);
         mLiveService = new StatsLiveService(mDatabase, channelProcessingManager);
         mWebAccessDatabasePath = SdrTrunkDatabasePath.getDatabasePath(mUserPreferences);
@@ -589,6 +614,10 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             () -> mDatabase.conventionalRadios(StatsRequest.from(exchange.getRequestURI()))));
         createProtectedContext(server, "/api/export.csv", WebCapability.CSV_EXPORT, this::handleCsvExport);
         createProtectedContext(server, "/live/systems", WebCapability.LIVE_VIEW, this::handleSystemsSse);
+        createProtectedContext(server, "/live/events", WebCapability.LIVE_VIEW, this::handleDecodeEventsSse);
+        createProtectedContext(server, "/live/messages", WebCapability.LIVE_VIEW, this::handleDecodeMessagesSse);
+        createProtectedContext(server, "/live/channel-diagnostics", WebCapability.LIVE_VIEW,
+            this::handleChannelDiagnosticsSse);
         createProtectedContext(server, "/live/sites", WebCapability.LIVE_VIEW, this::handleSitesSse);
         createProtectedContext(server, "/live/web-calls", WebCapability.WEB_AUDIO_LISTEN, this::handleWebCallsSse);
         createProtectedContext(server, "/live/activity", WebCapability.SYSTEMS_VIEW, this::handleActivitySse);
@@ -648,6 +677,19 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         if(!mRuntimeServicesStarted)
         {
             return;
+        }
+
+        if(mDecodeEventViewService != null)
+        {
+            synchronized(mDecodeEventSubscriptionLock)
+            {
+                mDecodeEventViewService.removeListener(mDecodeEventViewListener);
+            }
+        }
+
+        if(mChannelDiagnosticService != null)
+        {
+            mChannelDiagnosticService.closeActiveSession();
         }
 
         mLiveService.stop();
@@ -961,6 +1003,363 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         streamSse(exchange, subscription, "snapshot", mLiveService.snapshot(), event -> true);
     }
 
+    private void handleDecodeEventsSse(HttpExchange exchange) throws IOException
+    {
+        if(!requireExactTextPath(exchange, "/live/events") || !requireMethod(exchange, "GET"))
+        {
+            return;
+        }
+
+        if(mDecodeEventViewService == null)
+        {
+            sendText(exchange, 503, "Live decoder events are unavailable");
+            return;
+        }
+
+        DecodeEventViewService.Scope scope;
+
+        try
+        {
+            scope = decodeEventScope(exchange.getRequestURI());
+        }
+        catch(StatsApiException e)
+        {
+            sendText(exchange, e.status(), e.getMessage());
+            return;
+        }
+
+        StatsLiveEventHub.Subscription subscription;
+
+        synchronized(mDecodeEventSubscriptionLock)
+        {
+            subscription = mDecodeEventHub.subscribe(
+                event -> event.data() instanceof DecodeEventViewService.EventView view && scope.matches(view));
+
+            if(subscription != null)
+            {
+                mDecodeEventViewService.addListener(mDecodeEventViewListener);
+            }
+        }
+
+        if(subscription == null)
+        {
+            sendText(exchange, 429, "Too many live Stats Server clients");
+            return;
+        }
+
+        try
+        {
+            streamSse(exchange, subscription, "snapshot",
+                Map.of("events", mDecodeEventViewService.snapshot(scope)), event -> true);
+        }
+        finally
+        {
+            synchronized(mDecodeEventSubscriptionLock)
+            {
+                subscription.close();
+
+                if(!mDecodeEventHub.hasSubscribers())
+                {
+                    mDecodeEventViewService.removeListener(mDecodeEventViewListener);
+                }
+            }
+        }
+    }
+
+    static DecodeEventViewService.Scope decodeEventScope(URI uri)
+    {
+        StatsRequest request = StatsRequest.from(uri);
+        String configurationId;
+
+        try
+        {
+            configurationId = UUID.fromString(request.requiredText("configuration_id")).toString();
+        }
+        catch(IllegalArgumentException e)
+        {
+            throw new StatsApiException(400, "configuration_id is invalid");
+        }
+
+        String frequencyText = request.text("frequency_hz");
+        Long frequency = null;
+        Integer timeslot = request.optionalInt("timeslot");
+
+        if(frequencyText != null)
+        {
+            try
+            {
+                frequency = Long.valueOf(frequencyText);
+            }
+            catch(NumberFormatException e)
+            {
+                throw new StatsApiException(400, "frequency_hz is invalid");
+            }
+
+            if(frequency <= 0)
+            {
+                throw new StatsApiException(400, "frequency_hz is invalid");
+            }
+        }
+
+        if(timeslot != null && timeslot <= 0)
+        {
+            throw new StatsApiException(400, "timeslot is invalid");
+        }
+
+        return new DecodeEventViewService.Scope(configurationId, frequency, timeslot);
+    }
+
+    private void handleDecodeMessagesSse(HttpExchange exchange) throws IOException
+    {
+        if(!requireExactTextPath(exchange, "/live/messages") || !requireMethod(exchange, "GET"))
+        {
+            return;
+        }
+
+        if(mDecodeMessageViewService == null)
+        {
+            sendText(exchange, 503, "Live decoder messages are unavailable");
+            return;
+        }
+
+        DecodeMessageViewService.Scope scope;
+
+        try
+        {
+            DecodeEventViewService.Scope selected = decodeEventScope(exchange.getRequestURI());
+
+            if(selected.frequencyHz() == null)
+            {
+                throw new StatsApiException(400, "frequency_hz is required");
+            }
+
+            scope = new DecodeMessageViewService.Scope(selected.configurationId(), selected.frequencyHz());
+        }
+        catch(StatsApiException | IllegalArgumentException exception)
+        {
+            sendText(exchange, exception instanceof StatsApiException apiException ? apiException.status() : 400,
+                exception.getMessage());
+            return;
+        }
+
+        if(!mDecodeMessageClients.tryAcquire())
+        {
+            sendText(exchange, 429, "Too many live message clients");
+            return;
+        }
+
+        DecodeMessageViewService.Session session = mDecodeMessageViewService.openSession(scope);
+        WebAccessHttpController accessController = mWebAccessHttpController;
+
+        try(session)
+        {
+            if(accessController == null || !accessController.isRequestStillAuthorized(exchange))
+            {
+                sendText(exchange, 403, "Access changed before the live stream started");
+                return;
+            }
+
+            Headers headers = exchange.getResponseHeaders();
+            headers.set("Content-Type", "text/event-stream; charset=utf-8");
+            headers.set("Cache-Control", "no-store");
+            headers.set("Connection", "keep-alive");
+            headers.set("X-Accel-Buffering", "no");
+            exchange.sendResponseHeaders(200, 0);
+            HttpServer server = exchange.getHttpContext().getServer();
+            long lastHeartbeat = System.nanoTime();
+
+            try(OutputStream outputStream = exchange.getResponseBody())
+            {
+                writeSseEvent(outputStream, "snapshot",
+                    Map.of("messages", session.snapshot(), "bound", session.isBound()));
+                long generation = session.generation();
+
+                while(mListener != null && mListener.server() == server &&
+                    accessController.isRequestStillAuthorized(exchange))
+                {
+                    DecodeMessageViewService.MessageView message = session.poll(1, TimeUnit.SECONDS);
+
+                    if(!accessController.isRequestStillAuthorized(exchange))
+                    {
+                        break;
+                    }
+
+                    if(generation != session.generation())
+                    {
+                        writeSseEvent(outputStream, "snapshot",
+                            Map.of("messages", session.snapshot(), "bound", session.isBound()));
+                        generation = session.generation();
+                        lastHeartbeat = System.nanoTime();
+                    }
+
+                    if(message != null)
+                    {
+                        writeSseEvent(outputStream, "decode_message", message);
+                        lastHeartbeat = System.nanoTime();
+                    }
+                    else if(System.nanoTime() - lastHeartbeat >= TimeUnit.SECONDS.toNanos(15))
+                    {
+                        writeSseHeartbeat(outputStream);
+                        lastHeartbeat = System.nanoTime();
+                    }
+                }
+            }
+        }
+        catch(InterruptedException exception)
+        {
+            Thread.currentThread().interrupt();
+        }
+        catch(IOException exception)
+        {
+            // Client disconnected.
+        }
+        finally
+        {
+            mDecodeMessageClients.release();
+        }
+    }
+
+    private void handleChannelDiagnosticsSse(HttpExchange exchange) throws IOException
+    {
+        if(!requireExactTextPath(exchange, "/live/channel-diagnostics") || !requireMethod(exchange, "GET"))
+        {
+            return;
+        }
+
+        if(mChannelDiagnosticService == null)
+        {
+            sendText(exchange, 503, "Channel diagnostics are unavailable");
+            return;
+        }
+
+        ChannelDiagnosticService.Scope scope;
+        UUID clientId;
+
+        try
+        {
+            scope = channelDiagnosticScope(exchange.getRequestURI());
+            clientId = channelDiagnosticClientId(exchange.getRequestURI());
+        }
+        catch(StatsApiException exception)
+        {
+            sendText(exchange, exception.status(), exception.getMessage());
+            return;
+        }
+
+        ChannelDiagnosticService.OpenResult result;
+
+        try
+        {
+            result = mChannelDiagnosticService.tryOpen(scope, clientId);
+        }
+        catch(RuntimeException exception)
+        {
+            mLog.warn("Unable to start selected-channel diagnostics", exception);
+            sendText(exchange, 503, "Channel diagnostics could not be started");
+            return;
+        }
+
+        if(result.status() == ChannelDiagnosticService.OpenStatus.BUSY)
+        {
+            sendText(exchange, 429, "Channel diagnostics are already open in another browser");
+            return;
+        }
+        else if(result.status() != ChannelDiagnosticService.OpenStatus.OPEN)
+        {
+            sendText(exchange, 503, "Channel diagnostics are unavailable");
+            return;
+        }
+
+        ChannelDiagnosticService.Session session = result.session();
+        WebAccessHttpController accessController = mWebAccessHttpController;
+
+        try(session)
+        {
+            if(accessController == null || !accessController.isRequestStillAuthorized(exchange))
+            {
+                sendText(exchange, 403, "Access changed before the live stream started");
+                return;
+            }
+
+            Headers headers = exchange.getResponseHeaders();
+            headers.set("Content-Type", "text/event-stream; charset=utf-8");
+            headers.set("Cache-Control", "no-store");
+            headers.set("Connection", "keep-alive");
+            headers.set("X-Accel-Buffering", "no");
+            exchange.sendResponseHeaders(200, 0);
+            HttpServer server = exchange.getHttpContext().getServer();
+            long stateRevision = -1;
+            long lastHeartbeat = System.nanoTime();
+
+            try(OutputStream outputStream = exchange.getResponseBody())
+            {
+                while(mListener != null && mListener.server() == server && !session.isClosed() &&
+                    accessController.isRequestStillAuthorized(exchange))
+                {
+                    ChannelDiagnosticService.State state = session.refresh();
+
+                    if(state.revision() != stateRevision)
+                    {
+                        writeSseEvent(outputStream, "diagnostic_state", state);
+                        stateRevision = state.revision();
+                        lastHeartbeat = System.nanoTime();
+                    }
+
+                    ChannelDiagnosticService.Frame frame = session.poll(Duration.ofSeconds(1));
+
+                    if(!accessController.isRequestStillAuthorized(exchange))
+                    {
+                        break;
+                    }
+
+                    if(frame != null)
+                    {
+                        writeSseEvent(outputStream, frame.type(), frame);
+                        lastHeartbeat = System.nanoTime();
+                    }
+                    else if(System.nanoTime() - lastHeartbeat >= TimeUnit.SECONDS.toNanos(2))
+                    {
+                        writeSseHeartbeat(outputStream);
+                        lastHeartbeat = System.nanoTime();
+                    }
+                }
+            }
+        }
+        catch(InterruptedException exception)
+        {
+            Thread.currentThread().interrupt();
+        }
+        catch(IOException exception)
+        {
+            // Client disconnected.
+        }
+    }
+
+    static ChannelDiagnosticService.Scope channelDiagnosticScope(URI uri)
+    {
+        DecodeEventViewService.Scope selected = decodeEventScope(uri);
+
+        if(selected.frequencyHz() == null)
+        {
+            throw new StatsApiException(400, "frequency_hz is required");
+        }
+
+        return new ChannelDiagnosticService.Scope(selected.configurationId(), selected.frequencyHz(),
+            selected.timeslot());
+    }
+
+    static UUID channelDiagnosticClientId(URI uri)
+    {
+        try
+        {
+            return UUID.fromString(StatsRequest.from(uri).requiredText("client_id"));
+        }
+        catch(IllegalArgumentException exception)
+        {
+            throw new StatsApiException(400, "client_id is invalid");
+        }
+    }
+
     private void handleSitesSse(HttpExchange exchange) throws IOException
     {
         if(!requireExactTextPath(exchange, "/live/sites") || !requireMethod(exchange, "GET"))
@@ -1137,6 +1536,13 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
     {
         outputStream.write(("event: " + event + "\n").getBytes(StandardCharsets.UTF_8));
         outputStream.write(("data: " + OBJECT_MAPPER.writeValueAsString(data) + "\n\n").getBytes(StandardCharsets.UTF_8));
+        outputStream.flush();
+    }
+
+    private static void writeSseHeartbeat(OutputStream outputStream) throws IOException
+    {
+        outputStream.write((": heartbeat " + System.currentTimeMillis() + "\n\n")
+            .getBytes(StandardCharsets.UTF_8));
         outputStream.flush();
     }
 
@@ -1404,6 +1810,11 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         }
 
         mLiveService.close();
+        mDecodeEventHub.close();
+        if(mChannelDiagnosticService != null)
+        {
+            mChannelDiagnosticService.close();
+        }
         mWebCallService.close();
     }
 

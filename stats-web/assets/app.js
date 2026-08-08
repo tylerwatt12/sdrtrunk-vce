@@ -5649,7 +5649,714 @@ async function renderDashboard() {
   content.lastChild.append(destinations, sources);
 }
 
-function liveSystemsSection() {
+function liveEventSelection(tableValue, row) {
+  const configurationId = row?.configuration_id || tableValue?.configuration_id;
+  if (!configurationId) return null;
+  const tags = channelTagSet(row?.tags);
+  const siteScope = tableValue.table_id !== 'conventional' &&
+    ['CONFIGURED', 'CURRENT_CONTROL', 'ALTERNATE_CONTROL'].some((tag) => tags.has(tag));
+  const diagnosticFrequencyHz = Number(row?.frequency_hz) || null;
+  const diagnosticTimeslot = Number(row?.timeslot) || null;
+  const frequencyHz = siteScope || !Number(row?.frequency_hz) ? null : Number(row.frequency_hz);
+  const timeslot = siteScope || !Number(row?.timeslot) ? null : Number(row.timeslot);
+  const rowLabelBase = row?.channel_name || row?.lcn ||
+    (diagnosticFrequencyHz ? `${frequency(diagnosticFrequencyHz)} MHz` : '');
+  const rowLabel = diagnosticTimeslot && !/\bTS\s*:?\s*\d+\b/i.test(rowLabelBase) ?
+    `${rowLabelBase} · TS ${diagnosticTimeslot}` : rowLabelBase;
+  const tableLabel = tableValue.title || tableValue.channel_name || tableValue.table_id;
+  return {
+    configurationId,
+    frequencyHz,
+    timeslot,
+    diagnosticFrequencyHz,
+    diagnosticTimeslot,
+    label: [tableLabel, siteScope ? '' : rowLabel].filter(Boolean).join(' · '),
+    channelLabel: [tableLabel, rowLabel].filter(Boolean).join(' · ')
+  };
+}
+
+function liveEventDuration(value) {
+  const milliseconds = Math.max(0, Number(value) || 0);
+  if (milliseconds < 1000) return `${milliseconds} ms`;
+  return `${(milliseconds / 1000).toFixed(milliseconds < 10000 ? 1 : 0)} s`;
+}
+
+function liveEventParty(event, side) {
+  const aliases = event?.[`${side}Aliases`] || '';
+  const identifiers = event?.[`${side}Identifiers`] || '';
+  const value = node('td', 'live-event-stack');
+  if (aliases) value.append(node('strong', '', aliases));
+  if (identifiers) value.append(node(aliases ? 'small' : 'span', '', identifiers));
+  return value;
+}
+
+function liveMessagesPane() {
+  const messages = new Map();
+  const order = [];
+  let selection = null;
+  let active = false;
+  let collapsed = false;
+  let stream = null;
+  let streamEpoch = 0;
+
+  const pane = node('div', 'live-details-pane live-messages-pane');
+  const toolbar = node('div', 'live-messages-toolbar');
+  const selectionLabel = node('strong', 'live-message-selection', 'Select a live row above');
+  const connection = badge('Waiting', 'state-stale');
+  toolbar.append(selectionLabel, connection);
+  const scroll = node('div', 'live-messages-scroll');
+  const table = node('table', 'data-table live-messages-table');
+  const head = node('thead');
+  const headerRow = node('tr');
+  ['Time', 'Protocol', 'Timeslot', 'Message'].forEach((label) => headerRow.append(node('th', '', label)));
+  head.append(headerRow);
+  const body = node('tbody');
+  table.append(head, body);
+  scroll.append(table);
+  pane.append(toolbar, scroll);
+
+  const render = () => {
+    body.replaceChildren();
+    if (!selection || !order.length) {
+      const empty = node('tr', 'empty');
+      const text = !selection ? 'Select a live row above' :
+        (selection.diagnosticFrequencyHz ? 'No decoded messages observed' : 'Select an active channel');
+      const cell = node('td', '', text);
+      cell.colSpan = 4;
+      empty.append(cell);
+      body.append(empty);
+      return;
+    }
+    order.map((id) => messages.get(id)).filter(Boolean).forEach((message) => {
+      const row = node('tr', message.valid ? '' : 'message-invalid');
+      const date = new Date(Number(message.timestampMs));
+      const timeText = Number.isFinite(date.getTime()) ? date.toLocaleTimeString([], {
+        hour: '2-digit', minute: '2-digit', second: '2-digit'
+      }) : '';
+      const time = node('td', '', timeText);
+      if (timeText) time.title = exactDateTime(message.timestampMs);
+      const detail = node('td', 'live-message-text', message.text || '');
+      detail.title = message.text || '';
+      row.append(time, node('td', '', message.protocol || ''),
+        node('td', '', message.timeslot == null ? '' : String(message.timeslot)), detail);
+      body.append(row);
+    });
+  };
+
+  const setStatus = (text, className = 'state-stale') => {
+    connection.textContent = text;
+    connection.className = `badge ${className}`;
+  };
+
+  const closeStream = () => {
+    streamEpoch += 1;
+    if (!stream) return;
+    stream.close();
+    liveConnections.delete(stream);
+    pageConnections.delete(stream);
+    stream = null;
+  };
+
+  const addMessage = (message) => {
+    if (!message?.messageId) return;
+    if (!messages.has(message.messageId)) order.unshift(message.messageId);
+    messages.set(message.messageId, message);
+    while (order.length > 200) messages.delete(order.pop());
+    render();
+  };
+
+  const shouldRun = () => active && !collapsed && !document.hidden &&
+    selection?.configurationId && selection?.diagnosticFrequencyHz;
+
+  const sync = () => {
+    if (!shouldRun()) {
+      closeStream();
+      if (!selection) setStatus('Waiting');
+      else if (!selection.diagnosticFrequencyHz) setStatus('Unavailable');
+      else setStatus(document.hidden ? 'Hidden' : 'Paused');
+      return;
+    }
+    if (stream) return;
+    setStatus('Connecting');
+    const epoch = ++streamEpoch;
+    const parameters = {
+      configuration_id: selection.configurationId,
+      frequency_hz: selection.diagnosticFrequencyHz
+    };
+    if (selection.diagnosticTimeslot) parameters.timeslot = selection.diagnosticTimeslot;
+    stream = liveConnection('/live/messages', parameters);
+    stream.addEventListener('snapshot', (event) => {
+      if (epoch !== streamEpoch) return;
+      const snapshot = JSON.parse(event.data);
+      messages.clear();
+      order.length = 0;
+      (snapshot.messages || []).slice(0, 200).forEach((message) => {
+        if (message?.messageId && !messages.has(message.messageId)) {
+          messages.set(message.messageId, message);
+          order.push(message.messageId);
+        }
+      });
+      setStatus(snapshot.bound ? 'Live' : 'Waiting', snapshot.bound ? 'state-current' : 'state-stale');
+      render();
+    });
+    stream.addEventListener('decode_message', (event) => {
+      if (epoch === streamEpoch) addMessage(JSON.parse(event.data));
+    });
+    stream.onopen = () => {
+      if (epoch === streamEpoch) setStatus('Live', 'state-current');
+    };
+    stream.onerror = () => {
+      if (epoch === streamEpoch) setStatus('Reconnecting');
+    };
+  };
+
+  const select = (nextSelection) => {
+    const nextKey = nextSelection ?
+      `${nextSelection.configurationId}:${nextSelection.diagnosticFrequencyHz || ''}:` +
+        `${nextSelection.diagnosticTimeslot || ''}` : '';
+    const currentKey = selection ?
+      `${selection.configurationId}:${selection.diagnosticFrequencyHz || ''}:` +
+        `${selection.diagnosticTimeslot || ''}` : '';
+    selection = nextSelection;
+    selectionLabel.textContent = selection?.channelLabel || 'Select a live row above';
+    if (nextKey !== currentKey) {
+      closeStream();
+      messages.clear();
+      order.length = 0;
+      render();
+    }
+    sync();
+  };
+
+  const onVisibilityChange = () => sync();
+  document.addEventListener('visibilitychange', onVisibilityChange);
+  render();
+  return {
+    element: pane,
+    select,
+    setActive(value) { active = value; sync(); },
+    setCollapsed(value) { collapsed = value; sync(); },
+    close() {
+      closeStream();
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    }
+  };
+}
+
+function liveChannelPane() {
+  const clientId = window.crypto.randomUUID();
+  let selection = null;
+  let active = false;
+  let collapsed = false;
+  let stream = null;
+  let streamEpoch = 0;
+  let state = null;
+  let generation = -1;
+  let signalSequence = 0;
+  let symbolSequence = 0;
+  let signalValues = [];
+  let symbolValues = [];
+  let signalObservedAtMs = 0;
+  let symbolObservedAtMs = 0;
+  let drawPending = false;
+
+  const pane = node('div', 'live-details-pane live-channel-pane');
+  const toolbar = node('div', 'live-channel-toolbar');
+  const selectionLabel = node('strong', 'live-channel-selection', 'Select a live row above');
+  const connection = badge('Waiting', 'state-stale');
+  toolbar.append(selectionLabel, connection);
+
+  const diagnostic = (title, ariaLabel) => {
+    const card = node('section', 'channel-diagnostic-card');
+    const plot = node('div', 'channel-diagnostic-plot');
+    const canvas = node('canvas', 'channel-diagnostic-canvas');
+    canvas.setAttribute('role', 'img');
+    canvas.setAttribute('aria-label', ariaLabel);
+    const overlay = node('div', 'channel-diagnostic-overlay', 'Select a live row above');
+    const readouts = node('div', 'channel-diagnostic-readouts');
+    plot.append(canvas, overlay);
+    card.append(node('h3', 'channel-diagnostic-title', title), plot, readouts);
+    return { card, canvas, overlay, readouts };
+  };
+  const signalDiagnostic = diagnostic('Signal', 'Selected channel signal spectrum');
+  const symbolDiagnostic = diagnostic('Symbols', 'Selected channel demodulated symbols');
+  const diagnosticGrid = node('div', 'channel-diagnostic-grid');
+  diagnosticGrid.append(signalDiagnostic.card, symbolDiagnostic.card);
+  pane.append(toolbar, diagnosticGrid);
+
+  const setStatus = (text, className = 'state-stale') => {
+    connection.textContent = text;
+    connection.className = `badge ${className}`;
+  };
+
+  const ageText = (observedAtMs) => {
+    const age = observedAtMs > 0 ? Math.max(0, Date.now() - observedAtMs) : null;
+    if (age === null) return '—';
+    if (age < 1000) return `${age} ms`;
+    return `${(age / 1000).toFixed(1)} s`;
+  };
+
+  const setReadouts = (target, values) => {
+    target.replaceChildren(...values.map(([label, value]) => {
+      const item = node('span', 'channel-diagnostic-readout');
+      item.append(node('small', '', label), node('strong', '', value));
+      return item;
+    }));
+  };
+
+  const updateReadouts = () => {
+    const finiteSignalValues = signalValues.filter(Number.isFinite);
+    const peak = finiteSignalValues.length ? Math.max(...finiteSignalValues) : null;
+    setReadouts(signalDiagnostic.readouts, [
+      ['Center', state?.frequencyHz ? `${frequency(state.frequencyHz)} MHz` : '—'],
+      ['Span', state?.sampleRateHz ? `${(Number(state.sampleRateHz) / 1000).toFixed(1)} kHz` : '—'],
+      ['Bins', signalValues.length ? String(signalValues.length) : '—'],
+      ['Peak', Number.isFinite(peak) ? `${peak.toFixed(1)} dB` : '—'],
+      ['Age', ageText(signalObservedAtMs)]
+    ]);
+    setReadouts(symbolDiagnostic.readouts, [
+      ['Protocol', state?.protocol || '—'],
+      ['Selected TS', state?.timeslot == null ? '—' : String(state.timeslot)],
+      ['Visible', String(symbolValues.length)],
+      ['Range', '−π to π'],
+      ['Age', ageText(symbolObservedAtMs)]
+    ]);
+  };
+
+  const drawDiagnostic = (target, type) => {
+    const bounds = target.canvas.getBoundingClientRect();
+    if (!bounds.width || !bounds.height) return;
+    const ratio = Math.min(2, window.devicePixelRatio || 1);
+    const width = Math.max(1, Math.round(bounds.width * ratio));
+    const height = Math.max(1, Math.round(bounds.height * ratio));
+    if (target.canvas.width !== width || target.canvas.height !== height) {
+      target.canvas.width = width;
+      target.canvas.height = height;
+    }
+    const context = target.canvas.getContext('2d');
+    context.setTransform(ratio, 0, 0, ratio, 0, 0);
+    const cssWidth = width / ratio;
+    const cssHeight = height / ratio;
+    context.fillStyle = '#07111d';
+    context.fillRect(0, 0, cssWidth, cssHeight);
+    context.strokeStyle = 'rgba(150, 177, 199, 0.18)';
+    context.lineWidth = 1;
+    for (let line = 1; line < 4; line += 1) {
+      const y = cssHeight * line / 4;
+      context.beginPath();
+      context.moveTo(0, y);
+      context.lineTo(cssWidth, y);
+      context.stroke();
+    }
+
+    if (type === 'signal' && signalValues.length > 1) {
+      context.strokeStyle = '#55c7ff';
+      context.lineWidth = 1.5;
+      context.beginPath();
+      signalValues.forEach((raw, index) => {
+        const value = Math.max(-120, Math.min(0, Number(raw)));
+        const x = index * cssWidth / (signalValues.length - 1);
+        const y = (0 - value) / 120 * cssHeight;
+        if (index === 0) context.moveTo(x, y);
+        else context.lineTo(x, y);
+      });
+      context.stroke();
+    } else if (type === 'symbols' && symbolValues.length) {
+      context.fillStyle = '#65d6a6';
+      const maximum = Math.max(1, Number(state?.maximumVisibleSymbols) || 4800);
+      const denominator = Math.max(1, maximum - 1);
+      symbolValues.forEach((raw, index) => {
+        const value = Math.max(-Math.PI, Math.min(Math.PI, Number(raw)));
+        const x = index * Math.max(0, cssWidth - 1.5) / denominator;
+        const y = (Math.PI - value) / (2 * Math.PI) * cssHeight;
+        context.fillRect(x, y, 1.5, 1.5);
+      });
+    }
+  };
+
+  const draw = () => {
+    drawPending = false;
+    drawDiagnostic(signalDiagnostic, 'signal');
+    drawDiagnostic(symbolDiagnostic, 'symbols');
+    updateReadouts();
+  };
+
+  const scheduleDraw = () => {
+    if (drawPending) return;
+    drawPending = true;
+    window.requestAnimationFrame(draw);
+  };
+
+  const clearPlots = (message) => {
+    state = null;
+    generation = -1;
+    signalSequence = 0;
+    symbolSequence = 0;
+    signalValues = [];
+    symbolValues = [];
+    signalObservedAtMs = 0;
+    symbolObservedAtMs = 0;
+    [signalDiagnostic, symbolDiagnostic].forEach((target) => {
+      target.overlay.textContent = message || '';
+      target.overlay.hidden = !message;
+    });
+    updateReadouts();
+    scheduleDraw();
+  };
+
+  const updateDiagnosticState = (target, currentState, reason, fallback) => {
+    const live = currentState === 'live';
+    target.overlay.textContent = live ? '' : (reason || fallback);
+    target.overlay.hidden = live;
+  };
+
+  const closeStream = () => {
+    streamEpoch += 1;
+    if (!stream) return;
+    stream.close();
+    liveConnections.delete(stream);
+    pageConnections.delete(stream);
+    stream = null;
+  };
+
+  const shouldRun = () => active && !collapsed && !document.hidden &&
+    selection?.configurationId && selection?.diagnosticFrequencyHz;
+
+  const sync = () => {
+    if (!shouldRun()) {
+      closeStream();
+      if (!selection) {
+        setStatus('Waiting');
+        clearPlots('Select a live row above');
+      } else if (!selection.diagnosticFrequencyHz) {
+        setStatus('Unavailable');
+        clearPlots('The selected row does not have an active frequency.');
+      } else {
+        setStatus(document.hidden ? 'Hidden' : 'Paused');
+      }
+      return;
+    }
+    if (stream) return;
+    setStatus('Connecting');
+    clearPlots('Waiting for channel data…');
+    const epoch = ++streamEpoch;
+    const parameters = {
+      client_id: clientId,
+      configuration_id: selection.configurationId,
+      frequency_hz: selection.diagnosticFrequencyHz
+    };
+    if (selection.diagnosticTimeslot) parameters.timeslot = selection.diagnosticTimeslot;
+    stream = liveConnection('/live/channel-diagnostics', parameters);
+    stream.addEventListener('diagnostic_state', (event) => {
+      if (epoch !== streamEpoch) return;
+      state = JSON.parse(event.data);
+      generation = Number(state.generation);
+      signalSequence = 0;
+      symbolSequence = 0;
+      signalValues = [];
+      symbolValues = [];
+      signalObservedAtMs = 0;
+      symbolObservedAtMs = 0;
+      updateDiagnosticState(signalDiagnostic, state.signalState, state.signalReason,
+        'Signal diagnostics are unavailable.');
+      updateDiagnosticState(symbolDiagnostic, state.symbolsState, state.symbolsReason,
+        'Symbol diagnostics are unavailable.');
+      const live = state.signalState === 'live' || state.symbolsState === 'live';
+      const waiting = state.signalState === 'waiting' || state.symbolsState === 'waiting';
+      setStatus(live ? 'Live' : (waiting ? 'Waiting' : 'Unavailable'),
+        live ? 'state-current' : 'state-stale');
+      scheduleDraw();
+    });
+    stream.addEventListener('signal', (event) => {
+      if (epoch !== streamEpoch) return;
+      const frame = JSON.parse(event.data);
+      if (Number(frame.generation) !== generation || Number(frame.sequence) <= signalSequence ||
+          !Array.isArray(frame.values)) return;
+      signalSequence = Number(frame.sequence);
+      signalObservedAtMs = Number(frame.observedAtMs) || Date.now();
+      signalValues = frame.values.slice(0, 1024).map(Number).filter(Number.isFinite);
+      scheduleDraw();
+    });
+    stream.addEventListener('symbols', (event) => {
+      if (epoch !== streamEpoch) return;
+      const frame = JSON.parse(event.data);
+      if (Number(frame.generation) !== generation || Number(frame.sequence) <= symbolSequence ||
+          !Array.isArray(frame.values)) return;
+      symbolSequence = Number(frame.sequence);
+      symbolObservedAtMs = Number(frame.observedAtMs) || Date.now();
+      const incoming = frame.values.map(Number).filter(Number.isFinite);
+      const maximum = Math.max(1, Number(state?.maximumVisibleSymbols) || 4800);
+      if (symbolValues.length >= maximum) symbolValues = [];
+      symbolValues.push(...incoming.slice(0, maximum - symbolValues.length));
+      scheduleDraw();
+    });
+    stream.onopen = () => {
+      if (epoch === streamEpoch) setStatus('Connected', 'state-current');
+    };
+    stream.onerror = () => {
+      if (epoch !== streamEpoch) return;
+      setStatus('Reconnecting');
+      const reason = 'Connection interrupted. Reconnecting…';
+      if (state?.signalState === 'live') {
+        updateDiagnosticState(signalDiagnostic, 'stale', reason, reason);
+      }
+      if (state?.symbolsState === 'live') {
+        updateDiagnosticState(symbolDiagnostic, 'stale', reason, reason);
+      }
+    };
+  };
+
+  const select = (nextSelection) => {
+    const nextKey = nextSelection ?
+      `${nextSelection.configurationId}:${nextSelection.diagnosticFrequencyHz || ''}:` +
+        `${nextSelection.diagnosticTimeslot || ''}` : '';
+    const currentKey = selection ?
+      `${selection.configurationId}:${selection.diagnosticFrequencyHz || ''}:` +
+        `${selection.diagnosticTimeslot || ''}` : '';
+    selection = nextSelection;
+    selectionLabel.textContent = selection?.channelLabel || 'Select a live row above';
+    if (nextKey !== currentKey) {
+      closeStream();
+      clearPlots(selection ? 'Waiting for channel data…' : 'Select a live row above');
+    }
+    sync();
+  };
+
+  const onVisibilityChange = () => sync();
+  const onResize = () => scheduleDraw();
+  const ageTimer = window.setInterval(() => {
+    if (active && !collapsed && !document.hidden) updateReadouts();
+  }, 1000);
+  document.addEventListener('visibilitychange', onVisibilityChange);
+  window.addEventListener('resize', onResize);
+  clearPlots('Select a live row above');
+  return {
+    element: pane,
+    select,
+    setActive(value) { active = value; sync(); scheduleDraw(); },
+    setCollapsed(value) { collapsed = value; sync(); },
+    close() {
+      closeStream();
+      window.clearInterval(ageTimer);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('resize', onResize);
+    }
+  };
+}
+
+function liveEventsPanel(onCollapse) {
+  const events = new Map();
+  const order = [];
+  let selection = null;
+  let stream = null;
+  let renderPending = false;
+
+  const panel = node('section', 'section live-details');
+  const header = node('div', 'live-details-header');
+  const tabBar = node('div', 'live-details-tabs');
+  tabBar.setAttribute('role', 'tablist');
+  tabBar.setAttribute('aria-label', 'Live details');
+  const controls = node('div', 'live-details-controls');
+  const connection = badge('Waiting', 'state-stale');
+  const collapse = node('button', 'button secondary live-details-collapse', 'Collapse');
+  collapse.type = 'button';
+  collapse.setAttribute('aria-expanded', 'true');
+  controls.append(connection, collapse);
+  header.append(tabBar, controls);
+
+  const body = node('div', 'live-details-body');
+  const eventPane = node('div', 'live-details-pane live-events-pane');
+  const eventToolbar = node('div', 'live-events-toolbar');
+  const selectionLabel = node('strong', 'live-event-selection', 'Select a live row above');
+  const filterLabel = node('label', 'live-event-filter');
+  filterLabel.append(node('span', '', 'Show'));
+  const filter = node('select');
+  [
+    ['', 'All events'],
+    ['VOICE', 'Voice'],
+    ['ENCRYPTED_VOICE', 'Encrypted voice'],
+    ['DATA', 'Data'],
+    ['COMMAND', 'Commands'],
+    ['REGISTRATION', 'Registrations'],
+    ['OTHER', 'Other']
+  ].forEach(([value, label]) => {
+    const option = node('option', '', label);
+    option.value = value;
+    filter.append(option);
+  });
+  filterLabel.append(filter);
+  eventToolbar.append(selectionLabel, filterLabel);
+
+  const eventScroll = node('div', 'live-events-scroll');
+  const table = node('table', 'data-table live-events-table');
+  const head = node('thead');
+  const headerRow = node('tr');
+  ['Time', 'Event', 'From', 'To', 'Channel', 'Details'].forEach((label) =>
+    headerRow.append(node('th', '', label)));
+  head.append(headerRow);
+  const eventBody = node('tbody');
+  table.append(head, eventBody);
+  eventScroll.append(table);
+  eventPane.append(eventToolbar, eventScroll);
+
+  const messagesController = liveMessagesPane();
+  const channelController = liveChannelPane();
+  const messagesPane = messagesController.element;
+  const channelPane = channelController.element;
+  body.append(eventPane, messagesPane, channelPane);
+  panel.append(header, body);
+  pageConnections.add(messagesController);
+  pageConnections.add(channelController);
+
+  const renderEvents = () => {
+    renderPending = false;
+    eventBody.replaceChildren();
+    const rows = order.map((id) => events.get(id)).filter((event) =>
+      event && (!filter.value || event.category === filter.value));
+    if (!selection || !rows.length) {
+      const empty = node('tr', 'empty');
+      const message = node('td', '', selection ? 'No matching events observed' : 'Select a live row above');
+      message.colSpan = 6;
+      empty.append(message);
+      eventBody.append(empty);
+      return;
+    }
+    rows.forEach((event) => {
+      const row = node('tr');
+      row.dataset.eventId = event.eventId;
+      const time = node('td', 'live-event-time');
+      const started = new Date(Number(event.timeStartMs));
+      const timeText = Number.isFinite(started.getTime()) ? started.toLocaleTimeString([], {
+        hour: '2-digit', minute: '2-digit', second: '2-digit'
+      }) : '';
+      const timeValue = node('strong', '', timeText);
+      if (timeText) timeValue.title = exactDateTime(event.timeStartMs);
+      time.append(timeValue, node('small', '', liveEventDuration(event.durationMs)));
+
+      const eventType = node('td', 'live-event-stack');
+      eventType.append(node('strong', '', event.eventLabel || event.eventType || 'Event'));
+      if (event.protocol) eventType.append(node('small', '', event.protocol));
+
+      const channel = node('td', 'live-event-stack');
+      if (event.channel) channel.append(node('strong', '', event.channel));
+      const channelDetail = [event.frequencyHz ? `${frequency(event.frequencyHz)} MHz` : '',
+        event.timeslot == null ? '' : `TS ${event.timeslot}`].filter(Boolean).join(' · ');
+      if (channelDetail) channel.append(node(event.channel ? 'small' : 'span', '', channelDetail));
+
+      const details = node('td', 'live-event-details', event.details || '');
+      if (event.details) details.title = event.details;
+      row.append(time, eventType, liveEventParty(event, 'from'), liveEventParty(event, 'to'),
+        channel, details);
+      eventBody.append(row);
+    });
+  };
+
+  const scheduleRender = () => {
+    if (renderPending) return;
+    renderPending = true;
+    window.requestAnimationFrame(renderEvents);
+  };
+
+  const closeStream = () => {
+    if (!stream) return;
+    stream.close();
+    liveConnections.delete(stream);
+    pageConnections.delete(stream);
+    stream = null;
+  };
+
+  const addEvent = (event) => {
+    if (!event?.eventId) return;
+    if (!events.has(event.eventId)) order.unshift(event.eventId);
+    events.set(event.eventId, event);
+    while (order.length > 200) events.delete(order.pop());
+    scheduleRender();
+  };
+
+  const select = (nextSelection) => {
+    messagesController.select(nextSelection);
+    channelController.select(nextSelection);
+    const nextKey = nextSelection ?
+      `${nextSelection.configurationId}:${nextSelection.frequencyHz || ''}:${nextSelection.timeslot || ''}` : '';
+    const currentKey = selection ?
+      `${selection.configurationId}:${selection.frequencyHz || ''}:${selection.timeslot || ''}` : '';
+    if (nextKey === currentKey) {
+      selection = nextSelection;
+      selectionLabel.textContent = selection?.label || 'Select a live row above';
+      return;
+    }
+    closeStream();
+    selection = nextSelection;
+    events.clear();
+    order.length = 0;
+    selectionLabel.textContent = selection?.label || 'Select a live row above';
+    connection.textContent = selection ? 'Connecting' : 'Waiting';
+    connection.className = 'badge state-stale';
+    scheduleRender();
+    if (!selection) return;
+
+    const parameters = { configuration_id: selection.configurationId };
+    if (selection.frequencyHz) parameters.frequency_hz = selection.frequencyHz;
+    if (selection.timeslot) parameters.timeslot = selection.timeslot;
+    stream = liveConnection('/live/events', parameters);
+    stream.addEventListener('snapshot', (event) => {
+      const snapshot = JSON.parse(event.data);
+      events.clear();
+      order.length = 0;
+      (snapshot.events || []).slice(0, 200).forEach((item) => {
+        if (item?.eventId && !events.has(item.eventId)) {
+          events.set(item.eventId, item);
+          order.push(item.eventId);
+        }
+      });
+      scheduleRender();
+    });
+    stream.addEventListener('decode_event', (event) => addEvent(JSON.parse(event.data)));
+    stream.onopen = () => {
+      connection.textContent = 'Live';
+      connection.className = 'badge state-current';
+    };
+    stream.onerror = () => {
+      connection.textContent = 'Reconnecting';
+      connection.className = 'badge state-stale';
+    };
+  };
+
+  const panes = { events: eventPane, messages: messagesPane, channel: channelPane };
+  ['events', 'messages', 'channel'].forEach((id) => {
+    const button = node('button', 'live-details-tab', id[0].toUpperCase() + id.slice(1));
+    button.type = 'button';
+    button.setAttribute('role', 'tab');
+    button.addEventListener('click', () => {
+      Object.entries(panes).forEach(([paneId, pane]) => {
+        const active = paneId === id;
+        pane.hidden = !active;
+        tabBar.querySelector(`[data-tab="${paneId}"]`)?.setAttribute('aria-selected', String(active));
+      });
+      messagesController.setActive(id === 'messages');
+      channelController.setActive(id === 'channel');
+    });
+    button.dataset.tab = id;
+    button.setAttribute('aria-selected', String(id === 'events'));
+    tabBar.append(button);
+    panes[id].hidden = id !== 'events';
+  });
+
+  collapse.addEventListener('click', () => {
+    const collapsed = !panel.classList.contains('collapsed');
+    panel.classList.toggle('collapsed', collapsed);
+    collapse.textContent = collapsed ? 'Expand' : 'Collapse';
+    collapse.setAttribute('aria-expanded', String(!collapsed));
+    messagesController.setCollapsed(collapsed);
+    channelController.setCollapsed(collapsed);
+    onCollapse(collapsed);
+  });
+  filter.addEventListener('change', scheduleRender);
+  renderEvents();
+  return { element: panel, select };
+}
+
+function liveSystemsSection(onSelectionChange) {
   const tables = new Map();
   const tabNodes = new Map();
   const rowNodes = new Map();
@@ -5774,6 +6481,12 @@ function liveSystemsSection() {
   let activeTableId = null;
   let selectedRowKey = null;
 
+  const clearSelection = () => {
+    if (selectedRowKey === null) return;
+    selectedRowKey = null;
+    onSelectionChange(null);
+  };
+
   const cellText = (cell, value) => {
     const text = value === null || value === undefined ? '' : String(value);
     if (cell.textContent !== text) cell.textContent = text;
@@ -5820,8 +6533,12 @@ function liveSystemsSection() {
     element.dataset.key = row.key;
     for (let index = 0; index < 11; index += 1) element.append(node('td'));
     element.addEventListener('click', () => {
-      selectedRowKey = row.key;
+      const value = tables.get(activeTableId);
+      const currentRow = (value?.rows || []).find((candidate) => candidate.key === element.dataset.key);
+      if (!currentRow) return;
+      selectedRowKey = currentRow.key;
       rowNodes.forEach((candidate, key) => candidate.classList.toggle('selected', key === selectedRowKey));
+      onSelectionChange(liveEventSelection(value, currentRow));
     });
     updateRow(element, row);
     return element;
@@ -5842,8 +6559,8 @@ function liveSystemsSection() {
   const showTable = (tableId) => {
     const value = tables.get(tableId);
     if (!value) return;
+    clearSelection();
     activeTableId = tableId;
-    selectedRowKey = null;
     rowNodes.clear();
     body.replaceChildren();
     headers[2].querySelector('.table-sort-control').textContent =
@@ -5866,6 +6583,7 @@ function liveSystemsSection() {
   const updateVisibleRows = (value) => {
     if (value.table_id !== activeTableId) return;
     const incoming = new Map((value.rows || []).map((row) => [row.key, row]));
+    if (selectedRowKey !== null && !incoming.has(selectedRowKey)) clearSelection();
     body.querySelector('.empty')?.remove();
     rowNodes.forEach((element, key) => {
       if (!incoming.has(key)) {
@@ -5883,6 +6601,10 @@ function liveSystemsSection() {
         updateRow(element, row);
       }
     });
+    if (selectedRowKey !== null) {
+      const selectedRow = incoming.get(selectedRowKey);
+      if (selectedRow) onSelectionChange(liveEventSelection(value, selectedRow));
+    }
     if (liveSort) reorderVisibleRows(value.rows || []);
     if (!rowNodes.size) {
       const empty = node('tr', 'empty');
@@ -5950,6 +6672,7 @@ function liveSystemsSection() {
     tabNodes.get(tableId)?.remove();
     tabNodes.delete(tableId);
     if (activeTableId === tableId) {
+      clearSelection();
       activeTableId = null;
       const next = tables.has('conventional') ? 'conventional' : tables.keys().next().value;
       if (next) showTable(next);
@@ -5979,7 +6702,10 @@ function liveSystemsSection() {
 }
 
 async function renderLive() {
-  content.append(liveSystemsSection());
+  const split = node('div', 'live-split');
+  const eventsPanel = liveEventsPanel((collapsed) => split.classList.toggle('details-collapsed', collapsed));
+  split.append(liveSystemsSection(eventsPanel.select), eventsPanel.element);
+  content.append(split);
 }
 
 async function renderSystems() {

@@ -26,6 +26,7 @@ import io.github.dsheirer.preference.spectrum.SpectrumPreference;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.spectrum.converter.DFTResultsConverter;
 import java.io.IOException;
+import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -40,24 +41,27 @@ import org.slf4j.LoggerFactory;
  * Processes both complex samples or float samples and dispatches a float array of DFT results, using configurable fft
  * size and output dispatch timelines.
  */
-public class ComplexDftProcessor implements Listener<INativeBuffer>, IDFTWidthChangeProcessor
+public class ComplexDftProcessor implements Listener<INativeBuffer>, IDFTWidthChangeProcessor, AutoCloseable
 {
     private static final Logger mLog = LoggerFactory.getLogger(ComplexDftProcessor.class);
     //The Cosine and Hann windows seem to offer the best spectral display with minimal bin leakage/smearing
     private WindowType mWindowType = WindowType.BLACKMAN_HARRIS_7;
     private float[] mWindow;
-    private DFTSize mDFTSize = DFTSize.FFT04096;
-    private DFTSize mNewDFTSize = DFTSize.FFT04096;
+    private volatile DFTSize mDFTSize = DFTSize.FFT04096;
+    private volatile DFTSize mNewDFTSize = DFTSize.FFT04096;
     private FloatFFT_1D mFFT = new FloatFFT_1D(mDFTSize.getSize());
     private int mFrameRate;
     private final SpectrumPreference mSpectrumPreference;
     private AtomicBoolean mRunning = new AtomicBoolean();
+    private final AtomicBoolean mDisposed = new AtomicBoolean();
     private ScheduledFuture<?> mProcessorTaskHandle;
     private ScheduledExecutorService mExecutorService = Executors.newSingleThreadScheduledExecutor(new NamingThreadFactory("sdrtrunk dft processor"));
     private CopyOnWriteArrayList<DFTResultsConverter> mListeners = new CopyOnWriteArrayList<>();
     private NativeBufferManager<INativeBuffer> mDftBufferManager = new NativeBufferManager<>(mDFTSize.getSize());
     private float[] mCurrentSamples = new float[mDFTSize.getSize() * 2];
     private float[] mPreviousSamples = new float[mDFTSize.getSize() * 2];
+    private boolean mPreviousSamplesValid;
+    private volatile boolean mRepeatLastFrameWhenIdle = true;
 
     public ComplexDftProcessor()
     {
@@ -74,10 +78,34 @@ public class ComplexDftProcessor implements Listener<INativeBuffer>, IDFTWidthCh
 
     public void dispose()
     {
+        if(!mDisposed.compareAndSet(false, true))
+        {
+            return;
+        }
+
         stop();
+        mExecutorService.shutdownNow();
+
+        try
+        {
+            if(!mExecutorService.awaitTermination(5, TimeUnit.SECONDS))
+            {
+                mLog.warn("DFT processor executor did not terminate within five seconds");
+            }
+        }
+        catch(InterruptedException exception)
+        {
+            Thread.currentThread().interrupt();
+        }
 
         mListeners.clear();
         mWindow = null;
+    }
+
+    @Override
+    public void close()
+    {
+        dispose();
     }
 
     public WindowType getWindowType()
@@ -102,7 +130,12 @@ public class ComplexDftProcessor implements Listener<INativeBuffer>, IDFTWidthCh
      */
     public void setDFTSize(DFTSize size)
     {
-        mNewDFTSize = size;
+        if(mDisposed.get())
+        {
+            throw new IllegalStateException("Cannot resize a disposed DFT processor");
+        }
+
+        mNewDFTSize = Objects.requireNonNull(size, "DFT size cannot be null");
     }
 
     public DFTSize getDFTSize()
@@ -113,6 +146,14 @@ public class ComplexDftProcessor implements Listener<INativeBuffer>, IDFTWidthCh
     public int getFrameRate()
     {
         return mFrameRate;
+    }
+
+    /**
+     * Controls whether the most recent FFT is repeated when no fresh samples are available.
+     */
+    public void setRepeatLastFrameWhenIdle(boolean repeat)
+    {
+        mRepeatLastFrameWhenIdle = repeat;
     }
 
     public void setFrameRate(int framesPerSecond)
@@ -133,6 +174,11 @@ public class ComplexDftProcessor implements Listener<INativeBuffer>, IDFTWidthCh
 
     public void start()
     {
+        if(mDisposed.get())
+        {
+            throw new IllegalStateException("Cannot restart a disposed DFT processor");
+        }
+
         if(mProcessorTaskHandle == null)
         {
             //Schedule the DFT to run calculations at a fixed rate
@@ -171,7 +217,10 @@ public class ComplexDftProcessor implements Listener<INativeBuffer>, IDFTWidthCh
     @Override
     public void receive(INativeBuffer buffer)
     {
-        mDftBufferManager.add(buffer);
+        if(!mDisposed.get())
+        {
+            mDftBufferManager.add(buffer);
+        }
     }
 
     public void addConverter(DFTResultsConverter listener)
@@ -189,11 +238,13 @@ public class ComplexDftProcessor implements Listener<INativeBuffer>, IDFTWidthCh
         {
             if(mNewDFTSize.getSize() != mDFTSize.getSize())
             {
-                mDFTSize = mNewDFTSize;
+                DFTSize requestedSize = mNewDFTSize;
+                mDFTSize = requestedSize;
                 updateWindow();
-                mFFT = new FloatFFT_1D(mDFTSize.getSize());
-                mCurrentSamples = new float[mDFTSize.getSize() * 2];
-                mPreviousSamples = new float[mDFTSize.getSize() * 2];
+                mFFT = new FloatFFT_1D(requestedSize.getSize());
+                mCurrentSamples = new float[requestedSize.getSize() * 2];
+                mPreviousSamples = new float[requestedSize.getSize() * 2];
+                mPreviousSamplesValid = false;
             }
         }
 
@@ -214,7 +265,15 @@ public class ComplexDftProcessor implements Listener<INativeBuffer>, IDFTWidthCh
             //We always send the previous calculated samples - this should improve the screen rendering since the frame
             //rate will always occur on an even rhythm.  Any delays caused by processing will be absorbed and not impact
             //the screen rendering.
-            dispatch(mPreviousSamples);
+            if(mPreviousSamplesValid)
+            {
+                dispatch(mPreviousSamples);
+
+                if(!mRepeatLastFrameWhenIdle)
+                {
+                    mPreviousSamplesValid = false;
+                }
+            }
 
             try
             {
@@ -225,6 +284,7 @@ public class ComplexDftProcessor implements Listener<INativeBuffer>, IDFTWidthCh
                 float[] completedSamples = mPreviousSamples;
                 mPreviousSamples = mCurrentSamples;
                 mCurrentSamples = completedSamples;
+                mPreviousSamplesValid = true;
             }
             catch(IOException ioe)
             {
@@ -263,19 +323,28 @@ public class ComplexDftProcessor implements Listener<INativeBuffer>, IDFTWidthCh
         @Override
         public void run()
         {
+            boolean acquired = false;
+
             try
             {
 				/* Only run if we're not currently running */
                 if(mRunning.compareAndSet(false, true))
                 {
+                    acquired = true;
                     checkFFTSize();
                     calculate();
-                    mRunning.set(false);
                 }
             }
             catch(Exception e)
             {
                 mLog.error("error during dft processor calculation task", e);
+            }
+            finally
+            {
+                if(acquired)
+                {
+                    mRunning.set(false);
+                }
             }
         }
     }
@@ -283,5 +352,10 @@ public class ComplexDftProcessor implements Listener<INativeBuffer>, IDFTWidthCh
     public void clearBuffer()
     {
         mDftBufferManager.clear();
+    }
+
+    public boolean isExecutorTerminated()
+    {
+        return mExecutorService.isTerminated();
     }
 }

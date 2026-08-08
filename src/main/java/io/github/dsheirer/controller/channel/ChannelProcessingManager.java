@@ -298,6 +298,56 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     }
 
     /**
+     * Returns active processing chains for a saved channel configuration. A null frequency selects every chain for
+     * the configuration; an exact frequency selects only matching traffic or conventional chains.
+     */
+    public List<ProcessingChain> getProcessingChainsByConfiguration(String configurationId, Long frequency)
+    {
+        if(configurationId == null || configurationId.isBlank())
+        {
+            return List.of();
+        }
+
+        List<ProcessingChain> matches = new ArrayList<>();
+        mLock.lock();
+
+        try
+        {
+            for(Map.Entry<Channel,ProcessingChain> entry: mProcessingChainsMap.entrySet())
+            {
+                Channel channel = entry.getKey();
+                ProcessingChain chain = entry.getValue();
+
+                if(channel == null || chain == null ||
+                    !configurationId.equals(channel.getConfigurationId()))
+                {
+                    continue;
+                }
+
+                if(frequency != null)
+                {
+                    Source source = chain.getSource();
+
+                    if(source != null && source.getFrequency() == frequency)
+                    {
+                        matches.add(chain);
+                    }
+                }
+                else
+                {
+                    matches.add(chain);
+                }
+            }
+        }
+        finally
+        {
+            mLock.unlock();
+        }
+
+        return List.copyOf(matches);
+    }
+
+    /**
      * Returns the channel associated with the processing chain
      *
      * @param processingChain

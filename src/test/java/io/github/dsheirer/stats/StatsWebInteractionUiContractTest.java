@@ -356,8 +356,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(html.indexOf("localStorage.getItem('sdrtrunk_theme')") <
             html.indexOf("rel=\"stylesheet\""));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=31"));
-        assertTrue(html.contains("/assets/app.js?v=42"));
+        assertTrue(html.contains("/assets/app.css?v=34"));
+        assertTrue(html.contains("/assets/app.js?v=46"));
         assertTrue(source.contains("window.localStorage.setItem(THEME_STORAGE_KEY"));
         assertTrue(source.contains("toggle.setAttribute('aria-pressed'"));
         assertTrue(css.contains(":root[data-theme=\"dark\"]"));
@@ -418,7 +418,7 @@ class StatsWebInteractionUiContractTest
     {
         String source = source();
         String level = function(source, "function signalBarLevel(value)");
-        String live = function(source, "function liveSystemsSection()");
+        String live = function(source, "function liveSystemsSection(onSelectionChange)");
         assertTrue(level.contains("signal >= -65"));
         assertTrue(level.contains("signal >= -75"));
         assertTrue(level.contains("signal >= -85"));
@@ -427,6 +427,74 @@ class StatsWebInteractionUiContractTest
         assertTrue(live.contains("dBFS signal strength"));
         assertTrue(live.contains("% decode quality"));
         assertFalse(live.contains("Math.ceil(decodeQuality / 25)"));
+    }
+
+    @Test
+    void splitsLiveDetailsAndScopesBoundedDecoderEventsToTheCurrentSelection() throws Exception
+    {
+        String source = source();
+        String css = Files.readString(APP_CSS);
+        String selection = function(source, "function liveEventSelection(tableValue, row)");
+        String events = function(source, "function liveEventsPanel(onCollapse)");
+        String messages = function(source, "function liveMessagesPane()");
+        String channel = function(source, "function liveChannelPane()");
+        String systems = function(source, "function liveSystemsSection(onSelectionChange)");
+        String live = function(source, "async function renderLive()");
+
+        assertTrue(live.contains("node('div', 'live-split')"));
+        assertTrue(live.contains("liveSystemsSection(eventsPanel.select)"));
+        assertTrue(events.contains("['events', 'messages', 'channel']"));
+        assertTrue(events.contains("liveMessagesPane()"));
+        assertTrue(events.contains("liveChannelPane()"));
+        assertTrue(events.contains("liveConnection('/live/events', parameters)"));
+        assertTrue(events.contains("configuration_id: selection.configurationId"));
+        assertTrue(events.contains("parameters.frequency_hz = selection.frequencyHz"));
+        assertTrue(events.contains("parameters.timeslot = selection.timeslot"));
+        assertTrue(events.contains("stream.addEventListener('snapshot'"));
+        assertTrue(events.contains("stream.addEventListener('decode_event'"));
+        assertTrue(events.contains("if (!events.has(event.eventId)) order.unshift(event.eventId)"));
+        assertTrue(events.contains("while (order.length > 200)"));
+        assertTrue(events.contains("['ENCRYPTED_VOICE', 'Encrypted voice']"));
+        assertTrue(events.contains("['REGISTRATION', 'Registrations']"));
+        assertTrue(messages.contains("liveConnection('/live/messages', parameters)"));
+        assertTrue(messages.contains("stream.addEventListener('decode_message'"));
+        assertTrue(messages.contains("active && !collapsed && !document.hidden"));
+        assertTrue(channel.contains("liveConnection('/live/channel-diagnostics', parameters)"));
+        assertEquals(channel.indexOf("liveConnection('/live/channel-diagnostics', parameters)"),
+            channel.lastIndexOf("liveConnection('/live/channel-diagnostics', parameters)"));
+        assertTrue(channel.contains("stream.addEventListener('signal'"));
+        assertTrue(channel.contains("stream.addEventListener('symbols'"));
+        assertTrue(channel.contains("const clientId = window.crypto.randomUUID()"));
+        assertTrue(channel.contains("client_id: clientId"));
+        assertTrue(channel.contains("diagnosticGrid.append(signalDiagnostic.card, symbolDiagnostic.card)"));
+        assertTrue(channel.contains("let signalSequence = 0"));
+        assertTrue(channel.contains("let symbolSequence = 0"));
+        assertTrue(channel.contains("let signalObservedAtMs = 0"));
+        assertTrue(channel.contains("let symbolObservedAtMs = 0"));
+        assertTrue(channel.contains("maximumVisibleSymbols"));
+        assertTrue(channel.contains("Math.max(1, maximum - 1)"));
+        assertTrue(channel.contains("if (symbolValues.length >= maximum) symbolValues = []"));
+        assertFalse(channel.contains("symbolValues.splice"));
+        assertTrue(channel.contains("Connection interrupted. Reconnecting…"));
+        assertTrue(channel.contains("window.setInterval"));
+        assertTrue(channel.contains("window.clearInterval(ageTimer)"));
+        assertTrue(channel.contains("active && !collapsed && !document.hidden"));
+        assertFalse(channel.contains("channel-mode-tabs"));
+        assertFalse(channel.contains("view: mode"));
+        assertTrue(selection.contains("row?.configuration_id || tableValue?.configuration_id"));
+        assertTrue(selection.contains("['CONFIGURED', 'CURRENT_CONTROL', 'ALTERNATE_CONTROL']"));
+        assertTrue(selection.contains("diagnosticFrequencyHz"));
+        assertTrue(selection.contains("TS ${diagnosticTimeslot}"));
+        assertTrue(systems.contains("const currentRow = (value?.rows || []).find"));
+        assertTrue(systems.contains("onSelectionChange(liveEventSelection(value, currentRow))"));
+        assertTrue(systems.contains("if (selectedRowKey !== null && !incoming.has(selectedRowKey)) clearSelection()"));
+        assertTrue(css.contains("grid-template-rows: minmax(0, 1fr) minmax(0, 1fr)"));
+        assertTrue(css.contains(".live-split.details-collapsed"));
+        assertTrue(css.contains(".live-details.collapsed .live-details-body"));
+        assertTrue(css.contains(".live-events-table tbody tr:hover"));
+        assertTrue(css.contains(".channel-diagnostic-canvas"));
+        assertTrue(css.contains("grid-template-columns: repeat(2, minmax(0, 1fr))"));
+        assertTrue(css.contains(".channel-diagnostic-grid"));
     }
 
     private static String source() throws Exception

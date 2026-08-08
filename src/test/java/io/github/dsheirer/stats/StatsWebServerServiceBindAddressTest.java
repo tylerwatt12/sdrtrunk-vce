@@ -7,14 +7,17 @@ package io.github.dsheirer.stats;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.sun.net.httpserver.Headers;
+import io.github.dsheirer.module.decode.event.DecodeEventViewService;
 import io.github.dsheirer.web.auth.WebCapability;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
 class StatsWebServerServiceBindAddressTest
@@ -53,6 +56,15 @@ class StatsWebServerServiceBindAddressTest
         assertTrue(StatsWebServerService.hasExactPath(
             URI.create("/live/activity?scope=dmr%3Aguid%3Atest"), "/live/activity"));
         assertFalse(StatsWebServerService.hasExactPath(URI.create("/live/systems-old"), "/live/systems"));
+        assertTrue(StatsWebServerService.hasExactPath(
+            URI.create("/live/events?configuration_id=test"), "/live/events"));
+        assertFalse(StatsWebServerService.hasExactPath(URI.create("/live/events-old"), "/live/events"));
+        assertTrue(StatsWebServerService.hasExactPath(
+            URI.create("/live/messages?configuration_id=test"), "/live/messages"));
+        assertTrue(StatsWebServerService.hasExactPath(
+            URI.create("/live/channel-diagnostics?configuration_id=test"), "/live/channel-diagnostics"));
+        assertFalse(StatsWebServerService.hasExactPath(
+            URI.create("/live/channel-diagnostics-old"), "/live/channel-diagnostics"));
         assertFalse(StatsWebServerService.hasExactPath(URI.create("/live/sites/legacy"), "/live/sites"));
         assertFalse(StatsWebServerService.hasExactPath(URI.create("/live/web-calls/legacy"), "/live/web-calls"));
         assertTrue(StatsWebServerService.hasExactPath(
@@ -70,6 +82,44 @@ class StatsWebServerServiceBindAddressTest
             StatsWebServerService.qualityCapability(URI.create("/api/quality?guid=site-1")));
         assertEquals(WebCapability.SYSTEMS_VIEW,
             StatsWebServerService.qualityCapability(URI.create("/api/quality?%67uid=site-1")));
+    }
+
+    @Test
+    void validatesLiveDecoderEventScope()
+    {
+        DecodeEventViewService.Scope scope = StatsWebServerService.decodeEventScope(URI.create(
+            "/live/events?configuration_id=00000000-0000-0000-0000-000000000001" +
+                "&frequency_hz=851012500&timeslot=2"));
+
+        assertEquals("00000000-0000-0000-0000-000000000001", scope.configurationId());
+        assertEquals(851_012_500L, scope.frequencyHz());
+        assertEquals(2, scope.timeslot());
+        assertThrows(StatsApiException.class,
+            () -> StatsWebServerService.decodeEventScope(URI.create("/live/events")));
+        assertThrows(StatsApiException.class, () -> StatsWebServerService.decodeEventScope(URI.create(
+            "/live/events?configuration_id=00000000-0000-0000-0000-000000000001&timeslot=0")));
+    }
+
+    @Test
+    void validatesExactChannelDiagnosticScope()
+    {
+        ChannelDiagnosticService.Scope scope = StatsWebServerService.channelDiagnosticScope(URI.create(
+            "/live/channel-diagnostics?configuration_id=00000000-0000-0000-0000-000000000001" +
+                "&frequency_hz=851012500&timeslot=2&client_id=00000000-0000-0000-0000-000000000002"));
+
+        assertEquals("00000000-0000-0000-0000-000000000001", scope.configurationId());
+        assertEquals(851_012_500L, scope.frequencyHz());
+        assertEquals(2, scope.timeslot());
+        assertEquals(UUID.fromString("00000000-0000-0000-0000-000000000002"),
+            StatsWebServerService.channelDiagnosticClientId(URI.create(
+                "/live/channel-diagnostics?client_id=00000000-0000-0000-0000-000000000002")));
+        assertThrows(StatsApiException.class, () -> StatsWebServerService.channelDiagnosticScope(URI.create(
+            "/live/channel-diagnostics?configuration_id=00000000-0000-0000-0000-000000000001" +
+                "&timeslot=2")));
+        assertThrows(StatsApiException.class, () -> StatsWebServerService.channelDiagnosticClientId(URI.create(
+            "/live/channel-diagnostics")));
+        assertThrows(StatsApiException.class, () -> StatsWebServerService.channelDiagnosticClientId(URI.create(
+            "/live/channel-diagnostics?client_id=invalid")));
     }
 
     @Test

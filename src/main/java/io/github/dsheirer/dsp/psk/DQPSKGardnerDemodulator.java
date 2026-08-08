@@ -18,6 +18,7 @@ package io.github.dsheirer.dsp.psk;
 import io.github.dsheirer.dsp.psk.pll.IPhaseLockedLoop;
 import io.github.dsheirer.dsp.symbol.Dibit;
 import io.github.dsheirer.sample.complex.Complex;
+import io.github.dsheirer.sample.real.RealSampleListener;
 
 public class DQPSKGardnerDemodulator extends PSKDemodulator<Dibit>
 {
@@ -26,6 +27,7 @@ public class DQPSKGardnerDemodulator extends PSKDemodulator<Dibit>
     private Complex mPreviousMiddleSample = new Complex(0, 0);
     private Complex mMiddleSymbol = new Complex(0, 0);
     protected Complex mCurrentSymbol = new Complex(0, 0);
+    private RealSampleListener mSoftSymbolListener;
 
     /**
      * Implements a Differential QPSK demodulator using a Costas Loop (PLL) and a Gardner timing error detector.
@@ -38,6 +40,14 @@ public class DQPSKGardnerDemodulator extends PSKDemodulator<Dibit>
     public DQPSKGardnerDemodulator(IPhaseLockedLoop phaseLockedLoop, InterpolatingSampleBuffer interpolatingSampleBuffer)
     {
         super(interpolatingSampleBuffer, phaseLockedLoop);
+    }
+
+    /**
+     * Registers an optional listener for the differentially decoded symbol phase in radians.
+     */
+    public void setSoftSymbolListener(RealSampleListener listener)
+    {
+        mSoftSymbolListener = listener;
     }
 
     @Override
@@ -82,5 +92,10 @@ public class DQPSKGardnerDemodulator extends PSKDemodulator<Dibit>
         mPreviousCurrentSample.setValues(currentSample);
 
         broadcast(mSymbolEvaluator.getSymbolDecision());
+
+        if(mSoftSymbolListener != null)
+        {
+            mSoftSymbolListener.receive(mCurrentSymbol.angle());
+        }
     }
 }
