@@ -228,6 +228,7 @@ class RadioReferenceDecoderSelectionTest
         assertEquals("Ohio MARCS-IP", alias.getAliasListName());
         assertInstanceOf(io.github.dsheirer.alias.id.talkgroup.Talkgroup.class,
             alias.getMatchIdentifier());
+        assertEquals(alias.getMatchIdentifier().toString(), alias.getMatchIdentifier().valueProperty().get());
         assertEquals("Law Dispatch", alias.getGroup());
     }
 

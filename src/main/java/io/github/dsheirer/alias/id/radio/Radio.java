@@ -47,12 +47,6 @@ public class Radio extends AliasID implements Comparable<Radio>
         mValue = value;
     }
 
-    @Override
-    public boolean isAudioIdentifier()
-    {
-        return false;
-    }
-
     public int getValue()
     {
         return mValue;
@@ -105,10 +99,9 @@ public class Radio extends AliasID implements Comparable<Radio>
     @Override
     public boolean matches(AliasID id)
     {
-        if(id instanceof Radio)
+        if(id instanceof Radio radio && getClass() == radio.getClass())
         {
-            Radio tgid = (Radio)id;
-            return (getProtocol() == tgid.getProtocol()) && (getValue() == tgid.getValue());
+            return getProtocol() == radio.getProtocol() && getValue() == radio.getValue();
         }
 
         return false;
@@ -122,7 +115,7 @@ public class Radio extends AliasID implements Comparable<Radio>
             return true;
         }
 
-        if(!(obj instanceof Radio other))
+        if(!(obj instanceof Radio other) || getClass() != other.getClass())
         {
             return false;
         }
@@ -148,6 +141,13 @@ public class Radio extends AliasID implements Comparable<Radio>
         if(other == null)
         {
             return -1;
+        }
+
+        int classComparison = getClass().getName().compareTo(other.getClass().getName());
+
+        if(classComparison != 0)
+        {
+            return classComparison;
         }
 
         if(getProtocol().equals(other.getProtocol()))

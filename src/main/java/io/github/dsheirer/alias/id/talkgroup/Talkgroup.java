@@ -48,12 +48,6 @@ public class Talkgroup extends AliasID implements Comparable<Talkgroup>
         mValue = value;
     }
 
-    @Override
-    public boolean isAudioIdentifier()
-    {
-        return false;
-    }
-
     @JacksonXmlProperty(isAttribute = true, localName = "value")
     public int getValue()
     {
@@ -119,10 +113,9 @@ public class Talkgroup extends AliasID implements Comparable<Talkgroup>
     @Override
     public boolean matches(AliasID id)
     {
-        if(id instanceof Talkgroup)
+        if(id instanceof Talkgroup talkgroup && getClass() == talkgroup.getClass())
         {
-            Talkgroup tgid = (Talkgroup)id;
-            return (getProtocol() == tgid.getProtocol()) && (getValue() == tgid.getValue());
+            return getProtocol() == talkgroup.getProtocol() && getValue() == talkgroup.getValue();
         }
 
         return false;
@@ -140,6 +133,13 @@ public class Talkgroup extends AliasID implements Comparable<Talkgroup>
         if(other == null)
         {
             return -1;
+        }
+
+        int classComparison = getClass().getName().compareTo(other.getClass().getName());
+
+        if(classComparison != 0)
+        {
+            return classComparison;
         }
 
         if(getProtocol().equals(other.getProtocol()))
@@ -160,7 +160,7 @@ public class Talkgroup extends AliasID implements Comparable<Talkgroup>
             return true;
         }
 
-        if(!(obj instanceof Talkgroup other))
+        if(!(obj instanceof Talkgroup other) || getClass() != other.getClass())
         {
             return false;
         }

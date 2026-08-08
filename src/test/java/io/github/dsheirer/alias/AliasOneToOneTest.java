@@ -11,17 +11,23 @@
 package io.github.dsheirer.alias;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
+import io.github.dsheirer.alias.id.dcs.Dcs;
+import io.github.dsheirer.alias.id.esn.Esn;
 import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.alias.id.talkgroup.StreamAsTalkgroup;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
+import io.github.dsheirer.alias.id.tone.TonesID;
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.module.decode.dcs.DCSCode;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
@@ -57,6 +63,22 @@ class AliasOneToOneTest
         assertEquals(4, copy.getPlaybackPriority());
         assertTrue(copy.hasBroadcastChannel("Stream A"));
         assertEquals(900, copy.getStreamTalkgroupAlias().getValue());
+    }
+
+    @Test
+    void matcherCopiesPreserveCurrentOverlapState()
+    {
+        Dcs dcs = new Dcs();
+        dcs.setDCSCode(DCSCode.N023);
+        Esn esn = new Esn();
+        esn.setEsn("ABC123");
+        TonesID tones = new TonesID();
+
+        for(AliasID matcher: List.of(dcs, esn, tones))
+        {
+            matcher.setOverlap(true);
+            assertTrue(AliasFactory.copyOf(matcher).overlapProperty().get());
+        }
     }
 
     @Test
@@ -108,6 +130,46 @@ class AliasOneToOneTest
         assertSame(matcher, alias.getMatchIdentifier());
         alias.setMatchIdentifier(new Radio(Protocol.APCO25, 200));
         assertInstanceOf(Radio.class, alias.getMatchIdentifier());
+    }
+
+    @Test
+    void persistedListMembershipUsesTheSqliteIdentity()
+    {
+        AliasListDefinition definition = new AliasListDefinition("Current Name", AliasListFamily.P25);
+        definition.setId(12);
+        Alias alias = new Alias("Dispatch");
+        alias.setAliasListId(12);
+        alias.setAliasListName("Old Display Name");
+        assertTrue(alias.belongsTo(definition));
+
+        AliasListDefinition sameNameWrongId = new AliasListDefinition("Old Display Name", AliasListFamily.P25);
+        sameNameWrongId.setId(13);
+        assertFalse(alias.belongsTo(sameNameWrongId));
+
+        Alias imported = new Alias("Imported");
+        imported.setAliasListName("County");
+        AliasListDefinition importedDefinition = new AliasListDefinition("county", AliasListFamily.P25);
+        assertTrue(imported.belongsTo(importedDefinition));
+    }
+
+    @Test
+    void modelQueriesAndDeletesPersistedAliasesByListIdentity()
+    {
+        AliasListDefinition definition = new AliasListDefinition("Current Name", AliasListFamily.P25);
+        definition.setId(12);
+        Alias alias = new Alias("Dispatch");
+        alias.setAliasListDefinition(definition);
+        alias.setMatchIdentifier(new Talkgroup(Protocol.APCO25, 100));
+        AliasModel model = new AliasModel();
+        model.setAliasListDefinitions(List.of(definition));
+        model.addAlias(alias);
+
+        alias.setAliasListName("Stale Display Name");
+        assertSame(alias, model.getAliases("Current Name", alias.getMatchIdentifier().getType()).getFirst());
+
+        model.deleteAliasList("Current Name");
+        assertTrue(model.getAliases().isEmpty());
+        assertTrue(model.aliasListDefinitions().isEmpty());
     }
 
     @Test

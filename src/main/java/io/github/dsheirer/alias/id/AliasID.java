@@ -137,24 +137,8 @@ public abstract class AliasID
 
     public abstract boolean matches(AliasID id);
 
-    /**
-     * Indicates if this alias ID overlaps with another alias ID.
-     * Note: this method is intended to be overridden by certain subclass implementations.
-     */
-    @JsonIgnore
-    public boolean overlaps(AliasID id)
-    {
-        return false;
-    }
-
     @JsonIgnore
     public abstract boolean isValid();
-
-    /**
-     * Indicates if the identifier is an audio identifier (monitor, record, stream)
-     */
-    @JsonIgnore
-    public abstract boolean isAudioIdentifier();
 
     /**
      * Creates an observable property extractor for use with observable lists to detect changes internal to this object.

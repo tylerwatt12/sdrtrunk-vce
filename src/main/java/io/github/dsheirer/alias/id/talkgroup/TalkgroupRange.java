@@ -53,12 +53,6 @@ public class TalkgroupRange extends AliasID implements Comparable<TalkgroupRange
         mMaxTalkgroup = maxTalkgroup;
     }
 
-    @Override
-    public boolean isAudioIdentifier()
-    {
-        return false;
-    }
-
     @JacksonXmlProperty(isAttribute = true, localName = "min")
     public int getMinTalkgroup()
     {
@@ -149,27 +143,6 @@ public class TalkgroupRange extends AliasID implements Comparable<TalkgroupRange
     public boolean contains(int talkgroupValue)
     {
         return getMinTalkgroup() <= talkgroupValue && talkgroupValue <= getMaxTalkgroup();
-    }
-
-    @Override
-    public boolean overlaps(AliasID other)
-    {
-        return other instanceof TalkgroupRange && overlaps((TalkgroupRange)other);
-    }
-
-    /**
-     * Indicates if this talkgroup range overlaps the talkgroup range argument.
-     * @param talkgroupRange to check for overlap
-     * @return true if the ranges overlap
-     */
-    public boolean overlaps(TalkgroupRange talkgroupRange)
-    {
-        return contains(talkgroupRange.getMinTalkgroup()) ||
-               contains(talkgroupRange.getMaxTalkgroup()) ||
-               (getMinTalkgroup() < talkgroupRange.getMinTalkgroup() &&
-                   talkgroupRange.getMaxTalkgroup() < getMaxTalkgroup()) ||
-               (talkgroupRange.getMinTalkgroup() < getMinTalkgroup() &&
-                   getMaxTalkgroup() < talkgroupRange.getMaxTalkgroup());
     }
 
     @Override

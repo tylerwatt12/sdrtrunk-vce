@@ -55,6 +55,8 @@ public class EsnEditor extends IdentifierEditor<Esn>
     public void setItem(Esn item)
     {
         super.setItem(item);
+        getEsnField().setDisable(item == null);
+        getEsnField().setText(item != null ? item.getEsn() : null);
         modifiedProperty().set(false);
     }
 
@@ -77,8 +79,13 @@ public class EsnEditor extends IdentifierEditor<Esn>
             mEsnField = new TextField();
             mEsnField.textProperty()
                 .addListener((observable, oldValue, newValue) -> {
-                    getItem().setEsn(getEsnField().getText());
-                    modifiedProperty().set(true);
+                    Esn item = getItem();
+
+                    if(item != null)
+                    {
+                        item.setEsn(newValue);
+                        modifiedProperty().set(true);
+                    }
                 });
         }
 

@@ -517,20 +517,7 @@ public class AliasList
 
     private boolean belongsToThisList(Alias alias)
     {
-        if(mDefinition == null)
-        {
-            return false;
-        }
-
-        if(mDefinition.getId() > AliasListDefinition.UNASSIGNED_ID &&
-            alias.getAliasListId() > AliasListDefinition.UNASSIGNED_ID)
-        {
-            return mDefinition.getId() == alias.getAliasListId();
-        }
-
-        return mDefinition.getId() == AliasListDefinition.UNASSIGNED_ID &&
-            alias.getAliasListId() == AliasListDefinition.UNASSIGNED_ID &&
-            getName().equals(alias.getAliasListName());
+        return alias != null && alias.belongsTo(mDefinition);
     }
 
     private void observe(Alias alias)

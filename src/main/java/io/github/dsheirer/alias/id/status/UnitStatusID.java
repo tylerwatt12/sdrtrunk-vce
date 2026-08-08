@@ -28,12 +28,6 @@ public class UnitStatusID extends AliasID
 {
     private int mStatus;
 
-    @Override
-    public boolean isAudioIdentifier()
-    {
-        return false;
-    }
-
     public int getStatus()
     {
         return mStatus;

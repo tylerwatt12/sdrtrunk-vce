@@ -268,7 +268,7 @@ public final class AliasAdministrationService
                     }
 
                     if(AliasMatchRegistry.isUnmatchedTalkgroupCatchAll(target, alias.getMatchIdentifier()) &&
-                        !belongsTo(alias, target))
+                        !alias.belongsTo(target))
                     {
                         throw unmatchedTalkgroupCatchAllException(target);
                     }
@@ -380,10 +380,7 @@ public final class AliasAdministrationService
 
     private List<Alias> aliasesForList(AliasListDefinition definition)
     {
-        return aliasModel().getAliases().stream().filter(alias ->
-            alias.getAliasListId() == definition.getId() ||
-                alias.getAliasListId() == Alias.UNASSIGNED_ALIAS_LIST_ID &&
-                    definition.getName().equalsIgnoreCase(alias.getAliasListName())).toList();
+        return aliasModel().getAliases().stream().filter(alias -> alias.belongsTo(definition)).toList();
     }
 
     private static boolean matchesList(Channel channel, AliasListDefinition definition)
@@ -462,24 +459,7 @@ public final class AliasAdministrationService
     private static boolean retainsExistingCatchAll(Alias previous, AliasListDefinition definition, AliasID matcher)
     {
         AliasID previousMatcher = previous != null ? previous.getMatchIdentifier() : null;
-        return previousMatcher != null && belongsTo(previous, definition) && previousMatcher.matches(matcher);
-    }
-
-    private static boolean belongsTo(Alias alias, AliasListDefinition definition)
-    {
-        if(alias == null || definition == null)
-        {
-            return false;
-        }
-
-        if(alias.getAliasListId() > AliasListDefinition.UNASSIGNED_ID &&
-            definition.getId() > AliasListDefinition.UNASSIGNED_ID)
-        {
-            return alias.getAliasListId() == definition.getId();
-        }
-
-        return alias.getAliasListName() != null && definition.getName() != null &&
-            alias.getAliasListName().equalsIgnoreCase(definition.getName());
+        return previousMatcher != null && previous.belongsTo(definition) && previousMatcher.matches(matcher);
     }
 
     private static IllegalArgumentException unmatchedTalkgroupCatchAllException(AliasListDefinition definition)

@@ -37,6 +37,7 @@ import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.database.alias.AliasDatabaseStore;
 import io.github.dsheirer.database.configuration.ConfigurationDatabaseStore;
 import io.github.dsheirer.identifier.tone.AmbeTone;
+import io.github.dsheirer.identifier.tone.Tone;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.analog.DecodeConfigAnalog;
 import io.github.dsheirer.module.decode.dcs.DCSCode;
@@ -89,7 +90,15 @@ class LegacyXmlConfigurationImporterTest
         assertTrue(aliases.stream().anyMatch(alias -> alias.getMatchIdentifier() instanceof Talkgroup));
         assertTrue(aliases.stream().anyMatch(alias -> alias.getMatchIdentifier() instanceof TalkgroupRange));
         assertTrue(aliases.stream().allMatch(alias -> alias.hasBroadcastChannel("RadioResolve")));
+        assertTrue(aliases.stream().allMatch(alias -> alias.getMatchIdentifier().toString()
+            .equals(alias.getMatchIdentifier().valueProperty().get())));
+        assertTrue(aliases.stream().allMatch(alias -> alias.getBroadcastChannels().stream()
+            .allMatch(channel -> channel.toString().equals(channel.valueProperty().get()))));
         assertTrue(aliases.stream().allMatch(alias -> alias.getPlaybackPriority() == 50));
+        assertTrue(aliases.stream().allMatch(alias -> alias.getStreamTalkgroupAlias() != null &&
+            alias.getStreamTalkgroupAlias().getValue() == 42 &&
+            alias.getStreamTalkgroupAlias().toString().equals(
+                alias.getStreamTalkgroupAlias().valueProperty().get())));
 
         ConfigurationState state = new ConfigurationDatabaseStore(database).loadConfigurationState();
         assertEquals(2, state.getChannels().size());
@@ -462,6 +471,7 @@ class LegacyXmlConfigurationImporterTest
         assertEquals(70000, radioRange.getMinRadio());
         assertEquals(71000, radioRange.getMaxRadio());
         assertTrue(radioAlias.hasBroadcastChannel("Icecast"));
+        assertEquals("Icecast", radioAlias.getBroadcastChannels().iterator().next().valueProperty().get());
 
         Dcs dcs = assertInstanceOf(Dcs.class, aliases.stream()
             .filter(alias -> "DCS".equals(alias.getName())).findFirst().orElseThrow().getMatchIdentifier());
@@ -474,6 +484,12 @@ class LegacyXmlConfigurationImporterTest
         assertEquals(4, tones.getToneSequence().getTones().get(0).getDuration());
         assertEquals(AmbeTone.DTMF_2, tones.getToneSequence().getTones().get(1).getAmbeTone());
         assertEquals(6, tones.getToneSequence().getTones().get(1).getDuration());
+        assertTrue(tones.getToneSequence().getTones().stream()
+            .allMatch(tone -> tone.toString().equals(tone.valueProperty().get())));
+        Tone firstTone = tones.getToneSequence().getTones().getFirst();
+        firstTone.incrementDuration();
+        assertEquals(firstTone.toString(), firstTone.valueProperty().get());
+        assertEquals(tones.toString(), tones.valueProperty().get());
 
         ConfigurationState state = new ConfigurationDatabaseStore(database).loadConfigurationState();
         Channel nbfmChannel = state.getChannels().stream().filter(channel -> "NBFM".equals(channel.getName()))
@@ -884,6 +900,7 @@ class LegacyXmlConfigurationImporterTest
         Files.writeString(xml, """
             <playlist version="4">
               <alias name="Dispatch" list="County" group="Dispatch" color="255">
+                <stream_talkgroup_alias type="streamAsTalkgroup" protocol="UNKNOWN" value="42"/>
                 <id type="talkgroup" protocol="APCO25" value="1234"/>
                 <id type="broadcastChannel" channel="RadioResolve"/>
                 <id type="priority" priority="50"/>

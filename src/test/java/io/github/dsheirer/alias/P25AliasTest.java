@@ -37,6 +37,7 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class P25AliasTest
@@ -50,6 +51,48 @@ public class P25AliasTest
         assertFalse(new P25FullyQualifiedTalkgroup(0xBEE00, 0x348, 0xFFFF).isValid());
         assertFalse(new P25FullyQualifiedTalkgroup(0x100000, 0x348, 1).isValid());
         assertFalse(new P25FullyQualifiedTalkgroup(0xBEE00, 0x1000, 1).isValid());
+        P25FullyQualifiedTalkgroup wrongProtocol = new P25FullyQualifiedTalkgroup(0xBEE00, 0x348, 1);
+        wrongProtocol.setProtocol(Protocol.DMR);
+        assertFalse(wrongProtocol.isValid());
+    }
+
+    @Test
+    void fullyQualifiedRadioValidatesTheCompleteIdentity()
+    {
+        assertTrue(new P25FullyQualifiedRadio(0xBEE00, 0x348, 0).isValid());
+        assertTrue(new P25FullyQualifiedRadio(0xBEE00, 0x348, 0xFFFFFF).isValid());
+        assertFalse(new P25FullyQualifiedRadio(-1, 0x348, 1).isValid());
+        assertFalse(new P25FullyQualifiedRadio(0x100000, 0x348, 1).isValid());
+        assertFalse(new P25FullyQualifiedRadio(0xBEE00, 0x1000, 1).isValid());
+        assertFalse(new P25FullyQualifiedRadio(0xBEE00, 0x348, -1).isValid());
+        P25FullyQualifiedRadio wrongProtocol = new P25FullyQualifiedRadio(0xBEE00, 0x348, 1);
+        wrongProtocol.setProtocol(Protocol.DMR);
+        assertFalse(wrongProtocol.isValid());
+    }
+
+    @Test
+    void fullyQualifiedIdentitiesCompareTheCompleteTuple()
+    {
+        P25FullyQualifiedTalkgroup firstTalkgroup = new P25FullyQualifiedTalkgroup(1, 2, 300);
+        P25FullyQualifiedTalkgroup otherTalkgroup = new P25FullyQualifiedTalkgroup(3, 4, 300);
+        Talkgroup localTalkgroup = new Talkgroup(Protocol.APCO25, 300);
+        assertFalse(firstTalkgroup.matches(otherTalkgroup));
+        assertFalse(firstTalkgroup.matches(localTalkgroup));
+        assertFalse(localTalkgroup.matches(firstTalkgroup));
+        assertNotEquals(firstTalkgroup, otherTalkgroup);
+        assertNotEquals(firstTalkgroup, localTalkgroup);
+        assertNotEquals(0, firstTalkgroup.compareTo(otherTalkgroup));
+        assertTrue(firstTalkgroup.toString().startsWith("Fully Qualified Talkgroup:"));
+
+        P25FullyQualifiedRadio firstRadio = new P25FullyQualifiedRadio(1, 2, 300);
+        P25FullyQualifiedRadio otherRadio = new P25FullyQualifiedRadio(3, 4, 300);
+        Radio localRadio = new Radio(Protocol.APCO25, 300);
+        assertFalse(firstRadio.matches(otherRadio));
+        assertFalse(firstRadio.matches(localRadio));
+        assertFalse(localRadio.matches(firstRadio));
+        assertNotEquals(firstRadio, otherRadio);
+        assertNotEquals(firstRadio, localRadio);
+        assertNotEquals(0, firstRadio.compareTo(otherRadio));
     }
 
     @Test
@@ -73,6 +116,17 @@ public class P25AliasTest
         List<Alias> aliases = aliasList.getAliases(talkgroupIdentifier1);
         assertEquals(1, aliases.size(), "Expected 1 matching alias");
         assertEquals(correctAliasName, aliases.getFirst().getName(), "Unexpected alias name");
+    }
+
+    @Test
+    void initializesMatcherDisplayWhenAssignedToAlias()
+    {
+        Talkgroup matcher = new Talkgroup(Protocol.APCO25, 13501);
+        Alias alias = new Alias("LORAIN DISP");
+
+        alias.setMatchIdentifier(matcher);
+
+        assertEquals(matcher.toString(), matcher.valueProperty().get());
     }
 
     @Test

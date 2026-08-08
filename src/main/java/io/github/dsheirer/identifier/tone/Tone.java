@@ -41,6 +41,7 @@ public class Tone
     {
         mAmbeTone = tone;
         mDuration = duration;
+        updateValueProperty();
     }
 
     public Tone copyOf()
@@ -125,6 +126,7 @@ public class Tone
     public void incrementDuration()
     {
         mDuration++;
+        updateValueProperty();
     }
 
     /**

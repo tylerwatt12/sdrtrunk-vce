@@ -770,7 +770,6 @@ public class AliasDatabaseStore
             default -> throw new SQLException("Unsupported stored alias matcher type [" + type + "]");
         };
 
-        matcher.updateValueProperty();
         return matcher;
     }
 

@@ -26,12 +26,6 @@ public class FleetsyncID extends AliasID
 {
 	private String mID;
 
-	@Override
-	public boolean isAudioIdentifier()
-	{
-		return false;
-	}
-
 	public String getIdent()
 	{
 		return mID;

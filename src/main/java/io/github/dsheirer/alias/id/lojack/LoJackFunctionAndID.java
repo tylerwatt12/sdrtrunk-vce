@@ -27,12 +27,6 @@ public class LoJackFunctionAndID extends AliasID
     private LJ1200Message.Function mFunction = LJ1200Message.Function.F0_UNKNOWN;
     private String mID = null;
 
-    @Override
-    public boolean isAudioIdentifier()
-    {
-        return false;
-    }
-
     public String getID()
     {
         return mID;

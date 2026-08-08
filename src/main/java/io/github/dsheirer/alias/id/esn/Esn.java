@@ -24,12 +24,6 @@ public class Esn extends AliasID
 {
 	private String mEsn;
 
-	@Override
-	public boolean isAudioIdentifier()
-	{
-		return false;
-	}
-
 	public String getEsn()
 	{
 		return mEsn;

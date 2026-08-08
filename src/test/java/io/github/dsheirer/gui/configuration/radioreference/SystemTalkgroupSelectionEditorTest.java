@@ -59,10 +59,10 @@ class SystemTalkgroupSelectionEditorTest
     }
 
     @Test
-    void snapshotsOnlySelectedRowsBeforeImport()
+    void snapshotsRowsBeforeImport()
     {
         List<Integer> selectedRows = new ArrayList<>(List.of(2, 4));
-        List<Integer> snapshot = SystemTalkgroupSelectionEditor.snapshotSelectedRows(selectedRows);
+        List<Integer> snapshot = SystemTalkgroupSelectionEditor.snapshotRows(selectedRows);
 
         selectedRows.clear();
 

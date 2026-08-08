@@ -44,13 +44,17 @@ public final class AliasFactory
         return switch(id.getType())
         {
             case DCS -> {
+                Dcs original = (Dcs)id;
                 Dcs copy = new Dcs();
-                copy.setDCSCode(((Dcs)id).getDCSCode());
+                copy.setDCSCode(original.getDCSCode());
+                copy.setOverlap(original.overlapProperty().get());
                 yield copy;
             }
             case ESN -> {
+                Esn original = (Esn)id;
                 Esn copy = new Esn();
-                copy.setEsn(((Esn)id).getEsn());
+                copy.setEsn(original.getEsn());
+                copy.setOverlap(original.overlapProperty().get());
                 yield copy;
             }
             case P25_FULLY_QUALIFIED_RADIO_ID -> {
@@ -105,6 +109,7 @@ public final class AliasFactory
                 TonesID copy = new TonesID();
                 copy.setToneSequence(original.getToneSequence() != null ?
                     original.getToneSequence().copyOf() : null);
+                copy.setOverlap(original.overlapProperty().get());
                 yield copy;
             }
             case UNIT_STATUS -> {

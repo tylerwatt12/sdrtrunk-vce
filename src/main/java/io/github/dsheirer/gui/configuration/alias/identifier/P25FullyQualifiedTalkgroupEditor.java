@@ -153,7 +153,7 @@ public class P25FullyQualifiedTalkgroupEditor extends IdentifierEditor<P25FullyQ
         {
             mWacnTextFormatter = new HexFormatter(0,0xFFFFF);
             mSystemTextFormatter = new HexFormatter(0,0xFFF);
-            mTalkgroupTextFormatter = new HexFormatter(0,0xFFFFFF);
+            mTalkgroupTextFormatter = new HexFormatter(0,0xFFFF);
 
             mWacnField.setTooltip(new Tooltip("Format: 0 - FFFFF"));
             mSystemField.setTooltip(new Tooltip("Format: 0 - FFF"));

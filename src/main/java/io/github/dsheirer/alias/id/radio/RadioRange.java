@@ -41,12 +41,6 @@ public class RadioRange extends AliasID implements Comparable<RadioRange>
         //No-arg deserialization constructor
     }
 
-    @Override
-    public boolean isAudioIdentifier()
-    {
-        return false;
-    }
-
     /**
      * Creates a radio range of from - to radio values (inclusive) for the specified protocol
      * @param protocol for the radio range
@@ -147,28 +141,6 @@ public class RadioRange extends AliasID implements Comparable<RadioRange>
     public boolean contains(int radioValue)
     {
         return getMinRadio() <= radioValue && radioValue <= getMaxRadio();
-    }
-
-    @Override
-    public boolean overlaps(AliasID other)
-    {
-        return other instanceof RadioRange && overlaps((RadioRange)other);
-    }
-
-
-    /**
-     * Indicates if this talkgroup range overlaps the talkgroup range argument.
-     * @param radioRange to check for overlap
-     * @return true if the ranges overlap
-     */
-    public boolean overlaps(RadioRange radioRange)
-    {
-        return contains(radioRange.getMinRadio()) ||
-               contains(radioRange.getMaxRadio()) ||
-               (getMinRadio() < radioRange.getMinRadio() &&
-                   radioRange.getMaxRadio() < getMaxRadio()) ||
-               (radioRange.getMinRadio() < getMinRadio() &&
-                   getMaxRadio() < radioRange.getMaxRadio());
     }
 
     @Override

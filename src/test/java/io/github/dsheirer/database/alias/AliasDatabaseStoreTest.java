@@ -89,7 +89,11 @@ class AliasDatabaseStoreTest
         assertTrue(loaded.isRecordable());
         assertEquals(5, loaded.getPlaybackPriority());
         assertEquals("RadioResolve", loaded.getBroadcastChannels().iterator().next().getChannelName());
+        assertEquals("RadioResolve", loaded.getBroadcastChannels().iterator().next().valueProperty().get());
         assertEquals(1001, ((Talkgroup)loaded.getMatchIdentifier()).getValue());
+        assertEquals(loaded.getMatchIdentifier().toString(), loaded.getMatchIdentifier().valueProperty().get());
+        assertEquals(loaded.getStreamTalkgroupAlias().toString(),
+            loaded.getStreamTalkgroupAlias().valueProperty().get());
 
         try(Connection connection = SdrTrunkDatabase.open(database);
             Statement statement = connection.createStatement();

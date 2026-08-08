@@ -165,10 +165,16 @@ public class AliasModel
             return;
         }
 
-        mAliases.removeIf(alias -> alias.getAliasListName() != null &&
-            aliasListName.equalsIgnoreCase(alias.getAliasListName()));
-        mAliasListMap.remove(aliasListName);
-        mAliasListDefinitions.removeIf(definition -> aliasListName.equalsIgnoreCase(definition.getName()));
+        AliasListDefinition definition = getAliasListDefinition(aliasListName);
+
+        if(definition == null)
+        {
+            return;
+        }
+
+        mAliases.removeIf(alias -> alias.belongsTo(definition));
+        mAliasListMap.remove(definition.getName());
+        mAliasListDefinitions.remove(definition);
         refreshAliasListNames();
     }
 
@@ -267,15 +273,9 @@ public class AliasModel
         AliasList aliasList = new AliasList(definition);
         List<Alias> matchingAliases = new ArrayList<>();
 
-        for(Alias alias : mAliases)
+        for(Alias alias: mAliases)
         {
-            boolean persistedMatch = definition.getId() > AliasListDefinition.UNASSIGNED_ID &&
-                alias.getAliasListId() == definition.getId();
-            boolean newMatch = definition.getId() == AliasListDefinition.UNASSIGNED_ID &&
-                alias.getAliasListId() == Alias.UNASSIGNED_ALIAS_LIST_ID &&
-                definition.getName().equals(alias.getAliasListName());
-
-            if(persistedMatch || newMatch)
+            if(alias.belongsTo(definition))
             {
                 matchingAliases.add(alias);
             }
@@ -424,10 +424,16 @@ public class AliasModel
     public List<Alias> getAliases(String aliasListName, AliasIDType type)
     {
         List<Alias> aliases = new ArrayList<>();
+        AliasListDefinition definition = getAliasListDefinition(aliasListName);
 
-        for(Alias alias : mAliases)
+        if(definition == null)
         {
-            if(alias.hasList() && alias.getAliasListName().equalsIgnoreCase(aliasListName))
+            return aliases;
+        }
+
+        for(Alias alias: mAliases)
+        {
+            if(alias.belongsTo(definition))
             {
                 AliasID aliasID = alias.getMatchIdentifier();
 

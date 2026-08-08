@@ -20,8 +20,10 @@
 package io.github.dsheirer.alias.id.talkgroup;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.AliasIDType;
 import io.github.dsheirer.protocol.Protocol;
+import java.util.Objects;
 
 /**
  * Fully qualified talkgroup.  Note: this is only for P25.
@@ -90,8 +92,8 @@ public class P25FullyQualifiedTalkgroup extends Talkgroup
     @Override
     public boolean isValid()
     {
-        return getWacn() >= 0 && getWacn() <= 0xFFFFF && getSystem() >= 0 && getSystem() <= 0xFFF &&
-            getValue() > 0 && getValue() < 0xFFFF;
+        return getProtocol() == Protocol.APCO25 && getWacn() >= 0 && getWacn() <= 0xFFFFF &&
+            getSystem() >= 0 && getSystem() <= 0xFFF && getValue() > 0 && getValue() < 0xFFFF;
     }
 
     /**
@@ -105,11 +107,45 @@ public class P25FullyQualifiedTalkgroup extends Talkgroup
     }
 
     @Override
+    public boolean matches(AliasID id)
+    {
+        return id instanceof P25FullyQualifiedTalkgroup other && super.matches(id) &&
+            getWacn() == other.getWacn() && getSystem() == other.getSystem();
+    }
+
+    @Override
+    public int compareTo(Talkgroup other)
+    {
+        int comparison = super.compareTo(other);
+
+        if(comparison != 0 || !(other instanceof P25FullyQualifiedTalkgroup qualified))
+        {
+            return comparison;
+        }
+
+        comparison = Integer.compare(getWacn(), qualified.getWacn());
+        return comparison != 0 ? comparison : Integer.compare(getSystem(), qualified.getSystem());
+    }
+
+    @Override
+    public boolean equals(Object obj)
+    {
+        return this == obj || obj instanceof P25FullyQualifiedTalkgroup other && super.equals(obj) &&
+            getWacn() == other.getWacn() && getSystem() == other.getSystem();
+    }
+
+    @Override
+    public int hashCode()
+    {
+        return Objects.hash(super.hashCode(), getWacn(), getSystem());
+    }
+
+    @Override
     public String toString()
     {
         StringBuilder sb = new StringBuilder();
 
-        sb.append("Fully Qualified Radio ID:").append(getWacn());
+        sb.append("Fully Qualified Talkgroup:").append(getWacn());
         sb.append(".").append(getSystem());
         sb.append(".").append(getValue());
         sb.append(" Protocol:").append((getProtocol()));

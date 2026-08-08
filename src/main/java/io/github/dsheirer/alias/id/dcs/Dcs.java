@@ -74,12 +74,6 @@ public class Dcs extends AliasID implements Comparable<Dcs>
     }
 
     @Override
-    public boolean isAudioIdentifier()
-    {
-        return false;
-    }
-
-    @Override
     public String toString()
     {
         if(isValid())

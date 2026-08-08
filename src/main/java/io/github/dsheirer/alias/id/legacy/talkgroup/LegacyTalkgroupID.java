@@ -37,12 +37,6 @@ public class LegacyTalkgroupID extends AliasID
         mTalkgroup = talkgroup;
     }
 
-    @Override
-    public boolean isAudioIdentifier()
-    {
-        return false;
-    }
-
     public String getTalkgroup()
     {
         return mTalkgroup;

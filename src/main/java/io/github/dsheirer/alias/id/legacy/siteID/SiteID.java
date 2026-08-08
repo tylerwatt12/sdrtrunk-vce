@@ -24,12 +24,6 @@ public class SiteID extends AliasID
 {
     private String mSite;
 
-    @Override
-    public boolean isAudioIdentifier()
-    {
-        return false;
-    }
-
     public String getSite()
     {
         return mSite;

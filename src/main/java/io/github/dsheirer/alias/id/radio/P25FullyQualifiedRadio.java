@@ -20,8 +20,10 @@
 package io.github.dsheirer.alias.id.radio;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.AliasIDType;
 import io.github.dsheirer.protocol.Protocol;
+import java.util.Objects;
 
 /**
  * Fully qualified radio.  Note: this is only for P25.
@@ -91,6 +93,47 @@ public class P25FullyQualifiedRadio extends Radio
     {
         mSystem = system;
         updateValueProperty();
+    }
+
+    @Override
+    public boolean isValid()
+    {
+        return getProtocol() == Protocol.APCO25 && getWacn() >= 0 && getWacn() <= 0xFFFFF &&
+            getSystem() >= 0 && getSystem() <= 0xFFF && getValue() >= 0 && getValue() <= 0xFFFFFF;
+    }
+
+    @Override
+    public boolean matches(AliasID id)
+    {
+        return id instanceof P25FullyQualifiedRadio other && super.matches(id) &&
+            getWacn() == other.getWacn() && getSystem() == other.getSystem();
+    }
+
+    @Override
+    public int compareTo(Radio other)
+    {
+        int comparison = super.compareTo(other);
+
+        if(comparison != 0 || !(other instanceof P25FullyQualifiedRadio qualified))
+        {
+            return comparison;
+        }
+
+        comparison = Integer.compare(getWacn(), qualified.getWacn());
+        return comparison != 0 ? comparison : Integer.compare(getSystem(), qualified.getSystem());
+    }
+
+    @Override
+    public boolean equals(Object obj)
+    {
+        return this == obj || obj instanceof P25FullyQualifiedRadio other && super.equals(obj) &&
+            getWacn() == other.getWacn() && getSystem() == other.getSystem();
+    }
+
+    @Override
+    public int hashCode()
+    {
+        return Objects.hash(super.hashCode(), getWacn(), getSystem());
     }
 
     @Override

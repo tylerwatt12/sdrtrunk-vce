@@ -438,7 +438,8 @@ public class LegacyXmlConfigurationImporter
 
         for(Alias alias: aliases)
         {
-            if(alias != null && alias.matchesAliasList(aliasListName))
+            if(alias != null && aliasListName != null && alias.getAliasListName() != null &&
+                alias.getAliasListName().equalsIgnoreCase(aliasListName))
             {
                 if(alias.getMatchIdentifier() instanceof Talkgroup talkgroup &&
                     talkgroup.getProtocol() == Protocol.APCO25)
@@ -549,7 +550,7 @@ public class LegacyXmlConfigurationImporter
         private int mColor;
         @JacksonXmlProperty(isAttribute = true, localName = "iconName")
         private String mIconName;
-        @JacksonXmlProperty(isAttribute = true, localName = "stream_talkgroup_alias")
+        @JacksonXmlProperty(isAttribute = false, localName = "stream_talkgroup_alias")
         private StreamAsTalkgroup mStreamTalkgroupAlias;
         @JacksonXmlProperty(isAttribute = false, localName = "id")
         private List<AliasID> mIdentifiers = new ArrayList<>();
@@ -775,11 +776,6 @@ public class LegacyXmlConfigurationImporter
             return false;
         }
 
-        @Override
-        public boolean isAudioIdentifier()
-        {
-            return false;
-        }
     }
 
     private static class RetiredBroadcastConfiguration extends BroadcastConfiguration

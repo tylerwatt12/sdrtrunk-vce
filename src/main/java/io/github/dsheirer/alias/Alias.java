@@ -151,6 +151,11 @@ public class Alias
 
     public void setMatchIdentifier(AliasID identifier)
     {
+        if(identifier != null)
+        {
+            identifier.updateValueProperty();
+        }
+
         mMatchIdentifier.set(identifier);
     }
 
@@ -272,17 +277,27 @@ public class Alias
         mDescription.set(description);
     }
 
-    @JsonIgnore
-    public boolean matchesAliasList(String aliasList)
+    /**
+     * Tests membership using the durable SQLite identity. Name matching is only for not-yet-persisted import and
+     * editor objects that do not have database identities yet.
+     */
+    boolean belongsTo(AliasListDefinition definition)
     {
-        return aliasList != null && getAliasListName() != null &&
-            getAliasListName().equalsIgnoreCase(aliasList);
-    }
+        if(definition == null)
+        {
+            return false;
+        }
 
-    public boolean hasList()
-    {
-        return getAliasListId() > UNASSIGNED_ALIAS_LIST_ID ||
-            (getAliasListName() != null && !getAliasListName().isEmpty());
+        if(getAliasListId() > UNASSIGNED_ALIAS_LIST_ID ||
+            definition.getId() > AliasListDefinition.UNASSIGNED_ID)
+        {
+            return getAliasListId() > UNASSIGNED_ALIAS_LIST_ID &&
+                definition.getId() > AliasListDefinition.UNASSIGNED_ID &&
+                getAliasListId() == definition.getId();
+        }
+
+        return getAliasListName() != null && definition.getName() != null &&
+            getAliasListName().equalsIgnoreCase(definition.getName());
     }
 
     public String getGroup()
