@@ -100,6 +100,12 @@ class P25ActivityLogMapperTest
         assertEquals(101, record.sourceRadioId());
         assertEquals(202, record.targetRadioId());
         assertTrue(record.encrypted());
+
+        P25ActivityLogRecords.DmrConventionalCall fallback = new P25ActivityLogMapper().map(
+            new DMRConventionalCallEvent(1_000L, 2_000L, null, null, "County Repeater", null,
+                461_125_000L, 2, DMRConventionalCallEvent.TargetKind.UNKNOWN, null, null, null, false));
+        assertNotNull(fallback);
+        assertEquals("CONVENTIONAL_DMR:DMR:461125000:County Repeater", fallback.contextKey());
     }
 
     @Test
@@ -120,6 +126,12 @@ class P25ActivityLogMapperTest
         assertEquals(101, record.sourceRadioId());
         assertNull(record.targetRadioId());
         assertTrue(record.encrypted());
+
+        P25ActivityLogRecords.NxdnConventionalCall fallback = new P25ActivityLogMapper().map(
+            new NXDNConventionalCallEvent(1_000L, 2_000L, null, null, "County Repeater", null,
+                461_125_000L, NXDNConventionalCallEvent.TargetKind.UNKNOWN, null, null, null, false));
+        assertNotNull(fallback);
+        assertEquals("CONVENTIONAL_NXDN:NXDN:461125000:County Repeater", fallback.contextKey());
     }
 
     @Test
@@ -320,6 +332,7 @@ class P25ActivityLogMapperTest
             .identifiers(identifiers)
             .build();
         Channel channel = channel(DecoderType.NBFM);
+        channel.setAliasListName("Conventional Lorain Cnty");
 
         P25ActivityLogRecords.ActivityEvent record = new P25ActivityLogMapper().map(channel, event);
 
@@ -327,6 +340,9 @@ class P25ActivityLogMapperTest
         assertEquals(P25ActivityLogRecords.ContextKind.CONVENTIONAL_ANALOG, record.contextKind());
         assertEquals("NBFM", record.protocol());
         assertEquals("GUID:" + GUID, record.contextKey());
+        assertEquals("Test Channel", record.channelName());
+        assertEquals("Conventional Lorain Cnty", record.aliasListName());
+        assertTrue(record.configuredMetadataObserved());
         assertTrue(record.countedCall());
         assertNotNull(record.dedupeKey());
 
@@ -889,16 +905,27 @@ class P25ActivityLogMapperTest
     void mapsContextKindFromDecoderType()
     {
         P25ActivityLogMapper mapper = new P25ActivityLogMapper();
+        Channel conventionalChannel = channel(DecoderType.P25_CONVENTIONAL);
+        conventionalChannel.setAliasListName("Elyria PD");
+        Channel trunkedChannel = channel(DecoderType.P25_PHASE1);
+        trunkedChannel.setSite("Lorain");
+        trunkedChannel.setAliasListName("MARCS-IP");
 
-        P25ActivityLogRecords.ActivityEvent conventional = mapper.map(channel(DecoderType.P25_CONVENTIONAL),
+        P25ActivityLogRecords.ActivityEvent conventional = mapper.map(conventionalChannel,
             event(DecodeEventType.CALL_GROUP, "VOICE", DecoderType.P25_PHASE1));
-        P25ActivityLogRecords.ActivityEvent trunked = mapper.map(channel(DecoderType.P25_PHASE1),
+        P25ActivityLogRecords.ActivityEvent trunked = mapper.map(trunkedChannel,
             event(DecodeEventType.CALL_GROUP, "VOICE", DecoderType.P25_CONVENTIONAL));
 
         assertNotNull(conventional);
         assertNotNull(trunked);
         assertEquals(P25ActivityLogRecords.ContextKind.CONVENTIONAL_P25, conventional.contextKind());
         assertEquals(P25ActivityLogRecords.ContextKind.TRUNKED_SITE, trunked.contextKind());
+        assertEquals("Test Channel", conventional.channelName());
+        assertEquals("Elyria PD", conventional.aliasListName());
+        assertTrue(conventional.configuredMetadataObserved());
+        assertEquals("Lorain", trunked.channelName());
+        assertEquals("MARCS-IP", trunked.aliasListName());
+        assertTrue(trunked.configuredMetadataObserved());
     }
 
     @Test

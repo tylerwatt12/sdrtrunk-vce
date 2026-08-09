@@ -60,6 +60,8 @@ class TrunkedCallActivityMapperTest
         DecodeConfigDMR config = new DecodeConfigDMR();
         config.setChannelMode(DMRChannelMode.TRUNKED);
         parent.setDecodeConfiguration(config);
+        parent.setSite("Downtown");
+        parent.setAliasListName("Metro DMR");
         parent.setRadresGuid(DMR_GUID);
         DMRTier3Channel channel = dmrChannel(451_012_500L, 2);
         MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
@@ -74,6 +76,9 @@ class TrunkedCallActivityMapperTest
         assertEquals(P25ActivityLogRecords.ContextKind.TRUNKED_SITE, record.contextKind());
         assertEquals("DMR", record.protocol());
         assertEquals("GUID:" + DMR_GUID, record.contextKey());
+        assertEquals("Downtown", record.channelName());
+        assertEquals("Metro DMR", record.aliasListName());
+        assertTrue(record.configuredMetadataObserved());
         assertEquals(1_000L, record.observedAtEpochMilliseconds());
         assertEquals(451_012_500L, record.frequencyHertz());
         assertEquals(2, record.timeslot());
@@ -94,6 +99,9 @@ class TrunkedCallActivityMapperTest
             try(Statement statement = connection.createStatement();
                 ResultSet resultSet = statement.executeQuery("""
                     SELECT context.kind_code, context.protocol_code, context.system_key,
+                           context.channel_name, context.alias_list_name, context.decoder,
+                           context.primary_frequency_hz, context.current_control_hz,
+                           context.nac, context.rfss, context.site,
                            activity.call_count, event.source_radio_id, event.target_id,
                            event.frequency_hz, event.timeslot, event.encrypted
                     FROM receiver_context context
@@ -105,6 +113,14 @@ class TrunkedCallActivityMapperTest
                 assertEquals(1, resultSet.getInt("kind_code"));
                 assertEquals(3, resultSet.getInt("protocol_code"));
                 assertNull(resultSet.getObject("system_key"));
+                assertEquals("Downtown", resultSet.getString("channel_name"));
+                assertEquals("Metro DMR", resultSet.getString("alias_list_name"));
+                assertEquals("DMR", resultSet.getString("decoder"));
+                assertNull(resultSet.getObject("primary_frequency_hz"));
+                assertNull(resultSet.getObject("current_control_hz"));
+                assertNull(resultSet.getObject("nac"));
+                assertNull(resultSet.getObject("rfss"));
+                assertNull(resultSet.getObject("site"));
                 assertEquals(1, resultSet.getInt("call_count"));
                 assertEquals(101, resultSet.getInt("source_radio_id"));
                 assertEquals(91, resultSet.getInt("target_id"));
@@ -145,6 +161,8 @@ class TrunkedCallActivityMapperTest
     {
         Channel parent = new Channel("NXDN Site", Channel.ChannelType.STANDARD);
         parent.setDecodeConfiguration(new DecodeConfigNXDN());
+        parent.setSite("North");
+        parent.setAliasListName("Metro NXDN");
         parent.setRadresGuid(NXDN_GUID);
         MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
         identifiers.update(NXDNRadioIdentifier.createFrom(201));
@@ -160,6 +178,9 @@ class TrunkedCallActivityMapperTest
         assertNotNull(record);
         assertEquals("NXDN", record.protocol());
         assertEquals("GUID:" + NXDN_GUID, record.contextKey());
+        assertEquals("North", record.channelName());
+        assertEquals("Metro NXDN", record.aliasListName());
+        assertTrue(record.configuredMetadataObserved());
         assertEquals(452_012_500L, record.frequencyHertz());
         assertNull(record.timeslot());
         assertEquals("201", record.sourceRadioId());
@@ -176,6 +197,27 @@ class TrunkedCallActivityMapperTest
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
             P25ActivityLogSchema.recordActivity(connection, record, false);
+            try(Statement statement = connection.createStatement();
+                ResultSet resultSet = statement.executeQuery("""
+                    SELECT kind_code, protocol_code, system_key, channel_name, alias_list_name, decoder,
+                           primary_frequency_hz, current_control_hz, nac, rfss, site
+                    FROM receiver_context
+                    """))
+            {
+                assertTrue(resultSet.next());
+                assertEquals(1, resultSet.getInt("kind_code"));
+                assertEquals(4, resultSet.getInt("protocol_code"));
+                assertNull(resultSet.getObject("system_key"));
+                assertEquals("North", resultSet.getString("channel_name"));
+                assertEquals("Metro NXDN", resultSet.getString("alias_list_name"));
+                assertEquals("NXDN", resultSet.getString("decoder"));
+                assertNull(resultSet.getObject("primary_frequency_hz"));
+                assertNull(resultSet.getObject("current_control_hz"));
+                assertNull(resultSet.getObject("nac"));
+                assertNull(resultSet.getObject("rfss"));
+                assertNull(resultSet.getObject("site"));
+                assertFalse(resultSet.next());
+            }
             assertEquals(2, scalar(connection, "SELECT COUNT(*) FROM call_identity_bucket"));
             assertEquals(1, scalar(connection, """
                 SELECT call_count FROM call_identity_bucket

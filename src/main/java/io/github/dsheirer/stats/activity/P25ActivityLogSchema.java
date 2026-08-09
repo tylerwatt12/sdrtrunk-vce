@@ -237,7 +237,7 @@ public class P25ActivityLogSchema
         Long activityId = null;
         Integer systemKey = activity.contextKind() == P25ActivityLogRecords.ContextKind.TRUNKED_SITE ?
             resolveP25SystemKey(connection, activity) : null;
-        int contextId = upsertReceiverContext(connection, activity, systemKey);
+        int contextId = upsertReceiverContext(connection, ReceiverContextMetadata.from(activity, systemKey));
         ReceiverContextIdentity context = selectContextIdentity(connection, activity.contextKey(), activity.guid());
         int activityProtocol = TrunkedIdentityPolicy.protocolFamilyCode(activity.protocol());
 
@@ -863,7 +863,7 @@ public class P25ActivityLogSchema
         }
 
         DmrActivitySchema.validateCompletedCall(call);
-        int contextId = upsertReceiverContext(connection, call);
+        int contextId = upsertReceiverContext(connection, ReceiverContextMetadata.from(call));
 
         if(!matchesContext(selectContextIdentity(connection, call.contextKey(), call.guid()),
             CONTEXT_CONVENTIONAL_DMR, TrunkedIdentityPolicy.PROTOCOL_DMR))
@@ -905,7 +905,7 @@ public class P25ActivityLogSchema
         }
 
         validateNxdnConventionalCall(call);
-        int contextId = upsertReceiverContext(connection, call);
+        int contextId = upsertReceiverContext(connection, ReceiverContextMetadata.from(call));
 
         if(!matchesContext(selectContextIdentity(connection, call.contextKey(), call.guid()),
             CONTEXT_CONVENTIONAL_NXDN, TrunkedIdentityPolicy.PROTOCOL_NXDN))
@@ -984,7 +984,8 @@ public class P25ActivityLogSchema
     static void insertSite(Connection connection, P25ActivityLogRecords.SiteSnapshot snapshot) throws SQLException
     {
         SiteSnapshotState previous = siteSnapshotState(connection, snapshot.guid());
-        ReceiverContextState previousContext = receiverContextState(connection, guidContextKey(snapshot.guid()));
+        ReceiverContextState previousContext =
+            receiverContextState(connection, ReceiverContextKey.guid(snapshot.guid()));
 
         if((previous != null &&
             snapshot.observedAtEpochMilliseconds() < previous.lastSeenEpochMilliseconds()) ||
@@ -1005,7 +1006,7 @@ public class P25ActivityLogSchema
                         TrunkedIdentityPolicy.PROTOCOL_P25));
         boolean changed = previous == null || generationChanged ||
             !java.util.Objects.equals(snapshot.snapshotHash(), previous.snapshotHash());
-        int contextId = upsertReceiverContext(connection, snapshot, systemKey);
+        int contextId = upsertReceiverContext(connection, ReceiverContextMetadata.from(snapshot, systemKey));
 
         if(generationChanged)
         {
@@ -1045,7 +1046,7 @@ public class P25ActivityLogSchema
             return false;
         }
 
-        ReceiverContextState previous = receiverContextState(connection, guidContextKey(snapshot.guid()));
+        ReceiverContextState previous = receiverContextState(connection, ReceiverContextKey.guid(snapshot.guid()));
         return previous == null ||
             snapshot.observedAtEpochMilliseconds() >= previous.lastSeenEpochMilliseconds();
     }
@@ -1063,59 +1064,14 @@ public class P25ActivityLogSchema
             return;
         }
 
-        String contextKey = guidContextKey(snapshot.guid());
+        String contextKey = ReceiverContextKey.guid(snapshot.guid());
 
         if(!isAuthoritativeTrunkedSiteSnapshot(connection, snapshot))
         {
             return;
         }
 
-        try(PreparedStatement statement = connection.prepareStatement("""
-            INSERT INTO receiver_context (
-                context_key, guid, kind_code, protocol_code, channel_name, alias_list_name, decoder,
-                first_seen_ms, last_seen_ms, primary_frequency_hz, current_control_hz
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(context_key) DO UPDATE SET
-                first_seen_ms = CASE
-                    WHEN receiver_context.kind_code != excluded.kind_code
-                      OR coalesce(receiver_context.protocol_code, 0) != coalesce(excluded.protocol_code, 0)
-                      OR (receiver_context.system_key IS NOT NULL
-                          AND excluded.system_key IS NOT NULL
-                          AND receiver_context.system_key != excluded.system_key)
-                    THEN excluded.first_seen_ms
-                    ELSE min(receiver_context.first_seen_ms, excluded.first_seen_ms)
-                END,
-                guid = excluded.guid,
-                kind_code = excluded.kind_code,
-                protocol_code = excluded.protocol_code,
-                channel_name = coalesce(excluded.channel_name, receiver_context.channel_name),
-                alias_list_name = excluded.alias_list_name,
-                decoder = coalesce(excluded.decoder, receiver_context.decoder),
-                last_seen_ms = max(receiver_context.last_seen_ms, excluded.last_seen_ms),
-                system_key = NULL,
-                nac = NULL,
-                rfss = NULL,
-                site = NULL,
-                primary_frequency_hz = coalesce(
-                    excluded.primary_frequency_hz, receiver_context.primary_frequency_hz),
-                current_control_hz = coalesce(
-                    excluded.current_control_hz, receiver_context.current_control_hz)
-            WHERE excluded.last_seen_ms >= receiver_context.last_seen_ms
-            """))
-        {
-            statement.setString(1, contextKey);
-            statement.setString(2, snapshot.guid());
-            statement.setInt(3, CONTEXT_TRUNKED_SITE);
-            statement.setInt(4, snapshot.protocolCode());
-            statement.setString(5, snapshot.channelName());
-            statement.setString(6, snapshot.aliasListName());
-            statement.setString(7, snapshot.decoder());
-            statement.setLong(8, snapshot.observedAtEpochMilliseconds());
-            statement.setLong(9, snapshot.observedAtEpochMilliseconds());
-            setLong(statement, 10, snapshot.primaryFrequencyHertz());
-            setLong(statement, 11, snapshot.currentControlHertz());
-            statement.executeUpdate();
-        }
+        int contextId = upsertReceiverContext(connection, ReceiverContextMetadata.from(snapshot));
 
         ReceiverContextIdentity context = selectContextIdentity(connection, contextKey, snapshot.guid());
 
@@ -1135,8 +1091,8 @@ public class P25ActivityLogSchema
                 snapshot.protocolCode() == TrunkedSiteSchema.PROTOCOL_NXDN ?
                     P25ActivityLogRecords.IdentityDomain.NXDN_TYPE_C :
                     P25ActivityLogRecords.IdentityDomain.STANDARD;
-        TrunkedIdentitySchema.ensureScope(connection, selectContextId(connection, contextKey),
-            snapshot.observedAtEpochMilliseconds(), identityDomain);
+        TrunkedIdentitySchema.ensureScope(connection, contextId, snapshot.observedAtEpochMilliseconds(),
+            identityDomain);
     }
 
     static void insertControlChannelQuality(Connection connection,
@@ -2566,88 +2522,18 @@ public class P25ActivityLogSchema
         return systemKey;
     }
 
-    private static int upsertReceiverContext(Connection connection, P25ActivityLogRecords.ActivityEvent activity,
-                                             Integer systemKey) throws SQLException
+    private static int upsertReceiverContext(Connection connection, ReceiverContextMetadata metadata)
+        throws SQLException
     {
-        boolean trunkedSite = activity.contextKind() == P25ActivityLogRecords.ContextKind.TRUNKED_SITE;
-        ReceiverContextState previous = receiverContextState(connection, activity.contextKey());
+        boolean trunkedSite = metadata.contextKind() == P25ActivityLogRecords.ContextKind.TRUNKED_SITE;
+        ReceiverContextState previous = receiverContextState(connection, metadata.contextKey());
         boolean authoritative = previous == null ||
-            activity.observedAtEpochMilliseconds() >= previous.lastSeenEpochMilliseconds();
+            metadata.lastSeenEpochMilliseconds() >= previous.lastSeenEpochMilliseconds();
 
         try(PreparedStatement statement = connection.prepareStatement("""
             INSERT INTO receiver_context (
-                context_key, guid, kind_code, protocol_code, channel_name, decoder, first_seen_ms, last_seen_ms,
-                system_key, nac, rfss, site, primary_frequency_hz, current_control_hz
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
-            ON CONFLICT(context_key) DO UPDATE SET
-                first_seen_ms = CASE
-                    WHEN receiver_context.kind_code != excluded.kind_code
-                      OR coalesce(receiver_context.protocol_code, 0) != coalesce(excluded.protocol_code, 0)
-                      OR (receiver_context.system_key IS NOT NULL
-                          AND excluded.system_key IS NOT NULL
-                          AND receiver_context.system_key != excluded.system_key)
-                    THEN excluded.first_seen_ms
-                    ELSE min(receiver_context.first_seen_ms, excluded.first_seen_ms)
-                END,
-                guid = coalesce(excluded.guid, receiver_context.guid),
-                kind_code = excluded.kind_code,
-                protocol_code = coalesce(excluded.protocol_code, receiver_context.protocol_code),
-                channel_name = coalesce(excluded.channel_name, receiver_context.channel_name),
-                decoder = coalesce(excluded.decoder, receiver_context.decoder),
-                last_seen_ms = max(receiver_context.last_seen_ms, excluded.last_seen_ms),
-                system_key = CASE WHEN excluded.kind_code != 1 THEN NULL
-                    ELSE coalesce(excluded.system_key, receiver_context.system_key) END,
-                nac = CASE WHEN excluded.kind_code != 1 THEN excluded.nac
-                    ELSE coalesce(excluded.nac, receiver_context.nac) END,
-                rfss = CASE WHEN excluded.kind_code != 1 THEN excluded.rfss
-                    ELSE coalesce(excluded.rfss, receiver_context.rfss) END,
-                site = CASE WHEN excluded.kind_code != 1 THEN excluded.site
-                    ELSE coalesce(excluded.site, receiver_context.site) END,
-                primary_frequency_hz = coalesce(
-                    excluded.primary_frequency_hz, receiver_context.primary_frequency_hz),
-                current_control_hz = CASE WHEN excluded.kind_code != 1
-                    THEN NULL ELSE receiver_context.current_control_hz END
-            WHERE excluded.last_seen_ms >= receiver_context.last_seen_ms
-            """))
-        {
-            statement.setString(1, activity.contextKey());
-            statement.setString(2, activity.guid());
-            statement.setInt(3, contextKindCode(activity.contextKind()));
-            setInteger(statement, 4, protocolCode(activity.protocol()));
-            statement.setString(5,
-                activity.contextKind() != P25ActivityLogRecords.ContextKind.TRUNKED_SITE ? activity.channelName() : null);
-            statement.setString(6, activity.decoder());
-            statement.setLong(7, activity.observedAtEpochMilliseconds());
-            statement.setLong(8, activity.observedAtEpochMilliseconds());
-            setInteger(statement, 9, systemKey);
-            setInteger(statement, 10, trunkedSite ? null : activity.nac());
-            setInteger(statement, 11, trunkedSite ? null : activity.rfss());
-            setInteger(statement, 12, trunkedSite ? null : activity.site());
-            setLong(statement, 13, isConventional(activity.contextKind()) ? activity.frequencyHertz() : null);
-            statement.executeUpdate();
-        }
-
-        int contextId = selectContextId(connection, activity.contextKey());
-
-        if(authoritative && previous != null && previous.kindCode() == CONTEXT_TRUNKED_SITE &&
-            !trunkedSite)
-        {
-            clearFormerTrunkedOwnership(connection, contextId,
-                activity.guid() != null ? activity.guid() : previous.guid());
-        }
-
-        return contextId;
-    }
-
-    private static int upsertReceiverContext(Connection connection, P25ActivityLogRecords.SiteSnapshot snapshot,
-                                             Integer systemKey) throws SQLException
-    {
-        String contextKey = guidContextKey(snapshot.guid());
-
-        try(PreparedStatement statement = connection.prepareStatement("""
-            INSERT INTO receiver_context (
-                context_key, guid, kind_code, protocol_code, channel_name, alias_list_name, decoder, first_seen_ms,
-                last_seen_ms, system_key, nac, rfss, site, primary_frequency_hz, current_control_hz
+                context_key, guid, kind_code, protocol_code, channel_name, alias_list_name, decoder,
+                first_seen_ms, last_seen_ms, system_key, nac, rfss, site, primary_frequency_hz, current_control_hz
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(context_key) DO UPDATE SET
                 first_seen_ms = CASE
@@ -2663,156 +2549,54 @@ public class P25ActivityLogSchema
                 kind_code = excluded.kind_code,
                 protocol_code = coalesce(excluded.protocol_code, receiver_context.protocol_code),
                 channel_name = coalesce(excluded.channel_name, receiver_context.channel_name),
-                alias_list_name = excluded.alias_list_name,
+                alias_list_name = CASE WHEN ? THEN excluded.alias_list_name
+                    ELSE receiver_context.alias_list_name END,
                 decoder = coalesce(excluded.decoder, receiver_context.decoder),
                 last_seen_ms = max(receiver_context.last_seen_ms, excluded.last_seen_ms),
-                system_key = coalesce(excluded.system_key, receiver_context.system_key),
-                nac = coalesce(excluded.nac, receiver_context.nac),
-                rfss = coalesce(excluded.rfss, receiver_context.rfss),
-                site = coalesce(excluded.site, receiver_context.site),
+                system_key = CASE WHEN excluded.kind_code != 1 OR excluded.protocol_code NOT IN (1, 2) THEN NULL
+                    ELSE coalesce(excluded.system_key, receiver_context.system_key) END,
+                nac = CASE WHEN excluded.protocol_code NOT IN (1, 2) THEN NULL
+                    WHEN excluded.kind_code != 1 THEN excluded.nac
+                    ELSE coalesce(excluded.nac, receiver_context.nac) END,
+                rfss = CASE WHEN excluded.protocol_code NOT IN (1, 2) THEN NULL
+                    WHEN excluded.kind_code != 1 THEN excluded.rfss
+                    ELSE coalesce(excluded.rfss, receiver_context.rfss) END,
+                site = CASE WHEN excluded.protocol_code NOT IN (1, 2) THEN NULL
+                    WHEN excluded.kind_code != 1 THEN excluded.site
+                    ELSE coalesce(excluded.site, receiver_context.site) END,
                 primary_frequency_hz = coalesce(
                     excluded.primary_frequency_hz, receiver_context.primary_frequency_hz),
-                current_control_hz = coalesce(
-                    excluded.current_control_hz, receiver_context.current_control_hz)
+                current_control_hz = CASE WHEN excluded.kind_code != 1
+                    THEN NULL ELSE coalesce(excluded.current_control_hz, receiver_context.current_control_hz) END
             WHERE excluded.last_seen_ms >= receiver_context.last_seen_ms
             """))
         {
-            statement.setString(1, contextKey);
-            statement.setString(2, snapshot.guid());
-            statement.setInt(3, contextKindCode(snapshot.contextKind()));
-            setInteger(statement, 4, protocolCode(snapshot.protocol()));
-            statement.setString(5, snapshot.channelName());
-            statement.setString(6, snapshot.aliasListName());
-            statement.setString(7, snapshot.decoder());
-            statement.setLong(8, snapshot.observedAtEpochMilliseconds());
-            statement.setLong(9, snapshot.observedAtEpochMilliseconds());
-            setInteger(statement, 10, systemKey);
-            setInteger(statement, 11, snapshot.nac());
-            setInteger(statement, 12, snapshot.rfss());
-            setInteger(statement, 13, snapshot.site());
-            setLong(statement, 14, snapshot.primaryFrequencyHertz());
-            setLong(statement, 15, snapshot.currentControlHertz());
+            statement.setString(1, metadata.contextKey());
+            statement.setString(2, metadata.guid());
+            statement.setInt(3, contextKindCode(metadata.contextKind()));
+            setInteger(statement, 4, protocolCode(metadata.protocol()));
+            statement.setString(5, metadata.channelName());
+            statement.setString(6, metadata.aliasListName());
+            statement.setString(7, metadata.decoder());
+            statement.setLong(8, metadata.firstSeenEpochMilliseconds());
+            statement.setLong(9, metadata.lastSeenEpochMilliseconds());
+            setInteger(statement, 10, metadata.systemKey());
+            setInteger(statement, 11, metadata.nac());
+            setInteger(statement, 12, metadata.rfss());
+            setInteger(statement, 13, metadata.site());
+            setLong(statement, 14, metadata.primaryFrequencyHertz());
+            setLong(statement, 15, metadata.currentControlHertz());
+            statement.setBoolean(16, metadata.configuredMetadataObserved());
             statement.executeUpdate();
         }
 
-        return selectContextId(connection, contextKey);
-    }
+        int contextId = selectContextId(connection, metadata.contextKey());
 
-    private static int upsertReceiverContext(Connection connection, P25ActivityLogRecords.DmrConventionalCall call)
-        throws SQLException
-    {
-        ReceiverContextState previous = receiverContextState(connection, call.contextKey());
-        boolean authoritative = previous == null ||
-            call.callEndEpochMilliseconds() >= previous.lastSeenEpochMilliseconds();
-
-        try(PreparedStatement statement = connection.prepareStatement("""
-            INSERT INTO receiver_context (
-                context_key, guid, kind_code, protocol_code, channel_name, alias_list_name, decoder, first_seen_ms,
-                last_seen_ms, primary_frequency_hz
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(context_key) DO UPDATE SET
-                first_seen_ms = CASE
-                    WHEN receiver_context.kind_code != excluded.kind_code
-                      OR coalesce(receiver_context.protocol_code, 0) != coalesce(excluded.protocol_code, 0)
-                    THEN excluded.first_seen_ms
-                    ELSE min(receiver_context.first_seen_ms, excluded.first_seen_ms)
-                END,
-                guid = coalesce(excluded.guid, receiver_context.guid),
-                kind_code = excluded.kind_code,
-                protocol_code = excluded.protocol_code,
-                channel_name = excluded.channel_name,
-                alias_list_name = excluded.alias_list_name,
-                decoder = excluded.decoder,
-                last_seen_ms = max(receiver_context.last_seen_ms, excluded.last_seen_ms),
-                system_key = NULL,
-                nac = NULL,
-                rfss = NULL,
-                site = NULL,
-                primary_frequency_hz = coalesce(
-                    excluded.primary_frequency_hz, receiver_context.primary_frequency_hz),
-                current_control_hz = NULL
-            WHERE excluded.last_seen_ms >= receiver_context.last_seen_ms
-            """))
-        {
-            statement.setString(1, call.contextKey());
-            statement.setString(2, call.guid());
-            statement.setInt(3, CONTEXT_CONVENTIONAL_DMR);
-            statement.setInt(4, PROTOCOL_DMR);
-            statement.setString(5, call.channelName());
-            statement.setString(6, call.aliasListName());
-            statement.setString(7, "DMR");
-            statement.setLong(8, call.callStartEpochMilliseconds());
-            statement.setLong(9, call.callEndEpochMilliseconds());
-            statement.setLong(10, call.frequencyHertz());
-            statement.executeUpdate();
-        }
-
-        int contextId = selectContextId(connection, call.contextKey());
-
-        if(authoritative && previous != null && previous.kindCode() == CONTEXT_TRUNKED_SITE)
+        if(authoritative && previous != null && previous.kindCode() == CONTEXT_TRUNKED_SITE &&
+            !trunkedSite)
         {
             clearFormerTrunkedOwnership(connection, contextId,
-                call.guid() != null ? call.guid() : previous.guid());
-        }
-
-        return contextId;
-    }
-
-    private static int upsertReceiverContext(Connection connection, P25ActivityLogRecords.NxdnConventionalCall call)
-        throws SQLException
-    {
-        ReceiverContextState previous = receiverContextState(connection, call.contextKey());
-        boolean authoritative = previous == null ||
-            call.callEndEpochMilliseconds() >= previous.lastSeenEpochMilliseconds();
-
-        try(PreparedStatement statement = connection.prepareStatement("""
-            INSERT INTO receiver_context (
-                context_key, guid, kind_code, protocol_code, channel_name, alias_list_name, decoder, first_seen_ms,
-                last_seen_ms, primary_frequency_hz
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(context_key) DO UPDATE SET
-                first_seen_ms = CASE
-                    WHEN receiver_context.kind_code != excluded.kind_code
-                      OR coalesce(receiver_context.protocol_code, 0) != coalesce(excluded.protocol_code, 0)
-                    THEN excluded.first_seen_ms
-                    ELSE min(receiver_context.first_seen_ms, excluded.first_seen_ms)
-                END,
-                guid = coalesce(excluded.guid, receiver_context.guid),
-                kind_code = excluded.kind_code,
-                protocol_code = excluded.protocol_code,
-                channel_name = excluded.channel_name,
-                alias_list_name = excluded.alias_list_name,
-                decoder = excluded.decoder,
-                last_seen_ms = max(receiver_context.last_seen_ms, excluded.last_seen_ms),
-                system_key = NULL,
-                nac = NULL,
-                rfss = NULL,
-                site = NULL,
-                primary_frequency_hz = coalesce(
-                    excluded.primary_frequency_hz, receiver_context.primary_frequency_hz),
-                current_control_hz = NULL
-            WHERE excluded.last_seen_ms >= receiver_context.last_seen_ms
-            """))
-        {
-            statement.setString(1, call.contextKey());
-            statement.setString(2, call.guid());
-            statement.setInt(3, CONTEXT_CONVENTIONAL_NXDN);
-            statement.setInt(4, PROTOCOL_NXDN);
-            statement.setString(5, call.channelName());
-            statement.setString(6, call.aliasListName());
-            statement.setString(7, "NXDN");
-            statement.setLong(8, call.callStartEpochMilliseconds());
-            statement.setLong(9, call.callEndEpochMilliseconds());
-            statement.setLong(10, call.frequencyHertz());
-            statement.executeUpdate();
-        }
-
-        int contextId = selectContextId(connection, call.contextKey());
-
-        if(authoritative && previous != null && previous.kindCode() == CONTEXT_TRUNKED_SITE)
-        {
-            clearFormerTrunkedOwnership(connection, contextId,
-                call.guid() != null ? call.guid() : previous.guid());
+                metadata.guid() != null ? metadata.guid() : previous.guid());
         }
 
         return contextId;
@@ -3976,11 +3760,6 @@ public class P25ActivityLogSchema
     private static long qualityBucketStart(long observedAtEpochMilliseconds)
     {
         return observedAtEpochMilliseconds - Math.floorMod(observedAtEpochMilliseconds, QUALITY_BUCKET_MILLISECONDS);
-    }
-
-    private static String guidContextKey(String guid)
-    {
-        return "GUID:" + guid;
     }
 
     private static int actionCode(P25ActivityLogRecords.Action action)

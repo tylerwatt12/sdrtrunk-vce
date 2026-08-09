@@ -194,7 +194,8 @@ final class P25ActivityLogRecords
                          String decoder, String talkerAlias, boolean countedCall, String dedupeKey,
                          RadioAffiliationUpdate affiliationUpdate, IdentityDomain identityDomain,
                          P25TargetIdentity p25TargetIdentity,
-                         List<P25PatchMemberIdentity> p25PatchMemberIdentities)
+                         List<P25PatchMemberIdentity> p25PatchMemberIdentities, String aliasListName,
+                         boolean configuredMetadataObserved)
         implements P25ActivityLogRecord
     {
         ActivityEvent
@@ -205,6 +206,23 @@ final class P25ActivityLogRecords
             p25TargetIdentity = p25TargetIdentity != null ? p25TargetIdentity : P25TargetIdentity.UNKNOWN;
             p25PatchMemberIdentities = normalizeP25PatchMemberIdentities(p25PatchMemberIdentities,
                 patchMemberTalkgroupIds);
+        }
+
+        ActivityEvent(long observedAtEpochMilliseconds, String contextKey, String guid, ContextKind contextKind,
+                      String protocol, Action action, String eventType, String sourceRadioId, String targetId,
+                      String targetKind, List<Integer> patchMemberTalkgroupIds, Long frequencyHertz, String lcn,
+                      Integer timeslot, boolean encrypted, Integer encryptionAlgorithmId, Integer encryptionKeyId,
+                      Integer wacn, Integer systemId, Integer nac, Integer rfss, Integer site, String channelName,
+                      String decoder, String talkerAlias, boolean countedCall, String dedupeKey,
+                      RadioAffiliationUpdate affiliationUpdate, IdentityDomain identityDomain,
+                      P25TargetIdentity p25TargetIdentity,
+                      List<P25PatchMemberIdentity> p25PatchMemberIdentities)
+        {
+            this(observedAtEpochMilliseconds, contextKey, guid, contextKind, protocol, action, eventType,
+                sourceRadioId, targetId, targetKind, patchMemberTalkgroupIds, frequencyHertz, lcn, timeslot,
+                encrypted, encryptionAlgorithmId, encryptionKeyId, wacn, systemId, nac, rfss, site, channelName,
+                decoder, talkerAlias, countedCall, dedupeKey, affiliationUpdate, identityDomain,
+                p25TargetIdentity, p25PatchMemberIdentities, null, false);
         }
 
         ActivityEvent(long observedAtEpochMilliseconds, String contextKey, String guid, ContextKind contextKind,
