@@ -18,14 +18,16 @@ import io.github.dsheirer.module.decode.PrimaryDecoder;
 import io.github.dsheirer.sample.SampleType;
 import io.github.dsheirer.sample.complex.ComplexSamplesToNativeBufferModule;
 import io.github.dsheirer.source.Source;
-import io.github.dsheirer.spectrum.ComplexDftProcessor;
 import io.github.dsheirer.spectrum.DFTSize;
-import io.github.dsheirer.spectrum.converter.ComplexDecibelConverter;
 import java.time.Duration;
+import java.util.Collections;
+import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
-import java.util.UUID;
-import java.util.concurrent.Semaphore;
+import java.util.Set;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
@@ -34,87 +36,208 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Demand-owned, memory-only diagnostics for one selected live channel. Only one browser diagnostic lease can be
- * active, and each source retains one replaceable frame so a slow client cannot block receiver processing.
+ * Demand-owned selected-channel diagnostics.  Viewers of the same processing chain share one signal FFT and one
+ * decoder symbol observer.  With no viewers this service owns no receiver listener, scheduled task, or worker.
  */
 public final class ChannelDiagnosticService implements AutoCloseable
 {
     private static final Logger mLog = LoggerFactory.getLogger(ChannelDiagnosticService.class);
-    public static final int FFT_SIZE = 1_024;
-    public static final int SIGNAL_FRAMES_PER_SECOND = 5;
+    public static final int MAXIMUM_SESSIONS = 32;
+    public static final int MAXIMUM_PRODUCERS = 4;
+    public static final int MAXIMUM_FFT_SIZE = 1_024;
+    public static final int SIGNAL_FRAMES_PER_SECOND = 20;
     public static final int SYMBOL_BATCH_SIZE = 240;
     public static final int MAXIMUM_VISIBLE_SYMBOLS = 4_800;
+    private static final long BINDING_REFRESH_NANOS = TimeUnit.MILLISECONDS.toNanos(250);
     private static final float MAXIMUM_SYMBOL_PHASE = (float)Math.PI;
-    private static final String SIGNAL = "signal";
-    private static final String SYMBOLS = "symbols";
 
     private final ChannelProcessingManager mChannelProcessingManager;
-    private final AtomicReference<Session> mActiveSession = new AtomicReference<>();
-    private final AtomicBoolean mClosed = new AtomicBoolean();
+    private final DiagnosticFftScheduler mFftScheduler;
+    private final boolean mOwnsFftScheduler;
+    private final Map<Scope,ScopeBinding> mBindings = new LinkedHashMap<>();
+    private final Map<ProcessingChain,Producer> mProducers = new IdentityHashMap<>();
+    private final Set<Session> mSessions = Collections.newSetFromMap(new IdentityHashMap<>());
+    private final AtomicLong mGeneration = new AtomicLong();
+    private boolean mClosed;
 
     public ChannelDiagnosticService(ChannelProcessingManager channelProcessingManager)
     {
-        mChannelProcessingManager = Objects.requireNonNull(channelProcessingManager,
-            "Channel processing manager cannot be null");
+        this(channelProcessingManager, new DiagnosticFftScheduler(), true);
     }
 
-    public synchronized OpenResult tryOpen(Scope scope, UUID clientId)
+    ChannelDiagnosticService(ChannelProcessingManager channelProcessingManager, DiagnosticFftScheduler fftScheduler)
+    {
+        this(channelProcessingManager, fftScheduler, false);
+    }
+
+    private ChannelDiagnosticService(ChannelProcessingManager channelProcessingManager,
+                                     DiagnosticFftScheduler fftScheduler, boolean ownsFftScheduler)
+    {
+        mChannelProcessingManager = Objects.requireNonNull(channelProcessingManager,
+            "Channel processing manager cannot be null");
+        mFftScheduler = Objects.requireNonNull(fftScheduler, "Diagnostic FFT scheduler cannot be null");
+        mOwnsFftScheduler = ownsFftScheduler;
+    }
+
+    public OpenResult tryOpen(Scope scope)
     {
         Objects.requireNonNull(scope, "Diagnostic scope cannot be null");
-        Objects.requireNonNull(clientId, "Diagnostic client ID cannot be null");
+        ScopeBinding binding;
+        Session session;
 
-        if(mClosed.get())
+        synchronized(this)
         {
-            return new OpenResult(OpenStatus.CLOSED, null);
-        }
+            if(mClosed)
+            {
+                return new OpenResult(OpenStatus.CLOSED, null);
+            }
 
-        Session active = mActiveSession.get();
-
-        if(active != null)
-        {
-            if(!active.ownedBy(clientId))
+            if(mSessions.size() >= MAXIMUM_SESSIONS)
             {
                 return new OpenResult(OpenStatus.BUSY, null);
             }
 
-            active.close();
-        }
-
-        Session candidate = new Session(scope, clientId);
-
-        if(!mActiveSession.compareAndSet(null, candidate))
-        {
-            return new OpenResult(OpenStatus.BUSY, null);
+            binding = mBindings.computeIfAbsent(scope, ScopeBinding::new);
+            session = new Session(binding);
+            mSessions.add(session);
+            binding.add(session);
         }
 
         try
         {
-            candidate.refresh();
-            return new OpenResult(OpenStatus.OPEN, candidate);
+            binding.refresh(true);
+            return new OpenResult(OpenStatus.OPEN, session);
         }
         catch(RuntimeException exception)
         {
-            candidate.close();
+            session.close();
             throw exception;
         }
     }
 
-    public synchronized void closeActiveSession()
+    /**
+     * Stops every currently active diagnostic session.  Retained for the web-listener lifecycle call site.
+     */
+    public void closeActiveSession()
     {
-        Session session = mActiveSession.get();
+        closeSessions();
+    }
 
-        if(session != null)
+    private void closeSessions()
+    {
+        List<Session> sessions;
+
+        synchronized(this)
         {
-            session.close();
+            sessions = List.copyOf(mSessions);
+        }
+
+        sessions.forEach(Session::close);
+    }
+
+    synchronized int activeSessionCount()
+    {
+        return mSessions.size();
+    }
+
+    synchronized int activeProducerCount()
+    {
+        return mProducers.size();
+    }
+
+    private synchronized Producer acquireProducer(ProcessingChain processingChain, BindingInfo info,
+                                                  List<Session> sessions)
+    {
+        Producer producer = mProducers.get(processingChain);
+
+        if(producer != null && !producer.isCompatible(info))
+        {
+            mProducers.remove(processingChain, producer);
+            producer.close();
+            producer = null;
+        }
+
+        if(producer == null)
+        {
+            if(mProducers.size() >= MAXIMUM_PRODUCERS)
+            {
+                return null;
+            }
+
+            producer = new Producer(processingChain, info, mGeneration.incrementAndGet());
+            mProducers.put(processingChain, producer);
+        }
+        else
+        {
+            //The chain can retune without being replaced.  Keep frame metadata current without rebuilding an
+            //otherwise compatible FFT and symbol tap.
+            producer.updateInfo(info);
+        }
+
+        sessions.forEach(producer::add);
+        return producer;
+    }
+
+    private synchronized void releaseProducer(Producer producer, List<Session> sessions)
+    {
+        if(producer == null)
+        {
+            return;
+        }
+
+        sessions.forEach(producer::remove);
+
+        if(producer.isEmpty() && mProducers.remove(producer.processingChain(), producer))
+        {
+            producer.close();
+        }
+    }
+
+    private synchronized void closeSession(Session session, ScopeBinding binding)
+    {
+        if(!mSessions.remove(session))
+        {
+            return;
+        }
+
+        binding.remove(session);
+
+        if(binding.isEmpty())
+        {
+            mBindings.remove(binding.scope(), binding);
+            binding.close();
         }
     }
 
     @Override
-    public synchronized void close()
+    public void close()
     {
-        if(mClosed.compareAndSet(false, true))
+        synchronized(this)
         {
-            closeActiveSession();
+            if(mClosed)
+            {
+                return;
+            }
+
+            mClosed = true;
+        }
+
+        closeSessions();
+
+        synchronized(this)
+        {
+            for(Producer producer: List.copyOf(mProducers.values()))
+            {
+                producer.close();
+            }
+
+            mProducers.clear();
+            mBindings.clear();
+        }
+
+        if(mOwnsFftScheduler)
+        {
+            mFftScheduler.close();
         }
     }
 
@@ -148,114 +271,353 @@ public final class ChannelDiagnosticService implements AutoCloseable
     {
     }
 
-    public record Frame(String type, long generation, long sequence, long observedAtMs, float[] values)
-    {
-    }
-
     public final class Session implements AutoCloseable
     {
-        private final Scope mScope;
-        private final UUID mClientId;
+        private final ScopeBinding mBinding;
+        private final DiagnosticFrameQueue mFrames = new DiagnosticFrameQueue();
         private final AtomicBoolean mSessionClosed = new AtomicBoolean();
-        private final LatestFrameQueue mFrames = new LatestFrameQueue();
+
+        private Session(ScopeBinding binding)
+        {
+            mBinding = binding;
+        }
+
+        public State refresh()
+        {
+            if(!mSessionClosed.get())
+            {
+                mBinding.refresh(false);
+            }
+
+            return mBinding.state();
+        }
+
+        public State state()
+        {
+            return mBinding.state();
+        }
+
+        public DiagnosticStreamFrame poll(Duration timeout) throws InterruptedException
+        {
+            return mFrames.poll(timeout);
+        }
+
+        public boolean isClosed()
+        {
+            return mSessionClosed.get();
+        }
+
+        private void offer(DiagnosticStreamFrame frame)
+        {
+            if(!mSessionClosed.get())
+            {
+                mFrames.offer(frame);
+            }
+        }
+
+        @Override
+        public void close()
+        {
+            if(mSessionClosed.compareAndSet(false, true))
+            {
+                mFrames.close();
+                closeSession(this, mBinding);
+            }
+        }
+    }
+
+    private final class ScopeBinding implements AutoCloseable
+    {
+        private final Scope mScope;
+        private final CopyOnWriteArrayList<Session> mSessions = new CopyOnWriteArrayList<>();
         private ProcessingChain mProcessingChain;
-        private SignalSource mSignalSource;
-        private SymbolSource mSymbolSource;
-        private long mGeneration;
+        private BindingInfo mBindingInfo;
+        private Producer mProducer;
+        private boolean mRetryProducer;
+        private long mNextRefreshNanos;
         private long mStateRevision;
         private volatile State mState;
 
-        private Session(Scope scope, UUID clientId)
+        private ScopeBinding(Scope scope)
         {
             mScope = scope;
-            mClientId = clientId;
-            mState = createState("waiting", "Waiting for the selected channel to become active.",
+            mState = state(0, "waiting", "Waiting for the selected channel to become active.",
                 "waiting", "Waiting for signal data.", "waiting", "Waiting for symbol data.",
-                scope.frequencyHz(), 0, "");
+                scope.frequencyHz(), 0, "", 0);
         }
 
-        /**
-         * Rebinds when the selected processing chain starts, stops, or is replaced. This is invoked only by the SSE
-         * request thread and never by a decoder callback.
-         */
-        public synchronized State refresh()
+        private Scope scope()
         {
-            if(mSessionClosed.get())
+            return mScope;
+        }
+
+        private State state()
+        {
+            return mState;
+        }
+
+        private void add(Session session)
+        {
+            mSessions.add(session);
+
+            if(mProducer != null)
             {
-                return mState;
+                mProducer.add(session);
+            }
+        }
+
+        private void remove(Session session)
+        {
+            mSessions.remove(session);
+
+            if(mProducer != null)
+            {
+                releaseProducer(mProducer, List.of(session));
+            }
+        }
+
+        private boolean isEmpty()
+        {
+            return mSessions.isEmpty();
+        }
+
+        private void refresh(boolean force)
+        {
+            synchronized(ChannelDiagnosticService.this)
+            {
+                refreshLocked(force);
+            }
+        }
+
+        private void refreshLocked(boolean force)
+        {
+            if(mClosed || isEmpty())
+            {
+                return;
             }
 
+            long now = System.nanoTime();
+
+            if(!force && now < mNextRefreshNanos)
+            {
+                return;
+            }
+
+            mNextRefreshNanos = now + BINDING_REFRESH_NANOS;
             List<ProcessingChain> matches = mChannelProcessingManager.getProcessingChainsByConfiguration(
                 mScope.configurationId(), mScope.frequencyHz());
             ProcessingChain next = matches.stream().filter(ProcessingChain::isProcessing).findFirst().orElse(null);
+            BindingInfo info = next != null ? bindingInfo(next, mScope.frequencyHz()) : null;
 
-            if(next == mProcessingChain)
+            if(next == mProcessingChain && !mRetryProducer)
             {
-                return mState;
+                if(Objects.equals(mBindingInfo, info) && (mProducer == null || !mProducer.isClosed()))
+                {
+                    return;
+                }
+
+                if(mProducer != null && !mProducer.isClosed() && mProducer.isCompatible(info))
+                {
+                    BindingInfo previous = mProducer.info();
+                    mProducer.updateInfo(info);
+                    mBindingInfo = info;
+
+                    if(!previous.equals(info))
+                    {
+                        updateProducerState(mProducer, info);
+                    }
+
+                    return;
+                }
             }
 
             detach();
             mProcessingChain = next;
-            mGeneration++;
+            mBindingInfo = info;
 
             if(next == null)
             {
-                mState = createState("waiting", "Waiting for the selected channel to become active.",
+                mState = state(0, "waiting", "Waiting for the selected channel to become active.",
                     "waiting", "Waiting for signal data.", "waiting", "Waiting for symbol data.",
-                    mScope.frequencyHz(), 0, "");
-                return mState;
+                    mScope.frequencyHz(), 0, "", 0);
+                return;
             }
 
-            Source source = next.getSource();
-            PrimaryDecoder decoder = next.getModules().stream().filter(PrimaryDecoder.class::isInstance)
-                .map(PrimaryDecoder.class::cast).findFirst().orElse(null);
-            long actualFrequency = source != null && source.getFrequency() > 0 ? source.getFrequency() :
-                mScope.frequencyHz();
-            long sampleRate = source != null && Double.isFinite(source.getSampleRate()) && source.getSampleRate() > 0 ?
-                Math.round(source.getSampleRate()) : 0;
-            String protocol = decoder != null && decoder.getDecoderType() != null ?
-                decoder.getDecoderType().getDisplayString() : "";
+            if(!info.signalSupported() && !info.symbolsSupported())
+            {
+                mRetryProducer = false;
+                mState = state(0, "unsupported", "Channel diagnostics are not available for this channel.",
+                    "unsupported", "Signal is not available for this channel.",
+                    "unsupported", "Symbols are not available for this decoder.", info.frequencyHz(),
+                    info.sampleRateHz(), info.protocol(), 0);
+                return;
+            }
 
+            Producer producer;
+
+            try
+            {
+                producer = acquireProducer(next, info, List.copyOf(mSessions));
+            }
+            catch(RuntimeException exception)
+            {
+                mLog.warn("Unable to attach selected-channel diagnostics", exception);
+                mRetryProducer = false;
+                mState = state(0, "unavailable", "Channel diagnostics could not be started.",
+                    info.signalSupported() ? "unavailable" : "unsupported",
+                    info.signalSupported() ? "Signal diagnostics could not be started." :
+                        "Signal is not available for this channel.",
+                    info.symbolsSupported() ? "unavailable" : "unsupported",
+                    info.symbolsSupported() ? "Symbol diagnostics could not be started." :
+                        "Symbols are not available for this decoder.",
+                    info.frequencyHz(), info.sampleRateHz(), info.protocol(), info.fftSize());
+                return;
+            }
+
+            if(producer == null)
+            {
+                mRetryProducer = true;
+                mState = state(0, "capacity", "Too many different channels are already being viewed.",
+                    "waiting", "Waiting for diagnostic capacity.", "waiting", "Waiting for diagnostic capacity.",
+                    info.frequencyHz(), info.sampleRateHz(), info.protocol(), info.fftSize());
+                return;
+            }
+
+            mProducer = producer;
+            mRetryProducer = false;
+            updateProducerState(producer, info);
+        }
+
+        private void updateProducerState(Producer producer, BindingInfo info)
+        {
+            mState = state(producer.generation(), producer.isLive() ? "live" : "unavailable",
+                producer.isLive() ? "" : "Channel diagnostics could not be started.",
+                producer.signalState(), producer.signalReason(), producer.symbolsState(), producer.symbolsReason(),
+                info.frequencyHz(), info.sampleRateHz(), info.protocol(), info.fftSize());
+        }
+
+        private State state(long generation, String state, String reason, String signalState, String signalReason,
+                            String symbolsState, String symbolsReason, long frequency, long sampleRate,
+                            String protocol, int fftSize)
+        {
+            return new State(++mStateRevision, generation, state, reason, signalState, signalReason, symbolsState,
+                symbolsReason, frequency, sampleRate, mScope.timeslot(), protocol, fftSize,
+                SIGNAL_FRAMES_PER_SECOND, SYMBOL_BATCH_SIZE, MAXIMUM_VISIBLE_SYMBOLS);
+        }
+
+        private void detach()
+        {
+            Producer producer = mProducer;
+            mProducer = null;
+
+            if(producer != null)
+            {
+                releaseProducer(producer, List.copyOf(mSessions));
+            }
+        }
+
+        @Override
+        public void close()
+        {
+            detach();
+            mProcessingChain = null;
+            mBindingInfo = null;
+            mRetryProducer = false;
+        }
+    }
+
+    private BindingInfo bindingInfo(ProcessingChain processingChain, long fallbackFrequencyHz)
+    {
+        Source source = processingChain.getSource();
+        PrimaryDecoder decoder = processingChain.getModules().stream().filter(PrimaryDecoder.class::isInstance)
+            .map(PrimaryDecoder.class::cast).findFirst().orElse(null);
+        long frequency = source != null && source.getFrequency() > 0 ? source.getFrequency() : 0;
+        long sampleRate = source != null && Double.isFinite(source.getSampleRate()) && source.getSampleRate() > 0 ?
+            Math.round(source.getSampleRate()) : 0;
+        boolean signalSupported = source != null && source.getSampleType() == SampleType.COMPLEX && sampleRate > 0;
+        boolean symbolsSupported = decoder instanceof FeedbackDecoder;
+        String protocol = decoder != null && decoder.getDecoderType() != null ? decoder.getDecoderType().getDisplayString() : "";
+
+        if(decoder instanceof FeedbackDecoder feedbackDecoder)
+        {
+            protocol = feedbackDecoder.getProtocolDescription();
+        }
+
+        int fftSize = signalSupported ? fftSize(sampleRate) : 0;
+        return new BindingInfo(source, decoder, frequency > 0 ? frequency : fallbackFrequencyHz, sampleRate,
+            protocol, fftSize, signalSupported, symbolsSupported);
+    }
+
+    private static int fftSize(long sampleRate)
+    {
+        return sampleRate >= (long)MAXIMUM_FFT_SIZE * SIGNAL_FRAMES_PER_SECOND ? MAXIMUM_FFT_SIZE :
+            DFTSize.FFT00512.getSize();
+    }
+
+    private record BindingInfo(Source source, PrimaryDecoder decoder, long frequencyHz, long sampleRateHz,
+                               String protocol, int fftSize, boolean signalSupported, boolean symbolsSupported)
+    {
+    }
+
+    private final class Producer implements AutoCloseable
+    {
+        private final ProcessingChain mProcessingChain;
+        private final long mGeneration;
+        private final CopyOnWriteArrayList<Session> mSubscribers = new CopyOnWriteArrayList<>();
+        private final AtomicBoolean mClosed = new AtomicBoolean();
+        private volatile BindingInfo mInfo;
+        private final SignalSource mSignalSource;
+        private final SymbolSource mSymbolSource;
+        private final String mSignalState;
+        private final String mSignalReason;
+        private final String mSymbolsState;
+        private final String mSymbolsReason;
+
+        private Producer(ProcessingChain processingChain, BindingInfo info, long generation)
+        {
+            mProcessingChain = processingChain;
+            mGeneration = generation;
+            mInfo = info;
+            SignalSource signalSource = null;
+            SymbolSource symbolSource = null;
             String signalState;
             String signalReason;
+            String symbolsState;
+            String symbolsReason;
 
-            if(source == null || source.getSampleType() != SampleType.COMPLEX || sampleRate <= 0)
-            {
-                signalState = "unsupported";
-                signalReason = "Signal is not available for this channel.";
-            }
-            else
+            if(info.signalSupported())
             {
                 try
                 {
-                    mSignalSource = new SignalSource(next, mGeneration, mFrames);
+                    signalSource = new SignalSource(this, processingChain, info);
                     signalState = "live";
                     signalReason = "";
                 }
                 catch(RuntimeException exception)
                 {
-                    mFrames.clear();
                     mLog.warn("Unable to attach selected-channel signal diagnostics", exception);
                     signalState = "unavailable";
                     signalReason = "Signal diagnostics could not be started.";
                 }
             }
+            else
+            {
+                signalState = "unsupported";
+                signalReason = "Signal is not available for this channel.";
+            }
 
-            String symbolsState;
-            String symbolsReason;
-
-            if(decoder instanceof FeedbackDecoder feedbackDecoder)
+            if(info.decoder() instanceof FeedbackDecoder feedbackDecoder)
             {
                 try
                 {
-                    mSymbolSource = new SymbolSource(feedbackDecoder, mGeneration, mFrames);
+                    symbolSource = new SymbolSource(this, feedbackDecoder);
                     symbolsState = "live";
                     symbolsReason = "";
-                    protocol = feedbackDecoder.getProtocolDescription();
                 }
                 catch(RuntimeException exception)
                 {
                     mLog.warn("Unable to attach selected-channel symbol diagnostics", exception);
+                    symbolSource = null;
                     symbolsState = "unavailable";
                     symbolsReason = "Symbol diagnostics could not be started.";
                 }
@@ -266,168 +628,107 @@ public final class ChannelDiagnosticService implements AutoCloseable
                 symbolsReason = "Symbols are not available for this decoder.";
             }
 
-            boolean live = "live".equals(signalState) || "live".equals(symbolsState);
-            boolean unavailable = "unavailable".equals(signalState) || "unavailable".equals(symbolsState);
-            mState = createState(live ? "live" : (unavailable ? "unavailable" : "unsupported"),
-                live ? "" : "Channel diagnostics are not available for this channel.",
-                signalState, signalReason, symbolsState, symbolsReason, actualFrequency, sampleRate, protocol);
-
-            return mState;
+            mSignalSource = signalSource;
+            mSymbolSource = symbolSource;
+            mSignalState = signalState;
+            mSignalReason = signalReason;
+            mSymbolsState = symbolsState;
+            mSymbolsReason = symbolsReason;
         }
 
-        public State state()
+        private ProcessingChain processingChain()
         {
-            return mState;
+            return mProcessingChain;
         }
 
-        public Frame poll(Duration timeout) throws InterruptedException
+        private long generation()
         {
-            return mFrames.poll(timeout);
+            return mGeneration;
         }
 
-        public boolean isClosed()
+        private BindingInfo info()
         {
-            return mSessionClosed.get();
+            return mInfo;
         }
 
-        private boolean ownedBy(UUID clientId)
+        private boolean isCompatible(BindingInfo info)
         {
-            return mClientId.equals(clientId);
+            BindingInfo current = mInfo;
+            return current.source() == info.source() && current.decoder() == info.decoder() &&
+                current.sampleRateHz() == info.sampleRateHz() && current.fftSize() == info.fftSize() &&
+                current.signalSupported() == info.signalSupported() &&
+                current.symbolsSupported() == info.symbolsSupported();
         }
 
-        private State createState(String state, String reason, String signalState, String signalReason,
-                                  String symbolsState, String symbolsReason, long frequency, long sampleRate,
-                                  String protocol)
+        private void updateInfo(BindingInfo info)
         {
-            return new State(++mStateRevision, mGeneration, state, reason, signalState, signalReason, symbolsState,
-                symbolsReason, frequency, sampleRate, mScope.timeslot(), protocol, FFT_SIZE,
-                SIGNAL_FRAMES_PER_SECOND, SYMBOL_BATCH_SIZE, MAXIMUM_VISIBLE_SYMBOLS);
+            mInfo = info;
         }
 
-        private void detach()
+        private String signalState()
         {
-            SignalSource signalSource = mSignalSource;
-            SymbolSource symbolSource = mSymbolSource;
-            mSignalSource = null;
-            mSymbolSource = null;
+            return mSignalState;
+        }
 
-            if(signalSource != null)
+        private String signalReason()
+        {
+            return mSignalReason;
+        }
+
+        private String symbolsState()
+        {
+            return mSymbolsState;
+        }
+
+        private String symbolsReason()
+        {
+            return mSymbolsReason;
+        }
+
+        private boolean isLive()
+        {
+            return "live".equals(mSignalState) || "live".equals(mSymbolsState);
+        }
+
+        private boolean isClosed()
+        {
+            return mClosed.get();
+        }
+
+        private DiagnosticFftScheduler scheduler()
+        {
+            return mFftScheduler;
+        }
+
+        private void add(Session session)
+        {
+            if(!mClosed.get())
             {
-                signalSource.close();
-            }
-
-            if(symbolSource != null)
-            {
-                symbolSource.close();
-            }
-
-            mFrames.clear();
-        }
-
-        @Override
-        public synchronized void close()
-        {
-            if(mSessionClosed.compareAndSet(false, true))
-            {
-                detach();
-                mFrames.close();
-                mProcessingChain = null;
-                mActiveSession.compareAndSet(this, null);
+                mSubscribers.addIfAbsent(session);
             }
         }
-    }
 
-    private abstract static class LatestFrameSource implements AutoCloseable
-    {
-        private final String mType;
-        private final long mGeneration;
-        private final LatestFrameQueue mFrames;
-        private final AtomicLong mSequence = new AtomicLong();
-        protected final AtomicBoolean mSourceClosed = new AtomicBoolean();
-
-        private LatestFrameSource(String type, long generation, LatestFrameQueue frames)
+        private void remove(Session session)
         {
-            mType = type;
-            mGeneration = generation;
-            mFrames = frames;
+            mSubscribers.remove(session);
         }
 
-        protected void publish(float[] values)
+        private boolean isEmpty()
         {
-            if(mSourceClosed.get() || values == null || values.length == 0)
-            {
-                return;
-            }
-
-            mFrames.publish(new Frame(mType, mGeneration, mSequence.incrementAndGet(), System.currentTimeMillis(),
-                values), mSourceClosed);
+            return mSubscribers.isEmpty();
         }
 
-        @Override
-        public abstract void close();
-    }
-
-    /**
-     * Retains at most one signal frame and one symbol frame for the SSE writer.
-     */
-    static final class LatestFrameQueue implements AutoCloseable
-    {
-        private final AtomicReference<Frame> mSignalFrame = new AtomicReference<>();
-        private final AtomicReference<Frame> mSymbolFrame = new AtomicReference<>();
-        private final Semaphore mAvailable = new Semaphore(0);
-        private final AtomicBoolean mClosed = new AtomicBoolean();
-        private boolean mSignalFirst = true;
-
-        void publish(Frame frame, AtomicBoolean sourceClosed)
+        private void publish(DiagnosticStreamFrame frame)
         {
-            if(mClosed.get() || sourceClosed.get())
+            if(mClosed.get())
             {
                 return;
             }
 
-            AtomicReference<Frame> destination = SIGNAL.equals(frame.type()) ? mSignalFrame : mSymbolFrame;
-            Frame replaced = destination.getAndSet(frame);
-
-            if(mClosed.get() || sourceClosed.get())
+            for(Session subscriber: mSubscribers)
             {
-                destination.compareAndSet(frame, null);
+                subscriber.offer(frame);
             }
-            else if(replaced == null)
-            {
-                mAvailable.release();
-            }
-        }
-
-        Frame poll(Duration timeout) throws InterruptedException
-        {
-            boolean acquired = timeout.isZero() ? mAvailable.tryAcquire() :
-                mAvailable.tryAcquire(timeout.toNanos(), TimeUnit.NANOSECONDS);
-
-            if(!acquired)
-            {
-                return null;
-            }
-
-            Frame frame = mSignalFirst ? mSignalFrame.getAndSet(null) : mSymbolFrame.getAndSet(null);
-
-            if(frame == null)
-            {
-                frame = mSignalFirst ? mSymbolFrame.getAndSet(null) : mSignalFrame.getAndSet(null);
-            }
-
-            if(frame != null)
-            {
-                mSignalFirst = SYMBOLS.equals(frame.type());
-            }
-
-            return frame;
-        }
-
-        void clear()
-        {
-            mSignalFrame.set(null);
-            mSymbolFrame.set(null);
-            mAvailable.drainPermits();
         }
 
         @Override
@@ -435,39 +736,47 @@ public final class ChannelDiagnosticService implements AutoCloseable
         {
             if(mClosed.compareAndSet(false, true))
             {
-                clear();
-                mAvailable.release();
+                if(mSignalSource != null)
+                {
+                    mSignalSource.close();
+                }
+
+                if(mSymbolSource != null)
+                {
+                    mSymbolSource.close();
+                }
+
+                mSubscribers.clear();
             }
         }
     }
 
-    private static final class SignalSource extends LatestFrameSource
+    private static final class SignalSource implements AutoCloseable
     {
+        private final Producer mProducer;
         private final ProcessingChain mProcessingChain;
-        private final ComplexDftProcessor mProcessor = new ComplexDftProcessor();
+        private final AtomicLong mSequence = new AtomicLong();
+        private final AtomicBoolean mClosed = new AtomicBoolean();
         private final ComplexSamplesToNativeBufferModule mTap = new ComplexSamplesToNativeBufferModule();
+        private final DemandDftProcessor mDftProcessor;
 
-        private SignalSource(ProcessingChain processingChain, long generation, LatestFrameQueue frames)
+        private SignalSource(Producer producer, ProcessingChain processingChain, BindingInfo info)
         {
-            super(SIGNAL, generation, frames);
+            mProducer = producer;
             mProcessingChain = processingChain;
+            DFTSize dftSize = info.fftSize() == DFTSize.FFT00512.getSize() ? DFTSize.FFT00512 : DFTSize.FFT01024;
+            mDftProcessor = new DemandDftProcessor(producer.scheduler(), dftSize,
+                SIGNAL_FRAMES_PER_SECOND, this::publish);
             boolean moduleAdded = false;
 
             try
             {
-                mProcessor.setRepeatLastFrameWhenIdle(false);
-                mProcessor.setDFTSize(DFTSize.FFT01024);
-                mProcessor.setFrameRate(SIGNAL_FRAMES_PER_SECOND);
-                ComplexDecibelConverter converter = new ComplexDecibelConverter();
-                converter.addListener(this::publishSignal);
-                mProcessor.addConverter(converter);
-                mTap.setListener(mProcessor);
+                mTap.setListener(mDftProcessor);
                 mProcessingChain.addModule(mTap);
                 moduleAdded = true;
             }
             catch(RuntimeException exception)
             {
-                mSourceClosed.set(true);
                 mTap.removeListener();
 
                 if(moduleAdded || mProcessingChain.getModules().contains(mTap))
@@ -482,33 +791,26 @@ public final class ChannelDiagnosticService implements AutoCloseable
                     }
                 }
 
-                mProcessor.dispose();
+                mDftProcessor.close();
                 throw exception;
             }
         }
 
-        private void publishSignal(float[] bins)
+        private void publish(Long observedAtEpochMs, float[] bins)
         {
-            if(mSourceClosed.get() || bins == null || bins.length != FFT_SIZE)
+            if(!mClosed.get())
             {
-                return;
+                BindingInfo info = mProducer.info();
+                mProducer.publish(DiagnosticStreamFrame.float32(DiagnosticStreamFrame.TYPE_CHANNEL_SIGNAL,
+                    mProducer.generation(), mSequence.incrementAndGet(), observedAtEpochMs,
+                    info.frequencyHz(), info.sampleRateHz(), info.fftSize(), bins));
             }
-
-            float[] safe = new float[bins.length];
-
-            for(int x = 0; x < bins.length; x++)
-            {
-                float value = Float.isFinite(bins[x]) ? Math.max(-196.0f, Math.min(20.0f, bins[x])) : -196.0f;
-                safe[x] = Math.round(value * 10.0f) / 10.0f;
-            }
-
-            publish(safe);
         }
 
         @Override
         public void close()
         {
-            if(!mSourceClosed.compareAndSet(false, true))
+            if(!mClosed.compareAndSet(false, true))
             {
                 return;
             }
@@ -528,28 +830,43 @@ public final class ChannelDiagnosticService implements AutoCloseable
             }
             finally
             {
-                mProcessor.dispose();
+                mDftProcessor.close();
             }
         }
     }
 
-    private static final class SymbolSource extends LatestFrameSource implements FeedbackDecoder.SymbolObserver
+    private static final class SymbolSource implements FeedbackDecoder.SymbolObserver, AutoCloseable
     {
+        private final Producer mProducer;
         private final FeedbackDecoder mDecoder;
+        private final AtomicReference<float[]> mPendingBatch = new AtomicReference<>();
+        private final AtomicLong mSequence = new AtomicLong();
+        private final AtomicBoolean mClosed = new AtomicBoolean();
+        private final DiagnosticFftScheduler.Task mDrainTask;
         private float[] mBatch = new float[SYMBOL_BATCH_SIZE];
         private int mPointer;
 
-        private SymbolSource(FeedbackDecoder decoder, long generation, LatestFrameQueue frames)
+        private SymbolSource(Producer producer, FeedbackDecoder decoder)
         {
-            super(SYMBOLS, generation, frames);
+            mProducer = producer;
             mDecoder = decoder;
-            mDecoder.addSymbolObserver(this);
+            mDrainTask = producer.scheduler().scheduleWithFixedDelay(this::drain, 40);
+
+            try
+            {
+                mDecoder.addSymbolObserver(this);
+            }
+            catch(RuntimeException exception)
+            {
+                mDrainTask.close();
+                throw exception;
+            }
         }
 
         @Override
         public void receive(float symbol)
         {
-            if(mSourceClosed.get() || !Float.isFinite(symbol) || symbol < -MAXIMUM_SYMBOL_PHASE ||
+            if(mClosed.get() || !Float.isFinite(symbol) || symbol < -MAXIMUM_SYMBOL_PHASE ||
                 symbol > MAXIMUM_SYMBOL_PHASE)
             {
                 return;
@@ -562,17 +879,33 @@ public final class ChannelDiagnosticService implements AutoCloseable
             {
                 mBatch = new float[SYMBOL_BATCH_SIZE];
                 mPointer = 0;
-                publish(batch);
+                mPendingBatch.set(batch);
+            }
+        }
+
+        private void drain()
+        {
+            float[] batch = mPendingBatch.getAndSet(null);
+
+            if(batch != null && !mClosed.get())
+            {
+                BindingInfo info = mProducer.info();
+                mProducer.publish(DiagnosticStreamFrame.float32(DiagnosticStreamFrame.TYPE_CHANNEL_SYMBOLS,
+                    mProducer.generation(), mSequence.incrementAndGet(), System.currentTimeMillis(),
+                    info.frequencyHz(), info.sampleRateHz(), 0, batch));
             }
         }
 
         @Override
         public void close()
         {
-            if(mSourceClosed.compareAndSet(false, true))
+            if(mClosed.compareAndSet(false, true))
             {
                 mDecoder.removeSymbolObserver(this);
+                mPendingBatch.set(null);
+                mDrainTask.close();
             }
         }
     }
+
 }

@@ -459,13 +459,12 @@ class StatsWebInteractionUiContractTest
         assertTrue(messages.contains("liveConnection('/live/messages', parameters)"));
         assertTrue(messages.contains("stream.addEventListener('decode_message'"));
         assertTrue(messages.contains("active && !collapsed && !paused && !document.hidden"));
-        assertTrue(channel.contains("liveConnection('/live/channel-diagnostics', parameters)"));
-        assertEquals(channel.indexOf("liveConnection('/live/channel-diagnostics', parameters)"),
-            channel.lastIndexOf("liveConnection('/live/channel-diagnostics', parameters)"));
-        assertTrue(channel.contains("stream.addEventListener('signal'"));
-        assertTrue(channel.contains("stream.addEventListener('symbols'"));
-        assertTrue(channel.contains("const clientId = window.crypto.randomUUID()"));
-        assertTrue(channel.contains("client_id: clientId"));
+        assertTrue(channel.contains("binaryFrameConnection('/live/channel-diagnostics', parameters"));
+        assertEquals(channel.indexOf("binaryFrameConnection('/live/channel-diagnostics', parameters"),
+            channel.lastIndexOf("binaryFrameConnection('/live/channel-diagnostics', parameters"));
+        assertTrue(channel.contains("frame.type === DIAGNOSTIC_FRAME_TYPES.CHANNEL_SIGNAL"));
+        assertTrue(channel.contains("frame.type !== DIAGNOSTIC_FRAME_TYPES.CHANNEL_SYMBOLS"));
+        assertFalse(channel.contains("client_id"));
         assertTrue(channel.contains("diagnosticGrid.append(signalDiagnostic.card, symbolDiagnostic.card)"));
         assertTrue(channel.contains("let signalSequence = 0"));
         assertTrue(channel.contains("let symbolSequence = 0"));
@@ -480,8 +479,10 @@ class StatsWebInteractionUiContractTest
         assertFalse(channel.contains("['Age'"));
         assertFalse(channel.contains("ageText"));
         assertTrue(channel.contains("maximumVisibleSymbols"));
-        assertTrue(channel.contains("Math.max(1, maximum - 1)"));
-        assertTrue(channel.contains("if (symbolValues.length >= maximum) symbolValues = []"));
+        assertTrue(channel.contains("const denominator = Math.max(1, symbolValues.length - 1)"));
+        assertTrue(channel.contains("symbolsNeedClear = true"));
+        assertTrue(channel.contains("if (symbolCount + incoming.length > capacity)"));
+        assertTrue(channel.contains("symbolValues = new Float32Array(maximumSymbols)"));
         assertFalse(channel.contains("symbolValues.splice"));
         assertTrue(channel.contains("Connection interrupted. Reconnecting…"));
         assertFalse(channel.contains("window.setInterval"));
@@ -503,6 +504,34 @@ class StatsWebInteractionUiContractTest
         assertTrue(css.contains(".channel-diagnostic-canvas"));
         assertTrue(css.contains("grid-template-columns: repeat(2, minmax(0, 1fr))"));
         assertTrue(css.contains(".channel-diagnostic-grid"));
+    }
+
+    @Test
+    void opensDemandDrivenTunerSpectrumAndWaterfallInSharedModal() throws Exception
+    {
+        String source = source();
+        String binary = function(source, "function binaryFrameConnection(path, parameters = {}, callbacks = {})");
+        String tuner = function(source, "function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum')");
+        String live = function(source, "async function renderLive()");
+        String css = Files.readString(APP_CSS);
+
+        assertTrue(live.contains("'Tuner Spectrum'"));
+        assertTrue(live.contains("spectrum.addEventListener('click', () => showTunerSpectrumModal())"));
+        assertTrue(tuner.contains("openReadOnlyModal('Tuner Spectrum'"));
+        assertTrue(tuner.contains("api('/api/tuner-diagnostics/targets')"));
+        assertTrue(tuner.contains("binaryFrameConnection('/live/tuner-diagnostics'"));
+        assertTrue(tuner.contains("frame.type !== DIAGNOSTIC_FRAME_TYPES.TUNER_FFT"));
+        assertTrue(tuner.contains("const shouldRun = () => !disposed && !paused && !document.hidden"));
+        assertTrue(tuner.contains("const waterfallBuffer = document.createElement('canvas')"));
+        assertTrue(tuner.contains("const firstBin ="));
+        assertTrue(tuner.contains("for (let bin = firstBin; bin < lastBin; bin += 1)"));
+        assertTrue(tuner.contains("nextWaterfallRow = (nextWaterfallRow - 1 + ringHeight) % ringHeight"));
+        assertTrue(tuner.contains("cleanup: () =>"));
+        assertTrue(tuner.contains("closeStream()"));
+        assertTrue(css.contains(".tuner-spectrum-modal"));
+        assertTrue(css.contains(".tuner-spectrum-plot"));
+        assertTrue(binary.contains("await reader.cancel().catch(() => {})"));
+        assertTrue(binary.contains("attemptController.abort()"));
     }
 
     @Test

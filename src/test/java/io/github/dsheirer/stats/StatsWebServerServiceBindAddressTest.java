@@ -17,7 +17,6 @@ import java.net.InetSocketAddress;
 import java.net.URI;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
 class StatsWebServerServiceBindAddressTest
@@ -65,6 +64,12 @@ class StatsWebServerServiceBindAddressTest
             URI.create("/live/channel-diagnostics?configuration_id=test"), "/live/channel-diagnostics"));
         assertFalse(StatsWebServerService.hasExactPath(
             URI.create("/live/channel-diagnostics-old"), "/live/channel-diagnostics"));
+        assertTrue(StatsWebServerService.hasExactPath(
+            URI.create("/live/tuner-diagnostics?target_id=test"), "/live/tuner-diagnostics"));
+        assertFalse(StatsWebServerService.hasExactPath(
+            URI.create("/live/tuner-diagnostics-old"), "/live/tuner-diagnostics"));
+        assertTrue(StatsWebServerService.hasExactPath(
+            URI.create("/api/tuner-diagnostics/targets"), "/api/tuner-diagnostics/targets"));
         assertFalse(StatsWebServerService.hasExactPath(URI.create("/live/sites/legacy"), "/live/sites"));
         assertFalse(StatsWebServerService.hasExactPath(URI.create("/live/web-calls/legacy"), "/live/web-calls"));
         assertTrue(StatsWebServerService.hasExactPath(
@@ -105,21 +110,14 @@ class StatsWebServerServiceBindAddressTest
     {
         ChannelDiagnosticService.Scope scope = StatsWebServerService.channelDiagnosticScope(URI.create(
             "/live/channel-diagnostics?configuration_id=00000000-0000-0000-0000-000000000001" +
-                "&frequency_hz=851012500&timeslot=2&client_id=00000000-0000-0000-0000-000000000002"));
+                "&frequency_hz=851012500&timeslot=2"));
 
         assertEquals("00000000-0000-0000-0000-000000000001", scope.configurationId());
         assertEquals(851_012_500L, scope.frequencyHz());
         assertEquals(2, scope.timeslot());
-        assertEquals(UUID.fromString("00000000-0000-0000-0000-000000000002"),
-            StatsWebServerService.channelDiagnosticClientId(URI.create(
-                "/live/channel-diagnostics?client_id=00000000-0000-0000-0000-000000000002")));
         assertThrows(StatsApiException.class, () -> StatsWebServerService.channelDiagnosticScope(URI.create(
             "/live/channel-diagnostics?configuration_id=00000000-0000-0000-0000-000000000001" +
                 "&timeslot=2")));
-        assertThrows(StatsApiException.class, () -> StatsWebServerService.channelDiagnosticClientId(URI.create(
-            "/live/channel-diagnostics")));
-        assertThrows(StatsApiException.class, () -> StatsWebServerService.channelDiagnosticClientId(URI.create(
-            "/live/channel-diagnostics?client_id=invalid")));
     }
 
     @Test

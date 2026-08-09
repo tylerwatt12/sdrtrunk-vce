@@ -5097,6 +5097,178 @@ function liveConnection(path, parameters = {}) {
   return source;
 }
 
+const DIAGNOSTIC_FRAME_MAGIC = 0x53444447;
+const DIAGNOSTIC_FRAME_HEADER_BYTES = 64;
+const DIAGNOSTIC_FRAME_MAXIMUM_BYTES = 16 * 1024 * 1024;
+const DIAGNOSTIC_TEXT_DECODER = new TextDecoder();
+const DIAGNOSTIC_FRAME_TYPES = Object.freeze({
+  STATE: 1,
+  CHANNEL_SIGNAL: 2,
+  CHANNEL_SYMBOLS: 3,
+  TUNER_FFT: 4,
+  HEARTBEAT: 127
+});
+
+function binaryFrameConnection(path, parameters = {}, callbacks = {}) {
+  const query = new URLSearchParams();
+  Object.entries(parameters).forEach(([key, value]) => {
+    if (value !== null && value !== undefined && value !== '') query.set(key, String(value));
+  });
+  const target = `${path}${query.size ? `?${query}` : ''}`;
+  let closed = false;
+  let controller = null;
+  let reconnectTimer = null;
+  let pending = new Uint8Array(0);
+
+  const fail = (error) => {
+    if (!closed) callbacks.onError?.(error instanceof Error ? error : new Error(String(error)));
+  };
+
+  const consume = (chunk) => {
+    if (!(chunk instanceof Uint8Array) || !chunk.byteLength) return;
+    if (!pending.byteLength) pending = chunk;
+    else {
+      const combined = new Uint8Array(pending.byteLength + chunk.byteLength);
+      combined.set(pending);
+      combined.set(chunk, pending.byteLength);
+      pending = combined;
+    }
+    let offset = 0;
+
+    while (pending.byteLength - offset >= DIAGNOSTIC_FRAME_HEADER_BYTES) {
+      const header = new DataView(pending.buffer, pending.byteOffset + offset,
+        pending.byteLength - offset);
+      if (header.getUint32(0, true) !== DIAGNOSTIC_FRAME_MAGIC) {
+        throw new Error('The diagnostic stream returned an invalid frame marker.');
+      }
+      const version = header.getUint8(4);
+      const type = header.getUint8(5);
+      const headerBytes = header.getUint16(6, true);
+      const payloadBytes = header.getUint32(8, true);
+      const valueCount = header.getUint32(12, true);
+      if (version !== 1 || headerBytes < DIAGNOSTIC_FRAME_HEADER_BYTES || headerBytes > 4096 ||
+          payloadBytes > DIAGNOSTIC_FRAME_MAXIMUM_BYTES) {
+        throw new Error('The diagnostic stream returned an unsupported frame.');
+      }
+      const frameBytes = headerBytes + payloadBytes;
+      if (pending.byteLength - offset < frameBytes) break;
+      const payload = pending.subarray(offset + headerBytes, offset + frameBytes);
+      callbacks.onFrame?.({
+        version,
+        type,
+        valueCount,
+        generation: Number(header.getBigInt64(16, true)),
+        sequence: Number(header.getBigInt64(24, true)),
+        observedAtEpochMs: Number(header.getBigInt64(32, true)),
+        encodedAtEpochMs: Number(header.getBigInt64(40, true)),
+        centerFrequencyHz: Number(header.getBigInt64(48, true)),
+        sampleRateHz: header.getInt32(56, true),
+        fftSize: header.getInt32(60, true),
+        payload
+      });
+      offset += frameBytes;
+    }
+    pending = offset ? pending.slice(offset) : pending;
+  };
+
+  const connect = async () => {
+    if (closed) return;
+    const attemptController = new AbortController();
+    controller = attemptController;
+    let reader = null;
+    pending = new Uint8Array(0);
+    try {
+      const response = await fetch(target, {
+        cache: 'no-store',
+        credentials: 'same-origin',
+        headers: { Accept: 'application/octet-stream' },
+        signal: attemptController.signal
+      });
+      if (!response.ok) {
+        const message = await response.text().catch(() => '');
+        const error = new Error(message || `${path} returned ${response.status}`);
+        error.status = response.status;
+        throw error;
+      }
+      if (!response.body) throw new Error('This browser does not support streaming responses.');
+      callbacks.onOpen?.();
+      reader = response.body.getReader();
+      while (!closed) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        consume(value);
+      }
+      if (!closed) throw new Error('The diagnostic stream ended.');
+    } catch (error) {
+      if (!closed && error?.name !== 'AbortError') fail(error);
+    } finally {
+      if (reader) await reader.cancel().catch(() => {});
+      attemptController.abort();
+      if (controller === attemptController) controller = null;
+    }
+    if (!closed) reconnectTimer = window.setTimeout(connect, 750);
+  };
+
+  const connection = {
+    close() {
+      if (closed) return;
+      closed = true;
+      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+      controller?.abort();
+      controller = null;
+      pending = new Uint8Array(0);
+      liveConnections.delete(connection);
+      pageConnections.delete(connection);
+    }
+  };
+  liveConnections.add(connection);
+  pageConnections.add(connection);
+  connect();
+  return connection;
+}
+
+function diagnosticJsonPayload(frame) {
+  try {
+    return JSON.parse(DIAGNOSTIC_TEXT_DECODER.decode(frame.payload));
+  } catch (error) {
+    throw new Error('The diagnostic stream returned invalid state data.');
+  }
+}
+
+function diagnosticFloatPayload(frame) {
+  const count = Math.min(frame.valueCount, Math.floor(frame.payload.byteLength / Float32Array.BYTES_PER_ELEMENT));
+  const values = new Float32Array(count);
+  const data = new DataView(frame.payload.buffer, frame.payload.byteOffset, frame.payload.byteLength);
+  for (let index = 0; index < count; index += 1) values[index] = data.getFloat32(index * 4, true);
+  return values;
+}
+
+function diagnosticFrameLatency(frame, clock) {
+  const receivedAt = Date.now();
+  const transit = receivedAt - frame.encodedAtEpochMs;
+  if (!Number.isFinite(transit)) return null;
+  clock.offsetMs = Number.isFinite(clock.offsetMs) ? Math.min(clock.offsetMs, transit) : transit;
+  const latency = receivedAt - frame.observedAtEpochMs - clock.offsetMs;
+  return Number.isFinite(latency) && latency >= 0 && latency < 60_000 ? latency : null;
+}
+
+function updateDiagnosticReadouts(target, values) {
+  const labels = values.map(([label]) => label).join('|');
+  if (target.dataset.labels !== labels) {
+    target.dataset.labels = labels;
+    target.replaceChildren(...values.map(([label, value]) => {
+      const item = node('span', 'channel-diagnostic-readout');
+      item.append(node('small', '', label), node('strong', '', value));
+      return item;
+    }));
+  }
+  values.forEach(([, value], index) => {
+    const output = target.children[index]?.querySelector('strong');
+    if (output && output.textContent !== String(value)) output.textContent = String(value);
+  });
+}
+
 function closePageConnections() {
   pageConnections.forEach((source) => {
     source.close();
@@ -5815,7 +5987,6 @@ function liveMessagesPane() {
 }
 
 function liveChannelPane() {
-  const clientId = window.crypto.randomUUID();
   let selection = null;
   let active = false;
   let collapsed = false;
@@ -5826,8 +5997,16 @@ function liveChannelPane() {
   let generation = -1;
   let signalSequence = 0;
   let symbolSequence = 0;
-  let signalValues = [];
-  let symbolValues = [];
+  let signalValues = new Float32Array(0);
+  let signalPeak = null;
+  let signalLatencyMs = null;
+  const latencyClock = { offsetMs: null };
+  let symbolValues = new Float32Array(4800);
+  let symbolCount = 0;
+  let renderedSymbolCount = 0;
+  let symbolsNeedClear = true;
+  let signalDirty = true;
+  let symbolsDirty = true;
   let drawPending = false;
 
   const pane = node('div', 'live-details-pane live-channel-pane');
@@ -5859,32 +6038,26 @@ function liveChannelPane() {
     connection.className = `badge ${className}`;
   };
 
-  const setReadouts = (target, values) => {
-    target.replaceChildren(...values.map(([label, value]) => {
-      const item = node('span', 'channel-diagnostic-readout');
-      item.append(node('small', '', label), node('strong', '', value));
-      return item;
-    }));
-  };
-
   const updateReadouts = () => {
-    const finiteSignalValues = signalValues.filter(Number.isFinite);
-    const peak = finiteSignalValues.length ? Math.max(...finiteSignalValues) : null;
-    setReadouts(signalDiagnostic.readouts, [
-      ['Center', state?.frequencyHz ? `${frequency(state.frequencyHz)} MHz` : '—'],
-      ['Peak', Number.isFinite(peak) ? `${peak.toFixed(1)} dB` : '—']
+    const centerFrequencyHz = Number(state?.frequencyHz ?? state?.frequency_hz ??
+      state?.centerFrequencyHz ?? state?.center_frequency_hz ?? selection?.diagnosticFrequencyHz);
+    updateDiagnosticReadouts(signalDiagnostic.readouts, [
+      ['Center', centerFrequencyHz ? `${frequency(centerFrequencyHz)} MHz` : '—'],
+      ['Peak', Number.isFinite(signalPeak) ? `${signalPeak.toFixed(1)} dB` : '—'],
+      ['Latency', Number.isFinite(signalLatencyMs) ? `${Math.round(signalLatencyMs)} ms` : '—']
     ]);
-    setReadouts(symbolDiagnostic.readouts, [
+    updateDiagnosticReadouts(symbolDiagnostic.readouts, [
       ['Protocol', state?.protocol || '—']
     ]);
   };
 
-  const drawDiagnostic = (target, type) => {
+  const prepareCanvas = (target) => {
     const bounds = target.canvas.getBoundingClientRect();
-    if (!bounds.width || !bounds.height) return;
+    if (!bounds.width || !bounds.height) return null;
     const ratio = Math.min(2, window.devicePixelRatio || 1);
     const width = Math.max(1, Math.round(bounds.width * ratio));
     const height = Math.max(1, Math.round(bounds.height * ratio));
+    const resized = target.canvas.width !== width || target.canvas.height !== height;
     if (target.canvas.width !== width || target.canvas.height !== height) {
       target.canvas.width = width;
       target.canvas.height = height;
@@ -5893,6 +6066,10 @@ function liveChannelPane() {
     context.setTransform(ratio, 0, 0, ratio, 0, 0);
     const cssWidth = width / ratio;
     const cssHeight = height / ratio;
+    return { context, cssWidth, cssHeight, resized };
+  };
+
+  const drawBackground = ({ context, cssWidth, cssHeight }) => {
     context.fillStyle = '#07111d';
     context.fillRect(0, 0, cssWidth, cssHeight);
     context.strokeStyle = 'rgba(150, 177, 199, 0.18)';
@@ -5904,40 +6081,70 @@ function liveChannelPane() {
       context.lineTo(cssWidth, y);
       context.stroke();
     }
+  };
 
-    if (type === 'signal' && signalValues.length > 1) {
-      context.strokeStyle = '#55c7ff';
-      context.lineWidth = 1.5;
-      context.beginPath();
-      signalValues.forEach((raw, index) => {
-        const value = Math.max(-120, Math.min(0, Number(raw)));
-        const x = index * cssWidth / (signalValues.length - 1);
-        const y = (0 - value) / 120 * cssHeight;
-        if (index === 0) context.moveTo(x, y);
-        else context.lineTo(x, y);
-      });
-      context.stroke();
-    } else if (type === 'symbols' && symbolValues.length) {
-      context.fillStyle = '#65d6a6';
-      const maximum = Math.max(1, Number(state?.maximumVisibleSymbols) || 4800);
-      const denominator = Math.max(1, maximum - 1);
-      symbolValues.forEach((raw, index) => {
-        const value = Math.max(-Math.PI, Math.min(Math.PI, Number(raw)));
-        const x = index * Math.max(0, cssWidth - 1.5) / denominator;
-        const y = (Math.PI - value) / (2 * Math.PI) * cssHeight;
-        context.fillRect(x, y, 1.5, 1.5);
-      });
+  const drawSignal = () => {
+    const prepared = prepareCanvas(signalDiagnostic);
+    if (!prepared) return;
+    drawBackground(prepared);
+    if (signalValues.length < 2) return;
+    const { context, cssWidth, cssHeight } = prepared;
+    context.strokeStyle = '#55c7ff';
+    context.lineWidth = 1.5;
+    context.beginPath();
+    for (let index = 0; index < signalValues.length; index += 1) {
+      const raw = signalValues[index];
+      const value = Number.isFinite(raw) ? Math.max(-120, Math.min(0, raw)) : -120;
+      const x = index * cssWidth / (signalValues.length - 1);
+      const y = -value / 120 * cssHeight;
+      if (index === 0) context.moveTo(x, y);
+      else context.lineTo(x, y);
     }
+    context.stroke();
+  };
+
+  const drawSymbols = () => {
+    const prepared = prepareCanvas(symbolDiagnostic);
+    if (!prepared) return;
+    if (prepared.resized) {
+      symbolsNeedClear = true;
+      renderedSymbolCount = 0;
+    }
+    if (symbolsNeedClear) {
+      drawBackground(prepared);
+      symbolsNeedClear = false;
+      renderedSymbolCount = 0;
+    }
+    if (renderedSymbolCount >= symbolCount) return;
+    const { context, cssWidth, cssHeight } = prepared;
+    const denominator = Math.max(1, symbolValues.length - 1);
+    context.fillStyle = '#65d6a6';
+    for (let index = renderedSymbolCount; index < symbolCount; index += 1) {
+      const raw = symbolValues[index];
+      if (!Number.isFinite(raw)) continue;
+      const value = Math.max(-Math.PI, Math.min(Math.PI, raw));
+      const x = index * Math.max(0, cssWidth - 1.5) / denominator;
+      const y = (Math.PI - value) / (2 * Math.PI) * cssHeight;
+      context.fillRect(x, y, 1.5, 1.5);
+    }
+    renderedSymbolCount = symbolCount;
   };
 
   const draw = () => {
     drawPending = false;
-    drawDiagnostic(signalDiagnostic, 'signal');
-    drawDiagnostic(symbolDiagnostic, 'symbols');
-    updateReadouts();
+    if (signalDirty) {
+      signalDirty = false;
+      drawSignal();
+    }
+    if (symbolsDirty) {
+      symbolsDirty = false;
+      drawSymbols();
+    }
   };
 
-  const scheduleDraw = () => {
+  const scheduleDraw = (kind = 'both') => {
+    if (kind === 'signal' || kind === 'both') signalDirty = true;
+    if (kind === 'symbols' || kind === 'both') symbolsDirty = true;
     if (drawPending) return;
     drawPending = true;
     window.requestAnimationFrame(draw);
@@ -5948,8 +6155,13 @@ function liveChannelPane() {
     generation = -1;
     signalSequence = 0;
     symbolSequence = 0;
-    signalValues = [];
-    symbolValues = [];
+    signalValues = new Float32Array(0);
+    signalPeak = null;
+    signalLatencyMs = null;
+    latencyClock.offsetMs = null;
+    symbolCount = 0;
+    renderedSymbolCount = 0;
+    symbolsNeedClear = true;
     [signalDiagnostic, symbolDiagnostic].forEach((target) => {
       target.overlay.textContent = message || '';
       target.overlay.hidden = !message;
@@ -5997,65 +6209,96 @@ function liveChannelPane() {
     clearPlots('Waiting for channel data…');
     const epoch = ++streamEpoch;
     const parameters = {
-      client_id: clientId,
       configuration_id: selection.configurationId,
       frequency_hz: selection.diagnosticFrequencyHz
     };
     if (selection.diagnosticTimeslot) parameters.timeslot = selection.diagnosticTimeslot;
-    stream = liveConnection('/live/channel-diagnostics', parameters);
-    stream.addEventListener('diagnostic_state', (event) => {
-      if (epoch !== streamEpoch) return;
-      state = JSON.parse(event.data);
-      generation = Number(state.generation);
-      signalSequence = 0;
-      symbolSequence = 0;
-      signalValues = [];
-      symbolValues = [];
-      updateDiagnosticState(signalDiagnostic, state.signalState, state.signalReason,
-        'Signal diagnostics are unavailable.');
-      updateDiagnosticState(symbolDiagnostic, state.symbolsState, state.symbolsReason,
-        'Symbol diagnostics are unavailable.');
-      const live = state.signalState === 'live' || state.symbolsState === 'live';
-      const waiting = state.signalState === 'waiting' || state.symbolsState === 'waiting';
-      setStatus(live ? 'Live' : (waiting ? 'Waiting' : 'Unavailable'),
-        live ? 'state-current' : 'state-stale');
-      scheduleDraw();
-    });
-    stream.addEventListener('signal', (event) => {
-      if (epoch !== streamEpoch) return;
-      const frame = JSON.parse(event.data);
-      if (Number(frame.generation) !== generation || Number(frame.sequence) <= signalSequence ||
-          !Array.isArray(frame.values)) return;
-      signalSequence = Number(frame.sequence);
-      signalValues = frame.values.slice(0, 1024).map(Number).filter(Number.isFinite);
-      scheduleDraw();
-    });
-    stream.addEventListener('symbols', (event) => {
-      if (epoch !== streamEpoch) return;
-      const frame = JSON.parse(event.data);
-      if (Number(frame.generation) !== generation || Number(frame.sequence) <= symbolSequence ||
-          !Array.isArray(frame.values)) return;
-      symbolSequence = Number(frame.sequence);
-      const incoming = frame.values.map(Number).filter(Number.isFinite);
-      const maximum = Math.max(1, Number(state?.maximumVisibleSymbols) || 4800);
-      if (symbolValues.length >= maximum) symbolValues = [];
-      symbolValues.push(...incoming.slice(0, maximum - symbolValues.length));
-      scheduleDraw();
-    });
-    stream.onopen = () => {
-      if (epoch === streamEpoch) setStatus('Connected', 'state-current');
-    };
-    stream.onerror = () => {
-      if (epoch !== streamEpoch) return;
-      setStatus('Reconnecting');
-      const reason = 'Connection interrupted. Reconnecting…';
-      if (state?.signalState === 'live') {
-        updateDiagnosticState(signalDiagnostic, 'stale', reason, reason);
+    stream = binaryFrameConnection('/live/channel-diagnostics', parameters, {
+      onOpen: () => {
+        if (epoch === streamEpoch) setStatus('Connected', 'state-current');
+      },
+      onFrame: (frame) => {
+        if (epoch !== streamEpoch || frame.type === DIAGNOSTIC_FRAME_TYPES.HEARTBEAT) return;
+        if (frame.type === DIAGNOSTIC_FRAME_TYPES.STATE) {
+          state = diagnosticJsonPayload(frame);
+          generation = frame.generation;
+          signalSequence = 0;
+          symbolSequence = 0;
+          signalValues = new Float32Array(0);
+          signalPeak = null;
+          signalLatencyMs = null;
+          latencyClock.offsetMs = null;
+          const maximumSymbols = Math.max(1, Number(state?.maximumVisibleSymbols ??
+            state?.maximum_visible_symbols) || 4800);
+          symbolValues = new Float32Array(maximumSymbols);
+          symbolCount = 0;
+          renderedSymbolCount = 0;
+          symbolsNeedClear = true;
+          const signalState = state?.signalState ?? state?.signal_state;
+          const symbolsState = state?.symbolsState ?? state?.symbols_state;
+          updateDiagnosticState(signalDiagnostic, signalState,
+            state?.signalReason ?? state?.signal_reason, 'Signal diagnostics are unavailable.');
+          updateDiagnosticState(symbolDiagnostic, symbolsState,
+            state?.symbolsReason ?? state?.symbols_reason, 'Symbol diagnostics are unavailable.');
+          const live = signalState === 'live' || symbolsState === 'live';
+          const waiting = signalState === 'waiting' || symbolsState === 'waiting';
+          setStatus(live ? 'Live' : (waiting ? 'Waiting' : 'Unavailable'),
+            live ? 'state-current' : 'state-stale');
+          updateReadouts();
+          scheduleDraw();
+          return;
+        }
+        if (generation >= 0 && frame.generation !== generation) return;
+        if (frame.type === DIAGNOSTIC_FRAME_TYPES.CHANNEL_SIGNAL) {
+          if (frame.sequence <= signalSequence) return;
+          signalSequence = frame.sequence;
+          signalValues = diagnosticFloatPayload(frame);
+          signalPeak = null;
+          for (let index = 0; index < signalValues.length; index += 1) {
+            if (Number.isFinite(signalValues[index]) &&
+                (!Number.isFinite(signalPeak) || signalValues[index] > signalPeak)) signalPeak = signalValues[index];
+          }
+          if (frame.centerFrequencyHz > 0 && state) state.frequencyHz = frame.centerFrequencyHz;
+          signalLatencyMs = diagnosticFrameLatency(frame, latencyClock);
+          signalDiagnostic.overlay.hidden = true;
+          updateReadouts();
+          scheduleDraw('signal');
+          return;
+        }
+        if (frame.type !== DIAGNOSTIC_FRAME_TYPES.CHANNEL_SYMBOLS || frame.sequence <= symbolSequence) return;
+        symbolSequence = frame.sequence;
+        const incoming = diagnosticFloatPayload(frame);
+        if (!incoming.length) return;
+        const capacity = symbolValues.length;
+        if (incoming.length >= capacity) {
+          symbolValues.set(incoming.subarray(incoming.length - capacity));
+          symbolCount = capacity;
+          renderedSymbolCount = 0;
+          symbolsNeedClear = true;
+        } else if (symbolCount + incoming.length > capacity) {
+          const overflow = symbolCount + incoming.length - capacity;
+          symbolValues.set(incoming.subarray(incoming.length - overflow), 0);
+          symbolCount = overflow;
+          renderedSymbolCount = 0;
+          symbolsNeedClear = true;
+        } else {
+          symbolValues.set(incoming, symbolCount);
+          symbolCount += incoming.length;
+        }
+        symbolDiagnostic.overlay.hidden = true;
+        scheduleDraw('symbols');
+      },
+      onError: (error) => {
+        if (epoch !== streamEpoch) return;
+        setStatus(error?.status === 429 ? 'Busy' : 'Reconnecting');
+        const reason = error?.status === 429 ? 'Diagnostic viewer capacity is currently in use.' :
+          'Connection interrupted. Reconnecting…';
+        const signalState = state?.signalState ?? state?.signal_state;
+        const symbolsState = state?.symbolsState ?? state?.symbols_state;
+        if (signalState === 'live') updateDiagnosticState(signalDiagnostic, 'stale', reason, reason);
+        if (symbolsState === 'live') updateDiagnosticState(symbolDiagnostic, 'stale', reason, reason);
       }
-      if (state?.symbolsState === 'live') {
-        updateDiagnosticState(symbolDiagnostic, 'stale', reason, reason);
-      }
-    };
+    });
   };
 
   const select = (nextSelection) => {
@@ -6075,7 +6318,11 @@ function liveChannelPane() {
   };
 
   const onVisibilityChange = () => sync();
-  const onResize = () => scheduleDraw();
+  const onResize = () => {
+    renderedSymbolCount = 0;
+    symbolsNeedClear = true;
+    scheduleDraw();
+  };
   document.addEventListener('visibilitychange', onVisibilityChange);
   window.addEventListener('resize', onResize);
   clearPlots('Select a live row above');
@@ -6091,6 +6338,410 @@ function liveChannelPane() {
       window.removeEventListener('resize', onResize);
     }
   };
+}
+
+function tunerDiagnosticTargets(response) {
+  const values = Array.isArray(response) ? response : (response?.targets || []);
+  return values.map((target) => ({
+    ...target,
+    id: String(target?.targetId ?? target?.target_id ?? target?.id ?? ''),
+    label: String(target?.label ?? target?.displayName ?? target?.display_name ?? target?.name ??
+      target?.targetId ?? target?.target_id ?? target?.id ?? 'Tuner')
+  })).filter((target) => target.id);
+}
+
+function tunerWaterfallPalette() {
+  const stops = [
+    [0, 4, 11, 24],
+    [0.22, 14, 42, 94],
+    [0.46, 22, 135, 184],
+    [0.68, 76, 214, 170],
+    [0.84, 247, 216, 74],
+    [1, 239, 77, 61]
+  ];
+  const palette = new Uint8ClampedArray(256 * 4);
+  for (let index = 0; index < 256; index += 1) {
+    const value = index / 255;
+    let upper = 1;
+    while (upper < stops.length - 1 && value > stops[upper][0]) upper += 1;
+    const lower = Math.max(0, upper - 1);
+    const span = Math.max(0.0001, stops[upper][0] - stops[lower][0]);
+    const mix = Math.max(0, Math.min(1, (value - stops[lower][0]) / span));
+    for (let channel = 1; channel <= 3; channel += 1) {
+      palette[index * 4 + channel - 1] = Math.round(
+        stops[lower][channel] + (stops[upper][channel] - stops[lower][channel]) * mix);
+    }
+    palette[index * 4 + 3] = 255;
+  }
+  return palette;
+}
+
+function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
+  const layout = node('div', 'tuner-spectrum-layout');
+  const toolbar = node('div', 'tuner-spectrum-toolbar');
+  const targetLabel = node('label', 'tuner-spectrum-target');
+  targetLabel.append(node('span', '', 'Tuner'));
+  const targetSelect = node('select');
+  targetSelect.disabled = true;
+  targetSelect.append(node('option', '', 'Loading tuners…'));
+  targetLabel.append(targetSelect);
+  const status = badge('Loading', 'state-stale');
+  const pause = node('button', 'button secondary', 'Pause');
+  pause.type = 'button';
+  pause.disabled = true;
+  pause.setAttribute('aria-pressed', 'false');
+  toolbar.append(targetLabel, status, pause);
+
+  const plot = (title, ariaLabel, extraClass = '') => {
+    const card = node('section', `tuner-spectrum-card ${extraClass}`.trim());
+    const heading = node('h3', 'channel-diagnostic-title', title);
+    const host = node('div', 'tuner-spectrum-plot');
+    const canvas = node('canvas', 'channel-diagnostic-canvas');
+    canvas.setAttribute('role', 'img');
+    canvas.setAttribute('aria-label', ariaLabel);
+    const overlay = node('div', 'channel-diagnostic-overlay', 'Select a tuner');
+    host.append(canvas, overlay);
+    card.append(heading, host);
+    return { card, canvas, overlay };
+  };
+  const spectrum = plot('FFT', 'Tuner frequency spectrum', 'tuner-spectrum-fft');
+  const waterfall = plot('Waterfall', 'Tuner spectrum history', 'tuner-spectrum-waterfall');
+  const readouts = node('div', 'tuner-spectrum-readouts channel-diagnostic-readouts');
+  layout.append(toolbar, spectrum.card, waterfall.card, readouts);
+
+  let disposed = false;
+  let paused = false;
+  let stream = null;
+  let streamEpoch = 0;
+  let generation = -1;
+  let sequence = 0;
+  let fftValues = new Float32Array(0);
+  let frameMetadata = null;
+  let peak = null;
+  let latencyMs = null;
+  const latencyClock = { offsetMs: null };
+  let frameTimes = [];
+  let spectrumDirty = true;
+  let waterfallDirty = true;
+  let drawPending = false;
+  const waterfallBuffer = document.createElement('canvas');
+  const waterfallContext = waterfallBuffer.getContext('2d', { alpha: false });
+  const palette = tunerWaterfallPalette();
+  let newestWaterfallRow = -1;
+  let nextWaterfallRow = -1;
+  let waterfallRowImage = null;
+
+  const modal = openReadOnlyModal('Tuner Spectrum', layout, {
+    id: 'tuner-spectrum',
+    className: 'tuner-spectrum-modal',
+    returnFocusSelector,
+    cleanup: () => {
+      disposed = true;
+      closeStream();
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('resize', onResize);
+    }
+  });
+  if (!modal) return;
+
+  const setStatus = (text, className = 'state-stale') => {
+    if (status.textContent !== text) status.textContent = text;
+    const nextClassName = `badge ${className}`;
+    if (status.className !== nextClassName) status.className = nextClassName;
+  };
+
+  const setOverlay = (message = '') => {
+    [spectrum, waterfall].forEach((target) => {
+      if (target.overlay.textContent !== message) target.overlay.textContent = message;
+      if (target.overlay.hidden !== !message) target.overlay.hidden = !message;
+    });
+  };
+
+  const setReadouts = () => {
+    const center = Number(frameMetadata?.centerFrequencyHz || 0);
+    const sampleRate = Number(frameMetadata?.sampleRateHz || 0);
+    const fftSize = Number(frameMetadata?.fftSize || fftValues.length || 0);
+    const resolution = sampleRate > 0 && fftSize > 0 ? sampleRate / fftSize : null;
+    const fps = frameTimes.length > 1 ? (frameTimes.length - 1) * 1000 /
+      Math.max(1, frameTimes[frameTimes.length - 1] - frameTimes[0]) : null;
+    const values = [
+      ['Center', center ? `${frequency(center)} MHz` : '—'],
+      ['Span', sampleRate ? `${(sampleRate / 1_000_000).toFixed(sampleRate < 1_000_000 ? 3 : 2)} MHz` : '—'],
+      ['Bins', fftSize ? number(fftSize) : '—'],
+      ['Resolution', Number.isFinite(resolution) ? `${number(Math.round(resolution))} Hz` : '—'],
+      ['Peak', Number.isFinite(peak) ? `${peak.toFixed(1)} dB` : '—'],
+      ['Rate', Number.isFinite(fps) ? `${fps.toFixed(1)} fps` : '—'],
+      ['Latency', Number.isFinite(latencyMs) ? `${Math.round(latencyMs)} ms` : '—']
+    ];
+    updateDiagnosticReadouts(readouts, values);
+  };
+
+  const prepareCanvas = (target) => {
+    const bounds = target.canvas.getBoundingClientRect();
+    if (!bounds.width || !bounds.height) return null;
+    const ratio = Math.min(2, window.devicePixelRatio || 1);
+    const width = Math.max(1, Math.round(bounds.width * ratio));
+    const height = Math.max(1, Math.round(bounds.height * ratio));
+    const resized = target.canvas.width !== width || target.canvas.height !== height;
+    if (resized) {
+      target.canvas.width = width;
+      target.canvas.height = height;
+    }
+    const context = target.canvas.getContext('2d', { alpha: false });
+    context.setTransform(ratio, 0, 0, ratio, 0, 0);
+    return { context, ratio, cssWidth: width / ratio, cssHeight: height / ratio, resized };
+  };
+
+  const drawSpectrum = () => {
+    const prepared = prepareCanvas(spectrum);
+    if (!prepared) return;
+    const { context, cssWidth, cssHeight } = prepared;
+    context.fillStyle = '#07111d';
+    context.fillRect(0, 0, cssWidth, cssHeight);
+    context.strokeStyle = 'rgba(150, 177, 199, 0.18)';
+    context.lineWidth = 1;
+    for (let line = 1; line < 4; line += 1) {
+      context.beginPath();
+      context.moveTo(0, cssHeight * line / 4);
+      context.lineTo(cssWidth, cssHeight * line / 4);
+      context.stroke();
+      context.beginPath();
+      context.moveTo(cssWidth * line / 4, 0);
+      context.lineTo(cssWidth * line / 4, cssHeight);
+      context.stroke();
+    }
+    if (fftValues.length < 2) return;
+    context.strokeStyle = '#55c7ff';
+    context.lineWidth = 1.35;
+    context.beginPath();
+    for (let index = 0; index < fftValues.length; index += 1) {
+      const raw = fftValues[index];
+      const value = Number.isFinite(raw) ? Math.max(-130, Math.min(0, raw)) : -130;
+      const x = index * cssWidth / (fftValues.length - 1);
+      const y = -value / 130 * cssHeight;
+      if (index === 0) context.moveTo(x, y);
+      else context.lineTo(x, y);
+    }
+    context.stroke();
+  };
+
+  const resetWaterfallBuffer = (width, height) => {
+    waterfallBuffer.width = Math.max(1, width);
+    waterfallBuffer.height = Math.max(1, height);
+    waterfallContext.fillStyle = '#040b18';
+    waterfallContext.fillRect(0, 0, waterfallBuffer.width, waterfallBuffer.height);
+    waterfallRowImage = waterfallContext.createImageData(waterfallBuffer.width, 1);
+    newestWaterfallRow = -1;
+    nextWaterfallRow = waterfallBuffer.height - 1;
+  };
+
+  const drawWaterfall = () => {
+    const prepared = prepareCanvas(waterfall);
+    if (!prepared) return;
+    const ringWidth = Math.max(1, Math.round(prepared.cssWidth));
+    const ringHeight = Math.max(1, Math.round(prepared.cssHeight));
+    if (waterfallBuffer.width !== ringWidth || waterfallBuffer.height !== ringHeight) {
+      resetWaterfallBuffer(ringWidth, ringHeight);
+    }
+    if (fftValues.length) {
+      const row = waterfallRowImage;
+      for (let x = 0; x < ringWidth; x += 1) {
+        const firstBin = Math.min(fftValues.length - 1, Math.floor(x * fftValues.length / ringWidth));
+        const lastBin = Math.min(fftValues.length,
+          Math.max(firstBin + 1, Math.ceil((x + 1) * fftValues.length / ringWidth)));
+        let raw = -Infinity;
+        for (let bin = firstBin; bin < lastBin; bin += 1) {
+          if (Number.isFinite(fftValues[bin])) raw = Math.max(raw, fftValues[bin]);
+        }
+        const value = Number.isFinite(raw) ? Math.max(-125, Math.min(-20, raw)) : -125;
+        const color = Math.max(0, Math.min(255, Math.round((value + 125) / 105 * 255)));
+        row.data[x * 4] = palette[color * 4];
+        row.data[x * 4 + 1] = palette[color * 4 + 1];
+        row.data[x * 4 + 2] = palette[color * 4 + 2];
+        row.data[x * 4 + 3] = 255;
+      }
+      waterfallContext.putImageData(row, 0, nextWaterfallRow);
+      newestWaterfallRow = nextWaterfallRow;
+      nextWaterfallRow = (nextWaterfallRow - 1 + ringHeight) % ringHeight;
+    }
+    const context = prepared.context;
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    context.fillStyle = '#040b18';
+    context.fillRect(0, 0, waterfall.canvas.width, waterfall.canvas.height);
+    if (newestWaterfallRow < 0) return;
+    const firstRows = ringHeight - newestWaterfallRow;
+    const firstHeight = firstRows / ringHeight * waterfall.canvas.height;
+    context.drawImage(waterfallBuffer, 0, newestWaterfallRow, ringWidth, firstRows,
+      0, 0, waterfall.canvas.width, firstHeight);
+    if (newestWaterfallRow > 0) {
+      context.drawImage(waterfallBuffer, 0, 0, ringWidth, newestWaterfallRow,
+        0, firstHeight, waterfall.canvas.width, waterfall.canvas.height - firstHeight);
+    }
+  };
+
+  const draw = () => {
+    drawPending = false;
+    if (spectrumDirty) {
+      spectrumDirty = false;
+      drawSpectrum();
+    }
+    if (waterfallDirty) {
+      waterfallDirty = false;
+      drawWaterfall();
+    }
+  };
+
+  const scheduleDraw = (kind = 'both') => {
+    if (kind === 'spectrum' || kind === 'both') spectrumDirty = true;
+    if (kind === 'waterfall' || kind === 'both') waterfallDirty = true;
+    if (drawPending) return;
+    drawPending = true;
+    window.requestAnimationFrame(draw);
+  };
+
+  const resetPlots = (message) => {
+    generation = -1;
+    sequence = 0;
+    fftValues = new Float32Array(0);
+    frameMetadata = null;
+    peak = null;
+    latencyMs = null;
+    latencyClock.offsetMs = null;
+    frameTimes = [];
+    resetWaterfallBuffer(1, 1);
+    setOverlay(message);
+    setReadouts();
+    scheduleDraw();
+  };
+
+  function closeStream() {
+    streamEpoch += 1;
+    if (!stream) return;
+    stream.close();
+    liveConnections.delete(stream);
+    pageConnections.delete(stream);
+    stream = null;
+  }
+
+  const selectedTargetId = () => targetSelect.value;
+  const shouldRun = () => !disposed && !paused && !document.hidden && selectedTargetId();
+
+  const sync = () => {
+    if (!shouldRun()) {
+      closeStream();
+      if (disposed) return;
+      if (paused) setStatus('Paused');
+      else if (document.hidden) setStatus('Hidden');
+      else setStatus('Waiting');
+      return;
+    }
+    if (stream) return;
+    setStatus('Connecting');
+    setOverlay('Waiting for tuner data…');
+    const epoch = ++streamEpoch;
+    stream = binaryFrameConnection('/live/tuner-diagnostics', { target_id: selectedTargetId() }, {
+      onOpen: () => {
+        if (epoch === streamEpoch) setStatus('Connected', 'state-current');
+      },
+      onFrame: (frame) => {
+        if (epoch !== streamEpoch || frame.type === DIAGNOSTIC_FRAME_TYPES.HEARTBEAT) return;
+        if (frame.type === DIAGNOSTIC_FRAME_TYPES.STATE) {
+          const tunerState = diagnosticJsonPayload(frame);
+          if (generation >= 0 && generation !== frame.generation) resetPlots('Waiting for tuner data…');
+          generation = frame.generation;
+          sequence = 0;
+          const streamState = String(tunerState?.streamState ?? tunerState?.stream_state ?? tunerState?.state ??
+            (tunerState?.bound ? 'live' : 'waiting')).toLowerCase();
+          const live = streamState === 'live' || streamState === 'active';
+          const unavailable = streamState === 'unavailable' || streamState === 'closed';
+          frameMetadata = {
+            ...(frameMetadata || {}),
+            centerFrequencyHz: Number(tunerState?.centerFrequencyHz ?? tunerState?.center_frequency_hz) || 0,
+            sampleRateHz: Number(tunerState?.sampleRateHz ?? tunerState?.sample_rate_hz) || 0,
+            fftSize: Number(tunerState?.fftSize ?? tunerState?.fft_size) || 0
+          };
+          setOverlay(live ? '' : (tunerState?.reason || tunerState?.message || 'Waiting for tuner samples…'));
+          setStatus(live ? 'Live' : (unavailable ? 'Unavailable' : 'Waiting'),
+            live ? 'state-current' : 'state-stale');
+          setReadouts();
+          return;
+        }
+        if (frame.type !== DIAGNOSTIC_FRAME_TYPES.TUNER_FFT || frame.sequence <= sequence ||
+            (generation >= 0 && frame.generation !== generation)) return;
+        generation = frame.generation;
+        sequence = frame.sequence;
+        fftValues = diagnosticFloatPayload(frame);
+        frameMetadata = frame;
+        peak = null;
+        for (let index = 0; index < fftValues.length; index += 1) {
+          if (Number.isFinite(fftValues[index]) && (!Number.isFinite(peak) || fftValues[index] > peak)) {
+            peak = fftValues[index];
+          }
+        }
+        const now = performance.now();
+        frameTimes.push(now);
+        while (frameTimes.length > 2 && frameTimes[0] < now - 1000) frameTimes.shift();
+        latencyMs = diagnosticFrameLatency(frame, latencyClock);
+        setOverlay('');
+        setStatus('Live', 'state-current');
+        setReadouts();
+        scheduleDraw();
+      },
+      onError: (error) => {
+        if (epoch !== streamEpoch) return;
+        setStatus(error?.status === 429 ? 'Busy' : 'Reconnecting');
+        setOverlay(error?.status === 429 ? 'Tuner spectrum viewer capacity is currently in use.' :
+          'Connection interrupted. Reconnecting…');
+      }
+    });
+  };
+
+  targetSelect.addEventListener('change', () => {
+    closeStream();
+    resetPlots('Waiting for tuner data…');
+    sync();
+  });
+  pause.addEventListener('click', () => {
+    paused = !paused;
+    pause.textContent = paused ? 'Resume' : 'Pause';
+    pause.setAttribute('aria-pressed', String(paused));
+    sync();
+  });
+  const onVisibilityChange = () => sync();
+  const onResize = () => scheduleDraw();
+  document.addEventListener('visibilitychange', onVisibilityChange);
+  window.addEventListener('resize', onResize);
+  resetPlots('Loading tuners…');
+
+  api('/api/tuner-diagnostics/targets').then((response) => {
+    if (disposed || activeReadOnlyModal !== modal.state) return;
+    const targets = tunerDiagnosticTargets(response);
+    targetSelect.replaceChildren();
+    if (!targets.length) {
+      targetSelect.append(node('option', '', 'No tuners available'));
+      targetSelect.disabled = true;
+      pause.disabled = true;
+      setStatus('Unavailable');
+      resetPlots('No active tuner supports spectrum diagnostics.');
+      return;
+    }
+    targets.forEach((target) => {
+      const option = node('option', '', target.label);
+      option.value = target.id;
+      targetSelect.append(option);
+    });
+    targetSelect.disabled = false;
+    pause.disabled = false;
+    resetPlots('Waiting for tuner data…');
+    sync();
+  }).catch((error) => {
+    if (disposed || activeReadOnlyModal !== modal.state) return;
+    targetSelect.replaceChildren(node('option', '', 'Tuners unavailable'));
+    targetSelect.disabled = true;
+    pause.disabled = true;
+    setStatus('Unavailable');
+    resetPlots(error.message || 'Could not load tuner diagnostics.');
+  });
 }
 
 function liveEventsPanel(onCollapse) {
@@ -6688,7 +7339,13 @@ function liveSystemsSection(onSelectionChange) {
 async function renderLive() {
   const split = node('div', 'live-split');
   const eventsPanel = liveEventsPanel((collapsed) => split.classList.toggle('details-collapsed', collapsed));
-  split.append(liveSystemsSection(eventsPanel.select), eventsPanel.element);
+  const systems = liveSystemsSection(eventsPanel.select);
+  const spectrum = node('button', 'button secondary live-tuner-spectrum', 'Tuner Spectrum');
+  spectrum.id = 'open-tuner-spectrum';
+  spectrum.type = 'button';
+  spectrum.addEventListener('click', () => showTunerSpectrumModal());
+  systems.querySelector('.section-title')?.append(spectrum);
+  split.append(systems, eventsPanel.element);
   content.append(split);
 }
 

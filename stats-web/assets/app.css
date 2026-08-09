@@ -1661,6 +1661,89 @@ body[data-view="live"] .channel-diagnostic-readouts {
   font-variant-numeric: tabular-nums;
 }
 
+.live-tuner-spectrum {
+  min-height: 27px;
+  margin-left: auto;
+  padding: 3px 9px;
+}
+
+.tuner-spectrum-modal {
+  width: min(1500px, 98vw);
+  height: min(940px, calc(100dvh - 28px));
+  max-height: calc(100dvh - 28px);
+}
+
+.tuner-spectrum-modal .modal-content {
+  display: flex;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.tuner-spectrum-layout {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  flex: 1 1 auto;
+  grid-template-rows: auto minmax(170px, 0.38fr) minmax(240px, 0.62fr) auto;
+  gap: 8px;
+}
+
+.tuner-spectrum-toolbar {
+  min-width: 0;
+  display: flex;
+  align-items: end;
+  gap: 9px;
+}
+
+.tuner-spectrum-target {
+  min-width: 220px;
+  display: grid;
+  flex: 1 1 420px;
+  gap: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.tuner-spectrum-target select {
+  width: min(620px, 100%);
+  min-height: 34px;
+  padding: 5px 8px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line-dark);
+  border-radius: 3px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.tuner-spectrum-card {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+
+.tuner-spectrum-plot {
+  min-height: 0;
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  overflow: hidden;
+  background: #07111d;
+}
+
+.tuner-spectrum-readouts {
+  min-height: 46px;
+  flex-wrap: wrap;
+  row-gap: 6px;
+  overflow-x: hidden;
+}
+
 .live-details-pane[hidden] {
   display: none !important;
 }
@@ -3339,6 +3422,16 @@ th.center {
     overflow-y: auto;
   }
 
+  .tuner-spectrum-modal {
+    width: calc(100vw - 16px);
+    height: calc(100dvh - 16px);
+    max-height: calc(100dvh - 16px);
+  }
+
+  .tuner-spectrum-layout {
+    grid-template-rows: auto minmax(140px, 0.34fr) minmax(220px, 0.66fr) auto;
+  }
+
   .alias-editor-workspace {
     grid-template-columns: 1fr;
   }
@@ -3577,6 +3670,30 @@ th.center {
     border-radius: 0;
   }
 
+  .tuner-spectrum-modal {
+    width: 100vw;
+    height: 100dvh;
+    max-height: none;
+  }
+
+  .tuner-spectrum-toolbar {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+
+  .tuner-spectrum-target {
+    min-width: 0;
+    flex-basis: 100%;
+  }
+
+  .tuner-spectrum-target select {
+    width: 100%;
+  }
+
+  .tuner-spectrum-layout {
+    grid-template-rows: auto minmax(125px, 0.34fr) minmax(180px, 0.66fr) auto;
+  }
+
   .modal-content {
     padding: 8px;
   }
@@ -3645,6 +3762,17 @@ th.center {
     columns: 1;
   }
 }
+
+@media (max-height: 600px) {
+  .tuner-spectrum-modal .modal-content {
+    overflow: auto;
+  }
+
+  .tuner-spectrum-layout {
+    min-height: 520px;
+  }
+}
+
 .quality-good { color: #18864b; font-weight: 700; }
 .quality-warn { color: #b57900; font-weight: 700; }
 .quality-bad { color: #c23737; font-weight: 700; }

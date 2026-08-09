@@ -33,6 +33,7 @@ import io.github.dsheirer.preference.nowplaying.NowPlayingPreference;
 import io.github.dsheirer.preference.application.ApplicationPreference;
 import io.github.dsheirer.preference.application.WebCertificateMode;
 import io.github.dsheirer.sample.Listener;
+import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.stats.activity.P25ActivityCommitListener;
 import io.github.dsheirer.stats.activity.P25ActivityLogPath;
 import io.github.dsheirer.stats.activity.P25ActivityLogService;
@@ -88,13 +89,16 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
     private final StatsLiveService mLiveService;
     private final DecodeEventViewService mDecodeEventViewService;
     private final DecodeMessageViewService mDecodeMessageViewService;
+    private final DiagnosticFftScheduler mDiagnosticFftScheduler;
     private final ChannelDiagnosticService mChannelDiagnosticService;
+    private final TunerDiagnosticService mTunerDiagnosticService;
     private final StatsLiveEventHub mDecodeEventHub = new StatsLiveEventHub(32, 256);
     private final Object mDecodeEventSubscriptionLock = new Object();
     private final Listener<DecodeEventViewService.EventView> mDecodeEventViewListener =
         event -> mDecodeEventHub.publish("decode_event", event);
     private final StatsWebCallService mWebCallService = new StatsWebCallService();
     private final Semaphore mDecodeMessageClients = new Semaphore(16);
+    private final Semaphore mDiagnosticClients = new Semaphore(32);
     private final ChannelProcessingManager mChannelProcessingManager;
     private final P25ActivityLogService mActivityLogService;
     private final AliasAdministrationService mAliasAdministrationService;
@@ -138,6 +142,15 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
                                  AliasAdministrationService aliasAdministrationService,
                                  DecodeEventViewService decodeEventViewService)
     {
+        this(userPreferences, channelProcessingManager, activityLogService, aliasAdministrationService,
+            decodeEventViewService, null);
+    }
+
+    public StatsWebServerService(UserPreferences userPreferences, ChannelProcessingManager channelProcessingManager,
+                                 P25ActivityLogService activityLogService,
+                                 AliasAdministrationService aliasAdministrationService,
+                                 DecodeEventViewService decodeEventViewService, TunerManager tunerManager)
+    {
         mUserPreferences = userPreferences;
         mChannelProcessingManager = channelProcessingManager;
         mActivityLogService = activityLogService;
@@ -145,8 +158,11 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         mDecodeEventViewService = decodeEventViewService;
         mDecodeMessageViewService = channelProcessingManager != null ?
             new DecodeMessageViewService(channelProcessingManager) : null;
+        mDiagnosticFftScheduler = new DiagnosticFftScheduler();
         mChannelDiagnosticService = channelProcessingManager != null ?
-            new ChannelDiagnosticService(channelProcessingManager) : null;
+            new ChannelDiagnosticService(channelProcessingManager, mDiagnosticFftScheduler) : null;
+        mTunerDiagnosticService = tunerManager != null ?
+            new TunerDiagnosticService(tunerManager, mDiagnosticFftScheduler) : null;
         mDatabase = new StatsWebDatabase(userPreferences);
         mLiveService = new StatsLiveService(mDatabase, channelProcessingManager);
         mWebAccessDatabasePath = SdrTrunkDatabasePath.getDatabasePath(mUserPreferences);
@@ -613,11 +629,22 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             exchange -> handleJson(exchange, "/api/conventional/radios",
             () -> mDatabase.conventionalRadios(StatsRequest.from(exchange.getRequestURI()))));
         createProtectedContext(server, "/api/export.csv", WebCapability.CSV_EXPORT, this::handleCsvExport);
+        if(mTunerDiagnosticService != null)
+        {
+            createProtectedContext(server, "/api/tuner-diagnostics/targets", WebCapability.LIVE_VIEW,
+                exchange -> handleJson(exchange, "/api/tuner-diagnostics/targets",
+                    () -> Map.of("targets", mTunerDiagnosticService.targets())));
+        }
         createProtectedContext(server, "/live/systems", WebCapability.LIVE_VIEW, this::handleSystemsSse);
         createProtectedContext(server, "/live/events", WebCapability.LIVE_VIEW, this::handleDecodeEventsSse);
         createProtectedContext(server, "/live/messages", WebCapability.LIVE_VIEW, this::handleDecodeMessagesSse);
         createProtectedContext(server, "/live/channel-diagnostics", WebCapability.LIVE_VIEW,
-            this::handleChannelDiagnosticsSse);
+            this::handleChannelDiagnostics);
+        if(mTunerDiagnosticService != null)
+        {
+            createProtectedContext(server, "/live/tuner-diagnostics", WebCapability.LIVE_VIEW,
+                this::handleTunerDiagnostics);
+        }
         createProtectedContext(server, "/live/sites", WebCapability.LIVE_VIEW, this::handleSitesSse);
         createProtectedContext(server, "/live/web-calls", WebCapability.WEB_AUDIO_LISTEN, this::handleWebCallsSse);
         createProtectedContext(server, "/live/activity", WebCapability.SYSTEMS_VIEW, this::handleActivitySse);
@@ -690,6 +717,11 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         if(mChannelDiagnosticService != null)
         {
             mChannelDiagnosticService.closeActiveSession();
+        }
+
+        if(mTunerDiagnosticService != null)
+        {
+            mTunerDiagnosticService.closeActiveSessions();
         }
 
         mLiveService.stop();
@@ -1219,7 +1251,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         }
     }
 
-    private void handleChannelDiagnosticsSse(HttpExchange exchange) throws IOException
+    private void handleChannelDiagnostics(HttpExchange exchange) throws IOException
     {
         if(!requireExactTextPath(exchange, "/live/channel-diagnostics") || !requireMethod(exchange, "GET"))
         {
@@ -1233,12 +1265,10 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         }
 
         ChannelDiagnosticService.Scope scope;
-        UUID clientId;
 
         try
         {
             scope = channelDiagnosticScope(exchange.getRequestURI());
-            clientId = channelDiagnosticClientId(exchange.getRequestURI());
         }
         catch(StatsApiException exception)
         {
@@ -1246,14 +1276,21 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             return;
         }
 
+        if(!mDiagnosticClients.tryAcquire())
+        {
+            sendText(exchange, 429, "Too many diagnostic viewers");
+            return;
+        }
+
         ChannelDiagnosticService.OpenResult result;
 
         try
         {
-            result = mChannelDiagnosticService.tryOpen(scope, clientId);
+            result = mChannelDiagnosticService.tryOpen(scope);
         }
         catch(RuntimeException exception)
         {
+            mDiagnosticClients.release();
             mLog.warn("Unable to start selected-channel diagnostics", exception);
             sendText(exchange, 503, "Channel diagnostics could not be started");
             return;
@@ -1261,11 +1298,13 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
 
         if(result.status() == ChannelDiagnosticService.OpenStatus.BUSY)
         {
-            sendText(exchange, 429, "Channel diagnostics are already open in another browser");
+            mDiagnosticClients.release();
+            sendText(exchange, 429, "Too many diagnostic viewers");
             return;
         }
         else if(result.status() != ChannelDiagnosticService.OpenStatus.OPEN)
         {
+            mDiagnosticClients.release();
             sendText(exchange, 503, "Channel diagnostics are unavailable");
             return;
         }
@@ -1282,8 +1321,8 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             }
 
             Headers headers = exchange.getResponseHeaders();
-            headers.set("Content-Type", "text/event-stream; charset=utf-8");
-            headers.set("Cache-Control", "no-store");
+            headers.set("Content-Type", "application/vnd.sdrtrunk.diagnostics+binary");
+            headers.set("Cache-Control", "no-store, no-transform");
             headers.set("Connection", "keep-alive");
             headers.set("X-Accel-Buffering", "no");
             exchange.sendResponseHeaders(200, 0);
@@ -1300,12 +1339,12 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
 
                     if(state.revision() != stateRevision)
                     {
-                        writeSseEvent(outputStream, "diagnostic_state", state);
+                        writeDiagnosticState(outputStream, state.generation(), state.revision(), state);
                         stateRevision = state.revision();
                         lastHeartbeat = System.nanoTime();
                     }
 
-                    ChannelDiagnosticService.Frame frame = session.poll(Duration.ofSeconds(1));
+                    DiagnosticStreamFrame frame = session.poll(Duration.ofMillis(250));
 
                     if(!accessController.isRequestStillAuthorized(exchange))
                     {
@@ -1314,12 +1353,12 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
 
                     if(frame != null)
                     {
-                        writeSseEvent(outputStream, frame.type(), frame);
+                        writeDiagnosticFrame(outputStream, frame);
                         lastHeartbeat = System.nanoTime();
                     }
-                    else if(System.nanoTime() - lastHeartbeat >= TimeUnit.SECONDS.toNanos(2))
+                    else if(System.nanoTime() - lastHeartbeat >= TimeUnit.SECONDS.toNanos(1))
                     {
-                        writeSseHeartbeat(outputStream);
+                        writeDiagnosticFrame(outputStream, DiagnosticStreamFrame.heartbeat());
                         lastHeartbeat = System.nanoTime();
                     }
                 }
@@ -1332,6 +1371,131 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         catch(IOException exception)
         {
             // Client disconnected.
+        }
+        finally
+        {
+            mDiagnosticClients.release();
+        }
+    }
+
+    private void handleTunerDiagnostics(HttpExchange exchange) throws IOException
+    {
+        if(!requireExactTextPath(exchange, "/live/tuner-diagnostics") || !requireMethod(exchange, "GET"))
+        {
+            return;
+        }
+
+        if(mTunerDiagnosticService == null)
+        {
+            sendText(exchange, 503, "Tuner diagnostics are unavailable");
+            return;
+        }
+
+        String targetId;
+
+        try
+        {
+            targetId = StatsRequest.from(exchange.getRequestURI()).requiredText("target_id");
+        }
+        catch(StatsApiException exception)
+        {
+            sendText(exchange, exception.status(), exception.getMessage());
+            return;
+        }
+
+        if(!mDiagnosticClients.tryAcquire())
+        {
+            sendText(exchange, 429, "Too many diagnostic viewers");
+            return;
+        }
+
+        TunerDiagnosticService.OpenResult result;
+
+        try
+        {
+            result = mTunerDiagnosticService.tryOpen(targetId);
+        }
+        catch(RuntimeException exception)
+        {
+            mDiagnosticClients.release();
+            mLog.warn("Unable to start tuner diagnostics", exception);
+            sendText(exchange, 503, "Tuner diagnostics could not be started");
+            return;
+        }
+
+        if(result.status() != TunerDiagnosticService.OpenStatus.OPEN)
+        {
+            mDiagnosticClients.release();
+            int status = switch(result.status())
+            {
+                case BUSY -> 429;
+                case NOT_FOUND -> 404;
+                default -> 503;
+            };
+            sendText(exchange, status, status == 429 ? "Too many tuner diagnostic viewers" :
+                (status == 404 ? "Tuner diagnostic target was not found" : "Tuner diagnostics are unavailable"));
+            return;
+        }
+
+        TunerDiagnosticService.Session session = result.session();
+        WebAccessHttpController accessController = mWebAccessHttpController;
+
+        try(session)
+        {
+            if(accessController == null || !accessController.isRequestStillAuthorized(exchange))
+            {
+                sendText(exchange, 403, "Access changed before the live stream started");
+                return;
+            }
+
+            Headers headers = exchange.getResponseHeaders();
+            headers.set("Content-Type", "application/vnd.sdrtrunk.diagnostics+binary");
+            headers.set("Cache-Control", "no-store, no-transform");
+            headers.set("Connection", "keep-alive");
+            headers.set("X-Accel-Buffering", "no");
+            exchange.sendResponseHeaders(200, 0);
+            HttpServer server = exchange.getHttpContext().getServer();
+            TunerDiagnosticService.State state = session.state();
+            long lastHeartbeat = System.nanoTime();
+
+            try(OutputStream outputStream = exchange.getResponseBody())
+            {
+                writeDiagnosticState(outputStream, state.generation(), state.revision(), state);
+
+                while(mListener != null && mListener.server() == server && !session.isClosed() &&
+                    accessController.isRequestStillAuthorized(exchange))
+                {
+                    DiagnosticStreamFrame frame = session.poll(Duration.ofMillis(250));
+
+                    if(!accessController.isRequestStillAuthorized(exchange))
+                    {
+                        break;
+                    }
+
+                    if(frame != null)
+                    {
+                        writeDiagnosticFrame(outputStream, frame);
+                        lastHeartbeat = System.nanoTime();
+                    }
+                    else if(System.nanoTime() - lastHeartbeat >= TimeUnit.SECONDS.toNanos(1))
+                    {
+                        writeDiagnosticFrame(outputStream, DiagnosticStreamFrame.heartbeat());
+                        lastHeartbeat = System.nanoTime();
+                    }
+                }
+            }
+        }
+        catch(InterruptedException exception)
+        {
+            Thread.currentThread().interrupt();
+        }
+        catch(IOException exception)
+        {
+            // Client disconnected.
+        }
+        finally
+        {
+            mDiagnosticClients.release();
         }
     }
 
@@ -1346,18 +1510,6 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
 
         return new ChannelDiagnosticService.Scope(selected.configurationId(), selected.frequencyHz(),
             selected.timeslot());
-    }
-
-    static UUID channelDiagnosticClientId(URI uri)
-    {
-        try
-        {
-            return UUID.fromString(StatsRequest.from(uri).requiredText("client_id"));
-        }
-        catch(IllegalArgumentException exception)
-        {
-            throw new StatsApiException(400, "client_id is invalid");
-        }
     }
 
     private void handleSitesSse(HttpExchange exchange) throws IOException
@@ -1543,6 +1695,20 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
     {
         outputStream.write((": heartbeat " + System.currentTimeMillis() + "\n\n")
             .getBytes(StandardCharsets.UTF_8));
+        outputStream.flush();
+    }
+
+    private static void writeDiagnosticState(OutputStream outputStream, long generation, long revision, Object state)
+        throws IOException
+    {
+        writeDiagnosticFrame(outputStream, DiagnosticStreamFrame.jsonState(generation, revision,
+            OBJECT_MAPPER.writeValueAsBytes(state)));
+    }
+
+    private static void writeDiagnosticFrame(OutputStream outputStream, DiagnosticStreamFrame frame)
+        throws IOException
+    {
+        outputStream.write(frame.encoded());
         outputStream.flush();
     }
 
@@ -1815,6 +1981,11 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         {
             mChannelDiagnosticService.close();
         }
+        if(mTunerDiagnosticService != null)
+        {
+            mTunerDiagnosticService.close();
+        }
+        mDiagnosticFftScheduler.close();
         mWebCallService.close();
     }
 
