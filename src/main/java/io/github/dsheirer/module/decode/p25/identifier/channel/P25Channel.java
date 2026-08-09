@@ -117,7 +117,7 @@ public class P25Channel implements IChannelDescriptor
     @Override
     public int[] getFrequencyBandIdentifiers()
     {
-        if(getDownlinkBandIdentifier() != getUplinkBandIdentifier())
+        if(hasUplinkChannel() && getDownlinkBandIdentifier() != getUplinkBandIdentifier())
         {
             int[] identifiers = new int[2];
             identifiers[0] = getDownlinkBandIdentifier();
