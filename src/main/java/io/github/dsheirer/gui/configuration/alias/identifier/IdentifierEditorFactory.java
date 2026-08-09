@@ -41,8 +41,6 @@ public class IdentifierEditorFactory
                 return new EsnEditor();
             case LOJACK:
                 return new LojackEditor();
-            case P25_FULLY_QUALIFIED_RADIO_ID:
-                return new P25FullyQualifiedRadioIdEditor(userPreferences);
             case RADIO_ID:
                 return new RadioIdEditor(userPreferences);
             case RADIO_ID_RANGE:

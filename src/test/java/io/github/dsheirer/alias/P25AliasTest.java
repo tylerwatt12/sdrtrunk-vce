@@ -19,7 +19,6 @@
 
 package io.github.dsheirer.alias;
 
-import io.github.dsheirer.alias.id.radio.P25FullyQualifiedRadio;
 import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.alias.id.radio.RadioRange;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
@@ -35,40 +34,9 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class P25AliasTest
 {
-    @Test
-    void fullyQualifiedRadioValidatesTheCompleteIdentity()
-    {
-        assertTrue(new P25FullyQualifiedRadio(0xBEE00, 0x348, 0).isValid());
-        assertTrue(new P25FullyQualifiedRadio(0xBEE00, 0x348, 0xFFFFFF).isValid());
-        assertFalse(new P25FullyQualifiedRadio(-1, 0x348, 1).isValid());
-        assertFalse(new P25FullyQualifiedRadio(0x100000, 0x348, 1).isValid());
-        assertFalse(new P25FullyQualifiedRadio(0xBEE00, 0x1000, 1).isValid());
-        assertFalse(new P25FullyQualifiedRadio(0xBEE00, 0x348, -1).isValid());
-        P25FullyQualifiedRadio wrongProtocol = new P25FullyQualifiedRadio(0xBEE00, 0x348, 1);
-        wrongProtocol.setProtocol(Protocol.DMR);
-        assertFalse(wrongProtocol.isValid());
-    }
-
-    @Test
-    void fullyQualifiedRadioIdentitiesCompareTheCompleteTuple()
-    {
-        P25FullyQualifiedRadio firstRadio = new P25FullyQualifiedRadio(1, 2, 300);
-        P25FullyQualifiedRadio otherRadio = new P25FullyQualifiedRadio(3, 4, 300);
-        Radio localRadio = new Radio(Protocol.APCO25, 300);
-        assertFalse(firstRadio.matches(otherRadio));
-        assertFalse(firstRadio.matches(localRadio));
-        assertFalse(localRadio.matches(firstRadio));
-        assertNotEquals(firstRadio, otherRadio);
-        assertNotEquals(firstRadio, localRadio);
-        assertNotEquals(0, firstRadio.compareTo(otherRadio));
-    }
-
     @Test
     void aliasP25Talkgroup()
     {
@@ -189,45 +157,10 @@ public class P25AliasTest
     }
 
     /**
-     * Tests that a fully qualified P25 radio aliases correctly when there is a matching fully qualified radio
-     * alias ID along with a simple radio that has the same radio value, that is shadowing the fully qualified
-     * version.
+     * Decoded fully-qualified P25 radios match a simple radio alias by their local radio value.
      */
     @Test
-    void aliasP25FullyQualifiedRadio()
-    {
-        int wacn = 100;
-        int system = 200;
-        int originalRadio = 300;
-        int aliasRadio = 1;
-        String correctAliasName = "Alias Fully Qualified Radio 1";
-
-        AliasList aliasList = p25AliasList();
-
-        Alias aliasRadio1 = new Alias();
-        aliasRadio1.setName("Alias Radio 1");
-        aliasRadio1.setMatchIdentifier(new Radio(Protocol.APCO25, aliasRadio)); //Shadows the fully qualified variant
-        aliasList.addAlias(aliasRadio1);
-
-        Alias aliasFullyQualifiedRadio1 = new Alias();
-        aliasFullyQualifiedRadio1.setName(correctAliasName);
-        aliasFullyQualifiedRadio1.setMatchIdentifier(new P25FullyQualifiedRadio(wacn, system, originalRadio));
-        aliasList.addAlias(aliasFullyQualifiedRadio1);
-
-        //Identifier transmitted over the air that we want to alias
-        APCO25FullyQualifiedRadioIdentifier p25FQR1 = APCO25FullyQualifiedRadioIdentifier.createFrom(aliasRadio, wacn, system, originalRadio);
-
-        List<Alias> aliases = aliasList.getAliases(p25FQR1);
-        assertEquals(1, aliases.size(), "Expected 1 matching alias");
-        assertEquals(correctAliasName, aliases.getFirst().getName(), "Unexpected alias name");
-    }
-
-    /**
-     * Tests that a fully qualified P25 radio aliases correctly to a simple radio alias for the local radio
-     * value, when the user has not explicitly added a fully qualified radio alias ID.
-     */
-    @Test
-    void aliasP25FullyQualifiedRadioToBasicRadioAlias()
+    void decodedFullyQualifiedRadioUsesLocalRadioAlias()
     {
         int wacn = 100;
         int system = 200;
@@ -243,18 +176,19 @@ public class P25AliasTest
         aliasList.addAlias(aliasRadio1);
 
         //Identifier transmitted over the air that we want to alias
-        APCO25FullyQualifiedRadioIdentifier p25FQTG1 = APCO25FullyQualifiedRadioIdentifier.createFrom(aliasRadio, wacn, system, originalRadio);
+        APCO25FullyQualifiedRadioIdentifier decodedRadio =
+            APCO25FullyQualifiedRadioIdentifier.createFrom(aliasRadio, wacn, system, originalRadio);
 
-        List<Alias> aliases = aliasList.getAliases(p25FQTG1);
-        assertEquals(0, aliases.size(), "Expected 0 matching aliases");
+        List<Alias> aliases = aliasList.getAliases(decodedRadio);
+        assertEquals(1, aliases.size(), "Expected 1 matching alias");
+        assertEquals(correctAliasName, aliases.getFirst().getName(), "Unexpected alias name");
     }
 
     /**
-     * Tests that a fully qualified P25 radio aliases correctly to a radio range alias for the local radio
-     * value, when the user has not explicitly added a fully qualified radio alias ID.
+     * Decoded fully-qualified P25 radios fall back to an ordinary radio range by their local radio value.
      */
     @Test
-    void aliasP25FullyQualifiedRadioToRadioRangeAlias()
+    void decodedFullyQualifiedRadioUsesLocalRadioRangeAlias()
     {
         int wacn = 100;
         int system = 200;
@@ -266,14 +200,16 @@ public class P25AliasTest
 
         Alias aliasTalkgroup1 = new Alias();
         aliasTalkgroup1.setName(correctAliasName);
-        aliasTalkgroup1.setMatchIdentifier(new RadioRange(Protocol.APCO25, 1, 0xFFFFFF));
+        aliasTalkgroup1.setMatchIdentifier(new RadioRange(Protocol.APCO25, 1, 10));
         aliasList.addAlias(aliasTalkgroup1);
 
         //Identifier transmitted over the air that we want to alias
-        APCO25FullyQualifiedRadioIdentifier p25FQTG1 = APCO25FullyQualifiedRadioIdentifier.createFrom(aliasRadio, wacn, system, originalRadio);
+        APCO25FullyQualifiedRadioIdentifier decodedRadio =
+            APCO25FullyQualifiedRadioIdentifier.createFrom(aliasRadio, wacn, system, originalRadio);
 
-        List<Alias> aliases = aliasList.getAliases(p25FQTG1);
-        assertEquals(0, aliases.size(), "Expected 0 matching aliases");
+        List<Alias> aliases = aliasList.getAliases(decodedRadio);
+        assertEquals(1, aliases.size(), "Expected 1 matching alias");
+        assertEquals(correctAliasName, aliases.getFirst().getName(), "Unexpected alias name");
     }
 
     private static AliasList p25AliasList()

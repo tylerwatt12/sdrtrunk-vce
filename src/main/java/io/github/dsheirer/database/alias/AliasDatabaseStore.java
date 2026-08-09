@@ -22,7 +22,6 @@ import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.alias.id.dcs.Dcs;
 import io.github.dsheirer.alias.id.esn.Esn;
 import io.github.dsheirer.alias.id.priority.Priority;
-import io.github.dsheirer.alias.id.radio.P25FullyQualifiedRadio;
 import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.alias.id.radio.RadioRange;
 import io.github.dsheirer.alias.id.status.UnitStatusID;
@@ -207,8 +206,8 @@ public class AliasDatabaseStore
                    alias.group_name, alias.color, alias.icon_name, alias.stream_as_talkgroup,
                    alias.record_enabled, alias.priority,
                    alias.matcher_type, alias.protocol, alias.value,
-                   alias.min_value, alias.max_value, alias.wacn, alias.p25_system_id,
-                   alias.text_value, alias.numeric_value, alias.tone_sequence
+                   alias.min_value, alias.max_value, alias.text_value,
+                   alias.numeric_value, alias.tone_sequence
             FROM alias
             ORDER BY alias.id
             """);
@@ -533,9 +532,9 @@ public class AliasDatabaseStore
                     INSERT INTO alias (
                         alias_list_id, name, description, group_name, color, icon_name,
                         stream_as_talkgroup, record_enabled, priority, matcher_type,
-                        protocol, value, min_value, max_value, wacn, p25_system_id, text_value,
-                        numeric_value, tone_sequence
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        protocol, value, min_value, max_value, text_value, numeric_value,
+                        tone_sequence
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, Statement.RETURN_GENERATED_KEYS))
                 {
                     bindAlias(statement, alias, 1);
@@ -558,9 +557,9 @@ public class AliasDatabaseStore
                     INSERT INTO alias (
                         id, alias_list_id, name, description, group_name, color, icon_name,
                         stream_as_talkgroup, record_enabled, priority, matcher_type,
-                        protocol, value, min_value, max_value, wacn, p25_system_id, text_value,
-                        numeric_value, tone_sequence
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        protocol, value, min_value, max_value, text_value, numeric_value,
+                        tone_sequence
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """))
                 {
                     statement.setLong(1, aliasId);
@@ -596,11 +595,9 @@ public class AliasDatabaseStore
         setInteger(statement, offset + 11, matcher.value());
         setInteger(statement, offset + 12, matcher.minimum());
         setInteger(statement, offset + 13, matcher.maximum());
-        setInteger(statement, offset + 14, matcher.wacn());
-        setInteger(statement, offset + 15, matcher.p25SystemId());
-        statement.setString(offset + 16, matcher.textValue());
-        setInteger(statement, offset + 17, matcher.numericValue());
-        statement.setString(offset + 18, matcher.toneSequence());
+        statement.setString(offset + 14, matcher.textValue());
+        setInteger(statement, offset + 15, matcher.numericValue());
+        statement.setString(offset + 16, matcher.toneSequence());
     }
 
     private MatcherData matcherData(Alias alias) throws SQLException
@@ -615,8 +612,6 @@ public class AliasDatabaseStore
         Integer value = null;
         Integer minimum = null;
         Integer maximum = null;
-        Integer wacn = null;
-        Integer p25SystemId = null;
         String textValue = null;
         Integer numericValue = null;
         String toneSequence = null;
@@ -645,13 +640,6 @@ public class AliasDatabaseStore
                 minimum = range.getMinRadio();
                 maximum = range.getMaxRadio();
             }
-            case P25_FULLY_QUALIFIED_RADIO_ID -> {
-                P25FullyQualifiedRadio radio = (P25FullyQualifiedRadio)matcher;
-                protocol = protocol(radio.getProtocol());
-                value = radio.getValue();
-                wacn = radio.getWacn();
-                p25SystemId = radio.getSystem();
-            }
             case STATUS -> numericValue = ((UserStatusID)matcher).getStatus();
             case UNIT_STATUS -> numericValue = ((UnitStatusID)matcher).getStatus();
             case TONES -> toneSequence = serializeToneSequence(((TonesID)matcher).getToneSequence());
@@ -663,8 +651,8 @@ public class AliasDatabaseStore
             default -> throw new SQLException("Unsupported alias matcher type [" + matcher.getType() + "]");
         }
 
-        return new MatcherData(matcher.getType().name(), protocol, value, minimum, maximum, wacn,
-            p25SystemId, textValue, numericValue, toneSequence);
+        return new MatcherData(matcher.getType().name(), protocol, value, minimum, maximum,
+            textValue, numericValue, toneSequence);
     }
 
     private AliasID toMatcher(ResultSet resultSet) throws SQLException
@@ -680,8 +668,6 @@ public class AliasDatabaseStore
         Integer value = getInteger(resultSet, "value");
         Integer minimum = getInteger(resultSet, "min_value");
         Integer maximum = getInteger(resultSet, "max_value");
-        Integer wacn = getInteger(resultSet, "wacn");
-        Integer p25SystemId = getInteger(resultSet, "p25_system_id");
         Integer numericValue = getInteger(resultSet, "numeric_value");
         String textValue = resultSet.getString("text_value");
         String toneSequence = resultSet.getString("tone_sequence");
@@ -691,63 +677,47 @@ public class AliasDatabaseStore
         AliasID matcher = switch(type)
         {
             case TALKGROUP -> {
-                requireNullPayload(type, minimum, maximum, wacn, p25SystemId, textValue,
-                    numericValue, toneSequence);
+                requireNullPayload(type, minimum, maximum, textValue, numericValue, toneSequence);
                 yield new Talkgroup(protocol, requireInteger(value, "alias.value", type));
             }
             case TALKGROUP_RANGE -> {
-                requireNullPayload(type, value, wacn, p25SystemId, textValue, numericValue,
-                    toneSequence);
+                requireNullPayload(type, value, textValue, numericValue, toneSequence);
                 yield new TalkgroupRange(protocol, requireInteger(minimum, "alias.min_value", type),
                     requireInteger(maximum, "alias.max_value", type));
             }
             case RADIO_ID -> {
-                requireNullPayload(type, minimum, maximum, wacn, p25SystemId, textValue,
-                    numericValue, toneSequence);
+                requireNullPayload(type, minimum, maximum, textValue, numericValue, toneSequence);
                 yield new Radio(protocol, requireInteger(value, "alias.value", type));
             }
             case RADIO_ID_RANGE -> {
-                requireNullPayload(type, value, wacn, p25SystemId, textValue, numericValue,
-                    toneSequence);
+                requireNullPayload(type, value, textValue, numericValue, toneSequence);
                 yield new RadioRange(protocol, requireInteger(minimum, "alias.min_value", type),
                     requireInteger(maximum, "alias.max_value", type));
             }
-            case P25_FULLY_QUALIFIED_RADIO_ID -> {
-                requireP25Protocol(protocol, type);
-                requireNullPayload(type, minimum, maximum, textValue, numericValue, toneSequence);
-                yield new P25FullyQualifiedRadio(requireInteger(wacn, "alias.wacn", type),
-                    requireInteger(p25SystemId, "alias.p25_system_id", type),
-                    requireInteger(value, "alias.value", type));
-            }
             case STATUS -> {
-                requireNullPayload(type, protocol, value, minimum, maximum, wacn, p25SystemId, textValue,
-                    toneSequence);
+                requireNullPayload(type, protocol, value, minimum, maximum, textValue, toneSequence);
                 UserStatusID status = new UserStatusID();
                 status.setStatus(requireInteger(numericValue, "alias.numeric_value", type));
                 yield status;
             }
             case UNIT_STATUS -> {
-                requireNullPayload(type, protocol, value, minimum, maximum, wacn, p25SystemId, textValue,
-                    toneSequence);
+                requireNullPayload(type, protocol, value, minimum, maximum, textValue, toneSequence);
                 UnitStatusID status = new UnitStatusID();
                 status.setStatus(requireInteger(numericValue, "alias.numeric_value", type));
                 yield status;
             }
             case TONES -> {
-                requireNullPayload(type, protocol, value, minimum, maximum, wacn, p25SystemId, textValue,
-                    numericValue);
+                requireNullPayload(type, protocol, value, minimum, maximum, textValue, numericValue);
                 yield new TonesID(parseToneSequence(toneSequence));
             }
             case DCS -> {
-                requireNullPayload(type, protocol, value, minimum, maximum, wacn, p25SystemId,
-                    numericValue, toneSequence);
+                requireNullPayload(type, protocol, value, minimum, maximum, numericValue, toneSequence);
                 Dcs dcs = new Dcs();
                 dcs.setDCSCode(parseOptionalEnum(DCSCode.class, textValue, "alias.text_value"));
                 yield dcs;
             }
             case ESN -> {
-                requireNullPayload(type, protocol, value, minimum, maximum, wacn, p25SystemId,
-                    numericValue, toneSequence);
+                requireNullPayload(type, protocol, value, minimum, maximum, numericValue, toneSequence);
                 Esn esn = new Esn();
                 esn.setEsn(textValue);
                 yield esn;
@@ -896,14 +866,6 @@ public class AliasDatabaseStore
         }
     }
 
-    private static void requireP25Protocol(Protocol protocol, AliasIDType type) throws SQLException
-    {
-        if(protocol != Protocol.APCO25)
-        {
-            throw new SQLException("Alias matcher type [" + type + "] requires protocol APCO25");
-        }
-    }
-
     private static Integer getInteger(ResultSet resultSet, String column) throws SQLException
     {
         int value = resultSet.getInt(column);
@@ -969,8 +931,7 @@ public class AliasDatabaseStore
     }
 
     private record MatcherData(String type, String protocol, Integer value, Integer minimum,
-                               Integer maximum, Integer wacn, Integer p25SystemId, String textValue,
-                               Integer numericValue, String toneSequence)
+                               Integer maximum, String textValue, Integer numericValue, String toneSequence)
     {
     }
 }

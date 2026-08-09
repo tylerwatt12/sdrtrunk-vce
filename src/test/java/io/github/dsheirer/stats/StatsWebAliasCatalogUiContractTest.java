@@ -95,21 +95,17 @@ class StatsWebAliasCatalogUiContractTest
         {
             assertTrue(tabs.contains("'" + label + "'"), () -> "Missing modal tab " + label);
         }
-        for(String field: new String[]{"value", "minimum", "maximum", "wacn", "system", "status", "code",
-            "esn", "tones"})
+        for(String field: new String[]{"value", "minimum", "maximum", "status", "code", "esn", "tones"})
         {
-            assertTrue(fields.contains("field === '" + field + "'") ||
-                fields.contains("['wacn', 'system'].includes(field)"), () -> "Missing matcher field " + field);
+            assertTrue(fields.contains("field === '" + field + "'"), () -> "Missing matcher field " + field);
         }
         assertTrue(fields.contains("duration.min = '1'"));
         assertTrue(fields.contains("duration.max = '50'"));
-        assertTrue(payload.contains("aliasHexNumericValue"));
         assertTrue(source.contains("value: aliasMatcherKey(entry), label: entry.label"));
         assertTrue(source.contains("source.matcher?.type, source.matcher?.protocol"));
         assertTrue(payload.contains("selector.dataset.originalProtocol"));
         assertTrue(editorPayload.contains("descriptor.minimum"));
         assertTrue(editorPayload.contains("descriptor.maximum"));
-        assertTrue(source.contains("aliasHexValue(matcher?.[field])"));
         assertTrue(source.contains("options.dcsCodes?.[0] || 'N023'"));
         assertTrue(source.contains("Missing: ${source.iconName}"));
         assertTrue(source.contains("Missing: ${streamName}"));

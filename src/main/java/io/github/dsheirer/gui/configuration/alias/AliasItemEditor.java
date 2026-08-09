@@ -29,7 +29,6 @@ import io.github.dsheirer.alias.AliasMatchRegistry;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.AliasIDType;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
-import io.github.dsheirer.alias.id.radio.P25FullyQualifiedRadio;
 import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.alias.id.radio.RadioFormatter;
 import io.github.dsheirer.alias.id.radio.RadioRange;
@@ -1133,15 +1132,6 @@ public class AliasItemEditor extends Editor<Alias>
                     {
                         sb.append(" - Use Unmatched Talkgroups instead");
                     }
-                    setText(sb.toString());
-                }
-                else if(item instanceof P25FullyQualifiedRadio fqr)
-                {
-                    StringBuilder sb = new StringBuilder();
-                    sb.append("APCO-25 Fully Qualified Radio ID:").append(fqr.getWacn());
-                    sb.append(".").append(fqr.getSystem());
-                    sb.append(".").append(fqr.getValue());
-                    appendValidationState(sb, fqr.overlapProperty().get(), fqr.isValid());
                     setText(sb.toString());
                 }
                 else if(item instanceof Radio)

@@ -6,7 +6,6 @@
 package io.github.dsheirer.stats;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
@@ -41,16 +40,12 @@ class StatsAliasResolverTest
                 """);
             statement.executeUpdate("""
                 INSERT INTO alias (
-                    id, alias_list_id, name, matcher_type, protocol, value, min_value, max_value,
-                    wacn, p25_system_id
+                    id, alias_list_id, name, matcher_type, protocol, value, min_value, max_value
                 ) VALUES
-                    (1, 1, 'Selected Range', 'TALKGROUP_RANGE', 'APCO25', NULL, 1, 1000,
-                        NULL, NULL),
-                    (2, 1, 'Selected Exact', 'TALKGROUP', 'APCO25', 1700,
-                        NULL, NULL, NULL, NULL),
-                    (3, 2, 'Other Exact', 'TALKGROUP', 'APCO25', 800, NULL, NULL, NULL, NULL),
-                    (4, 1, 'Selected Narrow Range', 'TALKGROUP_RANGE', 'APCO25', NULL, 500, 900,
-                        NULL, NULL)
+                    (1, 1, 'Selected Range', 'TALKGROUP_RANGE', 'APCO25', NULL, 1, 1000),
+                    (2, 1, 'Selected Exact', 'TALKGROUP', 'APCO25', 1700, NULL, NULL),
+                    (3, 2, 'Other Exact', 'TALKGROUP', 'APCO25', 800, NULL, NULL),
+                    (4, 1, 'Selected Narrow Range', 'TALKGROUP_RANGE', 'APCO25', NULL, 500, 900)
                 """);
 
             StatsAliasResolver resolver = new StatsAliasResolver();
@@ -134,26 +129,26 @@ class StatsAliasResolverTest
             statement.executeUpdate("""
                 INSERT INTO alias (
                     id, alias_list_id, name, description, group_name, matcher_type, protocol,
-                    value, min_value, max_value, wacn, p25_system_id
+                    value, min_value, max_value
                 ) VALUES
                     (1, 1, 'NXDN Dispatch', 'County dispatch operations', 'Dispatch',
-                        'TALKGROUP', 'NXDN', 91, NULL, NULL, NULL, NULL),
+                        'TALKGROUP', 'NXDN', 91, NULL, NULL),
                     (2, 1, 'NXDN Unit', 'County radio unit', 'Units',
-                        'RADIO_ID', 'NXDN', 123, NULL, NULL, NULL, NULL),
+                        'RADIO_ID', 'NXDN', 123, NULL, NULL),
                     (3, 2, 'Wrong NXDN Dispatch', 'Other county dispatch', 'Other',
-                        'TALKGROUP', 'NXDN', 91, NULL, NULL, NULL, NULL),
+                        'TALKGROUP', 'NXDN', 91, NULL, NULL),
                     (4, 3, 'P25 Local', 'Local conventional dispatch', 'Local',
-                        'TALKGROUP', 'APCO25', 101, NULL, NULL, NULL, NULL),
+                        'TALKGROUP', 'APCO25', 101, NULL, NULL),
                     (5, 3, 'P25 Unit', 'Local conventional unit', 'Units',
-                        'RADIO_ID', 'APCO25', 456, NULL, NULL, NULL, NULL),
+                        'RADIO_ID', 'APCO25', 456, NULL, NULL),
                     (6, 3, 'P25 Secondary', 'Secondary dispatch', 'Dispatch',
-                        'TALKGROUP', 'APCO25', 102, NULL, NULL, NULL, NULL),
+                        'TALKGROUP', 'APCO25', 102, NULL, NULL),
                     (7, 1, 'NXDN Range', 'Range fallback description', 'Range',
-                        'TALKGROUP_RANGE', 'NXDN', NULL, 1, 200, NULL, NULL),
+                        'TALKGROUP_RANGE', 'NXDN', NULL, 1, 200),
                     (8, 4, 'DMR Dispatch', 'DMR county dispatch', 'Dispatch',
-                        'TALKGROUP', 'DMR', 301, NULL, NULL, NULL, NULL),
+                        'TALKGROUP', 'DMR', 301, NULL, NULL),
                     (9, 4, 'DMR Unit', 'DMR county unit', 'Units',
-                        'RADIO_ID', 'DMR', 302, NULL, NULL, NULL, NULL)
+                        'RADIO_ID', 'DMR', 302, NULL, NULL)
                 """);
 
             StatsAliasResolver resolver = new StatsAliasResolver();
@@ -225,14 +220,12 @@ class StatsAliasResolverTest
             statement.executeUpdate("""
                 INSERT INTO alias (
                     id, alias_list_id, name, description, group_name, matcher_type, protocol,
-                    value, wacn, p25_system_id
+                    value
                 ) VALUES
                     (1, 1, 'Local Dispatch', 'Local fallback description', 'Dispatch',
-                        'TALKGROUP', 'APCO25', 700, NULL, NULL),
+                        'TALKGROUP', 'APCO25', 700),
                     (3, 1, 'Local Unit', 'Local radio fallback', 'Units',
-                        'RADIO_ID', 'APCO25', 800, NULL, NULL),
-                    (4, 1, 'Qualified Unit', 'Full radio description', 'Units',
-                        'P25_FULLY_QUALIFIED_RADIO_ID', 'APCO25', 800, 0xBEE00, 0x348)
+                        'RADIO_ID', 'APCO25', 800)
                 """);
             statement.executeUpdate("""
                 INSERT INTO p25_site_snapshot (
@@ -282,12 +275,12 @@ class StatsAliasResolverTest
 
             assertEquals("Local Dispatch", talkgroups.getFirst().get("alias_name"));
             assertEquals("Local fallback description", talkgroups.getFirst().get("alias_description"));
-            assertEquals("Qualified Unit", radios.getFirst().get("alias_name"));
-            assertEquals("Full radio description", radios.getFirst().get("alias_description"));
-            assertEquals("Full radio description", activity.get(0).get("source_alias_description"));
+            assertEquals("Local Unit", radios.getFirst().get("alias_name"));
+            assertEquals("Local radio fallback", radios.getFirst().get("alias_description"));
+            assertEquals("Local radio fallback", activity.get(0).get("source_alias_description"));
             assertEquals("Local fallback description", activity.get(0).get("target_alias_description"));
-            assertEquals("Full radio description", activity.get(1).get("target_alias_description"));
-            assertEquals("Full radio description",
+            assertEquals("Local radio fallback", activity.get(1).get("target_alias_description"));
+            assertEquals("Local radio fallback",
                 relationships.getFirst().get("radio_alias_description"));
             assertEquals("Local fallback description",
                 relationships.getFirst().get("talkgroup_alias_description"));

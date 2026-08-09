@@ -106,15 +106,12 @@ class AliasAdminHttpControllerTest
                 AliasAdminHttpController.OPTIONS_PATH + "?aliasListId=" + aliasListId).GET()));
             assertEquals("APCO25", matcher(p25Options, "TALKGROUP_RANGE").get("protocol").textValue());
             assertEquals("APCO25", matcher(p25Options, "RADIO_ID_RANGE").get("protocol").textValue());
-            assertTrue(!matcher(p25Options, "P25_FULLY_QUALIFIED_RADIO_ID").has("protocol"));
             assertTrue(java.util.stream.StreamSupport.stream(p25Options.get("matchers").spliterator(), false)
                 .noneMatch(node -> "P25_FULLY_QUALIFIED_TALKGROUP".equals(node.get("type").textValue())));
 
             for(Map<String,Object> matcher: java.util.List.<Map<String,Object>>of(
                 Map.of("type", "TALKGROUP_RANGE", "protocol", "APCO25", "minimum", 200, "maximum", 210),
-                Map.of("type", "RADIO_ID_RANGE", "protocol", "APCO25", "minimum", 300, "maximum", 310),
-                Map.of("type", "P25_FULLY_QUALIFIED_RADIO_ID", "wacn", 0xBEE00, "system", 0x348,
-                    "value", 301)))
+                Map.of("type", "RADIO_ID_RANGE", "protocol", "APCO25", "minimum", 300, "maximum", 310)))
             {
                 Map<String,Object> candidate = new java.util.LinkedHashMap<>(alias(aliasListId,
                     "Matcher " + matcher.get("type"), false));

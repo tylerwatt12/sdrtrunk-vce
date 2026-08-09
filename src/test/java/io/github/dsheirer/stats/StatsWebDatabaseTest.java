@@ -169,7 +169,6 @@ class StatsWebDatabaseTest
         List<CSVRecord> csv = csvRows(mDatabase.csvExport(request(
             "/api/export.csv?dataset=aliases&list=County&type=talkgroup&sort=call_count&direction=desc")));
         assertEquals(List.of("Dispatch", "County Range"), csv.stream().map(row -> row.get("name")).toList());
-        assertEquals("", csv.getFirst().get("wacn_hex"));
     }
 
     @Test
@@ -561,7 +560,7 @@ class StatsWebDatabaseTest
     }
 
     @Test
-    void searchesFullyQualifiedRadioIdentifiersAndSortsEveryMatcherByItsDisplayValue() throws Exception
+    void sortsEveryMatcherByItsDisplayValue() throws Exception
     {
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
             Statement statement = connection.createStatement())
@@ -569,32 +568,20 @@ class StatsWebDatabaseTest
             statement.executeUpdate("""
                 INSERT INTO alias (
                     id, alias_list_id, name, matcher_type, protocol, value, min_value, max_value,
-                    wacn, p25_system_id, text_value, numeric_value, tone_sequence
+                    text_value, numeric_value, tone_sequence
                 ) VALUES
-                    (3, 1, 'Qualified B', 'P25_FULLY_QUALIFIED_RADIO_ID', 'APCO25', 7,
-                        NULL, NULL, 0xBEE01, 0x100, NULL, NULL, NULL),
-                    (4, 1, 'Qualified A', 'P25_FULLY_QUALIFIED_RADIO_ID', 'APCO25', 8,
-                        NULL, NULL, 0xBEE00, 0x400, NULL, NULL, NULL),
                     (5, 1, 'Small Range', 'TALKGROUP_RANGE', 'APCO25', NULL,
-                        20, 30, NULL, NULL, NULL, NULL, NULL),
+                        20, 30, NULL, NULL, NULL),
                     (6, 1, 'Status Ten', 'STATUS', NULL, NULL,
-                        NULL, NULL, NULL, NULL, NULL, 10, NULL),
+                        NULL, NULL, NULL, 10, NULL),
                     (7, 1, 'DCS Code', 'DCS', NULL, NULL,
-                        NULL, NULL, NULL, NULL, 'D023N', NULL, NULL),
+                        NULL, NULL, 'D023N', NULL, NULL),
                     (8, 1, 'Tone Code', 'TONES', NULL, NULL,
-                        NULL, NULL, NULL, NULL, NULL, NULL, 'A-B')
+                        NULL, NULL, NULL, NULL, 'A-B')
                 """);
         }
 
-        assertTrue(rows(mDatabase.aliases(request("/api/aliases?q=00000"))).isEmpty(),
-            "Ordinary aliases must not acquire a synthetic 00000-000 fully-qualified identifier");
-        assertEquals(List.of("Qualified A"), rows(mDatabase.aliases(request(
-            "/api/aliases?q=BEE00-400-8"))).stream().map(row -> row.get("name")).toList());
-        assertEquals(List.of("Qualified A"), rows(mDatabase.aliases(request(
-            "/api/aliases?q=781824-1024-8"))).stream().map(row -> row.get("name")).toList());
-
-        assertEquals(List.of("Status Ten", "Small Range", "Dispatch", "Engine 1", "Qualified A",
-                "Qualified B", "Tone Code", "DCS Code"),
+        assertEquals(List.of("Status Ten", "Small Range", "Dispatch", "Engine 1", "Tone Code", "DCS Code"),
             rows(mDatabase.aliases(request("/api/aliases?sort=value&direction=asc&limit=20"))).stream()
                 .map(row -> row.get("name")).toList());
     }

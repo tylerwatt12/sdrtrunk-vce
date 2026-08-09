@@ -42,7 +42,7 @@ final class StatsAliasCatalog
     private static final Set<String> FAMILIES = Set.of("P25", "DMR", "NXDN", "NBFM");
     private static final Set<String> MATCHERS = Set.of(
         "TALKGROUP", "TALKGROUP_RANGE",
-        "RADIO_ID", "RADIO_ID_RANGE", "P25_FULLY_QUALIFIED_RADIO_ID",
+        "RADIO_ID", "RADIO_ID_RANGE",
         "STATUS", "UNIT_STATUS", "TONES", "DCS", "ESN");
     private static final Set<String> IDENTITY_TYPES = Set.of("talkgroup", "radio", "other");
     private static final Set<String> EVIDENCE_STATES = Set.of(
@@ -50,8 +50,6 @@ final class StatsAliasCatalog
     private static final Set<String> USE_STATES = Set.of("used", "unused");
     private static final String IDENTIFIER_SORT_SQL = """
         CASE
-            WHEN alias.matcher_type = 'P25_FULLY_QUALIFIED_RADIO_ID'
-                THEN printf('%05X-%03X-%020d', alias.wacn, alias.p25_system_id, alias.value)
             WHEN alias.matcher_type IN ('TALKGROUP_RANGE', 'RADIO_ID_RANGE')
                 THEN printf('%020d–%020d', alias.min_value, alias.max_value)
             WHEN alias.value IS NOT NULL THEN printf('%020d', alias.value)
@@ -342,14 +340,12 @@ final class StatsAliasCatalog
                 alias.matcher_type,
                 CASE
                     WHEN alias.matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE') THEN 'talkgroup'
-                    WHEN alias.matcher_type IN ('RADIO_ID', 'RADIO_ID_RANGE',
-                        'P25_FULLY_QUALIFIED_RADIO_ID') THEN 'radio'
+                    WHEN alias.matcher_type IN ('RADIO_ID', 'RADIO_ID_RANGE') THEN 'radio'
                     ELSE 'other'
                 END AS identity_type,
-                alias.protocol, alias.value, alias.min_value, alias.max_value, alias.wacn,
-                alias.p25_system_id, alias.text_value, alias.numeric_value, alias.tone_sequence,
+                alias.protocol, alias.value, alias.min_value, alias.max_value,
+                alias.text_value, alias.numeric_value, alias.tone_sequence,
                 CASE WHEN alias.matcher_type IN ('TALKGROUP_RANGE', 'RADIO_ID_RANGE') THEN 1 ELSE 0 END AS ranged,
-                CASE WHEN alias.matcher_type = 'P25_FULLY_QUALIFIED_RADIO_ID' THEN 1 ELSE 0 END AS fully_qualified,
                 CASE WHEN alias.matcher_type NOT IN ('TALKGROUP_RANGE', 'RADIO_ID_RANGE') THEN 1 ELSE 0 END AS exact,
                 (SELECT group_concat(route.channel_name, char(31))
                  FROM (SELECT channel_name FROM alias_broadcast_channel
@@ -418,11 +414,9 @@ final class StatsAliasCatalog
             sql.append(switch(identityType)
             {
                 case "talkgroup" -> " AND alias.matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE')";
-                case "radio" -> " AND alias.matcher_type IN ('RADIO_ID', 'RADIO_ID_RANGE', " +
-                    "'P25_FULLY_QUALIFIED_RADIO_ID')";
+                case "radio" -> " AND alias.matcher_type IN ('RADIO_ID', 'RADIO_ID_RANGE')";
                 default -> " AND alias.matcher_type NOT IN ('TALKGROUP', 'TALKGROUP_RANGE', " +
-                    "'RADIO_ID', 'RADIO_ID_RANGE', " +
-                    "'P25_FULLY_QUALIFIED_RADIO_ID')";
+                    "'RADIO_ID', 'RADIO_ID_RANGE')";
             });
         }
 
@@ -520,21 +514,10 @@ final class StatsAliasCatalog
                    OR CAST(coalesce(alias.value, alias.min_value, alias.numeric_value) AS TEXT) LIKE ?
                    OR CAST(alias.max_value AS TEXT) LIKE ?
                    OR lower(coalesce(alias.text_value, '')) LIKE ?
-                   OR lower(coalesce(alias.tone_sequence, '')) LIKE ?
-                   OR CAST(alias.wacn AS TEXT) LIKE ?
-                   OR CAST(alias.p25_system_id AS TEXT) LIKE ?
-                   OR (alias.matcher_type = 'P25_FULLY_QUALIFIED_RADIO_ID'
-                       AND alias.wacn IS NOT NULL AND alias.p25_system_id IS NOT NULL
-                       AND alias.value IS NOT NULL
-                       AND lower(printf('%05X-%03X-%d', alias.wacn, alias.p25_system_id,
-                           alias.value)) LIKE ?)
-                   OR (alias.matcher_type = 'P25_FULLY_QUALIFIED_RADIO_ID'
-                       AND alias.wacn IS NOT NULL AND alias.p25_system_id IS NOT NULL
-                       AND alias.value IS NOT NULL
-                       AND printf('%d-%d-%d', alias.wacn, alias.p25_system_id, alias.value) LIKE ?))
+                   OR lower(coalesce(alias.tone_sequence, '')) LIKE ?)
                 """);
             String like = "%" + search.toLowerCase(Locale.ROOT) + "%";
-            for(int x = 0; x < 14; x++)
+            for(int x = 0; x < 10; x++)
             {
                 parameters.add(like);
             }
@@ -588,9 +571,6 @@ final class StatsAliasCatalog
                             WHEN current.matcher_type IN ('TALKGROUP', 'RADIO_ID') THEN
                                 (CASE WHEN other.protocol = 'APCO25_PHASE2' THEN 'APCO25' ELSE other.protocol END) =
                                 (CASE WHEN current.protocol = 'APCO25_PHASE2' THEN 'APCO25' ELSE current.protocol END)
-                                AND other.value = current.value
-                            WHEN current.matcher_type = 'P25_FULLY_QUALIFIED_RADIO_ID' THEN
-                                other.wacn = current.wacn AND other.p25_system_id = current.p25_system_id
                                 AND other.value = current.value
                             WHEN current.matcher_type IN ('TALKGROUP_RANGE', 'RADIO_ID_RANGE') THEN
                                 (CASE WHEN other.protocol = 'APCO25_PHASE2' THEN 'APCO25' ELSE other.protocol END) =
@@ -802,18 +782,7 @@ final class StatsAliasCatalog
             return false;
         }
 
-        String listName = text(alias.get("alias_list_name"));
-        boolean fullyQualified = number(alias.get("fully_qualified")) != 0;
-
-        if(scope.trunked && protocol == 1)
-        {
-            //A fully-qualified Alias names the destination's home system, not necessarily the monitored system.
-            //List assignment still limits normal scope coverage; the empty-list fallback preserves existing P25
-            //behavior for an otherwise unassigned scope.
-            return scope.aliasLists.contains(listName) || fullyQualified && scope.aliasLists.isEmpty();
-        }
-
-        return !fullyQualified && scope.aliasLists.contains(listName);
+        return scope.aliasLists.contains(text(alias.get("alias_list_name")));
     }
 
     private void applyTrunkedEvidence(Connection connection, Map<Long,Map<String,MetricAccumulator>> metrics,
@@ -1277,7 +1246,6 @@ final class StatsAliasCatalog
             case "TALKGROUP_RANGE" -> "Talkgroup range";
             case "RADIO_ID" -> "Radio ID";
             case "RADIO_ID_RANGE" -> "Radio ID range";
-            case "P25_FULLY_QUALIFIED_RADIO_ID" -> "P25 fully-qualified radio ID";
             case "UNIT_STATUS" -> "Unit status";
             case "TONES" -> "Tones";
             default -> matcher.replace('_', ' ');
@@ -1293,12 +1261,6 @@ final class StatsAliasCatalog
             return displayNumber(row.get("min_value")) + "–" + displayNumber(row.get("max_value"));
         }
 
-        if("P25_FULLY_QUALIFIED_RADIO_ID".equals(matcher))
-        {
-            return hex(row.get("wacn"), 5) + "-" + hex(row.get("p25_system_id"), 3) + "-" +
-                displayNumber(row.get("value"));
-        }
-
         Object value = row.get("value") != null ? row.get("value") :
             row.get("numeric_value") != null ? row.get("numeric_value") :
                 row.get("text_value") != null ? row.get("text_value") : row.get("tone_sequence");
@@ -1308,12 +1270,6 @@ final class StatsAliasCatalog
     private static String displayNumber(Object value)
     {
         return value instanceof Number number ? Long.toString(number.longValue()) : "";
-    }
-
-    private static String hex(Object value, int digits)
-    {
-        return value instanceof Number number ? String.format(Locale.ROOT, "%0" + digits + "X", number.longValue()) :
-            "";
     }
 
     private static String placeholders(int count)

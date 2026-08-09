@@ -23,7 +23,6 @@ import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.alias.id.dcs.Dcs;
 import io.github.dsheirer.alias.id.esn.Esn;
 import io.github.dsheirer.alias.id.priority.Priority;
-import io.github.dsheirer.alias.id.radio.P25FullyQualifiedRadio;
 import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.alias.id.radio.RadioFormat;
 import io.github.dsheirer.alias.id.radio.RadioRange;
@@ -371,14 +370,12 @@ public final class AliasAdminHttpController
         AliasIDType type = required(payload.type(), "matcher.type");
         int populated = (payload.protocol() != null ? 1 : 0) + (payload.value() != null ? 1 : 0) +
             (payload.minimum() != null ? 1 : 0) + (payload.maximum() != null ? 1 : 0) +
-            (payload.wacn() != null ? 1 : 0) + (payload.system() != null ? 1 : 0) +
             (payload.status() != null ? 1 : 0) + (payload.code() != null ? 1 : 0) +
             (payload.esn() != null ? 1 : 0) + (payload.tones() != null ? 1 : 0);
         int expected = switch(type)
         {
             case TALKGROUP, RADIO_ID -> 2;
             case TALKGROUP_RANGE, RADIO_ID_RANGE -> 3;
-            case P25_FULLY_QUALIFIED_RADIO_ID -> 3;
             case STATUS, UNIT_STATUS, DCS, ESN, TONES -> 1;
             default -> throw invalid("matcher type is invalid");
         };
@@ -395,9 +392,6 @@ public final class AliasAdminHttpController
                 required(payload.minimum(), "minimum"), required(payload.maximum(), "maximum"));
             case RADIO_ID_RANGE -> new RadioRange(requiredProtocol(payload.protocol()),
                 required(payload.minimum(), "minimum"), required(payload.maximum(), "maximum"));
-            case P25_FULLY_QUALIFIED_RADIO_ID -> new P25FullyQualifiedRadio(
-                bounded(payload.wacn(), "wacn", 0, 0xFFFFF), bounded(payload.system(), "system", 0, 0xFFF),
-                bounded(payload.value(), "value", 0, 0xFFFFFF));
             case STATUS -> {
                 UserStatusID status = new UserStatusID();
                 status.setStatus(bounded(payload.status(), "status", 0, 255));
@@ -470,11 +464,6 @@ public final class AliasAdminHttpController
 
         switch(matcher)
         {
-            case P25FullyQualifiedRadio value -> {
-                response.put("wacn", value.getWacn());
-                response.put("system", value.getSystem());
-                response.put("value", value.getValue());
-            }
             case TalkgroupRange value -> {
                 response.put("protocol", value.getProtocol().name());
                 response.put("minimum", value.getMinTalkgroup());
@@ -540,11 +529,6 @@ public final class AliasAdminHttpController
             response.put("minimum", format.getMinimumValidValue());
             response.put("maximum", format.getMaximumValidValue());
         }
-        else if(descriptor.type() == AliasIDType.P25_FULLY_QUALIFIED_RADIO_ID)
-        {
-            response.put("minimum", 0);
-            response.put("maximum", 0xFFFFFF);
-        }
         return response;
     }
 
@@ -554,7 +538,6 @@ public final class AliasAdminHttpController
         {
             case TALKGROUP, RADIO_ID -> List.of("value");
             case TALKGROUP_RANGE, RADIO_ID_RANGE -> List.of("minimum", "maximum");
-            case P25_FULLY_QUALIFIED_RADIO_ID -> List.of("wacn", "system", "value");
             case STATUS, UNIT_STATUS -> List.of("status");
             case TONES -> List.of("tones");
             case DCS -> List.of("code");
@@ -906,8 +889,7 @@ public final class AliasAdminHttpController
     private record TonePayload(AmbeTone tone, Integer duration) {}
 
     private record MatcherPayload(AliasIDType type, Protocol protocol, Integer value, Integer minimum, Integer maximum,
-                                  Integer wacn, Integer system, Integer status, DCSCode code, String esn,
-                                  List<TonePayload> tones)
+                                  Integer status, DCSCode code, String esn, List<TonePayload> tones)
     {}
 
     private static final class RequestException extends Exception

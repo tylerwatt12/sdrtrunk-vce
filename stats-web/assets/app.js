@@ -2140,14 +2140,9 @@ function aliasDetailContent(alias, breakdown) {
     ['Protocol', availableValue(alias.protocol)],
     ['Exact', alias.exact === null || alias.exact === undefined ? '—' : yesNoKnown(alias.exact)],
     ['Ranged', alias.ranged === null || alias.ranged === undefined ? '—' : yesNoKnown(alias.ranged)],
-    ['Fully Qualified', alias.fully_qualified === null || alias.fully_qualified === undefined ? '—' :
-      yesNoKnown(alias.fully_qualified)],
     ['Value', aliasRawValue(alias.value)],
     ['Minimum', aliasRawValue(alias.min_value)],
     ['Maximum', aliasRawValue(alias.max_value)],
-    ['WACN', alias.wacn === null || alias.wacn === undefined ? '—' : hexDecimalPair(alias.wacn, 5)],
-    ['P25 System', alias.p25_system_id === null || alias.p25_system_id === undefined ? '—' :
-      hexDecimalPair(alias.p25_system_id, 3)],
     ['Text Value', availableValue(alias.text_value)],
     ['Numeric Value', aliasRawValue(alias.numeric_value)],
     ['Tone Sequence', availableValue(alias.tone_sequence)],
@@ -2679,16 +2674,6 @@ function aliasNumericValue(value) {
   return Number.NaN;
 }
 
-function aliasHexNumericValue(value) {
-  const text = String(value ?? '').trim().replace(/^0x/i, '');
-  return /^[0-9a-f]+$/i.test(text) ? Number.parseInt(text, 16) : Number.NaN;
-}
-
-function aliasHexValue(value) {
-  const numeric = Number(value);
-  return Number.isInteger(numeric) && numeric >= 0 ? numeric.toString(16).toUpperCase() : '';
-}
-
 function aliasColorHex(value) {
   const numeric = Number(value ?? -1) >>> 0;
   return `#${numeric.toString(16).padStart(8, '0').slice(-6)}`;
@@ -2722,8 +2707,7 @@ function aliasMatcherDescriptor(options, keyOrType, protocol = '') {
     if (!protocol || String(entry.protocol) === String(protocol)) return true;
     const p25Protocols = ['APCO25', 'APCO25_PHASE2'];
     if (p25Protocols.includes(String(entry.protocol)) && p25Protocols.includes(String(protocol))) return true;
-    return key === 'P25_FULLY_QUALIFIED_RADIO_ID' &&
-      !entry.protocol && p25Protocols.includes(String(protocol));
+    return false;
   });
   return typed || matchers[0];
 }
@@ -2745,9 +2729,8 @@ function aliasMatcherFields(host, descriptor, matcher, options) {
   host.replaceChildren();
   const fields = descriptor?.fields || [];
   const numberField = (field, label, help = '') => {
-    const value = ['wacn', 'system'].includes(field) ? aliasHexValue(matcher?.[field]) : matcher?.[field] ?? '';
-    const input = aliasTextInput(`matcher-${field}`, value, 'text');
-    input.inputMode = ['wacn', 'system'].includes(field) ? 'text' : 'numeric';
+    const input = aliasTextInput(`matcher-${field}`, matcher?.[field] ?? '', 'text');
+    input.inputMode = 'numeric';
     input.required = true;
     host.append(aliasFormField(label, input, help));
   };
@@ -2757,8 +2740,6 @@ function aliasMatcherFields(host, descriptor, matcher, options) {
         `${identifierNumber(descriptor.minimum)} through ${identifierNumber(descriptor.maximum)}` : 'Decimal value');
     } else if (field === 'minimum') numberField(field, 'Minimum identifier');
     else if (field === 'maximum') numberField(field, 'Maximum identifier');
-    else if (field === 'wacn') numberField(field, 'WACN', 'Hexadecimal (for example BEE00)');
-    else if (field === 'system') numberField(field, 'System ID', 'Hexadecimal (for example 348)');
     else if (field === 'status') numberField(field, 'Status', '0 through 255');
     else if (field === 'code') {
       host.append(aliasFormField('DCS code', aliasSelect('matcher-code', options?.dcsCodes || [], matcher?.code)));
@@ -2809,9 +2790,7 @@ function aliasMatcherPayload(form, descriptor) {
       }));
     } else if (field === 'code') matcher.code = form.elements['matcher-code'].value;
     else if (field === 'esn') matcher.esn = form.elements['matcher-esn'].value.trim();
-    else matcher[field] = ['wacn', 'system'].includes(field) ?
-      aliasHexNumericValue(form.elements[`matcher-${field}`].value) :
-      aliasNumericValue(form.elements[`matcher-${field}`].value);
+    else matcher[field] = aliasNumericValue(form.elements[`matcher-${field}`].value);
   });
   return matcher;
 }

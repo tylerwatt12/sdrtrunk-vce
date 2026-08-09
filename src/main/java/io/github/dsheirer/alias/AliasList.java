@@ -21,7 +21,6 @@ package io.github.dsheirer.alias;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.dcs.Dcs;
 import io.github.dsheirer.alias.id.esn.Esn;
-import io.github.dsheirer.alias.id.radio.P25FullyQualifiedRadio;
 import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.alias.id.radio.RadioRange;
 import io.github.dsheirer.alias.id.status.UnitStatusID;
@@ -36,7 +35,6 @@ import io.github.dsheirer.identifier.dcs.DCSIdentifier;
 import io.github.dsheirer.identifier.esn.ESNIdentifier;
 import io.github.dsheirer.identifier.patch.PatchGroup;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
-import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.identifier.status.UnitStatusIdentifier;
 import io.github.dsheirer.identifier.status.UserStatusIdentifier;
@@ -209,21 +207,6 @@ public class AliasList
                         }
 
                         talkgroupRangeAliasList.add(talkgroupRange, alias);
-                        break;
-                    case P25_FULLY_QUALIFIED_RADIO_ID:
-                        P25FullyQualifiedRadio qualifiedRadio = (P25FullyQualifiedRadio) id;
-                        Protocol qualifiedRadioProtocol =
-                            lookupProtocol(Objects.requireNonNull(qualifiedRadio.getProtocol()));
-
-                        RadioAliasList p25RadioAliasList = index.mRadioProtocolMap.get(qualifiedRadioProtocol);
-
-                        if(p25RadioAliasList == null)
-                        {
-                            p25RadioAliasList = new RadioAliasList();
-                            index.mRadioProtocolMap.put(qualifiedRadioProtocol, p25RadioAliasList);
-                        }
-
-                        p25RadioAliasList.add(qualifiedRadio, alias);
                         break;
                     case RADIO_ID:
                         Radio radio = (Radio)id;
@@ -1130,20 +1113,13 @@ public class AliasList
      */
     public class RadioAliasList
     {
-        private final Map<String,Alias> mFullyQualifiedRadioAliasMap = new HashMap<>();
         private final Map<Integer,Alias> mRadioAliasMap = new HashMap<>();
         private final List<RadioRangeEntry> mRadioRanges = new ArrayList<>();
         private int[] mRadioRangePrefixMaximums = new int[0];
 
         public Alias getAlias(RadioIdentifier identifier)
         {
-            //Match fully qualified identifier only.
-            if(identifier instanceof FullyQualifiedRadioIdentifier fqri)
-            {
-                return mFullyQualifiedRadioAliasMap.get(fqri.getFullyQualifiedRadioAddress());
-            }
-
-            //Attempt to match against the radio identifier
+            //Fully-qualified decoded radios use their local address for ordinary radio and range matching.
             int value = identifier.getValue();
 
             Alias mapValue = mRadioAliasMap.get(value);
@@ -1172,47 +1148,24 @@ public class AliasList
 
         public void add(Radio radio, Alias alias)
         {
-            if(radio instanceof P25FullyQualifiedRadio fqr)
+            Alias existingRadioAlias = mRadioAliasMap.computeIfAbsent(radio.getValue(), key -> alias);
+
+            //Detect collisions
+            if(!existingRadioAlias.equals(alias))
             {
-                Alias existingFullyQualifiedRadioAlias =
-                    mFullyQualifiedRadioAliasMap.computeIfAbsent(fqr.getHashKey(), key -> alias);
+                radio.setOverlap(true);
 
-                //Detect collisions
-                if(!existingFullyQualifiedRadioAlias.equals(alias))
+                AliasID aliasID = existingRadioAlias.getMatchIdentifier();
+
+                if(aliasID instanceof Radio existingRadio &&
+                    lookupProtocol(existingRadio.getProtocol()) == lookupProtocol(radio.getProtocol()) &&
+                    existingRadio.getValue() == radio.getValue())
                 {
-                    fqr.setOverlap(true);
-
-                    AliasID aliasID = existingFullyQualifiedRadioAlias.getMatchIdentifier();
-
-                    if(aliasID instanceof P25FullyQualifiedRadio existingFqr &&
-                        existingFqr.getHashKey().contentEquals(fqr.getHashKey()))
-                    {
-                        aliasID.setOverlap(true);
-                    }
+                    aliasID.setOverlap(true);
                 }
             }
-            else
-            {
-                Alias existingRadioAlias = mRadioAliasMap.computeIfAbsent(radio.getValue(), key -> alias);
 
-                //Detect collisions
-                if(!existingRadioAlias.equals(alias))
-                {
-                    radio.setOverlap(true);
-
-                    AliasID aliasID = existingRadioAlias.getMatchIdentifier();
-
-                    if(aliasID instanceof Radio existingRadio &&
-                        !(existingRadio instanceof P25FullyQualifiedRadio) &&
-                        lookupProtocol(existingRadio.getProtocol()) == lookupProtocol(radio.getProtocol()) &&
-                        existingRadio.getValue() == radio.getValue())
-                    {
-                        aliasID.setOverlap(true);
-                    }
-                }
-
-                mRadioAliasMap.put(radio.getValue(), alias);
-            }
+            mRadioAliasMap.put(radio.getValue(), alias);
         }
 
         public void add(RadioRange radioRange, Alias alias)
@@ -1355,7 +1308,6 @@ public class AliasList
          */
         public void remove(Alias alias)
         {
-            mFullyQualifiedRadioAliasMap.values().removeAll(Collections.singleton(alias));
             mRadioAliasMap.values().removeAll(Collections.singleton(alias));
             mRadioRanges.removeIf(entry -> entry.alias().equals(alias));
         }

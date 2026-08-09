@@ -6,6 +6,7 @@
 package io.github.dsheirer.stats;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -79,6 +80,26 @@ class StatsCsvExportTest
             CSVRecord row = parser.getRecords().getFirst();
             assertEquals("P25", row.get("protocol"));
             assertEquals("", row.get("timeslot"));
+        }
+    }
+
+    @Test
+    void aliasExportOmitsRetiredFullyQualifiedMatcherFields() throws Exception
+    {
+        StatsCsvExport export = StatsCsvExport.create("aliases", "County", List.of(Map.of(
+            "alias_id", 1, "alias_list_id", 2, "alias_list_name", "County", "family", "P25",
+            "name", "Dispatch", "matcher_type", "TALKGROUP", "value", 100)));
+        String csv = new String(export.content(), 3, export.content().length - 3, StandardCharsets.UTF_8);
+
+        try(CSVParser parser = CSVFormat.RFC4180.builder().setHeader().setSkipHeaderRecord(true).get()
+            .parse(new StringReader(csv)))
+        {
+            assertFalse(parser.getHeaderMap().containsKey("wacn"));
+            assertFalse(parser.getHeaderMap().containsKey("wacn_hex"));
+            assertFalse(parser.getHeaderMap().containsKey("p25_system_id"));
+            assertFalse(parser.getHeaderMap().containsKey("p25_system_id_hex"));
+            assertFalse(parser.getHeaderMap().containsKey("fully_qualified"));
+            assertEquals("100", parser.getRecords().getFirst().get("value"));
         }
     }
 

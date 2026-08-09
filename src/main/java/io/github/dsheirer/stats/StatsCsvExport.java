@@ -277,12 +277,9 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
                 text("matcher", "matcher_label"), text("protocol", "protocol"),
                 text("identifier", "identifier_display"), number("value", "value"),
                 number("min_value", "min_value"), number("max_value", "max_value"),
-                text("wacn_hex", row -> aliasP25Hex(row, "wacn", 5)), number("wacn", "wacn"),
-                text("p25_system_id_hex", row -> aliasP25Hex(row, "p25_system_id", 3)),
-                number("p25_system_id", "p25_system_id"), text("text_value", "text_value"),
-                number("numeric_value", "numeric_value"), text("tone_sequence", "tone_sequence"),
-                number("exact", "exact"), number("ranged", "ranged"),
-                number("fully_qualified", "fully_qualified"),
+                text("text_value", "text_value"), number("numeric_value", "numeric_value"),
+                text("tone_sequence", "tone_sequence"), number("exact", "exact"),
+                number("ranged", "ranged"),
                 text("broadcast_channels", row -> row.get("broadcast_channels") instanceof List<?> values ?
                     String.join("; ", values.stream().map(String::valueOf).toList()) : ""),
                 text("metrics_state", "metrics_state"), number("coverage_scopes", "coverage_scope_count"),
@@ -306,13 +303,6 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
     private static Column text(String header, String key)
     {
         return text(header, row -> row.get(key));
-    }
-
-    private static String aliasP25Hex(Map<String,Object> row, String key, int digits)
-    {
-        Object value = row.get(key);
-        return "P25".equals(row.get("family")) && value instanceof Number number ?
-            String.format(Locale.ROOT, "%0" + digits + "X", number.longValue()) : "";
     }
 
     private static Column text(String header, Function<Map<String,Object>,Object> value)

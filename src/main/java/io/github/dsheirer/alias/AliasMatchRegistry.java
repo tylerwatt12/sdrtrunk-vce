@@ -15,7 +15,6 @@ import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.AliasIDType;
 import io.github.dsheirer.alias.id.dcs.Dcs;
 import io.github.dsheirer.alias.id.esn.Esn;
-import io.github.dsheirer.alias.id.radio.P25FullyQualifiedRadio;
 import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.alias.id.radio.RadioFormat;
 import io.github.dsheirer.alias.id.radio.RadioRange;
@@ -138,9 +137,6 @@ public final class AliasMatchRegistry
         List<AliasMatchDescriptor> descriptors = new ArrayList<>();
 
         addProtocolMatchers(descriptors, AliasListFamily.P25, Protocol.APCO25, "P25");
-        descriptors.add(descriptor("P25 Fully Qualified Radio ID",
-            AliasIDType.P25_FULLY_QUALIFIED_RADIO_ID, Set.of(AliasListFamily.P25),
-            _ -> new P25FullyQualifiedRadio(0, 0, 0), P25FullyQualifiedRadio.class::isInstance));
         addProtocolMatchers(descriptors, AliasListFamily.DMR, Protocol.DMR, "DMR");
         addProtocolMatchers(descriptors, AliasListFamily.NXDN, Protocol.NXDN, "NXDN");
         addTalkgroupMatchers(descriptors, AliasListFamily.NBFM, Protocol.NBFM, "NBFM");
@@ -171,7 +167,7 @@ public final class AliasMatchRegistry
         addTalkgroupMatchers(descriptors, family, protocol, label);
         descriptors.add(protocolDescriptor(label + " Radio ID", AliasIDType.RADIO_ID, protocol,
             Set.of(family), _ -> new Radio(protocol, RadioFormat.get(protocol).getMinimumValidValue()),
-            identifier -> identifier instanceof Radio && !(identifier instanceof P25FullyQualifiedRadio)));
+            Radio.class::isInstance));
         descriptors.add(protocolDescriptor(label + " Radio ID Range",
             AliasIDType.RADIO_ID_RANGE, protocol, Set.of(family),
             _ -> new RadioRange(protocol, RadioFormat.get(protocol).getMinimumValidValue(),

@@ -131,6 +131,8 @@ class AliasDatabaseStoreTest
             assertFalse(aliasColumns.contains("non_recordable"));
             assertFalse(aliasColumns.contains("matcher_enabled"));
             assertFalse(aliasColumns.contains("compatibility_reason"));
+            assertFalse(aliasColumns.contains("wacn"));
+            assertFalse(aliasColumns.contains("p25_system_id"));
             assertFalse(hasTable(connection, "alias_action"));
             assertTrue(hasTable(connection, "alias_list_unmatched_talkgroup_stream"));
             assertFalse(indexes(connection).contains("idx_alias_list_name"));
@@ -138,6 +140,12 @@ class AliasDatabaseStoreTest
             assertFalse(indexes(connection).contains("idx_alias_action_alias"));
             assertFalse(columns(connection, "alias_talkgroup").contains("id"));
             assertFalse(columns(connection, "alias_talkgroup").contains("sort_order"));
+            assertFalse(columns(connection, "alias_talkgroup").contains("fully_qualified"));
+            assertFalse(columns(connection, "alias_talkgroup").contains("wacn"));
+            assertFalse(columns(connection, "alias_talkgroup").contains("system_id"));
+            assertFalse(columns(connection, "alias_radio").contains("fully_qualified"));
+            assertFalse(columns(connection, "alias_radio").contains("wacn"));
+            assertFalse(columns(connection, "alias_radio").contains("system_id"));
 
             try(Statement statement = connection.createStatement();
                 ResultSet resultSet = statement.executeQuery(
@@ -303,8 +311,8 @@ class AliasDatabaseStoreTest
             assertEquals("County P25", resultSet.getString("alias_list_name"));
             assertThrows(SQLException.class, () -> statement.executeUpdate("""
                 INSERT INTO alias_talkgroup (
-                    alias_id, protocol, value, fully_qualified, ranged, alias_list_name
-                ) VALUES (1, 'APCO25', 100, 0, 0, 'County P25')
+                    alias_id, protocol, value, ranged, alias_list_name
+                ) VALUES (1, 'APCO25', 100, 0, 'County P25')
                 """));
         }
     }

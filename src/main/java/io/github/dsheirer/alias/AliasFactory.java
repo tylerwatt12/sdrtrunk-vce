@@ -14,7 +14,6 @@ import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.alias.id.dcs.Dcs;
 import io.github.dsheirer.alias.id.esn.Esn;
-import io.github.dsheirer.alias.id.radio.P25FullyQualifiedRadio;
 import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.alias.id.radio.RadioRange;
 import io.github.dsheirer.alias.id.status.UnitStatusID;
@@ -54,13 +53,6 @@ public final class AliasFactory
                 Esn original = (Esn)id;
                 Esn copy = new Esn();
                 copy.setEsn(original.getEsn());
-                copy.setOverlap(original.overlapProperty().get());
-                yield copy;
-            }
-            case P25_FULLY_QUALIFIED_RADIO_ID -> {
-                P25FullyQualifiedRadio original = (P25FullyQualifiedRadio)id;
-                P25FullyQualifiedRadio copy =
-                    new P25FullyQualifiedRadio(original.getWacn(), original.getSystem(), original.getValue());
                 copy.setOverlap(original.overlapProperty().get());
                 yield copy;
             }
