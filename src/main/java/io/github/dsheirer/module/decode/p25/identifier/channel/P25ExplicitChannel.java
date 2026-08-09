@@ -54,10 +54,18 @@ public class P25ExplicitChannel extends P25Channel implements Comparable<P25Chan
     @Override
     public long getUplinkFrequency()
     {
-        if(mUplinkFrequencyBand != null)
+        if(hasUplinkChannel())
         {
-            //Note: we explicitly use the downlink frequency from the uplink channel frequency band here
-            return mUplinkFrequencyBand.getDownlinkFrequency(getUplinkChannelNumber());
+            if(mUplinkFrequencyBand != null)
+            {
+                //Note: we explicitly use the downlink frequency from the uplink channel frequency band here
+                return mUplinkFrequencyBand.getDownlinkFrequency(getUplinkChannelNumber());
+            }
+        }
+        else if(getFrequencyBand() != null)
+        {
+            //TIA-102.AABC-E 2.3.9: Channel(R) 0xFFFF uses implicit signaling from Channel(T).
+            return getFrequencyBand().getUplinkFrequency(getDownlinkChannelNumber());
         }
 
         return 0;
@@ -66,7 +74,7 @@ public class P25ExplicitChannel extends P25Channel implements Comparable<P25Chan
     @Override
     public void setFrequencyBand(IFrequencyBand frequencyBand)
     {
-        if(frequencyBand.getIdentifier() == getUplinkBandIdentifier())
+        if(hasUplinkChannel() && frequencyBand.getIdentifier() == getUplinkBandIdentifier())
         {
             mUplinkFrequencyBand = frequencyBand;
         }
