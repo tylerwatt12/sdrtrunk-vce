@@ -79,7 +79,7 @@ class TrunkedCallActivityMapper
             configurationId = blankToNull(channel.getConfigurationId());
         }
 
-        String contextKey = contextKey(guid, configurationId);
+        String contextKey = ReceiverContextKey.configured(guid, configurationId);
 
         if(contextKey == null)
         {
@@ -100,9 +100,11 @@ class TrunkedCallActivityMapper
             encrypted && encryptionKey != null ? encryptionKey.getAlgorithm() : null,
             encrypted && encryptionKey != null ? encryptionKey.getKey() : null,
             null, intValue(identifiers, Form.SYSTEM), null, null, intValue(identifiers, Form.SITE),
-            null, decoderType != null ? decoderType.name() : protocol.name(),
+            TrunkedSiteMetadataMapper.configuredSiteName(channel),
+            decoderType != null ? decoderType.name() : protocol.name(),
             value(first(identifiers, Form.TALKER_ALIAS)), true, null, null,
-            identityDomain(channel, identifiers));
+            identityDomain(channel, identifiers), P25ActivityLogRecords.P25TargetIdentity.UNKNOWN, List.of(),
+            blankToNull(channel.getAliasListName()), true);
     }
 
     P25ActivityLogRecords.TrunkedCallAttribution map(TrunkedCallAttributionEvent attribution)
@@ -131,7 +133,7 @@ class TrunkedCallActivityMapper
         P25ActivityLogRecords.P25TargetIdentity targetIdentity = p25TargetIdentity(target, protocol);
         String guid = blankToNull(channel.getRadresGuid());
         String configurationId = blankToNull(channel.getConfigurationId());
-        String contextKey = contextKey(guid, configurationId);
+        String contextKey = ReceiverContextKey.configured(guid, configurationId);
         IChannelDescriptor descriptor = attribution.channelDescriptor();
         Long frequency = descriptor != null && descriptor.getDownlinkFrequency() > 0 ?
             descriptor.getDownlinkFrequency() : null;
@@ -157,12 +159,6 @@ class TrunkedCallActivityMapper
             attribution.encryptionBecameKnown(), attribution.encryptedBeforeObservation(),
             identityDomain(channel, identifiers), targetIdentity,
             p25PatchMemberIdentities(target, protocol));
-    }
-
-    private static String contextKey(String guid, String configurationId)
-    {
-        return guid != null ? "GUID:" + guid :
-            configurationId != null ? "CONFIGURATION:" + configurationId : null;
     }
 
     private static Integer identityId(Identifier identifier)

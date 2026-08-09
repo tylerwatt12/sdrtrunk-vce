@@ -69,20 +69,13 @@ class P25ActivityLogMapper
         String guid = blankToNull(event.guid());
         String configurationId = blankToNull(event.channelConfigurationId());
         String channelName = blankToNull(event.channelName());
-        String contextKey;
+        String contextKey = ReceiverContextKey.configured(guid, configurationId);
 
-        if(guid != null)
+        if(contextKey == null)
         {
-            contextKey = "GUID:" + guid;
-        }
-        else if(configurationId != null)
-        {
-            contextKey = "CONFIGURATION:" + configurationId;
-        }
-        else
-        {
-            contextKey = "CONVENTIONAL_DMR:DMR:" + event.frequencyHertz() +
-                (channelName != null ? ":" + channelName : "");
+            contextKey = ReceiverContextKey.conventionalWithChannelName(
+                P25ActivityLogRecords.ContextKind.CONVENTIONAL_DMR, Protocol.DMR.name(), event.frequencyHertz(),
+                channelName);
         }
 
         P25ActivityLogRecords.DmrTargetKind targetKind = switch(event.targetKind())
@@ -121,10 +114,14 @@ class P25ActivityLogMapper
         String guid = blankToNull(event.guid());
         String configurationId = blankToNull(event.channelConfigurationId());
         String channelName = blankToNull(event.channelName());
-        String contextKey = guid != null ? "GUID:" + guid :
-            configurationId != null ? "CONFIGURATION:" + configurationId :
-                "CONVENTIONAL_NXDN:NXDN:" + event.frequencyHertz() +
-                    (channelName != null ? ":" + channelName : "");
+        String contextKey = ReceiverContextKey.configured(guid, configurationId);
+
+        if(contextKey == null)
+        {
+            contextKey = ReceiverContextKey.conventionalWithChannelName(
+                P25ActivityLogRecords.ContextKind.CONVENTIONAL_NXDN, Protocol.NXDN.name(), event.frequencyHertz(),
+                channelName);
+        }
         P25ActivityLogRecords.NxdnTargetKind targetKind = switch(event.targetKind())
         {
             case GROUP -> P25ActivityLogRecords.NxdnTargetKind.GROUP;
@@ -461,7 +458,7 @@ class P25ActivityLogMapper
             action == P25ActivityLogRecords.Action.CALL &&
                 (contextKind != P25ActivityLogRecords.ContextKind.TRUNKED_SITE || actionOverride != null), dedupeKey,
             affiliationUpdate, identityDomain(channel, event.getIdentifierCollection()), p25TargetIdentity,
-            facts.p25PatchMemberIdentities());
+            facts.p25PatchMemberIdentities(), blankToNull(channel.getAliasListName()), true);
     }
 
     static boolean isTypedCallOwnedObservation(Channel channel, IDecodeEvent event)
@@ -956,17 +953,13 @@ class P25ActivityLogMapper
                                      P25ActivityLogRecords.ContextKind contextKind, String configuredChannelName,
                                      String channelConfigurationId)
     {
-        if(guid != null)
-        {
-            return "GUID:" + guid;
-        }
-
         String configurationId = facts != null && facts.configurationId() != null ?
             facts.configurationId() : blankToNull(channelConfigurationId);
+        String configured = ReceiverContextKey.configured(guid, configurationId);
 
-        if(configurationId != null)
+        if(configured != null)
         {
-            return "CONFIGURATION:" + configurationId;
+            return configured;
         }
 
         if(contextKind == P25ActivityLogRecords.ContextKind.TRUNKED_SITE)
@@ -979,24 +972,18 @@ class P25ActivityLogMapper
             return ":::".equals(key) ? null : "P25:" + key;
         }
 
-        if(frequency != null && frequency > 0)
-        {
-            return contextKind.name() + ":" + protocol + ":" + frequency;
-        }
-
-        String channelName = blankToNull(configuredChannelName);
-        return channelName != null ? contextKind.name() + ":" + protocol + ":" + channelName :
-            null;
+        return ReceiverContextKey.conventional(contextKind, protocol, frequency, configuredChannelName);
     }
 
     private static String activityChannelName(P25ActivityLogRecords.ContextKind contextKind, Channel channel)
     {
-        if(contextKind == P25ActivityLogRecords.ContextKind.TRUNKED_SITE || channel == null)
+        if(channel == null)
         {
             return null;
         }
 
-        return blankToNull(channel.getName());
+        return contextKind == P25ActivityLogRecords.ContextKind.TRUNKED_SITE ?
+            TrunkedSiteMetadataMapper.configuredSiteName(channel) : blankToNull(channel.getName());
     }
 
     private static String protocolName(Protocol protocol, IdentifierFacts facts, DecoderType decoderType)
