@@ -458,7 +458,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(events.contains("['REGISTRATION', 'Registrations']"));
         assertTrue(messages.contains("liveConnection('/live/messages', parameters)"));
         assertTrue(messages.contains("stream.addEventListener('decode_message'"));
-        assertTrue(messages.contains("active && !collapsed && !document.hidden"));
+        assertTrue(messages.contains("active && !collapsed && !paused && !document.hidden"));
         assertTrue(channel.contains("liveConnection('/live/channel-diagnostics', parameters)"));
         assertEquals(channel.indexOf("liveConnection('/live/channel-diagnostics', parameters)"),
             channel.lastIndexOf("liveConnection('/live/channel-diagnostics', parameters)"));
@@ -486,7 +486,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(channel.contains("Connection interrupted. Reconnecting…"));
         assertFalse(channel.contains("window.setInterval"));
         assertFalse(channel.contains("window.clearInterval(ageTimer)"));
-        assertTrue(channel.contains("active && !collapsed && !document.hidden"));
+        assertTrue(channel.contains("active && !collapsed && !paused && !document.hidden"));
         assertFalse(channel.contains("channel-mode-tabs"));
         assertFalse(channel.contains("view: mode"));
         assertTrue(selection.contains("row?.configuration_id || tableValue?.configuration_id"));
@@ -503,6 +503,26 @@ class StatsWebInteractionUiContractTest
         assertTrue(css.contains(".channel-diagnostic-canvas"));
         assertTrue(css.contains("grid-template-columns: repeat(2, minmax(0, 1fr))"));
         assertTrue(css.contains(".channel-diagnostic-grid"));
+    }
+
+    @Test
+    void pausesEventsMessagesAndChannelFromOneSharedControl() throws Exception
+    {
+        String source = source();
+        String events = function(source, "function liveEventsPanel(onCollapse)");
+        String messages = function(source, "function liveMessagesPane()");
+        String channel = function(source, "function liveChannelPane()");
+
+        assertTrue(events.contains("live-details-pause', 'Pause'"));
+        assertTrue(events.contains("'Pause Events, Messages, and Channel'"));
+        assertTrue(events.contains("const shouldRun = () => !paused && selection?.configurationId"));
+        assertTrue(events.contains("pause.textContent = paused ? 'Resume' : 'Pause'"));
+        assertTrue(events.contains("messagesController.setPaused(paused)"));
+        assertTrue(events.contains("channelController.setPaused(paused)"));
+        assertTrue(messages.contains("active && !collapsed && !paused && !document.hidden"));
+        assertTrue(messages.contains("setPaused(value) { paused = value; sync(); }"));
+        assertTrue(channel.contains("active && !collapsed && !paused && !document.hidden"));
+        assertTrue(channel.contains("setPaused(value) { paused = value; sync(); }"));
     }
 
     private static String source() throws Exception

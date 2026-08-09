@@ -5664,6 +5664,7 @@ function liveMessagesPane() {
   let selection = null;
   let active = false;
   let collapsed = false;
+  let paused = false;
   let stream = null;
   let streamEpoch = 0;
 
@@ -5733,7 +5734,7 @@ function liveMessagesPane() {
     render();
   };
 
-  const shouldRun = () => active && !collapsed && !document.hidden &&
+  const shouldRun = () => active && !collapsed && !paused && !document.hidden &&
     selection?.configurationId && selection?.diagnosticFrequencyHz;
 
   const sync = () => {
@@ -5741,6 +5742,7 @@ function liveMessagesPane() {
       closeStream();
       if (!selection) setStatus('Waiting');
       else if (!selection.diagnosticFrequencyHz) setStatus('Unavailable');
+      else if (paused) setStatus('Paused');
       else setStatus(document.hidden ? 'Hidden' : 'Paused');
       return;
     }
@@ -5804,6 +5806,7 @@ function liveMessagesPane() {
     select,
     setActive(value) { active = value; sync(); },
     setCollapsed(value) { collapsed = value; sync(); },
+    setPaused(value) { paused = value; sync(); },
     close() {
       closeStream();
       document.removeEventListener('visibilitychange', onVisibilityChange);
@@ -5816,6 +5819,7 @@ function liveChannelPane() {
   let selection = null;
   let active = false;
   let collapsed = false;
+  let paused = false;
   let stream = null;
   let streamEpoch = 0;
   let state = null;
@@ -5969,7 +5973,7 @@ function liveChannelPane() {
     stream = null;
   };
 
-  const shouldRun = () => active && !collapsed && !document.hidden &&
+  const shouldRun = () => active && !collapsed && !paused && !document.hidden &&
     selection?.configurationId && selection?.diagnosticFrequencyHz;
 
   const sync = () => {
@@ -5981,6 +5985,8 @@ function liveChannelPane() {
       } else if (!selection.diagnosticFrequencyHz) {
         setStatus('Unavailable');
         clearPlots('The selected row does not have an active frequency.');
+      } else if (paused) {
+        setStatus('Paused');
       } else {
         setStatus(document.hidden ? 'Hidden' : 'Paused');
       }
@@ -6078,6 +6084,7 @@ function liveChannelPane() {
     select,
     setActive(value) { active = value; sync(); scheduleDraw(); },
     setCollapsed(value) { collapsed = value; sync(); },
+    setPaused(value) { paused = value; sync(); },
     close() {
       closeStream();
       document.removeEventListener('visibilitychange', onVisibilityChange);
@@ -6090,7 +6097,9 @@ function liveEventsPanel(onCollapse) {
   const events = new Map();
   const order = [];
   let selection = null;
+  let paused = false;
   let stream = null;
+  let streamEpoch = 0;
   let renderPending = false;
 
   const panel = node('section', 'section live-details');
@@ -6100,10 +6109,14 @@ function liveEventsPanel(onCollapse) {
   tabBar.setAttribute('aria-label', 'Live details');
   const controls = node('div', 'live-details-controls');
   const connection = badge('Waiting', 'state-stale');
+  const pause = node('button', 'button secondary live-details-pause', 'Pause');
+  pause.type = 'button';
+  pause.setAttribute('aria-label', 'Pause Events, Messages, and Channel');
+  pause.setAttribute('aria-pressed', 'false');
   const collapse = node('button', 'button secondary live-details-collapse', 'Collapse');
   collapse.type = 'button';
   collapse.setAttribute('aria-expanded', 'true');
-  controls.append(connection, collapse);
+  controls.append(connection, pause, collapse);
   header.append(tabBar, controls);
 
   const body = node('div', 'live-details-body');
@@ -6200,6 +6213,7 @@ function liveEventsPanel(onCollapse) {
   };
 
   const closeStream = () => {
+    streamEpoch += 1;
     if (!stream) return;
     stream.close();
     liveConnections.delete(stream);
@@ -6215,33 +6229,26 @@ function liveEventsPanel(onCollapse) {
     scheduleRender();
   };
 
-  const select = (nextSelection) => {
-    messagesController.select(nextSelection);
-    channelController.select(nextSelection);
-    const nextKey = nextSelection ?
-      `${nextSelection.configurationId}:${nextSelection.frequencyHz || ''}:${nextSelection.timeslot || ''}` : '';
-    const currentKey = selection ?
-      `${selection.configurationId}:${selection.frequencyHz || ''}:${selection.timeslot || ''}` : '';
-    if (nextKey === currentKey) {
-      selection = nextSelection;
-      selectionLabel.textContent = selection?.label || 'Select a live row above';
+  const shouldRun = () => !paused && selection?.configurationId;
+
+  const sync = () => {
+    if (!shouldRun()) {
+      closeStream();
+      connection.textContent = selection && paused ? 'Paused' : 'Waiting';
+      connection.className = 'badge state-stale';
       return;
     }
-    closeStream();
-    selection = nextSelection;
-    events.clear();
-    order.length = 0;
-    selectionLabel.textContent = selection?.label || 'Select a live row above';
-    connection.textContent = selection ? 'Connecting' : 'Waiting';
-    connection.className = 'badge state-stale';
-    scheduleRender();
-    if (!selection) return;
+    if (stream) return;
 
+    connection.textContent = 'Connecting';
+    connection.className = 'badge state-stale';
+    const epoch = ++streamEpoch;
     const parameters = { configuration_id: selection.configurationId };
     if (selection.frequencyHz) parameters.frequency_hz = selection.frequencyHz;
     if (selection.timeslot) parameters.timeslot = selection.timeslot;
     stream = liveConnection('/live/events', parameters);
     stream.addEventListener('snapshot', (event) => {
+      if (epoch !== streamEpoch) return;
       const snapshot = JSON.parse(event.data);
       events.clear();
       order.length = 0;
@@ -6253,15 +6260,41 @@ function liveEventsPanel(onCollapse) {
       });
       scheduleRender();
     });
-    stream.addEventListener('decode_event', (event) => addEvent(JSON.parse(event.data)));
+    stream.addEventListener('decode_event', (event) => {
+      if (epoch === streamEpoch) addEvent(JSON.parse(event.data));
+    });
     stream.onopen = () => {
+      if (epoch !== streamEpoch) return;
       connection.textContent = 'Live';
       connection.className = 'badge state-current';
     };
     stream.onerror = () => {
+      if (epoch !== streamEpoch) return;
       connection.textContent = 'Reconnecting';
       connection.className = 'badge state-stale';
     };
+  };
+
+  const select = (nextSelection) => {
+    messagesController.select(nextSelection);
+    channelController.select(nextSelection);
+    const nextKey = nextSelection ?
+      `${nextSelection.configurationId}:${nextSelection.frequencyHz || ''}:${nextSelection.timeslot || ''}` : '';
+    const currentKey = selection ?
+      `${selection.configurationId}:${selection.frequencyHz || ''}:${selection.timeslot || ''}` : '';
+    if (nextKey === currentKey) {
+      selection = nextSelection;
+      selectionLabel.textContent = selection?.label || 'Select a live row above';
+      sync();
+      return;
+    }
+    closeStream();
+    selection = nextSelection;
+    events.clear();
+    order.length = 0;
+    selectionLabel.textContent = selection?.label || 'Select a live row above';
+    scheduleRender();
+    sync();
   };
 
   const panes = { events: eventPane, messages: messagesPane, channel: channelPane };
@@ -6292,6 +6325,15 @@ function liveEventsPanel(onCollapse) {
     messagesController.setCollapsed(collapsed);
     channelController.setCollapsed(collapsed);
     onCollapse(collapsed);
+  });
+  pause.addEventListener('click', () => {
+    paused = !paused;
+    pause.textContent = paused ? 'Resume' : 'Pause';
+    pause.setAttribute('aria-label', `${paused ? 'Resume' : 'Pause'} Events, Messages, and Channel`);
+    pause.setAttribute('aria-pressed', String(paused));
+    messagesController.setPaused(paused);
+    channelController.setPaused(paused);
+    sync();
   });
   filter.addEventListener('change', scheduleRender);
   renderEvents();
