@@ -122,4 +122,17 @@ public class DispatcherTest
             dispatcher.stop();
         }
     }
+
+    @Test
+    public void stoppedDispatcherCleansUpNewElements()
+    {
+        List<Integer> discarded = new CopyOnWriteArrayList<>();
+        Dispatcher<Integer> dispatcher = new Dispatcher<>("stopped dispatcher cleanup test", 1,
+            Dispatcher.ExecutorType.PRIVATE, 4, discarded::add);
+
+        dispatcher.receive(1);
+
+        assertEquals(List.of(1), discarded);
+        assertEquals(0, dispatcher.getQueueSize());
+    }
 }
