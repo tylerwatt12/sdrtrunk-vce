@@ -47,7 +47,7 @@ class TrunkedIdentitySchemaTest
         try(Connection connection = open(database))
         {
             P25ActivityLogSchema.validate(connection);
-            assertEquals("25", scalarString(connection, """
+            assertEquals(Integer.toString(P25ActivityLogSchema.SCHEMA_VERSION), scalarString(connection, """
                 SELECT value FROM database_metadata WHERE key='p25_activity_schema_version'
                 """));
             assertTrue(Long.parseLong(scalarString(connection, """
@@ -57,7 +57,10 @@ class TrunkedIdentitySchemaTest
             assertFalse(objectExists(connection, "table", "p25_talkgroup_summary"));
             assertFalse(objectExists(connection, "table", "p25_radio_summary"));
             assertFalse(objectExists(connection, "table", "p25_radio_talkgroup_summary"));
-            assertTrue(objectExists(connection, "table", "p25_radio_affiliation"));
+            assertFalse(objectExists(connection, "table", "p25_radio_affiliation"));
+            assertTrue(objectExists(connection, "table", "trunked_radio_affiliation"));
+            assertTrue(objectExists(connection, "table", "trunked_radio_site_presence"));
+            assertTrue(objectExists(connection, "table", "trunked_radio_presence_lifecycle"));
             assertTrue(objectExists(connection, "table", "p25_zero_local_fq_talkgroup_summary"));
         }
     }
@@ -659,8 +662,17 @@ class TrunkedIdentitySchemaTest
             statement.executeUpdate("""
                 INSERT INTO trunked_identity_summary(
                     scope_id,identity_kind_code,identity_id,first_seen_ms,last_seen_ms
-                ) VALUES(%d,1,100,1,1),(%d,1,101,1,1)
-                """.formatted(originalScope.scopeId(), originalScope.scopeId()));
+                ) VALUES(%d,1,100,1,1),(%d,1,101,1,1),(%d,2,200,1,1)
+                """.formatted(originalScope.scopeId(), originalScope.scopeId(), originalScope.scopeId()));
+            statement.executeUpdate("""
+                INSERT INTO trunked_radio_affiliation(scope_id,radio_id,talkgroup_id,confirmed_at_ms)
+                VALUES(%d,200,100,1)
+                """.formatted(originalScope.scopeId()));
+            statement.executeUpdate("""
+                INSERT INTO trunked_radio_site_presence(
+                    scope_id,radio_id,context_id,evidence_code,confirmed_at_ms
+                ) VALUES(%d,200,10,2,1)
+                """.formatted(originalScope.scopeId()));
 
             statement.executeUpdate("""
                 INSERT INTO call_identity_bucket(
@@ -693,6 +705,9 @@ class TrunkedIdentitySchemaTest
             TrunkedIdentitySchema.ensureScope(connection, 10, 2,
                 P25ActivityLogRecords.IdentityDomain.STANDARD);
             assertEquals(1, scalarLong(connection, """
+                SELECT COUNT(*) FROM trunked_radio_site_presence WHERE context_id=10
+                """));
+            assertEquals(1, scalarLong(connection, """
                 SELECT COUNT(*) FROM call_identity_bucket
                 WHERE context_id=10 AND identity_kind_code=1 AND identity_id=100
                 """));
@@ -715,6 +730,13 @@ class TrunkedIdentitySchemaTest
                 JOIN trunked_identity_scope scope ON scope.scope_id=mapping.scope_id
                 WHERE mapping.context_id=11 AND scope.scope_token='p25:BEE00:348'
                 """));
+            assertEquals(0, scalarLong(connection, """
+                SELECT COUNT(*) FROM trunked_radio_site_presence WHERE context_id=10
+                """));
+            assertEquals(1, scalarLong(connection, """
+                SELECT COUNT(*) FROM trunked_radio_affiliation
+                WHERE scope_id=%d AND radio_id=200 AND talkgroup_id=100
+                """.formatted(originalScope.scopeId())));
             assertEquals(0, scalarLong(connection, """
                 SELECT COUNT(*) FROM call_identity_bucket identity
                 JOIN trunked_identity_scope_context mapping ON mapping.context_id=identity.context_id
@@ -1321,6 +1343,25 @@ class TrunkedIdentitySchemaTest
                     (%d, 0xABCDE, 0x321, 1200, 1000, 1000),
                     (%d, 0xABCDE, 0x322, 1201, 10000, 10000)
                 """.formatted(p25ScopeId, p25ScopeId));
+            statement.executeUpdate("""
+                INSERT INTO trunked_radio_affiliation(scope_id,radio_id,talkgroup_id,confirmed_at_ms)
+                VALUES
+                    (%d, 300, 1200, 1000),
+                    (%d, 301, 1201, 10000)
+                """.formatted(p25ScopeId, p25ScopeId));
+            statement.executeUpdate("""
+                INSERT INTO trunked_radio_site_presence(
+                    scope_id,radio_id,context_id,evidence_code,confirmed_at_ms
+                ) VALUES
+                    (%d, 300, 50, 1, 1000),
+                    (%d, 301, 50, 2, 10000)
+                """.formatted(p25ScopeId, p25ScopeId));
+            statement.executeUpdate("""
+                INSERT INTO trunked_radio_presence_lifecycle(scope_id,radio_id,cleared_at_ms)
+                VALUES
+                    (%d, 302, 1000),
+                    (%d, 303, 10000)
+                """.formatted(p25ScopeId, p25ScopeId));
 
             assertTrue(TrunkedIdentitySchema.hasScopeCapacity(connection, "trunked_identity_summary",
                 scopeId, 5));
@@ -1355,11 +1396,50 @@ class TrunkedIdentitySchemaTest
                 LIMIT 1000
                 """);
             assertIndexedSearch(connection, """
+                EXPLAIN QUERY PLAN
+                SELECT scope_id, radio_id
+                FROM trunked_radio_affiliation INDEXED BY idx_trunked_radio_affiliation_retention
+                WHERE confirmed_at_ms < 5000
+                ORDER BY confirmed_at_ms, scope_id, radio_id
+                LIMIT 1000
+                """);
+            assertIndexedSearch(connection, """
+                EXPLAIN QUERY PLAN
+                SELECT scope_id, radio_id
+                FROM trunked_radio_presence_lifecycle
+                    INDEXED BY idx_trunked_radio_presence_lifecycle_retention
+                WHERE cleared_at_ms < 5000
+                ORDER BY cleared_at_ms, scope_id, radio_id
+                LIMIT 1000
+                """);
+            assertIndexedSearch(connection, """
+                EXPLAIN QUERY PLAN
+                SELECT scope_id, radio_id
+                FROM trunked_radio_site_presence INDEXED BY idx_trunked_radio_site_presence_retention
+                WHERE confirmed_at_ms < 5000
+                ORDER BY confirmed_at_ms, scope_id, radio_id
+                LIMIT 1000
+                """);
+            assertIndexedSearch(connection, """
+                EXPLAIN QUERY PLAN
+                SELECT radio_id FROM trunked_radio_affiliation
+                WHERE scope_id=%d AND talkgroup_id=1201
+                ORDER BY confirmed_at_ms DESC, radio_id
+                LIMIT 500
+                """.formatted(p25ScopeId));
+            assertIndexedSearch(connection, """
+                EXPLAIN QUERY PLAN
+                SELECT radio_id FROM trunked_radio_site_presence
+                WHERE context_id=50
+                ORDER BY confirmed_at_ms DESC, scope_id, radio_id
+                LIMIT 500
+                """);
+            assertIndexedSearch(connection, """
                 EXPLAIN QUERY PLAN SELECT 1 FROM trunked_identity_summary
                 WHERE scope_id=1 LIMIT 1 OFFSET 99999
                 """);
 
-            assertEquals(4, TrunkedIdentitySchema.deleteOlderThan(connection, 5_000L));
+            assertEquals(7, TrunkedIdentitySchema.deleteOlderThan(connection, 5_000L));
             assertEquals(2, scalarLong(connection, """
                 SELECT COUNT(*) FROM trunked_identity_summary WHERE last_seen_ms=10000
                 """));
@@ -1369,10 +1449,25 @@ class TrunkedIdentitySchemaTest
             assertEquals(1, scalarLong(connection, """
                 SELECT COUNT(*) FROM p25_zero_local_fq_talkgroup_summary WHERE last_seen_ms=10000
                 """));
+            assertEquals(1, scalarLong(connection, """
+                SELECT COUNT(*) FROM trunked_radio_affiliation WHERE confirmed_at_ms=10000
+                """));
+            assertEquals(1, scalarLong(connection, """
+                SELECT COUNT(*) FROM trunked_radio_site_presence WHERE confirmed_at_ms=10000
+                """));
+            assertEquals(1, scalarLong(connection, """
+                SELECT COUNT(*) FROM trunked_radio_presence_lifecycle WHERE cleared_at_ms=10000
+                """));
 
             TrunkedIdentitySchema.reset(connection);
             assertEquals(0, scalarLong(connection,
                 "SELECT COUNT(*) FROM p25_zero_local_fq_talkgroup_summary"));
+            assertEquals(0, scalarLong(connection,
+                "SELECT COUNT(*) FROM trunked_radio_affiliation"));
+            assertEquals(0, scalarLong(connection,
+                "SELECT COUNT(*) FROM trunked_radio_site_presence"));
+            assertEquals(0, scalarLong(connection,
+                "SELECT COUNT(*) FROM trunked_radio_presence_lifecycle"));
 
             try(ResultSet resultSet = statement.executeQuery("PRAGMA quick_check"))
             {
@@ -1396,7 +1491,7 @@ class TrunkedIdentitySchemaTest
                 """);
             insertContext(connection, 10, "p25-a", 1, 1, 50);
             insertContext(connection, 11, "p25-b", 1, 2, 50);
-            TrunkedIdentitySchema.ensureScope(connection, 10, 1,
+            TrunkedIdentitySchema.Scope scope = TrunkedIdentitySchema.ensureScope(connection, 10, 1,
                 P25ActivityLogRecords.IdentityDomain.STANDARD);
             TrunkedIdentitySchema.ensureScope(connection, 11, 1,
                 P25ActivityLogRecords.IdentityDomain.STANDARD);
@@ -1405,15 +1500,27 @@ class TrunkedIdentitySchemaTest
                     scope_id,home_wacn,home_system_id,home_talkgroup_id,first_seen_ms,last_seen_ms
                 ) VALUES((SELECT scope_id FROM trunked_identity_scope LIMIT 1), 0xABCDE, 0x321, 1200, 1, 1)
                 """);
+            statement.executeUpdate("""
+                INSERT INTO trunked_radio_affiliation(scope_id,radio_id,talkgroup_id,confirmed_at_ms)
+                VALUES(%d, 1811524, 56133, 1000)
+                """.formatted(scope.scopeId()));
+            statement.executeUpdate("""
+                INSERT INTO trunked_radio_site_presence(
+                    scope_id,radio_id,context_id,evidence_code,confirmed_at_ms
+                ) VALUES(%d, 1811524, 10, 2, 1000)
+                """.formatted(scope.scopeId()));
 
             TrunkedIdentitySchema.clearContext(connection, 10);
             assertEquals(1, scalarLong(connection, "SELECT COUNT(*) FROM trunked_identity_scope"));
             assertEquals(1, scalarLong(connection,
                 "SELECT COUNT(*) FROM p25_zero_local_fq_talkgroup_summary"));
+            assertEquals(1, scalarLong(connection, "SELECT COUNT(*) FROM trunked_radio_affiliation"));
+            assertEquals(0, scalarLong(connection, "SELECT COUNT(*) FROM trunked_radio_site_presence"));
             TrunkedIdentitySchema.clearContext(connection, 11);
             assertEquals(0, scalarLong(connection, "SELECT COUNT(*) FROM trunked_identity_scope"));
             assertEquals(0, scalarLong(connection,
                 "SELECT COUNT(*) FROM p25_zero_local_fq_talkgroup_summary"));
+            assertEquals(0, scalarLong(connection, "SELECT COUNT(*) FROM trunked_radio_affiliation"));
         }
     }
 
@@ -1500,6 +1607,21 @@ class TrunkedIdentitySchemaTest
                 () -> P25ActivityLogSchema.validate(connection));
             assertTrue(exception.getMessage().contains("index"));
         }
+
+        Path presenceIndexDatabase = database("wrong-radio-presence-index.sqlite");
+
+        try(Connection connection = open(presenceIndexDatabase);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("DROP INDEX idx_trunked_radio_site_presence_retention");
+            statement.executeUpdate("""
+                CREATE INDEX idx_trunked_radio_site_presence_retention
+                ON trunked_radio_site_presence(scope_id, confirmed_at_ms, radio_id)
+                """);
+            SQLException exception = assertThrows(SQLException.class,
+                () -> P25ActivityLogSchema.validate(connection));
+            assertTrue(exception.getMessage().contains("index"));
+        }
     }
 
     @Test
@@ -1513,6 +1635,7 @@ class TrunkedIdentitySchemaTest
             insertContext(connection, 10, "configured-dmr", 1, 3, null);
             insertContext(connection, 11, "removed-empty-dmr", 1, 3, null);
             insertContext(connection, 12, "removed-history-dmr", 1, 3, null);
+            insertContext(connection, 15, "removed-lifecycle-dmr", 1, 3, null);
             statement.executeUpdate("""
                 INSERT INTO configuration_channel(sort_order, radres_guid, config_json)
                 VALUES(0, 'configured-dmr', '{}')
@@ -1524,11 +1647,17 @@ class TrunkedIdentitySchemaTest
                 P25ActivityLogRecords.IdentityDomain.STANDARD);
             TrunkedIdentitySchema.Scope removedHistory = TrunkedIdentitySchema.ensureScope(connection, 12, 1,
                 P25ActivityLogRecords.IdentityDomain.STANDARD);
+            TrunkedIdentitySchema.Scope removedLifecycle = TrunkedIdentitySchema.ensureScope(connection, 15, 1,
+                P25ActivityLogRecords.IdentityDomain.STANDARD);
             statement.executeUpdate("""
                 INSERT INTO trunked_identity_summary(
                     scope_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms
                 ) VALUES(%d, 1, 100, 1, 1)
                 """.formatted(removedHistory.scopeId()));
+            statement.executeUpdate("""
+                INSERT INTO trunked_radio_presence_lifecycle(scope_id,radio_id,cleared_at_ms)
+                VALUES(%d,500,1)
+                """.formatted(removedLifecycle.scopeId()));
 
             statement.executeUpdate("""
                 INSERT INTO p25_system(system_key,wacn,system_id,first_seen_ms,last_seen_ms)
@@ -1561,6 +1690,8 @@ class TrunkedIdentitySchemaTest
             assertEquals(1, scalarLong(connection,
                 "SELECT COUNT(*) FROM receiver_context WHERE id=12"));
             assertEquals(1, scalarLong(connection,
+                "SELECT COUNT(*) FROM receiver_context WHERE id=15"));
+            assertEquals(1, scalarLong(connection,
                 "SELECT COUNT(*) FROM receiver_context WHERE id=13"));
             assertEquals(0, scalarLong(connection,
                 "SELECT COUNT(*) FROM receiver_context WHERE id=14"));
@@ -1576,6 +1707,10 @@ class TrunkedIdentitySchemaTest
                 DELETE FROM p25_zero_local_fq_talkgroup_summary
                 WHERE scope_id=%d
                 """.formatted(shared.scopeId()));
+            statement.executeUpdate("""
+                DELETE FROM trunked_radio_presence_lifecycle
+                WHERE scope_id=%d
+                """.formatted(removedLifecycle.scopeId()));
             P25ActivityLogSchema.pruneInactiveTrunkedContexts(connection);
 
             assertEquals(1, scalarLong(connection, "SELECT COUNT(*) FROM receiver_context"));

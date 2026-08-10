@@ -135,7 +135,8 @@ const CHANNEL_TAG_DISPLAY = Object.freeze({
 });
 const TABLE_COLUMN_DEFAULT_WIDTHS = {
   'action': 82,
-  'affiliated': 70,
+  'affiliation': 190,
+  'affiliated-site': 220,
   'alias': 170,
   'band': 54,
   'calls': 66,
@@ -673,14 +674,6 @@ function yesNoKnown(value) {
   return value === null || value === undefined || value === '' ? '' : (Number(value) ? 'Yes' : 'No');
 }
 
-function checkbox(checked) {
-  const input = node('input', 'status-checkbox');
-  input.type = 'checkbox';
-  input.checked = Boolean(checked);
-  input.disabled = true;
-  return input;
-}
-
 function protocol(value) {
   const named = { p25: 'P25', dmr: 'DMR', nxdn: 'NXDN', nbfm: 'NBFM' };
   return named[String(value || '').toLowerCase()] || value || '';
@@ -805,6 +798,67 @@ function siteNameSummary(row, linked = true) {
   const target = linked && row?.guid && capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS) ?
     href('site', { guid: row.guid, tab: 'info' }) : '';
   return siteNameSummaryValue(labels.primary, labels.secondary, target);
+}
+
+function authoritativePresence(row) {
+  const presence = row?.presence;
+  const evidence = String(presence?.evidence || '').trim().toLowerCase();
+  const confirmedAt = Number(presence?.confirmed_at_ms);
+  const site = presence?.site;
+  if (!['registration', 'affiliation'].includes(evidence) ||
+      !Number.isFinite(confirmedAt) || confirmedAt <= 0 || !site || typeof site !== 'object' ||
+      Array.isArray(site) || !normalizedSiteText(site.protocol) ||
+      (!identifierNumber(site.site_id) && !normalizedSiteText(site.guid))) return null;
+  return { evidence, confirmed_at_ms: confirmedAt, site };
+}
+
+function presenceSiteIdentity(site) {
+  if (!site) return '';
+  if (isP25(site)) {
+    const values = [];
+    const rfss = hex(site.rfss, 2);
+    const siteId = hex(site.site_id, 2);
+    if (rfss) values.push(`RFSS ${rfss}`);
+    if (siteId) values.push(`Site ${siteId}`);
+    return values.join(' · ') || normalizedSiteText(site.guid);
+  }
+  const siteId = identifierNumber(site.site_id);
+  return siteId ? `Site ${siteId}` : normalizedSiteText(site.guid);
+}
+
+function presenceSiteContext(site) {
+  return normalizedSiteText(site?.configured_site) || normalizedSiteText(site?.configured_name) ||
+    normalizedSiteText(site?.channel_name);
+}
+
+function presenceSiteSortValue(row) {
+  const presence = authoritativePresence(row);
+  if (!presence) return '';
+  return `${presenceSiteIdentity(presence.site)}\u0000${presenceSiteContext(presence.site)}`;
+}
+
+function sitePresenceCell(row, showConfirmation = true) {
+  const presence = authoritativePresence(row);
+  if (!presence) return '—';
+  const identity = presenceSiteIdentity(presence.site);
+  const configured = presenceSiteContext(presence.site);
+  const summary = node('span', 'site-name-summary');
+  const primary = node('span', 'site-name-summary-primary');
+  primary.append(siteLink(presence.site, identity));
+  summary.append(primary);
+  if (configured || showConfirmation) {
+    const context = node('small', 'site-name-summary-context');
+    if (configured) context.append(configured);
+    if (showConfirmation) {
+      if (configured) context.append(' · ');
+      context.append('Confirmed ', dateTime(presence.confirmed_at_ms));
+    }
+    summary.append(context);
+  }
+  summary.title = [identity, configured,
+    `${semanticLabel(presence.evidence)} confirmed ${exactDateTime(presence.confirmed_at_ms)}`]
+    .filter(Boolean).join(' · ');
+  return summary;
 }
 
 function siteLabel(row) {
@@ -1090,6 +1144,25 @@ function talkgroupAliasLink(row, id, prefix = 'alias_', explicitKind) {
   if (id === null || id === undefined) return '';
   const name = row[`${prefix}name`];
   return name ? talkgroupLink(row, id, name, explicitKind) : '';
+}
+
+function affiliationTalkgroupCell(row) {
+  const id = row?.affiliated_talkgroup_id;
+  if (id === null || id === undefined) return '—';
+  const alias = String(row.affiliated_talkgroup_alias_name || '').trim();
+  const identifier = `TG ${identityNumber(row, id)}`;
+  const summary = node('span', 'site-name-summary');
+  const primary = node('span', 'site-name-summary-primary');
+  primary.append(talkgroupLink(row, id, alias || identifier));
+  summary.append(primary);
+  if (alias) summary.append(node('small', 'site-name-summary-context', identifier));
+  summary.title = alias ? `${alias} · ${identifier}` : identifier;
+  return summary;
+}
+
+function affiliationTalkgroupSortValue(row) {
+  return `${row?.affiliated_talkgroup_alias_name || ''}\u0000${identityNumber(row,
+    row?.affiliated_talkgroup_id)}`;
 }
 
 function channelTagSet(...values) {
@@ -1646,8 +1719,9 @@ function metrics(values, embedded = false) {
   const band = node(embedded ? 'div' : 'section', 'summary-band');
   values.forEach(([label, value, displayValue]) => {
     const metric = node('div', 'metric');
-    metric.append(node('span', '', label),
-      node('strong', '', displayValue === undefined ? number(value) : displayValue));
+    const displayed = node('strong');
+    displayed.append(valueNode(displayValue === undefined ? number(value) : displayValue));
+    metric.append(node('span', '', label), displayed);
     band.append(metric);
   });
   return band;
@@ -5393,6 +5467,25 @@ function pageParameters(extra = {}) {
   };
 }
 
+function affiliationRouteFilters() {
+  const siteGuid = normalizedSiteText(route.get('site_guid'));
+  return {
+    affiliated: route.get('affiliated') === 'true' ? true : null,
+    site_guid: siteGuid || null
+  };
+}
+
+function affiliationFilterActions(exportAction = null) {
+  const filters = affiliationRouteFilters();
+  const actions = node('div', 'section-title-actions');
+  if (filters.affiliated || filters.site_guid) {
+    actions.append(anchor('Clear Filter', currentHref({ affiliated: null, site_guid: null, offset: null }),
+      'button secondary'));
+  }
+  if (exportAction) actions.append(exportAction);
+  return actions.childNodes.length ? actions : null;
+}
+
 function requiredSystemScope() {
   const scopeToken = String(route.get('scope') || '').trim();
   if (!scopeToken) throw new Error('System scope is missing from the URL');
@@ -5688,15 +5781,13 @@ function systemRadioColumns(system) {
       className: 'alias-cell', sort: 'talker_alias' });
   }
   if (systemCapability(system, 'current_affiliations')) {
-    columns.push(
-      { id: 'talkgroup-id', label: 'Affil TG', fullLabel: 'Affiliated Talkgroup ID',
-        render: (row) => talkgroupLink(row, row.affiliated_talkgroup_id), className: 'numeric',
-        sort: 'affiliated_talkgroup', sortValue: (row) => Number(row.affiliated_talkgroup_id) },
-      { id: 'talkgroup-name', label: 'TG Alias', fullLabel: 'Talkgroup Alias',
-        render: (row) => talkgroupAliasLink(row, row.affiliated_talkgroup_id,
-          'affiliated_talkgroup_alias_'), className: 'alias-cell',
-        sortValue: (row) => row.affiliated_talkgroup_alias_name || '' }
-    );
+    columns.push({ id: 'affiliation', label: 'Affiliation', fullLabel: 'Current Talkgroup Affiliation',
+      render: affiliationTalkgroupCell, className: 'alias-cell', sort: 'affiliated_talkgroup',
+      sortValue: affiliationTalkgroupSortValue });
+  }
+  if (systemCapability(system, 'radio_site_presence')) {
+    columns.push({ id: 'affiliated-site', label: 'Last Confirmed Site', render: sitePresenceCell,
+      className: 'alias-cell', sort: 'site', sortValue: presenceSiteSortValue });
   }
   columns.push(
     { id: 'calls', label: 'Calls', render: (row) => number(row.call_count), className: 'numeric',
@@ -8408,9 +8499,13 @@ async function renderSystem() {
     content.append(pagedSection('Talkgroups', page, talkgroupColumns, 'Search talkgroup ID', 'talkgroups',
       exportCsvLink('system-talkgroups', systemScope), { topPager: true }));
   } else if (tab === 'radios') {
-    const page = await api(systemApiPath(systemScope.scope, 'radios'), pageParameters());
-    content.append(pagedSection('Radios', page, systemRadioColumns(system), 'Search radio ID', 'radios',
-      exportCsvLink('system-radios', systemScope), { topPager: true }));
+    const filters = affiliationRouteFilters();
+    const page = await api(systemApiPath(systemScope.scope, 'radios'), pageParameters(filters));
+    const title = filters.site_guid ? (filters.affiliated ? 'Affiliated Radios at Site' : 'Radios at Site') :
+      (filters.affiliated ? 'Affiliated Radios' : 'Radios');
+    const exportAction = exportCsvLink('system-radios', { ...systemScope, ...filters });
+    content.append(pagedSection(title, page, systemRadioColumns(system), 'Search radio ID', 'radios',
+      affiliationFilterActions(exportAction), { topPager: true }));
   } else if (tab === 'talker-aliases') {
     const page = await api(systemApiPath(systemScope.scope, 'talker-aliases'), pageParameters());
     const columns = [
@@ -8449,7 +8544,7 @@ async function renderSystem() {
     ], true))];
     if (systemCapability(system, 'current_affiliations')) {
       blocks.push(section('Current State', metrics([
-        ['Currently Affiliated', system.affiliations]
+        ['Currently Affiliated', system.affiliated_radios]
       ], true)));
     }
     blocks.push(section('System Info', keyValues([
@@ -8486,11 +8581,13 @@ async function renderTalkgroup() {
     entityTabs('talkgroup', talkgroup, id, tab, false, kind));
 
   if (tab === 'radios') {
+    const currentAffiliations = kind === 'talkgroup' &&
+      systemCapability(talkgroup, 'current_affiliations');
+    const sitePresence = currentAffiliations && systemCapability(talkgroup, 'radio_site_presence');
+    const affiliatedOnly = currentAffiliations && route.get('affiliated') === 'true';
     const relationships = await api(systemApiPath(systemScope.scope, 'relationships'),
-      pageParameters({ talkgroup_id: id, kind: kind === 'patch_group' ? 'patch_group' : null }));
-    const affiliations = systemCapability(talkgroup, 'current_affiliations') ?
-      await api(systemApiPath(systemScope.scope, 'affiliations'), { talkgroup_id: id, limit: 500 }) : { rows: [] };
-    const affiliated = new Set((affiliations.rows || []).map((row) => Number(row.radio_id)));
+      pageParameters({ talkgroup_id: id, kind: kind === 'patch_group' ? 'patch_group' : null,
+        affiliated: affiliatedOnly ? true : null }));
     const columns = [
       { id: 'radio', label: 'Radio', render: (row) => radioLink(row), className: 'numeric', sort: 'radio', sortValue: (row) => Number(row.radio_id) },
       { id: 'alias', label: 'Alias', render: (row) => row.radio_alias_name ? radioLink(row, row.radio_id, row.radio_alias_name) : '', className: 'alias-cell', sort: 'radio_alias', sortValue: (row) => row.radio_alias_name || '' },
@@ -8502,13 +8599,17 @@ async function renderTalkgroup() {
       columns.splice(2, 0, { label: 'OTA Alias', fullLabel: 'Talker Alias', key: 'last_talker_alias',
         className: 'alias-cell', sort: 'talker_alias' });
     }
-    if (systemCapability(talkgroup, 'current_affiliations')) {
+    if (sitePresence) {
       columns.splice(systemCapability(talkgroup, 'talker_aliases') ? 3 : 2, 0,
-        { id: 'affiliated', label: 'Affil', fullLabel: 'Affiliated',
-          render: (row) => checkbox(affiliated.has(Number(row.radio_id))), className: 'center',
-          sort: 'affiliated', sortValue: (row) => affiliated.has(Number(row.radio_id)) });
+        { id: 'affiliated-site', label: 'Affiliated Site', fullLabel: 'Last Confirmed Affiliated Site',
+          render: (row) => row.currently_affiliated === true ? sitePresenceCell(row) : '',
+          className: 'alias-cell', sort: 'site', sortValue: (row) => row.currently_affiliated === true ?
+            presenceSiteSortValue(row) : '' });
     }
-    content.append(pagedSection('Radios', relationships, columns, null, 'talkgroup-radios'));
+    const action = currentAffiliations ? anchor(affiliatedOnly ? 'Clear Filter' : 'Show Affiliated',
+      currentHref({ affiliated: affiliatedOnly ? null : true, offset: null }), 'button secondary') : null;
+    content.append(pagedSection(affiliatedOnly ? 'Affiliated Radios' : 'Radios', relationships,
+      columns, null, 'talkgroup-radios', action));
   } else if (tab === 'activity') {
     if (detailedHistoryAvailable()) {
       await renderActivity({ ...systemScope, talkgroup_id: id, kind }, 'Activity Log');
@@ -8532,12 +8633,15 @@ async function renderTalkgroup() {
     ], true)), section('Relationships', metrics([
       ['Observed Radios', talkgroup.radios]
     ], true))];
-    if (systemCapability(talkgroup, 'current_affiliations')) {
-      blocks.push(section('Current State', keyValues([
+    if (kind === 'talkgroup' && systemCapability(talkgroup, 'current_affiliations')) {
+      const currentState = [
         ['Currently Affiliated', anchor(number(talkgroup.affiliated_radios),
-          href('talkgroup', { ...scope(talkgroup), id, kind: kind === 'patch_group' ? 'patch_group' : null,
-            tab: 'radios' }))]
-      ])));
+          href('talkgroup', { ...scope(talkgroup), id, tab: 'radios', affiliated: true }))]
+      ];
+      if (systemCapability(talkgroup, 'radio_site_presence')) {
+        currentState.push(['Affiliated Sites', number(talkgroup.affiliated_sites)]);
+      }
+      blocks.push(section('Current State', keyValues(currentState)));
     }
     blocks.push(section('Last-known Facts', keyValues([
       ['Last Source', radioLink(talkgroup, talkgroup.last_source_radio_id)],
@@ -8608,7 +8712,14 @@ async function renderRadio() {
         ['Talkgroup ID', talkgroupLink(radio, radio.affiliated_talkgroup_id)],
         ['Talkgroup Alias', talkgroupAliasLink(radio, radio.affiliated_talkgroup_id,
           'affiliated_talkgroup_alias_')],
-        ['Updated', dateTime(radio.affiliation_updated_at_ms)]
+        ['Affiliation Confirmed', dateTime(radio.affiliation_confirmed_at_ms)]
+      ])));
+    }
+    if (systemCapability(radio, 'radio_site_presence')) {
+      const presence = authoritativePresence(radio);
+      blocks.push(section('Last Confirmed Site', keyValues([
+        ['Site', sitePresenceCell(radio, false)],
+        ['Confirmed', presence ? dateTime(presence.confirmed_at_ms) : '—']
       ])));
     }
     blocks.push(section('Relationships', metrics([
@@ -8841,6 +8952,12 @@ async function renderSiteInfo(site) {
   ];
   if (siteCapability(site, 'frequency_bands')) summary.push(['Band Plans', site.bands]);
   if (siteCapability(site, 'patch_groups')) summary.push(['Patches', site.patches]);
+  if (siteCapability(site, 'current_affiliations') && siteCapability(site, 'radio_site_presence')) {
+    const label = number(site.affiliated_radios);
+    const linked = site.scope_token && site.guid ? anchor(label,
+      href('system', { ...scope(site), tab: 'radios', affiliated: true, site_guid: site.guid })) : label;
+    summary.push(['Affiliated Radios', site.affiliated_radios, linked]);
+  }
 
   const infoColumn = node('div', 'entity-info-column');
   infoColumn.append(section('Site Info', keyValues([

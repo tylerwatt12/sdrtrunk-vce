@@ -224,7 +224,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(tabs.contains("kind: kind === 'patch_group' ? 'patch_group' : null"));
         assertTrue(talkgroup.contains("entityTabs('talkgroup', talkgroup, id, tab, false, kind)"));
         assertTrue(talkgroup.contains(
-            "pageParameters({ talkgroup_id: id, kind: kind === 'patch_group' ? 'patch_group' : null })"));
+            "pageParameters({ talkgroup_id: id, kind: kind === 'patch_group' ? 'patch_group' : null,"));
         assertTrue(talkgroup.contains("renderActivity({ ...systemScope, talkgroup_id: id, kind }"));
         assertTrue(talkgroup.contains("talkgroupActivityHistorySection({ ...systemScope, talkgroup_id: id, kind })"));
         String activity = function(source, "async function renderActivity(scopeParameters, title = 'Activity')");
@@ -303,7 +303,7 @@ class StatsWebInteractionUiContractTest
 
         String system = function(source, "async function renderSystem()");
         assertTrue(system.contains("exportCsvLink('system-talkgroups', systemScope)"));
-        assertTrue(system.contains("exportCsvLink('system-radios', systemScope)"));
+        assertTrue(system.contains("exportCsvLink('system-radios', { ...systemScope, ...filters })"));
         assertEquals(2, system.split("exportCsvLink\\(", -1).length - 1,
             "Talker Alias Summary must not expose CSV export");
 
@@ -416,8 +416,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(html.indexOf("localStorage.getItem('sdrtrunk_theme')") <
             html.indexOf("rel=\"stylesheet\""));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=42"));
-        assertTrue(html.contains("/assets/app.js?v=57"));
+        assertTrue(html.contains("/assets/app.css?v=43"));
+        assertTrue(html.contains("/assets/app.js?v=58"));
         assertTrue(source.contains("window.localStorage.setItem(THEME_STORAGE_KEY"));
         assertTrue(source.contains("toggle.setAttribute('aria-pressed'"));
         assertTrue(css.contains(":root[data-theme=\"dark\"]"));

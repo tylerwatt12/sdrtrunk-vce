@@ -2896,20 +2896,6 @@ th.numeric {
   font-weight: 600;
 }
 
-td.center,
-th.center {
-  text-align: center;
-}
-
-.status-checkbox {
-  width: 15px;
-  height: 15px;
-  margin: 0;
-  vertical-align: middle;
-  accent-color: #087347;
-  opacity: 1;
-}
-
 .empty,
 .loading,
 .error {

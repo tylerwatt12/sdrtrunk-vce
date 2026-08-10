@@ -36,13 +36,13 @@ import java.util.stream.Collectors;
 /**
  * SQLite schema and writes for SDRTrunk receiver activity history.
  *
- * The v25 shape is summary-first. Trunked P25, DMR and NXDN share one protocol-neutral identity projection while
+ * The v26 shape is summary-first. Trunked P25, DMR and NXDN share one protocol-neutral identity projection while
  * receiver contexts own site observations. Detailed event rows are optional, while compact identity and hourly
  * summaries are always updated when stats logging is enabled.
  */
 public class P25ActivityLogSchema
 {
-    public static final int SCHEMA_VERSION = 25;
+    public static final int SCHEMA_VERSION = 26;
     private static final String SCHEMA_VERSION_KEY = "p25_activity_schema_version";
     public static final String CALL_OUTPUT_METRICS_STARTED_AT_KEY = "p25_call_output_metrics_started_at_ms";
     public static final String ALL_MODE_CALL_OUTPUT_METRICS_STARTED_AT_KEY =
@@ -271,11 +271,6 @@ public class P25ActivityLogSchema
 
             upsertTrunkedSiteMetrics(connection, activity, contextId);
 
-            if(systemKey != null &&
-                activityProtocol == TrunkedIdentityPolicy.PROTOCOL_P25)
-            {
-                updateRadioAffiliation(connection, activity, systemKey);
-            }
         }
         else if(isConventional(activity.contextKind()))
         {
@@ -1146,7 +1141,6 @@ public class P25ActivityLogSchema
         deleted += deleteByTime(connection, "p25_site_talkgroup_bucket", "bucket_start_ms", cutoffEpochMilliseconds);
         deleted += deleteByTime(connection, "p25_site_activity_bucket", "bucket_start_ms", cutoffEpochMilliseconds);
         deleted += deleteByTime(connection, "call_identity_bucket", "bucket_start_ms", cutoffEpochMilliseconds);
-        deleted += deleteByTime(connection, "p25_radio_affiliation", "updated_at_ms", cutoffEpochMilliseconds);
         deleted += deleteByTime(connection, "conventional_activity_bucket", "bucket_start_ms", cutoffEpochMilliseconds);
         deleted += deleteByTime(connection, "p25_site_channel", "confirmed_at_ms", cutoffEpochMilliseconds);
         deleted += deleteByTime(connection, "p25_site_channel_tag", "confirmed_at_ms", cutoffEpochMilliseconds);
@@ -1280,6 +1274,10 @@ public class P25ActivityLogSchema
                   AND NOT EXISTS (
                       SELECT 1 FROM trunked_site_neighbor_summary fact WHERE fact.guid = context.guid
                   )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM trunked_radio_site_presence presence
+                      WHERE presence.context_id = context.id
+                  )
                   AND (
                       EXISTS (
                           SELECT 1 FROM trunked_identity_scope_context other
@@ -1300,8 +1298,12 @@ public class P25ActivityLogSchema
                               WHERE relationship.scope_id = ownership.scope_id
                           )
                           AND NOT EXISTS (
-                              SELECT 1 FROM p25_radio_affiliation affiliation
-                              WHERE affiliation.system_key = scope.p25_system_key
+                              SELECT 1 FROM trunked_radio_affiliation affiliation
+                              WHERE affiliation.scope_id = ownership.scope_id
+                          )
+                          AND NOT EXISTS (
+                              SELECT 1 FROM trunked_radio_presence_lifecycle lifecycle
+                              WHERE lifecycle.scope_id = ownership.scope_id
                           )
                       )
                   )
@@ -1343,7 +1345,6 @@ public class P25ActivityLogSchema
         deleted += deleteAll(connection, "p25_site_activity_bucket");
         deleted += deleteAll(connection, "call_identity_bucket");
         deleted += TrunkedIdentitySchema.reset(connection);
-        deleted += deleteAll(connection, "p25_radio_affiliation");
         deleted += deleteAll(connection, "p25_site_frequency_summary");
         deleted += deleteAll(connection, "conventional_activity_bucket");
         deleted += deleteAll(connection, "conventional_activity_summary");
@@ -1447,15 +1448,6 @@ public class P25ActivityLogSchema
 
     private static void createP25SummaryTables(Statement statement) throws SQLException
     {
-        statement.executeUpdate("""
-            CREATE TABLE IF NOT EXISTS p25_radio_affiliation (
-                system_key INTEGER NOT NULL,
-                radio_id INTEGER NOT NULL,
-                talkgroup_id INTEGER NOT NULL,
-                updated_at_ms INTEGER NOT NULL,
-                PRIMARY KEY(system_key, radio_id)
-            ) WITHOUT ROWID
-            """);
         statement.executeUpdate("""
             CREATE TABLE IF NOT EXISTS p25_site_frequency_summary (
                 context_id INTEGER NOT NULL,
@@ -1884,7 +1876,6 @@ public class P25ActivityLogSchema
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_site_talkgroup_bucket_time ON p25_site_talkgroup_bucket(context_id, bucket_start_ms)");
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_site_talkgroup_bucket_talkgroup_time ON p25_site_talkgroup_bucket(talkgroup_id, bucket_start_ms)");
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_site_activity_bucket_time ON p25_site_activity_bucket(bucket_start_ms)");
-        statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_p25_radio_affiliation_talkgroup ON p25_radio_affiliation(system_key, talkgroup_id, updated_at_ms DESC, radio_id)");
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_conventional_bucket_time ON conventional_activity_bucket(context_id, bucket_start_ms)");
         statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_conventional_bucket_dashboard_time ON conventional_activity_bucket(bucket_start_ms, context_id)");
         statement.executeUpdate("""
@@ -1915,7 +1906,6 @@ public class P25ActivityLogSchema
             "source_radio_id", "target_id", "target_kind_code", "frequency_hz", "lcn_band", "lcn_number",
             "timeslot", "encrypted", "encryption_algorithm_id", "encryption_key_id"),
         table("activity_event_talkgroup_member", "event_id", "talkgroup_id"),
-        table("p25_radio_affiliation", "system_key", "radio_id", "talkgroup_id", "updated_at_ms"),
         tableWithActions("p25_site_frequency_summary", "context_id", "frequency_hz", "timeslot", "lcn_band",
             "lcn_number", "first_seen_ms", "last_seen_ms", "encrypted_count", "last_source_radio_id",
             "last_target_id", "last_encryption_algorithm_id", "last_encryption_key_id"),
@@ -1984,7 +1974,6 @@ public class P25ActivityLogSchema
         "idx_p25_site_talkgroup_bucket_time",
         "idx_p25_site_talkgroup_bucket_talkgroup_time",
         "idx_p25_site_activity_bucket_time",
-        "idx_p25_radio_affiliation_talkgroup",
         "idx_conventional_bucket_time",
         "idx_conventional_bucket_dashboard_time",
         "idx_call_identity_bucket_dashboard_time",
@@ -2152,51 +2141,6 @@ public class P25ActivityLogSchema
         }
 
         return identities;
-    }
-
-    private static void updateRadioAffiliation(Connection connection, P25ActivityLogRecords.ActivityEvent activity,
-                                               int systemKey) throws SQLException
-    {
-        P25ActivityLogRecords.RadioAffiliationUpdate update = activity.affiliationUpdate();
-
-        if(update == null || !isDirectoryRadio(update.radioId()) ||
-            update.talkgroupId() != null && !isDirectoryTalkgroup(update.talkgroupId()))
-        {
-            return;
-        }
-
-        if(update.talkgroupId() != null)
-        {
-            try(PreparedStatement statement = connection.prepareStatement("""
-                INSERT INTO p25_radio_affiliation (
-                    system_key, radio_id, talkgroup_id, updated_at_ms
-                ) VALUES (?, ?, ?, ?)
-                ON CONFLICT(system_key, radio_id) DO UPDATE SET
-                    talkgroup_id = excluded.talkgroup_id,
-                    updated_at_ms = excluded.updated_at_ms
-                WHERE excluded.updated_at_ms >= p25_radio_affiliation.updated_at_ms
-                """))
-            {
-                statement.setInt(1, systemKey);
-                statement.setInt(2, update.radioId());
-                statement.setInt(3, update.talkgroupId());
-                statement.setLong(4, activity.observedAtEpochMilliseconds());
-                statement.executeUpdate();
-            }
-        }
-        else
-        {
-            try(PreparedStatement statement = connection.prepareStatement("""
-                DELETE FROM p25_radio_affiliation
-                WHERE system_key = ? AND radio_id = ? AND updated_at_ms <= ?
-                """))
-            {
-                statement.setInt(1, systemKey);
-                statement.setInt(2, update.radioId());
-                statement.setLong(3, activity.observedAtEpochMilliseconds());
-                statement.executeUpdate();
-            }
-        }
     }
 
     private static long insertP25ActivityEvent(Connection connection, P25ActivityLogRecords.ActivityEvent activity,
