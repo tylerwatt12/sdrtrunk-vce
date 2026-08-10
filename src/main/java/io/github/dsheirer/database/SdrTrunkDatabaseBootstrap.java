@@ -41,8 +41,14 @@ public final class SdrTrunkDatabaseBootstrap
 
     public static BootstrapResult run(String[] args) throws IOException, SQLException, InterruptedException
     {
-        Path dataRoot = PortableApplicationPaths.getDataRoot();
-        Path databasePath = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        return run(args, PortableApplicationPaths.getDataRoot(), GraphicsEnvironment.isHeadless());
+    }
+
+    static BootstrapResult run(String[] args, Path dataRoot, boolean headless)
+        throws IOException, SQLException, InterruptedException
+    {
+        Path normalizedDataRoot = dataRoot.toAbsolutePath().normalize();
+        Path databasePath = SdrTrunkDatabasePath.getDatabasePath(normalizedDataRoot);
         Options options = Options.parse(args);
 
         if(Files.isRegularFile(databasePath))
@@ -58,15 +64,15 @@ public final class SdrTrunkDatabaseBootstrap
 
             if(!state.supported())
             {
-                throw new IOException("This development build accepts only its exact current database, not " +
-                    state.description() + ". Numbered release preparation adds the supported transition from the " +
-                    "immediately preceding public release. Intermediate development and webfirst databases are not " +
-                    "supported; keep separate portable data folders for main and webfirst.");
+                throw new IOException("This release accepts only its exact current database or the exact shared " +
+                    "v0.6.2 Alpha 8/Alpha 9 database layout, not " + state.description() + ". Intermediate " +
+                    "development and webfirst databases are not supported; keep separate portable data folders " +
+                    "for main and webfirst.");
             }
 
             if(state.requiresMigration())
             {
-                if(GraphicsEnvironment.isHeadless() && !options.upgradeCurrent())
+                if(headless && !options.upgradeCurrent())
                 {
                     throw new IOException("The portable database requires these changes: " +
                         state.requiredChanges() + ". Start once with --upgrade-current to let the Application " +
@@ -81,16 +87,16 @@ public final class SdrTrunkDatabaseBootstrap
                 ApplicationMigrationService service = new ApplicationMigrationService();
                 ApplicationMigrationService.MigrationResult result;
 
-                if(GraphicsEnvironment.isHeadless())
+                if(headless)
                 {
-                    result = service.migrateCurrent(dataRoot, System.out::println);
+                    result = service.migrateCurrent(normalizedDataRoot, System.out::println);
                 }
                 else
                 {
                     try
                     {
                         result = ApplicationMigrationProgressDialog.run(null, MIGRATOR_TITLE,
-                            progress -> service.migrateCurrent(dataRoot, progress));
+                            progress -> service.migrateCurrent(normalizedDataRoot, progress));
                     }
                     catch(InterruptedException e)
                     {
@@ -113,7 +119,7 @@ public final class SdrTrunkDatabaseBootstrap
             }
 
             SdrTrunkDatabaseStartup.validateGlobalDatabase(databasePath);
-            prepareVault(dataRoot);
+            prepareVault(normalizedDataRoot);
             return BootstrapResult.existingProfile();
         }
 
@@ -139,17 +145,17 @@ public final class SdrTrunkDatabaseBootstrap
             Path source = PreviousBuildLocator.resolveSelection(options.upgradeData()).orElseThrow(() ->
                 new IOException("The selected location does not contain portable sdrtrunk-vce data: " +
                     options.upgradeData()));
-            new ApplicationMigrationService().importPrevious(source, dataRoot, System.out::println);
+            new ApplicationMigrationService().importPrevious(source, normalizedDataRoot, System.out::println);
             result = BootstrapResult.existingProfile();
         }
-        else if(GraphicsEnvironment.isHeadless())
+        else if(headless)
         {
             throw new IOException("No portable SDRTrunk database exists at " + databasePath +
                 ". Start once with --fresh, --import-xml <path>, or --upgrade-data <previous-folder>.");
         }
         else
         {
-            result = runInteractive(databasePath, dataRoot);
+            result = runInteractive(databasePath, normalizedDataRoot);
 
             if(!result.startApplication())
             {
@@ -157,7 +163,7 @@ public final class SdrTrunkDatabaseBootstrap
             }
         }
 
-        prepareVault(dataRoot);
+        prepareVault(normalizedDataRoot);
         return result;
     }
 

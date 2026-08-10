@@ -46,13 +46,22 @@ class ApplicationMigrationServiceTest
     Path mTemporaryFolder;
 
     @Test
-    void supportsOnlyExactCurrentSchemaTuple()
+    void supportsExactAlpha9AndCurrentSchemaTuples()
     {
         ApplicationMigrationService.MigrationState current =
             currentState();
         assertTrue(current.supported());
         assertFalse(current.requiresMigration());
         assertEquals("", current.requiredChanges());
+
+        ApplicationMigrationService.MigrationState alpha9 =
+            new ApplicationMigrationService.MigrationState(
+                ApplicationMigrationService.ALPHA_9_ALIAS_VERSION,
+                ApplicationMigrationService.ALPHA_9_P25_VERSION, 2, 1);
+        assertTrue(alpha9.supported());
+        assertTrue(alpha9.requiresMigration());
+        assertTrue(alpha9.requiredChanges().contains("preserve current P25 affiliations"));
+        assertTrue(alpha9.requiredChanges().contains("site presence empty"));
 
         ApplicationMigrationService.MigrationState alpha7 =
             new ApplicationMigrationService.MigrationState(3, 21, 2, null);
@@ -80,6 +89,71 @@ class ApplicationMigrationServiceTest
             assertFalse(predecessor.requiresMigration());
             assertTrue(predecessor.requiredChanges().contains("no bundled transition"));
         }
+    }
+
+    @Test
+    void migratesExactAlpha9ProfileWithSafetyBackup() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("alpha9-data");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        Alpha9TestDatabase.create(database);
+        insertAlias(database, "Retained Alpha 9 Alias");
+
+        ApplicationMigrationService.MigrationResult result =
+            new ApplicationMigrationService().migrateCurrent(dataRoot, null);
+
+        assertFalse(result.importedPreviousProfile());
+        assertTrue(result.sourceState().alpha9());
+        assertTrue(result.helperOutput().contains("Alpha 8/Alpha 9 layout migration"));
+        assertNotNull(result.safetyBackup());
+        assertEquals("4", scalar(result.safetyBackup(), """
+            SELECT value FROM database_metadata WHERE key='alias_schema_version'
+            """));
+        assertEquals("24", scalar(result.safetyBackup(), """
+            SELECT value FROM database_metadata WHERE key='p25_activity_schema_version'
+            """));
+        assertEquals(1, count(result.safetyBackup(), "alias"));
+        assertEquals(currentState(), ApplicationMigrationService.readMigrationState(database));
+        assertEquals(1, count(database, "alias"));
+        assertEquals("wal", journalMode(database));
+    }
+
+    @Test
+    void importsExactAlpha9ProfileThroughMigrateExistingWithoutChangingSource() throws Exception
+    {
+        Path sourceRoot = mTemporaryFolder.resolve("alpha9-import-source");
+        Path sourceDatabase = SdrTrunkDatabasePath.getDatabasePath(sourceRoot);
+        Alpha9TestDatabase.create(sourceDatabase);
+        insertAlias(sourceDatabase, "Imported Alpha 9 Alias");
+        Path sourceJmbe = Files.createDirectories(sourceRoot.resolve("jmbe/nested")).resolve("jmbe-test.jar");
+        Path sourceModule = Files.createDirectories(sourceRoot.resolve("modules")).resolve("module-test.jar");
+        Files.write(sourceJmbe, new byte[] {1, 2, 3});
+        Files.write(sourceModule, new byte[] {4, 5, 6});
+        byte[] sourceHash = sha256(sourceDatabase);
+        Path targetRoot = Files.createDirectory(mTemporaryFolder.resolve("alpha9-import-target"));
+
+        ApplicationMigrationService.MigrationResult result = new ApplicationMigrationService()
+            .importPrevious(sourceRoot, targetRoot, null);
+
+        assertTrue(result.importedPreviousProfile());
+        assertTrue(result.sourceState().alpha9());
+        assertTrue(result.helperOutput().contains("Alpha 8/Alpha 9 layout migration"));
+        Path targetDatabase = SdrTrunkDatabasePath.getDatabasePath(targetRoot);
+        assertEquals(currentState(), ApplicationMigrationService.readMigrationState(targetDatabase));
+        assertEquals("Imported Alpha 9 Alias", scalar(targetDatabase,
+            "SELECT name FROM alias WHERE id=1"));
+        assertArrayEquals(sourceHash, sha256(sourceDatabase));
+        assertEquals("4", scalar(sourceDatabase, """
+            SELECT value FROM database_metadata WHERE key='alias_schema_version'
+            """));
+        assertEquals("24", scalar(sourceDatabase, """
+            SELECT value FROM database_metadata WHERE key='p25_activity_schema_version'
+            """));
+        assertArrayEquals(Files.readAllBytes(sourceJmbe),
+            Files.readAllBytes(targetRoot.resolve("jmbe/nested/jmbe-test.jar")));
+        assertArrayEquals(Files.readAllBytes(sourceModule),
+            Files.readAllBytes(targetRoot.resolve("modules/module-test.jar")));
+        assertEquals("wal", journalMode(targetDatabase));
     }
 
     @Test
@@ -127,13 +201,13 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
-    void importsExactAlpha8ProfileWithoutLosingConfigurationOrHistory() throws Exception
+    void importsExactCurrentProfileWithoutLosingConfigurationOrHistory() throws Exception
     {
         Path sourceRoot = mTemporaryFolder.resolve("source-data");
         Path sourceDatabase = SdrTrunkDatabasePath.getDatabasePath(sourceRoot);
         SdrTrunkDatabaseStartup.createGlobalDatabase(sourceDatabase);
         insertAlias(sourceDatabase, "Keep Me");
-        insertAlpha8ProfileSentinels(sourceDatabase);
+        insertCurrentProfileSentinels(sourceDatabase);
         byte[] sourceHash = sha256(sourceDatabase);
         Path targetRoot = mTemporaryFolder.resolve("target-data");
         Files.createDirectory(targetRoot);
@@ -146,7 +220,7 @@ class ApplicationMigrationServiceTest
         assertTrue(result.helperOutput().contains("Application database migration and validation complete"));
         Path targetDatabase = SdrTrunkDatabasePath.getDatabasePath(targetRoot);
         assertEquals(1, count(targetDatabase, "alias"));
-        assertAlpha8ProfileSentinels(targetDatabase);
+        assertCurrentProfileSentinels(targetDatabase);
         assertEquals(currentState(),
             ApplicationMigrationService.readMigrationState(targetDatabase));
         assertArrayEquals(sourceHash, sha256(sourceDatabase));
@@ -231,7 +305,7 @@ class ApplicationMigrationServiceTest
         IOException exception = assertThrows(IOException.class,
             () -> new ApplicationMigrationService().migrateCurrent(dataRoot, null));
 
-        assertTrue(exception.getMessage().contains("complete current database"));
+        assertTrue(exception.getMessage().contains("exact shared v0.6.2 Alpha 8/Alpha 9 database layout"));
         assertArrayEquals(before, sha256(database));
         assertFalse(Files.exists(database.getParent().resolve("backups")));
     }
@@ -438,7 +512,7 @@ class ApplicationMigrationServiceTest
         }
     }
 
-    private static void insertAlpha8ProfileSentinels(Path database) throws Exception
+    private static void insertCurrentProfileSentinels(Path database) throws Exception
     {
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
@@ -447,13 +521,13 @@ class ApplicationMigrationServiceTest
                     sort_order, system_name, site_name, name, alias_list_name, decoder_type,
                     source_type, primary_frequency_hz, frequency_count, config_json
                 ) VALUES (
-                    1, 'Alpha 8 System', 'Alpha 8 Site', 'Alpha 8 Channel', 'Test', 'DMR',
+                    1, 'Preserved System', 'Preserved Site', 'Preserved Channel', 'Test', 'DMR',
                     'TUNER', 451000000, 1, '{}'
                 )
                 """);
             statement.executeUpdate("""
                 INSERT INTO application_settings(key, settings_json, updated_at_ms)
-                VALUES ('alpha8_release_sentinel', '{"value":"preserved"}', 1000)
+                VALUES ('current_profile_sentinel', '{"value":"preserved"}', 1000)
                 """);
             statement.executeUpdate("""
                 INSERT INTO p25_control_channel_quality(
@@ -461,7 +535,7 @@ class ApplicationMigrationServiceTest
                     decode_health_pct, valid_frames, invalid_frames, corrected_bits,
                     sync_loss_bits, dropped_bits, last_valid_decode_ms
                 ) VALUES (
-                    'alpha8-quality', 851012500, 1000, 2000, -72.5,
+                    'preserved-quality', 851012500, 1000, 2000, -72.5,
                     92.5, 100, 3, 4, 5, 6, 1900
                 )
                 """);
@@ -470,7 +544,7 @@ class ApplicationMigrationServiceTest
                     id, context_key, guid, kind_code, protocol_code, channel_name,
                     alias_list_name, decoder, first_seen_ms, last_seen_ms, primary_frequency_hz
                 ) VALUES (
-                    7001, 'alpha8-dmr-context', 'alpha8-dmr-guid', 2, 3, 'Alpha 8 DMR',
+                    7001, 'preserved-dmr-context', 'preserved-dmr-guid', 2, 3, 'Preserved DMR',
                     'Test', 'DMR', 1000, 2000, 451000000
                 )
                 """);
@@ -486,30 +560,30 @@ class ApplicationMigrationServiceTest
                     configured_system, channel_name, decoder, first_seen_ms, last_seen_ms,
                     observation_count
                 ) VALUES (
-                    'alpha8-site-guid', 'alpha8-site-hash', 3, 1, 1,
-                    'Alpha 8 System', 'Alpha 8 Site', 'DMR', 1000, 2000, 9
+                    'preserved-site-guid', 'preserved-site-hash', 3, 1, 1,
+                    'Preserved System', 'Preserved Site', 'DMR', 1000, 2000, 9
                 )
                 """);
         }
     }
 
-    private static void assertAlpha8ProfileSentinels(Path database) throws Exception
+    private static void assertCurrentProfileSentinels(Path database) throws Exception
     {
-        assertEquals("Alpha 8 Channel", scalar(database, """
+        assertEquals("Preserved Channel", scalar(database, """
             SELECT name FROM configuration_channel WHERE primary_frequency_hz=451000000
             """));
         assertEquals("{\"value\":\"preserved\"}", scalar(database, """
-            SELECT settings_json FROM application_settings WHERE key='alpha8_release_sentinel'
+            SELECT settings_json FROM application_settings WHERE key='current_profile_sentinel'
             """));
         assertEquals("92.5", scalar(database, """
-            SELECT decode_health_pct FROM p25_control_channel_quality WHERE guid='alpha8-quality'
+            SELECT decode_health_pct FROM p25_control_channel_quality WHERE guid='preserved-quality'
             """));
         assertEquals("7", scalar(database, """
             SELECT call_count FROM dmr_conventional_talkgroup_summary
             WHERE context_id=7001 AND talkgroup_id=321
             """));
         assertEquals("9", scalar(database, """
-            SELECT observation_count FROM trunked_site_snapshot WHERE guid='alpha8-site-guid'
+            SELECT observation_count FROM trunked_site_snapshot WHERE guid='preserved-site-guid'
             """));
     }
 

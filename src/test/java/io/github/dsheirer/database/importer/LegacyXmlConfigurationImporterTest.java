@@ -155,6 +155,48 @@ class LegacyXmlConfigurationImporterTest
     }
 
     @Test
+    void dropsRetiredFullyQualifiedRadioAliases() throws Exception
+    {
+        Path xml = mTemporaryFolder.resolve("retired-fq-radio.xml");
+        Files.writeString(xml, """
+            <playlist version="4">
+              <alias name="ISSI Radio" list="County">
+                <id type="p25FullyQualifiedRadio" protocol="APCO25" value="1800001"
+                    wacn="781824" system="840"/>
+                <id type="broadcastChannel" channel="Primary"/>
+              </alias>
+              <alias name="Dispatch" list="County">
+                <id type="talkgroup" protocol="APCO25" value="700"/>
+              </alias>
+            </playlist>
+            """);
+        Path database = mTemporaryFolder.resolve("retired-fq-radio.sqlite");
+
+        LegacyXmlConfigurationImporter.importPlaylist(xml, database);
+
+        AliasDatabaseStore aliasStore = new AliasDatabaseStore(database);
+        List<Alias> aliases = aliasStore.loadAliases(aliasStore.loadAliasListDefinitions());
+        assertEquals(1, aliases.size());
+        assertEquals("Dispatch", aliases.getFirst().getName());
+        assertInstanceOf(Talkgroup.class, aliases.getFirst().getMatchIdentifier());
+    }
+
+    @Test
+    void rejectsUnrecognizedAliasIdentifierTypes() throws Exception
+    {
+        Path xml = mTemporaryFolder.resolve("unrecognized-alias-identifier.xml");
+        Files.writeString(xml, """
+            <playlist version="4">
+              <alias name="Unknown" list="County">
+                <id type="futureAliasIdentifier" value="123"/>
+              </alias>
+            </playlist>
+            """);
+
+        assertThrows(IOException.class, () -> LegacyXmlConfigurationImporter.readConfigurationState(xml));
+    }
+
+    @Test
     void refusesToOverwriteExistingDatabase() throws Exception
     {
         Path xml = writePlaylistXml();

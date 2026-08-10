@@ -53,6 +53,8 @@ import org.sqlite.SQLiteConfig;
  */
 public final class ApplicationMigrationService
 {
+    public static final int ALPHA_9_P25_VERSION = Alpha9DatabaseMigration.P25_VERSION;
+    public static final int ALPHA_9_ALIAS_VERSION = Alpha9DatabaseMigration.ALIAS_VERSION;
     public static final int CURRENT_P25_VERSION = P25ActivityLogSchema.SCHEMA_VERSION;
     public static final int CURRENT_ALIAS_VERSION = SdrTrunkDatabaseSchema.ALIAS_SCHEMA_VERSION;
     public static final int CURRENT_DMR_VERSION = DmrActivitySchema.SCHEMA_VERSION;
@@ -307,25 +309,17 @@ public final class ApplicationMigrationService
         }
     }
 
-    /**
-     * Compatibility accessor for callers that only need the P25 component.
-     */
-    public static int readP25ActivitySchemaVersion(Path database) throws IOException, SQLException
-    {
-        return readMigrationState(database).p25Version();
-    }
-
     private MigrationState requireSupportedState(Path database) throws IOException, SQLException
     {
         MigrationState state = readMigrationState(database);
 
         if(!state.supported())
         {
-            throw new IOException("This development build accepts only the complete current database (Alias v" +
-                CURRENT_ALIAS_VERSION + ", " +
-                "P25 activity v" + CURRENT_P25_VERSION + ", trunked-site v2, and DMR activity v" +
-                CURRENT_DMR_VERSION + "). Found " + state.description() + ". A transition from the immediately " +
-                "preceding public release is added during numbered release preparation.");
+            throw new IOException("This release accepts only the complete current database (Alias v" +
+                CURRENT_ALIAS_VERSION + ", P25 activity v" + CURRENT_P25_VERSION +
+                ", trunked-site v2, and DMR activity v" + CURRENT_DMR_VERSION +
+                ") or the exact shared v0.6.2 Alpha 8/Alpha 9 database layout. Found " +
+                state.description() + ".");
         }
 
         ApplicationDatabaseMigrator.validateAcceptedSource(database, state);
@@ -700,9 +694,11 @@ public final class ApplicationMigrationService
             {
                 try(var paths = Files.walk(source))
                 {
-                    for(Path file : paths.filter(Files::isRegularFile).toList())
+                    var files = paths.filter(Files::isRegularFile).iterator();
+
+                    while(files.hasNext())
                     {
-                        required = safeAdd(required, Files.size(file));
+                        required = safeAdd(required, Files.size(files.next()));
                     }
                 }
             }
@@ -849,14 +845,9 @@ public final class ApplicationMigrationService
 
     public record MigrationState(int aliasVersion, int p25Version, Integer trunkedSiteVersion, Integer dmrVersion)
     {
-        public MigrationState(int aliasVersion, int p25Version, Integer trunkedSiteVersion)
-        {
-            this(aliasVersion, p25Version, trunkedSiteVersion, null);
-        }
-
         public boolean supported()
         {
-            return current();
+            return current() || alpha9();
         }
 
         public boolean current()
@@ -868,7 +859,14 @@ public final class ApplicationMigrationService
 
         public boolean requiresMigration()
         {
-            return false;
+            return alpha9();
+        }
+
+        public boolean alpha9()
+        {
+            return aliasVersion == ALPHA_9_ALIAS_VERSION && p25Version == ALPHA_9_P25_VERSION &&
+                Integer.valueOf(Alpha9DatabaseMigration.TRUNKED_SITE_VERSION).equals(trunkedSiteVersion) &&
+                Integer.valueOf(Alpha9DatabaseMigration.DMR_VERSION).equals(dmrVersion);
         }
 
         public String description()
@@ -884,6 +882,14 @@ public final class ApplicationMigrationService
             {
                 return "";
             }
+
+            if(alpha9())
+            {
+                return "update Alias storage, remove retired fully-qualified P25 aliases, reset unqualified " +
+                    "trunked identity history, preserve current P25 affiliations, and begin authoritative site " +
+                    "presence empty";
+            }
+
             return "no bundled transition exists for this schema combination";
         }
     }
@@ -891,9 +897,5 @@ public final class ApplicationMigrationService
     public record MigrationResult(boolean importedPreviousProfile, Path safetyBackup, MigrationState sourceState,
                                   String helperOutput)
     {
-        public int sourceVersion()
-        {
-            return sourceState.p25Version();
-        }
     }
 }

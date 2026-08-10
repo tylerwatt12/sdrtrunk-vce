@@ -157,7 +157,10 @@ tasks.register('verifyApprovedReleaseNotes') {
     }
 }
 
-def publicPackagingTasks = ['runtimeZipCurrent', 'runtimeZipWindows', 'runtimeZipOthers', 'image', 'macAppZip'] as Set
+def publicPackagingTasks = [
+    'distTar', 'distZip', 'runtimeZip', 'runtimeZipCurrent',
+    'runtimeZipWindows', 'runtimeZipOthers', 'image', 'macAppZip'
+] as Set
 tasks.configureEach { candidate ->
     if(publicPackagingTasks.contains(candidate.name)) {
         candidate.dependsOn('verifyApprovedReleaseNotes')
@@ -438,7 +441,8 @@ tasks.register('verifyBundledApplicationDatabaseMigrator') {
     doLast {
         def archive = inputs.files.singleFile
         def helperEntries = [
-            'io/github/dsheirer/database/upgrade/ApplicationDatabaseMigrator.class'
+            'io/github/dsheirer/database/upgrade/ApplicationDatabaseMigrator.class',
+            'io/github/dsheirer/database/upgrade/Alpha9DatabaseMigration.class'
         ]
         def retiredEntries = [
             'io/github/dsheirer/database/upgrade/P25ActivitySchemaUpgrade.class',

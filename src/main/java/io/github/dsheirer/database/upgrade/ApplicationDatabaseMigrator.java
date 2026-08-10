@@ -173,12 +173,12 @@ public final class ApplicationDatabaseMigrator
         {
             SchemaState state = SchemaState.read(connection);
             output.println("Detected " + state.description() + ".");
-            state.requireSupported();
-            preflight(connection);
+            SourceKind sourceKind = state.requireSupported();
+            preflight(connection, sourceKind);
 
             boolean relocationRequired = relocation != null && !relocation.source().equals(relocation.target());
 
-            if(!relocationRequired)
+            if(sourceKind == SourceKind.CURRENT && !relocationRequired)
             {
                 validateCurrentDatabase(connection);
                 requireIntegrity(connection, "PRAGMA quick_check", "Quick check");
@@ -188,13 +188,17 @@ public final class ApplicationDatabaseMigrator
             }
 
             output.println("Pre-migration checks passed. Updating the staged database.");
-            int rebasedDirectories = migrateInTransaction(connection, relocation);
+            MigrationSummary migration = migrateInTransaction(connection, sourceKind, relocation);
             validateCurrentDatabase(connection);
             requireForeignKeysValid(connection);
             requireIntegrity(connection, "PRAGMA quick_check", "Quick check");
             finalizeStagedDatabase(connection);
 
-            output.println("Portable directory preferences updated: " + rebasedDirectories + ".");
+            if(sourceKind == SourceKind.ALPHA_9)
+            {
+                output.println(migration.releaseSummary());
+            }
+            output.println("Portable directory preferences updated: " + migration.rebasedDirectories() + ".");
             output.println("RESULT: Application database migration and validation complete.");
         }
     }
@@ -235,6 +239,11 @@ public final class ApplicationDatabaseMigrator
                 validateCurrentDatabase(connection);
                 requireForeignKeysValid(connection);
             }
+            else if(state.alpha9())
+            {
+                Alpha9DatabaseMigration.validateSource(connection);
+                requireForeignKeysValid(connection);
+            }
             else
             {
                 throw new IOException("No bundled migration accepts " + state.description() + ".");
@@ -244,15 +253,25 @@ public final class ApplicationDatabaseMigrator
         }
     }
 
-    private static void preflight(Connection connection) throws SQLException
+    private static void preflight(Connection connection, SourceKind sourceKind) throws SQLException
     {
         SdrTrunkDatabaseStartup.requireMainTrackDatabase(connection);
-        validateCurrentDatabase(connection);
+
+        if(sourceKind == SourceKind.CURRENT)
+        {
+            validateCurrentDatabase(connection);
+        }
+        else
+        {
+            Alpha9DatabaseMigration.validateSource(connection);
+        }
+
         requireForeignKeysValid(connection);
         requireIntegrity(connection, "PRAGMA integrity_check", "Integrity check");
     }
 
-    private static int migrateInTransaction(Connection connection, DataRootRelocation relocation)
+    private static MigrationSummary migrateInTransaction(Connection connection, SourceKind sourceKind,
+                                                          DataRootRelocation relocation)
         throws IOException, SQLException
     {
         try(Statement statement = connection.createStatement())
@@ -264,6 +283,8 @@ public final class ApplicationDatabaseMigrator
                 statement.execute("BEGIN IMMEDIATE");
                 transactionOpen = true;
 
+                String releaseSummary = sourceKind == SourceKind.ALPHA_9 ?
+                    Alpha9DatabaseMigration.migrate(connection).releaseSummary() : "";
                 int rebased = rebasePortableDirectoryPreferences(connection, relocation);
 
                 validateCurrentDatabase(connection);
@@ -271,7 +292,7 @@ public final class ApplicationDatabaseMigrator
                 requireIntegrity(connection, "PRAGMA quick_check", "Quick check");
                 statement.execute("COMMIT");
                 transactionOpen = false;
-                return rebased;
+                return new MigrationSummary(rebased, releaseSummary);
             }
             catch(IOException | SQLException | RuntimeException e)
             {
@@ -539,20 +560,31 @@ public final class ApplicationDatabaseMigrator
                 metadata(connection, DmrActivitySchema.SCHEMA_VERSION_KEY));
         }
 
-        private void requireSupported() throws UnsupportedSchemaVersionException
+        private SourceKind requireSupported() throws UnsupportedSchemaVersionException
         {
             if(ALIAS_TARGET_VERSION.equals(aliasVersion) && P25_TARGET_VERSION.equals(p25Version) &&
                 TRUNKED_SITE_TARGET_VERSION.equals(trunkedSiteVersion) && DMR_TARGET_VERSION.equals(dmrVersion))
             {
-                return;
+                return SourceKind.CURRENT;
+            }
+
+            if(Integer.toString(Alpha9DatabaseMigration.ALIAS_VERSION).equals(aliasVersion) &&
+                Integer.toString(Alpha9DatabaseMigration.P25_VERSION).equals(p25Version) &&
+                Integer.toString(Alpha9DatabaseMigration.TRUNKED_SITE_VERSION).equals(trunkedSiteVersion) &&
+                Integer.toString(Alpha9DatabaseMigration.DMR_VERSION).equals(dmrVersion))
+            {
+                return SourceKind.ALPHA_9;
             }
 
             throw new UnsupportedSchemaVersionException(
                 "Expected the complete current tuple (Alias v" + ALIAS_TARGET_VERSION +
                     ", P25 activity v" + P25_TARGET_VERSION +
                     ", trunked-site v" + TRUNKED_SITE_TARGET_VERSION + ", DMR activity v" +
-                    DMR_TARGET_VERSION + "). Found " + description() + ". Numbered release preparation adds the " +
-                    "supported transition from the immediately preceding public release. Refusing migration.");
+                    DMR_TARGET_VERSION + ") or the exact shared v0.6.2 Alpha 8/Alpha 9 tuple (Alias v" +
+                    Alpha9DatabaseMigration.ALIAS_VERSION + ", P25 activity v" +
+                    Alpha9DatabaseMigration.P25_VERSION + ", trunked-site v" +
+                    Alpha9DatabaseMigration.TRUNKED_SITE_VERSION + ", DMR activity v" +
+                    Alpha9DatabaseMigration.DMR_VERSION + "). Found " + description() + ". Refusing migration.");
         }
 
         private String description()
@@ -576,6 +608,16 @@ public final class ApplicationDatabaseMigrator
 
     private record DataRootRelocation(Path source, Path target)
     {
+    }
+
+    private record MigrationSummary(int rebasedDirectories, String releaseSummary)
+    {
+    }
+
+    private enum SourceKind
+    {
+        ALPHA_9,
+        CURRENT
     }
 
 }

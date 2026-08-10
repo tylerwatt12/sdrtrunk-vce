@@ -1,0 +1,204 @@
+# What’s New in sdrtrunk-vce 0.6.2 Alpha 10
+
+> **Draft:** This document is still under completeness review and has not been approved for publication.
+
+## What
+
+Alpha 10 makes the built-in website a secure administration and live-diagnostics interface. It adds automatic HTTPS,
+Public/User/Admin access tiers, user and Alias management, Live Events/Messages/Channel views, and an interactive
+whole-tuner spectrum and waterfall. It also hardens P25 control-channel and error-correction behavior, fixes
+RadioReference and SQLite Alias problems, and modernizes browser call playback.
+
+This release changes Alias storage from schema v4 to v5 and P25 activity storage directly from v24 to v26.
+**Migrate Existing** copies and upgrades the exact Alias v4/P25 v24 predecessor layout shipped unchanged by Alpha 8
+and Alpha 9 while leaving the original installation unchanged.
+
+## Added
+
+- **Secure website accounts and access tiers.** The website now supports Public, User, and Admin access. Administrators
+  can set the required tier for Dashboard, Live, Systems & Sites, Conventional, Aliases, CSV export, browser call
+  audio, and Credits. The corresponding pages, APIs, and live streams use the same permission checks. Existing
+  read-only features initially remain Public; administration is always Admin-only. Passwords are stored as hashes,
+  logins are throttled, sessions expire, and authenticated changes use same-origin and CSRF protection.
+- **Web administration.** The Admin portal can create users, reset passwords, delete users, revoke their sessions,
+  change User/Admin membership, and change feature access. The fixed primary `admin` password remains local-only and
+  is set from JavaFX under Web Server preferences. Passwords must contain 7–256 characters.
+- **Automatic HTTPS for other devices.** **This computer** keeps local-only HTTP on `127.0.0.1`. Selecting **Other
+  devices** listens on IPv4 with HTTPS and automatically creates and maintains a local certificate for the computer's
+  current LAN/VPN addresses. JavaFX shows usable browser URLs, certificate
+  identity, coverage, fingerprint, and expiration, with Copy and Open controls. A self-signed certificate encrypts
+  traffic but may still produce a browser trust warning.
+- **Custom certificates without stopping the server.** Administrators can import PKCS#12/PFX material or a PEM
+  certificate with its matching RSA/EC private key. Changes to the network mode, port, password, or certificate
+  restart the web listener automatically.
+- **Web Alias administration.** The Aliases page can create and delete lists; create, clone, edit, move, and delete
+  Aliases; edit identifiers, appearance, listening, recording, and streaming settings; inspect usage; and apply
+  bounded bulk changes.
+- **Unmatched talkgroup policies and Discover.** Each P25, DMR, or NXDN Alias list can define listening priority,
+  recording, and streaming destinations for unmatched talkgroups. Discover shows observed talkgroups and patches with
+  retained activity evidence and can prefill an ordinary Alias for a safe positive local ID. Fully-qualified P25
+  observations with local ID zero remain review-only.
+- **Authoritative affiliated-site visibility.** P25 radio pages and tables show a radio's current talkgroup affiliation
+  separately from the last site that explicitly accepted its registration or affiliation. Regular talkgroup Radio
+  tabs can show only currently affiliated radios and their protocol-native RFSS/Site identity with the configured site
+  name beneath it. Calls, grants, aliases, and generic last-seen traffic never populate this site-presence field.
+- **RadioReference Import All.** The JavaFX RadioReference talkgroup page can import all loaded system talkgroups,
+  independent of the current search or category filter, with an add/update/unchanged preview.
+- **Live Events, Messages, and Channel diagnostics.** A collapsible area beneath Live receiver tables shows up to 200
+  selected-channel events, up to 200 decoded messages, and Signal plus Symbols together. Events update in place while
+  calls are active and can be filtered by category. The Channel view supports FFT or waterfall signal display, and
+  Phase 2 now supplies compatible diagnostic soft symbols. The symbol sweep fills left to right, then clears and
+  starts over.
+- **Shared Pause control.** Pause/Resume applies to Events, Messages, and Channel diagnostics. Pausing, collapsing,
+  changing pages, hiding a tab, or closing a diagnostic view releases its stream.
+- **Whole-tuner spectrum and waterfall.** The Tuner Spectrum dialog shows already-running tuners without starting,
+  retuning, or reconfiguring them. It supports tuner selection, pause, pan, up to 8× zoom, refined FFT detail,
+  waterfall frequency/power/time inspection, a configurable lower display limit, waterfall speed, optional frequency
+  snapping, and FFT smoothing.
+- **Spectrum channel flags.** Small colored flags mark encrypted voice, voice, data, control, other active carriers,
+  and idle conventional channels. Hovering a flag shows the available channel, system, talkgroup, source, timeslot,
+  LCN, decoder, and encryption details. Idle conventional flags change to active as activity arrives.
+- **Optional decoded-tone muting.** With JMBE 1.0.15 or newer, a new preference can silence recognized AMBE tone
+  frames while retaining voice and tone metadata. It is off by default; older JMBE versions ignore it.
+
+## Changed
+
+- **The website uses one bounded `/api/v1` contract.** REST, CSV, live streams, call audio, authentication, and Alias
+  administration now share one versioned boundary, permission model, protocol-neutral resource naming, opaque scope
+  tokens, and bounded request rules. JSON endpoints use consistent envelopes and `snake_case` fields; CSV, WAV audio,
+  and binary diagnostic streams retain their appropriate wire formats. Collections require bounded paging, exports
+  and streams have fixed ceilings, and every database row materializer has an emergency 20,000-row stop.
+- **Dashboard opens on Health.** Health is now the first dashboard tab and the default when no tab is specified; Calls
+  remains available as the second tab.
+- **Identity pages report complete paging totals.** System talkgroup, radio, and talker-alias pages show the current row
+  range out of the filtered total and provide controls above and below long tables.
+- **First-launch choices are shorter and explained.** Setup now uses **Migrate Existing**, **Choose Install…**,
+  **Use Found XML** or **Choose XML…**, **Start Fresh**, and **Quit**. The prompt explains that migration copies and
+  upgrades a portable profile without changing the original, while XML import creates a new profile from configuration.
+- **Browser playback uses real transport controls.** Play/Pause replaces Mute, Pause keeps the current call and
+  position, Replay restarts it, and a progress indicator joins Skip, Hold, Avoid, Clear, saved volume, and the bounded
+  queue controls.
+- **Receiver context is consistent across protocols.** Trunked P25/DMR/NXDN and conventional NBFM/P25/DMR/NXDN now use
+  shared receiver metadata, including configured Alias list, channel name, decoder, and frequency.
+- **Site labels carry both useful fields.** Summary views show configured Name and Site together where useful, while
+  Site Info keeps them as separate rows. P25 site labels use configured Site metadata instead of a generic channel
+  name where appropriate.
+- **Live selects the active control channel initially.** Opening a trunked-system Live tab selects its currently active
+  control-channel row when one is known. A manually selected alternate control or traffic channel remains selected;
+  updates do not force the view back.
+- **Diagnostics are demand-driven and shared.** Viewers of the same channel or tuner share a bounded producer and
+  latest-only binary frames. When nobody is viewing, no diagnostic sample listener, scheduled FFT work, or worker is
+  active. Channel diagnostics support up to 32 sessions and four distinct channel producers; tuner diagnostics support
+  up to 32 sessions and two tuner producers, targeting 20 frames per second.
+- **Frequency snapping uses fixed rasters.** Supported ranges use 2.5 kHz spacing in VHF, 6.25 kHz in the configured
+  UHF and 700/800 MHz ranges, and 12.5 kHz in the 900 MHz ranges. Outside them, the pointer remains unsnapped.
+- **Alias schema v5 stores unmatched behavior on the list.** A single plain, unambiguous full-domain catch-all can be
+  converted to the list policy. Styled, multiple, or Stream As catch-alls remain as Aliases for manual review.
+- **P25 activity schema v26 separates qualifier-safe identity evidence from authoritative radio state.** A bounded
+  summary retains zero-local fully-qualified talkgroup observations for review without turning talkgroup zero into an
+  Alias. Current system-wide P25 affiliation is stored independently from the last site that authoritatively accepted
+  a radio, and an accepted deregistration prevents delayed messages from restoring stale state.
+- **Baseband recording status follows the tuner.** Switching between tuner editors no longer hides or stops an active
+  tuner recording or loses its file and size display.
+- **`main` is the sole development and release branch.** `webfirst` remains an inactive reference only.
+
+## Fixed
+
+- **Systems & Sites navigation and Activity stay usable at scale.** The directory again shows observed site children,
+  system/site/talkgroup/radio links retain their scope, and system Activity selects bounded, indexed candidates per
+  monitored context instead of reading the full multi-site history. A system spanning more than 200 contexts directs
+  the user to a site Activity view.
+- **API-backed values render correctly in the website.** Alias evidence First Activity and Latest Activity values show
+  formatted times instead of `[object HTMLTimeElement]`; the 24-hour source-activity field follows the v1 naming
+  contract; and system group-identity drilldowns use the selected system scope.
+- **Updated web assets replace stale clients cleanly.** A browser detects when its loaded HTML/JavaScript revision no
+  longer matches the running server and reloads once. Entity tabs retain horizontal overflow behavior without showing
+  a stray vertical scrollbar.
+- **Wideband spectrum drag panning works while frames are live.** Incoming frames no longer overwrite the local
+  viewport during a drag; the refined stream request is sent after pointer release.
+- **RadioReference Alias identifiers populate correctly.** Newly imported talkgroups immediately show their exact
+  Identifier in the JavaFX Alias table. SQLite Alias list ownership, one-to-one matching, overlap state, and XML
+  import/merge behavior now use the current persistent model instead of stale list-name assumptions.
+- **Conventional web context is complete.** Conventional channels now expose their configured Alias list and channel
+  metadata consistently instead of leaving fields blank.
+- **Site pages no longer depend on separate Live access.** The Live Receiver block was removed from Site pages, so a
+  public Site view no longer shows an unauthorized or permanently reconnecting Live fragment. Navigation also honors
+  the viewer's capabilities.
+- **Responsive data stays inside its containers.** Large retained-activity values no longer escape summary cards, and
+  Sites, Destinations, Sources, and similar tables avoid unnecessary horizontal scrolling.
+- **Encryption details remain attached to the right call.** Algorithm, key, and status learned after a trunked call
+  starts update that same call and its activity counters. P25, DMR, and NXDN event key IDs display as uppercase
+  hexadecimal, fixing issue #38.
+- **P25 control authority fails closed.** A rotating Phase 1 control decoder requires three independent matching NAC
+  observations within one second before it can issue control actions, then rejects foreign NACs. Traffic decoders use
+  the authoritative control NAC, Phase 1 traffic channels cannot drive control-channel actions, and a source-frequency
+  change resets adaptive authority.
+- **Corrupt P25 frames are rejected earlier.** CRC-CCITT, CRC-9, CRC-32, extended Golay/BCH, Phase 1 PDU/packet,
+  TDULC, and Phase 2 DUID/FACCH validation now reject incomplete, ambiguous, or irrecoverable control/data frames
+  instead of parsing them into grants or requests.
+- **Weak Phase 1 voice remains usable without relaxing control validation.** Near-limit alternating voice NIDs can be
+  recovered only on a traffic channel with an authoritative preloaded NAC.
+- **P25 implicit uplinks resolve correctly.** The reserved explicit uplink value `0xFFFF` now derives the uplink from
+  the downlink band offset instead of treating band 15/channel 4095 as a real channel.
+- **Inactive P25 SNDCP channels are not advertised.** Requested-access-only SNDCP announcements retain their access
+  status but no longer expose channel-number fields that are valid only for autonomous access.
+- **RSP1 LNA controls use the device's valid state range.** The original RSP1 now exposes four LNA states, 0–3,
+  instead of frequency-dependent ranges belonging to other SDRplay models.
+- **P25 retunes and slow consumers no longer build an unbounded freeze.** Traffic-channel shutdown is performed
+  outside the manager lock, and channelizer/IFFT/output queues are bounded and release stale buffers under overload
+  or shutdown instead of retaining a heap-sized backlog.
+- **Web diagnostic polish.** The FFT/Waterfall selection is readable in dark mode, tuner zoom no longer remains stuck
+  at Refining when another diagnostic stream is open, and Live event-row hover no longer flashes.
+
+## Removed
+
+- **P25 Fully Qualified Talkgroup and Fully Qualified Radio Alias matching.** These identifier types are no longer
+  selectable or used for desktop, web, runtime, or SQLite Alias matching. Ordinary local P25 talkgroup and radio
+  Aliases remain supported. The decoder may still retain fully-qualified identity evidence for diagnostics, but it
+  does not match an Alias by home WACN/System ID.
+- **Existing fully-qualified P25 Alias rows do not migrate.** The predecessor-layout migration deletes those Alias rows
+  and their dependent broadcast routes. It never reinterprets a home talkgroup or radio number as a local Alias ID.
+- **Legacy web APIs are not retained.** Earlier unversioned read, export, live-stream, and call-audio paths are not
+  registered, and alternate compatibility representations are not returned.
+- **Direct Alpha 7 migration is no longer bundled.** Alpha 10 has one accepted predecessor database layout: the exact
+  Alias v4/P25 v24 layout shared by Alpha 8 and Alpha 9. Older layouts must be upgraded in sequence first.
+- No decoder, channel type, classic call-recording feature, streaming provider, or RadioReference service is removed.
+  Recording formats, streaming-provider configuration/upload formats, and classic recording ownership are unchanged.
+
+## Before You Upgrade
+
+- **Stop Alpha 8 or Alpha 9 and back up its complete portable data folder.** Extract Alpha 10 into a new empty folder,
+  start it,
+  and choose **Migrate Existing**. The Application Migrator copies the profile, keeps the original unchanged, creates
+  a safety backup, updates a staged copy, validates the final schema/integrity/foreign keys, and promotes it only when
+  every check passes.
+- **Only the exact shared Alpha 8/Alpha 9 database layout is accepted for conversion.** The two releases have the same
+  schema fingerprint and store no release provenance, so the migrator cannot distinguish which one created an
+  otherwise exact profile. This is one direct exact-schema gate; mixed, intermediate development, v25, `webfirst`, and
+  older layouts are refused without modification.
+- **Most source data is preserved.** Channels, tuners, supported Aliases and routes, broadcast configuration,
+  preferences, icons, site observations, and unrelated activity remain. Classic recording files are not moved or
+  converted; they remain in their administrator-owned locations. Saved portable paths are adjusted when the profile
+  is copied to its new location.
+- **Retired fully-qualified P25 Alias rows are intentionally removed.** Review the source profile for any Fully
+  Qualified Talkgroup or Fully Qualified Radio Alias configuration you need to replace with an ordinary local Alias
+  before upgrading.
+- **Shared P25, DMR, and NXDN trunked-identity history resets, but current P25 affiliations are preserved.** The v24
+  shared projection cannot establish qualifier-safe P25 history. The clean direct migration rebuilds that shared
+  storage instead of retaining partial projection state, so accumulated talkgroup/radio activity,
+  call/encryption/recorded/sent totals, relationships, and talker aliases restart from new traffic for all three
+  trunked protocol families. The migrator re-keys each valid system-wide current P25 affiliation and reconstructs only
+  the ordinary P25 radio, talkgroup, and relationship rows required to represent it. It refuses the staged migration
+  instead of truncating invalid or over-capacity affiliation state. Authoritative site presence, clear watermarks, and
+  zero-local review evidence start empty because the source cannot prove them; other retained activity and site
+  observations are not reset.
+- **Automatic certificates are encrypted but self-signed.** Current IP addresses should be covered, avoiding a
+  certificate-name mismatch, but each browser may still require trust confirmation. Import a certificate trusted by
+  your devices to remove that warning.
+- Stop every old VCE copy before opening the migrated profile, and keep the previous installation until Alpha 10 has
+  been verified.
+
+## Downloads
+
+Use the package that matches your operating system and processor. Java 25 is included. JMBE remains a separate setup
+under **Preferences > Decoder > JMBE Audio Library**.

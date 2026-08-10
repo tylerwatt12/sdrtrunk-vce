@@ -27,7 +27,7 @@ uptime.
 
 ## Qualifier-safe P25 identity summaries
 
-P25 activity schema v25 extends the existing `trunked_identity_summary` row with four integer fields:
+P25 activity schema v26 extends the existing `trunked_identity_summary` row with four integer fields:
 
 - a state code for unknown, ordinary, stable fully-qualified, or ambiguous identity evidence; and
 - nullable home WACN, System ID, and talkgroup ID values, present only for stable fully-qualified evidence.
@@ -95,16 +95,20 @@ Startup validation checks the tuple table's exact DDL and column set, its four-c
 foreign key, and both indexes including column order and descending recency direction. Normal application services do
 not create or repair a missing or mismatched table or index.
 
-## Development migration boundary
+## Alpha 8/Alpha 9 layout to Alpha 10 migration boundary
 
-The earlier Alpha 9-to-v25 development transition established the qualifier-safe Alias v5/P25 v25 baseline. The
-current retained development candidate accepts only that exact P25 v25 state and advances it to v26 on a backed-up
-staged copy. It preserves the qualifier-safe identity and zero-local tuple summaries. Existing P25 current
-affiliations are re-keyed into the protocol-neutral affiliation table; authoritative site presence begins empty
-because call history and the old system-wide affiliation row cannot prove which site last accepted a radio.
+The bundled Application Migrator converts one exact Alias v4/P25 v24 source layout directly to Alpha 10 Alias v5/P25
+v26 on a backed-up staged copy. Alpha 8 and Alpha 9 shipped that same layout and schema fingerprint, with no stored
+release provenance, so an exact profile from either release satisfies the same single source gate. It converts only
+one plain, structurally unambiguous full-domain talkgroup range per list; styled, multiple, or Stream As catch-alls
+remain aliases for manual review. The v24 shared projection cannot establish qualifier-safe P25 history, so the clean
+direct migration rebuilds that shared storage and projected P25, DMR, and NXDN identity history restarts. It then
+recreates only the compact ordinary P25 identities and relationships required by preserved authoritative P25
+affiliations. The zero-local tuple projection starts empty.
 
-The external candidate is for unreleased development profiles only. During the next numbered release, the exact
-preceding public schema is compared with the final release schema and the required transition is consolidated into
-the bundled Application Migrator. If that release boundary contains stored P25 fully-qualified talkgroup aliases,
-the migration removes those alias rows and their dependent routes; it does not convert their home talkgroup values
-into ordinary local talkgroup aliases.
+Existing system-wide P25 affiliations are re-keyed into the protocol-neutral affiliation table. Authoritative site
+presence and presence-lifecycle state start empty because neither call history nor a source affiliation row proves
+which site last accepted a radio or when it deregistered. Supported administrator-owned aliases and unrelated
+configuration remain intact. Stored P25 fully-qualified talkgroup and radio Alias rows and their dependent routes are
+removed; their home values are not converted into ordinary local aliases. Intermediate development schemas are not
+accepted.

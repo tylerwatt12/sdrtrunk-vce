@@ -17,10 +17,10 @@ files, temporary bug-report bundles, JMBE libraries, and optional modules. Java 
 When `data/database/sdrtrunk.sqlite` is absent, a graphical launch first looks beside the current app or install
 folder for portable data from an earlier sdrtrunk-vce build. The setup window offers these paths:
 
-- Migrate using a discovered previous data folder.
-- Choose a previous `.app`, install folder, data folder, or `database/sdrtrunk.sqlite` file.
-- Import an older XML playlist.
-- Set up as new.
+- **Migrate Existing** using a discovered previous data folder.
+- **Choose Install…** to select a previous `.app`, install folder, data folder, or `database/sdrtrunk.sqlite` file.
+- **Use Found XML** or **Choose XML…** to import an older XML playlist.
+- **Start Fresh** with an empty profile.
 
 The bundled Application Migrator is the only supported release database-migration entry point. It copies an accepted
 SQLite database into a staging folder, updates only that staged copy, runs schema, integrity, and foreign-key checks,
@@ -31,16 +31,22 @@ streaming output remain in the previous data folder instead of being duplicated.
 Saved output and library paths that point inside the previous data folder are changed to the matching location inside
 the new data folder. Deliberately shared paths outside the previous data folder are left alone.
 
-The published Alpha 9 release accepts its documented Alpha 7 and Alpha 8 inputs. The current unreleased source tree
-does not keep that older release transition active while its schema is changing: it accepts only an exact database
-created by the same development schema. A reviewed Alpha 9-to-next-release transition will be added to the bundled
-Application Migrator during numbered release preparation. Mixed schemas, intermediate development schemas, and
-`webfirst` databases remain unsupported.
+Alpha 10 accepts its own exact current schema or one exact predecessor layout: Alias v4/P25 v24 as shipped unchanged
+by Alpha 8 and Alpha 9. Those releases have the same schema fingerprint and store no release provenance, so an exact
+profile from either is structurally indistinguishable and satisfies the same single source gate. The transition
+advances Alias storage to v5 and P25 activity storage directly to v26. It converts only a single plain, unambiguous
+full-domain talkgroup catch-all per Alias list into the list-owned unmatched-talkgroup policy and removes retired P25
+fully-qualified Alias rows and their dependent routes. The v24 shared projection cannot establish qualifier-safe P25
+history. The clean direct migration rebuilds that shared storage instead of retaining partial projection state, so
+projected P25, DMR, and NXDN identity history resets. The migrator preserves system-wide current P25 affiliations by
+re-keying them and reconstructing only the required ordinary P25 radio, talkgroup, and relationship rows within the
+current per-scope limits. Authoritative site presence, clear watermarks, and zero-local review evidence start empty
+because the source layout cannot prove them. The staged migration refuses invalid or over-capacity affiliation state
+instead of truncating it. Mixed schemas, intermediate development schemas including v25, and `webfirst` databases
+remain unsupported.
 
-Alpha 8 and Alpha 9 use the same published schema, so an Alpha 8 profile carries forward to Alpha 9 without a
-database conversion or history reset. See the version-matched Alpha 9 What's New document for that release's exact
-upgrade behavior. Development test profiles use the backed-up external migration candidate for their exact source
-state; that candidate is not a public or alternate deployed migration path.
+See the version-matched Alpha 10 What's New document for the exact preserved and reset data. Layouts older than the
+shared Alpha 8/Alpha 9 boundary must be upgraded sequentially until they reach that exact source layout.
 
 ## Recording Storage
 
@@ -56,8 +62,8 @@ that branch must be adapted to the current `main` storage and migration rules in
 into a release unintentionally.
 
 During unreleased development, test databases are converted once with a backed-up utility kept outside the repository.
-The next public release will receive one reviewed transition from the preceding public release. Ordinary application
-services remain validation-only, and skip-release migration chains are not accumulated in the current source tree.
+Each public release receives one reviewed transition from the preceding public release. Ordinary application services
+remain validation-only, and skip-release migration chains are not accumulated in the current source tree.
 
 When a numbered release contains a transition for its immediately preceding release, startup offers the Application
 Migrator. It first creates a timestamped backup under `data/database/backups`, migrates another staged copy, validates

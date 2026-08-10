@@ -110,7 +110,8 @@ public class LegacyXmlConfigurationImporter
     private static final Pattern LEGACY_MDC1200_MATCHER = Pattern.compile("[A-Fa-f\\d]{4}");
     private static final Set<String> RETIRED_DECODER_CONFIG_TYPES = Set.of(
         "decodeConfigAM", "decodeConfigLTRStandard", "decodeConfigLTRNet", "decodeConfigPassport");
-    private static final Set<String> RETIRED_ALIAS_IDENTIFIER_TYPES = Set.of("min", "uniqueID");
+    private static final Set<String> RETIRED_ALIAS_IDENTIFIER_TYPES = Set.of(
+        "min", "p25FullyQualifiedRadio", "uniqueID");
     private static final Set<String> RETIRED_BROADCAST_CONFIG_TYPES = Set.of("shoutcastV2Configuration");
 
     private LegacyXmlConfigurationImporter()

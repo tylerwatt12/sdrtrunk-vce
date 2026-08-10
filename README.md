@@ -29,22 +29,26 @@ This project is currently an **alpha release**. Back up your receiver data befor
 - **Clear channel types:** Conventional P25, DMR, and NXDN are kept separate from trunked systems.
 - **Improved listening:** Desktop audio adds Hold, Avoid, Clear, saved mute state, a queue counter, and a queue limit.
 
-## What’s New in Alpha 9
+## What’s New in Alpha 10
 
-Alpha 9 is a focused bugfix release for playback and tuner stability.
+Alpha 10 expands the built-in website and strengthens P25 decoding.
 
-- **Suppressed calls stay silent.** Calls marked Do Not Monitor, suppressed duplicates, and unidentified trunked
-  fragments no longer leak a tone or brief piece of voice audio.
-- **Playback status is more accurate.** The desktop queue represents calls that can actually play, and browser Hold
-  and Avoid remain unavailable until audio is playing.
-- **Browser listening has its own saved volume control** that is separate from Mute.
-- **Mixed-band tuner allocation is safer.** An out-of-range channel is rejected before it can move the wrong tuner,
-  while valid in-range site centering still works.
-- **Alpha 8 data carries forward unchanged.** Alpha 9 uses the same database schema, so configuration, calls, counts,
-  Activity, site observations, identity evidence, and quality history are preserved.
+- **Secure web administration** adds automatic HTTPS, Public/User/Admin access tiers, user management, and custom
+  certificate import without manually stopping the server.
+- **Alias management moves into the website**, including bulk editing, per-list unmatched-talkgroup behavior, observed
+  talkgroup discovery, and a RadioReference **Import All** action in JavaFX.
+- **Live diagnostics add Events, Messages, Signal, and Symbols**, plus a demand-driven whole-tuner FFT and waterfall
+  with zoom, smoothing, frequency snapping, and channel flags.
+- **P25 NAC, CRC, and error-correction handling is stricter**, while bounded weak-voice recovery preserves usable
+  Phase 1 audio and late encryption details remain attached to the correct call.
+- **The exact Alpha 8/Alpha 9 database layout uses the built-in migrator.** Alpha 8 and Alpha 9 shipped the same
+  schema, so the database cannot identify which release created it. Most configuration and activity are preserved;
+  retired fully-qualified P25 Alias rows are removed, and qualifier-sensitive identity summaries rebuild from new
+  traffic.
 
-Read the complete [Alpha 9 What’s New](docs/whats-new-0.6.2-alpha-9.md), including the different Alpha 7 and Alpha 8
-upgrade behavior.
+Read the complete [Alpha 10 What’s New](docs/whats-new-0.6.2-alpha-10.md) before upgrading. It explains the exact
+shared Alpha 8/Alpha 9 schema boundary, the P25/DMR/NXDN trunked-identity reset, and the removed fully-qualified P25
+Alias matchers.
 
 ## Screenshots
 
@@ -114,7 +118,7 @@ The easiest way to switch is:
 
 1. Leave regular SDRTrunk where it is.
 2. Extract VCE.
-3. Start VCE and choose **Import Older XML**.
+3. Start VCE and choose **Use Found XML** or **Choose XML…**.
 4. Review the imported channels and file locations.
 5. Keep the old installation until VCE has been tested.
 
@@ -151,7 +155,7 @@ Recommended update steps:
 1. Close the old VCE version.
 2. Back up its complete data folder.
 3. Extract the new version into a new empty folder.
-4. Start it and choose **Migrate Previous Data**.
+4. Start it and choose **Migrate Existing**.
 5. Select the old app or data folder if VCE does not find it automatically.
 6. Check your channels, tuners, JMBE library, file locations, web settings, and auto-start behavior.
 
@@ -161,8 +165,10 @@ it before the new version starts. The old installation is left unchanged, making
 Existing logs, recordings, screenshots, event logs, and streaming output are not copied into the new installation.
 Check the saved folder locations before deleting an old version.
 
-Each release supports upgrading from the immediately previous release on the same branch. If you skipped releases,
-upgrade through them in order. Do not copy a newer database into an older version.
+Each release normally supports upgrading from the immediately previous release on the same branch. If you skipped
+releases, upgrade through them in order unless the release notes explicitly document that those releases share the
+same accepted schema layout, as Alpha 8 and Alpha 9 do for Alpha 10. Do not copy a newer database into an older
+version.
 
 ## Where VCE Stores Data
 
@@ -206,16 +212,20 @@ Development builds require Java 25.
 
 ```bash
 ./gradlew test
-./gradlew runtimeZipCurrent
+./gradlew clean build -PprojectVersion=local-dev
+./gradlew runtimeZipCurrent -PprojectVersion=local-dev
 ```
+
+Use an explicit non-public version such as `local-dev` for development packages. Numbered package tasks stop while
+their version-matched release notes are still marked as a draft.
 
 Other package tasks:
 
 ```bash
-./gradlew image
-./gradlew macAppZip
-./gradlew --no-configuration-cache runtimeZipWindows
-./gradlew --no-configuration-cache runtimeZipOthers
+./gradlew image -PprojectVersion=local-dev
+./gradlew macAppZip -PprojectVersion=local-dev
+./gradlew --no-configuration-cache runtimeZipWindows -PprojectVersion=local-dev
+./gradlew --no-configuration-cache runtimeZipOthers -PprojectVersion=local-dev
 ```
 
 Build output is written under `build/image`.
