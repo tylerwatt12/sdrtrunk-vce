@@ -8,6 +8,7 @@ package io.github.dsheirer.stats;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import java.util.List;
@@ -17,6 +18,16 @@ import org.junit.jupiter.api.Test;
 
 class StatsApiV1PayloadTest
 {
+    @Test
+    void presentsDashboardDaySourceActivityWithDelimitedWireUnits()
+    {
+        JsonNode dashboard = StatsApiV1Payload.present(Map.of(
+            "sourceActivity24h", Map.of("rows", List.of(), "limit", 100)));
+
+        assertTrue(dashboard.has("source_activity_24h"));
+        assertFalse(dashboard.has("sourceActivity24h"));
+    }
+
     private static final Set<String> INTERNAL_FIELDS = Set.of(
         "protocol_code", "scope_kind_code", "variant_code", "identity_domain_code", "scope_id", "context_id",
         "system_key", "p25_system_key", "resolved_system_key", "site_type",

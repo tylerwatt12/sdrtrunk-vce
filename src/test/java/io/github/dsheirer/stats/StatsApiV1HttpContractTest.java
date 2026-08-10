@@ -113,6 +113,12 @@ class StatsApiV1HttpContractTest
         assertEquals(StatsApiV1.LIVE_CHANNEL_ACTIVITY,
             server.at("/live_channels/channel_activity").textValue());
 
+        HttpResponse<String> dashboardResponse = get(StatsApiV1.DASHBOARD);
+        assertEquals(200, dashboardResponse.statusCode(), dashboardResponse.body());
+        JsonNode dashboard = OBJECT_MAPPER.readTree(dashboardResponse.body()).get("data");
+        assertTrue(dashboard.has("source_activity_24h"), dashboardResponse.body());
+        assertFalse(dashboard.has("source_activity24h"), dashboardResponse.body());
+
         HttpResponse<String> systemsResponse = get(StatsApiV1.SYSTEMS + "?limit=1");
         assertEquals(200, systemsResponse.statusCode(), systemsResponse.body());
         JsonNode systems = OBJECT_MAPPER.readTree(systemsResponse.body());

@@ -194,6 +194,7 @@ class StatsWebAliasCatalogUiContractTest
         String key = function(source, "function observedTalkgroupKey(row)");
         String focusKey = function(source, "function observedTalkgroupFocusKey(row)");
         String homeIdentity = function(source, "function observedP25HomeIdentity(row)");
+        String time = function(source, "function observedTalkgroupTime(row, value)");
         String create = function(source, "function observedTalkgroupCreateButton(row, selectedList)");
         String detail = function(source, "function observedTalkgroupDetail(row, selectedList)");
         String editor = function(source,
@@ -237,6 +238,8 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(key.contains("context-key:"));
         assertTrue(homeIdentity.contains("talkgroup > 0"));
         assertTrue(homeIdentity.contains("talkgroup < 0xFFFF"));
+        assertTrue(time.contains("wrapper.append(rendered, ' (hour beginning)')"));
+        assertFalse(time.contains("`${rendered}"));
         assertTrue(focusKey.contains("encodeURIComponent(observedTalkgroupKey(row))"));
         assertTrue(prefill.contains("observedTalkgroupFocusKey(row)"));
         assertTrue(create.contains("dataset.observedKey = observedTalkgroupFocusKey(row)"));

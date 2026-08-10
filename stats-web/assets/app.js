@@ -3513,8 +3513,14 @@ function observedTalkgroupCounts(definitions) {
 
 function observedTalkgroupTime(row, value) {
   const rendered = dateTime(value);
-  return value !== null && value !== undefined && String(row?.topology || '').toUpperCase() === 'CONVENTIONAL' &&
-    ['P25', 'NXDN'].includes(protocolFamily(row)) ? `${rendered} (hour beginning)` : rendered;
+  if (value !== null && value !== undefined &&
+      String(row?.topology || '').toUpperCase() === 'CONVENTIONAL' &&
+      ['P25', 'NXDN'].includes(protocolFamily(row))) {
+    const wrapper = node('span', 'observed-talkgroup-time');
+    wrapper.append(rendered, ' (hour beginning)');
+    return wrapper;
+  }
+  return rendered;
 }
 
 function observedTalkgroupKey(row) {

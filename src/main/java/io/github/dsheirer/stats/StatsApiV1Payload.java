@@ -200,6 +200,11 @@ final class StatsApiV1Payload
 
         addP25Qualification(source, presented, protocol);
 
+        if(presented.has("sourceActivity24h"))
+        {
+            presented.set("source_activity_24h", presented.remove("sourceActivity24h"));
+        }
+
         return presented;
     }
 
