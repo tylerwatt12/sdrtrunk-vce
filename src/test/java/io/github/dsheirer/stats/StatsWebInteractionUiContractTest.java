@@ -521,10 +521,21 @@ class StatsWebInteractionUiContractTest
         assertFalse(channel.contains("ageText"));
         assertTrue(channel.contains("maximumVisibleSymbols"));
         assertTrue(channel.contains("const denominator = Math.max(1, symbolValues.length - 1)"));
-        assertTrue(channel.contains("symbolsNeedClear = true"));
-        assertTrue(channel.contains("if (symbolCount + incoming.length > capacity)"));
         assertTrue(channel.contains("symbolValues = new Float32Array(maximumSymbols)"));
+        assertTrue(channel.contains("symbolValues.fill(Number.NaN)"));
+        assertTrue(channel.contains("symbolValues[symbolCursor] = incoming[index]"));
+        assertTrue(channel.contains("symbolCursor = (symbolCursor + 1) % capacity"));
+        assertTrue(channel.contains("symbolCount = Math.min(capacity, symbolCount + 1)"));
+        assertFalse(channel.contains("if (symbolValues.length >= maximum) symbolValues = []"));
+        assertFalse(channel.contains("symbolsNeedClear"));
         assertFalse(channel.contains("symbolValues.splice"));
+        assertTrue(channel.contains("['FFT', 'Waterfall']"));
+        assertTrue(channel.contains("signalViewToggle.setAttribute('aria-label', 'Signal graph view')"));
+        assertTrue(channel.contains("button.setAttribute('aria-pressed'"));
+        assertTrue(channel.contains("const waterfallBuffer = document.createElement('canvas')"));
+        assertTrue(channel.contains("const addWaterfallFrame = (values) =>"));
+        assertTrue(channel.contains("nextWaterfallRow = (nextWaterfallRow - 1 + waterfallBuffer.height)"));
+        assertTrue(channel.contains("addWaterfallFrame(signalValues)"));
         assertTrue(channel.contains("Connection interrupted. Reconnecting…"));
         assertFalse(channel.contains("window.setInterval"));
         assertFalse(channel.contains("window.clearInterval(ageTimer)"));
@@ -543,6 +554,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(css.contains(".live-details.collapsed .live-details-body"));
         assertTrue(css.contains(".live-events-table tbody tr:hover"));
         assertTrue(css.contains(".channel-diagnostic-canvas"));
+        assertTrue(css.contains(".channel-diagnostic-view-toggle"));
+        assertTrue(css.contains(".channel-diagnostic-view-button[aria-pressed=\"true\"]"));
         assertTrue(css.contains("grid-template-columns: repeat(2, minmax(0, 1fr))"));
         assertTrue(css.contains(".channel-diagnostic-grid"));
     }

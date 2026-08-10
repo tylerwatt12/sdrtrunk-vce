@@ -234,7 +234,7 @@ body[data-view="live"] .live-details-header,
 body[data-view="live"] .live-events-toolbar,
 body[data-view="live"] .live-messages-toolbar,
 body[data-view="live"] .live-channel-toolbar,
-body[data-view="live"] .channel-diagnostic-title,
+body[data-view="live"] .channel-diagnostic-header,
 body[data-view="live"] .channel-diagnostic-readouts {
   flex: 0 0 auto;
 }
@@ -1649,13 +1649,54 @@ body[data-view="live"] .channel-diagnostic-readouts {
   border-radius: 5px;
 }
 
-.channel-diagnostic-title {
+.channel-diagnostic-header {
   min-height: 29px;
-  margin: 0;
-  padding: 5px 9px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-right: 5px;
   background: var(--section-header);
   border-bottom: 1px solid var(--line);
+}
+
+.channel-diagnostic-title {
+  margin: 0;
+  padding: 5px 9px;
   font-size: 13px;
+}
+
+.channel-diagnostic-view-toggle {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 2px;
+}
+
+.channel-diagnostic-view-button {
+  min-height: 21px;
+  padding: 1px 7px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  color: var(--muted);
+  background: transparent;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.channel-diagnostic-view-button:hover {
+  color: var(--text);
+  border-color: var(--line);
+}
+
+.channel-diagnostic-view-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.channel-diagnostic-view-button[aria-pressed="true"] {
+  color: #fff;
+  background: var(--accent);
 }
 
 .channel-diagnostic-plot {

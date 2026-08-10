@@ -6005,10 +6005,17 @@ function liveChannelPane() {
   let signalPeak = null;
   let signalLatencyMs = null;
   const latencyClock = { offsetMs: null };
+  let signalView = 'fft';
+  const waterfallBuffer = document.createElement('canvas');
+  const waterfallContext = waterfallBuffer.getContext('2d', { alpha: false });
+  const waterfallPalette = tunerWaterfallPalette();
+  let waterfallRowImage = null;
+  let newestWaterfallRow = -1;
+  let nextWaterfallRow = -1;
   let symbolValues = new Float32Array(4800);
+  symbolValues.fill(Number.NaN);
+  let symbolCursor = 0;
   let symbolCount = 0;
-  let renderedSymbolCount = 0;
-  let symbolsNeedClear = true;
   let signalDirty = true;
   let symbolsDirty = true;
   let drawPending = false;
@@ -6021,6 +6028,7 @@ function liveChannelPane() {
 
   const diagnostic = (title, ariaLabel) => {
     const card = node('section', 'channel-diagnostic-card');
+    const header = node('div', 'channel-diagnostic-header');
     const plot = node('div', 'channel-diagnostic-plot');
     const canvas = node('canvas', 'channel-diagnostic-canvas');
     canvas.setAttribute('role', 'img');
@@ -6028,11 +6036,24 @@ function liveChannelPane() {
     const overlay = node('div', 'channel-diagnostic-overlay', 'Select a live row above');
     const readouts = node('div', 'channel-diagnostic-readouts');
     plot.append(canvas, overlay);
-    card.append(node('h3', 'channel-diagnostic-title', title), plot, readouts);
-    return { card, canvas, overlay, readouts };
+    header.append(node('h3', 'channel-diagnostic-title', title));
+    card.append(header, plot, readouts);
+    return { card, header, canvas, overlay, readouts };
   };
   const signalDiagnostic = diagnostic('Signal', 'Selected channel signal spectrum');
   const symbolDiagnostic = diagnostic('Symbols', 'Selected channel demodulated symbols');
+  const signalViewToggle = node('div', 'channel-diagnostic-view-toggle');
+  signalViewToggle.setAttribute('role', 'group');
+  signalViewToggle.setAttribute('aria-label', 'Signal graph view');
+  const signalViewButtons = ['FFT', 'Waterfall'].map((label) => {
+    const button = node('button', 'channel-diagnostic-view-button', label);
+    button.type = 'button';
+    button.dataset.view = label.toLowerCase();
+    button.setAttribute('aria-pressed', String(button.dataset.view === signalView));
+    signalViewToggle.append(button);
+    return button;
+  });
+  signalDiagnostic.header.append(signalViewToggle);
   const diagnosticGrid = node('div', 'channel-diagnostic-grid');
   diagnosticGrid.append(signalDiagnostic.card, symbolDiagnostic.card);
   pane.append(toolbar, diagnosticGrid);
@@ -6061,7 +6082,6 @@ function liveChannelPane() {
     const ratio = Math.min(2, window.devicePixelRatio || 1);
     const width = Math.max(1, Math.round(bounds.width * ratio));
     const height = Math.max(1, Math.round(bounds.height * ratio));
-    const resized = target.canvas.width !== width || target.canvas.height !== height;
     if (target.canvas.width !== width || target.canvas.height !== height) {
       target.canvas.width = width;
       target.canvas.height = height;
@@ -6070,7 +6090,7 @@ function liveChannelPane() {
     context.setTransform(ratio, 0, 0, ratio, 0, 0);
     const cssWidth = width / ratio;
     const cssHeight = height / ratio;
-    return { context, cssWidth, cssHeight, resized };
+    return { context, cssWidth, cssHeight, width, height };
   };
 
   const drawBackground = ({ context, cssWidth, cssHeight }) => {
@@ -6087,9 +6107,58 @@ function liveChannelPane() {
     }
   };
 
+  const resetWaterfall = (binCount = 1) => {
+    waterfallBuffer.width = Math.max(1, binCount);
+    waterfallBuffer.height = 256;
+    waterfallContext.fillStyle = '#040b18';
+    waterfallContext.fillRect(0, 0, waterfallBuffer.width, waterfallBuffer.height);
+    waterfallRowImage = waterfallContext.createImageData(waterfallBuffer.width, 1);
+    newestWaterfallRow = -1;
+    nextWaterfallRow = waterfallBuffer.height - 1;
+  };
+
+  const addWaterfallFrame = (values) => {
+    if (!values.length) return;
+    if (waterfallBuffer.width !== values.length || waterfallBuffer.height !== 256 || !waterfallRowImage) {
+      resetWaterfall(values.length);
+    }
+    const row = waterfallRowImage;
+    values.forEach((raw, index) => {
+      const value = Number.isFinite(raw) ? Math.max(-120, Math.min(0, raw)) : -120;
+      const color = Math.max(0, Math.min(255, Math.round((value + 120) / 120 * 255)));
+      row.data[index * 4] = waterfallPalette[color * 4];
+      row.data[index * 4 + 1] = waterfallPalette[color * 4 + 1];
+      row.data[index * 4 + 2] = waterfallPalette[color * 4 + 2];
+      row.data[index * 4 + 3] = 255;
+    });
+    waterfallContext.putImageData(row, 0, nextWaterfallRow);
+    newestWaterfallRow = nextWaterfallRow;
+    nextWaterfallRow = (nextWaterfallRow - 1 + waterfallBuffer.height) % waterfallBuffer.height;
+  };
+
+  const drawWaterfall = (prepared) => {
+    const { context, width, height } = prepared;
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    context.fillStyle = '#040b18';
+    context.fillRect(0, 0, width, height);
+    if (newestWaterfallRow < 0) return;
+    const firstRows = waterfallBuffer.height - newestWaterfallRow;
+    const firstHeight = firstRows / waterfallBuffer.height * height;
+    context.drawImage(waterfallBuffer, 0, newestWaterfallRow, waterfallBuffer.width, firstRows,
+      0, 0, width, firstHeight);
+    if (newestWaterfallRow > 0) {
+      context.drawImage(waterfallBuffer, 0, 0, waterfallBuffer.width, newestWaterfallRow,
+        0, firstHeight, width, height - firstHeight);
+    }
+  };
+
   const drawSignal = () => {
     const prepared = prepareCanvas(signalDiagnostic);
     if (!prepared) return;
+    if (signalView === 'waterfall') {
+      drawWaterfall(prepared);
+      return;
+    }
     drawBackground(prepared);
     if (signalValues.length < 2) return;
     const { context, cssWidth, cssHeight } = prepared;
@@ -6110,20 +6179,12 @@ function liveChannelPane() {
   const drawSymbols = () => {
     const prepared = prepareCanvas(symbolDiagnostic);
     if (!prepared) return;
-    if (prepared.resized) {
-      symbolsNeedClear = true;
-      renderedSymbolCount = 0;
-    }
-    if (symbolsNeedClear) {
-      drawBackground(prepared);
-      symbolsNeedClear = false;
-      renderedSymbolCount = 0;
-    }
-    if (renderedSymbolCount >= symbolCount) return;
+    drawBackground(prepared);
+    if (!symbolCount) return;
     const { context, cssWidth, cssHeight } = prepared;
-    const denominator = Math.max(1, symbolValues.length - 1);
     context.fillStyle = '#65d6a6';
-    for (let index = renderedSymbolCount; index < symbolCount; index += 1) {
+    const denominator = Math.max(1, symbolValues.length - 1);
+    for (let index = 0; index < symbolValues.length; index += 1) {
       const raw = symbolValues[index];
       if (!Number.isFinite(raw)) continue;
       const value = Math.max(-Math.PI, Math.min(Math.PI, raw));
@@ -6131,7 +6192,6 @@ function liveChannelPane() {
       const y = (Math.PI - value) / (2 * Math.PI) * cssHeight;
       context.fillRect(x, y, 1.5, 1.5);
     }
-    renderedSymbolCount = symbolCount;
   };
 
   const draw = () => {
@@ -6154,6 +6214,19 @@ function liveChannelPane() {
     window.requestAnimationFrame(draw);
   };
 
+  const setSignalView = (view) => {
+    signalView = view === 'waterfall' ? 'waterfall' : 'fft';
+    signalViewButtons.forEach((button) => {
+      button.setAttribute('aria-pressed', String(button.dataset.view === signalView));
+    });
+    signalDiagnostic.canvas.setAttribute('aria-label', signalView === 'waterfall' ?
+      'Selected channel signal waterfall' : 'Selected channel signal spectrum');
+    scheduleDraw('signal');
+  };
+  signalViewButtons.forEach((button) => {
+    button.addEventListener('click', () => setSignalView(button.dataset.view));
+  });
+
   const clearPlots = (message) => {
     state = null;
     generation = -1;
@@ -6163,9 +6236,11 @@ function liveChannelPane() {
     signalPeak = null;
     signalLatencyMs = null;
     latencyClock.offsetMs = null;
+    resetWaterfall();
+    symbolValues = new Float32Array(4800);
+    symbolValues.fill(Number.NaN);
+    symbolCursor = 0;
     symbolCount = 0;
-    renderedSymbolCount = 0;
-    symbolsNeedClear = true;
     [signalDiagnostic, symbolDiagnostic].forEach((target) => {
       target.overlay.textContent = message || '';
       target.overlay.hidden = !message;
@@ -6232,12 +6307,13 @@ function liveChannelPane() {
           signalPeak = null;
           signalLatencyMs = null;
           latencyClock.offsetMs = null;
+          resetWaterfall();
           const maximumSymbols = Math.max(1, Number(state?.maximumVisibleSymbols ??
             state?.maximum_visible_symbols) || 4800);
           symbolValues = new Float32Array(maximumSymbols);
+          symbolValues.fill(Number.NaN);
+          symbolCursor = 0;
           symbolCount = 0;
-          renderedSymbolCount = 0;
-          symbolsNeedClear = true;
           const signalState = state?.signalState ?? state?.signal_state;
           const symbolsState = state?.symbolsState ?? state?.symbols_state;
           updateDiagnosticState(signalDiagnostic, signalState,
@@ -6264,6 +6340,7 @@ function liveChannelPane() {
           }
           if (frame.centerFrequencyHz > 0 && state) state.frequencyHz = frame.centerFrequencyHz;
           signalLatencyMs = diagnosticFrameLatency(frame, latencyClock);
+          addWaterfallFrame(signalValues);
           signalDiagnostic.overlay.hidden = true;
           updateReadouts();
           scheduleDraw('signal');
@@ -6274,20 +6351,10 @@ function liveChannelPane() {
         const incoming = diagnosticFloatPayload(frame);
         if (!incoming.length) return;
         const capacity = symbolValues.length;
-        if (incoming.length >= capacity) {
-          symbolValues.set(incoming.subarray(incoming.length - capacity));
-          symbolCount = capacity;
-          renderedSymbolCount = 0;
-          symbolsNeedClear = true;
-        } else if (symbolCount + incoming.length > capacity) {
-          const overflow = symbolCount + incoming.length - capacity;
-          symbolValues.set(incoming.subarray(incoming.length - overflow), 0);
-          symbolCount = overflow;
-          renderedSymbolCount = 0;
-          symbolsNeedClear = true;
-        } else {
-          symbolValues.set(incoming, symbolCount);
-          symbolCount += incoming.length;
+        for (let index = 0; index < incoming.length; index += 1) {
+          symbolValues[symbolCursor] = incoming[index];
+          symbolCursor = (symbolCursor + 1) % capacity;
+          symbolCount = Math.min(capacity, symbolCount + 1);
         }
         symbolDiagnostic.overlay.hidden = true;
         scheduleDraw('symbols');
@@ -6322,11 +6389,7 @@ function liveChannelPane() {
   };
 
   const onVisibilityChange = () => sync();
-  const onResize = () => {
-    renderedSymbolCount = 0;
-    symbolsNeedClear = true;
-    scheduleDraw();
-  };
+  const onResize = () => scheduleDraw();
   document.addEventListener('visibilitychange', onVisibilityChange);
   window.addEventListener('resize', onResize);
   clearPlots('Select a live row above');
