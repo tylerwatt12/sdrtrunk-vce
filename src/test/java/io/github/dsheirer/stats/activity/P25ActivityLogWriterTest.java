@@ -890,7 +890,8 @@ class P25ActivityLogWriterTest
             assertColumnAbsent(connection, "p25_site_neighbor", "observation_count");
             assertColumnAbsent(connection, "receiver_context", "wacn");
             assertColumnAbsent(connection, "receiver_context", "system_id");
-            assertEquals(0, count(connection, "p25_radio_affiliation"));
+            assertEquals(0, count(connection, "trunked_radio_affiliation"));
+            assertEquals(0, count(connection, "trunked_radio_site_presence"));
         }
     }
 
@@ -1000,13 +1001,17 @@ class P25ActivityLogWriterTest
             P25ActivityLogSchema.insertSite(connection, siteSnapshot(500L));
             P25ActivityLogSchema.recordActivity(connection, affiliation(1000L, 1811524, 56133), true);
             assertAffiliation(connection, 1811524, 56133, 1000L);
+            assertPresence(connection, 1811524, "123e4567-e89b-12d3-a456-426614174000",
+                P25ActivityLogRecords.RadioPresenceEvidence.AFFILIATION, 1000L);
 
             P25ActivityLogSchema.recordActivity(connection, affiliation(2000L, 1811524, 56538), true);
-            assertEquals(1, count(connection, "p25_radio_affiliation"));
+            assertEquals(1, count(connection, "trunked_radio_affiliation"));
+            assertEquals(1, count(connection, "trunked_radio_site_presence"));
             assertAffiliation(connection, 1811524, 56538, 2000L);
 
             P25ActivityLogSchema.recordActivity(connection, affiliation(3000L, 1811524, null), true);
-            assertEquals(0, count(connection, "p25_radio_affiliation"));
+            assertEquals(0, count(connection, "trunked_radio_affiliation"));
+            assertEquals(0, count(connection, "trunked_radio_site_presence"));
         }
     }
 
@@ -1015,13 +1020,189 @@ class P25ActivityLogWriterTest
     {
         Path database = mTemporaryFolder.resolve("affiliation-order.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        String siteA = "123e4567-e89b-12d3-a456-42661417400a";
+        String siteB = "123e4567-e89b-12d3-a456-42661417400b";
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            P25ActivityLogSchema.insertSite(connection, siteSnapshot(500L, siteA, 2, 1));
+            P25ActivityLogSchema.insertSite(connection, siteSnapshot(600L, siteB, 2, 2));
+            P25ActivityLogSchema.recordActivity(connection,
+                presence(2_000L, siteB, 1_811_524, 56_538,
+                    P25ActivityLogRecords.RadioPresenceEvidence.AFFILIATION), false);
+            P25ActivityLogSchema.recordActivity(connection,
+                presence(1_000L, siteA, 1_811_524, 56_133,
+                    P25ActivityLogRecords.RadioPresenceEvidence.AFFILIATION), false);
+            assertAffiliation(connection, 1811524, 56538, 2000L);
+            assertPresence(connection, 1811524, siteB,
+                P25ActivityLogRecords.RadioPresenceEvidence.AFFILIATION, 2000L);
+        }
+    }
+
+    @Test
+    void registrationOnlyMovesSitePresenceWithoutReplacingTalkgroupAffiliation() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("registration-moves-site.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        String siteA = "123e4567-e89b-12d3-a456-42661417400a";
+        String siteB = "123e4567-e89b-12d3-a456-42661417400b";
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            P25ActivityLogSchema.insertSite(connection, siteSnapshot(500L, siteA, 2, 1));
+            P25ActivityLogSchema.insertSite(connection, siteSnapshot(600L, siteB, 2, 2));
+            P25ActivityLogSchema.recordActivity(connection,
+                presence(1_000L, siteA, 1_811_524, 56_133,
+                    P25ActivityLogRecords.RadioPresenceEvidence.AFFILIATION), false);
+            P25ActivityLogSchema.recordActivity(connection,
+                presence(2_000L, siteB, 1_811_524, null,
+                    P25ActivityLogRecords.RadioPresenceEvidence.REGISTRATION), false);
+
+            assertAffiliation(connection, 1_811_524, 56_133, 1_000L);
+            assertPresence(connection, 1_811_524, siteB,
+                P25ActivityLogRecords.RadioPresenceEvidence.REGISTRATION, 2_000L);
+        }
+    }
+
+    @Test
+    void equalTimestampPresenceUsesEvidenceThenContextAndTalkgroupTieBreaks() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("presence-equal-order.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        String siteA = "123e4567-e89b-12d3-a456-42661417400a";
+        String siteB = "123e4567-e89b-12d3-a456-42661417400b";
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            P25ActivityLogSchema.insertSite(connection, siteSnapshot(500L, siteA, 2, 1));
+            P25ActivityLogSchema.insertSite(connection, siteSnapshot(600L, siteB, 2, 2));
+            P25ActivityLogSchema.recordActivity(connection,
+                presence(2_000L, siteB, 1_811_524, null,
+                    P25ActivityLogRecords.RadioPresenceEvidence.REGISTRATION), false);
+            P25ActivityLogSchema.recordActivity(connection,
+                presence(2_000L, siteA, 1_811_524, null,
+                    P25ActivityLogRecords.RadioPresenceEvidence.REGISTRATION), false);
+            assertPresence(connection, 1_811_524, siteA,
+                P25ActivityLogRecords.RadioPresenceEvidence.REGISTRATION, 2_000L);
+
+            P25ActivityLogSchema.recordActivity(connection,
+                presence(2_000L, siteB, 1_811_524, 56_538,
+                    P25ActivityLogRecords.RadioPresenceEvidence.AFFILIATION), false);
+            assertPresence(connection, 1_811_524, siteB,
+                P25ActivityLogRecords.RadioPresenceEvidence.AFFILIATION, 2_000L);
+
+            P25ActivityLogSchema.recordActivity(connection,
+                presence(2_000L, siteA, 1_811_524, 56_133,
+                    P25ActivityLogRecords.RadioPresenceEvidence.AFFILIATION), false);
+            assertPresence(connection, 1_811_524, siteA,
+                P25ActivityLogRecords.RadioPresenceEvidence.AFFILIATION, 2_000L);
+            assertAffiliation(connection, 1_811_524, 56_133, 2_000L);
+        }
+    }
+
+    @Test
+    void staleAndNewerClearsRespectConfirmedTimestamps() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("presence-clear-order.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
             P25ActivityLogSchema.insertSite(connection, siteSnapshot(500L));
-            P25ActivityLogSchema.recordActivity(connection, affiliation(2000L, 1811524, 56538), false);
-            P25ActivityLogSchema.recordActivity(connection, affiliation(1000L, 1811524, 56133), false);
-            assertAffiliation(connection, 1811524, 56538, 2000L);
+            P25ActivityLogSchema.recordActivity(connection, affiliation(2_000L, 1_811_524, 56_538), false);
+            P25ActivityLogSchema.recordActivity(connection, affiliation(1_000L, 1_811_524, null), false);
+            assertAffiliation(connection, 1_811_524, 56_538, 2_000L);
+            assertEquals(1, count(connection, "trunked_radio_site_presence"));
+
+            P25ActivityLogSchema.recordActivity(connection, affiliation(3_000L, 1_811_524, null), false);
+            assertEquals(0, count(connection, "trunked_radio_affiliation"));
+            assertEquals(0, count(connection, "trunked_radio_site_presence"));
+        }
+    }
+
+    @Test
+    void clearWatermarkPreventsStaleAndEqualConfirmationsFromResurrectingState() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("presence-clear-watermark.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            P25ActivityLogSchema.insertSite(connection, siteSnapshot(500L));
+            P25ActivityLogSchema.recordActivity(connection, affiliation(2_000L, 1_811_524, 56_538), false);
+            P25ActivityLogSchema.recordActivity(connection, affiliation(3_000L, 1_811_524, null), false);
+
+            assertEquals(0, count(connection, "trunked_radio_affiliation"));
+            assertEquals(0, count(connection, "trunked_radio_site_presence"));
+            assertEquals(3_000L, scalarLong(connection, """
+                SELECT cleared_at_ms FROM trunked_radio_presence_lifecycle WHERE radio_id=1811524
+                """));
+
+            P25ActivityLogSchema.recordActivity(connection, affiliation(1_000L, 1_811_524, 56_133), false);
+            P25ActivityLogSchema.recordActivity(connection, affiliation(3_000L, 1_811_524, 56_133), false);
+            P25ActivityLogSchema.recordActivity(connection, affiliation(2_500L, 1_811_524, null), false);
+
+            assertEquals(0, count(connection, "trunked_radio_affiliation"));
+            assertEquals(0, count(connection, "trunked_radio_site_presence"));
+            assertEquals(3_000L, scalarLong(connection, """
+                SELECT cleared_at_ms FROM trunked_radio_presence_lifecycle WHERE radio_id=1811524
+                """));
+
+            P25ActivityLogSchema.recordActivity(connection, affiliation(3_001L, 1_811_524, 56_133), false);
+            assertAffiliation(connection, 1_811_524, 56_133, 3_001L);
+            assertPresence(connection, 1_811_524, "123e4567-e89b-12d3-a456-426614174000",
+                P25ActivityLogRecords.RadioPresenceEvidence.AFFILIATION, 3_001L);
+
+            P25ActivityLogSchema.recordActivity(connection, affiliation(4_000L, 1_811_525, 56_133), false);
+            P25ActivityLogSchema.recordActivity(connection, affiliation(4_000L, 1_811_525, null), false);
+            assertEquals(0, scalarLong(connection, """
+                SELECT COUNT(*) FROM trunked_radio_affiliation WHERE radio_id=1811525
+                """));
+            assertEquals(0, scalarLong(connection, """
+                SELECT COUNT(*) FROM trunked_radio_site_presence WHERE radio_id=1811525
+                """));
+        }
+    }
+
+    @Test
+    void clearingOneSiteRemovesItsPresenceButRetainsSystemAffiliation() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("presence-site-clear.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        String clearedSite = "123e4567-e89b-12d3-a456-42661417400a";
+        String retainedSite = "123e4567-e89b-12d3-a456-42661417400b";
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            statement.execute("PRAGMA foreign_keys=ON");
+            P25ActivityLogSchema.insertSite(connection, siteSnapshot(500L, clearedSite, 2, 1));
+            P25ActivityLogSchema.insertSite(connection, siteSnapshot(600L, retainedSite, 2, 2));
+            P25ActivityLogSchema.recordActivity(connection,
+                presence(1_000L, clearedSite, 1_811_524, 56_133,
+                    P25ActivityLogRecords.RadioPresenceEvidence.AFFILIATION), false);
+
+            P25ActivityLogSchema.clearSiteStats(connection, clearedSite);
+
+            assertEquals(0, count(connection, "trunked_radio_site_presence"));
+            assertAffiliation(connection, 1_811_524, 56_133, 1_000L);
+        }
+    }
+
+    @Test
+    void ordinaryCallsNeverCreateAuthoritativeRadioState() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("calls-do-not-create-presence.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            P25ActivityLogSchema.insertSite(connection, siteSnapshot(500L));
+            P25ActivityLogSchema.recordActivity(connection,
+                activity(1_000L, P25ActivityLogRecords.Action.CALL), true);
+
+            assertEquals(0, count(connection, "trunked_radio_affiliation"));
+            assertEquals(0, count(connection, "trunked_radio_site_presence"));
         }
     }
 
@@ -1078,7 +1259,8 @@ class P25ActivityLogWriterTest
                 WHERE identity_kind_code=2 AND (identity_id <= 0 OR identity_id >= 16777212)
                 """));
             assertEquals(0, count(connection, "trunked_radio_talkgroup_summary"));
-            assertEquals(0, count(connection, "p25_radio_affiliation"));
+            assertEquals(0, count(connection, "trunked_radio_affiliation"));
+            assertEquals(0, count(connection, "trunked_radio_site_presence"));
             assertEquals(0, scalarLong(connection, """
                 SELECT COUNT(*) FROM p25_site_talkgroup_bucket
                 WHERE talkgroup_id <= 0 OR talkgroup_id >= 65535
@@ -2854,9 +3036,10 @@ class P25ActivityLogWriterTest
         try(Statement statement = connection.createStatement();
             ResultSet resultSet = statement.executeQuery("""
                 SELECT system.wacn, system.system_id, affiliation.radio_id, affiliation.talkgroup_id,
-                    affiliation.updated_at_ms
-                FROM p25_radio_affiliation affiliation
-                JOIN p25_system system ON system.system_key = affiliation.system_key
+                    affiliation.confirmed_at_ms
+                FROM trunked_radio_affiliation affiliation
+                JOIN trunked_identity_scope scope ON scope.scope_id = affiliation.scope_id
+                JOIN p25_system system ON system.system_key = scope.p25_system_key
                 """))
         {
             assertTrue(resultSet.next());
@@ -2864,7 +3047,27 @@ class P25ActivityLogWriterTest
             assertEquals(0x348, resultSet.getInt("system_id"));
             assertEquals(radioId, resultSet.getInt("radio_id"));
             assertEquals(talkgroupId, resultSet.getInt("talkgroup_id"));
-            assertEquals(updatedAt, resultSet.getLong("updated_at_ms"));
+            assertEquals(updatedAt, resultSet.getLong("confirmed_at_ms"));
+            assertFalse(resultSet.next());
+        }
+    }
+
+    private static void assertPresence(Connection connection, int radioId, String guid,
+                                       P25ActivityLogRecords.RadioPresenceEvidence evidence, long confirmedAt)
+        throws Exception
+    {
+        try(Statement statement = connection.createStatement();
+            ResultSet resultSet = statement.executeQuery("""
+                SELECT presence.radio_id, context.guid, presence.evidence_code, presence.confirmed_at_ms
+                FROM trunked_radio_site_presence presence
+                JOIN receiver_context context ON context.id = presence.context_id
+                """))
+        {
+            assertTrue(resultSet.next());
+            assertEquals(radioId, resultSet.getInt("radio_id"));
+            assertEquals(guid, resultSet.getString("guid"));
+            assertEquals(evidence.code(), resultSet.getInt("evidence_code"));
+            assertEquals(confirmedAt, resultSet.getLong("confirmed_at_ms"));
             assertFalse(resultSet.next());
         }
     }
@@ -2926,15 +3129,15 @@ class P25ActivityLogWriterTest
 
     private static P25ActivityLogRecords.ActivityEvent identityActivity(long timestamp, int sourceRadio,
                                                                          int talkgroup,
-                                                                         P25ActivityLogRecords.RadioAffiliationUpdate
-                                                                             affiliationUpdate)
+                                                                         P25ActivityLogRecords.RadioPresenceUpdate
+                                                                             radioPresenceUpdate)
     {
         String guid = "123e4567-e89b-12d3-a456-426614174000";
         return new P25ActivityLogRecords.ActivityEvent(timestamp, "GUID:" + guid, guid,
             P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "APCO25", P25ActivityLogRecords.Action.JOIN,
             "AFFILIATE", Integer.toString(sourceRadio), Integer.toString(talkgroup), "TALKGROUP",
             null, null, null, false, null, null, 0xBEE00, 0x348, 0x348, 2, 1,
-            "Example Site", null, null, false, null, affiliationUpdate);
+            "Example Site", null, null, false, null, radioPresenceUpdate);
     }
 
     private static P25ActivityLogRecords.ActivityEvent countedIdentityActivity(long timestamp, int sourceRadio,
@@ -3025,15 +3228,36 @@ class P25ActivityLogWriterTest
 
     private static P25ActivityLogRecords.ActivityEvent affiliation(long timestamp, int radioId, Integer talkgroupId)
     {
-        P25ActivityLogRecords.Action action = talkgroupId != null ? P25ActivityLogRecords.Action.JOIN :
-            P25ActivityLogRecords.Action.LOGOUT;
+        String guid = "123e4567-e89b-12d3-a456-426614174000";
+        return talkgroupId != null ?
+            presence(timestamp, guid, radioId, talkgroupId,
+                P25ActivityLogRecords.RadioPresenceEvidence.AFFILIATION) :
+            clearedPresence(timestamp, guid, radioId);
+    }
+
+    private static P25ActivityLogRecords.ActivityEvent presence(long timestamp, String guid, int radioId,
+                                                                 Integer talkgroupId,
+        P25ActivityLogRecords.RadioPresenceEvidence evidence)
+    {
+        P25ActivityLogRecords.Action action = evidence == P25ActivityLogRecords.RadioPresenceEvidence.REGISTRATION ?
+            P25ActivityLogRecords.Action.REGISTER : P25ActivityLogRecords.Action.JOIN;
         return new P25ActivityLogRecords.ActivityEvent(timestamp,
-            "GUID:123e4567-e89b-12d3-a456-426614174000", "123e4567-e89b-12d3-a456-426614174000",
+            "GUID:" + guid, guid,
             P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "APCO25", action,
-            talkgroupId != null ? "AFFILIATE" : "DEREGISTER", Integer.toString(radioId),
+            evidence == P25ActivityLogRecords.RadioPresenceEvidence.REGISTRATION ? "REGISTER" : "AFFILIATE",
+            Integer.toString(radioId),
             talkgroupId != null ? talkgroupId.toString() : null, talkgroupId != null ? "TALKGROUP" : null,
             null, null, null, false, null, null, 0xBEE00, 0x348, 0x348, 2, 1, "Example Site", null, null,
-            false, null, new P25ActivityLogRecords.RadioAffiliationUpdate(radioId, talkgroupId));
+            false, null, P25ActivityLogRecords.RadioPresenceUpdate.confirmed(radioId, talkgroupId, evidence));
+    }
+
+    private static P25ActivityLogRecords.ActivityEvent clearedPresence(long timestamp, String guid, int radioId)
+    {
+        return new P25ActivityLogRecords.ActivityEvent(timestamp, "GUID:" + guid, guid,
+            P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "APCO25", P25ActivityLogRecords.Action.LOGOUT,
+            "DEREGISTER", Integer.toString(radioId), null, null, null, null, null, false, null, null,
+            0xBEE00, 0x348, 0x348, 2, 1, "Example Site", null, null, false, null,
+            P25ActivityLogRecords.RadioPresenceUpdate.cleared(radioId));
     }
 
     private static P25ActivityLogRecords.ActivityEvent activityWithoutSystemIdentity(long timestamp)
@@ -3051,6 +3275,11 @@ class P25ActivityLogWriterTest
     }
 
     private static P25ActivityLogRecords.SiteSnapshot siteSnapshot(long timestamp, String guid)
+    {
+        return siteSnapshot(timestamp, guid, 2, 1);
+    }
+
+    private static P25ActivityLogRecords.SiteSnapshot siteSnapshot(long timestamp, String guid, int rfss, int site)
     {
         List<P25NetworkConfigurationSnapshot.Channel> channels = List.of(
             new P25NetworkConfigurationSnapshot.Channel("primary_control", "00-0821", 856137500L, null, false, 1,
@@ -3073,7 +3302,7 @@ class P25ActivityLogWriterTest
 
         return new P25ActivityLogRecords.SiteSnapshot(timestamp, guid,
             P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "hash", "APCO25", "Example Site", "Example System", "P25-1",
-            0xBEE00, 0x348, 0x348, 2, 1, 0, true,
+            0xBEE00, 0x348, 0x348, rfss, site, 0, true,
             new P25NetworkConfigurationSnapshot.SiteStatus(1_784_000_000_000L, 110, true,
                 "Autonomous and by Request", 240, true, 0x90, true),
             856137500L, 856137500L, channels, neighbors, bands, patches, foreignBands);

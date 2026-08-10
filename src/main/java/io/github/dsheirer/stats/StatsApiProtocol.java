@@ -276,6 +276,7 @@ enum StatsApiProtocol
         capabilities.put("activity", trunked);
         capabilities.put("talker_aliases", trunked);
         capabilities.put("current_affiliations", this == P25);
+        capabilities.put("radio_site_presence", this == P25);
         capabilities.put("patch_groups", this == P25);
         return Map.copyOf(capabilities);
     }
@@ -289,6 +290,8 @@ enum StatsApiProtocol
         capabilities.put("neighbors", trunked);
         capabilities.put("quality", trunked);
         capabilities.put("activity", trunked);
+        capabilities.put("current_affiliations", this == P25);
+        capabilities.put("radio_site_presence", this == P25);
         capabilities.put("frequency_bands", this == P25);
         capabilities.put("patch_groups", this == P25);
         return Map.copyOf(capabilities);

@@ -181,11 +181,49 @@ final class P25ActivityLogRecords
         }
     }
 
-    /**
-     * One current talkgroup per radio.  A null talkgroup clears the current affiliation.
-     */
-    record RadioAffiliationUpdate(int radioId, Integer talkgroupId)
+    enum RadioPresenceEvidence
     {
+        REGISTRATION(1),
+        AFFILIATION(2);
+
+        private final int mCode;
+
+        RadioPresenceEvidence(int code)
+        {
+            mCode = code;
+        }
+
+        int code()
+        {
+            return mCode;
+        }
+    }
+
+    /**
+     * Authoritative radio state learned from an accepted registration or affiliation exchange. Every confirmed
+     * update supplies site-local presence; a talkgroup, when present, independently confirms current affiliation.
+     * A cleared update removes both states. Calls and other radio observations never create this record.
+     */
+    record RadioPresenceUpdate(int radioId, Integer talkgroupId, RadioPresenceEvidence evidence, boolean cleared)
+    {
+        RadioPresenceUpdate
+        {
+            if(radioId <= 0 || talkgroupId != null && talkgroupId <= 0 ||
+                cleared && (talkgroupId != null || evidence != null) || !cleared && evidence == null)
+            {
+                throw new IllegalArgumentException("Invalid authoritative radio presence update");
+            }
+        }
+
+        static RadioPresenceUpdate confirmed(int radioId, Integer talkgroupId, RadioPresenceEvidence evidence)
+        {
+            return new RadioPresenceUpdate(radioId, talkgroupId, evidence, false);
+        }
+
+        static RadioPresenceUpdate cleared(int radioId)
+        {
+            return new RadioPresenceUpdate(radioId, null, null, true);
+        }
     }
 
     record ActivityEvent(long observedAtEpochMilliseconds, String contextKey, String guid, ContextKind contextKind,
@@ -194,7 +232,7 @@ final class P25ActivityLogRecords
                          Integer timeslot, boolean encrypted, Integer encryptionAlgorithmId, Integer encryptionKeyId,
                          Integer wacn, Integer systemId, Integer nac, Integer rfss, Integer site, String channelName,
                          String decoder, String talkerAlias, boolean countedCall, String dedupeKey,
-                         RadioAffiliationUpdate affiliationUpdate, IdentityDomain identityDomain,
+                         RadioPresenceUpdate radioPresenceUpdate, IdentityDomain identityDomain,
                          P25TargetIdentity p25TargetIdentity,
                          List<P25PatchMemberIdentity> p25PatchMemberIdentities, String aliasListName,
                          boolean configuredMetadataObserved)
@@ -216,14 +254,14 @@ final class P25ActivityLogRecords
                       Integer timeslot, boolean encrypted, Integer encryptionAlgorithmId, Integer encryptionKeyId,
                       Integer wacn, Integer systemId, Integer nac, Integer rfss, Integer site, String channelName,
                       String decoder, String talkerAlias, boolean countedCall, String dedupeKey,
-                      RadioAffiliationUpdate affiliationUpdate, IdentityDomain identityDomain,
+                      RadioPresenceUpdate radioPresenceUpdate, IdentityDomain identityDomain,
                       P25TargetIdentity p25TargetIdentity,
                       List<P25PatchMemberIdentity> p25PatchMemberIdentities)
         {
             this(observedAtEpochMilliseconds, contextKey, guid, contextKind, protocol, action, eventType,
                 sourceRadioId, targetId, targetKind, patchMemberTalkgroupIds, frequencyHertz, lcn, timeslot,
                 encrypted, encryptionAlgorithmId, encryptionKeyId, wacn, systemId, nac, rfss, site, channelName,
-                decoder, talkerAlias, countedCall, dedupeKey, affiliationUpdate, identityDomain,
+                decoder, talkerAlias, countedCall, dedupeKey, radioPresenceUpdate, identityDomain,
                 p25TargetIdentity, p25PatchMemberIdentities, null, false);
         }
 
@@ -233,13 +271,13 @@ final class P25ActivityLogRecords
                       Integer timeslot, boolean encrypted, Integer encryptionAlgorithmId, Integer encryptionKeyId,
                       Integer wacn, Integer systemId, Integer nac, Integer rfss, Integer site, String channelName,
                       String decoder, String talkerAlias, boolean countedCall, String dedupeKey,
-                      RadioAffiliationUpdate affiliationUpdate, IdentityDomain identityDomain,
+                      RadioPresenceUpdate radioPresenceUpdate, IdentityDomain identityDomain,
                       P25TargetIdentity p25TargetIdentity)
         {
             this(observedAtEpochMilliseconds, contextKey, guid, contextKind, protocol, action, eventType,
                 sourceRadioId, targetId, targetKind, patchMemberTalkgroupIds, frequencyHertz, lcn, timeslot,
                 encrypted, encryptionAlgorithmId, encryptionKeyId, wacn, systemId, nac, rfss, site, channelName,
-                decoder, talkerAlias, countedCall, dedupeKey, affiliationUpdate, identityDomain,
+                decoder, talkerAlias, countedCall, dedupeKey, radioPresenceUpdate, identityDomain,
                 p25TargetIdentity, List.of());
         }
 
@@ -249,12 +287,12 @@ final class P25ActivityLogRecords
                       Integer timeslot, boolean encrypted, Integer encryptionAlgorithmId, Integer encryptionKeyId,
                       Integer wacn, Integer systemId, Integer nac, Integer rfss, Integer site, String channelName,
                       String decoder, String talkerAlias, boolean countedCall, String dedupeKey,
-                      RadioAffiliationUpdate affiliationUpdate, IdentityDomain identityDomain)
+                      RadioPresenceUpdate radioPresenceUpdate, IdentityDomain identityDomain)
         {
             this(observedAtEpochMilliseconds, contextKey, guid, contextKind, protocol, action, eventType,
                 sourceRadioId, targetId, targetKind, patchMemberTalkgroupIds, frequencyHertz, lcn, timeslot,
                 encrypted, encryptionAlgorithmId, encryptionKeyId, wacn, systemId, nac, rfss, site, channelName,
-                decoder, talkerAlias, countedCall, dedupeKey, affiliationUpdate, identityDomain,
+                decoder, talkerAlias, countedCall, dedupeKey, radioPresenceUpdate, identityDomain,
                 P25TargetIdentity.UNKNOWN);
         }
 
@@ -264,12 +302,12 @@ final class P25ActivityLogRecords
                       Integer timeslot, boolean encrypted, Integer encryptionAlgorithmId, Integer encryptionKeyId,
                       Integer wacn, Integer systemId, Integer nac, Integer rfss, Integer site, String channelName,
                       String decoder, String talkerAlias, boolean countedCall, String dedupeKey,
-                      RadioAffiliationUpdate affiliationUpdate)
+                      RadioPresenceUpdate radioPresenceUpdate)
         {
             this(observedAtEpochMilliseconds, contextKey, guid, contextKind, protocol, action, eventType,
                 sourceRadioId, targetId, targetKind, patchMemberTalkgroupIds, frequencyHertz, lcn, timeslot,
                 encrypted, encryptionAlgorithmId, encryptionKeyId, wacn, systemId, nac, rfss, site, channelName,
-                decoder, talkerAlias, countedCall, dedupeKey, affiliationUpdate, IdentityDomain.STANDARD);
+                decoder, talkerAlias, countedCall, dedupeKey, radioPresenceUpdate, IdentityDomain.STANDARD);
         }
 
         ActivityEvent(long observedAtEpochMilliseconds, String contextKey, String guid, ContextKind contextKind,
@@ -278,12 +316,12 @@ final class P25ActivityLogRecords
                       Integer encryptionAlgorithmId, Integer encryptionKeyId, Integer wacn, Integer systemId,
                       Integer nac, Integer rfss, Integer site, String channelName, String decoder,
                       String talkerAlias, boolean countedCall, String dedupeKey,
-                      RadioAffiliationUpdate affiliationUpdate)
+                      RadioPresenceUpdate radioPresenceUpdate)
         {
             this(observedAtEpochMilliseconds, contextKey, guid, contextKind, protocol, action, eventType,
                 sourceRadioId, targetId, targetKind, List.of(), frequencyHertz, lcn, timeslot, encrypted,
                 encryptionAlgorithmId, encryptionKeyId, wacn, systemId, nac, rfss, site, channelName, decoder,
-                talkerAlias, countedCall, dedupeKey, affiliationUpdate, IdentityDomain.STANDARD);
+                talkerAlias, countedCall, dedupeKey, radioPresenceUpdate, IdentityDomain.STANDARD);
         }
     }
 

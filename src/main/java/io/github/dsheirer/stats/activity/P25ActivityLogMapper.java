@@ -416,7 +416,7 @@ class P25ActivityLogMapper
         {
             p25TargetIdentity = P25ActivityLogRecords.P25TargetIdentity.ORDINARY;
         }
-        P25ActivityLogRecords.RadioAffiliationUpdate affiliationUpdate = affiliationUpdate(affiliationEvent);
+        P25ActivityLogRecords.RadioPresenceUpdate radioPresenceUpdate = radioPresenceUpdate(affiliationEvent);
         boolean metricsEncrypted = facts.encrypted() && event instanceof P25ChannelGrantEvent grantEvent &&
             P25EncryptionConfirmationTracker.isConfirmed(grantEvent, facts.encryptionAlgorithmId(),
                 facts.encryptionKeyId());
@@ -457,7 +457,7 @@ class P25ActivityLogMapper
             activityChannelName(contextKind, channel), decoderType.name(), facts.talkerAlias(),
             action == P25ActivityLogRecords.Action.CALL &&
                 (contextKind != P25ActivityLogRecords.ContextKind.TRUNKED_SITE || actionOverride != null), dedupeKey,
-            affiliationUpdate, identityDomain(channel, event.getIdentifierCollection()), p25TargetIdentity,
+            radioPresenceUpdate, identityDomain(channel, event.getIdentifierCollection()), p25TargetIdentity,
             facts.p25PatchMemberIdentities(), blankToNull(channel.getAliasListName()), true);
     }
 
@@ -701,7 +701,7 @@ class P25ActivityLogMapper
         return P25ActivityLogRecords.Action.UNKNOWN;
     }
 
-    private static P25ActivityLogRecords.RadioAffiliationUpdate affiliationUpdate(
+    private static P25ActivityLogRecords.RadioPresenceUpdate radioPresenceUpdate(
         P25AffiliationEvent affiliationEvent)
     {
         if(affiliationEvent == null || affiliationEvent.getRadioId() == null || affiliationEvent.getRadioId() <= 0)
@@ -709,13 +709,17 @@ class P25ActivityLogMapper
             return null;
         }
 
+        P25ActivityLogRecords.RadioPresenceEvidence evidence =
+            affiliationEvent.getEventType() == DecodeEventType.REGISTER ?
+                P25ActivityLogRecords.RadioPresenceEvidence.REGISTRATION :
+                P25ActivityLogRecords.RadioPresenceEvidence.AFFILIATION;
+
         return switch(affiliationEvent.getOutcome())
         {
-            case ACCEPTED, CONFIRMED -> affiliationEvent.getTalkgroupId() != null &&
-                affiliationEvent.getTalkgroupId() > 0 ?
-                new P25ActivityLogRecords.RadioAffiliationUpdate(affiliationEvent.getRadioId(),
-                    affiliationEvent.getTalkgroupId()) : null;
-            case CLEARED -> new P25ActivityLogRecords.RadioAffiliationUpdate(affiliationEvent.getRadioId(), null);
+            case ACCEPTED, CONFIRMED -> P25ActivityLogRecords.RadioPresenceUpdate.confirmed(
+                affiliationEvent.getRadioId(), affiliationEvent.getTalkgroupId() != null &&
+                    affiliationEvent.getTalkgroupId() > 0 ? affiliationEvent.getTalkgroupId() : null, evidence);
+            case CLEARED -> P25ActivityLogRecords.RadioPresenceUpdate.cleared(affiliationEvent.getRadioId());
             case REQUESTED, REJECTED, UNRESOLVED -> null;
         };
     }

@@ -32,8 +32,9 @@ key integers, four value/timestamp integers, and SQLite B-tree overhead, with no
 The decoder publishes message-scoped facts through the existing bounded statistics queue and single background writer.
 Ordinary runtime services never perform schema migration. Current rows use the standard `confirmed_at_ms` retention
 path; summaries use `last_seen_ms`. Site-specific clearing and full statistics reset delete both tables. Alpha 9
-shipped P25 activity schema v24. The current unreleased schema is v25 because the existing identity summaries now
-retain qualifier-safe P25 talkgroup facts; the foreign-band tables themselves are unchanged. The next numbered
+shipped P25 activity schema v24. Schema v25 added qualifier-safe P25 talkgroup facts, and the current unreleased schema
+is v26 because it adds bounded protocol-neutral current affiliation and authoritative site-presence state; the
+foreign-band tables themselves are unchanged. The next numbered
 release migration is prepared from the exact preceding public release, and older or intermediate schema combinations
 are rejected.
 

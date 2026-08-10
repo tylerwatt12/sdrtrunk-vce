@@ -110,6 +110,197 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void exposesAuthoritativePresenceAndAppliesBoundedAffiliationAndSiteFilters() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO receiver_context (
+                    id, context_key, guid, kind_code, protocol_code, channel_name, decoder,
+                    first_seen_ms, last_seen_ms, system_key, nac, rfss, site
+                ) VALUES (3, 'guidless-p25', NULL, 1, 1, 'Guidless P25', 'P25-1',
+                    1500, 2600, 1, 0x49F, 2, 3)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO trunked_identity_scope_context (
+                    scope_id, context_id, first_seen_ms, last_seen_ms
+                ) VALUES (1, 3, 1500, 2600)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO trunked_identity_summary (
+                    scope_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms
+                ) VALUES (1, 2, 1811333, 1500, 2500),
+                         (1, 2, 1811334, 1500, 2600)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO trunked_radio_talkgroup_summary (
+                    scope_id, radio_id, talkgroup_id, target_kind_code, first_seen_ms, last_seen_ms
+                ) VALUES (1, 1811333, 56132, 1, 1500, 2500)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO trunked_radio_site_presence (
+                    scope_id, radio_id, context_id, evidence_code, confirmed_at_ms
+                ) VALUES (1, 1811333, 1, 1, 2500),
+                         (1, 1811334, 3, 1, 2600)
+                """);
+        }
+
+        Map<String,Object> affiliated = mDatabase.systemRadios(request(
+            "/api/v1/systems/p25:BEE00:348/radios?scope=p25:BEE00:348&affiliated=true"));
+        assertEquals(1L, number(affiliated.get("totalCount")));
+        Map<String,Object> affiliatedRadio = rows(affiliated).getFirst();
+        assertEquals(1811332L, number(affiliatedRadio.get("radio_id")));
+        assertEquals(1L, number(affiliatedRadio.get("currently_affiliated")));
+        assertEquals(2000L, number(affiliatedRadio.get("affiliation_confirmed_at_ms")));
+        assertFalse(affiliatedRadio.containsKey("affiliation_updated_at_ms"));
+        Map<String,Object> affiliatedPresence = map(affiliatedRadio, "presence");
+        assertEquals("affiliation", affiliatedPresence.get("evidence"));
+        assertEquals(2000L, number(affiliatedPresence.get("confirmed_at_ms")));
+        Map<String,Object> affiliatedSite = map(affiliatedPresence, "site");
+        assertEquals(GUID, affiliatedSite.get("guid"));
+        assertEquals(1L, number(affiliatedSite.get("rfss")));
+        assertEquals(1L, number(affiliatedSite.get("site")));
+
+        Map<String,Object> registered = mDatabase.systemRadios(request(
+            "/api/v1/systems/p25:BEE00:348/radios?scope=p25:BEE00:348&affiliated=false&site_guid=" + GUID));
+        assertEquals(1L, number(registered.get("totalCount")));
+        Map<String,Object> registeredRadio = rows(registered).getFirst();
+        assertEquals(1811333L, number(registeredRadio.get("radio_id")));
+        assertEquals(0L, number(registeredRadio.get("currently_affiliated")));
+        assertEquals("registration", map(registeredRadio, "presence").get("evidence"));
+        assertEquals(0L, number(mDatabase.systemRadios(request(
+            "/api/v1/systems/p25:BEE00:348/radios?scope=p25:BEE00:348&site_guid=missing"))
+            .get("totalCount")));
+        assertEquals(1811332L, number(rows(mDatabase.systemRadios(request(
+            "/api/v1/systems/p25:BEE00:348/radios?scope=p25:BEE00:348&sort=site&direction=asc")))
+            .getFirst().get("radio_id")));
+
+        Map<String,Object> relationships = mDatabase.radioTalkgroupRelationships(request(
+            "/api/v1/systems/p25:BEE00:348/relationships?scope=p25:BEE00:348&talkgroup_id=56132" +
+                "&affiliated=true&site_guid=" + GUID));
+        assertEquals(1L, number(relationships.get("totalCount")));
+        assertEquals(1L, number(rows(relationships).getFirst().get("currently_affiliated")));
+        assertEquals(GUID, map(map(rows(relationships).getFirst(), "presence"), "site").get("guid"));
+
+        Map<String,Object> notAffiliated = mDatabase.radioTalkgroupRelationships(request(
+            "/api/v1/systems/p25:BEE00:348/relationships?scope=p25:BEE00:348&talkgroup_id=56132" +
+                "&affiliated=false&site_guid=" + GUID));
+        assertEquals(1L, number(notAffiliated.get("totalCount")));
+        assertEquals(1811333L, number(rows(notAffiliated).getFirst().get("radio_id")));
+        assertEquals(1811332L, number(rows(mDatabase.radioTalkgroupRelationships(request(
+            "/api/v1/systems/p25:BEE00:348/relationships?scope=p25:BEE00:348&talkgroup_id=56132" +
+                "&sort=site&direction=asc"))).getFirst().get("radio_id")));
+
+        Map<String,Object> talkgroup = map(mDatabase.talkgroup(request(
+            "/api/v1/systems/p25:BEE00:348/group-identities/talkgroup/56132" +
+                "?scope=p25:BEE00:348&talkgroup_id=56132")), "group_identity");
+        assertEquals(1L, number(talkgroup.get("affiliated_radios")));
+        assertEquals(1L, number(talkgroup.get("affiliated_sites")));
+        assertEquals(Boolean.TRUE, map(talkgroup, "capabilities").get("radio_site_presence"));
+        assertEquals(1L, number(map(mDatabase.system(request(
+            "/api/v1/systems/p25:BEE00:348?scope=p25:BEE00:348")), "system").get("affiliated_radios")));
+        assertEquals(1L, number(map(mDatabase.site(request(
+            "/api/v1/sites/" + GUID + "?guid=" + GUID)), "site").get("affiliated_radios")));
+
+        Map<String,Object> radioDetail = map(mDatabase.radio(request(
+            "/api/v1/systems/p25:BEE00:348/radios/1811333?scope=p25:BEE00:348&radio_id=1811333")),
+            "radio");
+        assertEquals("registration", map(radioDetail, "presence").get("evidence"));
+        assertEquals(Boolean.TRUE, map(radioDetail, "capabilities").get("radio_site_presence"));
+
+        Map<String,Object> guidlessRadio = map(mDatabase.radio(request(
+            "/api/v1/systems/p25:BEE00:348/radios/1811334?scope=p25:BEE00:348&radio_id=1811334")),
+            "radio");
+        Map<String,Object> guidlessSite = map(map(guidlessRadio, "presence"), "site");
+        assertNull(guidlessSite.get("guid"));
+        assertEquals(2L, number(guidlessSite.get("rfss")));
+        assertEquals(3L, number(guidlessSite.get("site")));
+
+        List<CSVRecord> csv = csvRows(mDatabase.csvExport(request(
+            "/api/v1/exports/system-radios.csv?dataset=system-radios&scope=p25:BEE00:348" +
+                "&affiliated=false&site_guid=" + GUID)));
+        assertEquals(List.of("1811333"), csv.stream().map(row -> row.get("radio_id")).toList());
+    }
+
+    @Test
+    void pagesMoreThanFiveHundredAffiliationsInlineWithoutASecondCollection() throws Exception
+    {
+        int talkgroupId = 60001;
+        int firstRadioId = 2_000_000;
+        int affiliationCount = 600;
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement();
+            PreparedStatement identities = connection.prepareStatement("""
+                INSERT INTO trunked_identity_summary (
+                    scope_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms
+                ) VALUES (1, 2, ?, 3000, 4000)
+                """);
+            PreparedStatement relationships = connection.prepareStatement("""
+                INSERT INTO trunked_radio_talkgroup_summary (
+                    scope_id, radio_id, talkgroup_id, target_kind_code, first_seen_ms, last_seen_ms
+                ) VALUES (1, ?, ?, 1, 3000, 4000)
+                """);
+            PreparedStatement affiliations = connection.prepareStatement("""
+                INSERT INTO trunked_radio_affiliation (
+                    scope_id, radio_id, talkgroup_id, confirmed_at_ms
+                ) VALUES (1, ?, ?, 4000)
+                """);
+            PreparedStatement presences = connection.prepareStatement("""
+                INSERT INTO trunked_radio_site_presence (
+                    scope_id, radio_id, context_id, evidence_code, confirmed_at_ms
+                ) VALUES (1, ?, 1, 2, 4000)
+                """))
+        {
+            connection.setAutoCommit(false);
+            statement.executeUpdate("""
+                INSERT INTO trunked_identity_summary (
+                    scope_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms
+                ) VALUES (1, 1, 60001, 3000, 4000)
+                """);
+
+            for(int offset = 0; offset < affiliationCount; offset++)
+            {
+                int radioId = firstRadioId + offset;
+                identities.setInt(1, radioId);
+                identities.addBatch();
+                relationships.setInt(1, radioId);
+                relationships.setInt(2, talkgroupId);
+                relationships.addBatch();
+                affiliations.setInt(1, radioId);
+                affiliations.setInt(2, talkgroupId);
+                affiliations.addBatch();
+                presences.setInt(1, radioId);
+                presences.addBatch();
+            }
+
+            identities.executeBatch();
+            relationships.executeBatch();
+            affiliations.executeBatch();
+            presences.executeBatch();
+            connection.commit();
+        }
+
+        String path = "/api/v1/systems/p25:BEE00:348/relationships?scope=p25:BEE00:348" +
+            "&talkgroup_id=" + talkgroupId + "&affiliated=true&site_guid=" + GUID + "&limit=500";
+        Map<String,Object> firstPage = mDatabase.radioTalkgroupRelationships(request(path));
+        assertEquals(500, rows(firstPage).size());
+        assertTrue((Boolean)firstPage.get("hasMore"));
+        assertEquals(affiliationCount, number(firstPage.get("totalCount")));
+        assertTrue(rows(firstPage).stream().allMatch(row -> number(row.get("currently_affiliated")) == 1 &&
+            "affiliation".equals(map(row, "presence").get("evidence")) &&
+            GUID.equals(map(map(row, "presence"), "site").get("guid"))));
+
+        Map<String,Object> secondPage = mDatabase.radioTalkgroupRelationships(request(path + "&offset=500"));
+        assertEquals(100, rows(secondPage).size());
+        assertFalse((Boolean)secondPage.get("hasMore"));
+        assertEquals(affiliationCount, number(secondPage.get("totalCount")));
+        assertTrue(rows(secondPage).stream().allMatch(row -> number(row.get("currently_affiliated")) == 1 &&
+            row.get("presence") instanceof Map));
+    }
+
+    @Test
     void exposesConfiguredAliasesWithWinnerOnlySummaryEvidenceAndCsvParity() throws Exception
     {
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
@@ -1092,6 +1283,48 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void authoritativePresenceAggregatesUseCurrentStateIndexesAndNeverDetailedEvents() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
+        {
+            List<String> talkgroupPlan = explain(connection, """
+                SELECT COUNT(DISTINCT presence.context_id)
+                FROM trunked_radio_affiliation affiliation
+                JOIN trunked_radio_site_presence presence
+                  ON presence.scope_id = affiliation.scope_id AND presence.radio_id = affiliation.radio_id
+                WHERE affiliation.scope_id = ? AND affiliation.talkgroup_id = ?
+                """, 1, 56132);
+            assertTrue(talkgroupPlan.stream().anyMatch(detail ->
+                    detail.contains("idx_trunked_radio_affiliation_talkgroup")),
+                () -> "Expected talkgroup-leading affiliation lookup, plan was: " + talkgroupPlan);
+            assertTrue(talkgroupPlan.stream().anyMatch(detail ->
+                    detail.contains("SEARCH presence USING PRIMARY KEY")),
+                () -> "Expected one-row presence lookup per affiliated radio, plan was: " + talkgroupPlan);
+
+            List<String> sitePlan = explain(connection, """
+                SELECT COUNT(*)
+                FROM trunked_radio_site_presence presence
+                JOIN receiver_context context ON context.id = presence.context_id
+                JOIN trunked_radio_affiliation affiliation
+                  ON affiliation.scope_id = presence.scope_id AND affiliation.radio_id = presence.radio_id
+                WHERE context.guid = ?
+                """, GUID);
+            assertTrue(sitePlan.stream().anyMatch(detail -> detail.contains("idx_receiver_context_guid")),
+                () -> "Expected exact GUID lookup, plan was: " + sitePlan);
+            assertTrue(sitePlan.stream().anyMatch(detail ->
+                    detail.contains("idx_trunked_radio_site_presence_context")),
+                () -> "Expected context-leading presence lookup, plan was: " + sitePlan);
+            assertTrue(sitePlan.stream().anyMatch(detail ->
+                    detail.contains("SEARCH affiliation USING PRIMARY KEY")),
+                () -> "Expected one-row affiliation lookup per present radio, plan was: " + sitePlan);
+
+            assertTrue(java.util.stream.Stream.concat(talkgroupPlan.stream(), sitePlan.stream())
+                .noneMatch(detail -> detail.contains("p25_activity_event") ||
+                    detail.contains("call_identity_bucket")));
+        }
+    }
+
+    @Test
     void observedTalkgroupQueryUsesBoundedSummaryIndexesAtRepresentativeVolume() throws Exception
     {
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
@@ -1465,9 +1698,9 @@ class StatsWebDatabaseTest
                          (1, 1, 3, 60000, %1$d, 3)
                 """.formatted(bucket));
             statement.executeUpdate("""
-                UPDATE p25_radio_affiliation
+                UPDATE trunked_radio_affiliation
                 SET talkgroup_id = 60000
-                WHERE system_key = 1 AND radio_id = 1811332
+                WHERE scope_id = 1 AND radio_id = 1811332
                 """);
             statement.executeUpdate("""
                 UPDATE trunked_identity_summary
@@ -1533,6 +1766,8 @@ class StatsWebDatabaseTest
         assertEquals(Boolean.TRUE, capabilities.get("patch_groups"));
         assertEquals(Boolean.TRUE, capabilities.get("group_identities"));
         assertEquals(Boolean.TRUE, capabilities.get("activity"));
+        assertEquals(Boolean.TRUE, capabilities.get("current_affiliations"));
+        assertEquals(Boolean.TRUE, capabilities.get("radio_site_presence"));
 
         List<Map<String,Object>> channels = rows(mDatabase.siteChannels(request(
             "/api/site/channels?guid=" + GUID)));
@@ -2097,6 +2332,7 @@ class StatsWebDatabaseTest
         assertEquals("Hytera Basic Privacy", dmrRadio.get("last_encryption_algorithm_name"));
         assertEquals("DMR UNIT", dmrRadio.get("last_talker_alias"));
         assertEquals(Boolean.TRUE, map(dmrRadio, "capabilities").get("talker_aliases"));
+        assertEquals(Boolean.FALSE, map(dmrRadio, "capabilities").get("radio_site_presence"));
         assertEquals(1, rows(mDatabase.systemTalkerAliases(request(
             "/api/system/talker-aliases?scope=dmr:guid:dmr-encryption-guid"))).size());
     }
@@ -3570,7 +3806,7 @@ class StatsWebDatabaseTest
         assertEquals(SYSTEM, number(rows(mDatabase.systemDirectory(request(
             "/api/system-directory?sort=site_names&direction=asc"))).getFirst().get("system_id")));
         assertEquals(SYSTEM, number(rows(mDatabase.systemDirectory(request(
-            "/api/system-directory?sort=affiliations&direction=desc"))).getFirst().get("system_id")));
+            "/api/system-directory?sort=affiliated_radios&direction=desc"))).getFirst().get("system_id")));
 
         Map<String,Object> talkgroup = rows(mDatabase.systemTalkgroups(request(
             "/api/system/talkgroups?scope=p25:BEE00:348&sort=alias&direction=asc&limit=1"))).getFirst();
@@ -4476,7 +4712,8 @@ class StatsWebDatabaseTest
                     first_seen_ms, last_seen_ms, call_count, grant_count, encrypted_count)
                 VALUES (1, 1811332, 56132, 1, 1000, 2000, 8, 8, 1)
                 """);
-            statement.executeUpdate("INSERT INTO p25_radio_affiliation VALUES (1, 1811332, 56132, 2000)");
+            statement.executeUpdate("INSERT INTO trunked_radio_affiliation VALUES (1, 1811332, 56132, 2000)");
+            statement.executeUpdate("INSERT INTO trunked_radio_site_presence VALUES (1, 1811332, 1, 2, 2000)");
             statement.executeUpdate("""
                 INSERT INTO p25_activity_event (context_id, observed_at_ms, action_code, event_type_code,
                     source_radio_id, target_id, target_kind_code, frequency_hz, lcn_band, lcn_number, timeslot,

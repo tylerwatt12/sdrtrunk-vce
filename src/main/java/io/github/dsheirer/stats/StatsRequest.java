@@ -216,19 +216,29 @@ final class StatsRequest
 
     boolean booleanValue(String key, boolean defaultValue)
     {
+        Boolean value = optionalBoolean(key);
+
+        return value != null ? value : defaultValue;
+    }
+
+    /**
+     * Parses an optional strict boolean while preserving the distinction between an omitted filter and false.
+     */
+    Boolean optionalBoolean(String key)
+    {
         String value = text(key);
 
         if(value == null)
         {
-            return defaultValue;
+            return null;
         }
         else if("true".equalsIgnoreCase(value))
         {
-            return true;
+            return Boolean.TRUE;
         }
         else if("false".equalsIgnoreCase(value))
         {
-            return false;
+            return Boolean.FALSE;
         }
 
         throw invalid(key, key + " must be true or false");

@@ -38,7 +38,8 @@ class StatsWebSiteUiContractTest
         String source = source();
 
         for(String capability: new String[]{"channels", "quality", "neighbors", "frequency_bands",
-            "patch_groups", "activity", "group_identities"})
+            "patch_groups", "activity", "group_identities", "current_affiliations",
+            "radio_site_presence"})
         {
             assertTrue(source.contains("siteCapability(site, '" + capability + "')"),
                 () -> "Missing site capability check for " + capability);
@@ -82,6 +83,8 @@ class StatsWebSiteUiContractTest
         assertTrue(siteInfo.contains("['Decoder', decoderDisplay(site.decoder)]"));
         assertTrue(siteInfo.contains("['Site', siteInfoSiteValue(site)]"));
         assertTrue(siteInfo.contains("['Name', configuredNameValue(site)]"));
+        assertTrue(siteInfo.contains("summary.push(['Affiliated Radios', site.affiliated_radios, linked])"));
+        assertTrue(siteInfo.contains("tab: 'radios', affiliated: true, site_guid: site.guid"));
         assertFalse(siteInfo.contains("['Name', site.channel_name]"));
         assertFalse(configuredSite.contains("channel_name"));
         assertTrue(siteInfoSite.contains("configuredNameValue(row) ? ''"));

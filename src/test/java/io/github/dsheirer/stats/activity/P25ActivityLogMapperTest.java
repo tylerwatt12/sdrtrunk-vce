@@ -589,9 +589,39 @@ class P25ActivityLogMapperTest
         assertEquals("1811524", record.sourceRadioId());
         assertEquals("56133", record.targetId());
         assertEquals("TALKGROUP", record.targetKind());
-        assertNotNull(record.affiliationUpdate());
-        assertEquals(1811524, record.affiliationUpdate().radioId());
-        assertEquals(56133, record.affiliationUpdate().talkgroupId());
+        assertNotNull(record.radioPresenceUpdate());
+        assertEquals(1811524, record.radioPresenceUpdate().radioId());
+        assertEquals(56133, record.radioPresenceUpdate().talkgroupId());
+        assertEquals(P25ActivityLogRecords.RadioPresenceEvidence.AFFILIATION,
+            record.radioPresenceUpdate().evidence());
+        assertFalse(record.radioPresenceUpdate().cleared());
+    }
+
+    @Test
+    void mapsAcceptedRegistrationWithoutInventingAnAffiliation()
+    {
+        MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
+        identifiers.update(APCO25RadioIdentifier.createTo(1811524));
+        identifiers.update(APCO25Wacn.create(0xBEE00));
+        identifiers.update(APCO25System.create(0x348));
+        identifiers.update(SiteGuidConfigurationIdentifier.create(GUID));
+
+        P25AffiliationEvent event = new P25AffiliationEvent(DecodeEventType.REGISTER, 1000L,
+            P25AffiliationEvent.Outcome.ACCEPTED, APCO25RadioIdentifier.createTo(1811524), null);
+        event.setIdentifierCollection(identifiers);
+        event.setDetails("ACCEPTED UNIT REGISTRATION");
+
+        P25ActivityLogRecords.ActivityEvent record = new P25ActivityLogMapper().map(channel(DecoderType.P25_PHASE1),
+            event);
+
+        assertNotNull(record);
+        assertEquals(P25ActivityLogRecords.Action.REGISTER, record.action());
+        assertNotNull(record.radioPresenceUpdate());
+        assertEquals(1811524, record.radioPresenceUpdate().radioId());
+        assertNull(record.radioPresenceUpdate().talkgroupId());
+        assertEquals(P25ActivityLogRecords.RadioPresenceEvidence.REGISTRATION,
+            record.radioPresenceUpdate().evidence());
+        assertFalse(record.radioPresenceUpdate().cleared());
     }
 
     @Test
@@ -634,7 +664,7 @@ class P25ActivityLogMapperTest
 
         assertNotNull(record);
         assertEquals(P25ActivityLogRecords.Action.DENIAL, record.action());
-        assertNull(record.affiliationUpdate());
+        assertNull(record.radioPresenceUpdate());
     }
 
     @Test
@@ -653,6 +683,7 @@ class P25ActivityLogMapperTest
         assertEquals(P25ActivityLogRecords.P25IdentityState.ORDINARY, record.p25TargetIdentity().state());
         assertTrue(record.dedupeKey() != null && !record.dedupeKey().isBlank());
         assertFalse(record.countedCall());
+        assertNull(record.radioPresenceUpdate());
     }
 
     @Test

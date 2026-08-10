@@ -157,6 +157,32 @@ class StatsApiV1PayloadTest
     }
 
     @Test
+    void preservesNestedPresenceSiteAndNormalizesItsScalarP25SiteIdAndAffiliationState()
+    {
+        JsonNode radio = StatsApiV1Payload.present(Map.of(
+            "protocol_code", 1,
+            "radio_id", 1234,
+            "currently_affiliated", 1,
+            "presence", Map.of(
+                "evidence", "affiliation",
+                "confirmed_at_ms", 5000,
+                "site", Map.of(
+                    "protocol_code", 1,
+                    "guid", "site-guid",
+                    "rfss", 2,
+                    "site", 7))));
+
+        assertTrue(radio.get("currently_affiliated").isBoolean());
+        assertTrue(radio.get("currently_affiliated").booleanValue());
+        assertTrue(radio.at("/presence/site").isObject());
+        assertEquals("p25", radio.at("/presence/site/protocol").textValue());
+        assertEquals(7, radio.at("/presence/site/site_id").intValue());
+        assertFalse(radio.at("/presence/site").has("site"));
+        assertFalse(radio.at("/presence").has("site_id"));
+        assertNoInternalFields(radio);
+    }
+
+    @Test
     void presentsAliasCatalogEnumsWithTheStableWireVocabulary()
     {
         JsonNode phaseTwo = StatsApiV1Payload.present(Map.of(

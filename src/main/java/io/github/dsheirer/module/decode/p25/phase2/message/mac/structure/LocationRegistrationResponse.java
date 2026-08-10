@@ -123,6 +123,9 @@ public class LocationRegistrationResponse extends MacStructure
         if(mIdentifiers == null)
         {
             mIdentifiers = new ArrayList<>();
+            mIdentifiers.add(getGroupAddress());
+            mIdentifiers.add(getRFSS());
+            mIdentifiers.add(getSite());
             mIdentifiers.add(getTargetAddress());
         }
 

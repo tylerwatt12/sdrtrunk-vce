@@ -109,12 +109,14 @@ class StatsApiProtocolTest
             () -> assertTrue(p25System.get("activity")),
             () -> assertTrue(p25System.get("talker_aliases")),
             () -> assertTrue(p25System.get("current_affiliations")),
+            () -> assertTrue(p25System.get("radio_site_presence")),
             () -> assertTrue(p25System.get("patch_groups")));
 
         Map<String,Boolean> dmrSystem = StatsApiProtocol.DMR.systemCapabilities();
         assertAll(
             () -> assertTrue(dmrSystem.get("sites")),
             () -> assertFalse(dmrSystem.get("current_affiliations")),
+            () -> assertFalse(dmrSystem.get("radio_site_presence")),
             () -> assertFalse(dmrSystem.get("patch_groups")));
 
         Map<String,Boolean> nxdnSite = StatsApiProtocol.NXDN.siteCapabilities();
@@ -122,8 +124,15 @@ class StatsApiProtocolTest
             () -> assertTrue(nxdnSite.get("channels")),
             () -> assertTrue(nxdnSite.get("neighbors")),
             () -> assertTrue(nxdnSite.get("quality")),
+            () -> assertFalse(nxdnSite.get("current_affiliations")),
+            () -> assertFalse(nxdnSite.get("radio_site_presence")),
             () -> assertFalse(nxdnSite.get("frequency_bands")),
             () -> assertFalse(nxdnSite.get("patch_groups")));
+
+        Map<String,Boolean> p25Site = StatsApiProtocol.P25.siteCapabilities();
+        assertAll(
+            () -> assertTrue(p25Site.get("current_affiliations")),
+            () -> assertTrue(p25Site.get("radio_site_presence")));
 
         Map<String,Boolean> conventional = StatsApiProtocol.NBFM.siteCapabilities();
         assertTrue(conventional.values().stream().noneMatch(Boolean::booleanValue));

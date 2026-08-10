@@ -341,6 +341,16 @@ class StatsWebDatabase
             "summary.gps_count + summary.page_count + summary.patch_count + " +
             "summary.patch_cancel_count + summary.patch_create_count + summary.queued_count + " +
             "summary.request_count + summary.status_count + summary.unknown_count";
+    private static final String CURRENT_RELATIONSHIP_AFFILIATION_SQL =
+        "relationship.target_kind_code = 1 AND affiliation.radio_id IS NOT NULL " +
+            "AND affiliation.talkgroup_id = relationship.talkgroup_id";
+    private static final String RADIO_SITE_SORT_SQL = "CASE WHEN presence.context_id IS NULL THEN NULL " +
+        "WHEN scope.protocol_code = 1 THEN printf('%03d:%03d', " +
+        "coalesce(presence_p25.rfss, presence_context.rfss, -1), " +
+        "coalesce(presence_p25.site, presence_context.site, -1)) " +
+        "ELSE printf('%010d', coalesce(presence_trunked.site_id, -1)) END || char(0) || " +
+        "lower(coalesce(presence_config.configured_site, presence_config.configured_name, " +
+        "presence_context.channel_name, presence_context.guid, ''))";
     private static final Map<String,String> SYSTEM_SORT_COLUMNS = Map.ofEntries(
         Map.entry("wacn", "wacn"),
         Map.entry("system_id", "system_id"),
@@ -348,7 +358,7 @@ class StatsWebDatabase
         Map.entry("sites", "sites"),
         Map.entry("talkgroups", "talkgroups"),
         Map.entry("radios", "radios"),
-        Map.entry("affiliations", "affiliations"),
+        Map.entry("affiliated_radios", "affiliated_radios"),
         Map.entry("first_seen", "first_seen_ms"),
         Map.entry("last_seen", "last_seen_ms")
     );
@@ -403,18 +413,28 @@ class StatsWebDatabase
         Map.entry("encrypted", "summary.encrypted_count"),
         Map.entry("affiliated_talkgroup", scopeAliasSortExpression("alias_talkgroup",
             "affiliation.talkgroup_id", "name")),
-        Map.entry("affiliation_updated", "affiliation.updated_at_ms"),
+        Map.entry("affiliated", "affiliation.radio_id IS NOT NULL"),
+        Map.entry("affiliation_confirmed", "affiliation.confirmed_at_ms"),
+        Map.entry("site", RADIO_SITE_SORT_SQL),
         Map.entry("first_seen", "summary.first_seen_ms"),
         Map.entry("last_seen", "summary.last_seen_ms")
     );
-    private static final Map<String,String> AFFILIATION_SORT_COLUMNS = Map.ofEntries(
-        Map.entry("radio", "affiliation.radio_id"),
-        Map.entry("radio_alias", aliasSortExpression("alias_radio", "affiliation.radio_id", "name")),
+    private static final Map<String,String> TALKER_ALIAS_SORT_COLUMNS = Map.ofEntries(
+        Map.entry("id", "summary.identity_id"),
+        Map.entry("radio", "summary.identity_id"),
+        Map.entry("alias", scopeAliasSortExpression("alias_radio", "summary.identity_id", "name")),
+        Map.entry("name", scopeAliasSortExpression("alias_radio", "summary.identity_id", "name")),
         Map.entry("talker_alias", "lower(summary.last_talker_alias)"),
-        Map.entry("talkgroup", "affiliation.talkgroup_id"),
-        Map.entry("talkgroup_alias", aliasSortExpression("alias_talkgroup", "affiliation.talkgroup_id", "name")),
-        Map.entry("updated", "affiliation.updated_at_ms"),
-        Map.entry("last_seen", "affiliation.updated_at_ms")
+        Map.entry("talker_alias_seen", "summary.last_talker_alias_seen_ms"),
+        Map.entry("last_talkgroup", "CASE WHEN summary.last_counterpart_kind_code IN (1, 3) " +
+            "THEN summary.last_counterpart_id END"),
+        Map.entry("last_talkgroup_name", "CASE WHEN summary.last_counterpart_kind_code IN (1, 3) THEN " +
+            scopeAliasSortExpression("alias_talkgroup", "summary.last_counterpart_id", "name") + " END"),
+        Map.entry("calls", "summary.call_count"),
+        Map.entry("grants", "summary.grant_count"),
+        Map.entry("encrypted", "summary.encrypted_count"),
+        Map.entry("first_seen", "summary.first_seen_ms"),
+        Map.entry("last_seen", "summary.last_seen_ms")
     );
     private static final Map<String,String> RELATIONSHIP_SORT_COLUMNS = Map.ofEntries(
         Map.entry("radio", "relationship.radio_id"),
@@ -426,10 +446,8 @@ class StatsWebDatabase
         Map.entry("calls", "relationship.call_count"),
         Map.entry("grants", "relationship.grant_count"),
         Map.entry("encrypted", "relationship.encrypted_count"),
-        Map.entry("affiliated", "EXISTS (SELECT 1 FROM p25_radio_affiliation current_affiliation " +
-            "WHERE current_affiliation.system_key = scope.p25_system_key " +
-            "AND current_affiliation.radio_id = relationship.radio_id " +
-            "AND current_affiliation.talkgroup_id = relationship.talkgroup_id)"),
+        Map.entry("affiliated", CURRENT_RELATIONSHIP_AFFILIATION_SQL),
+        Map.entry("site", RADIO_SITE_SORT_SQL),
         Map.entry("first_seen", "relationship.first_seen_ms"),
         Map.entry("last_seen", "relationship.last_seen_ms")
     );
@@ -1714,10 +1732,16 @@ class StatsWebDatabase
             SELECT COUNT(*)
             FROM trunked_identity_summary summary
             JOIN trunked_identity_scope scope ON scope.scope_id = summary.scope_id
+            LEFT JOIN trunked_radio_affiliation affiliation
+              ON affiliation.scope_id = scope.scope_id AND affiliation.radio_id = summary.identity_id
+            LEFT JOIN trunked_radio_site_presence presence
+              ON presence.scope_id = scope.scope_id AND presence.radio_id = summary.identity_id
+            LEFT JOIN receiver_context presence_context ON presence_context.id = presence.context_id
             WHERE scope.scope_token = ? AND summary.identity_kind_code = 2
             """);
         List<Object> parameters = new ArrayList<>(List.of(request.requiredText("scope")));
         addIdentifierSearch(sql, parameters, request.search(), "summary.identity_id");
+        addRadioFilters(sql, parameters, request, "affiliation.radio_id IS NOT NULL");
         return scalarLong(connection, sql.toString(), parameters.toArray());
     }
 
@@ -1725,7 +1749,7 @@ class StatsWebDatabase
                                                        int limit, int offset) throws SQLException
     {
         String scopeToken = request.requiredText("scope");
-        StringBuilder sql = new StringBuilder("""
+        StringBuilder sql = new StringBuilder("WITH " + FIRST_CONFIGURATION_CHANNEL_CTE + """
                 SELECT scope.scope_id, scope.scope_token, scope.protocol_code, scope.identity_domain_code,
                     CASE scope.protocol_code WHEN 1 THEN 'P25' WHEN 3 THEN 'DMR'
                         WHEN 4 THEN 'NXDN' ELSE 'Unknown' END AS protocol,
@@ -1748,24 +1772,151 @@ class StatsWebDatabase
                     CASE WHEN summary.last_counterpart_kind_code IN (1, 3)
                         THEN summary.last_counterpart_kind_code END AS last_talkgroup_kind_code,
                     affiliation.talkgroup_id AS affiliated_talkgroup_id,
-                    affiliation.updated_at_ms AS affiliation_updated_at_ms
+                    affiliation.confirmed_at_ms AS affiliation_confirmed_at_ms,
+                    CASE WHEN affiliation.radio_id IS NOT NULL THEN 1 ELSE 0 END AS currently_affiliated,
+                    %s
                 FROM trunked_identity_summary summary
                 JOIN trunked_identity_scope scope ON scope.scope_id = summary.scope_id
                 LEFT JOIN p25_system system ON system.system_key = scope.p25_system_key
-                LEFT JOIN p25_radio_affiliation affiliation
-                  ON scope.protocol_code = 1 AND affiliation.system_key = scope.p25_system_key
-                 AND affiliation.radio_id = summary.identity_id
+                LEFT JOIN trunked_radio_affiliation affiliation
+                  ON affiliation.scope_id = scope.scope_id AND affiliation.radio_id = summary.identity_id
+                %s
                 WHERE scope.scope_token = ? AND summary.identity_kind_code = 2
-                """.formatted(uniqueScopeAliasListExpression()));
+                """.formatted(uniqueScopeAliasListExpression(), radioPresenceSelect(),
+            radioPresenceJoins("summary.identity_id")));
         List<Object> parameters = new ArrayList<>(List.of(scopeToken));
         addIdentifierSearch(sql, parameters, request.search(), "summary.identity_id");
+        addRadioFilters(sql, parameters, request, "affiliation.radio_id IS NOT NULL");
         sql.append(" ORDER BY ").append(order(request, RADIO_SORT_COLUMNS, "calls"))
             .append(", summary.identity_id LIMIT ? OFFSET ?");
         addLimitOffset(parameters, limit, offset);
         List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
         enrichScopeRadios(connection, rows, "radio_id", "alias_");
         enrichScopeTalkgroups(connection, rows, "affiliated_talkgroup_id", "affiliated_talkgroup_alias_");
+        nestRadioPresence(rows);
         return rows;
+    }
+
+    /**
+     * Fixed-width site-presence projection.  The current-state table contributes at most one row for each radio, so
+     * adding this projection cannot multiply a bounded directory page.
+     */
+    private static String radioPresenceSelect()
+    {
+        return """
+            CASE presence.evidence_code WHEN 1 THEN 'registration' WHEN 2 THEN 'affiliation' END
+                AS presence_evidence,
+            presence.confirmed_at_ms AS presence_confirmed_at_ms,
+            presence_context.guid AS presence_guid,
+            scope.protocol_code AS presence_protocol_code,
+            system.wacn AS presence_wacn,
+            CASE WHEN scope.protocol_code = 1 THEN system.system_id ELSE presence_trunked.system_id END
+                AS presence_system_id,
+            presence_trunked.network_id AS presence_network_id,
+            CASE WHEN scope.protocol_code = 1 THEN coalesce(presence_p25.nac, presence_context.nac) END
+                AS presence_nac,
+            CASE WHEN scope.protocol_code = 1 THEN coalesce(presence_p25.rfss, presence_context.rfss) END
+                AS presence_rfss,
+            CASE WHEN scope.protocol_code = 1 THEN coalesce(presence_p25.site, presence_context.site) END
+                AS presence_site,
+            CASE WHEN scope.protocol_code IN (3, 4) THEN presence_trunked.site_id END AS presence_site_id,
+            CASE WHEN scope.protocol_code IN (3, 4) THEN presence_trunked.ran END AS presence_ran,
+            presence_config.configured_site AS presence_configured_site,
+            presence_config.configured_name AS presence_configured_name,
+            coalesce(presence_context.channel_name, presence_p25.channel_name,
+                presence_trunked.channel_name) AS presence_channel_name
+            """;
+    }
+
+    private static String radioPresenceJoins(String radioIdColumn)
+    {
+        return """
+            LEFT JOIN trunked_radio_site_presence presence
+              ON presence.scope_id = scope.scope_id AND presence.radio_id = %s
+            LEFT JOIN receiver_context presence_context ON presence_context.id = presence.context_id
+            LEFT JOIN p25_site_snapshot presence_p25
+              ON scope.protocol_code = 1 AND presence_p25.guid = presence_context.guid
+            LEFT JOIN trunked_site_snapshot presence_trunked
+              ON scope.protocol_code IN (3, 4) AND presence_trunked.guid = presence_context.guid
+            LEFT JOIN first_configuration_channel presence_config
+              ON presence_config.radres_guid = presence_context.guid
+            """.formatted(radioIdColumn);
+    }
+
+    private static void addRadioFilters(StringBuilder sql, List<Object> parameters, StatsRequest request,
+                                        String currentlyAffiliatedSql)
+    {
+        Boolean affiliated = request.optionalBoolean("affiliated");
+
+        if(affiliated != null)
+        {
+            sql.append(affiliated ? " AND (" : " AND NOT (").append(currentlyAffiliatedSql).append(')');
+        }
+
+        String siteGuid = request.text("site_guid");
+
+        if(siteGuid != null)
+        {
+            sql.append(" AND presence_context.guid = ?");
+            parameters.add(siteGuid);
+        }
+    }
+
+    private static void nestRadioPresence(List<Map<String,Object>> rows)
+    {
+        for(Map<String,Object> row: rows)
+        {
+            Object guid = row.remove("presence_guid");
+            Object evidence = row.remove("presence_evidence");
+            Object confirmedAt = row.remove("presence_confirmed_at_ms");
+
+            if(evidence == null || confirmedAt == null)
+            {
+                removePresenceColumns(row);
+                row.put("presence", null);
+                continue;
+            }
+
+            Map<String,Object> site = new LinkedHashMap<>();
+            site.put("guid", guid);
+            movePresenceColumn(row, site, "protocol_code");
+            movePresenceColumn(row, site, "wacn");
+            movePresenceColumn(row, site, "system_id");
+            movePresenceColumn(row, site, "network_id");
+            movePresenceColumn(row, site, "nac");
+            movePresenceColumn(row, site, "rfss");
+            movePresenceColumn(row, site, "site");
+            movePresenceColumn(row, site, "site_id");
+            movePresenceColumn(row, site, "ran");
+            movePresenceColumn(row, site, "configured_site");
+            movePresenceColumn(row, site, "configured_name");
+            movePresenceColumn(row, site, "channel_name");
+            Map<String,Object> presence = new LinkedHashMap<>();
+            presence.put("evidence", evidence);
+            presence.put("confirmed_at_ms", confirmedAt);
+            presence.put("site", site);
+            row.put("presence", presence);
+        }
+    }
+
+    private static void movePresenceColumn(Map<String,Object> row, Map<String,Object> site, String name)
+    {
+        Object value = row.remove("presence_" + name);
+
+        if(value != null || "configured_site".equals(name) || "configured_name".equals(name) ||
+            "channel_name".equals(name))
+        {
+            site.put(name, value);
+        }
+    }
+
+    private static void removePresenceColumns(Map<String,Object> row)
+    {
+        for(String name: List.of("protocol_code", "wacn", "system_id", "network_id", "nac", "rfss", "site",
+            "site_id", "ran", "configured_site", "configured_name", "channel_name"))
+        {
+            row.remove("presence_" + name);
+        }
     }
 
     Map<String,Object> systemTalkerAliases(StatsRequest request)
@@ -1801,7 +1952,7 @@ class StatsWebDatabase
 
             addTalkerAliasSearch(sql, parameters, request.search());
 
-            sql.append(" ORDER BY ").append(order(request, RADIO_SORT_COLUMNS, "talker_alias"))
+            sql.append(" ORDER BY ").append(order(request, TALKER_ALIAS_SORT_COLUMNS, "talker_alias"))
                 .append(", summary.identity_id LIMIT ? OFFSET ?");
             addPageParameters(parameters, request);
             List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
@@ -1834,7 +1985,7 @@ class StatsWebDatabase
         int talkgroup = request.requiredIdentifier("talkgroup_id");
         int identityKind = targetKind(request);
 
-        return read(connection -> {
+        return readSnapshot(connection -> {
             List<Map<String,Object>> rows = queryRows(connection, """
                 SELECT scope.scope_id, scope.scope_token, scope.protocol_code, scope.identity_domain_code,
                     CASE scope.protocol_code WHEN 1 THEN 'P25' WHEN 3 THEN 'DMR'
@@ -1855,11 +2006,18 @@ class StatsWebDatabase
                         WHERE relationship.scope_id = summary.scope_id
                           AND relationship.talkgroup_id = summary.identity_id
                           AND relationship.target_kind_code = summary.identity_kind_code) AS radios,
-                    (SELECT COUNT(*) FROM p25_radio_affiliation affiliation
+                    (SELECT COUNT(*) FROM trunked_radio_affiliation affiliation
                         WHERE summary.identity_kind_code = 1
-                          AND scope.protocol_code = 1
-                          AND affiliation.system_key = scope.p25_system_key
-                          AND affiliation.talkgroup_id = summary.identity_id) AS affiliated_radios
+                          AND affiliation.scope_id = summary.scope_id
+                          AND affiliation.talkgroup_id = summary.identity_id) AS affiliated_radios,
+                    (SELECT COUNT(DISTINCT presence.context_id)
+                      FROM trunked_radio_affiliation affiliation
+                      JOIN trunked_radio_site_presence presence
+                        ON presence.scope_id = affiliation.scope_id
+                       AND presence.radio_id = affiliation.radio_id
+                      WHERE summary.identity_kind_code = 1
+                        AND affiliation.scope_id = summary.scope_id
+                        AND affiliation.talkgroup_id = summary.identity_id) AS affiliated_sites
                 FROM trunked_identity_summary summary
                 JOIN trunked_identity_scope scope ON scope.scope_id = summary.scope_id
                 LEFT JOIN p25_system system ON system.system_key = scope.p25_system_key
@@ -1982,8 +2140,8 @@ class StatsWebDatabase
         String scopeToken = request.requiredText("scope");
         int radio = request.requiredIdentifier("radio_id");
 
-        return read(connection -> {
-            List<Map<String,Object>> rows = queryRows(connection, """
+        return readSnapshot(connection -> {
+            List<Map<String,Object>> rows = queryRows(connection, "WITH " + FIRST_CONFIGURATION_CHANNEL_CTE + """
                 SELECT scope.scope_id, scope.scope_token, scope.protocol_code, scope.identity_domain_code,
                     CASE scope.protocol_code WHEN 1 THEN 'P25' WHEN 3 THEN 'DMR'
                         WHEN 4 THEN 'NXDN' ELSE 'Unknown' END AS protocol,
@@ -2003,77 +2161,30 @@ class StatsWebDatabase
                     CASE WHEN summary.last_counterpart_kind_code = 2
                         THEN summary.last_counterpart_id END AS last_peer_radio_id,
                     affiliation.talkgroup_id AS affiliated_talkgroup_id,
-                    affiliation.updated_at_ms AS affiliation_updated_at_ms,
+                    affiliation.confirmed_at_ms AS affiliation_confirmed_at_ms,
+                    CASE WHEN affiliation.radio_id IS NOT NULL THEN 1 ELSE 0 END AS currently_affiliated,
                     (SELECT COUNT(*) FROM trunked_radio_talkgroup_summary relationship
                         WHERE relationship.scope_id = summary.scope_id
-                          AND relationship.radio_id = summary.identity_id) AS talkgroups
+                          AND relationship.radio_id = summary.identity_id) AS talkgroups,
+                    %s
                 FROM trunked_identity_summary summary
                 JOIN trunked_identity_scope scope ON scope.scope_id = summary.scope_id
                 LEFT JOIN p25_system system ON system.system_key = scope.p25_system_key
-                LEFT JOIN p25_radio_affiliation affiliation
-                  ON scope.protocol_code = 1 AND affiliation.system_key = scope.p25_system_key
-                 AND affiliation.radio_id = summary.identity_id
+                LEFT JOIN trunked_radio_affiliation affiliation
+                  ON affiliation.scope_id = scope.scope_id AND affiliation.radio_id = summary.identity_id
+                %s
                 WHERE scope.scope_token = ? AND summary.identity_kind_code = 2 AND summary.identity_id = ?
-                """.formatted(uniqueScopeAliasListExpression()), scopeToken, radio);
+                """.formatted(uniqueScopeAliasListExpression(), radioPresenceSelect(),
+                radioPresenceJoins("summary.identity_id")), scopeToken, radio);
             enrichScopeRadios(connection, rows, "radio_id", "alias_");
             enrichScopeTalkgroups(connection, rows, "affiliated_talkgroup_id", "affiliated_talkgroup_alias_");
             enrichScopeTalkgroups(connection, rows, "last_talkgroup_id", "last_talkgroup_alias_");
             enrichScopeRadios(connection, rows, "last_peer_radio_id", "last_peer_alias_");
             enrichSummaryEncryption(rows);
+            nestRadioPresence(rows);
             Map<String,Object> row = first(rows, "Radio not found");
             row.put("capabilities", systemCapabilities((int)number(row.get("protocol_code"))));
             return Map.of("radio", row);
-        });
-    }
-
-    Map<String,Object> currentAffiliations(StatsRequest request)
-    {
-        String scopeToken = request.requiredText("scope");
-        Integer talkgroup = request.optionalIdentifier("talkgroup_id");
-        Integer radio = request.optionalIdentifier("radio_id");
-
-        return read(connection -> {
-            Map<String,Object> scopeRow = requireScope(connection, scopeToken);
-
-            if(number(scopeRow.get("protocol_code")) != 1)
-            {
-                throw new StatsApiException(404, "Current affiliation is not available for this protocol");
-            }
-
-            StringBuilder sql = new StringBuilder("""
-                SELECT scope.scope_id, scope.scope_token, scope.protocol_code, 'P25' AS protocol,
-                    scope.p25_system_key AS system_key, system.wacn, system.system_id,
-                    affiliation.radio_id, affiliation.talkgroup_id, affiliation.updated_at_ms,
-                    summary.last_talker_alias
-                FROM p25_radio_affiliation affiliation
-                JOIN trunked_identity_scope scope ON scope.p25_system_key = affiliation.system_key
-                JOIN p25_system system ON system.system_key = scope.p25_system_key
-                LEFT JOIN trunked_identity_summary summary
-                  ON summary.scope_id = scope.scope_id AND summary.identity_kind_code = 2
-                 AND summary.identity_id = affiliation.radio_id
-                WHERE scope.scope_token = ?
-                """);
-            List<Object> parameters = new ArrayList<>(List.of(scopeToken));
-
-            if(talkgroup != null)
-            {
-                sql.append(" AND affiliation.talkgroup_id = ?");
-                parameters.add(talkgroup);
-            }
-
-            if(radio != null)
-            {
-                sql.append(" AND affiliation.radio_id = ?");
-                parameters.add(radio);
-            }
-
-            sql.append(" ORDER BY ").append(order(request, AFFILIATION_SORT_COLUMNS, "updated"))
-                .append(", affiliation.radio_id LIMIT ? OFFSET ?");
-            addPageParameters(parameters, request);
-            List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
-            enrichScopeRadios(connection, rows, "radio_id", "alias_");
-            enrichScopeTalkgroups(connection, rows, "talkgroup_id", "alias_");
-            return page(rows, request);
         });
     }
 
@@ -2082,16 +2193,21 @@ class StatsWebDatabase
         String scopeToken = request.requiredText("scope");
         Integer talkgroup = request.optionalIdentifier("talkgroup_id");
         Integer radio = request.optionalIdentifier("radio_id");
+        String requestedKind = request.text("kind");
 
         if(talkgroup == null && radio == null)
         {
             throw new StatsApiException(400, "radio_id or talkgroup_id is required");
         }
+        else if(talkgroup == null && requestedKind != null)
+        {
+            throw new StatsApiException(400, "invalid_parameter", "kind requires talkgroup_id", "kind");
+        }
 
-        int targetKind = talkgroup != null ? targetKind(request) : IDENTITY_KIND_TALKGROUP;
+        int targetKind = talkgroup != null ? targetKind(requestedKind) : IDENTITY_KIND_TALKGROUP;
 
-        return read(connection -> {
-            StringBuilder sql = new StringBuilder("""
+        return readSnapshot(connection -> {
+            StringBuilder sql = new StringBuilder("WITH " + FIRST_CONFIGURATION_CHANNEL_CTE + """
                 SELECT scope.scope_id, scope.scope_token, scope.protocol_code, scope.identity_domain_code,
                     CASE scope.protocol_code WHEN 1 THEN 'P25' WHEN 3 THEN 'DMR'
                         WHEN 4 THEN 'NXDN' ELSE 'Unknown' END AS protocol,
@@ -2104,29 +2220,25 @@ class StatsWebDatabase
                     END AS system_id,
                     %s AS alias_list_name,
                     relationship.*,
-                    radio.last_talker_alias
+                    radio.last_talker_alias,
+                    CASE WHEN %s THEN 1 ELSE 0 END AS currently_affiliated,
+                    %s
                 FROM trunked_radio_talkgroup_summary relationship
                 JOIN trunked_identity_scope scope ON scope.scope_id = relationship.scope_id
                 LEFT JOIN p25_system system ON system.system_key = scope.p25_system_key
                 LEFT JOIN trunked_identity_summary radio
                   ON radio.scope_id = relationship.scope_id AND radio.identity_kind_code = 2
                  AND radio.identity_id = relationship.radio_id
+                LEFT JOIN trunked_radio_affiliation affiliation
+                  ON affiliation.scope_id = relationship.scope_id
+                 AND affiliation.radio_id = relationship.radio_id
+                %s
                 WHERE scope.scope_token = ?
-                """.formatted(uniqueScopeAliasListExpression()));
+                """.formatted(uniqueScopeAliasListExpression(), CURRENT_RELATIONSHIP_AFFILIATION_SQL,
+                radioPresenceSelect(), radioPresenceJoins("relationship.radio_id")));
             List<Object> parameters = new ArrayList<>(List.of(scopeToken));
-
-            if(talkgroup != null)
-            {
-                sql.append(" AND relationship.talkgroup_id = ? AND relationship.target_kind_code = ?");
-                parameters.add(talkgroup);
-                parameters.add(targetKind);
-            }
-
-            if(radio != null)
-            {
-                sql.append(" AND relationship.radio_id = ?");
-                parameters.add(radio);
-            }
+            addRelationshipIdentityFilters(sql, parameters, talkgroup, targetKind, radio);
+            addRadioFilters(sql, parameters, request, CURRENT_RELATIONSHIP_AFFILIATION_SQL);
 
             sql.append(" ORDER BY ").append(order(request, RELATIONSHIP_SORT_COLUMNS, "last_seen"))
                 .append(", relationship.target_kind_code, relationship.talkgroup_id, relationship.radio_id")
@@ -2135,14 +2247,57 @@ class StatsWebDatabase
             List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
             enrichScopeRadios(connection, rows, "radio_id", "radio_alias_");
             enrichScopeTalkgroups(connection, rows, "talkgroup_id", "talkgroup_alias_");
-            return page(rows, request);
+            nestRadioPresence(rows);
+            Map<String,Object> response = page(rows, request);
+            response.put("totalCount", countRadioTalkgroupRelationships(connection, scopeToken, talkgroup,
+                targetKind, radio, request));
+            return response;
         });
+    }
+
+    private static long countRadioTalkgroupRelationships(Connection connection, String scopeToken, Integer talkgroup,
+                                                         int targetKind, Integer radio, StatsRequest request)
+        throws SQLException
+    {
+        StringBuilder sql = new StringBuilder("""
+            SELECT COUNT(*)
+            FROM trunked_radio_talkgroup_summary relationship
+            JOIN trunked_identity_scope scope ON scope.scope_id = relationship.scope_id
+            LEFT JOIN trunked_radio_affiliation affiliation
+              ON affiliation.scope_id = relationship.scope_id
+             AND affiliation.radio_id = relationship.radio_id
+            LEFT JOIN trunked_radio_site_presence presence
+              ON presence.scope_id = relationship.scope_id AND presence.radio_id = relationship.radio_id
+            LEFT JOIN receiver_context presence_context ON presence_context.id = presence.context_id
+            WHERE scope.scope_token = ?
+            """);
+        List<Object> parameters = new ArrayList<>(List.of(scopeToken));
+        addRelationshipIdentityFilters(sql, parameters, talkgroup, targetKind, radio);
+        addRadioFilters(sql, parameters, request, CURRENT_RELATIONSHIP_AFFILIATION_SQL);
+        return scalarLong(connection, sql.toString(), parameters.toArray());
+    }
+
+    private static void addRelationshipIdentityFilters(StringBuilder sql, List<Object> parameters,
+                                                       Integer talkgroup, int targetKind, Integer radio)
+    {
+        if(talkgroup != null)
+        {
+            sql.append(" AND relationship.talkgroup_id = ? AND relationship.target_kind_code = ?");
+            parameters.add(talkgroup);
+            parameters.add(targetKind);
+        }
+
+        if(radio != null)
+        {
+            sql.append(" AND relationship.radio_id = ?");
+            parameters.add(radio);
+        }
     }
 
     Map<String,Object> site(StatsRequest request)
     {
         String guid = request.requiredText("guid");
-        return read(connection -> {
+        return readSnapshot(connection -> {
             List<Map<String,Object>> p25Sites = queryRows(connection, siteSelect() + " WHERE site.guid = ?", guid);
             List<Map<String,Object>> trunkedSites =
                 queryRows(connection, trunkedSiteSelect() + " WHERE site.guid = ?", guid);
@@ -2224,6 +2379,15 @@ class StatsWebDatabase
                 site.put("protocol", currentProtocol == 3 ? "DMR" :
                     currentProtocol == 4 ? "NXDN" : "Unknown");
             }
+
+            site.put("affiliated_radios", scalarLong(connection, """
+                SELECT COUNT(*)
+                FROM trunked_radio_site_presence presence
+                JOIN receiver_context context ON context.id = presence.context_id
+                JOIN trunked_radio_affiliation affiliation
+                  ON affiliation.scope_id = presence.scope_id AND affiliation.radio_id = presence.radio_id
+                WHERE context.guid = ?
+                """, guid));
 
             return Map.of("site", site);
         });
@@ -3287,9 +3451,8 @@ class StatsWebDatabase
                 (SELECT COUNT(*) FROM trunked_identity_summary identity
                     WHERE identity.scope_id = scope.scope_id
                       AND identity.identity_kind_code = 2) AS radios,
-                (SELECT COUNT(*) FROM p25_radio_affiliation affiliation
-                    WHERE scope.protocol_code = 1
-                      AND affiliation.system_key = scope.p25_system_key) AS affiliations,
+                (SELECT COUNT(*) FROM trunked_radio_affiliation affiliation
+                    WHERE affiliation.scope_id = scope.scope_id) AS affiliated_radios,
                 (SELECT group_concat(name, ', ') FROM (
                     SELECT DISTINCT coalesce(nullif(trim(context.channel_name), ''),
                                              nullif(trim(p25.channel_name), ''),

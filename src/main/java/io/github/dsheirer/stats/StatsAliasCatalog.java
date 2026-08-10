@@ -1255,11 +1255,12 @@ final class StatsAliasCatalog
         targets.appendCte(sql, parameters, true);
         sql.append("""
             SELECT scope.scope_id, 2 AS identity_kind_code, affiliation.radio_id AS identity_id,
-                affiliation.updated_at_ms, scope.protocol_code, scope.p25_system_key AS system_key,
+                affiliation.confirmed_at_ms AS updated_at_ms, scope.protocol_code,
+                scope.p25_system_key AS system_key,
                 system.wacn, system.system_id, NULL AS p25_identity_state_code,
                 NULL AS p25_home_wacn, NULL AS p25_home_system_id, NULL AS p25_home_talkgroup_id
             FROM trunked_identity_scope scope
-            JOIN p25_radio_affiliation affiliation ON affiliation.system_key = scope.p25_system_key
+            JOIN trunked_radio_affiliation affiliation ON affiliation.scope_id = scope.scope_id
             JOIN p25_system system ON system.system_key = scope.p25_system_key
             WHERE scope.scope_id IN (%s)
               AND
@@ -1271,11 +1272,12 @@ final class StatsAliasCatalog
             UNION ALL
 
             SELECT scope.scope_id, 1 AS identity_kind_code, affiliation.talkgroup_id AS identity_id,
-                affiliation.updated_at_ms, scope.protocol_code, scope.p25_system_key AS system_key,
+                affiliation.confirmed_at_ms AS updated_at_ms, scope.protocol_code,
+                scope.p25_system_key AS system_key,
                 system.wacn, system.system_id, target.p25_identity_state_code,
                 target.p25_home_wacn, target.p25_home_system_id, target.p25_home_talkgroup_id
             FROM trunked_identity_scope scope
-            JOIN p25_radio_affiliation affiliation ON affiliation.system_key = scope.p25_system_key
+            JOIN trunked_radio_affiliation affiliation ON affiliation.scope_id = scope.scope_id
             JOIN p25_system system ON system.system_key = scope.p25_system_key
             LEFT JOIN trunked_identity_summary target
               ON target.scope_id = scope.scope_id

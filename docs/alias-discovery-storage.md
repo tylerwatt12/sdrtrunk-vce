@@ -97,15 +97,13 @@ not create or repair a missing or mismatched table or index.
 
 ## Development migration boundary
 
-The retained Alpha 9-to-current development candidate converts exact Alias v4/P25 v24 databases to Alias v5/P25
-v25 on a backed-up staged copy. It converts only one plain, structurally unambiguous full-domain talkgroup range per
-list; styled, multiple, or Stream As catch-alls remain aliases for manual review. The candidate deliberately resets
-the four pre-existing trunked identity projection tables because the old summaries cannot establish qualifier-safe
-P25 identity history. The new zero-local tuple table also begins empty. Discover therefore starts empty for those
-projections and repopulates from new traffic, while administrator-owned aliases and unrelated configuration remain
-intact.
+The earlier Alpha 9-to-v25 development transition established the qualifier-safe Alias v5/P25 v25 baseline. The
+current retained development candidate accepts only that exact P25 v25 state and advances it to v26 on a backed-up
+staged copy. It preserves the qualifier-safe identity and zero-local tuple summaries. Existing P25 current
+affiliations are re-keyed into the protocol-neutral affiliation table; authoritative site presence begins empty
+because call history and the old system-wide affiliation row cannot prove which site last accepted a radio.
 
-That external candidate is for unreleased development profiles only. During the next numbered release, the exact
+The external candidate is for unreleased development profiles only. During the next numbered release, the exact
 preceding public schema is compared with the final release schema and the required transition is consolidated into
 the bundled Application Migrator. If that release boundary contains stored P25 fully-qualified talkgroup aliases,
 the migration removes those alias rows and their dependent routes; it does not convert their home talkgroup values

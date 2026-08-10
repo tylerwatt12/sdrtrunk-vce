@@ -148,6 +148,14 @@ class StatsApiV1HttpContractTest
         HttpResponse<String> unbounded = get(StatsApiV1.SYSTEMS + "?limit=501");
         assertStructuredError(unbounded, 400, "invalid_parameter", "limit");
 
+        HttpResponse<String> invalidAffiliated = get(StatsApiV1.SYSTEMS +
+            "/p25%3A00001%3A047/radios?affiliated=maybe");
+        assertStructuredError(invalidAffiliated, 400, "invalid_parameter", "affiliated");
+
+        HttpResponse<String> kindWithoutTalkgroup = get(StatsApiV1.SYSTEMS +
+            "/p25%3A00001%3A047/relationships?radio_id=1&kind=patch_group");
+        assertStructuredError(kindWithoutTalkgroup, 400, "invalid_parameter", "kind");
+
         HttpResponse<String> removedPatchSpelling = get(StatsApiV1.ACTIVITY +
             "?talkgroup_id=1&kind=patch");
         assertStructuredError(removedPatchSpelling, 400, "invalid_parameter", "kind");
@@ -198,6 +206,7 @@ class StatsApiV1HttpContractTest
             "/live/events",
             "/live/web-calls",
             "/api/web-player/calls/1/audio",
+            "/api/v1/systems/p25%3Atest/affiliations",
             "/api/v1/not-a-resource"))
         {
             HttpResponse<String> response = get(path);

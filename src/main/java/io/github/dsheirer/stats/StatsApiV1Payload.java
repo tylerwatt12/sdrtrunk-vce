@@ -39,7 +39,7 @@ final class StatsApiV1Payload
         "ranged", "exact", "overlap", "has_fdma", "has_tdma", "has_unknown", "detail_available",
         "identity_detail_available", "site_names_truncated", "talkgroups_truncated", "radios_truncated",
         "members_truncated", "channel_key_truncated", "descriptor_truncated", "callsign_truncated",
-        "logical_channels_truncated");
+        "logical_channels_truncated", "currently_affiliated");
     private static final Set<String> ENUM_FIELDS = Set.of(
         "type", "category", "event_type", "source_form", "target_form", "state", "metrics_state",
         "identity_role", "channel_kind", "site_kind", "action", "topology", "entry_type");
@@ -129,7 +129,8 @@ final class StatsApiV1Payload
             }
         }
 
-        if(protocol == StatsApiProtocol.P25 && source.has("site") && !source.path("site").isNull())
+        if(protocol == StatsApiProtocol.P25 && source.has("site") && source.path("site").isValueNode() &&
+            !source.path("site").isNull())
         {
             presented.set("site_id", transform(source.get("site"), protocol));
             presented.remove("site");
