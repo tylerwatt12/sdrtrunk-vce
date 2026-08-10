@@ -5327,11 +5327,12 @@ function synchronizePlaybackAccess() {
 
   if (!window.sdrtrunkWebPlayer) {
     window.sdrtrunkWebPlayer = new WebCallPlayer({
-      mute: 'playback-mute',
+      play: 'playback-play',
+      skip: 'playback-skip',
+      replay: 'playback-replay',
       hold: 'playback-hold',
       avoid: 'playback-avoid',
       clear: 'playback-clear',
-      skip: 'playback-skip',
       volume: 'playback-volume',
       volumeValue: 'playback-volume-value',
       current: 'playback-current',
@@ -5339,7 +5340,8 @@ function synchronizePlaybackAccess() {
       dropped: 'playback-dropped',
       queueList: 'playback-queue-list',
       maximumQueued: 'playback-max-queued',
-      status: 'playback-status'
+      status: 'playback-status',
+      progress: 'playback-progress'
     });
   }
   bar.querySelectorAll('button, input').forEach((control) => { control.disabled = false; });

@@ -22,7 +22,7 @@ This project is currently an **alpha release**. Back up your receiver data befor
 - **Stable activity screen:** Systems replaces Now Playing with one Conventional tab and stable tabs for each trunked
   site. Frequencies stay in place instead of constantly moving around.
 - **Built-in webserver and scanner:** View live systems, sites, channels, talkgroups, radios, activity, and statistics
-  from a browser. Browser audio has its own Mute, Hold, Avoid, Clear, Skip, and queue controls.
+  from a browser. Browser audio has Play/Pause, Skip, Replay, Hold, Avoid, Clear, volume, and queue controls.
 - **Portable setup:** Each VCE installation keeps its own database, settings, tuners, JMBE library, logs, recordings,
   statistics, and web files. It does not rely on the sdrtrunk in the userprofile, so you can rest assured it will not overwrite files from previous versions of sdrtrunk
 - **Safe importing and upgrades:** VCE allows you to import an existing SDRTrunk XML playlist, or migrate to a new version from a previous VCE database with the built-in Application Migrator.

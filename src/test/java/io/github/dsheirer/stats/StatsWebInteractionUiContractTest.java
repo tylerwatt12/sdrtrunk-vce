@@ -356,8 +356,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(html.indexOf("localStorage.getItem('sdrtrunk_theme')") <
             html.indexOf("rel=\"stylesheet\""));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=40"));
-        assertTrue(html.contains("/assets/app.js?v=54"));
+        assertTrue(html.contains("/assets/app.css?v=41"));
+        assertTrue(html.contains("/assets/app.js?v=55"));
         assertTrue(source.contains("window.localStorage.setItem(THEME_STORAGE_KEY"));
         assertTrue(source.contains("toggle.setAttribute('aria-pressed'"));
         assertTrue(css.contains(":root[data-theme=\"dark\"]"));
@@ -367,7 +367,7 @@ class StatsWebInteractionUiContractTest
     }
 
     @Test
-    void controlsAndPersistsBrowserPlaybackVolumeIndependentlyOfMute() throws Exception
+    void controlsAndPersistsBrowserPlaybackVolumeIndependentlyOfTransportState() throws Exception
     {
         String html = Files.readString(INDEX_HTML);
         String source = Files.readString(WEB_CALL_PLAYER);
@@ -380,12 +380,12 @@ class StatsWebInteractionUiContractTest
         assertTrue(html.contains("id=\"playback-volume\" type=\"range\""));
         assertTrue(html.contains("aria-label=\"Browser playback volume\""));
         assertTrue(html.contains("id=\"playback-volume-value\""));
-        assertTrue(html.contains("/assets/web-call-player.js?v=5"));
+        assertTrue(html.contains("/assets/web-call-player.js?v=6"));
         assertTrue(source.contains("VOLUME_KEY = 'sdrtrunk-vce.web-player.volume'"));
         assertTrue(source.contains("this.volume = this.readVolume()"));
         assertTrue(changeVolume.contains("this.gainNode.gain.value = this.volume"));
         assertTrue(changeVolume.contains("localStorage.setItem(WebCallPlayer.VOLUME_KEY"));
-        assertFalse(changeVolume.contains("this.muted"));
+        assertFalse(changeVolume.contains("this.paused"));
         assertTrue(readVolume.contains("stored === null || stored.trim() === ''"));
         assertTrue(readVolume.contains("return 1"));
         assertTrue(readVolume.contains("saved >= 0 && saved <= 1"));
@@ -397,20 +397,61 @@ class StatsWebInteractionUiContractTest
     }
 
     @Test
-    void keepsBufferingCallsOutOfQueueAndPlaybackActions() throws Exception
+    void usesNormalPlaybackTransportAndKeepsBufferingCallsOutOfCallActions() throws Exception
     {
+        String html = Files.readString(INDEX_HTML);
         String source = Files.readString(WEB_CALL_PLAYER);
         String enqueue = function(source, "  enqueue(call)");
+        String togglePlayback = function(source, "  async togglePlayback()");
+        String replayCurrent = function(source, "  async replayCurrent()");
         String toggleHold = function(source, "  toggleHold()");
         String avoidCurrent = function(source, "  avoidCurrent()");
         String render = function(source, "  render()");
 
-        assertTrue(enqueue.contains("if (!this.muted && !this.current) this.playNext();"));
+        int play = html.indexOf("id=\"playback-play\"");
+        int skip = html.indexOf("id=\"playback-skip\"");
+        int replay = html.indexOf("id=\"playback-replay\"");
+        int hold = html.indexOf("id=\"playback-hold\"");
+        int avoid = html.indexOf("id=\"playback-avoid\"");
+        assertTrue(play >= 0 && play < skip && skip < replay && replay < hold && hold < avoid);
+        assertFalse(html.contains("id=\"playback-mute\""));
+        assertFalse(html.contains(">Unmute<"));
+        assertTrue(source.contains("this.paused = true"));
+        assertTrue(enqueue.contains("if (!this.paused && !this.current) this.playNext();"));
         assertTrue(enqueue.contains("else this.render();"));
-        assertTrue(toggleHold.contains("this.source && this.current"));
-        assertTrue(avoidCurrent.contains("if (!this.source || !this.current) return;"));
-        assertTrue(render.contains("this.ui.hold.disabled = !this.holdTarget && !activelyPlaying"));
-        assertTrue(render.contains("this.ui.avoid.disabled = !activelyPlaying"));
+        assertTrue(togglePlayback.contains("this.playbackOffset = this.getPlaybackPosition()"));
+        assertTrue(togglePlayback.contains("if (this.currentBuffer) this.startCurrent();"));
+        assertTrue(replayCurrent.contains("this.playbackOffset = 0"));
+        assertTrue(replayCurrent.contains("this.startCurrent()"));
+        assertTrue(toggleHold.contains("this.current && this.currentBuffer"));
+        assertTrue(avoidCurrent.contains("if (!this.current || !this.currentBuffer) return;"));
+        assertTrue(render.contains("this.ui.hold.disabled = !this.holdTarget && !currentReady"));
+        assertTrue(render.contains("this.ui.avoid.disabled = !currentReady"));
+        assertTrue(render.contains("this.ui.replay.disabled = !currentReady"));
+    }
+
+    @Test
+    void movesAndSoftlyFadesTheCurrentCallProgressGlow() throws Exception
+    {
+        String html = Files.readString(INDEX_HTML);
+        String source = Files.readString(WEB_CALL_PLAYER);
+        String css = Files.readString(APP_CSS);
+        String startCurrent = function(source, "  startCurrent()");
+        String progress = function(source, "  renderProgress()");
+
+        assertTrue(html.contains("id=\"playback-progress\" class=\"playback-progress\" aria-hidden=\"true\""));
+        assertTrue(html.contains("id=\"playback-progress-glow\" class=\"playback-progress-glow\""));
+        assertTrue(startCurrent.contains("source.start(0, offset)"));
+        assertTrue(startCurrent.contains("this.startProgress()"));
+        assertTrue(progress.contains("position / duration"));
+        assertTrue(progress.contains("duration - position <= fadeWindow"));
+        assertTrue(progress.contains("--playback-progress"));
+        assertTrue(css.contains("left: calc(var(--playback-progress) * 100%);"));
+        assertTrue(css.contains("background: linear-gradient(90deg"));
+        assertTrue(css.contains("border-radius: 0;"));
+        assertTrue(css.contains("transition: opacity 600ms ease;"));
+        assertTrue(css.contains(".playback-progress.ending"));
+        assertTrue(css.contains("transition-duration: 800ms;"));
     }
 
     @Test

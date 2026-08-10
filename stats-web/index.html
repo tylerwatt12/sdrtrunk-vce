@@ -15,7 +15,7 @@
       }
     })();
   </script>
-  <link rel="stylesheet" href="/assets/app.css?v=40">
+  <link rel="stylesheet" href="/assets/app.css?v=41">
 </head>
 <body>
   <div class="app-shell">
@@ -42,17 +42,18 @@
         </div>
       </header>
       <section class="playback-bar" id="playback-bar" aria-label="Web call playback">
-        <button type="button" id="playback-mute" class="playback-command">Unmute</button>
+        <button type="button" id="playback-play" class="playback-command" aria-pressed="false">Play</button>
+        <button type="button" id="playback-skip" class="playback-command">Skip</button>
+        <button type="button" id="playback-replay" class="playback-command">Replay</button>
+        <button type="button" id="playback-hold" class="playback-command">Hold</button>
+        <button type="button" id="playback-avoid" class="playback-command">Avoid</button>
+        <button type="button" id="playback-clear" class="playback-command">Clear</button>
         <label class="playback-volume" title="Browser playback volume">
           <span class="playback-field">Vol</span>
           <input id="playback-volume" type="range" min="0" max="1" step="0.05" value="1"
             aria-label="Browser playback volume" aria-describedby="playback-volume-value">
           <output id="playback-volume-value" for="playback-volume">100%</output>
         </label>
-        <button type="button" id="playback-hold" class="playback-command">Hold</button>
-        <button type="button" id="playback-avoid" class="playback-command">Avoid</button>
-        <button type="button" id="playback-clear" class="playback-command">Clear</button>
-        <button type="button" id="playback-skip" class="playback-command">Skip</button>
         <div class="playback-now">
           <span class="playback-field">Now</span>
           <div id="playback-current" class="playback-current">
@@ -68,13 +69,16 @@
           <input id="playback-max-queued" type="number" min="1" max="500" step="1" value="100">
         </label>
         <div id="playback-status" class="playback-status">Checking access</div>
+        <div id="playback-progress" class="playback-progress" aria-hidden="true">
+          <span id="playback-progress-glow" class="playback-progress-glow"></span>
+        </div>
       </section>
     </div>
     <main id="content" class="content" aria-live="polite">
       <div class="loading">Loading</div>
     </main>
   </div>
-  <script src="/assets/web-call-player.js?v=5"></script>
-  <script src="/assets/app.js?v=54"></script>
+  <script src="/assets/web-call-player.js?v=6"></script>
+  <script src="/assets/app.js?v=55"></script>
 </body>
 </html>
