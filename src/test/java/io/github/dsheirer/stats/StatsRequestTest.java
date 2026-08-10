@@ -27,6 +27,11 @@ class StatsRequestTest
         assertEquals(0, request.offset());
         assertEquals("county system", request.search());
 
+        StatsRequest viewport = StatsRequest.from(URI.create(
+            "/live/tuner-diagnostics?viewport_start_hz=769010250&viewport_end_hz=771010250"));
+        assertEquals(769_010_250L, viewport.optionalLong("viewport_start_hz"));
+        assertEquals(771_010_250L, viewport.optionalLong("viewport_end_hz"));
+
         StatsRequest largeOffset = StatsRequest.from(URI.create("/api/system/talkgroups?offset=2147483647"));
         assertEquals(StatsRequest.MAX_OFFSET, largeOffset.offset());
     }
@@ -37,5 +42,7 @@ class StatsRequestTest
         StatsRequest request = StatsRequest.from(URI.create("/api/talkgroup?talkgroup_id=not-an-id"));
         assertThrows(StatsApiException.class, () -> request.requiredText("scope"));
         assertThrows(StatsApiException.class, () -> request.requiredIdentifier("talkgroup_id"));
+        assertThrows(StatsApiException.class, () ->
+            StatsRequest.from(URI.create("/?viewport_start_hz=nope")).optionalLong("viewport_start_hz"));
     }
 }

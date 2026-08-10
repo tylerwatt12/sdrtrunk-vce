@@ -5164,6 +5164,8 @@ function binaryFrameConnection(path, parameters = {}, callbacks = {}) {
         centerFrequencyHz: Number(header.getBigInt64(48, true)),
         sampleRateHz: header.getInt32(56, true),
         fftSize: header.getInt32(60, true),
+        firstBin: headerBytes >= 68 ? header.getInt32(64, true) : 0,
+        sourceBinCount: headerBytes >= 72 ? header.getInt32(68, true) : valueCount,
         payload
       });
       offset += frameBytes;
@@ -6376,6 +6378,130 @@ function tunerWaterfallPalette() {
   return palette;
 }
 
+const TUNER_SPECTRUM_DEFAULT_FLOOR_DB = -140;
+const TUNER_SPECTRUM_MINIMUM_FLOOR_DB = -200;
+const TUNER_SPECTRUM_MAXIMUM_FLOOR_DB = -40;
+const TUNER_SPECTRUM_MAXIMUM_ZOOM = 8;
+const TUNER_SPECTRUM_ZOOM_FACTOR = 1.5;
+const TUNER_SPECTRUM_REFINEMENT_DELAY_MS = 180;
+const TUNER_SPECTRUM_SMOOTHING_ALPHA = 0.25;
+const TUNER_SPECTRUM_FLOOR_STORAGE_KEY = 'sdrtrunk.wideband.lowerDisplayLimitDb';
+const TUNER_WATERFALL_SPEED_STORAGE_KEY = 'sdrtrunk.wideband.waterfallScrollSpeed';
+const TUNER_FREQUENCY_RASTERS = Object.freeze([
+  Object.freeze({ id: 'vhf-land-mobile', minHz: 150_000_000, maxHz: 173_997_500,
+    originHz: 150_000_000, stepHz: 2_500, label: 'VHF land mobile' }),
+  Object.freeze({ id: 'uhf-land-mobile-421', minHz: 421_000_000, maxHz: 429_993_750,
+    originHz: 421_000_000, stepHz: 6_250, label: 'UHF land mobile' }),
+  Object.freeze({ id: 'uhf-land-mobile-450', minHz: 450_000_000, maxHz: 511_993_750,
+    originHz: 450_000_000, stepHz: 6_250, label: 'UHF land mobile' }),
+  Object.freeze({ id: '700-base', minHz: 769_006_250, maxHz: 774_993_750,
+    originHz: 769_006_250, stepHz: 6_250, label: '700 MHz base' }),
+  Object.freeze({ id: '700-mobile', minHz: 799_006_250, maxHz: 804_993_750,
+    originHz: 799_006_250, stepHz: 6_250, label: '700 MHz mobile' }),
+  Object.freeze({ id: '800-mobile', minHz: 806_006_250, maxHz: 823_993_750,
+    originHz: 806_006_250, stepHz: 6_250, label: '800 MHz mobile' }),
+  Object.freeze({ id: '800-base', minHz: 851_006_250, maxHz: 868_993_750,
+    originHz: 851_006_250, stepHz: 6_250, label: '800 MHz base' }),
+  Object.freeze({ id: '900-mobile', minHz: 896_012_500, maxHz: 900_987_500,
+    originHz: 896_012_500, stepHz: 12_500, label: '900 MHz mobile' }),
+  Object.freeze({ id: '900-base', minHz: 935_012_500, maxHz: 939_987_500,
+    originHz: 935_012_500, stepHz: 12_500, label: '900 MHz base' })
+]);
+const TUNER_ACTIVITY_PRIORITY = Object.freeze({
+  ENCRYPTED: 6, CALL: 5, DATA: 4, CONTROL: 3, ACTIVE: 2, IDLE: 1
+});
+const TUNER_ACTIVITY_LABELS = Object.freeze({
+  ENCRYPTED: 'Encrypted voice',
+  CALL: 'Voice call',
+  DATA: 'Data activity',
+  CONTROL: 'Control channel',
+  ACTIVE: 'Other activity',
+  IDLE: 'Idle conventional'
+});
+
+function tunerStoredNumber(key, fallback, minimum, maximum) {
+  try {
+    const value = Number(window.localStorage.getItem(key));
+    return Number.isFinite(value) && value >= minimum && value <= maximum ? value : fallback;
+  } catch (error) {
+    return fallback;
+  }
+}
+
+function storeTunerNumber(key, value) {
+  try {
+    window.localStorage.setItem(key, String(value));
+  } catch (error) {
+    // Privacy modes can disable local storage. The control still works for the current page.
+  }
+}
+
+function tunerFrameDomain(frame, valueCount = frame?.valueCount || 0) {
+  const center = Number(frame?.centerFrequencyHz || 0);
+  const sampleRate = Number(frame?.sampleRateHz || 0);
+  const fftSize = Number(frame?.fftSize || valueCount || 0);
+  const firstBin = Math.max(0, Number(frame?.firstBin || 0));
+  const sourceBinCount = Math.max(0, Number(frame?.sourceBinCount || valueCount));
+  const rawBinWidthHz = sampleRate > 0 && fftSize > 0 ? sampleRate / fftSize : 0;
+  const fullStartHz = center - sampleRate / 2;
+  const startHz = fullStartHz + firstBin * rawBinWidthHz;
+  return {
+    fullStartHz,
+    fullEndHz: fullStartHz + sampleRate,
+    startHz,
+    endHz: startHz + sourceBinCount * rawBinWidthHz,
+    rawBinWidthHz,
+    sentBinWidthHz: valueCount > 0 ? sourceBinCount * rawBinWidthHz / valueCount : 0,
+    sourceBinCount,
+    transmittedBinCount: Math.max(0, Number(valueCount || 0))
+  };
+}
+
+function tunerFrequencyAtBin(domain, coordinate) {
+  const rawBinWidthHz = Number(domain?.rawBinWidthHz || 0);
+  const sourceBinCount = Number(domain?.sourceBinCount || 0);
+  const transmittedBinCount = Number(domain?.transmittedBinCount || 0);
+  if (!(rawBinWidthHz > 0) || sourceBinCount < 1 || transmittedBinCount < 1) {
+    return Number(domain?.startHz || 0) + coordinate * Number(domain?.sentBinWidthHz || 0);
+  }
+  const bounded = Math.max(0, Math.min(transmittedBinCount - 1, coordinate));
+  const bin = Math.floor(bounded);
+  const fraction = bounded - bin;
+  const center = (index) => {
+    const rawStart = Math.floor(index * sourceBinCount / transmittedBinCount);
+    const rawEnd = Math.floor((index + 1) * sourceBinCount / transmittedBinCount);
+    return (rawStart + rawEnd - 1) / 2;
+  };
+  const rawCenter = bin < transmittedBinCount - 1 ?
+    center(bin) + (center(bin + 1) - center(bin)) * fraction : center(bin);
+  return Number(domain.startHz) + rawCenter * rawBinWidthHz;
+}
+
+function tunerBinAtFrequency(domain, frequencyHz) {
+  const count = Number(domain?.transmittedBinCount || 0);
+  if (count < 1 || !Number.isFinite(Number(frequencyHz))) return 0;
+  let lower = 0;
+  let upper = count - 1;
+  while (lower < upper) {
+    const middle = Math.floor((lower + upper) / 2);
+    if (tunerFrequencyAtBin(domain, middle) < frequencyHz) lower = middle + 1;
+    else upper = middle;
+  }
+  if (lower > 0 && Math.abs(tunerFrequencyAtBin(domain, lower - 1) - frequencyHz) <=
+      Math.abs(tunerFrequencyAtBin(domain, lower) - frequencyHz)) return lower - 1;
+  return lower;
+}
+
+function tunerSnapFrequency(frequencyHz) {
+  if (!Number.isFinite(Number(frequencyHz))) return null;
+  const raster = TUNER_FREQUENCY_RASTERS.find((candidate) =>
+    frequencyHz >= candidate.minHz && frequencyHz <= candidate.maxHz);
+  if (!raster) return null;
+  const snappedHz = raster.originHz + Math.round((frequencyHz - raster.originHz) / raster.stepHz) * raster.stepHz;
+  if (snappedHz < raster.minHz || snappedHz > raster.maxHz) return null;
+  return { source: 'raster', frequencyHz: snappedHz, raster, label: raster.label };
+}
+
 function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
   const layout = node('div', 'tuner-spectrum-layout');
   const toolbar = node('div', 'tuner-spectrum-toolbar');
@@ -6386,36 +6512,150 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
   targetSelect.append(node('option', '', 'Loading tuners…'));
   targetLabel.append(targetSelect);
   const status = badge('Loading', 'state-stale');
+  const toolbarActions = node('div', 'tuner-spectrum-toolbar-actions');
+  const resetZoom = node('button', 'button secondary', 'Reset zoom');
+  resetZoom.type = 'button';
+  resetZoom.disabled = true;
   const pause = node('button', 'button secondary', 'Pause');
   pause.type = 'button';
   pause.disabled = true;
   pause.setAttribute('aria-pressed', 'false');
-  toolbar.append(targetLabel, status, pause);
+  toolbarActions.append(resetZoom, pause);
+  toolbar.append(targetLabel, status, toolbarActions);
+
+  const displayControls = node('div', 'tuner-spectrum-display-controls');
+  const options = node('details', 'tuner-spectrum-options');
+  const optionsSummary = node('summary', 'button secondary tuner-spectrum-options-summary', 'Options');
+  optionsSummary.setAttribute('role', 'button');
+  optionsSummary.setAttribute('aria-label', 'Options');
+  optionsSummary.setAttribute('aria-expanded', 'false');
+  const optionsPanel = node('div', 'tuner-spectrum-options-panel');
+  optionsPanel.setAttribute('role', 'group');
+  optionsPanel.setAttribute('aria-label', 'Tuner spectrum options');
+  const floorControl = node('label', 'tuner-spectrum-display-control');
+  const floorInput = node('input');
+  floorInput.type = 'range';
+  floorInput.min = String(TUNER_SPECTRUM_MINIMUM_FLOOR_DB);
+  floorInput.max = String(TUNER_SPECTRUM_MAXIMUM_FLOOR_DB);
+  floorInput.step = '5';
+  floorInput.value = String(tunerStoredNumber(TUNER_SPECTRUM_FLOOR_STORAGE_KEY,
+    TUNER_SPECTRUM_DEFAULT_FLOOR_DB, TUNER_SPECTRUM_MINIMUM_FLOOR_DB,
+    TUNER_SPECTRUM_MAXIMUM_FLOOR_DB));
+  floorInput.id = 'tuner-spectrum-floor';
+  const floorValue = node('output', '', `${floorInput.value} dB`);
+  floorValue.htmlFor = floorInput.id;
+  floorControl.append(node('span', '', 'Lower display limit'), floorInput, floorValue);
+  const floorHelp = node('span', 'tuner-spectrum-control-help',
+    'Display contrast only; receiver gain and decoder thresholds do not change.');
+  const speedControl = node('label', 'tuner-spectrum-display-control');
+  const speedInput = node('input');
+  speedInput.type = 'range';
+  speedInput.min = '0.25';
+  speedInput.max = '4';
+  speedInput.step = '0.25';
+  speedInput.value = String(tunerStoredNumber(TUNER_WATERFALL_SPEED_STORAGE_KEY, 1, 0.25, 4));
+  speedInput.id = 'tuner-waterfall-speed';
+  const speedValue = node('output', '', `${Number(speedInput.value).toFixed(2)}×`);
+  speedValue.htmlFor = speedInput.id;
+  speedControl.append(node('span', '', 'Waterfall speed'), speedInput, speedValue);
+  const snapControl = node('label', 'tuner-spectrum-toggle-control');
+  const snapInput = node('input');
+  snapInput.type = 'checkbox';
+  snapInput.checked = true;
+  snapControl.title = 'Snap the cursor to the nearest preset frequency in supported bands.';
+  snapControl.append(snapInput, node('span', '', 'Snap frequency'));
+  const smoothControl = node('label', 'tuner-spectrum-toggle-control');
+  const smoothInput = node('input');
+  smoothInput.type = 'checkbox';
+  smoothInput.checked = false;
+  smoothControl.title = 'Average successive frames to make the FFT trace steadier.';
+  smoothControl.append(smoothInput, node('span', '', 'Smooth FFT'));
+  const toggleControls = node('div', 'tuner-spectrum-option-toggles');
+  toggleControls.append(snapControl, smoothControl);
+  optionsPanel.append(floorControl, floorHelp, speedControl, toggleControls);
+  options.append(optionsSummary, optionsPanel);
+  options.addEventListener('toggle', () => {
+    optionsSummary.setAttribute('aria-expanded', String(options.open));
+  });
+  toolbarActions.append(options);
+  const refiningBadge = node('span', 'tuner-spectrum-refining', 'Refining…');
+  refiningBadge.hidden = true;
+  refiningBadge.setAttribute('role', 'status');
+  const flagLegend = node('div', 'tuner-spectrum-flag-legend');
+  flagLegend.setAttribute('aria-label', 'Activity flag colors');
+  ['CONTROL', 'CALL', 'ENCRYPTED', 'DATA', 'ACTIVE', 'IDLE'].forEach((flagStatus) => {
+    const item = node('span', 'tuner-spectrum-flag-legend-item');
+    item.append(node('span', `tuner-spectrum-flag-swatch status-${flagStatus.toLowerCase()}`),
+      node('span', '', TUNER_ACTIVITY_LABELS[flagStatus]));
+    flagLegend.append(item);
+  });
+  displayControls.append(refiningBadge, flagLegend);
+
+  const instructions = node('p', 'visually-hidden',
+    'Use the mouse wheel or plus and minus keys to zoom. Drag or use the arrow keys to pan. Press R to reset zoom.');
+  instructions.id = 'tuner-spectrum-instructions';
 
   const plot = (title, ariaLabel, extraClass = '') => {
     const card = node('section', `tuner-spectrum-card ${extraClass}`.trim());
     const heading = node('h3', 'channel-diagnostic-title', title);
     const host = node('div', 'tuner-spectrum-plot');
-    const canvas = node('canvas', 'channel-diagnostic-canvas');
+    const canvas = node('canvas', 'channel-diagnostic-canvas tuner-spectrum-canvas');
     canvas.setAttribute('role', 'img');
     canvas.setAttribute('aria-label', ariaLabel);
+    canvas.setAttribute('aria-describedby', instructions.id);
+    canvas.setAttribute('aria-keyshortcuts', '+ - ArrowLeft ArrowRight R 0 Home');
+    canvas.tabIndex = 0;
+    const guide = node('div', 'tuner-spectrum-cursor-guide');
+    guide.hidden = true;
     const overlay = node('div', 'channel-diagnostic-overlay', 'Select a tuner');
-    host.append(canvas, overlay);
+    host.append(canvas, guide, overlay);
     card.append(heading, host);
-    return { card, canvas, overlay };
+    return { card, host, canvas, guide, overlay };
   };
   const spectrum = plot('FFT', 'Tuner frequency spectrum', 'tuner-spectrum-fft');
   const waterfall = plot('Waterfall', 'Tuner spectrum history', 'tuner-spectrum-waterfall');
+  const activeFlags = node('div', 'tuner-spectrum-active-flags');
+  spectrum.host.insertBefore(activeFlags, spectrum.guide);
+  const cursorPopup = node('div', 'tuner-spectrum-cursor-popup');
+  const cursorFrequency = node('span', 'tuner-spectrum-cursor-frequency');
+  const cursorSnap = node('span', 'tuner-spectrum-cursor-snap');
+  const cursorPower = node('span', 'tuner-spectrum-cursor-power');
+  const cursorChannel = node('span', 'tuner-spectrum-cursor-channel');
+  cursorSnap.hidden = true;
+  cursorChannel.hidden = true;
+  cursorPopup.hidden = true;
+  cursorPopup.append(cursorFrequency, cursorSnap, cursorPower, cursorChannel);
   const readouts = node('div', 'tuner-spectrum-readouts channel-diagnostic-readouts');
-  layout.append(toolbar, spectrum.card, waterfall.card, readouts);
+  layout.append(instructions, toolbar, displayControls, spectrum.card, waterfall.card, cursorPopup, readouts);
 
   let disposed = false;
   let paused = false;
   let stream = null;
+  let pendingStream = null;
   let streamEpoch = 0;
   let generation = -1;
-  let sequence = 0;
+  let sequence = null;
+  let droppedFrames = 0;
+  let fullViewport = null;
+  let viewport = null;
+  let refining = false;
+  let refiningStream = null;
+  let refinementTimer = null;
+  let hoverRatio = null;
+  let hoverCanvas = null;
+  let hoverYRatio = null;
+  let hoverFlag = null;
+  let drag = null;
+  let dbFloor = Number(floorInput.value);
+  let waterfallSpeed = Number(speedInput.value);
+  let waterfallScrollAccumulator = 0;
+  let activeChannelSource = null;
+  const activeChannelTables = new Map();
+  const targetsById = new Map();
+  let activeFlagSignature = '';
   let fftValues = new Float32Array(0);
+  let smoothedFftValues = new Float32Array(0);
+  let spectrumSmoothingKey = '';
   let frameMetadata = null;
   let peak = null;
   let latencyMs = null;
@@ -6425,11 +6665,14 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
   let waterfallDirty = true;
   let drawPending = false;
   const waterfallBuffer = document.createElement('canvas');
+  const spectrumScratch = document.createElement('canvas');
+  const waterfallScratch = document.createElement('canvas');
   const waterfallContext = waterfallBuffer.getContext('2d', { alpha: false });
   const palette = tunerWaterfallPalette();
   let newestWaterfallRow = -1;
   let nextWaterfallRow = -1;
   let waterfallRowImage = null;
+  let waterfallObservedAtRows = new Float64Array(0);
 
   const modal = openReadOnlyModal('Tuner Spectrum', layout, {
     id: 'tuner-spectrum',
@@ -6437,9 +6680,13 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
     returnFocusSelector,
     cleanup: () => {
       disposed = true;
-      closeStream();
+      window.clearTimeout(refinementTimer);
+      cancelDrag();
+      closeStreams();
+      closeActiveChannels();
       document.removeEventListener('visibilitychange', onVisibilityChange);
       window.removeEventListener('resize', onResize);
+      [spectrum.canvas, waterfall.canvas].forEach(removePlotInteractions);
     }
   });
   if (!modal) return;
@@ -6457,23 +6704,44 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
     });
   };
 
+  function formatTunerSpan(spanHz) {
+    if (spanHz >= 1_000_000) return `${(spanHz / 1_000_000).toFixed(3)} MHz`;
+    if (spanHz >= 1_000) return `${(spanHz / 1_000).toFixed(1)} kHz`;
+    return `${Math.round(spanHz)} Hz`;
+  }
+
+  function zoomAmount() {
+    if (!fullViewport || !viewport) return 1;
+    return (fullViewport.endHz - fullViewport.startHz) /
+      Math.max(1, viewport.endHz - viewport.startHz);
+  }
+
   const setReadouts = () => {
     const center = Number(frameMetadata?.centerFrequencyHz || 0);
     const sampleRate = Number(frameMetadata?.sampleRateHz || 0);
     const fftSize = Number(frameMetadata?.fftSize || fftValues.length || 0);
-    const resolution = sampleRate > 0 && fftSize > 0 ? sampleRate / fftSize : null;
+    const visibleSpan = viewport ? viewport.endHz - viewport.startHz : sampleRate;
+    const zoom = sampleRate > 0 && visibleSpan > 0 ? sampleRate / visibleSpan : 1;
+    const resolution = tunerFrameDomain(frameMetadata, fftValues.length).sentBinWidthHz || null;
     const fps = frameTimes.length > 1 ? (frameTimes.length - 1) * 1000 /
       Math.max(1, frameTimes[frameTimes.length - 1] - frameTimes[0]) : null;
     const values = [
       ['Center', center ? `${frequency(center)} MHz` : '—'],
-      ['Span', sampleRate ? `${(sampleRate / 1_000_000).toFixed(sampleRate < 1_000_000 ? 3 : 2)} MHz` : '—'],
-      ['Bins', fftSize ? number(fftSize) : '—'],
-      ['Resolution', Number.isFinite(resolution) ? `${number(Math.round(resolution))} Hz` : '—'],
+      ['Full span', sampleRate ? formatTunerSpan(sampleRate) : '—'],
+      ['Visible span', visibleSpan ? formatTunerSpan(visibleSpan) : '—'],
+      ['Zoom', `${zoom.toFixed(2)}×`],
+      ['Sent bins', fftValues.length ? number(fftValues.length) : '—'],
+      ['FFT detail', fftSize ? number(fftSize) : '—'],
+      ['Displayed resolution', Number.isFinite(resolution) ? `${number(Math.round(resolution))} Hz` : '—'],
       ['Peak', Number.isFinite(peak) ? `${peak.toFixed(1)} dB` : '—'],
       ['Rate', Number.isFinite(fps) ? `${fps.toFixed(1)} fps` : '—'],
+      ['Dropped', number(droppedFrames)],
+      ['Generation', generation >= 0 ? number(generation) : '—'],
       ['Latency', Number.isFinite(latencyMs) ? `${Math.round(latencyMs)} ms` : '—']
     ];
     updateDiagnosticReadouts(readouts, values);
+    resetZoom.disabled = !shouldRun() || !fullViewport || !viewport || zoom <= 1.0001;
+    layout.classList.toggle('zoomed', zoom > 1.0001);
   };
 
   const prepareCanvas = (target) => {
@@ -6500,27 +6768,45 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
     context.fillRect(0, 0, cssWidth, cssHeight);
     context.strokeStyle = 'rgba(150, 177, 199, 0.18)';
     context.lineWidth = 1;
-    for (let line = 1; line < 4; line += 1) {
+    for (let line = 1; line < 6; line += 1) {
+      const power = dbFloor + (-dbFloor) * (1 - line / 6);
+      const y = cssHeight * line / 6;
       context.beginPath();
-      context.moveTo(0, cssHeight * line / 4);
-      context.lineTo(cssWidth, cssHeight * line / 4);
+      context.moveTo(0, y);
+      context.lineTo(cssWidth, y);
       context.stroke();
+      context.fillStyle = 'rgba(7, 17, 29, 0.82)';
+      context.fillRect(4, y - 8, 57, 16);
+      context.fillStyle = '#8fa8b7';
+      context.font = '10px ui-monospace, SFMono-Regular, Menlo, monospace';
+      context.textBaseline = 'middle';
+      context.fillText(`${Math.round(power)} dB`, 7, y);
+    }
+    for (let line = 1; line < 4; line += 1) {
       context.beginPath();
       context.moveTo(cssWidth * line / 4, 0);
       context.lineTo(cssWidth * line / 4, cssHeight);
       context.stroke();
     }
-    if (fftValues.length < 2) return;
+    const spectrumValues = displayedSpectrumValues();
+    if (spectrumValues.length < 2) return;
     context.strokeStyle = '#55c7ff';
     context.lineWidth = 1.35;
     context.beginPath();
-    for (let index = 0; index < fftValues.length; index += 1) {
-      const raw = fftValues[index];
-      const value = Number.isFinite(raw) ? Math.max(-130, Math.min(0, raw)) : -130;
-      const x = index * cssWidth / (fftValues.length - 1);
-      const y = -value / 130 * cssHeight;
-      if (index === 0) context.moveTo(x, y);
-      else context.lineTo(x, y);
+    const points = Math.max(2, Math.round(cssWidth));
+    for (let x = 0; x < points; x += 1) {
+      const first = Math.min(spectrumValues.length - 1, Math.floor(x * spectrumValues.length / points));
+      const last = Math.min(spectrumValues.length,
+        Math.max(first + 1, Math.ceil((x + 1) * spectrumValues.length / points)));
+      let raw = -Infinity;
+      for (let bin = first; bin < last; bin += 1) {
+        if (Number.isFinite(spectrumValues[bin])) raw = Math.max(raw, spectrumValues[bin]);
+      }
+      const value = Number.isFinite(raw) ? Math.max(dbFloor, Math.min(0, raw)) : dbFloor;
+      const drawX = x * cssWidth / (points - 1);
+      const y = (0 - value) / (0 - dbFloor) * cssHeight;
+      if (x === 0) context.moveTo(drawX, y);
+      else context.lineTo(drawX, y);
     }
     context.stroke();
   };
@@ -6531,39 +6817,57 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
     waterfallContext.fillStyle = '#040b18';
     waterfallContext.fillRect(0, 0, waterfallBuffer.width, waterfallBuffer.height);
     waterfallRowImage = waterfallContext.createImageData(waterfallBuffer.width, 1);
+    waterfallObservedAtRows = new Float64Array(waterfallBuffer.height);
     newestWaterfallRow = -1;
     nextWaterfallRow = waterfallBuffer.height - 1;
+  };
+
+  const ensureWaterfallBuffer = () => {
+    const bounds = waterfall.canvas.getBoundingClientRect();
+    const width = Math.max(1, Math.round(bounds.width));
+    const height = Math.max(1, Math.round(bounds.height));
+    if (waterfallBuffer.width !== width || waterfallBuffer.height !== height) {
+      resetWaterfallBuffer(width, height);
+    }
+    return { width, height };
+  };
+
+  const addWaterfallFrame = () => {
+    if (!fftValues.length) return;
+    const size = ensureWaterfallBuffer();
+    waterfallScrollAccumulator += waterfallSpeed;
+    const rowCount = Math.min(size.height, Math.floor(waterfallScrollAccumulator));
+    if (rowCount < 1) return;
+    waterfallScrollAccumulator -= rowCount;
+    const row = waterfallRowImage;
+    for (let x = 0; x < size.width; x += 1) {
+      const firstBin = Math.min(fftValues.length - 1, Math.floor(x * fftValues.length / size.width));
+      const lastBin = Math.min(fftValues.length,
+        Math.max(firstBin + 1, Math.ceil((x + 1) * fftValues.length / size.width)));
+      let raw = -Infinity;
+      for (let bin = firstBin; bin < lastBin; bin += 1) {
+        if (Number.isFinite(fftValues[bin])) raw = Math.max(raw, fftValues[bin]);
+      }
+      const value = Number.isFinite(raw) ? Math.max(dbFloor, Math.min(0, raw)) : dbFloor;
+      const color = Math.max(0, Math.min(255, Math.round((value - dbFloor) / (0 - dbFloor) * 255)));
+      row.data[x * 4] = palette[color * 4];
+      row.data[x * 4 + 1] = palette[color * 4 + 1];
+      row.data[x * 4 + 2] = palette[color * 4 + 2];
+      row.data[x * 4 + 3] = 255;
+    }
+    const observedAtEpochMs = Number(frameMetadata?.observedAtEpochMs || 0);
+    for (let count = 0; count < rowCount; count += 1) {
+      waterfallContext.putImageData(row, 0, nextWaterfallRow);
+      waterfallObservedAtRows[nextWaterfallRow] = observedAtEpochMs;
+      newestWaterfallRow = nextWaterfallRow;
+      nextWaterfallRow = (nextWaterfallRow - 1 + size.height) % size.height;
+    }
   };
 
   const drawWaterfall = () => {
     const prepared = prepareCanvas(waterfall);
     if (!prepared) return;
-    const ringWidth = Math.max(1, Math.round(prepared.cssWidth));
-    const ringHeight = Math.max(1, Math.round(prepared.cssHeight));
-    if (waterfallBuffer.width !== ringWidth || waterfallBuffer.height !== ringHeight) {
-      resetWaterfallBuffer(ringWidth, ringHeight);
-    }
-    if (fftValues.length) {
-      const row = waterfallRowImage;
-      for (let x = 0; x < ringWidth; x += 1) {
-        const firstBin = Math.min(fftValues.length - 1, Math.floor(x * fftValues.length / ringWidth));
-        const lastBin = Math.min(fftValues.length,
-          Math.max(firstBin + 1, Math.ceil((x + 1) * fftValues.length / ringWidth)));
-        let raw = -Infinity;
-        for (let bin = firstBin; bin < lastBin; bin += 1) {
-          if (Number.isFinite(fftValues[bin])) raw = Math.max(raw, fftValues[bin]);
-        }
-        const value = Number.isFinite(raw) ? Math.max(-125, Math.min(-20, raw)) : -125;
-        const color = Math.max(0, Math.min(255, Math.round((value + 125) / 105 * 255)));
-        row.data[x * 4] = palette[color * 4];
-        row.data[x * 4 + 1] = palette[color * 4 + 1];
-        row.data[x * 4 + 2] = palette[color * 4 + 2];
-        row.data[x * 4 + 3] = 255;
-      }
-      waterfallContext.putImageData(row, 0, nextWaterfallRow);
-      newestWaterfallRow = nextWaterfallRow;
-      nextWaterfallRow = (nextWaterfallRow - 1 + ringHeight) % ringHeight;
-    }
+    const { width: ringWidth, height: ringHeight } = ensureWaterfallBuffer();
     const context = prepared.context;
     context.setTransform(1, 0, 0, 1, 0, 0);
     context.fillStyle = '#040b18';
@@ -6581,6 +6885,7 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
 
   const draw = () => {
     drawPending = false;
+    if (refining) return;
     if (spectrumDirty) {
       spectrumDirty = false;
       drawSpectrum();
@@ -6601,114 +6906,738 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
 
   const resetPlots = (message) => {
     generation = -1;
-    sequence = 0;
+    sequence = null;
+    droppedFrames = 0;
     fftValues = new Float32Array(0);
+    clearSpectrumSmoothing();
     frameMetadata = null;
     peak = null;
     latencyMs = null;
     latencyClock.offsetMs = null;
     frameTimes = [];
+    waterfallScrollAccumulator = 0;
+    hoverFlag = null;
     resetWaterfallBuffer(1, 1);
+    setRefining(false);
     setOverlay(message);
     setReadouts();
+    renderActiveChannels();
     scheduleDraw();
   };
 
-  function closeStream() {
+  function setRefining(value) {
+    refining = value;
+    refiningStream = null;
+    refiningBadge.hidden = !value;
+    layout.classList.toggle('refining', value);
+    if (value) setStatus('Refining');
+  }
+
+  function releaseConnection(connection) {
+    if (!connection) return;
+    connection.close();
+    liveConnections.delete(connection);
+    pageConnections.delete(connection);
+  }
+
+  function closeStreams() {
     streamEpoch += 1;
-    if (!stream) return;
-    stream.close();
-    liveConnections.delete(stream);
-    pageConnections.delete(stream);
+    const active = stream;
+    const pending = pendingStream;
     stream = null;
+    pendingStream = null;
+    releaseConnection(active);
+    if (pending !== active) releaseConnection(pending);
+  }
+
+  function closePendingStream() {
+    if (!pendingStream) return;
+    const pending = pendingStream;
+    pendingStream = null;
+    releaseConnection(pending);
   }
 
   const selectedTargetId = () => targetSelect.value;
   const shouldRun = () => !disposed && !paused && !document.hidden && selectedTargetId();
 
-  const sync = () => {
-    if (!shouldRun()) {
-      closeStream();
-      if (disposed) return;
-      if (paused) setStatus('Paused');
-      else if (document.hidden) setStatus('Hidden');
-      else setStatus('Waiting');
+  function diagnosticParameters() {
+    const parameters = { target_id: selectedTargetId() };
+    if (fullViewport && viewport && zoomAmount() > 1.0001) {
+      parameters.viewport_start_hz = Math.round(viewport.startHz);
+      parameters.viewport_end_hz = Math.round(viewport.endHz);
+    }
+    return parameters;
+  }
+
+  function acceptTunerState(frame) {
+    const tunerState = diagnosticJsonPayload(frame);
+    const streamState = String(tunerState?.streamState ?? tunerState?.stream_state ?? tunerState?.state ??
+      (tunerState?.bound ? 'live' : 'waiting')).toLowerCase();
+    const live = streamState === 'live' || streamState === 'active';
+    const unavailable = streamState === 'unavailable' || streamState === 'closed';
+    frameMetadata = {
+      ...(frameMetadata || {}),
+      centerFrequencyHz: Number(tunerState?.centerFrequencyHz ?? tunerState?.center_frequency_hz) || 0,
+      sampleRateHz: Number(tunerState?.sampleRateHz ?? tunerState?.sample_rate_hz) || 0,
+      fftSize: Number(tunerState?.fftSize ?? tunerState?.fft_size) || 0,
+      firstBin: Number(tunerState?.firstBin ?? tunerState?.first_bin) || 0,
+      sourceBinCount: Number(tunerState?.sourceBinCount ?? tunerState?.source_bin_count) || 0
+    };
+    setOverlay(live ? '' : (tunerState?.reason || tunerState?.message || 'Waiting for tuner samples…'));
+    setStatus(live ? (refining ? 'Refining' : 'Live') : (unavailable ? 'Unavailable' : 'Waiting'),
+      live && !refining ? 'state-current' : 'state-stale');
+    setReadouts();
+  }
+
+  function clearSpectrumSmoothing() {
+    smoothedFftValues = new Float32Array(0);
+    spectrumSmoothingKey = '';
+  }
+
+  function displayedSpectrumValues() {
+    return smoothInput.checked && smoothedFftValues.length === fftValues.length ?
+      smoothedFftValues : fftValues;
+  }
+
+  function updateSpectrumPeak() {
+    peak = null;
+    const values = displayedSpectrumValues();
+    for (let index = 0; index < values.length; index += 1) {
+      if (Number.isFinite(values[index]) && (!Number.isFinite(peak) || values[index] > peak)) {
+        peak = values[index];
+      }
+    }
+  }
+
+  function updateSpectrumSmoothing(values, frame, domain) {
+    if (!smoothInput.checked) return;
+    const key = [frame.generation, domain.startHz, domain.endHz, domain.rawBinWidthHz,
+      domain.sourceBinCount, domain.transmittedBinCount].join(':');
+    if (key !== spectrumSmoothingKey || smoothedFftValues.length !== values.length) {
+      smoothedFftValues = values.slice();
+      spectrumSmoothingKey = key;
       return;
     }
-    if (stream) return;
-    setStatus('Connecting');
-    setOverlay('Waiting for tuner data…');
+    for (let index = 0; index < values.length; index += 1) {
+      const current = values[index];
+      const previous = smoothedFftValues[index];
+      smoothedFftValues[index] = Number.isFinite(current) && Number.isFinite(previous) ?
+        previous + TUNER_SPECTRUM_SMOOTHING_ALPHA * (current - previous) : current;
+    }
+  }
+
+  function acceptTunerFrame(frame, connection) {
+    if (refining && connection !== refiningStream) return;
+    if (frame.type !== DIAGNOSTIC_FRAME_TYPES.TUNER_FFT ||
+        (generation === frame.generation && sequence !== null && frame.sequence <= sequence)) return;
+    const values = diagnosticFloatPayload(frame);
+    if (!values.length) return;
+    const domain = tunerFrameDomain(frame, values.length);
+    const nextFull = { startHz: domain.fullStartHz, endHz: domain.fullEndHz };
+    const domainChanged = !fullViewport || Math.abs(fullViewport.startHz - nextFull.startHz) >= 0.5 ||
+      Math.abs(fullViewport.endHz - nextFull.endHz) >= 0.5;
+    if ((generation >= 0 && generation !== frame.generation) || (fullViewport && domainChanged)) {
+      droppedFrames = 0;
+      resetWaterfallBuffer(1, 1);
+      hoverFlag = null;
+    } else if (sequence !== null && frame.sequence > sequence + 1) {
+      droppedFrames += frame.sequence - sequence - 1;
+    }
+    generation = frame.generation;
+    sequence = frame.sequence;
+    fftValues = values;
+    updateSpectrumSmoothing(values, frame, domain);
+    frameMetadata = frame;
+    fullViewport = nextFull;
+    viewport = { startHz: domain.startHz, endHz: domain.endHz };
+    if (domainChanged && domain.endHz - domain.startHz < frame.sampleRateHz - 0.5) {
+      viewport = { ...nextFull };
+      queueViewportUpdate(true);
+      renderActiveChannels();
+      return;
+    }
+    updateSpectrumPeak();
+    const now = performance.now();
+    frameTimes.push(now);
+    while (frameTimes.length > 2 && frameTimes[0] < now - 1000) frameTimes.shift();
+    latencyMs = diagnosticFrameLatency(frame, latencyClock);
+    setRefining(false);
+    setOverlay('');
+    setStatus('Live', 'state-current');
+    addWaterfallFrame();
+    setReadouts();
+    if (domainChanged) renderActiveChannels();
+    if (hoverRatio !== null) updateCursor(hoverRatio);
+    scheduleDraw();
+  }
+
+  function openDiagnosticStream() {
+    if (!shouldRun()) return;
+    closePendingStream();
     const epoch = ++streamEpoch;
-    stream = binaryFrameConnection('/live/tuner-diagnostics', { target_id: selectedTargetId() }, {
+    let candidate = null;
+    setStatus(refining ? 'Refining' : 'Connecting');
+    if (!stream) setOverlay('Waiting for tuner data…');
+    candidate = binaryFrameConnection('/live/tuner-diagnostics', diagnosticParameters(), {
       onOpen: () => {
-        if (epoch === streamEpoch) setStatus('Connected', 'state-current');
+        if (disposed || candidate !== pendingStream || epoch !== streamEpoch) return;
+        const previous = stream;
+        stream = candidate;
+        pendingStream = null;
+        sequence = null;
+        clearSpectrumSmoothing();
+        if (refining) refiningStream = candidate;
+        if (previous && previous !== candidate) releaseConnection(previous);
+        setStatus(refining ? 'Refining' : 'Connected', refining ? 'state-stale' : 'state-current');
       },
       onFrame: (frame) => {
-        if (epoch !== streamEpoch || frame.type === DIAGNOSTIC_FRAME_TYPES.HEARTBEAT) return;
-        if (frame.type === DIAGNOSTIC_FRAME_TYPES.STATE) {
-          const tunerState = diagnosticJsonPayload(frame);
-          if (generation >= 0 && generation !== frame.generation) resetPlots('Waiting for tuner data…');
-          generation = frame.generation;
-          sequence = 0;
-          const streamState = String(tunerState?.streamState ?? tunerState?.stream_state ?? tunerState?.state ??
-            (tunerState?.bound ? 'live' : 'waiting')).toLowerCase();
-          const live = streamState === 'live' || streamState === 'active';
-          const unavailable = streamState === 'unavailable' || streamState === 'closed';
-          frameMetadata = {
-            ...(frameMetadata || {}),
-            centerFrequencyHz: Number(tunerState?.centerFrequencyHz ?? tunerState?.center_frequency_hz) || 0,
-            sampleRateHz: Number(tunerState?.sampleRateHz ?? tunerState?.sample_rate_hz) || 0,
-            fftSize: Number(tunerState?.fftSize ?? tunerState?.fft_size) || 0
-          };
-          setOverlay(live ? '' : (tunerState?.reason || tunerState?.message || 'Waiting for tuner samples…'));
-          setStatus(live ? 'Live' : (unavailable ? 'Unavailable' : 'Waiting'),
-            live ? 'state-current' : 'state-stale');
-          setReadouts();
-          return;
-        }
-        if (frame.type !== DIAGNOSTIC_FRAME_TYPES.TUNER_FFT || frame.sequence <= sequence ||
-            (generation >= 0 && frame.generation !== generation)) return;
-        generation = frame.generation;
-        sequence = frame.sequence;
-        fftValues = diagnosticFloatPayload(frame);
-        frameMetadata = frame;
-        peak = null;
-        for (let index = 0; index < fftValues.length; index += 1) {
-          if (Number.isFinite(fftValues[index]) && (!Number.isFinite(peak) || fftValues[index] > peak)) {
-            peak = fftValues[index];
-          }
-        }
-        const now = performance.now();
-        frameTimes.push(now);
-        while (frameTimes.length > 2 && frameTimes[0] < now - 1000) frameTimes.shift();
-        latencyMs = diagnosticFrameLatency(frame, latencyClock);
-        setOverlay('');
-        setStatus('Live', 'state-current');
-        setReadouts();
-        scheduleDraw();
+        if (disposed || candidate !== stream || epoch !== streamEpoch ||
+            frame.type === DIAGNOSTIC_FRAME_TYPES.HEARTBEAT) return;
+        if (frame.type === DIAGNOSTIC_FRAME_TYPES.STATE) acceptTunerState(frame);
+        else acceptTunerFrame(frame, candidate);
       },
       onError: (error) => {
-        if (epoch !== streamEpoch) return;
+        if (disposed || epoch !== streamEpoch || (candidate !== pendingStream && candidate !== stream)) return;
+        if (error?.status === 429 && candidate === pendingStream && stream) {
+          const previous = stream;
+          stream = null;
+          releaseConnection(previous);
+        }
         setStatus(error?.status === 429 ? 'Busy' : 'Reconnecting');
         setOverlay(error?.status === 429 ? 'Tuner spectrum viewer capacity is currently in use.' :
           'Connection interrupted. Reconnecting…');
       }
     });
-  };
+    pendingStream = candidate;
+  }
+
+  function queueViewportUpdate(immediate = false) {
+    window.clearTimeout(refinementTimer);
+    refinementTimer = null;
+    closePendingStream();
+    setRefining(true);
+    if (immediate) openDiagnosticStream();
+    else refinementTimer = window.setTimeout(() => {
+      refinementTimer = null;
+      openDiagnosticStream();
+    }, TUNER_SPECTRUM_REFINEMENT_DELAY_MS);
+  }
+
+  function sync() {
+    if (!shouldRun()) {
+      window.clearTimeout(refinementTimer);
+      refinementTimer = null;
+      closeStreams();
+      closeActiveChannels();
+      if (disposed) return;
+      setRefining(false);
+      if (paused) setStatus('Paused');
+      else if (document.hidden) setStatus('Hidden');
+      else setStatus('Waiting');
+      return;
+    }
+    connectActiveChannels();
+    if (!stream && !pendingStream) openDiagnosticStream();
+  }
+
+  function transformCanvas(canvas, scratch, fromViewport, toViewport) {
+    if (!canvas.width || !canvas.height || !fromViewport || !toViewport) return;
+    if (scratch.width !== canvas.width || scratch.height !== canvas.height) {
+      scratch.width = canvas.width;
+      scratch.height = canvas.height;
+    }
+    const scratchContext = scratch.getContext('2d', { alpha: false });
+    scratchContext.setTransform(1, 0, 0, 1, 0, 0);
+    scratchContext.drawImage(canvas, 0, 0);
+    const context = canvas.getContext('2d', { alpha: false });
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    context.fillStyle = '#07111d';
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    const overlapStart = Math.max(fromViewport.startHz, toViewport.startHz);
+    const overlapEnd = Math.min(fromViewport.endHz, toViewport.endHz);
+    if (overlapEnd <= overlapStart) return;
+    const fromSpan = fromViewport.endHz - fromViewport.startHz;
+    const toSpan = toViewport.endHz - toViewport.startHz;
+    const sourceX = (overlapStart - fromViewport.startHz) / fromSpan * canvas.width;
+    const sourceWidth = (overlapEnd - overlapStart) / fromSpan * canvas.width;
+    const destinationX = (overlapStart - toViewport.startHz) / toSpan * canvas.width;
+    const destinationWidth = (overlapEnd - overlapStart) / toSpan * canvas.width;
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = 'high';
+    context.drawImage(scratch, sourceX, 0, sourceWidth, canvas.height,
+      destinationX, 0, destinationWidth, canvas.height);
+  }
+
+  function transformPlots(fromViewport, toViewport) {
+    transformCanvas(spectrum.canvas, spectrumScratch, fromViewport, toViewport);
+    transformCanvas(waterfall.canvas, waterfallScratch, fromViewport, toViewport);
+    transformCanvas(waterfallBuffer, waterfallScratch, fromViewport, toViewport);
+  }
+
+  function clampViewport(startHz, endHz) {
+    if (!fullViewport) return null;
+    const fullSpan = fullViewport.endHz - fullViewport.startHz;
+    const span = Math.max(fullSpan / TUNER_SPECTRUM_MAXIMUM_ZOOM,
+      Math.min(fullSpan, endHz - startHz));
+    let start = startHz;
+    let end = start + span;
+    if (start < fullViewport.startHz) {
+      start = fullViewport.startHz;
+      end = start + span;
+    }
+    if (end > fullViewport.endHz) {
+      end = fullViewport.endHz;
+      start = end - span;
+    }
+    return { startHz: start, endHz: end };
+  }
+
+  function applyViewport(nextViewport, requestMode = 'debounced') {
+    if (!viewport || !nextViewport || nextViewport.endHz <= nextViewport.startHz) return;
+    if (Math.abs(nextViewport.startHz - viewport.startHz) < 0.5 &&
+        Math.abs(nextViewport.endHz - viewport.endHz) < 0.5) return;
+    const previous = viewport;
+    transformPlots(previous, nextViewport);
+    viewport = nextViewport;
+    setRefining(true);
+    setReadouts();
+    renderActiveChannels();
+    if (hoverRatio !== null) updateCursor(hoverRatio);
+    if (requestMode === 'immediate') queueViewportUpdate(true);
+    else if (requestMode === 'debounced') queueViewportUpdate(false);
+  }
+
+  function zoomAt(anchor, factor) {
+    if (!fullViewport || !viewport) return;
+    const fullSpan = fullViewport.endHz - fullViewport.startHz;
+    const oldSpan = viewport.endHz - viewport.startHz;
+    const newSpan = Math.max(fullSpan / TUNER_SPECTRUM_MAXIMUM_ZOOM,
+      Math.min(fullSpan, oldSpan * factor));
+    const frequencyHz = viewport.startHz + anchor * oldSpan;
+    applyViewport(clampViewport(frequencyHz - anchor * newSpan,
+      frequencyHz + (1 - anchor) * newSpan));
+  }
+
+  function panBy(deltaHz, requestMode = 'immediate') {
+    if (!viewport || zoomAmount() <= 1.0001) return;
+    applyViewport(clampViewport(viewport.startHz + deltaHz, viewport.endHz + deltaHz), requestMode);
+  }
+
+  function resetViewport() {
+    if (!shouldRun() || !fullViewport || zoomAmount() <= 1.0001) return;
+    applyViewport({ ...fullViewport }, 'immediate');
+  }
+
+  function canInteract() {
+    return shouldRun() && !!fullViewport && !!viewport && !spectrum.overlay.textContent;
+  }
+
+  function waterfallObservedAt(yRatio) {
+    if (newestWaterfallRow < 0 || !waterfallObservedAtRows.length) return 0;
+    const displayRow = Math.max(0, Math.min(waterfallObservedAtRows.length - 1,
+      Math.floor(yRatio * waterfallObservedAtRows.length)));
+    return waterfallObservedAtRows[(newestWaterfallRow + displayRow) % waterfallObservedAtRows.length];
+  }
+
+  function setCursorGuide(frequencyHz) {
+    const spanHz = viewport.endHz - viewport.startHz;
+    const ratio = Math.max(0, Math.min(1, (frequencyHz - viewport.startHz) / spanHz));
+    const left = `${(ratio * 100).toFixed(3)}%`;
+    spectrum.guide.style.left = left;
+    waterfall.guide.style.left = left;
+  }
+
+  function updateCursor(ratio) {
+    if (!viewport) return hideCursor();
+    const spanHz = viewport.endHz - viewport.startHz;
+    const pointerHz = viewport.startHz + ratio * spanHz;
+    const viewingHistory = hoverCanvas === waterfall.canvas;
+    const snap = snapInput.checked ? tunerSnapFrequency(pointerHz) : null;
+    const displayHz = snap?.frequencyHz ?? pointerHz;
+    setCursorGuide(displayHz);
+
+    cursorFrequency.textContent = `${(displayHz / 1_000_000).toFixed(6)} MHz`;
+    cursorSnap.hidden = true;
+    cursorSnap.textContent = '';
+
+    if (viewingHistory) {
+      const observedAtEpochMs = waterfallObservedAt(hoverYRatio);
+      if (observedAtEpochMs > 0) {
+        cursorPower.textContent = `History · ${new Date(observedAtEpochMs).toLocaleTimeString([], {
+          hour: 'numeric', minute: '2-digit', second: '2-digit'
+        })}`;
+      } else {
+        cursorPower.textContent = 'Historical row';
+      }
+    } else if (refining || !fftValues.length) {
+      cursorPower.textContent = refining ? 'Refining…' : '—';
+    } else {
+      const index = tunerBinAtFrequency(tunerFrameDomain(frameMetadata, fftValues.length), displayHz);
+      const value = displayedSpectrumValues()[index];
+      cursorPower.textContent = Number.isFinite(value) ? `${value.toFixed(1)} dB` : '—';
+    }
+    cursorChannel.hidden = true;
+    cursorChannel.textContent = '';
+    cursorPopup.hidden = false;
+    positionCursorPopup();
+  }
+
+  function showCursor(ratio, canvas, yRatio) {
+    hoverFlag = null;
+    hoverRatio = ratio;
+    hoverCanvas = canvas;
+    hoverYRatio = yRatio;
+    spectrum.guide.hidden = false;
+    waterfall.guide.hidden = false;
+    updateCursor(ratio);
+  }
+
+  function positionCursorPopup(anchor = null) {
+    if (cursorPopup.hidden) return;
+    const layoutRect = layout.getBoundingClientRect();
+    let pointerX;
+    let pointerY;
+    if (anchor) {
+      const anchorRect = anchor.getBoundingClientRect();
+      pointerX = anchorRect.left - layoutRect.left + anchorRect.width / 2;
+      pointerY = anchorRect.bottom - layoutRect.top;
+    } else {
+      if (!hoverCanvas || hoverRatio === null || hoverYRatio === null) return;
+      const canvasRect = hoverCanvas.getBoundingClientRect();
+      pointerX = canvasRect.left - layoutRect.left + hoverRatio * canvasRect.width;
+      pointerY = canvasRect.top - layoutRect.top + hoverYRatio * canvasRect.height;
+    }
+    const maximumLeft = Math.max(6, layoutRect.width - cursorPopup.offsetWidth - 6);
+    cursorPopup.style.left = `${Math.max(6, Math.min(maximumLeft,
+      pointerX - cursorPopup.offsetWidth / 2))}px`;
+    const preferredTop = anchor ? pointerY + 7 : pointerY - cursorPopup.offsetHeight - 10;
+    const maximumTop = Math.max(6, layoutRect.height - cursorPopup.offsetHeight - 6);
+    cursorPopup.style.top = `${Math.max(6, Math.min(maximumTop, preferredTop))}px`;
+  }
+
+  function hideCursor() {
+    hoverFlag = null;
+    hoverRatio = null;
+    hoverCanvas = null;
+    hoverYRatio = null;
+    spectrum.guide.hidden = true;
+    waterfall.guide.hidden = true;
+    cursorPopup.hidden = true;
+  }
+
+  function cancelDrag(releaseCapture = true) {
+    const current = drag;
+    drag = null;
+    if (!current) return;
+    current.canvas.classList.remove('dragging');
+    if (releaseCapture && current.canvas.hasPointerCapture(current.pointerId)) {
+      try { current.canvas.releasePointerCapture(current.pointerId); } catch (error) { /* Already released. */ }
+    }
+  }
+
+  function onPlotWheel(event) {
+    if (!canInteract()) return;
+    event.preventDefault();
+    const rect = event.currentTarget.getBoundingClientRect();
+    const anchor = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+    zoomAt(anchor, event.deltaY < 0 ? 1 / TUNER_SPECTRUM_ZOOM_FACTOR : TUNER_SPECTRUM_ZOOM_FACTOR);
+  }
+
+  function onPlotKeyDown(event) {
+    if (!canInteract()) return;
+    if (event.key === '+' || event.key === '=') {
+      event.preventDefault();
+      zoomAt(0.5, 1 / TUNER_SPECTRUM_ZOOM_FACTOR);
+    } else if (event.key === '-' || event.key === '_') {
+      event.preventDefault();
+      zoomAt(0.5, TUNER_SPECTRUM_ZOOM_FACTOR);
+    } else if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+      event.preventDefault();
+      panBy((event.key === 'ArrowLeft' ? -1 : 1) * (viewport.endHz - viewport.startHz) * 0.1);
+    } else if (event.key === 'r' || event.key === 'R' || event.key === '0' || event.key === 'Home') {
+      event.preventDefault();
+      resetViewport();
+    }
+  }
+
+  function onPlotPointerMove(event) {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+    const yRatio = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height));
+    showCursor(ratio, event.currentTarget, yRatio);
+    if (!drag || drag.pointerId !== event.pointerId || drag.canvas !== event.currentTarget) return;
+    const deltaPixels = event.clientX - drag.lastX;
+    drag.lastX = event.clientX;
+    panBy(-deltaPixels / rect.width * (viewport.endHz - viewport.startHz), 'none');
+  }
+
+  function onPlotPointerDown(event) {
+    if (!canInteract() || zoomAmount() <= 1.0001 || event.button !== 0) return;
+    event.preventDefault();
+    cancelDrag();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    event.currentTarget.classList.add('dragging');
+    drag = { pointerId: event.pointerId, lastX: event.clientX, canvas: event.currentTarget };
+  }
+
+  function onPlotPointerUp(event) {
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    cancelDrag();
+    queueViewportUpdate(true);
+  }
+
+  function onPlotPointerLeave(event) {
+    if (!drag || drag.pointerId !== event.pointerId) hideCursor();
+  }
+
+  function onPlotLostCapture(event) {
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    cancelDrag(false);
+    queueViewportUpdate(true);
+  }
+
+  function addPlotInteractions(canvas) {
+    canvas.addEventListener('wheel', onPlotWheel, { passive: false });
+    canvas.addEventListener('keydown', onPlotKeyDown);
+    canvas.addEventListener('pointerenter', onPlotPointerMove);
+    canvas.addEventListener('pointermove', onPlotPointerMove);
+    canvas.addEventListener('pointerdown', onPlotPointerDown);
+    canvas.addEventListener('pointerup', onPlotPointerUp);
+    canvas.addEventListener('pointercancel', onPlotPointerUp);
+    canvas.addEventListener('pointerleave', onPlotPointerLeave);
+    canvas.addEventListener('lostpointercapture', onPlotLostCapture);
+  }
+
+  function removePlotInteractions(canvas) {
+    canvas.removeEventListener('wheel', onPlotWheel);
+    canvas.removeEventListener('keydown', onPlotKeyDown);
+    canvas.removeEventListener('pointerenter', onPlotPointerMove);
+    canvas.removeEventListener('pointermove', onPlotPointerMove);
+    canvas.removeEventListener('pointerdown', onPlotPointerDown);
+    canvas.removeEventListener('pointerup', onPlotPointerUp);
+    canvas.removeEventListener('pointercancel', onPlotPointerUp);
+    canvas.removeEventListener('pointerleave', onPlotPointerLeave);
+    canvas.removeEventListener('lostpointercapture', onPlotLostCapture);
+  }
+
+  function connectActiveChannels() {
+    if (!shouldRun() || activeChannelSource) return;
+    const source = liveConnection('/live/systems');
+    activeChannelSource = source;
+    const read = (event, callback) => {
+      try { callback(JSON.parse(event.data)); } catch (error) { /* Optional overlay update was malformed. */ }
+    };
+    source.addEventListener('snapshot', (event) => read(event, (snapshot) => {
+      activeChannelTables.clear();
+      (Array.isArray(snapshot?.tables) ? snapshot.tables : []).forEach((table) => {
+        if (table?.table_id) activeChannelTables.set(String(table.table_id), table);
+      });
+      renderActiveChannels();
+    }));
+    source.addEventListener('activity_table', (event) => read(event, (update) => {
+      const id = String(update?.table_id || update?.table?.table_id || '');
+      if (!id) return;
+      if (update.operation === 'remove') activeChannelTables.delete(id);
+      else if (update.table) activeChannelTables.set(id, update.table);
+      renderActiveChannels();
+    }));
+  }
+
+  function closeActiveChannels() {
+    if (activeChannelSource) {
+      activeChannelSource.close();
+      liveConnections.delete(activeChannelSource);
+      pageConnections.delete(activeChannelSource);
+      activeChannelSource = null;
+    }
+    activeChannelTables.clear();
+    activeFlagSignature = '';
+    activeFlags.replaceChildren();
+  }
+
+  function activeCarriers() {
+    if (!viewport) return [];
+    const byFrequency = new Map();
+    activeChannelTables.forEach((table) => {
+      const tableChannelName = String(table?.channel_name || '').trim();
+      (Array.isArray(table?.rows) ? table.rows : []).forEach((row) => {
+        const frequencyHz = Number(row?.frequency_hz);
+        const status = String(row?.status || '').toUpperCase();
+        const conventional = channelTagSet(row?.tags).has('CONVENTIONAL');
+        if (!Number.isFinite(frequencyHz) || frequencyHz < viewport.startHz ||
+            frequencyHz > viewport.endHz || !TUNER_ACTIVITY_PRIORITY[status] ||
+            (status === 'IDLE' && !conventional)) return;
+        const decorated = { ...row, status, frequencyHz, tableId: table.table_id, tableChannelName };
+        let carrier = byFrequency.get(frequencyHz);
+        if (!carrier) {
+          carrier = { frequencyHz, status, rows: [] };
+          byFrequency.set(frequencyHz, carrier);
+        } else if (TUNER_ACTIVITY_PRIORITY[status] > TUNER_ACTIVITY_PRIORITY[carrier.status]) {
+          carrier.status = status;
+        }
+        carrier.rows.push(decorated);
+      });
+    });
+    return [...byFrequency.values()].sort((left, right) => left.frequencyHz - right.frequencyHz);
+  }
+
+  function activeChannelLabel(row) {
+    if (row.status === 'CONTROL' && row.tableChannelName) {
+      return `${row.tableChannelName} · Control`;
+    }
+    return row.target_alias || row.target_id || row.channel_name || row.lcn || row.tableChannelName || row.status;
+  }
+
+  function activeRowDescription(row) {
+    const details = [];
+    const conventional = channelTagSet(row.tags).has('CONVENTIONAL');
+    const channelName = conventional ? String(row.channel_name || row.tableChannelName || '').trim() : '';
+    const decoder = conventional ? decoderLabel(row.decoder) : '';
+    if (channelName || decoder) details.push([channelName, decoder].filter(Boolean).join(' · '));
+    const label = activeChannelLabel(row);
+    if (label && label !== channelName) details.push(label);
+    const source = row.source_alias_display || row.source_alias || row.talker_alias || row.source_id;
+    if (source && source !== label) details.push(`From ${source}`);
+    if (row.timeslot !== null && row.timeslot !== undefined) details.push(`Slot ${row.timeslot}`);
+    if (row.lcn) details.push(`Channel ${row.lcn}`);
+    if (row.encryption_details) details.push(String(row.encryption_details));
+    return details.join(' · ');
+  }
+
+  function activeCarrierDescription(carrier) {
+    return [...new Set((carrier?.rows || []).map(activeRowDescription).filter(Boolean))].join('\n');
+  }
+
+  function activeCarrierPower(carrier) {
+    if (!fftValues.length || !frameMetadata) return null;
+    const index = tunerBinAtFrequency(tunerFrameDomain(frameMetadata, fftValues.length), carrier.frequencyHz);
+    const value = displayedSpectrumValues()[index];
+    return Number.isFinite(value) ? value : null;
+  }
+
+  function showActiveFlag(carrier, flag) {
+    if (!viewport) return;
+    hoverFlag = flag;
+    hoverRatio = null;
+    hoverCanvas = null;
+    hoverYRatio = null;
+    setCursorGuide(carrier.frequencyHz);
+    spectrum.guide.hidden = false;
+    waterfall.guide.hidden = false;
+    cursorFrequency.textContent = `${(carrier.frequencyHz / 1_000_000).toFixed(6)} MHz`;
+    cursorSnap.hidden = false;
+    cursorSnap.textContent = TUNER_ACTIVITY_LABELS[carrier.status] || TUNER_ACTIVITY_LABELS.ACTIVE;
+    const power = activeCarrierPower(carrier);
+    cursorPower.textContent = Number.isFinite(power) ? `${power.toFixed(1)} dB` : '—';
+    const details = activeCarrierDescription(carrier);
+    cursorChannel.hidden = !details;
+    cursorChannel.textContent = details;
+    cursorPopup.hidden = false;
+    positionCursorPopup(flag);
+  }
+
+  function hideActiveFlag(flag) {
+    if (hoverFlag === flag) hideCursor();
+  }
+
+  function renderActiveChannels() {
+    if (!viewport) {
+      if (hoverFlag) hideCursor();
+      activeFlagSignature = '';
+      activeFlags.replaceChildren();
+      return;
+    }
+    const carriers = activeCarriers();
+    const signature = JSON.stringify([viewport.startHz, viewport.endHz,
+      carriers.map((carrier) => [carrier.frequencyHz, carrier.status, activeCarrierDescription(carrier)])]);
+    if (signature === activeFlagSignature) return;
+    if (hoverFlag) hideCursor();
+    activeFlagSignature = signature;
+    const spanHz = viewport.endHz - viewport.startHz;
+    activeFlags.replaceChildren(...carriers.map((carrier) => {
+      const flag = node('button', `tuner-spectrum-active-flag status-${carrier.status.toLowerCase()}`);
+      flag.type = 'button';
+      flag.style.left = `${((carrier.frequencyHz - viewport.startHz) / spanHz * 100).toFixed(3)}%`;
+      flag.style.zIndex = String(TUNER_ACTIVITY_PRIORITY[carrier.status]);
+      const details = activeCarrierDescription(carrier).replaceAll('\n', ', ');
+      flag.setAttribute('aria-label', `${TUNER_ACTIVITY_LABELS[carrier.status]}, ${
+        (carrier.frequencyHz / 1_000_000).toFixed(6)} MHz${details ? `, ${details}` : ''}`);
+      flag.addEventListener('pointerenter', () => showActiveFlag(carrier, flag));
+      flag.addEventListener('pointerleave', () => hideActiveFlag(flag));
+      flag.addEventListener('focus', () => showActiveFlag(carrier, flag));
+      flag.addEventListener('blur', () => hideActiveFlag(flag));
+      return flag;
+    }));
+    if (hoverRatio !== null) updateCursor(hoverRatio);
+  }
+
+  function resetViewportForTarget() {
+    const target = targetsById.get(selectedTargetId());
+    const center = Number(target?.centerFrequencyHz ?? target?.center_frequency_hz ?? 0);
+    const sampleRate = Number(target?.sampleRateHz ?? target?.sample_rate_hz ?? 0);
+    if (center > 0 && sampleRate > 0) {
+      fullViewport = { startHz: center - sampleRate / 2, endHz: center + sampleRate / 2 };
+      viewport = { ...fullViewport };
+    } else {
+      fullViewport = null;
+      viewport = null;
+    }
+  }
 
   targetSelect.addEventListener('change', () => {
-    closeStream();
+    window.clearTimeout(refinementTimer);
+    refinementTimer = null;
+    closeStreams();
+    closeActiveChannels();
+    resetViewportForTarget();
     resetPlots('Waiting for tuner data…');
     sync();
   });
+  resetZoom.addEventListener('click', resetViewport);
   pause.addEventListener('click', () => {
     paused = !paused;
     pause.textContent = paused ? 'Resume' : 'Pause';
     pause.setAttribute('aria-pressed', String(paused));
     sync();
+    setReadouts();
   });
+  floorInput.addEventListener('input', () => {
+    const candidate = Number(floorInput.value);
+    if (!Number.isFinite(candidate)) return;
+    dbFloor = Math.max(TUNER_SPECTRUM_MINIMUM_FLOOR_DB,
+      Math.min(TUNER_SPECTRUM_MAXIMUM_FLOOR_DB, candidate));
+    floorValue.textContent = `${dbFloor} dB`;
+    storeTunerNumber(TUNER_SPECTRUM_FLOOR_STORAGE_KEY, dbFloor);
+    if (!refining) scheduleDraw('spectrum');
+  });
+  speedInput.addEventListener('input', () => {
+    const candidate = Number(speedInput.value);
+    if (!Number.isFinite(candidate)) return;
+    waterfallSpeed = Math.max(0.25, Math.min(4, candidate));
+    speedValue.textContent = `${waterfallSpeed.toFixed(2)}×`;
+    storeTunerNumber(TUNER_WATERFALL_SPEED_STORAGE_KEY, waterfallSpeed);
+  });
+  snapInput.addEventListener('change', () => {
+    if (hoverRatio !== null) updateCursor(hoverRatio);
+  });
+  smoothInput.addEventListener('change', () => {
+    clearSpectrumSmoothing();
+    if (smoothInput.checked && fftValues.length && frameMetadata) {
+      updateSpectrumSmoothing(fftValues, frameMetadata, tunerFrameDomain(frameMetadata, fftValues.length));
+    }
+    updateSpectrumPeak();
+    setReadouts();
+    if (hoverRatio !== null) updateCursor(hoverRatio);
+    if (!refining) scheduleDraw('spectrum');
+  });
+  [spectrum.canvas, waterfall.canvas].forEach(addPlotInteractions);
   const onVisibilityChange = () => sync();
-  const onResize = () => scheduleDraw();
+  const onResize = () => {
+    renderActiveChannels();
+    if (hoverFlag) positionCursorPopup(hoverFlag);
+    else positionCursorPopup();
+    if (!refining) scheduleDraw();
+  };
   document.addEventListener('visibilitychange', onVisibilityChange);
   window.addEventListener('resize', onResize);
   resetPlots('Loading tuners…');
@@ -6716,6 +7645,7 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
   api('/api/tuner-diagnostics/targets').then((response) => {
     if (disposed || activeReadOnlyModal !== modal.state) return;
     const targets = tunerDiagnosticTargets(response);
+    targetsById.clear();
     targetSelect.replaceChildren();
     if (!targets.length) {
       targetSelect.append(node('option', '', 'No tuners available'));
@@ -6726,12 +7656,14 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
       return;
     }
     targets.forEach((target) => {
+      targetsById.set(target.id, target);
       const option = node('option', '', target.label);
       option.value = target.id;
       targetSelect.append(option);
     });
     targetSelect.disabled = false;
     pause.disabled = false;
+    resetViewportForTarget();
     resetPlots('Waiting for tuner data…');
     sync();
   }).catch((error) => {

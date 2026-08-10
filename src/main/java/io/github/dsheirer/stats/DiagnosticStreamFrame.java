@@ -20,11 +20,11 @@ import java.util.Objects;
  */
 record DiagnosticStreamFrame(int type, long generation, long sequence, long observedAtEpochMs,
                              long encodedAtEpochMs, long centerFrequencyHz, int sampleRateHz, int fftSize,
-                             int valueCount, byte[] encoded)
+                             int firstBin, int sourceBinCount, int valueCount, byte[] encoded)
 {
     static final int MAGIC = 0x53444447;
     static final int VERSION = 1;
-    static final int HEADER_BYTES = 64;
+    static final int HEADER_BYTES = 72;
     static final int TYPE_STATE = 1;
     static final int TYPE_CHANNEL_SIGNAL = 2;
     static final int TYPE_CHANNEL_SYMBOLS = 3;
@@ -34,7 +34,8 @@ record DiagnosticStreamFrame(int type, long generation, long sequence, long obse
     DiagnosticStreamFrame
     {
         if(type < 1 || type > 255 || generation < 0 || sequence < 0 || observedAtEpochMs < 0 ||
-            encodedAtEpochMs < 0 || centerFrequencyHz < 0 || sampleRateHz < 0 || fftSize < 0 || valueCount < 0)
+            encodedAtEpochMs < 0 || centerFrequencyHz < 0 || sampleRateHz < 0 || fftSize < 0 || firstBin < 0 ||
+            sourceBinCount < 0 || valueCount < 0)
         {
             throw new IllegalArgumentException("Diagnostic frame metadata is invalid");
         }
@@ -44,6 +45,14 @@ record DiagnosticStreamFrame(int type, long generation, long sequence, long obse
 
     static DiagnosticStreamFrame float32(int type, long generation, long sequence, long observedAtEpochMs,
                                          long centerFrequencyHz, long sampleRateHz, int fftSize, float[] values)
+    {
+        return float32(type, generation, sequence, observedAtEpochMs, centerFrequencyHz, sampleRateHz, fftSize,
+            0, fftSize > 0 ? fftSize : values != null ? values.length : 0, values);
+    }
+
+    static DiagnosticStreamFrame float32(int type, long generation, long sequence, long observedAtEpochMs,
+                                         long centerFrequencyHz, long sampleRateHz, int fftSize, int firstBin,
+                                         int sourceBinCount, float[] values)
     {
         if(type != TYPE_CHANNEL_SIGNAL && type != TYPE_CHANNEL_SYMBOLS && type != TYPE_TUNER_FFT)
         {
@@ -58,8 +67,14 @@ record DiagnosticStreamFrame(int type, long generation, long sequence, long obse
         }
 
         int payloadBytes = Math.multiplyExact(values.length, Float.BYTES);
+        if(firstBin < 0 || sourceBinCount < 0 ||
+            (fftSize > 0 && (long)firstBin + sourceBinCount > fftSize))
+        {
+            throw new IllegalArgumentException("Diagnostic bin range is invalid");
+        }
+
         ByteBuffer buffer = header(type, payloadBytes, values.length, generation, sequence, observedAtEpochMs,
-            0, centerFrequencyHz, (int)sampleRateHz, fftSize);
+            0, centerFrequencyHz, (int)sampleRateHz, fftSize, firstBin, sourceBinCount);
 
         for(float raw: values)
         {
@@ -81,29 +96,29 @@ record DiagnosticStreamFrame(int type, long generation, long sequence, long obse
         buffer.putLong(40, encodedAt);
 
         return new DiagnosticStreamFrame(type, generation, sequence, observedAtEpochMs, encodedAt,
-            centerFrequencyHz, (int)sampleRateHz, fftSize, values.length, buffer.array());
+            centerFrequencyHz, (int)sampleRateHz, fftSize, firstBin, sourceBinCount, values.length, buffer.array());
     }
 
     static DiagnosticStreamFrame jsonState(long generation, long revision, byte[] json)
     {
         Objects.requireNonNull(json, "Diagnostic state JSON cannot be null");
         long now = System.currentTimeMillis();
-        ByteBuffer buffer = header(TYPE_STATE, json.length, 0, generation, revision, now, now, 0, 0, 0);
+        ByteBuffer buffer = header(TYPE_STATE, json.length, 0, generation, revision, now, now, 0, 0, 0, 0, 0);
         buffer.put(json);
-        return new DiagnosticStreamFrame(TYPE_STATE, generation, revision, now, now, 0, 0, 0, 0,
+        return new DiagnosticStreamFrame(TYPE_STATE, generation, revision, now, now, 0, 0, 0, 0, 0, 0,
             buffer.array());
     }
 
     static DiagnosticStreamFrame heartbeat()
     {
         long now = System.currentTimeMillis();
-        ByteBuffer buffer = header(TYPE_HEARTBEAT, 0, 0, 0, 0, now, now, 0, 0, 0);
-        return new DiagnosticStreamFrame(TYPE_HEARTBEAT, 0, 0, now, now, 0, 0, 0, 0, buffer.array());
+        ByteBuffer buffer = header(TYPE_HEARTBEAT, 0, 0, 0, 0, now, now, 0, 0, 0, 0, 0);
+        return new DiagnosticStreamFrame(TYPE_HEARTBEAT, 0, 0, now, now, 0, 0, 0, 0, 0, 0, buffer.array());
     }
 
     private static ByteBuffer header(int type, int payloadBytes, int valueCount, long generation, long sequence,
                                      long observedAtEpochMs, long encodedAtEpochMs, long centerFrequencyHz,
-                                     int sampleRateHz, int fftSize)
+                                     int sampleRateHz, int fftSize, int firstBin, int sourceBinCount)
     {
         ByteBuffer buffer = ByteBuffer.allocate(Math.addExact(HEADER_BYTES, payloadBytes))
             .order(ByteOrder.LITTLE_ENDIAN);
@@ -120,6 +135,8 @@ record DiagnosticStreamFrame(int type, long generation, long sequence, long obse
         buffer.putLong(centerFrequencyHz);
         buffer.putInt(sampleRateHz);
         buffer.putInt(fftSize);
+        buffer.putInt(firstBin);
+        buffer.putInt(sourceBinCount);
         return buffer;
     }
 }

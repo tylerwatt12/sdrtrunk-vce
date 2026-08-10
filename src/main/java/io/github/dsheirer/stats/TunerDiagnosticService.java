@@ -22,6 +22,7 @@ import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.spectrum.DFTSize;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
@@ -49,7 +50,11 @@ import org.slf4j.LoggerFactory;
 public final class TunerDiagnosticService implements AutoCloseable
 {
     private static final Logger mLog = LoggerFactory.getLogger(TunerDiagnosticService.class);
-    public static final int FFT_SIZE = 4_096;
+    public static final int BASE_FFT_SIZE = 4_096;
+    public static final int MAXIMUM_FFT_SIZE = 32_768;
+    public static final int MAXIMUM_TRANSMITTED_BINS = 4_096;
+    /** Retained name for channel and transport callers that use the default full-width detail. */
+    public static final int FFT_SIZE = BASE_FFT_SIZE;
     public static final int FRAMES_PER_SECOND = 20;
     public static final int MAXIMUM_PRODUCERS = 2;
     public static final int MAXIMUM_SESSIONS = 32;
@@ -72,8 +77,8 @@ public final class TunerDiagnosticService implements AutoCloseable
         Objects.requireNonNull(tunerManager, "Tuner manager cannot be null");
         Objects.requireNonNull(scheduler, "Diagnostic FFT scheduler cannot be null");
         mTargetSource = () -> availableTargets(tunerManager);
-        mProcessorFactory = (target, generation, consumer) ->
-            new SharedFftProcessor(scheduler, target, generation, consumer);
+        mProcessorFactory = (target, initialFftSize, consumer) ->
+            new SharedFftProcessor(scheduler, target, initialFftSize, consumer);
     }
 
     /**
@@ -110,6 +115,14 @@ public final class TunerDiagnosticService implements AutoCloseable
      */
     public OpenResult tryOpen(String targetId)
     {
+        return tryOpen(targetId, null);
+    }
+
+    /**
+     * Opens a latest-only session for a tuner target and an optional bounded frequency viewport.
+     */
+    public OpenResult tryOpen(String targetId, Viewport viewport)
+    {
         if(targetId == null || targetId.isBlank())
         {
             return new OpenResult(OpenStatus.NOT_FOUND, null);
@@ -143,6 +156,8 @@ public final class TunerDiagnosticService implements AutoCloseable
                 producer = null;
             }
 
+            boolean created = false;
+
             if(producer == null)
             {
                 if(mProducers.size() >= MAXIMUM_PRODUCERS)
@@ -152,8 +167,10 @@ public final class TunerDiagnosticService implements AutoCloseable
 
                 try
                 {
-                    producer = new Producer(target, mNextGeneration.incrementAndGet());
+                    int initialFftSize = requiredFftSize(target.target().sampleRateHz(), viewport);
+                    producer = new Producer(target, mNextGeneration.incrementAndGet(), initialFftSize);
                     mProducers.put(targetId, producer);
+                    created = true;
                 }
                 catch(RuntimeException exception)
                 {
@@ -162,10 +179,32 @@ public final class TunerDiagnosticService implements AutoCloseable
                 }
             }
 
-            Session session = new Session(producer);
-            producer.add(session);
-            mSessionCount++;
-            return new OpenResult(OpenStatus.OPEN, session);
+            try
+            {
+                Session session = new Session(producer, viewport);
+                producer.add(session);
+                mSessionCount++;
+                return new OpenResult(OpenStatus.OPEN, session);
+            }
+            catch(RuntimeException exception)
+            {
+                if(created)
+                {
+                    mProducers.remove(targetId, producer);
+
+                    try
+                    {
+                        producer.close();
+                    }
+                    catch(RuntimeException cleanupException)
+                    {
+                        exception.addSuppressed(cleanupException);
+                    }
+                }
+
+                mLog.warn("Unable to configure tuner spectrum diagnostics", exception);
+                return new OpenResult(OpenStatus.UNAVAILABLE, null);
+            }
         }
     }
 
@@ -451,11 +490,28 @@ public final class TunerDiagnosticService implements AutoCloseable
     }
 
     /**
+     * Requested frequency viewport for one stream.  The service clamps it to the tuner's current sampled bandwidth
+     * and to the supported eight-times maximum zoom.
+     */
+    public record Viewport(long startFrequencyHz, long endFrequencyHz)
+    {
+        public Viewport
+        {
+            if(startFrequencyHz < 0 || endFrequencyHz <= startFrequencyHz)
+            {
+                throw new IllegalArgumentException("Tuner diagnostic viewport is invalid");
+            }
+        }
+    }
+
+    /**
      * Current bounded stream state and counters for one session's shared producer.
      */
     public record State(long revision, long generation, String state, String reason, String targetId, String label,
                         long centerFrequencyHz, long sampleRateHz, int activeChannelCount, int fftSize,
-                        int framesPerSecond)
+                        int framesPerSecond, int maximumTransmittedBins, Long requestedStartFrequencyHz,
+                        Long requestedEndFrequencyHz, double visibleStartFrequencyHz,
+                        double visibleEndFrequencyHz, int firstBin, int sourceBinCount, int transmittedBinCount)
     {
     }
 
@@ -466,10 +522,12 @@ public final class TunerDiagnosticService implements AutoCloseable
         private final AtomicBoolean mSessionClosed = new AtomicBoolean();
         private volatile String mTerminalState;
         private volatile String mTerminalReason;
+        private final Viewport mViewport;
 
-        private Session(Producer producer)
+        private Session(Producer producer, Viewport viewport)
         {
             mProducer = producer;
+            mViewport = viewport;
         }
 
         public State state()
@@ -479,10 +537,10 @@ public final class TunerDiagnosticService implements AutoCloseable
 
             if(terminalState != null)
             {
-                return mProducer.state(terminalState, mTerminalReason);
+                return mProducer.state(this, terminalState, mTerminalReason);
             }
 
-            return mProducer.state("live", "");
+            return mProducer.state(this, "live", "");
         }
 
         public DiagnosticStreamFrame poll(Duration timeout) throws InterruptedException
@@ -581,17 +639,19 @@ public final class TunerDiagnosticService implements AutoCloseable
         private final long mGeneration;
         private final CopyOnWriteArrayList<Session> mSessions = new CopyOnWriteArrayList<>();
         private final AtomicBoolean mProducerClosed = new AtomicBoolean();
+        private final AtomicLong mSequence = new AtomicLong();
+        private final AtomicLong mStateRevision = new AtomicLong(1);
         private final FrameProcessor mProcessor;
         private volatile Target mMetadata;
         private boolean mBufferListenerAttached;
         private long mNextAvailabilityCheckNanos;
 
-        private Producer(TargetSnapshot target, long generation)
+        private Producer(TargetSnapshot target, long generation, int initialFftSize)
         {
             mTarget = target;
             mGeneration = generation;
             mMetadata = target.target();
-            FrameProcessor processor = mProcessorFactory.create(target, generation, this::publish);
+            FrameProcessor processor = mProcessorFactory.create(target, initialFftSize, this::publish);
             mProcessor = Objects.requireNonNull(processor, "Diagnostic processor factory returned null");
 
             try
@@ -652,7 +712,22 @@ public final class TunerDiagnosticService implements AutoCloseable
 
         private void updateMetadata(Target metadata)
         {
+            if(metadata == null || metadata.equals(mMetadata))
+            {
+                return;
+            }
+
             mMetadata = metadata;
+
+            try
+            {
+                configureProcessor(null);
+            }
+            catch(RuntimeException exception)
+            {
+                //The existing resolution is still correct and usable.  A later session or metadata refresh retries.
+                mLog.debug("Unable to resize tuner diagnostics after a tuner metadata change", exception);
+            }
         }
 
         private String targetId()
@@ -667,12 +742,49 @@ public final class TunerDiagnosticService implements AutoCloseable
 
         private void add(Session session)
         {
+            configureProcessor(session);
             mSessions.add(session);
         }
 
         private void remove(Session session)
         {
             mSessions.remove(session);
+
+            if(!mSessions.isEmpty())
+            {
+                try
+                {
+                    configureProcessor(null);
+                }
+                catch(RuntimeException exception)
+                {
+                    //Keeping a larger FFT after a downshift failure is correct; retry on the next lifecycle change.
+                    mLog.debug("Unable to reduce tuner diagnostic FFT detail", exception);
+                }
+            }
+        }
+
+        private void configureProcessor(Session additional)
+        {
+            Target metadata = mMetadata;
+            int required = BASE_FFT_SIZE;
+
+            for(Session session: mSessions)
+            {
+                required = Math.max(required, requiredFftSize(metadata.sampleRateHz(), session.mViewport));
+            }
+
+            if(additional != null)
+            {
+                required = Math.max(required, requiredFftSize(metadata.sampleRateHz(), additional.mViewport));
+            }
+
+            int previous = mProcessor.fftSize();
+
+            if(required != previous)
+            {
+                mProcessor.setFftSize(required);
+            }
         }
 
         private boolean isEmpty()
@@ -697,7 +809,29 @@ public final class TunerDiagnosticService implements AutoCloseable
             {
                 //Capture the wall-clock observation at the tuner callback boundary.  Downstream FFT scheduling and
                 //transport delay can therefore be measured without doing conversion or encoding on this thread.
-                mProcessor.receive(buffer, System.currentTimeMillis());
+                //Capture tuning under the controller lock as well, so an asynchronous result can never label old
+                //samples with settings read after a retune.
+                long observedAtEpochMs = System.currentTimeMillis();
+                TunerController controller = mTarget.controller();
+                long centerFrequencyHz;
+                long sampleRateHz;
+                controller.getLock().lock();
+
+                try
+                {
+                    centerFrequencyHz = controller.getFrequency();
+                    double sampleRate = controller.getSampleRate();
+                    sampleRateHz = Double.isFinite(sampleRate) ? Math.round(sampleRate) : 0;
+                }
+                finally
+                {
+                    controller.getLock().unlock();
+                }
+
+                if(centerFrequencyHz > 0 && sampleRateHz > 0)
+                {
+                    mProcessor.receive(buffer, observedAtEpochMs, centerFrequencyHz, sampleRateHz);
+                }
             }
             catch(RuntimeException exception)
             {
@@ -705,27 +839,52 @@ public final class TunerDiagnosticService implements AutoCloseable
             }
         }
 
-        private void publish(DiagnosticStreamFrame frame)
+        private void publish(FftResult result)
         {
-            if(mProducerClosed.get() || frame == null)
+            if(mProducerClosed.get() || result == null || result.bins() == null || result.fftSize() < 1 ||
+                result.bins().length != result.fftSize() || result.centerFrequencyHz() <= 0 ||
+                result.sampleRateHz() <= 0)
             {
                 return;
             }
 
-            //The immutable, already-encoded frame instance is shared by all session queues.
+            long sequence = mSequence.incrementAndGet();
+            Map<FrameLayout, DiagnosticStreamFrame> encoded = new HashMap<>();
+
             for(Session session: mSessions)
             {
+                if(session.isClosed() || result.fftSize() < requiredFftSize(result.sampleRateHz(),
+                    session.mViewport))
+                {
+                    continue;
+                }
+
+                FrameLayout layout = frameLayout(result.centerFrequencyHz(), result.sampleRateHz(),
+                    result.fftSize(), session.mViewport);
+                DiagnosticStreamFrame frame = encoded.computeIfAbsent(layout,
+                    key -> encode(result, key, mGeneration, sequence));
                 session.offer(frame);
             }
         }
 
-        private State state(String state, String reason)
+        private State state(Session session, String state, String reason)
         {
             Target metadata = mMetadata;
+            int fftSize = mProcessor.fftSize();
+            FrameLayout layout = frameLayout(metadata.centerFrequencyHz(), metadata.sampleRateHz(), fftSize,
+                session.mViewport);
+            Long requestedStart = session.mViewport != null ? session.mViewport.startFrequencyHz() : null;
+            Long requestedEnd = session.mViewport != null ? session.mViewport.endFrequencyHz() : null;
 
-            return new State(1, mGeneration, state, reason, metadata.targetId(), metadata.label(),
-                metadata.centerFrequencyHz(), metadata.sampleRateHz(), metadata.activeChannelCount(), FFT_SIZE,
-                FRAMES_PER_SECOND);
+            //State contains session-specific viewport fields.  Assign its revision when the snapshot is created so
+            //two different viewports can never advertise different content with the same generation and revision.
+            return new State(mStateRevision.getAndIncrement(), mGeneration, state, reason, metadata.targetId(),
+                metadata.label(),
+                metadata.centerFrequencyHz(), metadata.sampleRateHz(), metadata.activeChannelCount(), fftSize,
+                FRAMES_PER_SECOND, MAXIMUM_TRANSMITTED_BINS, requestedStart, requestedEnd,
+                visibleStart(metadata.centerFrequencyHz(), metadata.sampleRateHz(), fftSize, layout),
+                visibleEnd(metadata.centerFrequencyHz(), metadata.sampleRateHz(), fftSize, layout),
+                layout.firstBin(), layout.sourceBinCount(), layout.transmittedBinCount());
         }
 
         @Override
@@ -779,63 +938,289 @@ public final class TunerDiagnosticService implements AutoCloseable
 
     private static final class SharedFftProcessor implements FrameProcessor
     {
-        private final TargetSnapshot mTarget;
-        private final long mGeneration;
-        private final Consumer<DiagnosticStreamFrame> mConsumer;
-        private final AtomicLong mSequence = new AtomicLong();
-        private final DemandDftProcessor mProcessor;
+        private final Object mLock = new Object();
+        private final DiagnosticFftScheduler mScheduler;
+        private final Consumer<FftResult> mConsumer;
+        private volatile DemandDftProcessor mProcessor;
+        private volatile int mFftSize;
+        private volatile long mConfiguration;
+        private long mCenterFrequencyHz;
+        private long mSampleRateHz;
+        private volatile boolean mClosed;
 
-        private SharedFftProcessor(DiagnosticFftScheduler scheduler, TargetSnapshot target, long generation,
-                                   Consumer<DiagnosticStreamFrame> consumer)
+        private SharedFftProcessor(DiagnosticFftScheduler scheduler, TargetSnapshot target, int initialFftSize,
+                                   Consumer<FftResult> consumer)
         {
-            mTarget = target;
-            mGeneration = generation;
+            mScheduler = scheduler;
             mConsumer = consumer;
-            mProcessor = new DemandDftProcessor(scheduler, DFTSize.FFT04096, FRAMES_PER_SECOND,
-                this::publish);
+            mCenterFrequencyHz = target.target().centerFrequencyHz();
+            mSampleRateHz = target.target().sampleRateHz();
+            mProcessor = create(initialFftSize, ++mConfiguration, mCenterFrequencyHz, mSampleRateHz);
+            mFftSize = initialFftSize;
         }
 
         @Override
-        public void receive(INativeBuffer buffer, long observedAtEpochMs)
+        public void receive(INativeBuffer buffer, long observedAtEpochMs, long centerFrequencyHz, long sampleRateHz)
         {
-            mProcessor.receive(buffer, observedAtEpochMs);
-        }
-
-        private void publish(long observedAtEpochMs, float[] bins)
-        {
-            if(bins == null || bins.length != FFT_SIZE)
+            if(centerFrequencyHz <= 0 || sampleRateHz <= 0)
             {
                 return;
             }
 
-            long frequency;
-            long sampleRate;
+            DemandDftProcessor processor;
+            DemandDftProcessor previous = null;
+            boolean tuningChanged = false;
+
+            synchronized(mLock)
+            {
+                if(mClosed)
+                {
+                    return;
+                }
+
+                if(centerFrequencyHz != mCenterFrequencyHz || sampleRateHz != mSampleRateHz)
+                {
+                    long configuration = mConfiguration + 1;
+                    DemandDftProcessor replacement = create(mFftSize, configuration, centerFrequencyHz,
+                        sampleRateHz);
+                    previous = mProcessor;
+                    mConfiguration = configuration;
+                    mCenterFrequencyHz = centerFrequencyHz;
+                    mSampleRateHz = sampleRateHz;
+                    mProcessor = replacement;
+                    processor = replacement;
+                    tuningChanged = true;
+                }
+                else
+                {
+                    processor = mProcessor;
+                }
+            }
+
+            if(previous != null)
+            {
+                previous.close();
+            }
+
+            //The first buffer observed across a tuning boundary may contain transition samples.  Start the new
+            //processor with the next buffer so that a displayed FFT never spans both tunings.
+            if(!tuningChanged && processor != null)
+            {
+                processor.receive(buffer, observedAtEpochMs);
+            }
+        }
+
+        @Override
+        public void setFftSize(int fftSize)
+        {
+            if(fftSize != BASE_FFT_SIZE && fftSize != 8_192 && fftSize != 16_384 &&
+                fftSize != MAXIMUM_FFT_SIZE)
+            {
+                throw new IllegalArgumentException("Unsupported tuner diagnostic FFT size: " + fftSize);
+            }
+
+            DemandDftProcessor previous;
+
+            synchronized(mLock)
+            {
+                if(mClosed)
+                {
+                    throw new IllegalStateException("Tuner diagnostic processor is closed");
+                }
+
+                if(fftSize == mFftSize)
+                {
+                    return;
+                }
+
+                long configuration = mConfiguration + 1;
+                DemandDftProcessor replacement = create(fftSize, configuration, mCenterFrequencyHz,
+                    mSampleRateHz);
+                previous = mProcessor;
+                mConfiguration = configuration;
+                mProcessor = replacement;
+                mFftSize = fftSize;
+            }
+
+            if(previous != null)
+            {
+                previous.close();
+            }
+        }
+
+        @Override
+        public int fftSize()
+        {
+            return mFftSize;
+        }
+
+        private DemandDftProcessor create(int fftSize, long configuration, long centerFrequencyHz,
+                                          long sampleRateHz)
+        {
+            return new DemandDftProcessor(mScheduler, dftSize(fftSize), FRAMES_PER_SECOND,
+                (observedAt, bins) -> publish(configuration, centerFrequencyHz, sampleRateHz, fftSize, observedAt,
+                    bins));
+        }
+
+        private void publish(long configuration, long centerFrequencyHz, long sampleRateHz, int fftSize,
+                             long observedAtEpochMs, float[] bins)
+        {
+            if(mClosed || configuration != mConfiguration || bins == null || bins.length != fftSize)
+            {
+                return;
+            }
 
             try
             {
-                frequency = mTarget.controller().getFrequency();
-                sampleRate = Math.round(mTarget.controller().getSampleRate());
+                if(configuration == mConfiguration && !mClosed)
+                {
+                    mConsumer.accept(new FftResult(observedAtEpochMs, centerFrequencyHz, sampleRateHz, fftSize,
+                        bins));
+                }
             }
             catch(RuntimeException exception)
             {
-                return;
+                //A session can close while this low-priority result is being published.
             }
-
-            if(frequency <= 0 || sampleRate <= 0)
-            {
-                return;
-            }
-
-            DiagnosticStreamFrame frame = DiagnosticStreamFrame.float32(DiagnosticStreamFrame.TYPE_TUNER_FFT,
-                mGeneration, mSequence.incrementAndGet(), observedAtEpochMs, frequency, sampleRate, FFT_SIZE, bins);
-            mConsumer.accept(frame);
         }
 
         @Override
         public void close()
         {
-            mProcessor.close();
+            DemandDftProcessor processor;
+
+            synchronized(mLock)
+            {
+                if(mClosed)
+                {
+                    return;
+                }
+
+                mClosed = true;
+                mConfiguration++;
+                processor = mProcessor;
+                mProcessor = null;
+            }
+
+            if(processor != null)
+            {
+                processor.close();
+            }
         }
+    }
+
+    static int requiredFftSize(long sampleRateHz, Viewport viewport)
+    {
+        if(sampleRateHz <= 0 || viewport == null)
+        {
+            return BASE_FFT_SIZE;
+        }
+
+        double span = Math.min(sampleRateHz,
+            (double)viewport.endFrequencyHz() - viewport.startFrequencyHz());
+        double zoom = sampleRateHz / Math.max(1.0, span);
+        int fftSize = BASE_FFT_SIZE;
+
+        while(fftSize < MAXIMUM_FFT_SIZE && zoom >= 2.0)
+        {
+            fftSize *= 2;
+            zoom /= 2.0;
+        }
+
+        return fftSize;
+    }
+
+    static FrameLayout frameLayout(long centerFrequencyHz, long sampleRateHz, int fftSize, Viewport viewport)
+    {
+        if(centerFrequencyHz <= 0 || sampleRateHz <= 0 || fftSize <= 0)
+        {
+            throw new IllegalArgumentException("Tuner diagnostic frame metadata is invalid");
+        }
+
+        double fullStart = centerFrequencyHz - sampleRateHz / 2.0;
+        double fullEnd = fullStart + sampleRateHz;
+        double requestedSpan = viewport == null ? sampleRateHz : Math.min(sampleRateHz,
+            (double)viewport.endFrequencyHz() - viewport.startFrequencyHz());
+        double span = Math.max(sampleRateHz / 8.0, requestedSpan);
+        double requestedCenter = viewport == null ? centerFrequencyHz :
+            ((double)viewport.startFrequencyHz() + viewport.endFrequencyHz()) / 2.0;
+        double boundedCenter = Math.max(fullStart + span / 2.0,
+            Math.min(fullEnd - span / 2.0, requestedCenter));
+        double binWidth = (double)sampleRateHz / fftSize;
+        int sourceBinCount = Math.max(1, Math.min(fftSize, (int)Math.round(span / binWidth)));
+        int firstBin = (int)Math.round((boundedCenter - fullStart) / binWidth - sourceBinCount / 2.0);
+        firstBin = Math.max(0, Math.min(fftSize - sourceBinCount, firstBin));
+        return new FrameLayout(firstBin, sourceBinCount,
+            Math.min(sourceBinCount, MAXIMUM_TRANSMITTED_BINS));
+    }
+
+    static float[] projectBins(float[] bins, FrameLayout layout)
+    {
+        Objects.requireNonNull(bins, "Tuner diagnostic FFT bins cannot be null");
+        Objects.requireNonNull(layout, "Tuner diagnostic frame layout cannot be null");
+
+        if(layout.firstBin() < 0 || layout.sourceBinCount() < 1 ||
+            (long)layout.firstBin() + layout.sourceBinCount() > bins.length ||
+            layout.transmittedBinCount() < 1 || layout.transmittedBinCount() > layout.sourceBinCount() ||
+            layout.transmittedBinCount() > MAXIMUM_TRANSMITTED_BINS)
+        {
+            throw new IllegalArgumentException("Tuner diagnostic frame layout is outside the FFT result");
+        }
+
+        if(layout.sourceBinCount() == layout.transmittedBinCount())
+        {
+            return Arrays.copyOfRange(bins, layout.firstBin(), layout.firstBin() + layout.sourceBinCount());
+        }
+
+        float[] values = new float[layout.transmittedBinCount()];
+
+        for(int output = 0; output < values.length; output++)
+        {
+            int start = layout.firstBin() + (int)((long)output * layout.sourceBinCount() / values.length);
+            int end = layout.firstBin() + (int)((long)(output + 1) * layout.sourceBinCount() / values.length);
+            float maximum = Float.NEGATIVE_INFINITY;
+
+            for(int input = start; input < Math.max(start + 1, end); input++)
+            {
+                maximum = Math.max(maximum, bins[input]);
+            }
+
+            values[output] = maximum;
+        }
+
+        return values;
+    }
+
+    private static DiagnosticStreamFrame encode(FftResult result, FrameLayout layout, long generation, long sequence)
+    {
+        return DiagnosticStreamFrame.float32(DiagnosticStreamFrame.TYPE_TUNER_FFT, generation, sequence,
+            result.observedAtEpochMs(), result.centerFrequencyHz(), result.sampleRateHz(), result.fftSize(),
+            layout.firstBin(), layout.sourceBinCount(), projectBins(result.bins(), layout));
+    }
+
+    private static double visibleStart(long centerFrequencyHz, long sampleRateHz, int fftSize, FrameLayout layout)
+    {
+        return centerFrequencyHz - sampleRateHz / 2.0 +
+            layout.firstBin() * ((double)sampleRateHz / fftSize);
+    }
+
+    private static double visibleEnd(long centerFrequencyHz, long sampleRateHz, int fftSize, FrameLayout layout)
+    {
+        return visibleStart(centerFrequencyHz, sampleRateHz, fftSize, layout) +
+            layout.sourceBinCount() * ((double)sampleRateHz / fftSize);
+    }
+
+    private static DFTSize dftSize(int size)
+    {
+        for(DFTSize candidate: DFTSize.values())
+        {
+            if(candidate.getSize() == size)
+            {
+                return candidate;
+            }
+        }
+
+        throw new IllegalArgumentException("Unsupported tuner diagnostic FFT size: " + size);
     }
 
     @FunctionalInterface
@@ -847,15 +1232,27 @@ public final class TunerDiagnosticService implements AutoCloseable
     @FunctionalInterface
     interface ProcessorFactory
     {
-        FrameProcessor create(TargetSnapshot target, long generation, Consumer<DiagnosticStreamFrame> consumer);
+        FrameProcessor create(TargetSnapshot target, int initialFftSize, Consumer<FftResult> consumer);
     }
 
     interface FrameProcessor extends AutoCloseable
     {
-        void receive(INativeBuffer buffer, long observedAtEpochMs);
+        void receive(INativeBuffer buffer, long observedAtEpochMs, long centerFrequencyHz, long sampleRateHz);
+
+        void setFftSize(int fftSize);
+
+        int fftSize();
 
         @Override
         void close();
+    }
+
+    record FftResult(long observedAtEpochMs, long centerFrequencyHz, long sampleRateHz, int fftSize, float[] bins)
+    {
+    }
+
+    record FrameLayout(int firstBin, int sourceBinCount, int transmittedBinCount)
+    {
     }
 
     record AvailableTarget(Object identity, TunerClass tunerClass, TunerController controller,

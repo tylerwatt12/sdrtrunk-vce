@@ -36,6 +36,7 @@ import io.github.dsheirer.module.decode.dmr.DMRChannelMode;
 import io.github.dsheirer.module.decode.dmr.channel.DMRAbsoluteChannel;
 import io.github.dsheirer.module.decode.dmr.telemetry.DMRNetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
+import io.github.dsheirer.module.decode.nbfm.DecodeConfigNBFM;
 import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
 import io.github.dsheirer.module.decode.nxdn.channel.ChannelFrequency;
 import io.github.dsheirer.module.decode.nxdn.channel.NXDNChannelLookup;
@@ -45,6 +46,7 @@ import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.module.decode.p25.phase1.message.P25FrequencyBand;
 import io.github.dsheirer.preference.nowplaying.NowPlayingPreference;
 import io.github.dsheirer.source.config.SourceConfigTuner;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -54,6 +56,53 @@ import org.junit.jupiter.api.Test;
 
 class ChannelActivityModelTest
 {
+    @Test
+    void conventionalSnapshotsPreserveRowIdentityAcrossIdleCallIdleTransitions() throws Exception
+    {
+        AliasModel aliasModel = new AliasModel();
+        ChannelActivityModel model = new ChannelActivityModel(aliasModel,
+            new NowPlayingPreference(type -> {}));
+        Channel channel = trunkedChannel("Dispatch", "County", "North", new DecodeConfigNBFM(),
+            155_730_000L);
+        ChannelMetadata metadata = new ChannelMetadata(aliasModel, 1);
+        List<ChannelActivitySnapshot> snapshots = new ArrayList<>();
+        model.addActivityListener(event -> {
+            if(event.operation() == ChannelActivityEvent.Operation.UPSERT &&
+                "conventional".equals(event.snapshot().tableId()) && !event.snapshot().rows().isEmpty())
+            {
+                snapshots.add(event.snapshot());
+            }
+        });
+
+        SwingUtilities.invokeAndWait(() -> {
+            model.setEnabled(true);
+            model.channelStarted(channel, List.of(metadata));
+        });
+
+        ChannelActivitySnapshot idle = snapshots.getLast();
+        assertEquals("IDLE", idle.rows().getFirst().status());
+
+        SwingUtilities.invokeAndWait(() -> {
+            metadata.receive(new IdentifierUpdateNotification(ChannelStateIdentifier.CALL, Operation.ADD, 1));
+            model.updated(metadata, io.github.dsheirer.channel.metadata.ChannelMetadataField.DECODER_STATE);
+        });
+
+        ChannelActivitySnapshot call = snapshots.getLast();
+        assertEquals("CALL", call.rows().getFirst().status());
+
+        SwingUtilities.invokeAndWait(() -> {
+            metadata.receive(new IdentifierUpdateNotification(ChannelStateIdentifier.IDLE, Operation.ADD, 1));
+            model.updated(metadata, io.github.dsheirer.channel.metadata.ChannelMetadataField.DECODER_STATE);
+        });
+
+        ChannelActivitySnapshot returnedToIdle = snapshots.getLast();
+        assertEquals("IDLE", returnedToIdle.rows().getFirst().status());
+        assertEquals(idle.tableId(), call.tableId());
+        assertEquals(call.tableId(), returnedToIdle.tableId());
+        assertEquals(idle.rows().getFirst().key(), call.rows().getFirst().key());
+        assertEquals(call.rows().getFirst().key(), returnedToIdle.rows().getFirst().key());
+    }
+
     @Test
     void startsConfiguredTrunkedDmrInSystemsImmediately() throws Exception
     {

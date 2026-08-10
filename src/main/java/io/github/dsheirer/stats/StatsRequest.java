@@ -120,6 +120,25 @@ record StatsRequest(Map<String,String> parameters)
         }
     }
 
+    Long optionalLong(String key)
+    {
+        String value = text(key);
+
+        if(value == null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return Long.valueOf(value);
+        }
+        catch(NumberFormatException e)
+        {
+            throw new StatsApiException(400, key + " is invalid");
+        }
+    }
+
     int limit()
     {
         Integer requested = optionalInt("limit");

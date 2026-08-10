@@ -102,10 +102,28 @@ class DiagnosticTransportTest
         assertEquals(773_106_250L, encoded.getLong());
         assertEquals(10_000_000, encoded.getInt());
         assertEquals(4_096, encoded.getInt());
+        assertEquals(0, encoded.getInt());
+        assertEquals(4_096, encoded.getInt());
         assertEquals(-196.0f, encoded.getFloat());
         assertEquals(-196.0f, encoded.getFloat());
         assertEquals(20.0f, encoded.getFloat());
         assertEquals(-42.5f, encoded.getFloat());
+    }
+
+    @Test
+    void encodesViewportMetadataAtTheExtendedHeaderOffsets()
+    {
+        DiagnosticStreamFrame frame = DiagnosticStreamFrame.float32(
+            DiagnosticStreamFrame.TYPE_TUNER_FFT, 3, 4, 100, 100_000_000L, 8_192_000L, 32_768,
+            14_336, 4_096, new float[4_096]);
+        ByteBuffer encoded = ByteBuffer.wrap(frame.encoded()).order(ByteOrder.LITTLE_ENDIAN);
+
+        assertEquals(72, Short.toUnsignedInt(encoded.getShort(6)));
+        assertEquals(32_768, encoded.getInt(60));
+        assertEquals(14_336, encoded.getInt(64));
+        assertEquals(4_096, encoded.getInt(68));
+        assertEquals(4_096 * Float.BYTES, encoded.getInt(8));
+        assertEquals(4_096, encoded.getInt(12));
     }
 
     @Test

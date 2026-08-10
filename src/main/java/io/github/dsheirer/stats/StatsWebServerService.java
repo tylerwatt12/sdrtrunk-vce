@@ -1392,10 +1392,32 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         }
 
         String targetId;
+        TunerDiagnosticService.Viewport viewport = null;
 
         try
         {
-            targetId = StatsRequest.from(exchange.getRequestURI()).requiredText("target_id");
+            StatsRequest request = StatsRequest.from(exchange.getRequestURI());
+            targetId = request.requiredText("target_id");
+            Long viewportStart = request.optionalLong("viewport_start_hz");
+            Long viewportEnd = request.optionalLong("viewport_end_hz");
+
+            if((viewportStart == null) != (viewportEnd == null))
+            {
+                throw new StatsApiException(400,
+                    "viewport_start_hz and viewport_end_hz must be supplied together");
+            }
+
+            if(viewportStart != null)
+            {
+                try
+                {
+                    viewport = new TunerDiagnosticService.Viewport(viewportStart, viewportEnd);
+                }
+                catch(IllegalArgumentException exception)
+                {
+                    throw new StatsApiException(400, "Tuner diagnostic viewport is invalid");
+                }
+            }
         }
         catch(StatsApiException exception)
         {
@@ -1413,7 +1435,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
 
         try
         {
-            result = mTunerDiagnosticService.tryOpen(targetId);
+            result = mTunerDiagnosticService.tryOpen(targetId, viewport);
         }
         catch(RuntimeException exception)
         {

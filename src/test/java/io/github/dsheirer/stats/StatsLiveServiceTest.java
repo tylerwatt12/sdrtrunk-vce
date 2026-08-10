@@ -32,6 +32,28 @@ import org.junit.jupiter.api.Test;
 class StatsLiveServiceTest
 {
     @Test
+    void publishesConventionalStatusChangesWithStableTableIdentity() throws Exception
+    {
+        StatsLiveService service = new StatsLiveService(null, null);
+
+        try(StatsLiveEventHub.Subscription subscription = service.subscribeSystems())
+        {
+            service.process(conventionalActivity("IDLE"));
+            assertActivityStatus(subscription.poll(1, TimeUnit.SECONDS), "IDLE");
+
+            service.process(conventionalActivity("CALL"));
+            assertActivityStatus(subscription.poll(1, TimeUnit.SECONDS), "CALL");
+
+            service.process(conventionalActivity("IDLE"));
+            assertActivityStatus(subscription.poll(1, TimeUnit.SECONDS), "IDLE");
+        }
+        finally
+        {
+            service.close();
+        }
+    }
+
+    @Test
     void createsSerializableProtocolNeutralLiveSite()
         throws Exception
     {
@@ -148,6 +170,32 @@ class StatsLiveServiceTest
         ChannelActivitySnapshot snapshot = new ChannelActivitySnapshot("channel-1", "DMR", "Control", null,
             guid, false, true, List.of(row));
         return new ChannelActivityEvent(ChannelActivityEvent.Operation.UPSERT, snapshot);
+    }
+
+    private static ChannelActivityEvent conventionalActivity(String status)
+    {
+        ChannelActivitySnapshot.Row row = new ChannelActivitySnapshot.Row("channel-17:155730000:0",
+            "Dispatch", "configuration-17", status, List.of("CONVENTIONAL"), null, 155_730_000L, null,
+            null, null, 0L, 0L, 0L, 0L, 0L, 0L, null, null, null, null, null, null, null, null,
+            "NBFM", null);
+        ChannelActivitySnapshot snapshot = new ChannelActivitySnapshot("conventional", "Conventional",
+            "Conventional", null, null, false, false, List.of(row));
+        return new ChannelActivityEvent(ChannelActivityEvent.Operation.UPSERT, snapshot);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void assertActivityStatus(StatsLiveEventHub.LiveEvent event, String expectedStatus)
+    {
+        assertNotNull(event);
+        assertEquals("activity_table", event.name());
+        Map<String,Object> update = (Map<String,Object>)event.data();
+        assertEquals("upsert", update.get("operation"));
+        assertEquals("conventional", update.get("table_id"));
+        Map<String,Object> table = (Map<String,Object>)update.get("table");
+        assertEquals("conventional", table.get("table_id"));
+        List<Map<String,Object>> rows = (List<Map<String,Object>>)table.get("rows");
+        assertEquals("channel-17:155730000:0", rows.getFirst().get("key"));
+        assertEquals(expectedStatus, rows.getFirst().get("status"));
     }
 
     @SuppressWarnings("unchecked")
