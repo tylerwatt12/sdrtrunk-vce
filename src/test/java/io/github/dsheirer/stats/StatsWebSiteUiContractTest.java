@@ -37,8 +37,8 @@ class StatsWebSiteUiContractTest
     {
         String source = source();
 
-        for(String capability: new String[]{"channels", "quality", "quality-history",
-            "neighbors", "band-plan", "patches", "activity", "top-talkgroups"})
+        for(String capability: new String[]{"channels", "quality", "neighbors", "frequency_bands",
+            "patch_groups", "activity", "group_identities"})
         {
             assertTrue(source.contains("siteCapability(site, '" + capability + "')"),
                 () -> "Missing site capability check for " + capability);
@@ -119,11 +119,11 @@ class StatsWebSiteUiContractTest
 
         assertFalse(source.contains("function liveSiteReceiverSection(site)"));
         assertFalse(source.contains("liveConnection('/live/sites')"));
+        assertFalse(source.contains("liveConnection('/api/v1/live/sites')"));
         assertFalse(source.contains("section('Live Receiver'"));
         assertFalse(source.contains("siteCapability(site, 'quality-live')"));
-        assertTrue(tabItems.contains(
-            "siteCapability(site, 'quality') && siteCapability(site, 'quality-history')"));
-        assertTrue(tabItems.contains("siteCapability(site, 'quality-history')"));
+        assertTrue(tabItems.contains("siteCapability(site, 'quality')"));
+        assertTrue(siteInfo.contains("siteCapability(site, 'group_identities')"));
         assertTrue(siteInfo.contains("siteTopTalkgroupsSection(site)"));
         assertTrue(site.contains("content.append(await siteSignalHistorySection(site))"));
     }

@@ -11,8 +11,9 @@ The persistent records serve these bounded website functions:
 5. Conventional DMR pages list carrier/timeslot-scoped talkgroups and radios.
 
 The system APIs use a stored opaque `scope_token`; numeric IDs are never treated as globally unique. The relevant
-bounded endpoints are `/api/system-directory`, `/api/system`, `/api/system/sites`, `/api/system/talkgroups`,
-`/api/system/radios`, `/api/system/talker-aliases`, `/api/talkgroup`, `/api/radio`, `/api/relationships`, and the
+bounded endpoints are `/api/v1/systems`, `/api/v1/systems/{scope}`, `/api/v1/systems/{scope}/sites`,
+`/api/v1/systems/{scope}/group-identities`, `/api/v1/systems/{scope}/radios`,
+`/api/v1/systems/{scope}/talker-aliases`, and `/api/v1/systems/{scope}/relationships`, and the
 site and conventional endpoints. List endpoints enforce the shared 500-row server maximum. Live calls and current
 radio state continue to use the bounded in-memory streams.
 

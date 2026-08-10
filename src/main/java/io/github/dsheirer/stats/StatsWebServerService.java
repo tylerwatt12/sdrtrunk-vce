@@ -11,7 +11,6 @@
 
 package io.github.dsheirer.stats;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.eventbus.Subscribe;
 import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpExchange;
@@ -46,6 +45,8 @@ import io.github.dsheirer.web.auth.WebAccessService;
 import io.github.dsheirer.web.auth.WebAuthenticationService;
 import io.github.dsheirer.web.auth.WebCapability;
 import io.github.dsheirer.web.http.AliasAdminHttpController;
+import io.github.dsheirer.web.http.ApiHttpResponse;
+import io.github.dsheirer.web.http.ApiRequestDecoder;
 import io.github.dsheirer.web.http.WebAccessHttpController;
 import io.github.dsheirer.web.network.WebCertificateIdentity;
 import java.io.IOException;
@@ -64,10 +65,12 @@ import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLContext;
 import org.slf4j.Logger;
@@ -79,10 +82,12 @@ import org.slf4j.LoggerFactory;
 public class StatsWebServerService implements AutoCloseable, P25ActivityCommitListener
 {
     private static final Logger mLog = LoggerFactory.getLogger(StatsWebServerService.class);
-    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     static final Duration AUTOMATIC_CERTIFICATE_RENEWAL_WINDOW = Duration.ofDays(30);
     private static final long AUTOMATIC_CERTIFICATE_INITIAL_CHECK_MINUTES = 1;
     private static final long AUTOMATIC_CERTIFICATE_MAINTENANCE_MINUTES = TimeUnit.HOURS.toMinutes(12);
+    private static final int REQUEST_MAXIMUM_THREADS = 96;
+    private static final int REQUEST_QUEUE_CAPACITY = 256;
+    private static final int MAXIMUM_LIVE_HTTP_CLIENTS = 64;
 
     private final UserPreferences mUserPreferences;
     private final StatsWebDatabase mDatabase;
@@ -99,10 +104,10 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
     private final StatsWebCallService mWebCallService = new StatsWebCallService();
     private final Semaphore mDecodeMessageClients = new Semaphore(16);
     private final Semaphore mDiagnosticClients = new Semaphore(32);
+    private final Semaphore mLiveHttpClients = new Semaphore(MAXIMUM_LIVE_HTTP_CLIENTS);
     private final ChannelProcessingManager mChannelProcessingManager;
     private final P25ActivityLogService mActivityLogService;
     private final AliasAdministrationService mAliasAdministrationService;
-    private final Semaphore mCsvExportPermit = new Semaphore(1);
     private final Path mWebAccessDatabasePath;
     private final WebTlsMaterialService mTlsMaterialService;
     private final ScheduledExecutorService mTlsMaintenanceExecutor;
@@ -505,7 +510,9 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             server = HttpServer.create(bindAddress, 0);
         }
 
-        ExecutorService executor = Executors.newCachedThreadPool(new NamingThreadFactory("stats web server"));
+        ExecutorService executor = new ThreadPoolExecutor(REQUEST_MAXIMUM_THREADS, REQUEST_MAXIMUM_THREADS,
+            60, TimeUnit.SECONDS, new ArrayBlockingQueue<>(REQUEST_QUEUE_CAPACITY),
+            new NamingThreadFactory("stats web server"), new ThreadPoolExecutor.AbortPolicy());
 
         try
         {
@@ -536,120 +543,31 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             server.createContext(AliasAdminHttpController.ALIASES_PATH, protectedAliases);
         }
 
-        createProtectedContext(server, "/api/status", WebCapability.DASHBOARD_VIEW,
-            exchange -> handleJson(exchange, "/api/status", this::status));
-        createProtectedContext(server, "/api/dashboard", WebCapability.DASHBOARD_VIEW,
-            exchange -> handleJson(exchange, "/api/dashboard", mDatabase::dashboard));
-        createProtectedContext(server, "/api/alias-lists", WebCapability.ALIASES_VIEW,
-            exchange -> handleJson(exchange, "/api/alias-lists", mDatabase::aliasLists));
-        createProtectedContext(server, "/api/aliases", WebCapability.ALIASES_VIEW,
-            exchange -> handleJson(exchange, "/api/aliases",
-            () -> mDatabase.aliases(StatsRequest.from(exchange.getRequestURI()))));
-        createProtectedContext(server, "/api/alias-list/observed-talkgroups", WebCapability.ALIASES_VIEW,
-            exchange -> handleJson(exchange, "/api/alias-list/observed-talkgroups",
-            () -> mDatabase.observedTalkgroups(StatsRequest.from(exchange.getRequestURI()))));
-        createProtectedContext(server, "/api/alias", WebCapability.ALIASES_VIEW,
-            exchange -> handleJson(exchange, "/api/alias",
-            () -> mDatabase.alias(StatsRequest.from(exchange.getRequestURI()))));
-        server.createContext("/api/quality", exchange -> mWebAccessHttpController.protect(
-            qualityCapability(exchange.getRequestURI()),
-            protectedExchange -> handleJson(protectedExchange, "/api/quality",
-                () -> mDatabase.qualityHistory(StatsRequest.from(protectedExchange.getRequestURI()))))
-            .handle(exchange));
-        createProtectedContext(server, "/api/system-directory", WebCapability.SYSTEMS_VIEW,
-            exchange -> handleJson(exchange, "/api/system-directory",
-            () -> mDatabase.systemDirectory(StatsRequest.from(exchange.getRequestURI()))));
-        createProtectedContext(server, "/api/system", WebCapability.SYSTEMS_VIEW,
-            exchange -> handleJson(exchange, "/api/system",
-            () -> mDatabase.system(StatsRequest.from(exchange.getRequestURI()))));
-        createProtectedContext(server, "/api/system/sites", WebCapability.SYSTEMS_VIEW,
-            exchange -> handleJson(exchange, "/api/system/sites",
-            () -> mDatabase.systemSites(StatsRequest.from(exchange.getRequestURI()))));
-        createProtectedContext(server, "/api/system/talkgroups", WebCapability.SYSTEMS_VIEW,
-            exchange -> handleJson(exchange, "/api/system/talkgroups",
-            () -> mDatabase.systemTalkgroups(StatsRequest.from(exchange.getRequestURI()))));
-        createProtectedContext(server, "/api/system/radios", WebCapability.SYSTEMS_VIEW,
-            exchange -> handleJson(exchange, "/api/system/radios",
-            () -> mDatabase.systemRadios(StatsRequest.from(exchange.getRequestURI()))));
-        createProtectedContext(server, "/api/system/talker-aliases", WebCapability.SYSTEMS_VIEW,
-            exchange -> handleJson(exchange, "/api/system/talker-aliases",
-            () -> mDatabase.systemTalkerAliases(StatsRequest.from(exchange.getRequestURI()))));
-        createProtectedContext(server, "/api/talkgroup", WebCapability.SYSTEMS_VIEW,
-            exchange -> handleJson(exchange, "/api/talkgroup",
-            () -> mDatabase.talkgroup(StatsRequest.from(exchange.getRequestURI()))));
-        createProtectedContext(server, "/api/talkgroup/activity", WebCapability.SYSTEMS_VIEW,
-            exchange -> handleJson(exchange, "/api/talkgroup/activity",
-            () -> mDatabase.talkgroupActivity(StatsRequest.from(exchange.getRequestURI()))));
-        createProtectedContext(server, "/api/radio", WebCapability.SYSTEMS_VIEW,
-            exchange -> handleJson(exchange, "/api/radio",
-            () -> mDatabase.radio(StatsRequest.from(exchange.getRequestURI()))));
-        createProtectedContext(server, "/api/affiliations", WebCapability.SYSTEMS_VIEW,
-            exchange -> handleJson(exchange, "/api/affiliations",
-            () -> mDatabase.currentAffiliations(StatsRequest.from(exchange.getRequestURI()))));
-        createProtectedContext(server, "/api/relationships", WebCapability.SYSTEMS_VIEW,
-            exchange -> handleJson(exchange, "/api/relationships",
-            () -> mDatabase.radioTalkgroupRelationships(StatsRequest.from(exchange.getRequestURI()))));
-        createProtectedContext(server, "/api/site", WebCapability.SYSTEMS_VIEW,
-            exchange -> handleJson(exchange, "/api/site",
-            () -> mDatabase.site(StatsRequest.from(exchange.getRequestURI()))));
-        createProtectedContext(server, "/api/site/channels", WebCapability.SYSTEMS_VIEW,
-            exchange -> handleJson(exchange, "/api/site/channels",
-            () -> mDatabase.siteChannels(StatsRequest.from(exchange.getRequestURI()))));
-        createProtectedContext(server, "/api/site/talkgroups", WebCapability.SYSTEMS_VIEW,
-            exchange -> handleJson(exchange, "/api/site/talkgroups",
-            () -> mDatabase.siteTalkgroups(StatsRequest.from(exchange.getRequestURI()))));
-        createProtectedContext(server, "/api/site/quality", WebCapability.SYSTEMS_VIEW,
-            exchange -> handleJson(exchange, "/api/site/quality",
-            () -> mDatabase.siteQuality(StatsRequest.from(exchange.getRequestURI()))));
-        createProtectedContext(server, "/api/site/bands", WebCapability.SYSTEMS_VIEW,
-            exchange -> handleJson(exchange, "/api/site/bands",
-            () -> mDatabase.siteBands(StatsRequest.from(exchange.getRequestURI()))));
-        createProtectedContext(server, "/api/site/neighbors", WebCapability.SYSTEMS_VIEW,
-            exchange -> handleJson(exchange, "/api/site/neighbors",
-            () -> mDatabase.siteNeighbors(StatsRequest.from(exchange.getRequestURI()))));
-        createProtectedContext(server, "/api/site/patches", WebCapability.SYSTEMS_VIEW,
-            exchange -> handleJson(exchange, "/api/site/patches",
-            () -> mDatabase.sitePatches(StatsRequest.from(exchange.getRequestURI()))));
-        createProtectedContext(server, "/api/activity", WebCapability.SYSTEMS_VIEW,
-            exchange -> handleJson(exchange, "/api/activity",
-            () -> mDatabase.activity(StatsRequest.from(exchange.getRequestURI()))));
-        createProtectedContext(server, "/api/activity/recent", WebCapability.SYSTEMS_VIEW,
-            exchange -> handleJson(exchange, "/api/activity/recent",
-            () -> mDatabase.activity(StatsRequest.from(exchange.getRequestURI()))));
-        createProtectedContext(server, "/api/conventional", WebCapability.CONVENTIONAL_VIEW,
-            exchange -> handleJson(exchange, "/api/conventional",
-            () -> mDatabase.conventional(StatsRequest.from(exchange.getRequestURI()))));
-        createProtectedContext(server, "/api/conventional/detail", WebCapability.CONVENTIONAL_VIEW,
-            exchange -> handleJson(exchange, "/api/conventional/detail",
-            () -> mDatabase.conventionalDetail(StatsRequest.from(exchange.getRequestURI()))));
-        createProtectedContext(server, "/api/conventional/talkgroups", WebCapability.CONVENTIONAL_VIEW,
-            exchange -> handleJson(exchange, "/api/conventional/talkgroups",
-            () -> mDatabase.conventionalTalkgroups(StatsRequest.from(exchange.getRequestURI()))));
-        createProtectedContext(server, "/api/conventional/radios", WebCapability.CONVENTIONAL_VIEW,
-            exchange -> handleJson(exchange, "/api/conventional/radios",
-            () -> mDatabase.conventionalRadios(StatsRequest.from(exchange.getRequestURI()))));
-        createProtectedContext(server, "/api/export.csv", WebCapability.CSV_EXPORT, this::handleCsvExport);
-        if(mTunerDiagnosticService != null)
-        {
-            createProtectedContext(server, "/api/tuner-diagnostics/targets", WebCapability.LIVE_VIEW,
-                exchange -> handleJson(exchange, "/api/tuner-diagnostics/targets",
-                    () -> Map.of("targets", mTunerDiagnosticService.targets())));
-        }
-        createProtectedContext(server, "/live/systems", WebCapability.LIVE_VIEW, this::handleSystemsSse);
-        createProtectedContext(server, "/live/events", WebCapability.LIVE_VIEW, this::handleDecodeEventsSse);
-        createProtectedContext(server, "/live/messages", WebCapability.LIVE_VIEW, this::handleDecodeMessagesSse);
-        createProtectedContext(server, "/live/channel-diagnostics", WebCapability.LIVE_VIEW,
+        new StatsApiV1Controller(mDatabase, this::status, mWebAccessHttpController, mTunerDiagnosticService)
+            .register(server);
+        createProtectedLiveContext(server, StatsApiV1.LIVE_CHANNEL_ACTIVITY, WebCapability.LIVE_VIEW,
+            this::handleSystemsSse);
+        createProtectedLiveContext(server, StatsApiV1.LIVE_DECODE_EVENTS, WebCapability.LIVE_VIEW,
+            this::handleDecodeEventsSse);
+        createProtectedLiveContext(server, StatsApiV1.LIVE_DECODE_MESSAGES, WebCapability.LIVE_VIEW,
+            this::handleDecodeMessagesSse);
+        createProtectedLiveContext(server, StatsApiV1.LIVE_CHANNEL_DIAGNOSTICS, WebCapability.LIVE_VIEW,
             this::handleChannelDiagnostics);
         if(mTunerDiagnosticService != null)
         {
-            createProtectedContext(server, "/live/tuner-diagnostics", WebCapability.LIVE_VIEW,
+            createProtectedLiveContext(server, StatsApiV1.LIVE_TUNER_DIAGNOSTICS, WebCapability.LIVE_VIEW,
                 this::handleTunerDiagnostics);
         }
-        createProtectedContext(server, "/live/sites", WebCapability.LIVE_VIEW, this::handleSitesSse);
-        createProtectedContext(server, "/live/web-calls", WebCapability.WEB_AUDIO_LISTEN, this::handleWebCallsSse);
-        createProtectedContext(server, "/live/activity", WebCapability.SYSTEMS_VIEW, this::handleActivitySse);
-        createProtectedContext(server, "/api/web-player/calls/", WebCapability.WEB_AUDIO_LISTEN,
+        createProtectedLiveContext(server, StatsApiV1.LIVE_SITES, WebCapability.LIVE_VIEW, this::handleSitesSse);
+        createProtectedLiveContext(server, StatsApiV1.LIVE_CALLS, WebCapability.WEB_AUDIO_LISTEN,
+            this::handleWebCallsSse);
+        createProtectedLiveContext(server, StatsApiV1.LIVE_ACTIVITY, WebCapability.SYSTEMS_VIEW,
+            this::handleActivitySse);
+        createProtectedContext(server, StatsApiV1.CALLS + "/", WebCapability.WEB_AUDIO_LISTEN,
             this::handleWebCallAudio);
+        server.createContext(StatsApiV1.ROOT, StatsWebServerService::handleApiNotFound);
+        server.createContext("/api", StatsWebServerService::handleApiNotFound);
+        server.createContext("/live", StatsWebServerService::handleApiNotFound);
         server.createContext("/", exchange -> handleStatic(exchange, assetRoot));
     }
 
@@ -801,22 +719,25 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         server.createContext(path, mWebAccessHttpController.protect(capability, handler));
     }
 
-    /**
-     * Site-scoped quality data belongs to the Systems capability; global quality belongs to Dashboard.  Parameter
-     * names must be decoded before authorization so percent-encoding cannot select a less restrictive policy.
-     */
-    static WebCapability qualityCapability(URI uri)
+    private void createProtectedLiveContext(HttpServer server, String path, WebCapability capability,
+                                              HttpHandler handler)
     {
-        try
-        {
-            return StatsRequest.from(uri).text("guid") != null ? WebCapability.SYSTEMS_VIEW :
-                WebCapability.DASHBOARD_VIEW;
-        }
-        catch(RuntimeException exception)
-        {
-            // Malformed or ambiguous requests take the more restrictive route and are rejected by the handler.
-            return WebCapability.SYSTEMS_VIEW;
-        }
+        createProtectedContext(server, path, capability, exchange -> {
+            if(!mLiveHttpClients.tryAcquire())
+            {
+                sendApiError(exchange, 429, "too_many_clients", "Too many live clients");
+                return;
+            }
+
+            try
+            {
+                handler.handle(exchange);
+            }
+            finally
+            {
+                mLiveHttpClients.release();
+            }
+        });
     }
 
     private synchronized Map<String,Object> status()
@@ -834,10 +755,14 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         server.put("assetsAvailable", listener != null &&
             Files.isRegularFile(listener.configuration().requested().assetRoot().resolve("index.html")));
         server.put("liveChannels", Map.of(
-            "systems", "/live/systems",
-            "sites", "/live/sites",
-            "webCalls", "/live/web-calls",
-            "activity", "/live/activity"));
+            "channelActivity", StatsApiV1.LIVE_CHANNEL_ACTIVITY,
+            "decodeEvents", StatsApiV1.LIVE_DECODE_EVENTS,
+            "decodeMessages", StatsApiV1.LIVE_DECODE_MESSAGES,
+            "channelDiagnostics", StatsApiV1.LIVE_CHANNEL_DIAGNOSTICS,
+            "tunerDiagnostics", StatsApiV1.LIVE_TUNER_DIAGNOSTICS,
+            "sites", StatsApiV1.LIVE_SITES,
+            "calls", StatsApiV1.LIVE_CALLS,
+            "activity", StatsApiV1.LIVE_ACTIVITY));
         status.put("server", server);
         status.put("database", mDatabase.status());
         status.put("statsLogging", statsLoggingStatusResponse());
@@ -905,80 +830,6 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         return mDatabase.scopeTokenForGuid(guid);
     }
 
-    private void handleJson(HttpExchange exchange, String expectedPath, JsonSupplier supplier) throws IOException
-    {
-        if(!hasExactPath(exchange.getRequestURI(), expectedPath))
-        {
-            sendJson(exchange, 404, Map.of("error", "Not found", "status", 404));
-            return;
-        }
-
-        if(!requireMethod(exchange, "GET"))
-        {
-            return;
-        }
-
-        try
-        {
-            sendJson(exchange, 200, supplier.get());
-        }
-        catch(StatsApiException e)
-        {
-            sendJson(exchange, e.status(), Map.of("error", e.getMessage(), "status", e.status()));
-        }
-        catch(RuntimeException e)
-        {
-            mLog.warn("Stats web request failed [{}]", exchange.getRequestURI().getPath(), e);
-            sendJson(exchange, 500, Map.of("error", "Stats request failed", "status", 500));
-        }
-    }
-
-    private void handleCsvExport(HttpExchange exchange) throws IOException
-    {
-        if(!hasExactPath(exchange.getRequestURI(), "/api/export.csv"))
-        {
-            sendJson(exchange, 404, Map.of("error", "Not found", "status", 404));
-            return;
-        }
-
-        if(!requireMethod(exchange, "GET"))
-        {
-            return;
-        }
-
-        if(!mCsvExportPermit.tryAcquire())
-        {
-            sendJson(exchange, 429, Map.of("error", "Another CSV export is already running", "status", 429));
-            return;
-        }
-
-        try
-        {
-            StatsCsvExport export = mDatabase.csvExport(StatsRequest.from(exchange.getRequestURI()));
-            Headers headers = exchange.getResponseHeaders();
-            applyCsvHeaders(headers, export.fileName());
-            exchange.sendResponseHeaders(200, export.content().length);
-
-            try(OutputStream outputStream = exchange.getResponseBody())
-            {
-                outputStream.write(export.content());
-            }
-        }
-        catch(StatsApiException e)
-        {
-            sendJson(exchange, e.status(), Map.of("error", e.getMessage(), "status", e.status()));
-        }
-        catch(RuntimeException e)
-        {
-            mLog.warn("Stats CSV export failed", e);
-            sendJson(exchange, 500, Map.of("error", "CSV export failed", "status", 500));
-        }
-        finally
-        {
-            mCsvExportPermit.release();
-        }
-    }
-
     static void applyCsvHeaders(Headers headers, String fileName)
     {
         headers.set("Content-Type", "text/csv; charset=utf-8");
@@ -999,27 +850,43 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             return true;
         }
 
-        sendText(exchange, 404, "Not found");
+        ApiHttpResponse.sendError(exchange, 404, "not_found", "Resource not found");
         return false;
     }
 
-    private static void sendJson(HttpExchange exchange, int status, Map<String,Object> value) throws IOException
+    private static boolean requireNoQuery(HttpExchange exchange) throws IOException
     {
-        byte[] body = OBJECT_MAPPER.writeValueAsBytes(value);
-        Headers headers = exchange.getResponseHeaders();
-        headers.set("Content-Type", "application/json; charset=utf-8");
-        headers.set("Cache-Control", "no-store");
-        exchange.sendResponseHeaders(status, body.length);
+        StatsRequest request;
 
-        try(OutputStream outputStream = exchange.getResponseBody())
+        try
         {
-            outputStream.write(body);
+            request = StatsRequest.from(exchange.getRequestURI());
+            request.requireFullyConsumed();
+            return true;
         }
+        catch(StatsApiException exception)
+        {
+            sendApiException(exchange, exception);
+            return false;
+        }
+    }
+
+    private static void sendApiException(HttpExchange exchange, StatsApiException exception) throws IOException
+    {
+        ApiHttpResponse.sendError(exchange, exception.status(), exception.code(), exception.getMessage(),
+            exception.field());
+    }
+
+    private static void sendApiError(HttpExchange exchange, int status, String code, String message)
+        throws IOException
+    {
+        ApiHttpResponse.sendError(exchange, status, code, message);
     }
 
     private void handleSystemsSse(HttpExchange exchange) throws IOException
     {
-        if(!requireExactTextPath(exchange, "/live/systems") || !requireMethod(exchange, "GET"))
+        if(!requireExactTextPath(exchange, StatsApiV1.LIVE_CHANNEL_ACTIVITY) || !requireMethod(exchange, "GET") ||
+            !requireNoQuery(exchange))
         {
             return;
         }
@@ -1028,23 +895,36 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
 
         if(subscription == null)
         {
-            sendText(exchange, 429, "Too many live Stats Server clients");
+            sendApiError(exchange, 429, "too_many_clients", "Too many live clients");
             return;
         }
 
-        streamSse(exchange, subscription, "snapshot", mLiveService.snapshot(), event -> true);
+        byte[] snapshot;
+
+        try
+        {
+            snapshot = mLiveService.encodedSnapshot();
+        }
+        catch(IOException exception)
+        {
+            subscription.close();
+            sendApiError(exchange, 503, "snapshot_unavailable", "Live channel activity is temporarily unavailable");
+            return;
+        }
+
+        streamSse(exchange, subscription, "snapshot", new EncodedSsePayload(snapshot), event -> true);
     }
 
     private void handleDecodeEventsSse(HttpExchange exchange) throws IOException
     {
-        if(!requireExactTextPath(exchange, "/live/events") || !requireMethod(exchange, "GET"))
+        if(!requireExactTextPath(exchange, StatsApiV1.LIVE_DECODE_EVENTS) || !requireMethod(exchange, "GET"))
         {
             return;
         }
 
         if(mDecodeEventViewService == null)
         {
-            sendText(exchange, 503, "Live decoder events are unavailable");
+            sendApiError(exchange, 503, "service_unavailable", "Live decoder events are unavailable");
             return;
         }
 
@@ -1056,7 +936,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         }
         catch(StatsApiException e)
         {
-            sendText(exchange, e.status(), e.getMessage());
+            sendApiException(exchange, e);
             return;
         }
 
@@ -1075,7 +955,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
 
         if(subscription == null)
         {
-            sendText(exchange, 429, "Too many live Stats Server clients");
+            sendApiError(exchange, 429, "too_many_clients", "Too many live clients");
             return;
         }
 
@@ -1112,45 +992,68 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             throw new StatsApiException(400, "configuration_id is invalid");
         }
 
-        String frequencyText = request.text("frequency_hz");
-        Long frequency = null;
+        Long frequency = request.optionalLong("frequency_hz");
         Integer timeslot = request.optionalInt("timeslot");
 
-        if(frequencyText != null)
+        if(frequency != null)
         {
-            try
-            {
-                frequency = Long.valueOf(frequencyText);
-            }
-            catch(NumberFormatException e)
-            {
-                throw new StatsApiException(400, "frequency_hz is invalid");
-            }
-
             if(frequency <= 0)
             {
-                throw new StatsApiException(400, "frequency_hz is invalid");
+                throw new StatsApiException(400, "invalid_parameter", "frequency_hz must be positive",
+                    "frequency_hz");
             }
         }
 
         if(timeslot != null && timeslot <= 0)
         {
-            throw new StatsApiException(400, "timeslot is invalid");
+            throw new StatsApiException(400, "invalid_parameter", "timeslot must be positive", "timeslot");
         }
 
+        request.requireFullyConsumed();
         return new DecodeEventViewService.Scope(configurationId, frequency, timeslot);
+    }
+
+    static DecodeMessageViewService.Scope decodeMessageScope(URI uri)
+    {
+        StatsRequest request = StatsRequest.from(uri);
+        String configurationId;
+
+        try
+        {
+            configurationId = UUID.fromString(request.requiredText("configuration_id")).toString();
+        }
+        catch(IllegalArgumentException e)
+        {
+            throw new StatsApiException(400, "configuration_id is invalid");
+        }
+
+        Long frequency = request.optionalLong("frequency_hz");
+
+        if(frequency == null)
+        {
+            throw new StatsApiException(400, "frequency_hz is required");
+        }
+
+        if(frequency <= 0)
+        {
+            throw new StatsApiException(400, "invalid_parameter", "frequency_hz must be positive",
+                "frequency_hz");
+        }
+
+        request.requireFullyConsumed();
+        return new DecodeMessageViewService.Scope(configurationId, frequency);
     }
 
     private void handleDecodeMessagesSse(HttpExchange exchange) throws IOException
     {
-        if(!requireExactTextPath(exchange, "/live/messages") || !requireMethod(exchange, "GET"))
+        if(!requireExactTextPath(exchange, StatsApiV1.LIVE_DECODE_MESSAGES) || !requireMethod(exchange, "GET"))
         {
             return;
         }
 
         if(mDecodeMessageViewService == null)
         {
-            sendText(exchange, 503, "Live decoder messages are unavailable");
+            sendApiError(exchange, 503, "service_unavailable", "Live decoder messages are unavailable");
             return;
         }
 
@@ -1158,25 +1061,24 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
 
         try
         {
-            DecodeEventViewService.Scope selected = decodeEventScope(exchange.getRequestURI());
-
-            if(selected.frequencyHz() == null)
-            {
-                throw new StatsApiException(400, "frequency_hz is required");
-            }
-
-            scope = new DecodeMessageViewService.Scope(selected.configurationId(), selected.frequencyHz());
+            scope = decodeMessageScope(exchange.getRequestURI());
         }
         catch(StatsApiException | IllegalArgumentException exception)
         {
-            sendText(exchange, exception instanceof StatsApiException apiException ? apiException.status() : 400,
-                exception.getMessage());
+            if(exception instanceof StatsApiException apiException)
+            {
+                sendApiException(exchange, apiException);
+            }
+            else
+            {
+                sendApiError(exchange, 400, "invalid_parameter", exception.getMessage());
+            }
             return;
         }
 
         if(!mDecodeMessageClients.tryAcquire())
         {
-            sendText(exchange, 429, "Too many live message clients");
+            sendApiError(exchange, 429, "too_many_clients", "Too many live message clients");
             return;
         }
 
@@ -1187,7 +1089,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         {
             if(accessController == null || !accessController.isRequestStillAuthorized(exchange))
             {
-                sendText(exchange, 403, "Access changed before the live stream started");
+                sendApiError(exchange, 403, "access_denied", "Access changed before the live stream started");
                 return;
             }
 
@@ -1253,14 +1155,15 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
 
     private void handleChannelDiagnostics(HttpExchange exchange) throws IOException
     {
-        if(!requireExactTextPath(exchange, "/live/channel-diagnostics") || !requireMethod(exchange, "GET"))
+        if(!requireExactTextPath(exchange, StatsApiV1.LIVE_CHANNEL_DIAGNOSTICS) ||
+            !requireMethod(exchange, "GET"))
         {
             return;
         }
 
         if(mChannelDiagnosticService == null)
         {
-            sendText(exchange, 503, "Channel diagnostics are unavailable");
+            sendApiError(exchange, 503, "service_unavailable", "Channel diagnostics are unavailable");
             return;
         }
 
@@ -1272,13 +1175,13 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         }
         catch(StatsApiException exception)
         {
-            sendText(exchange, exception.status(), exception.getMessage());
+            sendApiException(exchange, exception);
             return;
         }
 
         if(!mDiagnosticClients.tryAcquire())
         {
-            sendText(exchange, 429, "Too many diagnostic viewers");
+            sendApiError(exchange, 429, "too_many_clients", "Too many diagnostic viewers");
             return;
         }
 
@@ -1292,20 +1195,20 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         {
             mDiagnosticClients.release();
             mLog.warn("Unable to start selected-channel diagnostics", exception);
-            sendText(exchange, 503, "Channel diagnostics could not be started");
+            sendApiError(exchange, 503, "service_unavailable", "Channel diagnostics could not be started");
             return;
         }
 
         if(result.status() == ChannelDiagnosticService.OpenStatus.BUSY)
         {
             mDiagnosticClients.release();
-            sendText(exchange, 429, "Too many diagnostic viewers");
+            sendApiError(exchange, 429, "too_many_clients", "Too many diagnostic viewers");
             return;
         }
         else if(result.status() != ChannelDiagnosticService.OpenStatus.OPEN)
         {
             mDiagnosticClients.release();
-            sendText(exchange, 503, "Channel diagnostics are unavailable");
+            sendApiError(exchange, 503, "service_unavailable", "Channel diagnostics are unavailable");
             return;
         }
 
@@ -1316,7 +1219,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         {
             if(accessController == null || !accessController.isRequestStillAuthorized(exchange))
             {
-                sendText(exchange, 403, "Access changed before the live stream started");
+                sendApiError(exchange, 403, "access_denied", "Access changed before the live stream started");
                 return;
             }
 
@@ -1380,14 +1283,14 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
 
     private void handleTunerDiagnostics(HttpExchange exchange) throws IOException
     {
-        if(!requireExactTextPath(exchange, "/live/tuner-diagnostics") || !requireMethod(exchange, "GET"))
+        if(!requireExactTextPath(exchange, StatsApiV1.LIVE_TUNER_DIAGNOSTICS) || !requireMethod(exchange, "GET"))
         {
             return;
         }
 
         if(mTunerDiagnosticService == null)
         {
-            sendText(exchange, 503, "Tuner diagnostics are unavailable");
+            sendApiError(exchange, 503, "service_unavailable", "Tuner diagnostics are unavailable");
             return;
         }
 
@@ -1418,16 +1321,18 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
                     throw new StatsApiException(400, "Tuner diagnostic viewport is invalid");
                 }
             }
+
+            request.requireFullyConsumed();
         }
         catch(StatsApiException exception)
         {
-            sendText(exchange, exception.status(), exception.getMessage());
+            sendApiException(exchange, exception);
             return;
         }
 
         if(!mDiagnosticClients.tryAcquire())
         {
-            sendText(exchange, 429, "Too many diagnostic viewers");
+            sendApiError(exchange, 429, "too_many_clients", "Too many diagnostic viewers");
             return;
         }
 
@@ -1441,7 +1346,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         {
             mDiagnosticClients.release();
             mLog.warn("Unable to start tuner diagnostics", exception);
-            sendText(exchange, 503, "Tuner diagnostics could not be started");
+            sendApiError(exchange, 503, "service_unavailable", "Tuner diagnostics could not be started");
             return;
         }
 
@@ -1454,8 +1359,11 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
                 case NOT_FOUND -> 404;
                 default -> 503;
             };
-            sendText(exchange, status, status == 429 ? "Too many tuner diagnostic viewers" :
-                (status == 404 ? "Tuner diagnostic target was not found" : "Tuner diagnostics are unavailable"));
+            sendApiError(exchange, status, status == 429 ? "too_many_clients" :
+                    (status == 404 ? "not_found" : "service_unavailable"),
+                status == 429 ? "Too many tuner diagnostic viewers" :
+                    (status == 404 ? "Tuner diagnostic target was not found" :
+                        "Tuner diagnostics are unavailable"));
             return;
         }
 
@@ -1466,7 +1374,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         {
             if(accessController == null || !accessController.isRequestStillAuthorized(exchange))
             {
-                sendText(exchange, 403, "Access changed before the live stream started");
+                sendApiError(exchange, 403, "access_denied", "Access changed before the live stream started");
                 return;
             }
 
@@ -1536,7 +1444,8 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
 
     private void handleSitesSse(HttpExchange exchange) throws IOException
     {
-        if(!requireExactTextPath(exchange, "/live/sites") || !requireMethod(exchange, "GET"))
+        if(!requireExactTextPath(exchange, StatsApiV1.LIVE_SITES) || !requireMethod(exchange, "GET") ||
+            !requireNoQuery(exchange))
         {
             return;
         }
@@ -1545,7 +1454,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
 
         if(subscription == null)
         {
-            sendText(exchange, 429, "Too many live Stats Server clients");
+            sendApiError(exchange, 429, "too_many_clients", "Too many live clients");
             return;
         }
 
@@ -1555,7 +1464,8 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
 
     private void handleWebCallsSse(HttpExchange exchange) throws IOException
     {
-        if(!requireExactTextPath(exchange, "/live/web-calls") || !requireMethod(exchange, "GET"))
+        if(!requireExactTextPath(exchange, StatsApiV1.LIVE_CALLS) || !requireMethod(exchange, "GET") ||
+            !requireNoQuery(exchange))
         {
             return;
         }
@@ -1564,7 +1474,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
 
         if(subscription == null)
         {
-            sendText(exchange, 429, "Too many live Stats Server clients");
+            sendApiError(exchange, 429, "too_many_clients", "Too many live clients");
             return;
         }
 
@@ -1574,20 +1484,22 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
 
     private void handleActivitySse(HttpExchange exchange) throws IOException
     {
-        if(!requireExactTextPath(exchange, "/live/activity") || !requireMethod(exchange, "GET"))
+        if(!requireExactTextPath(exchange, StatsApiV1.LIVE_ACTIVITY) || !requireMethod(exchange, "GET"))
         {
             return;
         }
 
-        StatsRequest request = StatsRequest.from(exchange.getRequestURI());
+        StatsRequest request;
 
         try
         {
+            request = StatsRequest.from(exchange.getRequestURI());
             validateActivityRequest(request);
+            request.requireFullyConsumed();
         }
         catch(StatsApiException e)
         {
-            sendText(exchange, e.status(), e.getMessage());
+            sendApiException(exchange, e);
             return;
         }
 
@@ -1595,7 +1507,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
 
         if(subscription == null)
         {
-            sendText(exchange, 429, "Too many live Stats Server clients");
+            sendApiError(exchange, 429, "too_many_clients", "Too many live clients");
             return;
         }
 
@@ -1612,7 +1524,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         if(accessController == null || !accessController.isRequestStillAuthorized(exchange))
         {
             subscription.close();
-            sendText(exchange, 403, "Access changed before the live stream started");
+            sendApiError(exchange, 403, "access_denied", "Access changed before the live stream started");
             return;
         }
 
@@ -1674,21 +1586,24 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             return;
         }
 
-        String prefix = "/api/web-player/calls/";
-        String path = exchange.getRequestURI().getPath();
-
-        if(path == null || !path.startsWith(prefix) || !path.endsWith("/audio"))
+        if(!requireNoQuery(exchange))
         {
-            sendText(exchange, 404, "Call audio not found");
             return;
         }
 
-        String id = path.substring(prefix.length(), path.length() - "/audio".length());
+        String id = callAudioId(exchange.getRequestURI());
+
+        if(id == null)
+        {
+            sendApiError(exchange, 404, "not_found", "Call audio not found");
+            return;
+        }
+
         StatsWebCallService.CachedCall call = mWebCallService.get(id);
 
         if(call == null)
         {
-            sendText(exchange, 404, "Call audio is no longer available");
+            sendApiError(exchange, 404, "not_found", "Call audio is no longer available");
             return;
         }
 
@@ -1705,12 +1620,49 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         }
     }
 
+    static String callAudioId(URI uri)
+    {
+        String prefix = StatsApiV1.CALLS + "/";
+        String suffix = "/audio";
+        String rawPath = uri != null ? uri.getRawPath() : null;
+
+        if(rawPath == null || !rawPath.startsWith(prefix) || !rawPath.endsWith(suffix))
+        {
+            return null;
+        }
+
+        String rawId = rawPath.substring(prefix.length(), rawPath.length() - suffix.length());
+
+        if(rawId.isBlank() || rawId.indexOf('/') >= 0 || rawId.indexOf('\\') >= 0)
+        {
+            return null;
+        }
+
+        try
+        {
+            String id = ApiRequestDecoder.decodeComponent(rawId, false);
+            return id.indexOf('/') < 0 && id.indexOf('\\') < 0 && id.indexOf('%') < 0 &&
+                id.matches("[0-9a-z]+") ? id : null;
+        }
+        catch(IllegalArgumentException exception)
+        {
+            return null;
+        }
+    }
+
     private static void writeSseEvent(OutputStream outputStream, String event, Object data)
         throws IOException
     {
-        outputStream.write(("event: " + event + "\n").getBytes(StandardCharsets.UTF_8));
-        outputStream.write(("data: " + OBJECT_MAPPER.writeValueAsString(data) + "\n\n").getBytes(StandardCharsets.UTF_8));
+        outputStream.write(("event: " + event + "\ndata: ").getBytes(StandardCharsets.UTF_8));
+        outputStream.write(data instanceof EncodedSsePayload encoded ? encoded.payload() :
+            ApiHttpResponse.encodePayload(StatsApiV1Payload.present(data)));
+        outputStream.write("\n\n".getBytes(StandardCharsets.UTF_8));
         outputStream.flush();
+    }
+
+    private static void handleApiNotFound(HttpExchange exchange) throws IOException
+    {
+        ApiHttpResponse.sendError(exchange, 404, "not_found", "Resource not found");
     }
 
     private static void writeSseHeartbeat(OutputStream outputStream) throws IOException
@@ -1724,7 +1676,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         throws IOException
     {
         writeDiagnosticFrame(outputStream, DiagnosticStreamFrame.jsonState(generation, revision,
-            OBJECT_MAPPER.writeValueAsBytes(state)));
+            ApiHttpResponse.encodePayload(StatsApiV1Payload.present(state))));
     }
 
     private static void writeDiagnosticFrame(OutputStream outputStream, DiagnosticStreamFrame frame)
@@ -1741,6 +1693,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         String scope = request.text("scope");
         String guid = request.text("guid");
         String context = request.text("context");
+        String kind = request.text("kind");
 
         if(scope != null && !scope.equals(row.get("scope_token")) ||
             guid != null && !guid.equals(row.get("guid")) ||
@@ -1749,9 +1702,14 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             return false;
         }
 
+        if(request.booleanValue("hide_grants", false) && "GRANT".equals(row.get("action")))
+        {
+            return false;
+        }
+
         if(talkgroup != null)
         {
-            boolean patch = "patch".equalsIgnoreCase(request.text("kind"));
+            boolean patch = "patch_group".equals(kind);
             boolean directTarget = numberEquals(row.get("target_id"), talkgroup) &&
                 numberEquals(row.get("target_kind_code"), patch ? 3 : 1);
 
@@ -1788,13 +1746,22 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
 
     private static void validateActivityRequest(StatsRequest request)
     {
-        request.optionalIdentifier("talkgroup_id");
+        Integer talkgroup = request.optionalIdentifier("talkgroup_id");
         request.optionalIdentifier("radio_id");
+        request.text("scope");
+        request.text("guid");
+        request.text("context");
+        request.booleanValue("hide_grants", false);
         String kind = request.text("kind");
 
-        if(kind != null && !"talkgroup".equalsIgnoreCase(kind) && !"patch".equalsIgnoreCase(kind))
+        if(kind != null && talkgroup == null)
         {
-            throw new StatsApiException(400, "kind must be talkgroup or patch");
+            throw new StatsApiException(400, "invalid_parameter", "kind requires talkgroup_id", "kind");
+        }
+        else if(kind != null && !"talkgroup".equals(kind) && !"patch_group".equals(kind))
+        {
+            throw new StatsApiException(400, "invalid_parameter",
+                "kind must be talkgroup or patch_group", "kind");
         }
     }
 
@@ -1912,7 +1879,8 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             }
         }
 
-        sendText(exchange, 405, "Method not allowed");
+        exchange.getResponseHeaders().set("Allow", String.join(", ", methods));
+        ApiHttpResponse.sendError(exchange, 405, "method_not_allowed", "Method not allowed");
         return false;
     }
 
@@ -2053,6 +2021,17 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         }
     }
 
+    private record EncodedSsePayload(byte[] payload)
+    {
+        private EncodedSsePayload
+        {
+            if(payload == null)
+            {
+                throw new IllegalArgumentException("Encoded SSE payload is required");
+            }
+        }
+    }
+
     private record ListenerRuntime(HttpServer server, ExecutorService executor, PreparedConfiguration configuration)
     {
         private ListenerRuntime
@@ -2064,8 +2043,4 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         }
     }
 
-    private interface JsonSupplier
-    {
-        Map<String,Object> get();
-    }
 }

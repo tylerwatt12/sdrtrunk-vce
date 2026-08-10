@@ -27,8 +27,8 @@ import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.protocol.Protocol;
-import java.util.ArrayList;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -69,6 +69,51 @@ class StatsWebCallServiceTest
             assertEquals("RIFF", new String(cached.wave(), 0, 4, StandardCharsets.US_ASCII));
             assertEquals("WAVE", new String(cached.wave(), 8, 4, StandardCharsets.US_ASCII));
             assertEquals(44 + 800 * Short.BYTES, cached.wave().length);
+        }
+        finally
+        {
+            service.close();
+        }
+    }
+
+    @Test
+    void checksThePerCallWaveLimitBeforeEncoding()
+    {
+        int maximumSamples = (StatsWebCallService.MAXIMUM_CALL_AUDIO_BYTES -
+            StatsWebCallService.WAVE_HEADER_BYTES) / Short.BYTES;
+        List<float[]> maximum = audioBuffers(maximumSamples);
+        List<float[]> oversized = new ArrayList<>(maximum);
+        oversized.add(new float[1]);
+
+        assertEquals(16 * 1024 * 1024, StatsWebCallService.MAXIMUM_CALL_AUDIO_BYTES);
+        assertEquals(StatsWebCallService.MAXIMUM_CALL_AUDIO_BYTES,
+            StatsWebCallService.MAXIMUM_PENDING_AUDIO_BYTES);
+        assertEquals(StatsWebCallService.MAXIMUM_CALL_AUDIO_BYTES,
+            StatsWebCallService.checkedWaveLength(maximum));
+        assertEquals(-1, StatsWebCallService.checkedWaveLength(oversized));
+
+        CompletedAudioCall template = call();
+        assertNull(StatsWebCallService.wave(new CompletedAudioCall(template.snapshot(), oversized)));
+    }
+
+    @Test
+    void doesNotPublishAudioAboveThePerCallResponseLimit() throws Exception
+    {
+        StatsWebCallService service = new StatsWebCallService();
+        service.start();
+        int maximumSamples = (StatsWebCallService.MAXIMUM_CALL_AUDIO_BYTES -
+            StatsWebCallService.WAVE_HEADER_BYTES) / Short.BYTES;
+        List<float[]> oversized = audioBuffers(maximumSamples);
+        oversized.add(new float[1]);
+        CompletedAudioCall template = call();
+
+        try(StatsLiveEventHub.Subscription subscription = service.subscribe())
+        {
+            service.receive(new CompletedAudioCall(template.snapshot(), oversized));
+            assertNull(subscription.poll(1, TimeUnit.SECONDS));
+            assertEquals(0, ((Number)service.status().get("cached_calls")).intValue());
+            assertEquals(16 * 1024 * 1024,
+                ((Number)service.status().get("maximum_call_audio_bytes")).intValue());
         }
         finally
         {
@@ -201,5 +246,26 @@ class StatsWebCallServiceTest
         }
 
         return new CompletedAudioCall(snapshot, List.of(audio));
+    }
+
+    private static List<float[]> audioBuffers(int sampleCount)
+    {
+        int bufferLength = 8192;
+        float[] fullBuffer = new float[bufferLength];
+        List<float[]> buffers = new ArrayList<>((sampleCount + bufferLength - 1) / bufferLength);
+        int remaining = sampleCount;
+
+        while(remaining >= bufferLength)
+        {
+            buffers.add(fullBuffer);
+            remaining -= bufferLength;
+        }
+
+        if(remaining > 0)
+        {
+            buffers.add(new float[remaining]);
+        }
+
+        return buffers;
     }
 }

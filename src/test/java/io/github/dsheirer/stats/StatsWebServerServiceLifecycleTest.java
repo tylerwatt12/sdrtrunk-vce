@@ -325,7 +325,7 @@ class StatsWebServerServiceLifecycleTest
             .build(), HttpResponse.BodyHandlers.ofString());
         assertEquals(200, response.statusCode(), response.body());
         JsonNode body = OBJECT_MAPPER.readTree(response.body());
-        assertEquals(expected, body.get("authenticated").booleanValue());
+        assertEquals(expected, body.at("/data/authenticated").booleanValue());
     }
 
     private static void assertAliasRoutes(HttpClient client, URI origin, String cookie, long aliasListId)
@@ -339,16 +339,16 @@ class StatsWebServerServiceLifecycleTest
             .build(), HttpResponse.BodyHandlers.ofString());
         assertEquals(200, catalog.statusCode(), catalog.body());
         assertEquals(aliasListId,
-            OBJECT_MAPPER.readTree(catalog.body()).at("/aliasLists/0/id").longValue());
+            OBJECT_MAPPER.readTree(catalog.body()).at("/data/alias_lists/0/alias_list_id").longValue());
 
         HttpResponse<String> observed = client.send(HttpRequest.newBuilder(origin.resolve(
-                "/api/alias-list/observed-talkgroups?list=" + aliasListId))
+                "/api/v1/alias-lists/" + aliasListId + "/observed-talkgroups"))
             .timeout(Duration.ofSeconds(10))
             .header("Cookie", cookie)
             .GET()
             .build(), HttpResponse.BodyHandlers.ofString());
         assertEquals(200, observed.statusCode(), observed.body());
-        assertTrue(OBJECT_MAPPER.readTree(observed.body()).get("rows").isArray());
+        assertTrue(OBJECT_MAPPER.readTree(observed.body()).get("data").isArray());
     }
 
     private static String login(HttpClient client, URI origin, String password) throws Exception

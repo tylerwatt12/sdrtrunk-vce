@@ -39,6 +39,8 @@ public final class AliasAdministrationService
 {
     public static final int MAX_BULK_ALIASES = 500;
     public static final int MAX_ALIAS_LIST_NAME_LENGTH = 25;
+    public static final int MAX_BROADCAST_CHANNELS = 64;
+    public static final int MAX_BROADCAST_CHANNEL_NAME_LENGTH = 256;
     private static final long FX_QUEUE_TIMEOUT_SECONDS = 15L;
     private static final long JSON_SAFE_INTEGER_MASK = (1L << 53) - 1L;
 
@@ -173,6 +175,20 @@ public final class AliasAdministrationService
     public DeleteImpact aliasListDeleteImpact(long aliasListId)
     {
         return onConfigurationThread(() -> deleteImpact(requireAliasList(aliasListId)));
+    }
+
+    /**
+     * Returns a memory-bounded delete impact for remote administration.  Each count stops at one beyond the supplied
+     * maximum so a caller can reject an oversized mutation without materializing the aliases that would be deleted.
+     */
+    public DeleteImpact aliasListDeleteImpact(long aliasListId, int maximumCount)
+    {
+        if(maximumCount < 0)
+        {
+            throw new IllegalArgumentException("Maximum delete-impact count cannot be negative");
+        }
+
+        return onConfigurationThread(() -> boundedDeleteImpact(requireAliasList(aliasListId), maximumCount));
     }
 
     public MutationResult deleteAliasList(long aliasListId, long expectedRevision, boolean confirmed)
@@ -569,9 +585,20 @@ public final class AliasAdministrationService
 
     private DeleteImpact deleteImpact(AliasListDefinition definition)
     {
-        int aliasCount = aliasesForList(definition).size();
+        int aliasCount = Math.toIntExact(aliasModel().getAliases().stream()
+            .filter(alias -> alias.belongsTo(definition)).count());
+        int channelCount = Math.toIntExact(mConfigurationManager.getChannelModel().getChannels().stream()
+            .filter(channel -> matchesList(channel, definition)).count());
+        return new DeleteImpact(revision(), definition.getId(), definition.getName(), aliasCount, channelCount);
+    }
+
+    private DeleteImpact boundedDeleteImpact(AliasListDefinition definition, int maximumCount)
+    {
+        long limit = (long)maximumCount + 1L;
+        int aliasCount = (int)aliasModel().getAliases().stream()
+            .filter(alias -> alias.belongsTo(definition)).limit(limit).count();
         int channelCount = (int)mConfigurationManager.getChannelModel().getChannels().stream()
-            .filter(channel -> matchesList(channel, definition)).count();
+            .filter(channel -> matchesList(channel, definition)).limit(limit).count();
         return new DeleteImpact(revision(), definition.getId(), definition.getName(), aliasCount, channelCount);
     }
 
@@ -666,11 +693,25 @@ public final class AliasAdministrationService
             throw unmatchedTalkgroupCatchAllException(definition);
         }
 
-        for(BroadcastChannel channel: alias.getBroadcastChannels())
+        Set<BroadcastChannel> broadcastChannels = alias.getBroadcastChannels();
+
+        if(broadcastChannels.size() > MAX_BROADCAST_CHANNELS)
+        {
+            throw new IllegalArgumentException("An Alias cannot have more than " + MAX_BROADCAST_CHANNELS +
+                " broadcast channels");
+        }
+
+        for(BroadcastChannel channel: broadcastChannels)
         {
             if(channel == null || channel.getChannelName() == null || channel.getChannelName().isBlank())
             {
                 throw new IllegalArgumentException("Broadcast channel names cannot be blank");
+            }
+
+            if(channel.getChannelName().length() > MAX_BROADCAST_CHANNEL_NAME_LENGTH)
+            {
+                throw new IllegalArgumentException("Broadcast channel names cannot exceed " +
+                    MAX_BROADCAST_CHANNEL_NAME_LENGTH + " characters");
             }
 
             if(!isConfiguredStream(channel.getChannelName()) &&
@@ -708,11 +749,24 @@ public final class AliasAdministrationService
 
     private void validatePolicyStreams(UnmatchedTalkgroupPolicy policy, UnmatchedTalkgroupPolicy previous)
     {
+        if(policy.getStreamDestinationNames().size() > MAX_BROADCAST_CHANNELS)
+        {
+            throw new IllegalArgumentException("Unmatched Talkgroups cannot have more than " +
+                MAX_BROADCAST_CHANNELS + " broadcast channels");
+        }
+
         Set<String> previousNames = previous != null ?
             Set.copyOf(previous.getStreamDestinationNames()) : Set.of();
 
         for(String channelName: policy.getStreamDestinationNames())
         {
+            if(channelName == null || channelName.isBlank() ||
+                channelName.length() > MAX_BROADCAST_CHANNEL_NAME_LENGTH)
+            {
+                throw new IllegalArgumentException("Broadcast channel names must contain between 1 and " +
+                    MAX_BROADCAST_CHANNEL_NAME_LENGTH + " characters");
+            }
+
             if(!isConfiguredStream(channelName) && !previousNames.contains(channelName))
             {
                 throw new IllegalArgumentException("Broadcast channel [" + channelName + "] does not exist");

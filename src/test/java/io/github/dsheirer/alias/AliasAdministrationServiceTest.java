@@ -37,6 +37,7 @@ import io.github.dsheirer.preference.directory.DirectoryPreference;
 import io.github.dsheirer.protocol.Protocol;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -108,6 +109,60 @@ class AliasAdministrationServiceTest
             AliasDatabaseStore store = new AliasDatabaseStore(database);
             List<AliasListDefinition> definitions = store.loadAliasListDefinitions();
             assertEquals(1, store.loadAliases(definitions).size());
+        }
+        finally
+        {
+            MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
+        }
+    }
+
+    @Test
+    void rejectsBroadcastRouteStateBeyondTheSharedServiceBound() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("broadcast-bound-data");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        Files.createDirectories(database.getParent());
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        CountingConfigurationManager manager = new CountingConfigurationManager(new TestUserPreferences(dataRoot));
+
+        try
+        {
+            manager.init();
+            AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
+            long aliasListId = service.createAliasList("County P25", AliasListFamily.P25).aliasListId();
+            long aliasId = service.createAlias(alias("Dispatch", aliasListId, 101)).aliasIds().getFirst();
+            List<String> routes = new ArrayList<>();
+
+            for(int index = 0; index <= AliasAdministrationService.MAX_BROADCAST_CHANNELS; index++)
+            {
+                String name = "Route " + index;
+                BroadcastifyCallConfiguration route = new BroadcastifyCallConfiguration(BroadcastFormat.MP3);
+                route.setName(name);
+                manager.getBroadcastModel().addBroadcastConfiguration(route);
+                routes.add(name);
+            }
+
+            Alias bounded = service.getAlias(aliasId).alias();
+            bounded.setBroadcastChannels(routes.subList(0, AliasAdministrationService.MAX_BROADCAST_CHANNELS)
+                .stream().map(BroadcastChannel::new).toList());
+            AliasAdministrationService.MutationResult configured = service.replaceAlias(aliasId, bounded);
+            int flushesBeforeOverflow = manager.flushCount();
+
+            IllegalArgumentException overflow = assertThrows(IllegalArgumentException.class,
+                () -> service.bulkEdit(new AliasAdministrationService.BulkEdit(List.of(aliasId), null, null,
+                    null, null, null, null, null, AliasAdministrationService.StreamOperation.ADD,
+                    List.of(routes.getLast()), false), configured.revision()));
+            assertTrue(overflow.getMessage().contains("more than " +
+                AliasAdministrationService.MAX_BROADCAST_CHANNELS));
+            assertEquals(flushesBeforeOverflow, manager.flushCount());
+            assertEquals(AliasAdministrationService.MAX_BROADCAST_CHANNELS,
+                service.getAlias(aliasId).alias().getBroadcastChannels().size());
+
+            Alias longName = service.getAlias(aliasId).alias();
+            longName.setBroadcastChannels(List.of(new BroadcastChannel(
+                "x".repeat(AliasAdministrationService.MAX_BROADCAST_CHANNEL_NAME_LENGTH + 1))));
+            assertThrows(IllegalArgumentException.class, () -> service.replaceAlias(aliasId, longName));
+            assertEquals(flushesBeforeOverflow, manager.flushCount());
         }
         finally
         {
@@ -281,6 +336,10 @@ class AliasAdministrationServiceTest
             AliasAdministrationService.DeleteImpact impact = service.aliasListDeleteImpact(aliasListId);
             assertEquals(2, impact.aliasCount());
             assertEquals(1, impact.channelCount());
+            AliasAdministrationService.DeleteImpact boundedImpact =
+                service.aliasListDeleteImpact(aliasListId, 1);
+            assertEquals(2, boundedImpact.aliasCount());
+            assertEquals(1, boundedImpact.channelCount());
             AliasAdministrationService.ConfirmationRequiredException confirmation = assertThrows(
                 AliasAdministrationService.ConfirmationRequiredException.class,
                 () -> service.deleteAliasList(aliasListId, impact.revision(), false));

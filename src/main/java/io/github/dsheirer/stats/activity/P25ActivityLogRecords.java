@@ -22,6 +22,8 @@ import java.util.TreeSet;
  */
 final class P25ActivityLogRecords
 {
+    static final int MAXIMUM_PATCH_MEMBER_TALKGROUPS = 64;
+
     private P25ActivityLogRecords()
     {
     }
@@ -552,7 +554,8 @@ final class P25ActivityLogRecords
 
         for(Integer talkgroup: talkgroups)
         {
-            if(talkgroup != null && talkgroup > 0 && !talkgroup.equals(excludedTalkgroup))
+            if(distinct.size() < MAXIMUM_PATCH_MEMBER_TALKGROUPS && talkgroup != null && talkgroup > 0 &&
+                !talkgroup.equals(excludedTalkgroup))
             {
                 distinct.add(talkgroup);
             }

@@ -27,7 +27,7 @@ class StatsWebConventionalUiContractTest
         String source = source();
         String tabBuilder = function(source, "function conventionalTabItems(context)");
 
-        for(String capability: new String[]{"info", "talkgroups", "radios", "activity"})
+        for(String capability: new String[]{"group_identities", "radios", "activity"})
         {
             assertTrue(tabBuilder.contains("conventionalCapability(context, '" + capability + "')"),
                 () -> "Missing conventional capability check for " + capability);
@@ -44,10 +44,10 @@ class StatsWebConventionalUiContractTest
     {
         String source = source();
         assertTrue(source.contains("const CONVENTIONAL_IDENTITY_PAGE_LIMIT = 100;"));
-        assertTrue(source.contains("api('/api/conventional/talkgroups', pageParameters({"));
-        assertTrue(source.contains("api('/api/conventional/radios', pageParameters({"));
+        assertTrue(source.contains("api(conventionalApiPath(contextKey, 'talkgroups'), pageParameters({"));
+        assertTrue(source.contains("api(conventionalApiPath(contextKey, 'radios'), pageParameters({"));
         assertTrue(source.contains("limit: CONVENTIONAL_IDENTITY_PAGE_LIMIT"));
-        assertFalse(source.contains("/api/conventional/activity"));
+        assertFalse(source.contains("/api/conventional/"));
     }
 
     @Test

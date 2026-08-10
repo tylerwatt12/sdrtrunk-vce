@@ -33,13 +33,13 @@ class StatsWebDashboardUiContractTest
             dashboard.indexOf("await signalHealthSection()"));
         assertTrue(dashboard.contains("'Monitored Coverage'"));
         assertTrue(dashboard.contains("'Recent Sites / Channels'"));
-        assertTrue(dashboard.contains("dashboard.recentReceivers"));
+        assertTrue(dashboard.contains("dashboard.recent_receivers"));
         assertTrue(dashboard.contains("'Call Totals · Last 24 Hours'"));
         assertTrue(dashboard.contains("'Call Activity · Last 24 Hours'"));
         assertTrue(dashboard.contains("'Calls by Site / Channel · Last 24 Hours'"));
-        assertTrue(dashboard.contains("dashboard.sourceActivity24h"));
-        assertTrue(dashboard.contains("dashboard.topDestinations"));
-        assertTrue(dashboard.contains("dashboard.topSources"));
+        assertTrue(dashboard.contains("dashboard.source_activity_24h"));
+        assertTrue(dashboard.contains("dashboard.top_destinations"));
+        assertTrue(dashboard.contains("dashboard.top_sources"));
         assertTrue(dashboard.contains("'Top Destinations · Last 24 Hours'"));
         assertTrue(dashboard.contains("'Top Sources · Last 24 Hours'"));
         assertFalse(dashboard.contains("'Busiest Call Sources"));
@@ -112,8 +112,8 @@ class StatsWebDashboardUiContractTest
         assertTrue(live.contains("cells[10].title = decoderLabel(row.decoder)"));
         assertFalse(live.contains("cellText(cells[10], row.decoder)"));
         String identity = function(source, "function dashboardIdentity(row)");
-        assertTrue(identity.contains("Talkgroup: 'TG'"));
-        assertTrue(identity.contains("'Patch Group': 'Patch'"));
+        assertTrue(identity.contains("talkgroup: 'TG'"));
+        assertTrue(identity.contains("patch_group: 'Patch'"));
     }
 
     @Test
@@ -122,7 +122,8 @@ class StatsWebDashboardUiContractTest
         String source = Files.readString(APP_JAVASCRIPT);
         String receiverLink = function(source, "function callSourceLink(row)");
         String identityLink = function(source, "function dashboardIdentityLink(row, label = dashboardIdentityId(row))");
-        assertTrue(receiverLink.contains("detail_available ?? row.receiver_detail_available"));
+        assertTrue(receiverLink.contains("Number(row.detail_available)"));
+        assertFalse(receiverLink.contains("receiver_detail_available"));
         assertTrue(receiverLink.contains("dashboardChannelKind(row) === 'TRUNKED'"));
         assertTrue(receiverLink.contains("siteNameSummary(row"));
         assertTrue(receiverLink.contains("return label"));

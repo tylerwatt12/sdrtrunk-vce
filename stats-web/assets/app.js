@@ -360,17 +360,24 @@ function initializeThemeToggle() {
   toggle.addEventListener('click', () => setTheme(currentTheme() === 'dark' ? 'light' : 'dark'));
 }
 
-function normalizeAccessTier(value) {
-  const tier = String(value || 'PUBLIC').trim().toUpperCase();
-  return ['PUBLIC', 'USER', 'ADMIN'].includes(tier) ? tier : 'PUBLIC';
+function accessTierFromWire(value) {
+  return ({ public: 'PUBLIC', user: 'USER', admin: 'ADMIN' })[value] || null;
+}
+
+function accessTierToWire(value) {
+  return ({ PUBLIC: 'public', USER: 'user', ADMIN: 'admin' })[value] || null;
+}
+
+function accessTierValue(value) {
+  return ['PUBLIC', 'USER', 'ADMIN'].includes(value) ? value : 'PUBLIC';
 }
 
 function accessTierRank(value) {
-  return ({ PUBLIC: 0, USER: 1, ADMIN: 2 })[normalizeAccessTier(value)];
+  return ({ PUBLIC: 0, USER: 1, ADMIN: 2 })[accessTierValue(value)];
 }
 
 function accessTierLabel(value) {
-  const tier = normalizeAccessTier(value);
+  const tier = accessTierValue(value);
   return tier[0] + tier.slice(1).toLowerCase();
 }
 
@@ -386,54 +393,25 @@ function anonymousAccessSession() {
   };
 }
 
-function normalizeCapabilityMap(value) {
-  if (Array.isArray(value)) {
-    return Object.fromEntries(value.map((entry) => {
-      if (typeof entry === 'string') return [entry, true];
-      const id = String(entry?.id || entry?.capability || '').trim();
-      return id ? [id, entry?.allowed ?? entry?.enabled ?? entry?.requiredTier ?? false] : null;
-    }).filter(Boolean));
-  }
-  return value && typeof value === 'object' ? { ...value } : {};
-}
-
 function normalizedAccessSession(value) {
   const authenticated = value?.authenticated === true;
+  const capabilities = value?.capabilities && !Array.isArray(value.capabilities) &&
+    typeof value.capabilities === 'object' ? value.capabilities : {};
   return {
     configured: value?.configured === true,
     authenticated,
     username: authenticated ? String(value.username || '').trim() : null,
-    tier: authenticated ? normalizeAccessTier(value.tier) : 'PUBLIC',
-    primary: authenticated && Boolean(value.primary ?? value.primaryAdmin),
-    csrfToken: authenticated && typeof value.csrfToken === 'string' ? value.csrfToken : null,
-    capabilities: normalizeCapabilityMap(value?.capabilities)
+    tier: authenticated ? accessTierFromWire(value?.tier) || 'PUBLIC' : 'PUBLIC',
+    primary: authenticated && value?.primary === true,
+    csrfToken: authenticated && typeof value.csrf_token === 'string' ? value.csrf_token : null,
+    capabilities: Object.fromEntries(Object.entries(capabilities)
+      .filter(([id, allowed]) => typeof id === 'string' && typeof allowed === 'boolean'))
   };
 }
 
 function capabilityAllowed(capability) {
   if (!accessSessionAvailable) return false;
-  const values = accessSession.capabilities || {};
-  const entry = Object.prototype.hasOwnProperty.call(values, capability) ? values[capability] : undefined;
-  if (typeof entry === 'boolean') return entry;
-  if (typeof entry === 'number') return entry !== 0;
-  if (typeof entry === 'string') {
-    const normalized = entry.trim().toUpperCase();
-    if (normalized === 'TRUE') return true;
-    if (normalized === 'FALSE') return false;
-    if (['PUBLIC', 'USER', 'ADMIN'].includes(normalized)) {
-      return accessTierRank(accessSession.tier) >= accessTierRank(normalized);
-    }
-    return false;
-  }
-  if (entry && typeof entry === 'object') {
-    if (typeof entry.allowed === 'boolean') return entry.allowed;
-    if (typeof entry.enabled === 'boolean') return entry.enabled;
-    const requiredTier = String(entry.requiredTier || '').trim().toUpperCase();
-    if (['PUBLIC', 'USER', 'ADMIN'].includes(requiredTier)) {
-      return accessTierRank(accessSession.tier) >= accessTierRank(requiredTier);
-    }
-  }
-  return capability.startsWith('admin-') && accessSession.tier === 'ADMIN';
+  return accessSession.capabilities?.[capability] === true;
 }
 
 function viewAccessCapability(view) {
@@ -702,8 +680,8 @@ function checkbox(checked) {
 }
 
 function protocol(value) {
-  const values = { 1: 'P25 Phase 1', 2: 'P25 Phase 2', 3: 'DMR', 4: 'NXDN', 10: 'NBFM' };
-  return values[Number(value)] || value || '';
+  const named = { p25: 'P25', dmr: 'DMR', nxdn: 'NXDN', nbfm: 'NBFM' };
+  return named[String(value || '').toLowerCase()] || value || '';
 }
 
 function decoderLabel(value, compact = false) {
@@ -836,18 +814,11 @@ function siteValue(row) {
 }
 
 function protocolFamily(row) {
-  const code = Number(row?.protocol_code);
-  if (code === 1 || code === 2) return 'P25';
-  if (code === 3) return 'DMR';
-  if (code === 4) return 'NXDN';
-  if (code === 10) return 'NBFM';
-  return row?.protocol || '';
+  return protocol(row?.protocol);
 }
 
 function isP25(row) {
-  return ['P25', 'APCO25', 'APCO25_PHASE2'].includes(protocolFamily(row)) ||
-    ['APCO25', 'APCO25_PHASE2'].includes(row?.protocol) ||
-    (row?.wacn !== null && row?.wacn !== undefined);
+  return protocolFamily(row) === 'P25';
 }
 
 function identifierNumber(value) {
@@ -858,7 +829,7 @@ function identifierNumber(value) {
 
 function identityNumber(row, value) {
   const numeric = Number(value);
-  if (protocolFamily(row) === 'NXDN' && Number(row?.identity_domain_code) === 2 &&
+  if (protocolFamily(row) === 'NXDN' && row?.address_domain === 'nxdn_type_d' &&
       Number.isInteger(numeric) && numeric >= 0 && numeric <= 0xFFFF) {
     return `${String((numeric >> 11) & 0x1F).padStart(2, '0')}-${
       String(numeric & 0x7FF).padStart(4, '0')}`;
@@ -885,7 +856,6 @@ function trunkedSiteLabel(row) {
 }
 
 function trunkedVariant(row) {
-  const protocolName = protocolFamily(row);
   const raw = String(row.variant || '').toUpperCase();
   if (raw === 'TIER_III') return 'Tier III';
   if (raw === 'CONNECT_PLUS') return 'Connect Plus';
@@ -896,30 +866,19 @@ function trunkedVariant(row) {
   if (raw === 'TYPE_D' || raw === 'TYPE-D') return 'Type-D';
   if (raw === 'P25_PHASE_1') return 'Phase 1';
   if (raw === 'P25_PHASE_2') return 'Phase 2';
-  const variant = Number(row.variant_code);
-  if (protocolName === 'DMR' && variant === 1) return 'Tier III';
-  if (protocolName === 'DMR' && variant === 2) return 'Connect Plus';
-  if (protocolName === 'DMR' && variant === 3) return 'Capacity Max';
-  if (protocolName === 'DMR' && variant === 4) return 'Hytera Tier III';
-  if (protocolName === 'DMR' && variant === 5) return 'Capacity Plus';
-  if (protocolName === 'NXDN' && variant === 1) return 'Type-C';
-  if (protocolName === 'NXDN' && variant === 2) return 'Type-D';
-  return variant > 0 ? `Variant ${variant}` : '';
+  return raw ? raw.toLowerCase().replace(/_/g, ' ').replace(/\b\w/g,
+    (character) => character.toUpperCase()) : '';
+}
+
+function semanticLabel(value) {
+  return String(value || '').toLowerCase().replace(/_/g, ' ').replace(/\b\w/g,
+    (character) => character.toUpperCase());
 }
 
 function identityDomainLabel(row) {
-  const code = Number(row.identity_domain_code || 0);
-  if (protocolFamily(row) === 'DMR') {
-    return ({ 1: 'Tiny', 2: 'Small', 3: 'Large', 4: 'Huge' })[code] || '';
-  }
-  if (protocolFamily(row) === 'NXDN') {
-    if (row.scope_kind_code !== undefined || row.identity_kind_code !== undefined ||
-        row.target_kind_code !== undefined) {
-      return ({ 1: 'Type-C', 2: 'Type-D' })[code] || '';
-    }
-    return ({ 1: 'Global', 2: 'Regional', 3: 'Local', 4: 'Type-D', 5: 'Reserved' })[code] || '';
-  }
-  return '';
+  const value = row?.address_domain || row?.model || row?.location_category || '';
+  return String(value).toLowerCase().replace(/^(dmr|nxdn)_/, '').replace(/_/g, ' ').replace(/\b\w/g,
+    (character) => character.toUpperCase());
 }
 
 function trunkedIdentity(row) {
@@ -976,20 +935,29 @@ function neighborModes(row) {
   return modes.join(', ');
 }
 
-function foreignBandDetails(value) {
-  const types = [
-    { mode: 'FDMA', bandwidth: 12500, slots: 1, voiceRate: 'Half-rate' },
-    { mode: 'FDMA', bandwidth: 12500, slots: 1, voiceRate: 'Full-rate' },
-    { mode: 'FDMA', bandwidth: 6250, slots: 1, voiceRate: 'Half-rate' },
-    { mode: 'TDMA', bandwidth: 12500, slots: 2, voiceRate: 'Half-rate' },
-    { mode: 'TDMA', bandwidth: 25000, slots: 4, voiceRate: 'Half-rate' },
-    { mode: 'TDMA H-D8PSK', bandwidth: 12500, slots: 2, voiceRate: 'Half-rate' }
-  ];
-  return types[Number(value)] || { mode: 'Unknown', bandwidth: '', slots: '', voiceRate: 'Unknown' };
-}
-
 function scope(row) {
   return { scope: row?.scope_token || '' };
+}
+
+function systemApiPath(scopeToken, child = '') {
+  const base = `/api/v1/systems/${encodeURIComponent(String(scopeToken || ''))}`;
+  return child ? `${base}/${child}` : base;
+}
+
+function groupIdentityApiPath(scopeToken, kind, id, child = '') {
+  const identityKind = kind === 'patch_group' ? 'patch_group' : 'talkgroup';
+  const base = `${systemApiPath(scopeToken, 'group-identities')}/${identityKind}/${encodeURIComponent(String(id))}`;
+  return child ? `${base}/${child}` : base;
+}
+
+function siteApiPath(guid, child = '') {
+  const base = `/api/v1/sites/${encodeURIComponent(String(guid || ''))}`;
+  return child ? `${base}/${child}` : base;
+}
+
+function conventionalApiPath(contextKey, child = '') {
+  const base = `/api/v1/conventional-contexts/${encodeURIComponent(String(contextKey || ''))}`;
+  return child ? `${base}/${child}` : base;
 }
 
 function href(view, values = {}) {
@@ -1022,7 +990,6 @@ function anchor(label, target, className) {
 
 function exportCsvHref(dataset, context = {}) {
   const parameters = new URLSearchParams();
-  parameters.set('dataset', dataset);
   Object.entries(context).forEach(([key, value]) => {
     if (value !== null && value !== undefined && value !== '') parameters.set(key, String(value));
   });
@@ -1030,7 +997,8 @@ function exportCsvHref(dataset, context = {}) {
     const value = route.get(key);
     if (value) parameters.set(key, value);
   });
-  return `/api/export.csv?${parameters}`;
+  const path = `/api/v1/exports/${encodeURIComponent(String(dataset))}.csv`;
+  return `${path}${parameters.size ? `?${parameters}` : ''}`;
 }
 
 function exportCsvLink(dataset, context = {}) {
@@ -1085,11 +1053,27 @@ function neighborSiteLink(row) {
   return siteNameSummaryValue(labels.primary, labels.secondary, target);
 }
 
-function talkgroupLink(row, id = row.talkgroup_id, label, explicitKindCode) {
+function identityKind(value) {
+  const kind = String(value || '').trim().toLowerCase();
+  return ['talkgroup', 'radio', 'patch_group', 'unknown'].includes(kind) ? kind : '';
+}
+
+function rowGroupIdentityKind(row, explicitKind) {
+  return identityKind(explicitKind ?? row?.identity_kind ?? row?.target_kind) || 'talkgroup';
+}
+
+function groupIdentityLabel(row, explicitKind, compact = true) {
+  const kind = rowGroupIdentityKind(row, explicitKind);
+  if (kind === 'patch_group') return compact ? 'Patch' : 'Patch Group';
+  if (kind === 'radio') return 'Radio';
+  if (kind === 'unknown') return compact ? 'Unknown' : 'Unknown Identity';
+  return compact ? 'TG' : 'Talkgroup';
+}
+
+function talkgroupLink(row, id = row.talkgroup_id, label, explicitKind) {
   if (id === null || id === undefined || !row?.scope_token ||
       !capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS)) return label || identityNumber(row, id);
-  const kindCode = Number(explicitKindCode ?? row.identity_kind_code ?? row.target_kind_code);
-  const kind = kindCode === 3 ? 'patch' : null;
+  const kind = rowGroupIdentityKind(row, explicitKind) === 'patch_group' ? 'patch_group' : null;
   return anchor(label || identityNumber(row, id),
     href('talkgroup', { ...scope(row), id, kind, tab: 'info' }));
 }
@@ -1100,10 +1084,10 @@ function radioLink(row, id = row.radio_id, label) {
   return anchor(label || identityNumber(row, id), href('radio', { ...scope(row), id, tab: 'info' }));
 }
 
-function talkgroupAliasLink(row, id, prefix = 'alias_', explicitKindCode) {
+function talkgroupAliasLink(row, id, prefix = 'alias_', explicitKind) {
   if (id === null || id === undefined) return '';
   const name = row[`${prefix}name`];
-  return name ? talkgroupLink(row, id, name, explicitKindCode) : '';
+  return name ? talkgroupLink(row, id, name, explicitKind) : '';
 }
 
 function channelTagSet(...values) {
@@ -1258,31 +1242,31 @@ function openReadOnlyModal(title, body, options = {}) {
 }
 
 function statsLoggingState() {
-  const current = serviceStatus?.statsLogging;
+  const current = serviceStatus?.stats_logging;
   const database = serviceStatus?.database || {};
   const logger = new Map((database.logger || []).map((row) => [row.key, row.value]));
   const persistedLastWrite = Number(logger.get('last_successful_write_ms') || 0);
   if (current) {
     return {
       available: true,
-      summaryConfigured: Boolean(current.summaryConfigured),
-      historyConfigured: Boolean(current.detailedHistoryConfigured),
-      summaryActive: Boolean(current.summaryActive),
-      historyActive: Boolean(current.detailedHistoryActive),
-      historyRetained: Boolean(database.detailedHistoryAvailable),
-      lastHistoryMs: Number(database.lastDetailedHistoryMs || 0),
-      lastSuccessfulWriteMs: Math.max(Number(current.lastSuccessfulWriteMs || 0), persistedLastWrite),
+      summaryConfigured: Boolean(current.summary_configured),
+      historyConfigured: Boolean(current.detailed_history_configured),
+      summaryActive: Boolean(current.summary_active),
+      historyActive: Boolean(current.detailed_history_active),
+      historyRetained: Boolean(database.detailed_history_available),
+      lastHistoryMs: Number(database.last_detailed_history_ms || 0),
+      lastSuccessfulWriteMs: Math.max(Number(current.last_successful_write_ms || 0), persistedLastWrite),
       state: String(current.state || ''),
-      lastError: current.lastError || ''
+      lastError: current.last_error || ''
     };
   }
   if (serviceStatus) {
-    const summary = Boolean(database.statsLoggingEnabled);
-    const history = Boolean(database.detailedHistoryEnabled);
+    const summary = Boolean(database.stats_logging_enabled);
+    const history = Boolean(database.detailed_history_enabled);
     return { available: true, summaryConfigured: summary, historyConfigured: history,
       summaryActive: summary, historyActive: summary && history,
-      historyRetained: Boolean(database.detailedHistoryAvailable),
-      lastHistoryMs: Number(database.lastDetailedHistoryMs || 0), lastSuccessfulWriteMs: persistedLastWrite,
+      historyRetained: Boolean(database.detailed_history_available),
+      lastHistoryMs: Number(database.last_detailed_history_ms || 0), lastSuccessfulWriteMs: persistedLastWrite,
       state: summary ? 'RUNNING' : 'DISABLED', lastError: '' };
   }
   return { available: false, summaryConfigured: false, historyConfigured: false,
@@ -1703,7 +1687,7 @@ function pager(page, position = 'bottom') {
   bar.append(node('span', 'muted', range));
   bar.append(offset > 0 ? anchor('Previous', currentHref({ offset: Math.max(0, offset - limit) }), 'button secondary') :
     node('span', 'button disabled', 'Previous'));
-  bar.append(page.hasMore ? anchor('Next', currentHref({ offset: page.nextOffset }), 'button secondary') :
+  bar.append(page.has_more ? anchor('Next', currentHref({ offset: page.next_offset }), 'button secondary') :
     node('span', 'button disabled', 'Next'));
   return bar;
 }
@@ -2200,9 +2184,9 @@ async function renderAliasDetailModal(id) {
   });
   if (!modal) return;
   try {
-    const response = await api('/api/alias', { id });
+    const response = await api(`/api/v1/aliases/${encodeURIComponent(String(id))}`);
     if (activeReadOnlyModal !== modal.state || Number(route.get('alias')) !== id) return;
-    const alias = response.alias || {};
+    const alias = response || {};
     modal.dialog.querySelector('.modal-header h2').textContent = String(alias.name || '').trim() ||
       `Alias ${identifierNumber(id)}`;
     modal.content.replaceChildren(aliasDetailContent(alias, response.breakdown || []));
@@ -2216,7 +2200,7 @@ function aliasAdminAllowed() {
 }
 
 function aliasListId(row) {
-  const value = Number(row?.alias_list_id ?? row?.id);
+  const value = Number(row?.alias_list_id);
   return Number.isInteger(value) && value > 0 ? value : null;
 }
 
@@ -2365,7 +2349,7 @@ function aliasEditorFilterToolbar(listResponse, options = null) {
   search.append(input);
   const matcherOptions = (listResponse.matcher_types || []).map(aliasMatcherOption)
     .filter((entry) => entry.value).sort((left, right) => left.label.localeCompare(right.label));
-  const groupNames = [...new Set((options?.groupNames || []).map((value) => String(value || '').trim())
+  const groupNames = [...new Set((options?.group_names || []).map((value) => String(value || '').trim())
     .filter(Boolean))].sort((left, right) => left.localeCompare(right));
   const groupFilter = aliasTextInput('group', route.get('group') || '');
   groupFilter.placeholder = 'Exact group';
@@ -2590,7 +2574,10 @@ function openAliasListCreateModal() {
   const name = aliasTextInput('name');
   name.required = true;
   name.maxLength = 25;
-  const family = aliasSelect('family', ['P25', 'DMR', 'NXDN', 'NBFM'], 'P25');
+  const family = aliasSelect('family', [
+    { value: 'p25', label: 'P25' }, { value: 'dmr', label: 'DMR' },
+    { value: 'nxdn', label: 'NXDN' }, { value: 'nbfm', label: 'NBFM' }
+  ], 'p25');
   const errorHost = node('div', 'alias-form-message');
   form.append(node('p', 'modal-introduction',
     'A list owns one protocol family. Channels can share the list when their protocol matches.'),
@@ -2614,7 +2601,7 @@ function openAliasListCreateModal() {
           revision: Number(aliasEditorContext?.revision ?? 0), name: name.value.trim(), family: family.value
         }
       });
-      await finishAliasMutation(modal, result, { list: result.aliasListId, aliasTab: 'configure' });
+      await finishAliasMutation(modal, result, { list: result.alias_list_id, aliasTab: 'configure' });
     } catch (error) {
       aliasMutationError(errorHost, error);
       submit.disabled = false;
@@ -2634,10 +2621,10 @@ async function openAliasListDeleteModal(selectedList) {
     const impact = await requestJson(`/api/v1/admin/alias-lists/${id}/delete-impact`, { csrf: false });
     if (activeReadOnlyModal !== modal.state) return;
     const body = node('div', 'alias-confirmation');
-    body.append(node('p', '', `This permanently deletes ${number(impact.aliasCount || 0)} aliases.`));
-    if (Number(impact.channelCount || 0) > 0) {
+    body.append(node('p', '', `This permanently deletes ${number(impact.alias_count || 0)} aliases.`));
+    if (Number(impact.channel_count || 0) > 0) {
       body.append(node('div', 'logging-notice warning',
-        `${number(impact.channelCount)} configured channels use this list. Their alias-list assignment will be removed.`));
+        `${number(impact.channel_count)} configured channels use this list. Their alias-list assignment will be removed.`));
     }
     const confirm = node('label', 'alias-confirm-check');
     const checkbox = node('input');
@@ -2703,10 +2690,11 @@ function aliasEditorColorValue(control) {
 function aliasMatcherKey(value) {
   const type = String(value?.type || '');
   const protocol = String(value?.protocol || '');
-  return protocol ? `${type}:${protocol}` : type;
+  const variant = String(value?.variant || '');
+  return protocol ? `${type}:${protocol}${variant ? `:${variant}` : ''}` : type;
 }
 
-function aliasMatcherDescriptor(options, keyOrType, protocol = '') {
+function aliasMatcherDescriptor(options, keyOrType, protocol = '', variant = '') {
   const matchers = options?.matchers || [];
   const key = String(keyOrType || '');
   const exact = matchers.find((entry) => aliasMatcherKey(entry) === key);
@@ -2714,8 +2702,6 @@ function aliasMatcherDescriptor(options, keyOrType, protocol = '') {
   const typed = matchers.find((entry) => {
     if (String(entry.type) !== key) return false;
     if (!protocol || String(entry.protocol) === String(protocol)) return true;
-    const p25Protocols = ['APCO25', 'APCO25_PHASE2'];
-    if (p25Protocols.includes(String(entry.protocol)) && p25Protocols.includes(String(protocol))) return true;
     return false;
   });
   return typed || matchers[0];
@@ -2724,9 +2710,10 @@ function aliasMatcherDescriptor(options, keyOrType, protocol = '') {
 function aliasMatcherDefault(descriptor, options = {}) {
   const matcher = { type: descriptor?.type };
   if (descriptor?.protocol) matcher.protocol = descriptor.protocol;
+  if (descriptor?.variant) matcher.variant = descriptor.variant;
   (descriptor?.fields || []).forEach((field) => {
     if (field === 'tones') matcher.tones = [{ tone: options.tones?.[0] || '', duration: 1 }];
-    else if (field === 'code') matcher.code = options.dcsCodes?.[0] || 'N023';
+    else if (field === 'code') matcher.code = options.dcs_codes?.[0] || 'n023';
     else if (field === 'esn') matcher.esn = '';
     else matcher[field] = field === 'minimum' ? Number(descriptor.minimum || 0) :
       (field === 'maximum' ? Number(descriptor.minimum || 0) : 0);
@@ -2751,7 +2738,7 @@ function aliasMatcherFields(host, descriptor, matcher, options) {
     else if (field === 'maximum') numberField(field, 'Maximum identifier');
     else if (field === 'status') numberField(field, 'Status', '0 through 255');
     else if (field === 'code') {
-      host.append(aliasFormField('DCS code', aliasSelect('matcher-code', options?.dcsCodes || [], matcher?.code)));
+      host.append(aliasFormField('DCS code', aliasSelect('matcher-code', options?.dcs_codes || [], matcher?.code)));
     } else if (field === 'esn') {
       const input = aliasTextInput('matcher-esn', matcher?.esn || '');
       input.required = true;
@@ -2790,6 +2777,8 @@ function aliasMatcherPayload(form, descriptor) {
     const preserveProtocol = selector.value === selector.dataset.originalSelection &&
       String(descriptor.type) === selector.dataset.originalType && selector.dataset.originalProtocol;
     matcher.protocol = preserveProtocol ? selector.dataset.originalProtocol : descriptor.protocol;
+    if (preserveProtocol && selector.dataset.originalVariant) matcher.variant = selector.dataset.originalVariant;
+    else if (descriptor.variant) matcher.variant = descriptor.variant;
   }
   (descriptor.fields || []).forEach((field) => {
     if (field === 'tones') {
@@ -2883,18 +2872,18 @@ function aliasEditorPayload(form, options) {
   const priorityValue = form.elements.priority.value;
   const streamValue = form.elements.streamAsTalkgroup.value.trim();
   return {
-    aliasListId: Number(form.elements.aliasListId.value),
+    alias_list_id: Number(form.elements.aliasListId.value),
     name: form.elements.name.value.trim(),
     description: form.elements.description.value.trim(),
     group: form.elements.group.value.trim(),
     color: aliasEditorColorValue(form.elements.color),
-    iconName: form.elements.iconName.value || null,
-    listenEnabled,
+    icon_name: form.elements.iconName.value || null,
+    listen_enabled: listenEnabled,
     priority: listenEnabled && priorityValue !== '' ? Number(priorityValue) : null,
     recordable: form.elements.recordable.checked,
-    broadcastChannels: [...form.querySelectorAll('[name="broadcastChannel"]:checked')]
+    broadcast_channels: [...form.querySelectorAll('[name="broadcastChannel"]:checked')]
       .map((checkbox) => checkbox.value),
-    streamAsTalkgroup: streamValue ? Number(streamValue) : null,
+    stream_as_talkgroup: streamValue ? Number(streamValue) : null,
     matcher
   };
 }
@@ -2902,8 +2891,8 @@ function aliasEditorPayload(form, options) {
 async function openAliasEditorModal(mode = 'create', id = null, prefill = null) {
   const editing = mode === 'edit';
   const cloning = mode === 'clone';
-  const selectedListId = Number(prefill?.aliasListId || route.get('list'));
-  const copyingRangeActions = !editing && !cloning && Number(prefill?.copyActionsFromAliasId) > 0;
+  const selectedListId = Number(prefill?.alias_list_id || route.get('list'));
+  const copyingRangeActions = !editing && !cloning && Number(prefill?.copy_actions_from_alias_id) > 0;
   const loading = node('div', 'loading', editing || cloning || copyingRangeActions ?
     'Loading alias settings' : 'Preparing alias editor');
   const modal = openReadOnlyModal(editing ? `Edit Alias ${identifierNumber(id)}` :
@@ -2916,11 +2905,12 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
   try {
     const recordPromise = editing || cloning ? requestJson(`/api/v1/admin/aliases/${id}`, { csrf: false }) :
       Promise.resolve(null);
-    const initialOptionsPromise = requestJson(`/api/v1/admin/aliases/options?aliasListId=${selectedListId}`,
+    const initialOptionsPromise = requestJson(`/api/v1/admin/aliases/options?alias_list_id=${selectedListId}`,
       { csrf: false });
-    const analyticsPromise = editing || cloning ? api('/api/alias', { id }).catch(() => null) : Promise.resolve(null);
+    const analyticsPromise = editing || cloning ?
+      api(`/api/v1/aliases/${encodeURIComponent(String(id))}`).catch(() => null) : Promise.resolve(null);
     const rangeActionsPromise = copyingRangeActions ?
-      requestJson(`/api/v1/admin/aliases/${Number(prefill.copyActionsFromAliasId)}`, { csrf: false }) :
+      requestJson(`/api/v1/admin/aliases/${Number(prefill.copy_actions_from_alias_id)}`, { csrf: false }) :
       Promise.resolve(null);
     const [recordResponse, options, analytics, rangeActionsResponse] = await Promise.all([
       recordPromise, initialOptionsPromise, analyticsPromise, rangeActionsPromise
@@ -2928,23 +2918,24 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
     if (activeReadOnlyModal !== modal.state) return;
     const source = editing || cloning ? { ...(recordResponse?.alias || {}) } : { ...(prefill || {}) };
     if (rangeActionsResponse?.alias) {
-      if (Number(rangeActionsResponse.alias.aliasListId) !== selectedListId) {
+      if (Number(rangeActionsResponse.alias.alias_list_id) !== selectedListId) {
         throw new Error('The covering range alias changed lists. Reload Discover and try again.');
       }
-      ['listenEnabled', 'priority', 'recordable', 'broadcastChannels'].forEach((field) => {
+      ['listen_enabled', 'priority', 'recordable', 'broadcast_channels'].forEach((field) => {
         source[field] = rangeActionsResponse.alias[field];
       });
     }
-    if ((editing || cloning) && Number(source.aliasListId) !== selectedListId) {
+    if ((editing || cloning) && Number(source.alias_list_id) !== selectedListId) {
       throw new Error('This alias is no longer in the selected alias list. Reload the list and try again.');
     }
     const revision = Number(recordResponse?.revision ?? rangeActionsResponse?.revision ?? options?.revision ??
       aliasEditorContext?.revision ?? 0);
     const currentList = aliasEditorContext?.lists.find((row) => aliasListId(row) ===
-      Number(source.aliasListId || selectedListId)) || aliasEditorContext?.selectedList;
+      Number(source.alias_list_id || selectedListId)) || aliasEditorContext?.selectedList;
     const family = aliasListFamily(currentList);
     const compatibleLists = (aliasEditorContext?.lists || []).filter((row) => aliasListFamily(row) === family);
-    const descriptor = aliasMatcherDescriptor(options, source.matcher?.type, source.matcher?.protocol);
+    const descriptor = aliasMatcherDescriptor(options, source.matcher?.type, source.matcher?.protocol,
+      source.matcher?.variant);
     const initialMatcher = source.matcher || aliasMatcherDefault(descriptor, options);
     const form = node('form', 'alias-editor-form');
     const basics = node('section', 'alias-editor-panel');
@@ -2954,7 +2945,7 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
 
     const listSelect = aliasSelect('aliasListId', compatibleLists.map((row) => ({
       value: aliasListId(row), label: row.name
-    })), source.aliasListId || selectedListId);
+    })), source.alias_list_id || selectedListId);
     const name = aliasTextInput('name', cloning ? `Copy of ${source.name || ''}` : source.name || '');
     name.required = true;
     name.maxLength = 256;
@@ -2969,7 +2960,7 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
     group.setAttribute('list', groupListId);
     const groupList = node('datalist');
     groupList.id = groupListId;
-    (options.groupNames || []).forEach((value) => {
+    (options.group_names || []).forEach((value) => {
       const option = node('option');
       option.value = value;
       groupList.append(option);
@@ -2978,13 +2969,13 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
     const color = aliasTextInput('color', aliasColorHex(originalColor), 'color');
     color.dataset.originalColor = String(originalColor);
     color.dataset.originalHex = aliasColorHex(originalColor);
-    const configuredIcons = new Set(options.iconNames || []);
-    const iconEntries = [...(options.iconNames || []).map((value) => ({ value, label: value }))];
-    if (source.iconName && !configuredIcons.has(source.iconName)) {
-      iconEntries.unshift({ value: source.iconName, label: `Missing: ${source.iconName}` });
+    const configuredIcons = new Set(options.icon_names || []);
+    const iconEntries = [...(options.icon_names || []).map((value) => ({ value, label: value }))];
+    if (source.icon_name && !configuredIcons.has(source.icon_name)) {
+      iconEntries.unshift({ value: source.icon_name, label: `Missing: ${source.icon_name}` });
     }
-    const selectedIcon = cloning && source.iconName && !configuredIcons.has(source.iconName) ? '' :
-      source.iconName || '';
+    const selectedIcon = cloning && source.icon_name && !configuredIcons.has(source.icon_name) ? '' :
+      source.icon_name || '';
     const icon = aliasSelect('iconName', iconEntries, selectedIcon, true);
     const basicsGrid = node('div', 'alias-editor-grid');
     basicsGrid.append(aliasFormField('Alias list', listSelect), aliasFormField('Alias name', name),
@@ -2998,6 +2989,7 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
     matcherType.dataset.originalSelection = aliasMatcherKey(descriptor);
     matcherType.dataset.originalType = String(source.matcher?.type || '');
     matcherType.dataset.originalProtocol = String(source.matcher?.protocol || '');
+    matcherType.dataset.originalVariant = String(source.matcher?.variant || '');
     const matcherNotice = node('div', 'alias-identifier-notice');
     if (source.overlap) matcherNotice.append(node('div', 'logging-notice warning',
       'This identifier overlaps another alias in the list. Review both aliases before saving.'));
@@ -3016,8 +3008,8 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
     const listen = node('input');
     listen.type = 'checkbox';
     listen.name = 'listenEnabled';
-    listen.checked = source.listenEnabled !== false;
-    const priorityOptions = [{ value: '', label: 'Default' }, ...(options.playbackPriorities || [])
+    listen.checked = source.listen_enabled !== false;
+    const priorityOptions = [{ value: '', label: 'Default' }, ...(options.playback_priorities || [])
       .filter((value) => Number(value) >= 0 && Number(value) < 100)
       .map((value) => ({ value, label: `Priority ${value}` }))];
     const priority = aliasSelect('priority', priorityOptions, source.priority ?? '');
@@ -3032,9 +3024,9 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
       aliasFormField('Listen priority', priority), aliasFormField('Record calls', record));
     const streams = node('fieldset', 'alias-stream-options');
     streams.append(node('legend', '', 'Streaming destinations'));
-    const selectedStreams = new Set(source.broadcastChannels || []);
-    const configuredStreams = new Set(options.streamNames || []);
-    const streamNames = [...new Set([...(options.streamNames || []), ...(source.broadcastChannels || [])])];
+    const selectedStreams = new Set(source.broadcast_channels || []);
+    const configuredStreams = new Set(options.stream_names || []);
+    const streamNames = [...new Set([...(options.stream_names || []), ...(source.broadcast_channels || [])])];
     if (!streamNames.length) streams.append(node('div', 'empty', 'No stream destinations configured'));
     streamNames.forEach((streamName) => {
       const label = node('label', 'alias-check-option');
@@ -3048,7 +3040,7 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
       label.append(checkbox, node('span', '', missing ? `Missing: ${streamName}` : streamName));
       streams.append(label);
     });
-    const streamAs = aliasTextInput('streamAsTalkgroup', source.streamAsTalkgroup ?? '', 'number');
+    const streamAs = aliasTextInput('streamAsTalkgroup', source.stream_as_talkgroup ?? '', 'number');
     streamAs.min = '1';
     streamAs.max = '65535';
     streamAs.step = '1';
@@ -3102,7 +3094,7 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
         const result = await requestJson(editing ? `/api/v1/admin/aliases/${id}` : '/api/v1/admin/aliases', {
           method: editing ? 'PUT' : 'POST', body: { revision, alias: payload }
         });
-        await finishAliasMutation(modal, result, { list: payload.aliasListId });
+        await finishAliasMutation(modal, result, { list: payload.alias_list_id });
       } catch (error) {
         aliasMutationError(errorHost, error, () => {
           modal.setDirty(false);
@@ -3186,7 +3178,7 @@ function aliasBulkBar(onClear) {
 function aliasBulkStreamChoices(options) {
   const fieldset = node('fieldset', 'alias-stream-options alias-bulk-streams');
   fieldset.append(node('legend', '', 'Destinations'));
-  (options?.streamNames || []).forEach((streamName) => {
+  (options?.stream_names || []).forEach((streamName) => {
     const label = node('label', 'alias-check-option');
     const checkbox = node('input');
     checkbox.type = 'checkbox';
@@ -3195,7 +3187,7 @@ function aliasBulkStreamChoices(options) {
     label.append(checkbox, node('span', '', streamName));
     fieldset.append(label);
   });
-  if (!(options?.streamNames || []).length) fieldset.append(node('div', 'empty', 'No destinations configured'));
+  if (!(options?.stream_names || []).length) fieldset.append(node('div', 'empty', 'No destinations configured'));
   return fieldset;
 }
 
@@ -3206,7 +3198,7 @@ function openAliasBulkModal(kind) {
   form.append(node('p', 'modal-introduction',
     `This change applies only to the ${number(ids.length)} explicitly selected aliases on this page.`));
   const options = aliasEditorContext?.options || {};
-  const payload = { revision: Number(aliasEditorContext?.revision ?? options.revision ?? 0), aliasIds: ids };
+  const payload = { revision: Number(aliasEditorContext?.revision ?? options.revision ?? 0), alias_ids: ids };
   let readChange;
   let submitLabel = 'Apply Change';
 
@@ -3221,38 +3213,38 @@ function openAliasBulkModal(kind) {
       'Only lists with a compatible protocol are available.'));
     readChange = () => {
       if (!select.value) throw new Error('Choose a destination list');
-      return { aliasListId: Number(select.value) };
+      return { alias_list_id: Number(select.value) };
     };
   } else if (kind === 'group') {
     const operation = aliasSelect('groupOperation', [
-      { value: '', label: 'Leave unchanged' }, { value: 'SET', label: 'Set group' },
-      { value: 'CLEAR', label: 'Clear group' }
+      { value: '', label: 'Leave unchanged' }, { value: 'set', label: 'Set group' },
+      { value: 'clear', label: 'Clear group' }
     ], '');
     const group = aliasTextInput('group');
     group.disabled = true;
-    operation.addEventListener('change', () => { group.disabled = operation.value !== 'SET'; });
+    operation.addEventListener('change', () => { group.disabled = operation.value !== 'set'; });
     form.append(aliasFormField('Group change', operation), aliasFormField('Group name', group));
     readChange = () => {
       if (!operation.value) throw new Error('Choose how the group should change');
-      if (operation.value === 'SET' && !group.value.trim()) throw new Error('Enter a group name');
-      return { groupOperation: operation.value, group: operation.value === 'SET' ? group.value.trim() : null };
+      if (operation.value === 'set' && !group.value.trim()) throw new Error('Enter a group name');
+      return { group_operation: operation.value, group: operation.value === 'set' ? group.value.trim() : null };
     };
   } else if (kind === 'listen') {
     const operation = aliasSelect('listenOperation', [
       { value: '', label: 'Leave unchanged' }, { value: 'DEFAULT', label: 'Enable · default priority' },
       { value: 'PRIORITY', label: 'Enable · selected priority' }, { value: 'DISABLE', label: 'Disable Listen' }
     ], '');
-    const priority = aliasSelect('priority', (options.playbackPriorities || []).filter((value) =>
+    const priority = aliasSelect('priority', (options.playback_priorities || []).filter((value) =>
       Number(value) >= 0 && Number(value) < 100).map((value) => ({ value, label: `Priority ${value}` })), '');
     priority.disabled = true;
     operation.addEventListener('change', () => { priority.disabled = operation.value !== 'PRIORITY'; });
     form.append(aliasFormField('Listen change', operation), aliasFormField('Priority', priority));
     readChange = () => {
       if (!operation.value) throw new Error('Choose how Listen should change');
-      if (operation.value === 'DISABLE') return { listenEnabled: false, priority: null };
-      if (operation.value === 'DEFAULT') return { listenEnabled: true, priority: null };
+      if (operation.value === 'DISABLE') return { listen_enabled: false, priority: null };
+      if (operation.value === 'DEFAULT') return { listen_enabled: true, priority: null };
       if (!priority.value) throw new Error('Choose a priority');
-      return { listenEnabled: true, priority: Number(priority.value) };
+      return { listen_enabled: true, priority: Number(priority.value) };
     };
   } else if (kind === 'record') {
     const operation = aliasSelect('recordOperation', [
@@ -3266,13 +3258,13 @@ function openAliasBulkModal(kind) {
     };
   } else if (kind === 'stream') {
     const operation = aliasSelect('streamOperation', [
-      { value: '', label: 'Leave unchanged' }, { value: 'ADD', label: 'Add destinations' },
-      { value: 'REMOVE', label: 'Remove destinations' }, { value: 'REPLACE', label: 'Replace destinations' },
-      { value: 'CLEAR', label: 'Clear all destinations' }
+      { value: '', label: 'Leave unchanged' }, { value: 'add', label: 'Add destinations' },
+      { value: 'remove', label: 'Remove destinations' }, { value: 'replace', label: 'Replace destinations' },
+      { value: 'clear', label: 'Clear all destinations' }
     ], '');
     const choices = aliasBulkStreamChoices(options);
     operation.addEventListener('change', () => {
-      choices.disabled = operation.value === 'CLEAR' || !operation.value;
+      choices.disabled = operation.value === 'clear' || !operation.value;
       choices.querySelectorAll('input').forEach((input) => { input.disabled = choices.disabled; });
     });
     choices.disabled = true;
@@ -3281,9 +3273,9 @@ function openAliasBulkModal(kind) {
     readChange = () => {
       if (!operation.value) throw new Error('Choose how streams should change');
       const channels = [...choices.querySelectorAll('input:checked')].map((input) => input.value);
-      if (operation.value !== 'CLEAR' && !channels.length) throw new Error('Select at least one destination');
-      return { streamOperation: operation.value,
-        broadcastChannels: operation.value === 'CLEAR' ? null : channels };
+      if (operation.value !== 'clear' && !channels.length) throw new Error('Select at least one destination');
+      return { stream_operation: operation.value,
+        broadcast_channels: operation.value === 'clear' ? null : channels };
     };
   } else if (kind === 'appearance') {
     const colorOperation = aliasSelect('colorOperation', [
@@ -3294,7 +3286,7 @@ function openAliasBulkModal(kind) {
     color.disabled = true;
     colorOperation.addEventListener('change', () => { color.disabled = colorOperation.value !== 'SET'; });
     const icon = aliasSelect('iconName', [{ value: '', label: 'Leave icon unchanged' },
-      ...(options.iconNames || []).map((value) => ({ value, label: value }))], '');
+      ...(options.icon_names || []).map((value) => ({ value, label: value }))], '');
     form.append(aliasFormField('Color change', colorOperation), aliasFormField('Color', color),
       aliasFormField('Icon change', icon));
     readChange = () => {
@@ -3302,7 +3294,7 @@ function openAliasBulkModal(kind) {
       return { ...(colorOperation.value ? {
         color: colorOperation.value === 'RESET' ? 0 : aliasColorInteger(color.value)
       } : {}),
-        ...(icon.value ? { iconName: icon.value } : {}) };
+        ...(icon.value ? { icon_name: icon.value } : {}) };
     };
   } else if (kind === 'delete') {
     submitLabel = `Delete ${number(ids.length)} Aliases`;
@@ -3341,7 +3333,7 @@ function openAliasBulkModal(kind) {
       const result = await requestJson('/api/v1/admin/aliases/bulk', {
         method: 'POST', body: payload
       });
-      await finishAliasMutation(modal, result, kind === 'move' ? { list: payload.aliasListId } : {});
+      await finishAliasMutation(modal, result, kind === 'move' ? { list: payload.alias_list_id } : {});
     } catch (error) {
       aliasMutationError(errorHost, error, () => {
         modal.setDirty(false);
@@ -3353,16 +3345,6 @@ function openAliasBulkModal(kind) {
   });
 }
 
-function unmatchedTalkgroupPolicy(selectedList) {
-  const policy = selectedList?.unmatchedTalkgroupPolicy || selectedList?.unmatched_talkgroup_policy || {};
-  const playbackPriority = Number(policy.playbackPriority ?? policy.playback_priority ?? 100);
-  return {
-    playbackPriority: Number.isInteger(playbackPriority) ? playbackPriority : 100,
-    recordEnabled: Boolean(policy.recordEnabled ?? policy.record_enabled),
-    streamDestinationNames: [...(policy.streamDestinationNames || policy.stream_destination_names || [])]
-  };
-}
-
 function unmatchedTalkgroupsSupported(selectedList) {
   return ['P25', 'DMR', 'NXDN'].includes(aliasListFamily(selectedList));
 }
@@ -3370,7 +3352,7 @@ function unmatchedTalkgroupsSupported(selectedList) {
 function openUnmatchedTalkgroupPolicyModal(selectedList) {
   const listId = aliasListId(selectedList);
   const options = aliasEditorContext?.options || {};
-  const policy = unmatchedTalkgroupPolicy(selectedList);
+  const policy = selectedList?.unmatched_talkgroup_policy || {};
   const form = node('form', 'alias-editor-form alias-policy-form');
   form.append(node('p', 'modal-introduction',
     'These settings apply only when a received talkgroup has no exact alias or covering range in this list.'));
@@ -3378,27 +3360,27 @@ function openUnmatchedTalkgroupPolicyModal(selectedList) {
   const listen = node('input');
   listen.type = 'checkbox';
   listen.name = 'listenEnabled';
-  listen.checked = policy.playbackPriority !== -1;
-  const priorityValues = (options.playbackPriorities || []).filter((value) =>
+  listen.checked = Boolean(policy.listen_enabled);
+  const priorityValues = (options.playback_priorities || []).filter((value) =>
     Number(value) >= 1 && Number(value) < 100).map((value) => ({ value, label: `Priority ${value}` }));
-  const selectedPriority = policy.playbackPriority >= 1 && policy.playbackPriority < 100 ?
-    policy.playbackPriority : '';
+  const selectedPriority = Number(policy.priority) >= 1 && Number(policy.priority) < 100 ?
+    Number(policy.priority) : '';
   const priority = aliasSelect('priority', [{ value: '', label: 'Default' }, ...priorityValues], selectedPriority);
   priority.disabled = !listen.checked;
   listen.addEventListener('change', () => { priority.disabled = !listen.checked; });
   const record = node('input');
   record.type = 'checkbox';
   record.name = 'recordable';
-  record.checked = policy.recordEnabled;
+  record.checked = Boolean(policy.recordable);
   const behavior = node('div', 'alias-editor-grid');
   behavior.append(aliasFormField('Listen', listen, 'Play unmatched talkgroup calls'),
     aliasFormField('Listen priority', priority), aliasFormField('Record calls', record));
 
   const streams = node('fieldset', 'alias-stream-options');
   streams.append(node('legend', '', 'Streaming destinations'));
-  const selectedStreams = new Set(policy.streamDestinationNames);
-  const configuredStreams = new Set(options.streamNames || []);
-  const streamNames = [...new Set([...(options.streamNames || []), ...policy.streamDestinationNames])];
+  const selectedStreams = new Set(policy.broadcast_channels || []);
+  const configuredStreams = new Set(options.stream_names || []);
+  const streamNames = [...new Set([...(options.stream_names || []), ...(policy.broadcast_channels || [])])];
   if (!streamNames.length) streams.append(node('div', 'empty', 'No stream destinations configured'));
   streamNames.forEach((streamName) => {
     const label = node('label', 'alias-check-option');
@@ -3436,10 +3418,10 @@ function openUnmatchedTalkgroupPolicyModal(selectedList) {
       const result = await requestJson(`/api/v1/admin/alias-lists/${listId}/unmatched-talkgroups`, {
         method: 'PUT', body: {
           revision: Number(aliasEditorContext?.revision ?? options.revision ?? 0),
-          listenEnabled: listen.checked,
+          listen_enabled: listen.checked,
           priority: listen.checked && priority.value ? Number(priority.value) : null,
           recordable: record.checked,
-          broadcastChannels: [...streams.querySelectorAll('[name="broadcastChannel"]:checked')]
+          broadcast_channels: [...streams.querySelectorAll('[name="broadcastChannel"]:checked')]
             .map((checkbox) => checkbox.value)
         }
       });
@@ -3456,27 +3438,30 @@ function openUnmatchedTalkgroupPolicyModal(selectedList) {
 }
 
 function observedTalkgroupProtocol(row) {
-  const raw = String(row?.protocol || protocolFamily(row) || '').trim().toUpperCase();
-  if (['P25', 'P25_PHASE1'].includes(raw)) return 'APCO25';
-  if (raw === 'P25_PHASE2') return 'APCO25_PHASE2';
-  return raw;
+  const value = String(row?.protocol || '').trim().toLowerCase();
+  return ['p25', 'dmr', 'nxdn', 'nbfm', 'fleetsync', 'mdc1200'].includes(value) ? value : '';
+}
+
+function observedTalkgroupVariant(row) {
+  if (observedTalkgroupProtocol(row) !== 'p25') return null;
+  return ['phase_1', 'phase_2'].includes(row?.protocol_variant) ? row.protocol_variant : 'phase_1';
 }
 
 function observedTalkgroupMatchKind(row) {
-  const kind = String(row?.match_kind || row?.alias_match_kind || 'none').trim().toLowerCase();
+  const kind = String(row?.match_kind || 'none').trim().toLowerCase();
   return ['exact', 'range'].includes(kind) ? kind : 'none';
 }
 
 function observedP25IdentityState(row) {
-  const state = Number(row?.p25_identity_state_code);
-  return Number.isInteger(state) && state >= 0 && state <= 3 ? state : 0;
+  const state = String(row?.qualification?.state || 'unknown').trim().toLowerCase();
+  return ['unknown', 'ordinary', 'stable_fully_qualified', 'ambiguous'].includes(state) ? state : 'unknown';
 }
 
 function observedP25HomeIdentity(row) {
-  if (observedP25IdentityState(row) !== 2) return null;
-  const wacn = Number(row?.p25_home_wacn);
-  const system = Number(row?.p25_home_system_id);
-  const talkgroup = Number(row?.p25_home_talkgroup_id);
+  if (observedP25IdentityState(row) !== 'stable_fully_qualified') return null;
+  const wacn = Number(row?.qualification?.home?.wacn);
+  const system = Number(row?.qualification?.home?.system_id);
+  const talkgroup = Number(row?.qualification?.home?.talkgroup_id);
   return Number.isInteger(wacn) && wacn >= 0 && wacn <= 0xFFFFF &&
     Number.isInteger(system) && system >= 0 && system <= 0xFFF &&
     Number.isInteger(talkgroup) && talkgroup > 0 && talkgroup < 0xFFFF ?
@@ -3534,13 +3519,12 @@ function observedTalkgroupKey(row) {
   const topology = String(row?.topology || 'UNKNOWN').trim().toUpperCase() || 'UNKNOWN';
   const protocol = observedTalkgroupProtocol(row) || 'UNKNOWN';
   let source = 'source:unknown';
-  if (row?.scope_id !== null && row?.scope_id !== undefined) source = `scope-id:${row.scope_id}`;
-  else if (row?.context_id !== null && row?.context_id !== undefined) source = `context-id:${row.context_id}`;
-  else if (row?.scope_key) source = `scope-key:${row.scope_key}`;
+  if (row?.scope_key) source = `scope-key:${row.scope_key}`;
   else if (row?.context_key) source = `context-key:${row.context_key}`;
-  return `${topology}|${protocol}|${source}|${row.target_kind_code ?? 1}-${
+  const home = row?.qualification?.home || {};
+  return `${topology}|${protocol}|${source}|${rowGroupIdentityKind(row)}-${
     row.talkgroup_id}-${observedP25IdentityState(row)}-${
-    row.p25_home_wacn ?? 'x'}-${row.p25_home_system_id ?? 'x'}-${row.p25_home_talkgroup_id ?? 'x'}`;
+    home.wacn ?? 'x'}-${home.system_id ?? 'x'}-${home.talkgroup_id ?? 'x'}`;
 }
 
 function observedTalkgroupFocusKey(row) {
@@ -3551,39 +3535,41 @@ function observedTalkgroupPrefill(row, selectedList) {
   if (!observedTalkgroupPromotionSupported(row)) {
     throw new Error(observedTalkgroupPromotionReason(row));
   }
-  const policy = unmatchedTalkgroupPolicy(selectedList);
-  const priority = policy.playbackPriority >= 1 && policy.playbackPriority < 100 ?
-    policy.playbackPriority : null;
-  const matchedAliasId = Number(row.matched_alias_id ?? row.alias_id);
+  const policy = selectedList?.unmatched_talkgroup_policy || {};
+  const priority = Number(policy.priority) >= 1 && Number(policy.priority) < 100 ?
+    Number(policy.priority) : null;
+  const matchedAliasId = Number(row.matched_alias_id);
   const talkgroupId = Number(row.talkgroup_id);
   let matcher;
   if (isP25(row)) {
     if (String(row?.topology || '').toUpperCase() === 'CONVENTIONAL') {
       throw new Error('Conventional P25 observations cannot be promoted until identity qualification is retained.');
     }
-    if ([1, 2].includes(observedP25IdentityState(row)) && Number.isInteger(talkgroupId) &&
+    if (['ordinary', 'stable_fully_qualified'].includes(observedP25IdentityState(row)) &&
+        Number.isInteger(talkgroupId) &&
         talkgroupId > 0 && talkgroupId < 0xFFFF) {
-      matcher = { type: 'TALKGROUP', protocol: observedTalkgroupProtocol(row), value: talkgroupId };
+      matcher = { type: 'talkgroup', protocol: observedTalkgroupProtocol(row),
+        variant: observedTalkgroupVariant(row), value: talkgroupId };
     } else {
       throw new Error('This P25 observation does not have a usable local talkgroup ID.');
     }
   } else {
-    matcher = { type: 'TALKGROUP', protocol: observedTalkgroupProtocol(row), value: talkgroupId };
+    matcher = { type: 'talkgroup', protocol: observedTalkgroupProtocol(row), value: talkgroupId };
   }
   return {
-    aliasListId: aliasListId(selectedList),
+    alias_list_id: aliasListId(selectedList),
     name: '',
     description: '',
     group: '',
     color: 0,
-    iconName: null,
-    listenEnabled: policy.playbackPriority !== -1,
+    icon_name: null,
+    listen_enabled: Boolean(policy.listen_enabled),
     priority,
-    recordable: policy.recordEnabled,
-    broadcastChannels: policy.streamDestinationNames,
-    streamAsTalkgroup: null,
+    recordable: Boolean(policy.recordable),
+    broadcast_channels: [...(policy.broadcast_channels || [])],
+    stream_as_talkgroup: null,
     matcher,
-    copyActionsFromAliasId: observedTalkgroupMatchKind(row) === 'range' && Number.isInteger(matchedAliasId) &&
+    copy_actions_from_alias_id: observedTalkgroupMatchKind(row) === 'range' && Number.isInteger(matchedAliasId) &&
       matchedAliasId > 0 ? matchedAliasId : null,
     returnFocusSelector: `.observed-talkgroup-create[data-observed-key="${observedTalkgroupFocusKey(row)}"]`
   };
@@ -3611,7 +3597,7 @@ function observedTalkgroupDetail(row, selectedList) {
   const wrapper = node('div', 'observed-talkgroup-detail');
   const home = observedP25HomeIdentity(row);
   const identity = [
-    [home ? 'Local Talkgroup' : (row.identity_kind || 'Talkgroup'), identityNumber(row, row.talkgroup_id)],
+    [home ? 'Local Talkgroup' : groupIdentityLabel(row, null, false), identityNumber(row, row.talkgroup_id)],
     ['Protocol', protocolFamily(row) || row.protocol],
     ['System', row.system_name || '—'],
     ['Sites', row.site_names || '—'],
@@ -3664,7 +3650,7 @@ function observedTalkgroupDetail(row, selectedList) {
 
 function openObservedTalkgroupDetail(row, selectedList) {
   const id = identityNumber(row, row.talkgroup_id);
-  openReadOnlyModal(`Observed ${row.identity_kind || 'Talkgroup'} ${id}`,
+  openReadOnlyModal(`Observed ${groupIdentityLabel(row, null, false)} ${id}`,
     observedTalkgroupDetail(row, selectedList), {
     id: `observed-talkgroup-${id}`, className: 'alias-editor-modal observed-talkgroup-modal'
   });
@@ -3744,11 +3730,11 @@ function renderObservedTalkgroups(main, page, selectedList) {
 
 async function renderAliases() {
   const admin = aliasAdminAllowed();
-  const publicListsPromise = api('/api/alias-lists');
+  const publicListsPromise = api('/api/v1/alias-lists');
   const adminListsPromise = admin ? requestJson('/api/v1/admin/alias-lists', { csrf: false }) :
-    Promise.resolve({ revision: null, aliasLists: [] });
+    Promise.resolve({ revision: null, alias_lists: [] });
   const [listResponse, adminCatalog] = await Promise.all([publicListsPromise, adminListsPromise]);
-  const lists = mergedAliasLists(listResponse.rows || [], adminCatalog.aliasLists || []);
+  const lists = mergedAliasLists(listResponse.rows || [], adminCatalog.alias_lists || []);
   let selectedList = lists.find((row) => aliasListId(row) === Number(route.get('list')));
   aliasEditorContext = {
     admin, revision: Number(adminCatalog.revision ?? 0), lists, selectedList, options: null, page: null
@@ -3775,19 +3761,19 @@ async function renderAliases() {
     list: aliasListId(selectedList), type: route.get('type'), matcher: route.get('matcher'),
     group: route.get('group'), listen: route.get('listen'), record: route.get('record'),
     stream: route.get('stream'), evidence: route.get('evidence'), use: route.get('use'),
-    lastActivityBefore: route.get('lastActivityBefore'), lastActivityAfter: route.get('lastActivityAfter')
+    last_activity_before: route.get('lastActivityBefore'), last_activity_after: route.get('lastActivityAfter')
   };
-  const pagePromise = view === 'discover' ? api('/api/alias-list/observed-talkgroups', pageParameters({
-    list: aliasListId(selectedList), include_exact: false
-  })) : api('/api/aliases', pageParameters(filters));
-  const optionsPromise = admin ? api('/api/v1/admin/aliases/options', { aliasListId: aliasListId(selectedList) }) :
+  const pagePromise = view === 'discover' ?
+    api(`/api/v1/alias-lists/${aliasListId(selectedList)}/observed-talkgroups`,
+      pageParameters({ include_exact: false })) : api('/api/v1/aliases', pageParameters(filters));
+  const optionsPromise = admin ? api('/api/v1/admin/aliases/options', { alias_list_id: aliasListId(selectedList) }) :
     Promise.resolve(null);
   const [page, options] = await Promise.all([pagePromise, optionsPromise]);
   aliasEditorContext.page = page;
   aliasEditorContext.options = options;
-  if (options?.aliasList && options?.revision !== undefined &&
-      aliasListId(options.aliasList) === aliasListId(selectedList)) {
-    selectedList = { ...selectedList, ...options.aliasList };
+  if (options?.alias_list && options?.revision !== undefined &&
+      aliasListId(options.alias_list) === aliasListId(selectedList)) {
+    selectedList = { ...selectedList, ...options.alias_list };
     const selectedIndex = lists.findIndex((row) => aliasListId(row) === aliasListId(selectedList));
     if (selectedIndex >= 0) lists[selectedIndex] = selectedList;
     aliasEditorContext.selectedList = selectedList;
@@ -3890,9 +3876,13 @@ async function renderAliases() {
     actions.append(aliasColumnChooser(definitions, selectedCustom, () => renderTable()));
   }
   const exportContext = { list: aliasListId(selectedList) };
-  ['type', 'matcher', 'group', 'listen', 'record', 'stream', 'evidence', 'use',
-    'lastActivityBefore', 'lastActivityAfter'].forEach((key) => {
-    if (route.get(key)) exportContext[key] = route.get(key);
+  const exportFilters = new Map([
+    ['type', 'type'], ['matcher', 'matcher'], ['group', 'group'], ['listen', 'listen'],
+    ['record', 'record'], ['stream', 'stream'], ['evidence', 'evidence'], ['use', 'use'],
+    ['lastActivityBefore', 'last_activity_before'], ['lastActivityAfter', 'last_activity_after']
+  ]);
+  exportFilters.forEach((queryKey, routeKey) => {
+    if (route.get(routeKey)) exportContext[queryKey] = route.get(routeKey);
   });
   actions.append(exportCsvLink('aliases', exportContext));
   const block = section(view === 'configure' ? 'Alias Configuration' :
@@ -3990,7 +3980,7 @@ function callSourceLabel(row) {
 
 function callSourceLink(row) {
   const label = callSourceLabel(row);
-  const detailAvailable = Number(row.detail_available ?? row.receiver_detail_available);
+  const detailAvailable = Number(row.detail_available);
   if (dashboardChannelKind(row) === 'TRUNKED') {
     return siteNameSummary(row, Boolean(detailAvailable && row.guid));
   }
@@ -4168,7 +4158,7 @@ function dashboardCoverageStatus(activity, protocolKey, channelKind, metricField
 }
 
 function dashboardMetricCoverageStatus(activity, field) {
-  return String(activity?.metricCoverage?.[field] || '').toUpperCase();
+  return String(activity?.metric_coverage?.[field] || '').toUpperCase();
 }
 
 function dashboardMetricLabel(activity, field, label) {
@@ -4783,7 +4773,7 @@ async function signalHealthSection() {
 
   const renderCurrent = () => {
     const now = Date.now();
-    const sites = sortSignalSites((currentResponse?.sites || []).filter((site) =>
+    const sites = sortSignalSites((currentResponse?.rows || []).filter((site) =>
       now - Number(site.last_observed_ms || 0) <= SIGNAL_OFFLINE_MILLISECONDS));
     const healthy = sites.filter((site) =>
       optionalNumber(site.decode_health_pct) >= DECODE_HEALTHY_MINIMUM_PERCENT).length;
@@ -4829,7 +4819,7 @@ async function signalHealthSection() {
       loading = true;
       if (initial) summary.textContent = 'Loading current signal health…';
       try {
-        currentResponse = await api('/api/quality', { range: '1h', points: 60, include_history: false });
+        currentResponse = await api('/api/v1/quality', { range: '1h', points: 60, include_history: false });
         renderCurrent();
       } catch (error) {
         summary.textContent = currentResponse ? `Signal health update failed: ${error.message}` : '';
@@ -4870,9 +4860,9 @@ async function siteSignalHistorySection(site) {
       host.replaceChildren(node('div', 'loading', 'Loading control channel quality history'));
     }
     try {
-      const response = await api('/api/quality', { guid: site.guid, range: selectedRange, points: 300 });
+      const response = await api(siteApiPath(site.guid, 'quality'), { range: selectedRange, points: 300 });
       if (sequence !== loadingSequence) return;
-      const qualitySite = (response.sites || [])[0];
+      const qualitySite = (response.rows || [])[0];
       disconnectPageObserversWithin(host);
       host.replaceChildren();
       if (!qualitySite || !Array.isArray(qualitySite.series) || !qualitySite.series.length) {
@@ -4933,7 +4923,8 @@ async function talkgroupActivityHistorySection(scopeParameters) {
       host.replaceChildren(node('div', 'loading', 'Loading talkgroup activity history'));
     }
     try {
-      const response = await api('/api/talkgroup/activity', { ...scopeParameters, range: selectedRange });
+      const response = await api(groupIdentityApiPath(scopeParameters.scope, scopeParameters.kind,
+        scopeParameters.talkgroup_id, 'activity'), { range: selectedRange });
       if (sequence !== loadingSequence) return;
       host.replaceChildren(metrics([
         ['Tracked Calls', response.totals?.call_count],
@@ -4984,8 +4975,7 @@ async function siteTopTalkgroupsSection(site) {
   block.querySelector('.section-title').append(rangeControl.controls);
   const columns = [
     { id: 'talkgroup-id', label: 'TGID', render: (row) => talkgroupLink(row), className: 'numeric', sortValue: (row) => Number(row.talkgroup_id) },
-    { id: 'talkgroup-kind', label: 'Kind', render: (row) =>
-      Number(row.target_kind_code ?? row.identity_kind_code) === 3 ? 'Patch' : 'TG' },
+    { id: 'talkgroup-kind', label: 'Kind', render: (row) => groupIdentityLabel(row) },
     { id: 'talkgroup-name', label: 'Alias', fullLabel: 'Talkgroup Alias', render: (row) => talkgroupAliasLink(row, row.talkgroup_id), className: 'alias-cell', sortValue: aliasLabel },
     { label: 'Group', key: 'alias_group', className: 'alias-cell', sortValue: (row) => row.alias_group || '' },
     { id: 'calls', label: 'Calls', render: (row) => number(row.call_count), className: 'numeric', sortValue: (row) => Number(row.call_count || 0) },
@@ -5005,8 +4995,8 @@ async function siteTopTalkgroupsSection(site) {
       host.replaceChildren(node('div', 'loading', 'Loading talkgroup call activity'));
     }
     try {
-      const response = await api('/api/site/talkgroups', {
-        guid: site.guid, range: selectedRange, limit: 20
+      const response = await api(siteApiPath(site.guid, 'group-identities'), {
+        range: selectedRange, limit: 20
       });
       if (sequence !== loadingSequence) return;
       host.replaceChildren(table(response.rows || [], columns,
@@ -5031,6 +5021,17 @@ async function siteTopTalkgroupsSection(site) {
   return block;
 }
 
+function snakeCaseKey(value) {
+  return String(value).replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
+}
+
+function snakeCasePayload(value) {
+  if (Array.isArray(value)) return value.map(snakeCasePayload);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value).map(([key, item]) =>
+    [snakeCaseKey(key), snakeCasePayload(item)]));
+}
+
 async function requestJson(path, options = {}) {
   const method = String(options.method || 'GET').toUpperCase();
   const headers = new Headers(options.headers || {});
@@ -5042,7 +5043,7 @@ async function requestJson(path, options = {}) {
   const response = await fetch(path, {
     method,
     headers,
-    body: options.body === undefined ? undefined : JSON.stringify(options.body),
+    body: options.body === undefined ? undefined : JSON.stringify(snakeCasePayload(options.body)),
     cache: 'no-store',
     credentials: 'same-origin'
   });
@@ -5056,19 +5057,31 @@ async function requestJson(path, options = {}) {
     }
   }
   if (!response.ok) {
-    const error = new Error(result?.message || result?.error || `${path} returned ${response.status}`);
-    error.status = response.status;
-    error.code = result?.code || result?.error || null;
+    const failure = result?.error && typeof result.error === 'object' ? result.error : result;
+    const fallback = typeof result?.error === 'string' ? result.error : `${path} returned ${response.status}`;
+    const error = new Error(failure?.message || fallback);
+    error.status = Number(failure?.status) || response.status;
+    error.code = failure?.code || (typeof result?.error === 'string' ? result.error : null);
+    error.field = failure?.field || null;
     error.path = path;
     throw error;
   }
-  return result;
+  if (response.status === 204) return null;
+  if (!result || typeof result !== 'object' || !Object.prototype.hasOwnProperty.call(result, 'data')) {
+    const error = new Error('The API returned an invalid success response.');
+    error.status = response.status;
+    error.code = 'invalid_response';
+    error.path = path;
+    throw error;
+  }
+  if (Array.isArray(result.data)) return { rows: result.data, ...(result.meta || {}) };
+  return result.meta && typeof result.meta === 'object' ? { ...result.data, ...result.meta } : result.data;
 }
 
 async function api(path, parameters = {}) {
   const query = new URLSearchParams();
   Object.entries(parameters).forEach(([key, value]) => {
-    if (value !== null && value !== undefined && value !== '') query.set(key, String(value));
+    if (value !== null && value !== undefined && value !== '') query.set(snakeCaseKey(key), String(value));
   });
   return requestJson(`${path}${query.size ? `?${query}` : ''}`, { csrf: false });
 }
@@ -5098,7 +5111,7 @@ function disconnectPageObserversWithin(root) {
 function liveConnection(path, parameters = {}) {
   const query = new URLSearchParams();
   Object.entries(parameters).forEach(([key, value]) => {
-    if (value !== null && value !== undefined && value !== '') query.set(key, String(value));
+    if (value !== null && value !== undefined && value !== '') query.set(snakeCaseKey(key), String(value));
   });
   const source = new EventSource(`${path}${query.size ? `?${query}` : ''}`);
   liveConnections.add(source);
@@ -5121,7 +5134,7 @@ const DIAGNOSTIC_FRAME_TYPES = Object.freeze({
 function binaryFrameConnection(path, parameters = {}, callbacks = {}) {
   const query = new URLSearchParams();
   Object.entries(parameters).forEach(([key, value]) => {
-    if (value !== null && value !== undefined && value !== '') query.set(key, String(value));
+    if (value !== null && value !== undefined && value !== '') query.set(snakeCaseKey(key), String(value));
   });
   const target = `${path}${query.size ? `?${query}` : ''}`;
   let closed = false;
@@ -5356,7 +5369,7 @@ function synchronizePlaybackAccess() {
   bar.querySelectorAll('button, input').forEach((control) => { control.disabled = false; });
   window.sdrtrunkWebPlayer.render();
   if (!playbackConnection) {
-    playbackConnection = window.sdrtrunkWebPlayer.connect('/live/web-calls');
+    playbackConnection = window.sdrtrunkWebPlayer.connect('/api/v1/live/calls');
     liveConnections.add(playbackConnection);
   }
 }
@@ -5392,13 +5405,17 @@ function systemCapability(system, capability) {
 
 function systemTabItems(system) {
   const values = scope(system);
-  const items = [
-    { id: 'info', label: 'Info', href: href('system', { ...values, tab: 'info' }) },
-    { id: 'talkgroups', label: 'Talkgroups', href: href('system', { ...values, tab: 'talkgroups' }) },
-    { id: 'radios', label: 'Radios', href: href('system', { ...values, tab: 'radios' }) },
-    { id: 'activity', label: 'Activity', href: href('system', { ...values, tab: 'activity' }),
-      disabled: !detailedHistoryAvailable(), disabledReason: 'Detailed history logging is not running' }
-  ];
+  const items = [{ id: 'info', label: 'Info', href: href('system', { ...values, tab: 'info' }) }];
+  if (systemCapability(system, 'group_identities')) {
+    items.push({ id: 'talkgroups', label: 'Talkgroups', href: href('system', { ...values, tab: 'talkgroups' }) });
+  }
+  if (systemCapability(system, 'radios')) {
+    items.push({ id: 'radios', label: 'Radios', href: href('system', { ...values, tab: 'radios' }) });
+  }
+  if (systemCapability(system, 'activity')) {
+    items.push({ id: 'activity', label: 'Activity', href: href('system', { ...values, tab: 'activity' }),
+      disabled: !detailedHistoryAvailable(), disabledReason: 'Detailed history logging is not running' });
+  }
   if (systemCapability(system, 'talker_aliases')) {
     items.push({ id: 'talker-aliases', label: 'Talker Aliases',
       href: href('system', { ...values, tab: 'talker-aliases' }) });
@@ -5411,67 +5428,21 @@ function systemTabs(system, active) {
 }
 
 function entityTabs(view, system, id, active, radio, kind = null) {
-  const values = { ...scope(system), id, kind: kind === 'patch' ? 'patch' : null };
+  const values = { ...scope(system), id, kind: kind === 'patch_group' ? 'patch_group' : null };
   const activity = { id: 'activity', label: 'Activity', href: href(view, { ...values, tab: 'activity' }),
     disabled: !detailedHistoryAvailable(), disabledReason: 'Detailed history logging is not running' };
-  return tabs(radio ? [
-    { id: 'info', label: 'Info', href: href(view, { ...values, tab: 'info' }) },
-    { id: 'talkgroups', label: 'Talkgroups', href: href(view, { ...values, tab: 'talkgroups' }) },
-    activity
-  ] : [
-    { id: 'info', label: 'Info', href: href(view, { ...values, tab: 'info' }) },
-    { id: 'radios', label: 'Radios', href: href(view, { ...values, tab: 'radios' }) },
-    activity
-  ], active);
-}
-
-const SITE_CAPABILITY_ALIASES = Object.freeze({
-  channels: ['channels'],
-  quality: ['quality'],
-  'quality-history': ['quality-history', 'quality_history', 'qualityHistory'],
-  neighbors: ['neighbors'],
-  'band-plan': ['band-plan', 'band_plan', 'bandPlan', 'bands'],
-  patches: ['patches'],
-  activity: ['activity', 'detailed-history', 'detailed_history', 'detailedHistory'],
-  'top-talkgroups': ['top-talkgroups', 'top_talkgroups', 'topTalkgroups', 'talkgroups', 'site-talkgroups']
-});
-
-function normalizedSiteCapability(value) {
-  return String(value || '').replace(/([a-z0-9])([A-Z])/g, '$1-$2')
-    .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-}
-
-function siteCapabilityValue(value) {
-  if (value && typeof value === 'object') {
-    for (const key of ['available', 'enabled', 'supported']) {
-      if (Object.prototype.hasOwnProperty.call(value, key)) return Boolean(value[key]);
-    }
+  const items = [{ id: 'info', label: 'Info', href: href(view, { ...values, tab: 'info' }) }];
+  if (radio && systemCapability(system, 'group_identities')) {
+    items.push({ id: 'talkgroups', label: 'Talkgroups', href: href(view, { ...values, tab: 'talkgroups' }) });
+  } else if (!radio && systemCapability(system, 'radios')) {
+    items.push({ id: 'radios', label: 'Radios', href: href(view, { ...values, tab: 'radios' }) });
   }
-  return Boolean(value);
-}
-
-function explicitSiteCapability(site, capability) {
-  const capabilities = site?.capabilities;
-  if (!capabilities) return undefined;
-  const aliases = new Set((SITE_CAPABILITY_ALIASES[capability] || [capability])
-    .map(normalizedSiteCapability));
-  if (Array.isArray(capabilities)) {
-    return capabilities.some((value) => aliases.has(normalizedSiteCapability(value)));
-  }
-  if (typeof capabilities === 'string') {
-    return capabilities.split(',').some((value) => aliases.has(normalizedSiteCapability(value)));
-  }
-  if (typeof capabilities !== 'object') return undefined;
-  const entry = Object.entries(capabilities)
-    .find(([key]) => aliases.has(normalizedSiteCapability(key)));
-  return entry ? siteCapabilityValue(entry[1]) : undefined;
+  if (systemCapability(system, 'activity')) items.push(activity);
+  return tabs(items, active);
 }
 
 function siteCapability(site, capability) {
-  const explicit = explicitSiteCapability(site, capability);
-  if (explicit !== undefined) return explicit;
-  return ['channels', 'quality', 'quality-history', 'neighbors'].includes(capability) ||
-    isP25(site);
+  return Boolean(site?.capabilities?.[capability]);
 }
 
 function siteTabItems(site) {
@@ -5482,17 +5453,16 @@ function siteTabItems(site) {
   if (siteCapability(site, 'channels')) {
     items.push({ id: 'channels', label: 'Channels', href: href('site', { ...values, tab: 'channels' }) });
   }
-  const hasQuality = siteCapability(site, 'quality') && siteCapability(site, 'quality-history');
-  if (hasQuality) {
+  if (siteCapability(site, 'quality')) {
     items.push({ id: 'quality', label: 'Quality', href: href('site', { ...values, tab: 'quality' }) });
   }
   if (siteCapability(site, 'neighbors')) {
     items.push({ id: 'neighbors', label: 'Neighbors', href: href('site', { ...values, tab: 'neighbors' }) });
   }
-  if (siteCapability(site, 'band-plan')) {
+  if (siteCapability(site, 'frequency_bands')) {
     items.push({ id: 'band-plan', label: 'Band Plan', href: href('site', { ...values, tab: 'band-plan' }) });
   }
-  if (siteCapability(site, 'patches')) {
+  if (siteCapability(site, 'patch_groups')) {
     items.push({ id: 'patches', label: 'Patches', href: href('site', { ...values, tab: 'patches' }) });
   }
   if (siteCapability(site, 'activity')) {
@@ -5508,50 +5478,32 @@ function siteTabs(site, active) {
 }
 
 function trunkedChannelUse(value) {
-  const flags = Number(value || 0);
+  const roles = new Set(Array.isArray(value) ? value : []);
   const values = [];
-  if (flags & 1) values.push(badge('Current CC', 'state-current'));
-  if (flags & 2) values.push(badge('Alt CC', 'state-current'));
-  if (flags & 4) values.push(badge('Traffic'));
+  if (roles.has('current_control')) values.push(badge('Current CC', 'state-current'));
+  if (roles.has('alternate_control')) values.push(badge('Alt CC', 'state-current'));
+  if (roles.has('traffic')) values.push(badge('Traffic'));
   return badgeGroup(values);
 }
 
 function trunkedChannelSources(value) {
-  const flags = Number(value || 0);
+  const sources = new Set(Array.isArray(value) ? value : []);
   const values = [];
-  if (flags & 8) values.push(badge('OTA Seen', '', 'This channel and timeslot were decoded over the air'));
-  if (flags & 16) values.push(badge('LCN Map', '', 'Frequency resolved from the configured LCN-to-frequency map'));
-  if (flags & 32) values.push(badge('OTA Freq', '', 'Absolute frequency was broadcast over the air'));
+  if (sources.has('observed')) values.push(badge('OTA Seen', '',
+    'This channel and timeslot were decoded over the air'));
+  if (sources.has('configured_map_frequency')) values.push(badge('LCN Map', '',
+    'Frequency resolved from the configured LCN-to-frequency map'));
+  if (sources.has('over_air_frequency')) values.push(badge('OTA Freq', '',
+    'Absolute frequency was broadcast over the air'));
   return badgeGroup(values);
 }
 
 function trunkedNeighborStatus(value) {
-  const flags = Number(value || 0);
+  const statuses = new Set(Array.isArray(value) ? value : []);
   const values = [];
-  if (flags & 1) values.push(badge('Linked', 'state-current'));
-  if (flags & 2) values.push(badge('Isolated', 'state-stale'));
+  if (statuses.has('linked')) values.push(badge('Linked', 'state-current'));
+  if (statuses.has('isolated')) values.push(badge('Isolated', 'state-stale'));
   return badgeGroup(values);
-}
-
-function dmrBrand(value) {
-  return ({ 1: 'Tier III', 2: 'Motorola Connect+', 3: 'Motorola Capacity Max',
-    4: 'Hytera Tier III', 5: 'Motorola Capacity+' })[Number(value)] || '';
-}
-
-function dmrModel(value) {
-  return ({ 1: 'Tiny', 2: 'Small', 3: 'Large', 4: 'Huge' })[Number(value)] || '';
-}
-
-function dmrMode(value) {
-  return ({ 1: 'Open System', 2: 'Advantage' })[Number(value)] || '';
-}
-
-function dmrChannelType(value) {
-  return ({ 1: 'Control', 2: 'Traffic' })[Number(value)] || '';
-}
-
-function nxdnRepeaterMode(value) {
-  return ({ 1: 'Idle', 2: 'Free', 3: 'Halted / CWID' })[Number(value)] || '';
 }
 
 const siteColumns = [
@@ -5622,7 +5574,7 @@ const dashboardHealthColumns = [
 ];
 
 function dashboardIdentityId(row) {
-  return Number(row.identity_kind_code) === 0 || Number(row.identity_id) <= 0 ? '—' :
+  return identityKind(row.identity_kind) === 'unknown' || Number(row.identity_id) <= 0 ? '—' :
     identityNumber(row, row.identity_id);
 }
 
@@ -5653,11 +5605,11 @@ function dashboardIdentity(row) {
   const talkerAlias = String(row.last_talker_alias || '').trim();
   const hasId = id !== '—';
   const compactKind = ({
-    Talkgroup: 'TG',
-    Radio: 'Radio',
-    'Patch Group': 'Patch',
-    'Channel / Unknown': 'Channel'
-  })[kind] || kind;
+    talkgroup: 'TG',
+    radio: 'Radio',
+    patch_group: 'Patch',
+    unknown: 'Channel'
+  })[identityKind(kind)] || kind;
   const compactIdentity = hasId ? `${compactKind || 'ID'} ${id}` : kind;
   const primaryLabel = configuredAlias || talkerAlias || compactIdentity || 'Unknown identity';
   const primary = node('span', 'dashboard-identity-primary');
@@ -5704,8 +5656,7 @@ function dashboardSummarySection(title, values) {
 
 const talkgroupColumns = [
   { id: 'talkgroup-id', label: 'TGID', render: (row) => talkgroupLink(row), className: 'numeric', sort: 'talkgroup', sortValue: (row) => Number(row.talkgroup_id) },
-  { id: 'talkgroup-kind', label: 'Kind', render: (row) =>
-    Number(row.target_kind_code) === 3 ? 'Patch' : 'TG' },
+  { id: 'talkgroup-kind', label: 'Kind', render: (row) => groupIdentityLabel(row) },
   { id: 'talkgroup-name', label: 'Alias', fullLabel: 'Talkgroup Alias', render: (row) => talkgroupAliasLink(row, row.talkgroup_id), className: 'alias-cell', sort: 'alias', sortValue: aliasLabel },
   { id: 'talkgroup-description', label: 'Description', key: 'alias_description', className: 'alias-cell' },
   { label: 'Group', key: 'alias_group', className: 'alias-cell', sort: 'group' },
@@ -5753,14 +5704,14 @@ function systemRadioColumns(system) {
 }
 
 async function renderDashboard() {
-  const dashboard = await api('/api/dashboard');
+  const dashboard = await api('/api/v1/dashboard');
   const counts = dashboard.counts || {};
-  const callActivity = dashboard.callActivity || {};
+  const callActivity = dashboard.call_activity || {};
   const callTotals = callActivity.totals || {};
   const requestedTab = route.get('tab') || 'calls';
   const tab = requestedTab === 'health' ? 'health' : 'calls';
-  content.append(pageHeader('Dashboard', dashboard.lastSeenMs ?
-    fragment('Last activity ', dateTime(dashboard.lastSeenMs)) : 'Last activity not recorded'),
+  content.append(pageHeader('Dashboard', dashboard.last_seen_ms ?
+    fragment('Last activity ', dateTime(dashboard.last_seen_ms)) : 'Last activity not recorded'),
   tabs([
     { id: 'calls', label: 'Calls', href: href('dashboard', { tab: 'calls' }) },
     { id: 'health', label: 'Health', href: href('dashboard', { tab: 'health' }) }
@@ -5773,7 +5724,7 @@ async function renderDashboard() {
       ['Trunked Sites', counts.trunked_sites],
       ['Conventional Channels', counts.conventional_channels]
     ]));
-    content.append(section('Recent Sites / Channels', table(dashboard.recentReceivers || [],
+    content.append(section('Recent Sites / Channels', table(dashboard.recent_receivers || [],
       dashboardHealthColumns, 'No sites or channels recorded', { type: 'dashboard-receivers' })));
     return;
   }
@@ -5787,16 +5738,16 @@ async function renderDashboard() {
       dashboardMetricDisplay(callActivity, 'streamed_count')]
   ]));
   content.append(section('Call Activity · Last 24 Hours', dashboardCallActivityChart(callActivity)));
-  const sourceRows = Array.isArray(dashboard.sourceActivity24h) ? dashboard.sourceActivity24h :
-    dashboard.sourceActivity24h?.rows || [];
+  const sourceRows = Array.isArray(dashboard.source_activity_24h) ? dashboard.source_activity_24h :
+    dashboard.source_activity_24h?.rows || [];
   content.append(section('Calls by Site / Channel · Last 24 Hours',
     table(sourceRows, dashboardCallSourceColumns, 'No call activity recorded',
       { type: 'dashboard-call-sources' })));
   const destinations = section('Top Destinations · Last 24 Hours',
-    table(dashboard.topDestinations || [], dashboardIdentityColumns('Destination'),
+    table(dashboard.top_destinations || [], dashboardIdentityColumns('Destination'),
       'No call destinations recorded', { type: 'dashboard-destinations' }));
   const sources = section('Top Sources · Last 24 Hours',
-    table(dashboard.topSources || [], dashboardIdentityColumns('Source'),
+    table(dashboard.top_sources || [], dashboardIdentityColumns('Source'),
       'No call sources recorded', { type: 'dashboard-sources' }));
   content.append(node('div', 'split dashboard-identity-split'));
   content.lastChild.append(destinations, sources);
@@ -5835,8 +5786,8 @@ function liveEventDuration(value) {
 }
 
 function liveEventParty(event, side) {
-  const aliases = event?.[`${side}Aliases`] || '';
-  const identifiers = event?.[`${side}Identifiers`] || '';
+  const aliases = event?.[`${side}_aliases`] || '';
+  const identifiers = event?.[`${side}_identifiers`] || '';
   const value = node('td', 'live-event-stack');
   if (aliases) value.append(node('strong', '', aliases));
   if (identifiers) value.append(node(aliases ? 'small' : 'span', '', identifiers));
@@ -5883,12 +5834,12 @@ function liveMessagesPane() {
     }
     order.map((id) => messages.get(id)).filter(Boolean).forEach((message) => {
       const row = node('tr', message.valid ? '' : 'message-invalid');
-      const date = new Date(Number(message.timestampMs));
+      const date = new Date(Number(message.timestamp_ms));
       const timeText = Number.isFinite(date.getTime()) ? date.toLocaleTimeString([], {
         hour: '2-digit', minute: '2-digit', second: '2-digit'
       }) : '';
       const time = node('td', '', timeText);
-      if (timeText) time.title = exactDateTime(message.timestampMs);
+      if (timeText) time.title = exactDateTime(message.timestamp_ms);
       const detail = node('td', 'live-message-text', message.text || '');
       detail.title = message.text || '';
       row.append(time, node('td', '', message.protocol || ''),
@@ -5912,9 +5863,9 @@ function liveMessagesPane() {
   };
 
   const addMessage = (message) => {
-    if (!message?.messageId) return;
-    if (!messages.has(message.messageId)) order.unshift(message.messageId);
-    messages.set(message.messageId, message);
+    if (!message?.message_id) return;
+    if (!messages.has(message.message_id)) order.unshift(message.message_id);
+    messages.set(message.message_id, message);
     while (order.length > 200) messages.delete(order.pop());
     render();
   };
@@ -5939,16 +5890,16 @@ function liveMessagesPane() {
       frequency_hz: selection.diagnosticFrequencyHz
     };
     if (selection.diagnosticTimeslot) parameters.timeslot = selection.diagnosticTimeslot;
-    stream = liveConnection('/live/messages', parameters);
+    stream = liveConnection('/api/v1/live/decode-messages', parameters);
     stream.addEventListener('snapshot', (event) => {
       if (epoch !== streamEpoch) return;
       const snapshot = JSON.parse(event.data);
       messages.clear();
       order.length = 0;
       (snapshot.messages || []).slice(0, 200).forEach((message) => {
-        if (message?.messageId && !messages.has(message.messageId)) {
-          messages.set(message.messageId, message);
-          order.push(message.messageId);
+        if (message?.message_id && !messages.has(message.message_id)) {
+          messages.set(message.message_id, message);
+          order.push(message.message_id);
         }
       });
       setStatus(snapshot.bound ? 'Live' : 'Waiting', snapshot.bound ? 'state-current' : 'state-stale');
@@ -6073,8 +6024,8 @@ function liveChannelPane() {
   };
 
   const updateReadouts = () => {
-    const centerFrequencyHz = Number(state?.frequencyHz ?? state?.frequency_hz ??
-      state?.centerFrequencyHz ?? state?.center_frequency_hz ?? selection?.diagnosticFrequencyHz);
+    const centerFrequencyHz = Number(state?.frequency_hz ?? state?.center_frequency_hz ??
+      selection?.diagnosticFrequencyHz);
     updateDiagnosticReadouts(signalDiagnostic.readouts, [
       ['Center', centerFrequencyHz ? `${frequency(centerFrequencyHz)} MHz` : '—'],
       ['Peak', Number.isFinite(signalPeak) ? `${signalPeak.toFixed(1)} dB` : '—'],
@@ -6301,7 +6252,7 @@ function liveChannelPane() {
       frequency_hz: selection.diagnosticFrequencyHz
     };
     if (selection.diagnosticTimeslot) parameters.timeslot = selection.diagnosticTimeslot;
-    stream = binaryFrameConnection('/live/channel-diagnostics', parameters, {
+    stream = binaryFrameConnection('/api/v1/live/channel-diagnostics', parameters, {
       onOpen: () => {
         if (epoch === streamEpoch) setStatus('Connected', 'state-current');
       },
@@ -6317,18 +6268,17 @@ function liveChannelPane() {
           signalLatencyMs = null;
           latencyClock.offsetMs = null;
           resetWaterfall();
-          const maximumSymbols = Math.max(1, Number(state?.maximumVisibleSymbols ??
-            state?.maximum_visible_symbols) || 4800);
+          const maximumSymbols = Math.max(1, Number(state?.maximum_visible_symbols) || 4800);
           symbolValues = new Float32Array(maximumSymbols);
           symbolValues.fill(Number.NaN);
           symbolCursor = 0;
           symbolCount = 0;
-          const signalState = state?.signalState ?? state?.signal_state;
-          const symbolsState = state?.symbolsState ?? state?.symbols_state;
+        const signalState = state?.signal_state;
+        const symbolsState = state?.symbols_state;
           updateDiagnosticState(signalDiagnostic, signalState,
-            state?.signalReason ?? state?.signal_reason, 'Signal diagnostics are unavailable.');
+            state?.signal_reason, 'Signal diagnostics are unavailable.');
           updateDiagnosticState(symbolDiagnostic, symbolsState,
-            state?.symbolsReason ?? state?.symbols_reason, 'Symbol diagnostics are unavailable.');
+            state?.symbols_reason, 'Symbol diagnostics are unavailable.');
           const live = signalState === 'live' || symbolsState === 'live';
           const waiting = signalState === 'waiting' || symbolsState === 'waiting';
           setStatus(live ? 'Live' : (waiting ? 'Waiting' : 'Unavailable'),
@@ -6347,7 +6297,7 @@ function liveChannelPane() {
             if (Number.isFinite(signalValues[index]) &&
                 (!Number.isFinite(signalPeak) || signalValues[index] > signalPeak)) signalPeak = signalValues[index];
           }
-          if (frame.centerFrequencyHz > 0 && state) state.frequencyHz = frame.centerFrequencyHz;
+          if (frame.centerFrequencyHz > 0 && state) state.frequency_hz = frame.centerFrequencyHz;
           signalLatencyMs = diagnosticFrameLatency(frame, latencyClock);
           addWaterfallFrame(signalValues);
           signalDiagnostic.overlay.hidden = true;
@@ -6373,8 +6323,8 @@ function liveChannelPane() {
         setStatus(error?.status === 429 ? 'Busy' : 'Reconnecting');
         const reason = error?.status === 429 ? 'Diagnostic viewer capacity is currently in use.' :
           'Connection interrupted. Reconnecting…';
-        const signalState = state?.signalState ?? state?.signal_state;
-        const symbolsState = state?.symbolsState ?? state?.symbols_state;
+        const signalState = state?.signal_state;
+        const symbolsState = state?.symbols_state;
         if (signalState === 'live') updateDiagnosticState(signalDiagnostic, 'stale', reason, reason);
         if (symbolsState === 'live') updateDiagnosticState(symbolDiagnostic, 'stale', reason, reason);
       }
@@ -6417,12 +6367,11 @@ function liveChannelPane() {
 }
 
 function tunerDiagnosticTargets(response) {
-  const values = Array.isArray(response) ? response : (response?.targets || []);
+  const values = Array.isArray(response?.rows) ? response.rows : [];
   return values.map((target) => ({
     ...target,
-    id: String(target?.targetId ?? target?.target_id ?? target?.id ?? ''),
-    label: String(target?.label ?? target?.displayName ?? target?.display_name ?? target?.name ??
-      target?.targetId ?? target?.target_id ?? target?.id ?? 'Tuner')
+    id: String(target?.target_id ?? ''),
+    label: String(target?.label ?? target?.target_id ?? 'Tuner')
   })).filter((target) => target.id);
 }
 
@@ -7032,17 +6981,17 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
 
   function acceptTunerState(frame) {
     const tunerState = diagnosticJsonPayload(frame);
-    const streamState = String(tunerState?.streamState ?? tunerState?.stream_state ?? tunerState?.state ??
+    const streamState = String(tunerState?.stream_state ?? tunerState?.state ??
       (tunerState?.bound ? 'live' : 'waiting')).toLowerCase();
     const live = streamState === 'live' || streamState === 'active';
     const unavailable = streamState === 'unavailable' || streamState === 'closed';
     frameMetadata = {
       ...(frameMetadata || {}),
-      centerFrequencyHz: Number(tunerState?.centerFrequencyHz ?? tunerState?.center_frequency_hz) || 0,
-      sampleRateHz: Number(tunerState?.sampleRateHz ?? tunerState?.sample_rate_hz) || 0,
-      fftSize: Number(tunerState?.fftSize ?? tunerState?.fft_size) || 0,
-      firstBin: Number(tunerState?.firstBin ?? tunerState?.first_bin) || 0,
-      sourceBinCount: Number(tunerState?.sourceBinCount ?? tunerState?.source_bin_count) || 0
+      centerFrequencyHz: Number(tunerState?.center_frequency_hz) || 0,
+      sampleRateHz: Number(tunerState?.sample_rate_hz) || 0,
+      fftSize: Number(tunerState?.fft_size) || 0,
+      firstBin: Number(tunerState?.first_bin) || 0,
+      sourceBinCount: Number(tunerState?.source_bin_count) || 0
     };
     setOverlay(live ? '' : (tunerState?.reason || tunerState?.message || 'Waiting for tuner samples…'));
     setStatus(live ? (refining ? 'Refining' : 'Live') : (unavailable ? 'Unavailable' : 'Waiting'),
@@ -7137,7 +7086,7 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
     let candidate = null;
     setStatus(refining ? 'Refining' : 'Connecting');
     if (!stream) setOverlay('Waiting for tuner data…');
-    candidate = binaryFrameConnection('/live/tuner-diagnostics', diagnosticParameters(), {
+    candidate = binaryFrameConnection('/api/v1/live/tuner-diagnostics', diagnosticParameters(), {
       onOpen: () => {
         if (disposed || candidate !== stream || epoch !== streamEpoch) return;
         sequence = null;
@@ -7472,7 +7421,7 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
 
   function connectActiveChannels() {
     if (!shouldRun() || activeChannelSource) return;
-    const source = liveConnection('/live/systems');
+    const source = liveConnection('/api/v1/live/channel-activity');
     activeChannelSource = source;
     const read = (event, callback) => {
       try { callback(JSON.parse(event.data)); } catch (error) { /* Optional overlay update was malformed. */ }
@@ -7623,8 +7572,8 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
 
   function resetViewportForTarget() {
     const target = targetsById.get(selectedTargetId());
-    const center = Number(target?.centerFrequencyHz ?? target?.center_frequency_hz ?? 0);
-    const sampleRate = Number(target?.sampleRateHz ?? target?.sample_rate_hz ?? 0);
+    const center = Number(target?.center_frequency_hz ?? 0);
+    const sampleRate = Number(target?.sample_rate_hz ?? 0);
     if (center > 0 && sampleRate > 0) {
       fullViewport = { startHz: center - sampleRate / 2, endHz: center + sampleRate / 2 };
       viewport = { ...fullViewport };
@@ -7692,7 +7641,7 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
   window.addEventListener('resize', onResize);
   resetPlots('Loading tuners…');
 
-  api('/api/tuner-diagnostics/targets').then((response) => {
+  api('/api/v1/diagnostics/tuners').then((response) => {
     if (disposed || activeReadOnlyModal !== modal.state) return;
     const targets = tunerDiagnosticTargets(response);
     targetsById.clear();
@@ -7811,23 +7760,23 @@ function liveEventsPanel(onCollapse) {
     }
     rows.forEach((event) => {
       const row = node('tr');
-      row.dataset.eventId = event.eventId;
+      row.dataset.eventId = event.event_id;
       const time = node('td', 'live-event-time');
-      const started = new Date(Number(event.timeStartMs));
+      const started = new Date(Number(event.time_start_ms));
       const timeText = Number.isFinite(started.getTime()) ? started.toLocaleTimeString([], {
         hour: '2-digit', minute: '2-digit', second: '2-digit'
       }) : '';
       const timeValue = node('strong', '', timeText);
-      if (timeText) timeValue.title = exactDateTime(event.timeStartMs);
-      time.append(timeValue, node('small', '', liveEventDuration(event.durationMs)));
+      if (timeText) timeValue.title = exactDateTime(event.time_start_ms);
+      time.append(timeValue, node('small', '', liveEventDuration(event.duration_ms)));
 
       const eventType = node('td', 'live-event-stack');
-      eventType.append(node('strong', '', event.eventLabel || event.eventType || 'Event'));
+      eventType.append(node('strong', '', event.event_label || event.event_type || 'Event'));
       if (event.protocol) eventType.append(node('small', '', event.protocol));
 
       const channel = node('td', 'live-event-stack');
       if (event.channel) channel.append(node('strong', '', event.channel));
-      const channelDetail = [event.frequencyHz ? `${frequency(event.frequencyHz)} MHz` : '',
+      const channelDetail = [event.frequency_hz ? `${frequency(event.frequency_hz)} MHz` : '',
         event.timeslot == null ? '' : `TS ${event.timeslot}`].filter(Boolean).join(' · ');
       if (channelDetail) channel.append(node(event.channel ? 'small' : 'span', '', channelDetail));
 
@@ -7855,9 +7804,9 @@ function liveEventsPanel(onCollapse) {
   };
 
   const addEvent = (event) => {
-    if (!event?.eventId) return;
-    if (!events.has(event.eventId)) order.unshift(event.eventId);
-    events.set(event.eventId, event);
+    if (!event?.event_id) return;
+    if (!events.has(event.event_id)) order.unshift(event.event_id);
+    events.set(event.event_id, event);
     while (order.length > 200) events.delete(order.pop());
     scheduleRender();
   };
@@ -7879,16 +7828,16 @@ function liveEventsPanel(onCollapse) {
     const parameters = { configuration_id: selection.configurationId };
     if (selection.frequencyHz) parameters.frequency_hz = selection.frequencyHz;
     if (selection.timeslot) parameters.timeslot = selection.timeslot;
-    stream = liveConnection('/live/events', parameters);
+    stream = liveConnection('/api/v1/live/decode-events', parameters);
     stream.addEventListener('snapshot', (event) => {
       if (epoch !== streamEpoch) return;
       const snapshot = JSON.parse(event.data);
       events.clear();
       order.length = 0;
       (snapshot.events || []).slice(0, 200).forEach((item) => {
-        if (item?.eventId && !events.has(item.eventId)) {
-          events.set(item.eventId, item);
-          order.push(item.eventId);
+        if (item?.event_id && !events.has(item.event_id)) {
+          events.set(item.event_id, item);
+          order.push(item.event_id);
         }
       });
       scheduleRender();
@@ -7977,7 +7926,7 @@ function liveSystemsSection(onSelectionChange) {
   const tables = new Map();
   const tabNodes = new Map();
   const rowNodes = new Map();
-  const decodeDisplay = serviceStatus?.decodeDisplay || { showControl: true, showVoice: true, mode: 'percentage' };
+  const decodeDisplay = serviceStatus?.decode_display || { show_control: true, show_voice: true, mode: 'percentage' };
   const compactQualityCount = (value) => {
     const count = Number(value || 0);
     if (count >= 1000000) return `${(count / 1000000).toFixed(1)}m`;
@@ -7989,10 +7938,10 @@ function liveSystemsSection(onSelectionChange) {
     VOICE_QUALITY_WARMUP_FRAMES;
   const decodeQualityValues = (row) => {
     const values = [];
-    if (decodeDisplay.showControl && row.decode_health_pct != null) {
+    if (decodeDisplay.show_control && row.decode_health_pct != null) {
       values.push(Number(row.decode_health_pct));
     }
-    if (decodeDisplay.showVoice && row.vc_quality_pct != null && voiceQualityReady(row)) {
+    if (decodeDisplay.show_voice && row.vc_quality_pct != null && voiceQualityReady(row)) {
       values.push(Number(row.vc_quality_pct));
     }
     return values.filter(Number.isFinite);
@@ -8000,7 +7949,7 @@ function liveSystemsSection(onSelectionChange) {
   const decodeQualityText = (row) => {
     const values = [];
     const detailed = decodeDisplay.mode === 'detailed';
-    if (decodeDisplay.showControl && row.decode_health_pct != null) {
+    if (decodeDisplay.show_control && row.decode_health_pct != null) {
       let value = `CC ${Number(row.decode_health_pct).toFixed(1)}%`;
       if (detailed) {
         value += ` · ${Number(row.cc_valid_frames || 0)}/${Number(row.cc_invalid_frames || 0)}/` +
@@ -8009,7 +7958,7 @@ function liveSystemsSection(onSelectionChange) {
       }
       values.push(value);
     }
-    if (decodeDisplay.showVoice && row.vc_quality_pct != null) {
+    if (decodeDisplay.show_voice && row.vc_quality_pct != null) {
       if (!voiceQualityReady(row)) {
         values.push('VC -');
         return values.join(' · ');
@@ -8026,11 +7975,11 @@ function liveSystemsSection(onSelectionChange) {
   };
   const decodeQualityTitle = (row) => {
     const values = [];
-    if (decodeDisplay.showControl && row.decode_health_pct != null) {
+    if (decodeDisplay.show_control && row.decode_health_pct != null) {
       values.push('CC uses a rolling 30-second control-channel window. Detail order: valid frames / ' +
         'invalid frames / corrected bits / sync-loss bits / dropped bits.');
     }
-    if (decodeDisplay.showVoice && row.vc_quality_pct != null) {
+    if (decodeDisplay.show_voice && row.vc_quality_pct != null) {
       values.push('VC uses 20 ms voice frames. Detail order: decoded / repeated / concealed / missing frames · ' +
         'FEC detected corrections / inspected protected bits.');
     }
@@ -8306,7 +8255,7 @@ function liveSystemsSection(onSelectionChange) {
     }
   };
 
-  const source = liveConnection('/live/systems');
+  const source = liveConnection('/api/v1/live/channel-activity');
   source.addEventListener('snapshot', (event) => {
     const snapshot = JSON.parse(event.data);
     (snapshot.tables || []).forEach(upsertTable);
@@ -8341,26 +8290,17 @@ async function renderLive() {
 }
 
 async function renderSystems() {
-  const page = await api('/api/system-directory', pageParameters({ limit: 25 }));
+  const page = await api('/api/v1/systems', pageParameters({ limit: 25 }));
   content.append(pageHeader('Systems & Sites',
-    'P25, DMR, and NXDN systems with their observed sites'));
-  const rows = [];
-  (page.rows || []).forEach((system) => {
-    rows.push({ ...system, directory_type: 'system' });
-    (system.children || []).forEach((site) => rows.push({ ...site, directory_type: 'site' }));
-  });
+    'P25, DMR, and NXDN trunked system scopes'));
+  const rows = page.rows || [];
   const columns = [
-    { id: 'directory-name', label: 'System / Site', width: 230, className: 'directory-name', render: (row) => {
+    { id: 'directory-name', label: 'System', width: 230, className: 'directory-name', render: (row) => {
       const wrapper = node('div', 'directory-entity');
-      if (row.directory_type === 'system') {
-        const label = row.configured_system || `${protocolFamily(row)} System`;
-        const heading = node('strong');
-        heading.append(systemLink(row, label));
-        wrapper.append(heading);
-      } else {
-        wrapper.append(node('span', 'directory-branch', '↳'),
-          siteNameSummary(row));
-      }
+      const label = row.configured_system || `${protocolFamily(row)} System`;
+      const heading = node('strong');
+      heading.append(systemLink(row, label));
+      wrapper.append(heading);
       return wrapper;
     } },
     { id: 'protocol', label: 'Protocol', render: (row) => protocolFamily(row) },
@@ -8369,44 +8309,32 @@ async function renderSystems() {
       return [...new Set([trunkedVariant(row), identityDomainLabel(row)].filter(Boolean))].join(' · ');
     } },
     { id: 'wacn', label: 'WACN / Net', fullLabel: 'WACN or Network', className: 'numeric', render: (row) =>
-      isP25(row) ? (row.directory_type === 'system' ? hex(row.wacn, 5) : '') :
-        (row.directory_type === 'system' ? identifierNumber(row.network_id) : '') },
+      isP25(row) ? hex(row.wacn, 5) : identifierNumber(row.network_id) },
     { id: 'system', label: 'Sys ID', fullLabel: 'System ID', className: 'numeric', render: (row) => {
-      if (row.directory_type !== 'system') return '';
       return isP25(row) ? hex(row.system_id, 3) : identifierNumber(row.system_id);
     } },
-    { id: 'rfss', label: 'RFSS / RAN', className: 'numeric', render: (row) =>
-      row.directory_type === 'site' ? (isP25(row) ? hex(row.rfss, 2) : identifierNumber(row.ran)) : '' },
-    { id: 'site', label: 'Site', className: 'numeric', render: (row) =>
-      row.directory_type === 'site' ? (isP25(row) ? hex(row.site, 2) : identifierNumber(row.site_id)) : '' },
-    { id: 'control-frequency', label: 'CC MHz', fullLabel: 'Control Frequency MHz', className: 'numeric',
-      render: (row) => row.directory_type === 'site' ? frequency(row.current_control_hz) : '' },
-    { id: 'count', label: 'Sites / Ch', fullLabel: 'Sites or Channels', className: 'numeric', render: (row) =>
-      row.directory_type === 'system' ? `${number(row.sites)} ${Number(row.sites) === 1 ? 'site' : 'sites'}` :
-        `${number(row.channels)} ch` },
-    { id: 'talkgroups', label: 'TGs', fullLabel: 'Talkgroups', className: 'numeric', render: (row) =>
-      row.directory_type === 'system' ? number(row.talkgroups) : '' },
-    { id: 'radios', label: 'Radios', className: 'numeric', render: (row) =>
-      row.directory_type === 'system' ? number(row.radios) : '' },
+    { id: 'count', label: 'Sites', className: 'numeric', render: (row) => number(row.sites) },
+    { id: 'talkgroups', label: 'TGs', fullLabel: 'Talkgroups', className: 'numeric',
+      render: (row) => number(row.talkgroups) },
+    { id: 'patch-groups', label: 'Patches', fullLabel: 'Patch Groups', className: 'numeric',
+      render: (row) => number(row.patch_groups) },
+    { id: 'radios', label: 'Radios', className: 'numeric', render: (row) => number(row.radios) },
     { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms) }
   ];
-  content.append(searchBar('Search protocol, system, site, name, or GUID'));
-  const directory = section('System Directory', table(rows, columns, 'No systems or sites recorded', {
+  content.append(searchBar('Search protocol, system, or configured name'));
+  const directory = section('System Directory', table(rows, columns, 'No systems recorded', {
     type: 'system-directory',
     sortable: false,
-    rowClass: (row) => `directory-${row.directory_type}-row`
+    rowClass: () => 'directory-system-row'
   }));
-  const truncated = (page.rows || []).filter((row) => row.children_truncated);
-  if (truncated.length) directory.append(node('div', 'directory-warning',
-    `${number(truncated.length)} system group${truncated.length === 1 ? '' : 's'} exceeded the child-site display limit.`));
   directory.append(pager(page));
   content.append(directory);
 }
 
 async function renderSystem() {
   const systemScope = requiredSystemScope();
-  const response = await api('/api/system', systemScope);
-  const system = response.system;
+  const response = await api(systemApiPath(systemScope.scope));
+  const system = response;
   const requestedTab = route.get('tab') || 'info';
   const tabItems = systemTabItems(system);
   const tab = tabItems.some((item) => item.id === requestedTab) ? requestedTab : 'info';
@@ -8418,25 +8346,25 @@ async function renderSystem() {
     systemTabs(system, tab));
 
   if (tab === 'talkgroups') {
-    const page = await api('/api/system/talkgroups', pageParameters(systemScope));
+    const page = await api(systemApiPath(systemScope.scope, 'group-identities'), pageParameters());
     content.append(pagedSection('Talkgroups', page, talkgroupColumns, 'Search talkgroup ID', 'talkgroups',
       exportCsvLink('system-talkgroups', systemScope), { topPager: true }));
   } else if (tab === 'radios') {
-    const page = await api('/api/system/radios', pageParameters(systemScope));
+    const page = await api(systemApiPath(systemScope.scope, 'radios'), pageParameters());
     content.append(pagedSection('Radios', page, systemRadioColumns(system), 'Search radio ID', 'radios',
       exportCsvLink('system-radios', systemScope), { topPager: true }));
   } else if (tab === 'talker-aliases') {
-    const page = await api('/api/system/talker-aliases', pageParameters(systemScope));
+    const page = await api(systemApiPath(systemScope.scope, 'talker-aliases'), pageParameters());
     const columns = [
     { id: 'radio', label: 'Radio', fullLabel: 'Radio ID', render: (row) => radioLink(row), className: 'numeric', sort: 'radio', sortValue: (row) => Number(row.radio_id) },
       { id: 'talker-alias', label: 'OTA Alias', fullLabel: 'Talker Alias', key: 'last_talker_alias', className: 'alias-cell', sort: 'talker_alias' },
       { id: 'radio-alias', label: 'Alias', fullLabel: 'Configured Alias', render: (row) => aliasLabel(row) ? radioLink(row, row.radio_id, aliasLabel(row)) : '', className: 'alias-cell', sort: 'alias', sortValue: aliasLabel },
       { id: 'talkgroup-id', label: 'Last TGID', render: (row) => talkgroupLink(row,
-        row.last_talkgroup_id, undefined, row.last_talkgroup_kind_code), className: 'numeric',
+        row.last_talkgroup_id, undefined, row.last_talkgroup_kind), className: 'numeric',
         sort: 'last_talkgroup', sortValue: (row) => Number(row.last_talkgroup_id) },
       { id: 'talkgroup-name', label: 'TG Alias', fullLabel: 'Talkgroup Alias',
         render: (row) => talkgroupAliasLink(row, row.last_talkgroup_id, 'talkgroup_alias_',
-          row.last_talkgroup_kind_code), className: 'alias-cell', sort: 'last_talkgroup_name',
+          row.last_talkgroup_kind), className: 'alias-cell', sort: 'last_talkgroup_name',
         sortValue: (row) => row.talkgroup_alias_name || '' },
       { id: 'calls', label: 'Calls', render: (row) => number(row.call_count), className: 'numeric', sort: 'calls', sortValue: (row) => Number(row.call_count || 0) },
       { id: 'encrypted', label: 'Enc', render: (row) => number(row.encrypted_count), className: 'numeric encrypted', sort: 'encrypted', sortValue: (row) => Number(row.encrypted_count || 0) },
@@ -8453,6 +8381,7 @@ async function renderSystem() {
     const blocks = [section('Directory', metrics([
       ['Known Sites', system.sites],
       ['Known Talkgroups', system.talkgroups],
+      ['Known Patch Groups', system.patch_groups],
       ['Known Radios', system.radios]
     ], true)), section('Retained Call Activity', metrics([
       ['Calls', system.activity_retained_calls],
@@ -8469,13 +8398,13 @@ async function renderSystem() {
       ['System', systemInfoValue(system)],
       ['First Seen', dateTime(system.first_seen_ms)], ['Last Seen', dateTime(system.last_seen_ms)]
     ])), section('Retained Signaling Observations', fragment(table(
-      signalingActionRows(response.actionCounts), [
+      signalingActionRows(response.action_counts), [
       { label: 'Action', key: 'action' },
       { id: 'count', label: 'Count', render: (row) => number(row.count), className: 'numeric', sortValue: (row) => Number(row.count || 0) }
     ], 'No signaling observations recorded', { type: 'action-counts' }), activityMetricGuide())));
     infoColumn.append(...blocks);
 
-    const sitesPage = await api('/api/system/sites', pageParameters(systemScope));
+    const sitesPage = await api(systemApiPath(systemScope.scope, 'sites'), pageParameters());
     const sitesColumn = node('div', 'entity-info-column system-sites-column');
     sitesColumn.append(pagedSection('Sites', sitesPage, scopedSiteColumns,
       'Search site, name, or GUID', 'sites'));
@@ -8488,21 +8417,21 @@ async function renderSystem() {
 async function renderTalkgroup() {
   const systemScope = requiredSystemScope();
   const id = requiredId();
-  const kind = route.get('kind') === 'patch' ? 'patch' : 'talkgroup';
-  const response = await api('/api/talkgroup', { ...systemScope, talkgroup_id: id, kind });
-  const talkgroup = response.talkgroup;
+  const kind = route.get('kind') === 'patch_group' ? 'patch_group' : 'talkgroup';
+  const response = await api(groupIdentityApiPath(systemScope.scope, kind, id));
+  const talkgroup = response;
   const tab = route.get('tab') || 'info';
   const formattedId = identityNumber(talkgroup, id);
-  const kindLabel = kind === 'patch' ? 'Patch Group' : 'Talkgroup';
+  const kindLabel = kind === 'patch_group' ? 'Patch Group' : 'Talkgroup';
   const title = aliasLabel(talkgroup) || `${kindLabel} ${formattedId}`;
   content.append(pageHeader(title, fragment(systemValue(talkgroup), ` · ${kindLabel} ${formattedId}`)),
     entityTabs('talkgroup', talkgroup, id, tab, false, kind));
 
   if (tab === 'radios') {
-    const relationships = await api('/api/relationships',
-      pageParameters({ ...systemScope, talkgroup_id: id, kind }));
+    const relationships = await api(systemApiPath(systemScope.scope, 'relationships'),
+      pageParameters({ talkgroup_id: id, kind: kind === 'patch_group' ? 'patch_group' : null }));
     const affiliations = systemCapability(talkgroup, 'current_affiliations') ?
-      await api('/api/affiliations', { ...systemScope, talkgroup_id: id, limit: 500 }) : { rows: [] };
+      await api(systemApiPath(systemScope.scope, 'affiliations'), { talkgroup_id: id, limit: 500 }) : { rows: [] };
     const affiliated = new Set((affiliations.rows || []).map((row) => Number(row.radio_id)));
     const columns = [
       { id: 'radio', label: 'Radio', render: (row) => radioLink(row), className: 'numeric', sort: 'radio', sortValue: (row) => Number(row.radio_id) },
@@ -8533,7 +8462,7 @@ async function renderTalkgroup() {
     const infoColumn = node('div', 'entity-info-column');
     const blocks = [section('Identity', keyValues([
       ['System', systemLink(talkgroup, systemInfoValue(talkgroup))],
-      [kind === 'patch' ? 'Patch Group ID' : 'Talkgroup ID', formattedId],
+      [kind === 'patch_group' ? 'Patch Group ID' : 'Talkgroup ID', formattedId],
       ['Alias', aliasLabel(talkgroup)],
       ['Description', talkgroup.alias_description],
       ['Group', talkgroup.alias_group]
@@ -8548,7 +8477,7 @@ async function renderTalkgroup() {
     if (systemCapability(talkgroup, 'current_affiliations')) {
       blocks.push(section('Current State', keyValues([
         ['Currently Affiliated', anchor(number(talkgroup.affiliated_radios),
-          href('talkgroup', { ...scope(talkgroup), id, kind: kind === 'patch' ? 'patch' : null,
+          href('talkgroup', { ...scope(talkgroup), id, kind: kind === 'patch_group' ? 'patch_group' : null,
             tab: 'radios' }))]
       ])));
     }
@@ -8575,8 +8504,8 @@ async function renderTalkgroup() {
 async function renderRadio() {
   const systemScope = requiredSystemScope();
   const id = requiredId();
-  const response = await api('/api/radio', { ...systemScope, radio_id: id });
-  const radio = response.radio;
+  const response = await api(`${systemApiPath(systemScope.scope, 'radios')}/${encodeURIComponent(String(id))}`);
+  const radio = response;
   const tab = route.get('tab') || 'info';
   const formattedId = identityNumber(radio, id);
   const title = aliasLabel(radio) || radio.last_talker_alias || `Radio ${formattedId}`;
@@ -8584,12 +8513,11 @@ async function renderRadio() {
     entityTabs('radio', radio, id, tab, true));
 
   if (tab === 'talkgroups') {
-    const relationships = await api('/api/relationships',
-      pageParameters({ ...systemScope, radio_id: id }));
+    const relationships = await api(systemApiPath(systemScope.scope, 'relationships'),
+      pageParameters({ radio_id: id }));
     const columns = [
       { id: 'talkgroup-id', label: 'TGID', render: (row) => talkgroupLink(row), className: 'numeric', sort: 'talkgroup', sortValue: (row) => Number(row.talkgroup_id) },
-      { id: 'talkgroup-kind', label: 'Kind', render: (row) =>
-        Number(row.target_kind_code) === 3 ? 'Patch' : 'TG' },
+      { id: 'talkgroup-kind', label: 'Kind', render: (row) => groupIdentityLabel(row) },
       { id: 'talkgroup-name', label: 'TG Alias', fullLabel: 'Talkgroup Alias', render: (row) => talkgroupAliasLink(row,
         row.talkgroup_id, 'talkgroup_alias_'), className: 'alias-cell', sort: 'talkgroup_alias', sortValue: (row) => row.talkgroup_alias_name || '' },
       { id: 'talkgroup-description', label: 'Description', key: 'talkgroup_alias_description',
@@ -8629,9 +8557,9 @@ async function renderRadio() {
       ['Observed Talkgroups', radio.talkgroups]
     ])), section('Last-known Facts', keyValues([
       ['Last Talkgroup', talkgroupLink(radio, radio.last_talkgroup_id, undefined,
-        radio.last_talkgroup_kind_code)],
+        radio.last_talkgroup_kind)],
       ['Talkgroup Alias', talkgroupAliasLink(radio, radio.last_talkgroup_id,
-        'last_talkgroup_alias_', radio.last_talkgroup_kind_code)],
+        'last_talkgroup_alias_', radio.last_talkgroup_kind)],
       ['Last Peer Radio', radioLink(radio, radio.last_peer_radio_id)],
       ['Peer Alias', radio.last_peer_alias_name ?
         radioLink(radio, radio.last_peer_radio_id, radio.last_peer_alias_name) : ''],
@@ -8658,7 +8586,7 @@ function siteIdentity(site) {
     site.wacn == null ? '' : `WACN ${hex(site.wacn, 5)}`,
     site.system_id == null ? '' : `System ${hex(site.system_id, 3)}`,
     site.rfss == null ? '' : `RFSS ${hex(site.rfss, 2)}`,
-    site.site == null ? '' : `Site ${hex(site.site, 2)}`
+    site.site_id == null ? '' : `Site ${hex(site.site_id, 2)}`
   ].filter(Boolean).join(' · ');
 }
 
@@ -8666,7 +8594,7 @@ function p25SiteDetailRows(site) {
   return [
     ['Callsign', callsignLink(site.callsign)], ['WACN', hexDecimalPair(site.wacn, 5)],
     ['SysID', hexDecimalPair(site.system_id, 3)], ['NAC', hexDecimalPair(site.nac, 3)],
-    ['RFSS', hexDecimalPair(site.rfss, 2)], ['Site', hexDecimalPair(site.site, 2)],
+    ['RFSS', hexDecimalPair(site.rfss, 2)], ['Site', hexDecimalPair(site.site_id, 2)],
     ['Local Registration Area', hexDecimalPair(site.lra, 2)],
     ['Manufacturer', site.mfid_display],
     ['Broadcast Clock', dateTime(site.broadcast_clock_ms)],
@@ -8683,9 +8611,9 @@ function dmrSiteDetailRows(site) {
   return [
     ['Variant', trunkedVariant(site)], ['Network', identifierNumber(site.network_id)],
     ['System', identifierNumber(site.system_id)], ['Site', identifierNumber(site.site_id)],
-    ['RAN', identifierNumber(site.ran)], ['Brand', dmrBrand(site.brand_code)],
-    ['Model', dmrModel(site.model_code)], ['Mode', dmrMode(site.mode_code)],
-    ['Channel Type', dmrChannelType(site.channel_type_code)],
+    ['RAN', identifierNumber(site.ran)], ['Brand', semanticLabel(site.brand)],
+    ['Model', semanticLabel(site.model)], ['Mode', semanticLabel(site.mode)],
+    ['Channel Type', semanticLabel(site.channel_type)],
     ['Color Code TS1', identifierNumber(site.color_code_ts1)],
     ['Color Code TS2', identifierNumber(site.color_code_ts2)]
   ];
@@ -8696,11 +8624,12 @@ function nxdnSiteDetailRows(site) {
     ['Variant', trunkedVariant(site)], ['Network', identifierNumber(site.network_id)],
     ['System', identifierNumber(site.system_id)], ['Site', identifierNumber(site.site_id)],
     ['RAN', identifierNumber(site.ran)], ['Category', identityDomainLabel(site)],
-    ['Repeater State', nxdnRepeaterMode(site.mode_code)],
+    ['Repeater State', semanticLabel(site.repeater_state)],
     ['Current Repeater', identifierNumber(site.current_repeater)],
-    ['Service Flags', Number(site.service_flags) ? `0x${hex(site.service_flags, 4)}` : ''],
-    ['Failure Call Timer', site.failure_code == null ? '' :
-      (Number(site.failure_code) === 0 ? 'Unspecified' : `${number(site.failure_code)} seconds`)]
+    ['Services', (site.services || []).map(semanticLabel).join(', ')],
+    ['Failure Call Timer', Object.hasOwn(site, 'failure_call_timer_seconds') ?
+      (site.failure_call_timer_seconds == null ? 'Unspecified' :
+        `${number(site.failure_call_timer_seconds)} seconds`) : '']
   ];
 }
 
@@ -8745,8 +8674,8 @@ function trunkedSiteChannelColumns() {
       render: (row) => identifierNumber(row.inbound_channel_number) },
     { label: 'Slot', key: 'timeslot', className: 'numeric',
       render: (row) => identifierNumber(row.timeslot) },
-    { label: 'Use', render: (row) => trunkedChannelUse(row.role_flags) },
-    { label: 'Source', render: (row) => trunkedChannelSources(row.role_flags) },
+    { label: 'Use', render: (row) => trunkedChannelUse(row.roles) },
+    { label: 'Source', render: (row) => trunkedChannelSources(row.sources) },
     { id: 'downlink', label: 'Down MHz', fullLabel: 'Downlink MHz',
       render: (row) => frequency(row.frequency_hz), className: 'numeric' },
     { id: 'uplink', label: 'Up MHz', fullLabel: 'Uplink MHz',
@@ -8759,7 +8688,7 @@ function trunkedSiteChannelColumns() {
 }
 
 async function renderSiteChannels(site) {
-  const data = await api('/api/site/channels', pageParameters({ guid: site.guid }));
+  const data = await api(siteApiPath(site.guid, 'channels'), pageParameters());
   const explanation = protocolFamily(site) === 'DMR' ? node('p', 'muted',
     'DMR grants usually identify an LCN and timeslot. Frequencies marked LCN Map were resolved from the configured map; OTA Freq means the system broadcast an absolute frequency.') :
     fragment();
@@ -8807,12 +8736,14 @@ function p25SiteNeighborColumns() {
 function trunkedSiteNeighborColumns(site) {
   return [
     { label: 'Variant', render: (row) => trunkedVariant({
-      protocol_code: site.protocol_code,
-      variant_code: row.variant_code
+      protocol: site.protocol,
+      variant: row.variant
     }) },
     { label: 'Model / Category', render: (row) => identityDomainLabel({
-      protocol_code: site.protocol_code,
-      identity_domain_code: row.identity_domain_code
+      protocol: site.protocol,
+      address_domain: row.address_domain,
+      model: row.model,
+      location_category: row.location_category
     }) },
     { id: 'neighbor-name', label: 'Name / Site', fullLabel: 'Monitored Name and Site',
       render: neighborSiteLink,
@@ -8827,7 +8758,7 @@ function trunkedSiteNeighborColumns(site) {
       render: (row) => identifierNumber(row.channel_number) },
     { id: 'control-frequency', label: 'CC MHz', fullLabel: 'Control Frequency MHz',
       render: (row) => frequency(row.frequency_hz), className: 'numeric' },
-    { label: 'Status', render: (row) => trunkedNeighborStatus(row.status_flags) },
+    { label: 'Status', render: (row) => trunkedNeighborStatus(row.statuses) },
     { id: 'state', label: 'State', render: (row) => stateBadge(row.state) },
     { label: 'Obs', fullLabel: 'Observations', key: 'observation_count', className: 'numeric' },
     { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen',
@@ -8836,7 +8767,7 @@ function trunkedSiteNeighborColumns(site) {
 }
 
 async function renderSiteNeighbors(site) {
-  const data = await api('/api/site/neighbors', pageParameters({ guid: site.guid }));
+  const data = await api(siteApiPath(site.guid, 'neighbors'), pageParameters());
   const p25 = isP25(site);
   const block = section('Neighbors', table(data.rows || [],
     p25 ? p25SiteNeighborColumns() : trunkedSiteNeighborColumns(site), 'No neighbors recorded',
@@ -8850,8 +8781,8 @@ async function renderSiteInfo(site) {
   const summary = [
     ['Metadata Updates', site.observation_count], ['Channels', site.channels], ['Neighbors', site.neighbors]
   ];
-  if (siteCapability(site, 'band-plan')) summary.push(['Band Plans', site.bands]);
-  if (siteCapability(site, 'patches')) summary.push(['Patches', site.patches]);
+  if (siteCapability(site, 'frequency_bands')) summary.push(['Band Plans', site.bands]);
+  if (siteCapability(site, 'patch_groups')) summary.push(['Patches', site.patches]);
 
   const infoColumn = node('div', 'entity-info-column');
   infoColumn.append(section('Site Info', keyValues([
@@ -8870,7 +8801,7 @@ async function renderSiteInfo(site) {
   }
 
   const activityColumn = node('div', 'entity-info-column');
-  if (siteCapability(site, 'top-talkgroups')) {
+  if (siteCapability(site, 'group_identities')) {
     activityColumn.append(await siteTopTalkgroupsSection(site));
   }
   const layout = node('div', 'entity-info-layout');
@@ -8882,8 +8813,8 @@ async function renderSiteInfo(site) {
 async function renderSite() {
   const guid = route.get('guid');
   if (!guid) throw new Error('Site GUID is missing from the URL');
-  const response = await api('/api/site', { guid });
-  const site = response.site;
+  const response = await api(siteApiPath(guid));
+  const site = response;
   const requestedTab = route.get('tab') || 'info';
   const tabItems = siteTabItems(site);
   const tab = tabItems.some((item) => item.id === requestedTab) ? requestedTab : 'info';
@@ -8899,12 +8830,12 @@ async function renderSite() {
   } else if (tab === 'neighbors') {
     await renderSiteNeighbors(site);
   } else if (tab === 'band-plan') {
-    const data = await api('/api/site/bands', { guid });
-    content.append(section('Home System Band Plan', table(data.rows || [], [
+    const data = await api(siteApiPath(guid, 'frequency-bands'));
+    content.append(section('Home System Band Plan', table(data.home_bands || [], [
       { label: 'Band', key: 'band', className: 'numeric' },
       { id: 'base', label: 'Base', fullLabel: 'Base MHz', render: (row) => frequency(row.base_hz), className: 'numeric', sortValue: (row) => Number(row.base_hz || 0) },
       { id: 'spacing', label: 'Space', fullLabel: 'Spacing kHz', render: (row) => row.spacing_hz ? (row.spacing_hz / 1000).toFixed(3) : '', className: 'numeric', sortValue: (row) => Number(row.spacing_hz || 0) },
-      { label: 'BW Hz', fullLabel: 'Bandwidth Hz', key: 'bandwidth', className: 'numeric' },
+      { label: 'BW Hz', fullLabel: 'Bandwidth Hz', key: 'bandwidth_hz', className: 'numeric' },
       { id: 'offset', label: 'Offset', fullLabel: 'Offset MHz', render: (row) => row.transmit_offset_hz ? (row.transmit_offset_hz / 1000000).toFixed(5) : '', className: 'numeric', sortValue: (row) => Number(row.transmit_offset_hz || 0) },
       { id: 'tdma', label: 'TDMA', render: (row) => yesNo(row.tdma), sortValue: (row) => Boolean(row.tdma) },
       { label: 'Slots', key: 'timeslots', className: 'numeric' },
@@ -8912,23 +8843,23 @@ async function renderSite() {
       { label: 'Obs', fullLabel: 'Observations', key: 'observation_count', className: 'numeric' },
       { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
     ], 'No home-system band plan recorded', { type: 'site-bands' })));
-    content.append(section('ISSI Advertised Band Plans', table(data.foreign_rows || [], [
+    content.append(section('ISSI Advertised Band Plans', table(data.foreign_bands || [], [
       { id: 'wacn', label: 'WACN', render: (row) => hex(row.foreign_wacn, 5), sortValue: (row) => Number(row.foreign_wacn || 0) },
       { id: 'system', label: 'Sys', fullLabel: 'Foreign System', render: (row) => hex(row.foreign_system_id, 3), sortValue: (row) => Number(row.foreign_system_id || 0) },
       { label: 'Band', key: 'band', className: 'numeric' },
-      { id: 'mode', label: 'Mode', render: (row) => foreignBandDetails(row.channel_type).mode },
+      { id: 'mode', label: 'Mode', render: (row) => semanticLabel(row.access_mode) },
       { id: 'base', label: 'Base', fullLabel: 'Base MHz', render: (row) => frequency(row.base_hz), className: 'numeric', sortValue: (row) => Number(row.base_hz || 0) },
       { id: 'spacing', label: 'Space', fullLabel: 'Spacing kHz', render: (row) => row.spacing_hz ? (row.spacing_hz / 1000).toFixed(3) : '', className: 'numeric', sortValue: (row) => Number(row.spacing_hz || 0) },
-      { id: 'bandwidth', label: 'BW Hz', fullLabel: 'Bandwidth Hz', render: (row) => foreignBandDetails(row.channel_type).bandwidth, className: 'numeric' },
+      { id: 'bandwidth', label: 'BW Hz', fullLabel: 'Bandwidth Hz', key: 'bandwidth_hz', className: 'numeric' },
       { id: 'offset', label: 'Offset', fullLabel: 'Offset MHz', render: (row) => row.transmit_offset_hz ? (row.transmit_offset_hz / 1000000).toFixed(5) : '', className: 'numeric', sortValue: (row) => Number(row.transmit_offset_hz || 0) },
-      { id: 'slots', label: 'Slots', render: (row) => foreignBandDetails(row.channel_type).slots, className: 'numeric' },
-      { id: 'voice-rate', label: 'Voice Rate', render: (row) => foreignBandDetails(row.channel_type).voiceRate },
+      { id: 'slots', label: 'Slots', key: 'timeslots', className: 'numeric' },
+      { id: 'voice-rate', label: 'Voice Rate', render: (row) => semanticLabel(row.voice_rate) },
       { id: 'state', label: 'State', render: (row) => stateBadge(row.state), sortValue: (row) => row.state || '' },
       { label: 'Obs', fullLabel: 'Observations', key: 'observation_count', className: 'numeric' },
       { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
     ], 'No ISSI-advertised band plans recorded', { type: 'site-foreign-bands' })));
   } else if (tab === 'patches') {
-    const data = await api('/api/site/patches', { guid });
+    const data = await api(siteApiPath(guid, 'patch-groups'));
     const talkgroups = new Map();
     const radios = new Map();
     (data.talkgroups || []).forEach((row) => {
@@ -8950,10 +8881,10 @@ async function renderSite() {
     const groups = data.groups || [];
     const columns = [
       { id: 'patch-id', label: 'Patch', fullLabel: 'Patch Talkgroup ID',
-        render: (row) => talkgroupLink(site, row.patch_group, undefined, 3),
+        render: (row) => talkgroupLink(site, row.patch_group, undefined, 'patch_group'),
         className: 'numeric', sortValue: (row) => Number(row.patch_group) },
       { id: 'patch-name', label: 'Alias', fullLabel: 'Patch Alias', render: (row) => row.patch_alias_name ?
-        talkgroupLink(site, row.patch_group, row.patch_alias_name, 3) : '',
+        talkgroupLink(site, row.patch_group, row.patch_alias_name, 'patch_group') : '',
         className: 'alias-cell', sortValue: (row) => row.patch_alias_name || '' },
       { id: 'member-talkgroup-ids', label: 'TGIDs', fullLabel: 'Member Talkgroup IDs', render: (row) =>
         memberLinks(talkgroups.get(row.patch_group), (member) => talkgroupLink(site, member.talkgroup_id)) },
@@ -9030,7 +8961,7 @@ function specialIdentifierLabel(row, value, kind) {
   }
 
   // Mirrors NXDNRadioIdentifier/NXDNTalkgroupIdentifier. Type-D uses the same bits as a real HH-NNNN identity.
-  if (protocolFamily(row) === 'NXDN' && Number(row.identity_domain_code) !== 2) {
+  if (protocolFamily(row) === 'NXDN' && row.address_domain !== 'nxdn_type_d') {
     if (kind === 'talkgroup') {
       return ({
         0x0000: 'Null Group',
@@ -9073,8 +9004,9 @@ function activityIdentifier(row, value, kind) {
 }
 
 function activityTargetIdentifier(row) {
-  const kind = TALKGROUP_TARGET_KINDS.has(Number(row.target_kind_code)) ? 'talkgroup' :
-    Number(row.target_kind_code) === 2 ? 'radio' : '';
+  const targetKind = identityKind(row.target_kind);
+  const kind = targetKind === 'radio' ? 'radio' :
+    ['talkgroup', 'patch_group'].includes(targetKind) ? 'talkgroup' : '';
   return activityIdentifier(row, row.target_id, kind);
 }
 
@@ -9088,8 +9020,9 @@ function activitySourceAlias(row) {
 function activityTargetAlias(row) {
   const alias = row.target_alias_name || '';
   if (!alias) return '';
-  const kind = TALKGROUP_TARGET_KINDS.has(Number(row.target_kind_code)) ? 'talkgroup' :
-    Number(row.target_kind_code) === 2 ? 'radio' : '';
+  const targetKind = identityKind(row.target_kind);
+  const kind = targetKind === 'radio' ? 'radio' :
+    ['talkgroup', 'patch_group'].includes(targetKind) ? 'talkgroup' : '';
   if (specialIdentifierLabel(row, row.target_id, kind)) return alias;
   if (kind === 'talkgroup') return talkgroupLink(row, row.target_id, alias);
   if (kind === 'radio') return radioLink(row, row.target_id, alias);
@@ -9124,7 +9057,7 @@ async function renderActivity(scopeParameters, title = 'Activity') {
     content.append(section(title, node('div', 'empty', 'Detailed history logging is not running.')));
     return;
   }
-  const data = await api('/api/activity', {
+  const data = await api('/api/v1/activity', {
     ...scopeParameters,
     before_id: route.get('before_id'),
     hide_grants: true,
@@ -9137,7 +9070,7 @@ async function renderActivity(scopeParameters, title = 'Activity') {
   const controls = node('div', 'pager');
   controls.append(route.get('before_id') ? anchor('Newest', currentHref({ before_id: null }), 'button secondary') :
     node('span', 'button disabled', 'Newest'));
-  controls.append(data.hasMore ? anchor('Older', currentHref({ before_id: data.nextBeforeId }), 'button secondary') :
+  controls.append(data.has_more ? anchor('Older', currentHref({ before_id: data.next_before_id }), 'button secondary') :
     node('span', 'button disabled', 'Older'));
   block.append(controls);
   content.append(block);
@@ -9171,7 +9104,7 @@ async function renderActivity(scopeParameters, title = 'Activity') {
       }
       updatePauseLabel();
     });
-    const source = liveConnection('/live/activity', scopeParameters);
+    const source = liveConnection('/api/v1/live/activity', scopeParameters);
     source.addEventListener('activity', (event) => {
       const row = JSON.parse(event.data);
       if (String(row.action || '').toUpperCase() === 'GRANT') return;
@@ -9191,12 +9124,12 @@ async function renderActivity(scopeParameters, title = 'Activity') {
 }
 
 async function renderConventional() {
-  const page = await api('/api/conventional', pageParameters());
+  const page = await api('/api/v1/conventional-contexts', pageParameters());
   content.append(pageHeader('Conventional', 'Started conventional analog and digital channel summaries'));
   const columns = [
     { label: 'Name', render: (row) => anchor(row.channel_name || row.context_key,
       href('conventional-detail', { context: row.context_key, tab: 'info' })), className: 'alias-cell', sort: 'name', sortValue: (row) => row.channel_name || row.context_key },
-    { id: 'protocol', label: 'Protocol', render: (row) => protocol(row.protocol_code), sort: 'protocol', sortValue: (row) => protocol(row.protocol_code) },
+    { id: 'protocol', label: 'Protocol', render: protocolFamily, sort: 'protocol', sortValue: protocolFamily },
     { label: 'Decoder', render: (row) => decoderDisplay(row.decoder), sort: 'decoder',
       sortValue: (row) => decoderLabel(row.decoder, true) },
     { id: 'frequency', label: 'MHz', fullLabel: 'Frequency MHz', render: (row) => frequency(row.frequency_hz), className: 'numeric', sort: 'frequency', sortValue: (row) => Number(row.frequency_hz || 0) },
@@ -9211,29 +9144,15 @@ async function renderConventional() {
 }
 
 function conventionalCapability(context, capability) {
-  const capabilities = context?.capabilities;
-  if (!capabilities) return capability === 'info';
-  const normalized = normalizedSiteCapability(capability);
-  if (Array.isArray(capabilities)) {
-    return capabilities.some((value) => normalizedSiteCapability(value) === normalized);
-  }
-  if (typeof capabilities === 'string') {
-    return capabilities.split(',').some((value) => normalizedSiteCapability(value) === normalized);
-  }
-  if (typeof capabilities !== 'object') return false;
-  const entry = Object.entries(capabilities)
-    .find(([key]) => normalizedSiteCapability(key) === normalized);
-  return entry ? siteCapabilityValue(entry[1]) : false;
+  return Boolean(context?.capabilities?.[capability]);
 }
 
 function conventionalTabItems(context) {
   const values = { context: context.context_key };
   const items = [];
-  if (conventionalCapability(context, 'info')) {
-    items.push({ id: 'info', label: 'Info',
-      href: href('conventional-detail', { ...values, tab: 'info' }) });
-  }
-  if (conventionalCapability(context, 'talkgroups')) {
+  items.push({ id: 'info', label: 'Info',
+    href: href('conventional-detail', { ...values, tab: 'info' }) });
+  if (conventionalCapability(context, 'group_identities')) {
     items.push({ id: 'talkgroups', label: 'Talkgroups',
       href: href('conventional-detail', { ...values, tab: 'talkgroups' }) });
   }
@@ -9246,9 +9165,7 @@ function conventionalTabItems(context) {
       href: href('conventional-detail', { ...values, tab: 'activity' }),
       disabled: !detailedHistoryAvailable(), disabledReason: 'Detailed history logging is not running' });
   }
-  return items.length ? items : [
-    { id: 'info', label: 'Info', href: href('conventional-detail', { ...values, tab: 'info' }) }
-  ];
+  return items;
 }
 
 function conventionalTalkgroupColumns() {
@@ -9318,8 +9235,7 @@ function conventionalRadioColumns() {
 }
 
 async function renderConventionalTalkgroups(contextKey) {
-  const page = await api('/api/conventional/talkgroups', pageParameters({
-    context: contextKey,
+  const page = await api(conventionalApiPath(contextKey, 'talkgroups'), pageParameters({
     limit: CONVENTIONAL_IDENTITY_PAGE_LIMIT
   }));
   content.append(pagedSection('Talkgroups', page, conventionalTalkgroupColumns(),
@@ -9328,8 +9244,7 @@ async function renderConventionalTalkgroups(contextKey) {
 }
 
 async function renderConventionalRadios(contextKey) {
-  const page = await api('/api/conventional/radios', pageParameters({
-    context: contextKey,
+  const page = await api(conventionalApiPath(contextKey, 'radios'), pageParameters({
     limit: CONVENTIONAL_IDENTITY_PAGE_LIMIT
   }));
   content.append(pagedSection('Radios', page, conventionalRadioColumns(),
@@ -9340,12 +9255,12 @@ async function renderConventionalRadios(contextKey) {
 async function renderConventionalDetail() {
   const contextKey = route.get('context');
   if (!contextKey) throw new Error('Conventional context is missing from the URL');
-  const data = await api('/api/conventional/detail', { context: contextKey });
+  const data = await api(conventionalApiPath(contextKey));
   const context = data.context;
   const tabItems = conventionalTabItems(context);
   const requestedTab = route.get('tab') || 'info';
   const tab = tabItems.some((item) => item.id === requestedTab) ? requestedTab : tabItems[0].id;
-  content.append(pageHeader(context.channel_name || context.context_key, protocol(context.protocol_code)),
+  content.append(pageHeader(context.channel_name || context.context_key, protocolFamily(context)),
     tabs(tabItems, tab));
 
   if (tab === 'activity') {
@@ -9357,7 +9272,7 @@ async function renderConventionalDetail() {
   } else {
     content.append(section('Channel Info', keyValues([
       ['Name', context.channel_name], ['Context', context.context_key], ['GUID', context.guid],
-      ['Protocol', protocol(context.protocol_code)], ['Decoder', decoderDisplay(context.decoder)],
+      ['Protocol', protocolFamily(context)], ['Decoder', decoderDisplay(context.decoder)],
       ['Alias List', aliasListLink(context.alias_list_name, context.alias_list_id)],
       ['Frequency', frequency(context.primary_frequency_hz)],
       ['NAC', hexDecimalPair(context.nac, 3)], ['First Seen', dateTime(context.first_seen_ms)],
@@ -9386,11 +9301,10 @@ async function renderConventionalDetail() {
 function adminUserRecord(value) {
   return {
     username: String(value?.username || '').trim(),
-    tier: normalizeAccessTier(value?.tier),
-    passwordChangedAtEpochMillis: Number(value?.passwordChangedAtEpochMillis ||
-      value?.passwordChangedAtMs || 0),
-    credentialVersion: Number(value?.credentialVersion || 0),
-    primaryAdmin: Boolean(value?.primaryAdmin ?? value?.primary)
+    tier: accessTierFromWire(value?.tier) || 'PUBLIC',
+    passwordChangedAtEpochMillis: Number(value?.password_changed_at_epoch_millis || 0),
+    credentialVersion: Number(value?.credential_version || 0),
+    primaryAdmin: value?.primary === true
   };
 }
 
@@ -9428,11 +9342,13 @@ function userTierControl(account, statusHost) {
   });
   select.addEventListener('change', async () => {
     const previous = account.tier;
-    const requested = normalizeAccessTier(select.value);
+    const requested = accessTierValue(select.value);
     select.disabled = true;
     adminStatusMessage(statusHost, `Updating ${account.username}…`);
     try {
-      await requestJson(adminUserEndpoint(account.username), { method: 'PUT', body: { tier: requested } });
+      await requestJson(adminUserEndpoint(account.username), {
+        method: 'PUT', body: { tier: accessTierToWire(requested) }
+      });
       account.tier = requested;
       adminStatusMessage(statusHost, `${account.username} now has ${accessTierLabel(requested)} access.`);
       await refreshAccessSession(false);
@@ -9524,7 +9440,7 @@ function openManagedUserModal(account, statusHost, returnFocusSelector) {
       if (creating) {
         await requestJson('/api/v1/admin/users', {
           method: 'POST', body: { username: normalizedManagedUsername(username.value), password: password.value,
-            tier: normalizeAccessTier(tier.value) }
+            tier: accessTierToWire(accessTierValue(tier.value)) }
         });
       } else {
         await requestJson(adminUserEndpoint(account.username), {
@@ -9611,7 +9527,7 @@ async function renderAdminUsers() {
   const create = node('button', '', 'Create User');
   create.type = 'button';
   create.id = 'admin-create-user';
-  const maximumUsers = Number(response?.maximumUsers || 0);
+  const maximumUsers = Number(response?.maximum_users || 0);
   if (maximumUsers > 0 && users.filter((account) => !account.primaryAdmin).length >= maximumUsers) {
     create.disabled = true;
     create.title = `The limit of ${number(maximumUsers)} managed users has been reached.`;
@@ -9634,26 +9550,19 @@ async function renderAdminUsers() {
 }
 
 function adminAccessPolicies(response) {
-  const supplied = response?.capabilities ?? response?.policies ?? response;
-  if (Array.isArray(supplied)) {
-    return supplied.map((entry) => ({
-      id: String(entry?.id || entry?.capability || '').trim(),
-      displayName: String(entry?.displayName || entry?.name || entry?.id || entry?.capability || '').trim(),
-      requiredTier: normalizeAccessTier(entry?.requiredTier ?? entry?.tier),
-      defaultTier: normalizeAccessTier(entry?.defaultTier ?? entry?.requiredTier ?? entry?.tier),
-      configurable: entry?.configurable !== false
-    })).filter((entry) => entry.id);
-  }
-  if (supplied && typeof supplied === 'object') {
-    return Object.entries(supplied).map(([id, value]) => ({
-      id,
-      displayName: id.split('-').map((word) => word[0]?.toUpperCase() + word.slice(1)).join(' '),
-      requiredTier: normalizeAccessTier(value?.requiredTier ?? value?.tier ?? value),
-      defaultTier: normalizeAccessTier(value?.defaultTier ?? value?.requiredTier ?? value?.tier ?? value),
-      configurable: value?.configurable !== false
-    }));
-  }
-  return [];
+  if (!Array.isArray(response?.capabilities)) return [];
+  return response.capabilities.map((entry) => {
+    const requiredTier = accessTierFromWire(entry?.required_tier);
+    const defaultTier = accessTierFromWire(entry?.default_tier);
+    if (!requiredTier || !defaultTier) return null;
+    return {
+      id: typeof entry?.id === 'string' ? entry.id.trim() : '',
+      displayName: typeof entry?.display_name === 'string' ? entry.display_name.trim() : '',
+      requiredTier,
+      defaultTier,
+      configurable: entry?.configurable === true
+    };
+  }).filter((entry) => entry?.id && entry.displayName);
 }
 
 function accessPolicyTierControl(policy, statusHost) {
@@ -9670,12 +9579,12 @@ function accessPolicyTierControl(policy, statusHost) {
   if (select.disabled) select.title = 'This capability is always administrator-only.';
   select.addEventListener('change', async () => {
     const previous = policy.requiredTier;
-    const requested = normalizeAccessTier(select.value);
+    const requested = accessTierValue(select.value);
     select.disabled = true;
     adminStatusMessage(statusHost, `Updating ${policy.displayName || policy.id}…`);
     try {
       await requestJson('/api/v1/admin/access', {
-        method: 'PUT', body: { capability: policy.id, tier: requested }
+        method: 'PUT', body: { capability: policy.id, tier: accessTierToWire(requested) }
       });
       policy.requiredTier = requested;
       adminStatusMessage(statusHost,
@@ -9860,10 +9769,10 @@ async function loadStatus(refreshCurrentView = false) {
     return;
   }
   try {
-    serviceStatus = await api('/api/status');
+    serviceStatus = await api('/api/v1/status');
     const database = serviceStatus.database || {};
     const logging = statsLoggingState();
-    const size = (Number(database.databaseBytes || 0) / 1048576).toFixed(1);
+    const size = (Number(database.database_bytes || 0) / 1048576).toFixed(1);
     const summaryLabel = logging.summaryActive ? 'Summaries on' :
       (logging.summaryConfigured ? 'Summaries unavailable' : 'Summaries off');
     const historyLabel = logging.historyActive ? 'History on' : (logging.historyRetained ? 'History paused' :
@@ -9932,7 +9841,6 @@ async function render() {
   }
 }
 
-const TALKGROUP_TARGET_KINDS = new Set([1, 3]);
 document.addEventListener('click', (event) => {
   const link = event.target.closest('a');
   if (!link || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey ||
