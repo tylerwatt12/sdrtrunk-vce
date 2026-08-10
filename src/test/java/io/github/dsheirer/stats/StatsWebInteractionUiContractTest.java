@@ -132,6 +132,37 @@ class StatsWebInteractionUiContractTest
     }
 
     @Test
+    void reloadsStaleWebClientsWithoutRestoringLegacyTalkgroupReads() throws Exception
+    {
+        String source = source();
+        String reload = function(source, "async function reloadForWebClientRevision()");
+        String status = function(source, "async function loadStatus(refreshCurrentView = false)");
+        String talkgroup = function(source, "async function renderTalkgroup()");
+        String index = Files.readString(INDEX_HTML);
+
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"59\">"));
+        assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
+        assertTrue(reload.contains("fetch('/', { method: 'HEAD', cache: 'no-store', credentials: 'same-origin' })"));
+        assertTrue(reload.contains("response.headers.get('X-Sdrtrunk-Web-Revision')"));
+        assertTrue(reload.contains("window.location.reload()"));
+        assertTrue(status.contains("if (await reloadForWebClientRevision()) return;"));
+        assertTrue(status.indexOf("await reloadForWebClientRevision()") <
+            status.indexOf("capabilityAllowed(ACCESS_CAPABILITIES.DASHBOARD)"));
+        assertTrue(talkgroup.contains("api(groupIdentityApiPath(systemScope.scope, kind, id))"));
+        assertFalse(source.contains("/api/talkgroup"));
+    }
+
+    @Test
+    void keepsSharedTabsScrollableWithoutVisibleScrollbars() throws Exception
+    {
+        String css = Files.readString(APP_CSS);
+
+        assertTrue(css.contains(".tabs {"));
+        assertTrue(css.contains("overflow-x: auto;\n  overflow-y: hidden;\n  scrollbar-width: none;"));
+        assertTrue(css.contains(".tabs::-webkit-scrollbar {\n  display: none;"));
+    }
+
+    @Test
     void showsConfiguredSystemHeadingsAndLinksEveryTrunkedParent() throws Exception
     {
         String source = source();
@@ -416,8 +447,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(html.indexOf("localStorage.getItem('sdrtrunk_theme')") <
             html.indexOf("rel=\"stylesheet\""));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=43"));
-        assertTrue(html.contains("/assets/app.js?v=58"));
+        assertTrue(html.contains("/assets/app.css?v=44"));
+        assertTrue(html.contains("/assets/app.js?v=59"));
         assertTrue(source.contains("window.localStorage.setItem(THEME_STORAGE_KEY"));
         assertTrue(source.contains("toggle.setAttribute('aria-pressed'"));
         assertTrue(css.contains(":root[data-theme=\"dark\"]"));

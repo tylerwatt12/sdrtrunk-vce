@@ -50,6 +50,7 @@ import io.github.dsheirer.web.http.ApiRequestDecoder;
 import io.github.dsheirer.web.http.WebAccessHttpController;
 import io.github.dsheirer.web.network.WebCertificateIdentity;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.URI;
@@ -88,6 +89,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
     private static final int REQUEST_MAXIMUM_THREADS = 96;
     private static final int REQUEST_QUEUE_CAPACITY = 256;
     private static final int MAXIMUM_LIVE_HTTP_CLIENTS = 64;
+    private static final int MAXIMUM_WEB_INDEX_BYTES = 64 * 1024;
 
     private final UserPreferences mUserPreferences;
     private final StatsWebDatabase mDatabase;
@@ -516,8 +518,9 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
 
         try
         {
+            String webClientRevision = readWebClientRevision(requested.assetRoot());
             server.setExecutor(executor);
-            registerContexts(server, requested.assetRoot());
+            registerContexts(server, requested.assetRoot(), webClientRevision);
             server.start();
             return new ListenerRuntime(server, executor, configuration);
         }
@@ -529,7 +532,45 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         }
     }
 
-    private void registerContexts(HttpServer server, Path assetRoot)
+    private static String readWebClientRevision(Path assetRoot)
+    {
+        if(assetRoot == null)
+        {
+            return null;
+        }
+
+        Path index = assetRoot.resolve("index.html");
+
+        try(InputStream input = Files.newInputStream(index))
+        {
+            byte[] bytes = input.readNBytes(MAXIMUM_WEB_INDEX_BYTES + 1);
+
+            if(bytes.length > MAXIMUM_WEB_INDEX_BYTES)
+            {
+                return null;
+            }
+
+            String html = new String(bytes, StandardCharsets.UTF_8);
+            String prefix = "<meta name=\"sdrtrunk-web-revision\" content=\"";
+            int start = html.indexOf(prefix);
+
+            if(start < 0)
+            {
+                return null;
+            }
+
+            start += prefix.length();
+            int end = html.indexOf('"', start);
+            String revision = end > start ? html.substring(start, end).trim() : "";
+            return revision.matches("[A-Za-z0-9._-]{1,64}") ? revision : null;
+        }
+        catch(IOException exception)
+        {
+            return null;
+        }
+    }
+
+    private void registerContexts(HttpServer server, Path assetRoot, String webClientRevision)
     {
         mWebAccessHttpController.register(server);
 
@@ -568,7 +609,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         server.createContext(StatsApiV1.ROOT, StatsWebServerService::handleApiNotFound);
         server.createContext("/api", StatsWebServerService::handleApiNotFound);
         server.createContext("/live", StatsWebServerService::handleApiNotFound);
-        server.createContext("/", exchange -> handleStatic(exchange, assetRoot));
+        server.createContext("/", exchange -> handleStatic(exchange, assetRoot, webClientRevision));
     }
 
     private void ensureAuthenticationServices() throws IOException, SQLException
@@ -1779,7 +1820,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         mWebCallService.receive(call);
     }
 
-    private void handleStatic(HttpExchange exchange, Path root) throws IOException
+    private void handleStatic(HttpExchange exchange, Path root, String webClientRevision) throws IOException
     {
         WebAccessHttpController.prepareSecurityHeaders(exchange);
 
@@ -1826,6 +1867,12 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         Headers headers = exchange.getResponseHeaders();
         headers.set("Content-Type", contentType(file));
         headers.set("Cache-Control", "no-cache");
+
+        if(webClientRevision != null)
+        {
+            headers.set("X-Sdrtrunk-Web-Revision", webClientRevision);
+        }
+
         long length = Files.size(file);
         exchange.sendResponseHeaders(200, "HEAD".equals(exchange.getRequestMethod()) ? -1 : length);
 
