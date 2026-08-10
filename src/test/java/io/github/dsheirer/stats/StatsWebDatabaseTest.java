@@ -2830,6 +2830,33 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void detailedSystemActivityUsesBoundedPerContextCandidates() throws Exception
+    {
+        assertEquals(200, StatsWebDatabase.MAXIMUM_SYSTEM_ACTIVITY_CONTEXTS);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
+        {
+            StringBuilder sql = new StringBuilder(StatsWebDatabase.ACTIVITY_SELECT_SQL);
+            List<Object> parameters = new ArrayList<>();
+            StatsWebDatabase.appendScopeActivityCandidates(sql, parameters, List.of(1L, 2L), true,
+                null, Long.MAX_VALUE, 201);
+            sql.append(StatsWebDatabase.ACTIVITY_ORDER_SQL);
+            parameters.add(201);
+            List<String> plan = explain(connection, sql.toString(), parameters.toArray());
+
+            assertTrue(plan.stream().anyMatch(
+                    detail -> detail.contains("idx_p25_activity_event_context_time")),
+                () -> "Expected bounded context/time candidate scans, plan was: " + plan);
+            assertTrue(plan.stream().anyMatch(
+                    detail -> detail.contains("SEARCH a USING INTEGER PRIMARY KEY")),
+                () -> "Expected primary-key activity hydration, plan was: " + plan);
+            assertTrue(plan.stream().noneMatch(
+                    detail -> detail.contains("SCAN a USING INDEX idx_p25_activity_event_context_time")),
+                () -> "Did not expect a full activity index scan, plan was: " + plan);
+        }
+    }
+
+    @Test
     void foreignBandQueriesUseCompositePrimaryKeys() throws Exception
     {
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))

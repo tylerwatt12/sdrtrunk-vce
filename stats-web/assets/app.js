@@ -5,6 +5,8 @@ const TABLE_WIDTH_COOKIE = 'sdrtrunk_table_widths_v4';
 const ALIAS_CATALOG_COLUMNS_STORAGE_KEY = 'sdrtrunk_alias_catalog_enrichment_columns_v1';
 const TABLE_WIDTH_MINIMUM = 48;
 const TABLE_WIDTH_MAXIMUM = 1200;
+const SYSTEM_DIRECTORY_SITE_LIMIT = 100;
+const SYSTEM_DIRECTORY_SITE_CONCURRENCY = 4;
 const SIGNAL_OFFLINE_MILLISECONDS = 45_000;
 const DECODE_HEALTHY_MINIMUM_PERCENT = 90;
 const DECODE_DEGRADED_MINIMUM_PERCENT = 75;
@@ -8303,41 +8305,80 @@ async function renderLive() {
 async function renderSystems() {
   const page = await api('/api/v1/systems', pageParameters({ limit: 25 }));
   content.append(pageHeader('Systems & Sites',
-    'P25, DMR, and NXDN trunked system scopes'));
-  const rows = page.rows || [];
+    'P25, DMR, and NXDN systems with their observed sites'));
+  const systems = page.rows || [];
+  const sitePages = new Array(systems.length);
+  let nextSystemIndex = 0;
+  const loadSites = async () => {
+    while (nextSystemIndex < systems.length) {
+      const index = nextSystemIndex;
+      nextSystemIndex += 1;
+      const system = systems[index];
+      sitePages[index] = Number(system.sites || 0) > 0 && systemCapability(system, 'sites') ?
+        await api(systemApiPath(system.scope_token, 'sites'), { limit: SYSTEM_DIRECTORY_SITE_LIMIT }) :
+        { rows: [], has_more: false };
+    }
+  };
+  await Promise.all(Array.from({
+    length: Math.min(SYSTEM_DIRECTORY_SITE_CONCURRENCY, systems.length)
+  }, loadSites));
+  const rows = [];
+  systems.forEach((system, index) => {
+    rows.push({ ...system, directory_type: 'system' });
+    (sitePages[index]?.rows || []).forEach((site) => rows.push({ ...site, directory_type: 'site' }));
+  });
   const columns = [
-    { id: 'directory-name', label: 'System', width: 230, className: 'directory-name', render: (row) => {
+    { id: 'directory-name', label: 'System / Site', width: 230, className: 'directory-name', render: (row) => {
       const wrapper = node('div', 'directory-entity');
-      const label = row.configured_system || `${protocolFamily(row)} System`;
-      const heading = node('strong');
-      heading.append(systemLink(row, label));
-      wrapper.append(heading);
+      if (row.directory_type === 'system') {
+        const label = row.configured_system || `${protocolFamily(row)} System`;
+        const heading = node('strong');
+        heading.append(systemLink(row, label));
+        wrapper.append(heading);
+      } else {
+        wrapper.append(node('span', 'directory-branch', '↳'), siteNameSummary(row));
+      }
       return wrapper;
     } },
     { id: 'protocol', label: 'Protocol', render: (row) => protocolFamily(row) },
     { label: 'Variant / Model', render: (row) => {
-      if (isP25(row)) return '';
+      if (row.directory_type !== 'system' || isP25(row)) return '';
       return [...new Set([trunkedVariant(row), identityDomainLabel(row)].filter(Boolean))].join(' · ');
     } },
     { id: 'wacn', label: 'WACN / Net', fullLabel: 'WACN or Network', className: 'numeric', render: (row) =>
-      isP25(row) ? hex(row.wacn, 5) : identifierNumber(row.network_id) },
+      row.directory_type === 'system' ?
+        (isP25(row) ? hex(row.wacn, 5) : identifierNumber(row.network_id)) : '' },
     { id: 'system', label: 'Sys ID', fullLabel: 'System ID', className: 'numeric', render: (row) => {
+      if (row.directory_type !== 'system') return '';
       return isP25(row) ? hex(row.system_id, 3) : identifierNumber(row.system_id);
     } },
-    { id: 'count', label: 'Sites', className: 'numeric', render: (row) => number(row.sites) },
+    { id: 'rfss', label: 'RFSS / RAN', className: 'numeric', render: (row) =>
+      row.directory_type === 'site' ? (isP25(row) ? hex(row.rfss, 2) : identifierNumber(row.ran)) : '' },
+    { id: 'site', label: 'Site', className: 'numeric', render: (row) =>
+      row.directory_type === 'site' ? (isP25(row) ? hex(row.site_id, 2) : identifierNumber(row.site_id)) : '' },
+    { id: 'control-frequency', label: 'CC MHz', fullLabel: 'Control Frequency MHz', className: 'numeric',
+      render: (row) => row.directory_type === 'site' ? frequency(row.current_control_hz) : '' },
+    { id: 'count', label: 'Sites / Ch', fullLabel: 'Sites or Channels', className: 'numeric', render: (row) =>
+      row.directory_type === 'system' ? `${number(row.sites)} ${Number(row.sites) === 1 ? 'site' : 'sites'}` :
+        `${number(row.channels)} ch` },
     { id: 'talkgroups', label: 'TGs', fullLabel: 'Talkgroups', className: 'numeric',
-      render: (row) => number(row.talkgroups) },
+      render: (row) => row.directory_type === 'system' ? number(row.talkgroups) : '' },
     { id: 'patch-groups', label: 'Patches', fullLabel: 'Patch Groups', className: 'numeric',
-      render: (row) => number(row.patch_groups) },
-    { id: 'radios', label: 'Radios', className: 'numeric', render: (row) => number(row.radios) },
+      render: (row) => row.directory_type === 'system' ? number(row.patch_groups) : '' },
+    { id: 'radios', label: 'Radios', className: 'numeric', render: (row) =>
+      row.directory_type === 'system' ? number(row.radios) : '' },
     { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms) }
   ];
-  content.append(searchBar('Search protocol, system, or configured name'));
-  const directory = section('System Directory', table(rows, columns, 'No systems recorded', {
+  content.append(searchBar('Search protocol, system, site, name, or GUID'));
+  const directory = section('System Directory', table(rows, columns, 'No systems or sites recorded', {
     type: 'system-directory',
     sortable: false,
-    rowClass: () => 'directory-system-row'
+    rowClass: (row) => `directory-${row.directory_type}-row`
   }));
+  const truncated = sitePages.filter((sitePage) => sitePage?.has_more).length;
+  if (truncated) directory.append(node('div', 'directory-warning',
+    `${number(truncated)} system group${truncated === 1 ? '' : 's'} exceeded the ` +
+    `${number(SYSTEM_DIRECTORY_SITE_LIMIT)}-site display limit. Open the system for its complete paged site list.`));
   directory.append(pager(page));
   content.append(directory);
 }
