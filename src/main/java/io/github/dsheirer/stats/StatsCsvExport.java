@@ -122,7 +122,7 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
                 text("last_talkgroup_alias", "last_talkgroup_alias_name"),
                 number("affiliated_talkgroup_id", "affiliated_talkgroup_id"),
                 text("affiliated_talkgroup_alias", "affiliated_talkgroup_alias_name"),
-                time("affiliation_updated_utc", "affiliation_updated_at_ms"), number("calls", "call_count"),
+                time("affiliation_confirmed_utc", "affiliation_confirmed_at_ms"), number("calls", "call_count"),
                 number("recorded", "recorded_count"), number("streamed", "streamed_count"),
                 number("encrypted", "encrypted_count"), time("first_seen_utc", "first_seen_ms"),
                 time("last_seen_utc", "last_seen_ms")

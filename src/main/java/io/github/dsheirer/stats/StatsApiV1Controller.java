@@ -168,7 +168,7 @@ final class StatsApiV1Controller
         {
             if(segments.size() == 2)
             {
-                request.requireOnly("q", "sort", "direction", "limit", "offset");
+                request.requireOnly("q", "affiliated", "site_guid", "sort", "direction", "limit", "offset");
                 return page(mDatabase.systemRadios(scoped));
             }
             else if(segments.size() == 3)
@@ -182,14 +182,10 @@ final class StatsApiV1Controller
             request.requireOnly("q", "sort", "direction", "limit", "offset");
             return page(mDatabase.systemTalkerAliases(scoped));
         }
-        else if("affiliations".equals(resource) && segments.size() == 2)
-        {
-            request.requireOnly("talkgroup_id", "radio_id", "sort", "direction", "limit", "offset");
-            return page(mDatabase.currentAffiliations(scoped));
-        }
         else if("relationships".equals(resource) && segments.size() == 2)
         {
-            request.requireOnly("talkgroup_id", "radio_id", "kind", "sort", "direction", "limit", "offset");
+            request.requireOnly("talkgroup_id", "radio_id", "kind", "affiliated", "site_guid", "sort",
+                "direction", "limit", "offset");
             return page(mDatabase.radioTalkgroupRelationships(scoped));
         }
 
@@ -407,8 +403,10 @@ final class StatsApiV1Controller
     {
         switch(dataset)
         {
-            case "system-talkgroups", "system-radios" ->
+            case "system-talkgroups" ->
                 request.requireOnly("scope", "q", "sort", "direction");
+            case "system-radios" ->
+                request.requireOnly("scope", "q", "affiliated", "site_guid", "sort", "direction");
             case "site-channels", "site-neighbors" -> request.requireOnly("guid");
             case "conventional-channels" -> request.requireOnly("q", "sort", "direction");
             case "conventional-talkgroups", "conventional-radios" ->

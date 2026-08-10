@@ -55,7 +55,6 @@ and double-encoded or separator-smuggling resource names are rejected.
 | `GET /api/v1/systems/{scope}/radios` | Paged radio identities. |
 | `GET /api/v1/systems/{scope}/radios/{id}` | One radio identity. |
 | `GET /api/v1/systems/{scope}/talker-aliases` | Paged latest talker aliases. |
-| `GET /api/v1/systems/{scope}/affiliations` | Paged current P25 affiliations. |
 | `GET /api/v1/systems/{scope}/relationships` | Paged radio-to-group or group-to-radio relationships. |
 | `GET /api/v1/sites/{guid}` | One protocol-neutral trunked site. |
 | `GET /api/v1/sites/{guid}/channels` | Paged observed channels. |
@@ -77,6 +76,44 @@ Endpoint-specific filters are documented by the returned resource and reject unk
 
 Every database row materializer also has a 20,000-row emergency ceiling. This is a final guard against a future SQL
 regression; normal endpoint, enrichment, member, history, and export limits are substantially smaller.
+
+System radio pages and radio-to-group relationship pages accept `affiliated=true|false` and `site_guid={guid}`.
+Both filters are applied by SQLite before the bounded page is selected, and `total_count` reflects the same filters.
+A relationship request must include `radio_id` or `talkgroup_id`; `kind=patch_group` is valid only with
+`talkgroup_id`. Patch groups are never current affiliations.
+
+Radio and relationship rows expose `currently_affiliated`. A radio row also exposes
+`affiliated_talkgroup_id` and `affiliation_confirmed_at_ms` when a current affiliation exists. Authoritative
+site-local evidence is represented by one nullable `presence` object:
+
+```json
+{
+  "presence": {
+    "evidence": "registration",
+    "confirmed_at_ms": 1786300000000,
+    "site": {
+      "guid": "receiver-site-guid",
+      "protocol": "p25",
+      "wacn": 781824,
+      "system_id": 840,
+      "nac": 1183,
+      "rfss": 1,
+      "site_id": 2,
+      "configured_site": "North",
+      "configured_name": "North Control",
+      "channel_name": "North Simulcast"
+    }
+  }
+}
+```
+
+`evidence` is `registration` or `affiliation`. Calls, grants, aliases, and generic last-seen traffic do not create
+authoritative presence. `site.guid` is nullable when the decoder has authoritative protocol-native site identifiers
+but no receiver GUID; the presence object is retained in that case. Registration-only presence does not set
+`currently_affiliated` and is not included in
+affiliation aggregates. A regular talkgroup detail reports `affiliated_radios` and the distinct
+`affiliated_sites`; a system reports `affiliated_radios`; a site reports the `affiliated_radios` whose current
+presence points to that site. The former `/api/v1/systems/{scope}/affiliations` collection is not registered.
 
 Site channel pages collapse multiple logical observations of one physical downlink into one row. Each row carries
 one bounded representative channel key, descriptor, and callsign plus `logical_channel_count`,
@@ -100,7 +137,9 @@ Database protocol, variant, scope, identity-domain, and surrogate system keys ar
 - Every trunked site uses `site_kind: "trunked"`; protocol site numbers use `site_id`.
 - NXDN Type-D identities retain their decimal value and add a formatted `*_display` value.
 - `capabilities` uses the same feature names on every protocol: `sites`, `group_identities`, `radios`, `activity`,
-  `talker_aliases`, `current_affiliations`, `channels`, `neighbors`, `quality`, `frequency_bands`, and `patch_groups`.
+  `talker_aliases`, `current_affiliations`, `radio_site_presence`, `channels`, `neighbors`, `quality`,
+  `frequency_bands`, and `patch_groups`. `radio_site_presence` and `current_affiliations` are independent
+  capabilities; both are currently true only for P25.
 
 Unsupported features are absent from the route's data or have a false capability; a protocol-specific alternate API
 is not exposed.
@@ -111,6 +150,9 @@ CSV exports use `GET /api/v1/exports/{dataset}.csv`. Supported datasets are `ali
 `site-quality`, `system-talkgroups`, `system-radios`, `site-channels`, `site-neighbors`, `conventional-channels`,
 `conventional-talkgroups`, and `conventional-radios`. One export can run at a time. Buffered exports stop at 10,000
 rows or 16 MiB instead of attempting an unbounded materialization.
+
+`system-radios` CSV exports accept the same `affiliated` and `site_guid` filters as the JSON collection. Nested
+presence is not serialized into CSV; the export retains the scalar affiliation fields.
 
 Live streams are:
 

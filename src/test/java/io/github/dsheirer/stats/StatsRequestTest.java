@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -82,17 +83,19 @@ class StatsRequestTest
             () -> assertEquals(0, defaults.offset()),
             () -> assertEquals(Long.MAX_VALUE, defaults.beforeId()),
             () -> assertTrue(defaults.booleanValue("include_history", true)),
+            () -> assertNull(defaults.optionalBoolean("affiliated")),
             () -> assertEquals("last_seen", defaults.sort("last_seen")),
             () -> assertTrue(defaults.descending()));
         assertDoesNotThrow(defaults::requireFullyConsumed);
 
         StatsRequest bounds = StatsRequest.from(URI.create("/?limit=500&offset=100000&before_id=1" +
-            "&include_history=false&q=county%20system&sort=first_seen&direction=asc"));
+            "&include_history=false&affiliated=true&q=county%20system&sort=first_seen&direction=asc"));
         assertAll(
             () -> assertEquals(StatsRequest.MAX_LIMIT, bounds.limit()),
             () -> assertEquals(StatsRequest.MAX_OFFSET, bounds.offset()),
             () -> assertEquals(1, bounds.beforeId()),
             () -> assertFalse(bounds.booleanValue("include_history", true)),
+            () -> assertEquals(Boolean.TRUE, bounds.optionalBoolean("affiliated")),
             () -> assertEquals("county system", bounds.search()),
             () -> assertEquals("first_seen", bounds.sort("last_seen")),
             () -> assertFalse(bounds.descending()));
@@ -106,6 +109,8 @@ class StatsRequestTest
         assertInvalidParameter("before_id", () -> StatsRequest.from(URI.create("/?before_id=0")).beforeId());
         assertInvalidParameter("enabled", () -> StatsRequest.from(
             URI.create("/?enabled=1")).booleanValue("enabled", false));
+        assertInvalidParameter("affiliated", () -> StatsRequest.from(
+            URI.create("/?affiliated=unknown")).optionalBoolean("affiliated"));
         assertInvalidParameter("sort", () -> StatsRequest.from(
             URI.create("/?sort=LastSeen")).sort("last_seen"));
         assertInvalidParameter("sort", () -> StatsRequest.from(
