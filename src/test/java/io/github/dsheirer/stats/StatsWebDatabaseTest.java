@@ -366,6 +366,307 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void sortsAliasCallCountsWithoutMaterializingHighFanoutRelationshipsAndAffiliations() throws Exception
+    {
+        int fanout = StatsAliasCatalog.MAX_EVIDENCE_ROWS + 1;
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            PreparedStatement relationships = connection.prepareStatement("""
+                INSERT INTO trunked_radio_talkgroup_summary (
+                    scope_id, radio_id, talkgroup_id, target_kind_code, first_seen_ms, last_seen_ms, join_count
+                ) VALUES (1, ?, 56132, 1, 3000, 4000, 1)
+                """);
+            PreparedStatement radioRelationships = connection.prepareStatement("""
+                INSERT INTO trunked_radio_talkgroup_summary (
+                    scope_id, radio_id, talkgroup_id, target_kind_code, first_seen_ms, last_seen_ms, join_count
+                ) VALUES (1, 1811332, ?, 1, 3000, 4000, 1)
+                """);
+            PreparedStatement affiliations = connection.prepareStatement("""
+                INSERT INTO trunked_radio_affiliation (scope_id, radio_id, talkgroup_id, confirmed_at_ms)
+                VALUES (1, ?, 56132, 4000)
+                """))
+        {
+            connection.setAutoCommit(false);
+
+            for(int offset = 0; offset < fanout; offset++)
+            {
+                int radioId = 2_000_000 + offset;
+                relationships.setInt(1, radioId);
+                relationships.addBatch();
+                radioRelationships.setInt(1, 100_000 + offset);
+                radioRelationships.addBatch();
+                affiliations.setInt(1, radioId);
+                affiliations.addBatch();
+            }
+
+            relationships.executeBatch();
+            radioRelationships.executeBatch();
+            affiliations.executeBatch();
+            connection.commit();
+        }
+
+        Map<String,Object> response = mDatabase.aliases(request(
+            "/api/v1/aliases?list=1&type=talkgroup&sort=call_count&direction=desc"));
+        Map<String,Object> dispatch = rows(response).getFirst();
+        assertEquals("Dispatch", dispatch.get("name"));
+        assertEquals(12L, number(dispatch.get("call_count")));
+        assertEquals(fanout + 1L, number(dispatch.get("relationship_count")));
+        assertEquals(fanout, number(dispatch.get("join_relationship_count")));
+        assertEquals(fanout + 1L, number(dispatch.get("current_affiliation_count")));
+        assertEquals(4000L, number(dispatch.get("last_evidence_ms")));
+
+        Map<String,Object> radioResponse = mDatabase.aliases(request(
+            "/api/v1/aliases?list=1&type=radio&sort=call_count&direction=desc"));
+        Map<String,Object> engine = rows(radioResponse).getFirst();
+        assertEquals("Engine 1", engine.get("name"));
+        assertEquals(8L, number(engine.get("call_count")));
+        assertEquals(fanout + 1L, number(engine.get("relationship_count")));
+        assertEquals(fanout, number(engine.get("join_relationship_count")));
+        assertEquals(1L, number(engine.get("current_affiliation_count")));
+    }
+
+    @Test
+    void sortsLargeAliasListAcrossSeveralBusySystemsWithinPerSourceBounds() throws Exception
+    {
+        int aliasListId = 700;
+        int aliasCount = 450;
+        int systemCount = 20;
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement();
+            PreparedStatement systems = connection.prepareStatement("""
+                INSERT INTO p25_system (system_key, wacn, system_id, first_seen_ms, last_seen_ms)
+                VALUES (?, 0xAAA00, ?, 1000, 5000)
+                """);
+            PreparedStatement contexts = connection.prepareStatement("""
+                INSERT INTO receiver_context (
+                    id, context_key, guid, kind_code, protocol_code, channel_name, alias_list_name,
+                    decoder, first_seen_ms, last_seen_ms, system_key, nac, rfss, site,
+                    primary_frequency_hz, current_control_hz
+                ) VALUES (?, ?, ?, 1, 1, ?, 'Large P25', 'P25-1', 1000, 5000, ?, 0x123, 1, ?, ?, ?)
+                """);
+            PreparedStatement sites = connection.prepareStatement("""
+                INSERT INTO p25_site_snapshot (
+                    guid, snapshot_hash, first_seen_ms, last_seen_ms, observation_count,
+                    protocol, channel_name, alias_list_name, decoder, system_key, nac, rfss, site,
+                    primary_frequency_hz, current_control_hz
+                ) VALUES (?, ?, 1000, 5000, 10, 'APCO25', ?, 'Large P25', 'P25-1', ?, 0x123, 1, ?, ?, ?)
+                """);
+            PreparedStatement scopes = connection.prepareStatement("""
+                INSERT INTO trunked_identity_scope (
+                    scope_id, scope_token, protocol_code, scope_kind_code, identity_domain_code,
+                    p25_system_key, first_seen_ms, last_seen_ms
+                ) VALUES (?, ?, 1, 1, 0, ?, 1000, 5000)
+                """);
+            PreparedStatement ownership = connection.prepareStatement("""
+                INSERT INTO trunked_identity_scope_context (scope_id, context_id, first_seen_ms, last_seen_ms)
+                VALUES (?, ?, 1000, 5000)
+                """);
+            PreparedStatement aliases = connection.prepareStatement("""
+                INSERT INTO alias (id, alias_list_id, name, matcher_type, protocol, value)
+                VALUES (?, ?, ?, 'TALKGROUP', 'APCO25', ?)
+                """);
+            PreparedStatement identities = connection.prepareStatement("""
+                INSERT INTO trunked_identity_summary (
+                    scope_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms,
+                    call_count, target_call_count, grant_count
+                ) VALUES (?, 1, ?, 3000, ?, ?, ?, ?)
+                """);
+            PreparedStatement relationships = connection.prepareStatement("""
+                INSERT INTO trunked_radio_talkgroup_summary (
+                    scope_id, radio_id, talkgroup_id, target_kind_code,
+                    first_seen_ms, last_seen_ms, join_count
+                ) VALUES (?, ?, ?, 1, 3000, ?, 1)
+                """);
+            PreparedStatement affiliations = connection.prepareStatement("""
+                INSERT INTO trunked_radio_affiliation (scope_id, radio_id, talkgroup_id, confirmed_at_ms)
+                VALUES (?, ?, ?, ?)
+                """))
+        {
+            connection.setAutoCommit(false);
+            statement.executeUpdate("INSERT INTO alias_list (id, name, family) VALUES (700, 'Large P25', 'P25')");
+
+            for(int systemIndex = 0; systemIndex < systemCount; systemIndex++)
+            {
+                int key = 700 + systemIndex;
+                int systemId = 0x100 + systemIndex;
+                String guid = "large-p25-" + systemIndex;
+                String channel = "Large P25 Site " + systemIndex;
+                long frequency = 851_000_000L + systemIndex * 1_000_000L;
+
+                systems.setInt(1, key);
+                systems.setInt(2, systemId);
+                systems.addBatch();
+
+                contexts.setInt(1, key);
+                contexts.setString(2, "large-p25-context-" + systemIndex);
+                contexts.setString(3, guid);
+                contexts.setString(4, channel);
+                contexts.setInt(5, key);
+                contexts.setInt(6, systemIndex + 1);
+                contexts.setLong(7, frequency);
+                contexts.setLong(8, frequency);
+                contexts.addBatch();
+
+                sites.setString(1, guid);
+                sites.setString(2, "large-p25-hash-" + systemIndex);
+                sites.setString(3, channel);
+                sites.setInt(4, key);
+                sites.setInt(5, systemIndex + 1);
+                sites.setLong(6, frequency);
+                sites.setLong(7, frequency);
+                sites.addBatch();
+
+                scopes.setInt(1, key);
+                scopes.setString(2, "p25:AAA00:" + Integer.toHexString(systemId).toUpperCase());
+                scopes.setInt(3, key);
+                scopes.addBatch();
+
+                ownership.setInt(1, key);
+                ownership.setInt(2, key);
+                ownership.addBatch();
+            }
+
+            systems.executeBatch();
+            contexts.executeBatch();
+            sites.executeBatch();
+            scopes.executeBatch();
+            ownership.executeBatch();
+
+            for(int aliasIndex = 0; aliasIndex < aliasCount; aliasIndex++)
+            {
+                int aliasId = 700_000 + aliasIndex;
+                int talkgroupId = 10_000 + aliasIndex;
+                aliases.setInt(1, aliasId);
+                aliases.setInt(2, aliasListId);
+                aliases.setString(3, "Large Talkgroup " + aliasIndex);
+                aliases.setInt(4, talkgroupId);
+                aliases.addBatch();
+
+                for(int systemIndex = 0; systemIndex < systemCount; systemIndex++)
+                {
+                    int scopeId = 700 + systemIndex;
+                    int radioId = 4_000_000 + systemIndex * aliasCount + aliasIndex;
+                    long lastSeen = 4000L + systemIndex;
+                    int calls = aliasIndex == aliasCount - 1 ? 2 : 1;
+
+                    identities.setInt(1, scopeId);
+                    identities.setInt(2, talkgroupId);
+                    identities.setLong(3, lastSeen);
+                    identities.setInt(4, calls);
+                    identities.setInt(5, calls);
+                    identities.setInt(6, calls);
+                    identities.addBatch();
+
+                    relationships.setInt(1, scopeId);
+                    relationships.setInt(2, radioId);
+                    relationships.setInt(3, talkgroupId);
+                    relationships.setLong(4, lastSeen);
+                    relationships.addBatch();
+
+                    affiliations.setInt(1, scopeId);
+                    affiliations.setInt(2, radioId);
+                    affiliations.setInt(3, talkgroupId);
+                    affiliations.setLong(4, lastSeen);
+                    affiliations.addBatch();
+
+                    if(aliasIndex == aliasCount - 1)
+                    {
+                        int secondRadioId = 5_000_000 + systemIndex;
+                        relationships.setInt(1, scopeId);
+                        relationships.setInt(2, secondRadioId);
+                        relationships.setInt(3, talkgroupId);
+                        relationships.setLong(4, lastSeen);
+                        relationships.addBatch();
+
+                        affiliations.setInt(1, scopeId);
+                        affiliations.setInt(2, secondRadioId);
+                        affiliations.setInt(3, talkgroupId);
+                        affiliations.setLong(4, lastSeen);
+                        affiliations.addBatch();
+                    }
+                }
+            }
+
+            aliases.executeBatch();
+            statement.executeUpdate("""
+                INSERT INTO alias (
+                    id, alias_list_id, name, matcher_type, protocol, min_value, max_value
+                ) VALUES (800000, 700, 'Large Range', 'TALKGROUP_RANGE', 'APCO25', 20000, 20049)
+                """);
+
+            for(int systemIndex = 0; systemIndex < systemCount; systemIndex++)
+            {
+                int scopeId = 700 + systemIndex;
+                long lastSeen = 4000L + systemIndex;
+
+                for(int rangeOffset = 0; rangeOffset < 50; rangeOffset++)
+                {
+                    int talkgroupId = 20_000 + rangeOffset;
+                    int radioId = 6_000_000 + systemIndex * 50 + rangeOffset;
+
+                    identities.setInt(1, scopeId);
+                    identities.setInt(2, talkgroupId);
+                    identities.setLong(3, lastSeen);
+                    identities.setInt(4, 1);
+                    identities.setInt(5, 1);
+                    identities.setInt(6, 1);
+                    identities.addBatch();
+
+                    relationships.setInt(1, scopeId);
+                    relationships.setInt(2, radioId);
+                    relationships.setInt(3, talkgroupId);
+                    relationships.setLong(4, lastSeen);
+                    relationships.addBatch();
+
+                    affiliations.setInt(1, scopeId);
+                    affiliations.setInt(2, radioId);
+                    affiliations.setInt(3, talkgroupId);
+                    affiliations.setLong(4, lastSeen);
+                    affiliations.addBatch();
+                }
+            }
+
+            identities.executeBatch();
+            relationships.executeBatch();
+            affiliations.executeBatch();
+            connection.commit();
+        }
+
+        Map<String,Object> response = mDatabase.aliases(request(
+            "/api/v1/aliases?list=700&type=talkgroup&sort=call_count&direction=desc"));
+        Map<String,Object> busiest = rows(response).getFirst();
+        assertEquals("Large Range", busiest.get("name"));
+        assertEquals(1000L, number(busiest.get("call_count")));
+        assertEquals(1000L, number(busiest.get("relationship_count")));
+        assertEquals(1000L, number(busiest.get("join_relationship_count")));
+        assertEquals(1000L, number(busiest.get("current_affiliation_count")));
+        assertEquals(20L, number(busiest.get("coverage_scope_count")));
+        assertEquals(20L, number(busiest.get("observed_scope_count")));
+        assertEquals(4019L, number(busiest.get("last_evidence_ms")));
+        assertTrue((Boolean)response.get("hasMore"));
+
+        Map<String,Object> busiestExact = rows(response).stream()
+            .filter(row -> "Large Talkgroup 449".equals(row.get("name")))
+            .findFirst().orElseThrow();
+        assertEquals(40L, number(busiestExact.get("call_count")));
+        assertEquals(40L, number(busiestExact.get("relationship_count")));
+        assertEquals(40L, number(busiestExact.get("current_affiliation_count")));
+
+        for(String sort: List.of("relationship_count", "join_relationship_count", "current_affiliation_count"))
+        {
+            Map<String,Object> sorted = mDatabase.aliases(request(
+                "/api/v1/aliases?list=700&type=talkgroup&sort=" + sort + "&direction=desc"));
+            assertEquals("Large Range", rows(sorted).getFirst().get("name"));
+        }
+
+        Map<String,Object> filtered = mDatabase.aliases(request(
+            "/api/v1/aliases?list=700&type=talkgroup&evidence=observed&use=used" +
+                "&last_activity_after=4019&sort=call_count&direction=desc"));
+        assertEquals("Large Range", rows(filtered).getFirst().get("name"));
+    }
+
+    @Test
     void rejectsOversizedAliasBroadcastRouteShapesBeforeReadingChildText() throws Exception
     {
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);

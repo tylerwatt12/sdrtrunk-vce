@@ -794,14 +794,16 @@ final class StatsAliasCatalog
         Map<Long,List<CoverageScope>> scopeById = scopeProjections(scopes, true);
         Map<Long,List<CoverageScope>> contextById = scopeProjections(scopes, false);
         ScopedIdentityTargets scopedTargets = ScopedIdentityTargets.from(aliases, coverage);
-        EvidenceBudget evidenceBudget = new EvidenceBudget(MAX_EVIDENCE_ROWS);
-        applyTrunkedEvidence(connection, metrics, trunkedScopeIds, scopeById, scopedTargets, evidenceBudget);
+        applyTrunkedEvidence(connection, metrics, trunkedScopeIds, scopeById, scopedTargets,
+            new EvidenceBudget(MAX_EVIDENCE_ROWS));
         applyConventionalDmrEvidence(connection, metrics, conventionalContextIds, contextById, scopedTargets,
-            evidenceBudget);
+            new EvidenceBudget(MAX_EVIDENCE_ROWS));
         applyConventionalDmrOutputs(connection, metrics, conventionalContextIds, contextById, scopedTargets,
-            evidenceBudget);
-        applyRelationships(connection, metrics, trunkedScopeIds, scopeById, scopedTargets, evidenceBudget);
-        applyCurrentAffiliations(connection, metrics, trunkedScopeIds, scopeById, scopedTargets, evidenceBudget);
+            new EvidenceBudget(MAX_EVIDENCE_ROWS));
+        applyRelationships(connection, metrics, trunkedScopeIds, scopeById, scopedTargets,
+            new EvidenceBudget(MAX_EVIDENCE_ROWS));
+        applyCurrentAffiliations(connection, metrics, trunkedScopeIds, scopeById, scopedTargets,
+            new EvidenceBudget(MAX_EVIDENCE_ROWS));
 
         Map<Long,List<Map<String,Object>>> breakdown = new LinkedHashMap<>();
 
@@ -1165,7 +1167,10 @@ final class StatsAliasCatalog
         targets.appendCte(sql, parameters, true);
         sql.append("""
             SELECT relationship.scope_id, 2 AS identity_kind_code, relationship.radio_id AS identity_id,
-                relationship.first_seen_ms, relationship.last_seen_ms, relationship.join_count,
+                min(relationship.first_seen_ms) AS first_seen_ms,
+                max(relationship.last_seen_ms) AS last_seen_ms,
+                count(*) AS relationship_count,
+                sum(CASE WHEN relationship.join_count > 0 THEN 1 ELSE 0 END) AS join_relationship_count,
                 scope.protocol_code, scope.p25_system_key AS system_key, system.wacn, system.system_id,
                 NULL AS p25_identity_state_code, NULL AS p25_home_wacn,
                 NULL AS p25_home_system_id, NULL AS p25_home_talkgroup_id
@@ -1178,12 +1183,17 @@ final class StatsAliasCatalog
         parameters.addAll(scopeIds);
         targets.appendPredicate(sql, "relationship.scope_id", "2", "relationship.radio_id");
         sql.append("""
+            GROUP BY relationship.scope_id, relationship.radio_id, scope.protocol_code,
+                scope.p25_system_key, system.wacn, system.system_id
 
             UNION ALL
 
             SELECT relationship.scope_id, relationship.target_kind_code AS identity_kind_code,
                 relationship.talkgroup_id AS identity_id,
-                relationship.first_seen_ms, relationship.last_seen_ms, relationship.join_count,
+                min(relationship.first_seen_ms) AS first_seen_ms,
+                max(relationship.last_seen_ms) AS last_seen_ms,
+                count(*) AS relationship_count,
+                sum(CASE WHEN relationship.join_count > 0 THEN 1 ELSE 0 END) AS join_relationship_count,
                 scope.protocol_code, scope.p25_system_key AS system_key, system.wacn, system.system_id,
                 target.p25_identity_state_code, target.p25_home_wacn,
                 target.p25_home_system_id, target.p25_home_talkgroup_id
@@ -1201,6 +1211,10 @@ final class StatsAliasCatalog
         targets.appendPredicate(sql, "relationship.scope_id", "relationship.target_kind_code",
             "relationship.talkgroup_id");
         sql.append("""
+            GROUP BY relationship.scope_id, relationship.target_kind_code, relationship.talkgroup_id,
+                scope.protocol_code, scope.p25_system_key, system.wacn, system.system_id,
+                target.p25_identity_state_code, target.p25_home_wacn,
+                target.p25_home_system_id, target.p25_home_talkgroup_id
             ORDER BY 1, 2, 3
             LIMIT ?
             """);
@@ -1218,13 +1232,9 @@ final class StatsAliasCatalog
 
             if(accumulator != null)
             {
-                accumulator.relationshipCount++;
+                accumulator.relationshipCount += number(row.get("relationship_count"));
+                accumulator.joinRelationshipCount += number(row.get("join_relationship_count"));
                 accumulator.observe(row.get("first_seen_ms"), row.get("last_seen_ms"));
-
-                if(number(row.get("join_count")) > 0)
-                {
-                    accumulator.joinRelationshipCount++;
-                }
             }
         }
     }
@@ -1255,7 +1265,8 @@ final class StatsAliasCatalog
         targets.appendCte(sql, parameters, true);
         sql.append("""
             SELECT scope.scope_id, 2 AS identity_kind_code, affiliation.radio_id AS identity_id,
-                affiliation.confirmed_at_ms AS updated_at_ms, scope.protocol_code,
+                max(affiliation.confirmed_at_ms) AS updated_at_ms,
+                count(*) AS current_affiliation_count, scope.protocol_code,
                 scope.p25_system_key AS system_key,
                 system.wacn, system.system_id, NULL AS p25_identity_state_code,
                 NULL AS p25_home_wacn, NULL AS p25_home_system_id, NULL AS p25_home_talkgroup_id
@@ -1268,11 +1279,14 @@ final class StatsAliasCatalog
         parameters.addAll(p25Scopes);
         targets.appendPredicate(sql, "scope.scope_id", "2", "affiliation.radio_id");
         sql.append("""
+            GROUP BY scope.scope_id, affiliation.radio_id, scope.protocol_code,
+                scope.p25_system_key, system.wacn, system.system_id
 
             UNION ALL
 
             SELECT scope.scope_id, 1 AS identity_kind_code, affiliation.talkgroup_id AS identity_id,
-                affiliation.confirmed_at_ms AS updated_at_ms, scope.protocol_code,
+                max(affiliation.confirmed_at_ms) AS updated_at_ms,
+                count(*) AS current_affiliation_count, scope.protocol_code,
                 scope.p25_system_key AS system_key,
                 system.wacn, system.system_id, target.p25_identity_state_code,
                 target.p25_home_wacn, target.p25_home_system_id, target.p25_home_talkgroup_id
@@ -1289,6 +1303,10 @@ final class StatsAliasCatalog
         parameters.addAll(p25Scopes);
         targets.appendPredicate(sql, "scope.scope_id", "1", "affiliation.talkgroup_id");
         sql.append("""
+            GROUP BY scope.scope_id, affiliation.talkgroup_id, scope.protocol_code,
+                scope.p25_system_key, system.wacn, system.system_id,
+                target.p25_identity_state_code, target.p25_home_wacn,
+                target.p25_home_system_id, target.p25_home_talkgroup_id
             ORDER BY 1, 2, 3
             LIMIT ?
             """);
@@ -1306,7 +1324,7 @@ final class StatsAliasCatalog
 
             if(accumulator != null && accumulator.currentAffiliationCount != null)
             {
-                accumulator.currentAffiliationCount++;
+                accumulator.currentAffiliationCount += number(row.get("current_affiliation_count"));
                 accumulator.observe(row.get("updated_at_ms"), row.get("updated_at_ms"));
             }
         }
@@ -1590,7 +1608,11 @@ final class StatsAliasCatalog
         }
     }
 
-    /** One allocation budget shared by every summary source touched by a single alias enrichment. */
+    /**
+     * Allocation budget for one sequential summary-source query and its Alias List projections. Each source releases
+     * its materialized rows before the next source is queried, so sharing one budget across all sources rejects safe
+     * multi-system requests without reducing peak memory.
+     */
     private static final class EvidenceBudget
     {
         private int mRemaining;
