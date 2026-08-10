@@ -2,7 +2,7 @@
 
 ## User-visible purpose
 
-The Alias page's Discover tab calls `/api/alias-list/observed-talkgroups` to show P25, DMR, and NXDN talkgroups or
+The Alias page's Discover tab calls `/api/v1/alias-lists/{id}/observed-talkgroups` to show P25, DMR, and NXDN talkgroups or
 patch groups that have been observed for a selected alias list. Exact aliases are excluded by default, while a
 covering range is reported without hiding the received identity. Administrators can use an observation to prefill a
 normal alias without changing the identity that was received over the air.

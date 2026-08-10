@@ -39,6 +39,20 @@ class P25ActivityLogWriterTest
     Path mTemporaryFolder;
 
     @Test
+    void boundsPatchMembersBeforeTheyReachTheWriterQueue()
+    {
+        List<Integer> members = new ArrayList<>();
+
+        for(int index = 0; index < P25ActivityLogRecords.MAXIMUM_PATCH_MEMBER_TALKGROUPS + 20; index++)
+        {
+            members.add(60_000 + index);
+        }
+
+        assertEquals(P25ActivityLogRecords.MAXIMUM_PATCH_MEMBER_TALKGROUPS,
+            patchActivity(1_000L, members).patchMemberTalkgroupIds().size());
+    }
+
+    @Test
     void writesActivityEvent() throws Exception
     {
         Path database = mTemporaryFolder.resolve("activity.sqlite");
@@ -2936,11 +2950,16 @@ class P25ActivityLogWriterTest
 
     private static P25ActivityLogRecords.ActivityEvent patchActivity(long timestamp)
     {
+        return patchActivity(timestamp, List.of(56181, 56180, 56180, 56182, -1));
+    }
+
+    private static P25ActivityLogRecords.ActivityEvent patchActivity(long timestamp, List<Integer> members)
+    {
         String guid = "123e4567-e89b-12d3-a456-426614174000";
         return new P25ActivityLogRecords.ActivityEvent(timestamp, "GUID:" + guid, guid,
             P25ActivityLogRecords.ContextKind.TRUNKED_SITE, "APCO25", P25ActivityLogRecords.Action.CALL,
             "CALL_PATCH_GROUP_ENCRYPTED", "1811524", "56182", "PATCH_GROUP",
-            List.of(56181, 56180, 56180, 56182, -1), 854187500L, "00-0509", 1, true, 0x84, 101,
+            members, 854187500L, "00-0509", 1, true, 0x84, 101,
             0xBEE00, 0x348, 0x348, 2, 1, "Example Site", "P25_PHASE1", null, true, null, null);
     }
 

@@ -106,22 +106,25 @@ class WebAccessHttpControllerTest
             URI origin = URI.create("http://127.0.0.1:" + server.getAddress().getPort());
             HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
             HttpResponse<String> anonymousSession = send(client, request(origin, "/api/v1/auth/session").GET());
-            JsonNode anonymous = json(anonymousSession);
+            JsonNode anonymous = data(anonymousSession);
             assertEquals(200, anonymousSession.statusCode());
             assertTrue(anonymous.get("configured").booleanValue());
             assertFalse(anonymous.get("authenticated").booleanValue());
+            assertEquals("public", anonymous.get("tier").textValue());
             assertFalse(anonymous.at("/capabilities/dashboard").booleanValue());
             assertFalse(anonymous.at("/capabilities/admin-users").booleanValue());
             assertFalse(anonymous.at("/capabilities/admin-aliases").booleanValue());
 
             HttpResponse<String> anonymousProtected = send(client, request(origin, "/protected").GET());
             assertEquals(401, anonymousProtected.statusCode());
+            assertEquals("authentication_required", json(anonymousProtected).at("/error/code").textValue());
+            assertEquals(401, json(anonymousProtected).at("/error/status").intValue());
             assertTrue(anonymousProtected.headers().firstValue("Content-Security-Policy").isPresent());
             assertEquals(401, send(client, request(origin, "/admin-api")
                 .POST(HttpRequest.BodyPublishers.noBody())).statusCode());
 
             Login admin = login(client, origin, "admin", ADMIN_PASSWORD);
-            assertEquals("ADMIN", admin.body().get("tier").textValue());
+            assertEquals("admin", admin.body().get("tier").textValue());
             assertTrue(admin.cookieHeader().contains(WebAccessHttpController.SESSION_COOKIE_NAME + "="));
             assertTrue(admin.setCookie().contains("HttpOnly"));
             assertTrue(admin.setCookie().contains("SameSite=Strict"));
@@ -132,17 +135,21 @@ class WebAccessHttpControllerTest
                 .header("Cookie", admin.cookieHeader()).GET()).statusCode());
             assertEquals(200, send(client, request(origin, "/admin-api")
                 .header("Cookie", admin.cookieHeader()).GET()).statusCode());
-            assertEquals(200, send(client, request(origin, "/api/v1/admin/users")
-                .header("Cookie", admin.cookieHeader()).GET()).statusCode());
+            HttpResponse<String> usersResponse = send(client, request(origin, "/api/v1/admin/users")
+                .header("Cookie", admin.cookieHeader()).GET());
+            assertEquals(200, usersResponse.statusCode());
+            assertEquals(WebAccessService.MAXIMUM_USERS, data(usersResponse).get("maximum_users").intValue());
+            assertTrue(data(usersResponse).get("users").isArray());
 
             String createBody = OBJECT_MAPPER.writeValueAsString(Map.of(
-                "username", "listener", "password", USER_PASSWORD, "tier", "USER"));
+                "username", "listener", "password", USER_PASSWORD, "tier", "user"));
             HttpResponse<String> missingCsrf = send(client, request(origin, "/api/v1/admin/users")
                 .header("Origin", origin.toString())
                 .header("Cookie", admin.cookieHeader())
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(createBody)));
             assertEquals(403, missingCsrf.statusCode());
+            assertEquals("request_rejected", json(missingCsrf).at("/error/code").textValue());
             assertEquals(403, send(client, request(origin, "/admin-api")
                 .header("Origin", origin.toString())
                 .header("Cookie", admin.cookieHeader())
@@ -158,35 +165,55 @@ class WebAccessHttpControllerTest
             HttpResponse<String> created = send(client, mutation(origin, "/api/v1/admin/users", admin)
                 .POST(HttpRequest.BodyPublishers.ofString(createBody)));
             assertEquals(201, created.statusCode());
-            assertEquals("listener", json(created).get("username").textValue());
+            assertEquals("listener", data(created).get("username").textValue());
+            assertTrue(data(created).has("password_changed_at_epoch_millis"));
+            assertFalse(data(created).has("passwordChangedAtEpochMillis"));
+
+            String keepUserTier = OBJECT_MAPPER.writeValueAsString(Map.of("tier", "user"));
+            assertEquals(200, send(client, mutation(origin, "/api/v1/admin/users/%6cistener", admin)
+                .PUT(HttpRequest.BodyPublishers.ofString(keepUserTier))).statusCode());
+            for(String rejectedPath: java.util.List.of(
+                "/api/v1/admin/users/%2561dmin",
+                "/api/v1/admin/users/listener+",
+                "/api/v1/admin/users/listener%2Fextra",
+                "/api/v1/admin/users/%C3%28"))
+            {
+                assertEquals(404, send(client, mutation(origin, rejectedPath, admin)
+                    .PUT(HttpRequest.BodyPublishers.ofString(keepUserTier))).statusCode(), rejectedPath);
+            }
 
             Login listener = login(client, origin, "listener", USER_PASSWORD);
-            assertEquals("USER", listener.body().get("tier").textValue());
+            assertEquals("user", listener.body().get("tier").textValue());
             assertEquals(200, send(client, request(origin, "/protected")
                 .header("Cookie", listener.cookieHeader()).GET()).statusCode());
             assertEquals(403, send(client, mutation(origin, "/admin-api", listener)
                 .POST(HttpRequest.BodyPublishers.noBody())).statusCode());
 
-            String adminOnly = OBJECT_MAPPER.writeValueAsString(
+            String uppercaseTier = OBJECT_MAPPER.writeValueAsString(
                 Map.of("capability", "dashboard", "tier", "ADMIN"));
+            assertEquals(400, send(client, mutation(origin, "/api/v1/admin/access", admin)
+                .PUT(HttpRequest.BodyPublishers.ofString(uppercaseTier))).statusCode());
+
+            String adminOnly = OBJECT_MAPPER.writeValueAsString(
+                Map.of("capability", "dashboard", "tier", "admin"));
             HttpResponse<String> policyChanged = send(client, mutation(origin, "/api/v1/admin/access", admin)
                 .PUT(HttpRequest.BodyPublishers.ofString(adminOnly)));
             assertEquals(200, policyChanged.statusCode());
-            assertEquals("ADMIN", json(policyChanged).get("requiredTier").textValue());
+            assertEquals("admin", data(policyChanged).get("required_tier").textValue());
             assertEquals(403, send(client, request(origin, "/protected")
                 .header("Cookie", listener.cookieHeader()).GET()).statusCode());
 
-            String promote = OBJECT_MAPPER.writeValueAsString(Map.of("tier", "ADMIN"));
+            String promote = OBJECT_MAPPER.writeValueAsString(Map.of("tier", "admin"));
             HttpResponse<String> promoted = send(client,
                 mutation(origin, "/api/v1/admin/users/listener", admin)
                     .PUT(HttpRequest.BodyPublishers.ofString(promote)));
             assertEquals(200, promoted.statusCode());
-            assertEquals("ADMIN", json(promoted).get("tier").textValue());
+            assertEquals("admin", data(promoted).get("tier").textValue());
             assertEquals(401, send(client, request(origin, "/protected")
                 .header("Cookie", listener.cookieHeader()).GET()).statusCode());
 
             Login promotedLogin = login(client, origin, "listener", USER_PASSWORD);
-            assertEquals("ADMIN", promotedLogin.body().get("tier").textValue());
+            assertEquals("admin", promotedLogin.body().get("tier").textValue());
             assertEquals(200, send(client, request(origin, "/protected")
                 .header("Cookie", promotedLogin.cookieHeader()).GET()).statusCode());
 
@@ -273,10 +300,10 @@ class WebAccessHttpControllerTest
             .header("Content-Type", "application/json")
             .POST(HttpRequest.BodyPublishers.ofString(body)));
         assertEquals(200, response.statusCode(), response.body());
-        JsonNode json = json(response);
+        JsonNode json = data(response);
         String setCookie = response.headers().firstValue("Set-Cookie").orElseThrow();
         return new Login(json, setCookie.substring(0, setCookie.indexOf(';')), setCookie,
-            json.get("csrfToken").textValue());
+            json.get("csrf_token").textValue());
     }
 
     private static HttpRequest.Builder mutation(URI origin, String path, Login login)
@@ -301,6 +328,11 @@ class WebAccessHttpControllerTest
     private static JsonNode json(HttpResponse<String> response) throws Exception
     {
         return OBJECT_MAPPER.readTree(response.body());
+    }
+
+    private static JsonNode data(HttpResponse<String> response) throws Exception
+    {
+        return json(response).get("data");
     }
 
     private static SSLContext trustAllSslContext() throws Exception

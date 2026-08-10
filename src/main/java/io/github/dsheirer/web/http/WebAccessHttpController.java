@@ -23,10 +23,8 @@ import io.github.dsheirer.web.auth.WebAuthenticationService;
 import io.github.dsheirer.web.auth.WebCapability;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.URI;
-import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -66,7 +64,6 @@ public final class WebAccessHttpController implements AutoCloseable
         WebAccessHttpController.class.getName() + ".authorization";
     private static final int MAXIMUM_JSON_BODY_BYTES = 16 * 1024;
     private static final int MAXIMUM_COOKIE_HEADER_CHARACTERS = 8 * 1024;
-    private static final String JSON_CONTENT_TYPE = "application/json; charset=utf-8";
     private static final String SECURITY_POLICY =
         "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; " +
             "img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; object-src 'none'; " +
@@ -188,10 +185,8 @@ public final class WebAccessHttpController implements AutoCloseable
         }
 
         int status = account == null ? 401 : 403;
-        sendJson(exchange, status, Map.of(
-            "error", account == null ? "authentication_required" : "access_denied",
-            "status", status,
-            "capability", capability.id()));
+        sendError(exchange, status, account == null ? "authentication_required" : "access_denied",
+            account == null ? "Authentication is required" : "Access is denied");
         return false;
     }
 
@@ -202,6 +197,11 @@ public final class WebAccessHttpController implements AutoCloseable
         if(!hasExactPath(exchange, SESSION_PATH))
         {
             notFound(exchange);
+            return;
+        }
+
+        if(!requireNoQuery(exchange))
+        {
             return;
         }
 
@@ -225,7 +225,7 @@ public final class WebAccessHttpController implements AutoCloseable
             expireSessionCookie(exchange);
         }
 
-        sendJson(exchange, 200, sessionResponse(session.orElse(null)));
+        sendData(exchange, 200, sessionResponse(session.orElse(null)));
     }
 
     private void handleLogin(HttpExchange exchange) throws IOException
@@ -235,6 +235,11 @@ public final class WebAccessHttpController implements AutoCloseable
         if(!hasExactPath(exchange, LOGIN_PATH))
         {
             notFound(exchange);
+            return;
+        }
+
+        if(!requireNoQuery(exchange))
+        {
             return;
         }
 
@@ -308,7 +313,7 @@ public final class WebAccessHttpController implements AutoCloseable
 
             WebAccessSession created = result.session().get();
             setSessionCookie(exchange, created.sessionId());
-            sendJson(exchange, 200, sessionResponse(created));
+            sendData(exchange, 200, sessionResponse(created));
         }
         catch(RequestException exception)
         {
@@ -371,6 +376,11 @@ public final class WebAccessHttpController implements AutoCloseable
             return;
         }
 
+        if(!requireNoQuery(exchange))
+        {
+            return;
+        }
+
         if(!requireMethod(exchange, "POST"))
         {
             return;
@@ -386,25 +396,30 @@ public final class WebAccessHttpController implements AutoCloseable
 
         mAuthenticationService.logout(cookie.sessionId());
         expireSessionCookie(exchange);
-        sendJson(exchange, 200, Map.of("authenticated", false, "tier", AccessTier.PUBLIC.name()));
+        sendData(exchange, 200, Map.of("authenticated", false, "tier", tierName(AccessTier.PUBLIC)));
     }
 
     private void handleUsers(HttpExchange exchange) throws IOException
     {
         prepareSecurityHeaders(exchange);
 
-        if(!authorize(exchange, WebCapability.ADMIN_USERS))
-        {
-            return;
-        }
-
-        String path = exchange.getRequestURI().getPath();
-        boolean collection = USERS_PATH.equals(path);
-        String username = collection ? null : usernameFromPath(path);
+        String rawPath = exchange.getRequestURI().getRawPath();
+        boolean collection = USERS_PATH.equals(rawPath);
+        String username = collection ? null : usernameFromPath(rawPath);
 
         if(!collection && username == null)
         {
             notFound(exchange);
+            return;
+        }
+
+        if(!requireNoQuery(exchange))
+        {
+            return;
+        }
+
+        if(!authorize(exchange, WebCapability.ADMIN_USERS))
+        {
             return;
         }
 
@@ -422,7 +437,8 @@ public final class WebAccessHttpController implements AutoCloseable
                     List<Map<String,Object>> users = mAccessService.accounts().stream()
                         .map(WebAccessHttpController::accountResponse)
                         .toList();
-                    sendJson(exchange, 200, Map.of("users", users, "maximumUsers", WebAccessService.MAXIMUM_USERS));
+                    sendData(exchange, 200, Map.of("users", users,
+                        "maximumUsers", WebAccessService.MAXIMUM_USERS));
                 }
                 case "POST" -> {
                     if(!collection)
@@ -445,7 +461,7 @@ public final class WebAccessHttpController implements AutoCloseable
                     {
                         WebAccessAccount created = mAccessService.createUser(
                             requiredText(request, "username", 256), password, requiredAccountTier(request));
-                        sendJson(exchange, 201, accountResponse(created));
+                        sendData(exchange, 201, accountResponse(created));
                     }
                     finally
                     {
@@ -491,7 +507,7 @@ public final class WebAccessHttpController implements AutoCloseable
                     }
 
                     mAuthenticationService.invalidateAccountSessions(username);
-                    sendJson(exchange, 200, accountResponse(updated));
+                    sendData(exchange, 200, accountResponse(updated));
                 }
                 case "DELETE" -> {
                     if(collection || hasRequestBody(exchange) ||
@@ -503,7 +519,7 @@ public final class WebAccessHttpController implements AutoCloseable
 
                     WebAccessAccount deleted = mAccessService.deleteUser(username);
                     mAuthenticationService.invalidateAccountSessions(username);
-                    sendJson(exchange, 200, Map.of("deleted", deleted.username()));
+                    sendData(exchange, 200, Map.of("deleted", deleted.username()));
                 }
                 default -> methodNotAllowed(exchange, collection ? "GET, POST" : "PUT, DELETE");
             }
@@ -547,6 +563,11 @@ public final class WebAccessHttpController implements AutoCloseable
             return;
         }
 
+        if(!requireNoQuery(exchange))
+        {
+            return;
+        }
+
         if(!authorize(exchange, WebCapability.ADMIN_ACCESS))
         {
             return;
@@ -561,7 +582,7 @@ public final class WebAccessHttpController implements AutoCloseable
                     throw new RequestException(400, "invalid_request", "GET requests cannot include a body");
                 }
 
-                sendJson(exchange, 200, Map.of("capabilities", policyResponses()));
+                sendData(exchange, 200, Map.of("capabilities", policyResponses()));
             }
             else if("PUT".equals(exchange.getRequestMethod()))
             {
@@ -575,7 +596,7 @@ public final class WebAccessHttpController implements AutoCloseable
                 String id = requiredText(request, "capability", 64);
                 AccessTier tier = requiredTier(request, "tier");
                 WebAccessService.CapabilityPolicy changed = mAccessService.setCapabilityTier(id, tier);
-                sendJson(exchange, 200, policyResponse(changed));
+                sendData(exchange, 200, policyResponse(changed));
             }
             else
             {
@@ -633,7 +654,7 @@ public final class WebAccessHttpController implements AutoCloseable
         Map<String,Object> response = new LinkedHashMap<>();
         response.put("configured", mAccessService.isPrimaryAdminConfigured());
         response.put("authenticated", account != null);
-        response.put("tier", tier.name());
+        response.put("tier", tierName(tier));
         response.put("capabilities", capabilities);
 
         if(account != null)
@@ -664,8 +685,8 @@ public final class WebAccessHttpController implements AutoCloseable
         return Map.of(
             "id", policy.id(),
             "displayName", policy.displayName(),
-            "requiredTier", policy.requiredTier().name(),
-            "defaultTier", policy.defaultTier().name(),
+            "requiredTier", tierName(policy.requiredTier()),
+            "defaultTier", tierName(policy.defaultTier()),
             "configurable", policy.configurable());
     }
 
@@ -673,7 +694,7 @@ public final class WebAccessHttpController implements AutoCloseable
     {
         return Map.of(
             "username", account.username(),
-            "tier", account.tier().name(),
+            "tier", tierName(account.tier()),
             "passwordChangedAtEpochMillis", account.passwordChangedAtEpochMillis(),
             "credentialVersion", account.credentialVersion(),
             "primary", account.primaryAdmin());
@@ -780,7 +801,7 @@ public final class WebAccessHttpController implements AutoCloseable
 
         if(!tier.isAccountTier())
         {
-            throw new RequestException(400, "invalid_request", "A user tier must be USER or ADMIN");
+            throw new RequestException(400, "invalid_request", "A user tier must be user or admin");
         }
 
         return tier;
@@ -790,14 +811,23 @@ public final class WebAccessHttpController implements AutoCloseable
     {
         String value = requiredText(request, field, 16);
 
-        try
+        return switch(value)
         {
-            return AccessTier.valueOf(value.toUpperCase(Locale.ROOT));
-        }
-        catch(IllegalArgumentException exception)
+            case "public" -> AccessTier.PUBLIC;
+            case "user" -> AccessTier.USER;
+            case "admin" -> AccessTier.ADMIN;
+            default -> throw new RequestException(400, "invalid_request", field + " is invalid");
+        };
+    }
+
+    private static String tierName(AccessTier tier)
+    {
+        return switch(Objects.requireNonNull(tier, "Access tier cannot be null"))
         {
-            throw new RequestException(400, "invalid_request", field + " is invalid");
-        }
+            case PUBLIC -> "public";
+            case USER -> "user";
+            case ADMIN -> "admin";
+        };
     }
 
     private static CookieLookup sessionCookie(HttpExchange exchange)
@@ -912,26 +942,27 @@ public final class WebAccessHttpController implements AutoCloseable
         return address != null ? address.getHostAddress() : "unknown";
     }
 
-    private static String usernameFromPath(String path)
+    private static String usernameFromPath(String rawPath)
     {
         String prefix = USERS_PATH + "/";
 
-        if(path == null || !path.startsWith(prefix))
+        if(rawPath == null || !rawPath.startsWith(prefix))
         {
             return null;
         }
 
-        String segment = path.substring(prefix.length());
+        String segment = rawPath.substring(prefix.length());
 
-        if(segment.isBlank() || segment.contains("/"))
+        if(segment.isBlank() || segment.length() > 768 || segment.contains("/"))
         {
             return null;
         }
 
         try
         {
-            String decoded = URLDecoder.decode(segment, StandardCharsets.UTF_8);
-            return decoded.contains("/") || decoded.isBlank() ? null : decoded;
+            String decoded = ApiRequestDecoder.decodeComponent(segment, false);
+            return decoded.isBlank() || decoded.contains("/") || decoded.contains("\\") || decoded.contains("%") ||
+                decoded.contains("+") ? null : decoded;
         }
         catch(IllegalArgumentException exception)
         {
@@ -941,7 +972,7 @@ public final class WebAccessHttpController implements AutoCloseable
 
     private static boolean hasExactPath(HttpExchange exchange, String expected)
     {
-        return expected.equals(exchange.getRequestURI().getPath());
+        return expected.equals(exchange.getRequestURI().getRawPath());
     }
 
     private static boolean hasRequestBody(HttpExchange exchange)
@@ -962,6 +993,20 @@ public final class WebAccessHttpController implements AutoCloseable
         return false;
     }
 
+    private static boolean requireNoQuery(HttpExchange exchange) throws IOException
+    {
+        if(exchange.getRequestURI().getRawQuery() == null)
+        {
+            return true;
+        }
+
+        prepareSecurityHeaders(exchange);
+        exchange.getResponseHeaders().set("Vary", "Cookie");
+        ApiHttpResponse.sendError(exchange, 400, "unknown_parameter", "Query parameters are not supported",
+            "query");
+        return false;
+    }
+
     private static void methodNotAllowed(HttpExchange exchange, String allow) throws IOException
     {
         exchange.getResponseHeaders().set("Allow", allow);
@@ -975,23 +1020,16 @@ public final class WebAccessHttpController implements AutoCloseable
 
     private static void sendError(HttpExchange exchange, int status, String code, String message) throws IOException
     {
-        sendJson(exchange, status, Map.of("error", code, "message", message, "status", status));
+        prepareSecurityHeaders(exchange);
+        exchange.getResponseHeaders().set("Vary", "Cookie");
+        ApiHttpResponse.sendError(exchange, status, code, message);
     }
 
-    private static void sendJson(HttpExchange exchange, int status, Object value) throws IOException
+    private static void sendData(HttpExchange exchange, int status, Object value) throws IOException
     {
         prepareSecurityHeaders(exchange);
-        byte[] body = OBJECT_MAPPER.writeValueAsBytes(value);
-        Headers headers = exchange.getResponseHeaders();
-        headers.set("Content-Type", JSON_CONTENT_TYPE);
-        headers.set("Cache-Control", "no-store");
-        headers.set("Vary", "Cookie");
-        exchange.sendResponseHeaders(status, body.length);
-
-        try(OutputStream outputStream = exchange.getResponseBody())
-        {
-            outputStream.write(body);
-        }
+        exchange.getResponseHeaders().set("Vary", "Cookie");
+        ApiHttpResponse.sendData(exchange, status, value);
     }
 
     private static String safeMessage(RuntimeException exception, String fallback)

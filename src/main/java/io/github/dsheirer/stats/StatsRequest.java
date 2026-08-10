@@ -11,46 +11,112 @@
 
 package io.github.dsheirer.stats;
 
+import io.github.dsheirer.web.http.ApiRequestDecoder;
 import java.net.URI;
-import java.net.URLDecoder;
-import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
- * Parsed, bounded query parameters for Stats Server requests.
+ * Strict, bounded query parameters for the version-one Stats API.
  */
-record StatsRequest(Map<String,String> parameters)
+final class StatsRequest
 {
     static final int DEFAULT_LIMIT = 100;
     static final int MAX_LIMIT = 500;
     static final int MAX_OFFSET = 100_000;
+    static final int MAX_QUERY_LENGTH = 8_192;
+    static final int MAX_PARAMETER_COUNT = 32;
+    static final int MAX_PARAMETER_NAME_LENGTH = 64;
+    static final int MAX_PARAMETER_VALUE_LENGTH = 1_024;
+    static final int MAX_SEARCH_LENGTH = 100;
+
+    private final Map<String,String> mParameters;
+    private final Set<String> mConsumed;
+
+    StatsRequest(Map<String,String> parameters)
+    {
+        this(parameters, new LinkedHashSet<>());
+    }
+
+    private StatsRequest(Map<String,String> parameters, Set<String> consumed)
+    {
+        mParameters = Collections.unmodifiableMap(new LinkedHashMap<>(parameters != null ? parameters : Map.of()));
+        mConsumed = consumed;
+    }
 
     static StatsRequest from(URI uri)
     {
         Map<String,String> parameters = new LinkedHashMap<>();
         String query = uri != null ? uri.getRawQuery() : null;
 
-        if(query != null && !query.isBlank())
+        if(query == null || query.isBlank())
         {
-            for(String parameter: query.split("&"))
-            {
-                String[] parts = parameter.split("=", 2);
-                String key = decode(parts[0]);
+            return new StatsRequest(parameters);
+        }
 
-                if(!key.isBlank())
-                {
-                    parameters.putIfAbsent(key, parts.length == 2 ? decode(parts[1]) : "");
-                }
+        if(query.length() > MAX_QUERY_LENGTH)
+        {
+            throw invalid("query", "query is too long");
+        }
+
+        for(String parameter: query.split("&", -1))
+        {
+            if(parameters.size() >= MAX_PARAMETER_COUNT)
+            {
+                throw invalid("query", "query contains too many parameters");
+            }
+
+            String[] parts = parameter.split("=", 2);
+            String key = decode(parts[0], "query", true);
+            String value = parts.length == 2 ? decode(parts[1], key, true) : "";
+
+            if(key.isBlank())
+            {
+                throw invalid("query", "query parameter name is required");
+            }
+            else if(key.length() > MAX_PARAMETER_NAME_LENGTH)
+            {
+                throw invalid("query", "query parameter name is too long");
+            }
+            else if(value.length() > MAX_PARAMETER_VALUE_LENGTH)
+            {
+                throw invalid(key, key + " is too long");
+            }
+            else if(parameters.putIfAbsent(key, value) != null)
+            {
+                throw invalid(key, key + " must not be repeated");
             }
         }
 
-        return new StatsRequest(Map.copyOf(parameters));
+        return new StatsRequest(parameters);
+    }
+
+    StatsRequest withPathParameter(String key, Object value)
+    {
+        if(key == null || key.isBlank() || value == null)
+        {
+            throw new IllegalArgumentException("Path parameter name and value are required");
+        }
+
+        if(mParameters.containsKey(key))
+        {
+            throw invalid(key, key + " must be supplied in the path only");
+        }
+
+        Map<String,String> combined = new LinkedHashMap<>(mParameters);
+        combined.put(key, String.valueOf(value));
+        return new StatsRequest(combined, mConsumed);
     }
 
     String text(String key)
     {
-        String value = parameters.get(key);
+        mConsumed.add(key);
+        String value = mParameters.get(key);
         return value != null && !value.isBlank() ? value.strip() : null;
     }
 
@@ -60,7 +126,7 @@ record StatsRequest(Map<String,String> parameters)
 
         if(value == null)
         {
-            throw new StatsApiException(400, key + " is required");
+            throw invalid(key, key + " is required");
         }
 
         return value;
@@ -72,12 +138,13 @@ record StatsRequest(Map<String,String> parameters)
 
         if(value == null)
         {
-            throw new StatsApiException(400, key + " is required");
+            throw invalid(key, key + " is required");
         }
 
         return value;
     }
 
+    /** Identifier paths use one unambiguous decimal representation. */
     Integer optionalIdentifier(String key)
     {
         String value = text(key);
@@ -89,15 +156,23 @@ record StatsRequest(Map<String,String> parameters)
 
         try
         {
-            String candidate = value.toUpperCase();
-            int radix = candidate.startsWith("0X") || candidate.matches(".*[A-F].*") ? 16 : 10;
-            candidate = candidate.startsWith("0X") ? candidate.substring(2) : candidate;
-            int parsed = Integer.parseInt(candidate, radix);
-            return parsed >= 0 ? parsed : null;
+            if(!value.matches("[0-9]+"))
+            {
+                throw new NumberFormatException();
+            }
+
+            int parsed = Integer.parseInt(value);
+
+            if(parsed < 0)
+            {
+                throw new NumberFormatException();
+            }
+
+            return parsed;
         }
         catch(NumberFormatException e)
         {
-            throw new StatsApiException(400, key + " is invalid");
+            throw invalid(key, key + " must be a non-negative decimal integer");
         }
     }
 
@@ -116,7 +191,7 @@ record StatsRequest(Map<String,String> parameters)
         }
         catch(NumberFormatException e)
         {
-            throw new StatsApiException(400, key + " is invalid");
+            throw invalid(key, key + " must be an integer");
         }
     }
 
@@ -135,60 +210,188 @@ record StatsRequest(Map<String,String> parameters)
         }
         catch(NumberFormatException e)
         {
-            throw new StatsApiException(400, key + " is invalid");
+            throw invalid(key, key + " must be an integer");
         }
+    }
+
+    boolean booleanValue(String key, boolean defaultValue)
+    {
+        String value = text(key);
+
+        if(value == null)
+        {
+            return defaultValue;
+        }
+        else if("true".equalsIgnoreCase(value))
+        {
+            return true;
+        }
+        else if("false".equalsIgnoreCase(value))
+        {
+            return false;
+        }
+
+        throw invalid(key, key + " must be true or false");
     }
 
     int limit()
     {
+        return limit(MAX_LIMIT);
+    }
+
+    int limit(int maximum)
+    {
+        if(maximum < 1 || maximum > MAX_LIMIT)
+        {
+            throw new IllegalArgumentException("Endpoint limit must be between 1 and " + MAX_LIMIT);
+        }
+
         Integer requested = optionalInt("limit");
-        return Math.max(1, Math.min(MAX_LIMIT, requested != null ? requested : DEFAULT_LIMIT));
+        int value = requested != null ? requested : Math.min(DEFAULT_LIMIT, maximum);
+
+        if(value < 1 || value > maximum)
+        {
+            throw invalid("limit", "limit must be between 1 and " + maximum);
+        }
+
+        return value;
     }
 
     int offset()
     {
         Integer requested = optionalInt("offset");
-        return Math.max(0, Math.min(MAX_OFFSET, requested != null ? requested : 0));
+        int value = requested != null ? requested : 0;
+
+        if(value < 0 || value > MAX_OFFSET)
+        {
+            throw invalid("offset", "offset must be between 0 and " + MAX_OFFSET);
+        }
+
+        return value;
     }
 
     long beforeId()
     {
-        String value = text("before_id");
+        Long value = optionalLong("before_id");
 
         if(value == null)
         {
             return Long.MAX_VALUE;
         }
+        else if(value < 1)
+        {
+            throw invalid("before_id", "before_id must be a positive integer");
+        }
 
-        try
-        {
-            return Math.max(1, Long.parseLong(value));
-        }
-        catch(NumberFormatException e)
-        {
-            throw new StatsApiException(400, "before_id is invalid");
-        }
+        return value;
     }
 
     String search()
     {
         String value = text("q");
-        return value != null && value.length() > 100 ? value.substring(0, 100) : value;
+
+        if(value != null && value.length() > MAX_SEARCH_LENGTH)
+        {
+            throw invalid("q", "q must not exceed " + MAX_SEARCH_LENGTH + " characters");
+        }
+
+        return value;
     }
 
     String sort(String defaultSort)
     {
         String value = text("sort");
-        return value != null && value.matches("[a-z_]+") ? value : defaultSort;
+
+        if(value == null)
+        {
+            return defaultSort;
+        }
+        else if(!value.matches("[a-z][a-z0-9_]{0,63}"))
+        {
+            throw invalid("sort", "sort is invalid");
+        }
+
+        return value;
     }
 
     boolean descending()
     {
-        return !"asc".equalsIgnoreCase(text("direction"));
+        return descending(true);
     }
 
-    private static String decode(String value)
+    boolean descending(boolean defaultValue)
     {
-        return URLDecoder.decode(value != null ? value : "", StandardCharsets.UTF_8);
+        String direction = text("direction");
+
+        if(direction == null)
+        {
+            return defaultValue;
+        }
+        else if("desc".equalsIgnoreCase(direction))
+        {
+            return true;
+        }
+        else if("asc".equalsIgnoreCase(direction))
+        {
+            return false;
+        }
+
+        throw invalid("direction", "direction must be asc or desc");
+    }
+
+    void requireFullyConsumed()
+    {
+        rejectUnknown(mConsumed);
+    }
+
+    /**
+     * Rejects endpoint-specific unknown query parameters before any database or export work begins.  This does not
+     * consume accepted parameters; the endpoint still has to parse every accepted value before returning.
+     */
+    void requireOnly(String... allowedNames)
+    {
+        Set<String> allowed = Set.of(allowedNames != null ? allowedNames : new String[0]);
+        rejectUnknown(allowed);
+    }
+
+    private void rejectUnknown(Set<String> allowed)
+    {
+        List<String> unknown = new ArrayList<>();
+
+        for(String key: mParameters.keySet())
+        {
+            if(!allowed.contains(key))
+            {
+                unknown.add(key);
+            }
+        }
+
+        if(!unknown.isEmpty())
+        {
+            String field = unknown.getFirst();
+            throw new StatsApiException(400, "unknown_parameter", field + " is not supported", field);
+        }
+    }
+
+    static String decodePathSegment(String value)
+    {
+        return decode(value, "path", false);
+    }
+
+    private static String decode(String value, String field, boolean plusAsSpace)
+    {
+        try
+        {
+            return ApiRequestDecoder.decodeComponent(value, plusAsSpace);
+        }
+        catch(IllegalArgumentException exception)
+        {
+            throw invalid(field, field + " contains invalid percent encoding");
+        }
+    }
+
+    private static StatsApiException invalid(String field, String message)
+    {
+        return new StatsApiException(400, "invalid_parameter", message, field);
     }
 }

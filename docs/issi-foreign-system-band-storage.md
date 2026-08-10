@@ -5,8 +5,9 @@
 P25 Phase 1 control channels can broadcast an extended `IDEN_UP_TDMA` message containing a band plan for a foreign
 WACN and System ID. The Stats Server uses these facts for two bounded website queries:
 
-- `/api/site/neighbors?guid=...` shows one aggregated `ISSI System` row per advertised foreign WACN/System.
-- `/api/site/bands?guid=...` shows the individual foreign-system band definitions separately from home-system bands.
+- `/api/v1/sites/{guid}/neighbors` shows one aggregated `ISSI System` row per advertised foreign WACN/System.
+- `/api/v1/sites/{guid}/frequency-bands` shows the individual foreign-system band definitions separately from
+  home-system bands.
 
 The existing `p25_site_frequency_band` tables cannot safely store these facts because their key is only `(guid, band)`.
 Home and foreign systems can reuse the same four-bit band ID, and multiple foreign systems can also reuse it.

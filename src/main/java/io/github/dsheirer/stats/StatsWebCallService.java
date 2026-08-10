@@ -12,7 +12,6 @@ package io.github.dsheirer.stats;
 
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasList;
-import io.github.dsheirer.audio.AudioUtils;
 import io.github.dsheirer.audio.call.AudioCallSnapshot;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.controller.NamingThreadFactory;
@@ -43,14 +42,18 @@ final class StatsWebCallService implements AutoCloseable
     private static final int EVENT_QUEUE_CAPACITY = 256;
     private static final int MAXIMUM_CALLS = 512;
     private static final long MAXIMUM_AUDIO_BYTES = 128L * 1024L * 1024L;
+    static final int MAXIMUM_CALL_AUDIO_BYTES = 16 * 1024 * 1024;
+    static final long MAXIMUM_PENDING_AUDIO_BYTES = MAXIMUM_CALL_AUDIO_BYTES;
+    static final int WAVE_HEADER_BYTES = 44;
     private static final long MAXIMUM_AGE_MS = TimeUnit.MINUTES.toMillis(30);
     private static final int SAMPLE_RATE = 8000;
     private final StatsLiveEventHub mEventHub = new StatsLiveEventHub(MAXIMUM_CLIENTS, EVENT_QUEUE_CAPACITY);
     private final ExecutorService mEncoderExecutor = new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS,
-        new ArrayBlockingQueue<>(64), new NamingThreadFactory("stats completed call audio"),
-        new ThreadPoolExecutor.DiscardOldestPolicy());
+        new ArrayBlockingQueue<>(2), new NamingThreadFactory("stats completed call audio"),
+        new ThreadPoolExecutor.AbortPolicy());
     private final Map<String,CachedCall> mCalls = new LinkedHashMap<>();
     private final AtomicLong mSequence = new AtomicLong();
+    private final AtomicLong mPendingAudioBytes = new AtomicLong();
     private long mAudioBytes;
     private volatile boolean mRunning;
 
@@ -70,18 +73,35 @@ final class StatsWebCallService implements AutoCloseable
     {
         AudioCallSnapshot snapshot = call != null ? call.snapshot() : null;
 
-        if(!mRunning || !mEventHub.hasSubscribers() || !call.hasAudio() || snapshot == null ||
+        if(!mRunning || !mEventHub.hasSubscribers() || call == null || !call.hasAudio() || snapshot == null ||
             snapshot.isDoNotMonitor() || snapshot.duplicate() || isUnresolvedTrafficCall(snapshot))
+        {
+            return;
+        }
+
+        int waveLength = checkedWaveLength(call.audioBuffers());
+
+        if(waveLength < 0 || !reservePendingAudio(waveLength))
         {
             return;
         }
 
         try
         {
-            mEncoderExecutor.execute(() -> cache(call));
+            mEncoderExecutor.execute(() -> {
+                try
+                {
+                    cache(call, waveLength);
+                }
+                finally
+                {
+                    mPendingAudioBytes.addAndGet(-waveLength);
+                }
+            });
         }
         catch(RuntimeException e)
         {
+            mPendingAudioBytes.addAndGet(-waveLength);
             // Service is shutting down.
         }
     }
@@ -108,14 +128,42 @@ final class StatsWebCallService implements AutoCloseable
     {
         evictExpired(System.currentTimeMillis());
         return Map.of("cached_calls", mCalls.size(), "cached_audio_bytes", mAudioBytes,
-            "maximum_calls", MAXIMUM_CALLS, "maximum_audio_bytes", MAXIMUM_AUDIO_BYTES);
+            "maximum_calls", MAXIMUM_CALLS, "maximum_audio_bytes", MAXIMUM_AUDIO_BYTES,
+            "maximum_call_audio_bytes", MAXIMUM_CALL_AUDIO_BYTES,
+            "pending_audio_bytes", mPendingAudioBytes.get(),
+            "maximum_pending_audio_bytes", MAXIMUM_PENDING_AUDIO_BYTES);
     }
 
-    private void cache(CompletedAudioCall call)
+    private boolean reservePendingAudio(int waveLength)
     {
-        byte[] wave = wave(call);
+        long current;
+        long updated;
 
-        if(wave.length <= 44 || wave.length > MAXIMUM_AUDIO_BYTES)
+        do
+        {
+            current = mPendingAudioBytes.get();
+            updated = current + waveLength;
+
+            if(updated > MAXIMUM_PENDING_AUDIO_BYTES)
+            {
+                return false;
+            }
+        }
+        while(!mPendingAudioBytes.compareAndSet(current, updated));
+
+        return true;
+    }
+
+    private void cache(CompletedAudioCall call, int waveLength)
+    {
+        if(!mRunning)
+        {
+            return;
+        }
+
+        byte[] wave = wave(call, waveLength);
+
+        if(wave == null)
         {
             return;
         }
@@ -178,7 +226,7 @@ final class StatsWebCallService implements AutoCloseable
         AliasList aliasList = snapshot.aliasList();
         LinkedHashMap<String,Object> value = new LinkedHashMap<>();
         value.put("call_id", id);
-        value.put("audio_url", "/api/web-player/calls/" + id + "/audio");
+        value.put("audio_url", StatsApiV1.CALLS + "/" + id + "/audio");
         value.put("completed_at_ms", completedAt);
         value.put("duration_ms", call.getDuration());
         put(value, "system", identifierValue(identifiers, IdentifierClass.CONFIGURATION, Form.SYSTEM, Role.ANY));
@@ -275,12 +323,32 @@ final class StatsWebCallService implements AutoCloseable
         }
     }
 
-    private static byte[] wave(CompletedAudioCall call)
+    static byte[] wave(CompletedAudioCall call)
     {
-        byte[] pcm = AudioUtils.convertTo16BitSamples(call.audioBuffers());
-        ByteBuffer wave = ByteBuffer.allocate(44 + pcm.length).order(ByteOrder.LITTLE_ENDIAN);
+        List<float[]> audioBuffers = call != null ? call.audioBuffers() : null;
+        int waveLength = checkedWaveLength(audioBuffers);
+
+        if(waveLength < 0)
+        {
+            return null;
+        }
+
+        return wave(call, waveLength);
+    }
+
+    private static byte[] wave(CompletedAudioCall call, int waveLength)
+    {
+        List<float[]> audioBuffers = call != null ? call.audioBuffers() : null;
+
+        if(audioBuffers == null || waveLength < WAVE_HEADER_BYTES || waveLength > MAXIMUM_CALL_AUDIO_BYTES)
+        {
+            return null;
+        }
+
+        int pcmLength = waveLength - WAVE_HEADER_BYTES;
+        ByteBuffer wave = ByteBuffer.allocate(waveLength).order(ByteOrder.LITTLE_ENDIAN);
         wave.put("RIFF".getBytes(StandardCharsets.US_ASCII));
-        wave.putInt(36 + pcm.length);
+        wave.putInt(36 + pcmLength);
         wave.put("WAVE".getBytes(StandardCharsets.US_ASCII));
         wave.put("fmt ".getBytes(StandardCharsets.US_ASCII));
         wave.putInt(16);
@@ -291,9 +359,68 @@ final class StatsWebCallService implements AutoCloseable
         wave.putShort((short)Short.BYTES);
         wave.putShort((short)16);
         wave.put("data".getBytes(StandardCharsets.US_ASCII));
-        wave.putInt(pcm.length);
-        wave.put(pcm);
+        wave.putInt(pcmLength);
+
+        for(float[] audioBuffer: audioBuffers)
+        {
+            if(audioBuffer == null || audioBuffer.length > wave.remaining() / Short.BYTES)
+            {
+                return null;
+            }
+
+            for(float sample: audioBuffer)
+            {
+                wave.putShort(sample > 1.0f ? Short.MAX_VALUE : sample < -1.0f ? (short)-Short.MAX_VALUE :
+                    (short)(sample * Short.MAX_VALUE));
+            }
+        }
+
+        if(wave.hasRemaining())
+        {
+            return null;
+        }
+
         return wave.array();
+    }
+
+    static int checkedWaveLength(List<float[]> audioBuffers)
+    {
+        if(audioBuffers == null || audioBuffers.isEmpty())
+        {
+            return -1;
+        }
+
+        long pcmBytes = 0;
+
+        try
+        {
+            for(float[] audioBuffer: audioBuffers)
+            {
+                if(audioBuffer == null)
+                {
+                    return -1;
+                }
+
+                pcmBytes = Math.addExact(pcmBytes,
+                    Math.multiplyExact((long)audioBuffer.length, Short.BYTES));
+
+                if(pcmBytes > MAXIMUM_CALL_AUDIO_BYTES - WAVE_HEADER_BYTES)
+                {
+                    return -1;
+                }
+            }
+
+            if(pcmBytes == 0)
+            {
+                return -1;
+            }
+
+            return Math.toIntExact(Math.addExact(WAVE_HEADER_BYTES, pcmBytes));
+        }
+        catch(ArithmeticException e)
+        {
+            return -1;
+        }
     }
 
     @Override

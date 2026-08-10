@@ -11,8 +11,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.sun.net.httpserver.Headers;
+import io.github.dsheirer.message.DecodeMessageViewService;
 import io.github.dsheirer.module.decode.event.DecodeEventViewService;
-import io.github.dsheirer.web.auth.WebCapability;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.util.List;
@@ -49,44 +49,39 @@ class StatsWebServerServiceBindAddressTest
     void acceptsOnlyRegisteredFixedPaths()
     {
         assertTrue(StatsWebServerService.hasExactPath(
-            URI.create("/api/system?scope=p25%3ABEE00%3A348"), "/api/system"));
-        assertFalse(StatsWebServerService.hasExactPath(URI.create("/api/systems"), "/api/system"));
-        assertFalse(StatsWebServerService.hasExactPath(URI.create("/api/system/legacy"), "/api/system"));
-        assertTrue(StatsWebServerService.hasExactPath(
-            URI.create("/live/activity?scope=dmr%3Aguid%3Atest"), "/live/activity"));
-        assertFalse(StatsWebServerService.hasExactPath(URI.create("/live/systems-old"), "/live/systems"));
-        assertTrue(StatsWebServerService.hasExactPath(
-            URI.create("/live/events?configuration_id=test"), "/live/events"));
-        assertFalse(StatsWebServerService.hasExactPath(URI.create("/live/events-old"), "/live/events"));
-        assertTrue(StatsWebServerService.hasExactPath(
-            URI.create("/live/messages?configuration_id=test"), "/live/messages"));
-        assertTrue(StatsWebServerService.hasExactPath(
-            URI.create("/live/channel-diagnostics?configuration_id=test"), "/live/channel-diagnostics"));
+            URI.create("/api/v1/systems/p25%3ABEE00%3A348"), "/api/v1/systems/p25:BEE00:348"));
         assertFalse(StatsWebServerService.hasExactPath(
-            URI.create("/live/channel-diagnostics-old"), "/live/channel-diagnostics"));
+            URI.create("/api/system?scope=p25%3ABEE00%3A348"), "/api/v1/systems/p25:BEE00:348"));
         assertTrue(StatsWebServerService.hasExactPath(
-            URI.create("/live/tuner-diagnostics?target_id=test"), "/live/tuner-diagnostics"));
+            URI.create("/api/v1/live/activity?scope=dmr%3Aguid%3Atest"), StatsApiV1.LIVE_ACTIVITY));
         assertFalse(StatsWebServerService.hasExactPath(
-            URI.create("/live/tuner-diagnostics-old"), "/live/tuner-diagnostics"));
+            URI.create("/live/activity?scope=dmr%3Aguid%3Atest"), StatsApiV1.LIVE_ACTIVITY));
         assertTrue(StatsWebServerService.hasExactPath(
-            URI.create("/api/tuner-diagnostics/targets"), "/api/tuner-diagnostics/targets"));
-        assertFalse(StatsWebServerService.hasExactPath(URI.create("/live/sites/legacy"), "/live/sites"));
-        assertFalse(StatsWebServerService.hasExactPath(URI.create("/live/web-calls/legacy"), "/live/web-calls"));
-        assertTrue(StatsWebServerService.hasExactPath(
-            URI.create("/api/export.csv?dataset=system-talkgroups"), "/api/export.csv"));
+            URI.create("/api/v1/live/decode-events?configuration_id=test"), StatsApiV1.LIVE_DECODE_EVENTS));
         assertFalse(StatsWebServerService.hasExactPath(
-            URI.create("/api/export.csv/legacy"), "/api/export.csv"));
-    }
-
-    @Test
-    void decodesQualityScopeBeforeChoosingItsCapability()
-    {
-        assertEquals(WebCapability.DASHBOARD_VIEW,
-            StatsWebServerService.qualityCapability(URI.create("/api/quality?range=1h")));
-        assertEquals(WebCapability.SYSTEMS_VIEW,
-            StatsWebServerService.qualityCapability(URI.create("/api/quality?guid=site-1")));
-        assertEquals(WebCapability.SYSTEMS_VIEW,
-            StatsWebServerService.qualityCapability(URI.create("/api/quality?%67uid=site-1")));
+            URI.create("/live/events?configuration_id=test"), StatsApiV1.LIVE_DECODE_EVENTS));
+        assertTrue(StatsWebServerService.hasExactPath(
+            URI.create("/api/v1/live/decode-messages?configuration_id=test"), StatsApiV1.LIVE_DECODE_MESSAGES));
+        assertTrue(StatsWebServerService.hasExactPath(
+            URI.create("/api/v1/live/channel-diagnostics?configuration_id=test"),
+            StatsApiV1.LIVE_CHANNEL_DIAGNOSTICS));
+        assertFalse(StatsWebServerService.hasExactPath(
+            URI.create("/live/channel-diagnostics?configuration_id=test"),
+            StatsApiV1.LIVE_CHANNEL_DIAGNOSTICS));
+        assertTrue(StatsWebServerService.hasExactPath(
+            URI.create("/api/v1/live/tuner-diagnostics?target_id=test"), StatsApiV1.LIVE_TUNER_DIAGNOSTICS));
+        assertFalse(StatsWebServerService.hasExactPath(
+            URI.create("/live/tuner-diagnostics?target_id=test"), StatsApiV1.LIVE_TUNER_DIAGNOSTICS));
+        assertTrue(StatsWebServerService.hasExactPath(
+            URI.create("/api/v1/diagnostics/tuners"), StatsApiV1.TUNER_DIAGNOSTICS));
+        assertFalse(StatsWebServerService.hasExactPath(URI.create("/live/sites"), StatsApiV1.LIVE_SITES));
+        assertFalse(StatsWebServerService.hasExactPath(URI.create("/live/web-calls"), StatsApiV1.LIVE_CALLS));
+        assertTrue(StatsWebServerService.hasExactPath(
+            URI.create("/api/v1/exports/system-talkgroups.csv"),
+            StatsApiV1.EXPORTS + "/system-talkgroups.csv"));
+        assertFalse(StatsWebServerService.hasExactPath(
+            URI.create("/api/export.csv?dataset=system-talkgroups"),
+            StatsApiV1.EXPORTS + "/system-talkgroups.csv"));
     }
 
     @Test
@@ -121,6 +116,39 @@ class StatsWebServerServiceBindAddressTest
     }
 
     @Test
+    void validatesExactDecodeMessageScope()
+    {
+        DecodeMessageViewService.Scope scope = StatsWebServerService.decodeMessageScope(URI.create(
+            "/api/v1/live/decode-messages?configuration_id=00000000-0000-0000-0000-000000000001" +
+                "&frequency_hz=851012500"));
+
+        assertEquals("00000000-0000-0000-0000-000000000001", scope.configurationId());
+        assertEquals(851_012_500L, scope.frequencyHz());
+        assertThrows(StatsApiException.class, () -> StatsWebServerService.decodeMessageScope(URI.create(
+            "/api/v1/live/decode-messages?configuration_id=00000000-0000-0000-0000-000000000001")));
+        assertThrows(StatsApiException.class, () -> StatsWebServerService.decodeMessageScope(URI.create(
+            "/api/v1/live/decode-messages?configuration_id=00000000-0000-0000-0000-000000000001" +
+                "&frequency_hz=851012500&timeslot=2")));
+    }
+
+    @Test
+    void acceptsOnlyOneStrictCallAudioIdentifierSegment()
+    {
+        assertEquals("abc123", StatsWebServerService.callAudioId(URI.create(
+            "/api/v1/calls/abc123/audio")));
+        assertEquals("abc", StatsWebServerService.callAudioId(URI.create(
+            "/api/v1/calls/%61bc/audio")));
+        assertEquals(null, StatsWebServerService.callAudioId(URI.create(
+            "/api/v1/calls/abc%2Faudio")));
+        assertEquals(null, StatsWebServerService.callAudioId(URI.create(
+            "/api/v1/calls/abc%252Faudio")));
+        assertEquals(null, StatsWebServerService.callAudioId(URI.create(
+            "/api/v1/calls/abc+def/audio")));
+        assertEquals(null, StatsWebServerService.callAudioId(URI.create(
+            "/api/v1/calls/abc/def/audio")));
+    }
+
+    @Test
     void appliesDownloadAndSecurityHeadersToCsvResponses()
     {
         Headers headers = new Headers();
@@ -146,8 +174,8 @@ class StatsWebServerServiceBindAddressTest
         assertFalse(StatsWebServerService.matchesActivity(patchEvent, StatsRequest.from(
             URI.create("/live/activity?scope=p25:BEE00:348&talkgroup_id=56135"))));
         assertTrue(StatsWebServerService.matchesActivity(patchEvent, StatsRequest.from(
-            URI.create("/live/activity?scope=p25:BEE00:348&talkgroup_id=60000&kind=patch"))));
+            URI.create("/live/activity?scope=p25:BEE00:348&talkgroup_id=60000&kind=patch_group"))));
         assertFalse(StatsWebServerService.matchesActivity(patchEvent, StatsRequest.from(
-            URI.create("/live/activity?scope=p25:BEE00:348&talkgroup_id=56133&kind=patch"))));
+            URI.create("/live/activity?scope=p25:BEE00:348&talkgroup_id=56133&kind=patch_group"))));
     }
 }

@@ -74,9 +74,14 @@ class StatsLiveServiceTest
         assertEquals(3, site.get("protocol_code"));
         assertEquals("TIER_III", site.get("variant"));
         assertEquals(-25.5, site.get("signal_dbfs"));
+        assertEquals(10, site.get("network_id"));
+        assertEquals(20, site.get("site_id"));
+        assertEquals(Map.of("channels", 1, "neighbors", 0), site.get("detail_counts"));
+        assertEquals(true, site.get("details_truncated"));
+        assertFalse(site.containsKey("metadata"));
         String json = new ObjectMapper().writeValueAsString(site);
-        assertTrue(json.contains("\"network\":10"));
-        assertTrue(json.contains("\"logicalChannelNumber\":42"));
+        assertFalse(json.contains("logicalChannelNumber"));
+        assertTrue(json.length() < 2_048);
     }
 
     @Test

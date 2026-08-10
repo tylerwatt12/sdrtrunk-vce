@@ -11,10 +11,12 @@
 
 package io.github.dsheirer.stats;
 
+import static io.github.dsheirer.stats.StatsSqlRows.queryRows;
+
+import io.github.dsheirer.alias.AliasAdministrationService;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
-import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -26,6 +28,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.Semaphore;
 
 /**
  * Read-only alias configuration catalog with compact statistics enrichment.  Configuration always comes from the
@@ -34,16 +37,26 @@ import java.util.Set;
  */
 final class StatsAliasCatalog
 {
-    private static final int MAX_COVERAGE_ROWS = 10_000;
-    private static final int MAX_COVERAGE_PAIRS = 250_000;
-    private static final int MAX_EVIDENCE_ROWS = 500_000;
-    private static final int MAX_METRIC_SORT_ALIASES = 25_000;
-    private static final String BROADCAST_SEPARATOR = "\u001f";
-    private static final Set<String> FAMILIES = Set.of("P25", "DMR", "NXDN", "NBFM");
-    private static final Set<String> MATCHERS = Set.of(
-        "TALKGROUP", "TALKGROUP_RANGE",
-        "RADIO_ID", "RADIO_ID_RANGE",
-        "STATUS", "UNIT_STATUS", "TONES", "DCS", "ESN");
+    static final int MAX_ENRICH_ALIASES = 1_000;
+    static final int MAX_COVERAGE_ROWS = 500;
+    static final int MAX_COVERAGE_PAIRS = 10_000;
+    static final int MAX_EVIDENCE_ROWS = 10_000;
+    static final int MAX_METRIC_SORT_ALIASES = 1_000;
+    static final int MAX_TARGET_ALIAS_LISTS = 256;
+    static final int MAX_TARGET_RANGES = 500;
+    static final int MAX_SCOPED_TARGET_RANGES = 10_000;
+    static final int MAX_BROADCAST_CHANNELS_PER_ALIAS = AliasAdministrationService.MAX_BROADCAST_CHANNELS;
+    static final int MAX_BROADCAST_CHANNEL_NAME_CHARACTERS =
+        AliasAdministrationService.MAX_BROADCAST_CHANNEL_NAME_LENGTH;
+    static final int MAX_BROADCAST_CHANNEL_ROWS = StatsSqlRows.MAXIMUM_MATERIALIZED_ROWS;
+    private static final EnrichmentAdmission ENRICHMENT_ADMISSION = new EnrichmentAdmission(2);
+    private static final Map<String,String> FAMILIES = Map.of(
+        "p25", "P25", "dmr", "DMR", "nxdn", "NXDN", "nbfm", "NBFM");
+    private static final Map<String,String> MATCHERS = Map.ofEntries(
+        Map.entry("talkgroup", "TALKGROUP"), Map.entry("talkgroup_range", "TALKGROUP_RANGE"),
+        Map.entry("radio", "RADIO_ID"), Map.entry("radio_range", "RADIO_ID_RANGE"),
+        Map.entry("user_status", "STATUS"), Map.entry("unit_status", "UNIT_STATUS"),
+        Map.entry("tone_sequence", "TONES"), Map.entry("dcs", "DCS"), Map.entry("esn", "ESN"));
     private static final Set<String> IDENTITY_TYPES = Set.of("talkgroup", "radio", "other");
     private static final Set<String> EVIDENCE_STATES = Set.of(
         "observed", "covered_no_evidence", "not_collected", "unsupported");
@@ -112,7 +125,7 @@ final class StatsAliasCatalog
         mResolver = resolver;
     }
 
-    Map<String,Object> aliasLists(Connection connection) throws SQLException
+    Map<String,Object> aliasLists(Connection connection, StatsRequest request) throws SQLException
     {
         List<Map<String,Object>> rows = queryRows(connection, """
             SELECT list.id AS alias_list_id, list.name, list.family,
@@ -124,12 +137,25 @@ final class StatsAliasCatalog
             GROUP BY list.id, list.name, list.family
             ORDER BY CASE list.family WHEN 'P25' THEN 1 WHEN 'DMR' THEN 2 WHEN 'NXDN' THEN 3 ELSE 4 END,
                 lower(list.name), list.id
-            """);
+            LIMIT ? OFFSET ?
+            """, request.limit() + 1, request.offset());
+        boolean hasMore = rows.size() > request.limit();
+
+        if(hasMore)
+        {
+            rows = new ArrayList<>(rows.subList(0, request.limit()));
+        }
+
+        List<Map<String,Object>> totals = queryRows(connection, "SELECT count(*) AS count FROM alias_list");
         Map<String,Object> response = new LinkedHashMap<>();
         response.put("rows", rows);
-        response.put("count", rows.size());
-        response.put("families", List.of("P25", "DMR", "NXDN", "NBFM"));
-        response.put("matcher_types", MATCHERS.stream().sorted().toList());
+        response.put("count", totals.isEmpty() ? 0 : number(totals.getFirst().get("count")));
+        response.put("limit", request.limit());
+        response.put("offset", request.offset());
+        response.put("hasMore", hasMore);
+        response.put("nextOffset", hasMore ? request.offset() + request.limit() : null);
+        response.put("families", List.of("p25", "dmr", "nxdn", "nbfm"));
+        response.put("matcher_types", MATCHERS.keySet().stream().sorted().toList());
         return response;
     }
 
@@ -142,7 +168,8 @@ final class StatsAliasCatalog
 
             if(allRows.size() > MAX_METRIC_SORT_ALIASES)
             {
-                throw new StatsApiException(413, "Metric-sorted or filtered alias query exceeds the 25,000 row limit");
+                throw new StatsApiException(413, "Metric-sorted or filtered alias query exceeds the " +
+                    MAX_METRIC_SORT_ALIASES + " row limit");
             }
 
             enrich(connection, allRows, false);
@@ -209,7 +236,8 @@ final class StatsAliasCatalog
 
         if(metricProcessing && rows.size() > MAX_METRIC_SORT_ALIASES)
         {
-            throw new StatsApiException(413, "Metric-filtered alias query exceeds the 25,000 row limit");
+            throw new StatsApiException(413, "Metric-filtered alias query exceeds the " +
+                MAX_METRIC_SORT_ALIASES + " row limit");
         }
 
         if(rows.size() <= maximumRows)
@@ -235,34 +263,34 @@ final class StatsAliasCatalog
     {
         validateMetricFilters(request);
         return request.text("evidence") != null || request.text("use") != null ||
-            request.text("lastActivityAfter") != null || request.text("lastActivityBefore") != null;
+            request.text("last_activity_after") != null || request.text("last_activity_before") != null;
     }
 
     private static void validateMetricFilters(StatsRequest request)
     {
         String evidence = request.text("evidence");
-        if(evidence != null && !EVIDENCE_STATES.contains(evidence.toLowerCase(Locale.ROOT)))
+        if(evidence != null && !EVIDENCE_STATES.contains(evidence))
         {
             throw new StatsApiException(400, "evidence is invalid");
         }
 
         String use = request.text("use");
-        if(use != null && !USE_STATES.contains(use.toLowerCase(Locale.ROOT)))
+        if(use != null && !USE_STATES.contains(use))
         {
             throw new StatsApiException(400, "use is invalid");
         }
 
-        optionalTimestamp(request, "lastActivityAfter");
-        optionalTimestamp(request, "lastActivityBefore");
+        optionalTimestamp(request, "last_activity_after");
+        optionalTimestamp(request, "last_activity_before");
     }
 
     private static void applyMetricFilters(List<Map<String,Object>> rows, StatsRequest request)
     {
         validateMetricFilters(request);
-        String evidence = lower(request.text("evidence"));
-        String use = lower(request.text("use"));
-        Long after = optionalTimestamp(request, "lastActivityAfter");
-        Long before = optionalTimestamp(request, "lastActivityBefore");
+        String evidence = request.text("evidence");
+        String use = request.text("use");
+        Long after = optionalTimestamp(request, "last_activity_after");
+        Long before = optionalTimestamp(request, "last_activity_before");
 
         rows.removeIf(row -> evidence != null && !evidence.equals(lower(text(row.get("metrics_state")))) ||
             "used".equals(use) && !(row.get("call_count") instanceof Number count && count.longValue() > 0) ||
@@ -303,7 +331,7 @@ final class StatsAliasCatalog
             return;
         }
 
-        boolean descending = "desc".equalsIgnoreCase(request.text("direction"));
+        boolean descending = request.descending(false);
         rows.sort((left, right) -> {
             Object leftValue = left.get(field);
             Object rightValue = right.get(field);
@@ -346,11 +374,7 @@ final class StatsAliasCatalog
                 alias.protocol, alias.value, alias.min_value, alias.max_value,
                 alias.text_value, alias.numeric_value, alias.tone_sequence,
                 CASE WHEN alias.matcher_type IN ('TALKGROUP_RANGE', 'RADIO_ID_RANGE') THEN 1 ELSE 0 END AS ranged,
-                CASE WHEN alias.matcher_type NOT IN ('TALKGROUP_RANGE', 'RADIO_ID_RANGE') THEN 1 ELSE 0 END AS exact,
-                (SELECT group_concat(route.channel_name, char(31))
-                 FROM (SELECT channel_name FROM alias_broadcast_channel
-                       WHERE alias_id = alias.id ORDER BY lower(channel_name), channel_name) route)
-                    AS broadcast_channels_text
+                CASE WHEN alias.matcher_type NOT IN ('TALKGROUP_RANGE', 'RADIO_ID_RANGE') THEN 1 ELSE 0 END AS exact
             FROM alias
             JOIN alias_list ON alias_list.id = alias.alias_list_id
             WHERE 1=1
@@ -368,12 +392,26 @@ final class StatsAliasCatalog
         }
 
         String requestedSort = request.sort("name");
-        String sort = SORT_COLUMNS.getOrDefault(requestedSort, SORT_COLUMNS.get("name"));
-        String direction = "desc".equalsIgnoreCase(request.text("direction")) ? " DESC" : " ASC";
+        String sort = SORT_COLUMNS.get(requestedSort);
+
+        if(sort == null)
+        {
+            if(metricSortField(request) != null)
+            {
+                sort = SORT_COLUMNS.get("name");
+            }
+            else
+            {
+                throw new StatsApiException(400, "invalid_parameter", "sort is not supported", "sort");
+            }
+        }
+
+        String direction = request.descending(false) ? " DESC" : " ASC";
         sql.append(" ORDER BY ").append(sort).append(direction).append(", alias.id ASC LIMIT ? OFFSET ?");
         parameters.add(limit);
         parameters.add(offset);
         List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
+        attachBroadcastChannels(connection, rows);
 
         for(Map<String,Object> row: rows)
         {
@@ -383,29 +421,101 @@ final class StatsAliasCatalog
         return rows;
     }
 
+    private static void attachBroadcastChannels(Connection connection, List<Map<String,Object>> aliases)
+        throws SQLException
+    {
+        List<Long> aliasIds = aliases.stream().map(row -> nullableNumber(row.get("alias_id")))
+            .filter(java.util.Objects::nonNull).distinct().toList();
+        Map<Long,List<String>> channels = new HashMap<>();
+        long routeTotal = 0;
+
+        for(int start = 0; start < aliasIds.size(); start += 500)
+        {
+            List<Long> chunk = aliasIds.subList(start, Math.min(start + 500, aliasIds.size()));
+            List<Map<String,Object>> counts = queryRows(connection, """
+                SELECT alias_id, count(*) AS route_count, max(length(channel_name)) AS maximum_name_length
+                FROM alias_broadcast_channel
+                WHERE alias_id IN (%s)
+                GROUP BY alias_id
+                ORDER BY alias_id
+                """.formatted(placeholders(chunk.size())), chunk.toArray());
+
+            for(Map<String,Object> count: counts)
+            {
+                long routes = number(count.get("route_count"));
+
+                if(routes > MAX_BROADCAST_CHANNELS_PER_ALIAS)
+                {
+                    throw new StatsApiException(413, "alias_routes_too_large",
+                        "An alias has too many broadcast channels");
+                }
+
+                if(number(count.get("maximum_name_length")) > MAX_BROADCAST_CHANNEL_NAME_CHARACTERS)
+                {
+                    throw new StatsApiException(413, "alias_routes_too_large",
+                        "An alias broadcast channel name is too long");
+                }
+
+                routeTotal += routes;
+
+                if(routeTotal > MAX_BROADCAST_CHANNEL_ROWS)
+                {
+                    throw new StatsApiException(413, "alias_routes_too_large",
+                        "Alias broadcast channels exceed the response safety limit");
+                }
+            }
+        }
+
+        for(int start = 0; start < aliasIds.size(); start += 500)
+        {
+            List<Long> chunk = aliasIds.subList(start, Math.min(start + 500, aliasIds.size()));
+            List<Map<String,Object>> routes = queryRows(connection, """
+                SELECT alias_id, channel_name
+                FROM alias_broadcast_channel
+                WHERE alias_id IN (%s)
+                ORDER BY alias_id, lower(channel_name), channel_name
+                """.formatted(placeholders(chunk.size())), chunk.toArray());
+
+            for(Map<String,Object> route: routes)
+            {
+                Long aliasId = nullableNumber(route.get("alias_id"));
+                String channel = text(route.get("channel_name"));
+
+                if(aliasId != null && channel != null)
+                {
+                    channels.computeIfAbsent(aliasId, ignored -> new ArrayList<>()).add(channel);
+                }
+            }
+        }
+
+        for(Map<String,Object> alias: aliases)
+        {
+            Long aliasId = nullableNumber(alias.get("alias_id"));
+            alias.put("broadcast_channels", List.copyOf(channels.getOrDefault(aliasId, List.of())));
+        }
+    }
+
     private static void addFilters(StringBuilder sql, List<Object> parameters, StatsRequest request)
     {
         String family = request.text("family");
 
         if(family != null)
         {
-            family = family.toUpperCase(Locale.ROOT);
+            String databaseFamily = FAMILIES.get(family);
 
-            if(!FAMILIES.contains(family))
+            if(databaseFamily == null)
             {
                 throw new StatsApiException(400, "family is invalid");
             }
 
             sql.append(" AND alias_list.family = ?");
-            parameters.add(family);
+            parameters.add(databaseFamily);
         }
 
         String identityType = request.text("type");
 
         if(identityType != null)
         {
-            identityType = identityType.toLowerCase(Locale.ROOT);
-
             if(!IDENTITY_TYPES.contains(identityType))
             {
                 throw new StatsApiException(400, "type is invalid");
@@ -424,15 +534,15 @@ final class StatsAliasCatalog
 
         if(matcher != null)
         {
-            matcher = matcher.toUpperCase(Locale.ROOT);
+            String databaseMatcher = MATCHERS.get(matcher);
 
-            if(!MATCHERS.contains(matcher))
+            if(databaseMatcher == null)
             {
                 throw new StatsApiException(400, "matcher is invalid");
             }
 
             sql.append(" AND alias.matcher_type = ?");
-            parameters.add(matcher);
+            parameters.add(databaseMatcher);
         }
 
         String list = request.text("list");
@@ -465,7 +575,7 @@ final class StatsAliasCatalog
             parameters.add(group);
         }
 
-        String listen = lower(request.text("listen"));
+        String listen = request.text("listen");
         if(listen != null)
         {
             switch(listen)
@@ -476,7 +586,7 @@ final class StatsAliasCatalog
             }
         }
 
-        String record = lower(request.text("record"));
+        String record = request.text("record");
         if(record != null)
         {
             switch(record)
@@ -487,7 +597,7 @@ final class StatsAliasCatalog
             }
         }
 
-        String stream = lower(request.text("stream"));
+        String stream = request.text("stream");
         if(stream != null)
         {
             switch(stream)
@@ -526,8 +636,6 @@ final class StatsAliasCatalog
 
     private static void normalizeConfigurationRow(Map<String,Object> row)
     {
-        String routes = text(row.remove("broadcast_channels_text"));
-        row.put("broadcast_channels", routes == null ? List.of() : List.of(routes.split(BROADCAST_SEPARATOR, -1)));
         String matcher = text(row.get("matcher_type"));
         row.put("matcher_label", matcherLabel(matcher));
         row.put("identifier_display", identifierDisplay(row));
@@ -608,14 +716,26 @@ final class StatsAliasCatalog
     private Map<Long,List<Map<String,Object>>> enrich(Connection connection, List<Map<String,Object>> aliases,
                                                        boolean includeBreakdown) throws SQLException
     {
-        Map<Long,Map<String,MetricAccumulator>> metrics = new LinkedHashMap<>();
-
         if(aliases.isEmpty())
         {
             return Map.of();
         }
 
-        List<CoverageScope> scopes = loadCoverageScopes(connection);
+        if(aliases.size() > MAX_ENRICH_ALIASES)
+        {
+            throw new StatsApiException(413, "Alias enrichment exceeds the bounded alias limit");
+        }
+
+        return ENRICHMENT_ADMISSION.execute(() -> enrichAdmitted(connection, aliases, includeBreakdown));
+    }
+
+    private Map<Long,List<Map<String,Object>>> enrichAdmitted(Connection connection,
+                                                               List<Map<String,Object>> aliases,
+                                                               boolean includeBreakdown) throws SQLException
+    {
+        Map<Long,Map<String,MetricAccumulator>> metrics = new LinkedHashMap<>();
+        IdentityTargets targets = IdentityTargets.from(aliases);
+        List<CoverageScope> scopes = loadCoverageScopes(connection, targets);
         Map<Long,Map<String,CoverageScope>> coverage = new LinkedHashMap<>();
         int coveragePairs = 0;
 
@@ -671,13 +791,17 @@ final class StatsAliasCatalog
             }
         }
 
-        Map<Long,CoverageScope> scopeById = uniqueScopes(scopes, true);
-        Map<Long,CoverageScope> contextById = uniqueScopes(scopes, false);
-        applyTrunkedEvidence(connection, metrics, trunkedScopeIds, scopeById);
-        applyConventionalDmrEvidence(connection, metrics, conventionalContextIds, contextById);
-        applyConventionalDmrOutputs(connection, metrics, conventionalContextIds, contextById);
-        applyRelationships(connection, metrics, trunkedScopeIds, scopeById);
-        applyCurrentAffiliations(connection, metrics, trunkedScopeIds, scopeById);
+        Map<Long,List<CoverageScope>> scopeById = scopeProjections(scopes, true);
+        Map<Long,List<CoverageScope>> contextById = scopeProjections(scopes, false);
+        ScopedIdentityTargets scopedTargets = ScopedIdentityTargets.from(aliases, coverage);
+        EvidenceBudget evidenceBudget = new EvidenceBudget(MAX_EVIDENCE_ROWS);
+        applyTrunkedEvidence(connection, metrics, trunkedScopeIds, scopeById, scopedTargets, evidenceBudget);
+        applyConventionalDmrEvidence(connection, metrics, conventionalContextIds, contextById, scopedTargets,
+            evidenceBudget);
+        applyConventionalDmrOutputs(connection, metrics, conventionalContextIds, contextById, scopedTargets,
+            evidenceBudget);
+        applyRelationships(connection, metrics, trunkedScopeIds, scopeById, scopedTargets, evidenceBudget);
+        applyCurrentAffiliations(connection, metrics, trunkedScopeIds, scopeById, scopedTargets, evidenceBudget);
 
         Map<Long,List<Map<String,Object>>> breakdown = new LinkedHashMap<>();
 
@@ -712,9 +836,10 @@ final class StatsAliasCatalog
         return breakdown;
     }
 
-    private static List<CoverageScope> loadCoverageScopes(Connection connection) throws SQLException
+    private static List<CoverageScope> loadCoverageScopes(Connection connection, IdentityTargets targets)
+        throws SQLException
     {
-        List<Map<String,Object>> trunked = queryRows(connection, """
+        StringBuilder trunkedSql = new StringBuilder("""
             SELECT scope.scope_id, scope.scope_token, scope.protocol_code, scope.p25_system_key AS system_key,
                 system.wacn, system.system_id, context.id AS context_id, context.context_key, context.guid,
                 coalesce(context.channel_name, p25.channel_name, trunked.channel_name) AS site_name,
@@ -730,11 +855,26 @@ final class StatsAliasCatalog
             LEFT JOIN p25_site_snapshot p25
               ON p25.guid = context.guid AND p25.system_key = scope.p25_system_key
             LEFT JOIN trunked_site_snapshot trunked ON trunked.guid = context.guid
-            WHERE scope.protocol_code IN (1, 3, 4)
+            WHERE
+            """);
+        List<Object> trunkedParameters = new ArrayList<>();
+        targets.appendCoveragePredicate(trunkedSql, trunkedParameters, "scope.protocol_code",
+            "CASE WHEN scope.protocol_code = 1 THEN coalesce(p25.alias_list_name, context.alias_list_name) " +
+                "ELSE coalesce(context.alias_list_name, trunked.alias_list_name) END");
+        trunkedSql.append("""
             ORDER BY scope.scope_id, context.id
             LIMIT ?
-            """, MAX_COVERAGE_ROWS + 1);
-        List<Map<String,Object>> conventionalDmr = queryRows(connection, """
+            """);
+        trunkedParameters.add(MAX_COVERAGE_ROWS + 1);
+        List<Map<String,Object>> trunked = queryRows(connection, trunkedSql.toString(),
+            trunkedParameters.toArray());
+
+        if(trunked.size() > MAX_COVERAGE_ROWS)
+        {
+            throw new StatsApiException(413, "Alias coverage exceeds the bounded receiver limit");
+        }
+
+        StringBuilder conventionalSql = new StringBuilder("""
             SELECT context.id AS context_id, context.context_key, context.guid, context.channel_name AS site_name,
                 context.alias_list_name,
                 (SELECT config.system_name FROM configuration_channel config
@@ -742,26 +882,53 @@ final class StatsAliasCatalog
             FROM receiver_context context
             WHERE context.kind_code <> 1 AND context.protocol_code = 3
               AND context.alias_list_name IS NOT NULL AND trim(context.alias_list_name) <> ''
+              AND
+            """);
+        List<Object> conventionalParameters = new ArrayList<>();
+        targets.appendAliasListPredicate(conventionalSql, conventionalParameters, 3,
+            "context.alias_list_name");
+        conventionalSql.append("""
             ORDER BY context.id
             LIMIT ?
-            """, MAX_COVERAGE_ROWS + 1);
+            """);
+        conventionalParameters.add(MAX_COVERAGE_ROWS - trunked.size() + 1);
+        List<Map<String,Object>> conventionalDmr = queryRows(connection, conventionalSql.toString(),
+            conventionalParameters.toArray());
 
-        if(trunked.size() > MAX_COVERAGE_ROWS || conventionalDmr.size() > MAX_COVERAGE_ROWS)
+        if(trunked.size() + conventionalDmr.size() > MAX_COVERAGE_ROWS)
         {
             throw new StatsApiException(413, "Alias coverage exceeds the bounded receiver limit");
         }
 
-        Map<Long,CoverageScope> trunkedById = new LinkedHashMap<>();
+        Map<Long,CoverageScope> p25ById = new LinkedHashMap<>();
+        Map<String,CoverageScope> trunkedByProjection = new LinkedHashMap<>();
 
         for(Map<String,Object> row: trunked)
         {
             long scopeId = number(row.get("scope_id"));
-            CoverageScope scope = trunkedById.computeIfAbsent(scopeId, ignored ->
-                CoverageScope.trunked(row));
+            int protocolCode = (int)number(row.get("protocol_code"));
+            String aliasList = text(row.get("alias_list_name"));
+            CoverageScope scope;
+
+            if(protocolCode == 1)
+            {
+                //P25 aliases are deliberately resolved across every list assigned to the decoded system.
+                scope = p25ById.computeIfAbsent(scopeId, ignored -> CoverageScope.trunked(row));
+            }
+            else
+            {
+                //DMR/NXDN ownership is list-specific.  Keep an explicit projection per list so one context cannot
+                //silently become the canonical resolver context for every other receiver sharing this scope.
+                String projectionKey = scopeId + "\u0000" + aliasList;
+                scope = trunkedByProjection.computeIfAbsent(projectionKey,
+                    ignored -> CoverageScope.trunked(row));
+            }
+
             scope.addAliasList(text(row.get("alias_list_name")));
         }
 
-        List<CoverageScope> scopes = new ArrayList<>(trunkedById.values());
+        List<CoverageScope> scopes = new ArrayList<>(p25ById.values());
+        scopes.addAll(trunkedByProjection.values());
 
         for(Map<String,Object> row: conventionalDmr)
         {
@@ -782,19 +949,23 @@ final class StatsAliasCatalog
             return false;
         }
 
-        return scope.aliasLists.contains(text(alias.get("alias_list_name")));
+        return scope.aliasLists.contains(lower(text(alias.get("alias_list_name"))));
     }
 
     private void applyTrunkedEvidence(Connection connection, Map<Long,Map<String,MetricAccumulator>> metrics,
                                       Set<Long> scopeIds,
-                                      Map<Long,CoverageScope> scopes) throws SQLException
+                                      Map<Long,List<CoverageScope>> scopes, ScopedIdentityTargets targets,
+                                      EvidenceBudget budget) throws SQLException
     {
         if(scopeIds.isEmpty())
         {
             return;
         }
 
-        String sql = """
+        StringBuilder sql = new StringBuilder();
+        List<Object> parameters = new ArrayList<>();
+        targets.appendCte(sql, parameters, true);
+        sql.append("""
             SELECT summary.scope_id, summary.identity_kind_code, summary.identity_id,
                 summary.p25_identity_state_code, summary.p25_home_wacn,
                 summary.p25_home_system_id, summary.p25_home_talkgroup_id,
@@ -809,6 +980,11 @@ final class StatsAliasCatalog
             JOIN trunked_identity_scope scope ON scope.scope_id = summary.scope_id
             LEFT JOIN p25_system system ON system.system_key = scope.p25_system_key
             WHERE summary.scope_id IN (%s)
+              AND
+            """.formatted(OTHER_SIGNALING_SQL, placeholders(scopeIds.size())));
+        parameters.addAll(scopeIds);
+        targets.appendPredicate(sql, "summary.scope_id", "summary.identity_kind_code", "summary.identity_id");
+        sql.append("""
 
             UNION ALL
 
@@ -827,25 +1003,18 @@ final class StatsAliasCatalog
             JOIN trunked_identity_scope scope ON scope.scope_id = summary.scope_id
             LEFT JOIN p25_system system ON system.system_key = scope.p25_system_key
             WHERE summary.scope_id IN (%s)
+              AND
+            """.formatted(OTHER_SIGNALING_SQL, placeholders(scopeIds.size())));
+        parameters.addAll(scopeIds);
+        targets.appendPredicate(sql, "summary.scope_id", "1", "0");
+        sql.append("""
             ORDER BY 1, 2, 3, 5, 6, 7
             LIMIT ?
-            """.formatted(OTHER_SIGNALING_SQL, placeholders(scopeIds.size()), OTHER_SIGNALING_SQL,
-            placeholders(scopeIds.size()));
-        List<Object> parameters = new ArrayList<>(scopeIds);
-        parameters.addAll(scopeIds);
-        parameters.add(MAX_EVIDENCE_ROWS + 1);
-        List<Map<String,Object>> evidence = queryRows(connection, sql, parameters.toArray());
-        requireEvidenceBound(evidence);
-
-        for(Map<String,Object> row: evidence)
-        {
-            CoverageScope scope = scopes.get(number(row.get("scope_id")));
-
-            if(scope != null)
-            {
-                scope.decorateEvidence(row);
-            }
-        }
+            """);
+        parameters.add(budget.queryLimit());
+        List<Map<String,Object>> evidence = queryRows(connection, sql.toString(), parameters.toArray());
+        budget.consume(evidence.size());
+        evidence = projectEvidence(evidence, scopes, "scope_id", targets, budget);
 
         mResolver.resolveEvidenceAliases(connection, evidence);
         applyEvidenceRows(evidence, metrics);
@@ -853,7 +1022,8 @@ final class StatsAliasCatalog
 
     private void applyConventionalDmrEvidence(Connection connection,
                                                Map<Long,Map<String,MetricAccumulator>> metrics,
-                                               Set<Long> contextIds, Map<Long,CoverageScope> scopes)
+                                               Set<Long> contextIds, Map<Long,List<CoverageScope>> scopes,
+                                               ScopedIdentityTargets targets, EvidenceBudget budget)
         throws SQLException
     {
         if(contextIds.isEmpty())
@@ -862,7 +1032,10 @@ final class StatsAliasCatalog
         }
 
         String placeholders = placeholders(contextIds.size());
-        String sql = """
+        StringBuilder sql = new StringBuilder();
+        List<Object> parameters = new ArrayList<>();
+        targets.appendCte(sql, parameters, false);
+        sql.append("""
             SELECT summary.context_id, 1 AS identity_kind_code, summary.talkgroup_id AS identity_id,
                 summary.first_seen_ms, summary.last_seen_ms, summary.call_count,
                 NULL AS recorded_count, NULL AS streamed_count,
@@ -872,6 +1045,11 @@ final class StatsAliasCatalog
                 NULL AS data_count, NULL AS other_signaling_count, 3 AS protocol_code
             FROM dmr_conventional_talkgroup_summary summary
             WHERE summary.context_id IN (%1$s)
+              AND
+            """.formatted(placeholders));
+        parameters.addAll(contextIds);
+        targets.appendPredicate(sql, "summary.context_id", "1", "summary.talkgroup_id");
+        sql.append("""
 
             UNION ALL
 
@@ -884,24 +1062,18 @@ final class StatsAliasCatalog
                 NULL AS data_count, NULL AS other_signaling_count, 3 AS protocol_code
             FROM dmr_conventional_radio_summary summary
             WHERE summary.context_id IN (%1$s)
+              AND
+            """.formatted(placeholders));
+        parameters.addAll(contextIds);
+        targets.appendPredicate(sql, "summary.context_id", "2", "summary.radio_id");
+        sql.append("""
             ORDER BY context_id, identity_kind_code, identity_id
             LIMIT ?
-            """.formatted(placeholders);
-        List<Object> parameters = new ArrayList<>(contextIds);
-        parameters.addAll(contextIds);
-        parameters.add(MAX_EVIDENCE_ROWS + 1);
-        List<Map<String,Object>> evidence = queryRows(connection, sql, parameters.toArray());
-        requireEvidenceBound(evidence);
-
-        for(Map<String,Object> row: evidence)
-        {
-            CoverageScope scope = scopes.get(number(row.get("context_id")));
-
-            if(scope != null)
-            {
-                scope.decorateEvidence(row);
-            }
-        }
+            """);
+        parameters.add(budget.queryLimit());
+        List<Map<String,Object>> evidence = queryRows(connection, sql.toString(), parameters.toArray());
+        budget.consume(evidence.size());
+        evidence = projectEvidence(evidence, scopes, "context_id", targets, budget);
 
         mResolver.resolveEvidenceAliases(connection, evidence);
         applyEvidenceRows(evidence, metrics);
@@ -936,7 +1108,8 @@ final class StatsAliasCatalog
      */
     private void applyConventionalDmrOutputs(Connection connection,
                                              Map<Long,Map<String,MetricAccumulator>> metrics,
-                                             Set<Long> contextIds, Map<Long,CoverageScope> scopes)
+                                             Set<Long> contextIds, Map<Long,List<CoverageScope>> scopes,
+                                             ScopedIdentityTargets targets, EvidenceBudget budget)
         throws SQLException
     {
         if(contextIds.isEmpty())
@@ -944,9 +1117,10 @@ final class StatsAliasCatalog
             return;
         }
 
-        List<Object> parameters = new ArrayList<>(contextIds);
-        parameters.add(MAX_EVIDENCE_ROWS + 1);
-        List<Map<String,Object>> evidence = queryRows(connection, """
+        List<Object> parameters = new ArrayList<>();
+        StringBuilder sql = new StringBuilder();
+        targets.appendCte(sql, parameters, false);
+        sql.append("""
             SELECT bucket.context_id, bucket.identity_kind_code, bucket.identity_id,
                 NULL AS first_seen_ms, NULL AS last_seen_ms,
                 NULL AS call_count, sum(bucket.recorded_count) AS recorded_count,
@@ -958,21 +1132,19 @@ final class StatsAliasCatalog
             JOIN receiver_context context ON context.id = bucket.context_id
             WHERE bucket.context_id IN (%s) AND context.kind_code <> 1 AND context.protocol_code = 3
               AND bucket.identity_kind_code IN (1, 2)
+              AND
+            """.formatted(placeholders(contextIds.size())));
+        parameters.addAll(contextIds);
+        targets.appendPredicate(sql, "bucket.context_id", "bucket.identity_kind_code", "bucket.identity_id");
+        sql.append("""
             GROUP BY bucket.context_id, bucket.identity_kind_code, bucket.identity_id
             ORDER BY bucket.context_id, bucket.identity_kind_code, bucket.identity_id
             LIMIT ?
-            """.formatted(placeholders(contextIds.size())), parameters.toArray());
-        requireEvidenceBound(evidence);
-
-        for(Map<String,Object> row: evidence)
-        {
-            CoverageScope scope = scopes.get(number(row.get("context_id")));
-
-            if(scope != null)
-            {
-                scope.decorateEvidence(row);
-            }
-        }
+            """);
+        parameters.add(budget.queryLimit());
+        List<Map<String,Object>> evidence = queryRows(connection, sql.toString(), parameters.toArray());
+        budget.consume(evidence.size());
+        evidence = projectEvidence(evidence, scopes, "context_id", targets, budget);
 
         mResolver.resolveEvidenceAliases(connection, evidence);
         applyEvidenceRows(evidence, metrics);
@@ -980,20 +1152,39 @@ final class StatsAliasCatalog
 
     private void applyRelationships(Connection connection, Map<Long,Map<String,MetricAccumulator>> metrics,
                                     Set<Long> scopeIds,
-                                    Map<Long,CoverageScope> scopes) throws SQLException
+                                    Map<Long,List<CoverageScope>> scopes, ScopedIdentityTargets targets,
+                                    EvidenceBudget budget) throws SQLException
     {
         if(scopeIds.isEmpty())
         {
             return;
         }
 
-        List<Object> parameters = new ArrayList<>(scopeIds);
-        parameters.add(MAX_EVIDENCE_ROWS + 1);
-        List<Map<String,Object>> relationships = queryRows(connection, """
-            SELECT relationship.scope_id, relationship.radio_id, relationship.talkgroup_id,
-                relationship.target_kind_code, relationship.first_seen_ms, relationship.last_seen_ms,
-                relationship.join_count, scope.protocol_code,
-                scope.p25_system_key AS system_key, system.wacn, system.system_id,
+        List<Object> parameters = new ArrayList<>();
+        StringBuilder sql = new StringBuilder();
+        targets.appendCte(sql, parameters, true);
+        sql.append("""
+            SELECT relationship.scope_id, 2 AS identity_kind_code, relationship.radio_id AS identity_id,
+                relationship.first_seen_ms, relationship.last_seen_ms, relationship.join_count,
+                scope.protocol_code, scope.p25_system_key AS system_key, system.wacn, system.system_id,
+                NULL AS p25_identity_state_code, NULL AS p25_home_wacn,
+                NULL AS p25_home_system_id, NULL AS p25_home_talkgroup_id
+            FROM trunked_radio_talkgroup_summary relationship
+            JOIN trunked_identity_scope scope ON scope.scope_id = relationship.scope_id
+            LEFT JOIN p25_system system ON system.system_key = scope.p25_system_key
+            WHERE relationship.scope_id IN (%s)
+              AND
+            """.formatted(placeholders(scopeIds.size())));
+        parameters.addAll(scopeIds);
+        targets.appendPredicate(sql, "relationship.scope_id", "2", "relationship.radio_id");
+        sql.append("""
+
+            UNION ALL
+
+            SELECT relationship.scope_id, relationship.target_kind_code AS identity_kind_code,
+                relationship.talkgroup_id AS identity_id,
+                relationship.first_seen_ms, relationship.last_seen_ms, relationship.join_count,
+                scope.protocol_code, scope.p25_system_key AS system_key, system.wacn, system.system_id,
                 target.p25_identity_state_code, target.p25_home_wacn,
                 target.p25_home_system_id, target.p25_home_talkgroup_id
             FROM trunked_radio_talkgroup_summary relationship
@@ -1004,32 +1195,20 @@ final class StatsAliasCatalog
              AND target.identity_kind_code = relationship.target_kind_code
              AND target.identity_id = relationship.talkgroup_id
             WHERE relationship.scope_id IN (%s)
-            ORDER BY relationship.scope_id, relationship.radio_id, relationship.talkgroup_id,
-                relationship.target_kind_code
+              AND
+            """.formatted(placeholders(scopeIds.size())));
+        parameters.addAll(scopeIds);
+        targets.appendPredicate(sql, "relationship.scope_id", "relationship.target_kind_code",
+            "relationship.talkgroup_id");
+        sql.append("""
+            ORDER BY 1, 2, 3
             LIMIT ?
-            """.formatted(placeholders(scopeIds.size())), parameters.toArray());
-        requireEvidenceBound(relationships);
+            """);
+        parameters.add(budget.queryLimit());
+        List<Map<String,Object>> identities = queryRows(connection, sql.toString(), parameters.toArray());
+        budget.consume(identities.size());
 
-        if((long)relationships.size() * 2L > MAX_EVIDENCE_ROWS)
-        {
-            throw new StatsApiException(413, "Alias relationship evidence exceeds the bounded query limit");
-        }
-
-        List<Map<String,Object>> identities = new ArrayList<>(relationships.size() * 2);
-
-        for(Map<String,Object> relationship: relationships)
-        {
-            CoverageScope scope = scopes.get(number(relationship.get("scope_id")));
-
-            if(scope == null)
-            {
-                continue;
-            }
-
-            identities.add(relationshipIdentity(relationship, scope, 2, "radio_id"));
-            identities.add(relationshipIdentity(relationship, scope,
-                (int)number(relationship.get("target_kind_code")), "talkgroup_id"));
-        }
+        identities = projectEvidence(identities, scopes, "scope_id", targets, budget);
 
         mResolver.resolveEvidenceAliases(connection, identities);
 
@@ -1052,15 +1231,15 @@ final class StatsAliasCatalog
 
     private void applyCurrentAffiliations(Connection connection,
                                            Map<Long,Map<String,MetricAccumulator>> metrics, Set<Long> scopeIds,
-                                           Map<Long,CoverageScope> scopes) throws SQLException
+                                           Map<Long,List<CoverageScope>> scopes, ScopedIdentityTargets targets,
+                                           EvidenceBudget budget) throws SQLException
     {
         Set<Long> p25Scopes = new LinkedHashSet<>();
 
         for(long scopeId: scopeIds)
         {
-            CoverageScope scope = scopes.get(scopeId);
-
-            if(scope != null && scope.protocolCode == 1)
+            if(scopes.getOrDefault(scopeId, List.of()).stream()
+                .anyMatch(scope -> scope.protocolCode == 1))
             {
                 p25Scopes.add(scopeId);
             }
@@ -1071,13 +1250,30 @@ final class StatsAliasCatalog
             return;
         }
 
-        List<Object> parameters = new ArrayList<>(p25Scopes);
-        parameters.add(MAX_EVIDENCE_ROWS + 1);
-        List<Map<String,Object>> affiliations = queryRows(connection, """
-            SELECT scope.scope_id, affiliation.radio_id, affiliation.talkgroup_id, affiliation.updated_at_ms,
-                scope.protocol_code, scope.p25_system_key AS system_key, system.wacn, system.system_id,
-                target.p25_identity_state_code, target.p25_home_wacn,
-                target.p25_home_system_id, target.p25_home_talkgroup_id
+        List<Object> parameters = new ArrayList<>();
+        StringBuilder sql = new StringBuilder();
+        targets.appendCte(sql, parameters, true);
+        sql.append("""
+            SELECT scope.scope_id, 2 AS identity_kind_code, affiliation.radio_id AS identity_id,
+                affiliation.updated_at_ms, scope.protocol_code, scope.p25_system_key AS system_key,
+                system.wacn, system.system_id, NULL AS p25_identity_state_code,
+                NULL AS p25_home_wacn, NULL AS p25_home_system_id, NULL AS p25_home_talkgroup_id
+            FROM trunked_identity_scope scope
+            JOIN p25_radio_affiliation affiliation ON affiliation.system_key = scope.p25_system_key
+            JOIN p25_system system ON system.system_key = scope.p25_system_key
+            WHERE scope.scope_id IN (%s)
+              AND
+            """.formatted(placeholders(p25Scopes.size())));
+        parameters.addAll(p25Scopes);
+        targets.appendPredicate(sql, "scope.scope_id", "2", "affiliation.radio_id");
+        sql.append("""
+
+            UNION ALL
+
+            SELECT scope.scope_id, 1 AS identity_kind_code, affiliation.talkgroup_id AS identity_id,
+                affiliation.updated_at_ms, scope.protocol_code, scope.p25_system_key AS system_key,
+                system.wacn, system.system_id, target.p25_identity_state_code,
+                target.p25_home_wacn, target.p25_home_system_id, target.p25_home_talkgroup_id
             FROM trunked_identity_scope scope
             JOIN p25_radio_affiliation affiliation ON affiliation.system_key = scope.p25_system_key
             JOIN p25_system system ON system.system_key = scope.p25_system_key
@@ -1086,28 +1282,19 @@ final class StatsAliasCatalog
              AND target.identity_kind_code = 1
              AND target.identity_id = affiliation.talkgroup_id
             WHERE scope.scope_id IN (%s)
-            ORDER BY scope.scope_id, affiliation.radio_id
+              AND
+            """.formatted(placeholders(p25Scopes.size())));
+        parameters.addAll(p25Scopes);
+        targets.appendPredicate(sql, "scope.scope_id", "1", "affiliation.talkgroup_id");
+        sql.append("""
+            ORDER BY 1, 2, 3
             LIMIT ?
-            """.formatted(placeholders(p25Scopes.size())), parameters.toArray());
-        requireEvidenceBound(affiliations);
+            """);
+        parameters.add(budget.queryLimit());
+        List<Map<String,Object>> identities = queryRows(connection, sql.toString(), parameters.toArray());
+        budget.consume(identities.size());
 
-        if((long)affiliations.size() * 2L > MAX_EVIDENCE_ROWS)
-        {
-            throw new StatsApiException(413, "Alias affiliation evidence exceeds the bounded query limit");
-        }
-
-        List<Map<String,Object>> identities = new ArrayList<>(affiliations.size() * 2);
-
-        for(Map<String,Object> affiliation: affiliations)
-        {
-            CoverageScope scope = scopes.get(number(affiliation.get("scope_id")));
-
-            if(scope != null)
-            {
-                identities.add(relationshipIdentity(affiliation, scope, 2, "radio_id"));
-                identities.add(relationshipIdentity(affiliation, scope, 1, "talkgroup_id"));
-            }
-        }
+        identities = projectEvidence(identities, scopes, "scope_id", targets, budget);
 
         mResolver.resolveEvidenceAliases(connection, identities);
 
@@ -1123,29 +1310,39 @@ final class StatsAliasCatalog
         }
     }
 
-    private static Map<String,Object> relationshipIdentity(Map<String,Object> source, CoverageScope scope, int kind,
-                                                            String identifierColumn)
+    private static List<Map<String,Object>> projectEvidence(List<Map<String,Object>> rows,
+                                                            Map<Long,List<CoverageScope>> scopes,
+                                                            String scopeIdColumn, ScopedIdentityTargets targets,
+                                                            EvidenceBudget budget)
     {
-        Map<String,Object> row = new LinkedHashMap<>();
-        row.put("identity_kind_code", kind);
-        row.put("identity_id", source.get(identifierColumn));
-        row.put("join_count", source.get("join_count"));
-        row.put("first_seen_ms", source.get("first_seen_ms"));
-        row.put("last_seen_ms", source.get("last_seen_ms"));
-        row.put("updated_at_ms", source.get("updated_at_ms"));
-        row.put("protocol_code", source.get("protocol_code"));
-        row.put("system_key", source.get("system_key"));
-        row.put("wacn", source.get("wacn"));
-        row.put("system_id", source.get("system_id"));
-        if(kind != 2)
+        List<Map<String,Object>> projected = new ArrayList<>(rows.size());
+
+        for(Map<String,Object> row: rows)
         {
-            row.put("p25_identity_state_code", source.get("p25_identity_state_code"));
-            row.put("p25_home_wacn", source.get("p25_home_wacn"));
-            row.put("p25_home_system_id", source.get("p25_home_system_id"));
-            row.put("p25_home_talkgroup_id", source.get("p25_home_talkgroup_id"));
+            List<CoverageScope> projections = scopes.getOrDefault(number(row.get(scopeIdColumn)), List.of()).stream()
+                .filter(scope -> targets.matches(row, scope))
+                .toList();
+
+            for(int index = 0; index < projections.size(); index++)
+            {
+                Map<String,Object> projection;
+
+                if(index == 0)
+                {
+                    projection = row;
+                }
+                else
+                {
+                    budget.consume(1);
+                    projection = new LinkedHashMap<>(row);
+                }
+
+                projections.get(index).decorateEvidence(projection);
+                projected.add(projection);
+            }
         }
-        scope.decorateEvidence(row);
-        return row;
+
+        return projected;
     }
 
     private static MetricAccumulator accumulator(Map<Long,Map<String,MetricAccumulator>> metrics,
@@ -1210,27 +1407,78 @@ final class StatsAliasCatalog
         return 0;
     }
 
-    private static Map<Long,CoverageScope> uniqueScopes(List<CoverageScope> scopes, boolean trunked)
+    private static int identityKindCode(Map<String,Object> alias)
     {
-        Map<Long,CoverageScope> result = new HashMap<>();
+        return "radio".equals(text(alias.get("identity_type"))) ? 2 : 1;
+    }
+
+    private static IdentityRange identityRange(Map<String,Object> alias)
+    {
+        Long minimum;
+        Long maximum;
+        String matcher = text(alias.get("matcher_type"));
+
+        if("TALKGROUP_RANGE".equals(matcher) || "RADIO_ID_RANGE".equals(matcher))
+        {
+            minimum = nullableNumber(alias.get("min_value"));
+            maximum = nullableNumber(alias.get("max_value"));
+        }
+        else
+        {
+            minimum = nullableNumber(alias.get("value"));
+            maximum = minimum;
+        }
+
+        return minimum != null && maximum != null && minimum >= 0 && maximum >= minimum ?
+            new IdentityRange(minimum, maximum) : null;
+    }
+
+    private static List<IdentityRange> mergeRanges(List<IdentityRange> ranges)
+    {
+        List<IdentityRange> sorted = ranges.stream()
+            .sorted(Comparator.comparingLong(IdentityRange::minimum)
+                .thenComparingLong(IdentityRange::maximum))
+            .toList();
+        List<IdentityRange> merged = new ArrayList<>();
+
+        for(IdentityRange range: sorted)
+        {
+            if(merged.isEmpty())
+            {
+                merged.add(range);
+                continue;
+            }
+
+            IdentityRange previous = merged.getLast();
+
+            if(range.minimum() <= previous.maximum() ||
+                previous.maximum() != Long.MAX_VALUE && range.minimum() == previous.maximum() + 1)
+            {
+                merged.set(merged.size() - 1,
+                    new IdentityRange(previous.minimum(), Math.max(previous.maximum(), range.maximum())));
+            }
+            else
+            {
+                merged.add(range);
+            }
+        }
+
+        return List.copyOf(merged);
+    }
+
+    private static Map<Long,List<CoverageScope>> scopeProjections(List<CoverageScope> scopes, boolean trunked)
+    {
+        Map<Long,List<CoverageScope>> result = new HashMap<>();
 
         for(CoverageScope scope: scopes)
         {
             if(scope.trunked == trunked)
             {
-                result.put(scope.numericId, scope);
+                result.computeIfAbsent(scope.numericId, ignored -> new ArrayList<>()).add(scope);
             }
         }
 
         return result;
-    }
-
-    private static void requireEvidenceBound(List<?> rows)
-    {
-        if(rows.size() > MAX_EVIDENCE_ROWS)
-        {
-            throw new StatsApiException(413, "Alias evidence exceeds the bounded query limit");
-        }
     }
 
     private static String matcherLabel(String matcher)
@@ -1297,36 +1545,327 @@ final class StatsAliasCatalog
         return value instanceof Number number ? number.longValue() : null;
     }
 
-    private static List<Map<String,Object>> queryRows(Connection connection, String sql, Object... parameters)
-        throws SQLException
+    @FunctionalInterface
+    interface EnrichmentOperation<T>
     {
-        try(PreparedStatement statement = connection.prepareStatement(sql))
+        T execute() throws SQLException;
+    }
+
+    /**
+     * Alias metrics touch several compact summary tables.  A small process-wide, fail-fast gate prevents otherwise
+     * bounded requests from multiplying their working sets under concurrent browser refreshes or exports.
+     */
+    static final class EnrichmentAdmission
+    {
+        private final Semaphore mPermits;
+
+        EnrichmentAdmission(int permits)
         {
-            for(int x = 0; x < parameters.length; x++)
+            if(permits <= 0)
             {
-                statement.setObject(x + 1, parameters[x]);
+                throw new IllegalArgumentException("permits must be positive");
             }
 
-            try(ResultSet resultSet = statement.executeQuery())
+            mPermits = new Semaphore(permits, true);
+        }
+
+        <T> T execute(EnrichmentOperation<T> operation) throws SQLException
+        {
+            if(!mPermits.tryAcquire())
             {
-                ResultSetMetaData metaData = resultSet.getMetaData();
-                int columnCount = metaData.getColumnCount();
-                List<Map<String,Object>> rows = new ArrayList<>();
+                throw new StatsApiException(429, "alias_enrichment_busy",
+                    "Alias metrics are busy; retry the request");
+            }
 
-                while(resultSet.next())
+            try
+            {
+                return operation.execute();
+            }
+            finally
+            {
+                mPermits.release();
+            }
+        }
+    }
+
+    /** One allocation budget shared by every summary source touched by a single alias enrichment. */
+    private static final class EvidenceBudget
+    {
+        private int mRemaining;
+
+        private EvidenceBudget(int maximumRows)
+        {
+            mRemaining = maximumRows;
+        }
+
+        private int queryLimit()
+        {
+            return mRemaining + 1;
+        }
+
+        private void consume(int rows)
+        {
+            if(rows > mRemaining)
+            {
+                throw new StatsApiException(413, "Alias evidence exceeds the bounded query limit");
+            }
+
+            mRemaining -= rows;
+        }
+    }
+
+    private record TargetKey(int protocolCode, int identityKindCode) {}
+
+    private record IdentityRange(long minimum, long maximum) {}
+
+    /**
+     * Compact, merged identity ranges and assigned Alias Lists derived solely from the alias rows in this response.
+     * Every evidence query applies these predicates in SQLite before allocating result maps.
+     */
+    private static final class IdentityTargets
+    {
+        private final Map<Integer,Set<String>> mAliasLists;
+
+        private IdentityTargets(Map<Integer,Set<String>> aliasLists)
+        {
+            mAliasLists = aliasLists;
+        }
+
+        private static IdentityTargets from(List<Map<String,Object>> aliases)
+        {
+            Map<TargetKey,List<IdentityRange>> ranges = new LinkedHashMap<>();
+            Map<Integer,Set<String>> aliasLists = new LinkedHashMap<>();
+
+            for(Map<String,Object> alias: aliases)
+            {
+                if(!isSupportedIdentity(alias))
                 {
-                    Map<String,Object> row = new LinkedHashMap<>();
-
-                    for(int column = 1; column <= columnCount; column++)
-                    {
-                        row.put(metaData.getColumnLabel(column), resultSet.getObject(column));
-                    }
-
-                    rows.add(row);
+                    continue;
                 }
 
-                return rows;
+                int protocol = protocolCode(text(alias.get("protocol")));
+                String aliasList = text(alias.get("alias_list_name"));
+
+                if(aliasList != null)
+                {
+                    aliasLists.computeIfAbsent(protocol, ignored -> new LinkedHashSet<>()).add(lower(aliasList));
+                }
+
+                IdentityRange range = identityRange(alias);
+
+                if(range == null)
+                {
+                    continue;
+                }
+
+                addRange(ranges, new TargetKey(protocol, identityKindCode(alias)),
+                    range.minimum(), range.maximum());
             }
+
+            int listCount = aliasLists.values().stream().mapToInt(Set::size).sum();
+
+            if(listCount > MAX_TARGET_ALIAS_LISTS)
+            {
+                throw new StatsApiException(413, "Alias enrichment exceeds the bounded Alias List limit");
+            }
+
+            int rangeCount = 0;
+
+            for(Map.Entry<TargetKey,List<IdentityRange>> entry: ranges.entrySet())
+            {
+                List<IdentityRange> result = mergeRanges(entry.getValue());
+                rangeCount += result.size();
+            }
+
+            if(rangeCount > MAX_TARGET_RANGES)
+            {
+                throw new StatsApiException(413, "Alias enrichment exceeds the bounded identity-range limit");
+            }
+
+            return new IdentityTargets(aliasLists);
+        }
+
+        private static void addRange(Map<TargetKey,List<IdentityRange>> ranges, TargetKey key,
+                                     long minimum, long maximum)
+        {
+            ranges.computeIfAbsent(key, ignored -> new ArrayList<>()).add(new IdentityRange(minimum, maximum));
+        }
+
+        private void appendCoveragePredicate(StringBuilder sql, List<Object> parameters,
+                                             String protocolColumn, String aliasListColumn)
+        {
+            if(mAliasLists.isEmpty())
+            {
+                sql.append("0 ");
+                return;
+            }
+
+            sql.append('(');
+            boolean first = true;
+
+            for(Map.Entry<Integer,Set<String>> entry: mAliasLists.entrySet())
+            {
+                if(!first)
+                {
+                    sql.append(" OR ");
+                }
+
+                sql.append('(').append(protocolColumn).append(" = ? AND ").append(aliasListColumn)
+                    .append(" COLLATE NOCASE IN (").append(placeholders(entry.getValue().size())).append("))");
+                parameters.add(entry.getKey());
+                parameters.addAll(entry.getValue());
+                first = false;
+            }
+
+            sql.append(')');
+            sql.append(' ');
+        }
+
+        private void appendAliasListPredicate(StringBuilder sql, List<Object> parameters, int protocol,
+                                              String aliasListColumn)
+        {
+            Set<String> aliasLists = mAliasLists.getOrDefault(protocol, Set.of());
+
+            if(aliasLists.isEmpty())
+            {
+                sql.append("0 ");
+                return;
+            }
+
+            sql.append(aliasListColumn).append(" COLLATE NOCASE IN (")
+                .append(placeholders(aliasLists.size())).append(')');
+            parameters.addAll(aliasLists);
+            sql.append(' ');
+        }
+
+    }
+
+    private record ScopedTargetKey(boolean trunked, long scopeId, String projectionAliasList,
+                                   int identityKindCode) {}
+
+    private record SqlScopedTarget(long scopeId, int identityKindCode, long minimum, long maximum) {}
+
+    /**
+     * Correlates each selected alias range to only the receiver scopes where that alias is eligible.  Evidence SQL
+     * consumes this bounded relation as a VALUES CTE, avoiding the protocol-wide list/range cross product that could
+     * otherwise fill the response budget with identities from the wrong Alias List.
+     */
+    private static final class ScopedIdentityTargets
+    {
+        private static final String CTE_NAME = "requested_identity";
+        private final Map<ScopedTargetKey,List<IdentityRange>> mRanges;
+
+        private ScopedIdentityTargets(Map<ScopedTargetKey,List<IdentityRange>> ranges)
+        {
+            mRanges = ranges;
+        }
+
+        private static ScopedIdentityTargets from(List<Map<String,Object>> aliases,
+                                                  Map<Long,Map<String,CoverageScope>> coverage)
+        {
+            Map<ScopedTargetKey,List<IdentityRange>> ranges = new LinkedHashMap<>();
+
+            for(Map<String,Object> alias: aliases)
+            {
+                IdentityRange range = identityRange(alias);
+
+                if(range == null || !isSupportedIdentity(alias))
+                {
+                    continue;
+                }
+
+                long aliasId = number(alias.get("alias_id"));
+                int kind = identityKindCode(alias);
+
+                for(CoverageScope scope: coverage.getOrDefault(aliasId, Map.of()).values())
+                {
+                    String projectionAliasList = scope.protocolCode == 1 ? null :
+                        lower(text(alias.get("alias_list_name")));
+                    ScopedTargetKey key = new ScopedTargetKey(scope.trunked, scope.numericId,
+                        projectionAliasList, kind);
+                    ranges.computeIfAbsent(key, ignored -> new ArrayList<>()).add(range);
+                }
+            }
+
+            Map<ScopedTargetKey,List<IdentityRange>> merged = new LinkedHashMap<>();
+            int rangeCount = 0;
+
+            for(Map.Entry<ScopedTargetKey,List<IdentityRange>> entry: ranges.entrySet())
+            {
+                List<IdentityRange> result = mergeRanges(entry.getValue());
+                rangeCount += result.size();
+
+                if(rangeCount > MAX_SCOPED_TARGET_RANGES)
+                {
+                    throw new StatsApiException(413,
+                        "Alias evidence exceeds the bounded scope and identity-range limit");
+                }
+
+                merged.put(entry.getKey(), result);
+            }
+
+            return new ScopedIdentityTargets(Map.copyOf(merged));
+        }
+
+        private void appendCte(StringBuilder sql, List<Object> parameters, boolean trunked)
+        {
+            Set<SqlScopedTarget> targets = new LinkedHashSet<>();
+
+            for(Map.Entry<ScopedTargetKey,List<IdentityRange>> entry: mRanges.entrySet())
+            {
+                if(entry.getKey().trunked() == trunked)
+                {
+                    for(IdentityRange range: entry.getValue())
+                    {
+                        targets.add(new SqlScopedTarget(entry.getKey().scopeId(),
+                            entry.getKey().identityKindCode(), range.minimum(), range.maximum()));
+                    }
+                }
+            }
+
+            sql.append("WITH ").append(CTE_NAME)
+                .append("(scope_id, identity_kind_code, minimum, maximum) AS (");
+
+            if(targets.isEmpty())
+            {
+                sql.append("SELECT NULL, NULL, NULL, NULL WHERE 0");
+            }
+            else
+            {
+                sql.append("VALUES ").append(String.join(",",
+                    java.util.Collections.nCopies(targets.size(), "(?,?,?,?)")));
+
+                for(SqlScopedTarget target: targets)
+                {
+                    parameters.add(target.scopeId());
+                    parameters.add(target.identityKindCode());
+                    parameters.add(target.minimum());
+                    parameters.add(target.maximum());
+                }
+            }
+
+            sql.append(") ");
+        }
+
+        private void appendPredicate(StringBuilder sql, String scopeColumn, String kindExpression,
+                                     String identityExpression)
+        {
+            sql.append("EXISTS (SELECT 1 FROM ").append(CTE_NAME).append(" target WHERE target.scope_id = ")
+                .append(scopeColumn).append(" AND (target.identity_kind_code = ").append(kindExpression)
+                .append(" OR (target.identity_kind_code = 1 AND ").append(kindExpression)
+                .append(" = 3)) AND ").append(identityExpression)
+                .append(" BETWEEN target.minimum AND target.maximum) ");
+        }
+
+        private boolean matches(Map<String,Object> row, CoverageScope scope)
+        {
+            int kind = (int)number(row.get("identity_kind_code"));
+            kind = kind == 3 ? 1 : kind;
+            long identity = number(row.get("identity_id"));
+            String projectionAliasList = scope.protocolCode == 1 ? null : lower(scope.canonicalAliasList);
+            List<IdentityRange> ranges = mRanges.getOrDefault(new ScopedTargetKey(scope.trunked,
+                scope.numericId, projectionAliasList, kind), List.of());
+            return ranges.stream().anyMatch(range -> identity >= range.minimum() && identity <= range.maximum());
         }
     }
 
@@ -1392,7 +1931,7 @@ final class StatsAliasCatalog
         {
             if(aliasList != null)
             {
-                aliasLists.add(aliasList);
+                aliasLists.add(lower(aliasList));
 
                 if(canonicalAliasList == null)
                 {

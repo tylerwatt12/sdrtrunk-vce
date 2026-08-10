@@ -88,7 +88,7 @@ class StatsCsvExportTest
     {
         StatsCsvExport export = StatsCsvExport.create("aliases", "County", List.of(Map.of(
             "alias_id", 1, "alias_list_id", 2, "alias_list_name", "County", "family", "P25",
-            "name", "Dispatch", "matcher_type", "TALKGROUP", "value", 100)));
+            "name", "Dispatch", "matcher_type", "TALKGROUP", "protocol", "APCO25_PHASE2", "value", 100)));
         String csv = new String(export.content(), 3, export.content().length - 3, StandardCharsets.UTF_8);
 
         try(CSVParser parser = CSVFormat.RFC4180.builder().setHeader().setSkipHeaderRecord(true).get()
@@ -99,7 +99,12 @@ class StatsCsvExportTest
             assertFalse(parser.getHeaderMap().containsKey("p25_system_id"));
             assertFalse(parser.getHeaderMap().containsKey("p25_system_id_hex"));
             assertFalse(parser.getHeaderMap().containsKey("fully_qualified"));
-            assertEquals("100", parser.getRecords().getFirst().get("value"));
+            CSVRecord row = parser.getRecords().getFirst();
+            assertEquals("100", row.get("value"));
+            assertEquals("p25", row.get("family"));
+            assertEquals("talkgroup", row.get("matcher_type"));
+            assertEquals("p25", row.get("protocol"));
+            assertEquals("phase_2", row.get("protocol_variant"));
         }
     }
 

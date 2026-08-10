@@ -27,10 +27,10 @@ class StatsWebAliasCatalogUiContractTest
 
         assertTrue(readText(INDEX_HTML).contains("data-view=\"aliases\" href=\"/?view=aliases\""));
         assertTrue(source.contains("aliases: renderAliases"));
-        assertTrue(renderer.contains("api('/api/alias-lists')"));
+        assertTrue(renderer.contains("api('/api/v1/alias-lists')"));
         assertTrue(renderer.contains("if (!selectedList)"));
         assertTrue(renderer.indexOf("if (!selectedList)") <
-            renderer.indexOf("api('/api/aliases', pageParameters(filters))"));
+            renderer.indexOf("api('/api/v1/aliases', pageParameters(filters))"));
         assertTrue(function(source, "function pageParameters(extra = {})").contains("limit: 100"));
         assertFalse(renderer.contains("All alias lists"));
         assertTrue(function(source, "function aliasListRail(lists, selectedList, admin)")
@@ -75,7 +75,7 @@ class StatsWebAliasCatalogUiContractTest
             .contains("ACCESS_CAPABILITIES.ADMIN_ALIASES"));
         assertTrue(renderer.contains("const admin = aliasAdminAllowed()"));
         assertTrue(renderer.contains("admin ? requestJson('/api/v1/admin/alias-lists'"));
-        assertTrue(editor.contains("/api/v1/admin/aliases/options?aliasListId="));
+        assertTrue(editor.contains("/api/v1/admin/aliases/options?alias_list_id="));
         assertTrue(editor.contains("method: editing ? 'PUT' : 'POST'"));
         assertTrue(source.contains("method: 'DELETE', body: { revision }"));
         assertTrue(source.contains("/api/v1/admin/alias-lists/${id}/delete-impact"));
@@ -106,10 +106,10 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(payload.contains("selector.dataset.originalProtocol"));
         assertTrue(editorPayload.contains("descriptor.minimum"));
         assertTrue(editorPayload.contains("descriptor.maximum"));
-        assertTrue(source.contains("options.dcsCodes?.[0] || 'N023'"));
-        assertTrue(source.contains("Missing: ${source.iconName}"));
+        assertTrue(source.contains("options.dcs_codes?.[0] || 'n023'"));
+        assertTrue(source.contains("Missing: ${source.icon_name}"));
         assertTrue(source.contains("Missing: ${streamName}"));
-        assertTrue(source.contains("error.code = result?.code || result?.error || null"));
+        assertTrue(source.contains("error.code = failure?.code"));
         assertTrue(source.contains("color: aliasEditorColorValue(form.elements.color)"));
         assertTrue(source.contains("color.dataset.originalColor"));
         assertTrue(source.contains("value: 'RESET', label: 'Reset to default'"));
@@ -148,8 +148,8 @@ class StatsWebAliasCatalogUiContractTest
 
         assertTrue(bulk.contains("slice(0, 500)"));
         assertTrue(bulk.contains("explicitly selected aliases"));
-        for(String operation: new String[]{"Leave unchanged", "groupOperation", "listenEnabled", "recordable",
-            "streamOperation", "broadcastChannels", "aliasListId", "iconName", "delete"})
+        for(String operation: new String[]{"Leave unchanged", "group_operation", "listen_enabled", "recordable",
+            "stream_operation", "broadcast_channels", "alias_list_id", "icon_name", "delete"})
         {
             assertTrue(bulk.contains(operation), () -> "Missing bulk contract " + operation);
         }
@@ -166,12 +166,13 @@ class StatsWebAliasCatalogUiContractTest
         String renderer = function(source, "async function renderAliases()");
         String filters = function(source, "function aliasEditorFilterToolbar(listResponse, options = null)");
 
-        for(String parameter: new String[]{"group", "listen", "record", "stream", "evidence", "use",
-            "lastActivityBefore", "lastActivityAfter"})
+        for(String parameter: new String[]{"group", "listen", "record", "stream", "evidence", "use"})
         {
             assertTrue(renderer.contains(parameter + ": route.get('" + parameter + "')"),
                 () -> "Missing server filter " + parameter);
         }
+        assertTrue(renderer.contains("last_activity_before: route.get('lastActivityBefore')"));
+        assertTrue(renderer.contains("last_activity_after: route.get('lastActivityAfter')"));
         assertTrue(filters.contains("'Call use'"));
         assertTrue(filters.contains("'No calls observed'"));
         assertTrue(filters.contains("hidden.value = String(new Date(control.value).getTime())"));
@@ -198,38 +199,42 @@ class StatsWebAliasCatalogUiContractTest
         String editor = function(source,
             "async function openAliasEditorModal(mode = 'create', id = null, prefill = null)");
 
+        assertFalse(source.contains("alias_match_kind"));
         assertTrue(tabs.contains("'Discover'"));
-        assertTrue(renderer.contains("api('/api/alias-list/observed-talkgroups'"));
+        assertTrue(renderer.contains("`/api/v1/alias-lists/${aliasListId(selectedList)}/observed-talkgroups`"));
         assertTrue(renderer.contains("include_exact: false"));
-        assertTrue(renderer.contains("options?.aliasList && options?.revision !== undefined"));
+        assertTrue(renderer.contains("options?.alias_list && options?.revision !== undefined"));
         assertTrue(renderer.contains("aliasEditorContext.selectedList = selectedList"));
         assertTrue(source.contains("aliasTab: 'discover'"));
         assertTrue(observed.contains("observedTalkgroupMatchKind(row) !== 'exact'"));
         assertTrue(observed.contains("defaultSort: 'last_seen'"));
         assertTrue(observed.contains("pager({ ...page, rows })"));
 
-        assertTrue(source.contains("unmatchedTalkgroupPolicy"));
+        assertFalse(source.contains("function unmatchedTalkgroupPolicy"));
+        assertTrue(policy.contains("selectedList?.unmatched_talkgroup_policy"));
+        assertTrue(prefill.contains("selectedList?.unmatched_talkgroup_policy"));
         assertTrue(policy.contains("/unmatched-talkgroups"));
-        for(String field: new String[]{"listenEnabled", "priority", "recordable", "broadcastChannels"})
+        for(String field: new String[]{"listen_enabled", "priority", "recordable", "broadcast_channels"})
         {
             assertTrue(policy.contains(field), () -> "Missing unmatched policy field " + field);
         }
 
         assertTrue(prefill.contains("name: ''"));
-        assertTrue(prefill.contains("type: 'TALKGROUP'"));
+        assertTrue(prefill.contains("type: 'talkgroup'"));
         assertFalse(source.contains("P25_FULLY_QUALIFIED_TALKGROUP"));
         assertTrue(prefill.contains("!observedTalkgroupPromotionSupported(row)"));
-        assertTrue(prefill.contains("[1, 2].includes(observedP25IdentityState(row))"));
+        assertTrue(prefill.contains("['ordinary', 'stable_fully_qualified'].includes(observedP25IdentityState(row))"));
         assertTrue(prefill.contains("topology || '').toUpperCase() === 'CONVENTIONAL'"));
-        for(String field: new String[]{"p25_home_wacn", "p25_home_system_id", "p25_home_talkgroup_id"})
+        for(String field: new String[]{"wacn", "system_id", "talkgroup_id"})
         {
-            assertTrue(source.contains(field), () -> "Missing qualifier-safe discovery field " + field);
-            assertTrue(key.contains(field), () -> "Observed row key omits qualifier " + field);
+            assertTrue(source.contains("qualification?.home?." + field),
+                () -> "Missing qualifier-safe discovery field " + field);
+            assertTrue(key.contains("home." + field), () -> "Observed row key omits qualifier " + field);
         }
         assertTrue(key.contains("row?.topology"));
         assertTrue(key.contains("observedTalkgroupProtocol(row)"));
-        assertTrue(key.contains("scope-id:"));
-        assertTrue(key.contains("context-id:"));
+        assertTrue(key.contains("scope-key:"));
+        assertTrue(key.contains("context-key:"));
         assertTrue(homeIdentity.contains("talkgroup > 0"));
         assertTrue(homeIdentity.contains("talkgroup < 0xFFFF"));
         assertTrue(focusKey.contains("encodeURIComponent(observedTalkgroupKey(row))"));
@@ -242,11 +247,11 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(create.contains("'Review only'"));
         assertTrue(create.contains("observedTalkgroupPromotionReason(row)"));
         assertTrue(detail.contains("observedTalkgroupPromotionSupported(row)"));
-        assertTrue(prefill.contains("streamAsTalkgroup: null"));
-        assertTrue(prefill.contains("copyActionsFromAliasId"));
+        assertTrue(prefill.contains("stream_as_talkgroup: null"));
+        assertTrue(prefill.contains("copy_actions_from_alias_id"));
         assertTrue(editor.contains("rangeActionsPromise"));
-        assertTrue(editor.contains("/api/v1/admin/aliases/${Number(prefill.copyActionsFromAliasId)}"));
-        assertTrue(editor.contains("['listenEnabled', 'priority', 'recordable', 'broadcastChannels']"));
+        assertTrue(editor.contains("/api/v1/admin/aliases/${Number(prefill.copy_actions_from_alias_id)}"));
+        assertTrue(editor.contains("['listen_enabled', 'priority', 'recordable', 'broadcast_channels']"));
         assertTrue(editor.contains("selectedStreams.has(streamName) && (editing || configuredStreams.has(streamName))"));
     }
 

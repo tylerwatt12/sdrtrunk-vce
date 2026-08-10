@@ -9,7 +9,7 @@ import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.StreamReadFeature;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.sun.net.httpserver.Headers;
+import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.sun.net.httpserver.HttpExchange;
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasAdministrationService;
@@ -40,7 +40,6 @@ import io.github.dsheirer.module.decode.dcs.DCSCode;
 import io.github.dsheirer.protocol.Protocol;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
@@ -68,20 +67,19 @@ public final class AliasAdminHttpController
     private static final int MAXIMUM_JSON_BODY_BYTES = 16 * 1024;
     private static final int MAXIMUM_TEXT_CHARACTERS = 256;
     private static final int MAXIMUM_DESCRIPTION_CHARACTERS = 4096;
-    private static final int MAXIMUM_BROADCAST_CHANNELS = 64;
     private static final int MAXIMUM_TONES = 64;
-    private static final String JSON_CONTENT_TYPE = "application/json; charset=utf-8";
-    private static final Set<Protocol> SUPPORTED_PROTOCOLS = Set.of(Protocol.APCO25, Protocol.APCO25_PHASE2,
-        Protocol.DMR, Protocol.NXDN, Protocol.NBFM, Protocol.FLEETSYNC, Protocol.MDC1200);
+    private static final int MAXIMUM_ADMIN_COLLECTION_ITEMS = 500;
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper(JsonFactory.builder()
         .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).build())
         .enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
         .enable(DeserializationFeature.FAIL_ON_NUMBERS_FOR_ENUMS)
         .disable(DeserializationFeature.ACCEPT_FLOAT_AS_INT)
-        .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
+        .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+        .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
 
     private final AliasAdministrationService mService;
     private final Runnable mAliasChanged;
+    private final AliasListDeletion mAliasListDeletion;
 
     public AliasAdminHttpController(AliasAdministrationService service)
     {
@@ -90,8 +88,29 @@ public final class AliasAdminHttpController
 
     public AliasAdminHttpController(AliasAdministrationService service, Runnable aliasChanged)
     {
+        this(service, aliasChanged, new AliasListDeletion()
+        {
+            @Override
+            public AliasAdministrationService.DeleteImpact impact(long aliasListId, int maximumCount)
+            {
+                return service.aliasListDeleteImpact(aliasListId, maximumCount);
+            }
+
+            @Override
+            public AliasAdministrationService.MutationResult delete(long aliasListId, long revision,
+                                                                     boolean confirmed)
+            {
+                return service.deleteAliasList(aliasListId, revision, confirmed);
+            }
+        });
+    }
+
+    AliasAdminHttpController(AliasAdministrationService service, Runnable aliasChanged,
+                             AliasListDeletion aliasListDeletion)
+    {
         mService = Objects.requireNonNull(service, "Alias administration service cannot be null");
         mAliasChanged = Objects.requireNonNull(aliasChanged, "Alias change callback cannot be null");
+        mAliasListDeletion = Objects.requireNonNull(aliasListDeletion, "Alias-list deletion cannot be null");
     }
 
     /** Handles all alias-administration contexts. */
@@ -101,7 +120,7 @@ public final class AliasAdminHttpController
 
         try
         {
-            String path = exchange.getRequestURI().getPath();
+            String path = exchange.getRequestURI().getRawPath();
 
             if(OPTIONS_PATH.equals(path))
             {
@@ -126,7 +145,7 @@ public final class AliasAdminHttpController
         }
         catch(RequestException exception)
         {
-            sendError(exchange, exception.status(), exception.code(), exception.getMessage());
+            sendError(exchange, exception.status(), exception.code(), exception.getMessage(), exception.field());
         }
         catch(AliasAdministrationService.NotFoundException exception)
         {
@@ -187,16 +206,23 @@ public final class AliasAdminHttpController
                 case "GET" -> {
                     requireNoBody(exchange);
                     AliasAdministrationService.Catalog catalog = mService.catalog();
-                    sendJson(exchange, 200, Map.of("revision", catalog.revision(), "aliasLists",
-                        catalog.aliasLists()));
+                    sendData(exchange, 200, Map.of("revision", catalog.revision(), "aliasLists",
+                        boundedCollection(catalog.aliasLists(), "alias_lists").stream()
+                            .map(AliasAdminHttpController::aliasListView).toList()));
                 }
                 case "POST" -> {
+                    if(mService.catalog().aliasLists().size() >= MAXIMUM_ADMIN_COLLECTION_ITEMS)
+                    {
+                        throw error(409, "collection_limit_reached",
+                            "alias_lists cannot exceed " + MAXIMUM_ADMIN_COLLECTION_ITEMS + " items");
+                    }
+
                     CreateListRequest request = readJson(exchange, CreateListRequest.class);
                     AliasAdministrationService.MutationResult result = changed(mService.createAliasList(
                         requiredText(request.name(), "name", MAXIMUM_TEXT_CHARACTERS),
-                        required(request.family(), "family"), requiredRevision(request.revision())));
+                        requiredAliasListFamily(request.family()), requiredRevision(request.revision())));
                     exchange.getResponseHeaders().set("Location", ALIAS_LISTS_PATH + "/" + result.aliasListId());
-                    sendJson(exchange, 201, result);
+                    sendData(exchange, 201, mutationResponse(result));
                 }
                 default -> methodNotAllowed(exchange, "GET, POST");
             }
@@ -217,7 +243,10 @@ public final class AliasAdminHttpController
         {
             requireMethod(exchange, "GET");
             requireNoBody(exchange);
-            sendJson(exchange, 200, mService.aliasListDeleteImpact(aliasListId));
+            AliasAdministrationService.DeleteImpact deleteImpact =
+                mAliasListDeletion.impact(aliasListId, MAXIMUM_ADMIN_COLLECTION_ITEMS);
+            requireBoundedDeleteImpact(deleteImpact);
+            sendData(exchange, 200, deleteImpact);
             return;
         }
 
@@ -226,10 +255,10 @@ public final class AliasAdminHttpController
             requireMethod(exchange, "PUT");
             UnmatchedPolicyRequest request = readJson(exchange, UnmatchedPolicyRequest.class);
             UnmatchedTalkgroupPolicy replacement = new UnmatchedTalkgroupPolicy(
-                unmatchedPlaybackPriority(required(request.listenEnabled(), "listenEnabled"), request.priority()),
+                unmatchedPlaybackPriority(required(request.listenEnabled(), "listen_enabled"), request.priority()),
                 required(request.recordable(), "recordable"), requiredChannels(request.broadcastChannels()));
-            sendJson(exchange, 200, changed(mService.updateUnmatchedTalkgroupPolicy(aliasListId, replacement,
-                requiredRevision(request.revision()))));
+            sendData(exchange, 200, mutationResponse(changed(mService.updateUnmatchedTalkgroupPolicy(aliasListId,
+                replacement, requiredRevision(request.revision())))));
             return;
         }
 
@@ -237,9 +266,20 @@ public final class AliasAdminHttpController
         {
             case "DELETE" -> {
                 DeleteListRequest request = readJson(exchange, DeleteListRequest.class);
-                AliasAdministrationService.MutationResult result = changed(mService.deleteAliasList(aliasListId,
-                    requiredRevision(request.revision()), required(request.confirmed(), "confirmed")));
-                sendJson(exchange, 200, result);
+                long revision = requiredRevision(request.revision());
+                boolean confirmed = required(request.confirmed(), "confirmed");
+                AliasAdministrationService.DeleteImpact deleteImpact =
+                    mAliasListDeletion.impact(aliasListId, MAXIMUM_ADMIN_COLLECTION_ITEMS);
+
+                if(deleteImpact.revision() != revision)
+                {
+                    throw new AliasAdministrationService.StaleRevisionException(revision, deleteImpact.revision());
+                }
+
+                requireBoundedDeleteImpact(deleteImpact);
+                AliasAdministrationService.MutationResult result = changed(
+                    mAliasListDeletion.delete(aliasListId, revision, confirmed));
+                sendData(exchange, 200, mutationResponse(result));
             }
             default -> methodNotAllowed(exchange, "DELETE");
         }
@@ -263,7 +303,7 @@ public final class AliasAdminHttpController
                         exchange.getResponseHeaders().set("Location", ALIASES_PATH + "/" +
                             result.aliasIds().getFirst());
                     }
-                    sendJson(exchange, 201, result);
+                    sendData(exchange, 201, mutationResponse(result));
                 }
                 default -> methodNotAllowed(exchange, "POST");
             }
@@ -278,17 +318,17 @@ public final class AliasAdminHttpController
             case "GET" -> {
                 requireNoBody(exchange);
                 AliasAdministrationService.AliasEntry entry = mService.getAlias(aliasId);
-                sendJson(exchange, 200, Map.of("revision", entry.revision(), "alias", aliasView(entry.alias())));
+                sendData(exchange, 200, Map.of("revision", entry.revision(), "alias", aliasView(entry.alias())));
             }
             case "PUT" -> {
                 AliasRequest request = readJson(exchange, AliasRequest.class);
-                sendJson(exchange, 200, changed(mService.replaceAlias(aliasId, toAlias(request.alias()),
-                    requiredRevision(request.revision()))));
+                sendData(exchange, 200, mutationResponse(changed(mService.replaceAlias(aliasId,
+                    toAlias(request.alias()), requiredRevision(request.revision())))));
             }
             case "DELETE" -> {
                 RevisionRequest request = readJson(exchange, RevisionRequest.class);
-                sendJson(exchange, 200, changed(mService.deleteAlias(aliasId,
-                    requiredRevision(request.revision()))));
+                sendData(exchange, 200, mutationResponse(changed(mService.deleteAlias(aliasId,
+                    requiredRevision(request.revision())))));
             }
             default -> methodNotAllowed(exchange, "GET, PUT, DELETE");
         }
@@ -298,27 +338,29 @@ public final class AliasAdminHttpController
     {
         requireMethod(exchange, "GET");
         requireNoBody(exchange);
-        AliasAdministrationService.Options options = mService.options(requiredIdQuery(exchange, "aliasListId"));
+        AliasAdministrationService.Options options = mService.options(requiredIdQuery(exchange, "alias_list_id"));
         Map<String,Object> response = new LinkedHashMap<>();
         response.put("revision", options.revision());
-        response.put("aliasList", options.aliasList());
-        response.put("matchers", options.matchers().stream()
+        response.put("aliasList", aliasListView(options.aliasList()));
+        response.put("matchers", boundedCollection(options.matchers(), "matchers").stream()
             .map(descriptor -> matcherOption(descriptor, options.aliasList())).toList());
-        response.put("iconNames", options.iconNames());
-        response.put("streamNames", options.streamNames());
-        response.put("groupNames", options.groupNames());
-        response.put("playbackPriorities", options.playbackPriorities());
+        response.put("iconNames", boundedCollection(options.iconNames(), "icon_names"));
+        response.put("streamNames", boundedCollection(options.streamNames(), "stream_names"));
+        response.put("groupNames", boundedCollection(options.groupNames(), "group_names"));
+        response.put("playbackPriorities", boundedCollection(options.playbackPriorities(),
+            "playback_priorities"));
 
         if(options.matchers().stream().anyMatch(descriptor -> descriptor.type() == AliasIDType.DCS))
         {
             response.put("dcsCodes", Arrays.stream(DCSCode.values()).filter(code -> code != DCSCode.UNKNOWN)
-                .map(Enum::name).toList());
+                .map(AliasAdminHttpController::dcsCodeName).toList());
         }
         if(options.matchers().stream().anyMatch(descriptor -> descriptor.type() == AliasIDType.TONES))
         {
-            response.put("tones", AmbeTone.ALL_VALID_TONES.stream().map(Enum::name).sorted().toList());
+            response.put("tones", AmbeTone.ALL_VALID_TONES.stream()
+                .map(AliasAdminHttpController::toneName).sorted().toList());
         }
-        sendJson(exchange, 200, response);
+        sendData(exchange, 200, response);
     }
 
     private void handleBulk(HttpExchange exchange) throws Exception
@@ -327,13 +369,14 @@ public final class AliasAdminHttpController
         requireNoQuery(exchange);
         BulkRequest request = readJson(exchange, BulkRequest.class);
         AliasAdministrationService.BulkEdit edit = new AliasAdministrationService.BulkEdit(
-            requiredIds(request.aliasIds()), optionalPositive(request.aliasListId(), "aliasListId"), request.color(),
-            optionalText(request.iconName(), "iconName", MAXIMUM_TEXT_CHARACTERS),
+            requiredIds(request.aliasIds()), optionalPositive(request.aliasListId(), "alias_list_id"), request.color(),
+            optionalText(request.iconName(), "icon_name", MAXIMUM_TEXT_CHARACTERS),
             bulkPlaybackPriority(request.listenEnabled(), request.priority()), request.recordable(),
-            request.groupOperation(), optionalText(request.group(), "group", MAXIMUM_TEXT_CHARACTERS),
-            request.streamOperation(), optionalChannels(request.broadcastChannels()),
+            groupOperation(request.groupOperation()), optionalText(request.group(), "group", MAXIMUM_TEXT_CHARACTERS),
+            streamOperation(request.streamOperation()), optionalChannels(request.broadcastChannels()),
             Boolean.TRUE.equals(request.delete()));
-        sendJson(exchange, 200, changed(mService.bulkEdit(edit, requiredRevision(request.revision()))));
+        sendData(exchange, 200,
+            mutationResponse(changed(mService.bulkEdit(edit, requiredRevision(request.revision())))));
     }
 
     private AliasAdministrationService.MutationResult changed(AliasAdministrationService.MutationResult result)
@@ -342,16 +385,30 @@ public final class AliasAdminHttpController
         return result;
     }
 
+    private static Map<String,Object> mutationResponse(AliasAdministrationService.MutationResult result)
+    {
+        List<Long> aliasIds = result.aliasIds();
+        int returned = Math.min(aliasIds.size(), MAXIMUM_ADMIN_COLLECTION_ITEMS);
+        Map<String,Object> response = new LinkedHashMap<>();
+        response.put("revision", result.revision());
+        response.put("aliasListId", result.aliasListId());
+        response.put("aliasIds", List.copyOf(aliasIds.subList(0, returned)));
+        response.put("aliasIdsTotal", aliasIds.size());
+        response.put("aliasIdsTruncated", returned < aliasIds.size());
+        response.put("affected", result.affected());
+        return response;
+    }
+
     private static Alias toAlias(AliasPayload payload) throws RequestException
     {
         required(payload, "alias");
         Alias alias = new Alias(requiredText(payload.name(), "name", MAXIMUM_TEXT_CHARACTERS));
-        alias.setAliasListId(requiredPositive(payload.aliasListId(), "aliasListId"));
+        alias.setAliasListId(requiredPositive(payload.aliasListId(), "alias_list_id"));
         alias.setDescription(optionalText(payload.description(), "description", MAXIMUM_DESCRIPTION_CHARACTERS));
         alias.setGroup(optionalText(payload.group(), "group", MAXIMUM_TEXT_CHARACTERS));
         alias.setColor(required(payload.color(), "color"));
-        alias.setIconName(optionalText(payload.iconName(), "iconName", MAXIMUM_TEXT_CHARACTERS));
-        alias.setCallPriority(playbackPriority(required(payload.listenEnabled(), "listenEnabled"), payload.priority()));
+        alias.setIconName(optionalText(payload.iconName(), "icon_name", MAXIMUM_TEXT_CHARACTERS));
+        alias.setCallPriority(playbackPriority(required(payload.listenEnabled(), "listen_enabled"), payload.priority()));
         alias.setRecordable(required(payload.recordable(), "recordable"));
         alias.setBroadcastChannels(requiredChannels(payload.broadcastChannels()).stream()
             .map(BroadcastChannel::new).toList());
@@ -359,7 +416,7 @@ public final class AliasAdminHttpController
         if(payload.streamAsTalkgroup() != null)
         {
             alias.setStreamTalkgroupAlias(new StreamAsTalkgroup(bounded(payload.streamAsTalkgroup(),
-                "streamAsTalkgroup", 1, 0xFFFF)));
+                "stream_as_talkgroup", 1, 0xFFFF)));
         }
         alias.setMatchIdentifier(toMatcher(required(payload.matcher(), "matcher")));
         return alias;
@@ -367,7 +424,15 @@ public final class AliasAdminHttpController
 
     private static AliasID toMatcher(MatcherPayload payload) throws RequestException
     {
-        AliasIDType type = required(payload.type(), "matcher.type");
+        AliasIDType type = matcherType(payload.type());
+        boolean protocolMatcher = type == AliasIDType.TALKGROUP || type == AliasIDType.TALKGROUP_RANGE ||
+            type == AliasIDType.RADIO_ID || type == AliasIDType.RADIO_ID_RANGE;
+
+        if(!protocolMatcher && payload.variant() != null)
+        {
+            throw invalid("variant is only valid for protocol matchers");
+        }
+
         int populated = (payload.protocol() != null ? 1 : 0) + (payload.value() != null ? 1 : 0) +
             (payload.minimum() != null ? 1 : 0) + (payload.maximum() != null ? 1 : 0) +
             (payload.status() != null ? 1 : 0) + (payload.code() != null ? 1 : 0) +
@@ -386,11 +451,13 @@ public final class AliasAdminHttpController
 
         AliasID matcher = switch(type)
         {
-            case TALKGROUP -> new Talkgroup(requiredProtocol(payload.protocol()), required(payload.value(), "value"));
-            case RADIO_ID -> new Radio(requiredProtocol(payload.protocol()), required(payload.value(), "value"));
-            case TALKGROUP_RANGE -> new TalkgroupRange(requiredProtocol(payload.protocol()),
+            case TALKGROUP -> new Talkgroup(requiredProtocol(payload.protocol(), payload.variant()),
+                required(payload.value(), "value"));
+            case RADIO_ID -> new Radio(requiredProtocol(payload.protocol(), payload.variant()),
+                required(payload.value(), "value"));
+            case TALKGROUP_RANGE -> new TalkgroupRange(requiredProtocol(payload.protocol(), payload.variant()),
                 required(payload.minimum(), "minimum"), required(payload.maximum(), "maximum"));
-            case RADIO_ID_RANGE -> new RadioRange(requiredProtocol(payload.protocol()),
+            case RADIO_ID_RANGE -> new RadioRange(requiredProtocol(payload.protocol(), payload.variant()),
                 required(payload.minimum(), "minimum"), required(payload.maximum(), "maximum"));
             case STATUS -> {
                 UserStatusID status = new UserStatusID();
@@ -403,12 +470,13 @@ public final class AliasAdminHttpController
                 yield status;
             }
             case DCS -> {
-                if(payload.code() == DCSCode.UNKNOWN)
+                DCSCode code = dcsCode(payload.code());
+                if(code == DCSCode.UNKNOWN)
                 {
                     throw invalid("code is invalid");
                 }
                 Dcs dcs = new Dcs();
-                dcs.setDCSCode(required(payload.code(), "code"));
+                dcs.setDCSCode(code);
                 yield dcs;
             }
             case ESN -> {
@@ -437,11 +505,12 @@ public final class AliasAdminHttpController
         List<Tone> result = new ArrayList<>(tones.size());
         for(TonePayload tone: tones)
         {
-            if(tone == null || tone.tone() == null || !AmbeTone.ALL_VALID_TONES.contains(tone.tone()))
+            AmbeTone value = tone != null ? tone(tone.tone()) : null;
+            if(value == null || !AmbeTone.ALL_VALID_TONES.contains(value))
             {
                 throw invalid("tone is invalid");
             }
-            result.add(new Tone(tone.tone(), bounded(tone.duration(), "duration", 1, 50)));
+            result.add(new Tone(value, bounded(tone.duration(), "duration", 1, 50)));
         }
         return new ToneSequence(result);
     }
@@ -460,34 +529,34 @@ public final class AliasAdminHttpController
     private static Map<String,Object> matcherView(AliasID matcher)
     {
         Map<String,Object> response = new LinkedHashMap<>();
-        response.put("type", matcher.getType().name());
+        response.put("type", matcherTypeName(matcher.getType()));
 
         switch(matcher)
         {
             case TalkgroupRange value -> {
-                response.put("protocol", value.getProtocol().name());
+                addProtocol(response, value.getProtocol());
                 response.put("minimum", value.getMinTalkgroup());
                 response.put("maximum", value.getMaxTalkgroup());
             }
             case Talkgroup value -> {
-                response.put("protocol", value.getProtocol().name());
+                addProtocol(response, value.getProtocol());
                 response.put("value", value.getValue());
             }
             case RadioRange value -> {
-                response.put("protocol", value.getProtocol().name());
+                addProtocol(response, value.getProtocol());
                 response.put("minimum", value.getMinRadio());
                 response.put("maximum", value.getMaxRadio());
             }
             case Radio value -> {
-                response.put("protocol", value.getProtocol().name());
+                addProtocol(response, value.getProtocol());
                 response.put("value", value.getValue());
             }
             case UserStatusID value -> response.put("status", value.getStatus());
             case UnitStatusID value -> response.put("status", value.getStatus());
-            case Dcs value -> response.put("code", value.getDCSCode().name());
+            case Dcs value -> response.put("code", dcsCodeName(value.getDCSCode()));
             case Esn value -> response.put("esn", value.getEsn());
             case TonesID value -> response.put("tones", value.getToneSequence().getTones().stream()
-                .map(tone -> new TonePayload(tone.getAmbeTone(), tone.getDuration())).toList());
+                .map(tone -> new TonePayload(toneName(tone.getAmbeTone()), tone.getDuration())).toList());
             default -> throw new IllegalArgumentException("Unsupported alias matcher");
         }
         return response;
@@ -497,38 +566,61 @@ public final class AliasAdminHttpController
     {
         AliasID example = descriptor.create(definition);
         Map<String,Object> response = new LinkedHashMap<>();
-        response.put("type", descriptor.type().name());
+        response.put("type", matcherTypeName(descriptor.type()));
         response.put("label", descriptor.label());
         response.put("fields", matcherFields(descriptor.type()));
 
         if(descriptor.type() == AliasIDType.TALKGROUP && example instanceof Talkgroup talkgroup)
         {
-            response.put("protocol", talkgroup.getProtocol().name());
+            addProtocol(response, talkgroup.getProtocol());
             TalkgroupFormat format = TalkgroupFormat.get(talkgroup.getProtocol());
             response.put("minimum", format.getMinimumValidValue());
             response.put("maximum", format.getMaximumValidValue());
         }
         else if(descriptor.type() == AliasIDType.TALKGROUP_RANGE && example instanceof TalkgroupRange range)
         {
-            response.put("protocol", range.getProtocol().name());
+            addProtocol(response, range.getProtocol());
             TalkgroupFormat format = TalkgroupFormat.get(range.getProtocol());
             response.put("minimum", format.getMinimumValidValue());
             response.put("maximum", format.getMaximumValidValue());
         }
         else if(descriptor.type() == AliasIDType.RADIO_ID && example instanceof Radio radio)
         {
-            response.put("protocol", radio.getProtocol().name());
+            addProtocol(response, radio.getProtocol());
             RadioFormat format = RadioFormat.get(radio.getProtocol());
             response.put("minimum", format.getMinimumValidValue());
             response.put("maximum", format.getMaximumValidValue());
         }
         else if(descriptor.type() == AliasIDType.RADIO_ID_RANGE && example instanceof RadioRange range)
         {
-            response.put("protocol", range.getProtocol().name());
+            addProtocol(response, range.getProtocol());
             RadioFormat format = RadioFormat.get(range.getProtocol());
             response.put("minimum", format.getMinimumValidValue());
             response.put("maximum", format.getMaximumValidValue());
         }
+        return response;
+    }
+
+    private static Map<String,Object> aliasListView(AliasListDefinition definition)
+    {
+        Map<String,Object> response = new LinkedHashMap<>();
+        response.put("aliasListId", definition.getId());
+        response.put("name", definition.getName());
+        response.put("family", familyName(definition.getFamily()));
+        response.put("unmatchedTalkgroupPolicy", unmatchedTalkgroupPolicyView(
+            definition.getUnmatchedTalkgroupPolicy()));
+        return response;
+    }
+
+    private static Map<String,Object> unmatchedTalkgroupPolicyView(UnmatchedTalkgroupPolicy policy)
+    {
+        int playbackPriority = policy.getPlaybackPriority();
+        boolean listenEnabled = playbackPriority != Priority.DO_NOT_MONITOR;
+        Map<String,Object> response = new LinkedHashMap<>();
+        response.put("listenEnabled", listenEnabled);
+        response.put("priority", listenEnabled ? playbackPriority : null);
+        response.put("recordable", policy.isRecordEnabled());
+        response.put("broadcastChannels", policy.getStreamDestinationNames());
         return response;
     }
 
@@ -543,6 +635,91 @@ public final class AliasAdminHttpController
             case DCS -> List.of("code");
             case ESN -> List.of("esn");
             default -> List.of();
+        };
+    }
+
+    private static AliasIDType matcherType(String value) throws RequestException
+    {
+        return switch(requiredText(value, "matcher.type", 32))
+        {
+            case "talkgroup" -> AliasIDType.TALKGROUP;
+            case "talkgroup_range" -> AliasIDType.TALKGROUP_RANGE;
+            case "radio" -> AliasIDType.RADIO_ID;
+            case "radio_range" -> AliasIDType.RADIO_ID_RANGE;
+            case "user_status" -> AliasIDType.STATUS;
+            case "unit_status" -> AliasIDType.UNIT_STATUS;
+            case "tone_sequence" -> AliasIDType.TONES;
+            case "dcs" -> AliasIDType.DCS;
+            case "esn" -> AliasIDType.ESN;
+            default -> throw invalid("matcher type is invalid");
+        };
+    }
+
+    private static String matcherTypeName(AliasIDType type)
+    {
+        return switch(type)
+        {
+            case TALKGROUP -> "talkgroup";
+            case TALKGROUP_RANGE -> "talkgroup_range";
+            case RADIO_ID -> "radio";
+            case RADIO_ID_RANGE -> "radio_range";
+            case STATUS -> "user_status";
+            case UNIT_STATUS -> "unit_status";
+            case TONES -> "tone_sequence";
+            case DCS -> "dcs";
+            case ESN -> "esn";
+            default -> throw new IllegalArgumentException("Unsupported alias matcher type");
+        };
+    }
+
+    private static AliasListFamily requiredAliasListFamily(String value) throws RequestException
+    {
+        return switch(requiredText(value, "family", 16))
+        {
+            case "p25" -> AliasListFamily.P25;
+            case "dmr" -> AliasListFamily.DMR;
+            case "nxdn" -> AliasListFamily.NXDN;
+            case "nbfm" -> AliasListFamily.NBFM;
+            default -> throw invalid("family is invalid");
+        };
+    }
+
+    private static String familyName(AliasListFamily family)
+    {
+        return switch(Objects.requireNonNull(family, "Alias-list family cannot be null"))
+        {
+            case P25 -> "p25";
+            case DMR -> "dmr";
+            case NXDN -> "nxdn";
+            case NBFM -> "nbfm";
+        };
+    }
+
+    private static void addProtocol(Map<String,Object> response, Protocol protocol)
+    {
+        response.put("protocol", protocolName(protocol));
+
+        if(protocol == Protocol.APCO25)
+        {
+            response.put("variant", "phase_1");
+        }
+        else if(protocol == Protocol.APCO25_PHASE2)
+        {
+            response.put("variant", "phase_2");
+        }
+    }
+
+    private static String protocolName(Protocol protocol)
+    {
+        return switch(Objects.requireNonNull(protocol, "Protocol cannot be null"))
+        {
+            case APCO25, APCO25_PHASE2 -> "p25";
+            case DMR -> "dmr";
+            case NXDN -> "nxdn";
+            case NBFM -> "nbfm";
+            case FLEETSYNC -> "fleetsync";
+            case MDC1200 -> "mdc1200";
+            default -> throw new IllegalArgumentException("Unsupported alias protocol");
         };
     }
 
@@ -566,7 +743,7 @@ public final class AliasAdminHttpController
         {
             if(priority != null)
             {
-                throw invalid("listenEnabled is required when priority is supplied");
+                throw invalid("listen_enabled is required when priority is supplied");
             }
             return null;
         }
@@ -587,29 +764,121 @@ public final class AliasAdminHttpController
             Priority.MAX_PRIORITY);
     }
 
-    private static Protocol requiredProtocol(Protocol protocol) throws RequestException
+    private static Protocol requiredProtocol(String protocol, String variant) throws RequestException
     {
-        if(protocol == null || !SUPPORTED_PROTOCOLS.contains(protocol))
+        if(protocol == null)
         {
             throw invalid("protocol is invalid");
         }
+
+        return switch(protocol)
+        {
+            case "p25" -> switch(variant)
+            {
+                case "phase_1" -> Protocol.APCO25;
+                case "phase_2" -> Protocol.APCO25_PHASE2;
+                case null, default -> throw invalid("variant is invalid for p25");
+            };
+            case "dmr" -> protocolWithoutVariant(Protocol.DMR, variant);
+            case "nxdn" -> protocolWithoutVariant(Protocol.NXDN, variant);
+            case "nbfm" -> protocolWithoutVariant(Protocol.NBFM, variant);
+            case "fleetsync" -> protocolWithoutVariant(Protocol.FLEETSYNC, variant);
+            case "mdc1200" -> protocolWithoutVariant(Protocol.MDC1200, variant);
+            default -> throw invalid("protocol is invalid");
+        };
+    }
+
+    private static Protocol protocolWithoutVariant(Protocol protocol, String variant) throws RequestException
+    {
+        if(variant != null)
+        {
+            throw invalid("variant is only valid for p25");
+        }
+
         return protocol;
+    }
+
+    private static DCSCode dcsCode(String value) throws RequestException
+    {
+        if(value != null)
+        {
+            for(DCSCode code: DCSCode.values())
+            {
+                if(dcsCodeName(code).equals(value))
+                {
+                    return code;
+                }
+            }
+        }
+
+        throw invalid("code is invalid");
+    }
+
+    private static String dcsCodeName(DCSCode code)
+    {
+        return code.name().toLowerCase(Locale.ROOT);
+    }
+
+    private static AmbeTone tone(String value)
+    {
+        if(value != null)
+        {
+            for(AmbeTone tone: AmbeTone.ALL_VALID_TONES)
+            {
+                if(toneName(tone).equals(value))
+                {
+                    return tone;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static String toneName(AmbeTone tone)
+    {
+        return tone.name().toLowerCase(Locale.ROOT);
+    }
+
+    private static AliasAdministrationService.GroupOperation groupOperation(String value) throws RequestException
+    {
+        return switch(value)
+        {
+            case null -> null;
+            case "set" -> AliasAdministrationService.GroupOperation.SET;
+            case "clear" -> AliasAdministrationService.GroupOperation.CLEAR;
+            default -> throw invalid("group_operation is invalid");
+        };
+    }
+
+    private static AliasAdministrationService.StreamOperation streamOperation(String value) throws RequestException
+    {
+        return switch(value)
+        {
+            case null -> null;
+            case "add" -> AliasAdministrationService.StreamOperation.ADD;
+            case "remove" -> AliasAdministrationService.StreamOperation.REMOVE;
+            case "replace" -> AliasAdministrationService.StreamOperation.REPLACE;
+            case "clear" -> AliasAdministrationService.StreamOperation.CLEAR;
+            default -> throw invalid("stream_operation is invalid");
+        };
     }
 
     private static List<String> requiredChannels(List<String> channels) throws RequestException
     {
-        if(channels == null || channels.size() > MAXIMUM_BROADCAST_CHANNELS)
+        if(channels == null || channels.size() > AliasAdministrationService.MAX_BROADCAST_CHANNELS)
         {
-            throw invalid("broadcastChannels is invalid");
+            throw invalid("broadcast_channels is invalid");
         }
 
         Set<String> unique = new HashSet<>();
         for(String channel: channels)
         {
-            String checked = requiredText(channel, "broadcastChannels", MAXIMUM_TEXT_CHARACTERS);
+            String checked = requiredText(channel, "broadcast_channels",
+                AliasAdministrationService.MAX_BROADCAST_CHANNEL_NAME_LENGTH);
             if(!unique.add(checked))
             {
-                throw invalid("broadcastChannels contains a duplicate");
+                throw invalid("broadcast_channels contains a duplicate");
             }
         }
         return List.copyOf(channels);
@@ -624,14 +893,14 @@ public final class AliasAdminHttpController
     {
         if(ids == null || ids.isEmpty() || ids.size() > AliasAdministrationService.MAX_BULK_ALIASES)
         {
-            throw invalid("aliasIds is invalid");
+            throw invalid("alias_ids is invalid");
         }
         Set<Long> unique = new HashSet<>();
         for(Long id: ids)
         {
             if(id == null || id <= 0 || !unique.add(id))
             {
-                throw invalid("aliasIds must be positive and unique");
+                throw invalid("alias_ids must be positive and unique");
             }
         }
         return List.copyOf(ids);
@@ -641,11 +910,18 @@ public final class AliasAdminHttpController
     {
         String query = exchange.getRequestURI().getRawQuery();
         String prefix = name + "=";
-        if(query == null || !query.startsWith(prefix) || query.indexOf('&') >= 0)
+        if(query == null || query.length() > 128 || !query.startsWith(prefix) || query.indexOf('&') >= 0)
         {
             throw invalid(name + " is required");
         }
-        return parseLong(query.substring(prefix.length()), name, 1, Long.MAX_VALUE);
+        try
+        {
+            return positiveDecimal(ApiRequestDecoder.decodeComponent(query.substring(prefix.length()), true), name);
+        }
+        catch(IllegalArgumentException exception)
+        {
+            throw invalid(name + " contains invalid percent encoding");
+        }
     }
 
     private static long requiredItemId(String path, String collection) throws RequestException
@@ -655,15 +931,27 @@ public final class AliasAdminHttpController
         {
             throw error(404, "not_found", "Not found");
         }
-        return parseLong(path.substring(prefix.length()), "id", 1, Long.MAX_VALUE);
+        try
+        {
+            return positiveDecimal(ApiRequestDecoder.decodeComponent(path.substring(prefix.length()), false), "id");
+        }
+        catch(IllegalArgumentException exception)
+        {
+            throw invalid("id contains invalid percent encoding");
+        }
     }
 
-    private static long parseLong(String value, String field, long minimum, long maximum) throws RequestException
+    private static long positiveDecimal(String value, String field) throws RequestException
     {
         try
         {
+            if(value == null || !value.matches("[0-9]+"))
+            {
+                throw new NumberFormatException();
+            }
+
             long parsed = Long.parseLong(value);
-            if(parsed < minimum || parsed > maximum)
+            if(parsed <= 0)
             {
                 throw invalid(field + " is invalid");
             }
@@ -833,23 +1121,52 @@ public final class AliasAdminHttpController
         return value;
     }
 
-    private static void sendError(HttpExchange exchange, int status, String code, String message) throws IOException
+    private static <T> List<T> boundedCollection(List<T> values, String field) throws RequestException
     {
-        sendJson(exchange, status, Map.of("error", code, "message", message, "status", status));
+        if(values == null || values.size() > MAXIMUM_ADMIN_COLLECTION_ITEMS)
+        {
+            throw error(422, "collection_limit_exceeded",
+                field + " exceeds the maximum of " + MAXIMUM_ADMIN_COLLECTION_ITEMS + " items");
+        }
+
+        return values;
     }
 
-    private static void sendJson(HttpExchange exchange, int status, Object value) throws IOException
+    private static void requireBoundedDeleteImpact(AliasAdministrationService.DeleteImpact impact)
+        throws RequestException
     {
-        byte[] body = OBJECT_MAPPER.writeValueAsBytes(value);
-        Headers headers = exchange.getResponseHeaders();
-        headers.set("Content-Type", JSON_CONTENT_TYPE);
-        headers.set("Cache-Control", "no-store");
-        headers.set("Vary", "Cookie");
-        exchange.sendResponseHeaders(status, body.length);
-        try(OutputStream outputStream = exchange.getResponseBody())
+        if(impact.aliasCount() > MAXIMUM_ADMIN_COLLECTION_ITEMS)
         {
-            outputStream.write(body);
+            throw error(413, "alias_list_delete_too_large",
+                "alias_count exceeds the maximum deletable alias-list size of " +
+                    MAXIMUM_ADMIN_COLLECTION_ITEMS, "alias_count");
         }
+        if(impact.channelCount() > MAXIMUM_ADMIN_COLLECTION_ITEMS)
+        {
+            throw error(413, "alias_list_delete_too_large",
+                "channel_count exceeds the maximum deletable alias-list size of " +
+                    MAXIMUM_ADMIN_COLLECTION_ITEMS, "channel_count");
+        }
+    }
+
+    private static void sendError(HttpExchange exchange, int status, String code, String message) throws IOException
+    {
+        sendError(exchange, status, code, message, null);
+    }
+
+    private static void sendError(HttpExchange exchange, int status, String code, String message, String field)
+        throws IOException
+    {
+        WebAccessHttpController.prepareSecurityHeaders(exchange);
+        exchange.getResponseHeaders().set("Vary", "Cookie");
+        ApiHttpResponse.sendError(exchange, status, code, message, field);
+    }
+
+    private static void sendData(HttpExchange exchange, int status, Object value) throws IOException
+    {
+        WebAccessHttpController.prepareSecurityHeaders(exchange);
+        exchange.getResponseHeaders().set("Vary", "Cookie");
+        ApiHttpResponse.sendData(exchange, status, value);
     }
 
     private static String safeMessage(RuntimeException exception, String fallback)
@@ -865,10 +1182,15 @@ public final class AliasAdminHttpController
 
     private static RequestException error(int status, String code, String message)
     {
-        return new RequestException(status, code, message);
+        return error(status, code, message, null);
     }
 
-    private record CreateListRequest(Long revision, String name, AliasListFamily family) {}
+    private static RequestException error(int status, String code, String message, String field)
+    {
+        return new RequestException(status, code, message, field);
+    }
+
+    private record CreateListRequest(Long revision, String name, String family) {}
     private record DeleteListRequest(Long revision, Boolean confirmed) {}
     private record UnmatchedPolicyRequest(Long revision, Boolean listenEnabled, Integer priority,
                                           Boolean recordable, List<String> broadcastChannels) {}
@@ -876,8 +1198,7 @@ public final class AliasAdminHttpController
     private record AliasRequest(Long revision, AliasPayload alias) {}
     private record BulkRequest(Long revision, List<Long> aliasIds, Long aliasListId, Integer color, String iconName,
                                Boolean listenEnabled, Integer priority, Boolean recordable,
-                               AliasAdministrationService.GroupOperation groupOperation, String group,
-                               AliasAdministrationService.StreamOperation streamOperation,
+                               String groupOperation, String group, String streamOperation,
                                List<String> broadcastChannels, Boolean delete) {}
     private record AliasPayload(Long aliasListId, String name, String description, String group, Integer color,
                                 String iconName, Boolean listenEnabled, Integer priority, Boolean recordable,
@@ -886,22 +1207,24 @@ public final class AliasAdminHttpController
                              String iconName, boolean listenEnabled, Integer priority, boolean recordable,
                              List<String> broadcastChannels, Integer streamAsTalkgroup, boolean overlap,
                              Map<String,Object> matcher) {}
-    private record TonePayload(AmbeTone tone, Integer duration) {}
+    private record TonePayload(String tone, Integer duration) {}
 
-    private record MatcherPayload(AliasIDType type, Protocol protocol, Integer value, Integer minimum, Integer maximum,
-                                  Integer status, DCSCode code, String esn, List<TonePayload> tones)
+    private record MatcherPayload(String type, String protocol, String variant, Integer value, Integer minimum,
+                                  Integer maximum, Integer status, String code, String esn, List<TonePayload> tones)
     {}
 
     private static final class RequestException extends Exception
     {
         private final int mStatus;
         private final String mCode;
+        private final String mField;
 
-        private RequestException(int status, String code, String message)
+        private RequestException(int status, String code, String message, String field)
         {
             super(message);
             mStatus = status;
             mCode = code;
+            mField = field;
         }
 
         private int status()
@@ -913,5 +1236,17 @@ public final class AliasAdminHttpController
         {
             return mCode;
         }
+
+        private String field()
+        {
+            return mField;
+        }
+    }
+
+    interface AliasListDeletion
+    {
+        AliasAdministrationService.DeleteImpact impact(long aliasListId, int maximumCount);
+
+        AliasAdministrationService.MutationResult delete(long aliasListId, long revision, boolean confirmed);
     }
 }

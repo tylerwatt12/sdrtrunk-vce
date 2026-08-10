@@ -20,12 +20,11 @@ import io.github.dsheirer.sample.Broadcaster;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.source.Source;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Set;
+import java.util.PriorityQueue;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -41,6 +40,8 @@ public class DecodeEventViewService implements AutoCloseable
     public static final int HISTORY_SIZE = 200;
     private static final int UPDATE_QUEUE_SIZE = 512;
     private static final int DETAILS_MAXIMUM_LENGTH = 512;
+    private static final int PARTY_MAXIMUM_IDENTIFIERS = 32;
+    private static final int TEXT_MAXIMUM_LENGTH = 512;
     private final ChannelProcessingManager mChannelProcessingManager;
     private final AliasModel mAliasModel;
     private final Broadcaster<EventView> mBroadcaster = new Broadcaster<>();
@@ -88,8 +89,12 @@ public class DecodeEventViewService implements AutoCloseable
             return List.of();
         }
 
-        List<IDecodeEvent> history = new ArrayList<>();
+        Comparator<EventCandidate> oldestFirst = Comparator.comparingLong(EventCandidate::timeStartMs)
+            .thenComparing(Comparator.comparingLong(EventCandidate::sequence).reversed());
+        PriorityQueue<EventCandidate> newest = new PriorityQueue<>(HISTORY_SIZE, oldestFirst);
+        IdentityHashMap<IDecodeEvent,EventCandidate> included = new IdentityHashMap<>();
         IdentityHashMap<IDecodeEvent,Long> sourceFrequencies = new IdentityHashMap<>();
+        long sequence = 0;
 
         for(ProcessingChain chain: chains)
         {
@@ -98,26 +103,51 @@ public class DecodeEventViewService implements AutoCloseable
 
             for(IDecodeEvent event: chain.getDecodeEventHistory().getItems())
             {
-                history.add(event);
-                sourceFrequencies.putIfAbsent(event, sourceFrequency);
+                if(event == null || !matchesTimeslot(event, scope.timeslot()))
+                {
+                    continue;
+                }
+
+                EventCandidate existing = included.get(event);
+
+                if(existing != null)
+                {
+                    if(sourceFrequencies.get(event) == null && sourceFrequency != null)
+                    {
+                        sourceFrequencies.put(event, sourceFrequency);
+                    }
+
+                    continue;
+                }
+
+                EventCandidate candidate = new EventCandidate(event, sequence++);
+
+                if(newest.size() < HISTORY_SIZE)
+                {
+                    newest.add(candidate);
+                    included.put(event, candidate);
+                    sourceFrequencies.put(event, sourceFrequency);
+                }
+                else if(oldestFirst.compare(candidate, newest.peek()) > 0)
+                {
+                    EventCandidate removed = newest.remove();
+                    included.remove(removed.event());
+                    sourceFrequencies.remove(removed.event());
+                    newest.add(candidate);
+                    included.put(event, candidate);
+                    sourceFrequencies.put(event, sourceFrequency);
+                }
             }
         }
 
-        history.sort(Comparator.comparingLong(IDecodeEvent::getTimeStart).reversed());
-        List<EventView> events = new ArrayList<>(Math.min(HISTORY_SIZE, history.size()));
-        Set<IDecodeEvent> included = Collections.newSetFromMap(new IdentityHashMap<>());
+        List<EventCandidate> candidates = new ArrayList<>(newest);
+        candidates.sort(Comparator.comparingLong(EventCandidate::timeStartMs).reversed()
+            .thenComparingLong(EventCandidate::sequence));
+        List<EventView> events = new ArrayList<>(candidates.size());
 
-        for(IDecodeEvent event: history)
+        for(EventCandidate candidate: candidates)
         {
-            if(events.size() >= HISTORY_SIZE)
-            {
-                break;
-            }
-
-            if(matchesTimeslot(event, scope.timeslot()) && included.add(event))
-            {
-                events.add(view(scope.configurationId(), event, sourceFrequencies.get(event)));
-            }
+            events.add(view(scope.configurationId(), candidate.event(), sourceFrequencies.get(candidate.event())));
         }
 
         return List.copyOf(events);
@@ -161,11 +191,11 @@ public class DecodeEventViewService implements AutoCloseable
             descriptor.getDownlinkFrequency() : sourceFrequency;
         DecodeEventType type = event.getEventType();
 
-        return new EventView(eventId(event), configurationId, event.getTimeStart(), event.getDuration(),
+        return new EventView(eventId(event), bounded(configurationId), event.getTimeStart(), event.getDuration(),
             type != null ? type.name() : DecodeEventType.UNKNOWN.name(),
             type != null ? type.getLabel() : DecodeEventType.UNKNOWN.getLabel(), category(type),
             from.identifiers(), from.aliases(), to.identifiers(), to.aliases(),
-            descriptor != null ? descriptor.toString() : null, frequency,
+            descriptor != null ? bounded(descriptor.toString()) : null, frequency,
             event.hasTimeslot() ? event.getTimeslot() : null, bounded(event.getDetails()),
             event.getProtocol() != null ? event.getProtocol().name() : null);
     }
@@ -188,6 +218,8 @@ public class DecodeEventViewService implements AutoCloseable
         LinkedHashSet<String> aliases = new LinkedHashSet<>();
         AliasList aliasList = mAliasModel != null ? mAliasModel.getAliasList(collection) : null;
 
+        int examined = 0;
+
         for(Identifier identifier: identifiers)
         {
             if(identifier == null)
@@ -195,7 +227,12 @@ public class DecodeEventViewService implements AutoCloseable
                 continue;
             }
 
-            values.add(identifier.toString());
+            if(examined++ >= PARTY_MAXIMUM_IDENTIFIERS)
+            {
+                break;
+            }
+
+            values.add(bounded(identifier.toString()));
 
             if(aliasList != null)
             {
@@ -203,7 +240,12 @@ public class DecodeEventViewService implements AutoCloseable
                 {
                     if(alias != null && alias.getName() != null && !alias.getName().isBlank())
                     {
-                        aliases.add(alias.getName());
+                        aliases.add(bounded(alias.getName()));
+
+                        if(aliases.size() >= PARTY_MAXIMUM_IDENTIFIERS)
+                        {
+                            break;
+                        }
                     }
                 }
             }
@@ -263,7 +305,41 @@ public class DecodeEventViewService implements AutoCloseable
 
     private static String join(LinkedHashSet<String> values)
     {
-        return values.isEmpty() ? null : String.join(", ", values);
+        if(values.isEmpty())
+        {
+            return null;
+        }
+
+        StringBuilder joined = new StringBuilder(Math.min(TEXT_MAXIMUM_LENGTH, values.size() * 16));
+
+        for(String value: values)
+        {
+            String separator = joined.isEmpty() ? "" : ", ";
+            int remaining = TEXT_MAXIMUM_LENGTH - joined.length();
+
+            if(separator.length() + value.length() <= remaining)
+            {
+                joined.append(separator).append(value);
+            }
+            else
+            {
+                if(remaining <= 0)
+                {
+                    break;
+                }
+                else if(remaining > 1)
+                {
+                    joined.append(separator, 0, Math.min(separator.length(), remaining - 1));
+                    remaining = TEXT_MAXIMUM_LENGTH - joined.length();
+                    joined.append(value, 0, Math.min(value.length(), Math.max(0, remaining - 1)));
+                }
+
+                joined.append('…');
+                break;
+            }
+        }
+
+        return joined.toString();
     }
 
     @Override
@@ -313,5 +389,13 @@ public class DecodeEventViewService implements AutoCloseable
     private record Parties(String identifiers, String aliases)
     {
         private static final Parties EMPTY = new Parties(null, null);
+    }
+
+    private record EventCandidate(IDecodeEvent event, long sequence)
+    {
+        private long timeStartMs()
+        {
+            return event.getTimeStart();
+        }
     }
 }

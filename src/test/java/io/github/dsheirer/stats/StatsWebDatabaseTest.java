@@ -136,7 +136,7 @@ class StatsWebDatabaseTest
                 """);
         }
 
-        Map<String,Object> lists = mDatabase.aliasLists();
+        Map<String,Object> lists = mDatabase.aliasLists(request("/api/v1/alias-lists"));
         Map<String,Object> county = rows(lists).getFirst();
         assertEquals(1L, number(county.get("alias_list_id")));
         assertEquals(1L, number(county.get("assigned_channel_count")));
@@ -169,6 +169,378 @@ class StatsWebDatabaseTest
         List<CSVRecord> csv = csvRows(mDatabase.csvExport(request(
             "/api/export.csv?dataset=aliases&list=County&type=talkgroup&sort=call_count&direction=desc")));
         assertEquals(List.of("Dispatch", "County Range"), csv.stream().map(row -> row.get("name")).toList());
+    }
+
+    @Test
+    void rejectsOversizedAliasBroadcastRouteShapesBeforeReadingChildText() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            PreparedStatement insert = connection.prepareStatement("""
+                INSERT INTO alias_broadcast_channel(alias_id, channel_name) VALUES(1, ?)
+                """))
+        {
+            for(int index = 0; index <= StatsAliasCatalog.MAX_BROADCAST_CHANNELS_PER_ALIAS; index++)
+            {
+                insert.setString(1, "Route " + index);
+                insert.addBatch();
+            }
+
+            insert.executeBatch();
+        }
+
+        StatsApiException fanout = assertThrows(StatsApiException.class,
+            () -> mDatabase.alias(request("/api/v1/aliases/1?id=1")));
+        assertEquals(413, fanout.status());
+        assertEquals("alias_routes_too_large", fanout.code());
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("DELETE FROM alias_broadcast_channel WHERE alias_id=1");
+            statement.executeUpdate("INSERT INTO alias_broadcast_channel(alias_id, channel_name) VALUES(1, '" +
+                "x".repeat(StatsAliasCatalog.MAX_BROADCAST_CHANNEL_NAME_CHARACTERS + 1) + "')");
+        }
+
+        StatsApiException name = assertThrows(StatsApiException.class,
+            () -> mDatabase.alias(request("/api/v1/aliases/1?id=1")));
+        assertEquals(413, name.status());
+        assertEquals("alias_routes_too_large", name.code());
+    }
+
+    @Test
+    void aliasEnrichmentReadsOnlyEvidenceThatCanMatchTheRequestedPage() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            PreparedStatement insert = connection.prepareStatement("""
+                INSERT INTO trunked_identity_summary (
+                    scope_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms,
+                    call_count, target_call_count, grant_count
+                ) VALUES (1, 1, ?, 1000, 2000, 1, 1, 1)
+                """))
+        {
+            connection.setAutoCommit(false);
+
+            for(int identifier = 100_000; identifier < 112_000; identifier++)
+            {
+                insert.setInt(1, identifier);
+                insert.addBatch();
+            }
+
+            insert.executeBatch();
+            connection.commit();
+        }
+
+        List<Map<String,Object>> aliases = rows(mDatabase.aliases(request(
+            "/api/v1/aliases?list=1&q=Dispatch&limit=1")));
+        assertEquals(1, aliases.size());
+        assertEquals("Dispatch", aliases.getFirst().get("name"));
+        assertEquals(12L, number(aliases.getFirst().get("call_count")));
+    }
+
+    @Test
+    void aliasEvidenceKeepsEachIdentityRangeCorrelatedWithItsAssignedList() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
+        {
+            seedContextScope(connection, 500, 500, "cross-list-north", TrunkedSiteSchema.PROTOCOL_DMR, 0);
+            seedContextScope(connection, 501, 501, "cross-list-south", TrunkedSiteSchema.PROTOCOL_DMR, 0);
+
+            try(Statement statement = connection.createStatement())
+            {
+                statement.executeUpdate("""
+                    UPDATE receiver_context SET alias_list_name = CASE id
+                        WHEN 500 THEN 'Cross North'
+                        WHEN 501 THEN 'Cross South'
+                    END WHERE id IN (500, 501)
+                    """);
+                statement.executeUpdate("""
+                    INSERT INTO alias_list(id, name, family)
+                    VALUES (500, 'Cross North', 'DMR'), (501, 'Cross South', 'DMR')
+                    """);
+                statement.executeUpdate("""
+                    INSERT INTO alias(id, alias_list_id, name, matcher_type, protocol, min_value, max_value)
+                    VALUES (500, 500, 'Cross North Range', 'TALKGROUP_RANGE', 'DMR', 100000, 105000),
+                           (501, 501, 'Cross South Range', 'TALKGROUP_RANGE', 'DMR', 200000, 205000)
+                    """);
+            }
+
+            connection.setAutoCommit(false);
+
+            try(PreparedStatement insert = connection.prepareStatement("""
+                INSERT INTO trunked_identity_summary (
+                    scope_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms,
+                    call_count, target_call_count, grant_count
+                ) VALUES (?, 1, ?, 1000, 2000, 1, 1, 1)
+                """))
+            {
+                for(int offset = 0; offset <= 5_000; offset++)
+                {
+                    insert.setLong(1, 500);
+                    insert.setInt(2, 200_000 + offset);
+                    insert.addBatch();
+                    insert.setLong(1, 501);
+                    insert.setInt(2, 100_000 + offset);
+                    insert.addBatch();
+                }
+
+                insert.executeBatch();
+            }
+
+            connection.commit();
+        }
+
+        List<Map<String,Object>> aliases = rows(mDatabase.aliases(request(
+            "/api/v1/aliases?q=Cross&sort=name&limit=10")));
+        assertEquals(List.of("Cross North Range", "Cross South Range"),
+            aliases.stream().map(row -> row.get("name")).toList());
+        assertTrue(aliases.stream().allMatch(row -> "covered_no_evidence".equals(row.get("metrics_state"))));
+        assertTrue(aliases.stream().allMatch(row -> number(row.get("call_count")) == 0));
+    }
+
+    @Test
+    void aliasEvidenceProjectsSharedScopesOnlyToMatchingAliasLists() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
+        {
+            seedContextScope(connection, 600, 600, "shared-projection-0", TrunkedSiteSchema.PROTOCOL_DMR, 0);
+            connection.setAutoCommit(false);
+
+            try(PreparedStatement context = connection.prepareStatement("""
+                    INSERT INTO receiver_context (
+                        id, context_key, guid, kind_code, protocol_code, channel_name, alias_list_name,
+                        decoder, first_seen_ms, last_seen_ms
+                    ) VALUES (?, ?, ?, 1, 3, ?, ?, 'DMR', 1000, 3000)
+                    """);
+                PreparedStatement ownership = connection.prepareStatement("""
+                    INSERT INTO trunked_identity_scope_context (scope_id, context_id, first_seen_ms, last_seen_ms)
+                    VALUES (600, ?, 1000, 3000)
+                    """);
+                PreparedStatement list = connection.prepareStatement("""
+                    INSERT INTO alias_list(id, name, family) VALUES (?, ?, 'DMR')
+                    """);
+                PreparedStatement alias = connection.prepareStatement("""
+                    INSERT INTO alias(id, alias_list_id, name, matcher_type, protocol, min_value, max_value)
+                    VALUES (?, ?, ?, 'TALKGROUP_RANGE', 'DMR', ?, ?)
+                    """))
+            {
+                for(int index = 0; index < 21; index++)
+                {
+                    int id = 600 + index;
+                    String listName = "Shared Projection " + index;
+                    list.setInt(1, id);
+                    list.setString(2, listName);
+                    list.addBatch();
+                    alias.setInt(1, id);
+                    alias.setInt(2, id);
+                    alias.setString(3, listName + " Range");
+                    int minimum = index == 0 ? 100_000 : 200_000 + index * 1_000;
+                    alias.setInt(4, minimum);
+                    alias.setInt(5, minimum + 499);
+                    alias.addBatch();
+
+                    if(index == 0)
+                    {
+                        try(PreparedStatement update = connection.prepareStatement(
+                            "UPDATE receiver_context SET alias_list_name=? WHERE id=600"))
+                        {
+                            update.setString(1, listName);
+                            update.executeUpdate();
+                        }
+                    }
+                    else
+                    {
+                        context.setInt(1, id);
+                        context.setString(2, "dmr-shared-projection-" + index);
+                        context.setString(3, "shared-projection-" + index);
+                        context.setString(4, "DMR Receiver " + index);
+                        context.setString(5, listName);
+                        context.addBatch();
+                        ownership.setInt(1, id);
+                        ownership.addBatch();
+                    }
+                }
+
+                list.executeBatch();
+                alias.executeBatch();
+                context.executeBatch();
+                ownership.executeBatch();
+            }
+
+            try(PreparedStatement evidence = connection.prepareStatement("""
+                INSERT INTO trunked_identity_summary (
+                    scope_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms,
+                    call_count, target_call_count, grant_count
+                ) VALUES (600, 1, ?, 1000, 2000, 1, 1, 1)
+                """))
+            {
+                for(int identifier = 100_000; identifier < 100_500; identifier++)
+                {
+                    evidence.setInt(1, identifier);
+                    evidence.addBatch();
+                }
+
+                evidence.executeBatch();
+            }
+
+            connection.commit();
+        }
+
+        List<Map<String,Object>> aliases = rows(mDatabase.aliases(request(
+            "/api/v1/aliases?q=Shared%20Projection&sort=name&limit=100")));
+        assertEquals(21, aliases.size());
+        Map<String,Object> observed = aliases.stream()
+            .filter(row -> number(row.get("alias_list_id")) == 600)
+            .findFirst().orElseThrow();
+        assertEquals("observed", observed.get("metrics_state"));
+        assertEquals(500L, number(observed.get("call_count")));
+        assertTrue(aliases.stream().filter(row -> row != observed)
+            .allMatch(row -> "covered_no_evidence".equals(row.get("metrics_state")) &&
+                number(row.get("call_count")) == 0));
+    }
+
+    @Test
+    void trunkedDmrEvidenceIsProjectedIndependentlyForEveryAssignedAliasList() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
+        {
+            seedContextScope(connection, 300, 300, "shared-dmr-a", TrunkedSiteSchema.PROTOCOL_DMR, 0);
+
+            try(Statement statement = connection.createStatement())
+            {
+                statement.executeUpdate("""
+                    UPDATE receiver_context SET alias_list_name='DMR North' WHERE id=300
+                    """);
+                statement.executeUpdate("""
+                    INSERT INTO receiver_context (
+                        id, context_key, guid, kind_code, protocol_code, channel_name, alias_list_name,
+                        decoder, first_seen_ms, last_seen_ms
+                    ) VALUES (301, 'dmr-shared-dmr-b', 'shared-dmr-b', 1, 3, 'DMR Receiver B',
+                        'DMR South', 'DMR', 1000, 3000)
+                    """);
+                statement.executeUpdate("""
+                    INSERT INTO trunked_identity_scope_context (
+                        scope_id, context_id, first_seen_ms, last_seen_ms
+                    ) VALUES (300, 301, 1000, 3000)
+                    """);
+                statement.executeUpdate("""
+                    INSERT INTO alias_list (id, name, family)
+                    VALUES (300, 'DMR North', 'DMR'), (301, 'DMR South', 'DMR')
+                    """);
+                statement.executeUpdate("""
+                    INSERT INTO alias (id, alias_list_id, name, matcher_type, protocol, value)
+                    VALUES (300, 300, 'North Dispatch', 'TALKGROUP', 'DMR', 150),
+                           (301, 301, 'South Dispatch', 'TALKGROUP', 'DMR', 150),
+                           (302, 300, 'North Unit', 'RADIO_ID', 'DMR', 900),
+                           (303, 301, 'South Unit', 'RADIO_ID', 'DMR', 900)
+                    """);
+                statement.executeUpdate("""
+                    INSERT INTO trunked_identity_summary (
+                        scope_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms,
+                        call_count, target_call_count, grant_count, join_count
+                    ) VALUES (300, 1, 150, 1000, 3000, 9, 9, 8, 7),
+                             (300, 2, 900, 1000, 3000, 9, 0, 8, 7)
+                    """);
+                statement.executeUpdate("""
+                    INSERT INTO trunked_radio_talkgroup_summary (
+                        scope_id, radio_id, talkgroup_id, target_kind_code, first_seen_ms, last_seen_ms,
+                        call_count, grant_count
+                    ) VALUES (300, 900, 150, 1, 1000, 3000, 9, 8)
+                    """);
+            }
+        }
+
+        Map<String,Object> north = rows(mDatabase.aliases(request(
+            "/api/v1/aliases?list=300"))).getFirst();
+        Map<String,Object> south = rows(mDatabase.aliases(request(
+            "/api/v1/aliases?list=301"))).getFirst();
+
+        for(Map<String,Object> alias: List.of(north, south))
+        {
+            assertEquals("observed", alias.get("metrics_state"));
+            assertEquals(1L, number(alias.get("coverage_scope_count")));
+            assertEquals(1L, number(alias.get("observed_scope_count")));
+            assertEquals(9L, number(alias.get("call_count")));
+            assertEquals(7L, number(alias.get("join_count")));
+        }
+
+        String scope = "dmr:guid:shared-dmr-a";
+        Map<String,Object> talkgroup = rows(mDatabase.systemTalkgroups(request(
+            "/api/v1/systems/talkgroups?scope=" + scope + "&sort=alias"))).getFirst();
+        Map<String,Object> radio = rows(mDatabase.systemRadios(request(
+            "/api/v1/systems/radios?scope=" + scope + "&sort=alias"))).getFirst();
+        Map<String,Object> talkgroupDetail = map(mDatabase.talkgroup(request(
+            "/api/v1/group?scope=" + scope + "&talkgroup_id=150")), "group_identity");
+        Map<String,Object> radioDetail = map(mDatabase.radio(request(
+            "/api/v1/radio?scope=" + scope + "&radio_id=900")), "radio");
+        Map<String,Object> relationship = rows(mDatabase.radioTalkgroupRelationships(request(
+            "/api/v1/relationships?scope=" + scope + "&radio_id=900&sort=talkgroup_alias"))).getFirst();
+
+        for(Map<String,Object> identity: List.of(talkgroup, radio, talkgroupDetail, radioDetail, relationship))
+        {
+            assertNull(identity.get("alias_list_name"));
+        }
+
+        assertNull(talkgroup.get("alias_name"));
+        assertNull(radio.get("alias_name"));
+        assertNull(talkgroupDetail.get("alias_name"));
+        assertNull(radioDetail.get("alias_name"));
+        assertNull(relationship.get("radio_alias_name"));
+        assertNull(relationship.get("talkgroup_alias_name"));
+    }
+
+    @Test
+    void aliasSortingUsesTheSameDuplicateExactAndRangeWinnerAsPresentedRows() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
+        {
+            seedContextScope(connection, 400, 400, "sort-exact", TrunkedSiteSchema.PROTOCOL_DMR, 0);
+            seedContextScope(connection, 401, 401, "sort-range", TrunkedSiteSchema.PROTOCOL_DMR, 0);
+
+            try(Statement statement = connection.createStatement())
+            {
+                statement.executeUpdate("""
+                    UPDATE receiver_context SET alias_list_name='Sort DMR' WHERE id IN (400, 401)
+                    """);
+                statement.executeUpdate("""
+                    INSERT INTO alias_list (id, name, family) VALUES (400, 'Sort DMR', 'DMR')
+                    """);
+                statement.executeUpdate("""
+                    INSERT INTO alias (
+                        id, alias_list_id, name, matcher_type, protocol, value, min_value, max_value
+                    ) VALUES
+                        (400, 400, 'Alpha Exact Loser', 'TALKGROUP', 'DMR', 100, NULL, NULL),
+                        (401, 400, 'Zulu Exact Winner', 'TALKGROUP', 'DMR', 100, NULL, NULL),
+                        (402, 400, 'Middle Exact', 'TALKGROUP', 'DMR', 200, NULL, NULL),
+                        (403, 400, 'Alpha Bound Loser', 'TALKGROUP_RANGE', 'DMR', NULL, 250, 350),
+                        (404, 400, 'Beta Maximum Loser', 'TALKGROUP_RANGE', 'DMR', NULL, 290, 305),
+                        (405, 400, 'Gamma Older Tie', 'TALKGROUP_RANGE', 'DMR', NULL, 290, 310),
+                        (406, 400, 'Zulu Range Winner', 'TALKGROUP_RANGE', 'DMR', NULL, 290, 310),
+                        (407, 400, 'Middle Range Comparator', 'TALKGROUP', 'DMR', 400, NULL, NULL)
+                    """);
+                statement.executeUpdate("""
+                    INSERT INTO trunked_identity_summary (
+                        scope_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms,
+                        call_count, target_call_count
+                    ) VALUES
+                        (400, 1, 100, 1000, 3000, 1, 1),
+                        (400, 1, 200, 1000, 3000, 1, 1),
+                        (401, 1, 300, 1000, 3000, 1, 1),
+                        (401, 1, 400, 1000, 3000, 1, 1)
+                    """);
+            }
+        }
+
+        List<Map<String,Object>> exact = rows(mDatabase.systemTalkgroups(request(
+            "/api/v1/systems/talkgroups?scope=dmr:guid:sort-exact&sort=alias&direction=asc")));
+        assertEquals(List.of(200L, 100L), exact.stream().map(row -> number(row.get("talkgroup_id"))).toList());
+        assertEquals(List.of("Middle Exact", "Zulu Exact Winner"),
+            exact.stream().map(row -> row.get("alias_name")).toList());
+
+        List<Map<String,Object>> ranged = rows(mDatabase.systemTalkgroups(request(
+            "/api/v1/systems/talkgroups?scope=dmr:guid:sort-range&sort=alias&direction=asc")));
+        assertEquals(List.of(400L, 300L), ranged.stream().map(row -> number(row.get("talkgroup_id"))).toList());
+        assertEquals(List.of("Middle Range Comparator", "Zulu Range Winner"),
+            ranged.stream().map(row -> row.get("alias_name")).toList());
     }
 
     @Test
@@ -535,12 +907,18 @@ class StatsWebDatabaseTest
         assertEquals(List.of("overlap"), configured.getFirst().get("configuration_errors"));
 
         List<Map<String,Object>> ranges = rows(mDatabase.aliases(request(
-            "/api/aliases?list=1&matcher=TALKGROUP_RANGE&sort=name")));
+            "/api/v1/aliases?list=1&family=p25&matcher=talkgroup_range&sort=name")));
         assertEquals(2, ranges.size());
         assertTrue(ranges.stream().allMatch(row -> Boolean.TRUE.equals(row.get("overlap"))));
+        assertThrows(StatsApiException.class, () -> mDatabase.aliases(request(
+            "/api/v1/aliases?list=1&matcher=TALKGROUP_RANGE")));
+        assertThrows(StatsApiException.class, () -> mDatabase.aliases(request(
+            "/api/v1/aliases?list=1&family=P25")));
+        assertThrows(StatsApiException.class, () -> mDatabase.aliases(request(
+            "/api/v1/aliases?list=1&evidence=OBSERVED")));
 
         Map<String,Object> observedResponse = mDatabase.aliases(request(
-            "/api/aliases?list=1&type=talkgroup&evidence=observed&use=used&lastActivityAfter=2000&limit=1"));
+            "/api/v1/aliases?list=1&type=talkgroup&evidence=observed&use=used&last_activity_after=2000&limit=1"));
         List<Map<String,Object>> observed = rows(observedResponse);
         assertEquals(List.of("Dispatch Duplicate"), observed.stream().map(row -> row.get("name")).toList(),
             "Catalog evidence must follow the same later-exact-alias precedence as runtime");
@@ -552,7 +930,7 @@ class StatsWebDatabaseTest
             noCalls.stream().map(row -> row.get("name")).toList());
 
         assertTrue(rows(mDatabase.aliases(request(
-            "/api/aliases?list=1&evidence=observed&lastActivityBefore=1999"))).isEmpty());
+            "/api/v1/aliases?list=1&evidence=observed&last_activity_before=1999"))).isEmpty());
         assertEquals(400, assertThrows(StatsApiException.class, () ->
             mDatabase.aliases(request("/api/aliases?list=1&listen=maybe"))).status());
         assertEquals(400, assertThrows(StatsApiException.class, () ->
@@ -1009,7 +1387,7 @@ class StatsWebDatabaseTest
         }
 
         Map<String,Object> patch = map(mDatabase.talkgroup(request(
-            "/api/talkgroup?scope=p25:BEE00:348&talkgroup_id=56182&kind=patch")), "talkgroup");
+            "/api/talkgroup?scope=p25:BEE00:348&talkgroup_id=56182&kind=patch_group")), "group_identity");
         assertEquals(3L, number(patch.get("target_kind_code")));
         assertEquals(1L, number(patch.get("radios")));
 
@@ -1096,9 +1474,9 @@ class StatsWebDatabaseTest
         }
 
         Map<String,Object> talkgroup = map(mDatabase.talkgroup(request(
-            "/api/talkgroup?scope=p25:BEE00:348&talkgroup_id=60000")), "talkgroup");
+            "/api/talkgroup?scope=p25:BEE00:348&talkgroup_id=60000")), "group_identity");
         Map<String,Object> patch = map(mDatabase.talkgroup(request(
-            "/api/talkgroup?scope=p25:BEE00:348&talkgroup_id=60000&kind=patch")), "talkgroup");
+            "/api/talkgroup?scope=p25:BEE00:348&talkgroup_id=60000&kind=patch_group")), "group_identity");
         assertEquals(1, number(talkgroup.get("target_kind_code")));
         assertEquals(2, number(talkgroup.get("call_count")));
         assertEquals(1, number(talkgroup.get("affiliated_radios")));
@@ -1120,7 +1498,7 @@ class StatsWebDatabaseTest
         Map<String,Object> talkgroupHistory = mDatabase.talkgroupActivity(request(
             "/api/talkgroup/activity?scope=p25:BEE00:348&talkgroup_id=60000&range=24h"));
         Map<String,Object> patchHistory = mDatabase.talkgroupActivity(request(
-            "/api/talkgroup/activity?scope=p25:BEE00:348&talkgroup_id=60000&kind=patch&range=24h"));
+            "/api/talkgroup/activity?scope=p25:BEE00:348&talkgroup_id=60000&kind=patch_group&range=24h"));
         assertEquals(2, number(map(talkgroupHistory, "totals").get("call_count")));
         assertEquals(4, number(map(talkgroupHistory, "totals").get("join_count")));
         assertEquals(3, number(map(patchHistory, "totals").get("call_count")));
@@ -1130,7 +1508,7 @@ class StatsWebDatabaseTest
             "/api/relationships?scope=p25:BEE00:348&talkgroup_id=60000"))).getFirst()
             .get("target_kind_code")));
         assertEquals(3, number(rows(mDatabase.radioTalkgroupRelationships(request(
-            "/api/relationships?scope=p25:BEE00:348&talkgroup_id=60000&kind=patch"))).getFirst()
+            "/api/relationships?scope=p25:BEE00:348&talkgroup_id=60000&kind=patch_group"))).getFirst()
             .get("target_kind_code")));
     }
 
@@ -1144,26 +1522,32 @@ class StatsWebDatabaseTest
         assertEquals("Motorola (0x90)", site.get("mfid_display"));
         assertEquals(110L, number(site.get("micro_slots")));
         assertEquals("Autonomous and by Request", site.get("data_access"));
-        assertEquals("trunked", site.get("site_type"));
+        assertEquals("trunked", site.get("site_kind"));
+        assertFalse(site.containsKey("site_type"));
         Map<String,Object> capabilities = map(site, "capabilities");
         assertEquals(Boolean.TRUE, capabilities.get("quality"));
-        assertEquals(Boolean.TRUE, capabilities.get("quality_history"));
-        assertEquals(Boolean.TRUE, capabilities.get("band_plan"));
-        assertEquals(Boolean.TRUE, capabilities.get("patches"));
+        assertEquals(Boolean.TRUE, capabilities.get("frequency_bands"));
+        assertEquals(Boolean.TRUE, capabilities.get("patch_groups"));
+        assertEquals(Boolean.TRUE, capabilities.get("group_identities"));
         assertEquals(Boolean.TRUE, capabilities.get("activity"));
 
         List<Map<String,Object>> channels = rows(mDatabase.siteChannels(request(
             "/api/site/channels?guid=" + GUID)));
-        assertTrue(channels.get(0).get("tags").toString().contains("VOICE"));
-        assertTrue(channels.get(0).get("tags").toString().contains("DATA"));
-        assertTrue(channels.get(0).get("channel_key").toString().contains("0-509"));
-        assertTrue(channels.get(0).get("channel_key").toString().contains("0-510"));
-        assertEquals(4L, number(channels.get(0).get("voice_grant_observations")));
-        assertEquals(2L, number(channels.get(0).get("data_grant_observations")));
-        assertEquals(854_187_500L, number(channels.get(0).get("downlink_hz")));
-        assertEquals("0-821", channels.get(1).get("descriptor"));
-        assertEquals("WPFF205", channels.get(1).get("callsign"));
-        assertEquals("CURRENT", channels.get(1).get("state"));
+        Map<String,Object> sharedChannel = channels.stream()
+            .filter(row -> "0-509".equals(row.get("channel_key"))).findFirst().orElseThrow();
+        Map<String,Object> controlChannel = channels.stream()
+            .filter(row -> "0-821".equals(row.get("channel_key"))).findFirst().orElseThrow();
+        assertEquals(List.of("VOICE", "DATA"), sharedChannel.get("tags"));
+        assertEquals(4L, number(sharedChannel.get("voice_grant_observations")));
+        assertEquals(2L, number(sharedChannel.get("data_grant_observations")));
+        assertEquals(2L, number(sharedChannel.get("logical_channel_count")));
+        assertEquals(1L, number(sharedChannel.get("logical_channels_included")));
+        assertEquals(1L, number(sharedChannel.get("logical_channels_truncated")));
+        assertEquals(854_187_500L, number(sharedChannel.get("downlink_hz")));
+        assertEquals("0-821", controlChannel.get("descriptor"));
+        assertEquals("WPFF205", controlChannel.get("callsign"));
+        assertEquals(List.of("CURRENT_CONTROL"), controlChannel.get("current_tags"));
+        assertEquals("CURRENT", controlChannel.get("state"));
         assertEquals("CURRENT", channels.stream().filter(row -> "0-900".equals(row.get("descriptor")))
             .findFirst().orElseThrow().get("state"));
         Map<String,Object> channelPage = mDatabase.siteChannels(request(
@@ -1205,7 +1589,7 @@ class StatsWebDatabaseTest
         assertEquals(0x954L, number(foreignBands.get(0).get("foreign_system_id")));
         assertEquals(0x9EFL, number(foreignBands.get(1).get("foreign_system_id")));
         assertEquals(4L, number(foreignBands.get(1).get("band")));
-        assertEquals(1L, number(foreignBands.get(1).get("channel_type")));
+        assertEquals(1L, number(foreignBands.get(1).get("channel_type_code")));
         assertEquals(935_012_500L, number(foreignBands.get(1).get("base_hz")));
 
         Map<String,Object> patches = mDatabase.sitePatches(request("/api/site/patches?guid=" + GUID));
@@ -1213,18 +1597,17 @@ class StatsWebDatabaseTest
         assertEquals("Dispatch", rowsFrom(patches, "talkgroups").get(0).get("alias_name"));
         assertEquals("Engine 1", rowsFrom(patches, "radios").get(0).get("alias_name"));
 
-        List<Map<String,Object>> quality = rows(mDatabase.siteQuality(request(
-            "/api/site/quality?guid=" + GUID)));
-        assertEquals(856_137_500L, number(quality.getFirst().get("frequency_hz")));
-        assertEquals(98.5, ((Number)quality.getFirst().get("decode_health_pct")).doubleValue());
+        Map<String,Object> qualitySite = rowsFrom(mDatabase.qualityHistory(request(
+            "/api/v1/sites/" + GUID + "/quality?guid=" + GUID + "&range=1h&points=60")), "sites").getFirst();
+        assertEquals(856_137_500L, number(qualitySite.get("quality_frequency_hz")));
+        assertEquals(98.5, ((Number)qualitySite.get("decode_health_pct")).doubleValue());
 
         Map<String,Object> activity = mDatabase.activity(request(
-            "/api/activity?scope=p25:BEE00:348&talkgroup_id=56132"));
+            "/api/activity?scope=p25:BEE00:348&talkgroup_id=56132&limit=1"));
         Map<String,Object> event = rows(activity).get(0);
         assertEquals(1L, number(event.get("target_kind_code")));
         assertEquals("Dispatch", event.get("target_alias_name"));
         assertEquals("Engine 1", event.get("source_alias_name"));
-        assertNotNull(activity.get("nextBeforeId"));
         assertEquals("Dispatch", mDatabase.activityByIds(List.of(number(event.get("id"))))
             .getFirst().get("target_alias_name"));
 
@@ -1282,12 +1665,95 @@ class StatsWebDatabaseTest
         assertEquals(3L, number(memberActivity.getFirst().get("target_kind_code")));
 
         List<Map<String,Object>> patchActivity = rows(mDatabase.activity(request(
-            "/api/activity?scope=p25:BEE00:348&talkgroup_id=60000&kind=patch")));
+            "/api/activity?scope=p25:BEE00:348&talkgroup_id=60000&kind=patch_group")));
         assertEquals(1, patchActivity.size());
         assertEquals(500L, number(patchActivity.getFirst().get("id")));
 
         Map<String,Object> committedEvent = mDatabase.activityByIds(List.of(500L)).getFirst();
         assertEquals(List.of(56133L, 56134L), committedEvent.get("member_talkgroup_ids"));
+        assertEquals(2L, number(committedEvent.get("member_talkgroup_ids_total")));
+        assertEquals(Boolean.FALSE, committedEvent.get("member_talkgroup_ids_truncated"));
+    }
+
+    @Test
+    void boundsPatchGroupMemberProjectionPerGroup() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            PreparedStatement talkgroup = connection.prepareStatement("""
+                INSERT INTO p25_site_patch_group_talkgroup
+                    (guid, patch_group, talkgroup_id, confirmed_at_ms)
+                VALUES (?, 56132, ?, ?)
+                """);
+            PreparedStatement radio = connection.prepareStatement("""
+                INSERT INTO p25_site_patch_group_radio
+                    (guid, patch_group, radio_id, confirmed_at_ms)
+                VALUES (?, 56132, ?, ?)
+                """))
+        {
+            long now = System.currentTimeMillis();
+
+            for(int index = 0; index < StatsWebDatabase.MAXIMUM_PATCH_MEMBERS_PER_GROUP + 8; index++)
+            {
+                talkgroup.setString(1, GUID);
+                talkgroup.setInt(2, 62_000 + index);
+                talkgroup.setLong(3, now);
+                talkgroup.addBatch();
+                radio.setString(1, GUID);
+                radio.setInt(2, 1_900_000 + index);
+                radio.setLong(3, now);
+                radio.addBatch();
+            }
+
+            talkgroup.executeBatch();
+            radio.executeBatch();
+        }
+
+        Map<String,Object> response = mDatabase.sitePatches(request("/api/site/patches?guid=" + GUID));
+        Map<String,Object> group = rowsFrom(response, "groups").getFirst();
+        assertEquals(StatsWebDatabase.MAXIMUM_PATCH_MEMBERS_PER_GROUP + 9L,
+            number(group.get("talkgroup_count")));
+        assertEquals(StatsWebDatabase.MAXIMUM_PATCH_MEMBERS_PER_GROUP,
+            number(group.get("talkgroups_included")));
+        assertEquals(Boolean.TRUE, group.get("talkgroups_truncated"));
+        assertEquals(StatsWebDatabase.MAXIMUM_PATCH_MEMBERS_PER_GROUP,
+            rowsFrom(response, "talkgroups").size());
+        assertEquals(Boolean.TRUE, response.get("members_truncated"));
+    }
+
+    @Test
+    void boundsPatchMembersPerCommittedActivityEvent() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO p25_activity_event (
+                    id, context_id, observed_at_ms, action_code, event_type_code, source_radio_id,
+                    target_id, target_kind_code, frequency_hz, encrypted
+                ) VALUES (599, 1, 2600, 0, 0, 1811332, 60001, 3, 855612500, 0)
+                """);
+
+            try(PreparedStatement members = connection.prepareStatement("""
+                INSERT INTO activity_event_talkgroup_member(event_id, talkgroup_id) VALUES (599, ?)
+                """))
+            {
+                for(int index = 0; index < StatsWebDatabase.MAXIMUM_ACTIVITY_EVENT_MEMBERS + 16; index++)
+                {
+                    members.setInt(1, 70_000 + index);
+                    members.addBatch();
+                }
+
+                members.executeBatch();
+            }
+        }
+
+        Map<String,Object> event = mDatabase.activityByIds(List.of(599L)).getFirst();
+        @SuppressWarnings("unchecked")
+        List<Long> members = (List<Long>)event.get("member_talkgroup_ids");
+        assertEquals(StatsWebDatabase.MAXIMUM_ACTIVITY_EVENT_MEMBERS, members.size());
+        assertEquals(StatsWebDatabase.MAXIMUM_ACTIVITY_EVENT_MEMBERS + 16L,
+            number(event.get("member_talkgroup_ids_total")));
+        assertEquals(Boolean.TRUE, event.get("member_talkgroup_ids_truncated"));
     }
 
     @Test
@@ -1615,7 +2081,7 @@ class StatsWebDatabaseTest
             .get("encryption_display"));
 
         Map<String,Object> talkgroup = map(mDatabase.talkgroup(request(
-            "/api/talkgroup?scope=p25:BEE00:348&talkgroup_id=56132")), "talkgroup");
+            "/api/talkgroup?scope=p25:BEE00:348&talkgroup_id=56132")), "group_identity");
         assertEquals("AES256", talkgroup.get("last_encryption_algorithm_display"));
         assertEquals("AES-256", talkgroup.get("last_encryption_algorithm_name"));
         Map<String,Object> radio = map(mDatabase.radio(request(
@@ -1658,7 +2124,7 @@ class StatsWebDatabaseTest
         assertEquals(6, number(recentSite.get("channels")));
 
         Map<String,Object> directorySite = rows(mDatabase.systemDirectory(request("/api/system-directory"))).stream()
-            .flatMap(system -> rowsFrom(system, "children").stream())
+            .flatMap(system -> systemSitesFor(system).stream())
             .filter(row -> GUID.equals(row.get("guid"))).findFirst().orElseThrow();
         assertEquals(6, number(directorySite.get("channels")));
     }
@@ -1686,17 +2152,15 @@ class StatsWebDatabaseTest
         Map<String,Object> detail = mDatabase.conventionalDetail(request(
             "/api/conventional/detail?context=conventional-dmr-county"));
         Map<String,Object> capabilities = map(map(detail, "context"), "capabilities");
-        assertTrue((Boolean)capabilities.get("info"));
-        assertTrue((Boolean)capabilities.get("talkgroups"));
+        assertTrue((Boolean)capabilities.get("group_identities"));
         assertTrue((Boolean)capabilities.get("radios"));
         assertTrue((Boolean)capabilities.get("activity"));
 
         Map<String,Object> analogDetail = mDatabase.conventionalDetail(request(
             "/api/conventional/detail?context=conventional-fire"));
         Map<String,Object> analogCapabilities = map(map(analogDetail, "context"), "capabilities");
-        assertTrue((Boolean)analogCapabilities.get("info"));
         assertTrue((Boolean)analogCapabilities.get("activity"));
-        assertFalse((Boolean)analogCapabilities.get("talkgroups"));
+        assertFalse((Boolean)analogCapabilities.get("group_identities"));
         assertFalse((Boolean)analogCapabilities.get("radios"));
 
         Map<String,Object> talkgroups = mDatabase.conventionalTalkgroups(request(
@@ -2469,8 +2933,9 @@ class StatsWebDatabaseTest
                     (context_id, identity_role_code, identity_kind_code, identity_id, bucket_start_ms,
                      call_count, recorded_count, streamed_count)
                 VALUES (1, 1, 1, 56132, %d, 7, 5, 4),
-                       (3, 1, 1, 56132, %d, 100, 90, 80)
-                """.formatted(currentHour, currentHour));
+                       (3, 1, 1, 56132, %d, 100, 90, 80),
+                       (1, 1, 1, 56132, %d, 999, 999, 999)
+                """.formatted(currentHour, currentHour, currentHour + 100L * 3_600_000L));
             statement.executeUpdate("""
                 UPDATE trunked_identity_summary
                 SET emergency_count = 1
@@ -2524,9 +2989,11 @@ class StatsWebDatabaseTest
                        (1, 1, 1, 56132, %d, 5, 2, 4, 1),
                        (1, 1, 1, 60000, %d, 20, 0, 0, 0),
                        (1, 1, 1, 56132, %d, 50, 0, 50, 50),
-                       (3, 1, 1, 56132, %d, 100, 0, 90, 80)
+                       (3, 1, 1, 56132, %d, 100, 0, 90, 80),
+                       (1, 1, 1, 56132, %d, 999, 0, 999, 999)
                 """.formatted(currentHour - 3_600_000L, currentHour, currentHour,
-                    currentHour - 25L * 3_600_000L, currentHour));
+                    currentHour - 25L * 3_600_000L, currentHour,
+                    currentHour + 100L * 3_600_000L));
         }
 
         mDatabase = new StatsWebDatabase(new UserPreferences(), mDatabasePath);
@@ -2693,7 +3160,7 @@ class StatsWebDatabaseTest
 
         Map<String,Object> directoryChild = rows(mDatabase.systemDirectory(request(
             "/api/system-directory?q=MARCS%20Cleveland%20Simulcast"))).stream()
-            .flatMap(parent -> rowsFrom(parent, "children").stream())
+            .flatMap(parent -> systemSitesFor(parent).stream())
             .filter(row -> GUID.equals(row.get("guid"))).findFirst().orElseThrow();
         assertEquals("Cuyahoga County", directoryChild.get("configured_site"));
         assertEquals("MARCS Cleveland Simulcast", directoryChild.get("configured_name"));
@@ -2821,8 +3288,9 @@ class StatsWebDatabaseTest
         assertEquals(88.0, ((Number)nxdn.get("decode_health_pct")).doubleValue());
         assertEquals(1, rowsFrom(nxdn, "series").size());
 
-        List<Map<String,Object>> dmrRows = rows(mDatabase.siteQuality(request(
-            "/api/site/quality?guid=quality-dmr&limit=1")));
+        List<Map<String,Object>> dmrRows = rowsFrom(rowsFrom(mDatabase.qualityHistory(request(
+            "/api/v1/sites/quality-dmr/quality?guid=quality-dmr&range=1h&points=60")), "sites")
+            .getFirst(), "series");
         assertEquals(1, dmrRows.size());
         assertEquals(451_012_500L, number(dmrRows.getFirst().get("frequency_hz")));
 
@@ -2898,7 +3366,7 @@ class StatsWebDatabaseTest
 
         Map<String,Object> dmrChild = rows(mDatabase.systemDirectory(request(
             "/api/system-directory?q=Downtown%20DMR"))).stream()
-            .flatMap(parent -> rowsFrom(parent, "children").stream())
+            .flatMap(parent -> systemSitesFor(parent).stream())
             .filter(row -> "configured-dmr".equals(row.get("guid"))).findFirst().orElseThrow();
         assertEquals("Cuyahoga County", dmrChild.get("configured_site"));
         assertEquals("Downtown DMR", dmrChild.get("configured_name"));
@@ -2970,7 +3438,7 @@ class StatsWebDatabaseTest
         List<Map<String,Object>> directory = rows(mDatabase.systemDirectory(request(
             "/api/system-directory")));
         List<Map<String,Object>> directoryChildren = directory.stream()
-            .flatMap(parent -> rowsFrom(parent, "children").stream())
+            .flatMap(parent -> systemSitesFor(parent).stream())
             .filter(child -> GUID.equals(child.get("guid"))).toList();
         assertEquals(1, directoryChildren.size());
         assertEquals("DMR", directoryChildren.getFirst().get("protocol"));
@@ -3002,7 +3470,7 @@ class StatsWebDatabaseTest
 
         Map<String,Object> tied = map(mDatabase.site(request("/api/site?guid=" + GUID)), "site");
         assertEquals(1, number(tied.get("protocol_code")));
-        assertEquals("p25", tied.get("site_kind"));
+        assertEquals("trunked", tied.get("site_kind"));
         assertNotNull(rows(mDatabase.siteChannels(request(
             "/api/site/channels?guid=" + GUID))).getFirst().get("descriptor"));
         assertFalse(rows(mDatabase.siteNeighbors(request(
@@ -3020,7 +3488,7 @@ class StatsWebDatabaseTest
         assertEquals(0x49FL, number(qualitySites.getFirst().get("nac")));
 
         directory = rows(mDatabase.systemDirectory(request("/api/system-directory")));
-        directoryChildren = directory.stream().flatMap(parent -> rowsFrom(parent, "children").stream())
+        directoryChildren = directory.stream().flatMap(parent -> systemSitesFor(parent).stream())
             .filter(child -> GUID.equals(child.get("guid"))).toList();
         assertEquals(1, directoryChildren.size());
         assertEquals("P25", directoryChildren.getFirst().get("protocol"));
@@ -3117,11 +3585,11 @@ class StatsWebDatabaseTest
         assertEquals(4095, number(systems.getFirst().get("system_id")));
         assertEquals(SECOND_SYSTEM, number(systems.get(1).get("system_id")));
         assertEquals(SYSTEM, number(systems.getLast().get("system_id")));
-        List<Map<String,Object>> children = rowsFrom(systems.getLast(), "children");
+        assertTrue(systems.stream().noneMatch(system -> system.containsKey("children")));
+        List<Map<String,Object>> children = systemSitesFor(systems.getLast());
         assertEquals("earlier-child", children.getFirst().get("guid"));
         assertEquals("unknown-child", children.get(1).get("guid"));
         assertEquals(GUID, children.getLast().get("guid"));
-        assertFalse((Boolean)systems.getLast().get("children_truncated"));
     }
 
     @Test
@@ -3149,7 +3617,8 @@ class StatsWebDatabaseTest
             .filter(row -> number(row.get("system_id")) == SYSTEM).findFirst().orElseThrow();
         assertEquals("Greater Cleveland", parent.get("configured_system"));
         assertEquals(2, number(parent.get("sites")));
-        assertEquals(2, rowsFrom(parent, "children").size());
+        assertFalse(parent.containsKey("children"));
+        assertEquals(2, systemSitesFor(parent).size());
         assertEquals(1, rows(mDatabase.systemDirectory(request(
             "/api/system-directory?q=greater%20cleveland"))).size());
         assertEquals(1, rows(mDatabase.systemDirectory(request(
@@ -3236,13 +3705,13 @@ class StatsWebDatabaseTest
             dmr.stream().map(row -> String.valueOf(row.get("scope_token"))).toList());
         assertTrue(dmr.stream().allMatch(row -> number(row.get("sites")) == 1));
         assertTrue(dmr.stream().allMatch(row -> "Metro DMR".equals(row.get("configured_system"))));
-        assertTrue(dmr.stream().allMatch(row -> rowsFrom(row, "children").size() == 1));
-        assertEquals("dmr-a", rowsFrom(dmr.getFirst(), "children").getFirst().get("guid"));
-        assertEquals("dmr-b", rowsFrom(dmr.getLast(), "children").getFirst().get("guid"));
-        assertTrue(dmr.stream().flatMap(row -> rowsFrom(row, "children").stream())
+        assertTrue(dmr.stream().noneMatch(row -> row.containsKey("children")));
+        assertEquals("dmr-a", systemSitesFor(dmr.getFirst()).getFirst().get("guid"));
+        assertEquals("dmr-b", systemSitesFor(dmr.getLast()).getFirst().get("guid"));
+        assertTrue(dmr.stream().flatMap(row -> systemSitesFor(row).stream())
             .allMatch(row -> "trunked".equals(row.get("site_kind"))));
-        assertEquals("dmr-b", rowsFrom(rows(mDatabase.systemDirectory(request(
-            "/api/system-directory?q=DMR%20Airport"))).getFirst(), "children").getFirst().get("guid"));
+        assertEquals("dmr-b", systemSitesFor(rows(mDatabase.systemDirectory(request(
+            "/api/system-directory?q=DMR%20Airport"))).getFirst()).getFirst().get("guid"));
         assertEquals(2, rows(mDatabase.systemDirectory(request(
             "/api/system-directory?q=20"))).size());
 
@@ -3251,31 +3720,32 @@ class StatsWebDatabaseTest
         assertEquals(List.of("nxdn:guid:nxdn-a", "nxdn:guid:nxdn-b"),
             nxdn.stream().map(row -> String.valueOf(row.get("scope_token"))).toList());
         assertTrue(nxdn.stream().allMatch(row -> number(row.get("sites")) == 1));
-        assertTrue(nxdn.stream().allMatch(row -> rowsFrom(row, "children").size() == 1));
+        assertTrue(nxdn.stream().allMatch(row -> systemSitesFor(row).size() == 1));
 
         List<Map<String,Object>> nxdnSearch = rows(mDatabase.systemDirectory(request(
             "/api/system-directory?q=NXDN")));
         assertEquals(2, nxdnSearch.size());
         assertEquals("NXDN", nxdnSearch.getFirst().get("protocol"));
-        assertEquals("nxdn-a", rowsFrom(nxdnSearch.getFirst(), "children").getFirst().get("guid"));
+        assertEquals("nxdn-a", systemSitesFor(nxdnSearch.getFirst()).getFirst().get("guid"));
         assertEquals(1, rows(mDatabase.systemDirectory(request(
             "/api/system-directory?q=NXDN%20North"))).size());
-        assertEquals("nxdn-a", rowsFrom(rows(mDatabase.systemDirectory(request(
-            "/api/system-directory?q=9"))).getFirst(), "children").getFirst().get("guid"));
+        assertEquals("nxdn-a", systemSitesFor(rows(mDatabase.systemDirectory(request(
+            "/api/system-directory?q=9"))).getFirst()).getFirst().get("guid"));
 
         Map<String,Object> site = map(mDatabase.site(request("/api/site?guid=dmr-a")), "site");
         assertEquals("DMR", site.get("protocol"));
         assertEquals("trunked", site.get("site_kind"));
-        assertEquals("trunked", site.get("site_type"));
+        assertFalse(site.containsKey("site_type"));
+        assertFalse(site.containsKey("snapshot_hash"));
         assertEquals(2, number(site.get("identity_domain_code")));
         assertEquals(20, number(site.get("system_id")));
         assertEquals(2, number(site.get("channels")));
         assertEquals(1, number(site.get("neighbors")));
         Map<String,Object> dmrCapabilities = map(site, "capabilities");
         assertEquals(Boolean.TRUE, dmrCapabilities.get("quality"));
-        assertEquals(Boolean.TRUE, dmrCapabilities.get("quality_history"));
-        assertEquals(Boolean.FALSE, dmrCapabilities.get("band_plan"));
-        assertEquals(Boolean.FALSE, dmrCapabilities.get("patches"));
+        assertEquals(Boolean.FALSE, dmrCapabilities.get("frequency_bands"));
+        assertEquals(Boolean.FALSE, dmrCapabilities.get("patch_groups"));
+        assertEquals(Boolean.TRUE, dmrCapabilities.get("group_identities"));
         assertEquals(Boolean.TRUE, dmrCapabilities.get("activity"));
 
         Map<String,Object> nxdnSite = map(mDatabase.site(request("/api/site?guid=nxdn-a")), "site");
@@ -3545,7 +4015,8 @@ class StatsWebDatabaseTest
             .filter(row -> "dmr:guid:quiet-dmr".equals(row.get("scope_token")))
             .findFirst().orElseThrow();
         assertEquals(1, number(quietSystem.get("sites")));
-        Map<String,Object> child = rowsFrom(quietSystem, "children").getFirst();
+        assertFalse(quietSystem.containsKey("children"));
+        Map<String,Object> child = systemSitesFor(quietSystem).getFirst();
         assertEquals("quiet-dmr", child.get("guid"));
         assertEquals("Quiet DMR", child.get("channel_name"));
         assertEquals("Summit County", child.get("configured_site"));
@@ -3585,13 +4056,20 @@ class StatsWebDatabaseTest
             .toList();
         assertEquals(2, dmr.size());
         assertEquals(List.of(1L, 2L), dmr.stream().map(row -> number(row.get("variant_code"))).sorted().toList());
-        assertTrue(dmr.stream().allMatch(row -> rowsFrom(row, "children").size() == 1));
+        assertTrue(dmr.stream().allMatch(row -> systemSitesFor(row).size() == 1));
         assertEquals(3, number(map(mDatabase.dashboard(), "counts").get("trunked_systems")));
     }
 
     private static StatsRequest request(String uri)
     {
         return StatsRequest.from(URI.create(uri));
+    }
+
+    private List<Map<String,Object>> systemSitesFor(Map<String,Object> system)
+    {
+        String scope = String.valueOf(system.get("scope_token"));
+        return rows(mDatabase.systemSites(request(
+            "/api/v1/systems/" + scope + "/sites?scope=" + scope + "&limit=500")));
     }
 
     private static List<CSVRecord> csvRows(StatsCsvExport export) throws Exception

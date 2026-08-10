@@ -7,11 +7,13 @@ package io.github.dsheirer.stats;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.PreparedStatement;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -26,7 +28,7 @@ class StatsAliasResolverTest
     Path mTemporaryFolder;
 
     @Test
-    void classifiesObservedTalkgroupsWithinOnlyTheSelectedAliasListAndInvalidatesImmediately() throws Exception
+    void classifiesObservedTalkgroupsWithinOnlyTheSelectedAliasListAndObservesCommittedChanges() throws Exception
     {
         Path database = mTemporaryFolder.resolve("observed-talkgroups.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
@@ -101,9 +103,6 @@ class StatsAliasResolverTest
                     id, alias_list_id, name, matcher_type, protocol, value
                 ) VALUES (5, 1, 'New Exact', 'TALKGROUP', 'APCO25', 800)
                 """);
-            resolver.resolveObservedTalkgroups(connection, rows(range));
-            assertEquals("range", range.get("match_kind"), "The normal polling cache remains bounded");
-            resolver.invalidate();
             resolver.resolveObservedTalkgroups(connection, rows(range));
             assertEquals("exact", range.get("match_kind"));
             assertEquals("New Exact", range.get("matched_alias_name"));
@@ -284,6 +283,123 @@ class StatsAliasResolverTest
                 relationships.getFirst().get("radio_alias_description"));
             assertEquals("Local fallback description",
                 relationships.getFirst().get("talkgroup_alias_description"));
+        }
+    }
+
+    @Test
+    void loadsOnlyRulesForTheBoundedPageIdentityAndAliasList() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("bounded-alias-rules.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO alias_list (id, name, family)
+                VALUES (1, 'Selected', 'P25'), (2, 'Irrelevant', 'P25')
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias (alias_list_id, name, matcher_type, protocol, value)
+                VALUES (1, 'Selected 42', 'TALKGROUP', 'APCO25', 42),
+                       (2, 'Irrelevant 99', 'TALKGROUP', 'APCO25', 99)
+                """);
+
+            connection.setAutoCommit(false);
+
+            try(PreparedStatement insert = connection.prepareStatement("""
+                INSERT INTO alias (alias_list_id, name, matcher_type, protocol, value)
+                VALUES (?, ?, 'TALKGROUP', 'APCO25', ?)
+                """))
+            {
+                for(int x = 0; x <= StatsAliasResolver.MAX_LOADED_RULES; x++)
+                {
+                    insert.setInt(1, 1);
+                    insert.setString(2, "Wrong Selected pair " + x);
+                    insert.setInt(3, 99);
+                    insert.addBatch();
+                    insert.setInt(1, 2);
+                    insert.setString(2, "Wrong Irrelevant pair " + x);
+                    insert.setInt(3, 42);
+                    insert.addBatch();
+                }
+
+                insert.executeBatch();
+            }
+
+            connection.commit();
+            connection.setAutoCommit(true);
+            StatsAliasResolver resolver = new StatsAliasResolver();
+            Map<String,Object> selected = observedP25Row(42);
+            Map<String,Object> irrelevant = observedP25Row(99);
+            irrelevant.put("alias_list_name", "Irrelevant");
+            resolver.resolveObservedTalkgroups(connection, rows(selected, irrelevant));
+
+            assertEquals("exact", selected.get("match_kind"));
+            assertEquals("Selected 42", selected.get("matched_alias_name"));
+            assertEquals("exact", irrelevant.get("match_kind"));
+            assertEquals("Irrelevant 99", irrelevant.get("matched_alias_name"));
+        }
+    }
+
+    @Test
+    void systemAliasListPairBudgetIsSharedAcrossSystemsAndCountsRepeatedListNames()
+    {
+        StatsAliasResolver.AliasListPairBudget budget = new StatsAliasResolver.AliasListPairBudget(2);
+        budget.add(1, "Shared");
+        budget.add(2, "Shared");
+        assertEquals(1, budget.queryLimit());
+
+        StatsApiException overflow = assertThrows(StatsApiException.class,
+            () -> budget.add(3, "Shared"));
+        assertEquals(413, overflow.status());
+        assertEquals("response_too_large", overflow.code());
+    }
+
+    @Test
+    void assignedAliasListLookupUsesCaseInsensitiveConfigurationNames() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("alias-list-case.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO alias_list (id, name, family) VALUES (1, 'Mixed Case', 'DMR')
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias (id, alias_list_id, name, matcher_type, protocol, value)
+                VALUES (1, 1, 'Case Dispatch', 'TALKGROUP', 'DMR', 42)
+                """);
+            Map<String,Object> identity = row("mixed case", 42);
+
+            new StatsAliasResolver().enrichDmrTalkgroups(connection, rows(identity),
+                "identity_id", "alias_");
+
+            assertEquals("Case Dispatch", identity.get("alias_name"));
+        }
+    }
+
+    @Test
+    void rejectsUnboundedEnrichmentInputBeforeQueryingAliases() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("bounded-alias-input.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        List<Map<String,Object>> rows = new ArrayList<>();
+
+        for(int x = 0; x <= StatsAliasResolver.MAX_INPUT_ROWS; x++)
+        {
+            rows.add(row("P25", x + 1));
+        }
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            StatsApiException exception = assertThrows(StatsApiException.class,
+                () -> new StatsAliasResolver().enrichP25ConventionalTalkgroups(connection, rows,
+                    "identity_id", "alias_"));
+            assertEquals(413, exception.status());
+            assertEquals("response_too_large", exception.code());
         }
     }
 

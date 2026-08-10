@@ -34,8 +34,8 @@ import org.apache.commons.csv.CSVPrinter;
  */
 record StatsCsvExport(String fileName, byte[] content, int rowCount)
 {
-    static final int MAX_ROWS = 100_000;
-    static final int MAX_BYTES = 64 * 1024 * 1024;
+    static final int MAX_ROWS = 10_000;
+    static final int MAX_BYTES = 16 * 1024 * 1024;
     private static final byte[] UTF_8_BOM = {(byte)0xEF, (byte)0xBB, (byte)0xBF};
     private static final DateTimeFormatter FILE_TIME =
         DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss'Z'", Locale.ROOT).withZone(ZoneOffset.UTC);
@@ -51,7 +51,7 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
     {
         if(rows.size() > MAX_ROWS)
         {
-            throw new StatsApiException(413, "CSV export exceeds the 100,000 row limit");
+            throw new StatsApiException(413, "CSV export exceeds the " + MAX_ROWS + " row limit");
         }
 
         List<Column> columns = columns(dataset);
@@ -79,7 +79,8 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
         }
         catch(SizeLimitException e)
         {
-            throw new StatsApiException(413, "CSV export exceeds the 64 MiB size limit");
+            throw new StatsApiException(413, "CSV export exceeds the " +
+                (MAX_BYTES / (1024 * 1024)) + " MiB size limit");
         }
 
         return new StatsCsvExport(fileName(dataset, scopeLabel), output.toByteArray(), rows.size());
@@ -95,7 +96,7 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
                 number("wacn", "wacn"), text("system_id_hex", row -> p25Hex(row, "system_id", 3)),
                 number("system_id", "system_id"), number("network_id", "network_id"),
                 number("talkgroup_id", "talkgroup_id"),
-                number("identity_domain_code", "identity_domain_code"),
+                text("address_domain", StatsCsvExport::addressDomain),
                 text("formatted_talkgroup_id", row -> nxdnDisplay(row, "talkgroup_id")),
                 text("identity_type", row -> numberValue(row.get("target_kind_code")) == 3 ? "patch_group" :
                     "talkgroup"), text("alias", "alias_name"), text("description", "alias_description"),
@@ -111,7 +112,7 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
                 number("wacn", "wacn"), text("system_id_hex", row -> p25Hex(row, "system_id", 3)),
                 number("system_id", "system_id"), number("network_id", "network_id"),
                 number("radio_id", "radio_id"),
-                number("identity_domain_code", "identity_domain_code"),
+                text("address_domain", StatsCsvExport::addressDomain),
                 text("formatted_radio_id", row -> nxdnDisplay(row, "radio_id")),
                 text("alias", "alias_name"), text("description", "alias_description"),
                 text("group", "alias_group"), text("alias_list", "alias_list_name"),
@@ -172,8 +173,9 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
                 text("control_frequency_mhz", row -> megahertz(firstValue(row, "downlink_hz", "frequency_hz"))),
                 number("uplink_hz", "uplink_hz"),
                 text("uplink_mhz", row -> megahertz(row.get("uplink_hz"))),
-                number("variant_code", "variant_code"), number("identity_domain_code", "identity_domain_code"),
-                number("status_flags", "status_flags"), number("band_count", "band_count"),
+                text("variant", StatsCsvExport::variant),
+                text("site_classification", StatsCsvExport::siteClassification),
+                number("band_count", "band_count"),
                 number("has_fdma", "has_fdma"), number("has_tdma", "has_tdma"),
                 number("has_unknown_mode", "has_unknown"),
                 text("status", StatsCsvExport::neighborStatus), text("state", "state"),
@@ -189,7 +191,7 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
                 text("observed_frequency_mhz", row -> megahertz(row.get("frequency_hz"))),
                 number("timeslot", row -> nonNegative(row.get("timeslot"))), number("nac", "nac"),
                 number("calls", "call_count"),
-                number("last_event_type", "last_event_type_code"), time("first_seen_utc", "first_seen_ms"),
+                text("last_event_type", StatsCsvExport::lastEventType), time("first_seen_utc", "first_seen_ms"),
                 time("last_seen_utc", "last_seen_ms")
             );
             case "conventional-talkgroups" -> List.of(
@@ -269,16 +271,22 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
             );
             case "aliases" -> List.of(
                 number("alias_id", "alias_id"), number("alias_list_id", "alias_list_id"),
-                text("alias_list", "alias_list_name"), text("family", "family"), text("name", "name"),
+                text("alias_list", "alias_list_name"),
+                text("family", row -> StatsApiV1Payload.aliasFamily(String.valueOf(row.get("family")))),
+                text("name", "name"),
                 text("description", "description"), text("group", "group"), number("color", "color"),
                 text("icon", "icon_name"), number("stream_as_talkgroup", "stream_as_talkgroup"),
                 number("record_enabled", "record_enabled"), number("priority", "priority"),
-                text("identity_type", "identity_type"), text("matcher_type", "matcher_type"),
-                text("matcher", "matcher_label"), text("protocol", "protocol"),
+                text("identity_type", "identity_type"),
+                text("matcher_type", row -> StatsApiV1Payload.aliasMatcherType(
+                    String.valueOf(row.get("matcher_type")))),
+                text("matcher", "matcher_label"), text("protocol", StatsCsvExport::aliasProtocol),
+                text("protocol_variant", StatsCsvExport::aliasProtocolVariant),
                 text("identifier", "identifier_display"), number("value", "value"),
                 number("min_value", "min_value"), number("max_value", "max_value"),
                 text("text_value", "text_value"), number("numeric_value", "numeric_value"),
-                text("tone_sequence", "tone_sequence"), number("exact", "exact"),
+                text("tone_sequence", row -> row.get("tone_sequence") instanceof String value ?
+                    value.toLowerCase(Locale.ROOT) : ""), number("exact", "exact"),
                 number("ranged", "ranged"),
                 text("broadcast_channels", row -> row.get("broadcast_channels") instanceof List<?> values ?
                     String.join("; ", values.stream().map(String::valueOf).toList()) : ""),
@@ -375,6 +383,59 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
             case 10 -> "NBFM";
             default -> "Unknown";
         };
+    }
+
+    private static StatsApiProtocol apiProtocol(Map<String,Object> row)
+    {
+        Object code = row.get("protocol_code");
+        StatsApiProtocol protocol = code instanceof Number number ? StatsApiProtocol.fromCode(number.longValue()) :
+            StatsApiProtocol.UNKNOWN;
+
+        if(protocol == StatsApiProtocol.UNKNOWN)
+        {
+            protocol = StatsApiProtocol.fromName(String.valueOf(firstValue(row, "protocol", "site_protocol")));
+        }
+
+        return protocol;
+    }
+
+    private static String addressDomain(Map<String,Object> row)
+    {
+        return apiProtocol(row).addressDomain(numberValue(row.get("identity_domain_code")));
+    }
+
+    private static String variant(Map<String,Object> row)
+    {
+        return apiProtocol(row).variant(numberValue(row.get("variant_code")));
+    }
+
+    private static String aliasProtocol(Map<String,Object> row)
+    {
+        return row.get("protocol") instanceof String value && !value.isBlank() ?
+            StatsApiProtocol.fromName(value).wireName() : "";
+    }
+
+    private static String aliasProtocolVariant(Map<String,Object> row)
+    {
+        return switch(row.get("protocol"))
+        {
+            case String value when "APCO25".equals(value) -> "phase_1";
+            case String value when "APCO25_PHASE2".equals(value) -> "phase_2";
+            default -> "";
+        };
+    }
+
+    private static String siteClassification(Map<String,Object> row)
+    {
+        return apiProtocol(row).siteClassification(numberValue(row.get("identity_domain_code")));
+    }
+
+    private static String lastEventType(Map<String,Object> row)
+    {
+        long code = numberValue(row.get("last_event_type_code"));
+        io.github.dsheirer.module.decode.event.DecodeEventType[] values =
+            io.github.dsheirer.module.decode.event.DecodeEventType.values();
+        return code >= 1 && code <= values.length ? values[(int)code - 1].name().toLowerCase(Locale.ROOT) : "";
     }
 
     private static Object firstValue(Map<String,Object> row, String... keys)
