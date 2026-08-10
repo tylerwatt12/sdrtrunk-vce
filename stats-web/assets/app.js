@@ -7136,7 +7136,9 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
       return;
     }
     connectActiveChannels();
-    if (!stream) openDiagnosticStream();
+    //A drag owns the client-side viewport until pointer release.  Reopening here would allow incoming frames to
+    //replace that viewport and discard part of the user's pan before the refined request is sent.
+    if (!stream && !drag) openDiagnosticStream();
   }
 
   function transformCanvas(canvas, scratch, fromViewport, toViewport) {
@@ -7367,6 +7369,13 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
     if (!drag || drag.pointerId !== event.pointerId || drag.canvas !== event.currentTarget) return;
     const deltaPixels = event.clientX - drag.lastX;
     drag.lastX = event.clientX;
+    if (!deltaPixels) return;
+    if (!drag.moved) {
+      drag.moved = true;
+      //Freeze the streamed viewport for the duration of the drag.  Otherwise each live frame overwrites the local
+      //pan position and makes wideband panning lose most (or all) of the pointer movement.
+      closeStreams();
+    }
     panBy(-deltaPixels / rect.width * (viewport.endHz - viewport.startHz), 'none');
   }
 
@@ -7376,13 +7385,14 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
     cancelDrag();
     event.currentTarget.setPointerCapture(event.pointerId);
     event.currentTarget.classList.add('dragging');
-    drag = { pointerId: event.pointerId, lastX: event.clientX, canvas: event.currentTarget };
+    drag = { pointerId: event.pointerId, lastX: event.clientX, canvas: event.currentTarget, moved: false };
   }
 
   function onPlotPointerUp(event) {
     if (!drag || drag.pointerId !== event.pointerId) return;
+    const moved = drag.moved;
     cancelDrag();
-    queueViewportUpdate(true);
+    if (moved) queueViewportUpdate(true);
   }
 
   function onPlotPointerLeave(event) {
@@ -7391,8 +7401,9 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
 
   function onPlotLostCapture(event) {
     if (!drag || drag.pointerId !== event.pointerId) return;
+    const moved = drag.moved;
     cancelDrag(false);
-    queueViewportUpdate(true);
+    if (moved) queueViewportUpdate(true);
   }
 
   function addPlotInteractions(canvas) {
