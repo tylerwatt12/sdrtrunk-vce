@@ -25,9 +25,12 @@ class StatsWebDashboardUiContractTest
     void separatesCallActivityFromReceiverHealth() throws Exception
     {
         String dashboard = function(Files.readString(APP_JAVASCRIPT), "async function renderDashboard()");
-        assertTrue(dashboard.contains("route.get('tab') || 'calls'"));
+        assertTrue(dashboard.contains("route.get('tab') || 'health'"));
+        assertTrue(dashboard.contains("requestedTab === 'calls' ? 'calls' : 'health'"));
         assertTrue(dashboard.contains("{ id: 'calls', label: 'Calls'"));
         assertTrue(dashboard.contains("{ id: 'health', label: 'Health'"));
+        assertTrue(dashboard.indexOf("{ id: 'health', label: 'Health'") <
+            dashboard.indexOf("{ id: 'calls', label: 'Calls'"));
         assertTrue(dashboard.contains("if (tab === 'health')"));
         assertTrue(dashboard.indexOf("if (tab === 'health')") <
             dashboard.indexOf("await signalHealthSection()"));

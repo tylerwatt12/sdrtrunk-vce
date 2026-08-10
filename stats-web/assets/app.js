@@ -5708,13 +5708,13 @@ async function renderDashboard() {
   const counts = dashboard.counts || {};
   const callActivity = dashboard.call_activity || {};
   const callTotals = callActivity.totals || {};
-  const requestedTab = route.get('tab') || 'calls';
-  const tab = requestedTab === 'health' ? 'health' : 'calls';
+  const requestedTab = route.get('tab') || 'health';
+  const tab = requestedTab === 'calls' ? 'calls' : 'health';
   content.append(pageHeader('Dashboard', dashboard.last_seen_ms ?
     fragment('Last activity ', dateTime(dashboard.last_seen_ms)) : 'Last activity not recorded'),
   tabs([
-    { id: 'calls', label: 'Calls', href: href('dashboard', { tab: 'calls' }) },
-    { id: 'health', label: 'Health', href: href('dashboard', { tab: 'health' }) }
+    { id: 'health', label: 'Health', href: href('dashboard', { tab: 'health' }) },
+    { id: 'calls', label: 'Calls', href: href('dashboard', { tab: 'calls' }) }
   ], tab));
 
   if (tab === 'health') {
