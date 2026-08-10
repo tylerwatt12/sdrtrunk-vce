@@ -1685,7 +1685,7 @@ body[data-view="live"] .channel-diagnostic-readouts {
 }
 
 .channel-diagnostic-view-button:hover {
-  color: var(--text);
+  color: var(--ink);
   border-color: var(--line);
 }
 
@@ -3035,7 +3035,12 @@ th.center {
 :root[data-theme="dark"] .dashboard-filter-button.active,
 :root[data-theme="dark"] .signal-range-button.active,
 :root[data-theme="dark"] .button:not(.secondary):not(.disabled),
-:root[data-theme="dark"] button:not(.secondary):not(.playback-command):not(.theme-toggle):not(.auth-action):not(.table-sort-control):not(.systems-live-tab):not(.live-details-tab) {
+:root[data-theme="dark"] button:not(.secondary):not(.playback-command):not(.theme-toggle):not(.auth-action):not(.table-sort-control):not(.systems-live-tab):not(.live-details-tab):not(.channel-diagnostic-view-button) {
+  color: #071a18;
+  border-color: #69cec2;
+}
+
+:root[data-theme="dark"] .channel-diagnostic-view-button[aria-pressed="true"] {
   color: #071a18;
   border-color: #69cec2;
 }

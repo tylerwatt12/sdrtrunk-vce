@@ -356,8 +356,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(html.indexOf("localStorage.getItem('sdrtrunk_theme')") <
             html.indexOf("rel=\"stylesheet\""));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=41"));
-        assertTrue(html.contains("/assets/app.js?v=55"));
+        assertTrue(html.contains("/assets/app.css?v=42"));
+        assertTrue(html.contains("/assets/app.js?v=57"));
         assertTrue(source.contains("window.localStorage.setItem(THEME_STORAGE_KEY"));
         assertTrue(source.contains("toggle.setAttribute('aria-pressed'"));
         assertTrue(css.contains(":root[data-theme=\"dark\"]"));
@@ -480,6 +480,9 @@ class StatsWebInteractionUiContractTest
         String messages = function(source, "function liveMessagesPane()");
         String channel = function(source, "function liveChannelPane()");
         String systems = function(source, "function liveSystemsSection(onSelectionChange)");
+        String createRow = function(systems, "const createRow = (row) =>");
+        String showTable = function(systems, "const showTable = (tableId) =>");
+        String updateVisibleRows = function(systems, "const updateVisibleRows = (value) =>");
         String live = function(source, "async function renderLive()");
 
         assertTrue(live.contains("node('div', 'live-split')"));
@@ -547,8 +550,13 @@ class StatsWebInteractionUiContractTest
         assertTrue(selection.contains("diagnosticFrequencyHz"));
         assertTrue(selection.contains("TS ${diagnosticTimeslot}"));
         assertTrue(systems.contains("const currentRow = (value?.rows || []).find"));
-        assertTrue(systems.contains("onSelectionChange(liveEventSelection(value, currentRow))"));
+        assertTrue(systems.contains("onSelectionChange(liveEventSelection(value, row))"));
         assertTrue(systems.contains("if (selectedRowKey !== null && !incoming.has(selectedRowKey)) clearSelection()"));
+        assertTrue(systems.contains("const currentControlRow = (value) =>"));
+        assertTrue(createRow.contains("selectRow(value, currentRow)"));
+        assertTrue(showTable.contains("value.control_active ? currentControlRow(value) : null"));
+        assertTrue(showTable.contains("selectRow(value, currentControl)"));
+        assertFalse(updateVisibleRows.contains("currentControlRow(value)"));
         assertTrue(css.contains("grid-template-rows: minmax(0, 1fr) minmax(0, 1fr)"));
         assertTrue(css.contains(".live-split.details-collapsed"));
         assertTrue(css.contains(".live-details.collapsed .live-details-body"));
@@ -556,6 +564,9 @@ class StatsWebInteractionUiContractTest
         assertTrue(css.contains(".channel-diagnostic-canvas"));
         assertTrue(css.contains(".channel-diagnostic-view-toggle"));
         assertTrue(css.contains(".channel-diagnostic-view-button[aria-pressed=\"true\"]"));
+        assertTrue(css.contains(":not(.live-details-tab):not(.channel-diagnostic-view-button)"));
+        assertTrue(css.contains(":root[data-theme=\"dark\"] .channel-diagnostic-view-button[aria-pressed=\"true\"]"));
+        assertTrue(css.contains(".channel-diagnostic-view-button:hover {\n  color: var(--ink);"));
         assertTrue(css.contains("grid-template-columns: repeat(2, minmax(0, 1fr))"));
         assertTrue(css.contains(".channel-diagnostic-grid"));
     }
@@ -569,6 +580,7 @@ class StatsWebInteractionUiContractTest
         String inverseFrequencyMapping = function(source, "function tunerBinAtFrequency(domain, frequencyHz)");
         String snapper = function(source, "function tunerSnapFrequency(frequencyHz)");
         String tuner = function(source, "function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum')");
+        String refinement = function(tuner, "function queueViewportUpdate(immediate = false)");
         String live = function(source, "async function renderLive()");
         String css = Files.readString(APP_CSS);
 
@@ -588,8 +600,12 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("viewport_start_hz"));
         assertTrue(tuner.contains("viewport_end_hz"));
         assertTrue(tuner.contains("TUNER_SPECTRUM_REFINEMENT_DELAY_MS"));
-        assertTrue(tuner.contains("candidate !== pendingStream"));
-        assertTrue(tuner.contains("previous && previous !== candidate"));
+        assertTrue(refinement.contains("closeStreams();"));
+        assertFalse(refinement.contains("closePendingStream();"));
+        assertTrue(refinement.indexOf("closeStreams();") < refinement.indexOf("openDiagnosticStream();"));
+        assertFalse(tuner.contains("pendingStream"));
+        assertFalse(tuner.contains("refiningStream"));
+        assertFalse(tuner.contains("previous && previous !== candidate"));
         assertTrue(tuner.contains("addEventListener('wheel', onPlotWheel"));
         assertTrue(tuner.contains("addEventListener('pointermove', onPlotPointerMove"));
         assertTrue(tuner.contains("event.key === 'ArrowLeft'"));

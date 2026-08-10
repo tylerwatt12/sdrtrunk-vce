@@ -6696,7 +6696,6 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
   let disposed = false;
   let paused = false;
   let stream = null;
-  let pendingStream = null;
   let streamEpoch = 0;
   let generation = -1;
   let sequence = null;
@@ -6704,7 +6703,6 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
   let fullViewport = null;
   let viewport = null;
   let refining = false;
-  let refiningStream = null;
   let refinementTimer = null;
   let hoverRatio = null;
   let hoverCanvas = null;
@@ -6992,7 +6990,6 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
 
   function setRefining(value) {
     refining = value;
-    refiningStream = null;
     refiningBadge.hidden = !value;
     layout.classList.toggle('refining', value);
     if (value) setStatus('Refining');
@@ -7008,18 +7005,8 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
   function closeStreams() {
     streamEpoch += 1;
     const active = stream;
-    const pending = pendingStream;
     stream = null;
-    pendingStream = null;
     releaseConnection(active);
-    if (pending !== active) releaseConnection(pending);
-  }
-
-  function closePendingStream() {
-    if (!pendingStream) return;
-    const pending = pendingStream;
-    pendingStream = null;
-    releaseConnection(pending);
   }
 
   const selectedTargetId = () => targetSelect.value;
@@ -7091,8 +7078,7 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
     }
   }
 
-  function acceptTunerFrame(frame, connection) {
-    if (refining && connection !== refiningStream) return;
+  function acceptTunerFrame(frame) {
     if (frame.type !== DIAGNOSTIC_FRAME_TYPES.TUNER_FFT ||
         (generation === frame.generation && sequence !== null && frame.sequence <= sequence)) return;
     const values = diagnosticFloatPayload(frame);
@@ -7138,48 +7124,38 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
 
   function openDiagnosticStream() {
     if (!shouldRun()) return;
-    closePendingStream();
     const epoch = ++streamEpoch;
     let candidate = null;
     setStatus(refining ? 'Refining' : 'Connecting');
     if (!stream) setOverlay('Waiting for tuner data…');
     candidate = binaryFrameConnection('/live/tuner-diagnostics', diagnosticParameters(), {
       onOpen: () => {
-        if (disposed || candidate !== pendingStream || epoch !== streamEpoch) return;
-        const previous = stream;
-        stream = candidate;
-        pendingStream = null;
+        if (disposed || candidate !== stream || epoch !== streamEpoch) return;
         sequence = null;
         clearSpectrumSmoothing();
-        if (refining) refiningStream = candidate;
-        if (previous && previous !== candidate) releaseConnection(previous);
         setStatus(refining ? 'Refining' : 'Connected', refining ? 'state-stale' : 'state-current');
       },
       onFrame: (frame) => {
         if (disposed || candidate !== stream || epoch !== streamEpoch ||
             frame.type === DIAGNOSTIC_FRAME_TYPES.HEARTBEAT) return;
         if (frame.type === DIAGNOSTIC_FRAME_TYPES.STATE) acceptTunerState(frame);
-        else acceptTunerFrame(frame, candidate);
+        else acceptTunerFrame(frame);
       },
       onError: (error) => {
-        if (disposed || epoch !== streamEpoch || (candidate !== pendingStream && candidate !== stream)) return;
-        if (error?.status === 429 && candidate === pendingStream && stream) {
-          const previous = stream;
-          stream = null;
-          releaseConnection(previous);
-        }
+        if (disposed || epoch !== streamEpoch || candidate !== stream) return;
         setStatus(error?.status === 429 ? 'Busy' : 'Reconnecting');
         setOverlay(error?.status === 429 ? 'Tuner spectrum viewer capacity is currently in use.' :
           'Connection interrupted. Reconnecting…');
       }
     });
-    pendingStream = candidate;
+    stream = candidate;
   }
 
   function queueViewportUpdate(immediate = false) {
     window.clearTimeout(refinementTimer);
     refinementTimer = null;
-    closePendingStream();
+    //Free the old HTTP/1.1 connection before its refined replacement needs the same browser connection slot.
+    closeStreams();
     setRefining(true);
     if (immediate) openDiagnosticStream();
     else refinementTimer = window.setTimeout(() => {
@@ -7202,7 +7178,7 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
       return;
     }
     connectActiveChannels();
-    if (!stream && !pendingStream) openDiagnosticStream();
+    if (!stream) openDiagnosticStream();
   }
 
   function transformCanvas(canvas, scratch, fromViewport, toViewport) {
@@ -8113,10 +8089,20 @@ function liveSystemsSection(onSelectionChange) {
   let activeTableId = null;
   let selectedRowKey = null;
 
+  const currentControlRow = (value) => (value?.rows || []).find((row) =>
+    channelTagSet(row.tags).has('CURRENT_CONTROL')) || null;
+
   const clearSelection = () => {
     if (selectedRowKey === null) return;
     selectedRowKey = null;
     onSelectionChange(null);
+  };
+
+  const selectRow = (value, row) => {
+    if (!value || !row) return;
+    selectedRowKey = row.key;
+    rowNodes.forEach((candidate, key) => candidate.classList.toggle('selected', key === selectedRowKey));
+    onSelectionChange(liveEventSelection(value, row));
   };
 
   const cellText = (cell, value) => {
@@ -8168,9 +8154,7 @@ function liveSystemsSection(onSelectionChange) {
       const value = tables.get(activeTableId);
       const currentRow = (value?.rows || []).find((candidate) => candidate.key === element.dataset.key);
       if (!currentRow) return;
-      selectedRowKey = currentRow.key;
-      rowNodes.forEach((candidate, key) => candidate.classList.toggle('selected', key === selectedRowKey));
-      onSelectionChange(liveEventSelection(value, currentRow));
+      selectRow(value, currentRow);
     });
     updateRow(element, row);
     return element;
@@ -8209,6 +8193,8 @@ function liveSystemsSection(onSelectionChange) {
       empty.append(message);
       body.append(empty);
     }
+    const currentControl = value.control_active ? currentControlRow(value) : null;
+    if (currentControl) selectRow(value, currentControl);
     tabNodes.forEach((tab, id) => tab.classList.toggle('active', id === activeTableId));
   };
 
@@ -8264,8 +8250,7 @@ function liveSystemsSection(onSelectionChange) {
     const label = value.title || value.channel_name || value.table_id;
     tab.querySelector('.systems-tab-label').textContent = label;
     const quality = tab.querySelector('.systems-tab-quality');
-    const currentControl = (value.rows || []).find((row) =>
-      channelTagSet(row.tags).has('CURRENT_CONTROL'));
+    const currentControl = currentControlRow(value);
     const qualityObservedAt = Number(currentControl?.quality_observed_at_ms || 0);
     const qualityFresh = currentControl && value.control_active && qualityObservedAt > 0 &&
       Date.now() - qualityObservedAt <= SIGNAL_OFFLINE_MILLISECONDS;
