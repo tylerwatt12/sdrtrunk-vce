@@ -162,7 +162,7 @@ final class StatsApiV1Controller
         }
         else if("group-identities".equals(resource))
         {
-            return groupIdentities(scoped, segments);
+            return groupIdentities(request, scoped, segments);
         }
         else if("radios".equals(resource))
         {
@@ -196,12 +196,12 @@ final class StatsApiV1Controller
         throw notFound();
     }
 
-    private Object groupIdentities(StatsRequest request, List<String> segments)
+    private Object groupIdentities(StatsRequest request, StatsRequest scoped, List<String> segments)
     {
         if(segments.size() == 2)
         {
             request.requireOnly("q", "sort", "direction", "limit", "offset");
-            return page(mDatabase.systemTalkgroups(request));
+            return page(mDatabase.systemTalkgroups(scoped));
         }
         else if(segments.size() != 4 && segments.size() != 5)
         {
@@ -215,7 +215,7 @@ final class StatsApiV1Controller
             default -> throw new StatsApiException(400, "invalid_path",
                 "group identity kind must be talkgroup or patch_group", "kind");
         };
-        StatsRequest identity = request.withPathParameter("kind", kind)
+        StatsRequest identity = scoped.withPathParameter("kind", kind)
             .withPathParameter("talkgroup_id", segments.get(3));
 
         if(segments.size() == 4)
