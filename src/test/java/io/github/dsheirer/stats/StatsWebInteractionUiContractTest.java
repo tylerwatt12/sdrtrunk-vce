@@ -134,10 +134,20 @@ class StatsWebInteractionUiContractTest
     @Test
     void showsConfiguredSystemHeadingsAndLinksEveryTrunkedParent() throws Exception
     {
-        String systems = function(source(), "async function renderSystems()");
+        String source = source();
+        String systems = function(source, "async function renderSystems()");
+        assertTrue(source.contains("const SYSTEM_DIRECTORY_SITE_LIMIT = 100;"));
+        assertTrue(source.contains("const SYSTEM_DIRECTORY_SITE_CONCURRENCY = 4;"));
         assertTrue(systems.contains("row.configured_system || `${protocolFamily(row)} System`"));
         assertTrue(systems.contains("heading.append(systemLink(row, label))"));
-        assertFalse(systems.contains("siteNameSummary(row)"));
+        assertTrue(systems.contains("siteNameSummary(row)"));
+        assertTrue(systems.contains("systemApiPath(system.scope_token, 'sites')"));
+        assertTrue(systems.contains("SYSTEM_DIRECTORY_SITE_LIMIT"));
+        assertTrue(systems.contains("SYSTEM_DIRECTORY_SITE_CONCURRENCY"));
+        assertTrue(systems.contains("directory_type: 'system'"));
+        assertTrue(systems.contains("directory_type: 'site'"));
+        assertTrue(systems.contains("`directory-${row.directory_type}-row`"));
+        assertTrue(systems.contains("sitePage?.has_more"));
         assertFalse(systems.contains("directory-secondary"));
         assertFalse(systems.contains("row.site_names && row.site_names"));
         assertFalse(systems.contains("isP25(row) ? 'P25 System'"));

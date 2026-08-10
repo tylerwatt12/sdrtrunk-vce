@@ -60,6 +60,7 @@ class StatsWebDatabase
     static final int MAXIMUM_PATCH_MEMBER_ROWS = 512;
     static final int MAXIMUM_ACTIVITY_EVENT_BATCH = 500;
     static final int MAXIMUM_ACTIVITY_EVENT_MEMBERS = 64;
+    static final int MAXIMUM_SYSTEM_ACTIVITY_CONTEXTS = 200;
     private static final int IDENTITY_ROLE_DESTINATION = P25ActivityLogSchema.IDENTITY_ROLE_DESTINATION;
     private static final int IDENTITY_ROLE_SOURCE = P25ActivityLogSchema.IDENTITY_ROLE_SOURCE;
     private static final int IDENTITY_KIND_CHANNEL_OR_UNKNOWN =
@@ -2915,8 +2916,23 @@ class StatsWebDatabase
 
             if(scopeToken != null)
             {
-                sql.append(" AND scope.scope_token = ?");
-                parameters.add(scopeToken);
+                if(guid == null && context == null && talkgroup == null && radio == null)
+                {
+                    List<Long> contextIds = scopeActivityContextIds(connection, scopeToken);
+
+                    if(contextIds.isEmpty())
+                    {
+                        return cursorPage(List.of(), limit);
+                    }
+
+                    appendScopeActivityCandidates(sql, parameters, contextIds, hideGrants, beforeTimestamp,
+                        beforeId, limit + 1);
+                }
+                else
+                {
+                    sql.append(" AND scope.scope_token = ?");
+                    parameters.add(scopeToken);
+                }
             }
             if(guid != null)
             {
@@ -2976,6 +2992,65 @@ class StatsWebDatabase
             enrichActivityEncryption(rows);
             return cursorPage(rows, limit);
         });
+    }
+
+    private static List<Long> scopeActivityContextIds(Connection connection, String scopeToken) throws SQLException
+    {
+        List<Map<String,Object>> rows = queryRows(connection, """
+            SELECT ownership.context_id
+            FROM trunked_identity_scope_context ownership
+            JOIN trunked_identity_scope scope ON scope.scope_id = ownership.scope_id
+            WHERE scope.scope_token = ?
+            ORDER BY ownership.context_id
+            LIMIT ?
+            """, scopeToken, MAXIMUM_SYSTEM_ACTIVITY_CONTEXTS + 1);
+
+        if(rows.size() > MAXIMUM_SYSTEM_ACTIVITY_CONTEXTS)
+        {
+            throw new StatsApiException(400, "scope_too_broad",
+                "System activity spans too many monitored contexts; open a site activity view instead", "scope");
+        }
+
+        return rows.stream().map(row -> number(row.get("context_id"))).toList();
+    }
+
+    static void appendScopeActivityCandidates(StringBuilder sql, List<Object> parameters,
+                                               List<Long> contextIds, boolean hideGrants,
+                                               Long beforeTimestamp, long beforeId, int candidateLimit)
+    {
+        sql.append(" AND activity.id IN (SELECT candidate.id FROM (");
+
+        for(int index = 0; index < contextIds.size(); index++)
+        {
+            if(index > 0)
+            {
+                sql.append(" UNION ALL ");
+            }
+
+            sql.append("SELECT id, observed_at_ms FROM (")
+                .append("SELECT id, observed_at_ms FROM p25_activity_event_resolved ")
+                .append("WHERE context_id = ?");
+            parameters.add(contextIds.get(index));
+
+            if(hideGrants)
+            {
+                sql.append(" AND action <> 'GRANT'");
+            }
+
+            if(beforeTimestamp != null)
+            {
+                sql.append(" AND (observed_at_ms < ? OR (observed_at_ms = ? AND id < ?))");
+                parameters.add(beforeTimestamp);
+                parameters.add(beforeTimestamp);
+                parameters.add(beforeId);
+            }
+
+            sql.append(" ORDER BY observed_at_ms DESC, id DESC LIMIT ")
+                .append(candidateLimit).append(')');
+        }
+
+        sql.append(") candidate ORDER BY candidate.observed_at_ms DESC, candidate.id DESC LIMIT ")
+            .append(candidateLimit).append(')');
     }
 
     Map<String,Object> conventional(StatsRequest request)
