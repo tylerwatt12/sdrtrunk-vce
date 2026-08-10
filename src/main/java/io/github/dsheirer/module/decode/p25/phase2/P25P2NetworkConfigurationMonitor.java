@@ -218,8 +218,10 @@ public class P25P2NetworkConfigurationMonitor
             case PHASE1_D6_SNDCP_DATA_CHANNEL_ANNOUNCEMENT:
                 if(mac instanceof SNDCPDataChannelAnnouncement s)
                 {
-                    mSNDCPDataChannelAnnouncement = s;
-                    return observation(null, null, getChannelSnapshots("fdma_data", s.getChannel()),
+                    mSNDCPDataChannelAnnouncement = s.hasChannel() ? s : null;
+                    List<P25NetworkConfigurationSnapshot.Channel> channels = s.hasChannel() ?
+                        getChannelSnapshots("fdma_data", s.getChannel()) : Collections.emptyList();
+                    return observation(null, null, channels,
                         Collections.emptyList(), Collections.emptyList(), dataAccessStatus(s));
                 }
                 break;

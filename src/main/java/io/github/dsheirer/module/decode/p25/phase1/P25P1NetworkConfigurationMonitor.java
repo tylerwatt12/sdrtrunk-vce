@@ -240,11 +240,14 @@ public class P25P1NetworkConfigurationMonitor
                 }
                 break;
             case OSP_SNDCP_DATA_CHANNEL_ANNOUNCEMENT_EXPLICIT:
-                if(tsbk instanceof SNDCPDataChannelAnnouncementExplicit)
+                if(tsbk instanceof SNDCPDataChannelAnnouncementExplicit announcement)
                 {
-                    mSNDCPDataChannel = (SNDCPDataChannelAnnouncementExplicit)tsbk;
-                    return observation(null, null, getChannelSnapshots("fdma_data", mSNDCPDataChannel.getChannel()),
-                        Collections.emptyList(), Collections.emptyList(), dataAccessStatus(mSNDCPDataChannel));
+                    mSNDCPDataChannel = announcement.hasChannel() ? announcement : null;
+                    List<P25NetworkConfigurationSnapshot.Channel> channels = announcement.hasChannel() ?
+                        getChannelSnapshots("fdma_data", announcement.getChannel()) : Collections.emptyList();
+
+                    return observation(null, null, channels,
+                        Collections.emptyList(), Collections.emptyList(), dataAccessStatus(announcement));
                 }
                 break;
             case MOTOROLA_OSP_BASE_STATION_ID:
