@@ -1564,11 +1564,26 @@ class StatsWebDatabase
 
     Map<String,Object> systemTalkgroups(StatsRequest request)
     {
-        return read(connection -> {
+        return readSnapshot(connection -> {
             List<Map<String,Object>> rows = querySystemTalkgroups(connection, request,
                 request.limit() + 1, request.offset());
-            return page(rows, request);
+            Map<String,Object> response = page(rows, request);
+            response.put("totalCount", countSystemTalkgroups(connection, request));
+            return response;
         });
+    }
+
+    private static long countSystemTalkgroups(Connection connection, StatsRequest request) throws SQLException
+    {
+        StringBuilder sql = new StringBuilder("""
+            SELECT COUNT(*)
+            FROM trunked_identity_summary summary
+            JOIN trunked_identity_scope scope ON scope.scope_id = summary.scope_id
+            WHERE scope.scope_token = ? AND summary.identity_kind_code IN (1, 3)
+            """);
+        List<Object> parameters = new ArrayList<>(List.of(request.requiredText("scope")));
+        addIdentifierSearch(sql, parameters, request.search(), "summary.identity_id");
+        return scalarLong(connection, sql.toString(), parameters.toArray());
     }
 
     private List<Map<String,Object>> querySystemTalkgroups(Connection connection, StatsRequest request,
@@ -1615,11 +1630,26 @@ class StatsWebDatabase
 
     Map<String,Object> systemRadios(StatsRequest request)
     {
-        return read(connection -> {
+        return readSnapshot(connection -> {
             List<Map<String,Object>> rows = querySystemRadios(connection, request,
                 request.limit() + 1, request.offset());
-            return page(rows, request);
+            Map<String,Object> response = page(rows, request);
+            response.put("totalCount", countSystemRadios(connection, request));
+            return response;
         });
+    }
+
+    private static long countSystemRadios(Connection connection, StatsRequest request) throws SQLException
+    {
+        StringBuilder sql = new StringBuilder("""
+            SELECT COUNT(*)
+            FROM trunked_identity_summary summary
+            JOIN trunked_identity_scope scope ON scope.scope_id = summary.scope_id
+            WHERE scope.scope_token = ? AND summary.identity_kind_code = 2
+            """);
+        List<Object> parameters = new ArrayList<>(List.of(request.requiredText("scope")));
+        addIdentifierSearch(sql, parameters, request.search(), "summary.identity_id");
+        return scalarLong(connection, sql.toString(), parameters.toArray());
     }
 
     private List<Map<String,Object>> querySystemRadios(Connection connection, StatsRequest request,
@@ -1676,7 +1706,7 @@ class StatsWebDatabase
     {
         String scopeToken = request.requiredText("scope");
 
-        return read(connection -> {
+        return readSnapshot(connection -> {
             StringBuilder sql = new StringBuilder("""
                 SELECT scope.scope_id, scope.scope_token, scope.protocol_code, scope.identity_domain_code,
                     CASE scope.protocol_code WHEN 1 THEN 'P25' WHEN 3 THEN 'DMR'
@@ -1706,20 +1736,7 @@ class StatsWebDatabase
                 """);
             List<Object> parameters = new ArrayList<>(List.of(scopeToken));
 
-            if(request.search() != null)
-            {
-                sql.append("""
-                     AND (CAST(summary.identity_id AS TEXT) LIKE ?
-                       OR (scope.protocol_code = 4 AND scope.identity_domain_code = 2
-                         AND printf('%02d-%04d', ((summary.identity_id >> 11) & 31),
-                           (summary.identity_id & 2047)) LIKE ?)
-                       OR lower(summary.last_talker_alias) LIKE ?)
-                    """);
-                String like = like(request.search());
-                parameters.add(like);
-                parameters.add(like);
-                parameters.add(like);
-            }
+            addTalkerAliasSearch(sql, parameters, request.search());
 
             sql.append(" ORDER BY ").append(order(request, RADIO_SORT_COLUMNS, "talker_alias"))
                 .append(", summary.identity_id LIMIT ? OFFSET ?");
@@ -1727,8 +1744,25 @@ class StatsWebDatabase
             List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
             enrichScopeRadios(connection, rows, "radio_id", "alias_");
             enrichScopeTalkgroups(connection, rows, "last_talkgroup_id", "talkgroup_alias_");
-            return page(rows, request);
+            Map<String,Object> response = page(rows, request);
+            response.put("totalCount", countSystemTalkerAliases(connection, request));
+            return response;
         });
+    }
+
+    private static long countSystemTalkerAliases(Connection connection, StatsRequest request) throws SQLException
+    {
+        StringBuilder sql = new StringBuilder("""
+            SELECT COUNT(*)
+            FROM trunked_identity_summary summary
+            JOIN trunked_identity_scope scope ON scope.scope_id = summary.scope_id
+            WHERE scope.scope_token = ? AND summary.identity_kind_code = 2
+              AND summary.last_talker_alias IS NOT NULL
+              AND trim(summary.last_talker_alias) <> ''
+            """);
+        List<Object> parameters = new ArrayList<>(List.of(request.requiredText("scope")));
+        addTalkerAliasSearch(sql, parameters, request.search());
+        return scalarLong(connection, sql.toString(), parameters.toArray());
     }
 
     Map<String,Object> talkgroup(StatsRequest request)
@@ -4151,6 +4185,24 @@ class StatsWebDatabase
                 .append("AND printf('%02d-%04d', ((").append(column).append(" >> 11) & 31), (")
                 .append(column).append(" & 2047)) LIKE ?))");
             String like = like(search);
+            parameters.add(like);
+            parameters.add(like);
+        }
+    }
+
+    private static void addTalkerAliasSearch(StringBuilder sql, List<Object> parameters, String search)
+    {
+        if(search != null)
+        {
+            sql.append("""
+                 AND (CAST(summary.identity_id AS TEXT) LIKE ?
+                   OR (scope.protocol_code = 4 AND scope.identity_domain_code = 2
+                     AND printf('%02d-%04d', ((summary.identity_id >> 11) & 31),
+                       (summary.identity_id & 2047)) LIKE ?)
+                   OR lower(summary.last_talker_alias) LIKE ?)
+                """);
+            String like = like(search);
+            parameters.add(like);
             parameters.add(like);
             parameters.add(like);
         }

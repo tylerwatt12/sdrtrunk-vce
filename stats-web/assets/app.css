@@ -2950,11 +2950,17 @@ th.center {
 
 .pager {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
   gap: 7px;
   padding: 8px;
   border-top: 1px solid var(--line);
+}
+
+.pager-top {
+  border-top: 0;
+  border-bottom: 1px solid var(--line);
 }
 
 .badge {

@@ -227,6 +227,25 @@ class StatsWebInteractionUiContractTest
     }
 
     @Test
+    void showsSystemIdentityTotalsWithNavigationAboveAndBelowEachTable() throws Exception
+    {
+        String source = source();
+        String pager = function(source, "function pager(page, position = 'bottom')");
+        String pagedSection = function(source,
+            "function pagedSection(title, page, columns, searchPlaceholder, tableType, action = null, options = {})");
+        String system = function(source, "async function renderSystem()");
+        String css = Files.readString(APP_CSS);
+
+        assertTrue(pager.contains("Number(page.totalCount)"));
+        assertTrue(pager.contains("of ${number(totalCount)}"));
+        assertTrue(pager.contains("aria-label"));
+        assertTrue(pagedSection.contains("if (options.topPager) block.append(pager(page, 'top'))"));
+        assertTrue(pagedSection.contains("block.append(pager(page))"));
+        assertEquals(3, system.split("topPager: true", -1).length - 1);
+        assertTrue(css.contains(".pager-top {\n  border-top: 0;\n  border-bottom: 1px solid var(--line);"));
+    }
+
+    @Test
     void exportsCompleteFilteredManagerTablesWithoutPaginationParameters() throws Exception
     {
         String source = source();

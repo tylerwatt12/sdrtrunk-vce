@@ -80,6 +80,7 @@ class StatsWebDatabaseTest
         assertEquals(0, number(talkgroup.get("streamed_count")));
         assertFalse(talkgroup.containsKey("grant_count"));
         assertFalse((Boolean)talkgroups.get("hasMore"));
+        assertEquals(1L, number(talkgroups.get("totalCount")));
 
         Map<String,Object> radios = mDatabase.systemRadios(request(
             "/api/system/radios?scope=p25:BEE00:348"));
@@ -87,6 +88,7 @@ class StatsWebDatabaseTest
         assertEquals("Engine 1", radio.get("alias_name"));
         assertEquals(56132L, number(radio.get("affiliated_talkgroup_id")));
         assertEquals("Dispatch", radio.get("affiliated_talkgroup_alias_name"));
+        assertEquals(1L, number(radios.get("totalCount")));
 
         Map<String,Object> talkerAliases = mDatabase.systemTalkerAliases(request(
             "/api/system/talker-aliases?scope=p25:BEE00:348"));
@@ -95,6 +97,7 @@ class StatsWebDatabaseTest
         assertEquals("CAR 201", talkerAlias.get("last_talker_alias"));
         assertEquals("Engine 1", talkerAlias.get("alias_name"));
         assertEquals("Dispatch", talkerAlias.get("talkgroup_alias_name"));
+        assertEquals(1L, number(talkerAliases.get("totalCount")));
 
         Map<String,Object> relationships = mDatabase.radioTalkgroupRelationships(request(
             "/api/relationships?scope=p25:BEE00:348&radio_id=1811332"));
@@ -3031,6 +3034,35 @@ class StatsWebDatabaseTest
         recentReceiver = rowsFrom(mDatabase.dashboard(), "recentReceivers").stream()
             .filter(receiver -> GUID.equals(receiver.get("guid"))).findFirst().orElseThrow();
         assertEquals("P25", recentReceiver.get("protocol"));
+    }
+
+    @Test
+    void reportsFilteredTotalsForSystemIdentityPages() throws Exception
+    {
+        seedSortingRows(mDatabasePath);
+
+        Map<String,Object> talkgroups = mDatabase.systemTalkgroups(request(
+            "/api/system/talkgroups?scope=p25:BEE00:348&limit=1"));
+        assertEquals(2L, number(talkgroups.get("totalCount")));
+        assertTrue((Boolean)talkgroups.get("hasMore"));
+        assertEquals(1L, number(mDatabase.systemTalkgroups(request(
+            "/api/system/talkgroups?scope=p25:BEE00:348&q=100")).get("totalCount")));
+
+        Map<String,Object> radios = mDatabase.systemRadios(request(
+            "/api/system/radios?scope=p25:BEE00:348&limit=1"));
+        assertEquals(2L, number(radios.get("totalCount")));
+        assertTrue((Boolean)radios.get("hasMore"));
+        assertEquals(1L, number(mDatabase.systemRadios(request(
+            "/api/system/radios?scope=p25:BEE00:348&q=100")).get("totalCount")));
+
+        Map<String,Object> talkerAliases = mDatabase.systemTalkerAliases(request(
+            "/api/system/talker-aliases?scope=p25:BEE00:348&limit=1"));
+        assertEquals(2L, number(talkerAliases.get("totalCount")));
+        assertTrue((Boolean)talkerAliases.get("hasMore"));
+        assertEquals(1L, number(mDatabase.systemTalkerAliases(request(
+            "/api/system/talker-aliases?scope=p25:BEE00:348&q=car")).get("totalCount")));
+        assertEquals(0L, number(mDatabase.systemTalkerAliases(request(
+            "/api/system/talker-aliases?scope=p25:BEE00:348&q=missing")).get("totalCount")));
     }
 
     @Test

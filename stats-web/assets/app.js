@@ -1689,11 +1689,18 @@ function searchBar(placeholder = 'Search') {
   return form;
 }
 
-function pager(page) {
-  const bar = node('div', 'pager');
+function pager(page, position = 'bottom') {
+  const bar = node('nav', `pager pager-${position}`);
+  bar.setAttribute('aria-label', `${position === 'top' ? 'Top' : 'Bottom'} table pagination`);
   const offset = Number(page.offset || 0);
   const limit = Number(page.limit || 100);
-  bar.append(node('span', 'muted', `Rows ${offset + (page.rows.length ? 1 : 0)}-${offset + page.rows.length}`));
+  const firstRow = offset + (page.rows.length ? 1 : 0);
+  const lastRow = offset + page.rows.length;
+  const totalCount = Number(page.totalCount);
+  const range = Number.isFinite(totalCount) && totalCount >= 0 ?
+    `Rows ${number(firstRow)}-${number(lastRow)} of ${number(totalCount)}` :
+    `Rows ${number(firstRow)}-${number(lastRow)}`;
+  bar.append(node('span', 'muted', range));
   bar.append(offset > 0 ? anchor('Previous', currentHref({ offset: Math.max(0, offset - limit) }), 'button secondary') :
     node('span', 'button disabled', 'Previous'));
   bar.append(page.hasMore ? anchor('Next', currentHref({ offset: page.nextOffset }), 'button secondary') :
@@ -1701,15 +1708,17 @@ function pager(page) {
   return bar;
 }
 
-function pagedSection(title, page, columns, searchPlaceholder, tableType, action = null) {
+function pagedSection(title, page, columns, searchPlaceholder, tableType, action = null, options = {}) {
   return fragment(searchPlaceholder ? searchBar(searchPlaceholder) : null,
     (() => {
-      const block = section(title, table(page.rows, columns, 'No rows', {
+      const block = section(title, null, action);
+      if (options.topPager) block.append(pager(page, 'top'));
+      block.append(table(page.rows, columns, 'No rows', {
         type: tableType,
         serverSort: true,
         defaultSort: SERVER_TABLE_DEFAULT_SORTS[tableType],
         defaultDirection: 'desc'
-      }), action);
+      }));
       block.append(pager(page));
       return block;
     })());
@@ -8411,11 +8420,11 @@ async function renderSystem() {
   if (tab === 'talkgroups') {
     const page = await api('/api/system/talkgroups', pageParameters(systemScope));
     content.append(pagedSection('Talkgroups', page, talkgroupColumns, 'Search talkgroup ID', 'talkgroups',
-      exportCsvLink('system-talkgroups', systemScope)));
+      exportCsvLink('system-talkgroups', systemScope), { topPager: true }));
   } else if (tab === 'radios') {
     const page = await api('/api/system/radios', pageParameters(systemScope));
     content.append(pagedSection('Radios', page, systemRadioColumns(system), 'Search radio ID', 'radios',
-      exportCsvLink('system-radios', systemScope)));
+      exportCsvLink('system-radios', systemScope), { topPager: true }));
   } else if (tab === 'talker-aliases') {
     const page = await api('/api/system/talker-aliases', pageParameters(systemScope));
     const columns = [
@@ -8434,7 +8443,7 @@ async function renderSystem() {
       { id: 'last-seen', label: 'Alias Seen', fullLabel: 'Talker Alias Last Seen', render: (row) => dateTime(row.last_talker_alias_seen_ms), sort: 'talker_alias_seen', sortValue: (row) => Number(row.last_talker_alias_seen_ms || 0) }
     ];
     const block = pagedSection('Talker Alias Summary', page, columns,
-      'Search radio ID or talker alias', 'talker-aliases');
+      'Search radio ID or talker alias', 'talker-aliases', null, { topPager: true });
     if (!page.rows.length) block.querySelector('.empty').textContent = 'No talker aliases recorded for this system';
     content.append(block);
   } else if (tab === 'activity') {
