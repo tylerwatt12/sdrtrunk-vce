@@ -97,6 +97,23 @@ public class Dispatcher<E> implements Listener<E>
     }
 
     /**
+     * Constructs a bounded dispatcher that uses the shared dispatcher pool and broadcasts heartbeats.  When full, the
+     * oldest queued element is discarded and supplied to the discard handler.
+     *
+     * @param threadName used for diagnostics
+     * @param interval for processing each batch in milliseconds
+     * @param heartbeatManager to receive a heartbeat command at each processing interval
+     * @param maximumQueueSize maximum queued elements
+     * @param discardHandler cleanup callback for discarded elements
+     */
+    public Dispatcher(String threadName, long interval, HeartbeatManager heartbeatManager, int maximumQueueSize,
+                      Consumer<E> discardHandler)
+    {
+        this(threadName, interval, ExecutorType.SHARED, maximumQueueSize, discardHandler);
+        mHeartbeatManager = heartbeatManager;
+    }
+
+    /**
      * Constructs an instance that uses the shared dispatcher pool.  Use for channel sources and channel output
      * processors where thread-per-instance overhead is the primary concern.
      * @param threadName used for diagnostics
@@ -160,31 +177,44 @@ public class Dispatcher<E> implements Listener<E>
     }
 
     /**
-     * Primary input method for adding buffers to this processor.  Note: incoming buffers will be ignored if this
-     * processor is in a stopped state.  You must invoke start() to allow incoming buffers and initiate buffer
-     * processing.
+     * Primary input method for adding buffers to this processor.  Incoming elements received while stopped are passed
+     * to the discard handler, when configured.  You must invoke start() to queue elements and initiate processing.
      *
      * @param e to enqueue for distribution to a registered listener
      */
     public void receive(E e)
     {
-        if(mRunning.get())
+        if(!mRunning.get())
         {
-            if(!mQueue.offer(e))
+            discard(e, false);
+            return;
+        }
+
+        boolean accepted = mQueue.offer(e);
+
+        if(!accepted)
+        {
+            E dropped = mQueue.poll();
+
+            if(dropped != null)
             {
-                E dropped = mQueue.poll();
-
-                if(dropped != null)
-                {
-                    discard(dropped, true);
-                }
-
-                //Another producer can claim the freed slot.  Never block a real-time producer if that happens.
-                if(!mQueue.offer(e))
-                {
-                    discard(e, true);
-                }
+                discard(dropped, true);
             }
+
+            //Another producer can claim the freed slot.  Never block a real-time producer if that happens.
+            accepted = mQueue.offer(e);
+
+            if(!accepted)
+            {
+                discard(e, true);
+            }
+        }
+
+        //Shutdown can race the initial running-state check.  Remove and clean up this element if stop() already
+        //drained the queue before this producer completed its offer.
+        if(accepted && !mRunning.get() && mQueue.remove(e))
+        {
+            discard(e, false);
         }
     }
 

@@ -454,20 +454,15 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             return;
         }
 
+        List<Channel> trafficChannelsToDisable;
+        ChannelActivityModel channelActivityModel;
         mLock.lock();
 
         try
         {
-            //Shutdown all existing traffic channels and clear the maps.
-            List<Channel> trafficChannelsToDisable = new ArrayList<>(mAllocatedTrafficChannelMap.values());
-
-            for(Channel channelToDisable : trafficChannelsToDisable)
-            {
-                if(!parentChannel.equals(channelToDisable))
-                {
-                    broadcast(new ChannelEvent(channelToDisable, Event.REQUEST_DISABLE));
-                }
-            }
+            //Capture traffic channels under the manager lock, but disable them after releasing it.  Channel disable is
+            //synchronous and can re-enter a decoder state that is simultaneously waiting for this manager lock.
+            trafficChannelsToDisable = new ArrayList<>(mAllocatedTrafficChannelMap.values());
 
             mTS1ChannelGrantEventMap.clear();
             mTS2ChannelGrantEventMap.clear();
@@ -479,15 +474,25 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
             //Store the current control channel in the allocated channel map so that we don't allocate a traffic channel against it
             mAllocatedTrafficChannelMap.put(current, parentChannel);
-
-            if(mChannelActivityModel != null && parentChannel.getSourceConfiguration() instanceof SourceConfigTunerMultipleFrequency)
-            {
-                mChannelActivityModel.p25CurrentControl(parentChannel, current);
-            }
+            channelActivityModel = mChannelActivityModel;
         }
         finally
         {
             mLock.unlock();
+        }
+
+        for(Channel channelToDisable : trafficChannelsToDisable)
+        {
+            if(!parentChannel.equals(channelToDisable))
+            {
+                broadcast(new ChannelEvent(channelToDisable, Event.REQUEST_DISABLE));
+            }
+        }
+
+        if(channelActivityModel != null &&
+            parentChannel.getSourceConfiguration() instanceof SourceConfigTunerMultipleFrequency)
+        {
+            channelActivityModel.p25CurrentControl(parentChannel, current);
         }
     }
 

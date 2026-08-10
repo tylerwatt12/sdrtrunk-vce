@@ -39,6 +39,7 @@ import java.lang.reflect.Field;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
@@ -117,6 +118,27 @@ class P25TrafficChannelManagerTest
         manager.changeControlFrequency(851_012_500L, 852_012_500L, parentChannel);
 
         assertTrue(frequencyBands(manager).isEmpty());
+    }
+
+    @Test
+    void controlFrequencyChangeDisablesTrafficChannelsAfterReleasingManagerLock() throws Exception
+    {
+        Channel parentChannel = new Channel("Control");
+        Channel trafficChannel = new Channel("Traffic");
+        TestP25TrafficChannelManager manager = new TestP25TrafficChannelManager(parentChannel);
+        allocatedTrafficChannels(manager).put(851_012_500L, trafficChannel);
+        ReentrantLock managerLock = managerLock(manager);
+        AtomicReference<Channel> disabledChannel = new AtomicReference<>();
+        AtomicReference<Boolean> callbackHeldManagerLock = new AtomicReference<>();
+        manager.setChannelEventListener(event -> {
+            disabledChannel.set(event.getChannel());
+            callbackHeldManagerLock.set(managerLock.isHeldByCurrentThread());
+        });
+
+        manager.changeControlFrequency(851_000_000L, 852_000_000L, parentChannel);
+
+        assertSame(trafficChannel, disabledChannel.get());
+        assertEquals(Boolean.FALSE, callbackHeldManagerLock.get());
     }
 
     @Test
@@ -376,6 +398,21 @@ class P25TrafficChannelManagerTest
             "mTS2ChannelGrantEventMap" : "mTS1ChannelGrantEventMap");
         field.setAccessible(true);
         return (Map<Long,P25TrafficChannelEventTracker>)field.get(manager);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<Long,Channel> allocatedTrafficChannels(P25TrafficChannelManager manager) throws Exception
+    {
+        Field field = P25TrafficChannelManager.class.getDeclaredField("mAllocatedTrafficChannelMap");
+        field.setAccessible(true);
+        return (Map<Long,Channel>)field.get(manager);
+    }
+
+    private static ReentrantLock managerLock(P25TrafficChannelManager manager) throws Exception
+    {
+        Field field = P25TrafficChannelManager.class.getDeclaredField("mLock");
+        field.setAccessible(true);
+        return (ReentrantLock)field.get(manager);
     }
 
     private static IFrequencyBand band(int identifier, long base, long spacing, int timeslots)

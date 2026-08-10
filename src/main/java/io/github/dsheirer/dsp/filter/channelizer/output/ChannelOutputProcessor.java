@@ -29,6 +29,7 @@ import org.slf4j.LoggerFactory;
 public abstract class ChannelOutputProcessor implements IPolyphaseChannelOutputProcessor
 {
     private static final Logger mLog = LoggerFactory.getLogger(ChannelOutputProcessor.class);
+    protected static final int CHANNEL_RESULTS_QUEUE_CAPACITY = 8;
 
     private Dispatcher<ComplexPolyphaseChannelizerM2.ChannelResultsBuffer> mChannelResultsDispatcher;
     private HeartbeatManager mHeartbeatManager;
@@ -48,7 +49,8 @@ public abstract class ChannelOutputProcessor implements IPolyphaseChannelOutputP
         mInputChannelCount = inputChannelCount;
         //Process 1/10th of the sample rate per second at a rate of 20 times a second (200% of anticipated rate)
         mHeartbeatManager = heartbeatManager;
-        mChannelResultsDispatcher = new Dispatcher<>(threadName,20, mHeartbeatManager);
+        mChannelResultsDispatcher = new Dispatcher<>(threadName, 20, mHeartbeatManager,
+            CHANNEL_RESULTS_QUEUE_CAPACITY, ComplexPolyphaseChannelizerM2.ChannelResultsBuffer::release);
         mChannelResultsDispatcher.setListener(channelResultsBuffer -> {
             try
             {
@@ -74,7 +76,9 @@ public abstract class ChannelOutputProcessor implements IPolyphaseChannelOutputP
     @Override
     public void stop()
     {
-        mChannelResultsDispatcher.flushAndStop();
+        //Queued channel results are stale at shutdown.  Discarding invokes release() so shared result batches can be
+        //recycled without forcing old samples through the assembler on the stopping thread.
+        mChannelResultsDispatcher.stop();
     }
 
     /**
