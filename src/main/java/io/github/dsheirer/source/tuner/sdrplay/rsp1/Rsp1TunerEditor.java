@@ -135,6 +135,7 @@ public class Rsp1TunerEditor extends RspTunerEditor<Rsp1TunerConfiguration>
             AgcMode current = getTunerController().getControlRsp().getAgcMode();
             getAgcButton().setSelected(current == null || current.equals(AgcMode.ENABLE));
             getAgcButton().setText((current == null || current.equals(AgcMode.ENABLE)) ? AUTOMATIC : MANUAL);
+            getLNASlider().setMaximum(getTunerController().getControlRsp().getMaximumLNASetting());
             getLNASlider().setLNA(getTunerController().getControlRsp().getLNA());
             getIfGainSlider().setGR(getTunerController().getControlRsp().getBasebandGainReduction());
 

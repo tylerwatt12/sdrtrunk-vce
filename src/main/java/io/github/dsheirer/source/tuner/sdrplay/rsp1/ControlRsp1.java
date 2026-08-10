@@ -20,18 +20,13 @@
 package io.github.dsheirer.source.tuner.sdrplay.rsp1;
 
 import io.github.dsheirer.source.tuner.sdrplay.ControlRsp;
-import io.github.dsheirer.source.tuner.sdrplay.api.SDRPlayException;
 import io.github.dsheirer.source.tuner.sdrplay.api.device.Rsp1Device;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Control wrapper for an RSP1 Device
  */
 public class ControlRsp1 extends ControlRsp<Rsp1Device> implements IControlRsp1
 {
-    private Logger mLog = LoggerFactory.getLogger(ControlRsp1.class);
-
     /**
      * Constructs an instance
      * @param device for the device
@@ -42,35 +37,12 @@ public class ControlRsp1 extends ControlRsp<Rsp1Device> implements IControlRsp1
     }
 
     /**
-     * Maximum LNA index value as determined by frequency range using the API section 5. Gain Reduction Table values.
+     * Maximum LNA index value from the API section 5 Gain Reduction Table for the RSP1.
      * @return maximum (valid) LNA index value.
      */
     @Override
     public int getMaximumLNASetting()
     {
-        try
-        {
-            long frequency = getTunedFrequency();
-
-            if(frequency < 60_000_000)
-            {
-                return 6;
-            }
-            else if(frequency < 1_000_000_000)
-            {
-                return 9;
-            }
-            else
-            {
-                return 8;
-            }
-
-        }
-        catch(SDRPlayException se)
-        {
-            mLog.error("Error getting tuned frequency while determining maximum LNA setting.");
-        }
-
-        return 6; //Use the most restrictive setting as a default.
+        return 3;
     }
 }
