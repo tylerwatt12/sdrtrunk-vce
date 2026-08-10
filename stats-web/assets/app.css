@@ -603,7 +603,13 @@ body[data-view="live"] .channel-diagnostic-readouts {
   max-width: 100%;
   margin-bottom: 12px;
   overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
   border-bottom: 1px solid var(--line-dark);
+}
+
+.tabs::-webkit-scrollbar {
+  display: none;
 }
 
 .tabs a,

@@ -1,6 +1,7 @@
 let route = new URLSearchParams(window.location.search);
 const content = document.getElementById('content');
 const tableOnly = route.get('layout') === 'table';
+const WEB_CLIENT_REVISION = document.querySelector('meta[name="sdrtrunk-web-revision"]')?.content?.trim() || '';
 const TABLE_WIDTH_COOKIE = 'sdrtrunk_table_widths_v4';
 const ALIAS_CATALOG_COLUMNS_STORAGE_KEY = 'sdrtrunk_alias_catalog_enrichment_columns_v1';
 const TABLE_WIDTH_MINIMUM = 48;
@@ -195,6 +196,7 @@ const ALIAS_CATALOG_DEFAULT_ENRICHMENT_COLUMNS = Object.freeze([
   'relationships', 'last-evidence'
 ]);
 let serviceStatus = null;
+let webClientReloadAttempted = false;
 let tableWidthPreferences = readTableWidthPreferences();
 let activeReadOnlyModal = null;
 let aliasEditorSelection = new Set();
@@ -9936,8 +9938,32 @@ function loggingAvailabilitySignature() {
   return [logging.available, logging.summaryActive, historyMode, logging.state].join('|');
 }
 
+async function reloadForWebClientRevision() {
+  let serverRevision = '';
+  try {
+    const response = await fetch('/', { method: 'HEAD', cache: 'no-store', credentials: 'same-origin' });
+    if (!response.ok) return false;
+    serverRevision = String(response.headers.get('X-Sdrtrunk-Web-Revision') || '').trim();
+  } catch (error) {
+    return false;
+  }
+
+  if (!WEB_CLIENT_REVISION || !serverRevision || serverRevision === WEB_CLIENT_REVISION ||
+      webClientReloadAttempted) return false;
+
+  webClientReloadAttempted = true;
+  const label = document.getElementById('server-status');
+  label.textContent = 'Web update available · reloading';
+  window.setTimeout(() => {
+    label.textContent = 'Web update available · reload required';
+  }, 1_000);
+  window.location.reload();
+  return true;
+}
+
 async function loadStatus(refreshCurrentView = false) {
   const previousSignature = loggingAvailabilitySignature();
+  if (await reloadForWebClientRevision()) return;
   if (accessSessionAvailable && !capabilityAllowed(ACCESS_CAPABILITIES.DASHBOARD)) {
     serviceStatus = null;
     document.getElementById('server-status').textContent = 'Status restricted';

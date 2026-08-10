@@ -64,7 +64,8 @@ class StatsApiV1HttpContractTest
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
         Path assets = mTemporaryDirectory.resolve("assets");
         Files.createDirectories(assets);
-        Files.writeString(assets.resolve("index.html"), "<!doctype html><title>v1 test</title>");
+        Files.writeString(assets.resolve("index.html"), "<!doctype html>" +
+            "<meta name=\"sdrtrunk-web-revision\" content=\"test-revision\"><title>v1 test</title>");
         mPreviousAssetOverride = System.getProperty(StatsWebPath.ROOT_OVERRIDE_PROPERTY);
         System.setProperty(StatsWebPath.ROOT_OVERRIDE_PROPERTY, assets.toString());
         TestApplicationPreference applicationPreference = new TestApplicationPreference();
@@ -140,6 +141,18 @@ class StatsApiV1HttpContractTest
     }
 
     @Test
+    void staticIndexPublishesItsWebClientRevisionWithoutExpandingTheApi() throws Exception
+    {
+        HttpResponse<String> response = send(HttpRequest.newBuilder(mOrigin)
+            .timeout(Duration.ofSeconds(10))
+            .method("HEAD", HttpRequest.BodyPublishers.noBody())
+            .build());
+        assertEquals(200, response.statusCode());
+        assertEquals("test-revision", response.headers().firstValue("X-Sdrtrunk-Web-Revision").orElseThrow());
+        assertTrue(response.body().isEmpty());
+    }
+
+    @Test
     void invalidQueriesAndMethodsUseTheStructuredErrorContract() throws Exception
     {
         HttpResponse<String> unknown = get(StatsApiV1.STATUS + "?surprise=true");
@@ -198,6 +211,7 @@ class StatsApiV1HttpContractTest
     {
         for(String path: List.of(
             "/api/status",
+            "/api/talkgroup?scope=p25%3ABEE00%3A348&id=51900",
             "/api/system-directory",
             "/api/alias-list/observed-talkgroups?list=1",
             "/api/export.csv?dataset=system-talkgroups",
