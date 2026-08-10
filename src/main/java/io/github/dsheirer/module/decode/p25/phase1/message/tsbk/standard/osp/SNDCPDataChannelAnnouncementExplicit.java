@@ -30,7 +30,6 @@ import io.github.dsheirer.module.decode.p25.phase1.message.IFrequencyBandReceive
 import io.github.dsheirer.module.decode.p25.phase1.message.tsbk.OSPMessage;
 import io.github.dsheirer.module.decode.p25.reference.DataServiceOptions;
 
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
@@ -93,6 +92,16 @@ public class SNDCPDataChannelAnnouncementExplicit extends OSPMessage implements 
         return getMessage().get(REQUESTED_ACCESS_FLAG);
     }
 
+    /**
+     * Indicates if this announcement contains a usable packet-data channel assignment.
+     *
+     * TIA-102.AABC-B (2005), section 5.2.7 defines the channel fields as valid only when autonomous access is set.
+     */
+    public boolean hasChannel()
+    {
+        return isAutonomousAccess();
+    }
+
     public DataServiceOptions getServiceOptions()
     {
         if(mServiceOptions == null)
@@ -131,8 +140,7 @@ public class SNDCPDataChannelAnnouncementExplicit extends OSPMessage implements 
     {
         if(mChannels == null)
         {
-            mChannels = new ArrayList<>();
-            mChannels.add(getChannel());
+            mChannels = hasChannel() ? Collections.singletonList(getChannel()) : Collections.emptyList();
         }
 
         return mChannels;

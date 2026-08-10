@@ -92,6 +92,16 @@ public class SNDCPDataChannelAnnouncement extends MacStructureDataService implem
     }
 
     /**
+     * Indicates if this announcement contains a usable packet-data channel assignment.
+     *
+     * TIA-102.AABC-B (2005), section 5.2.7 defines the channel fields as valid only when autonomous access is set.
+     */
+    public boolean hasChannel()
+    {
+        return isAutonomousAccess();
+    }
+
+    /**
      * Channel
      */
     public APCO25Channel getChannel()
@@ -134,7 +144,7 @@ public class SNDCPDataChannelAnnouncement extends MacStructureDataService implem
     {
         if(mIdentifiers == null)
         {
-            mIdentifiers = Collections.singletonList(getChannel());
+            mIdentifiers = hasChannel() ? Collections.singletonList(getChannel()) : Collections.emptyList();
         }
 
         return mIdentifiers;
@@ -143,6 +153,6 @@ public class SNDCPDataChannelAnnouncement extends MacStructureDataService implem
     @Override
     public List<IChannelDescriptor> getChannels()
     {
-        return Collections.singletonList(getChannel());
+        return hasChannel() ? Collections.singletonList(getChannel()) : Collections.emptyList();
     }
 }

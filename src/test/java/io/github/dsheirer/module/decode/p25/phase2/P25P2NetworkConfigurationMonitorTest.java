@@ -18,9 +18,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.bits.IntField;
+import io.github.dsheirer.module.decode.p25.phase1.message.P25FrequencyBand;
 import io.github.dsheirer.module.decode.p25.phase2.enumeration.DataUnitID;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.MacMessage;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.MacMessageFactory;
+import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.SNDCPDataChannelAnnouncement;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.SynchronizationBroadcast;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import java.time.Instant;
@@ -28,6 +30,41 @@ import org.junit.jupiter.api.Test;
 
 class P25P2NetworkConfigurationMonitorTest
 {
+    @Test
+    void ignoresSndcpChannelFieldsWhenAutonomousAccessIsClear()
+    {
+        MacMessage message = sndcpDataAnnouncement(false, true);
+        SNDCPDataChannelAnnouncement announcement =
+            (SNDCPDataChannelAnnouncement)message.getMacStructure();
+        P25P2NetworkConfigurationMonitor monitor = new P25P2NetworkConfigurationMonitor();
+
+        assertFalse(announcement.hasChannel());
+        assertTrue(announcement.getChannels().isEmpty());
+
+        P25NetworkConfigurationSnapshot observation = monitor.processMacMessage(message);
+
+        assertTrue(observation.channels().isEmpty());
+        assertEquals("Request Only", observation.siteStatus().dataAccess());
+    }
+
+    @Test
+    void retainsSndcpChannelFieldsWhenAutonomousAccessIsSet()
+    {
+        MacMessage message = sndcpDataAnnouncement(true, true);
+        SNDCPDataChannelAnnouncement announcement =
+            (SNDCPDataChannelAnnouncement)message.getMacStructure();
+        P25P2NetworkConfigurationMonitor monitor = new P25P2NetworkConfigurationMonitor();
+
+        assertTrue(announcement.hasChannel());
+        assertEquals(1, announcement.getChannels().size());
+
+        P25NetworkConfigurationSnapshot observation = monitor.processMacMessage(message);
+
+        assertEquals(1, observation.channels().size());
+        assertEquals(851_000_000L, observation.channels().getFirst().downlink());
+        assertEquals("Autonomous and by Request", observation.siteStatus().dataAccess());
+    }
+
     @Test
     void emitsOnlyTheStatusFieldsObservedByTheCurrentMessage()
     {
@@ -91,6 +128,28 @@ class P25P2NetworkConfigurationMonitorTest
         message.setInt(34, IntField.range(53 + offset, 58 + offset));
         message.setInt(microSlots, IntField.range(59 + offset, 71 + offset));
         SynchronizationBroadcast structure = new SynchronizationBroadcast(message, offset);
+        return new MacMessage(1, DataUnitID.UNSCRAMBLED_LCCH, message, 1_000L, structure);
+    }
+
+    private static MacMessage sndcpDataAnnouncement(boolean autonomous, boolean requested)
+    {
+        int offset = MacMessageFactory.DEFAULT_MAC_STRUCTURE_INDEX;
+        CorrectedBinaryMessage message = new CorrectedBinaryMessage(96);
+        message.setInt(214, IntField.length8(offset));
+
+        if(autonomous)
+        {
+            message.set(16 + offset);
+        }
+
+        if(requested)
+        {
+            message.set(17 + offset);
+        }
+
+        SNDCPDataChannelAnnouncement structure = new SNDCPDataChannelAnnouncement(message, offset);
+        structure.getChannel().setFrequencyBand(new P25FrequencyBand(0, 851_000_000L, -45_000_000L,
+            6_250L, 12_500, 1));
         return new MacMessage(1, DataUnitID.UNSCRAMBLED_LCCH, message, 1_000L, structure);
     }
 }
