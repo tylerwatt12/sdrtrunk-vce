@@ -169,6 +169,17 @@ class StatsApiV1HttpContractTest
     }
 
     @Test
+    void systemGroupIdentityCollectionAcceptsItsPathScope() throws Exception
+    {
+        HttpResponse<String> response = get(StatsApiV1.SYSTEMS +
+            "/p25%3A00001%3A047/group-identities?limit=1");
+        assertEquals(200, response.statusCode(), response.body());
+        JsonNode page = OBJECT_MAPPER.readTree(response.body());
+        assertTrue(page.get("data").isArray(), response.body());
+        assertEquals(1, page.at("/meta/limit").intValue(), response.body());
+    }
+
+    @Test
     void legacyReadLiveExportAndAudioRoutesAreNotCompatibilityEndpoints() throws Exception
     {
         for(String path: List.of(
