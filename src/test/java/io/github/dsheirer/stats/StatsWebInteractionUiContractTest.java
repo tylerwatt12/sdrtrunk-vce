@@ -631,6 +631,7 @@ class StatsWebInteractionUiContractTest
         String snapper = function(source, "function tunerSnapFrequency(frequencyHz)");
         String tuner = function(source, "function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum')");
         String refinement = function(tuner, "function queueViewportUpdate(immediate = false)");
+        String pointerMove = function(tuner, "function onPlotPointerMove(event)");
         String live = function(source, "async function renderLive()");
         String css = Files.readString(APP_CSS);
 
@@ -658,6 +659,10 @@ class StatsWebInteractionUiContractTest
         assertFalse(tuner.contains("previous && previous !== candidate"));
         assertTrue(tuner.contains("addEventListener('wheel', onPlotWheel"));
         assertTrue(tuner.contains("addEventListener('pointermove', onPlotPointerMove"));
+        assertTrue(tuner.contains("if (!stream && !drag) openDiagnosticStream();"));
+        assertTrue(pointerMove.contains("if (!drag.moved)"));
+        assertTrue(pointerMove.indexOf("closeStreams();") < pointerMove.indexOf("panBy("));
+        assertTrue(tuner.contains("if (moved) queueViewportUpdate(true);"));
         assertTrue(tuner.contains("event.key === 'ArrowLeft'"));
         assertTrue(tuner.contains("event.key === 'r' || event.key === 'R'"));
         assertTrue(tuner.contains("connectActiveChannels()"));
