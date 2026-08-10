@@ -19,6 +19,7 @@
 package io.github.dsheirer.configuration;
 
 import io.github.dsheirer.alias.Alias;
+import io.github.dsheirer.alias.AliasAdministrationService;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasMatchRegistry;
 import io.github.dsheirer.alias.AliasModel;
@@ -77,6 +78,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     private RadioReference mRadioReference;
     private AliasDatabaseStore mAliasDatabaseStore;
     private ConfigurationDatabaseStore mConfigurationDatabaseStore;
+    private final AliasAdministrationService mAliasAdministrationService;
     private AtomicBoolean mConfigurationSavePending = new AtomicBoolean();
     private AtomicBoolean mConfigurationDirty = new AtomicBoolean();
     private final AtomicLong mAliasConfigurationRevision = new AtomicLong();
@@ -107,6 +109,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         mIconModel = iconModel;
         mAliasDatabaseStore = new AliasDatabaseStore(SdrTrunkDatabasePath.getDatabasePath(userPreferences));
         mConfigurationDatabaseStore = new ConfigurationDatabaseStore(SdrTrunkDatabasePath.getDatabasePath(userPreferences));
+        mAliasAdministrationService = new AliasAdministrationService(this);
 
         mBroadcastModel = new BroadcastModel(mAliasModel, mIconModel, userPreferences);
         mRadioReference = new RadioReference();
@@ -182,19 +185,6 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     }
 
     /**
-     * Deletes all aliases that have the alias list name and removes the alias list name from all channels.
-     *
-     * Note: this method should be invoked on the JavaFX thread since it will touch observable alias and channel lists.
-     * @param aliasListName to delete
-     */
-    public void deleteAliasList(String aliasListName)
-    {
-        prepareForAliasListRefresh();
-        getAliasModel().deleteAliasList(aliasListName);
-        getChannelModel().deleteAliasList(aliasListName);
-    }
-
-    /**
      * Channel model managed by this configuration manager.
      */
     public ChannelModel getChannelModel()
@@ -224,6 +214,14 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     public AliasModel getAliasModel()
     {
         return mAliasModel;
+    }
+
+    /**
+     * Shared mutation boundary used by desktop and web Alias administration clients.
+     */
+    public AliasAdministrationService getAliasAdministrationService()
+    {
+        return mAliasAdministrationService;
     }
 
     /**

@@ -21,18 +21,16 @@ package io.github.dsheirer.gui.configuration.alias;
 
 import com.google.common.collect.Ordering;
 import io.github.dsheirer.alias.Alias;
+import io.github.dsheirer.alias.AliasAdministrationService;
 import io.github.dsheirer.gui.configuration.Editor;
 import io.github.dsheirer.icon.Icon;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import java.util.List;
-import javafx.beans.property.BooleanProperty;
-import javafx.beans.property.ReadOnlyBooleanProperty;
-import javafx.beans.property.SimpleBooleanProperty;
+import java.util.function.Consumer;
 import javafx.collections.transformation.SortedList;
-import javafx.event.ActionEvent;
-import javafx.event.EventHandler;
 import javafx.geometry.HPos;
 import javafx.geometry.Insets;
+import javafx.scene.Node;
 import javafx.scene.control.Button;
 import javafx.scene.control.ColorPicker;
 import javafx.scene.control.ComboBox;
@@ -53,6 +51,7 @@ import org.controlsfx.control.ToggleSwitch;
 public class AliasBulkEditor extends Editor<List<Alias>>
 {
     private ConfigurationManager mConfigurationManager;
+    private final Consumer<List<Long>> mAliasesSavedListener;
     private Label mEditingLabel;
     private ColorPicker mColorPicker;
     private Button mApplyColorButton;
@@ -65,19 +64,15 @@ public class AliasBulkEditor extends Editor<List<Alias>>
     private ToggleSwitch mRecordToggleSwitch;
     private Button mApplyRecordButton;
 
-    private BooleanProperty mChangeInProgressProperty;
-    private ReadOnlyBooleanProperty mChangeInProgressROProperty;
-
     /**
      * Constructs an instance
      *
      * @param configurationManager for accessing icon manager
      */
-    public AliasBulkEditor(ConfigurationManager configurationManager)
+    public AliasBulkEditor(ConfigurationManager configurationManager, Consumer<List<Long>> aliasesSavedListener)
     {
         mConfigurationManager = configurationManager;
-
-        mChangeInProgressProperty = new SimpleBooleanProperty();
+        mAliasesSavedListener = aliasesSavedListener;
 
         GridPane gridPane = new GridPane();
         gridPane.setPadding(new Insets(10, 10, 10, 10));
@@ -182,32 +177,6 @@ public class AliasBulkEditor extends Editor<List<Alias>>
         //no-op
     }
 
-    /**
-     * Property indicating whether a bulk change is in progress.  Bulk changes may cause drastic
-     * slow downs in some UI components.
-     *
-     * @return changeInProgressProperty
-     */
-    public ReadOnlyBooleanProperty changeInProgressProperty()
-    {
-        if(mChangeInProgressROProperty == null)
-        {
-            mChangeInProgressROProperty = BooleanProperty.readOnlyBooleanProperty(mChangeInProgressProperty);
-        }
-
-        return mChangeInProgressROProperty;
-    }
-
-    private void startChange()
-    {
-        mChangeInProgressProperty.set(true);
-    }
-
-    private void endChange()
-    {
-        mChangeInProgressProperty.set(false);
-    }
-
     private Label getEditingLabel()
     {
         if(mEditingLabel == null)
@@ -237,16 +206,9 @@ public class AliasBulkEditor extends Editor<List<Alias>>
             mApplyColorButton = createApplyButton();
             mApplyColorButton.setOnAction(event ->
             {
-                startChange();
-
                 int colorValue = ColorUtil.toInteger(getColorPicker().getValue());
-
-                for(Alias alias : getItem())
-                {
-                    alias.setColor(colorValue);
-                }
-
-                endChange();
+                apply(new AliasAdministrationService.BulkEdit(aliasIds(), null, colorValue, null, null, null,
+                    null, null, null, null, false), getApplyColorButton());
             });
         }
 
@@ -260,14 +222,8 @@ public class AliasBulkEditor extends Editor<List<Alias>>
             mResetColorButton = new Button("Reset Color");
             mResetColorButton.setOnAction(event ->
             {
-                startChange();
-
-                for(Alias alias : getItem())
-                {
-                    alias.setColor(0);
-                }
-
-                endChange();
+                apply(new AliasAdministrationService.BulkEdit(aliasIds(), null, 0, null, null, null,
+                    null, null, null, null, false), getResetColorButton());
             });
         }
 
@@ -298,19 +254,13 @@ public class AliasBulkEditor extends Editor<List<Alias>>
             mApplyIconButton.setDisable(true);
             mApplyIconButton.setOnAction(event ->
             {
-                startChange();
-
                 Icon icon = getIconNodeComboBox().getSelectionModel().getSelectedItem();
 
                 if(icon != null)
                 {
-                    for(Alias alias : getItem())
-                    {
-                        alias.setIconName(icon.getName());
-                    }
+                    apply(new AliasAdministrationService.BulkEdit(aliasIds(), null, null, icon.getName(), null,
+                        null, null, null, null, null, false), getApplyIconButton());
                 }
-
-                endChange();
             });
         }
 
@@ -370,8 +320,6 @@ public class AliasBulkEditor extends Editor<List<Alias>>
             mApplyMonitorButton = createApplyButton();
             mApplyMonitorButton.setOnAction(event ->
             {
-                startChange();
-
                 boolean canMonitor = getMonitorAudioToggleSwitch().isSelected();
                 Integer priority = getMonitorPriorityComboBox().getSelectionModel().getSelectedItem();
                 if(canMonitor)
@@ -386,13 +334,8 @@ public class AliasBulkEditor extends Editor<List<Alias>>
                     priority = io.github.dsheirer.alias.id.priority.Priority.DO_NOT_MONITOR;
                 }
 
-                final Integer pri = priority;
-                for(Alias alias : getItem())
-                {
-                    alias.setCallPriority(pri);
-                }
-
-                endChange();
+                apply(new AliasAdministrationService.BulkEdit(aliasIds(), null, null, null, priority, null,
+                    null, null, null, null, false), getApplyMonitorButton());
             });
         }
 
@@ -405,13 +348,9 @@ public class AliasBulkEditor extends Editor<List<Alias>>
         {
             mApplyRecordButton = createApplyButton();
             mApplyRecordButton.setOnAction(event -> {
-                startChange();
                 boolean recordable = getRecordToggleSwitch().isSelected();
-                for(Alias alias : getItem())
-                {
-                    alias.setRecordable(recordable);
-                }
-                endChange();
+                apply(new AliasAdministrationService.BulkEdit(aliasIds(), null, null, null, null, recordable,
+                    null, null, null, null, false), getApplyRecordButton());
             });
         }
 
@@ -421,6 +360,18 @@ public class AliasBulkEditor extends Editor<List<Alias>>
     private Button createApplyButton()
     {
         return new Button("Apply");
+    }
+
+    private List<Long> aliasIds()
+    {
+        return getItem().stream().map(Alias::getId).toList();
+    }
+
+    private void apply(AliasAdministrationService.BulkEdit edit, Node owner)
+    {
+        AliasMutationUi.execute(owner, "Edit Aliases", () ->
+            mConfigurationManager.getAliasAdministrationService().bulkEdit(edit)).ifPresent(result ->
+            mAliasesSavedListener.accept(result.aliasIds()));
     }
 
     /**

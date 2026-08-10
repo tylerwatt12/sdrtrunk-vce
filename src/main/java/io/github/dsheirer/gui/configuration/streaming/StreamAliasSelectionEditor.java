@@ -23,8 +23,10 @@
 package io.github.dsheirer.gui.configuration.streaming;
 
 import io.github.dsheirer.alias.Alias;
+import io.github.dsheirer.alias.AliasAdministrationService;
 import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.configuration.ConfigurationManager;
+import io.github.dsheirer.gui.configuration.alias.AliasMutationUi;
 import javafx.collections.ListChangeListener;
 import javafx.collections.transformation.FilteredList;
 import javafx.collections.transformation.SortedList;
@@ -32,6 +34,7 @@ import javafx.event.ActionEvent;
 import javafx.event.EventHandler;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
+import javafx.scene.Node;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.SelectionMode;
@@ -308,8 +311,8 @@ public class StreamAliasSelectionEditor extends VBox
 
                 if(selectedAlias != null && stream != null)
                 {
-                    selectedAlias.addBroadcastChannel(stream);
-                    updateListFilters();
+                    updateStream(List.of(selectedAlias), stream, AliasAdministrationService.StreamOperation.ADD,
+                        getAddButton());
                 }
             });
         }
@@ -337,12 +340,8 @@ public class StreamAliasSelectionEditor extends VBox
 
                     if(!selectedAliases.isEmpty() && stream != null)
                     {
-                        for(Alias selectedAlias: selectedAliases)
-                        {
-                            selectedAlias.addBroadcastChannel(stream);
-                        }
-
-                        updateListFilters();
+                        updateStream(selectedAliases, stream, AliasAdministrationService.StreamOperation.ADD,
+                            getAddAllButton());
                     }
                 }
             });
@@ -366,8 +365,8 @@ public class StreamAliasSelectionEditor extends VBox
 
                 if(selectedAlias != null && stream != null)
                 {
-                    selectedAlias.removeBroadcastChannel(stream);
-                    updateListFilters();
+                    updateStream(List.of(selectedAlias), stream, AliasAdministrationService.StreamOperation.REMOVE,
+                        getRemoveButton());
                 }
             });
         }
@@ -391,17 +390,24 @@ public class StreamAliasSelectionEditor extends VBox
 
                 if(!selectedAliases.isEmpty() && stream != null)
                 {
-                    for(Alias selectedAlias: selectedAliases)
-                    {
-                        selectedAlias.removeBroadcastChannel(stream);
-                    }
-
-                    updateListFilters();
+                    updateStream(selectedAliases, stream, AliasAdministrationService.StreamOperation.REMOVE,
+                        getRemoveAllButton());
                 }
             });
         }
 
         return mRemoveAllButton;
+    }
+
+    private void updateStream(List<Alias> aliases, String stream,
+                              AliasAdministrationService.StreamOperation operation, Node owner)
+    {
+        List<Long> aliasIds = aliases.stream().map(Alias::getId).toList();
+        AliasAdministrationService.BulkEdit edit = new AliasAdministrationService.BulkEdit(aliasIds, null, null,
+            null, null, null, null, null, operation, List.of(stream), false);
+        AliasMutationUi.execute(owner, "Update Alias Stream", () ->
+            mConfigurationManager.getAliasAdministrationService().bulkEdit(edit)).ifPresent(ignored ->
+            updateListFilters());
     }
 
     /**

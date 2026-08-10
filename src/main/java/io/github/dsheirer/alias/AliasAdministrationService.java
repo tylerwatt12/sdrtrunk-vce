@@ -57,6 +57,15 @@ public final class AliasAdministrationService
     }
 
     /**
+     * Returns the current Alias configuration revision on the configuration-model thread. Desktop editors can retain
+     * this value while staging a detached form and use a revision-aware mutation when overwriting stale data matters.
+     */
+    public long currentRevision()
+    {
+        return onConfigurationThread(this::revision);
+    }
+
+    /**
      * Returns the current alias-list definitions and revision. Alias rows use the existing bounded catalog API.
      */
     public Catalog catalog()
@@ -102,6 +111,19 @@ public final class AliasAdministrationService
     }
 
     public MutationResult createAliasList(String name, AliasListFamily family, long expectedRevision)
+    {
+        return createAliasList(name, family, Long.valueOf(expectedRevision));
+    }
+
+    /**
+     * Creates an Alias list from a trusted desktop workflow using the current serialized model state.
+     */
+    public MutationResult createAliasList(String name, AliasListFamily family)
+    {
+        return createAliasList(name, family, null);
+    }
+
+    private MutationResult createAliasList(String name, AliasListFamily family, Long expectedRevision)
     {
         String preparedName = requireAliasListName(name);
         Objects.requireNonNull(family, "Alias-list family cannot be null");
@@ -155,6 +177,19 @@ public final class AliasAdministrationService
 
     public MutationResult deleteAliasList(long aliasListId, long expectedRevision, boolean confirmed)
     {
+        return deleteAliasList(aliasListId, Long.valueOf(expectedRevision), confirmed);
+    }
+
+    /**
+     * Deletes an Alias list from a trusted desktop workflow using the current serialized model state.
+     */
+    public MutationResult deleteAliasList(long aliasListId, boolean confirmed)
+    {
+        return deleteAliasList(aliasListId, null, confirmed);
+    }
+
+    private MutationResult deleteAliasList(long aliasListId, Long expectedRevision, boolean confirmed)
+    {
         return mutate(expectedRevision, () ->
         {
             AliasListDefinition definition = requireAliasList(aliasListId);
@@ -167,6 +202,8 @@ public final class AliasAdministrationService
 
             List<Alias> deletedAliases = aliasesForList(definition);
             List<Long> deletedAliasIds = deletedAliases.stream().map(Alias::getId).toList();
+            List<Alias> previousAliases = List.copyOf(aliasModel().getAliases());
+            List<AliasListDefinition> previousDefinitions = List.copyOf(aliasModel().aliasListDefinitions());
             List<ChannelAssignment> channels = mConfigurationManager.getChannelModel().getChannels().stream()
                 .filter(channel -> matchesList(channel, definition))
                 .map(channel -> new ChannelAssignment(channel, channel.getAliasListName())).toList();
@@ -178,8 +215,8 @@ public final class AliasAdministrationService
 
             return new MutationTarget(definition, deletedAliasIds, impact.aliasCount(), () ->
             {
-                aliasModel().addAliasListDefinition(definition);
-                aliasModel().addAliases(deletedAliases);
+                aliasModel().setAliasListDefinitions(previousDefinitions);
+                aliasModel().restoreAliases(previousAliases);
                 channels.forEach(assignment -> assignment.channel().setAliasListName(assignment.aliasListName()));
             }, () -> aliasModel().discardAliasListCache(definition.getName()));
         });
@@ -188,50 +225,67 @@ public final class AliasAdministrationService
     public MutationResult createAlias(Alias alias, long expectedRevision)
     {
         Alias prepared = prepareNewAlias(alias);
+        return savePreparedAliases(List.of(prepared), Long.valueOf(expectedRevision));
+    }
 
-        return mutate(expectedRevision, () ->
-        {
-            AliasListDefinition definition = resolveAliasList(prepared);
-            validateAlias(prepared, definition, null);
-            prepared.setAliasListDefinition(definition);
-            aliasModel().addAlias(prepared);
-            return new MutationTarget(null, List.of(), 1, prepared,
-                () -> aliasModel().removeAlias(prepared), null);
-        });
+    /**
+     * Creates an Alias from a trusted desktop workflow using the current serialized model state.
+     */
+    public MutationResult createAlias(Alias alias)
+    {
+        return savePreparedAliases(List.of(prepareNewAlias(alias)), null);
     }
 
     public MutationResult replaceAlias(long aliasId, Alias replacement, long expectedRevision)
     {
-        Alias prepared = prepareNewAlias(replacement);
-        prepared.setId(requirePositiveId(aliasId, "Alias ID"));
+        return savePreparedAliases(List.of(prepareReplacement(aliasId, replacement)),
+            Long.valueOf(expectedRevision));
+    }
 
-        return mutate(expectedRevision, () ->
-        {
-            Alias current = requireAlias(aliasId);
-            AliasListDefinition definition = resolveAliasList(prepared);
-            validateAlias(prepared, definition, current);
-            prepared.setAliasListDefinition(definition);
-            aliasModel().removeAlias(current);
-            aliasModel().addAlias(prepared);
-            return new MutationTarget(null, List.of(aliasId), 1, prepared, () ->
-            {
-                aliasModel().removeAlias(prepared);
-                aliasModel().addAlias(current);
-            }, null);
-        });
+    /**
+     * Replaces an Alias from a trusted desktop workflow using the current serialized model state.
+     */
+    public MutationResult replaceAlias(long aliasId, Alias replacement)
+    {
+        return savePreparedAliases(List.of(prepareReplacement(aliasId, replacement)), null);
     }
 
     public MutationResult deleteAlias(long aliasId, long expectedRevision)
     {
-        requirePositiveId(aliasId, "Alias ID");
+        return deleteAliases(List.of(aliasId), Long.valueOf(expectedRevision));
+    }
 
-        return mutate(expectedRevision, () ->
-        {
-            Alias alias = requireAlias(aliasId);
-            aliasModel().removeAlias(alias);
-            return new MutationTarget(null, List.of(aliasId), 1,
-                () -> aliasModel().addAlias(alias), null);
-        });
+    /**
+     * Deletes Aliases by durable identity from a trusted desktop workflow.
+     */
+    public MutationResult deleteAliases(List<Long> aliasIds)
+    {
+        return deleteAliases(aliasIds, null);
+    }
+
+    /**
+     * Revision-aware batch deletion for a staged selection or confirmation dialog.
+     */
+    public MutationResult deleteAliases(List<Long> aliasIds, long expectedRevision)
+    {
+        return deleteAliases(aliasIds, Long.valueOf(expectedRevision));
+    }
+
+    /**
+     * Atomically creates and replaces a mixed set of Aliases from a trusted desktop or import workflow. An ID of zero
+     * creates a new row; a positive ID replaces the current row with that durable identity.
+     */
+    public MutationResult saveAliases(List<Alias> aliases)
+    {
+        return savePreparedAliases(prepareAliases(aliases), null);
+    }
+
+    /**
+     * Revision-aware form of {@link #saveAliases(List)}.
+     */
+    public MutationResult saveAliases(List<Alias> aliases, long expectedRevision)
+    {
+        return savePreparedAliases(prepareAliases(aliases), Long.valueOf(expectedRevision));
     }
 
     /**
@@ -239,8 +293,21 @@ public final class AliasAdministrationService
      */
     public MutationResult bulkEdit(BulkEdit edit, long expectedRevision)
     {
+        return bulkEdit(edit, Long.valueOf(expectedRevision));
+    }
+
+    /**
+     * Applies a bulk edit from a trusted desktop workflow without imposing the HTTP request-size limit.
+     */
+    public MutationResult bulkEdit(BulkEdit edit)
+    {
+        return bulkEdit(edit, null);
+    }
+
+    private MutationResult bulkEdit(BulkEdit edit, Long expectedRevision)
+    {
         Objects.requireNonNull(edit, "Bulk edit cannot be null");
-        List<Long> aliasIds = validatedBulkIds(edit.aliasIds());
+        List<Long> aliasIds = validatedAliasIds(edit.aliasIds());
         validateBulkFields(edit);
 
         return mutate(expectedRevision, () ->
@@ -249,9 +316,7 @@ public final class AliasAdministrationService
 
             if(edit.delete())
             {
-                aliasModel().removeAliases(aliases);
-                return new MutationTarget(null, aliasIds, aliases.size(),
-                    () -> aliasModel().addAliases(aliases), null);
+                return deleteAliasesTarget(aliasIds, aliases);
             }
 
             AliasListDefinition target = edit.targetAliasListId() != null ?
@@ -282,12 +347,9 @@ public final class AliasAdministrationService
 
             validateBulkStreams(edit);
 
-            List<BulkAliasState> previous = aliases.stream().map(alias -> new BulkAliasState(alias,
-                aliasModel().getAliasListDefinition(alias), alias.getColor(), alias.getIconName(),
-                alias.getPlaybackPriority(), alias.isRecordable(), alias.getGroup(),
-                copyBroadcastChannels(alias))).toList();
+            List<Alias> replacements = aliases.stream().map(AliasAdministrationService::copyAlias).toList();
 
-            for(Alias alias: aliases)
+            for(Alias alias: replacements)
             {
                 if(target != null)
                 {
@@ -321,24 +383,30 @@ public final class AliasAdministrationService
                 applyStreamOperation(alias, edit.streamOperation(), edit.broadcastChannels());
             }
 
-            return new MutationTarget(target, aliasIds, aliases.size(), () -> previous.forEach(state ->
-            {
-                state.alias().setAliasListDefinition(state.aliasList());
-                state.alias().setColor(state.color());
-                state.alias().setIconName(state.iconName());
-                state.alias().setCallPriority(state.playbackPriority());
-                state.alias().setRecordable(state.recordable());
-                state.alias().setGroup(state.group());
-                state.alias().setBroadcastChannels(state.broadcastChannels());
-            }), null);
+            MutationTarget replacementTarget = saveAliasesTarget(replacements);
+            return replacementTarget.withAliasList(target);
         });
     }
 
-    private MutationResult mutate(long expectedRevision, Supplier<MutationTarget> operation)
+    /**
+     * Rewrites Alias and unmatched-talkgroup stream references after a broadcast destination is renamed.
+     */
+    public MutationResult renameBroadcastChannelReferences(String previousName, String updatedName)
+    {
+        String previous = requireName(previousName, "Previous broadcast channel name");
+        String updated = requireName(updatedName, "Updated broadcast channel name");
+
+        return mutate(null, () -> renameBroadcastChannelReferencesTarget(previous, updated));
+    }
+
+    private MutationResult mutate(Long expectedRevision, Supplier<MutationTarget> operation)
     {
         return onConfigurationThread(() -> mConfigurationManager.applyConfigurationMutation(() ->
             {
-                requireRevision(expectedRevision);
+                if(expectedRevision != null)
+                {
+                    requireRevision(expectedRevision);
+                }
                 MutationTarget target = operation.get();
 
                 try
@@ -356,11 +424,140 @@ public final class AliasAdministrationService
                     target.afterCommit().run();
                 }
 
-                List<Long> ids = target.aliases().isEmpty() && target.alias() != null ?
-                    List.of(target.alias().getId()) : target.aliases();
+                List<Long> ids = target.savedAliases().isEmpty() ? target.aliases() :
+                    target.savedAliases().stream().map(Alias::getId).toList();
                 Long aliasListId = target.aliasList() != null ? target.aliasList().getId() : null;
                 return new MutationResult(revision(), aliasListId, ids, target.affected());
             }));
+    }
+
+    private MutationResult savePreparedAliases(List<Alias> prepared, Long expectedRevision)
+    {
+        return mutate(expectedRevision, () -> saveAliasesTarget(prepared));
+    }
+
+    /**
+     * Validates the complete batch before changing the live model, then installs each Alias by durable identity.
+     */
+    private MutationTarget saveAliasesTarget(List<Alias> prepared)
+    {
+        if(prepared == null || prepared.isEmpty())
+        {
+            throw new IllegalArgumentException("Select at least one Alias to save");
+        }
+
+        Set<Long> persistedIds = new HashSet<>();
+        List<Alias> previousAliases = List.copyOf(aliasModel().getAliases());
+
+        for(Alias alias: prepared)
+        {
+            if(alias == null)
+            {
+                throw new IllegalArgumentException("Alias cannot be null");
+            }
+
+            Alias current = null;
+            if(alias.getId() > Alias.UNASSIGNED_ID)
+            {
+                if(!persistedIds.add(alias.getId()))
+                {
+                    throw new IllegalArgumentException("Alias IDs to save must be unique");
+                }
+
+                current = requireAlias(alias.getId());
+            }
+
+            AliasListDefinition definition = resolveAliasList(alias);
+            validateAlias(alias, definition, current);
+            alias.setAliasListDefinition(definition);
+        }
+
+        aliasModel().addAliases(prepared);
+        return new MutationTarget(null, List.of(), prepared.size(), prepared,
+            () -> aliasModel().restoreAliases(previousAliases), null);
+    }
+
+    private MutationResult deleteAliases(List<Long> aliasIds, Long expectedRevision)
+    {
+        List<Long> validatedIds = validatedAliasIds(aliasIds);
+
+        return mutate(expectedRevision, () -> deleteAliasesTarget(validatedIds,
+            validatedIds.stream().map(this::requireAlias).toList()));
+    }
+
+    private MutationTarget deleteAliasesTarget(List<Long> aliasIds, List<Alias> aliases)
+    {
+        List<Alias> previousAliases = List.copyOf(aliasModel().getAliases());
+        aliasModel().removeAliases(aliases);
+        return new MutationTarget(null, aliasIds, aliases.size(),
+            () -> aliasModel().restoreAliases(previousAliases), null);
+    }
+
+    private MutationTarget renameBroadcastChannelReferencesTarget(String previousName, String updatedName)
+    {
+        if(previousName.equals(updatedName))
+        {
+            return new MutationTarget(null, List.of(), 0, null, null);
+        }
+
+        List<Alias> replacements = aliasModel().getAliases().stream()
+            .filter(alias -> alias.hasBroadcastChannel(previousName))
+            .map(AliasAdministrationService::copyAlias)
+            .toList();
+
+        for(Alias replacement: replacements)
+        {
+            replacement.removeBroadcastChannel(previousName);
+            replacement.addBroadcastChannel(updatedName);
+        }
+
+        List<AliasListPolicyState> policyStates = new ArrayList<>();
+        for(AliasListDefinition definition: aliasModel().aliasListDefinitions())
+        {
+            UnmatchedTalkgroupPolicy previous = definition.getUnmatchedTalkgroupPolicy();
+            if(previous.getStreamDestinationNames().contains(previousName))
+            {
+                List<String> destinations = new ArrayList<>();
+                for(String destination: previous.getStreamDestinationNames())
+                {
+                    String replacement = destination.equals(previousName) ? updatedName : destination;
+                    if(!destinations.contains(replacement))
+                    {
+                        destinations.add(replacement);
+                    }
+                }
+
+                UnmatchedTalkgroupPolicy updated = new UnmatchedTalkgroupPolicy(previous.getPlaybackPriority(),
+                    previous.isRecordEnabled(), destinations);
+                validatePolicyStreams(updated, previous);
+                policyStates.add(new AliasListPolicyState(definition, previous, updated));
+            }
+        }
+
+        MutationTarget aliasesTarget = replacements.isEmpty() ?
+            new MutationTarget(null, List.of(), 0, null, null) : saveAliasesTarget(replacements);
+
+        if(!policyStates.isEmpty())
+        {
+            policyStates.forEach(state -> state.definition().setUnmatchedTalkgroupPolicy(state.updated()));
+            mConfigurationManager.aliasListDefinitionChanged();
+        }
+
+        Runnable rollback = () ->
+        {
+            if(aliasesTarget.rollback() != null)
+            {
+                aliasesTarget.rollback().run();
+            }
+            if(!policyStates.isEmpty())
+            {
+                policyStates.forEach(state -> state.definition().setUnmatchedTalkgroupPolicy(state.previous()));
+                mConfigurationManager.aliasListDefinitionChanged();
+            }
+        };
+
+        return new MutationTarget(null, List.of(), replacements.size() + policyStates.size(),
+            aliasesTarget.savedAliases(), rollback, null);
     }
 
     private Catalog catalogOnConfigurationThread()
@@ -398,6 +595,42 @@ public final class AliasAdministrationService
         return prepared;
     }
 
+    private Alias prepareReplacement(long aliasId, Alias source)
+    {
+        Alias prepared = prepareNewAlias(source);
+        prepared.setId(requirePositiveId(aliasId, "Alias ID"));
+        return prepared;
+    }
+
+    private static List<Alias> prepareAliases(List<Alias> aliases)
+    {
+        if(aliases == null || aliases.isEmpty())
+        {
+            throw new IllegalArgumentException("Select at least one Alias to save");
+        }
+
+        Set<Long> persistedIds = new HashSet<>();
+        Set<Alias> instances = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        List<Alias> prepared = new ArrayList<>(aliases.size());
+        for(Alias source: aliases)
+        {
+            Objects.requireNonNull(source, "Alias cannot be null");
+            if(!instances.add(source))
+            {
+                throw new IllegalArgumentException("Aliases to save must be unique instances");
+            }
+            Alias copy = copyAlias(source);
+            requireName(copy.getName(), "Alias name");
+            if(copy.getId() > Alias.UNASSIGNED_ID && !persistedIds.add(copy.getId()))
+            {
+                throw new IllegalArgumentException("Alias IDs to save must be unique");
+            }
+            prepared.add(copy);
+        }
+
+        return List.copyOf(prepared);
+    }
+
     private AliasListDefinition resolveAliasList(Alias alias)
     {
         AliasListDefinition definition = alias.getAliasListId() > AliasListDefinition.UNASSIGNED_ID ?
@@ -414,8 +647,7 @@ public final class AliasAdministrationService
 
     private void removeAliasListDefinition(AliasListDefinition definition)
     {
-        aliasModel().aliasListDefinitions().remove(definition);
-        aliasModel().refreshAliasListNames();
+        aliasModel().removeAliasListDefinition(definition);
     }
 
     private void validateAlias(Alias alias, AliasListDefinition definition, Alias previous)
@@ -508,12 +740,6 @@ public final class AliasAdministrationService
                 throw new IllegalArgumentException("Broadcast channel [" + channel + "] does not exist");
             }
         }
-    }
-
-    private static List<BroadcastChannel> copyBroadcastChannels(Alias alias)
-    {
-        return alias.getBroadcastChannels().stream()
-            .map(channel -> new BroadcastChannel(channel.getChannelName())).toList();
     }
 
     private static void applyStreamOperation(Alias alias, StreamOperation operation, List<String> channelNames)
@@ -617,15 +843,11 @@ public final class AliasAdministrationService
             Priority.MIN_PRIORITY <= priority && priority < Priority.MAX_PRIORITY;
     }
 
-    private static List<Long> validatedBulkIds(List<Long> aliasIds)
+    private static List<Long> validatedAliasIds(List<Long> aliasIds)
     {
         if(aliasIds == null || aliasIds.isEmpty())
         {
             throw new IllegalArgumentException("Select at least one alias");
-        }
-        if(aliasIds.size() > MAX_BULK_ALIASES)
-        {
-            throw new IllegalArgumentException("Bulk operations are limited to " + MAX_BULK_ALIASES + " aliases");
         }
 
         Set<Long> unique = new HashSet<>();
@@ -652,8 +874,12 @@ public final class AliasAdministrationService
     private Alias requireAlias(long aliasId)
     {
         requirePositiveId(aliasId, "Alias ID");
-        return aliasModel().getAliases().stream().filter(alias -> alias.getId() == aliasId).findFirst()
-            .orElseThrow(() -> new NotFoundException("Alias [" + aliasId + "] was not found"));
+        Alias alias = aliasModel().getAlias(aliasId);
+        if(alias == null)
+        {
+            throw new NotFoundException("Alias [" + aliasId + "] was not found");
+        }
+        return alias;
     }
 
     private AliasListDefinition requireAliasList(long aliasListId)
@@ -917,13 +1143,24 @@ public final class AliasAdministrationService
         CLEAR
     }
 
-    private record MutationTarget(AliasListDefinition aliasList, List<Long> aliases, int affected, Alias alias,
-                                  Runnable rollback, Runnable afterCommit)
+    private record MutationTarget(AliasListDefinition aliasList, List<Long> aliases, int affected,
+                                  List<Alias> savedAliases, Runnable rollback, Runnable afterCommit)
     {
+        private MutationTarget
+        {
+            aliases = List.copyOf(aliases);
+            savedAliases = List.copyOf(savedAliases);
+        }
+
         private MutationTarget(AliasListDefinition aliasList, List<Long> aliases, int affected,
                                Runnable rollback, Runnable afterCommit)
         {
-            this(aliasList, List.copyOf(aliases), affected, null, rollback, afterCommit);
+            this(aliasList, aliases, affected, List.of(), rollback, afterCommit);
+        }
+
+        private MutationTarget withAliasList(AliasListDefinition definition)
+        {
+            return new MutationTarget(definition, aliases, affected, savedAliases, rollback, afterCommit);
         }
     }
 
@@ -931,9 +1168,8 @@ public final class AliasAdministrationService
     {
     }
 
-    private record BulkAliasState(Alias alias, AliasListDefinition aliasList, int color, String iconName,
-                                  int playbackPriority, boolean recordable, String group,
-                                  List<BroadcastChannel> broadcastChannels)
+    private record AliasListPolicyState(AliasListDefinition definition, UnmatchedTalkgroupPolicy previous,
+                                        UnmatchedTalkgroupPolicy updated)
     {
     }
 

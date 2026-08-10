@@ -34,7 +34,8 @@ class AliasDescriptionUiContractTest
         assertTrue(configurationEditor.contains("descriptionColumn.setText(\"Description\")"));
         assertTrue(configurationEditor.contains("alias.getDescription().toLowerCase().contains(mSearchText)"));
         assertTrue(itemEditor.contains("new Label(\"Description\")"));
-        assertTrue(itemEditor.contains("alias.setDescription(getDescriptionField().getText())"));
+        assertTrue(itemEditor.contains("replacement.setDescription(getDescriptionField().getText())"));
+        assertTrue(itemEditor.contains(".replaceAlias("));
     }
 
     @Test

@@ -46,9 +46,18 @@ class LocalPlaybackUiContractTest
 
         assertTrue(itemEditor.contains("getPlaybackPriority()"));
         assertTrue(itemEditor.contains("setCallPriority("));
+        assertTrue(itemEditor.contains(".replaceAlias("));
+        assertTrue(itemEditor.contains("getAliasModel().getAlias(edited.getId())"),
+            "Reset must reload the canonical durable-ID row instead of blessing a stale editor object");
+        assertTrue(!itemEditor.contains("setItem(getItem())"));
+        assertTrue(configurationEditor.lines()
+            .filter(line -> line.contains("resolveModifiedAliasDraft()"))
+            .count() >= 8, "Page commands must resolve a dirty draft before advancing the shared revision");
+        assertTrue(configurationEditor.contains("clearDeletedAliasDraft(deleted.aliasIds())"));
         assertTrue(itemEditor.contains("new Label(\"Listen\")"));
         assertTrue(itemEditor.contains("new Label(\"Priority\")"));
-        assertTrue(bulkEditor.contains("setCallPriority("));
+        assertTrue(bulkEditor.contains("new AliasAdministrationService.BulkEdit("));
+        assertTrue(bulkEditor.contains(".bulkEdit("));
         assertTrue(configurationEditor.contains("new TableColumn<>(\"Listen\")"));
     }
 

@@ -32,7 +32,10 @@ import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifi
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.protocol.Protocol;
+import java.util.Comparator;
 import java.util.List;
+import javafx.collections.transformation.FilteredList;
+import javafx.collections.transformation.SortedList;
 import org.junit.jupiter.api.Test;
 
 class AliasOneToOneTest
@@ -153,7 +156,7 @@ class AliasOneToOneTest
     }
 
     @Test
-    void modelQueriesAndDeletesPersistedAliasesByListIdentity()
+    void modelQueriesPersistedAliasesByListIdentity()
     {
         AliasListDefinition definition = new AliasListDefinition("Current Name", AliasListFamily.P25);
         definition.setId(12);
@@ -166,10 +169,104 @@ class AliasOneToOneTest
 
         alias.setAliasListName("Stale Display Name");
         assertSame(alias, model.getAliases("Current Name", alias.getMatchIdentifier().getType()).getFirst());
+    }
 
-        model.deleteAliasList("Current Name");
-        assertTrue(model.getAliases().isEmpty());
-        assertTrue(model.aliasListDefinitions().isEmpty());
+    @Test
+    void detachedPersistedAliasReplacesAndDeletesByStableIdentity()
+    {
+        AliasListDefinition definition = definition(12);
+        Alias original = alias(41, definition, "Original", 100);
+        Alias replacement = alias(41, definition, "Replacement", 101);
+        AliasModel model = new AliasModel();
+        model.setAliasListDefinitions(List.of(definition));
+        FilteredList<Alias> filtered = new FilteredList<>(model.aliasList(), alias -> true);
+        SortedList<Alias> visibleRows = new SortedList<>(filtered, Comparator.comparing(Alias::getName));
+        model.addAlias(original);
+        AliasList runtime = model.getAliasList(definition);
+
+        model.addAlias(replacement);
+
+        assertEquals(List.of(replacement), model.getAliases());
+        assertEquals(List.of(replacement), visibleRows);
+        assertSame(replacement, model.getAlias(41));
+        assertTrue(runtime.getAliases(APCO25Talkgroup.create(100)).isEmpty());
+        assertSame(replacement, runtime.getAliases(APCO25Talkgroup.create(101)).getFirst());
+
+        model.removeAliases(List.of(original));
+
+        assertTrue(model.getAliases().isEmpty(),
+            "A stale detached object must delete the current row with the same durable ID");
+        assertTrue(visibleRows.isEmpty());
+        assertTrue(runtime.getAliases(APCO25Talkgroup.create(101)).isEmpty());
+    }
+
+    @Test
+    void batchReplacementPreservesModelAndCachedOverlapWinnerOrder()
+    {
+        AliasListDefinition definition = definition(12);
+        Alias first = alias(41, definition, "First", 100);
+        Alias second = alias(42, definition, "Second", 100);
+        AliasModel model = new AliasModel();
+        model.setAliasListDefinitions(List.of(definition));
+        model.addAliases(List.of(first, second));
+        AliasList cached = model.getAliasList(definition);
+        assertSame(second, cached.getAliases(APCO25Talkgroup.create(100)).getFirst());
+
+        Alias firstReplacement = alias(41, definition, "First Updated", 100);
+        Alias secondReplacement = alias(42, definition, "Second Updated", 100);
+        model.addAliases(List.of(secondReplacement, firstReplacement));
+
+        assertEquals(List.of(firstReplacement, secondReplacement), model.getAliases());
+        assertSame(secondReplacement, cached.getAliases(APCO25Talkgroup.create(100)).getFirst());
+    }
+
+    @Test
+    void unsavedAliasesRemainSeparateAndDuplicatePersistedBatchIsRejectedBeforeMutation()
+    {
+        AliasListDefinition definition = definition(12);
+        Alias first = alias(Alias.UNASSIGNED_ID, definition, "First", 100);
+        Alias second = alias(Alias.UNASSIGNED_ID, definition, "Second", 101);
+        AliasModel model = new AliasModel();
+        model.setAliasListDefinitions(List.of(definition));
+        model.addAliases(List.of(first, second));
+        assertEquals(List.of(first, second), model.getAliases());
+
+        Alias replacementOne = alias(41, definition, "Replacement One", 102);
+        Alias replacementTwo = alias(41, definition, "Replacement Two", 103);
+        assertThrows(IllegalArgumentException.class,
+            () -> model.addAliases(List.of(replacementOne, replacementTwo)));
+        assertEquals(List.of(first, second), model.getAliases());
+    }
+
+    @Test
+    void rollbackSnapshotKeepsFirstPersistedIdentityAndAllUnsavedRows()
+    {
+        AliasListDefinition definition = definition(12);
+        Alias firstUnsaved = alias(Alias.UNASSIGNED_ID, definition, "First Unsaved", 100);
+        Alias persisted = alias(41, definition, "Persisted", 101);
+        Alias duplicate = alias(41, definition, "Duplicate", 102);
+        Alias secondUnsaved = alias(Alias.UNASSIGNED_ID, definition, "Second Unsaved", 103);
+        AliasModel model = new AliasModel();
+        model.setAliasListDefinitions(List.of(definition));
+
+        model.restoreAliases(List.of(firstUnsaved, persisted, duplicate, secondUnsaved));
+
+        assertEquals(List.of(firstUnsaved, persisted, secondUnsaved), model.getAliases());
+    }
+
+    @Test
+    void observableModelProjectionsAreReadOnly()
+    {
+        AliasListDefinition definition = definition(12);
+        Alias alias = alias(41, definition, "Dispatch", 100);
+        AliasModel model = new AliasModel();
+        model.setAliasListDefinitions(List.of(definition));
+        model.addAlias(alias);
+
+        assertThrows(UnsupportedOperationException.class, () -> model.aliasList().clear());
+        assertThrows(UnsupportedOperationException.class, () -> model.aliasListDefinitions().clear());
+        assertEquals(List.of(alias), model.getAliases());
+        assertEquals(List.of(definition), model.aliasListDefinitions());
     }
 
     @Test
@@ -215,5 +312,21 @@ class AliasOneToOneTest
         channel.setAliasListName(aliasList);
         channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
         return channel;
+    }
+
+    private static AliasListDefinition definition(long id)
+    {
+        AliasListDefinition definition = new AliasListDefinition("Metro", AliasListFamily.P25);
+        definition.setId(id);
+        return definition;
+    }
+
+    private static Alias alias(long id, AliasListDefinition definition, String name, int talkgroup)
+    {
+        Alias alias = new Alias(name);
+        alias.setId(id);
+        alias.setAliasListDefinition(definition);
+        alias.setMatchIdentifier(new Talkgroup(Protocol.APCO25, talkgroup));
+        return alias;
     }
 }

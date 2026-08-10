@@ -21,11 +21,13 @@ package io.github.dsheirer.gui.configuration.radioreference;
 
 import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.alias.Alias;
+import io.github.dsheirer.alias.AliasFactory;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasMatchRegistry;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.eventbus.MyEventBus;
+import io.github.dsheirer.gui.configuration.alias.AliasMutationUi;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.module.decode.DecoderType;
@@ -396,25 +398,34 @@ public class SystemTalkgroupSelectionEditor extends GridPane
             return;
         }
 
+        long revision = mConfigurationManager.getAliasAdministrationService().currentRevision();
         List<Talkgroup> aliasesToCreate = new ArrayList<>();
-        List<AliasedTalkgroup> aliasesToUpdate = new ArrayList<>();
+        List<Alias> aliasesToUpdate = new ArrayList<>();
         int identical = 0;
 
         for(AliasedTalkgroup aliasedTalkgroup: talkgroups)
         {
-            if(aliasedTalkgroup.getImportStatus() == ImportStatus.NOT_PRESENT)
+            Talkgroup talkgroup = aliasedTalkgroup.getTalkgroup();
+            TalkgroupCategory category = getTalkgroupCategory(talkgroup);
+            Alias currentAlias = getAlias(talkgroup);
+            ImportStatus status = getImportStatus(isCurrentSystemSupported(), currentAlias, talkgroup, category);
+
+            if(status == ImportStatus.NOT_PRESENT)
             {
-                aliasesToCreate.add(aliasedTalkgroup.getTalkgroup());
+                aliasesToCreate.add(talkgroup);
             }
-            else if(aliasedTalkgroup.getImportStatus() == ImportStatus.DIFFERENT)
+            else if(status == ImportStatus.DIFFERENT)
             {
-                aliasesToUpdate.add(aliasedTalkgroup);
+                aliasesToUpdate.add(createRadioReferenceReplacement(currentAlias, talkgroup, category));
             }
-            else if(aliasedTalkgroup.getImportStatus() == ImportStatus.IDENTICAL)
+            else if(status == ImportStatus.IDENTICAL)
             {
                 identical++;
             }
         }
+
+        List<Alias> changes = new ArrayList<>(createAliases(aliasesToCreate));
+        changes.addAll(aliasesToUpdate);
 
         ButtonType apply = new ButtonType("Apply", ButtonBar.ButtonData.OK_DONE);
         Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION,
@@ -425,22 +436,21 @@ public class SystemTalkgroupSelectionEditor extends GridPane
         confirmation.setTitle(title);
         confirmation.setHeaderText("Apply RadioReference changes to " + scopeDescription + "?");
         confirmation.initOwner(sourceButton.getScene().getWindow());
+        int identicalCount = identical;
 
         if(confirmation.showAndWait().filter(apply::equals).isPresent())
         {
-            if(!aliasesToCreate.isEmpty())
+            if(changes.isEmpty())
             {
-                createAliases(aliasesToCreate);
+                getImportResultLabel().setText(formatImportCompletion(0, 0, identicalCount));
             }
-
-            for(AliasedTalkgroup aliasedTalkgroup: aliasesToUpdate)
+            else
             {
-                updateAliasFromRadioReference(aliasedTalkgroup.getAlias(), aliasedTalkgroup.getTalkgroup(),
-                    getTalkgroupCategory(aliasedTalkgroup.getTalkgroup()));
+                AliasMutationUi.execute(sourceButton, title, () ->
+                    mConfigurationManager.getAliasAdministrationService().saveAliases(changes, revision))
+                    .ifPresent(ignored -> getImportResultLabel().setText(formatImportCompletion(
+                        aliasesToCreate.size(), aliasesToUpdate.size(), identicalCount)));
             }
-
-            getImportResultLabel().setText(formatImportCompletion(
-                aliasesToCreate.size(), aliasesToUpdate.size(), identical));
         }
     }
 
@@ -479,10 +489,10 @@ public class SystemTalkgroupSelectionEditor extends GridPane
     }
 
     /**
-     * Creates an alias for each of the specified talkgroups and adds it to the currently selected alias list
+     * Creates a detached Alias for each talkgroup using the currently selected Alias list.
      * @param talkgroups to alias
      */
-    public void createAliases(List<Talkgroup> talkgroups)
+    private List<Alias> createAliases(List<Talkgroup> talkgroups)
     {
         AliasListDefinition definition = getAliasListDefinition(
             getAliasListNameComboBox().getSelectionModel().getSelectedItem());
@@ -507,7 +517,7 @@ public class SystemTalkgroupSelectionEditor extends GridPane
             createdAliases.add(alias);
         }
 
-        mConfigurationManager.getAliasModel().addAliases(createdAliases);
+        return List.copyOf(createdAliases);
     }
 
     /**
@@ -558,22 +568,25 @@ public class SystemTalkgroupSelectionEditor extends GridPane
             return null;
         }
 
-        TalkgroupIdentifier talkgroupIdentifier = getRadioReferenceDecoder().getIdentifier(talkgroup, getCurrentSystem());
-        List<Alias> aliases = getAliasList().getAliases(talkgroupIdentifier);
+        return findExactAlias(getAliasList(), getRadioReferenceDecoder(), talkgroup, getCurrentSystem());
+    }
 
-        if(!aliases.isEmpty())
+    /**
+     * Resolves the current exact Alias at action time so a deferred table refresh cannot create a duplicate or replace
+     * newly edited local fields with an older row snapshot.
+     */
+    static Alias findExactAlias(AliasList aliasList, RadioReferenceDecoder decoder, Talkgroup talkgroup, System system)
+    {
+        if(aliasList == null || decoder == null || talkgroup == null || system == null)
         {
-            Alias alias = aliases.get(0);
-            io.github.dsheirer.alias.id.talkgroup.Talkgroup expected =
-                getRadioReferenceDecoder().getTalkgroupAliasId(talkgroup, getCurrentSystem());
-
-            if(hasExactTalkgroup(alias, expected))
-            {
-                return alias;
-            }
+            return null;
         }
 
-        return null;
+        TalkgroupIdentifier talkgroupIdentifier = decoder.getIdentifier(talkgroup, system);
+        List<Alias> aliases = aliasList.getAliases(talkgroupIdentifier);
+        io.github.dsheirer.alias.id.talkgroup.Talkgroup expected =
+            decoder.getTalkgroupAliasId(talkgroup, system);
+        return aliases.stream().filter(alias -> hasExactTalkgroup(alias, expected)).findFirst().orElse(null);
     }
 
     static boolean hasExactTalkgroup(Alias alias,
@@ -986,18 +999,24 @@ public class SystemTalkgroupSelectionEditor extends GridPane
         return List.copyOf(changes);
     }
 
-    static void updateAliasFromRadioReference(Alias alias, Talkgroup talkgroup, TalkgroupCategory category)
+    static Alias createRadioReferenceReplacement(Alias alias, Talkgroup talkgroup, TalkgroupCategory category)
     {
-        if(alias != null && talkgroup != null)
+        if(alias == null || talkgroup == null)
         {
-            alias.setName(talkgroup.getAlphaTag());
-            alias.setDescription(talkgroup.getDescription());
-
-            if(category != null)
-            {
-                alias.setGroup(category.getName());
-            }
+            throw new IllegalArgumentException("Alias and RadioReference talkgroup are required");
         }
+
+        Alias replacement = AliasFactory.copyOf(alias);
+        replacement.setId(alias.getId());
+        replacement.setName(talkgroup.getAlphaTag());
+        replacement.setDescription(talkgroup.getDescription());
+
+        if(category != null)
+        {
+            replacement.setGroup(category.getName());
+        }
+
+        return replacement;
     }
 
     private static void addChange(List<ImportedFieldChange> changes, String field, String oldValue, String newValue)

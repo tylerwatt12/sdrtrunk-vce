@@ -20,6 +20,7 @@
 package io.github.dsheirer.gui.configuration.alias;
 
 import io.github.dsheirer.alias.Alias;
+import io.github.dsheirer.alias.AliasAdministrationService;
 import io.github.dsheirer.alias.AliasFactory;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasListFamily;
@@ -99,6 +100,8 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
     private FilteredList<Alias> mAliasFilteredList;
     private SortedList<Alias> mAliasSortedList;
     private AliasPredicate mAliasPredicate;
+    private boolean mIgnoreAliasSelectionChanges;
+    private boolean mAliasSelectionRefreshPending;
 
     /**
      * Constructs an instance
@@ -144,10 +147,65 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
     {
         if(alias != null)
         {
+            if(alias.getId() > Alias.UNASSIGNED_ID)
+            {
+                selectAliasById(alias.getId());
+            }
+            else
+            {
+                selectAliases(List.of(alias));
+            }
+        }
+    }
+
+    private void selectAliasById(long aliasId)
+    {
+        selectAliasesById(List.of(aliasId));
+    }
+
+    private void selectAliasesById(List<Long> aliasIds)
+    {
+        Platform.runLater(() -> selectAliases(findAliases(aliasIds)));
+    }
+
+    private List<Alias> findAliases(List<Long> aliasIds)
+    {
+        return mConfigurationManager.getAliasModel().getAliases().stream()
+            .filter(alias -> aliasIds.contains(alias.getId())).toList();
+    }
+
+    /**
+     * Restores the table selection after a navigation-triggered save fails without reloading or clearing the draft.
+     */
+    private void restoreAliasSelection(long aliasId)
+    {
+        Platform.runLater(() ->
+        {
+            mIgnoreAliasSelectionChanges = true;
+            try
+            {
+                selectAliases(findAliases(List.of(aliasId)));
+            }
+            finally
+            {
+                mIgnoreAliasSelectionChanges = false;
+            }
+        });
+    }
+
+    private void selectAliases(List<Alias> aliases)
+    {
+        getAliasTableView().getSelectionModel().clearSelection();
+
+        for(Alias alias: aliases)
+        {
             getAliasListNameComboBox().getSelectionModel().select(alias.getAliasListName());
-            getAliasTableView().getSelectionModel().clearSelection();
             getAliasTableView().getSelectionModel().select(alias);
-            getAliasTableView().scrollTo(alias);
+        }
+
+        if(!aliases.isEmpty())
+        {
+            getAliasTableView().scrollTo(aliases.getFirst());
         }
     }
 
@@ -164,31 +222,19 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
         }
     }
 
-    private void setAliases(List<Alias> aliases)
+    private void setAliases()
     {
-        //Prompt the user to save if the contents of the current channel editor have been modified
-        if(getAliasItemEditor().modifiedProperty().get())
+        Alias editedAlias = getAliasItemEditor().getItem();
+        if(!resolveModifiedAliasDraft())
         {
-            Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
-            alert.getButtonTypes().clear();
-            alert.getButtonTypes().addAll(ButtonType.NO, ButtonType.YES);
-            alert.setTitle("Save Changes");
-            alert.setHeaderText("Alias configuration has been modified");
-            alert.setContentText("Do you want to save these changes?");
-            alert.initOwner((getButtonBox()).getScene().getWindow());
-
-            //Workaround for JavaFX KDE on Linux bug in FX 10/11: https://bugs.openjdk.java.net/browse/JDK-8179073
-            alert.setResizable(true);
-            alert.onShownProperty().addListener(e ->
-                Platform.runLater(() -> alert.setResizable(false)));
-
-            Optional<ButtonType> result = alert.showAndWait();
-
-            if(result.isPresent() && result.get() == ButtonType.YES)
+            if(editedAlias != null && editedAlias.getId() > Alias.UNASSIGNED_ID)
             {
-                getAliasItemEditor().save();
+                restoreAliasSelection(editedAlias.getId());
             }
+            return;
         }
+
+        List<Alias> aliases = new ArrayList<>(getAliasTableView().getSelectionModel().getSelectedItems());
 
         if(aliases.size() <= 1)
         {
@@ -215,6 +261,56 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
         getMoveToAliasButton().setDisable(aliases.isEmpty() || containsUnmatchedTalkgroupCatchAll);
     }
 
+    /**
+     * Resolves a dirty single-row draft before another page command advances the shared Alias revision.
+     */
+    private boolean resolveModifiedAliasDraft()
+    {
+        if(!getAliasItemEditor().modifiedProperty().get())
+        {
+            return true;
+        }
+
+        Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+        alert.getButtonTypes().clear();
+        alert.getButtonTypes().addAll(ButtonType.CANCEL, ButtonType.NO, ButtonType.YES);
+        alert.setTitle("Save Changes");
+        alert.setHeaderText("Alias configuration has been modified");
+        alert.setContentText("Save these changes before continuing?");
+        alert.initOwner(getButtonBox().getScene().getWindow());
+
+        //Workaround for JavaFX KDE on Linux bug in FX 10/11: https://bugs.openjdk.java.net/browse/JDK-8179073
+        alert.setResizable(true);
+        alert.onShownProperty().addListener(e -> Platform.runLater(() -> alert.setResizable(false)));
+
+        Optional<ButtonType> result = alert.showAndWait();
+        if(result.isEmpty() || result.get() == ButtonType.CANCEL)
+        {
+            return false;
+        }
+        if(result.get() == ButtonType.YES)
+        {
+            return getAliasItemEditor().save(false);
+        }
+
+        getAliasItemEditor().reloadCurrentAlias();
+        return true;
+    }
+
+    private boolean currentDraftIsIncluded(List<Long> aliasIds)
+    {
+        Alias draft = getAliasItemEditor().getItem();
+        return draft != null && draft.getId() > Alias.UNASSIGNED_ID && aliasIds.contains(draft.getId());
+    }
+
+    private void clearDeletedAliasDraft(List<Long> aliasIds)
+    {
+        if(currentDraftIsIncluded(aliasIds))
+        {
+            getAliasItemEditor().setItem(null);
+        }
+    }
+
     private boolean isUnmatchedTalkgroupCatchAll(Alias alias)
     {
         AliasListDefinition definition = alias != null ?
@@ -227,7 +323,7 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
     {
         if(mAliasItemEditor == null)
         {
-            mAliasItemEditor = new AliasItemEditor(mConfigurationManager, mUserPreferences);
+            mAliasItemEditor = new AliasItemEditor(mConfigurationManager, mUserPreferences, this::selectAliasById);
         }
 
         return mAliasItemEditor;
@@ -237,7 +333,7 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
     {
         if(mAliasBulkEditor == null)
         {
-            mAliasBulkEditor = new AliasBulkEditor(mConfigurationManager);
+            mAliasBulkEditor = new AliasBulkEditor(mConfigurationManager, this::selectAliasesById);
         }
 
         return mAliasBulkEditor;
@@ -384,9 +480,16 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
                             return;
                         }
 
-                        mConfigurationManager.getAliasModel().addAliasListDefinition(
-                            new AliasListDefinition(name, selectedFamily.get()));
-                        getAliasListNameComboBox().getSelectionModel().select(name);
+                        if(!resolveModifiedAliasDraft())
+                        {
+                            return;
+                        }
+
+                        String aliasListName = name;
+                        AliasMutationUi.execute(getNewAliasListButton(), "Create New Alias List", () ->
+                            mConfigurationManager.getAliasAdministrationService()
+                                .createAliasList(aliasListName, selectedFamily.get())).ifPresent(created ->
+                            getAliasListNameComboBox().getSelectionModel().select(aliasListName));
                     }
                 });
             });
@@ -401,13 +504,33 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
             mDeleteAliasListButton = new Button("Delete Alias List");
             mDeleteAliasListButton.setOnAction(event -> {
                 String aliasListName = getAliasListNameComboBox().getSelectionModel().getSelectedItem();
+                AliasListDefinition definition = getAliasListDefinition(aliasListName);
+
+                if(definition == null)
+                {
+                    return;
+                }
+
+                Alias draft = getAliasItemEditor().getItem();
+                boolean deletesDraft = draft != null &&
+                    definition == mConfigurationManager.getAliasModel().getAliasListDefinition(draft);
+                if(!deletesDraft && !resolveModifiedAliasDraft())
+                {
+                    return;
+                }
+
+                long aliasListId = definition.getId();
+                long revision = mConfigurationManager.getAliasAdministrationService().currentRevision();
                 Alert alert = createDeleteAliasListAlert(Alert.AlertType.CONFIRMATION, ButtonType.NO, ButtonType.YES);
                 alert.setHeaderText("Are you sure you want to delete the alias list " + aliasListName + " and all associated aliases?");
 
                 Optional<ButtonType> result = alert.showAndWait();
                 if (result.isPresent() && result.get() == ButtonType.YES)
                 {
-                    mConfigurationManager.deleteAliasList(aliasListName);
+                    AliasMutationUi.execute(getDeleteAliasListButton(), "Delete Alias List", () ->
+                        mConfigurationManager.getAliasAdministrationService()
+                            .deleteAliasList(aliasListId, revision, true))
+                        .ifPresent(deleted -> clearDeletedAliasDraft(deleted.aliasIds()));
                 }
             });
         }
@@ -519,8 +642,23 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
             mAliasTableView.setItems(getAliasSortedList());
             mAliasTableView.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
             mAliasTableView.getSelectionModel().getSelectedItems().addListener(
-                (ListChangeListener.Change<? extends Alias> c) ->
-                    Platform.runLater(() -> setAliases(mAliasTableView.getSelectionModel().getSelectedItems())));
+                (ListChangeListener.Change<? extends Alias> c) -> {
+                    if(!mIgnoreAliasSelectionChanges && !mAliasSelectionRefreshPending)
+                    {
+                        mAliasSelectionRefreshPending = true;
+                        Platform.runLater(() ->
+                        {
+                            try
+                            {
+                                setAliases();
+                            }
+                            finally
+                            {
+                                mAliasSelectionRefreshPending = false;
+                            }
+                        });
+                    }
+                });
         }
 
         return mAliasTableView;
@@ -542,20 +680,6 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
         {
             mAliasSortedList = new SortedList<>(getAliasFilteredList());
             mAliasSortedList.comparatorProperty().bind(getAliasTableView().comparatorProperty());
-
-            //Don't re-sort while the bulk editor is still applying changes to aliases
-            getAliasBulkEditor().changeInProgressProperty().addListener((observable, oldValue, newValue) ->
-            {
-                if(newValue)
-                {
-                    mAliasSortedList.comparatorProperty().unbind();
-                    mAliasSortedList.setComparator(null);
-                }
-                else
-                {
-                    mAliasSortedList.comparatorProperty().bind(getAliasTableView().comparatorProperty());
-                }
-            });
         }
 
         return mAliasSortedList;
@@ -598,6 +722,11 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
             mNewAliasButton.setMaxWidth(Double.MAX_VALUE);
             mNewAliasButton.setOnAction(event ->
             {
+                if(!resolveModifiedAliasDraft())
+                {
+                    return;
+                }
+
                 Alias alias = new Alias("New Alias");
                 AliasListDefinition definition = getAliasListDefinition(
                     getAliasListNameComboBox().getSelectionModel().getSelectedItem());
@@ -609,15 +738,9 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
 
                 alias.setAliasListDefinition(definition);
                 alias.setMatchIdentifier(AliasMatchRegistry.allowed(definition).getFirst().create(definition));
-                mConfigurationManager.getAliasModel().addAlias(alias);
-
-                //Queue a select alias action to allow table to update filter predicate and display the alias
-                Platform.runLater(() ->
-                {
-                    getAliasTableView().getSelectionModel().clearSelection();
-                    getAliasTableView().getSelectionModel().select(alias);
-                    getAliasTableView().scrollTo(alias);
-                });
+                AliasMutationUi.execute(getNewAliasButton(), "Create Alias", () ->
+                    mConfigurationManager.getAliasAdministrationService().createAlias(alias)).ifPresent(result ->
+                    selectAliasById(result.aliasIds().getFirst()));
             });
         }
 
@@ -633,7 +756,21 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
             mDeleteAliasButton.setMaxWidth(Double.MAX_VALUE);
             mDeleteAliasButton.setOnAction(event ->
             {
-                int count = getAliasTableView().getSelectionModel().getSelectedItems().size();
+                List<Long> aliasIds = getAliasTableView().getSelectionModel().getSelectedItems().stream()
+                    .map(Alias::getId).toList();
+                int count = aliasIds.size();
+
+                if(aliasIds.isEmpty())
+                {
+                    return;
+                }
+
+                if(!currentDraftIsIncluded(aliasIds) && !resolveModifiedAliasDraft())
+                {
+                    return;
+                }
+
+                long revision = mConfigurationManager.getAliasAdministrationService().currentRevision();
 
                 Alert alert = new Alert(Alert.AlertType.CONFIRMATION,
                         "Do you want to delete [" + count + "] selected alias" + ((count > 1) ? "es?" : "?"),
@@ -646,8 +783,9 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
 
                 if(result.isPresent() && result.get() == ButtonType.YES)
                 {
-                    List<Alias> selectedAliases = new ArrayList<>(getAliasTableView().getSelectionModel().getSelectedItems());
-                    mConfigurationManager.getAliasModel().removeAliases(selectedAliases);
+                    AliasMutationUi.execute(getDeleteAliasButton(), "Delete Alias", () ->
+                        mConfigurationManager.getAliasAdministrationService().deleteAliases(aliasIds, revision))
+                        .ifPresent(deleted -> clearDeletedAliasDraft(deleted.aliasIds()));
                 }
             });
         }
@@ -664,18 +802,29 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
             mCloneAliasButton.setMaxWidth(Double.MAX_VALUE);
             mCloneAliasButton.setOnAction(event ->
             {
-                Alias original = getAliasTableView().getSelectionModel().getSelectedItem();
+                Alias selected = getAliasTableView().getSelectionModel().getSelectedItem();
 
-                if(original == null || isUnmatchedTalkgroupCatchAll(original))
+                if(selected == null || isUnmatchedTalkgroupCatchAll(selected))
+                {
+                    return;
+                }
+
+                long aliasId = selected.getId();
+                if(!resolveModifiedAliasDraft())
+                {
+                    return;
+                }
+
+                Alias original = mConfigurationManager.getAliasModel().getAlias(aliasId);
+                if(original == null)
                 {
                     return;
                 }
 
                 Alias copy = AliasFactory.copyOf(original);
-                mConfigurationManager.getAliasModel().addAlias(copy);
-                getAliasTableView().getSelectionModel().clearSelection();
-                getAliasTableView().getSelectionModel().select(copy);
-                getAliasTableView().scrollTo(copy);
+                AliasMutationUi.execute(getCloneAliasButton(), "Clone Alias", () ->
+                    mConfigurationManager.getAliasAdministrationService().createAlias(copy)).ifPresent(result ->
+                    selectAliasById(result.aliasIds().getFirst()));
             });
         }
 
@@ -738,24 +887,28 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
 
             setOnAction(event ->
             {
-                List<Alias> selectedAliases = new ArrayList<>(getAliasTableView().getSelectionModel().getSelectedItems());
+                List<Long> aliasIds = getAliasTableView().getSelectionModel().getSelectedItems().stream()
+                    .map(Alias::getId).toList();
 
-                if(selectedAliases.stream().anyMatch(AliasConfigurationEditor.this::isUnmatchedTalkgroupCatchAll))
+                if(aliasIds.isEmpty() || !resolveModifiedAliasDraft())
                 {
                     return;
                 }
 
-                for(Alias selected : selectedAliases)
+                List<Alias> selectedAliases = findAliases(aliasIds);
+
+                if(selectedAliases.size() != aliasIds.size() ||
+                    selectedAliases.stream().anyMatch(AliasConfigurationEditor.this::isUnmatchedTalkgroupCatchAll))
                 {
-                    moveAlias(selected, mDefinition);
+                    return;
                 }
+
+                AliasAdministrationService.BulkEdit edit = new AliasAdministrationService.BulkEdit(aliasIds,
+                    mDefinition.getId(), null, null, null, null, null, null, null, null, false);
+                AliasMutationUi.execute(getMoveToAliasButton(), "Move Aliases", () ->
+                    mConfigurationManager.getAliasAdministrationService().bulkEdit(edit));
             });
         }
-    }
-
-    private void moveAlias(Alias alias, AliasListDefinition definition)
-    {
-        alias.setAliasListDefinition(definition);
     }
 
     public class ColorizedCell implements Callback<TableColumn<Alias, Integer>, TableCell<Alias, Integer>>

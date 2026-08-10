@@ -14,6 +14,7 @@ package io.github.dsheirer.alias;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -36,7 +37,9 @@ import io.github.dsheirer.preference.directory.DirectoryPreference;
 import io.github.dsheirer.protocol.Protocol;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashSet;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -49,6 +52,67 @@ class AliasAdministrationServiceTest
     void persistsValidatedChangesAndUpdatesTheLiveCatalog() throws Exception
     {
         exerciseService();
+    }
+
+    @Test
+    void sharedServiceAtomicallySavesMixedCreatesAndReplacements() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("mixed-data");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        Files.createDirectories(database.getParent());
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        CountingConfigurationManager manager = new CountingConfigurationManager(new TestUserPreferences(dataRoot));
+
+        try
+        {
+            manager.init();
+            assertSame(manager.getAliasAdministrationService(), manager.getAliasAdministrationService());
+            AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
+            assertEquals(service.catalog().revision(), service.currentRevision());
+            long aliasListId = service.createAliasList("County P25", AliasListFamily.P25).aliasListId();
+            AliasAdministrationService.MutationResult initial = service.saveAliases(List.of(
+                alias("Dispatch", aliasListId, 101), alias("Operations", aliasListId, 102)));
+            long dispatchId = initial.aliasIds().getFirst();
+            Alias replacement = service.getAlias(dispatchId).alias();
+            replacement.setName("Dispatch Updated");
+            Alias created = alias("Tactical", aliasListId, 103);
+            int flushesBeforeMixedSave = manager.flushCount();
+
+            Alias duplicateReplacement = service.getAlias(dispatchId).alias();
+            assertThrows(IllegalArgumentException.class,
+                () -> service.saveAliases(List.of(replacement, duplicateReplacement)));
+            assertEquals(flushesBeforeMixedSave, manager.flushCount());
+            assertEquals("Dispatch", service.getAlias(dispatchId).alias().getName());
+
+            Alias invalidCreate = alias("Invalid", aliasListId + 1000, 104);
+            assertThrows(AliasAdministrationService.NotFoundException.class,
+                () -> service.saveAliases(List.of(replacement, invalidCreate)));
+            assertEquals(flushesBeforeMixedSave, manager.flushCount());
+            assertEquals("Dispatch", service.getAlias(dispatchId).alias().getName());
+
+            AliasAdministrationService.MutationResult mixed = service.saveAliases(List.of(replacement, created));
+
+            assertEquals(flushesBeforeMixedSave + 1, manager.flushCount());
+            assertEquals(2, mixed.affected());
+            assertEquals(2, mixed.aliasIds().size());
+            assertEquals(dispatchId, mixed.aliasIds().getFirst());
+            assertEquals(2, new HashSet<>(mixed.aliasIds()).size());
+            assertEquals("Dispatch Updated", service.getAlias(dispatchId).alias().getName());
+            assertEquals(3, manager.getAliasModel().getAliases().size());
+            assertEquals(3, new HashSet<>(manager.getAliasModel().getAliases().stream()
+                .map(Alias::getId).toList()).size());
+
+            service.deleteAliases(mixed.aliasIds());
+            assertEquals(1, manager.getAliasModel().getAliases().size());
+
+            AliasDatabaseStore store = new AliasDatabaseStore(database);
+            List<AliasListDefinition> definitions = store.loadAliasListDefinitions();
+            assertEquals(1, store.loadAliases(definitions).size());
+        }
+        finally
+        {
+            MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
+        }
     }
 
     private void exerciseService() throws Exception
@@ -280,6 +344,28 @@ class AliasAdministrationServiceTest
         public DirectoryPreference getDirectoryPreference()
         {
             return mDirectoryPreference;
+        }
+    }
+
+    private static final class CountingConfigurationManager extends ConfigurationManager
+    {
+        private final AtomicInteger mFlushCount = new AtomicInteger();
+
+        private CountingConfigurationManager(UserPreferences preferences)
+        {
+            super(preferences, null, new AliasModel(), null, null);
+        }
+
+        @Override
+        public void flushConfiguration()
+        {
+            mFlushCount.incrementAndGet();
+            super.flushConfiguration();
+        }
+
+        private int flushCount()
+        {
+            return mFlushCount.get();
         }
     }
 }

@@ -193,7 +193,7 @@ class UnmatchedTalkgroupPolicyTest
     }
 
     @Test
-    void aliasModelCountsAndRenamesPolicyStreamDestinations()
+    void aliasModelCountsPolicyStreamDestinations()
     {
         AliasListDefinition definition = new AliasListDefinition("County", AliasListFamily.P25,
             new UnmatchedTalkgroupPolicy(100, false, List.of("Old Stream", "Keep")));
@@ -201,12 +201,7 @@ class UnmatchedTalkgroupPolicyTest
         model.setAliasListDefinitions(List.of(definition));
 
         assertTrue(model.hasAliasesWithBroadcastChannel("Old Stream"));
-        assertTrue(model.updateBroadcastChannel("Old Stream", "New Stream"));
-
-        assertFalse(model.hasAliasesWithBroadcastChannel("Old Stream"));
-        assertTrue(model.hasAliasesWithBroadcastChannel("New Stream"));
-        assertEquals(List.of("New Stream", "Keep"),
-            definition.getUnmatchedTalkgroupPolicy().getStreamDestinationNames());
+        assertFalse(model.hasAliasesWithBroadcastChannel("New Stream"));
     }
 
     private static Alias alias(String name, io.github.dsheirer.alias.id.AliasID matcher, int priority,

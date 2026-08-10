@@ -23,6 +23,7 @@ import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.audio.broadcast.BroadcastEvent;
 import io.github.dsheirer.audio.broadcast.BroadcastServerType;
 import io.github.dsheirer.gui.configuration.Editor;
+import io.github.dsheirer.gui.configuration.alias.AliasMutationUi;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import javafx.application.Platform;
 import javafx.beans.value.ChangeListener;
@@ -111,7 +112,7 @@ public abstract class AbstractBroadcastEditor<T extends BroadcastConfiguration> 
 
     public void save()
     {
-        BroadcastConfiguration configuration = getItem();
+        T configuration = getItem();
 
         if(configuration != null)
         {
@@ -124,30 +125,32 @@ public abstract class AbstractBroadcastEditor<T extends BroadcastConfiguration> 
 
             if(previousName != null && !previousName.isEmpty() && !updatedName.contentEquals(previousName)
                 && getConfigurationManager().getAliasModel().hasAliasesWithBroadcastChannel(previousName))
+            {
+                Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+                alert.getButtonTypes().clear();
+                alert.getButtonTypes().addAll(ButtonType.NO, ButtonType.YES);
+                alert.setTitle("Update Aliases");
+                alert.setHeaderText("Rename requires updating aliases for this stream");
+                alert.setContentText("Do you want to update aliases to new stream name?");
+                alert.initOwner(((Node)getSaveButton()).getScene().getWindow());
+
+                //Workaround for JavaFX KDE on Linux bug in FX 10/11: https://bugs.openjdk.java.net/browse/JDK-8179073
+                alert.setResizable(true);
+                alert.onShownProperty().addListener(e ->
+                    Platform.runLater(() -> alert.setResizable(false)));
+
+                if(alert.showAndWait().filter(ButtonType.YES::equals).isPresent() &&
+                    AliasMutationUi.execute(getSaveButton(), "Update Alias Streams", () ->
+                        getConfigurationManager().getAliasAdministrationService()
+                            .renameBroadcastChannelReferences(previousName, updatedName)).isEmpty())
                 {
-                    Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
-                    alert.getButtonTypes().clear();
-                    alert.getButtonTypes().addAll(ButtonType.NO, ButtonType.YES);
-                    alert.setTitle("Update Aliases");
-                    alert.setHeaderText("Rename requires updating aliases for this stream");
-                    alert.setContentText("Do you want to update aliases to new stream name?");
-                    alert.initOwner(((Node)getSaveButton()).getScene().getWindow());
-
-                    //Workaround for JavaFX KDE on Linux bug in FX 10/11: https://bugs.openjdk.java.net/browse/JDK-8179073
-                    alert.setResizable(true);
-                    alert.onShownProperty().addListener(e ->
-                        Platform.runLater(() -> alert.setResizable(false)));
-
-                    alert.showAndWait().ifPresent(buttonType -> {
-                        if(buttonType == ButtonType.YES)
-                        {
-                            if(getConfigurationManager().getAliasModel()
-                                .updateBroadcastChannel(previousName, updatedName))
-                            {
-                                getConfigurationManager().aliasListDefinitionChanged();
-                            }
-                        }
-                    });
+                    //Keep the broadcast and Alias references consistent when the combined snapshot cannot save.
+                    configuration.setName(previousName);
+                    getConfigurationManager().getBroadcastModel().process(new BroadcastEvent(configuration,
+                        BroadcastEvent.Event.CONFIGURATION_CHANGE));
+                    setItem(configuration);
+                    return;
+                }
             }
 
             //TODO: remove this after we get rid of Swing tables so that we don't have to announce these changes.

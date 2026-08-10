@@ -22,6 +22,7 @@ package io.github.dsheirer.gui.configuration.alias;
 import com.google.common.collect.Ordering;
 import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.alias.Alias;
+import io.github.dsheirer.alias.AliasAdministrationService;
 import io.github.dsheirer.alias.AliasFactory;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasMatchDescriptor;
@@ -55,6 +56,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.LongConsumer;
 import javafx.application.Platform;
 import javafx.beans.binding.Bindings;
 import javafx.beans.property.BooleanProperty;
@@ -99,18 +101,17 @@ import jiconfont.javafx.IconNode;
 import org.controlsfx.control.ToggleSwitch;
 import org.controlsfx.control.textfield.AutoCompletionBinding;
 import org.controlsfx.control.textfield.TextFields;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Editor for configuring individual aliases
  */
 public class AliasItemEditor extends Editor<Alias>
 {
-    private static final Logger mLog = LoggerFactory.getLogger(AliasItemEditor.class);
-
     private ConfigurationManager mConfigurationManager;
     private UserPreferences mUserPreferences;
+    private final LongConsumer mAliasSavedListener;
+    private long mLoadedRevision;
+    private boolean mLoadingStreamViews;
     private EditorModificationListener mEditorModificationListener = new EditorModificationListener();
     private IdentifierEditorModificationListener mIdentifierEditorModificationListener = new IdentifierEditorModificationListener();
     private TextField mGroupField;
@@ -144,10 +145,12 @@ public class AliasItemEditor extends Editor<Alias>
     private EmptyIdentifierEditor mEmptyIdentifierEditor = new EmptyIdentifierEditor();
     private IdentifierEditor<?> mIdentifierEditor;
 
-    public AliasItemEditor(ConfigurationManager configurationManager, UserPreferences userPreferences)
+    public AliasItemEditor(ConfigurationManager configurationManager, UserPreferences userPreferences,
+                           LongConsumer aliasSavedListener)
     {
         mConfigurationManager = configurationManager;
         mUserPreferences = userPreferences;
+        mAliasSavedListener = aliasSavedListener;
 
         //Listen for changes to the stream configurations and refresh the stream lists
         mConfigurationManager.getBroadcastModel().getConfiguredBroadcasts()
@@ -202,6 +205,8 @@ public class AliasItemEditor extends Editor<Alias>
     public void setItem(Alias alias)
     {
         super.setItem(alias);
+        mLoadedRevision = alias != null ?
+            mConfigurationManager.getAliasAdministrationService().currentRevision() : 0L;
 
         boolean disable = (alias == null);
         getGroupField().setDisable(disable);
@@ -364,94 +369,96 @@ public class AliasItemEditor extends Editor<Alias>
     @Override
     public void save()
     {
+        save(true);
+    }
+
+    /**
+     * Saves the detached editor state. Navigation-triggered saves retain the user's requested destination row,
+     * while an explicit Save reselects the canonical replacement installed by the service.
+     */
+    boolean save(boolean reselectSavedAlias)
+    {
         if(mMatcherMissing.get())
         {
-            return;
+            return false;
         }
 
-        if(modifiedProperty().get())
+        if(!modifiedProperty().get())
         {
-            Alias alias = getItem();
+            return true;
+        }
 
-            if(alias != null)
+        Alias alias = getItem();
+        if(alias == null)
+        {
+            return false;
+        }
+
+        Alias replacement = AliasFactory.copyOf(alias);
+        replacement.setId(alias.getId());
+        replacement.setRecordable(getRecordAudioToggleSwitch().isSelected());
+        replacement.setColor(ColorUtil.toInteger(getColorPicker().getValue()));
+
+        Icon icon = getIconNodeComboBox().getSelectionModel().getSelectedItem();
+        replacement.setIconName(icon != null ? icon.getName() : null);
+
+        boolean canMonitor = getMonitorAudioToggleSwitch().isSelected();
+        Integer priority = getMonitorPriorityComboBox().getSelectionModel().getSelectedItem();
+        if(canMonitor)
+        {
+            if(priority == null)
             {
-                alias.setRecordable(getRecordAudioToggleSwitch().isSelected());
-                alias.setColor(ColorUtil.toInteger(getColorPicker().getValue()));
-
-                Icon icon = getIconNodeComboBox().getSelectionModel().getSelectedItem();
-                alias.setIconName(icon != null ? icon.getName() : null);
-
-                boolean canMonitor = getMonitorAudioToggleSwitch().isSelected();
-                Integer priority = getMonitorPriorityComboBox().getSelectionModel().getSelectedItem();
-                if(canMonitor)
-                {
-                    if(priority == null)
-                    {
-                        priority = io.github.dsheirer.alias.id.priority.Priority.DEFAULT_PRIORITY;
-                    }
-
-                    alias.setCallPriority(priority);
-                }
-                else
-                {
-                    alias.setCallPriority(io.github.dsheirer.alias.id.priority.Priority.DO_NOT_MONITOR);
-                }
-
-                //Store broadcast streaming audio channels
-                alias.setBroadcastChannels(getSelectedStreamsView().getItems());
-
-                //Set or clear the 'Stream As Talkgroup' value.
-                Integer streamAsTalkgroup = mStreamAsIntegerTextFormatter.getValue();
-                alias.setStreamTalkgroupAlias(streamAsTalkgroup != null ? new StreamAsTalkgroup(streamAsTalkgroup) : null);
-
-                AliasID editedMatcher = getIdentifiersList().getItems().isEmpty() ? null :
-                    getIdentifiersList().getItems().getFirst();
-                AliasID matcherCopy = AliasFactory.copyOf(editedMatcher);
-
-                if(editedMatcher != null)
-                {
-                    //Reset overlap so the owning alias list reevaluates the replacement matcher.
-                    AliasID replacement = matcherCopy != null ? matcherCopy : editedMatcher;
-                    replacement.setOverlap(false);
-                    alias.setMatchIdentifier(replacement);
-                }
-
-                //Hack: because we're using a sorted list for the alias editor, sometimes setting
-                //name and or group can cause list errors.  So, we wrap each of these in a try/catch
-                //block to mitigate the error and effect the changes.
-                try
-                {
-                    alias.setName(getNameField().getText());
-                }
-                catch(Exception e)
-                {
-                    mLog.error("Error while updating alias name.", e);
-                }
-
-                try
-                {
-                    alias.setDescription(getDescriptionField().getText());
-                }
-                catch(Exception e)
-                {
-                    mLog.error("Error while updating alias description.", e);
-                }
-
-                try
-                {
-                    alias.setGroup(getGroupField().getText());
-                }
-                catch(Exception e)
-                {
-                    mLog.error("Error while updating alias group value", e);
-                }
+                priority = io.github.dsheirer.alias.id.priority.Priority.DEFAULT_PRIORITY;
             }
 
-            //Reset the alias to refresh the editor.
-            setItem(alias);
-
-            modifiedProperty().set(false);
+            replacement.setCallPriority(priority);
         }
+        else
+        {
+            replacement.setCallPriority(io.github.dsheirer.alias.id.priority.Priority.DO_NOT_MONITOR);
+        }
+
+        //Store broadcast streaming audio channels
+        replacement.setBroadcastChannels(getSelectedStreamsView().getItems());
+
+        //Set or clear the 'Stream As Talkgroup' value.
+        Integer streamAsTalkgroup = mStreamAsIntegerTextFormatter.getValue();
+        replacement.setStreamTalkgroupAlias(
+            streamAsTalkgroup != null ? new StreamAsTalkgroup(streamAsTalkgroup) : null);
+
+        AliasID editedMatcher = getIdentifiersList().getItems().isEmpty() ? null :
+            getIdentifiersList().getItems().getFirst();
+        AliasID matcherCopy = AliasFactory.copyOf(editedMatcher);
+
+        if(editedMatcher != null)
+        {
+            //Reset overlap so the owning alias list reevaluates the replacement matcher.
+            AliasID matcherReplacement = matcherCopy != null ? matcherCopy : editedMatcher;
+            matcherReplacement.setOverlap(false);
+            replacement.setMatchIdentifier(matcherReplacement);
+        }
+
+        replacement.setName(getNameField().getText());
+        replacement.setDescription(getDescriptionField().getText());
+        replacement.setGroup(getGroupField().getText());
+
+        Optional<AliasAdministrationService.MutationResult> saved = AliasMutationUi.execute(getSaveButton(),
+            "Save Alias", () -> mConfigurationManager.getAliasAdministrationService()
+                .replaceAlias(alias.getId(), replacement, mLoadedRevision));
+        if(saved.isEmpty())
+        {
+            return false;
+        }
+
+        AliasAdministrationService.MutationResult result = saved.get();
+        mLoadedRevision = result.revision();
+        modifiedProperty().set(false);
+        if(reselectSavedAlias)
+        {
+            mAliasSavedListener.accept(result.aliasIds().getFirst());
+        }
+
+        return true;
     }
 
     @Override
@@ -473,7 +480,7 @@ public class AliasItemEditor extends Editor<Alias>
             mStreamAsTalkgroupField.setTooltip(new Tooltip("When specified, all streamed call audio will use this " +
                     "talkgroup value in place of the decoded talkgroup value."));
             mStreamAsTalkgroupField.textProperty().addListener((o, old, newV) -> {
-                if(getItem() != null)
+                if(getItem() != null && !mLoadingStreamViews)
                 {
                     modifiedProperty().set(true);
                 }
@@ -679,43 +686,51 @@ public class AliasItemEditor extends Editor<Alias>
     private void updateStreamViews()
     {
         Platform.runLater(() -> {
-            getAvailableStreamsView().getItems().clear();
-            getSelectedStreamsView().getItems().clear();
-            getAvailableStreamsView().setDisable(getItem() == null);
-            getSelectedStreamsView().setDisable(getItem() == null);
-            getStreamAsTalkgroupField().setDisable(getItem() == null);
-
-            if(getItem() != null)
+            mLoadingStreamViews = true;
+            try
             {
-                List<String> availableStreams = mConfigurationManager.getBroadcastModel().getBroadcastConfigurationNames();
+                getAvailableStreamsView().getItems().clear();
+                getSelectedStreamsView().getItems().clear();
+                getAvailableStreamsView().setDisable(getItem() == null);
+                getSelectedStreamsView().setDisable(getItem() == null);
+                getStreamAsTalkgroupField().setDisable(getItem() == null);
 
-                Set<BroadcastChannel> selectedChannels = getItem().getBroadcastChannels();
-
-                for(BroadcastChannel channel: selectedChannels)
+                if(getItem() != null)
                 {
-                    if(availableStreams.contains(channel.getChannelName()))
+                    List<String> availableStreams =
+                        mConfigurationManager.getBroadcastModel().getBroadcastConfigurationNames();
+                    Set<BroadcastChannel> selectedChannels = getItem().getBroadcastChannels();
+
+                    for(BroadcastChannel channel: selectedChannels)
                     {
-                        availableStreams.remove(channel.getChannelName());
+                        if(availableStreams.contains(channel.getChannelName()))
+                        {
+                            availableStreams.remove(channel.getChannelName());
+                        }
                     }
-                }
 
-                getSelectedStreamsView().getItems().addAll(selectedChannels);
-                getAvailableStreamsView().getItems().addAll(availableStreams);
+                    getSelectedStreamsView().getItems().addAll(selectedChannels);
+                    getAvailableStreamsView().getItems().addAll(availableStreams);
 
-                AliasID streamAs = getItem().getStreamTalkgroupAlias();
+                    AliasID streamAs = getItem().getStreamTalkgroupAlias();
 
-                if(streamAs instanceof StreamAsTalkgroup sat)
-                {
-                    mStreamAsIntegerTextFormatter.setValue(sat.getValue());
+                    if(streamAs instanceof StreamAsTalkgroup sat)
+                    {
+                        mStreamAsIntegerTextFormatter.setValue(sat.getValue());
+                    }
+                    else
+                    {
+                        mStreamAsIntegerTextFormatter.setValue(null);
+                    }
                 }
                 else
                 {
                     mStreamAsIntegerTextFormatter.setValue(null);
                 }
             }
-            else
+            finally
             {
-                mStreamAsIntegerTextFormatter.setValue(null);
+                mLoadingStreamViews = false;
             }
         });
     }
@@ -1048,13 +1063,22 @@ public class AliasItemEditor extends Editor<Alias>
             mResetButton.setTextAlignment(TextAlignment.CENTER);
             mResetButton.setMaxWidth(Double.MAX_VALUE);
             mResetButton.disableProperty().bind(modifiedProperty().not());
-            mResetButton.setOnAction(event -> {
-                modifiedProperty().set(false);
-                setItem(getItem());
-            });
+            mResetButton.setOnAction(event -> reloadCurrentAlias());
         }
 
         return mResetButton;
+    }
+
+    /**
+     * Discards the form and reloads the current durable row. This must never reuse a detached editor object after a
+     * stale-revision failure, since doing so would stamp old values with the newest catalog revision.
+     */
+    void reloadCurrentAlias()
+    {
+        Alias edited = getItem();
+        Alias current = edited != null && edited.getId() > Alias.UNASSIGNED_ID ?
+            mConfigurationManager.getAliasModel().getAlias(edited.getId()) : edited;
+        setItem(current);
     }
 
     /**

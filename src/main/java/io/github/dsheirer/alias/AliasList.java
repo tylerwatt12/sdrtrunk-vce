@@ -420,64 +420,33 @@ public class AliasList
     }
 
     /**
-     * Reconciles a group of changed aliases and rebuilds at most once.  AliasModel uses this for bulk edits and moves.
+     * Reconciles this runtime lookup list against the AliasModel's complete ordered snapshot. This preserves the
+     * deterministic winner for overlapping matchers while rebuilding the lock-free lookup index only once.
      */
-    public void updateAliases(Collection<? extends Alias> aliases)
+    void reconcileAliases(Collection<? extends Alias> orderedAliases)
     {
-        if(aliases == null || aliases.isEmpty())
+        List<Alias> desired = new ArrayList<>();
+        if(orderedAliases != null)
         {
-            return;
+            for(Alias alias: orderedAliases)
+            {
+                if(alias != null && belongsToThisList(alias))
+                {
+                    requireOperationalMatcher(alias);
+                    desired.add(alias);
+                }
+            }
         }
 
         synchronized(mMutationLock)
         {
-            if(mRebuilding)
-            {
-                return;
-            }
-
-            boolean rebuild = false;
-            Set<Alias> aliasesToRemove = Collections.newSetFromMap(new IdentityHashMap<>());
-            List<Alias> aliasesToAdd = new ArrayList<>();
-
-            for(Alias alias: aliases)
-            {
-                if(alias == null)
-                {
-                    continue;
-                }
-
-                boolean contains = mAliasObservers.containsKey(alias);
-                boolean belongs = belongsToThisList(alias);
-
-                if(contains && !belongs)
-                {
-                    aliasesToRemove.add(alias);
-                    rebuild = true;
-                }
-                else if(!contains && belongs)
-                {
-                    aliasesToAdd.add(alias);
-                    rebuild = true;
-                }
-            }
-
-            if(!aliasesToRemove.isEmpty())
-            {
-                mAliases.removeIf(aliasesToRemove::contains);
-                aliasesToRemove.forEach(this::unobserve);
-            }
-
-            for(Alias alias: aliasesToAdd)
-            {
-                mAliases.add(alias);
-                observe(alias);
-            }
-
-            if(rebuild)
-            {
-                rebuildIndexes();
-            }
+            Set<Alias> desiredAliases = Collections.newSetFromMap(new IdentityHashMap<>());
+            desiredAliases.addAll(desired);
+            List<Alias> observedAliases = new ArrayList<>(mAliasObservers.keySet());
+            observedAliases.stream().filter(alias -> !desiredAliases.contains(alias)).forEach(this::unobserve);
+            desired.stream().filter(alias -> !mAliasObservers.containsKey(alias)).forEach(this::observe);
+            mAliases.setAll(desired);
+            rebuildIndexes();
         }
     }
 

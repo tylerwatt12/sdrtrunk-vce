@@ -20,12 +20,14 @@
 package io.github.dsheirer.gui.configuration.alias;
 
 import io.github.dsheirer.alias.Alias;
+import io.github.dsheirer.alias.AliasAdministrationService;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import javafx.collections.ListChangeListener;
 import javafx.collections.transformation.FilteredList;
 import javafx.collections.transformation.SortedList;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
+import javafx.scene.Node;
 import javafx.scene.control.Button;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
@@ -305,8 +307,7 @@ public class AliasViewByRecordingEditor extends VBox
 
                 if(selectedAlias != null)
                 {
-                    selectedAlias.setRecordable(true);
-                    updateListFilters();
+                    setRecordable(List.of(selectedAlias), true, getAddButton());
                 }
             });
         }
@@ -329,12 +330,7 @@ public class AliasViewByRecordingEditor extends VBox
 
                 if(!selectedAliases.isEmpty())
                 {
-                    for(Alias selectedAlias: selectedAliases)
-                    {
-                        selectedAlias.setRecordable(true);
-                    }
-
-                    updateListFilters();
+                    setRecordable(selectedAliases, true, getAddAllButton());
                 }
             });
         }
@@ -356,8 +352,7 @@ public class AliasViewByRecordingEditor extends VBox
 
                 if(selectedAlias != null)
                 {
-                    selectedAlias.setRecordable(false);
-                    updateListFilters();
+                    setRecordable(List.of(selectedAlias), false, getRemoveButton());
                 }
             });
         }
@@ -380,17 +375,22 @@ public class AliasViewByRecordingEditor extends VBox
 
                 if(!selectedAliases.isEmpty())
                 {
-                    for(Alias selectedAlias: selectedAliases)
-                    {
-                        selectedAlias.setRecordable(false);
-                    }
-
-                    updateListFilters();
+                    setRecordable(selectedAliases, false, getRemoveAllButton());
                 }
             });
         }
 
         return mRemoveAllButton;
+    }
+
+    private void setRecordable(List<Alias> aliases, boolean recordable, Node owner)
+    {
+        List<Long> aliasIds = aliases.stream().map(Alias::getId).toList();
+        AliasAdministrationService.BulkEdit edit = new AliasAdministrationService.BulkEdit(aliasIds, null, null,
+            null, null, recordable, null, null, null, null, false);
+        AliasMutationUi.execute(owner, "Update Alias Recording", () ->
+            mConfigurationManager.getAliasAdministrationService().bulkEdit(edit)).ifPresent(ignored ->
+            updateListFilters());
     }
 
     public static class AvailablePredicate implements Predicate<Alias>

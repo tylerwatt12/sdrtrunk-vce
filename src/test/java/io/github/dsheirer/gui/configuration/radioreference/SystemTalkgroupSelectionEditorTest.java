@@ -16,15 +16,23 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.alias.Alias;
+import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasListFamily;
+import io.github.dsheirer.alias.id.talkgroup.StreamAsTalkgroup;
 import io.github.dsheirer.alias.id.talkgroup.TalkgroupRange;
+import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import io.github.dsheirer.module.decode.DecoderType;
+import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.protocol.Protocol;
+import io.github.dsheirer.rrapi.type.System;
 import io.github.dsheirer.rrapi.type.Talkgroup;
 import io.github.dsheirer.rrapi.type.TalkgroupCategory;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
@@ -151,6 +159,51 @@ class SystemTalkgroupSelectionEditorTest
     }
 
     @Test
+    void currentExactAliasWinsEvenWhenARangeAlsoMatches()
+    {
+        AliasListDefinition definition = new AliasListDefinition("County P25", AliasListFamily.P25);
+        Alias range = new Alias("Range");
+        range.setMatchIdentifier(new TalkgroupRange(Protocol.APCO25, 100, 200));
+        Alias exact = new Alias("Exact");
+        exact.setMatchIdentifier(new io.github.dsheirer.alias.id.talkgroup.Talkgroup(Protocol.APCO25, 125));
+        AliasList aliasList = new AliasList(definition);
+        aliasList.addAliases(List.of(range, exact));
+        Talkgroup talkgroup = new Talkgroup();
+        talkgroup.setDecimalValue(125);
+        RadioReferenceDecoder decoder = new RadioReferenceDecoder(null, Map.of(), Map.of(), Map.of(), Map.of())
+        {
+            @Override
+            public TalkgroupIdentifier getIdentifier(Talkgroup ignored, System system)
+            {
+                return APCO25Talkgroup.create(125);
+            }
+
+            @Override
+            public io.github.dsheirer.alias.id.talkgroup.Talkgroup getTalkgroupAliasId(
+                Talkgroup ignored, System system)
+            {
+                return new io.github.dsheirer.alias.id.talkgroup.Talkgroup(Protocol.APCO25, 125);
+            }
+        };
+
+        assertEquals(exact,
+            SystemTalkgroupSelectionEditor.findExactAlias(aliasList, decoder, talkgroup, new System()));
+    }
+
+    @Test
+    void importActionsResolveCurrentAliasesBeforeStaging() throws Exception
+    {
+        Path directory = Path.of("src/main/java/io/github/dsheirer/gui/configuration/radioreference");
+        String bulkEditor = Files.readString(directory.resolve("SystemTalkgroupSelectionEditor.java"));
+        String itemEditor = Files.readString(directory.resolve("TalkgroupEditor.java"));
+
+        assertTrue(bulkEditor.contains("Alias currentAlias = getAlias(talkgroup)"));
+        assertTrue(itemEditor.contains("Alias currentAlias = resolveCurrentAlias()"));
+        assertTrue(itemEditor.contains("Alias alias = resolveCurrentAlias()"));
+        assertTrue(itemEditor.contains(".createAlias(alias, revision)"));
+    }
+
+    @Test
     void reportsAndUpdatesOnlyRadioReferenceOwnedFields()
     {
         Talkgroup talkgroup = new Talkgroup();
@@ -160,22 +213,55 @@ class SystemTalkgroupSelectionEditorTest
         category.setName("New group");
 
         Alias alias = new Alias("Local name");
+        alias.setId(41L);
         alias.setDescription("Local description");
         alias.setGroup("Local group");
         alias.setColor(0x123456);
+        alias.setIconName("Local icon");
+        alias.setCallPriority(7);
         alias.setRecordable(true);
+        alias.addBroadcastChannel("Local Stream");
+        alias.setStreamTalkgroupAlias(new StreamAsTalkgroup(9001));
+        alias.setMatchIdentifier(new io.github.dsheirer.alias.id.talkgroup.Talkgroup(Protocol.APCO25, 125));
 
         List<SystemTalkgroupSelectionEditor.ImportedFieldChange> changes =
             SystemTalkgroupSelectionEditor.getImportedFieldChanges(alias, talkgroup, category);
         assertEquals(List.of("Name", "Description", "Group"),
             changes.stream().map(SystemTalkgroupSelectionEditor.ImportedFieldChange::field).toList());
 
-        SystemTalkgroupSelectionEditor.updateAliasFromRadioReference(alias, talkgroup, category);
+        Alias replacement = SystemTalkgroupSelectionEditor.createRadioReferenceReplacement(alias, talkgroup,
+            category);
 
-        assertEquals("NEW NAME", alias.getName());
-        assertEquals("New description", alias.getDescription());
-        assertEquals("New group", alias.getGroup());
-        assertEquals(0x123456, alias.getColor());
-        assertTrue(alias.isRecordable());
+        assertEquals("Local name", alias.getName());
+        assertEquals("Local description", alias.getDescription());
+        assertEquals("Local group", alias.getGroup());
+        assertEquals(41L, replacement.getId());
+        assertEquals("NEW NAME", replacement.getName());
+        assertEquals("New description", replacement.getDescription());
+        assertEquals("New group", replacement.getGroup());
+        assertEquals(0x123456, replacement.getColor());
+        assertEquals("Local icon", replacement.getIconName());
+        assertEquals(7, replacement.getPlaybackPriority());
+        assertTrue(replacement.isRecordable());
+        assertTrue(replacement.hasBroadcastChannel("Local Stream"));
+        assertEquals(9001, replacement.getStreamTalkgroupAlias().getValue());
+        assertTrue(alias.getMatchIdentifier().matches(replacement.getMatchIdentifier()));
+    }
+
+    @Test
+    void radioReferenceReplacementPreservesGroupWithoutCategoryEnrichment()
+    {
+        Talkgroup talkgroup = new Talkgroup();
+        talkgroup.setAlphaTag("UPDATED");
+        talkgroup.setDescription("Updated description");
+        Alias alias = new Alias("Local name");
+        alias.setId(42L);
+        alias.setGroup("Local group");
+
+        Alias replacement = SystemTalkgroupSelectionEditor.createRadioReferenceReplacement(alias, talkgroup, null);
+
+        assertEquals("UPDATED", replacement.getName());
+        assertEquals("Updated description", replacement.getDescription());
+        assertEquals("Local group", replacement.getGroup());
     }
 }

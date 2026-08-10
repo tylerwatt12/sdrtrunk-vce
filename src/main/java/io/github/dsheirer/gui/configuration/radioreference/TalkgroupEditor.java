@@ -20,8 +20,10 @@
 package io.github.dsheirer.gui.configuration.radioreference;
 
 import io.github.dsheirer.alias.Alias;
+import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.eventbus.MyEventBus;
+import io.github.dsheirer.gui.configuration.alias.AliasMutationUi;
 import io.github.dsheirer.gui.configuration.alias.ViewAliasRequest;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.rrapi.type.System;
@@ -327,6 +329,17 @@ public class TalkgroupEditor extends GridPane
                 }
                 else if(mRadioReferenceDecoder != null && mTalkgroup != null && mSystem != null)
                 {
+                    Alias currentAlias = resolveCurrentAlias();
+                    SystemTalkgroupSelectionEditor.ImportStatus currentStatus = getCurrentImportStatus(currentAlias);
+
+                    if(currentAlias != null)
+                    {
+                        setTalkgroup(mTalkgroup, mSystem, mRadioReferenceDecoder, currentAlias, mAliasListName,
+                            mTalkgroupCategory, mSetEncryptedDoNotMonitor, currentStatus);
+                        MyEventBus.getGlobalEventBus().post(new ViewAliasRequest(currentAlias));
+                        return;
+                    }
+
                     AliasListDefinition definition =
                         mConfigurationManager.getAliasModel().getAliasListDefinition(mAliasListName);
 
@@ -347,8 +360,10 @@ public class TalkgroupEditor extends GridPane
                     alias.setName(getAliasNameTextField().getText());
                     alias.setDescription(getAliasDescriptionTextField().getText());
                     RadioReferenceAliasPlaybackPolicy.apply(alias, mTalkgroup, mSetEncryptedDoNotMonitor);
+                    long revision = mConfigurationManager.getAliasAdministrationService().currentRevision();
 
-                    mConfigurationManager.getAliasModel().addAlias(alias);
+                    AliasMutationUi.execute(getCreateAliasButton(), "Create RadioReference Alias", () ->
+                        mConfigurationManager.getAliasAdministrationService().createAlias(alias, revision));
                 }
             });
         }
@@ -363,6 +378,26 @@ public class TalkgroupEditor extends GridPane
                 mRadioReferenceDecoder.getDecoderType(mSystem) : null);
     }
 
+    private Alias resolveCurrentAlias()
+    {
+        if(mAliasListName == null || mRadioReferenceDecoder == null || mTalkgroup == null || mSystem == null)
+        {
+            return null;
+        }
+
+        AliasList aliasList = mConfigurationManager.getAliasModel().getAliasList(mAliasListName);
+        return SystemTalkgroupSelectionEditor.findExactAlias(aliasList, mRadioReferenceDecoder, mTalkgroup, mSystem);
+    }
+
+    private SystemTalkgroupSelectionEditor.ImportStatus getCurrentImportStatus(Alias alias)
+    {
+        AliasListDefinition definition =
+            mConfigurationManager.getAliasModel().getAliasListDefinition(mAliasListName);
+        boolean compatible = mRadioReferenceDecoder != null && mSystem != null &&
+            mRadioReferenceDecoder.hasSupportedProtocol(mSystem) && isCurrentProtocolCompatible(definition);
+        return SystemTalkgroupSelectionEditor.getImportStatus(compatible, alias, mTalkgroup, mTalkgroupCategory);
+    }
+
     private Button getEditAliasButton()
     {
         if(mEditAliasButton == null)
@@ -370,14 +405,24 @@ public class TalkgroupEditor extends GridPane
             mEditAliasButton = new Button("View/Edit Alias");
             mEditAliasButton.setVisible(false);
             mEditAliasButton.setOnAction(event -> {
-                if(mAlias != null &&
-                    mImportStatus != SystemTalkgroupSelectionEditor.ImportStatus.NOT_COMPATIBLE)
+                Alias alias = resolveCurrentAlias();
+                SystemTalkgroupSelectionEditor.ImportStatus status = getCurrentImportStatus(alias);
+
+                if(alias != mAlias || status != mImportStatus)
                 {
-                    if(mImportStatus == SystemTalkgroupSelectionEditor.ImportStatus.DIFFERENT)
+                    setTalkgroup(mTalkgroup, mSystem, mRadioReferenceDecoder, alias, mAliasListName,
+                        mTalkgroupCategory, mSetEncryptedDoNotMonitor, status);
+                }
+
+                if(alias != null && status != SystemTalkgroupSelectionEditor.ImportStatus.NOT_COMPATIBLE)
+                {
+                    if(status == SystemTalkgroupSelectionEditor.ImportStatus.DIFFERENT)
                     {
+                        Talkgroup talkgroup = mTalkgroup;
+                        TalkgroupCategory category = mTalkgroupCategory;
+                        long revision = mConfigurationManager.getAliasAdministrationService().currentRevision();
                         List<SystemTalkgroupSelectionEditor.ImportedFieldChange> changes =
-                            SystemTalkgroupSelectionEditor.getImportedFieldChanges(mAlias, mTalkgroup,
-                                mTalkgroupCategory);
+                            SystemTalkgroupSelectionEditor.getImportedFieldChanges(alias, talkgroup, category);
                         ButtonType update = new ButtonType("Update", ButtonBar.ButtonData.OK_DONE);
                         Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION,
                             changes.stream().map(SystemTalkgroupSelectionEditor.ImportedFieldChange::display)
@@ -389,13 +434,16 @@ public class TalkgroupEditor extends GridPane
 
                         if(confirmation.showAndWait().filter(update::equals).isPresent())
                         {
-                            SystemTalkgroupSelectionEditor.updateAliasFromRadioReference(mAlias, mTalkgroup,
-                                mTalkgroupCategory);
+                            Alias replacement = SystemTalkgroupSelectionEditor.createRadioReferenceReplacement(
+                                alias, talkgroup, category);
+                            AliasMutationUi.execute(getEditAliasButton(), "Update RadioReference Alias", () ->
+                                mConfigurationManager.getAliasAdministrationService()
+                                    .replaceAlias(alias.getId(), replacement, revision));
                         }
                     }
                     else
                     {
-                        MyEventBus.getGlobalEventBus().post(new ViewAliasRequest(mAlias));
+                        MyEventBus.getGlobalEventBus().post(new ViewAliasRequest(alias));
                     }
                 }
             });
