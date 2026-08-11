@@ -132,25 +132,20 @@ public class SDRTrunk implements Listener<TunerEvent>
     private Preferences mPreferences;
 
     private static final String PREFERENCE_BROADCAST_STATUS_VISIBLE = "sdrtrunk.broadcast.status.visible";
-    private static final String PREFERENCE_NOW_PLAYING_LOWER_VIEWS_VISIBLE = "sdrtrunk.now.playing.details.visible";
     private static final String PREFERENCE_RESOURCE_STATUS_VISIBLE = "sdrtrunk.resource.status.visible";
     private static final String PREFERENCE_UPDATE_FOOTER_MIGRATION =
         "sdrtrunk.resource.status.update.icon.migration.1";
-    private static final String PREFERENCE_SYSTEMS_VISIBLE = "sdrtrunk.systems.visible";
     private static final String BASE_WINDOW_NAME = "sdrtrunk.main.window";
     private static final String CONTROLLER_PANEL_IDENTIFIER = BASE_WINDOW_NAME + ".control.panel";
     private static final String SPECTRAL_PANEL_IDENTIFIER = BASE_WINDOW_NAME + ".spectral.panel";
     private static final String WINDOW_FRAME_IDENTIFIER = BASE_WINDOW_NAME + ".frame";
     private static final String MAIN_SPLIT_PANE_DIVIDER_IDENTIFIER = BASE_WINDOW_NAME + ".split.pane.divider";
     private static final String SPECTRAL_DISPLAY_DIVIDER_IDENTIFIER = BASE_WINDOW_NAME + ".spectral.display.divider";
-    private static final String NOW_PLAYING_SPLIT_PANE_DIVIDER_IDENTIFIER = "now.playing.split.pane.divider";
-    private static final String CHANNEL_SPECTRUM_SPLIT_PANE_DIVIDER_IDENTIFIER = "channel.spectrum.panel.split.pane.divider";
     private static final int MAIN_SPECTRAL_MINIMUM_HEIGHT = 120;
     private static final int MAIN_CONTROLLER_MINIMUM_HEIGHT = 180;
 
     private boolean mBroadcastStatusVisible;
     private boolean mResourceStatusVisible;
-    private boolean mNowPlayingLowerViewsVisible;
     private AudioCallCoordinator mAudioCallCoordinator;
     private AudioPlaybackManager mAudioPlaybackManager;
     private P25ActivityLogService mP25ActivityLogService;
@@ -182,11 +177,9 @@ public class SDRTrunk implements Listener<TunerEvent>
     private JButton mConfigurationEditorShortcutButton;
     private JButton mUserPreferencesShortcutButton;
     private JMenuItem mEncryptionKeysItem;
-    private JToggleButton mSystemsToggleButton;
     private JToggleButton mSpectrumWaterfallToggleButton;
     private boolean mShutdownProcessed;
     private boolean mSpectralPanelVisible;
-    private boolean mSystemsVisible;
     private boolean mMainSplitPaneDividerRestored;
     private PortableDataRootLock mDataRootLock;
 
@@ -295,17 +288,10 @@ public class SDRTrunk implements Listener<TunerEvent>
         MapService mapService = new MapService(aliasModel);
         mConfigurationManager.getChannelProcessingManager().addDecodeEventListener(mapService);
 
-        mNowPlayingLowerViewsVisible = mPreferences.getBoolean(PREFERENCE_NOW_PLAYING_LOWER_VIEWS_VISIBLE, true);
-        mSystemsVisible = mPreferences.getBoolean(PREFERENCE_SYSTEMS_VISIBLE, true);
-
         if(!GraphicsEnvironment.isHeadless())
         {
             mControllerPanel = new ControllerPanel(mConfigurationManager, mAudioPlaybackManager, mIconModel, mapService,
-                    mSettingsManager, mTunerManager, mUserPreferences, mStatsWebServerService, mSystemsVisible,
-                    mNowPlayingLowerViewsVisible, visible -> {
-                        mNowPlayingLowerViewsVisible = visible;
-                        mPreferences.putBoolean(PREFERENCE_NOW_PLAYING_LOWER_VIEWS_VISIBLE, visible);
-                    });
+                    mSettingsManager, mTunerManager, mUserPreferences);
         }
 
         mSpectralPanel = new SpectralDisplayPanel(mConfigurationManager, mSettingsManager,
@@ -842,7 +828,6 @@ public class SDRTrunk implements Listener<TunerEvent>
         mUserPreferences.getSwingPreference().setDimension(WINDOW_FRAME_IDENTIFIER, mMainGui.getSize());
         mUserPreferences.getSwingPreference().setMaximized(WINDOW_FRAME_IDENTIFIER,
             (mMainGui.getExtendedState() & Frame.MAXIMIZED_BOTH) == Frame.MAXIMIZED_BOTH);
-        mPreferences.putBoolean(PREFERENCE_SYSTEMS_VISIBLE, mSystemsVisible);
         if(mSpectralPanelVisible)
         {
             mUserPreferences.getSwingPreference().setDimension(SPECTRAL_PANEL_IDENTIFIER, mSpectralPanel.getSize());
@@ -853,10 +838,6 @@ public class SDRTrunk implements Listener<TunerEvent>
         mUserPreferences.getSwingPreference().setDimension(CONTROLLER_PANEL_IDENTIFIER, mControllerPanel.getSize());
         mUserPreferences.getSwingPreference().setInt(SPECTRAL_DISPLAY_DIVIDER_IDENTIFIER,
             mSpectralPanel.getSplitPaneDividerLocation());
-        mUserPreferences.getSwingPreference().setInt(NOW_PLAYING_SPLIT_PANE_DIVIDER_IDENTIFIER,
-            mControllerPanel.getNowPlayingPanel().getSplitPaneDividerLocation());
-        mUserPreferences.getSwingPreference().setInt(CHANNEL_SPECTRUM_SPLIT_PANE_DIVIDER_IDENTIFIER,
-            mControllerPanel.getNowPlayingPanel().getChannelSpectrumPanelDividerLocation());
         mUserPreferences.getSwingPreference().flush();
         mControllerPanel.dispose();
         mJavaFxWindowManager.shutdown();
@@ -979,14 +960,11 @@ public class SDRTrunk implements Listener<TunerEvent>
 
     private JPanel getMainControlPanel()
     {
-        JPanel panel = new JPanel(new MigLayout("insets 2 6 2 6", "[][][grow,fill][][]", "[]"));
+        JPanel panel = new JPanel(new MigLayout("insets 2 6 2 6", "[][][grow,fill][]", "[]"));
         panel.add(getConfigurationEditorShortcutButton());
         panel.add(getUserPreferencesShortcutButton());
         panel.add(new JPanel(), "grow");
-        panel.add(getSystemsToggleButton());
-        panel.add(mControllerPanel.getNowPlayingPanel().getLowerViewsToggleButton());
         panel.add(getSpectrumWaterfallToggleButton());
-        updateSystemsToggleButton();
         return panel;
     }
 
@@ -1016,48 +994,6 @@ public class SDRTrunk implements Listener<TunerEvent>
         }
 
         return mUserPreferencesShortcutButton;
-    }
-
-    private JToggleButton getSystemsToggleButton()
-    {
-        if(mSystemsToggleButton == null)
-        {
-            mSystemsToggleButton = new JToggleButton("Systems");
-            mSystemsToggleButton.setFocusable(false);
-            mSystemsToggleButton.addActionListener(event ->
-                EventQueue.invokeLater(() -> setSystemsVisible(!mSystemsVisible)));
-            updateSystemsToggleButton();
-        }
-
-        return mSystemsToggleButton;
-    }
-
-    private void setSystemsVisible(boolean visible)
-    {
-        if(mSystemsVisible != visible)
-        {
-            mSystemsVisible = visible;
-            mControllerPanel.setSystemsVisible(visible);
-            mPreferences.putBoolean(PREFERENCE_SYSTEMS_VISIBLE, visible);
-            mControllerPanel.revalidate();
-            mControllerPanel.repaint();
-            mMainGui.revalidate();
-            mMainGui.repaint();
-        }
-
-        updateSystemsToggleButton();
-    }
-
-    private void updateSystemsToggleButton()
-    {
-        if(mSystemsToggleButton != null)
-        {
-            mSystemsToggleButton.setSelected(mSystemsVisible);
-            mSystemsToggleButton.setIcon(IconFontSwing.buildIcon(mSystemsVisible ?
-                FontAwesome.CHEVRON_DOWN : FontAwesome.CHEVRON_UP, 12));
-            mSystemsToggleButton.setToolTipText(mSystemsVisible ? "Hide Systems" : "Show Systems");
-            mControllerPanel.getNowPlayingPanel().getLowerViewsToggleButton().setEnabled(mSystemsVisible);
-        }
     }
 
     private JToggleButton getSpectrumWaterfallToggleButton()

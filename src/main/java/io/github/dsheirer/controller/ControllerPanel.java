@@ -21,7 +21,6 @@ package io.github.dsheirer.controller;
 import com.jidesoft.swing.JideTabbedPane;
 import io.github.dsheirer.audio.playback.AudioPanel;
 import io.github.dsheirer.audio.playback.AudioPlaybackManager;
-import io.github.dsheirer.channel.metadata.NowPlayingPanel;
 import io.github.dsheirer.icon.IconModel;
 import io.github.dsheirer.map.MapPanel;
 import io.github.dsheirer.map.MapService;
@@ -29,10 +28,8 @@ import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.settings.SettingsManager;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
-import io.github.dsheirer.stats.StatsWebServerService;
 import io.github.dsheirer.source.tuner.ui.TunerViewPanel;
 import java.awt.Dimension;
-import java.util.function.Consumer;
 import net.miginfocom.swing.MigLayout;
 
 import javax.swing.JPanel;
@@ -42,69 +39,26 @@ public class ControllerPanel extends JPanel
     private static final long serialVersionUID = 1L;
 
     private AudioPanel mAudioPanel;
-    private NowPlayingPanel mNowPlayingPanel;
     private MapPanel mMapPanel;
     private TunerViewPanel mTunerManagerPanel;
     private JideTabbedPane mTabbedPane;
-    private ConfigurationManager mConfigurationManager;
-    private boolean mSystemsVisible;
 
     public ControllerPanel(ConfigurationManager configurationManager, AudioPlaybackManager audioPlaybackManager,
                            IconModel iconModel, MapService mapService, SettingsManager settingsManager,
-                           TunerManager tunerManager, UserPreferences userPreferences,
-                           StatsWebServerService statsWebServerService, boolean systemsVisible,
-                           boolean lowerViewsVisible,
-                           Consumer<Boolean> lowerViewsVisibilityListener)
+                           TunerManager tunerManager, UserPreferences userPreferences)
     {
-        mConfigurationManager = configurationManager;
-        mSystemsVisible = systemsVisible;
-        mConfigurationManager.getChannelProcessingManager().setChannelActivityEnabled("java-ui", systemsVisible);
+        configurationManager.getChannelProcessingManager().setChannelActivityEnabled("java-ui", false);
         mAudioPanel = new AudioPanel(iconModel, userPreferences, settingsManager, audioPlaybackManager,
             configurationManager.getAliasModel());
-        mNowPlayingPanel = new NowPlayingPanel(configurationManager, iconModel, userPreferences, settingsManager,
-            statsWebServerService, lowerViewsVisible, lowerViewsVisibilityListener);
         mMapPanel = new MapPanel(mapService, configurationManager.getAliasModel(), iconModel, settingsManager);
         mTunerManagerPanel = new TunerViewPanel(tunerManager, userPreferences);
 
         init();
     }
 
-    /**
-     * Now playing panel.
-     */
-    public NowPlayingPanel getNowPlayingPanel()
-    {
-        return mNowPlayingPanel;
-    }
-
-    public void setSystemsVisible(boolean visible)
-    {
-        if(mSystemsVisible == visible)
-        {
-            return;
-        }
-
-        if(visible)
-        {
-            mTabbedPane.insertTab("Systems", null, mNowPlayingPanel, null, 0);
-            mNowPlayingPanel.setSystemsActive(true);
-            mConfigurationManager.getChannelProcessingManager().setChannelActivityEnabled("java-ui", true);
-            mTabbedPane.setSelectedComponent(mNowPlayingPanel);
-        }
-        else
-        {
-            mNowPlayingPanel.setSystemsActive(false);
-            mConfigurationManager.getChannelProcessingManager().setChannelActivityEnabled("java-ui", false);
-            mTabbedPane.remove(mNowPlayingPanel);
-        }
-
-        mSystemsVisible = visible;
-    }
-
     public void dispose()
     {
         mAudioPanel.dispose();
-        mNowPlayingPanel.dispose();
     }
 
     private void init()
@@ -115,16 +69,6 @@ public class ControllerPanel extends JPanel
 
         mTabbedPane = new JideTabbedPane();
         mTabbedPane.setFont(this.getFont());
-        if(mSystemsVisible)
-        {
-            mTabbedPane.addTab("Systems", mNowPlayingPanel);
-        }
-        else
-        {
-            mNowPlayingPanel.setSystemsActive(false);
-            mConfigurationManager.getChannelProcessingManager().setChannelActivityEnabled("java-ui", false);
-        }
-
         mTabbedPane.addTab("Map", mMapPanel);
         mTabbedPane.addTab("Tuners", mTunerManagerPanel);
 
