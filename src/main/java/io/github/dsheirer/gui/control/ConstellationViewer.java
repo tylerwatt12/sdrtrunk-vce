@@ -1,6 +1,7 @@
 package io.github.dsheirer.gui.control;
 
 import io.github.dsheirer.buffer.CircularBuffer;
+import io.github.dsheirer.gui.theme.ThemeManager;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.sample.complex.Complex;
 import org.apache.commons.math3.util.FastMath;
@@ -49,6 +50,7 @@ public class ConstellationViewer extends JPanel implements Listener<Complex>
 					
 					menu.add( new TimingOffsetItem( (int)( mSamplesPerSymbol * 10 ), (int)( mOffset * 10 ) ) );
 					
+					ThemeManager.getInstance().preparePopupMenu(menu);
 					menu.show( ConstellationViewer.this, e.getX(), e.getY() );
 				}
 			}

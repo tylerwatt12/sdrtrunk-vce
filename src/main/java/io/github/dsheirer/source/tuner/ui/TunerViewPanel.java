@@ -20,6 +20,7 @@
 package io.github.dsheirer.source.tuner.ui;
 
 import com.jidesoft.swing.JideSplitPane;
+import io.github.dsheirer.gui.theme.ThemeManager;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.swing.JTableColumnWidthMonitor;
 import io.github.dsheirer.source.tuner.TunerEvent;
@@ -140,6 +141,7 @@ public class TunerViewPanel extends JPanel
         });
         popupMenu.add(logStateMenuItem);
         mTunerTable.setComponentPopupMenu(popupMenu);
+        ThemeManager.getInstance().registerSwing(popupMenu);
 
         //Monitor for tuner removal events so we can update the editor when our selected tuner is removed
         mDiscoveredTunerModel.addTableModelListener(e ->

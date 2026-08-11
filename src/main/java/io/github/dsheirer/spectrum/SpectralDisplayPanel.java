@@ -28,6 +28,7 @@ import io.github.dsheirer.dsp.window.WindowType;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.gui.configuration.channel.ViewChannelRequest;
 import io.github.dsheirer.gui.SplitPaneDividerHelper;
+import io.github.dsheirer.gui.theme.ThemeManager;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.sample.Listener;
@@ -795,6 +796,8 @@ public class SpectralDisplayPanel extends JPanel
 
                 if(contextMenu != null)
                 {
+                    ThemeManager.getInstance().preparePopupMenu(contextMenu);
+
                     if(event.getComponent() == mOverlayPanel)
                     {
                         contextMenu.show(mOverlayPanel, event.getX(), event.getY());
