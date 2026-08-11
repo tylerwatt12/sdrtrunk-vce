@@ -5196,6 +5196,89 @@ function liveConnection(path, parameters = {}) {
   return source;
 }
 
+let liveChannelActivitySource = null;
+let liveChannelActivityState = 'connecting';
+const liveChannelActivitySubscribers = new Set();
+const liveChannelActivityTables = new Map();
+
+function subscribeLiveChannelActivity(callbacks = {}) {
+  const subscriber = {
+    snapshot: typeof callbacks.snapshot === 'function' ? callbacks.snapshot : null,
+    activityTable: typeof callbacks.activityTable === 'function' ? callbacks.activityTable : null,
+    open: typeof callbacks.open === 'function' ? callbacks.open : null,
+    error: typeof callbacks.error === 'function' ? callbacks.error : null
+  };
+  liveChannelActivitySubscribers.add(subscriber);
+
+  if (!liveChannelActivitySource) {
+    liveChannelActivityState = 'connecting';
+    const source = new EventSource('/api/v1/live/channel-activity');
+    liveChannelActivitySource = source;
+    liveConnections.add(source);
+    source.addEventListener('snapshot', (event) => {
+      try {
+        const snapshot = JSON.parse(event.data);
+        liveChannelActivityTables.clear();
+        (Array.isArray(snapshot?.tables) ? snapshot.tables : []).forEach((table) => {
+          if (table?.table_id) liveChannelActivityTables.set(String(table.table_id), table);
+        });
+        const current = { ...snapshot, tables: [...liveChannelActivityTables.values()] };
+        liveChannelActivitySubscribers.forEach((target) => target.snapshot?.(current));
+      } catch (error) {
+        //Ignore a malformed optional live update and retain the last complete snapshot.
+      }
+    });
+    source.addEventListener('activity_table', (event) => {
+      try {
+        const update = JSON.parse(event.data);
+        const id = String(update?.table_id || update?.table?.table_id || '');
+        if (!id) return;
+        if (update.operation === 'remove') liveChannelActivityTables.delete(id);
+        else if (update.table) liveChannelActivityTables.set(id, update.table);
+        liveChannelActivitySubscribers.forEach((target) => target.activityTable?.(update));
+      } catch (error) {
+        //Ignore one malformed update; a later snapshot restores authoritative state.
+      }
+    });
+    source.onopen = () => {
+      if (liveChannelActivitySource !== source) return;
+      liveChannelActivityState = 'open';
+      liveChannelActivitySubscribers.forEach((target) => target.open?.());
+    };
+    source.onerror = () => {
+      if (liveChannelActivitySource !== source) return;
+      liveChannelActivityState = 'error';
+      liveChannelActivitySubscribers.forEach((target) => target.error?.());
+    };
+  } else {
+    if (liveChannelActivityTables.size) {
+      subscriber.snapshot?.({ tables: [...liveChannelActivityTables.values()] });
+    }
+    if (liveChannelActivityState === 'open') subscriber.open?.();
+    else if (liveChannelActivityState === 'error') subscriber.error?.();
+  }
+
+  let closed = false;
+  const connection = {
+    close() {
+      if (closed) return;
+      closed = true;
+      liveChannelActivitySubscribers.delete(subscriber);
+      pageConnections.delete(connection);
+      if (!liveChannelActivitySubscribers.size && liveChannelActivitySource) {
+        const source = liveChannelActivitySource;
+        liveChannelActivitySource = null;
+        liveChannelActivityState = 'connecting';
+        liveChannelActivityTables.clear();
+        source.close();
+        liveConnections.delete(source);
+      }
+    }
+  };
+  pageConnections.add(connection);
+  return connection;
+}
+
 const DIAGNOSTIC_FRAME_MAGIC = 0x53444447;
 const DIAGNOSTIC_FRAME_HEADER_BYTES = 64;
 const DIAGNOSTIC_FRAME_MAXIMUM_BYTES = 16 * 1024 * 1024;
@@ -5218,6 +5301,16 @@ function binaryFrameConnection(path, parameters = {}, callbacks = {}) {
   let controller = null;
   let reconnectTimer = null;
   let pending = new Uint8Array(0);
+  let attemptActive = false;
+  let closedPromiseResolve = null;
+  const closedPromise = new Promise((resolve) => { closedPromiseResolve = resolve; });
+
+  const settleClosed = () => {
+    if (closed && !attemptActive && closedPromiseResolve) {
+      closedPromiseResolve();
+      closedPromiseResolve = null;
+    }
+  };
 
   const fail = (error) => {
     if (!closed) callbacks.onError?.(error instanceof Error ? error : new Error(String(error)));
@@ -5274,6 +5367,7 @@ function binaryFrameConnection(path, parameters = {}, callbacks = {}) {
 
   const connect = async () => {
     if (closed) return;
+    attemptActive = true;
     const attemptController = new AbortController();
     controller = attemptController;
     let reader = null;
@@ -5306,13 +5400,15 @@ function binaryFrameConnection(path, parameters = {}, callbacks = {}) {
       if (reader) await reader.cancel().catch(() => {});
       attemptController.abort();
       if (controller === attemptController) controller = null;
+      attemptActive = false;
+      settleClosed();
     }
     if (!closed) reconnectTimer = window.setTimeout(connect, 750);
   };
 
   const connection = {
     close() {
-      if (closed) return;
+      if (closed) return closedPromise;
       closed = true;
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
       reconnectTimer = null;
@@ -5321,6 +5417,11 @@ function binaryFrameConnection(path, parameters = {}, callbacks = {}) {
       pending = new Uint8Array(0);
       liveConnections.delete(connection);
       pageConnections.delete(connection);
+      settleClosed();
+      return closedPromise;
+    },
+    whenClosed() {
+      return closedPromise;
     }
   };
   liveConnections.add(connection);
@@ -6538,7 +6639,7 @@ const TUNER_ACTIVITY_LABELS = Object.freeze({
   DATA: 'Data activity',
   CONTROL: 'Control channel',
   ACTIVE: 'Other activity',
-  IDLE: 'Idle conventional'
+  IDLE: 'Known / idle channel'
 });
 
 function tunerStoredNumber(key, fallback, minimum, maximum) {
@@ -6736,8 +6837,11 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
   };
   const spectrum = plot('FFT', 'Tuner frequency spectrum', 'tuner-spectrum-fft');
   const waterfall = plot('Waterfall', 'Tuner spectrum history', 'tuner-spectrum-waterfall');
-  const activeFlags = node('div', 'tuner-spectrum-active-flags');
-  spectrum.host.insertBefore(activeFlags, spectrum.guide);
+  const spectrumActiveFlags = node('div', 'tuner-spectrum-active-flags');
+  const waterfallActiveFlags = node('div', 'tuner-spectrum-active-flags');
+  const activeFlagLayers = [spectrumActiveFlags, waterfallActiveFlags];
+  spectrum.host.insertBefore(spectrumActiveFlags, spectrum.guide);
+  waterfall.host.insertBefore(waterfallActiveFlags, waterfall.guide);
   const cursorPopup = node('div', 'tuner-spectrum-cursor-popup');
   const cursorFrequency = node('span', 'tuner-spectrum-cursor-frequency');
   const cursorSnap = node('span', 'tuner-spectrum-cursor-snap');
@@ -6753,6 +6857,7 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
   let disposed = false;
   let paused = false;
   let stream = null;
+  let streamRelease = Promise.resolve();
   let streamEpoch = 0;
   let generation = -1;
   let sequence = null;
@@ -7053,17 +7158,19 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
   }
 
   function releaseConnection(connection) {
-    if (!connection) return;
-    connection.close();
+    if (!connection) return Promise.resolve();
+    const closed = connection.close();
     liveConnections.delete(connection);
     pageConnections.delete(connection);
+    return connection.whenClosed?.() || (closed instanceof Promise ? closed : Promise.resolve());
   }
 
   function closeStreams() {
     streamEpoch += 1;
     const active = stream;
     stream = null;
-    releaseConnection(active);
+    streamRelease = Promise.all([streamRelease, releaseConnection(active)]).then(() => {});
+    return streamRelease;
   }
 
   const selectedTargetId = () => targetSelect.value;
@@ -7184,7 +7291,7 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
     const epoch = ++streamEpoch;
     let candidate = null;
     setStatus(refining ? 'Refining' : 'Connecting');
-    if (!stream) setOverlay('Waiting for tuner data…');
+    if (!stream && !refining) setOverlay('Waiting for tuner data…');
     candidate = binaryFrameConnection('/api/v1/live/tuner-diagnostics', diagnosticParameters(), {
       onOpen: () => {
         if (disposed || candidate !== stream || epoch !== streamEpoch) return;
@@ -7211,13 +7318,20 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
   function queueViewportUpdate(immediate = false) {
     window.clearTimeout(refinementTimer);
     refinementTimer = null;
-    //Free the old HTTP/1.1 connection before its refined replacement needs the same browser connection slot.
-    closeStreams();
+    //Wait until the browser has released the old streaming request before opening its refined replacement. This
+    //prevents a zoom from becoming permanently queued behind the browser's HTTP/1.1 per-origin connection limit.
+    const closed = closeStreams();
+    const queuedEpoch = streamEpoch;
     setRefining(true);
-    if (immediate) openDiagnosticStream();
+    const reopen = async () => {
+      await closed;
+      if (disposed || queuedEpoch !== streamEpoch || !shouldRun()) return;
+      openDiagnosticStream();
+    };
+    if (immediate) void reopen();
     else refinementTimer = window.setTimeout(() => {
       refinementTimer = null;
-      openDiagnosticStream();
+      void reopen();
     }, TUNER_SPECTRUM_REFINEMENT_DELAY_MS);
   }
 
@@ -7531,37 +7645,45 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
 
   function connectActiveChannels() {
     if (!shouldRun() || activeChannelSource) return;
-    const source = liveConnection('/api/v1/live/channel-activity');
+    const source = subscribeLiveChannelActivity({
+      snapshot: (snapshot) => {
+        activeChannelTables.clear();
+        (Array.isArray(snapshot?.tables) ? snapshot.tables : []).forEach((table) => {
+          if (table?.table_id) activeChannelTables.set(String(table.table_id), table);
+        });
+        renderActiveChannels();
+      },
+      activityTable: (update) => {
+        const id = String(update?.table_id || update?.table?.table_id || '');
+        if (!id) return;
+        if (update.operation === 'remove') activeChannelTables.delete(id);
+        else if (update.table) activeChannelTables.set(id, update.table);
+        renderActiveChannels();
+      }
+    });
     activeChannelSource = source;
-    const read = (event, callback) => {
-      try { callback(JSON.parse(event.data)); } catch (error) { /* Optional overlay update was malformed. */ }
-    };
-    source.addEventListener('snapshot', (event) => read(event, (snapshot) => {
-      activeChannelTables.clear();
-      (Array.isArray(snapshot?.tables) ? snapshot.tables : []).forEach((table) => {
-        if (table?.table_id) activeChannelTables.set(String(table.table_id), table);
-      });
-      renderActiveChannels();
-    }));
-    source.addEventListener('activity_table', (event) => read(event, (update) => {
-      const id = String(update?.table_id || update?.table?.table_id || '');
-      if (!id) return;
-      if (update.operation === 'remove') activeChannelTables.delete(id);
-      else if (update.table) activeChannelTables.set(id, update.table);
-      renderActiveChannels();
-    }));
   }
 
   function closeActiveChannels() {
     if (activeChannelSource) {
       activeChannelSource.close();
-      liveConnections.delete(activeChannelSource);
-      pageConnections.delete(activeChannelSource);
       activeChannelSource = null;
     }
     activeChannelTables.clear();
     activeFlagSignature = '';
-    activeFlags.replaceChildren();
+    activeFlagLayers.forEach((layer) => layer.replaceChildren());
+  }
+
+  function tunerActivityStatus(row) {
+    const status = String(row?.status || '').toUpperCase();
+    if (status !== 'IDLE') return TUNER_ACTIVITY_PRIORITY[status] ? status : null;
+    const tags = channelTagSet(row?.tags);
+    if (['CONTROL', 'CURRENT_CONTROL', 'ALTERNATE_CONTROL', 'CONFIGURED'].some((tag) => tags.has(tag))) {
+      return 'CONTROL';
+    }
+    if (['DATA', 'DATA_ANNOUNCED'].some((tag) => tags.has(tag))) return 'DATA';
+    if (tags.has('CONVENTIONAL') || tags.has('VOICE')) return 'IDLE';
+    return null;
   }
 
   function activeCarriers() {
@@ -7571,11 +7693,9 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
       const tableChannelName = String(table?.channel_name || '').trim();
       (Array.isArray(table?.rows) ? table.rows : []).forEach((row) => {
         const frequencyHz = Number(row?.frequency_hz);
-        const status = String(row?.status || '').toUpperCase();
-        const conventional = channelTagSet(row?.tags).has('CONVENTIONAL');
+        const status = tunerActivityStatus(row);
         if (!Number.isFinite(frequencyHz) || frequencyHz < viewport.startHz ||
-            frequencyHz > viewport.endHz || !TUNER_ACTIVITY_PRIORITY[status] ||
-            (status === 'IDLE' && !conventional)) return;
+            frequencyHz > viewport.endHz || !status) return;
         const decorated = { ...row, status, frequencyHz, tableId: table.table_id, tableChannelName };
         let carrier = byFrequency.get(frequencyHz);
         if (!carrier) {
@@ -7653,7 +7773,7 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
     if (!viewport) {
       if (hoverFlag) hideCursor();
       activeFlagSignature = '';
-      activeFlags.replaceChildren();
+      activeFlagLayers.forEach((layer) => layer.replaceChildren());
       return;
     }
     const carriers = activeCarriers();
@@ -7663,7 +7783,7 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
     if (hoverFlag) hideCursor();
     activeFlagSignature = signature;
     const spanHz = viewport.endHz - viewport.startHz;
-    activeFlags.replaceChildren(...carriers.map((carrier) => {
+    activeFlagLayers.forEach((layer) => layer.replaceChildren(...carriers.map((carrier) => {
       const flag = node('button', `tuner-spectrum-active-flag status-${carrier.status.toLowerCase()}`);
       flag.type = 'button';
       flag.style.left = `${((carrier.frequencyHz - viewport.startHz) / spanHz * 100).toFixed(3)}%`;
@@ -7676,7 +7796,7 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
       flag.addEventListener('focus', () => showActiveFlag(carrier, flag));
       flag.addEventListener('blur', () => hideActiveFlag(flag));
       return flag;
-    }));
+    })));
     if (hoverRatio !== null) updateCursor(hoverRatio);
   }
 
@@ -8372,24 +8492,23 @@ function liveSystemsSection(onSelectionChange) {
     }
   };
 
-  const source = liveConnection('/api/v1/live/channel-activity');
-  source.addEventListener('snapshot', (event) => {
-    const snapshot = JSON.parse(event.data);
-    (snapshot.tables || []).forEach(upsertTable);
+  subscribeLiveChannelActivity({
+    snapshot: (snapshot) => {
+      (snapshot.tables || []).forEach(upsertTable);
+    },
+    activityTable: (update) => {
+      if (update.operation === 'remove') removeTable(update.table_id);
+      else upsertTable(update.table);
+    },
+    open: () => {
+      connection.textContent = 'Live';
+      connection.className = 'badge state-current';
+    },
+    error: () => {
+      connection.textContent = 'Reconnecting';
+      connection.className = 'badge state-stale';
+    }
   });
-  source.addEventListener('activity_table', (event) => {
-    const update = JSON.parse(event.data);
-    if (update.operation === 'remove') removeTable(update.table_id);
-    else upsertTable(update.table);
-  });
-  source.onopen = () => {
-    connection.textContent = 'Live';
-    connection.className = 'badge state-current';
-  };
-  source.onerror = () => {
-    connection.textContent = 'Reconnecting';
-    connection.className = 'badge state-stale';
-  };
   return block;
 }
 

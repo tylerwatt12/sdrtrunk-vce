@@ -2099,6 +2099,23 @@ body[data-view="live"] .channel-diagnostic-readouts {
   outline-offset: 2px;
 }
 
+.tuner-spectrum-waterfall .tuner-spectrum-active-flag {
+  top: 0;
+  width: 14px;
+  height: 100%;
+  min-height: 100%;
+  border-width: 0 1px;
+  border-radius: 0;
+  box-shadow: none;
+  opacity: 0.3;
+}
+
+.tuner-spectrum-waterfall .tuner-spectrum-active-flag:hover,
+.tuner-spectrum-waterfall .tuner-spectrum-active-flag:focus-visible {
+  opacity: 0.72;
+  outline-offset: -2px;
+}
+
 .tuner-spectrum-active-flag.status-encrypted,
 .tuner-spectrum-flag-swatch.status-encrypted { background: #ff9b8b; }
 .tuner-spectrum-active-flag.status-call,

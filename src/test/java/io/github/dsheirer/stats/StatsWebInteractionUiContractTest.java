@@ -181,7 +181,7 @@ class StatsWebInteractionUiContractTest
         String talkgroup = function(source, "async function renderTalkgroup()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"60\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"61\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("fetch('/', { method: 'HEAD', cache: 'no-store', credentials: 'same-origin' })"));
         assertTrue(reload.contains("response.headers.get('X-Sdrtrunk-Web-Revision')"));
@@ -488,8 +488,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(html.indexOf("localStorage.getItem('sdrtrunk_theme')") <
             html.indexOf("rel=\"stylesheet\""));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=44"));
-        assertTrue(html.contains("/assets/app.js?v=60"));
+        assertTrue(html.contains("/assets/app.css?v=45"));
+        assertTrue(html.contains("/assets/app.js?v=61"));
         assertTrue(source.contains("window.localStorage.setItem(THEME_STORAGE_KEY"));
         assertTrue(source.contains("toggle.setAttribute('aria-pressed'"));
         assertTrue(css.contains(":root[data-theme=\"dark\"]"));
@@ -723,6 +723,7 @@ class StatsWebInteractionUiContractTest
     {
         String source = source();
         String binary = function(source, "function binaryFrameConnection(path, parameters = {}, callbacks = {})");
+        String activity = function(source, "function subscribeLiveChannelActivity(callbacks = {})");
         String frequencyMapping = function(source, "function tunerFrequencyAtBin(domain, coordinate)");
         String inverseFrequencyMapping = function(source, "function tunerBinAtFrequency(domain, frequencyHz)");
         String snapper = function(source, "function tunerSnapFrequency(frequencyHz)");
@@ -730,6 +731,7 @@ class StatsWebInteractionUiContractTest
         String refinement = function(tuner, "function queueViewportUpdate(immediate = false)");
         String pointerMove = function(tuner, "function onPlotPointerMove(event)");
         String live = function(source, "async function renderLive()");
+        String systems = function(source, "function liveSystemsSection(onSelectionChange)");
         String css = readText(APP_CSS);
 
         assertTrue(live.contains("'Tuner Spectrum'"));
@@ -749,6 +751,10 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("viewport_end_hz"));
         assertTrue(tuner.contains("TUNER_SPECTRUM_REFINEMENT_DELAY_MS"));
         assertTrue(refinement.contains("closeStreams();"));
+        assertTrue(refinement.contains("await closed;"));
+        assertTrue(refinement.contains("queuedEpoch !== streamEpoch"));
+        assertTrue(tuner.contains("let streamRelease = Promise.resolve()"));
+        assertTrue(tuner.contains("Promise.all([streamRelease, releaseConnection(active)])"));
         assertFalse(refinement.contains("closePendingStream();"));
         assertTrue(refinement.indexOf("closeStreams();") < refinement.indexOf("openDiagnosticStream();"));
         assertFalse(tuner.contains("pendingStream"));
@@ -763,8 +769,11 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("event.key === 'ArrowLeft'"));
         assertTrue(tuner.contains("event.key === 'r' || event.key === 'R'"));
         assertTrue(tuner.contains("connectActiveChannels()"));
-        assertTrue(tuner.contains("liveConnection('/api/v1/live/channel-activity')"));
-        assertTrue(tuner.contains("source.addEventListener('activity_table'"));
+        assertTrue(tuner.contains("subscribeLiveChannelActivity({"));
+        assertTrue(systems.contains("subscribeLiveChannelActivity({"));
+        assertTrue(activity.contains("new EventSource('/api/v1/live/channel-activity')"));
+        assertTrue(activity.contains("liveChannelActivityTables"));
+        assertTrue(activity.contains("subscriber.snapshot?.({ tables: [...liveChannelActivityTables.values()] })"));
         assertTrue(tuner.contains("const tableChannelName = String(table?.channel_name || '').trim()"));
         assertTrue(tuner.contains("row.status === 'CONTROL' && row.tableChannelName"));
         assertTrue(tuner.contains("`${row.tableChannelName} · Control`"));
@@ -801,17 +810,21 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("waterfallObservedAtRows[nextWaterfallRow] = observedAtEpochMs"));
         assertTrue(tuner.contains("function activeCarrierDescription(carrier)"));
         assertTrue(tuner.contains("carrier.rows.push(decorated)"));
-        assertTrue(tuner.contains("const activeFlags = node('div', 'tuner-spectrum-active-flags')"));
+        assertTrue(tuner.contains("const spectrumActiveFlags = node('div', 'tuner-spectrum-active-flags')"));
+        assertTrue(tuner.contains("const waterfallActiveFlags = node('div', 'tuner-spectrum-active-flags')"));
+        assertTrue(tuner.contains("waterfall.host.insertBefore(waterfallActiveFlags, waterfall.guide)"));
         assertTrue(tuner.contains("`tuner-spectrum-active-flag status-${carrier.status.toLowerCase()}`"));
         assertTrue(tuner.contains("flag.style.left ="));
         assertTrue(tuner.contains("flag.addEventListener('pointerenter'"));
         assertTrue(tuner.contains("flag.addEventListener('focus'"));
         assertTrue(tuner.contains("showActiveFlag(carrier, flag)"));
         assertTrue(tuner.contains("TUNER_ACTIVITY_LABELS[carrier.status]"));
-        assertTrue(tuner.contains("(status === 'IDLE' && !conventional)"));
+        assertTrue(tuner.contains("function tunerActivityStatus(row)"));
+        assertTrue(tuner.contains("'CURRENT_CONTROL', 'ALTERNATE_CONTROL', 'CONFIGURED'"));
+        assertTrue(tuner.contains("['DATA', 'DATA_ANNOUNCED']"));
         assertTrue(tuner.contains("String(row.channel_name || row.tableChannelName || '').trim()"));
         assertTrue(tuner.contains("decoderLabel(row.decoder)"));
-        assertTrue(source.contains("IDLE: 'Idle conventional'"));
+        assertTrue(source.contains("IDLE: 'Known / idle channel'"));
         assertTrue(tuner.contains("const signature = JSON.stringify([viewport.startHz, viewport.endHz"));
         assertTrue(tuner.contains("if (signature === activeFlagSignature) return;"));
         assertTrue(tuner.contains("waterfallObservedAtRows = new Float64Array(waterfallBuffer.height)"));
@@ -869,6 +882,9 @@ class StatsWebInteractionUiContractTest
         assertTrue(css.contains(".tuner-spectrum-display-controls"));
         assertTrue(binary.contains("await reader.cancel().catch(() => {})"));
         assertTrue(binary.contains("attemptController.abort()"));
+        assertTrue(binary.contains("whenClosed()"));
+        assertTrue(css.contains(".tuner-spectrum-waterfall .tuner-spectrum-active-flag {"));
+        assertTrue(css.contains("height: 100%;"));
     }
 
     @Test
