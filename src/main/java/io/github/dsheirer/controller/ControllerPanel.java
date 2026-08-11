@@ -18,18 +18,27 @@
  */
 package io.github.dsheirer.controller;
 
+import com.google.common.eventbus.Subscribe;
 import com.jidesoft.swing.JideTabbedPane;
 import io.github.dsheirer.audio.playback.AudioPanel;
 import io.github.dsheirer.audio.playback.AudioPlaybackManager;
+import io.github.dsheirer.channel.metadata.NowPlayingPanel;
+import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.icon.IconModel;
 import io.github.dsheirer.map.MapPanel;
 import io.github.dsheirer.map.MapService;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.preference.UserPreferences;
+import io.github.dsheirer.preference.PreferenceType;
+import io.github.dsheirer.preference.nowplaying.NowPlayingPreference.JavaTab;
 import io.github.dsheirer.settings.SettingsManager;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
+import io.github.dsheirer.stats.StatsWebServerService;
 import io.github.dsheirer.source.tuner.ui.TunerViewPanel;
+import io.github.dsheirer.util.SwingUtils;
+import java.awt.Component;
 import java.awt.Dimension;
+import java.util.function.Consumer;
 import net.miginfocom.swing.MigLayout;
 
 import javax.swing.JPanel;
@@ -39,26 +48,86 @@ public class ControllerPanel extends JPanel
     private static final long serialVersionUID = 1L;
 
     private AudioPanel mAudioPanel;
+    private NowPlayingPanel mNowPlayingPanel;
     private MapPanel mMapPanel;
     private TunerViewPanel mTunerManagerPanel;
     private JideTabbedPane mTabbedPane;
+    private ConfigurationManager mConfigurationManager;
+    private UserPreferences mUserPreferences;
 
     public ControllerPanel(ConfigurationManager configurationManager, AudioPlaybackManager audioPlaybackManager,
                            IconModel iconModel, MapService mapService, SettingsManager settingsManager,
-                           TunerManager tunerManager, UserPreferences userPreferences)
+                           TunerManager tunerManager, UserPreferences userPreferences,
+                           StatsWebServerService statsWebServerService, boolean lowerViewsVisible,
+                           Consumer<Boolean> lowerViewsVisibilityListener)
     {
-        configurationManager.getChannelProcessingManager().setChannelActivityEnabled("java-ui", false);
+        mConfigurationManager = configurationManager;
+        mUserPreferences = userPreferences;
         mAudioPanel = new AudioPanel(iconModel, userPreferences, settingsManager, audioPlaybackManager,
             configurationManager.getAliasModel());
+        mNowPlayingPanel = new NowPlayingPanel(configurationManager, iconModel, userPreferences, settingsManager,
+            statsWebServerService, lowerViewsVisible, lowerViewsVisibilityListener);
         mMapPanel = new MapPanel(mapService, configurationManager.getAliasModel(), iconModel, settingsManager);
         mTunerManagerPanel = new TunerViewPanel(tunerManager, userPreferences);
 
         init();
+        MyEventBus.getGlobalEventBus().register(this);
+    }
+
+    /**
+     * Now playing panel.
+     */
+    public NowPlayingPanel getNowPlayingPanel()
+    {
+        return mNowPlayingPanel;
+    }
+
+    @Subscribe
+    public void preferenceUpdated(PreferenceType preferenceType)
+    {
+        if(preferenceType == PreferenceType.NOW_PLAYING)
+        {
+            SwingUtils.run(this::refreshTabs);
+        }
+    }
+
+    private void refreshTabs()
+    {
+        Component selected = mTabbedPane.getSelectedComponent();
+        boolean systemsVisible = mUserPreferences.getNowPlayingPreference().isJavaTabVisible(JavaTab.SYSTEMS);
+        mNowPlayingPanel.setSystemsActive(systemsVisible);
+        mConfigurationManager.getChannelProcessingManager().setChannelActivityEnabled("java-ui", systemsVisible);
+        mTabbedPane.removeAll();
+
+        if(systemsVisible)
+        {
+            mTabbedPane.addTab("Systems", mNowPlayingPanel);
+        }
+
+        if(mUserPreferences.getNowPlayingPreference().isJavaTabVisible(JavaTab.MAP))
+        {
+            mTabbedPane.addTab("Map", mMapPanel);
+        }
+
+        if(mUserPreferences.getNowPlayingPreference().isJavaTabVisible(JavaTab.TUNERS))
+        {
+            mTabbedPane.addTab("Tuners", mTunerManagerPanel);
+        }
+
+        if(selected != null && mTabbedPane.indexOfComponent(selected) >= 0)
+        {
+            mTabbedPane.setSelectedComponent(selected);
+        }
+
+        revalidate();
+        repaint();
     }
 
     public void dispose()
     {
+        MyEventBus.getGlobalEventBus().unregister(this);
         mAudioPanel.dispose();
+        mNowPlayingPanel.dispose();
     }
 
     private void init()
@@ -69,8 +138,7 @@ public class ControllerPanel extends JPanel
 
         mTabbedPane = new JideTabbedPane();
         mTabbedPane.setFont(this.getFont());
-        mTabbedPane.addTab("Map", mMapPanel);
-        mTabbedPane.addTab("Tuners", mTunerManagerPanel);
+        refreshTabs();
 
         //Set preferred size to influence the split between these panels
         mTabbedPane.setPreferredSize(new Dimension(880, 500));

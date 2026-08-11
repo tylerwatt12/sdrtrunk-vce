@@ -27,7 +27,7 @@ public enum PreferenceEditorType
     APPLICATION("General"),
     APPEARANCE("Appearance"),
     CHANNEL_EVENT("Channel Events"),
-    NOW_PLAYING("Systems"),
+    NOW_PLAYING("Java Interface"),
     DIRECTORY("Directories"),
     JMBE_LIBRARY("JMBE Audio Library"),
     VOICE_DECRYPTION_MODULE("Voice Decryption Module"),

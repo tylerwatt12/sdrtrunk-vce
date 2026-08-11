@@ -278,7 +278,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
 
         boolean anyIpEnabled = preference.isStatsWebServerAnyIpEnabled();
         RequestedConfiguration requested = new RequestedConfiguration(StatsWebPath.getAssetsPath(),
-            preference.getStatsWebServerPort(), anyIpEnabled, anyIpEnabled);
+            preference.getStatsWebServerPort(), anyIpEnabled, preference.isStatsWebServerHttpsEnabled());
         ListenerRuntime previous = mListener;
 
         if(!forceReload && previous != null && previous.configuration().requested().equals(requested))

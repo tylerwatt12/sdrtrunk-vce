@@ -70,8 +70,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Embedded browser server preferences. Network access is HTTPS-only and certificate/private-key management remains
- * local to this JavaFX screen.
+ * Embedded browser server preferences. HTTPS is enabled by default, network access remains HTTPS-only, and
+ * certificate/private-key management remains local to this JavaFX screen.
  */
 public class WebServerPreferenceEditor extends HBox
 {
@@ -683,7 +683,8 @@ public class WebServerPreferenceEditor extends HBox
         int configuredPort = mApplicationPreference.getStatsWebServerPort();
         boolean running = runtimeState != null && runtimeState.running();
         int displayPort = running ? runtimeState.port() : configuredPort;
-        boolean displayHttps = running ? runtimeState.https() : configuredNetwork;
+        boolean displayHttps = running ? runtimeState.https() :
+            mApplicationPreference.isStatsWebServerHttpsEnabled();
         String scheme = displayHttps ? "https" : "http";
 
         mUpdatingControls = true;
@@ -1153,7 +1154,7 @@ public class WebServerPreferenceEditor extends HBox
         WebServerRuntimeState state = null;
 
         if(mStatsWebServerService != null && mApplicationPreference.isStatsWebServerEnabled() &&
-            mApplicationPreference.isStatsWebServerAnyIpEnabled())
+            mApplicationPreference.isStatsWebServerHttpsEnabled())
         {
             state = mStatsWebServerService.reloadActiveListener();
         }
@@ -1166,7 +1167,7 @@ public class WebServerPreferenceEditor extends HBox
         mInstalledTlsMaterial = material;
 
         if(state != null && mApplicationPreference.isStatsWebServerEnabled() &&
-            mApplicationPreference.isStatsWebServerAnyIpEnabled())
+            mApplicationPreference.isStatsWebServerHttpsEnabled())
         {
 
             try

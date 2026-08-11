@@ -47,6 +47,8 @@ public class ApplicationPreference extends Preference
         "stats.web.server.certificate.mode";
     public static final boolean DEFAULT_STATS_LOGGING_ENABLED = false;
     public static final boolean DEFAULT_STATS_DETAILED_HISTORY_ENABLED = false;
+    public static final boolean DEFAULT_STATS_WEB_SERVER_ENABLED = true;
+    public static final boolean DEFAULT_STATS_WEB_SERVER_HTTPS_ENABLED = true;
     public static final int MIN_STATS_LOGGING_RETENTION_DAYS = 1;
     public static final int MAX_STATS_LOGGING_RETENTION_DAYS = 365;
     public static final int DEFAULT_STATS_LOGGING_RETENTION_DAYS = 30;
@@ -192,7 +194,8 @@ public class ApplicationPreference extends Preference
     {
         if(mStatsWebServerEnabled == null)
         {
-            mStatsWebServerEnabled = mPreferences.getBoolean(PREFERENCE_KEY_STATS_WEB_SERVER_ENABLED, false);
+            mStatsWebServerEnabled = mPreferences.getBoolean(PREFERENCE_KEY_STATS_WEB_SERVER_ENABLED,
+                DEFAULT_STATS_WEB_SERVER_ENABLED);
         }
 
         return mStatsWebServerEnabled;
@@ -258,15 +261,20 @@ public class ApplicationPreference extends Preference
 
     /**
      * Selects whether the embedded web interface is reachable only from this computer or from other computers on
-     * connected networks. Network access always enables HTTPS; returning to local-only access returns to plain HTTP.
-     * Both values are saved before publishing one preference update so the listener is recycled only once.
+     * connected networks. Network access always enables HTTPS; returning to local-only access keeps the current HTTPS
+     * setting. Both values are saved before publishing one preference update so the listener is recycled only once.
      */
     public void setStatsWebServerNetworkAccessEnabled(boolean enabled)
     {
         mStatsWebServerAnyIpEnabled = enabled;
-        mStatsWebServerHttpsEnabled = enabled;
         mPreferences.putBoolean(PREFERENCE_KEY_STATS_WEB_SERVER_ANY_IP_ENABLED, enabled);
-        mPreferences.putBoolean(PREFERENCE_KEY_STATS_WEB_SERVER_HTTPS_ENABLED, enabled);
+
+        if(enabled)
+        {
+            mStatsWebServerHttpsEnabled = true;
+            mPreferences.putBoolean(PREFERENCE_KEY_STATS_WEB_SERVER_HTTPS_ENABLED, true);
+        }
+
         notifyPreferenceUpdated();
     }
 
@@ -278,7 +286,8 @@ public class ApplicationPreference extends Preference
         if(mStatsWebServerHttpsEnabled == null)
         {
             mStatsWebServerHttpsEnabled =
-                mPreferences.getBoolean(PREFERENCE_KEY_STATS_WEB_SERVER_HTTPS_ENABLED, false);
+                mPreferences.getBoolean(PREFERENCE_KEY_STATS_WEB_SERVER_HTTPS_ENABLED,
+                    DEFAULT_STATS_WEB_SERVER_HTTPS_ENABLED);
         }
 
         return mStatsWebServerHttpsEnabled;

@@ -20,6 +20,7 @@ package io.github.dsheirer.gui.preference.nowplaying;
 
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.nowplaying.NowPlayingPreference;
+import io.github.dsheirer.preference.nowplaying.NowPlayingPreference.JavaTab;
 import javafx.geometry.HPos;
 import javafx.geometry.Insets;
 import javafx.geometry.Orientation;
@@ -78,7 +79,25 @@ public class NowPlayingPreferenceEditor extends HBox
             mEditorPane.setHgap(3);
             mEditorPane.setPadding(new Insets(10, 10, 10, 10));
 
-            Label nowPlayingLabel = new Label("Systems Activity View");
+            Label tabsLabel = new Label("Java Interface Tabs");
+            tabsLabel.setStyle("-fx-font-weight: bold; -fx-font-size: 1.08em;");
+            mEditorPane.add(tabsLabel, 0, row++, 3, 1);
+            mEditorPane.add(new Label("Main tabs"), 0, row);
+            mEditorPane.add(getTabVisibilityControls(true), 1, row++, 2, 1);
+            mEditorPane.add(new Label("Systems tabs"), 0, row);
+            mEditorPane.add(getTabVisibilityControls(false), 1, row++, 2, 1);
+
+            Label tabHelp = new Label(
+                "Systems and Map are hidden by default. Changes are applied to the Java interface immediately.");
+            tabHelp.setWrapText(true);
+            mEditorPane.add(tabHelp, 0, row++, 3, 1);
+
+            Separator tabSeparator = new Separator(Orientation.HORIZONTAL);
+            GridPane.setHgrow(tabSeparator, Priority.ALWAYS);
+            mEditorPane.add(tabSeparator, 0, row++, 3, 1);
+
+            Label nowPlayingLabel = new Label("Systems Activity Settings");
+            nowPlayingLabel.setStyle("-fx-font-weight: bold; -fx-font-size: 1.08em;");
             mEditorPane.add(nowPlayingLabel, 0, row, 2, 1);
 
             GridPane.setHalignment(getRetainIdleCallDetailsToggle(), HPos.RIGHT);
@@ -121,6 +140,25 @@ public class NowPlayingPreferenceEditor extends HBox
         }
 
         return mEditorPane;
+    }
+
+    private HBox getTabVisibilityControls(boolean primary)
+    {
+        HBox controls = new HBox(12);
+
+        for(JavaTab tab: JavaTab.values())
+        {
+            if(tab.isPrimary() == primary)
+            {
+                CheckBox checkBox = new CheckBox(tab.getLabel());
+                checkBox.setSelected(mNowPlayingPreference.isJavaTabVisible(tab));
+                checkBox.setOnAction(event ->
+                    mNowPlayingPreference.setJavaTabVisible(tab, checkBox.isSelected()));
+                controls.getChildren().add(checkBox);
+            }
+        }
+
+        return controls;
     }
 
     private ToggleSwitch getRetainIdleCallDetailsToggle()

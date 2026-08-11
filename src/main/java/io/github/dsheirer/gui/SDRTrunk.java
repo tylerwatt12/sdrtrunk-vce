@@ -18,6 +18,7 @@
  */
 package io.github.dsheirer.gui;
 
+import com.google.common.eventbus.Subscribe;
 import com.jidesoft.swing.JideSplitPane;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.application.ApplicationInfo;
@@ -57,6 +58,7 @@ import io.github.dsheirer.module.log.EventLogManager;
 import io.github.dsheirer.monitor.ResourceMonitor;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.preference.UserPreferences;
+import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultService;
 import io.github.dsheirer.preference.portable.SqlitePreferencesFactory;
 import io.github.dsheirer.preference.swing.JTableColumnWidthMonitor;
@@ -132,6 +134,7 @@ public class SDRTrunk implements Listener<TunerEvent>
     private Preferences mPreferences;
 
     private static final String PREFERENCE_BROADCAST_STATUS_VISIBLE = "sdrtrunk.broadcast.status.visible";
+    private static final String PREFERENCE_NOW_PLAYING_LOWER_VIEWS_VISIBLE = "sdrtrunk.now.playing.details.visible";
     private static final String PREFERENCE_RESOURCE_STATUS_VISIBLE = "sdrtrunk.resource.status.visible";
     private static final String PREFERENCE_UPDATE_FOOTER_MIGRATION =
         "sdrtrunk.resource.status.update.icon.migration.1";
@@ -141,11 +144,14 @@ public class SDRTrunk implements Listener<TunerEvent>
     private static final String WINDOW_FRAME_IDENTIFIER = BASE_WINDOW_NAME + ".frame";
     private static final String MAIN_SPLIT_PANE_DIVIDER_IDENTIFIER = BASE_WINDOW_NAME + ".split.pane.divider";
     private static final String SPECTRAL_DISPLAY_DIVIDER_IDENTIFIER = BASE_WINDOW_NAME + ".spectral.display.divider";
+    private static final String NOW_PLAYING_SPLIT_PANE_DIVIDER_IDENTIFIER = "now.playing.split.pane.divider";
+    private static final String CHANNEL_SPECTRUM_SPLIT_PANE_DIVIDER_IDENTIFIER = "channel.spectrum.panel.split.pane.divider";
     private static final int MAIN_SPECTRAL_MINIMUM_HEIGHT = 120;
     private static final int MAIN_CONTROLLER_MINIMUM_HEIGHT = 180;
 
     private boolean mBroadcastStatusVisible;
     private boolean mResourceStatusVisible;
+    private boolean mNowPlayingLowerViewsVisible;
     private AudioCallCoordinator mAudioCallCoordinator;
     private AudioPlaybackManager mAudioPlaybackManager;
     private P25ActivityLogService mP25ActivityLogService;
@@ -176,6 +182,7 @@ public class SDRTrunk implements Listener<TunerEvent>
     private JMenuItem mCheckForUpdatesMenuItem;
     private JButton mConfigurationEditorShortcutButton;
     private JButton mUserPreferencesShortcutButton;
+    private JButton mWebInterfaceButton;
     private JMenuItem mEncryptionKeysItem;
     private JToggleButton mSpectrumWaterfallToggleButton;
     private boolean mShutdownProcessed;
@@ -198,6 +205,7 @@ public class SDRTrunk implements Listener<TunerEvent>
             //Install the stored look-and-feel before realizing the first Swing component.
             ThemeManager.getInstance().initialize(mUserPreferences);
             mMainGui = new JFrame();
+            MyEventBus.getGlobalEventBus().register(this);
         }
 
         mApplicationLog = new ApplicationLog(mUserPreferences);
@@ -288,10 +296,16 @@ public class SDRTrunk implements Listener<TunerEvent>
         MapService mapService = new MapService(aliasModel);
         mConfigurationManager.getChannelProcessingManager().addDecodeEventListener(mapService);
 
+        mNowPlayingLowerViewsVisible = mPreferences.getBoolean(PREFERENCE_NOW_PLAYING_LOWER_VIEWS_VISIBLE, true);
+
         if(!GraphicsEnvironment.isHeadless())
         {
             mControllerPanel = new ControllerPanel(mConfigurationManager, mAudioPlaybackManager, mIconModel, mapService,
-                    mSettingsManager, mTunerManager, mUserPreferences);
+                    mSettingsManager, mTunerManager, mUserPreferences, mStatsWebServerService,
+                    mNowPlayingLowerViewsVisible, visible -> {
+                        mNowPlayingLowerViewsVisible = visible;
+                        mPreferences.putBoolean(PREFERENCE_NOW_PLAYING_LOWER_VIEWS_VISIBLE, visible);
+                    });
         }
 
         mSpectralPanel = new SpectralDisplayPanel(mConfigurationManager, mSettingsManager,
@@ -823,6 +837,7 @@ public class SDRTrunk implements Listener<TunerEvent>
         }
 
         mShutdownProcessed = true;
+        MyEventBus.getGlobalEventBus().unregister(this);
         mLog.info("Application shutdown started ...");
         mUserPreferences.getSwingPreference().setLocation(WINDOW_FRAME_IDENTIFIER, mMainGui.getLocation());
         mUserPreferences.getSwingPreference().setDimension(WINDOW_FRAME_IDENTIFIER, mMainGui.getSize());
@@ -838,6 +853,10 @@ public class SDRTrunk implements Listener<TunerEvent>
         mUserPreferences.getSwingPreference().setDimension(CONTROLLER_PANEL_IDENTIFIER, mControllerPanel.getSize());
         mUserPreferences.getSwingPreference().setInt(SPECTRAL_DISPLAY_DIVIDER_IDENTIFIER,
             mSpectralPanel.getSplitPaneDividerLocation());
+        mUserPreferences.getSwingPreference().setInt(NOW_PLAYING_SPLIT_PANE_DIVIDER_IDENTIFIER,
+            mControllerPanel.getNowPlayingPanel().getSplitPaneDividerLocation());
+        mUserPreferences.getSwingPreference().setInt(CHANNEL_SPECTRUM_SPLIT_PANE_DIVIDER_IDENTIFIER,
+            mControllerPanel.getNowPlayingPanel().getChannelSpectrumPanelDividerLocation());
         mUserPreferences.getSwingPreference().flush();
         mControllerPanel.dispose();
         mJavaFxWindowManager.shutdown();
@@ -960,10 +979,12 @@ public class SDRTrunk implements Listener<TunerEvent>
 
     private JPanel getMainControlPanel()
     {
-        JPanel panel = new JPanel(new MigLayout("insets 2 6 2 6", "[][][grow,fill][]", "[]"));
+        JPanel panel = new JPanel(new MigLayout("insets 2 6 2 6", "[][][grow,fill][][][]", "[]"));
         panel.add(getConfigurationEditorShortcutButton());
         panel.add(getUserPreferencesShortcutButton());
         panel.add(new JPanel(), "grow");
+        panel.add(mControllerPanel.getNowPlayingPanel().getLowerViewsToggleButton());
+        panel.add(getWebInterfaceButton());
         panel.add(getSpectrumWaterfallToggleButton());
         return panel;
     }
@@ -972,7 +993,8 @@ public class SDRTrunk implements Listener<TunerEvent>
     {
         if(mConfigurationEditorShortcutButton == null)
         {
-            mConfigurationEditorShortcutButton = new JButton(IconFontSwing.buildIcon(FontAwesome.PLAY_CIRCLE_O, 14));
+            mConfigurationEditorShortcutButton = new JButton("Playlist",
+                IconFontSwing.buildIcon(FontAwesome.PLAY_CIRCLE_O, 14));
             mConfigurationEditorShortcutButton.setFocusable(false);
             mConfigurationEditorShortcutButton.setToolTipText("Configuration Editor");
             mConfigurationEditorShortcutButton.addActionListener(e ->
@@ -986,7 +1008,8 @@ public class SDRTrunk implements Listener<TunerEvent>
     {
         if(mUserPreferencesShortcutButton == null)
         {
-            mUserPreferencesShortcutButton = new JButton(IconFontSwing.buildIcon(FontAwesome.COG, 14));
+            mUserPreferencesShortcutButton = new JButton("Settings",
+                IconFontSwing.buildIcon(FontAwesome.COG, 14));
             mUserPreferencesShortcutButton.setFocusable(false);
             mUserPreferencesShortcutButton.setToolTipText("User Preferences");
             mUserPreferencesShortcutButton.addActionListener(e ->
@@ -994,6 +1017,73 @@ public class SDRTrunk implements Listener<TunerEvent>
         }
 
         return mUserPreferencesShortcutButton;
+    }
+
+    private JButton getWebInterfaceButton()
+    {
+        if(mWebInterfaceButton == null)
+        {
+            mWebInterfaceButton = new JButton("Web", IconFontSwing.buildIcon(FontAwesome.GLOBE, 14));
+            mWebInterfaceButton.setFocusable(false);
+            mWebInterfaceButton.addActionListener(event -> openWebInterface());
+            updateWebInterfaceButton();
+        }
+
+        return mWebInterfaceButton;
+    }
+
+    private void openWebInterface()
+    {
+        if(!mUserPreferences.getApplicationPreference().isStatsWebServerEnabled())
+        {
+            return;
+        }
+
+        io.github.dsheirer.stats.StatsWebNavigationState navigation = mStatsWebServerService.getNavigationState();
+
+        if(!navigation.running())
+        {
+            JOptionPane.showMessageDialog(mMainGui, "The web server is enabled but is not currently running.",
+                "Web Interface", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+
+        try
+        {
+            if(!Desktop.isDesktopSupported() || !Desktop.getDesktop().isSupported(Desktop.Action.BROWSE))
+            {
+                throw new IOException("Desktop browser integration is unavailable");
+            }
+
+            Desktop.getDesktop().browse(navigation.baseUri());
+        }
+        catch(IOException exception)
+        {
+            mLog.warn("Unable to open the web interface", exception);
+            JOptionPane.showMessageDialog(mMainGui,
+                "Unable to open the web browser. Open " + navigation.baseUri() + " manually.",
+                "Web Interface", JOptionPane.WARNING_MESSAGE);
+        }
+    }
+
+    @Subscribe
+    public void preferenceUpdated(PreferenceType preferenceType)
+    {
+        if(preferenceType == PreferenceType.APPLICATION)
+        {
+            EventQueue.invokeLater(this::updateWebInterfaceButton);
+        }
+    }
+
+    private void updateWebInterfaceButton()
+    {
+        if(mWebInterfaceButton != null)
+        {
+            boolean enabled = mUserPreferences.getApplicationPreference().isStatsWebServerEnabled();
+            mWebInterfaceButton.setEnabled(enabled);
+            mWebInterfaceButton.setToolTipText(enabled ? "Open Web Interface" :
+                "Enable the Web Interface in User Preferences");
+        }
     }
 
     private JToggleButton getSpectrumWaterfallToggleButton()

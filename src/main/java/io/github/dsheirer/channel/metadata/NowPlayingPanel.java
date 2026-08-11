@@ -18,10 +18,12 @@
  */
 package io.github.dsheirer.channel.metadata;
 
+import com.google.common.eventbus.Subscribe;
 import com.jidesoft.swing.JideSplitPane;
 import com.jidesoft.swing.JideTabbedPane;
 import io.github.dsheirer.channel.details.ChannelWebLinkPanel;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivityPanel;
+import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.gui.SplitPaneDividerHelper;
 import io.github.dsheirer.gui.channel.ChannelSpectrumPanel;
 import io.github.dsheirer.icon.IconModel;
@@ -29,8 +31,11 @@ import io.github.dsheirer.module.decode.event.DecodeEventPanel;
 import io.github.dsheirer.module.decode.event.MessageActivityPanel;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.preference.UserPreferences;
+import io.github.dsheirer.preference.PreferenceType;
+import io.github.dsheirer.preference.nowplaying.NowPlayingPreference.JavaTab;
 import io.github.dsheirer.settings.SettingsManager;
 import io.github.dsheirer.stats.StatsWebServerService;
+import io.github.dsheirer.util.SwingUtils;
 import java.awt.Dimension;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
@@ -66,7 +71,7 @@ public class NowPlayingPanel extends JPanel
     private JideTabbedPane mTabbedPane;
     private JideSplitPane mSplitPane;
     private boolean mRequestedLowerTabsVisible;
-    private boolean mSystemsActive = true;
+    private boolean mSystemsActive;
     private boolean mLowerTabsAttached;
     private boolean mSplitPaneDividerRestored;
     private JToggleButton mLowerTabsToggleButton;
@@ -87,15 +92,30 @@ public class NowPlayingPanel extends JPanel
         mStatsWebServerService = statsWebServerService;
         mChannelActivityPanel = new ChannelActivityPanel(configurationManager, iconModel, userPreferences);
         mRequestedLowerTabsVisible = lowerViewsVisible;
+        mSystemsActive = userPreferences.getNowPlayingPreference().isJavaTabVisible(JavaTab.SYSTEMS);
         mLowerTabsVisibilityListener = lowerViewsVisibilityListener;
 
         init();
+        MyEventBus.getGlobalEventBus().register(this);
     }
 
     public void dispose()
     {
+        MyEventBus.getGlobalEventBus().unregister(this);
         detachLowerTabs();
         mChannelActivityPanel.dispose();
+    }
+
+    @Subscribe
+    public void preferenceUpdated(PreferenceType preferenceType)
+    {
+        if(preferenceType == PreferenceType.NOW_PLAYING)
+        {
+            SwingUtils.run(() -> {
+                detachLowerTabs();
+                updateLowerTabs();
+            });
+        }
     }
 
     /**
@@ -132,10 +152,27 @@ public class NowPlayingPanel extends JPanel
         {
             mTabbedPane = new JideTabbedPane();
             ensureLowerPanels();
-            mTabbedPane.addTab("Details", mChannelWebLinkPanel);
-            mTabbedPane.addTab("Events", mDecodeEventPanel);
-            mTabbedPane.addTab("Messages", mMessageActivityPanel);
-            mTabbedPane.addTab("Channel", mChannelSpectrumSquelchPanel);
+
+            if(isLowerTabVisible(JavaTab.DETAILS))
+            {
+                mTabbedPane.addTab("Details", mChannelWebLinkPanel);
+            }
+
+            if(isLowerTabVisible(JavaTab.EVENTS))
+            {
+                mTabbedPane.addTab("Events", mDecodeEventPanel);
+            }
+
+            if(isLowerTabVisible(JavaTab.MESSAGES))
+            {
+                mTabbedPane.addTab("Messages", mMessageActivityPanel);
+            }
+
+            if(isLowerTabVisible(JavaTab.CHANNEL))
+            {
+                mTabbedPane.addTab("Channel", mChannelSpectrumSquelchPanel);
+            }
+
             mTabbedPane.setFont(this.getFont());
             mTabbedPane.setMinimumSize(new Dimension(0, LOWER_TABS_MINIMUM_HEIGHT));
             //Register state change listener to toggle visibility state for channel tab to turn-on/off FFT processing
@@ -215,7 +252,18 @@ public class NowPlayingPanel extends JPanel
 
     private boolean shouldAttachLowerTabs()
     {
-        return mSystemsActive && mRequestedLowerTabsVisible;
+        return mSystemsActive && mRequestedLowerTabsVisible && hasVisibleLowerTabs();
+    }
+
+    private boolean isLowerTabVisible(JavaTab tab)
+    {
+        return mUserPreferences.getNowPlayingPreference().isJavaTabVisible(tab);
+    }
+
+    private boolean hasVisibleLowerTabs()
+    {
+        return isLowerTabVisible(JavaTab.DETAILS) || isLowerTabVisible(JavaTab.EVENTS) ||
+            isLowerTabVisible(JavaTab.MESSAGES) || isLowerTabVisible(JavaTab.CHANNEL);
     }
 
     private void updateLowerTabs()
@@ -238,6 +286,7 @@ public class NowPlayingPanel extends JPanel
     {
         if(mLowerTabsToggleButton != null)
         {
+            mLowerTabsToggleButton.setEnabled(mSystemsActive && hasVisibleLowerTabs());
             mLowerTabsToggleButton.setSelected(mRequestedLowerTabsVisible);
             mLowerTabsToggleButton.setIcon(IconFontSwing.buildIcon(mRequestedLowerTabsVisible ?
                 FontAwesome.CHEVRON_DOWN : FontAwesome.CHEVRON_UP, 12));
@@ -252,10 +301,27 @@ public class NowPlayingPanel extends JPanel
         if(!mLowerTabsAttached)
         {
             ensureLowerPanels();
-            mChannelActivityPanel.addSelectedFrequencyListener(mChannelWebLinkPanel);
-            mChannelActivityPanel.addSelectedFrequencyListener(mDecodeEventPanel);
-            mChannelActivityPanel.addSelectedFrequencyListener(mMessageActivityPanel);
-            mChannelActivityPanel.addSelectedFrequencyListener(mChannelSpectrumSquelchPanel);
+
+            if(isLowerTabVisible(JavaTab.DETAILS))
+            {
+                mChannelActivityPanel.addSelectedFrequencyListener(mChannelWebLinkPanel);
+            }
+
+            if(isLowerTabVisible(JavaTab.EVENTS))
+            {
+                mChannelActivityPanel.addSelectedFrequencyListener(mDecodeEventPanel);
+            }
+
+            if(isLowerTabVisible(JavaTab.MESSAGES))
+            {
+                mChannelActivityPanel.addSelectedFrequencyListener(mMessageActivityPanel);
+            }
+
+            if(isLowerTabVisible(JavaTab.CHANNEL))
+            {
+                mChannelActivityPanel.addSelectedFrequencyListener(mChannelSpectrumSquelchPanel);
+            }
+
             mSplitPaneDividerRestored = false;
             getSplitPane().add(getTabbedPane());
             mLowerTabsAttached = true;

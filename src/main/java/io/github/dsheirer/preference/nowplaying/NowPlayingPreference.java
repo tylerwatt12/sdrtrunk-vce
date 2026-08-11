@@ -51,6 +51,43 @@ public class NowPlayingPreference extends Preference
     private Boolean mClearVoiceDecodeQualityOnCallEnd;
     private DecodeQualityDisplayMode mDecodeQualityDisplayMode;
 
+    /**
+     * Java desktop tabs that can be independently shown or hidden.
+     */
+    public enum JavaTab
+    {
+        SYSTEMS("Systems", "java.tab.systems.visible", false, true),
+        MAP("Map", "java.tab.map.visible", false, true),
+        TUNERS("Tuners", "java.tab.tuners.visible", true, true),
+        DETAILS("Details", "java.tab.details.visible", true, false),
+        EVENTS("Events", "java.tab.events.visible", true, false),
+        MESSAGES("Messages", "java.tab.messages.visible", true, false),
+        CHANNEL("Channel", "java.tab.channel.visible", true, false);
+
+        private final String mLabel;
+        private final String mPreferenceKey;
+        private final boolean mDefaultVisible;
+        private final boolean mPrimary;
+
+        JavaTab(String label, String preferenceKey, boolean defaultVisible, boolean primary)
+        {
+            mLabel = label;
+            mPreferenceKey = preferenceKey;
+            mDefaultVisible = defaultVisible;
+            mPrimary = primary;
+        }
+
+        public String getLabel()
+        {
+            return mLabel;
+        }
+
+        public boolean isPrimary()
+        {
+            return mPrimary;
+        }
+    }
+
     public enum DecodeQualityDisplayMode
     {
         PERCENTAGE("Percentage"),
@@ -251,6 +288,31 @@ public class NowPlayingPreference extends Preference
         mDecodeQualityDisplayMode = mode != null ? mode : DecodeQualityDisplayMode.PERCENTAGE;
         mPreferences.put(PREFERENCE_KEY_DECODE_QUALITY_DISPLAY_MODE, mDecodeQualityDisplayMode.name());
         notifyPreferenceUpdated();
+    }
+
+    /**
+     * Indicates whether the supplied Java desktop tab is visible.
+     */
+    public boolean isJavaTabVisible(JavaTab tab)
+    {
+        if(tab == null)
+        {
+            return false;
+        }
+
+        return mPreferences.getBoolean(tab.mPreferenceKey, tab.mDefaultVisible);
+    }
+
+    /**
+     * Shows or hides the supplied Java desktop tab.
+     */
+    public void setJavaTabVisible(JavaTab tab, boolean visible)
+    {
+        if(tab != null)
+        {
+            mPreferences.putBoolean(tab.mPreferenceKey, visible);
+            notifyPreferenceUpdated();
+        }
     }
 
     private int clamp(int value, int minimum, int maximum)
