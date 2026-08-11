@@ -85,12 +85,6 @@ public class NowPlayingPreferenceEditor extends HBox
             mEditorPane.add(new Label("Show"), 0, row);
             mEditorPane.add(getViewVisibilityControls(), 1, row++, 2, 1);
 
-            Label tabHelp = new Label(
-                "Systems, Map, and Spectrum are hidden by default. Tuners is always shown. Enabling Systems also " +
-                    "includes its Details, Events, Messages, and Channel views.");
-            tabHelp.setWrapText(true);
-            mEditorPane.add(tabHelp, 0, row++, 3, 1);
-
             Separator tabSeparator = new Separator(Orientation.HORIZONTAL);
             GridPane.setHgrow(tabSeparator, Priority.ALWAYS);
             mEditorPane.add(tabSeparator, 0, row++, 3, 1);
