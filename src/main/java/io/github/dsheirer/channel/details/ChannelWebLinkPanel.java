@@ -16,6 +16,7 @@ import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.gui.preference.PreferenceEditorType;
 import io.github.dsheirer.gui.preference.ViewUserPreferenceEditorRequest;
+import io.github.dsheirer.gui.theme.ThemeManager;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
 import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
@@ -150,8 +151,10 @@ public class ChannelWebLinkPanel extends JPanel implements Listener<SelectedFreq
 
         JPanel controls = new JPanel(new MigLayout("insets 0, fillx", "[][grow][]6[]", "[]"));
         mOpenWebButton.setFocusable(false);
-        mOpenWebButton.addActionListener(event ->
-            mOpenWebMenu.show(mOpenWebButton, 0, mOpenWebButton.getHeight()));
+        mOpenWebButton.addActionListener(event -> {
+            ThemeManager.getInstance().preparePopupMenu(mOpenWebMenu);
+            mOpenWebMenu.show(mOpenWebButton, 0, mOpenWebButton.getHeight());
+        });
         controls.add(mOpenWebButton);
 
         mOpenConsoleButton.setFocusable(false);
