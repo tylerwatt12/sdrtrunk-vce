@@ -22,6 +22,7 @@ import com.google.common.base.Joiner;
 import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.audio.call.VoiceCallQuality;
+import io.github.dsheirer.channel.metadata.ChannelStateColorPalette;
 import io.github.dsheirer.channel.state.State;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
@@ -40,7 +41,6 @@ import java.awt.Color;
 import java.awt.Component;
 import java.text.DecimalFormat;
 import java.util.ArrayList;
-import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -88,8 +88,6 @@ public class ChannelActivityPanel extends JPanel
         tableModel -> SwingUtils.run(() -> addTable(tableModel));
     private final Listener<ChannelActivityTableModel> mTableChangeListener =
         tableModel -> SwingUtils.run(() -> updateTable(tableModel));
-    private final Map<State,Color> mBackgroundColors = new EnumMap<>(State.class);
-    private final Map<State,Color> mForegroundColors = new EnumMap<>(State.class);
     private final Map<ChannelActivityTableModel,Component> mTabComponents = new HashMap<>();
     private final Map<ChannelActivityTableModel,ChannelActivityTable> mTables = new HashMap<>();
     private final Map<JTable,JTableColumnWidthMonitor> mColumnWidthMonitors = new HashMap<>();
@@ -111,7 +109,6 @@ public class ChannelActivityPanel extends JPanel
         mIconModel = iconModel;
         mUserPreferences = userPreferences;
         mNowPlayingPreference = userPreferences.getNowPlayingPreference();
-        setColors();
         init();
         setActive(true);
     }
@@ -703,26 +700,6 @@ public class ChannelActivityPanel extends JPanel
         }
     }
 
-    private void setColors()
-    {
-        mBackgroundColors.put(State.ACTIVE, Color.CYAN);
-        mForegroundColors.put(State.ACTIVE, Color.BLUE);
-        mBackgroundColors.put(State.CALL, Color.BLUE);
-        mForegroundColors.put(State.CALL, Color.YELLOW);
-        mBackgroundColors.put(State.CONTROL, Color.ORANGE);
-        mForegroundColors.put(State.CONTROL, Color.BLUE);
-        mBackgroundColors.put(State.DATA, Color.GREEN);
-        mForegroundColors.put(State.DATA, Color.BLUE);
-        mBackgroundColors.put(State.ENCRYPTED, Color.MAGENTA);
-        mForegroundColors.put(State.ENCRYPTED, Color.WHITE);
-        mBackgroundColors.put(State.FADE, Color.LIGHT_GRAY);
-        mForegroundColors.put(State.FADE, Color.DARK_GRAY);
-        mBackgroundColors.put(State.RESET, Color.PINK);
-        mForegroundColors.put(State.RESET, Color.YELLOW);
-        mBackgroundColors.put(State.TEARDOWN, Color.DARK_GRAY);
-        mForegroundColors.put(State.TEARDOWN, Color.WHITE);
-    }
-
     public class StateCellRenderer extends DefaultTableCellRenderer
     {
         public StateCellRenderer()
@@ -752,15 +729,9 @@ public class ChannelActivityPanel extends JPanel
                     }
                 }
 
-                if(mBackgroundColors.containsKey(state))
-                {
-                    label.setBackground(mBackgroundColors.get(state));
-                }
-
-                if(mForegroundColors.containsKey(state))
-                {
-                    label.setForeground(mForegroundColors.get(state));
-                }
+                Color background = ChannelStateColorPalette.background(state, label.getBackground());
+                label.setBackground(background);
+                label.setForeground(ChannelStateColorPalette.foreground(label.getForeground(), background));
             }
 
             applySelectionBorder(table, label, isSelected, column);

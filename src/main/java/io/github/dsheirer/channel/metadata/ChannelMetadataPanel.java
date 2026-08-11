@@ -43,9 +43,7 @@ import java.awt.Component;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.text.DecimalFormat;
-import java.util.EnumMap;
 import java.util.List;
-import java.util.Map;
 import net.miginfocom.swing.MigLayout;
 
 import javax.swing.JLabel;
@@ -69,8 +67,6 @@ public class ChannelMetadataPanel extends JPanel implements ListSelectionListene
     private UserPreferences mUserPreferences;
     private JTable mTable;
     private Broadcaster<ProcessingChain> mSelectedProcessingChainBroadcaster = new Broadcaster<>();
-    private Map<State,Color> mBackgroundColors = new EnumMap<>(State.class);
-    private Map<State,Color> mForegroundColors = new EnumMap<>(State.class);
     private Channel mUserSelectedChannel;
 
     /**
@@ -121,32 +117,6 @@ public class ChannelMetadataPanel extends JPanel implements ListSelectionListene
 
         add(scrollPane);
 
-        setColors();
-    }
-
-    /**
-     * Setup the background and foreground color palette for the various channel states.
-     */
-    private void setColors()
-    {
-        mBackgroundColors.put(State.ACTIVE, Color.CYAN);
-        mForegroundColors.put(State.ACTIVE, Color.BLUE);
-        mBackgroundColors.put(State.CALL, Color.BLUE);
-        mForegroundColors.put(State.CALL, Color.YELLOW);
-        mBackgroundColors.put(State.CONTROL, Color.ORANGE);
-        mForegroundColors.put(State.CONTROL, Color.BLUE);
-        mBackgroundColors.put(State.DATA, Color.GREEN);
-        mForegroundColors.put(State.DATA, Color.BLUE);
-        mBackgroundColors.put(State.ENCRYPTED, Color.MAGENTA);
-        mForegroundColors.put(State.ENCRYPTED, Color.WHITE);
-        mBackgroundColors.put(State.FADE, Color.LIGHT_GRAY);
-        mForegroundColors.put(State.FADE, Color.DARK_GRAY);
-        mBackgroundColors.put(State.IDLE, Color.WHITE);
-        mForegroundColors.put(State.IDLE, Color.DARK_GRAY);
-        mBackgroundColors.put(State.RESET, Color.PINK);
-        mForegroundColors.put(State.RESET, Color.YELLOW);
-        mBackgroundColors.put(State.TEARDOWN, Color.DARK_GRAY);
-        mForegroundColors.put(State.TEARDOWN, Color.WHITE);
     }
 
     @Override
@@ -373,23 +343,16 @@ public class ChannelMetadataPanel extends JPanel implements ListSelectionListene
         {
             JLabel label = (JLabel)super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
 
-            Color background = table.getBackground();
-            Color foreground = table.getForeground();
+            Color background = label.getBackground();
+            Color foreground = label.getForeground();
 
             if(value instanceof ChannelStateIdentifier)
             {
                 State state = ((ChannelStateIdentifier)value).getValue();
                 label.setText(state.getDisplayValue());
 
-                if(mBackgroundColors.containsKey(state))
-                {
-                    background = mBackgroundColors.get(state);
-                }
-
-                if(mForegroundColors.containsKey(state))
-                {
-                    foreground = mForegroundColors.get(state);
-                }
+                background = ChannelStateColorPalette.background(state, background);
+                foreground = ChannelStateColorPalette.foreground(foreground, background);
             }
             else
             {

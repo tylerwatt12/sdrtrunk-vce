@@ -2179,12 +2179,15 @@ body[data-view="live"] .channel-diagnostic-readouts {
   text-align: center;
 }
 
-.activity-status.state-call { color: #fff; background: #1555a5; }
-.activity-status.state-encrypted { color: #fff; background: #b51f68; }
-.activity-status.state-control { color: #163866; background: #f3a51c; }
-.activity-status.state-data { color: #143d2b; background: #5fd08a; }
-.activity-status.state-active { color: #124267; background: #72d5e6; }
-.activity-status.state-idle { color: #4b5560; background: #fff; }
+.activity-status.state-call { color: #244f7a; background: #e4edf7; }
+.activity-status.state-encrypted { color: #762b50; background: #f6e7ee; }
+.activity-status.state-control { color: #68480f; background: #f9f0df; }
+.activity-status.state-data { color: #285c3d; background: #e7f3eb; }
+.activity-status.state-active { color: #285967; background: #e5f2f5; }
+.activity-status.state-fade { color: #53606b; background: #edf0f2; }
+.activity-status.state-reset { color: #73333e; background: #f5e8ea; }
+.activity-status.state-teardown { color: #48515a; background: #e9ecee; }
+.activity-status.state-idle { color: var(--muted); background: var(--surface); }
 .control-current { color: #b11226; font-weight: 700; }
 .control-alternate { color: #9a6800; font-weight: 700; }
 
@@ -3226,30 +3229,42 @@ th.numeric {
 
 :root[data-theme="dark"] .activity-status.state-call {
   color: #dcecff;
-  background: #244f86;
+  background: #233447;
 }
 
 :root[data-theme="dark"] .activity-status.state-encrypted {
   color: #ffe0ee;
-  background: #74204b;
+  background: #3d2936;
 }
 
 :root[data-theme="dark"] .activity-status.state-control {
-  color: #2d220c;
-  background: #e9a83a;
-  border-color: #f0c77e;
+  color: #f4dfb4;
+  background: #3c3424;
 }
 
 :root[data-theme="dark"] .activity-status.state-data {
-  color: #0d2b1d;
-  background: #69cf92;
-  border-color: #9de4b9;
+  color: #d2eddb;
+  background: #24382d;
 }
 
 :root[data-theme="dark"] .activity-status.state-active {
-  color: #102d38;
-  background: #75c9dd;
-  border-color: #a5deea;
+  color: #d4edf2;
+  background: #253a40;
+}
+
+:root[data-theme="dark"] .activity-status.state-fade {
+  color: #d5dde4;
+  background: #2b343b;
+}
+
+:root[data-theme="dark"] .activity-status.state-reset {
+  color: #f4d9dd;
+  background: #3e2b30;
+}
+
+:root[data-theme="dark"] .activity-status.state-teardown {
+  color: #d7dde2;
+  background: #293038;
 }
 
 :root[data-theme="dark"] .activity-status.state-idle {
