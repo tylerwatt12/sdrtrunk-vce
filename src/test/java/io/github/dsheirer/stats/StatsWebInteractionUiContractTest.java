@@ -24,6 +24,12 @@ class StatsWebInteractionUiContractTest
     private static final Path INDEX_HTML = Path.of("stats-web", "index.html");
 
     @Test
+    void normalizesCheckedOutWebAssetLineEndings()
+    {
+        assertEquals("first\nsecond\nthird", normalizeLineEndings("first\r\nsecond\rthird"));
+    }
+
+    @Test
     void pausesEveryNewestActivityPageWithABoundedQueue() throws Exception
     {
         String activity = function(source(), "async function renderActivity(scopeParameters, title = 'Activity')");
@@ -119,7 +125,7 @@ class StatsWebInteractionUiContractTest
     void keepsSharedMetricsAndFittingTablesInsideTheirContainers() throws Exception
     {
         String source = source();
-        String css = Files.readString(APP_CSS);
+        String css = readText(APP_CSS);
         assertTrue(css.contains("grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));"));
         assertTrue(css.contains(".metric {\n  min-width: 0;"));
         assertTrue(css.contains("font-variant-numeric: tabular-nums;\n  overflow-wrap: anywhere;"));
@@ -138,7 +144,7 @@ class StatsWebInteractionUiContractTest
         String reload = function(source, "async function reloadForWebClientRevision()");
         String status = function(source, "async function loadStatus(refreshCurrentView = false)");
         String talkgroup = function(source, "async function renderTalkgroup()");
-        String index = Files.readString(INDEX_HTML);
+        String index = readText(INDEX_HTML);
 
         assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"59\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
@@ -155,7 +161,7 @@ class StatsWebInteractionUiContractTest
     @Test
     void keepsSharedTabsScrollableWithoutVisibleScrollbars() throws Exception
     {
-        String css = Files.readString(APP_CSS);
+        String css = readText(APP_CSS);
 
         assertTrue(css.contains(".tabs {"));
         assertTrue(css.contains("overflow-x: auto;\n  overflow-y: hidden;\n  scrollbar-width: none;"));
@@ -182,7 +188,7 @@ class StatsWebInteractionUiContractTest
         assertFalse(systems.contains("directory-secondary"));
         assertFalse(systems.contains("row.site_names && row.site_names"));
         assertFalse(systems.contains("isP25(row) ? 'P25 System'"));
-        assertFalse(Files.readString(APP_CSS).contains(".directory-secondary"));
+        assertFalse(readText(APP_CSS).contains(".directory-secondary"));
     }
 
     @Test
@@ -210,7 +216,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(source.contains("TALKGROUP_CALL_ACTIVITY_SERIES"));
         assertTrue(source.contains("TALKGROUP_SIGNALING_SERIES"));
         assertTrue(source.contains("entity-info-column entity-info-standalone"));
-        assertTrue(Files.readString(APP_CSS).contains(".entity-info-standalone > .section"));
+        assertTrue(readText(APP_CSS).contains(".entity-info-standalone > .section"));
         assertFalse(source.contains("function talkgroupEvidence"));
         assertFalse(source.contains("row.evidence_total"));
         assertFalse(source.contains("'Open full Action Counts'"));
@@ -304,7 +310,7 @@ class StatsWebInteractionUiContractTest
         String pagedSection = function(source,
             "function pagedSection(title, page, columns, searchPlaceholder, tableType, action = null, options = {})");
         String system = function(source, "async function renderSystem()");
-        String css = Files.readString(APP_CSS);
+        String css = readText(APP_CSS);
 
         assertTrue(pager.contains("Number(page.totalCount)"));
         assertTrue(pager.contains("of ${number(totalCount)}"));
@@ -353,14 +359,14 @@ class StatsWebInteractionUiContractTest
         assertFalse(function(source, "async function renderLive()").contains("exportCsvLink("));
         assertFalse(function(source, "async function renderActivity(scopeParameters, title = 'Activity')")
             .contains("exportCsvLink("));
-        assertTrue(Files.readString(APP_CSS).contains(".export-csv-action"));
+        assertTrue(readText(APP_CSS).contains(".export-csv-action"));
     }
 
     @Test
     void labelsProtocolDefinedSentinelsAsSystemOrSpecialActivityWithoutLinkingThem() throws Exception
     {
         String source = source();
-        String css = Files.readString(APP_CSS);
+        String css = readText(APP_CSS);
         String labels = function(source, "function specialIdentifierLabel(row, value, kind)");
         String renderer = function(source, "function activityIdentifier(row, value, kind)");
         String sourceAlias = function(source, "function activitySourceAlias(row)");
@@ -430,7 +436,7 @@ class StatsWebInteractionUiContractTest
     void wrapsAdjacentBadgesWithTwoDimensionalSpacing() throws Exception
     {
         String source = source();
-        String css = Files.readString(APP_CSS);
+        String css = readText(APP_CSS);
         assertTrue(function(source, "function neighborStatus(value)").contains("badgeGroup("));
         assertTrue(css.contains(".badge-group"));
         assertTrue(css.contains("flex-wrap: wrap"));
@@ -442,8 +448,8 @@ class StatsWebInteractionUiContractTest
     void appliesAndPersistsAnAccessibleThemeBeforePaint() throws Exception
     {
         String source = source();
-        String html = Files.readString(INDEX_HTML);
-        String css = Files.readString(APP_CSS);
+        String html = readText(INDEX_HTML);
+        String css = readText(APP_CSS);
         assertTrue(html.indexOf("localStorage.getItem('sdrtrunk_theme')") <
             html.indexOf("rel=\"stylesheet\""));
         assertTrue(html.contains("id=\"theme-toggle\""));
@@ -460,9 +466,9 @@ class StatsWebInteractionUiContractTest
     @Test
     void controlsAndPersistsBrowserPlaybackVolumeIndependentlyOfTransportState() throws Exception
     {
-        String html = Files.readString(INDEX_HTML);
-        String source = Files.readString(WEB_CALL_PLAYER);
-        String css = Files.readString(APP_CSS);
+        String html = readText(INDEX_HTML);
+        String source = readText(WEB_CALL_PLAYER);
+        String css = readText(APP_CSS);
         String changeVolume = function(source, "  changeVolume()");
         String readVolume = function(source, "  readVolume()");
         String ensureAudioContext = function(source, "  ensureAudioContext()");
@@ -490,8 +496,8 @@ class StatsWebInteractionUiContractTest
     @Test
     void usesNormalPlaybackTransportAndKeepsBufferingCallsOutOfCallActions() throws Exception
     {
-        String html = Files.readString(INDEX_HTML);
-        String source = Files.readString(WEB_CALL_PLAYER);
+        String html = readText(INDEX_HTML);
+        String source = readText(WEB_CALL_PLAYER);
         String enqueue = function(source, "  enqueue(call)");
         String togglePlayback = function(source, "  async togglePlayback()");
         String replayCurrent = function(source, "  async replayCurrent()");
@@ -524,9 +530,9 @@ class StatsWebInteractionUiContractTest
     @Test
     void movesAndSoftlyFadesTheCurrentCallProgressGlow() throws Exception
     {
-        String html = Files.readString(INDEX_HTML);
-        String source = Files.readString(WEB_CALL_PLAYER);
-        String css = Files.readString(APP_CSS);
+        String html = readText(INDEX_HTML);
+        String source = readText(WEB_CALL_PLAYER);
+        String css = readText(APP_CSS);
         String startCurrent = function(source, "  startCurrent()");
         String progress = function(source, "  renderProgress()");
 
@@ -565,7 +571,7 @@ class StatsWebInteractionUiContractTest
     void splitsLiveDetailsAndScopesBoundedDecoderEventsToTheCurrentSelection() throws Exception
     {
         String source = source();
-        String css = Files.readString(APP_CSS);
+        String css = readText(APP_CSS);
         String selection = function(source, "function liveEventSelection(tableValue, row)");
         String events = function(source, "function liveEventsPanel(onCollapse)");
         String messages = function(source, "function liveMessagesPane()");
@@ -674,7 +680,7 @@ class StatsWebInteractionUiContractTest
         String refinement = function(tuner, "function queueViewportUpdate(immediate = false)");
         String pointerMove = function(tuner, "function onPlotPointerMove(event)");
         String live = function(source, "async function renderLive()");
-        String css = Files.readString(APP_CSS);
+        String css = readText(APP_CSS);
 
         assertTrue(live.contains("'Tuner Spectrum'"));
         assertTrue(live.contains("spectrum.addEventListener('click', () => showTunerSpectrumModal())"));
@@ -838,7 +844,17 @@ class StatsWebInteractionUiContractTest
     private static String source() throws Exception
     {
         assertTrue(Files.isRegularFile(APP_JAVASCRIPT), () -> "Missing " + APP_JAVASCRIPT.toAbsolutePath());
-        return Files.readString(APP_JAVASCRIPT);
+        return readText(APP_JAVASCRIPT);
+    }
+
+    private static String readText(Path path) throws Exception
+    {
+        return normalizeLineEndings(Files.readString(path));
+    }
+
+    private static String normalizeLineEndings(String text)
+    {
+        return text.replace("\r\n", "\n").replace('\r', '\n');
     }
 
     private static String function(String source, String signature)
