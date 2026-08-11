@@ -597,6 +597,12 @@ class StatsWebInteractionUiContractTest
         assertTrue(events.contains("while (order.length > 200)"));
         assertTrue(events.contains("['ENCRYPTED_VOICE', 'Encrypted voice']"));
         assertTrue(events.contains("['REGISTRATION', 'Registrations']"));
+        assertTrue(events.contains("['Time', 'Duration', 'Event', 'From', 'To', 'Channel', 'Details']"));
+        assertTrue(events.contains("node('tr', liveEventCategoryClass(event.category))"));
+        assertTrue(events.contains("row.dataset.eventCategory = event.category || 'OTHER'"));
+        assertTrue(events.contains("message.colSpan = 7"));
+        assertTrue(events.contains("node('td', 'live-event-duration')"));
+        assertTrue(events.contains("node('strong', 'live-event-duration-value', durationText)"));
         assertTrue(messages.contains("liveConnection('/api/v1/live/decode-messages', parameters)"));
         assertTrue(messages.contains("stream.addEventListener('decode_message'"));
         assertTrue(messages.contains("active && !collapsed && !paused && !document.hidden"));
@@ -658,6 +664,15 @@ class StatsWebInteractionUiContractTest
         assertTrue(css.contains(".live-split.details-collapsed"));
         assertTrue(css.contains(".live-details.collapsed .live-details-body"));
         assertTrue(css.contains(".live-events-table tbody tr:hover"));
+        assertTrue(css.contains(".live-event-category-voice"));
+        assertTrue(css.contains(".live-event-category-encrypted-voice"));
+        assertTrue(css.contains(".live-event-category-data"));
+        assertTrue(css.contains(".live-event-category-command"));
+        assertTrue(css.contains(".live-event-category-registration"));
+        assertTrue(css.contains(".live-event-category-other"));
+        assertTrue(css.contains(".live-event-duration-value"));
+        assertTrue(css.contains("border: 1px solid var(--live-event-accent);"));
+        assertTrue(css.contains(":root[data-theme=\"dark\"] .live-event-category-voice"));
         assertTrue(css.contains(".channel-diagnostic-canvas"));
         assertTrue(css.contains(".channel-diagnostic-view-toggle"));
         assertTrue(css.contains(".channel-diagnostic-view-button[aria-pressed=\"true\"]"));

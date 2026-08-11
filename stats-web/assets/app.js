@@ -46,6 +46,14 @@ const SIGNAL_RANGES = Object.freeze([
 const ACTIVITY_RANGES = Object.freeze([
   ['6h', '6 hours'], ['24h', '24 hours'], ['7d', '7 days'], ['30d', '30 days']
 ]);
+const LIVE_EVENT_CATEGORY_CLASSES = Object.freeze({
+  VOICE: 'live-event-category-voice',
+  ENCRYPTED_VOICE: 'live-event-category-encrypted-voice',
+  DATA: 'live-event-category-data',
+  COMMAND: 'live-event-category-command',
+  REGISTRATION: 'live-event-category-registration',
+  OTHER: 'live-event-category-other'
+});
 const CALL_ACTIVITY_SERIES = Object.freeze([
   { field: 'call_count', label: 'Tracked Calls', color: 'var(--chart-call)', visible: true },
   { field: 'recorded_count', label: 'Recorded', color: 'var(--chart-recorded)', visible: true },
@@ -5886,6 +5894,11 @@ function liveEventDuration(value) {
   return `${(milliseconds / 1000).toFixed(milliseconds < 10000 ? 1 : 0)} s`;
 }
 
+function liveEventCategoryClass(value) {
+  const category = String(value || 'OTHER').toUpperCase();
+  return LIVE_EVENT_CATEGORY_CLASSES[category] || LIVE_EVENT_CATEGORY_CLASSES.OTHER;
+}
+
 function liveEventParty(event, side) {
   const aliases = event?.[`${side}_aliases`] || '';
   const identifiers = event?.[`${side}_identifiers`] || '';
@@ -7840,7 +7853,7 @@ function liveEventsPanel(onCollapse) {
   const table = node('table', 'data-table live-events-table');
   const head = node('thead');
   const headerRow = node('tr');
-  ['Time', 'Event', 'From', 'To', 'Channel', 'Details'].forEach((label) =>
+  ['Time', 'Duration', 'Event', 'From', 'To', 'Channel', 'Details'].forEach((label) =>
     headerRow.append(node('th', '', label)));
   head.append(headerRow);
   const eventBody = node('tbody');
@@ -7865,14 +7878,15 @@ function liveEventsPanel(onCollapse) {
     if (!selection || !rows.length) {
       const empty = node('tr', 'empty');
       const message = node('td', '', selection ? 'No matching events observed' : 'Select a live row above');
-      message.colSpan = 6;
+      message.colSpan = 7;
       empty.append(message);
       eventBody.append(empty);
       return;
     }
     rows.forEach((event) => {
-      const row = node('tr');
+      const row = node('tr', liveEventCategoryClass(event.category));
       row.dataset.eventId = event.event_id;
+      row.dataset.eventCategory = event.category || 'OTHER';
       const time = node('td', 'live-event-time');
       const started = new Date(Number(event.time_start_ms));
       const timeText = Number.isFinite(started.getTime()) ? started.toLocaleTimeString([], {
@@ -7880,7 +7894,13 @@ function liveEventsPanel(onCollapse) {
       }) : '';
       const timeValue = node('strong', '', timeText);
       if (timeText) timeValue.title = exactDateTime(event.time_start_ms);
-      time.append(timeValue, node('small', '', liveEventDuration(event.duration_ms)));
+      time.append(timeValue);
+
+      const durationText = liveEventDuration(event.duration_ms);
+      const duration = node('td', 'live-event-duration');
+      const durationValue = node('strong', 'live-event-duration-value', durationText);
+      durationValue.title = `Duration ${durationText}`;
+      duration.append(durationValue);
 
       const eventType = node('td', 'live-event-stack');
       eventType.append(node('strong', '', event.event_label || event.event_type || 'Event'));
@@ -7894,7 +7914,7 @@ function liveEventsPanel(onCollapse) {
 
       const details = node('td', 'live-event-details', event.details || '');
       if (event.details) details.title = event.details;
-      row.append(time, eventType, liveEventParty(event, 'from'), liveEventParty(event, 'to'),
+      row.append(time, duration, eventType, liveEventParty(event, 'from'), liveEventParty(event, 'to'),
         channel, details);
       eventBody.append(row);
     });
