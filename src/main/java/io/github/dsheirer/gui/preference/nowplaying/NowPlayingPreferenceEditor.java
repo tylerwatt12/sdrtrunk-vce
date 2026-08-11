@@ -20,7 +20,7 @@ package io.github.dsheirer.gui.preference.nowplaying;
 
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.nowplaying.NowPlayingPreference;
-import io.github.dsheirer.preference.nowplaying.NowPlayingPreference.JavaTab;
+import io.github.dsheirer.preference.nowplaying.NowPlayingPreference.JavaInterfaceView;
 import javafx.geometry.HPos;
 import javafx.geometry.Insets;
 import javafx.geometry.Orientation;
@@ -79,16 +79,15 @@ public class NowPlayingPreferenceEditor extends HBox
             mEditorPane.setHgap(3);
             mEditorPane.setPadding(new Insets(10, 10, 10, 10));
 
-            Label tabsLabel = new Label("Java Interface Tabs");
+            Label tabsLabel = new Label("Java Interface Views");
             tabsLabel.setStyle("-fx-font-weight: bold; -fx-font-size: 1.08em;");
             mEditorPane.add(tabsLabel, 0, row++, 3, 1);
-            mEditorPane.add(new Label("Main tabs"), 0, row);
-            mEditorPane.add(getTabVisibilityControls(true), 1, row++, 2, 1);
-            mEditorPane.add(new Label("Systems tabs"), 0, row);
-            mEditorPane.add(getTabVisibilityControls(false), 1, row++, 2, 1);
+            mEditorPane.add(new Label("Show"), 0, row);
+            mEditorPane.add(getViewVisibilityControls(), 1, row++, 2, 1);
 
             Label tabHelp = new Label(
-                "Systems and Map are hidden by default. Changes are applied to the Java interface immediately.");
+                "Systems, Map, and Spectrum are hidden by default. Tuners is always shown. Enabling Systems also " +
+                    "includes its Details, Events, Messages, and Channel views.");
             tabHelp.setWrapText(true);
             mEditorPane.add(tabHelp, 0, row++, 3, 1);
 
@@ -142,20 +141,17 @@ public class NowPlayingPreferenceEditor extends HBox
         return mEditorPane;
     }
 
-    private HBox getTabVisibilityControls(boolean primary)
+    private HBox getViewVisibilityControls()
     {
         HBox controls = new HBox(12);
 
-        for(JavaTab tab: JavaTab.values())
+        for(JavaInterfaceView view: JavaInterfaceView.values())
         {
-            if(tab.isPrimary() == primary)
-            {
-                CheckBox checkBox = new CheckBox(tab.getLabel());
-                checkBox.setSelected(mNowPlayingPreference.isJavaTabVisible(tab));
-                checkBox.setOnAction(event ->
-                    mNowPlayingPreference.setJavaTabVisible(tab, checkBox.isSelected()));
-                controls.getChildren().add(checkBox);
-            }
+            CheckBox checkBox = new CheckBox(view.getLabel());
+            checkBox.setSelected(mNowPlayingPreference.isJavaInterfaceViewEnabled(view));
+            checkBox.setOnAction(event ->
+                mNowPlayingPreference.setJavaInterfaceViewEnabled(view, checkBox.isSelected()));
+            controls.getChildren().add(checkBox);
         }
 
         return controls;

@@ -52,39 +52,28 @@ public class NowPlayingPreference extends Preference
     private DecodeQualityDisplayMode mDecodeQualityDisplayMode;
 
     /**
-     * Java desktop tabs that can be independently shown or hidden.
+     * Optional Java desktop views that can be independently shown or hidden.
      */
-    public enum JavaTab
+    public enum JavaInterfaceView
     {
-        SYSTEMS("Systems", "java.tab.systems.visible", false, true),
-        MAP("Map", "java.tab.map.visible", false, true),
-        TUNERS("Tuners", "java.tab.tuners.visible", true, true),
-        DETAILS("Details", "java.tab.details.visible", true, false),
-        EVENTS("Events", "java.tab.events.visible", true, false),
-        MESSAGES("Messages", "java.tab.messages.visible", true, false),
-        CHANNEL("Channel", "java.tab.channel.visible", true, false);
+        SYSTEMS("Systems", "java.tab.systems.visible", false),
+        MAP("Map", "java.tab.map.visible", false),
+        SPECTRUM("Spectrum", "java.spectrum.view.enabled", false);
 
         private final String mLabel;
         private final String mPreferenceKey;
-        private final boolean mDefaultVisible;
-        private final boolean mPrimary;
+        private final boolean mDefaultEnabled;
 
-        JavaTab(String label, String preferenceKey, boolean defaultVisible, boolean primary)
+        JavaInterfaceView(String label, String preferenceKey, boolean defaultEnabled)
         {
             mLabel = label;
             mPreferenceKey = preferenceKey;
-            mDefaultVisible = defaultVisible;
-            mPrimary = primary;
+            mDefaultEnabled = defaultEnabled;
         }
 
         public String getLabel()
         {
             return mLabel;
-        }
-
-        public boolean isPrimary()
-        {
-            return mPrimary;
         }
     }
 
@@ -291,26 +280,26 @@ public class NowPlayingPreference extends Preference
     }
 
     /**
-     * Indicates whether the supplied Java desktop tab is visible.
+     * Indicates whether the supplied optional Java desktop view is enabled.
      */
-    public boolean isJavaTabVisible(JavaTab tab)
+    public boolean isJavaInterfaceViewEnabled(JavaInterfaceView view)
     {
-        if(tab == null)
+        if(view == null)
         {
             return false;
         }
 
-        return mPreferences.getBoolean(tab.mPreferenceKey, tab.mDefaultVisible);
+        return mPreferences.getBoolean(view.mPreferenceKey, view.mDefaultEnabled);
     }
 
     /**
-     * Shows or hides the supplied Java desktop tab.
+     * Enables or disables the supplied optional Java desktop view.
      */
-    public void setJavaTabVisible(JavaTab tab, boolean visible)
+    public void setJavaInterfaceViewEnabled(JavaInterfaceView view, boolean enabled)
     {
-        if(tab != null)
+        if(view != null)
         {
-            mPreferences.putBoolean(tab.mPreferenceKey, visible);
+            mPreferences.putBoolean(view.mPreferenceKey, enabled);
             notifyPreferenceUpdated();
         }
     }

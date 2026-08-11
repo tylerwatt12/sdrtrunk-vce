@@ -30,7 +30,7 @@ import io.github.dsheirer.map.MapService;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.PreferenceType;
-import io.github.dsheirer.preference.nowplaying.NowPlayingPreference.JavaTab;
+import io.github.dsheirer.preference.nowplaying.NowPlayingPreference.JavaInterfaceView;
 import io.github.dsheirer.settings.SettingsManager;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.stats.StatsWebServerService;
@@ -94,7 +94,8 @@ public class ControllerPanel extends JPanel
     private void refreshTabs()
     {
         Component selected = mTabbedPane.getSelectedComponent();
-        boolean systemsVisible = mUserPreferences.getNowPlayingPreference().isJavaTabVisible(JavaTab.SYSTEMS);
+        boolean systemsVisible = mUserPreferences.getNowPlayingPreference()
+            .isJavaInterfaceViewEnabled(JavaInterfaceView.SYSTEMS);
         mNowPlayingPanel.setSystemsActive(systemsVisible);
         mConfigurationManager.getChannelProcessingManager().setChannelActivityEnabled("java-ui", systemsVisible);
         mTabbedPane.removeAll();
@@ -104,15 +105,12 @@ public class ControllerPanel extends JPanel
             mTabbedPane.addTab("Systems", mNowPlayingPanel);
         }
 
-        if(mUserPreferences.getNowPlayingPreference().isJavaTabVisible(JavaTab.MAP))
+        if(mUserPreferences.getNowPlayingPreference().isJavaInterfaceViewEnabled(JavaInterfaceView.MAP))
         {
             mTabbedPane.addTab("Map", mMapPanel);
         }
 
-        if(mUserPreferences.getNowPlayingPreference().isJavaTabVisible(JavaTab.TUNERS))
-        {
-            mTabbedPane.addTab("Tuners", mTunerManagerPanel);
-        }
+        mTabbedPane.addTab("Tuners", mTunerManagerPanel);
 
         if(selected != null && mTabbedPane.indexOfComponent(selected) >= 0)
         {

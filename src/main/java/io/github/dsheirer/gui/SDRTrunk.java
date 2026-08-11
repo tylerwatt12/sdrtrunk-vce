@@ -60,6 +60,7 @@ import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultService;
+import io.github.dsheirer.preference.nowplaying.NowPlayingPreference.JavaInterfaceView;
 import io.github.dsheirer.preference.portable.SqlitePreferencesFactory;
 import io.github.dsheirer.preference.swing.JTableColumnWidthMonitor;
 import io.github.dsheirer.portable.PortableApplicationPaths;
@@ -513,7 +514,8 @@ public class SDRTrunk implements Listener<TunerEvent>
                 }
             }
         });
-        mSpectralPanelVisible = mUserPreferences.getSpectrumPreference().isDisplayEnabled();
+        mSpectralPanelVisible = isSpectrumViewEnabled() &&
+            mUserPreferences.getSpectrumPreference().isDisplayEnabled();
 
         if(mSpectralPanelVisible)
         {
@@ -979,12 +981,12 @@ public class SDRTrunk implements Listener<TunerEvent>
 
     private JPanel getMainControlPanel()
     {
-        JPanel panel = new JPanel(new MigLayout("insets 2 6 2 6", "[][][grow,fill][][][]", "[]"));
+        JPanel panel = new JPanel(new MigLayout("insets 2 6 2 6", "[][][][grow,fill][][]", "[]"));
         panel.add(getConfigurationEditorShortcutButton());
         panel.add(getUserPreferencesShortcutButton());
+        panel.add(getWebInterfaceButton());
         panel.add(new JPanel(), "grow");
         panel.add(mControllerPanel.getNowPlayingPanel().getLowerViewsToggleButton());
-        panel.add(getWebInterfaceButton());
         panel.add(getSpectrumWaterfallToggleButton());
         return panel;
     }
@@ -1073,6 +1075,10 @@ public class SDRTrunk implements Listener<TunerEvent>
         {
             EventQueue.invokeLater(this::updateWebInterfaceButton);
         }
+        else if(preferenceType == PreferenceType.NOW_PLAYING)
+        {
+            EventQueue.invokeLater(this::updateJavaInterfaceControls);
+        }
     }
 
     private void updateWebInterfaceButton()
@@ -1107,6 +1113,11 @@ public class SDRTrunk implements Listener<TunerEvent>
 
     private void setSpectralPanelVisible(boolean visible, Tuner preferredTuner)
     {
+        if(visible && !isSpectrumViewEnabled())
+        {
+            return;
+        }
+
         if(mSpectralPanelVisible == visible)
         {
             if(visible && preferredTuner != null)
@@ -1196,11 +1207,32 @@ public class SDRTrunk implements Listener<TunerEvent>
     {
         if(mSpectrumWaterfallToggleButton != null)
         {
+            mSpectrumWaterfallToggleButton.setVisible(isSpectrumViewEnabled());
             mSpectrumWaterfallToggleButton.setSelected(mSpectralPanelVisible);
-            mSpectrumWaterfallToggleButton.setIcon(IconFontSwing.buildIcon(mSpectralPanelVisible ?
-                FontAwesome.CHEVRON_UP : FontAwesome.CHEVRON_DOWN, 12));
             mSpectrumWaterfallToggleButton.setToolTipText(mSpectralPanelVisible ?
                 "Collapse Spectrum and Waterfall" : "Expand Spectrum and Waterfall");
+        }
+    }
+
+    private boolean isSpectrumViewEnabled()
+    {
+        return mUserPreferences.getNowPlayingPreference()
+            .isJavaInterfaceViewEnabled(JavaInterfaceView.SPECTRUM);
+    }
+
+    private void updateJavaInterfaceControls()
+    {
+        if(!isSpectrumViewEnabled() && mSpectralPanelVisible)
+        {
+            setSpectralPanelVisible(false);
+        }
+
+        updateSpectrumWaterfallToggleButton();
+
+        if(mMainGui != null)
+        {
+            mMainGui.revalidate();
+            mMainGui.repaint();
         }
     }
 
