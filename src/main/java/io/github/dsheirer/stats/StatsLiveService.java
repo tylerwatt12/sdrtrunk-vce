@@ -43,6 +43,7 @@ import java.util.function.LongSupplier;
  */
 final class StatsLiveService implements AutoCloseable, ProtocolSiteMetadataListener
 {
+    private static final String CHANNEL_ACTIVITY_CONSUMER = "stats-web-live";
     private static final int MAXIMUM_SSE_CLIENTS = 32;
     private static final int SSE_QUEUE_CAPACITY = 256;
     private static final int EVENT_QUEUE_CAPACITY = 64;
@@ -107,18 +108,32 @@ final class StatsLiveService implements AutoCloseable, ProtocolSiteMetadataListe
     {
         if(mRunning.compareAndSet(false, true))
         {
-            if(mActivityModel != null)
+            try
             {
-                mActivityModel.addActivityListener(mChannelActivityListener);
-            }
+                if(mChannelProcessingManager != null)
+                {
+                    //The web live service owns this lease independently of the Java Systems tab.
+                    mChannelProcessingManager.setChannelActivityEnabled(CHANNEL_ACTIVITY_CONSUMER, true);
+                }
 
-            if(mChannelProcessingManager != null)
+                if(mActivityModel != null)
+                {
+                    mActivityModel.addActivityListener(mChannelActivityListener);
+                }
+
+                if(mChannelProcessingManager != null)
+                {
+                    mChannelProcessingManager.addProtocolSiteMetadataListener(this);
+                }
+
+                mSweepTask = mSweepExecutor.scheduleAtFixedRate(() -> execute(this::sweepExpired),
+                    5, 5, TimeUnit.SECONDS);
+            }
+            catch(RuntimeException exception)
             {
-                mChannelProcessingManager.addProtocolSiteMetadataListener(this);
+                stop();
+                throw exception;
             }
-
-            mSweepTask = mSweepExecutor.scheduleAtFixedRate(() -> execute(this::sweepExpired),
-                5, 5, TimeUnit.SECONDS);
         }
     }
 
@@ -142,6 +157,7 @@ final class StatsLiveService implements AutoCloseable, ProtocolSiteMetadataListe
             if(mChannelProcessingManager != null)
             {
                 mChannelProcessingManager.removeProtocolSiteMetadataListener(this);
+                mChannelProcessingManager.setChannelActivityEnabled(CHANNEL_ACTIVITY_CONSUMER, false);
             }
         }
 

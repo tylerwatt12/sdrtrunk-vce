@@ -76,6 +76,41 @@ class StatsWebInteractionUiContractTest
     }
 
     @Test
+    void limitsDetailedHistoryNoticesToViewsThatRequireDetailedRows() throws Exception
+    {
+        String source = source();
+        String globalNotice = function(source, "function databaseLoggingNotice(view)");
+        String status = function(source, "async function loadStatus(refreshCurrentView = false)");
+        String activity = function(source, "async function renderActivity(scopeParameters, title = 'Activity')");
+
+        assertFalse(globalNotice.contains("Detailed history"));
+        assertFalse(globalNotice.contains("Activity pages"));
+        assertFalse(status.contains("historyLabel"));
+        assertFalse(status.contains("History off"));
+        assertTrue(activity.contains("Detailed history logging is not running."));
+    }
+
+    @Test
+    void keepsSignalSymbolsAndTunerSpectrumVisibleWithoutDesktopViewGates() throws Exception
+    {
+        String source = source();
+        String live = function(source, "async function renderLive()");
+        String channel = function(source, "function liveChannelPane()");
+        String tuner = function(source,
+            "function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum')");
+
+        assertTrue(live.contains("node('button', 'button secondary live-tuner-spectrum', 'Tuner Spectrum')"));
+        assertTrue(live.contains("liveEventsPanel"));
+        assertTrue(channel.contains("diagnostic('Signal', 'Selected channel signal spectrum')"));
+        assertTrue(channel.contains("diagnostic('Symbols', 'Selected channel demodulated symbols')"));
+        assertTrue(tuner.contains("plot('FFT', 'Tuner frequency spectrum'"));
+        assertTrue(tuner.contains("plot('Waterfall', 'Tuner spectrum history'"));
+        assertFalse(live.contains("java-ui"));
+        assertFalse(channel.contains("java-ui"));
+        assertFalse(tuner.contains("java-ui"));
+    }
+
+    @Test
     void bindsAccessControlsDirectlyToTheVersionOneSchemas() throws Exception
     {
         String source = source();
@@ -146,7 +181,7 @@ class StatsWebInteractionUiContractTest
         String talkgroup = function(source, "async function renderTalkgroup()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"59\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"60\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("fetch('/', { method: 'HEAD', cache: 'no-store', credentials: 'same-origin' })"));
         assertTrue(reload.contains("response.headers.get('X-Sdrtrunk-Web-Revision')"));
@@ -454,7 +489,7 @@ class StatsWebInteractionUiContractTest
             html.indexOf("rel=\"stylesheet\""));
         assertTrue(html.contains("id=\"theme-toggle\""));
         assertTrue(html.contains("/assets/app.css?v=44"));
-        assertTrue(html.contains("/assets/app.js?v=59"));
+        assertTrue(html.contains("/assets/app.js?v=60"));
         assertTrue(source.contains("window.localStorage.setItem(THEME_STORAGE_KEY"));
         assertTrue(source.contains("toggle.setAttribute('aria-pressed'"));
         assertTrue(css.contains(":root[data-theme=\"dark\"]"));

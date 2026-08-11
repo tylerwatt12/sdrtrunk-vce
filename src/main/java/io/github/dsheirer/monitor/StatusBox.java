@@ -63,7 +63,6 @@ public class StatusBox extends HBox
     private static final double STORAGE_CELL_WIDTH = 134;
     private static final double DATABASE_CELL_WIDTH = 76;
     private static final double STATS_CELL_WIDTH = 76;
-    private static final double HISTORY_CELL_WIDTH = 88;
     private static final double WEB_CELL_WIDTH = 88;
     private static final double VAULT_CELL_WIDTH = 80;
     private static final double UPDATE_CELL_WIDTH = 30;
@@ -78,10 +77,8 @@ public class StatusBox extends HBox
     private HBox mVaultStatusBox;
     private Tooltip mVaultTooltip;
     private Label mStatsStatusLabel;
-    private Label mHistoryStatusLabel;
     private Label mWebStatusLabel;
     private Tooltip mStatsStatusTooltip;
-    private Tooltip mHistoryStatusTooltip;
     private Tooltip mWebStatusTooltip;
     private StatsWebNavigationState mLastNavigationState;
     private boolean mNavigationStatusInitialized;
@@ -234,13 +231,6 @@ public class StatusBox extends HBox
         mStatsStatusLabel.setTooltip(mStatsStatusTooltip);
         statsCell.getChildren().add(mStatsStatusLabel);
         addCell(statsCell);
-
-        HBox historyCell = createCell(HISTORY_CELL_WIDTH);
-        mHistoryStatusLabel = fixedLabel(null, HISTORY_CELL_WIDTH - CELL_HORIZONTAL_PADDING, Pos.CENTER_LEFT);
-        mHistoryStatusTooltip = new Tooltip();
-        mHistoryStatusLabel.setTooltip(mHistoryStatusTooltip);
-        historyCell.getChildren().add(mHistoryStatusLabel);
-        addCell(historyCell);
 
         HBox webCell = createCell(WEB_CELL_WIDTH);
         mWebStatusLabel = fixedLabel(null, WEB_CELL_WIDTH - CELL_HORIZONTAL_PADDING, Pos.CENTER_LEFT);
@@ -426,12 +416,9 @@ public class StatusBox extends HBox
         mLastNavigationState = state;
 
         boolean statsActive = state != null && state.summaryLoggingActive();
-        boolean historyActive = state != null && state.detailedHistoryActive();
         boolean webActive = state != null && state.running();
         updateStateLabel(mStatsStatusLabel, "Stats", statsActive);
         mStatsStatusTooltip.setText("Summary statistics logging is " + (statsActive ? "active" : "inactive"));
-        updateStateLabel(mHistoryStatusLabel, "History", historyActive);
-        mHistoryStatusTooltip.setText("Detailed history logging is " + (historyActive ? "active" : "inactive"));
 
         mWebStatusLabel.setText(webActive ? "Web:" + state.port() : "Web OFF");
         mWebStatusLabel.setTextFill(webActive ? ACTIVE_COLOR : INACTIVE_COLOR);

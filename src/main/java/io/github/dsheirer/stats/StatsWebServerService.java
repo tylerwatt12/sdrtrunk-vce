@@ -277,8 +277,9 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         }
 
         boolean anyIpEnabled = preference.isStatsWebServerAnyIpEnabled();
+        boolean httpsEnabled = anyIpEnabled || preference.isStatsWebServerHttpsEnabled();
         RequestedConfiguration requested = new RequestedConfiguration(StatsWebPath.getAssetsPath(),
-            preference.getStatsWebServerPort(), anyIpEnabled, preference.isStatsWebServerHttpsEnabled());
+            preference.getStatsWebServerPort(), anyIpEnabled, httpsEnabled);
         ListenerRuntime previous = mListener;
 
         if(!forceReload && previous != null && previous.configuration().requested().equals(requested))
@@ -642,11 +643,6 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
 
             try
             {
-                if(mChannelProcessingManager != null)
-                {
-                    mChannelProcessingManager.setChannelActivityEnabled("stats-web", true);
-                }
-
                 mLiveService.start();
                 mWebCallService.start();
             }
@@ -687,10 +683,6 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         mWebCallService.stop();
         mRuntimeServicesStarted = false;
 
-        if(mChannelProcessingManager != null)
-        {
-            mChannelProcessingManager.setChannelActivityEnabled("stats-web", false);
-        }
     }
 
     private void stopActiveListener()

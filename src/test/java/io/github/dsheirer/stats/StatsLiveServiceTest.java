@@ -21,8 +21,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivityEvent;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivitySnapshot;
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.controller.channel.ChannelProcessingManager;
 import io.github.dsheirer.metadata.site.ProtocolSiteMetadataEvent;
 import io.github.dsheirer.module.decode.dmr.telemetry.DMRNetworkConfigurationSnapshot;
+import io.github.dsheirer.preference.UserPreferences;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -31,6 +33,25 @@ import org.junit.jupiter.api.Test;
 
 class StatsLiveServiceTest
 {
+    @Test
+    void ownsChannelActivityIndependentlyFromTheJavaInterface()
+    {
+        ChannelProcessingManager manager = new ChannelProcessingManager(null, null, null, new UserPreferences());
+        StatsLiveService service = new StatsLiveService(null, manager);
+        assertFalse(manager.getChannelActivityModel().isEnabled());
+
+        service.start();
+        assertTrue(manager.getChannelActivityModel().isEnabled());
+
+        manager.setChannelActivityEnabled("java-ui", true);
+        manager.setChannelActivityEnabled("java-ui", false);
+        assertTrue(manager.getChannelActivityModel().isEnabled());
+
+        service.stop();
+        assertFalse(manager.getChannelActivityModel().isEnabled());
+        service.close();
+    }
+
     @Test
     void publishesConventionalStatusChangesWithStableTableIdentity() throws Exception
     {

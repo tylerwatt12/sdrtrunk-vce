@@ -1378,22 +1378,7 @@ function databaseLoggingNotice(view) {
     const detail = logging.summaryConfigured && logging.lastError ? ` ${logging.lastError}` : '';
     const lastWrite = logging.lastSuccessfulWriteMs ?
       ` Last successful summary write: ${exactDateTime(logging.lastSuccessfulWriteMs)}.` : '';
-    const activityState = logging.historyRetained ?
-      ` Activity pages show retained history${logging.lastHistoryMs ?
-        ` through ${exactDateTime(logging.lastHistoryMs)}` : ''} and are not updating.` :
-      ' Activity pages require detailed history and are unavailable.';
-    return node('div', 'logging-notice warning', `${message}${detail}${lastWrite}${activityState}`);
-  }
-  if (!logging.historyActive) {
-    const reason = logging.historyConfigured ? 'not currently running' : 'off';
-    if (logging.historyRetained) {
-      const through = logging.lastHistoryMs ? ` through ${exactDateTime(logging.lastHistoryMs)}` : '';
-      return node('div', 'logging-notice',
-        `Summary logging is running. Detailed history is ${reason}; Activity pages show retained data${through} ` +
-        'and are not updating.');
-    }
-    return node('div', 'logging-notice',
-      `Summary logging is running. Detailed history is ${reason}; Activity tabs are unavailable.`);
+    return node('div', 'logging-notice warning', `${message}${detail}${lastWrite}`);
   }
   return null;
 }
@@ -9996,10 +9981,8 @@ async function loadStatus(refreshCurrentView = false) {
     const size = (Number(database.database_bytes || 0) / 1048576).toFixed(1);
     const summaryLabel = logging.summaryActive ? 'Summaries on' :
       (logging.summaryConfigured ? 'Summaries unavailable' : 'Summaries off');
-    const historyLabel = logging.historyActive ? 'History on' : (logging.historyRetained ? 'History paused' :
-      (logging.historyConfigured ? 'History unavailable' : 'History off'));
     document.getElementById('server-status').textContent =
-      `${summaryLabel} · ${historyLabel} · ${size} MB`;
+      `${summaryLabel} · ${size} MB`;
   } catch (error) {
     serviceStatus = null;
     document.getElementById('server-status').textContent = 'Database unavailable';
