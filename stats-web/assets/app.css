@@ -2179,14 +2179,14 @@ body[data-view="live"] .channel-diagnostic-readouts {
   text-align: center;
 }
 
-.activity-status.state-call { color: #244f7a; background: #e4edf7; }
-.activity-status.state-encrypted { color: #762b50; background: #f6e7ee; }
-.activity-status.state-control { color: #68480f; background: #f9f0df; }
-.activity-status.state-data { color: #285c3d; background: #e7f3eb; }
-.activity-status.state-active { color: #285967; background: #e5f2f5; }
-.activity-status.state-fade { color: #53606b; background: #edf0f2; }
-.activity-status.state-reset { color: #73333e; background: #f5e8ea; }
-.activity-status.state-teardown { color: #48515a; background: #e9ecee; }
+.activity-status.state-call { color: #244f7a; background: #cdddef; }
+.activity-status.state-encrypted { color: #762b50; background: #f0d0df; }
+.activity-status.state-control { color: #68480f; background: #f6e7ca; }
+.activity-status.state-data { color: #285c3d; background: #d1e9db; }
+.activity-status.state-active { color: #285967; background: #cdeaef; }
+.activity-status.state-fade { color: #53606b; background: #dfe2e5; }
+.activity-status.state-reset { color: #73333e; background: #f2d8dc; }
+.activity-status.state-teardown { color: #48515a; background: #d7d9dc; }
 .activity-status.state-idle { color: var(--muted); background: var(--surface); }
 .control-current { color: #b11226; font-weight: 700; }
 .control-alternate { color: #9a6800; font-weight: 700; }
@@ -3229,42 +3229,42 @@ th.numeric {
 
 :root[data-theme="dark"] .activity-status.state-call {
   color: #dcecff;
-  background: #233447;
+  background: #20405f;
 }
 
 :root[data-theme="dark"] .activity-status.state-encrypted {
   color: #ffe0ee;
-  background: #3d2936;
+  background: #572d47;
 }
 
 :root[data-theme="dark"] .activity-status.state-control {
   color: #f4dfb4;
-  background: #3c3424;
+  background: #604f26;
 }
 
 :root[data-theme="dark"] .activity-status.state-data {
   color: #d2eddb;
-  background: #24382d;
+  background: #265241;
 }
 
 :root[data-theme="dark"] .activity-status.state-active {
   color: #d4edf2;
-  background: #253a40;
+  background: #225361;
 }
 
 :root[data-theme="dark"] .activity-status.state-fade {
   color: #d5dde4;
-  background: #2b343b;
+  background: #3d4750;
 }
 
 :root[data-theme="dark"] .activity-status.state-reset {
   color: #f4d9dd;
-  background: #3e2b30;
+  background: #5a3742;
 }
 
 :root[data-theme="dark"] .activity-status.state-teardown {
   color: #d7dde2;
-  background: #293038;
+  background: #303a42;
 }
 
 :root[data-theme="dark"] .activity-status.state-idle {

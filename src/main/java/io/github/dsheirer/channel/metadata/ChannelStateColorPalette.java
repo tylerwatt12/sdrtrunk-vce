@@ -15,8 +15,8 @@ import java.util.Map;
  */
 public final class ChannelStateColorPalette
 {
-    private static final double LIGHT_THEME_TINT = 0.16;
-    private static final double DARK_THEME_TINT = 0.28;
+    private static final double LIGHT_THEME_TINT = 0.24;
+    private static final double DARK_THEME_TINT = 0.38;
     private static final double MINIMUM_TEXT_CONTRAST = 4.5;
     private static final Map<State,Color> ACCENTS = Map.of(
         State.ACTIVE, new Color(0x35A6BD),
