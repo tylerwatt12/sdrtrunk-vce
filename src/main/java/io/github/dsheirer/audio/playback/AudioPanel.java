@@ -23,6 +23,7 @@ import io.github.dsheirer.audio.AudioEvent;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.gui.preference.PreferenceEditorType;
 import io.github.dsheirer.gui.preference.ViewUserPreferenceEditorRequest;
+import io.github.dsheirer.gui.theme.ThemeManager;
 import io.github.dsheirer.icon.IconModel;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.settings.ColorSetting.ColorSettingName;
@@ -235,6 +236,7 @@ public class AudioPanel extends JPanel implements Listener<AudioEvent>
                     popup.add(new VolumeSlider(mAudioPlaybackManager.getAudioOutput().getGainControl()));
                 }
 
+                ThemeManager.getInstance().preparePopupMenu(popup);
                 popup.show(event.getComponent(), event.getX(), event.getY());
             }
         }

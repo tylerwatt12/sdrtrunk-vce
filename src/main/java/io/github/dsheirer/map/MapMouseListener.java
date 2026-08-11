@@ -17,6 +17,7 @@
  ******************************************************************************/
 package io.github.dsheirer.map;
 
+import io.github.dsheirer.gui.theme.ThemeManager;
 import io.github.dsheirer.settings.SettingsManager;
 import org.jdesktop.swingx.JXMapViewer;
 import org.jdesktop.swingx.mapviewer.GeoPosition;
@@ -134,6 +135,7 @@ public class MapMouseListener extends MouseInputAdapter implements MouseWheelLis
 			});
 			popup.add( mapViewItem );
 			
+			ThemeManager.getInstance().preparePopupMenu(popup);
 			popup.show( mJXMapViewer, event.getX(), event.getY() );
 		}
 	}
