@@ -139,6 +139,9 @@ class StatsWebInteractionUiContractTest
         assertFalse(allowed.contains("required_tier"));
         assertTrue(policies.contains("Array.isArray(response?.capabilities)"));
         assertTrue(policies.contains("entry?.required_tier"));
+        assertTrue(source.contains("function wholeSiteAccessControl(policy, statusHost)"));
+        assertTrue(source.contains("ACCESS_CAPABILITIES.SITE_ACCESS"));
+        assertTrue(source.contains("policies.find((policy) => policy.id === ACCESS_CAPABILITIES.SITE_ACCESS)"));
         assertFalse(policies.contains("response?.policies"));
         assertFalse(policies.contains("entry?.capability"));
         assertFalse(source.contains("function normalizeCapabilityMap"));
@@ -195,7 +198,7 @@ class StatsWebInteractionUiContractTest
         String talkgroup = function(source, "async function renderTalkgroup()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"64\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"65\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -504,8 +507,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(html.indexOf("localStorage.getItem('sdrtrunk_theme')") <
             html.indexOf("rel=\"stylesheet\""));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=47"));
-        assertTrue(html.contains("/assets/app.js?v=68"));
+        assertTrue(html.contains("/assets/app.css?v=48"));
+        assertTrue(html.contains("/assets/app.js?v=69"));
         assertTrue(source.contains("window.localStorage.setItem(THEME_STORAGE_KEY"));
         assertTrue(source.contains("toggle.setAttribute('aria-pressed'"));
         assertTrue(css.contains(":root[data-theme=\"dark\"]"));

@@ -101,6 +101,15 @@ class WebAccessHttpControllerTest
                 outputStream.write(body);
             }
         }));
+        server.createContext("/public-protected", controller.protect(WebCapability.CREDITS_VIEW, exchange -> {
+            byte[] body = "ok".getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, body.length);
+
+            try(OutputStream outputStream = exchange.getResponseBody())
+            {
+                outputStream.write(body);
+            }
+        }));
         server.createContext("/admin-api", controller.protectApi(WebCapability.ADMIN_ALIASES, exchange -> {
             byte[] body = "ok".getBytes(StandardCharsets.UTF_8);
             exchange.sendResponseHeaders(200, body.length);
@@ -123,8 +132,10 @@ class WebAccessHttpControllerTest
             assertFalse(anonymous.get("authenticated").booleanValue());
             assertEquals("public", anonymous.get("tier").textValue());
             assertFalse(anonymous.at("/capabilities/dashboard").booleanValue());
+            assertTrue(anonymous.at("/capabilities/site-access").booleanValue());
             assertFalse(anonymous.at("/capabilities/admin-users").booleanValue());
             assertFalse(anonymous.at("/capabilities/admin-aliases").booleanValue());
+            assertEquals(200, send(client, request(origin, "/public-protected").GET()).statusCode());
 
             HttpResponse<String> staleSession = send(client, request(origin, "/api/v1/auth/session")
                 .header("Cookie", WebAccessHttpController.SESSION_COOKIE_NAME + "=expired-session")
@@ -206,6 +217,22 @@ class WebAccessHttpControllerTest
                 .header("Cookie", listener.cookieHeader()).GET()).statusCode());
             assertEquals(403, send(client, mutation(origin, "/admin-api", listener)
                 .POST(HttpRequest.BodyPublishers.noBody())).statusCode());
+
+            String requireSiteLogin = OBJECT_MAPPER.writeValueAsString(
+                Map.of("capability", "site-access", "tier", "user"));
+            HttpResponse<String> siteLocked = send(client, mutation(origin, "/api/v1/admin/access", admin)
+                .PUT(HttpRequest.BodyPublishers.ofString(requireSiteLogin)));
+            assertEquals(200, siteLocked.statusCode());
+            assertEquals("user", data(siteLocked).get("required_tier").textValue());
+            assertEquals(401, send(client, request(origin, "/protected").GET()).statusCode());
+            assertEquals(401, send(client, request(origin, "/public-protected").GET()).statusCode());
+            assertEquals(200, send(client, request(origin, "/protected")
+                .header("Cookie", listener.cookieHeader()).GET()).statusCode());
+            assertEquals(200, send(client, request(origin, "/public-protected")
+                .header("Cookie", listener.cookieHeader()).GET()).statusCode());
+            JsonNode lockedAnonymous = data(send(client, request(origin, "/api/v1/auth/session").GET()));
+            assertFalse(lockedAnonymous.at("/capabilities/site-access").booleanValue());
+            assertFalse(lockedAnonymous.at("/capabilities/credits").booleanValue());
 
             String uppercaseTier = OBJECT_MAPPER.writeValueAsString(
                 Map.of("capability", "dashboard", "tier", "ADMIN"));

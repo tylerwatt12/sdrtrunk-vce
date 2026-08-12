@@ -81,6 +81,13 @@ class WebAccessServiceTest
         assertEquals(AccessTier.USER, policy.requiredTier());
         assertFalse(service.isAllowed(AccessTier.PUBLIC, WebCapability.DASHBOARD_VIEW));
         assertTrue(service.isAllowed(AccessTier.USER, WebCapability.DASHBOARD_VIEW));
+        WebAccessService.CapabilityPolicy sitePolicy =
+            service.setCapabilityTier(WebCapability.SITE_ACCESS, AccessTier.USER);
+        assertEquals(AccessTier.USER, sitePolicy.requiredTier());
+        assertFalse(service.isAllowed(AccessTier.PUBLIC, WebCapability.CREDITS_VIEW));
+        assertFalse(service.isAllowed(AccessTier.PUBLIC, WebCapability.WEB_AUDIO_LISTEN));
+        assertTrue(service.isAllowed(AccessTier.USER, WebCapability.CREDITS_VIEW));
+        assertFalse(service.isAllowed(AccessTier.USER, WebCapability.ADMIN_ACCESS));
         WebAccessService.CapabilityPolicy spectrumPolicy =
             service.setCapabilityTier(WebCapability.TUNER_SPECTRUM_VIEW, AccessTier.USER);
         assertEquals(AccessTier.USER, spectrumPolicy.requiredTier());
@@ -90,6 +97,8 @@ class WebAccessServiceTest
         WebAccessService restarted = new WebAccessService(database);
         assertEquals(2, restarted.accounts().size());
         assertEquals(AccessTier.USER, restarted.requiredTier(WebCapability.DASHBOARD_VIEW));
+        assertEquals(AccessTier.USER, restarted.requiredTier(WebCapability.SITE_ACCESS));
+        assertFalse(restarted.isAllowed(AccessTier.PUBLIC, WebCapability.CREDITS_VIEW));
         assertEquals(AccessTier.USER, restarted.requiredTier(WebCapability.TUNER_SPECTRUM_VIEW));
         assertEquals(reset, restarted.authenticate("user.one", replacementPassword).orElseThrow());
         assertFalse(settingJson(database).contains(new String(replacementPassword)));
@@ -122,9 +131,9 @@ class WebAccessServiceTest
     @Test
     void definesEveryExistingCapabilityAndLocksAdminPolicies()
     {
-        assertEquals(12, WebCapability.registry().size());
+        assertEquals(13, WebCapability.registry().size());
 
-        for(String id: new String[]{"dashboard", "live", "tuner-spectrum", "systems", "conventional", "aliases", "credits",
+        for(String id: new String[]{"site-access", "dashboard", "live", "tuner-spectrum", "systems", "conventional", "aliases", "credits",
             "csv-export", "call-audio", "admin-users", "admin-access", "admin-aliases"})
         {
             assertTrue(WebCapability.fromId(id).isPresent(), id);

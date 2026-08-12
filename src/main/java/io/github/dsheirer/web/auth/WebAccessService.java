@@ -322,7 +322,15 @@ public final class WebAccessService
     public boolean isAllowed(AccessTier actualTier, WebCapability capability)
     {
         AccessTier actual = actualTier == null ? AccessTier.PUBLIC : actualTier;
-        return actual.allows(requiredTier(capability));
+        WebCapability requiredCapability = Objects.requireNonNull(capability, "Web capability cannot be null");
+
+        if(requiredCapability != WebCapability.SITE_ACCESS &&
+            !actual.allows(requiredTier(WebCapability.SITE_ACCESS)))
+        {
+            return false;
+        }
+
+        return actual.allows(requiredTier(requiredCapability));
     }
 
     public boolean isAllowed(WebAccessAccount account, WebCapability capability)
