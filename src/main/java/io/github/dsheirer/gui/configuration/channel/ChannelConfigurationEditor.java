@@ -30,6 +30,7 @@ import io.github.dsheirer.gui.preference.ViewUserPreferenceEditorRequest;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.config.AuxDecodeConfiguration;
 import io.github.dsheirer.module.decode.config.DecodeConfiguration;
+import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.log.config.EventLogConfiguration;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.preference.UserPreferences;
@@ -86,6 +87,7 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
     private TextField mSiteField;
     private TextField mNameField;
     private TextField mRadresGuidField;
+    private TextField mP25SiteIdentityField;
     private ComboBox<String> mAliasListComboBox;
     private FilteredList<String> mCompatibleAliasLists;
     private GridPane mTextFieldPane;
@@ -101,6 +103,8 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
     private IconNode mPlayGraphicNode;
     private IconNode mStopGraphicNode;
     private ChannelProcessingMonitor mChannelProcessingMonitor = new ChannelProcessingMonitor();
+    private final ChangeListener<P25SiteIdentity> mP25SiteIdentityMonitor =
+        (observable, oldValue, newValue) -> updateP25SiteIdentityField();
     private IFilterProcessor mFilterProcessor;
 
     /**
@@ -171,6 +175,7 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
         if(getItem() != null)
         {
             getItem().processingProperty().removeListener(mChannelProcessingMonitor);
+            getItem().p25SiteIdentityProperty().removeListener(mP25SiteIdentityMonitor);
         }
 
         super.setItem(channel);
@@ -179,6 +184,7 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
         {
             setPlayButtonState(getItem().processingProperty().get());
             getItem().processingProperty().addListener(mChannelProcessingMonitor);
+            getItem().p25SiteIdentityProperty().addListener(mP25SiteIdentityMonitor);
             channelProcessingStateChanged(getItem().isProcessing());
         }
 
@@ -189,6 +195,7 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
         getSiteField().setDisable(disable);
         getNameField().setDisable(disable);
         getRadresGuidField().setDisable(disable || channel.isProcessing());
+        getP25SiteIdentityField().setDisable(true);
         getAliasListComboBox().setDisable(disable);
         getAutoStartSwitch().setDisable(disable);
         updateClearSiteStatisticsButtonState();
@@ -199,6 +206,7 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
             getSiteField().setText(channel.getSite());
             getNameField().setText(channel.getName());
             getRadresGuidField().setText(channel.getRadresGuid());
+            updateP25SiteIdentityField();
             updateAliasListCompatibility();
             String aliasListName = channel.getAliasListName();
 
@@ -252,6 +260,7 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
             getSiteField().setText(null);
             getNameField().setText(null);
             getRadresGuidField().setText(null);
+            updateP25SiteIdentityField();
             getAliasListComboBox().getSelectionModel().select(null);
             getAutoStartSwitch().selectedProperty().set(false);
             getAutoStartOrderSpinner().setDisable(true);
@@ -608,9 +617,18 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
             GridPane.setConstraints(radresGuidLabel, 0, ++row);
             mTextFieldPane.getChildren().add(radresGuidLabel);
 
-            GridPane.setConstraints(getRadresGuidField(), 1, row, 4, 1);
+            GridPane.setConstraints(getRadresGuidField(), 1, row);
             GridPane.setHgrow(getRadresGuidField(), Priority.ALWAYS);
             mTextFieldPane.getChildren().add(getRadresGuidField());
+
+            Label p25SiteIdentityLabel = new Label("P25 Identity");
+            GridPane.setHalignment(p25SiteIdentityLabel, HPos.RIGHT);
+            GridPane.setConstraints(p25SiteIdentityLabel, 2, row);
+            mTextFieldPane.getChildren().add(p25SiteIdentityLabel);
+
+            GridPane.setConstraints(getP25SiteIdentityField(), 3, row, 2, 1);
+            GridPane.setHgrow(getP25SiteIdentityField(), Priority.ALWAYS);
+            mTextFieldPane.getChildren().add(getP25SiteIdentityField());
         }
 
         return mTextFieldPane;
@@ -662,10 +680,43 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
             mRadresGuidField = new TextField();
             mRadresGuidField.setDisable(true);
             mRadresGuidField.setMaxWidth(Double.MAX_VALUE);
+            mRadresGuidField.setPrefColumnCount(22);
             mRadresGuidField.textProperty().addListener(mEditorModificationListener);
         }
 
         return mRadresGuidField;
+    }
+
+    private TextField getP25SiteIdentityField()
+    {
+        if(mP25SiteIdentityField == null)
+        {
+            mP25SiteIdentityField = new TextField();
+            mP25SiteIdentityField.setDisable(true);
+            mP25SiteIdentityField.setMaxWidth(Double.MAX_VALUE);
+            mP25SiteIdentityField.setPrefColumnCount(20);
+            mP25SiteIdentityField.setTooltip(new Tooltip(
+                "Immutable WACN-System / RFSS-Site identity learned from the active P25 control channel"));
+        }
+
+        return mP25SiteIdentityField;
+    }
+
+    private void updateP25SiteIdentityField()
+    {
+        Runnable update = () -> {
+            P25SiteIdentity identity = getItem() != null ? getItem().getP25SiteIdentity() : null;
+            getP25SiteIdentityField().setText(identity != null ? identity.display() : null);
+        };
+
+        if(Platform.isFxApplicationThread())
+        {
+            update.run();
+        }
+        else
+        {
+            Platform.runLater(update);
+        }
     }
 
     private boolean validateSiteGuid()

@@ -227,6 +227,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
     private final Listener<ChannelEvent> mChannelEventListener;
     private final P25TrafficChannelManager mTrafficChannelManager;
     private long mControlNACFrequency;
+    private volatile long mSourceFrequency;
     private ServiceOptions mCurrentServiceOptions;
     private RadioIdentifier mHarrisTalkerAliasRadio;
     private boolean mHarrisTalkerAliasSourceInvalid;
@@ -260,7 +261,7 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
             mNetworkConfigurationStabilizer);
         mSiteMetadataPublisher = new P25SiteMetadataPublisher(mChannel, mNetworkConfigurationStabilizer::getSnapshot,
             this::hasInterModuleEventBus,
-            event -> getInterModuleEventBus().post(event));
+            event -> getInterModuleEventBus().post(event), () -> mSourceFrequency);
 
         if(trafficChannelManager != null)
         {
@@ -2402,6 +2403,19 @@ public class P25P1DecoderState extends DecoderState implements IChannelEventList
                 break;
             case NOTIFICATION_SOURCE_FREQUENCY:
                 long frequency = event.getFrequency();
+
+                if(mSourceFrequency != frequency)
+                {
+                    mSourceFrequency = frequency;
+
+                    if(mSiteMetadataEnabled)
+                    {
+                        mNetworkConfigurationMonitor.reset();
+                        mNetworkConfigurationStabilizer.reset();
+                    }
+                }
+
+                setCurrentFrequency(frequency);
 
                 //Notify the TCM that our control frequency has changed.
                 if(isTrunkedControlChannel())

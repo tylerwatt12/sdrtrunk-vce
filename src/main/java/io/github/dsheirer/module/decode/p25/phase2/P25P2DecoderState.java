@@ -189,6 +189,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
     private P25SiteMetadataPublisher mSiteMetadataPublisher;
     private P25TrafficChannelManager mTrafficChannelManager;
     private int mEndPttOnFacchCounter = 0;
+    private volatile long mSourceFrequency;
 
     /**
      * Constructs an APCO-25 decoder state instance for a traffic or control channel.
@@ -223,7 +224,7 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
         mNetworkConfigurationMonitor = new P25P2NetworkConfigurationMonitor(mNetworkConfigurationStabilizer);
         mSiteMetadataPublisher = new P25SiteMetadataPublisher(mChannel, mNetworkConfigurationStabilizer::getSnapshot,
             this::hasInterModuleEventBus,
-            event -> getInterModuleEventBus().post(event), siteMetadataRateLimiter);
+            event -> getInterModuleEventBus().post(event), siteMetadataRateLimiter, () -> mSourceFrequency);
 
     }
 
@@ -2025,6 +2026,19 @@ public class P25P2DecoderState extends TimeslotDecoderState implements Identifie
                     break;
                 case NOTIFICATION_SOURCE_FREQUENCY:
                     long frequency = event.getFrequency();
+
+                    if(mSourceFrequency != frequency)
+                    {
+                        mSourceFrequency = frequency;
+
+                        if(mChannel.isStandardChannel())
+                        {
+                            mNetworkConfigurationMonitor.reset();
+                            mNetworkConfigurationStabilizer.reset();
+                        }
+                    }
+
+                    setCurrentFrequency(frequency);
 
                     //Notify the TCM that our control frequency has changed.
                     if(mChannel.isStandardChannel())

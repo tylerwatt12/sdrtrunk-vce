@@ -35,7 +35,7 @@ class P25SiteMetadataPublisherTest
             new AtomicReference<>(snapshot(1_000L, true));
         List<SiteMetadataEvent> events = new ArrayList<>();
         P25SiteMetadataPublisher publisher = new P25SiteMetadataPublisher(channel, snapshot::get, () -> true,
-            events::add, limiter(clock));
+            events::add, limiter(clock), () -> 851_012_500L);
 
         publisher.publish(1_000L);
         snapshot.set(snapshot(2_000L, false));
@@ -47,6 +47,7 @@ class P25SiteMetadataPublisherTest
         publisher.publish(6_000L);
         assertEquals(2, events.size());
         assertFalse(events.get(1).snapshot().siteStatus().voiceService());
+        assertEquals(851_012_500L, events.get(1).sourceFrequency());
     }
 
     @Test

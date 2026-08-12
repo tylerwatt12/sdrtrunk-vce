@@ -26,6 +26,7 @@ import io.github.dsheirer.module.decode.DecoderFactory;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.config.AuxDecodeConfiguration;
 import io.github.dsheirer.module.decode.config.DecodeConfiguration;
+import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.log.EventLogType;
 import io.github.dsheirer.module.log.config.EventLogConfiguration;
 import io.github.dsheirer.record.RecorderType;
@@ -45,8 +46,10 @@ import java.util.UUID;
 import javafx.beans.Observable;
 import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.IntegerProperty;
+import javafx.beans.property.ObjectProperty;
 import javafx.beans.property.SimpleBooleanProperty;
 import javafx.beans.property.SimpleIntegerProperty;
+import javafx.beans.property.SimpleObjectProperty;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.beans.property.StringProperty;
 import javafx.collections.FXCollections;
@@ -79,6 +82,7 @@ public class Channel extends Configuration
     private StringProperty mSite = new SimpleStringProperty();
     private StringProperty mName = new SimpleStringProperty();
     private StringProperty mRadresGuid = new SimpleStringProperty();
+    private ObjectProperty<P25SiteIdentity> mP25SiteIdentity = new SimpleObjectProperty<>();
     private String mConfigurationId;
     private boolean mConfigurationIdPersistenceRequired;
     private ObservableList<Long> mFrequencyList;
@@ -298,6 +302,14 @@ public class Channel extends Configuration
     public StringProperty radresGuidProperty()
     {
         return mRadresGuid;
+    }
+
+    /**
+     * Immutable learned P25 site identity property.
+     */
+    public ObjectProperty<P25SiteIdentity> p25SiteIdentityProperty()
+    {
+        return mP25SiteIdentity;
     }
 
     /**
@@ -542,6 +554,46 @@ public class Channel extends Configuration
     public boolean hasRadresGuid()
     {
         return mRadresGuid != null && mRadresGuid.get() != null && !mRadresGuid.get().isBlank();
+    }
+
+    /**
+     * Complete P25 identity learned for this saved channel configuration.
+     */
+    public P25SiteIdentity getP25SiteIdentity()
+    {
+        return mP25SiteIdentity.get();
+    }
+
+    /**
+     * Restores a persisted P25 site identity. Runtime learning should use {@link #bindP25SiteIdentity(P25SiteIdentity)}.
+     */
+    public void setP25SiteIdentity(P25SiteIdentity identity)
+    {
+        mP25SiteIdentity.set(identity);
+    }
+
+    /**
+     * Binds this configuration to its first complete site identity and refuses later identity changes.
+     *
+     * @return true when the supplied identity is now the bound identity
+     */
+    @JsonIgnore
+    public boolean bindP25SiteIdentity(P25SiteIdentity identity)
+    {
+        if(identity == null)
+        {
+            return false;
+        }
+
+        P25SiteIdentity current = getP25SiteIdentity();
+
+        if(current == null)
+        {
+            setP25SiteIdentity(identity);
+            return true;
+        }
+
+        return current.equals(identity);
     }
 
     /**
@@ -869,6 +921,6 @@ public class Channel extends Configuration
     {
         return (Channel c) -> new Observable[] {c.processingProperty(), c.nameProperty(), c.aliasListNameProperty(),
             c.autoStartOrderProperty(), c.autoStartProperty(), c.siteProperty(), c.systemProperty(),
-            c.radresGuidProperty(), c.getFrequencyList()};
+            c.radresGuidProperty(), c.p25SiteIdentityProperty(), c.getFrequencyList()};
     }
 }

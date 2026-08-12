@@ -24,6 +24,10 @@ import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import io.github.dsheirer.module.decode.config.DecodeConfiguration;
 import io.github.dsheirer.module.decode.p25.phase2.DecodeConfigP25Phase2;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, include = JsonTypeInfo.As.PROPERTY, property = "type")
 @JsonSubTypes({
@@ -35,6 +39,7 @@ public abstract class DecodeConfigP25 extends DecodeConfiguration
     private int mTrafficChannelPoolSize = TRAFFIC_CHANNEL_LIMIT_DEFAULT;
     private boolean mIgnoreDataCalls = false;
     private boolean mLearnAnnouncedControlChannels = false;
+    private List<Long> mLearnedControlFrequencies = new CopyOnWriteArrayList<>();
 
     protected DecodeConfigP25()
     {
@@ -59,6 +64,49 @@ public abstract class DecodeConfigP25 extends DecodeConfiguration
     public void setLearnAnnouncedControlChannels(boolean learn)
     {
         mLearnAnnouncedControlChannels = learn;
+    }
+
+    /**
+     * Frequencies owned by automatic site learning. Manually configured frequencies are deliberately not included so
+     * that reconciliation can safely remove obsolete learned entries across application restarts.
+     */
+    public List<Long> getLearnedControlFrequencies()
+    {
+        return new ArrayList<>(mLearnedControlFrequencies);
+    }
+
+    public void setLearnedControlFrequencies(List<Long> frequencies)
+    {
+        LinkedHashSet<Long> normalized = new LinkedHashSet<>();
+
+        if(frequencies != null)
+        {
+            for(Long frequency: frequencies)
+            {
+                if(frequency != null && frequency > 0)
+                {
+                    normalized.add(frequency);
+                }
+            }
+        }
+
+        mLearnedControlFrequencies = new CopyOnWriteArrayList<>(normalized);
+    }
+
+    public boolean addLearnedControlFrequency(long frequency)
+    {
+        if(frequency > 0 && !mLearnedControlFrequencies.contains(frequency))
+        {
+            mLearnedControlFrequencies.add(frequency);
+            return true;
+        }
+
+        return false;
+    }
+
+    public boolean removeLearnedControlFrequency(long frequency)
+    {
+        return mLearnedControlFrequencies.remove(frequency);
     }
 
 

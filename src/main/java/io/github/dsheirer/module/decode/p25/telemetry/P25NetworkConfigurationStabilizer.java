@@ -39,8 +39,6 @@ public class P25NetworkConfigurationStabilizer
     static final long DISCOVERY_WINDOW_MILLISECONDS = TimeUnit.SECONDS.toMillis(60);
     static final int GUARDED_STATIC_OBSERVATION_THRESHOLD = 3;
     static final long GUARDED_STATIC_MINIMUM_AGE_MILLISECONDS = TimeUnit.SECONDS.toMillis(60);
-    static final int CURRENT_CONTROL_OBSERVATION_THRESHOLD = 2;
-    static final long CURRENT_CONTROL_MINIMUM_AGE_MILLISECONDS = TimeUnit.SECONDS.toMillis(10);
     static final int DYNAMIC_OBSERVATION_THRESHOLD = 2;
     static final long DYNAMIC_MINIMUM_AGE_MILLISECONDS = TimeUnit.SECONDS.toMillis(10);
     static final long CANDIDATE_EXPIRATION_MILLISECONDS = TimeUnit.MINUTES.toMillis(10);
@@ -52,9 +50,6 @@ public class P25NetworkConfigurationStabilizer
     private static final FactConfirmationPolicy GUARDED_STATIC_POLICY =
         new FactConfirmationPolicy(GUARDED_STATIC_OBSERVATION_THRESHOLD,
             GUARDED_STATIC_MINIMUM_AGE_MILLISECONDS, CANDIDATE_EXPIRATION_MILLISECONDS, false);
-    private static final FactConfirmationPolicy CURRENT_CONTROL_POLICY =
-        new FactConfirmationPolicy(CURRENT_CONTROL_OBSERVATION_THRESHOLD,
-            CURRENT_CONTROL_MINIMUM_AGE_MILLISECONDS, CANDIDATE_EXPIRATION_MILLISECONDS, false);
     private static final FactConfirmationPolicy DYNAMIC_POLICY =
         new FactConfirmationPolicy(DYNAMIC_OBSERVATION_THRESHOLD, DYNAMIC_MINIMUM_AGE_MILLISECONDS,
             CANDIDATE_EXPIRATION_MILLISECONDS, false);
@@ -354,12 +349,14 @@ public class P25NetworkConfigurationStabilizer
         StableFactTracker<P25NetworkConfigurationSnapshot.Channel,P25NetworkConfigurationSnapshot.Channel> tracker =
             mChannels.computeIfAbsent(key, ignored -> tracker());
 
-        boolean discovery = isDiscoveryMode(timestamp);
-        boolean currentControl = isCurrentControlChannel(channel);
-        FactConfirmationPolicy policy = discovery && currentControl ? IMMEDIATE_DISCOVERY_POLICY :
-            currentControl ? CURRENT_CONTROL_POLICY : GUARDED_STATIC_POLICY;
-
-        tracker.observe(channel, timestamp, policy, this::allowChannelPromotion);
+        if(isControlChannel(channel))
+        {
+            tracker.observeAuthoritative(channel, timestamp, this::allowChannelPromotion);
+        }
+        else
+        {
+            tracker.observe(channel, timestamp, GUARDED_STATIC_POLICY, this::allowChannelPromotion);
+        }
     }
 
     private void observeTalkerAlias(P25NetworkConfigurationSnapshot.TalkerAlias talkerAlias, long timestamp)
