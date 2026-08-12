@@ -94,7 +94,7 @@ final class StatsApiV1Controller
 
         if(mTunerDiagnosticService != null)
         {
-            create(server, StatsApiV1.TUNER_DIAGNOSTICS, WebCapability.LIVE_VIEW,
+            create(server, StatsApiV1.TUNER_DIAGNOSTICS, WebCapability.TUNER_SPECTRUM_VIEW,
                 exchange -> handleJson(exchange, StatsApiV1.TUNER_DIAGNOSTICS, (request, segments) -> {
                     requireNoSegments(segments);
                     request.requireOnly();

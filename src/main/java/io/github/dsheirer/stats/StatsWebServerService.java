@@ -129,8 +129,8 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).build());
     private static final Set<String> MULTIPLEX_TOPICS = Set.of("channel_activity", "calls", "decode_events",
         "decode_messages", "channel_diagnostics", "tuner_diagnostics", "activity");
-    private static final Set<WebCapability> MULTIPLEX_CAPABILITIES = Set.of(WebCapability.LIVE_VIEW,
-        WebCapability.WEB_AUDIO_LISTEN, WebCapability.SYSTEMS_VIEW);
+    static final Set<WebCapability> MULTIPLEX_CAPABILITIES = Set.of(WebCapability.LIVE_VIEW,
+        WebCapability.TUNER_SPECTRUM_VIEW, WebCapability.WEB_AUDIO_LISTEN, WebCapability.SYSTEMS_VIEW);
 
     private final UserPreferences mUserPreferences;
     private final StatsWebDatabase mDatabase;
@@ -3018,11 +3018,12 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             ApiHttpResponse.encodePayload(StatsApiV1Payload.present(state)));
     }
 
-    private static WebCapability capabilityForTopic(String topic)
+    static WebCapability capabilityForTopic(String topic)
     {
         return switch(topic)
         {
             case "calls" -> WebCapability.WEB_AUDIO_LISTEN;
+            case "tuner_diagnostics" -> WebCapability.TUNER_SPECTRUM_VIEW;
             case "activity" -> WebCapability.SYSTEMS_VIEW;
             default -> WebCapability.LIVE_VIEW;
         };

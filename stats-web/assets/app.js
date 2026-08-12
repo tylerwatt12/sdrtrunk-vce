@@ -17,6 +17,7 @@ const THEME_STORAGE_KEY = 'sdrtrunk_theme';
 const ACCESS_CAPABILITIES = Object.freeze({
   DASHBOARD: 'dashboard',
   LIVE: 'live',
+  TUNER_SPECTRUM: 'tuner-spectrum',
   SYSTEMS: 'systems',
   CONVENTIONAL: 'conventional',
   ALIASES: 'aliases',
@@ -30,6 +31,7 @@ const ACCESS_CAPABILITIES = Object.freeze({
 const VIEW_ACCESS_CAPABILITY = Object.freeze({
   dashboard: ACCESS_CAPABILITIES.DASHBOARD,
   live: ACCESS_CAPABILITIES.LIVE,
+  'tuner-spectrum': ACCESS_CAPABILITIES.TUNER_SPECTRUM,
   systems: ACCESS_CAPABILITIES.SYSTEMS,
   system: ACCESS_CAPABILITIES.SYSTEMS,
   talkgroup: ACCESS_CAPABILITIES.SYSTEMS,
@@ -7123,7 +7125,7 @@ function tunerSnapFrequency(frequencyHz) {
   return { source: 'raster', frequencyHz: snappedHz, raster, label: raster.label };
 }
 
-function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
+function tunerSpectrumPanel() {
   const layout = node('div', 'tuner-spectrum-layout');
   const toolbar = node('div', 'tuner-spectrum-toolbar');
   const targetLabel = node('label', 'tuner-spectrum-target');
@@ -7204,6 +7206,8 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
   waterfallChannelsControl.title = 'Show known and active channel bandwidths over the waterfall.';
   waterfallChannelsControl.append(waterfallChannelsInput,
     node('span', '', 'Highlight channels on waterfall'));
+  const liveActivityAllowed = capabilityAllowed(ACCESS_CAPABILITIES.LIVE);
+  waterfallChannelsControl.hidden = !liveActivityAllowed;
   const toggleControls = node('div', 'tuner-spectrum-option-toggles');
   toggleControls.append(snapControl, smoothControl, waterfallChannelsControl);
   optionsPanel.append(floorControl, floorHelp, speedControl, toggleControls);
@@ -7223,6 +7227,11 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
       node('span', '', TUNER_ACTIVITY_LABELS[flagStatus]));
     flagLegend.append(item);
   });
+  flagLegend.hidden = !liveActivityAllowed;
+  if (!liveActivityAllowed) {
+    displayControls.append(node('span', 'tuner-spectrum-control-help',
+      'Channel markers require Live access.'));
+  }
   displayControls.append(refiningBadge, flagLegend);
 
   const instructions = node('p', 'visually-hidden',
@@ -7312,11 +7321,10 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
   let waterfallRowImage = null;
   let waterfallObservedAtRows = new Float64Array(0);
 
-  const modal = openReadOnlyModal('Tuner Spectrum', layout, {
-    id: 'tuner-spectrum',
-    className: 'tuner-spectrum-modal',
-    returnFocusSelector,
-    cleanup: () => {
+  const controller = {
+    element: layout,
+    close: () => {
+      if (disposed) return;
       disposed = true;
       cancelDrag();
       closeStreams();
@@ -7325,8 +7333,7 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
       window.removeEventListener('resize', onResize);
       [spectrum.canvas, waterfall.canvas].forEach(removePlotInteractions);
     }
-  });
-  if (!modal) return;
+  };
 
   const setStatus = (text, className = 'state-stale') => {
     if (status.textContent !== text) status.textContent = text;
@@ -8052,7 +8059,7 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
   }
 
   function connectActiveChannels() {
-    if (!shouldRun() || activeChannelSource) return;
+    if (!liveActivityAllowed || !shouldRun() || activeChannelSource) return;
     const source = subscribeLiveChannelActivity({
       snapshot: (snapshot) => {
         activeChannelTables.clear();
@@ -8357,7 +8364,7 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
   resetPlots('Loading tuners…');
 
   api('/api/v1/diagnostics/tuners').then((response) => {
-    if (disposed || activeReadOnlyModal !== modal.state) return;
+    if (disposed) return;
     const targets = tunerDiagnosticTargets(response);
     targetsById.clear();
     targetSelect.replaceChildren();
@@ -8381,13 +8388,14 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
     resetPlots('Waiting for tuner data…');
     sync();
   }).catch((error) => {
-    if (disposed || activeReadOnlyModal !== modal.state) return;
+    if (disposed) return;
     targetSelect.replaceChildren(node('option', '', 'Tuners unavailable'));
     targetSelect.disabled = true;
     pause.disabled = true;
     setStatus('Unavailable');
     resetPlots(error.message || 'Could not load tuner diagnostics.');
   });
+  return controller;
 }
 
 function liveEventsPanel(onCollapse) {
@@ -9001,13 +9009,15 @@ async function renderLive() {
   const eventsPanel = liveEventsPanel((collapsed) => split.classList.toggle('details-collapsed', collapsed));
   pageConnections.add(eventsPanel);
   const systems = liveSystemsSection(eventsPanel.select);
-  const spectrum = node('button', 'button secondary live-tuner-spectrum', 'Tuner Spectrum');
-  spectrum.id = 'open-tuner-spectrum';
-  spectrum.type = 'button';
-  spectrum.addEventListener('click', () => showTunerSpectrumModal());
-  systems.querySelector('.section-title')?.append(spectrum);
   split.append(systems, eventsPanel.element);
   content.append(split);
+}
+
+async function renderTunerSpectrum() {
+  const spectrum = tunerSpectrumPanel();
+  pageConnections.add(spectrum);
+  content.append(pageHeader('Tuner Spectrum',
+    'Inspect the full bandwidth of each active tuner'), spectrum.element);
 }
 
 async function renderSystems() {
@@ -10478,7 +10488,8 @@ async function renderAdmin() {
 
 function routeViewLabel(view) {
   return ({
-    dashboard: 'Dashboard', live: 'Live', systems: 'Systems & Sites', system: 'System details',
+    dashboard: 'Dashboard', live: 'Live', 'tuner-spectrum': 'Tuner Spectrum',
+    systems: 'Systems & Sites', system: 'System details',
     site: 'Site details', talkgroup: 'Talkgroup details', radio: 'Radio details',
     conventional: 'Conventional', 'conventional-detail': 'Conventional details', aliases: 'Aliases',
     admin: 'Administration'
@@ -10638,7 +10649,7 @@ async function loadStatus(refreshCurrentView = false) {
 
   const currentView = route.get('view') || 'dashboard';
   if (refreshCurrentView && previousSignature !== loggingAvailabilitySignature() &&
-      !['live', 'admin', 'credits'].includes(currentView)) {
+      !['live', 'tuner-spectrum', 'admin', 'credits'].includes(currentView)) {
     render();
   }
 }
@@ -10660,6 +10671,7 @@ async function render() {
     const handlers = {
       dashboard: renderDashboard,
       live: renderLive,
+      'tuner-spectrum': renderTunerSpectrum,
       systems: renderSystems,
       system: renderSystem,
       talkgroup: renderTalkgroup,

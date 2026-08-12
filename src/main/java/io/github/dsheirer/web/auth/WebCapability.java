@@ -24,6 +24,7 @@ public enum WebCapability
 {
     DASHBOARD_VIEW("dashboard", "Dashboard", AccessTier.PUBLIC),
     LIVE_VIEW("live", "Live", AccessTier.PUBLIC),
+    TUNER_SPECTRUM_VIEW("tuner-spectrum", "Tuner Spectrum"),
     SYSTEMS_VIEW("systems", "Systems & Sites", AccessTier.PUBLIC),
     CONVENTIONAL_VIEW("conventional", "Conventional", AccessTier.PUBLIC),
     ALIASES_VIEW("aliases", "Aliases", AccessTier.PUBLIC),
