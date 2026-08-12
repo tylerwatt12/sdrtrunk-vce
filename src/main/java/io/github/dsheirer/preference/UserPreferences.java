@@ -35,7 +35,6 @@ import io.github.dsheirer.preference.nowplaying.NowPlayingPreference;
 import io.github.dsheirer.preference.playback.PlaybackPreference;
 import io.github.dsheirer.preference.radioreference.RadioReferencePreference;
 import io.github.dsheirer.preference.record.RecordPreference;
-import io.github.dsheirer.preference.source.ChannelMultiFrequencyPreference;
 import io.github.dsheirer.preference.source.TunerPreference;
 import io.github.dsheirer.preference.spectrum.SpectrumPreference;
 import io.github.dsheirer.preference.swing.SwingPreference;
@@ -60,7 +59,6 @@ import io.github.dsheirer.sample.Listener;
 public class UserPreferences implements Listener<PreferenceType>
 {
     private ApplicationPreference mApplicationPreference;
-    private ChannelMultiFrequencyPreference mChannelMultiFrequencyPreference;
     private DecodeEventPreference mDecodeEventPreference;
     private DirectoryPreference mDirectoryPreference;
     private CallManagementPreference mCallManagementPreference;
@@ -155,14 +153,6 @@ public class UserPreferences implements Listener<PreferenceType>
     }
 
     /**
-     * Multiple frequency channel source preferences
-     */
-    public ChannelMultiFrequencyPreference getChannelMultiFrequencyPreference()
-    {
-        return mChannelMultiFrequencyPreference;
-    }
-
-    /**
      * Audio playback preferences
      */
     public PlaybackPreference getPlaybackPreference()
@@ -246,7 +236,6 @@ public class UserPreferences implements Listener<PreferenceType>
     private void loadPreferenceTypes()
     {
         mApplicationPreference = new ApplicationPreference(this::receive);
-        mChannelMultiFrequencyPreference = new ChannelMultiFrequencyPreference(this::receive);
         mDecodeEventPreference = new DecodeEventPreference(this::receive);
         mDirectoryPreference = new DirectoryPreference(this::receive);
         mCallManagementPreference = new CallManagementPreference(this::receive);

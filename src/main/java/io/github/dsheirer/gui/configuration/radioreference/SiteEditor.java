@@ -249,9 +249,11 @@ public class SiteEditor extends GridPane
             case P25_PHASE1:
                 DecodeConfiguration p1config = DecoderFactory.getDecodeConfiguration(decoderType);
 
-                if(mRadioReferenceDecoder.isLSM(site) && p1config instanceof DecodeConfigP25Phase1 p1)
+                if(p1config instanceof DecodeConfigP25Phase1 p1)
                 {
-                    p1.setModulation(Modulation.CQPSK);
+                    p1.setModulation(Modulation.AUTO);
+                    p1.setAutoPreferredModulation(mRadioReferenceDecoder.isLSM(site) ? Modulation.CQPSK :
+                        Modulation.C4FM);
                 }
                 return p1config;
             case P25_PHASE2:

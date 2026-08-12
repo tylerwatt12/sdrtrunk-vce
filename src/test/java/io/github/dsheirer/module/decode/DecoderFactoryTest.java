@@ -18,6 +18,7 @@ import io.github.dsheirer.module.decode.dmr.channel.TimeslotFrequency;
 import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
 import io.github.dsheirer.module.decode.nxdn.NXDNChannelMode;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
+import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.module.decode.p25.phase1.Modulation;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -65,6 +66,20 @@ class DecoderFactoryTest
 
         assertNotSame(original, copy);
         assertEquals(Modulation.CQPSK, copy.getModulation());
+    }
+
+    @Test
+    void copiesP25PhaseOneAutoSelectionHint()
+    {
+        DecodeConfigP25Phase1 original = new DecodeConfigP25Phase1();
+        original.setAutoPreferredModulation(Modulation.CQPSK);
+
+        DecodeConfigP25Phase1 copy = (DecodeConfigP25Phase1)DecoderFactory.copy(original);
+
+        assertNotSame(original, copy);
+        assertEquals(Modulation.AUTO, copy.getModulation());
+        assertEquals(Modulation.CQPSK, copy.getAutoPreferredModulation());
+        assertEquals(Modulation.CQPSK, copy.getEffectiveModulation());
     }
 
     @Test

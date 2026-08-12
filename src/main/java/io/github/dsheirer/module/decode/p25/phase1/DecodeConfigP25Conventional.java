@@ -35,7 +35,7 @@ public class DecodeConfigP25Conventional extends DecodeConfiguration
 
     public void setModulation(Modulation modulation)
     {
-        mModulation = modulation != null ? modulation : Modulation.C4FM;
+        mModulation = modulation == Modulation.CQPSK ? Modulation.CQPSK : Modulation.C4FM;
     }
 
     /**

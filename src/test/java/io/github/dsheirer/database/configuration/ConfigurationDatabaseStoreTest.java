@@ -64,7 +64,9 @@ class ConfigurationDatabaseStoreTest
         sourceConfig.setFrequency(853_762_500L);
         sourceConfig.setPreferredTuner("Airspy");
         channel.setSourceConfiguration(sourceConfig);
-        channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
+        DecodeConfigP25Phase1 decodeConfig = new DecodeConfigP25Phase1();
+        decodeConfig.setAutoPreferredModulation(Modulation.CQPSK);
+        channel.setDecodeConfiguration(decodeConfig);
 
         RadioResolveConfiguration stream = new RadioResolveConfiguration();
         stream.setName("RadioResolve");
@@ -94,6 +96,10 @@ class ConfigurationDatabaseStoreTest
         assertEquals(2, loadedChannel.getAutoStartOrder());
         assertInstanceOf(SourceConfigTuner.class, loadedChannel.getSourceConfiguration());
         assertInstanceOf(DecodeConfigP25Phase1.class, loadedChannel.getDecodeConfiguration());
+        DecodeConfigP25Phase1 loadedDecodeConfig = (DecodeConfigP25Phase1)loadedChannel.getDecodeConfiguration();
+        assertEquals(Modulation.AUTO, loadedDecodeConfig.getModulation());
+        assertEquals(Modulation.CQPSK, loadedDecodeConfig.getAutoPreferredModulation());
+        assertEquals(Modulation.CQPSK, loadedDecodeConfig.getEffectiveModulation());
         SourceConfigTuner loadedSource = (SourceConfigTuner)loadedChannel.getSourceConfiguration();
         assertEquals(853_762_500L, loadedSource.getFrequency());
         assertEquals("Airspy", loadedSource.getPreferredTuner());
