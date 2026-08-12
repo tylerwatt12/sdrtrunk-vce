@@ -36,8 +36,8 @@ import org.slf4j.LoggerFactory;
 public abstract class DiscoveredTuner implements ITunerErrorListener
 {
     private Logger mLog = LoggerFactory.getLogger(DiscoveredTuner.class);
-    private TunerStatus mTunerStatus = TunerStatus.ENABLED;
-    private boolean mEnabled = true;
+    private volatile TunerStatus mTunerStatus = TunerStatus.ENABLED;
+    private volatile boolean mEnabled = true;
     private String mErrorMessage;
     private List<IDiscoveredTunerStatusListener> mListeners = new CopyOnWriteArrayList<>();
     protected Tuner mTuner;
@@ -148,8 +148,8 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
             }
             else
             {
-                stop();
                 setTunerStatus(TunerStatus.DISABLED);
+                stop();
             }
         }
     }

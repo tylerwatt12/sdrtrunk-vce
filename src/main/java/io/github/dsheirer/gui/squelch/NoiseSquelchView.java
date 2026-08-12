@@ -19,7 +19,9 @@
 
 package io.github.dsheirer.gui.squelch;
 
+import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.dsp.squelch.INoiseSquelchController;
+import io.github.dsheirer.dsp.squelch.NoiseSquelch;
 import io.github.dsheirer.dsp.squelch.NoiseSquelchState;
 import io.github.dsheirer.gui.symbol.ChannelView;
 import io.github.dsheirer.sample.Listener;
@@ -29,6 +31,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import javafx.application.Platform;
 import javafx.geometry.HPos;
 import javafx.geometry.Insets;
@@ -36,7 +40,11 @@ import javafx.geometry.Side;
 import javafx.scene.chart.LineChart;
 import javafx.scene.chart.NumberAxis;
 import javafx.scene.chart.XYChart;
+import javafx.scene.control.Button;
 import javafx.scene.control.Label;
+import javafx.scene.control.Slider;
+import javafx.scene.control.ToggleButton;
+import javafx.scene.control.Tooltip;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
@@ -44,7 +52,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Read-only JavaFX diagnostic view of noise squelch operating state.
+ * JavaFX view of live noise squelch operating state and controls.
  *
  * The NoiseSquelch control can be configured with noise and hysteresis open and close thresholds.  The two value ranges
  * for noise and hysteresis run in opposite directions relative to squelch open and close.  This view inverts the noise
@@ -69,14 +77,24 @@ public class NoiseSquelchView extends ChannelView implements Listener<NoiseSquel
     private static final float NOISE_INVERSION_BASE = 10.0f;
 
     /**
-     * Noise squelch history buffer size for x-axis of the XY chart, in units of 10 milliseconds.
+     * Noise squelch history buffer size for a two-second chart at the 50 millisecond state cadence.
      */
-    private static final int HISTORY_BUFFER_SIZE = 200; //200 x 10ms = 2,000ms / 2-second history view
+    private static final int HISTORY_BUFFER_SIZE = 40;
 
     private static final String NOT_AVAILABLE = "not available";
+    private final ConfigurationManager mConfigurationManager;
     private final List<NoiseSquelchState> mSquelchStateHistory = new ArrayList<>();
-    private INoiseSquelchController mController;
+    private final AtomicReference<NoiseSquelchState> mPendingState = new AtomicReference<>();
+    private final AtomicBoolean mChartUpdatePending = new AtomicBoolean();
+    private volatile INoiseSquelchController mController;
     private ScheduledFuture<?> mTimerFuture;
+
+    private ToggleButton mSquelchOverrideButton;
+    private Button mDefaultsButton;
+    private Slider mNoiseOpenSlider;
+    private Slider mNoiseCloseSlider;
+    private Slider mHysteresisOpenSlider;
+    private Slider mHysteresisCloseSlider;
 
     private LineChart<Number,Number> mActivityChart;
     private final XYChart.Series<Number,Number> mNoiseSeries = new XYChart.Series<>();
@@ -88,10 +106,12 @@ public class NoiseSquelchView extends ChannelView implements Listener<NoiseSquel
     private Label mSquelchStateLabel;
     private Label mNoiseValueLabel;
     private Label mHysteresisValueLabel;
-    private boolean mControlsUpdated = true;
+    private volatile boolean mControlsUpdated = true;
+    private boolean mUpdatingControls;
 
-    public NoiseSquelchView()
+    public NoiseSquelchView(ConfigurationManager configurationManager)
     {
+        mConfigurationManager = configurationManager;
         init();
     }
 
@@ -102,6 +122,7 @@ public class NoiseSquelchView extends ChannelView implements Listener<NoiseSquel
     {
         GridPane gridPane = new GridPane();
         gridPane.setHgap(8);
+        gridPane.setVgap(4);
         gridPane.setPadding(new Insets(5));
         gridPane.setMaxWidth(Double.MAX_VALUE);
 
@@ -125,6 +146,33 @@ public class NoiseSquelchView extends ChannelView implements Listener<NoiseSquel
         GridPane.setHgrow(getHysteresisValueLabel(), Priority.ALWAYS);
         GridPane.setHalignment(getHysteresisValueLabel(), HPos.LEFT);
         gridPane.add(getHysteresisValueLabel(), 5, 0);
+
+        Label noiseOpenLabel = new Label("Noise Open:");
+        GridPane.setHalignment(noiseOpenLabel, HPos.RIGHT);
+        gridPane.add(noiseOpenLabel, 0, 1);
+        GridPane.setHgrow(getNoiseOpenSlider(), Priority.ALWAYS);
+        gridPane.add(getNoiseOpenSlider(), 1, 1, 2, 1);
+
+        Label noiseCloseLabel = new Label("Noise Close:");
+        GridPane.setHalignment(noiseCloseLabel, HPos.RIGHT);
+        gridPane.add(noiseCloseLabel, 3, 1);
+        GridPane.setHgrow(getNoiseCloseSlider(), Priority.ALWAYS);
+        gridPane.add(getNoiseCloseSlider(), 4, 1, 2, 1);
+
+        Label hysteresisOpenLabel = new Label("Hysteresis Open:");
+        GridPane.setHalignment(hysteresisOpenLabel, HPos.RIGHT);
+        gridPane.add(hysteresisOpenLabel, 0, 2);
+        GridPane.setHgrow(getHysteresisOpenSlider(), Priority.ALWAYS);
+        gridPane.add(getHysteresisOpenSlider(), 1, 2, 2, 1);
+
+        Label hysteresisCloseLabel = new Label("Hysteresis Close:");
+        GridPane.setHalignment(hysteresisCloseLabel, HPos.RIGHT);
+        gridPane.add(hysteresisCloseLabel, 3, 2);
+        GridPane.setHgrow(getHysteresisCloseSlider(), Priority.ALWAYS);
+        gridPane.add(getHysteresisCloseSlider(), 4, 2, 2, 1);
+
+        gridPane.add(getSquelchOverrideButton(), 0, 3);
+        gridPane.add(getDefaultsButton(), 1, 3);
 
         VBox.setVgrow(gridPane, Priority.NEVER);
         VBox.setVgrow(getActivityChart(), Priority.ALWAYS);
@@ -171,31 +219,13 @@ public class NoiseSquelchView extends ChannelView implements Listener<NoiseSquel
     }
 
     /**
-     * Primary method for receiving noise squelch state updates from the decoder.  Manages the squelch state history
-     * buffer size.  This method is invoked by the channel buffer processing thread and cooperates with the chart
-     * update timer thread by synchronizing/blocking on the squelch state history.
-     * @param noiseSquelchState to add to the history.
+     * Receives the latest noise squelch state from the decoder without waiting for UI work.  Intermediate UI-only
+     * states may be coalesced when the chart is busy.
      */
     @Override
     public void receive(NoiseSquelchState noiseSquelchState)
     {
-        synchronized(mSquelchStateHistory)
-        {
-            mSquelchStateHistory.add(noiseSquelchState);
-
-            while(mSquelchStateHistory.size() > HISTORY_BUFFER_SIZE)
-            {
-                mSquelchStateHistory.removeFirst();
-            }
-        }
-
-        /**
-         * If this is the first squelch state, update the view controls with these initial values.
-         */
-        if(!mControlsUpdated)
-        {
-            updateViewControls(noiseSquelchState);
-        }
+        mPendingState.lazySet(noiseSquelchState);
     }
 
     /**
@@ -206,13 +236,21 @@ public class NoiseSquelchView extends ChannelView implements Listener<NoiseSquel
     private void updateViewControls(NoiseSquelchState noiseSquelchState)
     {
         Platform.runLater(() -> {
-            getNoiseValueLabel().setDisable(false);
-            getHysteresisValueLabel().setDisable(false);
-            getSquelchStateLabel().setDisable(false);
-            getActivityChart().setDisable(false);
-            updateLabels(noiseSquelchState);
+            if(mController != null && !mControlsUpdated)
+            {
+                mUpdatingControls = true;
+                getNoiseOpenSlider().setValue(noiseSquelchState.noiseOpenThreshold());
+                getNoiseCloseSlider().setValue(noiseSquelchState.noiseCloseThreshold());
+                getHysteresisOpenSlider().setValue(noiseSquelchState.hysteresisOpenThreshold());
+                getHysteresisCloseSlider().setValue(noiseSquelchState.hysteresisCloseThreshold());
+                getSquelchOverrideButton().setSelected(noiseSquelchState.squelchOverride());
+                mUpdatingControls = false;
 
-            mControlsUpdated = true;
+                setControlsDisabled(false);
+                getActivityChart().setDisable(false);
+                updateLabels(noiseSquelchState);
+                mControlsUpdated = true;
+            }
         });
     }
 
@@ -221,6 +259,8 @@ public class NoiseSquelchView extends ChannelView implements Listener<NoiseSquel
      */
     private void reset()
     {
+        mPendingState.set(null);
+
         //Clear the squelch state history
         synchronized(mSquelchStateHistory)
         {
@@ -239,25 +279,53 @@ public class NoiseSquelchView extends ChannelView implements Listener<NoiseSquel
             mHysteresisCloseThresholdSeries.getData().get(x).setYValue(0);
         }
 
-        getHysteresisValueLabel().setDisable(true);
+        mUpdatingControls = true;
+        getNoiseOpenSlider().setValue(NoiseSquelch.DEFAULT_NOISE_OPEN_THRESHOLD);
+        getNoiseCloseSlider().setValue(NoiseSquelch.DEFAULT_NOISE_CLOSE_THRESHOLD);
+        getHysteresisOpenSlider().setValue(NoiseSquelch.DEFAULT_HYSTERESIS_OPEN_THRESHOLD);
+        getHysteresisCloseSlider().setValue(NoiseSquelch.DEFAULT_HYSTERESIS_CLOSE_THRESHOLD);
+        getSquelchOverrideButton().setSelected(false);
+        mUpdatingControls = false;
+        setControlsDisabled(true);
+
         getHysteresisValueLabel().setText(NOT_AVAILABLE);
-
-        getNoiseValueLabel().setDisable(true);
         getNoiseValueLabel().setText(NOT_AVAILABLE);
-
-        getSquelchStateLabel().setDisable(true);
         getSquelchStateLabel().setText(NOT_AVAILABLE);
 
         mControlsUpdated = false;
     }
 
     /**
-     * Updates the chart and label values from the noise squelch state history buffer.  This method is fired by the
-     * scheduled timer process and cooperates squelch state history buffer thread access by synchronizing/blocking on the
-     * squelch state history buffer.
+     * Updates the chart and labels from the latest state on the diagnostic timer thread.  The decoder callback never
+     * accesses this history.
      */
     private void updateChart()
     {
+        if(!mChartUpdatePending.compareAndSet(false, true))
+        {
+            return;
+        }
+
+        NoiseSquelchState pendingState = mPendingState.getAndSet(null);
+
+        if(pendingState != null)
+        {
+            synchronized(mSquelchStateHistory)
+            {
+                mSquelchStateHistory.add(pendingState);
+
+                if(mSquelchStateHistory.size() > HISTORY_BUFFER_SIZE)
+                {
+                    mSquelchStateHistory.removeFirst();
+                }
+            }
+
+            if(!mControlsUpdated)
+            {
+                updateViewControls(pendingState);
+            }
+        }
+
         final int[] hysteresis = new int[HISTORY_BUFFER_SIZE];
         final int[] hysteresisOpenThreshold = new int[HISTORY_BUFFER_SIZE];
         final int[] hysteresisCloseThreshold = new int[HISTORY_BUFFER_SIZE];
@@ -321,6 +389,11 @@ public class NoiseSquelchView extends ChannelView implements Listener<NoiseSquel
         Platform.runLater(() -> {
             try
             {
+                if(!isShowing() || mController == null)
+                {
+                    return;
+                }
+
                 for(int x = 0; x < HISTORY_BUFFER_SIZE; x++)
                 {
                     mNoiseSeries.getData().get(x).setYValue(noise[x]);
@@ -340,6 +413,10 @@ public class NoiseSquelchView extends ChannelView implements Listener<NoiseSquel
             {
                 LOGGER.error("Error updating audio squelch noise values in squelch view", e);
             }
+            finally
+            {
+                mChartUpdatePending.set(false);
+            }
         });
     }
 
@@ -353,6 +430,12 @@ public class NoiseSquelchView extends ChannelView implements Listener<NoiseSquel
      */
     public void setController(INoiseSquelchController controller)
     {
+        if(!Platform.isFxApplicationThread())
+        {
+            Platform.runLater(() -> setController(controller));
+            return;
+        }
+
         try
         {
             cancelTimer();
@@ -360,30 +443,207 @@ public class NoiseSquelchView extends ChannelView implements Listener<NoiseSquel
             //Unregister from previous controller.
             if(mController != null)
             {
+                mController.setSquelchOverride(false);
                 mController.setNoiseSquelchStateListener(null);
             }
 
-            //Nullify the controller so the reset doesn't trigger any save actions.
             mController = null;
+            reset();
+            mController = controller;
 
-            //Since this is invoked on the Swing UI thread, transfer control to the JavaFX UI thread since we're
-            //accessing the JavaFX controls.
-            Platform.runLater(() -> {
-                reset();
+            if(mController != null)
+            {
+                mController.setNoiseSquelchStateListener(this);
+            }
 
-                mController = controller;
-
-                if(mController != null)
-                {
-                    mController.setNoiseSquelchStateListener(NoiseSquelchView.this);
-                }
-
-                updateTimer();
-            });
+            updateTimer();
         }
         catch(Exception e)
         {
             LOGGER.error("Error updating noise squelch controller", e);
+        }
+    }
+
+    private void setControlsDisabled(boolean disabled)
+    {
+        getNoiseOpenSlider().setDisable(disabled);
+        getNoiseCloseSlider().setDisable(disabled);
+        getHysteresisOpenSlider().setDisable(disabled);
+        getHysteresisCloseSlider().setDisable(disabled);
+        getSquelchOverrideButton().setDisable(disabled);
+        getDefaultsButton().setDisable(disabled);
+        getNoiseValueLabel().setDisable(disabled);
+        getHysteresisValueLabel().setDisable(disabled);
+        getSquelchStateLabel().setDisable(disabled);
+    }
+
+    private Slider getNoiseOpenSlider()
+    {
+        if(mNoiseOpenSlider == null)
+        {
+            mNoiseOpenSlider = noiseSlider("Noise threshold that opens the squelch");
+            mNoiseOpenSlider.valueProperty().addListener((observable, oldValue, newValue) -> updateNoiseThresholds());
+        }
+
+        return mNoiseOpenSlider;
+    }
+
+    private Slider getNoiseCloseSlider()
+    {
+        if(mNoiseCloseSlider == null)
+        {
+            mNoiseCloseSlider = noiseSlider("Noise threshold that closes the squelch");
+            mNoiseCloseSlider.valueProperty().addListener((observable, oldValue, newValue) -> updateNoiseThresholds());
+        }
+
+        return mNoiseCloseSlider;
+    }
+
+    private Slider noiseSlider(String tooltip)
+    {
+        Slider slider = new Slider(NoiseSquelch.MINIMUM_NOISE_THRESHOLD, NoiseSquelch.MAXIMUM_NOISE_THRESHOLD,
+            NoiseSquelch.DEFAULT_NOISE_OPEN_THRESHOLD);
+        slider.setMajorTickUnit(0.1);
+        slider.setMinorTickCount(4);
+        slider.setShowTickMarks(true);
+        slider.setShowTickLabels(true);
+        slider.setTooltip(new Tooltip(tooltip));
+        slider.setDisable(true);
+        return slider;
+    }
+
+    private Slider getHysteresisOpenSlider()
+    {
+        if(mHysteresisOpenSlider == null)
+        {
+            mHysteresisOpenSlider = hysteresisSlider("Consecutive 10 ms windows required to open the squelch");
+            mHysteresisOpenSlider.valueProperty()
+                .addListener((observable, oldValue, newValue) -> updateHysteresisThresholds());
+        }
+
+        return mHysteresisOpenSlider;
+    }
+
+    private Slider getHysteresisCloseSlider()
+    {
+        if(mHysteresisCloseSlider == null)
+        {
+            mHysteresisCloseSlider = hysteresisSlider("Consecutive 10 ms windows required to close the squelch");
+            mHysteresisCloseSlider.valueProperty()
+                .addListener((observable, oldValue, newValue) -> updateHysteresisThresholds());
+        }
+
+        return mHysteresisCloseSlider;
+    }
+
+    private Slider hysteresisSlider(String tooltip)
+    {
+        Slider slider = new Slider(NoiseSquelch.MINIMUM_HYSTERESIS_THRESHOLD,
+            NoiseSquelch.MAXIMUM_HYSTERESIS_THRESHOLD, NoiseSquelch.DEFAULT_HYSTERESIS_OPEN_THRESHOLD);
+        slider.setBlockIncrement(1);
+        slider.setMajorTickUnit(1);
+        slider.setMinorTickCount(0);
+        slider.setSnapToTicks(true);
+        slider.setShowTickMarks(true);
+        slider.setShowTickLabels(true);
+        slider.setTooltip(new Tooltip(tooltip));
+        slider.setDisable(true);
+        return slider;
+    }
+
+    private ToggleButton getSquelchOverrideButton()
+    {
+        if(mSquelchOverrideButton == null)
+        {
+            mSquelchOverrideButton = new ToggleButton("Override");
+            mSquelchOverrideButton.setDisable(true);
+            mSquelchOverrideButton.setTooltip(new Tooltip("Temporarily keep the squelch open"));
+            mSquelchOverrideButton.setOnAction(event -> {
+                if(mController != null && !mUpdatingControls)
+                {
+                    mController.setSquelchOverride(mSquelchOverrideButton.isSelected());
+                }
+            });
+        }
+
+        return mSquelchOverrideButton;
+    }
+
+    private Button getDefaultsButton()
+    {
+        if(mDefaultsButton == null)
+        {
+            mDefaultsButton = new Button("Defaults");
+            mDefaultsButton.setDisable(true);
+            mDefaultsButton.setTooltip(new Tooltip("Restore the default squelch thresholds"));
+            mDefaultsButton.setOnAction(event -> {
+                mUpdatingControls = true;
+                getNoiseOpenSlider().setValue(NoiseSquelch.DEFAULT_NOISE_OPEN_THRESHOLD);
+                getNoiseCloseSlider().setValue(NoiseSquelch.DEFAULT_NOISE_CLOSE_THRESHOLD);
+                getHysteresisOpenSlider().setValue(NoiseSquelch.DEFAULT_HYSTERESIS_OPEN_THRESHOLD);
+                getHysteresisCloseSlider().setValue(NoiseSquelch.DEFAULT_HYSTERESIS_CLOSE_THRESHOLD);
+                getSquelchOverrideButton().setSelected(false);
+                mUpdatingControls = false;
+
+                if(mController != null)
+                {
+                    mController.setSquelchOverride(false);
+                    updateNoiseThresholds();
+                    updateHysteresisThresholds();
+                }
+            });
+        }
+
+        return mDefaultsButton;
+    }
+
+    private void updateNoiseThresholds()
+    {
+        if(mController == null || mUpdatingControls || !isShowing())
+        {
+            return;
+        }
+
+        float open = (float)getNoiseOpenSlider().getValue();
+        float close = (float)Math.max(open, getNoiseCloseSlider().getValue());
+
+        if(close != (float)getNoiseCloseSlider().getValue())
+        {
+            mUpdatingControls = true;
+            getNoiseCloseSlider().setValue(close);
+            mUpdatingControls = false;
+        }
+
+        mController.setNoiseThreshold(open, close);
+        scheduleConfigurationSave();
+    }
+
+    private void updateHysteresisThresholds()
+    {
+        if(mController == null || mUpdatingControls || !isShowing())
+        {
+            return;
+        }
+
+        int open = (int)Math.round(getHysteresisOpenSlider().getValue());
+        int close = Math.max(open, (int)Math.round(getHysteresisCloseSlider().getValue()));
+
+        if(close != (int)Math.round(getHysteresisCloseSlider().getValue()))
+        {
+            mUpdatingControls = true;
+            getHysteresisCloseSlider().setValue(close);
+            mUpdatingControls = false;
+        }
+
+        mController.setHysteresisThreshold(open, close);
+        scheduleConfigurationSave();
+    }
+
+    private void scheduleConfigurationSave()
+    {
+        if(mConfigurationManager != null)
+        {
+            mConfigurationManager.scheduleConfigurationSave();
         }
     }
 
