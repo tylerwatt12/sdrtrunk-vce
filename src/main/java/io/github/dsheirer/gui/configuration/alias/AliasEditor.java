@@ -226,7 +226,7 @@ public class AliasEditor extends TabPane
     {
         if(mAliasIdentifierTab == null)
         {
-            mAliasIdentifierTab = new Tab("Browse by Identifier");
+            mAliasIdentifierTab = new Tab("Identifier");
             mAliasIdentifierTab.setContent(getAliasViewByIdentifierEditor());
         }
 

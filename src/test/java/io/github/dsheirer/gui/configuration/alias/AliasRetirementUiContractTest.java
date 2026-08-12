@@ -40,11 +40,11 @@ class AliasRetirementUiContractTest
     }
 
     @Test
-    void identifierTabExplainsThatItIsABrowser() throws Exception
+    void identifierTabKeepsCompactLabel() throws Exception
     {
         String source = Files.readString(ALIAS_EDITOR);
 
-        assertTrue(source.contains("new Tab(\"Browse by Identifier\")"));
+        assertTrue(source.contains("new Tab(\"Identifier\")"));
     }
 
     @Test
