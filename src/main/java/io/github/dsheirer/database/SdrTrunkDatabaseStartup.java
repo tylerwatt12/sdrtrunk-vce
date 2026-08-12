@@ -57,6 +57,7 @@ public final class SdrTrunkDatabaseStartup
             P25ActivityLogSchema.create(connection);
             DmrActivitySchema.create(connection);
             TrunkedSiteSchema.create(connection);
+            InitialAdminSetup.markRequired(connection);
             requireMainTrackDatabase(connection);
             SdrTrunkDatabaseSchema.validate(connection);
             P25ActivityLogSchema.validate(connection);

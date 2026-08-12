@@ -55,8 +55,11 @@ class PortableApplicationPathsTest
         Path dataRoot = mTemporaryFolder.resolve("portable-data");
         System.setProperty(PortableApplicationPaths.DATA_ROOT_PROPERTY, dataRoot.toString());
         PortableApplicationPaths.resetForTest();
+        Path passwordFile = mTemporaryFolder.resolve("admin-password.txt");
+        Files.writeString(passwordFile, "portable admin password\n");
 
-        assertTrue(SdrTrunkDatabaseBootstrap.run(new String[]{"--fresh"}).startApplication());
+        assertTrue(SdrTrunkDatabaseBootstrap.run(new String[]{"--fresh", "--admin-password-file",
+            passwordFile.toString()}).startApplication());
         assertTrue(Files.isRegularFile(dataRoot.resolve("database/sdrtrunk.sqlite")));
         assertTrue(Files.isRegularFile(dataRoot.resolve("vault/encryption-key-vault.sqlite")));
     }

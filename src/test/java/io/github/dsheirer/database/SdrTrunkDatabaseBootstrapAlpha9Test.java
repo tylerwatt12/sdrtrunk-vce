@@ -84,9 +84,11 @@ class SdrTrunkDatabaseBootstrapAlpha9Test
         Path sourceDatabase = createAlpha9Database(sourceRoot, "Imported Alpha 9");
         byte[] sourceHash = sha256(sourceDatabase);
         Path targetRoot = mTemporaryFolder.resolve("import-target");
+        Path passwordFile = passwordFile("import-target-password.txt");
 
         SdrTrunkDatabaseBootstrap.BootstrapResult result = SdrTrunkDatabaseBootstrap.run(
-            new String[]{"--upgrade-data", sourceRoot.toString()}, targetRoot, true);
+            new String[]{"--upgrade-data", sourceRoot.toString(), "--admin-password-file", passwordFile.toString()},
+            targetRoot, true);
 
         assertTrue(result.startApplication());
         assertFalse(result.initializeNewPreferences());
@@ -106,6 +108,7 @@ class SdrTrunkDatabaseBootstrapAlpha9Test
         Path dataRoot = mTemporaryFolder.resolve("current");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        removeInitialSetupMarker(database);
 
         SdrTrunkDatabaseBootstrap.BootstrapResult result =
             SdrTrunkDatabaseBootstrap.run(new String[0], dataRoot, true);
@@ -175,6 +178,24 @@ class SdrTrunkDatabaseBootstrapAlpha9Test
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
             statement.executeUpdate("CREATE TABLE unexpected_alpha9_bootstrap_object(id INTEGER PRIMARY KEY)");
+        }
+    }
+
+    private Path passwordFile(String name) throws IOException
+    {
+        Path path = mTemporaryFolder.resolve(name);
+        Files.writeString(path, "migration admin password\n");
+        return path;
+    }
+
+    private static void removeInitialSetupMarker(Path database) throws Exception
+    {
+        try(Connection connection = open(database);
+            java.sql.PreparedStatement statement = connection.prepareStatement(
+                "DELETE FROM database_metadata WHERE key = ?"))
+        {
+            statement.setString(1, InitialAdminSetup.METADATA_KEY);
+            statement.executeUpdate();
         }
     }
 

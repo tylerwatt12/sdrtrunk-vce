@@ -85,6 +85,18 @@ Headless launches require one explicit option when the database is absent:
 --upgrade-data <previous-app-or-data-folder>
 ```
 
+Every new installation must also configure the fixed `admin` web account before the application can start. The
+graphical setup wizard collects and confirms this password. For an unattended headless setup, put only the password
+in a protected UTF-8 file and add:
+
+```text
+--admin-password-file <path>
+```
+
+The password must contain 7-256 characters. Remove or secure the input file after setup. The application stores only
+the salted PBKDF2 verifier in the portable database. Existing installations are not retroactively forced through this
+step; copied profiles retain an already configured administrator.
+
 Fresh creation and XML import build the complete current schema in a temporary database, validate it, and then install
 it atomically. `--upgrade-data` is the non-graphical equivalent of choosing accepted portable data. In a numbered
 release that supports its immediate predecessor, `--upgrade-current` explicitly authorizes the release transition.

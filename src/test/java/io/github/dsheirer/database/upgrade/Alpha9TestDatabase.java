@@ -67,6 +67,8 @@ public final class Alpha9TestDatabase
                 statement.executeUpdate("UPDATE database_metadata SET value='4' WHERE key='alias_schema_version'");
                 statement.executeUpdate(
                     "UPDATE database_metadata SET value='24' WHERE key='p25_activity_schema_version'");
+                statement.executeUpdate(
+                    "DELETE FROM database_metadata WHERE key='initial_admin_setup'");
                 connection.commit();
             }
             catch(Exception e)
