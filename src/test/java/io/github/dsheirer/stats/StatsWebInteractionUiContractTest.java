@@ -30,6 +30,16 @@ class StatsWebInteractionUiContractTest
     }
 
     @Test
+    void presentsAmAsAConventionalWebProtocol() throws Exception
+    {
+        String javascript = source();
+        assertTrue(javascript.contains("am: 'AM'"));
+        assertTrue(javascript.contains("AM: ['AM', 'AM']"));
+        assertTrue(javascript.contains("{ key: 'AM', label: 'AM'"));
+        assertTrue(javascript.contains("['am', 'p25', 'dmr', 'nxdn', 'nbfm'"));
+    }
+
+    @Test
     void pausesEveryNewestActivityPageWithABoundedQueue() throws Exception
     {
         String activity = function(source(), "async function renderActivity(scopeParameters, title = 'Activity')");
@@ -508,7 +518,7 @@ class StatsWebInteractionUiContractTest
             html.indexOf("rel=\"stylesheet\""));
         assertTrue(html.contains("id=\"theme-toggle\""));
         assertTrue(html.contains("/assets/app.css?v=48"));
-        assertTrue(html.contains("/assets/app.js?v=69"));
+        assertTrue(html.contains("/assets/app.js?v=70"));
         assertTrue(source.contains("window.localStorage.setItem(THEME_STORAGE_KEY"));
         assertTrue(source.contains("toggle.setAttribute('aria-pressed'"));
         assertTrue(css.contains(":root[data-theme=\"dark\"]"));

@@ -68,6 +68,7 @@ const DASHBOARD_CALL_METRICS = Object.freeze([
   { field: 'streamed_count', label: 'Sent' }
 ]);
 const DASHBOARD_PROTOCOL_SERIES = Object.freeze([
+  { key: 'AM', label: 'AM', color: 'var(--chart-join)' },
   { key: 'P25', label: 'P25', color: 'var(--chart-call)' },
   { key: 'DMR', label: 'DMR', color: 'var(--chart-recorded)' },
   { key: 'NXDN', label: 'NXDN', color: 'var(--chart-streamed)' },
@@ -711,7 +712,7 @@ function yesNoKnown(value) {
 }
 
 function protocol(value) {
-  const named = { p25: 'P25', dmr: 'DMR', nxdn: 'NXDN', nbfm: 'NBFM' };
+  const named = { am: 'AM', p25: 'P25', dmr: 'DMR', nxdn: 'NXDN', nbfm: 'NBFM' };
   return named[String(value || '').toLowerCase()] || value || '';
 }
 
@@ -719,6 +720,7 @@ function decoderLabel(value, compact = false) {
   const raw = String(value || '').trim();
   if (!raw) return '';
   const labels = {
+    AM: ['AM', 'AM'],
     P25_PHASE1: ['P25 P1', 'P25 Phase 1'],
     P25_PHASE_1: ['P25 P1', 'P25 Phase 1'],
     'P25-1': ['P25 P1', 'P25 Phase 1'],
@@ -3540,7 +3542,7 @@ function openUnmatchedTalkgroupPolicyModal(selectedList) {
 
 function observedTalkgroupProtocol(row) {
   const value = String(row?.protocol || '').trim().toLowerCase();
-  return ['p25', 'dmr', 'nxdn', 'nbfm', 'fleetsync', 'mdc1200'].includes(value) ? value : '';
+  return ['am', 'p25', 'dmr', 'nxdn', 'nbfm', 'fleetsync', 'mdc1200'].includes(value) ? value : '';
 }
 
 function observedTalkgroupVariant(row) {
@@ -4224,6 +4226,7 @@ function dashboardProtocolKey(row) {
   if (value.startsWith('P25') || value.startsWith('APCO25')) return 'P25';
   if (value.startsWith('DMR')) return 'DMR';
   if (value.startsWith('NXDN')) return 'NXDN';
+  if (value === 'AM' || value.includes('AMPLITUDE MODULATION')) return 'AM';
   if (value === 'NBFM' || value.includes('NARROWBAND FM')) return 'NBFM';
   return value;
 }

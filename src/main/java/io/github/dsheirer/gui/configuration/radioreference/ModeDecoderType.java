@@ -29,7 +29,7 @@ import org.slf4j.LoggerFactory;
  */
 public enum ModeDecoderType
 {
-    AM("am", null),
+    AM("am", DecoderType.AM),
     APCO25("p25", DecoderType.P25_CONVENTIONAL),
     DMR("dmr", DecoderType.DMR),
     DSTAR("d-star", null),

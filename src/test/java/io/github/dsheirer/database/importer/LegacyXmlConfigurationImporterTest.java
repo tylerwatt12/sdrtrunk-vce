@@ -720,7 +720,7 @@ class LegacyXmlConfigurationImporterTest
     }
 
     @Test
-    void silentlyDropsRetiredDecoderChannelsAndIdentifiers() throws Exception
+    void restoresAmWhileDroppingTheRemainingRetiredDecodersAndIdentifiers() throws Exception
     {
         Path xml = mTemporaryFolder.resolve("retired-decoders.xml");
         Files.writeString(xml, """
@@ -770,13 +770,12 @@ class LegacyXmlConfigurationImporterTest
 
         ConfigurationState state = LegacyXmlConfigurationImporter.readConfigurationState(xml);
 
-        assertEquals(1, state.getChannels().size());
-        assertEquals(DecoderType.DMR, state.getChannels().getFirst().getDecodeConfiguration().getDecoderType());
-        assertEquals(1, state.getAliases().size());
-        assertEquals("Current Alias", state.getAliases().getFirst().getName());
-        Talkgroup talkgroup = assertInstanceOf(Talkgroup.class,
-            state.getAliases().getFirst().getMatchIdentifier());
-        assertEquals(Protocol.DMR, talkgroup.getProtocol());
+        assertEquals(2, state.getChannels().size());
+        assertEquals(List.of(DecoderType.AM, DecoderType.DMR), state.getChannels().stream()
+            .map(channel -> channel.getDecodeConfiguration().getDecoderType()).toList());
+        assertEquals(2, state.getAliases().size());
+        assertEquals(List.of(Protocol.AM, Protocol.DMR), state.getAliases().stream()
+            .map(alias -> assertInstanceOf(Talkgroup.class, alias.getMatchIdentifier()).getProtocol()).toList());
     }
 
     @Test

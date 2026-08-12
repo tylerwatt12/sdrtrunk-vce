@@ -254,6 +254,7 @@ final class StatsApiV1Payload
             case "DMR" -> "dmr";
             case "NXDN" -> "nxdn";
             case "NBFM" -> "nbfm";
+            case "AM" -> "am";
             default -> "unknown";
         };
     }

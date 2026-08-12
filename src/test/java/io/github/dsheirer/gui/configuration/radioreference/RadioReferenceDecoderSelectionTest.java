@@ -21,6 +21,7 @@ import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.module.decode.DecoderType;
+import io.github.dsheirer.module.decode.am.DecodeConfigAM;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
 import io.github.dsheirer.module.decode.dmr.DMRChannelMode;
 import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
@@ -44,16 +45,18 @@ import org.junit.jupiter.api.Test;
 class RadioReferenceDecoderSelectionTest
 {
     @Test
-    void recognizesAmButDoesNotOfferChannelCreation()
+    void createsAmAgencyFrequencyChannels()
     {
         Mode mode = new Mode();
         mode.setName("am");
         ModeDecoderType modeDecoderType = ModeDecoderType.get(mode);
 
         assertEquals(ModeDecoderType.AM, modeDecoderType);
-        assertFalse(modeDecoderType.hasDecoderType());
-        assertNull(FrequencyEditor.createChannel(modeDecoderType, 118_500_000L,
-            "Aviation", "Airport", "Tower"));
+        Channel channel = FrequencyEditor.createChannel(modeDecoderType, 118_500_000L,
+            "Aviation", "Airport", "Tower");
+        DecodeConfigAM config = assertInstanceOf(DecodeConfigAM.class, channel.getDecodeConfiguration());
+        assertEquals(DecoderType.AM, modeDecoderType.getDecoderType());
+        assertEquals(DecodeConfigAM.Bandwidth.BW_15_0, config.getBandwidth());
     }
 
     @Test

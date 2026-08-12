@@ -21,6 +21,7 @@ import java.util.Map;
  */
 enum StatsApiProtocol
 {
+    AM("am"),
     P25("p25"),
     DMR("dmr"),
     NXDN("nxdn"),
@@ -71,6 +72,7 @@ enum StatsApiProtocol
             case 3 -> DMR;
             case 4 -> NXDN;
             case 10 -> NBFM;
+            case 11 -> AM;
             default -> UNKNOWN;
         };
     }
@@ -86,6 +88,7 @@ enum StatsApiProtocol
             case "DMR" -> DMR;
             case "NXDN" -> NXDN;
             case "NBFM" -> NBFM;
+            case "AM" -> AM;
             case "ARS" -> ARS;
             case "CELLOCATOR" -> CELLOCATOR;
             case "DCS" -> DCS;

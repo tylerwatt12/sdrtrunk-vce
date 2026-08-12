@@ -30,6 +30,19 @@ class StatsApiV1PayloadTest
     }
 
     @Test
+    void exposesAmAsAFirstClassProtocol()
+    {
+        JsonNode payload = StatsApiV1Payload.present(Map.of(
+            "protocol_code", 11,
+            "kind_code", 10,
+            "decoder", "AM"));
+
+        assertEquals("am", payload.path("protocol").textValue());
+        assertFalse(payload.has("protocol_code"));
+        assertFalse(payload.has("kind_code"));
+    }
+
+    @Test
     void presentsDashboardDaySourceActivityWithDelimitedWireUnits()
     {
         JsonNode dashboard = StatsApiV1Payload.present(Map.of(

@@ -31,13 +31,13 @@ import io.github.dsheirer.identifier.decoder.ChannelStateIdentifier;
 import io.github.dsheirer.metadata.site.ProtocolSiteMetadataEvent;
 import io.github.dsheirer.metadata.site.SiteMetadataEvent;
 import io.github.dsheirer.metadata.site.SiteMetadataSnapshot;
+import io.github.dsheirer.module.decode.am.DecodeConfigAM;
 import io.github.dsheirer.module.decode.config.DecodeConfiguration;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
 import io.github.dsheirer.module.decode.dmr.DMRChannelMode;
 import io.github.dsheirer.module.decode.dmr.channel.DMRAbsoluteChannel;
 import io.github.dsheirer.module.decode.dmr.telemetry.DMRNetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
-import io.github.dsheirer.module.decode.nbfm.DecodeConfigNBFM;
 import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
 import io.github.dsheirer.module.decode.nxdn.channel.ChannelFrequency;
 import io.github.dsheirer.module.decode.nxdn.channel.NXDNChannelLookup;
@@ -60,13 +60,13 @@ import org.junit.jupiter.api.Test;
 class ChannelActivityModelTest
 {
     @Test
-    void conventionalSnapshotsPreserveRowIdentityAcrossIdleCallIdleTransitions() throws Exception
+    void amSnapshotsRemainUnderConventionalAcrossIdleCallIdleTransitions() throws Exception
     {
         AliasModel aliasModel = new AliasModel();
         ChannelActivityModel model = new ChannelActivityModel(aliasModel,
             new NowPlayingPreference(type -> {}));
-        Channel channel = trunkedChannel("Dispatch", "County", "North", new DecodeConfigNBFM(),
-            155_730_000L);
+        Channel channel = trunkedChannel("Airport Ground", "County Airport", "Tower", new DecodeConfigAM(),
+            121_900_000L);
         ChannelMetadata metadata = new ChannelMetadata(aliasModel, 1);
         List<ChannelActivitySnapshot> snapshots = new ArrayList<>();
         model.addActivityListener(event -> {

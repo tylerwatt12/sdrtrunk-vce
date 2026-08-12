@@ -139,6 +139,7 @@ public final class AliasMatchRegistry
         addProtocolMatchers(descriptors, AliasListFamily.P25, Protocol.APCO25, "P25");
         addProtocolMatchers(descriptors, AliasListFamily.DMR, Protocol.DMR, "DMR");
         addProtocolMatchers(descriptors, AliasListFamily.NXDN, Protocol.NXDN, "NXDN");
+        addTalkgroupMatchers(descriptors, AliasListFamily.NBFM, Protocol.AM, "AM");
         addTalkgroupMatchers(descriptors, AliasListFamily.NBFM, Protocol.NBFM, "NBFM");
 
         descriptors.add(descriptor("Tone Sequence", AliasIDType.TONES,

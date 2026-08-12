@@ -381,6 +381,7 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
             case 3 -> "DMR";
             case 4 -> "NXDN";
             case 10 -> "NBFM";
+            case 11 -> "AM";
             default -> "Unknown";
         };
     }

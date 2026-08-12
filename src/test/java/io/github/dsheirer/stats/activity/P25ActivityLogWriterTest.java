@@ -2506,7 +2506,7 @@ class P25ActivityLogWriterTest
     }
 
     @Test
-    void persistsConfiguredMetadataForP25AndNbfmConventionalContexts() throws Exception
+    void persistsConfiguredMetadataForP25AndAnalogConventionalContexts() throws Exception
     {
         Path database = mTemporaryFolder.resolve("configured-conventional-metadata.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
@@ -2572,6 +2572,18 @@ class P25ActivityLogWriterTest
                   AND system_key IS NULL AND nac IS NULL AND rfss IS NULL AND site IS NULL
                   AND current_control_hz IS NULL
                 """.formatted(nbfmGuid)));
+
+            String amGuid = "123e4567-e89b-12d3-a456-426614174099";
+            P25ActivityLogSchema.recordActivity(connection, configuredConventionalActivity(4_000L, amGuid,
+                P25ActivityLogRecords.ContextKind.CONVENTIONAL_ANALOG, "AM", "Airport Ground",
+                "County Airport", "AM", 121_900_000L, null), true);
+
+            assertEquals(10L, scalarLong(connection, """
+                SELECT kind_code FROM receiver_context WHERE context_key='GUID:%s'
+                """.formatted(amGuid)));
+            assertEquals(11L, scalarLong(connection, """
+                SELECT protocol_code FROM receiver_context WHERE context_key='GUID:%s'
+                """.formatted(amGuid)));
         }
     }
 

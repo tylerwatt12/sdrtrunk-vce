@@ -126,7 +126,7 @@ response.
 
 ## Protocol presentation
 
-Persisted system resources use lowercase `protocol`: `p25`, `dmr`, `nxdn`, or `nbfm`. Live decoder records can also
+Persisted system resources use lowercase `protocol`: `am`, `p25`, `dmr`, `nxdn`, or `nbfm`. Live decoder records can also
 use `ars`, `cellocator`, `dcs`, `fleetsync`, `ipv4`, `lojack`, `lrrp`, `mdc1200`, `tait1200`, `udp`, or `unknown`.
 Database protocol, variant, scope, identity-domain, and surrogate system keys are not part of the API.
 
@@ -204,7 +204,7 @@ Wire enum values are explicit and case-sensitive; Java enum names and alternate 
 - Alias-list families are `p25`, `dmr`, `nxdn`, and `nbfm`.
 - Alias matcher types are `talkgroup`, `talkgroup_range`, `radio`, `radio_range`, `user_status`, `unit_status`,
   `tone_sequence`, `dcs`, and `esn`.
-- Alias matcher protocols are `p25`, `dmr`, `nxdn`, `nbfm`, `fleetsync`, and `mdc1200`. A P25 matcher also requires
+- Alias matcher protocols are `am`, `p25`, `dmr`, `nxdn`, `nbfm`, `fleetsync`, and `mdc1200`. A P25 matcher also requires
   `variant` set to `phase_1` or `phase_2`; internal names such as `APCO25_PHASE2` are never accepted or returned.
 - `unmatched_talkgroup_policy` uses the same fields in reads and writes: `listen_enabled`, `priority`, `recordable`,
   and `broadcast_channels`.
