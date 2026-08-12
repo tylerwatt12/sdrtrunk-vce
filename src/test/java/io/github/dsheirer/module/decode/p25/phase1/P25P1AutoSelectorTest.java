@@ -43,6 +43,26 @@ class P25P1AutoSelectorTest
     }
 
     @Test
+    void subTrialFrequencyDwellsCannotCompleteAcquisition()
+    {
+        P25P1AutoSelector selector = new P25P1AutoSelector(1_000, Modulation.C4FM);
+
+        for(int frequency = 0; frequency < 4; frequency++)
+        {
+            selector.receiveFrame(Modulation.C4FM, true);
+            assertNull(selector.receiveSamples(400));
+            selector.reset(Modulation.C4FM);
+        }
+
+        assertFalse(selector.isLocked());
+        selector.receiveFrame(Modulation.C4FM, true);
+        assertEquals(Modulation.CQPSK, selector.receiveSamples(500));
+        selector.receiveFrame(Modulation.CQPSK, true);
+        selector.receiveSamples(500);
+        assertTrue(selector.isLocked());
+    }
+
+    @Test
     void selectsTheBetterAlternateEvenWhenThePreferredDecoderIsValid()
     {
         P25P1AutoSelector selector = new P25P1AutoSelector(1_000, Modulation.C4FM);

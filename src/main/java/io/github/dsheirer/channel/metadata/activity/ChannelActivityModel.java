@@ -41,12 +41,15 @@ import io.github.dsheirer.identifier.configuration.DecoderTypeConfigurationIdent
 import io.github.dsheirer.identifier.configuration.FrequencyConfigurationIdentifier;
 import io.github.dsheirer.identifier.decoder.ChannelStateIdentifier;
 import io.github.dsheirer.metadata.site.ProtocolSiteMetadataEvent;
+import io.github.dsheirer.metadata.site.SiteMetadataSnapshot;
 import io.github.dsheirer.metadata.site.TrunkedSiteMetadataClassifier;
 import io.github.dsheirer.metadata.site.SiteMetadataEvent;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
 import io.github.dsheirer.module.decode.dmr.channel.DMRChannel;
+import io.github.dsheirer.module.decode.dmr.telemetry.DMRNetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
+import io.github.dsheirer.module.decode.nxdn.telemetry.NXDNNetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.preference.encryption.VoiceEncryptionDisplay;
@@ -136,11 +139,11 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
     {
     }
 
-    private record SiteIdentity(Integer wacn, Integer system, Integer rfss, Integer site)
+    private record SiteIdentity(Integer wacn, Integer system, Integer rfss, Integer site, Integer nac)
     {
         private boolean hasAny()
         {
-            return wacn != null || system != null || rfss != null || site != null;
+            return wacn != null || system != null || rfss != null || site != null || nac != null;
         }
     }
 
@@ -757,6 +760,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
             return;
         }
 
+        table.setIdentifiers(identifierFields(snapshot));
         expireTrafficRows(session, table, parentChannel);
         Set<Long> promotedControlFrequencies = new HashSet<>();
 
@@ -859,6 +863,8 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
         {
             return;
         }
+
+        session.getTableState().setIdentifiers(identifierFields(event.snapshot()));
 
         removeConventionalRows(parentChannel);
         ensureConfiguredControlRowIfMissing(session, "protocol-site-metadata-control-seed");
@@ -1833,8 +1839,63 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
             currentSite != null ? currentSite.system() : null;
         Integer rfss = currentSite != null ? currentSite.rfss() : null;
         Integer site = currentSite != null ? currentSite.site() : null;
+        Integer nac = network != null && network.nac() != null ? network.nac() :
+            currentSite != null ? currentSite.nac() : null;
 
-        return new SiteIdentity(wacn, system, rfss, site);
+        return new SiteIdentity(wacn, system, rfss, site, nac);
+    }
+
+    private List<ChannelActivitySnapshot.IdentifierField> identifierFields(SiteMetadataSnapshot snapshot)
+    {
+        List<ChannelActivitySnapshot.IdentifierField> fields = new ArrayList<>();
+
+        if(snapshot instanceof P25NetworkConfigurationSnapshot p25)
+        {
+            SiteIdentity identity = getSiteIdentity(p25);
+
+            if(identity != null)
+            {
+                addIdentifier(fields, "System", "WACN", formatOptionalIdentifier(identity.wacn(), 5));
+                addIdentifier(fields, "System", "System ID", formatOptionalIdentifier(identity.system(), 3));
+                addIdentifier(fields, "Site", "RFSS", formatOptionalIdentifier(identity.rfss(), 2));
+                addIdentifier(fields, "Site", "Site ID", formatOptionalIdentifier(identity.site(), 2));
+                addIdentifier(fields, "Site", "NAC", formatOptionalIdentifier(identity.nac(), 3));
+            }
+        }
+        else if(snapshot instanceof DMRNetworkConfigurationSnapshot dmr)
+        {
+            addIdentifier(fields, "System", "Network ID", dmr.network());
+            addIdentifier(fields, "Site", "Site ID", dmr.site());
+            addIdentifier(fields, "Site", "Color Code TS1", dmr.colorCodeTimeslot1());
+            addIdentifier(fields, "Site", "Color Code TS2", dmr.colorCodeTimeslot2());
+        }
+        else if(snapshot instanceof NXDNNetworkConfigurationSnapshot nxdn)
+        {
+            NXDNNetworkConfigurationSnapshot.Location location = nxdn.currentLocation();
+            addIdentifier(fields, "System", "Category", location != null ? location.category() : null);
+            addIdentifier(fields, "System", "System ID", location != null ? location.system() : null);
+            addIdentifier(fields, "System", "Integrator", location != null ? location.integrator() : null);
+            addIdentifier(fields, "Site", "Site ID", location != null && location.site() != null ?
+                location.site() : nxdn.typeDSite());
+            addIdentifier(fields, "Site", "RAN", nxdn.ran());
+            addIdentifier(fields, "Site", "Station", nxdn.station() != null ? nxdn.station().identifier() : null);
+        }
+
+        return List.copyOf(fields);
+    }
+
+    private void addIdentifier(List<ChannelActivitySnapshot.IdentifierField> fields, String group, String label,
+                               Object value)
+    {
+        if(value != null && !String.valueOf(value).isBlank())
+        {
+            fields.add(new ChannelActivitySnapshot.IdentifierField(group, label, String.valueOf(value)));
+        }
+    }
+
+    private String formatOptionalIdentifier(Integer value, int width)
+    {
+        return value != null ? formatIdentifier(value, width) : null;
     }
 
     private String getTrunkedTitle(Channel channel)

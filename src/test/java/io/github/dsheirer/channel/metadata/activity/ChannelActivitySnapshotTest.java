@@ -17,7 +17,7 @@ class ChannelActivitySnapshotTest
     void normalizesNullTopLevelValues()
     {
         ChannelActivitySnapshot snapshot = new ChannelActivitySnapshot(null, null, null, null, null, null, null,
-            false, false, null);
+            false, false, null, null);
 
         assertEquals("", snapshot.tableId());
         assertEquals("", snapshot.title());
@@ -25,6 +25,7 @@ class ChannelActivitySnapshotTest
         assertEquals("", snapshot.siteName());
         assertEquals("", snapshot.channelName());
         assertEquals("", snapshot.configurationId());
+        assertEquals(List.of(), snapshot.identifiers());
         assertEquals(List.of(), snapshot.rows());
     }
 

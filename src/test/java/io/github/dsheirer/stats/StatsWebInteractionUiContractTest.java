@@ -820,9 +820,9 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("const tableChannelName = String(table?.channel_name || '').trim()"));
         assertTrue(tuner.contains("const tableSystemName = String(table?.system_name || '').trim()"));
         assertTrue(tuner.contains("const tableSiteName = String(table?.site_name || '').trim()"));
-        assertTrue(tuner.contains("const tableTitle = String(table?.title || '').trim()"));
-        assertTrue(tuner.contains("[row.tableSystemName, row.tableSiteName, row.tableChannelName]"));
-        assertTrue(tuner.contains("configured.join(' · ') || row.tableTitle || 'Control channel'"));
+        assertTrue(tuner.contains("add('System', activityValues(rows, (row) => row.tableSystemName))"));
+        assertTrue(tuner.contains("add('Site', activityValues(rows, (row) => row.tableSiteName))"));
+        assertTrue(tuner.contains("add('Channel', activityValues(rows, (row) => row.channel_name || row.tableChannelName))"));
         assertFalse(tuner.contains("`${row.tableChannelName} · Control`"));
         assertTrue(tuner.contains("snapInput.type = 'checkbox'"));
         assertTrue(tuner.contains("snapInput.checked = true"));
@@ -859,6 +859,16 @@ class StatsWebInteractionUiContractTest
         assertFalse(tuner.contains("`Snapped ${(guideHz / 1_000_000).toFixed(6)} MHz"));
         assertTrue(tuner.contains("waterfallObservedAtRows[nextWaterfallRow] = observedAtEpochMs"));
         assertTrue(tuner.contains("function activeCarrierDescription(carrier)"));
+        assertTrue(tuner.contains("function activeCarrierFields(carrier, fftPower = null)"));
+        assertTrue(tuner.contains("function renderActiveCarrierFields(carrier, power)"));
+        assertTrue(tuner.contains("targetIdentifierLabel(form)"));
+        assertTrue(tuner.contains("row.tableIdentifiers || []"));
+        assertTrue(tuner.contains("row.source_form"));
+        assertTrue(tuner.contains("row.target_form"));
+        assertTrue(tuner.contains("row.talker_alias"));
+        assertTrue(tuner.contains("row.signal_dbfs"));
+        assertTrue(tuner.contains("row.decode_health_pct"));
+        assertTrue(tuner.contains("row.vc_quality_pct"));
         assertTrue(tuner.contains("carrier.rows.push(decorated)"));
         assertTrue(tuner.contains("const spectrumActiveFlags = node('div', 'tuner-spectrum-active-flags')"));
         assertTrue(tuner.contains("const waterfallActiveFlags = node('div', 'tuner-spectrum-active-flags')"));
@@ -879,7 +889,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("function tunerActivityStatus(row)"));
         assertTrue(tuner.contains("'CURRENT_CONTROL', 'ALTERNATE_CONTROL', 'CONFIGURED'"));
         assertTrue(tuner.contains("['DATA', 'DATA_ANNOUNCED']"));
-        assertTrue(tuner.contains("String(row.channel_name || row.tableChannelName || '').trim()"));
+        assertTrue(tuner.contains("row.channel_name || row.tableChannelName"));
         assertTrue(tuner.contains("decoderLabel(row.decoder)"));
         assertTrue(source.contains("IDLE: 'Known / idle channel'"));
         assertTrue(tuner.contains("const signature = JSON.stringify([viewport.startHz, viewport.endHz"));
@@ -938,6 +948,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(css.contains(".tuner-spectrum-active-flag.status-idle"));
         assertFalse(css.contains(".tuner-spectrum-active-label"));
         assertTrue(css.contains(".tuner-spectrum-cursor-popup"));
+        assertTrue(css.contains(".tuner-spectrum-cursor-field-label"));
+        assertTrue(css.contains(".tuner-spectrum-cursor-field-value"));
         assertTrue(css.contains(".tuner-spectrum-display-controls"));
         assertTrue(binary.contains("liveMultiplexer.subscribe(topic, parameters"));
         assertTrue(binary.contains("return close();"));

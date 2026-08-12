@@ -18,7 +18,7 @@ import java.util.stream.Collectors;
  */
 public record ChannelActivitySnapshot(String tableId, String title, String systemName, String siteName,
                                       String channelName, String configurationId, String guid, boolean closeable,
-                                      boolean controlActive, List<Row> rows)
+                                      boolean controlActive, List<IdentifierField> identifiers, List<Row> rows)
 {
     public ChannelActivitySnapshot
     {
@@ -28,6 +28,7 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
         siteName = siteName != null ? siteName : "";
         channelName = channelName != null ? channelName : "";
         configurationId = configurationId != null ? configurationId : "";
+        identifiers = identifiers != null ? List.copyOf(identifiers) : List.of();
         rows = rows != null ? List.copyOf(rows) : List.of();
     }
 
@@ -40,7 +41,22 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
         return new ChannelActivitySnapshot(tableId, table != null ? table.getTitle() : "",
             owner != null ? owner.getSystem() : "", owner != null ? owner.getSite() : "",
             owner != null ? owner.getName() : "Conventional", owner != null ? owner.getConfigurationId() : null,
-            guid, table != null && table.isCloseable(), table != null && table.isControlActive(), rows);
+            guid, table != null && table.isCloseable(), table != null && table.isControlActive(),
+            table != null ? table.getIdentifiers() : List.of(), rows);
+    }
+
+    /**
+     * A protocol-neutral learned system or site identifier.  Labels retain the protocol's native terminology while
+     * consumers can render every available value without protocol-specific branches.
+     */
+    public record IdentifierField(String group, String label, String value)
+    {
+        public IdentifierField
+        {
+            group = group != null ? group : "";
+            label = label != null ? label : "";
+            value = value != null ? value : "";
+        }
     }
 
     public record Row(String key, String channelName, String configurationId, String status, List<String> tags,
@@ -48,8 +64,8 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
                       Double signalDbfs, Double decodeHealthPercent, long qualityObservedAtMs,
                       long controlValidFrames, long controlInvalidFrames, long controlCorrectedBits,
                       long controlSyncLossBits, long controlDroppedBits, VoiceCallQuality voiceQuality,
-                      Integer timeslot, String sourceId, String sourceAlias, String talkerAlias,
-                      String sourceAliasDisplay, String targetId, String targetAlias, String decoder,
+                      Integer timeslot, String sourceId, String sourceForm, String sourceAlias, String talkerAlias,
+                      String sourceAliasDisplay, String targetId, String targetForm, String targetAlias, String decoder,
                       String encryptionDetails)
     {
         private static Row from(ChannelActivityRow row)
@@ -67,9 +83,15 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
                 quality != null ? quality.controlSyncLossBits() : 0,
                 quality != null ? quality.controlDroppedBits() : 0,
                 row.getVoiceCallQuality(), row.getTimeslot(),
-                value(row.getSource()), aliases(row.getSourceAliases()), value(row.getTalkerAlias()),
-                row.getSourceAliasDisplay(), value(row.getTarget()), aliases(row.getTargetAliases()),
+                value(row.getSource()), form(row.getSource()), aliases(row.getSourceAliases()),
+                value(row.getTalkerAlias()), row.getSourceAliasDisplay(), value(row.getTarget()),
+                form(row.getTarget()), aliases(row.getTargetAliases()),
                 row.getDecoder(), row.getEncryptionDetails());
+        }
+
+        private static String form(Identifier<?> identifier)
+        {
+            return identifier != null && identifier.getForm() != null ? identifier.getForm().name() : null;
         }
 
         private static String value(Identifier<?> identifier)

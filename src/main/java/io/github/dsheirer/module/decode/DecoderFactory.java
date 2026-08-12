@@ -250,7 +250,7 @@ public class DecoderFactory
         {
             List<State> activeStates = new ArrayList<>();
             activeStates.add(State.CONTROL);
-            modules.add(new ChannelRotationMonitor(activeStates, sctmf.getFrequencyRotationDelay(),
+            modules.add(new ChannelRotationMonitor(activeStates, p25RotationDelay(sctmf),
                 ChannelRotationMonitor.ACTIVE_STATE_LOSS_DELAY_DEFAULT));
         }
     }
@@ -323,7 +323,7 @@ public class DecoderFactory
         {
             List<State> activeStates = new ArrayList<>();
             activeStates.add(State.CONTROL);
-            modules.add(new ChannelRotationMonitor(activeStates, sctmf.getFrequencyRotationDelay(),
+            modules.add(new ChannelRotationMonitor(activeStates, p25RotationDelay(sctmf),
                 ChannelRotationMonitor.ACTIVE_STATE_LOSS_DELAY_DEFAULT));
         }
     }
@@ -350,6 +350,16 @@ public class DecoderFactory
         return sourceConfig.hasMultipleFrequencies() ||
             (channel.getDecodeConfiguration() instanceof DecodeConfigP25 decodeConfig &&
                 decodeConfig.getLearnAnnouncedControlChannels());
+    }
+
+    /**
+     * Older saved P25 configurations can contain a dwell that predates automatic waveform selection.  Apply the
+     * safe acquisition floor at runtime without changing rotation behavior for any other protocol.
+     */
+    static int p25RotationDelay(SourceConfigTunerMultipleFrequency sourceConfig)
+    {
+        return Math.max(DecodeConfigP25Phase1.CHANNEL_ROTATION_DELAY_MINIMUM_MS,
+            sourceConfig.getFrequencyRotationDelay());
     }
 
     /**

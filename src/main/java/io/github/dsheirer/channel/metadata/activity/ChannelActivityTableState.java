@@ -33,6 +33,7 @@ public final class ChannelActivityTableState
     private final Channel mOwnerChannel;
     private final boolean mCloseable;
     private boolean mControlActive;
+    private List<ChannelActivitySnapshot.IdentifierField> mIdentifiers = List.of();
     private final List<ChannelActivityRow> mRows = new ArrayList<>();
     private final Map<String,ChannelActivityRow> mRowsByKey = new HashMap<>();
     private final List<Listener<ChannelActivityTableView>> mViewListeners = new CopyOnWriteArrayList<>();
@@ -93,6 +94,22 @@ public final class ChannelActivityTableState
         }
 
         return changed;
+    }
+
+    public List<ChannelActivitySnapshot.IdentifierField> getIdentifiers()
+    {
+        return mIdentifiers;
+    }
+
+    public void setIdentifiers(List<ChannelActivitySnapshot.IdentifierField> identifiers)
+    {
+        List<ChannelActivitySnapshot.IdentifierField> values = identifiers != null ? List.copyOf(identifiers) : List.of();
+
+        if(!mIdentifiers.equals(values))
+        {
+            mIdentifiers = values;
+            publish();
+        }
     }
 
     public ChannelActivityRow getOrCreate(String key, Channel channel, ChannelActivityRow.Role role, long frequency,

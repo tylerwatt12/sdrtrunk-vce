@@ -2133,8 +2133,8 @@ body[data-view="live"] .channel-diagnostic-readouts {
 }
 
 .tuner-spectrum-cursor-popup {
-  min-width: 132px;
-  max-width: min(420px, calc(100vw - 32px));
+  min-width: 220px;
+  max-width: min(520px, calc(100vw - 32px));
   position: absolute;
   z-index: 8;
   display: grid;
@@ -2161,8 +2161,27 @@ body[data-view="live"] .channel-diagnostic-readouts {
 }
 
 .tuner-spectrum-cursor-channel {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: 8px;
+  row-gap: 1px;
+  margin-top: 3px;
+  padding-top: 3px;
   color: #b8c6d1;
-  white-space: pre-line;
+  border-top: 1px solid rgb(166 204 230 / 25%);
+  text-align: left;
+}
+
+.tuner-spectrum-cursor-field-label {
+  color: #8296a6;
+  font-size: 10px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.tuner-spectrum-cursor-field-value {
+  color: #d7e3ec;
+  min-width: 0;
 }
 
 .tuner-spectrum-plot .channel-diagnostic-overlay {

@@ -14,6 +14,8 @@ import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.channel.state.State;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.identifier.alias.P25TalkerAliasIdentifier;
+import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
+import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
@@ -32,6 +34,9 @@ class ChannelActivityTableModelTest
         row.setState(State.CALL);
         row.setDecoder("NBFM");
         row.setCallsign("WPFF205");
+        row.setSource(APCO25RadioIdentifier.createFrom(1201));
+        row.setTarget(APCO25Talkgroup.create(4400));
+        state.setIdentifiers(List.of(new ChannelActivitySnapshot.IdentifierField("Site", "NAC", "343")));
         state.refresh(row);
         javax.swing.SwingUtilities.invokeAndWait(() -> {});
 
@@ -41,6 +46,10 @@ class ChannelActivityTableModelTest
         assertEquals("County Fire", latest.get().rows().getFirst().channelName());
         assertEquals(155_250_000L, latest.get().rows().getFirst().frequencyHz());
         assertEquals("WPFF205", latest.get().rows().getFirst().callsign());
+        assertEquals("RADIO", latest.get().rows().getFirst().sourceForm());
+        assertEquals("TALKGROUP", latest.get().rows().getFirst().targetForm());
+        assertEquals(List.of(new ChannelActivitySnapshot.IdentifierField("Site", "NAC", "343")),
+            latest.get().identifiers());
         assertEquals("WPFF205", model.getValueAt(0, ChannelActivityTableModel.COLUMN_CALLSIGN));
         assertEquals("Channel", model.getColumnName(ChannelActivityTableModel.COLUMN_LCN));
         assertEquals("County Fire", model.getValueAt(0, ChannelActivityTableModel.COLUMN_LCN));

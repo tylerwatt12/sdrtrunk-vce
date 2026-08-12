@@ -29,6 +29,7 @@ import io.github.dsheirer.identifier.IdentifierUpdateNotification.Operation;
 import io.github.dsheirer.identifier.configuration.FrequencyConfigurationIdentifier;
 import io.github.dsheirer.identifier.decoder.ChannelStateIdentifier;
 import io.github.dsheirer.metadata.site.ProtocolSiteMetadataEvent;
+import io.github.dsheirer.metadata.site.SiteMetadataEvent;
 import io.github.dsheirer.metadata.site.SiteMetadataSnapshot;
 import io.github.dsheirer.module.decode.config.DecodeConfiguration;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
@@ -44,6 +45,7 @@ import io.github.dsheirer.module.decode.nxdn.telemetry.NXDNNetworkConfigurationS
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.module.decode.p25.phase1.message.P25FrequencyBand;
+import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.preference.nowplaying.NowPlayingPreference;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import java.util.ArrayList;
@@ -268,7 +270,35 @@ class ChannelActivityModelTest
             assertTrue(model.getTables().get(1).isControlActive());
             assertEquals(-20.5, control.getSignalDbfs());
             assertEquals(97.5, control.getDecodeHealthPercent());
+            assertTrue(model.getTables().get(1).getLatestSnapshot().identifiers().stream()
+                .anyMatch(identifier -> identifier.label().equals("Site ID")));
         }
+    }
+
+    @Test
+    void publishesLearnedP25SystemAndSiteIdentifiers() throws Exception
+    {
+        ChannelActivityModel model = new ChannelActivityModel(new AliasModel(), new NowPlayingPreference(type -> {}));
+        Channel parent = trunkedChannel("Primary", "County", "Downtown", new DecodeConfigP25Phase1(),
+            851_012_500L);
+        P25NetworkConfigurationSnapshot snapshot = new P25NetworkConfigurationSnapshot("P25_PHASE_1",
+            new P25NetworkConfigurationSnapshot.Network(0xBEE00, 0x348, 0x343, null),
+            new P25NetworkConfigurationSnapshot.CurrentSite(0x348, 0x343, 2, 1, null, true),
+            List.of(), List.of(), List.of(), List.of(), List.of(), null, List.of());
+
+        run(model, () -> {
+            model.channelStarted(parent, List.of());
+            model.receiveSiteMetadata(new SiteMetadataEvent(parent, snapshot, 1_000L));
+        });
+
+        Map<String,String> identifiers = model.getTables().get(1).getLatestSnapshot().identifiers().stream()
+            .collect(Collectors.toMap(ChannelActivitySnapshot.IdentifierField::label,
+                ChannelActivitySnapshot.IdentifierField::value));
+        assertEquals("BEE00", identifiers.get("WACN"));
+        assertEquals("348", identifiers.get("System ID"));
+        assertEquals("02", identifiers.get("RFSS"));
+        assertEquals("01", identifiers.get("Site ID"));
+        assertEquals("343", identifiers.get("NAC"));
     }
 
     @Test

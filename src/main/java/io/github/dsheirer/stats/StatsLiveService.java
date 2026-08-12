@@ -43,6 +43,7 @@ final class StatsLiveService implements AutoCloseable
     static final int MAXIMUM_TOTAL_LIVE_ROWS = 2_048;
     static final int MAXIMUM_SYSTEM_SNAPSHOT_BYTES = 1024 * 1024;
     private static final int MAXIMUM_LIVE_TEXT_LENGTH = 256;
+    private static final int MAXIMUM_LIVE_IDENTIFIERS = 16;
     private static final int MAXIMUM_LIVE_TAGS = 16;
     private static final int MAXIMUM_LIVE_TAG_LENGTH = 64;
     private final StatsWebDatabase mDatabase;
@@ -371,6 +372,8 @@ final class StatsLiveService implements AutoCloseable
         putText(table, "guid", snapshot.guid(), MAXIMUM_LIVE_TEXT_LENGTH);
         table.put("closeable", snapshot.closeable());
         table.put("control_active", snapshot.controlActive());
+        table.put("identifiers", snapshot.identifiers().stream().limit(MAXIMUM_LIVE_IDENTIFIERS)
+            .map(StatsLiveService::activityIdentifier).toList());
         int rowCount = snapshot.rows().size();
         int included = Math.min(rowCount, Math.max(0, maximumRows));
         table.put("rows", snapshot.rows().stream().limit(included).map(StatsLiveService::activityRow).toList());
@@ -378,6 +381,15 @@ final class StatsLiveService implements AutoCloseable
         table.put("rows_omitted", rowCount - included);
         table.put("rows_truncated", rowCount > included);
         return Map.copyOf(table);
+    }
+
+    private static Map<String,Object> activityIdentifier(ChannelActivitySnapshot.IdentifierField identifier)
+    {
+        LinkedHashMap<String,Object> value = new LinkedHashMap<>();
+        value.put("group", boundedText(identifier.group(), MAXIMUM_LIVE_TEXT_LENGTH));
+        value.put("label", boundedText(identifier.label(), MAXIMUM_LIVE_TEXT_LENGTH));
+        value.put("value", boundedText(identifier.value(), MAXIMUM_LIVE_TEXT_LENGTH));
+        return Map.copyOf(value);
     }
 
     private static Map<String,Object> activityRow(ChannelActivitySnapshot.Row snapshot)
@@ -425,11 +437,14 @@ final class StatsLiveService implements AutoCloseable
 
         put(row, "timeslot", snapshot.timeslot());
         putText(row, "source_id", snapshot.sourceId(), MAXIMUM_LIVE_TEXT_LENGTH);
+        putText(row, "source_form", snapshot.sourceForm(), MAXIMUM_LIVE_TEXT_LENGTH);
         putText(row, "source_alias", snapshot.sourceAlias(), MAXIMUM_LIVE_TEXT_LENGTH);
         putText(row, "talker_alias", snapshot.talkerAlias(), MAXIMUM_LIVE_TEXT_LENGTH);
         putText(row, "source_alias_display", snapshot.sourceAliasDisplay(), MAXIMUM_LIVE_TEXT_LENGTH);
         putText(row, "target_id", snapshot.targetId(), MAXIMUM_LIVE_TEXT_LENGTH);
+        putText(row, "target_form", snapshot.targetForm(), MAXIMUM_LIVE_TEXT_LENGTH);
         putText(row, "target_alias", snapshot.targetAlias(), MAXIMUM_LIVE_TEXT_LENGTH);
+        putText(row, "callsign", snapshot.callsign(), MAXIMUM_LIVE_TEXT_LENGTH);
         putText(row, "decoder", snapshot.decoder(), MAXIMUM_LIVE_TEXT_LENGTH);
         putText(row, "encryption_details", snapshot.encryptionDetails(), MAXIMUM_LIVE_TEXT_LENGTH);
         return Map.copyOf(row);

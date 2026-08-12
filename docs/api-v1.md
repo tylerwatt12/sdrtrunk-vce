@@ -165,7 +165,10 @@ Supported subscription names are `channel_activity`, `decode_events`, `decode_me
 as the corresponding REST scopes. `decode_messages` accepts exactly `configuration_id` and required positive
 `frequency_hz`; `timeslot` is available for decoder events and channel diagnostics, but not decoder messages. Tuner
 viewport changes update the existing logical subscription without reconnecting or rebuilding its shared source FFT.
-Channel-activity table snapshots include protocol-neutral `system_name`, `site_name`, and `channel_name` context.
+Channel-activity table snapshots include protocol-neutral `system_name`, `site_name`, and `channel_name` context plus
+an `identifiers` list of `{group, label, value}` fields learned from the active protocol. Activity rows expose the
+available callsign, source and target forms/IDs/aliases, talker alias, LCN, timeslot, signal level, decoder, and call
+role without requiring a consumer to infer those fields from protocol-specific text.
 Channel diagnostic state keeps the normalized `protocol` separate from the human-readable `decoder_profile`, which
 may include the currently selected demodulator profile for an automatic decoder.
 

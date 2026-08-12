@@ -7259,7 +7259,7 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
   const cursorFrequency = node('span', 'tuner-spectrum-cursor-frequency');
   const cursorSnap = node('span', 'tuner-spectrum-cursor-snap');
   const cursorPower = node('span', 'tuner-spectrum-cursor-power');
-  const cursorChannel = node('span', 'tuner-spectrum-cursor-channel');
+  const cursorChannel = node('div', 'tuner-spectrum-cursor-channel');
   cursorSnap.hidden = true;
   cursorChannel.hidden = true;
   cursorPopup.hidden = true;
@@ -8101,14 +8101,14 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
       const tableChannelName = String(table?.channel_name || '').trim();
       const tableSystemName = String(table?.system_name || '').trim();
       const tableSiteName = String(table?.site_name || '').trim();
-      const tableTitle = String(table?.title || '').trim();
+      const tableIdentifiers = Array.isArray(table?.identifiers) ? table.identifiers : [];
       (Array.isArray(table?.rows) ? table.rows : []).forEach((row) => {
         const frequencyHz = Number(row?.frequency_hz);
         const status = tunerActivityStatus(row);
         if (!Number.isFinite(frequencyHz) || frequencyHz < viewport.startHz ||
             frequencyHz > viewport.endHz || !status) return;
-        const decorated = { ...row, status, frequencyHz, tableId: table.table_id, tableChannelName,
-          tableSystemName, tableSiteName, tableTitle };
+        const decorated = { ...row, status, frequencyHz, tableChannelName, tableSystemName, tableSiteName,
+          tableIdentifiers };
         let carrier = byFrequency.get(frequencyHz);
         if (!carrier) {
           carrier = { frequencyHz, status, rows: [] };
@@ -8122,33 +8122,86 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
     return [...byFrequency.values()].sort((left, right) => left.frequencyHz - right.frequencyHz);
   }
 
-  function activeChannelLabel(row) {
-    if (row.status === 'CONTROL') {
-      const configured = [...new Set([row.tableSystemName, row.tableSiteName, row.tableChannelName]
-        .filter(Boolean))];
-      return configured.join(' · ') || row.tableTitle || 'Control channel';
-    }
-    return row.target_alias || row.target_id || row.channel_name || row.lcn || row.tableChannelName || row.status;
+  function activityValues(rows, selector) {
+    return [...new Set(rows.map(selector).flat().map((value) => String(value ?? '').trim()).filter(Boolean))];
   }
 
-  function activeRowDescription(row) {
-    const details = [];
-    const conventional = channelTagSet(row.tags).has('CONVENTIONAL');
-    const channelName = conventional ? String(row.channel_name || row.tableChannelName || '').trim() : '';
-    const decoder = conventional ? decoderLabel(row.decoder) : '';
-    if (channelName || decoder) details.push([channelName, decoder].filter(Boolean).join(' · '));
-    const label = activeChannelLabel(row);
-    if (label && label !== channelName) details.push(label);
-    const source = row.source_alias_display || row.source_alias || row.talker_alias || row.source_id;
-    if (source && source !== label) details.push(`From ${source}`);
-    if (row.timeslot !== null && row.timeslot !== undefined) details.push(`Slot ${row.timeslot}`);
-    if (row.lcn) details.push(`Channel ${row.lcn}`);
-    if (row.encryption_details) details.push(String(row.encryption_details));
-    return details.join(' · ');
+  function activityTokenLabel(value) {
+    return String(value || '').toLowerCase().split('_').filter(Boolean)
+      .map((word) => `${word.charAt(0).toUpperCase()}${word.slice(1)}`).join(' ');
+  }
+
+  function targetIdentifierLabel(form) {
+    switch (String(form || '').toUpperCase()) {
+      case 'TALKGROUP': return 'TGID';
+      case 'PATCH_GROUP': return 'Patch group';
+      case 'RADIO': return 'Target radio';
+      case 'TELEPHONE_NUMBER': return 'Telephone';
+      default: return 'Target';
+    }
+  }
+
+  function activeCarrierFields(carrier, fftPower = null) {
+    const rows = carrier?.rows || [];
+    const fields = [];
+    const add = (label, values) => {
+      const list = Array.isArray(values) ? values : [values];
+      const unique = [...new Set(list.map((value) => String(value ?? '').trim()).filter(Boolean))];
+      if (unique.length) fields.push({ label, value: unique.join(' · ') });
+    };
+
+    add('System', activityValues(rows, (row) => row.tableSystemName));
+    add('Site', activityValues(rows, (row) => row.tableSiteName));
+    const identifiers = [];
+    rows.forEach((row) => (row.tableIdentifiers || []).forEach((identifier) => {
+      const label = String(identifier?.label || '').trim();
+      const value = String(identifier?.value || '').trim();
+      if (label && value) identifiers.push({ label, value });
+    }));
+    [...new Set(identifiers.map((identifier) => identifier.label))].forEach((label) =>
+      add(label, identifiers.filter((identifier) => identifier.label === label).map((identifier) => identifier.value)));
+    add('Channel', activityValues(rows, (row) => row.channel_name || row.tableChannelName));
+    add('Call type', TUNER_ACTIVITY_LABELS[carrier?.status] || TUNER_ACTIVITY_LABELS.ACTIVE);
+    add('Role', activityValues(rows, (row) => (row.tags || []).map(activityTokenLabel)));
+    add('Callsign', activityValues(rows, (row) => row.callsign));
+    add('LCN', activityValues(rows, (row) => row.lcn));
+    add('Timeslot', activityValues(rows, (row) => row.timeslot));
+
+    const targetForms = [...new Set(rows.filter((row) => row.target_id)
+      .map((row) => String(row.target_form || '').toUpperCase()))];
+    (targetForms.length ? targetForms : ['']).forEach((form) => add(targetIdentifierLabel(form),
+      activityValues(rows.filter((row) => String(row.target_form || '').toUpperCase() === form ||
+        (!form && !row.target_form)), (row) => row.target_id)));
+    add('Target alias', activityValues(rows, (row) => row.target_alias));
+    add('Source type', activityValues(rows, (row) => activityTokenLabel(row.source_form)));
+    add('Source', activityValues(rows, (row) => row.source_id));
+    add('Source alias', activityValues(rows, (row) => row.source_alias));
+    add('Talker alias', activityValues(rows, (row) => row.talker_alias));
+    const measuredSignal = activityValues(rows, (row) => Number.isFinite(Number(row.signal_dbfs)) ?
+      `${Number(row.signal_dbfs).toFixed(1)} dBFS` : '');
+    add('Signal', measuredSignal.length ? measuredSignal :
+      (Number.isFinite(fftPower) ? `${fftPower.toFixed(1)} dB (FFT)` : ''));
+    add('Control quality', activityValues(rows, (row) => Number.isFinite(Number(row.decode_health_pct)) ?
+      `${Number(row.decode_health_pct).toFixed(1)}%` : ''));
+    add('Voice quality', activityValues(rows, (row) => Number.isFinite(Number(row.vc_quality_pct)) ?
+      `${Number(row.vc_quality_pct).toFixed(1)}%` : ''));
+    add('Decoder', activityValues(rows, (row) => decoderLabel(row.decoder)));
+    add('Encryption', activityValues(rows, (row) => row.encryption_details));
+    return fields;
   }
 
   function activeCarrierDescription(carrier) {
-    return [...new Set((carrier?.rows || []).map(activeRowDescription).filter(Boolean))].join('\n');
+    return activeCarrierFields(carrier).map((field) => `${field.label}: ${field.value}`).join(', ');
+  }
+
+  function renderActiveCarrierFields(carrier, power) {
+    const fragments = [];
+    activeCarrierFields(carrier, power).forEach((field) => {
+      fragments.push(node('span', 'tuner-spectrum-cursor-field-label', field.label));
+      fragments.push(node('span', 'tuner-spectrum-cursor-field-value', field.value));
+    });
+    cursorChannel.replaceChildren(...fragments);
+    cursorChannel.hidden = fragments.length === 0;
   }
 
   function activeCarrierPower(carrier) {
@@ -8171,10 +8224,8 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
     cursorSnap.hidden = false;
     cursorSnap.textContent = TUNER_ACTIVITY_LABELS[carrier.status] || TUNER_ACTIVITY_LABELS.ACTIVE;
     const power = activeCarrierPower(carrier);
-    cursorPower.textContent = Number.isFinite(power) ? `${power.toFixed(1)} dB` : '—';
-    const details = activeCarrierDescription(carrier);
-    cursorChannel.hidden = !details;
-    cursorChannel.textContent = details;
+    cursorPower.textContent = Number.isFinite(power) ? `FFT ${power.toFixed(1)} dB` : 'FFT —';
+    renderActiveCarrierFields(carrier, power);
     cursorPopup.hidden = false;
     positionCursorPopup(flag);
   }

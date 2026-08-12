@@ -28,7 +28,11 @@ import io.github.dsheirer.source.tuner.channel.ChannelSpecification;
  */
 public class DecodeConfigP25Phase1 extends DecodeConfigP25
 {
-    public static final int CHANNEL_ROTATION_DELAY_MINIMUM_MS = 400;
+    /**
+     * P25 control acquisition needs enough dwell to synchronize and, in Auto mode, evaluate both 500 ms waveform
+     * trials before a frequency change resets the selector.
+     */
+    public static final int CHANNEL_ROTATION_DELAY_MINIMUM_MS = 2000;
     public static final int CHANNEL_ROTATION_DELAY_DEFAULT_MS = 2000;
     public static final int CHANNEL_ROTATION_DELAY_MAXIMUM_MS = 10000;
 

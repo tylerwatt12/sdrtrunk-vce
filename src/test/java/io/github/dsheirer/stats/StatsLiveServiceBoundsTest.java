@@ -53,6 +53,36 @@ class StatsLiveServiceBoundsTest
     }
 
     @Test
+    void projectsProtocolNeutralHoverDetails()
+    {
+        StatsLiveService service = new StatsLiveService(null, null);
+        ChannelActivitySnapshot.Row row = new ChannelActivitySnapshot.Row("row", "Dispatch", null, "CALL",
+            List.of("VOICE"), "0-101", 851_012_500L, "WPFF205", -22.5, null, 0L, 0L, 0L, 0L, 0L,
+            0L, null, 2, "1201", "RADIO", "Engine 1", "Portable 12", "Engine 1 · TA: Portable 12",
+            "4400", "TALKGROUP", "Fire Dispatch", "P25_PHASE1", null);
+        ChannelActivitySnapshot snapshot = new ChannelActivitySnapshot("site", "Live", "County", "Downtown",
+            "Primary", null, null, false, true,
+            List.of(new ChannelActivitySnapshot.IdentifierField("System", "WACN", "BEE00"),
+                new ChannelActivitySnapshot.IdentifierField("Site", "NAC", "343")), List.of(row));
+
+        try
+        {
+            service.process(new ChannelActivityEvent(ChannelActivityEvent.Operation.UPSERT, snapshot));
+            Map<String,Object> table = tables(service).getFirst();
+            List<Map<String,Object>> identifiers = (List<Map<String,Object>>)table.get("identifiers");
+            Map<String,Object> projected = rows(table).getFirst();
+            assertEquals("BEE00", identifiers.getFirst().get("value"));
+            assertEquals("RADIO", projected.get("source_form"));
+            assertEquals("TALKGROUP", projected.get("target_form"));
+            assertEquals("WPFF205", projected.get("callsign"));
+        }
+        finally
+        {
+            service.close();
+        }
+    }
+
+    @Test
     void capsTheAuthoritativeSnapshotWithoutBrowserOwnedCache() throws Exception
     {
         StatsLiveService service = new StatsLiveService(null, null);
@@ -141,7 +171,7 @@ class StatsLiveServiceBoundsTest
     private static ChannelActivityEvent activity(String tableId, List<ChannelActivitySnapshot.Row> rows)
     {
         ChannelActivitySnapshot snapshot = new ChannelActivitySnapshot(tableId, "Live", "System", "Site",
-            "Control", null, null, false, true, rows);
+            "Control", null, null, false, true, List.of(), rows);
         return new ChannelActivityEvent(ChannelActivityEvent.Operation.UPSERT, snapshot);
     }
 
@@ -149,7 +179,7 @@ class StatsLiveServiceBoundsTest
     {
         return new ChannelActivitySnapshot.Row(key, "Control", null, "ACTIVE", List.of("CONTROL"), "1",
             451_000_000L, null, -25.5, 98.0, 1_000L, 1L, 0L, 0L, 0L, 0L, null, null, null,
-            null, null, null, null, null, "DMR", null);
+            null, null, null, null, null, null, null, "DMR", null);
     }
 
     @SuppressWarnings("unchecked")
