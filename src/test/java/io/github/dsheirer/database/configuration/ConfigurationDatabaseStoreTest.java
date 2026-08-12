@@ -28,6 +28,7 @@ import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.module.decode.p25.phase1.Modulation;
+import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import java.io.IOException;
 import java.nio.file.Path;
@@ -59,6 +60,7 @@ class ConfigurationDatabaseStoreTest
         channel.setAutoStart(true);
         channel.setAutoStartOrder(2);
         channel.setRadresGuid("11111111-2222-3333-4444-555555555555");
+        channel.setP25SiteIdentity(new P25SiteIdentity(0xBEE00, 0x123, 1, 2));
 
         SourceConfigTuner sourceConfig = new SourceConfigTuner();
         sourceConfig.setFrequency(853_762_500L);
@@ -66,6 +68,7 @@ class ConfigurationDatabaseStoreTest
         channel.setSourceConfiguration(sourceConfig);
         DecodeConfigP25Phase1 decodeConfig = new DecodeConfigP25Phase1();
         decodeConfig.setAutoPreferredModulation(Modulation.CQPSK);
+        decodeConfig.setLearnedControlFrequencies(List.of(852_012_500L));
         channel.setDecodeConfiguration(decodeConfig);
 
         RadioResolveConfiguration stream = new RadioResolveConfiguration();
@@ -92,6 +95,7 @@ class ConfigurationDatabaseStoreTest
         assertEquals(configurationId, loadedChannel.getConfigurationId());
         assertEquals("County Aliases", loadedChannel.getAliasListName());
         assertEquals("11111111-2222-3333-4444-555555555555", loadedChannel.getRadresGuid());
+        assertEquals(new P25SiteIdentity(0xBEE00, 0x123, 1, 2), loadedChannel.getP25SiteIdentity());
         assertTrue(loadedChannel.getAutoStart());
         assertEquals(2, loadedChannel.getAutoStartOrder());
         assertInstanceOf(SourceConfigTuner.class, loadedChannel.getSourceConfiguration());
@@ -100,6 +104,7 @@ class ConfigurationDatabaseStoreTest
         assertEquals(Modulation.AUTO, loadedDecodeConfig.getModulation());
         assertEquals(Modulation.CQPSK, loadedDecodeConfig.getAutoPreferredModulation());
         assertEquals(Modulation.CQPSK, loadedDecodeConfig.getEffectiveModulation());
+        assertEquals(List.of(852_012_500L), loadedDecodeConfig.getLearnedControlFrequencies());
         SourceConfigTuner loadedSource = (SourceConfigTuner)loadedChannel.getSourceConfiguration();
         assertEquals(853_762_500L, loadedSource.getFrequency());
         assertEquals("Airspy", loadedSource.getPreferredTuner());

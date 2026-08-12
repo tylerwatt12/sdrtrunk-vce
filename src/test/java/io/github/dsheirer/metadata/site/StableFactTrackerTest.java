@@ -73,6 +73,21 @@ class StableFactTrackerTest
         assertFalse(tracker.isEmpty());
     }
 
+    @Test
+    void authoritativeObservationImmediatelyReplacesStableValue()
+    {
+        StableFactTracker<Value,Integer> tracker = new StableFactTracker<>(Value::key);
+
+        assertEquals(StableFactTracker.Result.PROMOTED,
+            tracker.observeAuthoritative(new Value(1, "first"), 100, ignored -> true));
+        assertEquals(StableFactTracker.Result.PROMOTED,
+            tracker.observeAuthoritative(new Value(2, "replacement"), 101, ignored -> true));
+        assertEquals(StableFactTracker.Result.NONE,
+            tracker.observeAuthoritative(new Value(3, "late older value"), 99, ignored -> true));
+        assertEquals(2, tracker.getStableValue().key());
+        assertNull(tracker.getCandidateKey());
+    }
+
     private record Value(int key, String label)
     {
     }
