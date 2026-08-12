@@ -166,13 +166,15 @@ a:hover {
   min-height: 100vh;
 }
 
-body[data-view="live"] {
+body[data-view="live"],
+body[data-view="tuner-spectrum"] {
   height: 100vh;
   height: 100dvh;
   overflow: hidden;
 }
 
-body[data-view="live"] .app-shell {
+body[data-view="live"] .app-shell,
+body[data-view="tuner-spectrum"] .app-shell {
   height: 100vh;
   height: 100dvh;
   min-height: 0;
@@ -180,18 +182,21 @@ body[data-view="live"] .app-shell {
   flex-direction: column;
 }
 
-body[data-view="live"] .app-header {
+body[data-view="live"] .app-header,
+body[data-view="tuner-spectrum"] .app-header {
   flex: 0 0 auto;
 }
 
-body[data-view="live"] .content {
+body[data-view="live"] .content,
+body[data-view="tuner-spectrum"] .content {
   min-height: 0;
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
 }
 
-body[data-view="live"] .page-header {
+body[data-view="live"] .page-header,
+body[data-view="tuner-spectrum"] .page-header {
   flex: 0 0 auto;
 }
 
@@ -1819,20 +1824,8 @@ body[data-view="live"] .channel-diagnostic-readouts {
   font-variant-numeric: tabular-nums;
 }
 
-.live-tuner-spectrum {
-  min-height: 27px;
-  margin-left: auto;
-  padding: 3px 9px;
-}
-
-.tuner-spectrum-modal {
-  width: min(1500px, 98vw);
-  height: min(940px, calc(100dvh - 28px));
-  max-height: calc(100dvh - 28px);
-}
-
-.tuner-spectrum-modal .modal-content {
-  display: flex;
+body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
+  min-height: 0;
   flex: 1 1 auto;
   overflow: hidden;
 }
@@ -3922,12 +3915,6 @@ th.numeric {
     overflow-y: auto;
   }
 
-  .tuner-spectrum-modal {
-    width: calc(100vw - 16px);
-    height: calc(100dvh - 16px);
-    max-height: calc(100dvh - 16px);
-  }
-
   .tuner-spectrum-layout {
     grid-template-rows: auto auto minmax(140px, 0.34fr) minmax(220px, 0.66fr) auto;
   }
@@ -4184,13 +4171,7 @@ th.numeric {
     border-radius: 0;
   }
 
-  .tuner-spectrum-modal {
-    width: 100vw;
-    height: 100dvh;
-    max-height: none;
-  }
-
-  .tuner-spectrum-modal .modal-content {
+  body[data-view="tuner-spectrum"] .content {
     overflow: auto;
   }
 
@@ -4318,7 +4299,7 @@ th.numeric {
 }
 
 @media (max-height: 600px) {
-  .tuner-spectrum-modal .modal-content {
+  body[data-view="tuner-spectrum"] .content {
     overflow: auto;
   }
 

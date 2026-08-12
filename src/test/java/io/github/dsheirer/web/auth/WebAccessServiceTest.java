@@ -34,6 +34,7 @@ class WebAccessServiceTest
         assertFalse(service.isPrimaryAdminConfigured());
         assertTrue(service.accounts().isEmpty());
         assertEquals(AccessTier.PUBLIC, service.requiredTier(WebCapability.DASHBOARD_VIEW));
+        assertEquals(AccessTier.ADMIN, service.requiredTier(WebCapability.TUNER_SPECTRUM_VIEW));
         assertFalse(service.isAllowed(AccessTier.ADMIN, "unknown-capability"));
         assertThrows(IllegalStateException.class, () -> service.createUser("user.one",
             "ordinary user password".toCharArray(), AccessTier.USER));
@@ -80,12 +81,16 @@ class WebAccessServiceTest
         assertEquals(AccessTier.USER, policy.requiredTier());
         assertFalse(service.isAllowed(AccessTier.PUBLIC, WebCapability.DASHBOARD_VIEW));
         assertTrue(service.isAllowed(AccessTier.USER, WebCapability.DASHBOARD_VIEW));
+        WebAccessService.CapabilityPolicy spectrumPolicy =
+            service.setCapabilityTier(WebCapability.TUNER_SPECTRUM_VIEW, AccessTier.USER);
+        assertEquals(AccessTier.USER, spectrumPolicy.requiredTier());
         assertThrows(IllegalArgumentException.class,
             () -> service.setCapabilityTier(WebCapability.ADMIN_USERS, AccessTier.PUBLIC));
 
         WebAccessService restarted = new WebAccessService(database);
         assertEquals(2, restarted.accounts().size());
         assertEquals(AccessTier.USER, restarted.requiredTier(WebCapability.DASHBOARD_VIEW));
+        assertEquals(AccessTier.USER, restarted.requiredTier(WebCapability.TUNER_SPECTRUM_VIEW));
         assertEquals(reset, restarted.authenticate("user.one", replacementPassword).orElseThrow());
         assertFalse(settingJson(database).contains(new String(replacementPassword)));
 
@@ -117,15 +122,17 @@ class WebAccessServiceTest
     @Test
     void definesEveryExistingCapabilityAndLocksAdminPolicies()
     {
-        assertEquals(11, WebCapability.registry().size());
+        assertEquals(12, WebCapability.registry().size());
 
-        for(String id: new String[]{"dashboard", "live", "systems", "conventional", "aliases", "credits",
+        for(String id: new String[]{"dashboard", "live", "tuner-spectrum", "systems", "conventional", "aliases", "credits",
             "csv-export", "call-audio", "admin-users", "admin-access", "admin-aliases"})
         {
             assertTrue(WebCapability.fromId(id).isPresent(), id);
         }
 
         assertEquals(AccessTier.PUBLIC, WebCapability.CREDITS_VIEW.defaultTier());
+        assertEquals(AccessTier.ADMIN, WebCapability.TUNER_SPECTRUM_VIEW.defaultTier());
+        assertTrue(WebCapability.TUNER_SPECTRUM_VIEW.configurable());
         assertEquals(AccessTier.ADMIN, WebCapability.ADMIN_USERS.defaultTier());
         assertFalse(WebCapability.ADMIN_USERS.configurable());
         assertFalse(WebCapability.ADMIN_ACCESS.configurable());

@@ -112,10 +112,8 @@ class StatsWebInteractionUiContractTest
         String source = source();
         String live = function(source, "async function renderLive()");
         String channel = function(source, "function liveChannelPane()");
-        String tuner = function(source,
-            "function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum')");
+        String tuner = function(source, "function tunerSpectrumPanel()");
 
-        assertTrue(live.contains("node('button', 'button secondary live-tuner-spectrum', 'Tuner Spectrum')"));
         assertTrue(live.contains("liveEventsPanel"));
         assertTrue(channel.contains("diagnostic('Signal', 'Selected channel signal spectrum')"));
         assertTrue(channel.contains("diagnostic('Symbols', 'Selected channel demodulated symbols')"));
@@ -197,7 +195,7 @@ class StatsWebInteractionUiContractTest
         String talkgroup = function(source, "async function renderTalkgroup()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"63\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"64\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -506,8 +504,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(html.indexOf("localStorage.getItem('sdrtrunk_theme')") <
             html.indexOf("rel=\"stylesheet\""));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=46"));
-        assertTrue(html.contains("/assets/app.js?v=67"));
+        assertTrue(html.contains("/assets/app.css?v=47"));
+        assertTrue(html.contains("/assets/app.js?v=68"));
         assertTrue(source.contains("window.localStorage.setItem(THEME_STORAGE_KEY"));
         assertTrue(source.contains("toggle.setAttribute('aria-pressed'"));
         assertTrue(css.contains(":root[data-theme=\"dark\"]"));
@@ -756,7 +754,7 @@ class StatsWebInteractionUiContractTest
     }
 
     @Test
-    void opensDemandDrivenTunerSpectrumAndWaterfallInSharedModal() throws Exception
+    void opensDemandDrivenTunerSpectrumAndWaterfallOnDedicatedPage() throws Exception
     {
         String source = source();
         String binary = function(source, "function binaryFrameConnection(topic, parameters = {}, callbacks = {})");
@@ -766,7 +764,7 @@ class StatsWebInteractionUiContractTest
         String frequencyMapping = function(source, "function tunerFrequencyAtBin(domain, coordinate)");
         String inverseFrequencyMapping = function(source, "function tunerBinAtFrequency(domain, frequencyHz)");
         String snapper = function(source, "function tunerSnapFrequency(frequencyHz)");
-        String tuner = function(source, "function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum')");
+        String tuner = function(source, "function tunerSpectrumPanel()");
         String refinement = function(tuner, "function queueViewportUpdate()");
         String pointerMove = function(tuner, "function onPlotPointerMove(event)");
         String acceptFrame = function(tuner, "function acceptTunerFrame(frame)");
@@ -774,9 +772,16 @@ class StatsWebInteractionUiContractTest
         String systems = function(source, "function liveSystemsSection(onSelectionChange)");
         String css = readText(APP_CSS);
 
-        assertTrue(live.contains("'Tuner Spectrum'"));
-        assertTrue(live.contains("spectrum.addEventListener('click', () => showTunerSpectrumModal())"));
-        assertTrue(tuner.contains("openReadOnlyModal('Tuner Spectrum'"));
+        String tunerPage = function(source, "async function renderTunerSpectrum()");
+        String html = readText(INDEX_HTML);
+
+        assertFalse(live.contains("'Tuner Spectrum'"));
+        assertTrue(html.contains("data-view=\"tuner-spectrum\""));
+        assertTrue(source.contains("TUNER_SPECTRUM: 'tuner-spectrum'"));
+        assertTrue(source.contains("'tuner-spectrum': ACCESS_CAPABILITIES.TUNER_SPECTRUM"));
+        assertTrue(tunerPage.contains("pageConnections.add(spectrum)"));
+        assertTrue(tunerPage.contains("pageHeader('Tuner Spectrum'"));
+        assertFalse(tuner.contains("openReadOnlyModal('Tuner Spectrum'"));
         assertTrue(tuner.contains("api('/api/v1/diagnostics/tuners')"));
         assertTrue(tuner.contains("binaryFrameConnection('tuner_diagnostics'"));
         assertTrue(tuner.contains("frame.type !== DIAGNOSTIC_FRAME_TYPES.TUNER_FFT"));
@@ -785,7 +790,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("const firstBin ="));
         assertTrue(tuner.contains("for (let bin = firstBin; bin < lastBin; bin += 1)"));
         assertTrue(tuner.contains("nextWaterfallRow = (nextWaterfallRow - 1 + size.height) % size.height"));
-        assertTrue(tuner.contains("cleanup: () =>"));
+        assertTrue(tuner.contains("close: () =>"));
         assertTrue(tuner.contains("closeStreams()"));
         assertTrue(tuner.contains("viewport_start_hz"));
         assertTrue(tuner.contains("viewport_end_hz"));
@@ -812,6 +817,9 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("event.key === 'ArrowLeft'"));
         assertTrue(tuner.contains("event.key === 'r' || event.key === 'R'"));
         assertTrue(tuner.contains("connectActiveChannels()"));
+        assertTrue(tuner.contains("if (!liveActivityAllowed || !shouldRun() || activeChannelSource) return"));
+        assertTrue(tuner.contains("flagLegend.hidden = !liveActivityAllowed"));
+        assertTrue(tuner.contains("'Channel markers require Live access.'"));
         assertTrue(tuner.contains("subscribeLiveChannelActivity({"));
         assertTrue(systems.contains("subscribeLiveChannelActivity({"));
         assertTrue(activity.contains("liveConnection('channel_activity', {}, false)"));
@@ -932,7 +940,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(source.contains("const TUNER_CHANNEL_VISUAL_BANDWIDTH_HZ = 25_000"));
         assertTrue(diagnostic.contains("headerBytes >= 68 ? header.getInt32(64, true) : 0"));
         assertTrue(diagnostic.contains("headerBytes >= 72 ? header.getInt32(68, true) : valueCount"));
-        assertTrue(css.contains(".tuner-spectrum-modal"));
+        assertFalse(css.contains(".tuner-spectrum-modal"));
+        assertTrue(css.contains("body[data-view=\"tuner-spectrum\"] .content > .tuner-spectrum-layout"));
         assertTrue(css.contains(".tuner-spectrum-plot"));
         assertTrue(css.contains(".tuner-spectrum-active-flag {\n  width: 12px;\n  height: 12px;\n  min-height: 12px;"));
         assertTrue(css.contains(".tuner-spectrum-flag-legend"));
