@@ -1136,6 +1136,43 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void exposesAmAsItsOwnProtocolUnderConventional() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO receiver_context (id, context_key, kind_code, protocol_code, channel_name,
+                    decoder, first_seen_ms, last_seen_ms, primary_frequency_hz)
+                VALUES (99, 'conventional-airport', 10, 11, 'Airport Tower', 'AM', 1000, 2000, 118500000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO conventional_activity_summary (context_id, frequency_hz, timeslot, first_seen_ms,
+                    last_seen_ms, call_count)
+                VALUES (99, 118500000, -1, 1000, 2000, 3)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO p25_activity_event (context_id, observed_at_ms, action_code, frequency_hz)
+                VALUES (99, 2000, 3, 118500000)
+                """);
+        }
+
+        Map<String,Object> row = rows(mDatabase.conventional(request("/api/conventional"))).stream()
+            .filter(value -> "conventional-airport".equals(value.get("context_key")))
+            .findFirst().orElseThrow();
+        assertEquals(11L, number(row.get("protocol_code")));
+
+        Map<String,Object> detail = mDatabase.conventionalDetail(request(
+            "/api/conventional/detail?context=conventional-airport"));
+        assertEquals(11L, number(map(detail, "context").get("protocol_code")));
+        assertTrue((Boolean)map(map(detail, "context"), "capabilities").get("activity"));
+
+        Map<String,Object> event = rows(mDatabase.activity(request(
+            "/api/activity?context=conventional-airport"))).getFirst();
+        assertEquals("AM", event.get("protocol"));
+    }
+
+    @Test
     void exposesConventionalDmrIdentitiesWithExactContextAliases() throws Exception
     {
         seedDmrConventionalRows(mDatabasePath);
@@ -1438,10 +1475,15 @@ class StatsWebDatabaseTest
                 "CONVENTIONAL".equals(row.get("channel_kind")))
             .findFirst().orElseThrow();
         assertEquals(3, number(map(nbfmConventional, "totals").get("call_count")));
+        Map<String,Object> amConventional = breakdown.stream()
+            .filter(row -> "AM".equals(row.get("protocol")) &&
+                "CONVENTIONAL".equals(row.get("channel_kind")))
+            .findFirst().orElseThrow();
+        assertEquals(0, number(map(amConventional, "totals").get("call_count")));
         assertFalse(map(p25Conventional, "totals").containsKey("non_p25_call_count"));
 
         List<Map<String,Object>> series = rowsFrom(callActivity, "series");
-        assertEquals(7 * 24, series.size());
+        assertEquals(8 * 24, series.size());
         Map<String,Object> currentP25Conventional = series.stream()
             .filter(row -> number(row.get("time_ms")) == currentHour &&
                 "P25".equals(row.get("protocol")) && "CONVENTIONAL".equals(row.get("channel_kind")))

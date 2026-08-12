@@ -72,6 +72,7 @@ public class P25ActivityLogSchema
     private static final int PROTOCOL_DMR = 3;
     private static final int PROTOCOL_NXDN = 4;
     private static final int PROTOCOL_NBFM = 10;
+    private static final int PROTOCOL_AM = 11;
 
     private static final int TARGET_TALKGROUP = 1;
     private static final int TARGET_RADIO = 2;
@@ -4037,6 +4038,7 @@ public class P25ActivityLogSchema
             case "DMR" -> PROTOCOL_DMR;
             case "NXDN" -> PROTOCOL_NXDN;
             case "NBFM" -> PROTOCOL_NBFM;
+            case "AM" -> PROTOCOL_AM;
             default -> PROTOCOL_UNKNOWN;
         };
     }

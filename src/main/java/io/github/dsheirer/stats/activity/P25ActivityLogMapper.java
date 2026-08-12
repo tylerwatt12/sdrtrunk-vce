@@ -315,10 +315,11 @@ class P25ActivityLogMapper
             return P25ActivityLogRecords.ContextKind.CONVENTIONAL_NXDN.name() + ":" +
                 Protocol.NXDN.name() + ":" + facts.frequencyHertz();
         }
-        else if(DecoderType.NBFM.toString().equals(decoder))
+        else if(DecoderType.AM.toString().equals(decoder) || DecoderType.NBFM.toString().equals(decoder))
         {
             return P25ActivityLogRecords.ContextKind.CONVENTIONAL_ANALOG.name() + ":" +
-                Protocol.NBFM.name() + ":" + facts.frequencyHertz();
+                (DecoderType.AM.toString().equals(decoder) ? Protocol.AM.name() : Protocol.NBFM.name()) + ":" +
+                facts.frequencyHertz();
         }
 
         return null;
@@ -926,7 +927,7 @@ class P25ActivityLogMapper
             return P25ActivityLogRecords.ContextKind.TRUNKED_SITE;
         }
 
-        if(decoderType == DecoderType.NBFM)
+        if(decoderType == DecoderType.AM || decoderType == DecoderType.NBFM)
         {
             return P25ActivityLogRecords.ContextKind.CONVENTIONAL_ANALOG;
         }

@@ -58,7 +58,7 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
 {
     private static final Logger mLog = LoggerFactory.getLogger(NBFMDecoder.class);
     private static final double DEMODULATED_AUDIO_SAMPLE_RATE = 8000.0;
-    private final IDemodulator mDemodulator = FmDemodulatorFactory.getFmDemodulator();
+    private final IDemodulator mDemodulator;
     private final SourceEventProcessor mSourceEventProcessor = new SourceEventProcessor();
     private final NoiseSquelch mNoiseSquelch;
     private IRealFilter mIBasebandFilter;
@@ -109,7 +109,16 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
      */
     public NBFMDecoder(DecodeConfigNBFM config)
     {
+        this(config, FmDemodulatorFactory.getFmDemodulator());
+    }
+
+    /**
+     * Shared analog audio path with an injected modulation-specific demodulator.
+     */
+    protected NBFMDecoder(DecodeConfigNBFM config, IDemodulator demodulator)
+    {
         super(config);
+        mDemodulator = java.util.Objects.requireNonNull(demodulator);
 
         //Save channel bandwidth to setup channel baseband filter.
         mChannelBandwidth = config.getBandwidth().getValue();
@@ -300,11 +309,17 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
     protected void broadcast(float[] demodulatedSamples)
     {
         demodulatedSamples = applyAudioPostProcessing(demodulatedSamples);
+        demodulatedSamples = processOutputAudio(demodulatedSamples);
 
         if(mResampledBufferListener != null)
         {
             mResampledBufferListener.receive(demodulatedSamples);
         }
+    }
+
+    protected float[] processOutputAudio(float[] audio)
+    {
+        return audio;
     }
 
     /**
@@ -344,7 +359,8 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
     {
         if(mIDecimationFilter == null || mQDecimationFilter == null)
         {
-            throw new IllegalStateException("NBFM demodulator module must receive a sample rate change source event " +
+            throw new IllegalStateException(getDecoderType().name() +
+                    " demodulator module must receive a sample rate change source event " +
                     "before it can process complex sample buffers");
         }
 

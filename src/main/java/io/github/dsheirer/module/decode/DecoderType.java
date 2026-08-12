@@ -29,6 +29,7 @@ import java.util.Set;
 public enum DecoderType
 {
     //Primary Decoders
+    AM("AM", "AM", Protocol.AM),
     DMR("DMR","DMR", Protocol.DMR),
     MPT1327("MPT1327", "MPT1327", Protocol.MPT1327, Availability.RETIRED_COMPATIBILITY),
     NBFM("NBFM", "NBFM", Protocol.NBFM),
@@ -66,7 +67,8 @@ public enum DecoderType
      * Primary decoders that operate on I/Q sample streams
      */
     public static final Set<DecoderType> PRIMARY_DECODERS =
-        activeOnly(EnumSet.of(DecoderType.DMR,
+        activeOnly(EnumSet.of(DecoderType.AM,
+        DecoderType.DMR,
         DecoderType.MPT1327,
         DecoderType.NBFM,
         DecoderType.NXDN,

@@ -12,9 +12,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivitySelectionScope;
 import io.github.dsheirer.channel.metadata.activity.SelectedFrequencyContext;
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.module.decode.am.DecodeConfigAM;
 import io.github.dsheirer.module.decode.dmr.DMRChannelMode;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
-import io.github.dsheirer.module.decode.nbfm.DecodeConfigNBFM;
 import io.github.dsheirer.module.decode.nxdn.NXDNChannelMode;
 import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
@@ -420,11 +420,11 @@ class ChannelWebLinkPanelTest
     void conventionalSelectionOnlyOffersConventionalPages() throws Exception
     {
         String guid = UUID.randomUUID().toString();
-        Channel conventional = new Channel("County Fire");
-        conventional.setSystem("County");
+        Channel conventional = new Channel("Airport Ground");
+        conventional.setSystem("County Airport");
         conventional.setSite("Conventional");
         conventional.setRadresGuid(guid);
-        conventional.setDecodeConfiguration(new DecodeConfigNBFM());
+        conventional.setDecodeConfiguration(new DecodeConfigAM());
         AtomicReference<StatsWebNavigationState> state = new AtomicReference<>(
             new StatsWebNavigationState(true, 8090, true, false));
         List<URI> opened = new ArrayList<>();
@@ -433,7 +433,7 @@ class ChannelWebLinkPanelTest
         SwingUtilities.invokeAndWait(() -> {
             ChannelWebLinkPanel panel = new ChannelWebLinkPanel(state::get, opened::add);
             panelReference[0] = panel;
-            panel.receive(new SelectedFrequencyContext(154_310_000L, null, "NBFM", conventional, conventional,
+            panel.receive(new SelectedFrequencyContext(121_900_000L, null, "AM", conventional, conventional,
                 null, ChannelActivitySelectionScope.EXACT, false));
         });
         SwingUtilities.invokeAndWait(() -> {});

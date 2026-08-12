@@ -34,6 +34,8 @@ import io.github.dsheirer.protocol.Protocol;
  */
 public enum TalkgroupFormat
 {
+    AM(1, 0xFFFF,
+        "AM valid value range is 1-65,535"),
     APCO25(0, 0xFFFF,
         "<html>APCO25 talkgroup valid range is 0 to 65,535", true),
     DMR(0, 0xFFFFFF,
@@ -137,6 +139,8 @@ public enum TalkgroupFormat
 
         switch(protocol)
         {
+            case AM:
+                return AM;
             case APCO25:
                 return APCO25;
             case DMR:

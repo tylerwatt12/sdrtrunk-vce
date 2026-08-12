@@ -24,6 +24,16 @@ class StatsWebInteractionUiContractTest
     private static final Path INDEX_HTML = Path.of("stats-web", "index.html");
 
     @Test
+    void presentsAmAsAConventionalWebProtocol() throws Exception
+    {
+        String javascript = source();
+        assertTrue(javascript.contains("11: 'AM'"));
+        assertTrue(javascript.contains("AM: ['AM', 'AM']"));
+        assertTrue(javascript.contains("{ key: 'AM', label: 'AM'"));
+        assertTrue(javascript.contains("value === 'AM' || value.includes('AMPLITUDE MODULATION')"));
+    }
+
+    @Test
     void pausesEveryNewestActivityPageWithABoundedQueue() throws Exception
     {
         String activity = function(source(), "async function renderActivity(scopeParameters, title = 'Activity')");
@@ -298,7 +308,7 @@ class StatsWebInteractionUiContractTest
             html.indexOf("rel=\"stylesheet\""));
         assertTrue(html.contains("id=\"theme-toggle\""));
         assertTrue(html.contains("/assets/app.css?v=26"));
-        assertTrue(html.contains("/assets/app.js?v=36"));
+        assertTrue(html.contains("/assets/app.js?v=37"));
         assertTrue(source.contains("window.localStorage.setItem(THEME_STORAGE_KEY"));
         assertTrue(source.contains("toggle.setAttribute('aria-pressed'"));
         assertTrue(css.contains(":root[data-theme=\"dark\"]"));

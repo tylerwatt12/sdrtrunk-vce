@@ -43,7 +43,7 @@ public enum AliasListFamily
             case P25_CONVENTIONAL, P25_PHASE1, P25_PHASE2 -> P25;
             case DMR -> DMR;
             case NXDN -> NXDN;
-            case NBFM -> NBFM;
+            case AM, NBFM -> NBFM;
             case MPT1327, DCS, FLEETSYNC2, LJ_1200, MDC1200, TAIT_1200 -> null;
         };
     }

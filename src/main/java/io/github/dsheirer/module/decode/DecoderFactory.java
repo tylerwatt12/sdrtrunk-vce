@@ -62,6 +62,9 @@ import io.github.dsheirer.module.decode.mdc1200.MDCMessageFilter;
 import io.github.dsheirer.module.decode.nbfm.DecodeConfigNBFM;
 import io.github.dsheirer.module.decode.nbfm.NBFMDecoder;
 import io.github.dsheirer.module.decode.nbfm.NBFMDecoderState;
+import io.github.dsheirer.module.decode.am.AMDecoder;
+import io.github.dsheirer.module.decode.am.AMDecoderState;
+import io.github.dsheirer.module.decode.am.DecodeConfigAM;
 import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
 import io.github.dsheirer.module.decode.nxdn.NXDNDecoder;
 import io.github.dsheirer.module.decode.nxdn.NXDNDecoderState;
@@ -156,6 +159,9 @@ public class DecoderFactory
         /* Baseband low-pass filter pass and stop frequencies */
         switch(decodeConfig.getDecoderType())
         {
+            case AM:
+                processAM(channel, modules, aliasList, decodeConfig);
+                break;
             case DMR:
                 processDMR(channel, userPreferences, modules, aliasList, (DecodeConfigDMR)decodeConfig,
                     trafficChannelManager, channelDescriptor, initialSourceSampleRate, channelActivityModel);
@@ -183,6 +189,20 @@ public class DecoderFactory
         }
 
         return modules;
+    }
+
+    private static void processAM(Channel channel, List<Module> modules, AliasList aliasList,
+                                  DecodeConfiguration decodeConfig)
+    {
+        if(!(decodeConfig instanceof DecodeConfigAM config))
+        {
+            throw new IllegalArgumentException("Can't create AM decoder - unrecognized decode config type: " +
+                (decodeConfig != null ? decodeConfig.getClass() : "null/empty"));
+        }
+
+        modules.add(new AMDecoder(config));
+        modules.add(new AMDecoderState(channel.getName(), config));
+        modules.add(new AudioModule(aliasList, 0, 60000, false));
     }
 
     /**
@@ -647,6 +667,8 @@ public class DecoderFactory
     {
         switch(decoder)
         {
+            case AM:
+                return new DecodeConfigAM();
             case DMR:
                 return new DecodeConfigDMR();
             case NBFM:
@@ -673,6 +695,8 @@ public class DecoderFactory
         {
             switch(config.getDecoderType())
             {
+                case AM:
+                    return copyAnalogConfiguration((DecodeConfigAM)config, new DecodeConfigAM());
                 case DMR:
                     DecodeConfigDMR originalDMR = (DecodeConfigDMR)config;
                     DecodeConfigDMR copyDMR = new DecodeConfigDMR();
@@ -686,25 +710,7 @@ public class DecoderFactory
                     copyDMR.setTimeslotMap(copiedTimeslotMap);
                     return copyDMR;
                 case NBFM:
-                    DecodeConfigNBFM origNBFM = (DecodeConfigNBFM)config;
-                    DecodeConfigNBFM copyNBFM = new DecodeConfigNBFM();
-                    copyNBFM.setAudioFilter(origNBFM.isAudioFilter());
-                    copyNBFM.setBandwidth(origNBFM.getBandwidth());
-                    copyNBFM.setDeemphasis(origNBFM.getDeemphasis());
-                    copyNBFM.setSquelchHysteresisCloseThreshold(origNBFM.getSquelchHysteresisCloseThreshold());
-                    copyNBFM.setSquelchHysteresisOpenThreshold(origNBFM.getSquelchHysteresisOpenThreshold());
-                    copyNBFM.setSquelchNoiseOpenThreshold(origNBFM.getSquelchNoiseOpenThreshold());
-                    copyNBFM.setSquelchNoiseCloseThreshold(origNBFM.getSquelchNoiseCloseThreshold());
-                    copyNBFM.setSquelchTailRemovalEnabled(origNBFM.isSquelchTailRemovalEnabled());
-                    copyNBFM.setSquelchTailRemovalMs(origNBFM.getSquelchTailRemovalMs());
-                    copyNBFM.setSquelchHeadRemovalMs(origNBFM.getSquelchHeadRemovalMs());
-                    copyNBFM.setLowPassEnabled(origNBFM.isLowPassEnabled());
-                    copyNBFM.setLowPassCutoff(origNBFM.getLowPassCutoff());
-                    copyNBFM.setVoiceEnhanceAmount(origNBFM.getVoiceEnhanceAmount());
-                    copyNBFM.setBassBoostDb(origNBFM.getBassBoostDb());
-                    copyNBFM.setOutputGain(origNBFM.getOutputGain());
-                    copyNBFM.setTalkgroup(origNBFM.getTalkgroup());
-                    return copyNBFM;
+                    return copyAnalogConfiguration((DecodeConfigNBFM)config, new DecodeConfigNBFM());
                 case NXDN:
                     DecodeConfigNXDN origNXDN = (DecodeConfigNXDN)config;
                     DecodeConfigNXDN copyNXDN = new DecodeConfigNXDN();
@@ -743,5 +749,26 @@ public class DecoderFactory
         }
 
         return null;
+    }
+
+    private static <T extends DecodeConfigNBFM> T copyAnalogConfiguration(DecodeConfigNBFM original, T copy)
+    {
+        copy.setAudioFilter(original.isAudioFilter());
+        copy.setBandwidth(original.getBandwidth());
+        copy.setDeemphasis(original.getDeemphasis());
+        copy.setSquelchHysteresisCloseThreshold(original.getSquelchHysteresisCloseThreshold());
+        copy.setSquelchHysteresisOpenThreshold(original.getSquelchHysteresisOpenThreshold());
+        copy.setSquelchNoiseOpenThreshold(original.getSquelchNoiseOpenThreshold());
+        copy.setSquelchNoiseCloseThreshold(original.getSquelchNoiseCloseThreshold());
+        copy.setSquelchTailRemovalEnabled(original.isSquelchTailRemovalEnabled());
+        copy.setSquelchTailRemovalMs(original.getSquelchTailRemovalMs());
+        copy.setSquelchHeadRemovalMs(original.getSquelchHeadRemovalMs());
+        copy.setLowPassEnabled(original.isLowPassEnabled());
+        copy.setLowPassCutoff(original.getLowPassCutoff());
+        copy.setVoiceEnhanceAmount(original.getVoiceEnhanceAmount());
+        copy.setBassBoostDb(original.getBassBoostDb());
+        copy.setOutputGain(original.getOutputGain());
+        copy.setTalkgroup(original.getTalkgroup());
+        return copy;
     }
 }
