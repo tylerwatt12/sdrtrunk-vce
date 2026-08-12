@@ -19,6 +19,17 @@ import org.junit.jupiter.api.Test;
 class StatsApiV1PayloadTest
 {
     @Test
+    void keepsTheDecoderProfileSeparateFromTheNormalizedProtocol()
+    {
+        JsonNode diagnostic = StatsApiV1Payload.present(Map.of(
+            "protocol", "P25 Phase 1",
+            "decoder_profile", "P25 Phase 1 Auto (LSM)"));
+
+        assertEquals("p25", diagnostic.path("protocol").textValue());
+        assertEquals("P25 Phase 1 Auto (LSM)", diagnostic.path("decoder_profile").textValue());
+    }
+
+    @Test
     void presentsDashboardDaySourceActivityWithDelimitedWireUnits()
     {
         JsonNode dashboard = StatsApiV1Payload.present(Map.of(

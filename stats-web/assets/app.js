@@ -6403,8 +6403,7 @@ function liveMessagesPane() {
   const pane = node('div', 'live-details-pane live-messages-pane');
   const toolbar = node('div', 'live-messages-toolbar');
   const selectionLabel = node('strong', 'live-message-selection', 'Select a live row above');
-  const connection = badge('Waiting', 'state-stale');
-  toolbar.append(selectionLabel, connection);
+  toolbar.append(selectionLabel);
   const scroll = node('div', 'live-messages-scroll');
   const table = node('table', 'data-table live-messages-table');
   const head = node('thead');
@@ -6444,11 +6443,6 @@ function liveMessagesPane() {
     });
   };
 
-  const setStatus = (text, className = 'state-stale') => {
-    connection.textContent = text;
-    connection.className = `badge ${className}`;
-  };
-
   const closeStream = () => {
     streamEpoch += 1;
     if (!stream) return;
@@ -6472,14 +6466,9 @@ function liveMessagesPane() {
   const sync = () => {
     if (!shouldRun()) {
       closeStream();
-      if (!selection) setStatus('Waiting');
-      else if (!selection.diagnosticFrequencyHz) setStatus('Unavailable');
-      else if (paused) setStatus('Paused');
-      else setStatus(document.hidden ? 'Hidden' : 'Paused');
       return;
     }
     if (stream) return;
-    setStatus('Connecting');
     const epoch = ++streamEpoch;
     const parameters = {
       configuration_id: selection.configurationId,
@@ -6498,18 +6487,11 @@ function liveMessagesPane() {
           order.push(message.message_id);
         }
       });
-      setStatus(snapshot.bound ? 'Live' : 'Waiting', snapshot.bound ? 'state-current' : 'state-stale');
       render();
     });
     stream.addEventListener('decode_message', (event) => {
       if (epoch === streamEpoch) addMessage(JSON.parse(event.data));
     });
-    stream.onopen = () => {
-      if (epoch === streamEpoch) setStatus('Live', 'state-current');
-    };
-    stream.onerror = () => {
-      if (epoch === streamEpoch) setStatus('Reconnecting');
-    };
   };
 
   const select = (nextSelection) => {
@@ -6628,7 +6610,7 @@ function liveChannelPane() {
       ['Latency', Number.isFinite(signalLatencyMs) ? `${Math.round(signalLatencyMs)} ms` : '—']
     ]);
     updateDiagnosticReadouts(symbolDiagnostic.readouts, [
-      ['Protocol', state?.protocol || '—']
+      ['Decoder', state?.decoder_profile || state?.protocol || '—']
     ]);
   };
 
@@ -7268,6 +7250,8 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
   const waterfall = plot('Waterfall', 'Tuner spectrum history', 'tuner-spectrum-waterfall');
   const spectrumActiveFlags = node('div', 'tuner-spectrum-active-flags');
   const waterfallActiveFlags = node('div', 'tuner-spectrum-active-flags');
+  waterfallActiveFlags.hidden = true;
+  waterfallActiveFlags.setAttribute('aria-hidden', 'true');
   const activeFlagLayers = [spectrumActiveFlags, waterfallActiveFlags];
   spectrum.host.insertBefore(spectrumActiveFlags, spectrum.guide);
   waterfall.host.insertBefore(waterfallActiveFlags, waterfall.guide);
@@ -7999,6 +7983,7 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
   }
 
   function onPlotPointerMove(event) {
+    waterfallActiveFlags.hidden = event.currentTarget !== waterfall.canvas;
     const rect = event.currentTarget.getBoundingClientRect();
     const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
     const yRatio = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height));
@@ -8031,6 +8016,7 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
   }
 
   function onPlotPointerLeave(event) {
+    if (event.currentTarget === waterfall.canvas) waterfallActiveFlags.hidden = true;
     if (!drag || drag.pointerId !== event.pointerId) hideCursor();
   }
 
@@ -8113,13 +8099,16 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
     const byFrequency = new Map();
     activeChannelTables.forEach((table) => {
       const tableChannelName = String(table?.channel_name || '').trim();
+      const tableSystemName = String(table?.system_name || '').trim();
+      const tableSiteName = String(table?.site_name || '').trim();
       const tableTitle = String(table?.title || '').trim();
       (Array.isArray(table?.rows) ? table.rows : []).forEach((row) => {
         const frequencyHz = Number(row?.frequency_hz);
         const status = tunerActivityStatus(row);
         if (!Number.isFinite(frequencyHz) || frequencyHz < viewport.startHz ||
             frequencyHz > viewport.endHz || !status) return;
-        const decorated = { ...row, status, frequencyHz, tableId: table.table_id, tableChannelName, tableTitle };
+        const decorated = { ...row, status, frequencyHz, tableId: table.table_id, tableChannelName,
+          tableSystemName, tableSiteName, tableTitle };
         let carrier = byFrequency.get(frequencyHz);
         if (!carrier) {
           carrier = { frequencyHz, status, rows: [] };
@@ -8135,7 +8124,9 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
 
   function activeChannelLabel(row) {
     if (row.status === 'CONTROL') {
-      return row.tableTitle || row.tableChannelName || 'Control';
+      const configured = [...new Set([row.tableSystemName, row.tableSiteName, row.tableChannelName]
+        .filter(Boolean))];
+      return configured.join(' · ') || row.tableTitle || 'Control channel';
     }
     return row.target_alias || row.target_id || row.channel_name || row.lcn || row.tableChannelName || row.status;
   }
@@ -8212,18 +8203,21 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
     if (hoverFlag) hideCursor();
     activeFlagSignature = signature;
     const createFlags = (waterfallLayer) => carriers.map((carrier) => {
-      const flag = node('button', `tuner-spectrum-active-flag status-${carrier.status.toLowerCase()}`);
-      flag.type = 'button';
+      const flag = node(waterfallLayer ? 'span' : 'button',
+        `tuner-spectrum-active-flag status-${carrier.status.toLowerCase()}`);
+      if (!waterfallLayer) flag.type = 'button';
       flag.style.left = `${((carrier.frequencyHz - viewport.startHz) / visibleSpanHz * 100).toFixed(3)}%`;
       if (waterfallLayer) flag.style.width = `${waterfallFlagWidth.toFixed(2)}px`;
       flag.style.zIndex = String(TUNER_ACTIVITY_PRIORITY[carrier.status]);
       const details = activeCarrierDescription(carrier).replaceAll('\n', ', ');
-      flag.setAttribute('aria-label', `${TUNER_ACTIVITY_LABELS[carrier.status]}, ${
-        (carrier.frequencyHz / 1_000_000).toFixed(6)} MHz${details ? `, ${details}` : ''}`);
-      flag.addEventListener('pointerenter', () => showActiveFlag(carrier, flag));
-      flag.addEventListener('pointerleave', () => hideActiveFlag(flag));
-      flag.addEventListener('focus', () => showActiveFlag(carrier, flag));
-      flag.addEventListener('blur', () => hideActiveFlag(flag));
+      if (!waterfallLayer) {
+        flag.setAttribute('aria-label', `${TUNER_ACTIVITY_LABELS[carrier.status]}, ${
+          (carrier.frequencyHz / 1_000_000).toFixed(6)} MHz${details ? `, ${details}` : ''}`);
+        flag.addEventListener('pointerenter', () => showActiveFlag(carrier, flag));
+        flag.addEventListener('pointerleave', () => hideActiveFlag(flag));
+        flag.addEventListener('focus', () => showActiveFlag(carrier, flag));
+        flag.addEventListener('blur', () => hideActiveFlag(flag));
+      }
       return flag;
     });
     spectrumActiveFlags.replaceChildren(...createFlags(false));

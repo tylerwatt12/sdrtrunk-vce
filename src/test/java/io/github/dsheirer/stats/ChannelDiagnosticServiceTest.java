@@ -152,6 +152,8 @@ class ChannelDiagnosticServiceTest
             assertEquals(ChannelDiagnosticService.OpenStatus.OPEN, result.status());
             await(() -> decoder.attachmentAttempts() >= 2 &&
                 "live".equals(result.session().state().symbolsState()));
+            assertEquals("DMR", result.session().state().protocol());
+            assertEquals("Test", result.session().state().decoderProfile());
             assertEquals(1, decoder.activeObservers());
             assertEquals(1, service.activeProducerCount());
         }

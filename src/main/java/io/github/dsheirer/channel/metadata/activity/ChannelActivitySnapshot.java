@@ -16,13 +16,16 @@ import java.util.stream.Collectors;
 /**
  * Immutable renderer-neutral snapshot of one Systems activity table.
  */
-public record ChannelActivitySnapshot(String tableId, String title, String channelName, String configurationId,
-                                      String guid, boolean closeable, boolean controlActive, List<Row> rows)
+public record ChannelActivitySnapshot(String tableId, String title, String systemName, String siteName,
+                                      String channelName, String configurationId, String guid, boolean closeable,
+                                      boolean controlActive, List<Row> rows)
 {
     public ChannelActivitySnapshot
     {
         tableId = tableId != null ? tableId : "";
         title = title != null ? title : "";
+        systemName = systemName != null ? systemName : "";
+        siteName = siteName != null ? siteName : "";
         channelName = channelName != null ? channelName : "";
         configurationId = configurationId != null ? configurationId : "";
         rows = rows != null ? List.copyOf(rows) : List.of();
@@ -35,6 +38,7 @@ public record ChannelActivitySnapshot(String tableId, String title, String chann
         String guid = owner != null && owner.hasRadresGuid() ? owner.getRadresGuid() : null;
         List<Row> rows = table != null ? table.getRows().stream().map(Row::from).toList() : List.of();
         return new ChannelActivitySnapshot(tableId, table != null ? table.getTitle() : "",
+            owner != null ? owner.getSystem() : "", owner != null ? owner.getSite() : "",
             owner != null ? owner.getName() : "Conventional", owner != null ? owner.getConfigurationId() : null,
             guid, table != null && table.isCloseable(), table != null && table.isControlActive(), rows);
     }

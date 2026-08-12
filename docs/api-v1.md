@@ -165,6 +165,9 @@ Supported subscription names are `channel_activity`, `decode_events`, `decode_me
 as the corresponding REST scopes. `decode_messages` accepts exactly `configuration_id` and required positive
 `frequency_hz`; `timeslot` is available for decoder events and channel diagnostics, but not decoder messages. Tuner
 viewport changes update the existing logical subscription without reconnecting or rebuilding its shared source FFT.
+Channel-activity table snapshots include protocol-neutral `system_name`, `site_name`, and `channel_name` context.
+Channel diagnostic state keeps the normalized `protocol` separate from the human-readable `decoder_profile`, which
+may include the currently selected demodulator profile for an automatic decoder.
 
 The stream uses a small fixed binary envelope around JSON event payloads and existing binary diagnostic frames.
 Initial channel snapshots are capped at 128 tables, 256 rows per table, 2,048 rows total, and 1 MiB after encoding.

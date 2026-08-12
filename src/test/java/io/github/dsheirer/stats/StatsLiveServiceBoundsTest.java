@@ -119,6 +119,8 @@ class StatsLiveServiceBoundsTest
             }
 
             Map<String,Object> snapshot = service.snapshot();
+            assertEquals("System", tables(service).getFirst().get("system_name"));
+            assertEquals("Site", tables(service).getFirst().get("site_name"));
             assertEquals(StatsLiveService.MAXIMUM_TOTAL_LIVE_ROWS, snapshot.get("rows_included"));
             assertEquals((long)tableCount * StatsLiveService.MAXIMUM_ROWS_PER_TABLE,
                 snapshot.get("rows_total"));
@@ -138,8 +140,8 @@ class StatsLiveServiceBoundsTest
 
     private static ChannelActivityEvent activity(String tableId, List<ChannelActivitySnapshot.Row> rows)
     {
-        ChannelActivitySnapshot snapshot = new ChannelActivitySnapshot(tableId, "Live", "Control", null,
-            null, false, true, rows);
+        ChannelActivitySnapshot snapshot = new ChannelActivitySnapshot(tableId, "Live", "System", "Site",
+            "Control", null, null, false, true, rows);
         return new ChannelActivityEvent(ChannelActivityEvent.Operation.UPSERT, snapshot);
     }
 

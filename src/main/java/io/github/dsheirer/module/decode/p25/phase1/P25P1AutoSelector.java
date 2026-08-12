@@ -12,15 +12,16 @@
 package io.github.dsheirer.module.decode.p25.phase1;
 
 /**
- * Deterministic sample-count based selector for the P25 Phase 1 C4FM and LSM decoders. The selector contains no
- * timers, locks, queues or allocation in its sample/message methods.
+ * Deterministic sample-count selector for the P25 Phase 1 C4FM and LSM decoders. Every acquisition evaluates both
+ * decoders for the same fixed duration. This class has no timers, locks, queues or allocation in its callback methods.
  */
 class P25P1AutoSelector
 {
-    private static final double TRIAL_SECONDS = 0.75;
+    private static final double TRIAL_SECONDS = 0.5;
     private static final double SIGNAL_LOSS_SECONDS = 3.0;
     private static final double MINIMUM_HOLD_SECONDS = 10.0;
-    private static final int EARLY_LOCK_VALID_MESSAGES = 2;
+    private static final int ASSUMED_FRAME_BITS = 196;
+    private static final int SCORE_SMOOTHING_FRAMES = 4;
 
     private Phase mPhase;
     private Modulation mPreferred;
@@ -31,9 +32,11 @@ class P25P1AutoSelector
     private long mMinimumHoldSamples;
     private long mPhaseSamples;
     private long mLockedSamples;
-    private long mSamplesSinceValidMessage;
-    private int mPreferredValidMessages;
-    private int mActiveValidMessages;
+    private long mSamplesSinceValidFrame;
+    private int mFirstValidFrames;
+    private int mFirstFailures;
+    private int mActiveValidFrames;
+    private int mActiveFailures;
 
     P25P1AutoSelector(double sampleRate, Modulation preferred)
     {
@@ -58,12 +61,11 @@ class P25P1AutoSelector
         mPreferred = fixed(preferred);
         mActive = mPreferred;
         mPreviousLocked = null;
-        mPhase = Phase.ACQUIRE_PREFERRED;
-        mPhaseSamples = 0;
-        mLockedSamples = 0;
-        mSamplesSinceValidMessage = 0;
-        mPreferredValidMessages = 0;
-        mActiveValidMessages = 0;
+        mPhase = Phase.ACQUIRE_FIRST;
+        mFirstValidFrames = 0;
+        mFirstFailures = 0;
+        clearTrial();
+        clearLock();
     }
 
     Modulation getActive()
@@ -76,36 +78,50 @@ class P25P1AutoSelector
         return mPhase == Phase.LOCKED;
     }
 
-    /**
-     * Records a decoded message and indicates if it may be forwarded to the processing chain.
-     */
-    boolean receiveMessage(Modulation modulation, boolean valid)
+    boolean receiveFrame(Modulation modulation, boolean valid)
     {
         if(modulation != mActive)
         {
             return false;
         }
 
-        if(valid)
+        if(mPhase == Phase.LOCKED)
         {
-            mSamplesSinceValidMessage = 0;
-
-            if(mPhase != Phase.LOCKED)
+            if(valid)
             {
-                mActiveValidMessages++;
-
-                if(mActiveValidMessages >= EARLY_LOCK_VALID_MESSAGES)
-                {
-                    lock(mActive);
-                }
+                mSamplesSinceValidFrame = 0;
             }
+        }
+        else if(valid)
+        {
+            mActiveValidFrames++;
+        }
+        else
+        {
+            mActiveFailures++;
+        }
+
+        return mPhase == Phase.LOCKED;
+    }
+
+    boolean receiveSyncLoss(Modulation modulation, int bitsProcessed)
+    {
+        if(modulation != mActive)
+        {
+            return false;
+        }
+
+        if(mPhase != Phase.LOCKED && bitsProcessed > 0)
+        {
+            long missedFrames = ((long)bitsProcessed + ASSUMED_FRAME_BITS - 1) / ASSUMED_FRAME_BITS;
+            mActiveFailures += (int)Math.min(Integer.MAX_VALUE - mActiveFailures, missedFrames);
         }
 
         return mPhase == Phase.LOCKED;
     }
 
     /**
-     * Advances the selector after one buffer was processed.
+     * Advances the selector after one sample buffer was processed.
      *
      * @return a different decoder to activate, or null when the current decoder remains active
      */
@@ -121,9 +137,9 @@ class P25P1AutoSelector
         if(mPhase == Phase.LOCKED)
         {
             mLockedSamples += sampleCount;
-            mSamplesSinceValidMessage += sampleCount;
+            mSamplesSinceValidFrame += sampleCount;
 
-            if(mLockedSamples >= mMinimumHoldSamples && mSamplesSinceValidMessage >= mSignalLossSamples)
+            if(mLockedSamples >= mMinimumHoldSamples && mSamplesSinceValidFrame >= mSignalLossSamples)
             {
                 mPreviousLocked = mActive;
                 return beginTrial(alternate(mActive), Phase.VERIFY_ALTERNATE);
@@ -139,36 +155,41 @@ class P25P1AutoSelector
 
         return switch(mPhase)
         {
-            case ACQUIRE_PREFERRED -> {
-                mPreferredValidMessages = mActiveValidMessages;
-                yield beginTrial(alternate(mPreferred), Phase.ACQUIRE_ALTERNATE);
-            }
-            case ACQUIRE_ALTERNATE -> finishAcquisition();
+            case ACQUIRE_FIRST -> beginSecondTrial();
+            case ACQUIRE_SECOND -> finishAcquisition();
             case VERIFY_ALTERNATE -> finishVerification();
             case LOCKED -> null;
         };
     }
 
+    private Modulation beginSecondTrial()
+    {
+        mFirstValidFrames = mActiveValidFrames;
+        mFirstFailures = mActiveFailures;
+        return beginTrial(alternate(mActive), Phase.ACQUIRE_SECOND);
+    }
+
     private Modulation finishAcquisition()
     {
-        if(mPreferredValidMessages == 0 && mActiveValidMessages == 0)
+        if(mFirstValidFrames == 0 && mActiveValidFrames == 0)
         {
-            mPreferredValidMessages = 0;
-            return beginTrial(mPreferred, Phase.ACQUIRE_PREFERRED);
+            return beginTrial(mPreferred, Phase.ACQUIRE_FIRST);
         }
 
-        Modulation winner = mActiveValidMessages > mPreferredValidMessages ? mActive : mPreferred;
-        Modulation previous = mActive;
-        lock(winner);
-        return winner != previous ? winner : null;
+        Modulation winner = score(mActiveValidFrames, mActiveFailures) >
+            score(mFirstValidFrames, mFirstFailures) ? mActive : alternate(mActive);
+        return lock(winner);
     }
 
     private Modulation finishVerification()
     {
-        Modulation winner = mActiveValidMessages > 0 ? mActive : mPreviousLocked;
-        Modulation previous = mActive;
-        lock(winner);
-        return winner != previous ? winner : null;
+        Modulation winner = mActiveValidFrames > 0 ? mActive : mPreviousLocked;
+        return lock(winner);
+    }
+
+    private static int score(int validFrames, int failures)
+    {
+        return validFrames * 1_000 / Math.max(1, validFrames + failures + SCORE_SMOOTHING_FRAMES);
     }
 
     private Modulation beginTrial(Modulation modulation, Phase phase)
@@ -176,20 +197,32 @@ class P25P1AutoSelector
         Modulation previous = mActive;
         mActive = fixed(modulation);
         mPhase = phase;
-        mPhaseSamples = 0;
-        mActiveValidMessages = 0;
+        clearTrial();
         return mActive != previous ? mActive : null;
     }
 
-    private void lock(Modulation modulation)
+    private Modulation lock(Modulation modulation)
     {
+        Modulation previous = mActive;
         mActive = fixed(modulation);
         mPhase = Phase.LOCKED;
-        mPhaseSamples = 0;
-        mLockedSamples = 0;
-        mSamplesSinceValidMessage = 0;
-        mActiveValidMessages = 0;
         mPreviousLocked = null;
+        clearTrial();
+        clearLock();
+        return mActive != previous ? mActive : null;
+    }
+
+    private void clearTrial()
+    {
+        mPhaseSamples = 0;
+        mActiveValidFrames = 0;
+        mActiveFailures = 0;
+    }
+
+    private void clearLock()
+    {
+        mLockedSamples = 0;
+        mSamplesSinceValidFrame = 0;
     }
 
     private static Modulation alternate(Modulation modulation)
@@ -204,8 +237,8 @@ class P25P1AutoSelector
 
     private enum Phase
     {
-        ACQUIRE_PREFERRED,
-        ACQUIRE_ALTERNATE,
+        ACQUIRE_FIRST,
+        ACQUIRE_SECOND,
         LOCKED,
         VERIFY_ALTERNATE
     }

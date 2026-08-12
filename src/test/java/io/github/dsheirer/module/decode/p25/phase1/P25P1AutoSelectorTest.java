@@ -28,43 +28,80 @@ import org.junit.jupiter.api.Test;
 class P25P1AutoSelectorTest
 {
     @Test
-    void locksThePreferredDecoderAfterDeterministicEvidence()
+    void testsBothDecodersBeforeSelectingThePreferredDecoder()
     {
         P25P1AutoSelector selector = new P25P1AutoSelector(1_000, Modulation.C4FM);
 
-        assertFalse(selector.receiveMessage(Modulation.C4FM, true));
-        assertTrue(selector.receiveMessage(Modulation.C4FM, true));
+        assertFalse(selector.receiveFrame(Modulation.C4FM, true));
+        assertFalse(selector.receiveFrame(Modulation.C4FM, true));
+        assertEquals(Modulation.CQPSK, selector.receiveSamples(500));
+        assertFalse(selector.isLocked(), "valid preferred evidence must not skip the LSM trial");
+        assertFalse(selector.receiveFrame(Modulation.CQPSK, true));
+        assertEquals(Modulation.C4FM, selector.receiveSamples(500));
         assertTrue(selector.isLocked());
         assertEquals(Modulation.C4FM, selector.getActive());
-        assertNull(selector.receiveSamples(9_999));
     }
 
     @Test
-    void selectsTheAlternateDecoderWhenThePreferredDecoderHasNoValidMessages()
+    void selectsTheBetterAlternateEvenWhenThePreferredDecoderIsValid()
     {
         P25P1AutoSelector selector = new P25P1AutoSelector(1_000, Modulation.C4FM);
 
-        assertEquals(Modulation.CQPSK, selector.receiveSamples(750));
-        assertFalse(selector.receiveMessage(Modulation.CQPSK, true));
-        assertTrue(selector.receiveMessage(Modulation.CQPSK, true));
+        selector.receiveFrame(Modulation.C4FM, true);
+        selector.receiveFrame(Modulation.C4FM, true);
+        for(int count = 0; count < 4; count++)
+        {
+            selector.receiveFrame(Modulation.C4FM, false);
+        }
+
+        assertEquals(Modulation.CQPSK, selector.receiveSamples(500));
+        for(int count = 0; count < 4; count++)
+        {
+            selector.receiveFrame(Modulation.CQPSK, true);
+        }
+
+        assertNull(selector.receiveSamples(500));
         assertTrue(selector.isLocked());
         assertEquals(Modulation.CQPSK, selector.getActive());
     }
 
     @Test
-    void hysteresisRequiresHoldAndLossBeforeTryingTheAlternateDecoder()
+    void syncLossContributesToTheDeterministicQualityComparison()
     {
         P25P1AutoSelector selector = new P25P1AutoSelector(1_000, Modulation.C4FM);
-        selector.receiveMessage(Modulation.C4FM, true);
-        selector.receiveMessage(Modulation.C4FM, true);
 
-        assertNull(selector.receiveSamples(9_999));
-        assertEquals(Modulation.CQPSK, selector.receiveSamples(1));
+        for(int count = 0; count < 4; count++) selector.receiveFrame(Modulation.C4FM, true);
+        selector.receiveSyncLoss(Modulation.C4FM, 1_960);
+        assertEquals(Modulation.CQPSK, selector.receiveSamples(500));
+        for(int count = 0; count < 3; count++) selector.receiveFrame(Modulation.CQPSK, true);
+
+        assertNull(selector.receiveSamples(500));
+        assertTrue(selector.isLocked());
+        assertEquals(Modulation.CQPSK, selector.getActive());
+    }
+
+    @Test
+    void hysteresisKeepsTheIncumbentWhenTheAlternateCannotDecodeAfterSustainedLoss()
+    {
+        P25P1AutoSelector selector = lockedC4fmSelector();
+
+        assertEquals(Modulation.CQPSK, selector.receiveSamples(10_000));
         assertFalse(selector.isLocked());
-
-        assertEquals(Modulation.C4FM, selector.receiveSamples(750));
+        assertEquals(Modulation.C4FM, selector.receiveSamples(500));
         assertTrue(selector.isLocked());
         assertEquals(Modulation.C4FM, selector.getActive());
+    }
+
+    @Test
+    void hysteresisSwitchesWhenTheAlternateDecodesAfterSustainedLoss()
+    {
+        P25P1AutoSelector selector = lockedC4fmSelector();
+
+        assertEquals(Modulation.CQPSK, selector.receiveSamples(10_000));
+        for(int count = 0; count < 4; count++) selector.receiveFrame(Modulation.CQPSK, true);
+        assertNull(selector.receiveSamples(500));
+        assertTrue(selector.isLocked());
+        assertEquals(Modulation.CQPSK, selector.getActive());
     }
 
     @Test
@@ -72,10 +109,22 @@ class P25P1AutoSelectorTest
     {
         P25P1AutoSelector selector = new P25P1AutoSelector(1_000, Modulation.CQPSK);
 
-        assertEquals(Modulation.C4FM, selector.receiveSamples(750));
-        assertEquals(Modulation.CQPSK, selector.receiveSamples(750));
-        assertEquals(Modulation.C4FM, selector.receiveSamples(750));
+        assertEquals(Modulation.C4FM, selector.receiveSamples(500));
+        assertEquals(Modulation.CQPSK, selector.receiveSamples(500));
+        assertEquals(Modulation.C4FM, selector.receiveSamples(500));
         assertFalse(selector.isLocked());
+    }
+
+    private static P25P1AutoSelector lockedC4fmSelector()
+    {
+        P25P1AutoSelector selector = new P25P1AutoSelector(1_000, Modulation.C4FM);
+        for(int count = 0; count < 4; count++) selector.receiveFrame(Modulation.C4FM, true);
+        selector.receiveSamples(500);
+        selector.receiveFrame(Modulation.CQPSK, true);
+        selector.receiveSamples(500);
+        assertTrue(selector.isLocked());
+        assertEquals(Modulation.C4FM, selector.getActive());
+        return selector;
     }
 
     @Test

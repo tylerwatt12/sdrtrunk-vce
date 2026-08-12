@@ -15,6 +15,7 @@ import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.channel.state.DecoderStateEvent;
 import io.github.dsheirer.channel.state.IDecoderStateEventProvider;
 import io.github.dsheirer.message.IMessage;
+import io.github.dsheirer.message.SyncLossMessage;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.FeedbackDecoder;
 import io.github.dsheirer.module.decode.p25.phase1.message.P25P1Message;
@@ -104,7 +105,20 @@ public class P25P1DecoderAuto extends FeedbackDecoder implements IByteBufferProv
     private void receive(Modulation modulation, IMessage message)
     {
         boolean wasLocked = mSelector.isLocked();
-        boolean forward = mSelector.receiveMessage(modulation, isSelectionEvidence(message));
+        boolean forward;
+
+        if(message instanceof P25P1Message)
+        {
+            forward = mSelector.receiveFrame(modulation, message.isValid());
+        }
+        else if(message instanceof SyncLossMessage syncLoss)
+        {
+            forward = mSelector.receiveSyncLoss(modulation, syncLoss.getBitsProcessed());
+        }
+        else
+        {
+            forward = mSelector.isLocked() && mSelector.getActive() == modulation;
+        }
 
         if(!wasLocked && mSelector.isLocked())
         {
@@ -196,7 +210,8 @@ public class P25P1DecoderAuto extends FeedbackDecoder implements IByteBufferProv
     @Override
     public String getProtocolDescription()
     {
-        return "P25 Phase 1 Auto (" + mConfiguration.getEffectiveModulation() + ")";
+        return "P25 Phase 1 Auto (" +
+            (mConfiguration.getEffectiveModulation() == Modulation.CQPSK ? "LSM" : "C4FM") + ")";
     }
 
     @Override

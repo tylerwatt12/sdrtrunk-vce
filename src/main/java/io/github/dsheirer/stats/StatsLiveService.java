@@ -364,6 +364,8 @@ final class StatsLiveService implements AutoCloseable
         LinkedHashMap<String,Object> table = new LinkedHashMap<>();
         table.put("table_id", boundedText(snapshot.tableId(), MAXIMUM_LIVE_TEXT_LENGTH));
         table.put("title", boundedText(snapshot.title(), MAXIMUM_LIVE_TEXT_LENGTH));
+        table.put("system_name", boundedText(snapshot.systemName(), MAXIMUM_LIVE_TEXT_LENGTH));
+        table.put("site_name", boundedText(snapshot.siteName(), MAXIMUM_LIVE_TEXT_LENGTH));
         table.put("channel_name", boundedText(snapshot.channelName(), MAXIMUM_LIVE_TEXT_LENGTH));
         putText(table, "configuration_id", snapshot.configurationId(), MAXIMUM_LIVE_TEXT_LENGTH);
         putText(table, "guid", snapshot.guid(), MAXIMUM_LIVE_TEXT_LENGTH);

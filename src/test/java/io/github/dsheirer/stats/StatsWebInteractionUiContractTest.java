@@ -506,8 +506,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(html.indexOf("localStorage.getItem('sdrtrunk_theme')") <
             html.indexOf("rel=\"stylesheet\""));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=45"));
-        assertTrue(html.contains("/assets/app.js?v=66"));
+        assertTrue(html.contains("/assets/app.css?v=46"));
+        assertTrue(html.contains("/assets/app.js?v=67"));
         assertTrue(source.contains("window.localStorage.setItem(THEME_STORAGE_KEY"));
         assertTrue(source.contains("toggle.setAttribute('aria-pressed'"));
         assertTrue(css.contains(":root[data-theme=\"dark\"]"));
@@ -689,7 +689,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(channel.contains("let symbolSequence = 0"));
         assertTrue(channel.contains("['Center'"));
         assertTrue(channel.contains("['Peak'"));
-        assertTrue(channel.contains("['Protocol'"));
+        assertTrue(channel.contains("['Decoder', state?.decoder_profile || state?.protocol || '—']"));
         assertFalse(channel.contains("['Span'"));
         assertFalse(channel.contains("['Bins'"));
         assertFalse(channel.contains("['Selected TS'"));
@@ -818,8 +818,11 @@ class StatsWebInteractionUiContractTest
         assertTrue(activity.contains("liveChannelActivityTables"));
         assertTrue(subscribeActivity.contains("invokeLiveSubscriber(subscriber, 'snapshot'"));
         assertTrue(tuner.contains("const tableChannelName = String(table?.channel_name || '').trim()"));
+        assertTrue(tuner.contains("const tableSystemName = String(table?.system_name || '').trim()"));
+        assertTrue(tuner.contains("const tableSiteName = String(table?.site_name || '').trim()"));
         assertTrue(tuner.contains("const tableTitle = String(table?.title || '').trim()"));
-        assertTrue(tuner.contains("row.tableTitle || row.tableChannelName || 'Control'"));
+        assertTrue(tuner.contains("[row.tableSystemName, row.tableSiteName, row.tableChannelName]"));
+        assertTrue(tuner.contains("configured.join(' · ') || row.tableTitle || 'Control channel'"));
         assertFalse(tuner.contains("`${row.tableChannelName} · Control`"));
         assertTrue(tuner.contains("snapInput.type = 'checkbox'"));
         assertTrue(tuner.contains("snapInput.checked = true"));
@@ -865,6 +868,10 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("waterfallPlotWidth * TUNER_CHANNEL_VISUAL_BANDWIDTH_HZ / visibleSpanHz"));
         assertTrue(tuner.contains("if (waterfallLayer) flag.style.width"));
         assertTrue(tuner.contains("waterfallChannelsInput.checked ? createFlags(true) : []"));
+        assertTrue(tuner.contains("waterfallActiveFlags.hidden = event.currentTarget !== waterfall.canvas"));
+        assertTrue(tuner.contains("if (event.currentTarget === waterfall.canvas) waterfallActiveFlags.hidden = true"));
+        assertTrue(tuner.contains("node(waterfallLayer ? 'span' : 'button'"));
+        assertTrue(tuner.contains("if (!waterfallLayer) flag.type = 'button'"));
         assertTrue(tuner.contains("flag.addEventListener('pointerenter'"));
         assertTrue(tuner.contains("flag.addEventListener('focus'"));
         assertTrue(tuner.contains("showActiveFlag(carrier, flag)"));
@@ -936,6 +943,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(binary.contains("return close();"));
         assertTrue(css.contains(".tuner-spectrum-waterfall .tuner-spectrum-active-flag {"));
         assertTrue(css.contains("height: 100%;"));
+        assertTrue(css.contains("pointer-events: none;"));
     }
 
     @Test
@@ -958,6 +966,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(events.contains("channelController.setPaused(paused)"));
         assertTrue(messages.contains("active && !collapsed && !paused && !document.hidden"));
         assertTrue(messages.contains("setPaused(value) { paused = value; sync(); }"));
+        assertFalse(messages.contains("badge('Waiting'"));
+        assertFalse(messages.contains("setStatus("));
         assertTrue(channel.contains("active && !collapsed && !paused && !document.hidden"));
         assertTrue(channel.contains("setPaused(value) { paused = value; sync(); }"));
     }

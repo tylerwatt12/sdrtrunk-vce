@@ -2108,12 +2108,7 @@ body[data-view="live"] .channel-diagnostic-readouts {
   border-radius: 0;
   box-shadow: none;
   opacity: 0.3;
-}
-
-.tuner-spectrum-waterfall .tuner-spectrum-active-flag:hover,
-.tuner-spectrum-waterfall .tuner-spectrum-active-flag:focus-visible {
-  opacity: 0.72;
-  outline-offset: -2px;
+  pointer-events: none;
 }
 
 .tuner-spectrum-active-flag.status-encrypted,

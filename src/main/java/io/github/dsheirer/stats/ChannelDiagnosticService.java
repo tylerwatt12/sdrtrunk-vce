@@ -320,6 +320,7 @@ public final class ChannelDiagnosticService implements AutoCloseable
     public record State(long revision, long generation, String state, String reason,
                         String signalState, String signalReason, String symbolsState, String symbolsReason,
                         long frequencyHz, long sampleRateHz, Integer timeslot, String protocol,
+                        String decoderProfile,
                         int fftSize, int signalFramesPerSecond, int symbolBatchSize, int maximumVisibleSymbols)
     {
     }
@@ -397,7 +398,7 @@ public final class ChannelDiagnosticService implements AutoCloseable
             mScope = scope;
             mState = state(0, "waiting", "Waiting for the selected channel to become active.",
                 "waiting", "Waiting for signal data.", "waiting", "Waiting for symbol data.",
-                scope.frequencyHz(), 0, "", 0);
+                scope.frequencyHz(), 0, "", "", 0);
         }
 
         private Scope scope()
@@ -494,7 +495,7 @@ public final class ChannelDiagnosticService implements AutoCloseable
             {
                 mState = state(0, "waiting", "Waiting for the selected channel to become active.",
                     "waiting", "Waiting for signal data.", "waiting", "Waiting for symbol data.",
-                    mScope.frequencyHz(), 0, "", 0);
+                    mScope.frequencyHz(), 0, "", "", 0);
                 return;
             }
 
@@ -504,7 +505,7 @@ public final class ChannelDiagnosticService implements AutoCloseable
                 mState = state(0, "unsupported", "Channel diagnostics are not available for this channel.",
                     "unsupported", "Signal is not available for this channel.",
                     "unsupported", "Symbols are not available for this decoder.", info.frequencyHz(),
-                    info.sampleRateHz(), info.protocol(), 0);
+                    info.sampleRateHz(), info.protocol(), info.decoderProfile(), 0);
                 return;
             }
 
@@ -525,7 +526,7 @@ public final class ChannelDiagnosticService implements AutoCloseable
                     info.symbolsSupported() ? "unavailable" : "unsupported",
                     info.symbolsSupported() ? "Symbol diagnostics could not be started." :
                         "Symbols are not available for this decoder.",
-                    info.frequencyHz(), info.sampleRateHz(), info.protocol(), info.fftSize());
+                    info.frequencyHz(), info.sampleRateHz(), info.protocol(), info.decoderProfile(), info.fftSize());
                 return;
             }
 
@@ -534,7 +535,7 @@ public final class ChannelDiagnosticService implements AutoCloseable
                 mRetryProducer = true;
                 mState = state(0, "capacity", "Too many different channels are already being viewed.",
                     "waiting", "Waiting for diagnostic capacity.", "waiting", "Waiting for diagnostic capacity.",
-                    info.frequencyHz(), info.sampleRateHz(), info.protocol(), info.fftSize());
+                    info.frequencyHz(), info.sampleRateHz(), info.protocol(), info.decoderProfile(), info.fftSize());
                 return;
             }
 
@@ -553,15 +554,15 @@ public final class ChannelDiagnosticService implements AutoCloseable
             mState = state(producer.generation(), producer.isLive() ? "live" : "unavailable",
                 producer.isLive() ? "" : "Channel diagnostics could not be started.",
                 producer.signalState(), producer.signalReason(), producer.symbolsState(), producer.symbolsReason(),
-                info.frequencyHz(), info.sampleRateHz(), info.protocol(), info.fftSize());
+                info.frequencyHz(), info.sampleRateHz(), info.protocol(), info.decoderProfile(), info.fftSize());
         }
 
         private State state(long generation, String state, String reason, String signalState, String signalReason,
                             String symbolsState, String symbolsReason, long frequency, long sampleRate,
-                            String protocol, int fftSize)
+                            String protocol, String decoderProfile, int fftSize)
         {
             return new State(++mStateRevision, generation, state, reason, signalState, signalReason, symbolsState,
-                symbolsReason, frequency, sampleRate, mScope.timeslot(), protocol, fftSize,
+                symbolsReason, frequency, sampleRate, mScope.timeslot(), protocol, decoderProfile, fftSize,
                 SIGNAL_FRAMES_PER_SECOND, SYMBOL_BATCH_SIZE, MAXIMUM_VISIBLE_SYMBOLS);
         }
 
@@ -596,16 +597,18 @@ public final class ChannelDiagnosticService implements AutoCloseable
             Math.round(source.getSampleRate()) : 0;
         boolean signalSupported = source != null && source.getSampleType() == SampleType.COMPLEX && sampleRate > 0;
         boolean symbolsSupported = decoder instanceof FeedbackDecoder;
-        String protocol = decoder != null && decoder.getDecoderType() != null ? decoder.getDecoderType().getDisplayString() : "";
+        String protocol = decoder != null && decoder.getDecoderType() != null ?
+            decoder.getDecoderType().getDisplayString() : "";
+        String decoderProfile = protocol;
 
         if(decoder instanceof FeedbackDecoder feedbackDecoder)
         {
-            protocol = feedbackDecoder.getProtocolDescription();
+            decoderProfile = feedbackDecoder.getProtocolDescription();
         }
 
         int fftSize = signalSupported ? fftSize(sampleRate) : 0;
         return new BindingInfo(source, decoder, frequency > 0 ? frequency : fallbackFrequencyHz, sampleRate,
-            protocol, fftSize, signalSupported, symbolsSupported);
+            protocol, decoderProfile, fftSize, signalSupported, symbolsSupported);
     }
 
     private static int fftSize(long sampleRate)
@@ -615,7 +618,8 @@ public final class ChannelDiagnosticService implements AutoCloseable
     }
 
     private record BindingInfo(Source source, PrimaryDecoder decoder, long frequencyHz, long sampleRateHz,
-                               String protocol, int fftSize, boolean signalSupported, boolean symbolsSupported)
+                               String protocol, String decoderProfile, int fftSize, boolean signalSupported,
+                               boolean symbolsSupported)
     {
     }
 
