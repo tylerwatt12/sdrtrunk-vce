@@ -62,7 +62,7 @@ class StatsWebDatabase
         SELECT bucket.bucket_start_ms AS time_ms,
             CASE
                 WHEN context.protocol_code IN (1, 2) THEN 1
-                WHEN context.kind_code = 10 THEN 10
+                WHEN context.kind_code = 10 THEN CASE WHEN context.protocol_code = 11 THEN 11 ELSE 10 END
                 ELSE coalesce(context.protocol_code, 0)
             END AS protocol_code,
             'TRUNKED' AS channel_kind,
@@ -76,7 +76,7 @@ class StatsWebDatabase
         GROUP BY bucket.bucket_start_ms,
             CASE
                 WHEN context.protocol_code IN (1, 2) THEN 1
-                WHEN context.kind_code = 10 THEN 10
+                WHEN context.kind_code = 10 THEN CASE WHEN context.protocol_code = 11 THEN 11 ELSE 10 END
                 ELSE coalesce(context.protocol_code, 0)
             END
 
@@ -84,7 +84,7 @@ class StatsWebDatabase
 
         SELECT bucket.bucket_start_ms AS time_ms,
             CASE
-                WHEN context.kind_code = 10 THEN 10
+                WHEN context.kind_code = 10 THEN CASE WHEN context.protocol_code = 11 THEN 11 ELSE 10 END
                 WHEN context.protocol_code IN (1, 2) OR context.kind_code = 2 THEN 1
                 ELSE coalesce(context.protocol_code, 0)
             END AS protocol_code,
@@ -100,7 +100,7 @@ class StatsWebDatabase
           AND bucket.bucket_start_ms >= ? AND bucket.bucket_start_ms < ?
         GROUP BY bucket.bucket_start_ms,
             CASE
-                WHEN context.kind_code = 10 THEN 10
+                WHEN context.kind_code = 10 THEN CASE WHEN context.protocol_code = 11 THEN 11 ELSE 10 END
                 WHEN context.protocol_code IN (1, 2) OR context.kind_code = 2 THEN 1
                 ELSE coalesce(context.protocol_code, 0)
             END
@@ -111,7 +111,7 @@ class StatsWebDatabase
             SELECT context.id AS context_id, context.context_key, context.guid,
                 CASE
                     WHEN context.protocol_code IN (1, 2) THEN 1
-                    WHEN context.kind_code = 10 THEN 10
+                    WHEN context.kind_code = 10 THEN CASE WHEN context.protocol_code = 11 THEN 11 ELSE 10 END
                     ELSE coalesce(context.protocol_code, 0)
                 END AS protocol_code,
                 'TRUNKED' AS channel_kind,
@@ -136,7 +136,7 @@ class StatsWebDatabase
             GROUP BY context.id, context.context_key, context.guid,
                 CASE
                     WHEN context.protocol_code IN (1, 2) THEN 1
-                    WHEN context.kind_code = 10 THEN 10
+                    WHEN context.kind_code = 10 THEN CASE WHEN context.protocol_code = 11 THEN 11 ELSE 10 END
                     ELSE coalesce(context.protocol_code, 0)
                 END,
                 coalesce(context.channel_name, trunked.channel_name), context.decoder,
@@ -148,7 +148,7 @@ class StatsWebDatabase
 
             SELECT context.id AS context_id, context.context_key, context.guid,
                 CASE
-                    WHEN context.kind_code = 10 THEN 10
+                    WHEN context.kind_code = 10 THEN CASE WHEN context.protocol_code = 11 THEN 11 ELSE 10 END
                     WHEN context.protocol_code IN (1, 2) OR context.kind_code = 2 THEN 1
                     ELSE coalesce(context.protocol_code, 0)
                 END AS protocol_code,
@@ -169,7 +169,7 @@ class StatsWebDatabase
               AND bucket.bucket_start_ms >= ? AND bucket.bucket_start_ms < ?
             GROUP BY context.id, context.context_key, context.guid,
                 CASE
-                    WHEN context.kind_code = 10 THEN 10
+                    WHEN context.kind_code = 10 THEN CASE WHEN context.protocol_code = 11 THEN 11 ELSE 10 END
                     WHEN context.protocol_code IN (1, 2) OR context.kind_code = 2 THEN 1
                     ELSE coalesce(context.protocol_code, 0)
                 END,
@@ -183,6 +183,7 @@ class StatsWebDatabase
                 WHEN 3 THEN 'DMR'
                 WHEN 4 THEN 'NXDN'
                 WHEN 10 THEN 'NBFM'
+                WHEN 11 THEN 'AM'
                 ELSE 'Unknown'
             END AS protocol,
             SUM(call_count) OVER () AS total_call_count
@@ -194,11 +195,12 @@ class StatsWebDatabase
         SELECT bucket.context_id, context.context_key, context.guid,
             CASE
                 WHEN context.protocol_code IN (1, 2) THEN 1
-                WHEN context.kind_code = 10 THEN 10
+                WHEN context.kind_code = 10 THEN CASE WHEN context.protocol_code = 11 THEN 11 ELSE 10 END
                 ELSE coalesce(context.protocol_code, 0)
             END AS protocol_code,
             CASE
                 WHEN context.protocol_code IN (1, 2) THEN 'P25'
+                WHEN context.kind_code = 10 AND context.protocol_code = 11 THEN 'AM'
                 WHEN context.kind_code = 10 THEN 'NBFM'
                 WHEN context.protocol_code = 3 THEN 'DMR'
                 WHEN context.protocol_code = 4 THEN 'NXDN'
@@ -254,7 +256,9 @@ class StatsWebDatabase
     static final String ACTIVITY_SELECT_SQL = """
         SELECT activity.id, activity.context_id, activity.context_key, activity.guid,
             activity.observed_at_ms, activity.channel_kind,
-            activity.channel_kind_code, activity.protocol, activity.action, activity.event_type,
+            activity.channel_kind_code,
+            CASE WHEN activity.protocol_code = 11 THEN 'AM' ELSE activity.protocol END AS protocol,
+            activity.action, activity.event_type,
             activity.source_radio_id, activity.target_id, activity.target_kind_code, activity.target_kind,
             activity.frequency_hz, activity.lcn, activity.timeslot, activity.encrypted,
             activity.encryption_algorithm_id, activity.encryption_key_id, activity.resolved_channel_name,
@@ -283,7 +287,8 @@ class StatsWebDatabase
         new CallActivityGroup(3, "DMR", "CONVENTIONAL", true),
         new CallActivityGroup(4, "NXDN", "TRUNKED", true),
         new CallActivityGroup(4, "NXDN", "CONVENTIONAL", true),
-        new CallActivityGroup(10, "NBFM", "CONVENTIONAL", true)
+        new CallActivityGroup(10, "NBFM", "CONVENTIONAL", true),
+        new CallActivityGroup(11, "AM", "CONVENTIONAL", true)
     );
     private static final List<String> TALKGROUP_ACTIVITY_FIELDS = List.of(
         "acknowledge_count", "active_count", "busy_count", "call_count", "check_count", "check_ack_count",
@@ -992,7 +997,9 @@ class StatsWebDatabase
             List<Map<String,Object>> rows = queryRows(connection, """
                 SELECT activity.id, activity.context_id, activity.context_key, activity.guid,
                     activity.observed_at_ms, activity.channel_kind,
-                    activity.channel_kind_code, activity.protocol, activity.action, activity.event_type,
+                    activity.channel_kind_code,
+                    CASE WHEN activity.protocol_code = 11 THEN 'AM' ELSE activity.protocol END AS protocol,
+                    activity.action, activity.event_type,
                     activity.source_radio_id, activity.target_id, activity.target_kind_code, activity.target_kind,
                     activity.frequency_hz, activity.lcn, activity.timeslot, activity.encrypted,
                     activity.encryption_algorithm_id, activity.encryption_key_id, activity.resolved_channel_name,
@@ -2260,7 +2267,8 @@ class StatsWebDatabase
     {
         StringBuilder sql = new StringBuilder("""
                 SELECT context.id AS context_id, context.context_key, context.guid, context.kind_code,
-                    CASE WHEN context.kind_code = 10 THEN 10 ELSE context.protocol_code END AS protocol_code,
+                    CASE WHEN context.kind_code = 10 THEN CASE WHEN context.protocol_code = 11 THEN 11 ELSE 10 END
+                         ELSE context.protocol_code END AS protocol_code,
                     context.channel_name, context.alias_list_name,
                     (SELECT list.id FROM alias_list list
                      WHERE list.name = context.alias_list_name COLLATE NOCASE LIMIT 1) AS alias_list_id,
@@ -2294,7 +2302,8 @@ class StatsWebDatabase
             Map<String,Object> response = new LinkedHashMap<>();
             Map<String,Object> context = first(queryRows(connection, """
                 SELECT id AS context_id, context_key, guid, kind_code,
-                    CASE WHEN kind_code = 10 THEN 10 ELSE protocol_code END AS protocol_code, channel_name,
+                    CASE WHEN kind_code = 10 THEN CASE WHEN protocol_code = 11 THEN 11 ELSE 10 END
+                         ELSE protocol_code END AS protocol_code, channel_name,
                     alias_list_name,
                     (SELECT list.id FROM alias_list list
                      WHERE list.name = receiver_context.alias_list_name COLLATE NOCASE LIMIT 1) AS alias_list_id,
@@ -2928,11 +2937,12 @@ class StatsWebDatabase
                 SELECT context.context_key AS receiver_key, context.id AS context_id, context.context_key,
                     context.guid,
                     CASE
-                        WHEN context.kind_code = 10 THEN 10
+                        WHEN context.kind_code = 10 THEN CASE WHEN context.protocol_code = 11 THEN 11 ELSE 10 END
                         WHEN context.protocol_code IN (1, 2) OR context.kind_code = 2 THEN 1
                         ELSE coalesce(context.protocol_code, 0)
                     END AS protocol_code,
                     CASE
+                        WHEN context.kind_code = 10 AND context.protocol_code = 11 THEN 'AM'
                         WHEN context.kind_code = 10 THEN 'NBFM'
                         WHEN context.protocol_code IN (1, 2) OR context.kind_code = 2 THEN 'P25'
                         WHEN context.protocol_code = 3 THEN 'DMR'

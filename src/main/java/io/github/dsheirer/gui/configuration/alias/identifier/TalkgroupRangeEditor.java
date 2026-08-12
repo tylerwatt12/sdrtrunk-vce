@@ -295,6 +295,7 @@ public class TalkgroupRangeEditor extends IdentifierEditor<TalkgroupRange>
     private List<TalkgroupDetail> createTalkgroupDetails()
     {
         List<TalkgroupDetail> details = new ArrayList<>();
+        addNumericTalkgroupDetails(details, Protocol.AM, 1, 0xFFFF);
         addNumericTalkgroupDetails(details, Protocol.APCO25, 0, 0xFFFF);
         details.add(new TalkgroupDetail(Protocol.FLEETSYNC, IntegerFormat.FORMATTED,
                 new PrefixIdentFormatter(), new PrefixIdentFormatter(),

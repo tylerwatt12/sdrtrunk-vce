@@ -138,6 +138,7 @@ public class TalkgroupFormatPreference extends Preference
         {
             case FLEETSYNC:
                 return IntegerFormat.FORMATTED;
+            case AM:
             case APCO25:
             case DMR:
             case MDC1200:
@@ -155,6 +156,7 @@ public class TalkgroupFormatPreference extends Preference
         {
             case FLEETSYNC:
                 return IntegerFormat.DECIMAL_FORMATTED;
+            case AM:
             case APCO25:
             case DMR:
             case MDC1200:
@@ -285,6 +287,9 @@ public class TalkgroupFormatPreference extends Preference
     {
         switch(talkgroupIdentifier.getProtocol())
         {
+            case AM:
+                return AnalogTalkgroupFormatter.format(talkgroupIdentifier, getTalkgroupFormat(Protocol.AM),
+                    isTalkgroupFixedWidth(Protocol.AM));
             case APCO25:
                 return APCO25TalkgroupFormatter.format(talkgroupIdentifier, getTalkgroupFormat(Protocol.APCO25),
                     isTalkgroupFixedWidth(Protocol.APCO25));

@@ -43,6 +43,7 @@ public class TalkgroupFormatter
     static
     {
         AnalogTalkgroupFormatter analogTalkgroupFormatter = new AnalogTalkgroupFormatter();
+        mFormatterMap.put(Protocol.AM, analogTalkgroupFormatter);
         mFormatterMap.put(Protocol.NBFM, analogTalkgroupFormatter);
 
         mFormatterMap.put(Protocol.APCO25, new APCO25TalkgroupFormatter());

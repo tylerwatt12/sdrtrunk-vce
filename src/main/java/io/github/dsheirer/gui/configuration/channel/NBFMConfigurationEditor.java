@@ -27,6 +27,7 @@ import io.github.dsheirer.gui.configuration.source.FrequencyEditor;
 import io.github.dsheirer.gui.configuration.source.SourceConfigurationEditor;
 import io.github.dsheirer.dsp.squelch.SquelchTailRemover;
 import io.github.dsheirer.module.decode.DecoderType;
+import io.github.dsheirer.module.decode.am.DecodeConfigAM;
 import io.github.dsheirer.module.decode.config.AuxDecodeConfiguration;
 import io.github.dsheirer.module.decode.config.DecodeConfiguration;
 import io.github.dsheirer.module.decode.nbfm.DecodeConfigNBFM;
@@ -42,6 +43,7 @@ import io.github.dsheirer.source.config.SourceConfiguration;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import javafx.beans.value.ChangeListener;
 import javafx.beans.value.ObservableValue;
 import javafx.collections.ListChangeListener;
@@ -63,7 +65,7 @@ import org.controlsfx.control.SegmentedButton;
 import org.controlsfx.control.ToggleSwitch;
 
 /**
- * Narrow-Band FM channel configuration editor
+ * Shared conventional analog channel configuration editor.
  */
 public class NBFMConfigurationEditor extends ChannelConfigurationEditor
 {
@@ -86,6 +88,7 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
     private TextFormatter<Integer> mTalkgroupTextFormatter;
     private ToggleSwitch mBasebandRecordSwitch;
     private SegmentedButton mBandwidthButton;
+    private final DecoderType mDecoderType;
 
     private SourceConfigurationEditor<SourceConfiguration> mSourceConfigurationEditor;
     private AuxDecoderConfigurationEditor mAuxDecoderConfigurationEditor;
@@ -102,7 +105,19 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
     public NBFMConfigurationEditor(ConfigurationManager configurationManager, TunerManager tunerManager,
                                    UserPreferences userPreferences, IFilterProcessor filterProcessor)
     {
+        this(configurationManager, tunerManager, userPreferences, filterProcessor, DecoderType.NBFM);
+    }
+
+    NBFMConfigurationEditor(ConfigurationManager configurationManager, TunerManager tunerManager,
+                            UserPreferences userPreferences, IFilterProcessor filterProcessor,
+                            DecoderType decoderType)
+    {
         super(configurationManager, tunerManager, userPreferences, filterProcessor);
+        if(decoderType != DecoderType.AM && decoderType != DecoderType.NBFM)
+        {
+            throw new IllegalArgumentException("Unsupported analog decoder type: " + decoderType);
+        }
+        mDecoderType = decoderType;
         getTitledPanesBox().getChildren().add(getSourcePane());
         getTitledPanesBox().getChildren().add(getDecoderPane());
         getTitledPanesBox().getChildren().add(getAuxDecoderPane());
@@ -113,7 +128,7 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
     @Override
     public DecoderType getDecoderType()
     {
-        return DecoderType.NBFM;
+        return mDecoderType;
     }
 
     private TitledPane getSourcePane()
@@ -132,7 +147,7 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
         if(mDecoderPane == null)
         {
             mDecoderPane = new TitledPane();
-            mDecoderPane.setText("Decoder: NBFM");
+            mDecoderPane.setText("Decoder: " + mDecoderType.getDisplayString());
             mDecoderPane.setExpanded(true);
 
             GridPane gridPane = new GridPane();
@@ -367,7 +382,7 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
             mBandwidthButton.getStyleClass().add(SegmentedButton.STYLE_CLASS_DARK);
             mBandwidthButton.setDisable(true);
 
-            for(DecodeConfigNBFM.Bandwidth bandwidth : DecodeConfigNBFM.Bandwidth.FM_BANDWIDTHS)
+            for(DecodeConfigNBFM.Bandwidth bandwidth : supportedBandwidths())
             {
                 ToggleButton toggleButton = new ToggleButton(bandwidth.toString());
                 toggleButton.setUserData(bandwidth);
@@ -394,7 +409,7 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
                     DecodeConfigNBFM.Bandwidth bandwidth = config.getBandwidth();
                     if(bandwidth == null)
                     {
-                        bandwidth = DecodeConfigNBFM.Bandwidth.BW_12_5;
+                        bandwidth = defaultBandwidth();
                     }
 
                     for(Toggle toggle: getBandwidthButton().getToggleGroup().getToggles())
@@ -408,6 +423,18 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
         }
 
         return mBandwidthButton;
+    }
+
+    private Set<DecodeConfigNBFM.Bandwidth> supportedBandwidths()
+    {
+        return mDecoderType == DecoderType.AM ? DecodeConfigNBFM.Bandwidth.AM_BANDWIDTHS :
+            DecodeConfigNBFM.Bandwidth.FM_BANDWIDTHS;
+    }
+
+    private DecodeConfigNBFM.Bandwidth defaultBandwidth()
+    {
+        return mDecoderType == DecoderType.AM ? DecodeConfigNBFM.Bandwidth.BW_15_0 :
+            DecodeConfigNBFM.Bandwidth.BW_12_5;
     }
 
     private ComboBox<DecodeConfigNBFM.DeemphasisMode> getDeemphasisModeComboBox()
@@ -575,7 +602,8 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
             mTalkgroupTextFormatter.valueProperty().removeListener(mTalkgroupValueChangeListener);
         }
 
-        IntegerFormat format = mUserPreferences.getTalkgroupFormatPreference().getTalkgroupFormat(Protocol.NBFM);
+        Protocol protocol = mDecoderType == DecoderType.AM ? Protocol.AM : Protocol.NBFM;
+        IntegerFormat format = mUserPreferences.getTalkgroupFormatPreference().getTalkgroupFormat(protocol);
 
         if(format == null)
         {
@@ -629,12 +657,12 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
     @Override
     protected void setDecoderConfiguration(DecodeConfiguration config)
     {
-        if(config instanceof DecodeConfigNBFM)
+        if(config instanceof DecodeConfigNBFM analog && analog.getDecoderType() == mDecoderType)
         {
             getBandwidthButton().setDisable(false);
-            DecodeConfigNBFM decodeConfigNBFM = (DecodeConfigNBFM)config;
+            DecodeConfigNBFM decodeConfigNBFM = analog;
             final DecodeConfigNBFM.Bandwidth bandwidth = (decodeConfigNBFM.getBandwidth() != null ?
-                    decodeConfigNBFM.getBandwidth() : DecodeConfigNBFM.Bandwidth.BW_12_5);
+                    decodeConfigNBFM.getBandwidth() : defaultBandwidth());
 
             for(Toggle toggle: getBandwidthButton().getToggleGroup().getToggles())
             {
@@ -644,7 +672,8 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
             updateTextFormatter(decodeConfigNBFM.getTalkgroup());
             getAudioFilterEnable().setDisable(false);
             getAudioFilterEnable().setSelected(decodeConfigNBFM.isAudioFilter());
-            getDeemphasisModeComboBox().setDisable(false);
+            getTalkgroupField().setDisable(false);
+            getDeemphasisModeComboBox().setDisable(mDecoderType == DecoderType.AM);
             getDeemphasisModeComboBox().getSelectionModel().select(decodeConfigNBFM.getDeemphasis());
             getSquelchTailRemovalEnable().setDisable(false);
             getSquelchTailRemovalEnable().setSelected(decodeConfigNBFM.isSquelchTailRemovalEnabled());
@@ -702,16 +731,17 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
     {
         DecodeConfigNBFM config;
 
-        if(getItem().getDecodeConfiguration() instanceof DecodeConfigNBFM)
+        if(getItem().getDecodeConfiguration() instanceof DecodeConfigNBFM analog &&
+            analog.getDecoderType() == mDecoderType)
         {
-            config = (DecodeConfigNBFM)getItem().getDecodeConfiguration();
+            config = analog;
         }
         else
         {
-            config = new DecodeConfigNBFM();
+            config = mDecoderType == DecoderType.AM ? new DecodeConfigAM() : new DecodeConfigNBFM();
         }
 
-        DecodeConfigNBFM.Bandwidth bandwidth = DecodeConfigNBFM.Bandwidth.BW_12_5;
+        DecodeConfigNBFM.Bandwidth bandwidth = defaultBandwidth();
 
         if(getBandwidthButton().getToggleGroup().getSelectedToggle() != null)
         {
@@ -729,7 +759,8 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
 
         config.setTalkgroup(talkgroup);
         config.setAudioFilter(getAudioFilterEnable().isSelected());
-        config.setDeemphasis(getDeemphasisModeComboBox().getSelectionModel().getSelectedItem());
+        config.setDeemphasis(mDecoderType == DecoderType.AM ? DecodeConfigNBFM.DeemphasisMode.NONE :
+            getDeemphasisModeComboBox().getSelectionModel().getSelectedItem());
         config.setSquelchTailRemovalEnabled(getSquelchTailRemovalEnable().isSelected());
         config.setSquelchTailRemovalMs(getTailRemovalSpinner().getValue());
         config.setSquelchHeadRemovalMs(getHeadRemovalSpinner().getValue());

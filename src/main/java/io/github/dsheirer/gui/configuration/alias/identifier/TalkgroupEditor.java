@@ -242,6 +242,7 @@ public class TalkgroupEditor extends IdentifierEditor<Talkgroup>
     private void loadTalkgroupDetails()
     {
         mTalkgroupDetails.clear();
+        addNumericTalkgroupDetails(Protocol.AM, 1, 0xFFFF);
         addNumericTalkgroupDetails(Protocol.APCO25, 0, 0xFFFF);
         mTalkgroupDetails.add(new TalkgroupDetail(Protocol.DMR, IntegerFormat.DECIMAL, new IntegerFormatter(1,0xFFFFFF),
                 "Format: 1 - 16,777,215"));

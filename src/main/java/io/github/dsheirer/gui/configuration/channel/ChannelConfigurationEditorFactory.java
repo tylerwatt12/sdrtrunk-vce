@@ -55,6 +55,9 @@ public class ChannelConfigurationEditorFactory
     {
         switch(decoderType)
         {
+            case AM:
+                return new NBFMConfigurationEditor(configurationManager, tunerManager, userPreferences,
+                    filterProcessor, DecoderType.AM);
             case DMR:
                 return new DMRConfigurationEditor(configurationManager, tunerManager, userPreferences, filterProcessor);
             case NBFM:
