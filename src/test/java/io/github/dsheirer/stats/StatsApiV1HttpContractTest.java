@@ -28,6 +28,9 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -111,8 +114,10 @@ class StatsApiV1HttpContractTest
         assertTrue(server.isObject(), statusResponse.body());
         assertTrue(server.has("access_mode"), statusResponse.body());
         assertFalse(server.has("accessMode"), statusResponse.body());
-        assertEquals(StatsApiV1.LIVE_CHANNEL_ACTIVITY,
-            server.at("/live_channels/channel_activity").textValue());
+        assertEquals(StatsApiV1.LIVE_MULTIPLEX,
+            server.at("/live_transport/stream").textValue());
+        assertEquals(StatsApiV1.LIVE_MULTIPLEX_CONTROL,
+            server.at("/live_transport/control").textValue());
 
         HttpResponse<String> dashboardResponse = get(StatsApiV1.DASHBOARD);
         assertEquals(200, dashboardResponse.statusCode(), dashboardResponse.body());
@@ -219,6 +224,14 @@ class StatsApiV1HttpContractTest
             "/live/systems",
             "/live/events",
             "/live/web-calls",
+            "/api/v1/live/channel-activity",
+            "/api/v1/live/decode-events?configuration_id=00000000-0000-0000-0000-000000000001",
+            "/api/v1/live/decode-messages?configuration_id=00000000-0000-0000-0000-000000000001",
+            "/api/v1/live/channel-diagnostics?configuration_id=00000000-0000-0000-0000-000000000001",
+            "/api/v1/live/tuner-diagnostics?target_id=retired",
+            "/api/v1/live/sites",
+            "/api/v1/live/calls",
+            "/api/v1/live/activity",
             "/api/web-player/calls/1/audio",
             "/api/v1/systems/p25%3Atest/affiliations",
             "/api/v1/not-a-resource"))
@@ -244,14 +257,8 @@ class StatsApiV1HttpContractTest
             Map.entry("CONVENTIONAL_CONTEXTS", "/api/v1/conventional-contexts"),
             Map.entry("EXPORTS", "/api/v1/exports"),
             Map.entry("TUNER_DIAGNOSTICS", "/api/v1/diagnostics/tuners"),
-            Map.entry("LIVE_CHANNEL_ACTIVITY", "/api/v1/live/channel-activity"),
-            Map.entry("LIVE_DECODE_EVENTS", "/api/v1/live/decode-events"),
-            Map.entry("LIVE_DECODE_MESSAGES", "/api/v1/live/decode-messages"),
-            Map.entry("LIVE_CHANNEL_DIAGNOSTICS", "/api/v1/live/channel-diagnostics"),
-            Map.entry("LIVE_TUNER_DIAGNOSTICS", "/api/v1/live/tuner-diagnostics"),
-            Map.entry("LIVE_SITES", "/api/v1/live/sites"),
-            Map.entry("LIVE_CALLS", "/api/v1/live/calls"),
-            Map.entry("LIVE_ACTIVITY", "/api/v1/live/activity"),
+            Map.entry("LIVE_MULTIPLEX", "/api/v1/live/multiplex"),
+            Map.entry("LIVE_MULTIPLEX_CONTROL", "/api/v1/live/multiplex/control"),
             Map.entry("CALLS", "/api/v1/calls")
         );
         Map<String,String> actual = new LinkedHashMap<>();
@@ -273,22 +280,24 @@ class StatsApiV1HttpContractTest
     }
 
     @Test
-    void liveSubscribersDoNotStarveOrdinaryApiRequests() throws Exception
+    void multiplexedBrowserDocumentsDoNotStarveOrdinaryApiRequests() throws Exception
     {
         List<HttpResponse<InputStream>> streams = new ArrayList<>();
 
         try
         {
-            for(int index = 0; index < 12; index++)
+            for(int index = 0; index < 4; index++)
             {
-                HttpRequest request = HttpRequest.newBuilder(mOrigin.resolve(StatsApiV1.LIVE_CHANNEL_ACTIVITY))
+                String clientId = "00000000-0000-0000-0000-" + String.format("%012d", index + 1);
+                HttpRequest request = HttpRequest.newBuilder(mOrigin.resolve(
+                        StatsApiV1.LIVE_MULTIPLEX + "?client_id=" + clientId))
                     .timeout(Duration.ofSeconds(10))
                     .GET()
                     .build();
                 HttpResponse<InputStream> stream = mClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
                 assertEquals(200, stream.statusCode());
                 assertTrue(stream.headers().firstValue("Content-Type").orElse("")
-                    .startsWith("text/event-stream"));
+                    .startsWith("application/vnd.sdrtrunk.live+binary"));
                 streams.add(stream);
             }
 
@@ -303,6 +312,74 @@ class StatsApiV1HttpContractTest
                 stream.body().close();
             }
         }
+    }
+
+    @Test
+    void oneMultiplexConnectionCarriesMultipleLogicalSubscriptions() throws Exception
+    {
+        String clientId = "00000000-0000-0000-0000-000000000123";
+        HttpRequest streamRequest = HttpRequest.newBuilder(mOrigin.resolve(
+                StatsApiV1.LIVE_MULTIPLEX + "?client_id=" + clientId))
+            .timeout(Duration.ofSeconds(10))
+            .GET()
+            .build();
+        HttpResponse<InputStream> stream = mClient.send(streamRequest, HttpResponse.BodyHandlers.ofInputStream());
+
+        try(InputStream input = stream.body())
+        {
+            MultiplexFrame ready = readMultiplexFrame(input);
+            assertEquals(0, ready.topic());
+            assertEquals("ready", ready.json().path("event").textValue());
+            assertEquals(clientId, ready.json().at("/data/client_id").textValue());
+
+            String body = OBJECT_MAPPER.writeValueAsString(Map.of(
+                "client_id", clientId,
+                "revision", 1,
+                "subscriptions", Map.of("channel_activity", Map.of(), "calls", Map.of())));
+            HttpRequest control = HttpRequest.newBuilder(mOrigin.resolve(StatsApiV1.LIVE_MULTIPLEX_CONTROL))
+                .timeout(Duration.ofSeconds(10))
+                .header("Origin", mOrigin.toString())
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(body))
+                .build();
+            HttpResponse<String> accepted = send(control);
+            assertEquals(200, accepted.statusCode(), accepted.body());
+            assertEquals(1, OBJECT_MAPPER.readTree(accepted.body()).at("/data/revision").intValue());
+
+            boolean activity = false;
+            boolean calls = false;
+
+            for(int count = 0; count < 4 && (!activity || !calls); count++)
+            {
+                MultiplexFrame frame = readMultiplexFrame(input);
+                activity |= frame.topic() == 1 && "snapshot".equals(frame.json().path("event").textValue());
+                calls |= frame.topic() == 2 && "snapshot".equals(frame.json().path("event").textValue());
+            }
+
+            assertTrue(activity, "Channel activity did not arrive on the multiplex connection");
+            assertTrue(calls, "Call snapshot did not arrive on the multiplex connection");
+        }
+    }
+
+    private static MultiplexFrame readMultiplexFrame(InputStream input) throws Exception
+    {
+        byte[] headerBytes = input.readNBytes(16);
+        assertEquals(16, headerBytes.length, "Multiplex frame header was truncated");
+        ByteBuffer header = ByteBuffer.wrap(headerBytes).order(ByteOrder.BIG_ENDIAN);
+        assertEquals(0x534C4D58, header.getInt());
+        assertEquals(1, Byte.toUnsignedInt(header.get()));
+        int kind = Byte.toUnsignedInt(header.get());
+        int topic = Short.toUnsignedInt(header.getShort());
+        int length = header.getInt();
+        header.getInt();
+        byte[] payload = input.readNBytes(length);
+        assertEquals(length, payload.length, "Multiplex frame payload was truncated");
+        JsonNode json = kind == 1 ? OBJECT_MAPPER.readTree(new String(payload, StandardCharsets.UTF_8)) : null;
+        return new MultiplexFrame(kind, topic, json);
+    }
+
+    private record MultiplexFrame(int kind, int topic, JsonNode json)
+    {
     }
 
     private HttpResponse<String> get(String path) throws Exception

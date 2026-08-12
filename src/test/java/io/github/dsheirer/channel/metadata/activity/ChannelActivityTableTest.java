@@ -26,11 +26,13 @@ class ChannelActivityTableTest
         assumeFalse(GraphicsEnvironment.isHeadless(), "Requires a graphical AWT environment");
         AtomicBoolean mouseObservedAsUser = new AtomicBoolean();
         AtomicInteger userSelections = new AtomicInteger();
+        ChannelActivityTableState state = new ChannelActivityTableState("Test", null, false, null);
+        state.getOrCreate("one", null, ChannelActivityRow.Role.CONVENTIONAL, 151_000_000L, null);
+        state.getOrCreate("two", null, ChannelActivityRow.Role.CONVENTIONAL, 152_000_000L, null);
+        state.refreshAllRows();
 
         SwingUtilities.invokeAndWait(() -> {
-            ChannelActivityTableModel model = new ChannelActivityTableModel("Test", null, false);
-            model.getOrCreate("one", null, ChannelActivityRow.Role.CONVENTIONAL, 151_000_000L, null);
-            model.getOrCreate("two", null, ChannelActivityRow.Role.CONVENTIONAL, 152_000_000L, null);
+            ChannelActivityTableModel model = new ChannelActivityTableModel(state);
             ChannelActivityTable table = new ChannelActivityTable(model);
             assertEquals(ListSelectionModel.SINGLE_SELECTION, table.getSelectionModel().getSelectionMode());
             table.setSize(600, 200);
@@ -45,7 +47,8 @@ class ChannelActivityTableTest
             table.processMouseEvent(new MouseEvent(table, MouseEvent.MOUSE_PRESSED, System.currentTimeMillis(), 0,
                 20, y, 1, false, MouseEvent.BUTTON1));
 
-            model.getOrCreate("inserted", null, ChannelActivityRow.Role.CONVENTIONAL, 150_000_000L, null);
+            state.getOrCreate("inserted", null, ChannelActivityRow.Role.CONVENTIONAL, 150_000_000L, null);
+            state.refreshAllRows();
             assertEquals(1, userSelections.get());
             table.setRowSelectionInterval(0, 0);
             table.processKeyEvent(new KeyEvent(table, KeyEvent.KEY_PRESSED, System.currentTimeMillis(), 0,

@@ -212,7 +212,7 @@ let aliasEditorLastSelectionIndex = null;
 let aliasEditorContext = null;
 let accessSession = anonymousAccessSession();
 let accessSessionAvailable = false;
-let playbackConnection = null;
+let notifyConfirmedAccessRefresh = () => {};
 
 if (tableOnly) {
   document.body.classList.add('table-only');
@@ -545,15 +545,22 @@ function showLoginModal(returnFocusSelector = '#auth-action') {
     password.disabled = true;
     message.textContent = 'Signing in…';
     try {
-      await requestJson('/api/v1/auth/login', {
-        method: 'POST', body: { username: username.value, password: password.value }, csrf: false
+      liveMultiplexer.stop();
+      const session = await requestJson('/api/v1/auth/login', {
+        method: 'POST', body: { username: username.value, password: password.value }, csrf: false,
+        page: false, timeoutMs: 35_000
       });
       password.value = '';
-      await refreshAccessSession(false);
+      accessSession = normalizedAccessSession(session);
+      accessSessionAvailable = true;
+      updateAccessControls();
+      synchronizePlaybackAccess();
+      liveMultiplexer.ensureConnected();
       if (!accessSession.authenticated) throw new Error('The receiver did not create a session.');
       modal.close();
       await render();
     } catch (error) {
+      liveMultiplexer.ensureConnected();
       password.value = '';
       password.disabled = false;
       username.disabled = false;
@@ -569,15 +576,23 @@ async function signOut() {
   const action = document.getElementById('auth-action');
   if (action) action.disabled = true;
   try {
-    await requestJson('/api/v1/auth/logout', { method: 'POST', csrf: true });
+    liveMultiplexer.stop();
+    const session = await requestJson('/api/v1/auth/logout', {
+      method: 'POST', csrf: true, page: false
+    });
+    accessSession = normalizedAccessSession(session);
+    accessSessionAvailable = true;
+    updateAccessControls();
+    synchronizePlaybackAccess();
+    liveMultiplexer.ensureConnected();
   } catch (error) {
+    liveMultiplexer.ensureConnected();
     openReadOnlyModal('Unable to sign out', node('div', 'error', error.message), {
       id: 'sign-out-error', returnFocusSelector: '#auth-action', className: 'admin-modal'
     });
     if (action) action.disabled = false;
     return;
   }
-  await refreshAccessSession(false);
   await render();
 }
 
@@ -593,12 +608,19 @@ function initializeAccessControls() {
 async function refreshAccessSession(refreshCurrentView = false) {
   const previousSignature = accessSessionSignature();
   try {
-    const session = await requestJson('/api/v1/auth/session', { csrf: false });
+    const session = await requestJson('/api/v1/auth/session', { csrf: false, page: false });
     accessSession = normalizedAccessSession(session);
     accessSessionAvailable = true;
+    notifyConfirmedAccessRefresh();
   } catch (error) {
-    accessSession = anonymousAccessSession();
-    accessSessionAvailable = false;
+    //A transport timeout is not evidence that an authenticated server session ended. Preserve the last confirmed
+    //identity and policy; only an explicit authorization denial can replace it before a confirmed session response.
+    if (error?.status === 401 || error?.status === 403) {
+      accessSession = anonymousAccessSession();
+      accessSessionAvailable = true;
+    } else if (!accessSessionAvailable) {
+      accessSession = anonymousAccessSession();
+    }
   }
   updateAccessControls();
   synchronizePlaybackAccess();
@@ -1692,6 +1714,10 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
         }
       }
       wrapper.tableController.addRow(data, settings);
+    },
+    replaceRows(rows) {
+      dataRows = [...(rows || [])];
+      renderBody();
     },
     rows: () => dataRows,
     render: renderBody
@@ -5117,21 +5143,53 @@ async function requestJson(path, options = {}) {
   if (options.csrf !== false && !['GET', 'HEAD', 'OPTIONS'].includes(method) && accessSession.csrfToken) {
     headers.set('X-CSRF-Token', accessSession.csrfToken);
   }
-  const response = await fetch(path, {
-    method,
-    headers,
-    body: options.body === undefined ? undefined : JSON.stringify(snakeCasePayload(options.body)),
-    cache: 'no-store',
-    credentials: 'same-origin'
-  });
-  const contentType = String(response.headers.get('Content-Type') || '').toLowerCase();
+  const controller = new AbortController();
+  const upstreamSignal = options.signal || (options.page === false ? null : activeRenderController?.signal);
+  const timeoutMs = Math.max(250, Number(options.timeoutMs) || 10_000);
+  let timedOut = false;
+  const abortFromUpstream = () => controller.abort(upstreamSignal?.reason);
+  if (upstreamSignal?.aborted) abortFromUpstream();
+  else upstreamSignal?.addEventListener('abort', abortFromUpstream, { once: true });
+  const timeout = window.setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  let response;
   let result = null;
-  if (response.status !== 204) {
-    if (contentType.includes('json')) result = await response.json().catch(() => null);
-    else {
-      const message = await response.text().catch(() => '');
-      result = message ? { error: message } : null;
+  try {
+    response = await fetch(path, {
+      method,
+      headers,
+      body: options.body === undefined ? undefined : JSON.stringify(snakeCasePayload(options.body)),
+      cache: 'no-store',
+      credentials: 'same-origin',
+      signal: controller.signal
+    });
+    const contentType = String(response.headers.get('Content-Type') || '').toLowerCase();
+    if (response.status !== 204) {
+      if (contentType.includes('json')) result = await response.json().catch((error) => {
+        if (controller.signal.aborted) throw error;
+        return null;
+      });
+      else {
+        const message = await response.text().catch((error) => {
+          if (controller.signal.aborted) throw error;
+          return '';
+        });
+        result = message ? { error: message } : null;
+      }
     }
+  } catch (error) {
+    if (timedOut) {
+      const timeoutError = new Error('The receiver did not respond in time.');
+      timeoutError.code = 'request_timeout';
+      timeoutError.path = path;
+      throw timeoutError;
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
+    upstreamSignal?.removeEventListener('abort', abortFromUpstream);
   }
   if (!response.ok) {
     const failure = result?.error && typeof result.error === 'object' ? result.error : result;
@@ -5155,18 +5213,20 @@ async function requestJson(path, options = {}) {
   return result.meta && typeof result.meta === 'object' ? { ...result.data, ...result.meta } : result.data;
 }
 
-async function api(path, parameters = {}) {
+async function api(path, parameters = {}, options = {}) {
   const query = new URLSearchParams();
   Object.entries(parameters).forEach(([key, value]) => {
     if (value !== null && value !== undefined && value !== '') query.set(snakeCaseKey(key), String(value));
   });
-  return requestJson(`${path}${query.size ? `?${query}` : ''}`, { csrf: false });
+  return requestJson(`${path}${query.size ? `?${query}` : ''}`, { csrf: false, ...options });
 }
 
 const liveConnections = new Set();
 const pageConnections = new Set();
 const pageObservers = new Map();
 const pageTimers = new Set();
+let activeRenderController = null;
+let activeRenderEpoch = 0;
 
 function pageInterval(callback, interval) {
   const timer = window.setInterval(() => {
@@ -5185,14 +5245,401 @@ function disconnectPageObserversWithin(root) {
   });
 }
 
-function liveConnection(path, parameters = {}) {
-  const query = new URLSearchParams();
-  Object.entries(parameters).forEach(([key, value]) => {
-    if (value !== null && value !== undefined && value !== '') query.set(snakeCaseKey(key), String(value));
-  });
-  const source = new EventSource(`${path}${query.size ? `?${query}` : ''}`);
+const LIVE_MULTIPLEX_MAGIC = 0x534c4d58;
+const LIVE_MULTIPLEX_HEADER_BYTES = 16;
+const LIVE_MULTIPLEX_MAXIMUM_BYTES = 16 * 1024 * 1024;
+const LIVE_MULTIPLEX_READY_TIMEOUT_MS = 10_000;
+const LIVE_MULTIPLEX_LIVENESS_TIMEOUT_MS = 25_000;
+const LIVE_MULTIPLEX_TOPICS = Object.freeze({
+  0: 'control',
+  1: 'channel_activity',
+  2: 'calls',
+  3: 'decode_events',
+  4: 'decode_messages',
+  5: 'channel_diagnostics',
+  6: 'tuner_diagnostics',
+  7: 'activity'
+});
+const LIVE_MULTIPLEX_DECODER = new TextDecoder();
+
+function randomLiveClientId() {
+  if (window.crypto?.randomUUID) return window.crypto.randomUUID();
+  const bytes = new Uint8Array(16);
+  window.crypto.getRandomValues(bytes);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = [...bytes].map((value) => value.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+function invokeLiveSubscriber(target, callback, ...parameters) {
+  try {
+    target?.[callback]?.(...parameters);
+  } catch (error) {
+    console.error(`Live subscriber ${callback} callback failed`, error);
+  }
+}
+
+function invokeLiveListener(callback, ...parameters) {
+  try {
+    callback?.(...parameters);
+  } catch (error) {
+    console.error('Live event listener callback failed', error);
+  }
+}
+
+class LiveMultiplexer {
+  constructor() {
+    this.subscribers = new Map();
+    this.parameters = new Map();
+    this.failedTopics = new Set();
+    this.controller = null;
+    this.reader = null;
+    this.clientId = null;
+    this.ready = false;
+    this.pending = new Uint8Array(0);
+    this.reconnectTimer = null;
+    this.controlTimer = null;
+    this.controlInFlight = false;
+    this.controlPending = false;
+    this.controlRevision = 0;
+    this.authorizationRecoveryUsed = false;
+    this.authorizationBlocked = false;
+    this.reconnectDelay = 500;
+    this.attempt = 0;
+    this.lastFrameAt = 0;
+  }
+
+  subscribe(topic, parameters, callbacks = {}) {
+    if (!Object.values(LIVE_MULTIPLEX_TOPICS).includes(topic) || topic === 'control') {
+      throw new Error(`Unknown live stream topic: ${topic}`);
+    }
+    const subscriber = callbacks;
+    let subscribers = this.subscribers.get(topic);
+    if (!subscribers) {
+      subscribers = new Set();
+      this.subscribers.set(topic, subscribers);
+    }
+    subscribers.add(subscriber);
+    this.parameters.set(topic, snakeCasePayload(parameters || {}));
+    if (this.ready) queueMicrotask(() => invokeLiveSubscriber(subscriber, 'onOpen'));
+    this.ensureConnected();
+    this.queueControl();
+    let closed = false;
+    return {
+      close: () => {
+        if (closed) return Promise.resolve();
+        closed = true;
+        subscribers.delete(subscriber);
+        if (!subscribers.size) {
+          this.subscribers.delete(topic);
+          this.parameters.delete(topic);
+        }
+        this.queueControl();
+        this.closeIfIdle();
+        return Promise.resolve();
+      },
+      update: (nextParameters = {}) => {
+        if (closed) return false;
+        const next = snakeCasePayload(nextParameters);
+        if (JSON.stringify(next) === JSON.stringify(this.parameters.get(topic) || {})) return false;
+        this.parameters.set(topic, next);
+        this.queueControl();
+        return true;
+      },
+      whenClosed: () => closed ? Promise.resolve() : new Promise((resolve) => {
+        const check = window.setInterval(() => {
+          if (closed) {
+            window.clearInterval(check);
+            resolve();
+          }
+        }, 25);
+      })
+    };
+  }
+
+  hasSubscribers() {
+    return [...this.subscribers.values()].some((subscribers) => subscribers.size);
+  }
+
+  ensureConnected() {
+    if (!this.hasSubscribers() || this.controller || this.reconnectTimer !== null) return;
+    void this.connect();
+  }
+
+  async connect() {
+    if (!this.hasSubscribers() || this.controller) return;
+    const attempt = ++this.attempt;
+    const controller = new AbortController();
+    this.controller = controller;
+    this.clientId = randomLiveClientId();
+    this.ready = false;
+    this.pending = new Uint8Array(0);
+    let responseStatus = 0;
+    let attemptReader = null;
+    let watchdogTimedOut = false;
+    const attemptStartedAt = Date.now();
+    this.lastFrameAt = attemptStartedAt;
+    const watchdog = window.setInterval(() => {
+      if (this.controller !== controller || controller.signal.aborted) return;
+      const lastProgress = this.ready ? this.lastFrameAt : attemptStartedAt;
+      const deadline = this.ready ? LIVE_MULTIPLEX_LIVENESS_TIMEOUT_MS : LIVE_MULTIPLEX_READY_TIMEOUT_MS;
+      if (Date.now() - lastProgress >= deadline) {
+        watchdogTimedOut = true;
+        controller.abort();
+      }
+    }, 1_000);
+    try {
+      const response = await fetch(`/api/v1/live/multiplex?client_id=${encodeURIComponent(this.clientId)}`, {
+        cache: 'no-store',
+        credentials: 'same-origin',
+        headers: { Accept: 'application/vnd.sdrtrunk.live+binary' },
+        signal: controller.signal
+      });
+      responseStatus = response.status;
+      if (!response.ok) throw Object.assign(new Error(`Live connection returned ${response.status}`), {
+        status: response.status
+      });
+      if (!response.body) throw new Error('This browser does not support streaming responses.');
+      attemptReader = response.body.getReader();
+      this.reader = attemptReader;
+      while (!controller.signal.aborted) {
+        const { done, value } = await attemptReader.read();
+        if (done) break;
+        if (this.controller !== controller) break;
+        this.consume(value);
+      }
+      if (!controller.signal.aborted) throw new Error('The live connection ended.');
+    } catch (error) {
+      if (watchdogTimedOut) this.dispatchError(new Error(this.ready ?
+        'The live connection stopped responding.' : 'The live connection did not become ready in time.'));
+      else if (!controller.signal.aborted) this.dispatchError(error);
+    } finally {
+      window.clearInterval(watchdog);
+      if (attemptReader) void attemptReader.cancel().catch(() => {});
+      controller.abort();
+      if (this.controller === controller) {
+        this.controller = null;
+        this.reader = null;
+        this.ready = false;
+        this.pending = new Uint8Array(0);
+      }
+    }
+    if (attempt !== this.attempt || !this.hasSubscribers()) return;
+    if (responseStatus === 401 || responseStatus === 403) return;
+    this.reconnectTimer = window.setTimeout(() => {
+      this.reconnectTimer = null;
+      this.ensureConnected();
+    }, this.reconnectDelay);
+    this.reconnectDelay = Math.min(10_000, Math.round(this.reconnectDelay * 1.7));
+  }
+
+  consume(chunk) {
+    if (!(chunk instanceof Uint8Array) || !chunk.byteLength) return;
+    if (!this.pending.byteLength) this.pending = chunk;
+    else {
+      const combined = new Uint8Array(this.pending.byteLength + chunk.byteLength);
+      combined.set(this.pending);
+      combined.set(chunk, this.pending.byteLength);
+      this.pending = combined;
+    }
+    let offset = 0;
+    while (this.pending.byteLength - offset >= LIVE_MULTIPLEX_HEADER_BYTES) {
+      const header = new DataView(this.pending.buffer, this.pending.byteOffset + offset,
+        this.pending.byteLength - offset);
+      if (header.getUint32(0) !== LIVE_MULTIPLEX_MAGIC || header.getUint8(4) !== 1) {
+        throw new Error('The live connection returned an invalid frame marker.');
+      }
+      const kind = header.getUint8(5);
+      const topic = LIVE_MULTIPLEX_TOPICS[header.getUint16(6)];
+      const payloadBytes = header.getUint32(8);
+      if (!topic || ![1, 2].includes(kind) || payloadBytes > LIVE_MULTIPLEX_MAXIMUM_BYTES) {
+        throw new Error('The live connection returned an unsupported frame.');
+      }
+      const frameBytes = LIVE_MULTIPLEX_HEADER_BYTES + payloadBytes;
+      if (this.pending.byteLength - offset < frameBytes) break;
+      const payload = this.pending.slice(offset + LIVE_MULTIPLEX_HEADER_BYTES, offset + frameBytes);
+      this.dispatch(topic, kind, payload);
+      offset += frameBytes;
+    }
+    this.pending = offset ? this.pending.slice(offset) : this.pending;
+  }
+
+  dispatch(topic, kind, payload) {
+    this.lastFrameAt = Date.now();
+    if (kind === 1) {
+      let message;
+      try {
+        message = JSON.parse(LIVE_MULTIPLEX_DECODER.decode(payload));
+      } catch (_) {
+        throw new Error('The live connection returned invalid JSON.');
+      }
+      if (topic === 'control' && message?.event === 'ready') {
+        if (String(message?.data?.client_id || '') !== this.clientId) {
+          throw new Error('The live connection identifier did not match.');
+        }
+        this.ready = true;
+        this.reconnectDelay = 500;
+        this.failedTopics.clear();
+        this.subscribers.forEach((subscribers) => subscribers.forEach((target) =>
+          invokeLiveSubscriber(target, 'onOpen')));
+        this.queueControl(true);
+        return;
+      }
+      if (message?.event === 'error') this.failedTopics.add(topic);
+      else if (this.failedTopics.delete(topic)) {
+        this.subscribers.get(topic)?.forEach((target) => invokeLiveSubscriber(target, 'onOpen'));
+      }
+      this.subscribers.get(topic)?.forEach((target) =>
+        invokeLiveSubscriber(target, 'onEvent', message?.event, message?.data));
+    } else {
+      const frame = decodeDiagnosticFrame(payload);
+      if (this.failedTopics.delete(topic)) {
+        this.subscribers.get(topic)?.forEach((target) => invokeLiveSubscriber(target, 'onOpen'));
+      }
+      this.subscribers.get(topic)?.forEach((target) => invokeLiveSubscriber(target, 'onFrame', frame));
+    }
+  }
+
+  dispatchError(error) {
+    this.subscribers.forEach((subscribers) => subscribers.forEach((target) =>
+      invokeLiveSubscriber(target, 'onError', error)));
+  }
+
+  queueControl(immediate = false) {
+    this.controlPending = true;
+    if (!this.ready || this.controlInFlight) return;
+    if (this.controlTimer !== null) window.clearTimeout(this.controlTimer);
+    this.controlTimer = window.setTimeout(() => {
+      this.controlTimer = null;
+      void this.sendControl();
+    }, immediate ? 0 : 20);
+  }
+
+  async sendControl() {
+    if (!this.ready || this.controlInFlight || !this.clientId) return;
+    this.controlPending = false;
+    this.controlInFlight = true;
+    const controlClientId = this.clientId;
+    const revision = ++this.controlRevision;
+    const subscriptions = {};
+    this.subscribers.forEach((targets, topic) => {
+      if (targets.size) subscriptions[topic] = this.parameters.get(topic) || {};
+    });
+    try {
+      await requestJson('/api/v1/live/multiplex/control', {
+        method: 'POST',
+        body: { client_id: controlClientId, revision, subscriptions },
+        page: false,
+        timeoutMs: 5_000
+      });
+      this.authorizationRecoveryUsed = false;
+      this.authorizationBlocked = false;
+    } catch (error) {
+      if (this.ready && this.clientId === controlClientId) {
+        this.dispatchError(error);
+        if (error?.status === 401 || error?.status === 403) {
+          this.authorizationBlocked = true;
+          if (!this.authorizationRecoveryUsed) {
+            this.authorizationRecoveryUsed = true;
+            await refreshAccessSession(false);
+          }
+        } else if (error?.status === 404) {
+          this.restart();
+        }
+      }
+    } finally {
+      this.controlInFlight = false;
+      if (this.controlPending) this.queueControl(true);
+    }
+  }
+
+  closeIfIdle() {
+    if (this.hasSubscribers()) return;
+    this.stop();
+  }
+
+  stop() {
+    this.attempt += 1;
+    this.ready = false;
+    this.clientId = null;
+    if (this.reconnectTimer !== null) window.clearTimeout(this.reconnectTimer);
+    if (this.controlTimer !== null) window.clearTimeout(this.controlTimer);
+    this.reconnectTimer = null;
+    this.controlTimer = null;
+    this.controller?.abort();
+    this.controller = null;
+    const reader = this.reader;
+    this.reader = null;
+    if (reader) void reader.cancel().catch(() => {});
+    this.pending = new Uint8Array(0);
+    this.lastFrameAt = 0;
+  }
+
+  restart() {
+    this.stop();
+    this.ensureConnected();
+  }
+
+  confirmedAccessRefresh() {
+    if (!this.authorizationBlocked) return;
+    this.authorizationBlocked = false;
+    if (this.hasSubscribers()) this.restart();
+  }
+}
+
+const liveMultiplexer = new LiveMultiplexer();
+notifyConfirmedAccessRefresh = () => liveMultiplexer.confirmedAccessRefresh();
+
+function liveConnection(topic, parameters = {}, pageScoped = true) {
+  const listeners = new Map();
+  let requestedParameters = parameters;
+  let subscription = null;
+  let closed = false;
+  const callbacks = {
+    onOpen: () => source.onopen?.({ type: 'open' }),
+    onError: (error) => source.onerror?.(error),
+    onEvent: (event, data) => {
+      if (event === 'error') source.onerror?.(Object.assign(new Error(data?.message || 'Live stream unavailable'), data));
+      else listeners.get(event)?.forEach((callback) =>
+        invokeLiveListener(callback, { type: event, data: JSON.stringify(data) }));
+    }
+  };
+  const synchronizeVisibility = () => {
+    if (closed) return;
+    if (pageScoped && document.hidden) {
+      subscription?.close();
+      subscription = null;
+    } else if (!subscription) {
+      subscription = liveMultiplexer.subscribe(topic, requestedParameters, callbacks);
+    }
+  };
+  const source = {
+    onopen: null,
+    onerror: null,
+    addEventListener(event, callback) {
+      if (!listeners.has(event)) listeners.set(event, new Set());
+      listeners.get(event).add(callback);
+    },
+    close() {
+      if (closed) return Promise.resolve();
+      closed = true;
+      document.removeEventListener('visibilitychange', synchronizeVisibility);
+      liveConnections.delete(source);
+      pageConnections.delete(source);
+      const active = subscription;
+      subscription = null;
+      return active?.close() || Promise.resolve();
+    },
+    update(nextParameters) {
+      requestedParameters = nextParameters;
+      return subscription?.update(nextParameters) || false;
+    }
+  };
+  if (pageScoped) document.addEventListener('visibilitychange', synchronizeVisibility);
+  synchronizeVisibility();
   liveConnections.add(source);
-  pageConnections.add(source);
+  if (pageScoped) pageConnections.add(source);
   return source;
 }
 
@@ -5200,30 +5647,39 @@ let liveChannelActivitySource = null;
 let liveChannelActivityState = 'connecting';
 const liveChannelActivitySubscribers = new Set();
 const liveChannelActivityTables = new Map();
+let liveChannelActivityRevision = 0;
+let liveChannelActivityNeedsResync = false;
 
-function subscribeLiveChannelActivity(callbacks = {}) {
-  const subscriber = {
-    snapshot: typeof callbacks.snapshot === 'function' ? callbacks.snapshot : null,
-    activityTable: typeof callbacks.activityTable === 'function' ? callbacks.activityTable : null,
-    open: typeof callbacks.open === 'function' ? callbacks.open : null,
-    error: typeof callbacks.error === 'function' ? callbacks.error : null
-  };
-  liveChannelActivitySubscribers.add(subscriber);
+function applyLiveChannelActivitySnapshot(snapshot) {
+  liveChannelActivityTables.clear();
+  (Array.isArray(snapshot?.tables) ? snapshot.tables : []).forEach((table) => {
+    if (table?.table_id) liveChannelActivityTables.set(String(table.table_id), table);
+  });
+  liveChannelActivityRevision = Math.max(0, Number(snapshot?.revision) || 0);
+  liveChannelActivityNeedsResync = false;
+  const current = { ...snapshot, tables: [...liveChannelActivityTables.values()] };
+  liveChannelActivitySubscribers.forEach((target) => invokeLiveSubscriber(target, 'snapshot', current));
+}
+
+function synchronizeLiveChannelActivitySource() {
+  if (document.hidden || !liveChannelActivitySubscribers.size) {
+    if (liveChannelActivitySource) {
+      const source = liveChannelActivitySource;
+      liveChannelActivitySource = null;
+      liveChannelActivityState = 'connecting';
+      source.close();
+      liveConnections.delete(source);
+    }
+    return;
+  }
 
   if (!liveChannelActivitySource) {
     liveChannelActivityState = 'connecting';
-    const source = new EventSource('/api/v1/live/channel-activity');
+    const source = liveConnection('channel_activity', {}, false);
     liveChannelActivitySource = source;
-    liveConnections.add(source);
     source.addEventListener('snapshot', (event) => {
       try {
-        const snapshot = JSON.parse(event.data);
-        liveChannelActivityTables.clear();
-        (Array.isArray(snapshot?.tables) ? snapshot.tables : []).forEach((table) => {
-          if (table?.table_id) liveChannelActivityTables.set(String(table.table_id), table);
-        });
-        const current = { ...snapshot, tables: [...liveChannelActivityTables.values()] };
-        liveChannelActivitySubscribers.forEach((target) => target.snapshot?.(current));
+        applyLiveChannelActivitySnapshot(JSON.parse(event.data));
       } catch (error) {
         //Ignore a malformed optional live update and retain the last complete snapshot.
       }
@@ -5233,29 +5689,60 @@ function subscribeLiveChannelActivity(callbacks = {}) {
         const update = JSON.parse(event.data);
         const id = String(update?.table_id || update?.table?.table_id || '');
         if (!id) return;
+        const revision = Math.max(0, Number(update?.revision) || 0);
+        if (liveChannelActivityNeedsResync) return;
+        if (revision && revision <= liveChannelActivityRevision) return;
+        if (revision && liveChannelActivityRevision && revision !== liveChannelActivityRevision + 1) {
+          liveChannelActivityNeedsResync = true;
+          return;
+        }
         if (update.operation === 'remove') liveChannelActivityTables.delete(id);
         else if (update.table) liveChannelActivityTables.set(id, update.table);
-        liveChannelActivitySubscribers.forEach((target) => target.activityTable?.(update));
+        if (revision) liveChannelActivityRevision = revision;
+        liveChannelActivitySubscribers.forEach((target) => invokeLiveSubscriber(target, 'activityTable', update));
       } catch (error) {
         //Ignore one malformed update; a later snapshot restores authoritative state.
+      }
+    });
+    source.addEventListener('activity_resync', (event) => {
+      try {
+        const resync = JSON.parse(event.data);
+        applyLiveChannelActivitySnapshot(resync?.snapshot || resync);
+      } catch (error) {
+        //A later drop-triggered authoritative snapshot remains a bounded fallback.
       }
     });
     source.onopen = () => {
       if (liveChannelActivitySource !== source) return;
       liveChannelActivityState = 'open';
-      liveChannelActivitySubscribers.forEach((target) => target.open?.());
+      liveChannelActivitySubscribers.forEach((target) => invokeLiveSubscriber(target, 'open'));
     };
     source.onerror = () => {
       if (liveChannelActivitySource !== source) return;
       liveChannelActivityState = 'error';
-      liveChannelActivitySubscribers.forEach((target) => target.error?.());
+      liveChannelActivitySubscribers.forEach((target) => invokeLiveSubscriber(target, 'error'));
     };
-  } else {
+  }
+}
+
+document.addEventListener('visibilitychange', synchronizeLiveChannelActivitySource);
+
+function subscribeLiveChannelActivity(callbacks = {}) {
+  const subscriber = {
+    snapshot: typeof callbacks.snapshot === 'function' ? callbacks.snapshot : null,
+    activityTable: typeof callbacks.activityTable === 'function' ? callbacks.activityTable : null,
+    open: typeof callbacks.open === 'function' ? callbacks.open : null,
+    error: typeof callbacks.error === 'function' ? callbacks.error : null
+  };
+  liveChannelActivitySubscribers.add(subscriber);
+  synchronizeLiveChannelActivitySource();
+
+  if (liveChannelActivitySource) {
     if (liveChannelActivityTables.size) {
-      subscriber.snapshot?.({ tables: [...liveChannelActivityTables.values()] });
+      invokeLiveSubscriber(subscriber, 'snapshot', { tables: [...liveChannelActivityTables.values()] });
     }
-    if (liveChannelActivityState === 'open') subscriber.open?.();
-    else if (liveChannelActivityState === 'error') subscriber.error?.();
+    if (liveChannelActivityState === 'open') invokeLiveSubscriber(subscriber, 'open');
+    else if (liveChannelActivityState === 'error') invokeLiveSubscriber(subscriber, 'error');
   }
 
   let closed = false;
@@ -5265,14 +5752,12 @@ function subscribeLiveChannelActivity(callbacks = {}) {
       closed = true;
       liveChannelActivitySubscribers.delete(subscriber);
       pageConnections.delete(connection);
-      if (!liveChannelActivitySubscribers.size && liveChannelActivitySource) {
-        const source = liveChannelActivitySource;
-        liveChannelActivitySource = null;
-        liveChannelActivityState = 'connecting';
+      if (!liveChannelActivitySubscribers.size) {
         liveChannelActivityTables.clear();
-        source.close();
-        liveConnections.delete(source);
+        liveChannelActivityRevision = 0;
+        liveChannelActivityNeedsResync = false;
       }
+      synchronizeLiveChannelActivitySource();
     }
   };
   pageConnections.add(connection);
@@ -5291,142 +5776,58 @@ const DIAGNOSTIC_FRAME_TYPES = Object.freeze({
   HEARTBEAT: 127
 });
 
-function binaryFrameConnection(path, parameters = {}, callbacks = {}) {
-  const query = new URLSearchParams();
-  Object.entries(parameters).forEach(([key, value]) => {
-    if (value !== null && value !== undefined && value !== '') query.set(snakeCaseKey(key), String(value));
-  });
-  const target = `${path}${query.size ? `?${query}` : ''}`;
-  let closed = false;
-  let controller = null;
-  let reconnectTimer = null;
-  let pending = new Uint8Array(0);
-  let attemptActive = false;
-  let closedPromiseResolve = null;
-  const closedPromise = new Promise((resolve) => { closedPromiseResolve = resolve; });
-
-  const settleClosed = () => {
-    if (closed && !attemptActive && closedPromiseResolve) {
-      closedPromiseResolve();
-      closedPromiseResolve = null;
-    }
+function decodeDiagnosticFrame(encoded) {
+  if (!(encoded instanceof Uint8Array) || encoded.byteLength < DIAGNOSTIC_FRAME_HEADER_BYTES) {
+    throw new Error('The diagnostic stream returned a truncated frame.');
+  }
+  const header = new DataView(encoded.buffer, encoded.byteOffset, encoded.byteLength);
+  if (header.getUint32(0, true) !== DIAGNOSTIC_FRAME_MAGIC) {
+    throw new Error('The diagnostic stream returned an invalid frame marker.');
+  }
+  const version = header.getUint8(4);
+  const type = header.getUint8(5);
+  const headerBytes = header.getUint16(6, true);
+  const payloadBytes = header.getUint32(8, true);
+  const valueCount = header.getUint32(12, true);
+  if (version !== 1 || headerBytes < DIAGNOSTIC_FRAME_HEADER_BYTES || headerBytes > 4096 ||
+      payloadBytes > DIAGNOSTIC_FRAME_MAXIMUM_BYTES || headerBytes + payloadBytes !== encoded.byteLength) {
+    throw new Error('The diagnostic stream returned an unsupported frame.');
+  }
+  return {
+    version,
+    type,
+    valueCount,
+    generation: Number(header.getBigInt64(16, true)),
+    sequence: Number(header.getBigInt64(24, true)),
+    observedAtEpochMs: Number(header.getBigInt64(32, true)),
+    encodedAtEpochMs: Number(header.getBigInt64(40, true)),
+    centerFrequencyHz: Number(header.getBigInt64(48, true)),
+    sampleRateHz: header.getInt32(56, true),
+    fftSize: header.getInt32(60, true),
+    firstBin: headerBytes >= 68 ? header.getInt32(64, true) : 0,
+    sourceBinCount: headerBytes >= 72 ? header.getInt32(68, true) : valueCount,
+    payload: encoded.slice(headerBytes)
   };
+}
 
-  const fail = (error) => {
-    if (!closed) callbacks.onError?.(error instanceof Error ? error : new Error(String(error)));
-  };
-
-  const consume = (chunk) => {
-    if (!(chunk instanceof Uint8Array) || !chunk.byteLength) return;
-    if (!pending.byteLength) pending = chunk;
-    else {
-      const combined = new Uint8Array(pending.byteLength + chunk.byteLength);
-      combined.set(pending);
-      combined.set(chunk, pending.byteLength);
-      pending = combined;
-    }
-    let offset = 0;
-
-    while (pending.byteLength - offset >= DIAGNOSTIC_FRAME_HEADER_BYTES) {
-      const header = new DataView(pending.buffer, pending.byteOffset + offset,
-        pending.byteLength - offset);
-      if (header.getUint32(0, true) !== DIAGNOSTIC_FRAME_MAGIC) {
-        throw new Error('The diagnostic stream returned an invalid frame marker.');
-      }
-      const version = header.getUint8(4);
-      const type = header.getUint8(5);
-      const headerBytes = header.getUint16(6, true);
-      const payloadBytes = header.getUint32(8, true);
-      const valueCount = header.getUint32(12, true);
-      if (version !== 1 || headerBytes < DIAGNOSTIC_FRAME_HEADER_BYTES || headerBytes > 4096 ||
-          payloadBytes > DIAGNOSTIC_FRAME_MAXIMUM_BYTES) {
-        throw new Error('The diagnostic stream returned an unsupported frame.');
-      }
-      const frameBytes = headerBytes + payloadBytes;
-      if (pending.byteLength - offset < frameBytes) break;
-      const payload = pending.subarray(offset + headerBytes, offset + frameBytes);
-      callbacks.onFrame?.({
-        version,
-        type,
-        valueCount,
-        generation: Number(header.getBigInt64(16, true)),
-        sequence: Number(header.getBigInt64(24, true)),
-        observedAtEpochMs: Number(header.getBigInt64(32, true)),
-        encodedAtEpochMs: Number(header.getBigInt64(40, true)),
-        centerFrequencyHz: Number(header.getBigInt64(48, true)),
-        sampleRateHz: header.getInt32(56, true),
-        fftSize: header.getInt32(60, true),
-        firstBin: headerBytes >= 68 ? header.getInt32(64, true) : 0,
-        sourceBinCount: headerBytes >= 72 ? header.getInt32(68, true) : valueCount,
-        payload
-      });
-      offset += frameBytes;
-    }
-    pending = offset ? pending.slice(offset) : pending;
-  };
-
-  const connect = async () => {
-    if (closed) return;
-    attemptActive = true;
-    const attemptController = new AbortController();
-    controller = attemptController;
-    let reader = null;
-    pending = new Uint8Array(0);
-    try {
-      const response = await fetch(target, {
-        cache: 'no-store',
-        credentials: 'same-origin',
-        headers: { Accept: 'application/octet-stream' },
-        signal: attemptController.signal
-      });
-      if (!response.ok) {
-        const message = await response.text().catch(() => '');
-        const error = new Error(message || `${path} returned ${response.status}`);
-        error.status = response.status;
-        throw error;
-      }
-      if (!response.body) throw new Error('This browser does not support streaming responses.');
-      callbacks.onOpen?.();
-      reader = response.body.getReader();
-      while (!closed) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        consume(value);
-      }
-      if (!closed) throw new Error('The diagnostic stream ended.');
-    } catch (error) {
-      if (!closed && error?.name !== 'AbortError') fail(error);
-    } finally {
-      if (reader) await reader.cancel().catch(() => {});
-      attemptController.abort();
-      if (controller === attemptController) controller = null;
-      attemptActive = false;
-      settleClosed();
-    }
-    if (!closed) reconnectTimer = window.setTimeout(connect, 750);
-  };
-
-  const connection = {
-    close() {
-      if (closed) return closedPromise;
-      closed = true;
-      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
-      reconnectTimer = null;
-      controller?.abort();
-      controller = null;
-      pending = new Uint8Array(0);
-      liveConnections.delete(connection);
-      pageConnections.delete(connection);
-      settleClosed();
-      return closedPromise;
+function binaryFrameConnection(topic, parameters = {}, callbacks = {}) {
+  const connection = liveMultiplexer.subscribe(topic, parameters, {
+    onOpen: () => callbacks.onOpen?.(),
+    onError: (error) => callbacks.onError?.(error instanceof Error ? error : new Error(String(error))),
+    onEvent: (event, data) => {
+      if (event === 'error') callbacks.onError?.(Object.assign(new Error(data?.message ||
+        'Diagnostic stream unavailable'), data));
     },
-    whenClosed() {
-      return closedPromise;
-    }
+    onFrame: (frame) => callbacks.onFrame?.(frame)
+  });
+  const close = connection.close;
+  connection.close = () => {
+    liveConnections.delete(connection);
+    pageConnections.delete(connection);
+    return close();
   };
   liveConnections.add(connection);
   pageConnections.add(connection);
-  connect();
   return connection;
 }
 
@@ -5512,11 +5913,6 @@ function synchronizePlaybackAccess() {
   bar.setAttribute('aria-disabled', String(!allowed));
 
   if (!allowed) {
-    if (playbackConnection) {
-      playbackConnection.close();
-      liveConnections.delete(playbackConnection);
-      playbackConnection = null;
-    }
     const unavailableMessage = !accessSessionAvailable ? 'Access unavailable' :
       (accessSession.authenticated ? 'Web audio unavailable' : 'Sign in for web audio');
     if (window.sdrtrunkWebPlayer) window.sdrtrunkWebPlayer.disconnect(unavailableMessage);
@@ -5546,9 +5942,9 @@ function synchronizePlaybackAccess() {
   }
   bar.querySelectorAll('button, input').forEach((control) => { control.disabled = false; });
   window.sdrtrunkWebPlayer.render();
-  if (!playbackConnection) {
-    playbackConnection = window.sdrtrunkWebPlayer.connect('/api/v1/live/calls');
-    liveConnections.add(playbackConnection);
+  if (!window.sdrtrunkWebPlayer.connectionFactory) {
+    window.sdrtrunkWebPlayer.connect('calls',
+      (topic) => liveConnection(topic, {}, false));
   }
 }
 
@@ -6090,7 +6486,7 @@ function liveMessagesPane() {
       frequency_hz: selection.diagnosticFrequencyHz
     };
     if (selection.diagnosticTimeslot) parameters.timeslot = selection.diagnosticTimeslot;
-    stream = liveConnection('/api/v1/live/decode-messages', parameters);
+    stream = liveConnection('decode_messages', parameters);
     stream.addEventListener('snapshot', (event) => {
       if (epoch !== streamEpoch) return;
       const snapshot = JSON.parse(event.data);
@@ -6452,7 +6848,7 @@ function liveChannelPane() {
       frequency_hz: selection.diagnosticFrequencyHz
     };
     if (selection.diagnosticTimeslot) parameters.timeslot = selection.diagnosticTimeslot;
-    stream = binaryFrameConnection('/api/v1/live/channel-diagnostics', parameters, {
+    stream = binaryFrameConnection('channel_diagnostics', parameters, {
       onOpen: () => {
         if (epoch === streamEpoch) setStatus('Connected', 'state-current');
       },
@@ -6865,6 +7261,7 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
   let fullViewport = null;
   let viewport = null;
   let refining = false;
+  let awaitingViewportState = false;
   let refinementTimer = null;
   let hoverRatio = null;
   let hoverCanvas = null;
@@ -7187,6 +7584,7 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
 
   function acceptTunerState(frame) {
     const tunerState = diagnosticJsonPayload(frame);
+    awaitingViewportState = false;
     const streamState = String(tunerState?.stream_state ?? tunerState?.state ??
       (tunerState?.bound ? 'live' : 'waiting')).toLowerCase();
     const live = streamState === 'live' || streamState === 'active';
@@ -7244,6 +7642,8 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
 
   function acceptTunerFrame(frame) {
     if (frame.type !== DIAGNOSTIC_FRAME_TYPES.TUNER_FFT ||
+        drag?.moved ||
+        awaitingViewportState ||
         (generation === frame.generation && sequence !== null && frame.sequence <= sequence)) return;
     const values = diagnosticFloatPayload(frame);
     if (!values.length) return;
@@ -7292,7 +7692,7 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
     let candidate = null;
     setStatus(refining ? 'Refining' : 'Connecting');
     if (!stream && !refining) setOverlay('Waiting for tuner data…');
-    candidate = binaryFrameConnection('/api/v1/live/tuner-diagnostics', diagnosticParameters(), {
+    candidate = binaryFrameConnection('tuner_diagnostics', diagnosticParameters(), {
       onOpen: () => {
         if (disposed || candidate !== stream || epoch !== streamEpoch) return;
         sequence = null;
@@ -7318,20 +7718,21 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
   function queueViewportUpdate(immediate = false) {
     window.clearTimeout(refinementTimer);
     refinementTimer = null;
-    //Wait until the browser has released the old streaming request before opening its refined replacement. This
-    //prevents a zoom from becoming permanently queued behind the browser's HTTP/1.1 per-origin connection limit.
-    const closed = closeStreams();
-    const queuedEpoch = streamEpoch;
     setRefining(true);
-    const reopen = async () => {
-      await closed;
-      if (disposed || queuedEpoch !== streamEpoch || !shouldRun()) return;
-      openDiagnosticStream();
+    const update = () => {
+      if (disposed || !shouldRun()) return;
+      awaitingViewportState = true;
+      if (stream) {
+        if (!stream.update(diagnosticParameters())) {
+          awaitingViewportState = false;
+          setRefining(false);
+        }
+      } else openDiagnosticStream();
     };
-    if (immediate) void reopen();
+    if (immediate) update();
     else refinementTimer = window.setTimeout(() => {
       refinementTimer = null;
-      void reopen();
+      update();
     }, TUNER_SPECTRUM_REFINEMENT_DELAY_MS);
   }
 
@@ -7585,9 +7986,7 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
     if (!deltaPixels) return;
     if (!drag.moved) {
       drag.moved = true;
-      //Freeze the streamed viewport for the duration of the drag.  Otherwise each live frame overwrites the local
-      //pan position and makes wideband panning lose most (or all) of the pointer movement.
-      closeStreams();
+      //Keep the server session/producer attached and freeze only local frame application until pointer release.
     }
     panBy(-deltaPixels / rect.width * (viewport.endHz - viewport.startHz), 'none');
   }
@@ -7910,6 +8309,8 @@ function liveEventsPanel(onCollapse) {
   const order = [];
   let selection = null;
   let paused = false;
+  let eventsActive = true;
+  let collapsed = false;
   let stream = null;
   let streamEpoch = 0;
   let renderPending = false;
@@ -7972,8 +8373,6 @@ function liveEventsPanel(onCollapse) {
   const channelPane = channelController.element;
   body.append(eventPane, messagesPane, channelPane);
   panel.append(header, body);
-  pageConnections.add(messagesController);
-  pageConnections.add(channelController);
 
   const renderEvents = () => {
     renderPending = false;
@@ -8048,7 +8447,8 @@ function liveEventsPanel(onCollapse) {
     scheduleRender();
   };
 
-  const shouldRun = () => !paused && selection?.configurationId;
+  const shouldRun = () => eventsActive && !collapsed && !paused && !document.hidden &&
+    selection?.configurationId;
 
   const sync = () => {
     if (!shouldRun()) {
@@ -8065,7 +8465,7 @@ function liveEventsPanel(onCollapse) {
     const parameters = { configuration_id: selection.configurationId };
     if (selection.frequencyHz) parameters.frequency_hz = selection.frequencyHz;
     if (selection.timeslot) parameters.timeslot = selection.timeslot;
-    stream = liveConnection('/api/v1/live/decode-events', parameters);
+    stream = liveConnection('decode_events', parameters);
     stream.addEventListener('snapshot', (event) => {
       if (epoch !== streamEpoch) return;
       const snapshot = JSON.parse(event.data);
@@ -8129,6 +8529,8 @@ function liveEventsPanel(onCollapse) {
       });
       messagesController.setActive(id === 'messages');
       channelController.setActive(id === 'channel');
+      eventsActive = id === 'events';
+      sync();
     });
     button.dataset.tab = id;
     button.setAttribute('aria-selected', String(id === 'events'));
@@ -8137,13 +8539,14 @@ function liveEventsPanel(onCollapse) {
   });
 
   collapse.addEventListener('click', () => {
-    const collapsed = !panel.classList.contains('collapsed');
+    collapsed = !panel.classList.contains('collapsed');
     panel.classList.toggle('collapsed', collapsed);
     collapse.textContent = collapsed ? 'Expand' : 'Collapse';
     collapse.setAttribute('aria-expanded', String(!collapsed));
     messagesController.setCollapsed(collapsed);
     channelController.setCollapsed(collapsed);
     onCollapse(collapsed);
+    sync();
   });
   pause.addEventListener('click', () => {
     paused = !paused;
@@ -8155,8 +8558,19 @@ function liveEventsPanel(onCollapse) {
     sync();
   });
   filter.addEventListener('change', scheduleRender);
+  const onVisibilityChange = () => sync();
+  document.addEventListener('visibilitychange', onVisibilityChange);
   renderEvents();
-  return { element: panel, select };
+  return {
+    element: panel,
+    select,
+    close() {
+      closeStream();
+      messagesController.close();
+      channelController.close();
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    }
+  };
 }
 
 function liveSystemsSection(onSelectionChange) {
@@ -8515,6 +8929,7 @@ function liveSystemsSection(onSelectionChange) {
 async function renderLive() {
   const split = node('div', 'live-split');
   const eventsPanel = liveEventsPanel((collapsed) => split.classList.toggle('details-collapsed', collapsed));
+  pageConnections.add(eventsPanel);
   const systems = liveSystemsSection(eventsPanel.select);
   const spectrum = node('button', 'button secondary live-tuner-spectrum', 'Tuner Spectrum');
   spectrum.id = 'open-tuner-spectrum';
@@ -9383,7 +9798,10 @@ async function renderActivity(scopeParameters, title = 'Activity') {
     pause.setAttribute('aria-pressed', 'false');
     titleBar.append(pause);
     let paused = false;
+    let activityResetInFlight = false;
+    let activityResetQueued = false;
     const pending = new Map();
+    const resetPending = new Map();
     const activityRowKey = (row) =>
       row.id !== null && row.id !== undefined ? String(row.id) : Symbol();
     const updatePauseLabel = () => {
@@ -9393,6 +9811,18 @@ async function renderActivity(scopeParameters, title = 'Activity') {
     };
     const addActivityRow = (row) => {
       activityTable.tableController.upsertRow(row, { prepend: true, limit: 200 });
+    };
+    const acceptActivityRow = (row) => {
+      if (String(row?.action || '').toUpperCase() === 'GRANT') return;
+      if (!paused) {
+        addActivityRow(row);
+        return;
+      }
+      const key = activityRowKey(row);
+      if (pending.has(key)) pending.delete(key);
+      pending.set(key, row);
+      if (pending.size > 200) pending.delete(pending.keys().next().value);
+      updatePauseLabel();
     };
     pause.addEventListener('click', () => {
       paused = !paused;
@@ -9405,22 +9835,45 @@ async function renderActivity(scopeParameters, title = 'Activity') {
       }
       updatePauseLabel();
     });
-    const source = liveConnection('/api/v1/live/activity', scopeParameters);
+    const source = liveConnection('activity', scopeParameters);
     source.addEventListener('activity', (event) => {
       const row = JSON.parse(event.data);
-      if (String(row.action || '').toUpperCase() === 'GRANT') return;
-      if (!paused) {
-        addActivityRow(row);
+      if (activityResetInFlight) {
+        const key = activityRowKey(row);
+        if (resetPending.has(key)) resetPending.delete(key);
+        resetPending.set(key, row);
+        if (resetPending.size > 200) resetPending.delete(resetPending.keys().next().value);
         return;
       }
-      const key = activityRowKey(row);
-      if (pending.has(key)) pending.delete(key);
-      pending.set(key, row);
-      if (pending.size > 200) {
-        pending.delete(pending.keys().next().value);
-      }
-      updatePauseLabel();
+      acceptActivityRow(row);
     });
+    const refreshAfterActivityGap = () => {
+      if (activityResetInFlight) {
+        activityResetQueued = true;
+        return;
+      }
+      activityResetInFlight = true;
+      activityResetQueued = false;
+      void api('/api/v1/activity', {
+        ...scopeParameters,
+        hide_grants: true,
+        limit: 200
+      }).then((refreshed) => {
+        pending.clear();
+        activityTable.tableController.replaceRows(withoutGrantActions(refreshed.rows));
+        [...resetPending.values()].forEach(acceptActivityRow);
+        resetPending.clear();
+        updatePauseLabel();
+      }).catch(() => {
+        //A later live gap or normal page refresh can retry without disturbing the last complete table.
+        [...resetPending.values()].forEach(acceptActivityRow);
+        resetPending.clear();
+      }).finally(() => {
+        activityResetInFlight = false;
+        if (activityResetQueued) refreshAfterActivityGap();
+      });
+    };
+    source.addEventListener('activity_reset', refreshAfterActivityGap);
   }
 }
 
@@ -10064,12 +10517,18 @@ function loggingAvailabilitySignature() {
 
 async function reloadForWebClientRevision() {
   let serverRevision = '';
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 5_000);
   try {
-    const response = await fetch('/', { method: 'HEAD', cache: 'no-store', credentials: 'same-origin' });
+    const response = await fetch('/', {
+      method: 'HEAD', cache: 'no-store', credentials: 'same-origin', signal: controller.signal
+    });
     if (!response.ok) return false;
     serverRevision = String(response.headers.get('X-Sdrtrunk-Web-Revision') || '').trim();
   } catch (error) {
     return false;
+  } finally {
+    window.clearTimeout(timeout);
   }
 
   if (!WEB_CLIENT_REVISION || !serverRevision || serverRevision === WEB_CLIENT_REVISION ||
@@ -10094,7 +10553,7 @@ async function loadStatus(refreshCurrentView = false) {
     return;
   }
   try {
-    serviceStatus = await api('/api/v1/status');
+    serviceStatus = await api('/api/v1/status', {}, { page: false });
     const database = serviceStatus.database || {};
     const logging = statsLoggingState();
     const size = (Number(database.database_bytes || 0) / 1048576).toFixed(1);
@@ -10115,6 +10574,10 @@ async function loadStatus(refreshCurrentView = false) {
 }
 
 async function render() {
+  const epoch = ++activeRenderEpoch;
+  activeRenderController?.abort();
+  const renderController = new AbortController();
+  activeRenderController = renderController;
   const view = route.get('view') || 'dashboard';
   if (!closeReadOnlyModal(false)) return;
   document.body.dataset.view = view;
@@ -10145,6 +10608,7 @@ async function render() {
       return;
     }
     await handlers[effectiveView]();
+    if (epoch !== activeRenderEpoch || renderController.signal.aborted) return;
     const notice = databaseLoggingNotice(effectiveView);
     if (notice) {
       const header = content.querySelector('.page-header');
@@ -10152,6 +10616,7 @@ async function render() {
       else content.prepend(notice);
     }
   } catch (error) {
+    if (epoch !== activeRenderEpoch || renderController.signal.aborted || error?.name === 'AbortError') return;
     if (error?.status === 401 || error?.status === 403) {
       await refreshAccessSession(false);
       content.replaceChildren();
@@ -10191,9 +10656,10 @@ initializePlaybackHeader();
 refreshAccessSession(false)
   .then(() => loadStatus(false))
   .finally(render);
-window.setInterval(async () => {
-  if (!document.hidden) {
-    await refreshAccessSession(true);
-    await loadStatus(true);
-  }
+let refreshCycle = null;
+window.setInterval(() => {
+  if (document.hidden || refreshCycle) return;
+  refreshCycle = refreshAccessSession(true)
+    .then(() => loadStatus(true))
+    .finally(() => { refreshCycle = null; });
 }, 10_000);

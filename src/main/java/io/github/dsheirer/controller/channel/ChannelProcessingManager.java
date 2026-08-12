@@ -136,6 +136,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         mUserPreferences = userPreferences;
         mChannelMetadataModel = new ChannelMetadataModel();
         mChannelActivityModel = new ChannelActivityModel(aliasModel, userPreferences.getNowPlayingPreference());
+        mChannelActivityModel.setActiveChannelSupplier(this::getActiveChannelActivitySnapshot);
         mChannelMetadataModel.addUpdateListener(mChannelActivityModel);
     }
 
@@ -213,9 +214,29 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
             if(processingChain != null && processingChain.getChannelState() != null)
             {
                 mChannelActivityModel.channelStarted(entry.getKey(),
-                    processingChain.getChannelState().getChannelMetadata());
+                    processingChain.getChannelState().getChannelMetadata(), processingChain);
             }
         }
+    }
+
+    private List<ChannelActivityModel.ActiveChannel> getActiveChannelActivitySnapshot()
+    {
+        List<ChannelActivityModel.ActiveChannel> active = new ArrayList<>(mProcessingChainsMap.size());
+
+        for(Map.Entry<Channel,ProcessingChain> entry: mProcessingChainsMap.entrySet())
+        {
+            Channel channel = entry.getKey();
+            ProcessingChain chain = entry.getValue();
+
+            if(channel != null && chain != null)
+            {
+                List<ChannelMetadata> metadata = chain.getChannelState() != null ?
+                    chain.getChannelState().getChannelMetadata() : List.of();
+                active.add(new ChannelActivityModel.ActiveChannel(channel, metadata, chain));
+            }
+        }
+
+        return List.copyOf(active);
     }
 
     /**
@@ -308,40 +329,34 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
             return List.of();
         }
 
+        //The backing ConcurrentHashMap provides a weakly consistent bounded snapshot without acquiring the channel
+        //lifecycle lock.  Browser diagnostics and history readers must never delay channel start, stop, or hunting.
         List<ProcessingChain> matches = new ArrayList<>();
-        mLock.lock();
 
-        try
+        for(Map.Entry<Channel,ProcessingChain> entry: mProcessingChainsMap.entrySet())
         {
-            for(Map.Entry<Channel,ProcessingChain> entry: mProcessingChainsMap.entrySet())
+            Channel channel = entry.getKey();
+            ProcessingChain chain = entry.getValue();
+
+            if(channel == null || chain == null ||
+                !configurationId.equals(channel.getConfigurationId()))
             {
-                Channel channel = entry.getKey();
-                ProcessingChain chain = entry.getValue();
+                continue;
+            }
 
-                if(channel == null || chain == null ||
-                    !configurationId.equals(channel.getConfigurationId()))
-                {
-                    continue;
-                }
+            if(frequency != null)
+            {
+                Source source = chain.getSource();
 
-                if(frequency != null)
-                {
-                    Source source = chain.getSource();
-
-                    if(source != null && source.getFrequency() == frequency)
-                    {
-                        matches.add(chain);
-                    }
-                }
-                else
+                if(source != null && source.getFrequency() == frequency)
                 {
                     matches.add(chain);
                 }
             }
-        }
-        finally
-        {
-            mLock.unlock();
+            else
+            {
+                matches.add(chain);
+            }
         }
 
         return List.copyOf(matches);
@@ -813,9 +828,16 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
                 added[0] = true;
                 getChannelMetadataModel().add(new ChannelAndMetadata(key,
                     processingChain.getChannelState().getChannelMetadata()));
-                getChannelActivityModel().channelStarted(key, processingChain.getChannelState().getChannelMetadata());
                 return processingChain;
             });
+
+            if(added[0])
+            {
+                //Publish the chain before offering its observer lifecycle event.  If the bounded activity ingress is
+                //full, its worker can now reconcile the dropped start from the authoritative map.
+                getChannelActivityModel().channelStarted(channel,
+                    processingChain.getChannelState().getChannelMetadata(), processingChain);
+            }
         }
         finally
         {
@@ -948,6 +970,8 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
                 mLog.error("Error stopping channel [{}] - {}", channel.getName(), ce.getMessage());
             }
         }
+
+        mChannelActivityModel.close();
     }
 
     /**
@@ -975,6 +999,9 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
             mProcessingChainsMap.put(request.getTrafficChannel(), processingChain);
             mChannelMetadataModel.updateChannelMetadataToChannelMap(processingChain.getChannelState().getChannelMetadata(),
                 request.getTrafficChannel());
+            mChannelActivityModel.channelStopped(request.getCurrentChannel());
+            mChannelActivityModel.channelStarted(request.getTrafficChannel(),
+                processingChain.getChannelState().getChannelMetadata(), processingChain);
 
             //Post a change notification so that processing chain modules can reconfigure
             processingChain.channelConfigurationChanged(new ChannelConfigurationChangeNotification(request.getTrafficChannel()));

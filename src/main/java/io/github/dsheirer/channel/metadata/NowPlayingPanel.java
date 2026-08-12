@@ -91,6 +91,7 @@ public class NowPlayingPanel extends JPanel
         mLowerTabsVisibilityListener = lowerViewsVisibilityListener;
 
         init();
+        mChannelActivityPanel.setActive(mSystemsActive);
     }
 
     public void dispose()

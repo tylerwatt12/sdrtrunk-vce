@@ -23,6 +23,7 @@ import io.github.dsheirer.sample.Broadcaster;
 import io.github.dsheirer.sample.Listener;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * Abstract base history module.  Maintains a history of items and constrains the total history size.  Adds support
@@ -35,6 +36,7 @@ public abstract class HistoryModule<T> extends Module implements Listener<T>
     private List<T> mItems = new ArrayList<>();
     private Broadcaster<T> mBroadcaster = new Broadcaster<>();
     private int mMaximumHistorySize;
+    private final ReentrantLock mItemsLock = new ReentrantLock();
 
     /**
      * Constructs an instance
@@ -47,15 +49,33 @@ public abstract class HistoryModule<T> extends Module implements Listener<T>
     /**
      * Access a copy of the events from this event history
      */
-    public synchronized List<T> getItems()
+    public List<T> getItems()
     {
-        return new ArrayList<>(mItems);
+        mItemsLock.lock();
+
+        try
+        {
+            return new ArrayList<>(mItems);
+        }
+        finally
+        {
+            mItemsLock.unlock();
+        }
     }
 
     @Override
-    public synchronized void reset()
+    public void reset()
     {
-        mItems.clear();
+        mItemsLock.lock();
+
+        try
+        {
+            mItems.clear();
+        }
+        finally
+        {
+            mItemsLock.unlock();
+        }
     }
 
     @Override
@@ -64,9 +84,9 @@ public abstract class HistoryModule<T> extends Module implements Listener<T>
     }
 
     @Override
-    public synchronized void stop()
+    public void stop()
     {
-        mItems.clear();
+        reset();
         mBroadcaster.clear();
     }
 
@@ -94,16 +114,28 @@ public abstract class HistoryModule<T> extends Module implements Listener<T>
     @Override
     public void receive(T item)
     {
-        synchronized(this)
+        /*
+         * History is an observer.  A UI or web snapshot may briefly own the history lock, but a decoder callback must
+         * never wait for that copy.  Missing a history row is preferable to delaying live decode; listeners still
+         * receive the observation through their own bounded handoffs.
+         */
+        if(mItemsLock.tryLock())
         {
-            if(!mItems.contains(item) && mMaximumHistorySize > 0)
+            try
             {
-                while(mItems.size() >= mMaximumHistorySize)
+                if(!mItems.contains(item) && mMaximumHistorySize > 0)
                 {
-                    mItems.remove(0);
-                }
+                    while(mItems.size() >= mMaximumHistorySize)
+                    {
+                        mItems.remove(0);
+                    }
 
-                mItems.add(item);
+                    mItems.add(item);
+                }
+            }
+            finally
+            {
+                mItemsLock.unlock();
             }
         }
 

@@ -21,18 +21,19 @@ import org.junit.jupiter.api.Test;
 class ChannelActivityTableModelTest
 {
     @Test
-    void publishesCompleteSnapshotsWhileSwingTableIsHidden()
+    void publishesCompleteSnapshotsWhileSwingTableIsHidden() throws Exception
     {
-        ChannelActivityTableModel model = new ChannelActivityTableModel("Conventional", null, false);
         AtomicReference<ChannelActivitySnapshot> latest = new AtomicReference<>();
-        model.addSnapshotListener(latest::set);
+        ChannelActivityTableState state = new ChannelActivityTableState("Conventional", null, false, latest::set);
+        ChannelActivityTableModel model = new ChannelActivityTableModel(state);
         Channel channel = new Channel("County Fire");
-        ChannelActivityRow row = model.getOrCreate("row-1", channel, ChannelActivityRow.Role.CONVENTIONAL,
+        ChannelActivityRow row = state.getOrCreate("row-1", channel, ChannelActivityRow.Role.CONVENTIONAL,
             155_250_000L, null);
         row.setState(State.CALL);
         row.setDecoder("NBFM");
         row.setCallsign("WPFF205");
-        model.refresh(row);
+        state.refresh(row);
+        javax.swing.SwingUtilities.invokeAndWait(() -> {});
 
         assertEquals("conventional", latest.get().tableId());
         assertEquals(1, latest.get().rows().size());
@@ -46,17 +47,20 @@ class ChannelActivityTableModelTest
     }
 
     @Test
-    void preservesLcnColumnForTrunkedTables()
+    void preservesLcnColumnForTrunkedTables() throws Exception
     {
         Channel owner = new Channel("County System");
-        ChannelActivityTableModel model = new ChannelActivityTableModel("County System", owner, true);
-        ChannelActivityRow row = model.getOrCreate("row-1", owner, ChannelActivityRow.Role.CURRENT_CONTROL,
+        ChannelActivityTableState state = new ChannelActivityTableState("County System", owner, true, null);
+        ChannelActivityTableModel model = new ChannelActivityTableModel(state);
+        ChannelActivityRow row = state.getOrCreate("row-1", owner, ChannelActivityRow.Role.CURRENT_CONTROL,
             851_012_500L, null);
         row.setLcn("0-101");
+        state.refresh(row);
+        javax.swing.SwingUtilities.invokeAndWait(() -> {});
 
         assertEquals("LCN", model.getColumnName(ChannelActivityTableModel.COLUMN_LCN));
         assertEquals("0-101", model.getValueAt(0, ChannelActivityTableModel.COLUMN_LCN));
-        assertNull(ChannelActivitySnapshot.from(model).rows().getFirst().channelName());
+        assertNull(ChannelActivitySnapshot.from(state).rows().getFirst().channelName());
     }
 
     @Test
@@ -84,14 +88,13 @@ class ChannelActivityTableModelTest
     @Test
     void publishesRawAndDisplayTalkerAliasValues()
     {
-        ChannelActivityTableModel model = new ChannelActivityTableModel("Test", null, false);
         AtomicReference<ChannelActivitySnapshot> latest = new AtomicReference<>();
-        model.addSnapshotListener(latest::set);
-        ChannelActivityRow row = model.getOrCreate("row-1", null, ChannelActivityRow.Role.TRAFFIC,
+        ChannelActivityTableState state = new ChannelActivityTableState("Test", null, false, latest::set);
+        ChannelActivityRow row = state.getOrCreate("row-1", null, ChannelActivityRow.Role.TRAFFIC,
             851_012_500L, null);
         row.setSourceAliases(List.of(new Alias("Engine 1")));
         row.setTalkerAlias(P25TalkerAliasIdentifier.create("Portable 12"));
-        model.refresh(row);
+        state.refresh(row);
 
         ChannelActivitySnapshot.Row snapshot = latest.get().rows().getFirst();
         assertEquals("Engine 1", snapshot.sourceAlias());
@@ -126,16 +129,19 @@ class ChannelActivityTableModelTest
     }
 
     @Test
-    void selectsCurrentControlWhenLogicalSiteRowNeedsReplacement()
+    void selectsCurrentControlWhenLogicalSiteRowNeedsReplacement() throws Exception
     {
         Channel owner = new Channel("County System");
-        ChannelActivityTableModel model = new ChannelActivityTableModel("County System", owner, true);
-        ChannelActivityRow configured = model.getOrCreate("configured", owner,
+        ChannelActivityTableState state = new ChannelActivityTableState("County System", owner, true, null);
+        ChannelActivityRow configured = state.getOrCreate("configured", owner,
             ChannelActivityRow.Role.CONFIGURED_CONTROL, 851_012_500L, null);
-        ChannelActivityRow current = model.getOrCreate("current", owner, ChannelActivityRow.Role.CURRENT_CONTROL,
+        ChannelActivityRow current = state.getOrCreate("current", owner, ChannelActivityRow.Role.CURRENT_CONTROL,
             852_012_500L, null);
+        state.refreshAllRows();
+        ChannelActivityTableModel model = new ChannelActivityTableModel(state);
+        javax.swing.SwingUtilities.invokeAndWait(() -> {});
 
-        assertSame(current, ChannelActivitySelectionController.findPreferredSiteControl(model));
+        assertEquals(current.getKey(), ChannelActivitySelectionController.findPreferredSiteControl(model).getKey());
         assertTrue(ChannelActivitySelectionController.isSiteControl(configured));
     }
 }

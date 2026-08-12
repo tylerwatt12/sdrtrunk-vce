@@ -22,7 +22,6 @@ import io.github.dsheirer.web.auth.WebAccessSession;
 import io.github.dsheirer.web.auth.WebAuthenticationService;
 import io.github.dsheirer.web.auth.WebCapability;
 import java.io.IOException;
-import java.io.InputStream;
 import java.net.InetAddress;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
@@ -118,6 +117,53 @@ public final class WebAccessHttpController implements AutoCloseable
     }
 
     /**
+     * Protects a shared transport that carries resources with different capability policies.  The request is
+     * admitted when at least one capability is available; handlers must use
+     * {@link #isRequestStillAuthorized(HttpExchange, WebCapability)} before enabling each logical resource.
+     */
+    public HttpHandler protectAny(Set<WebCapability> capabilities, HttpHandler next)
+    {
+        Objects.requireNonNull(capabilities, "Web capabilities cannot be null");
+        Objects.requireNonNull(next, "Protected HTTP handler cannot be null");
+        Set<WebCapability> required = Set.copyOf(capabilities);
+
+        if(required.isEmpty())
+        {
+            throw new IllegalArgumentException("At least one web capability is required");
+        }
+
+        return exchange -> {
+            prepareSecurityHeaders(exchange);
+
+            if(authorizeAny(exchange, required))
+            {
+                next.handle(exchange);
+            }
+        };
+    }
+
+    /**
+     * Protects an ephemeral viewer-control request. Anonymous public viewers have no CSRF token, so a same-origin
+     * request without a session cookie is accepted; authenticated viewers must also present their session CSRF token.
+     * This must not be used for persistent application mutations.
+     */
+    public HttpHandler protectAnyViewerControl(Set<WebCapability> capabilities, HttpHandler next)
+    {
+        Objects.requireNonNull(next, "Protected HTTP handler cannot be null");
+        return protectAny(capabilities, exchange -> {
+            CookieLookup cookie = sessionCookie(exchange);
+
+            if(!hasSameOrigin(exchange) || (cookie.present() && !authorizeMutation(exchange, cookie)))
+            {
+                sendError(exchange, 403, "request_rejected", "The viewer control request was rejected");
+                return;
+            }
+
+            next.handle(exchange);
+        });
+    }
+
+    /**
      * Wraps an API resource with capability protection and adds same-origin and CSRF protection to unsafe methods.
      */
     public HttpHandler protectApi(WebCapability capability, HttpHandler next)
@@ -149,12 +195,19 @@ public final class WebAccessHttpController implements AutoCloseable
     }
 
     /**
-     * Rechecks the session and current policy for a long-lived SSE request.
+     * Rechecks the session and current policy for a long-lived request.
      */
     public boolean isRequestStillAuthorized(HttpExchange exchange)
     {
         Object value = exchange != null ? exchange.getAttribute(AUTHORIZATION_ATTRIBUTE) : null;
         return value instanceof RequestAuthorization authorization && authorization.isStillAllowed();
+    }
+
+    /** Rechecks one logical resource carried by a request admitted through {@link #protectAny}. */
+    public boolean isRequestStillAuthorized(HttpExchange exchange, WebCapability capability)
+    {
+        Object value = exchange != null ? exchange.getAttribute(AUTHORIZATION_ATTRIBUTE) : null;
+        return value instanceof RequestAuthorization authorization && authorization.isStillAllowed(capability);
     }
 
     /**
@@ -181,6 +234,26 @@ public final class WebAccessHttpController implements AutoCloseable
         {
             exchange.setAttribute(AUTHORIZATION_ATTRIBUTE,
                 new RequestAuthorization(capability, session.map(WebAccessSession::sessionId).orElse(null)));
+            return true;
+        }
+
+        int status = account == null ? 401 : 403;
+        sendError(exchange, status, account == null ? "authentication_required" : "access_denied",
+            account == null ? "Authentication is required" : "Access is denied");
+        return false;
+    }
+
+    private boolean authorizeAny(HttpExchange exchange, Set<WebCapability> capabilities) throws IOException
+    {
+        CookieLookup cookie = sessionCookie(exchange);
+        Optional<WebAccessSession> session = cookie.valid() ?
+            mAuthenticationService.resolveSession(cookie.sessionId()) : Optional.empty();
+        WebAccessAccount account = session.map(WebAccessSession::account).orElse(null);
+
+        if(capabilities.stream().anyMatch(capability -> mAccessService.isAllowed(account, capability)))
+        {
+            exchange.setAttribute(AUTHORIZATION_ATTRIBUTE,
+                new RequestAuthorization(capabilities, session.map(WebAccessSession::sessionId).orElse(null)));
             return true;
         }
 
@@ -273,6 +346,8 @@ public final class WebAccessHttpController implements AutoCloseable
             return;
         }
 
+        CookieLookup existing = sessionCookie(exchange);
+        String existingSessionId = existing.valid() ? existing.sessionId() : null;
         char[] password = null;
         CompletableFuture<WebAuthenticationService.LoginResult> completion = null;
 
@@ -281,7 +356,7 @@ public final class WebAccessHttpController implements AutoCloseable
             String username = requiredText(request, "username", 256);
             password = requiredText(request, "password", Pbkdf2PasswordHasher.MAXIMUM_PASSWORD_CHARACTERS)
                 .toCharArray();
-            completion = mAuthenticationService.login(username, password, sourceKey(exchange));
+            completion = mAuthenticationService.login(username, password, sourceKey(exchange), existingSessionId);
             WebAuthenticationService.LoginResult result = completion.get(30, TimeUnit.SECONDS);
 
             if(result.status() == WebAuthenticationService.LoginStatus.THROTTLED)
@@ -304,16 +379,8 @@ public final class WebAccessHttpController implements AutoCloseable
                 return;
             }
 
-            CookieLookup existing = sessionCookie(exchange);
-
-            if(existing.valid())
-            {
-                mAuthenticationService.logout(existing.sessionId());
-            }
-
             WebAccessSession created = result.session().get();
-            setSessionCookie(exchange, created.sessionId());
-            sendData(exchange, 200, sessionResponse(created));
+            deliverLoginResponse(exchange, created, existingSessionId);
         }
         catch(RequestException exception)
         {
@@ -325,14 +392,14 @@ public final class WebAccessHttpController implements AutoCloseable
         }
         catch(TimeoutException | ExecutionException exception)
         {
-            abandonLogin(completion);
+            abandonLogin(completion, existingSessionId);
 
             mLog.warn("Web login worker did not complete normally", exception);
             sendError(exchange, 503, "login_unavailable", "Login is temporarily unavailable");
         }
         catch(InterruptedException exception)
         {
-            abandonLogin(completion);
+            abandonLogin(completion, existingSessionId);
             Thread.currentThread().interrupt();
             sendError(exchange, 503, "login_unavailable", "Login was interrupted");
         }
@@ -342,14 +409,48 @@ public final class WebAccessHttpController implements AutoCloseable
             {
                 Arrays.fill(password, '\u0000');
             }
+        }
+    }
 
+    /**
+     * Delivers the replacement session before retiring the session that made the request.  A disconnected browser
+     * cannot retain an undelivered session, and a failed response does not revoke its last known-good session.
+     */
+    void deliverLoginResponse(HttpExchange exchange, WebAccessSession created, String existingSessionId)
+        throws IOException
+    {
+        boolean delivered = false;
+
+        try
+        {
+            setSessionCookie(exchange, created.sessionId());
+            sendData(exchange, 200, sessionResponse(created));
+            delivered = true;
+        }
+        finally
+        {
+            if(delivered)
+            {
+                if(existingSessionId != null && !existingSessionId.equals(created.sessionId()))
+                {
+                    mAuthenticationService.logout(existingSessionId);
+                }
+            }
+            else
+            {
+                if(existingSessionId == null || !existingSessionId.equals(created.sessionId()))
+                {
+                    mAuthenticationService.logout(created.sessionId());
+                }
+            }
         }
     }
 
     /**
      * Stops an HTTP login that no longer has a caller and removes a session if the worker won the completion race.
      */
-    private void abandonLogin(CompletableFuture<WebAuthenticationService.LoginResult> completion)
+    private void abandonLogin(CompletableFuture<WebAuthenticationService.LoginResult> completion,
+                              String existingSessionId)
     {
         if(completion == null)
         {
@@ -358,7 +459,8 @@ public final class WebAccessHttpController implements AutoCloseable
 
         completion.whenComplete((result, throwable) ->
         {
-            if(result != null && result.session().isPresent())
+            if(result != null && result.session().isPresent() &&
+                !result.session().get().sessionId().equals(existingSessionId))
             {
                 mAuthenticationService.logout(result.session().get().sessionId());
             }
@@ -396,7 +498,7 @@ public final class WebAccessHttpController implements AutoCloseable
 
         mAuthenticationService.logout(cookie.sessionId());
         expireSessionCookie(exchange);
-        sendData(exchange, 200, Map.of("authenticated", false, "tier", tierName(AccessTier.PUBLIC)));
+        sendData(exchange, 200, sessionResponse(null));
     }
 
     private void handleUsers(HttpExchange exchange) throws IOException
@@ -728,12 +830,7 @@ public final class WebAccessHttpController implements AutoCloseable
             }
         }
 
-        byte[] bytes;
-
-        try(InputStream inputStream = exchange.getRequestBody())
-        {
-            bytes = inputStream.readNBytes(MAXIMUM_JSON_BODY_BYTES + 1);
-        }
+        byte[] bytes = ApiRequestDecoder.readBody(exchange, MAXIMUM_JSON_BODY_BYTES);
 
         if(bytes.length == 0)
         {
@@ -1046,26 +1143,37 @@ public final class WebAccessHttpController implements AutoCloseable
 
     private final class RequestAuthorization
     {
-        private final WebCapability mCapability;
+        private final Set<WebCapability> mCapabilities;
         private final String mSessionId;
 
         private RequestAuthorization(WebCapability capability, String sessionId)
         {
-            mCapability = capability;
+            this(Set.of(capability), sessionId);
+        }
+
+        private RequestAuthorization(Set<WebCapability> capabilities, String sessionId)
+        {
+            mCapabilities = Set.copyOf(capabilities);
             mSessionId = sessionId;
         }
 
         private boolean isStillAllowed()
         {
+            return mCapabilities.stream().anyMatch(this::isStillAllowed);
+        }
+
+        private boolean isStillAllowed(WebCapability capability)
+        {
             WebAccessAccount account = mSessionId == null ? null :
                 mAuthenticationService.resolveSession(mSessionId).map(WebAccessSession::account).orElse(null);
-            return mAccessService.isAllowed(account, mCapability);
+            return mCapabilities.contains(capability) && mAccessService.isAllowed(account, capability);
         }
 
         @Override
         public String toString()
         {
-            return "RequestAuthorization[capability=" + mCapability.id() + ", session=<redacted>]";
+            return "RequestAuthorization[capabilities=" + mCapabilities.stream().map(WebCapability::id).toList() +
+                ", session=<redacted>]";
         }
     }
 

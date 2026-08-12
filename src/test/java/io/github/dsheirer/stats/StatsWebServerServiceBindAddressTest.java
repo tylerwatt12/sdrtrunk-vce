@@ -53,29 +53,14 @@ class StatsWebServerServiceBindAddressTest
         assertFalse(StatsWebServerService.hasExactPath(
             URI.create("/api/system?scope=p25%3ABEE00%3A348"), "/api/v1/systems/p25:BEE00:348"));
         assertTrue(StatsWebServerService.hasExactPath(
-            URI.create("/api/v1/live/activity?scope=dmr%3Aguid%3Atest"), StatsApiV1.LIVE_ACTIVITY));
-        assertFalse(StatsWebServerService.hasExactPath(
-            URI.create("/live/activity?scope=dmr%3Aguid%3Atest"), StatsApiV1.LIVE_ACTIVITY));
+            URI.create("/api/v1/live/multiplex?client_id=00000000-0000-0000-0000-000000000001"),
+            StatsApiV1.LIVE_MULTIPLEX));
         assertTrue(StatsWebServerService.hasExactPath(
-            URI.create("/api/v1/live/decode-events?configuration_id=test"), StatsApiV1.LIVE_DECODE_EVENTS));
+            URI.create("/api/v1/live/multiplex/control"), StatsApiV1.LIVE_MULTIPLEX_CONTROL));
         assertFalse(StatsWebServerService.hasExactPath(
-            URI.create("/live/events?configuration_id=test"), StatsApiV1.LIVE_DECODE_EVENTS));
-        assertTrue(StatsWebServerService.hasExactPath(
-            URI.create("/api/v1/live/decode-messages?configuration_id=test"), StatsApiV1.LIVE_DECODE_MESSAGES));
-        assertTrue(StatsWebServerService.hasExactPath(
-            URI.create("/api/v1/live/channel-diagnostics?configuration_id=test"),
-            StatsApiV1.LIVE_CHANNEL_DIAGNOSTICS));
-        assertFalse(StatsWebServerService.hasExactPath(
-            URI.create("/live/channel-diagnostics?configuration_id=test"),
-            StatsApiV1.LIVE_CHANNEL_DIAGNOSTICS));
-        assertTrue(StatsWebServerService.hasExactPath(
-            URI.create("/api/v1/live/tuner-diagnostics?target_id=test"), StatsApiV1.LIVE_TUNER_DIAGNOSTICS));
-        assertFalse(StatsWebServerService.hasExactPath(
-            URI.create("/live/tuner-diagnostics?target_id=test"), StatsApiV1.LIVE_TUNER_DIAGNOSTICS));
+            URI.create("/retired-live-path?configuration_id=test"), StatsApiV1.LIVE_MULTIPLEX));
         assertTrue(StatsWebServerService.hasExactPath(
             URI.create("/api/v1/diagnostics/tuners"), StatsApiV1.TUNER_DIAGNOSTICS));
-        assertFalse(StatsWebServerService.hasExactPath(URI.create("/live/sites"), StatsApiV1.LIVE_SITES));
-        assertFalse(StatsWebServerService.hasExactPath(URI.create("/live/web-calls"), StatsApiV1.LIVE_CALLS));
         assertTrue(StatsWebServerService.hasExactPath(
             URI.create("/api/v1/exports/system-talkgroups.csv"),
             StatsApiV1.EXPORTS + "/system-talkgroups.csv"));
@@ -88,30 +73,30 @@ class StatsWebServerServiceBindAddressTest
     void validatesLiveDecoderEventScope()
     {
         DecodeEventViewService.Scope scope = StatsWebServerService.decodeEventScope(URI.create(
-            "/live/events?configuration_id=00000000-0000-0000-0000-000000000001" +
+            "/multiplex/decode-events?configuration_id=00000000-0000-0000-0000-000000000001" +
                 "&frequency_hz=851012500&timeslot=2"));
 
         assertEquals("00000000-0000-0000-0000-000000000001", scope.configurationId());
         assertEquals(851_012_500L, scope.frequencyHz());
         assertEquals(2, scope.timeslot());
         assertThrows(StatsApiException.class,
-            () -> StatsWebServerService.decodeEventScope(URI.create("/live/events")));
+            () -> StatsWebServerService.decodeEventScope(URI.create("/multiplex/decode-events")));
         assertThrows(StatsApiException.class, () -> StatsWebServerService.decodeEventScope(URI.create(
-            "/live/events?configuration_id=00000000-0000-0000-0000-000000000001&timeslot=0")));
+            "/multiplex/decode-events?configuration_id=00000000-0000-0000-0000-000000000001&timeslot=0")));
     }
 
     @Test
     void validatesExactChannelDiagnosticScope()
     {
         ChannelDiagnosticService.Scope scope = StatsWebServerService.channelDiagnosticScope(URI.create(
-            "/live/channel-diagnostics?configuration_id=00000000-0000-0000-0000-000000000001" +
+            "/multiplex/channel-diagnostics?configuration_id=00000000-0000-0000-0000-000000000001" +
                 "&frequency_hz=851012500&timeslot=2"));
 
         assertEquals("00000000-0000-0000-0000-000000000001", scope.configurationId());
         assertEquals(851_012_500L, scope.frequencyHz());
         assertEquals(2, scope.timeslot());
         assertThrows(StatsApiException.class, () -> StatsWebServerService.channelDiagnosticScope(URI.create(
-            "/live/channel-diagnostics?configuration_id=00000000-0000-0000-0000-000000000001" +
+            "/multiplex/channel-diagnostics?configuration_id=00000000-0000-0000-0000-000000000001" +
                 "&timeslot=2")));
     }
 
@@ -119,15 +104,15 @@ class StatsWebServerServiceBindAddressTest
     void validatesExactDecodeMessageScope()
     {
         DecodeMessageViewService.Scope scope = StatsWebServerService.decodeMessageScope(URI.create(
-            "/api/v1/live/decode-messages?configuration_id=00000000-0000-0000-0000-000000000001" +
+            "/multiplex/decode-messages?configuration_id=00000000-0000-0000-0000-000000000001" +
                 "&frequency_hz=851012500"));
 
         assertEquals("00000000-0000-0000-0000-000000000001", scope.configurationId());
         assertEquals(851_012_500L, scope.frequencyHz());
         assertThrows(StatsApiException.class, () -> StatsWebServerService.decodeMessageScope(URI.create(
-            "/api/v1/live/decode-messages?configuration_id=00000000-0000-0000-0000-000000000001")));
+            "/multiplex/decode-messages?configuration_id=00000000-0000-0000-0000-000000000001")));
         assertThrows(StatsApiException.class, () -> StatsWebServerService.decodeMessageScope(URI.create(
-            "/api/v1/live/decode-messages?configuration_id=00000000-0000-0000-0000-000000000001" +
+            "/multiplex/decode-messages?configuration_id=00000000-0000-0000-0000-000000000001" +
                 "&frequency_hz=851012500&timeslot=2")));
     }
 
@@ -170,12 +155,28 @@ class StatsWebServerServiceBindAddressTest
             "member_talkgroup_ids", List.of(56133L, 56134L));
 
         assertTrue(StatsWebServerService.matchesActivity(patchEvent, StatsRequest.from(
-            URI.create("/live/activity?scope=p25:BEE00:348&talkgroup_id=56133"))));
+            URI.create("/multiplex/activity?scope=p25:BEE00:348&talkgroup_id=56133"))));
         assertFalse(StatsWebServerService.matchesActivity(patchEvent, StatsRequest.from(
-            URI.create("/live/activity?scope=p25:BEE00:348&talkgroup_id=56135"))));
+            URI.create("/multiplex/activity?scope=p25:BEE00:348&talkgroup_id=56135"))));
         assertTrue(StatsWebServerService.matchesActivity(patchEvent, StatsRequest.from(
-            URI.create("/live/activity?scope=p25:BEE00:348&talkgroup_id=60000&kind=patch_group"))));
+            URI.create("/multiplex/activity?scope=p25:BEE00:348&talkgroup_id=60000&kind=patch_group"))));
         assertFalse(StatsWebServerService.matchesActivity(patchEvent, StatsRequest.from(
-            URI.create("/live/activity?scope=p25:BEE00:348&talkgroup_id=56133&kind=patch_group"))));
+            URI.create("/multiplex/activity?scope=p25:BEE00:348&talkgroup_id=56133&kind=patch_group"))));
+    }
+
+    @Test
+    void scopedActivitySubscriptionsAlwaysReceiveAuthoritativeResetEvents()
+    {
+        StatsRequest request = StatsRequest.from(URI.create("/multiplex/activity?scope=receiver-a&talkgroup_id=100"));
+        StatsLiveEventHub.LiveEvent reset = new StatsLiveEventHub.LiveEvent("activity_reset",
+            Map.of("reason", "source_overflow"));
+        StatsLiveEventHub.LiveEvent matching = new StatsLiveEventHub.LiveEvent("activity",
+            Map.of("scope_token", "receiver-a", "target_id", 100, "target_kind_code", 1));
+        StatsLiveEventHub.LiveEvent unrelated = new StatsLiveEventHub.LiveEvent("activity",
+            Map.of("scope_token", "receiver-b", "target_id", 200, "target_kind_code", 1));
+
+        assertTrue(StatsWebServerService.matchesActivityEvent(reset, request));
+        assertTrue(StatsWebServerService.matchesActivityEvent(matching, request));
+        assertFalse(StatsWebServerService.matchesActivityEvent(unrelated, request));
     }
 }

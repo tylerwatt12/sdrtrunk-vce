@@ -28,7 +28,7 @@ public record ChannelActivitySnapshot(String tableId, String title, String chann
         rows = rows != null ? List.copyOf(rows) : List.of();
     }
 
-    public static ChannelActivitySnapshot from(ChannelActivityTableModel table)
+    public static ChannelActivitySnapshot from(ChannelActivityTableState table)
     {
         Channel owner = table != null ? table.getOwnerChannel() : null;
         String tableId = owner != null ? "channel-" + owner.getChannelID() : "conventional";

@@ -30,7 +30,7 @@ class ChannelActivitySnapshotTest
     void normalizesUnnamedOwnerChannel()
     {
         Channel owner = new Channel();
-        ChannelActivityTableModel table = new ChannelActivityTableModel(null, owner, true);
+        ChannelActivityTableState table = new ChannelActivityTableState(null, owner, true, null);
         ChannelActivitySnapshot snapshot = ChannelActivitySnapshot.from(table);
 
         assertEquals("", snapshot.title());

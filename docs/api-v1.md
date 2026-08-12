@@ -154,30 +154,30 @@ rows or 16 MiB instead of attempting an unbounded materialization.
 `system-radios` CSV exports accept the same `affiliated` and `site_guid` filters as the JSON collection. Nested
 presence is not serialized into CSV; the export retains the scalar affiliation fields.
 
-Live streams are:
+Each browser document uses one multiplexed live connection:
 
-- `/api/v1/live/channel-activity`
-- `/api/v1/live/decode-events`
-- `/api/v1/live/decode-messages`
-- `/api/v1/live/channel-diagnostics`
-- `/api/v1/live/tuner-diagnostics`
-- `/api/v1/live/sites`
-- `/api/v1/live/calls`
-- `/api/v1/live/activity`
+- `GET /api/v1/live/multiplex?client_id={uuid}` opens the framed stream.
+- `POST /api/v1/live/multiplex/control` replaces that client's logical subscriptions using a monotonically increasing
+  `revision` and a `subscriptions` object.
 
-SSE and diagnostic state JSON use the same `snake_case` and protocol presentation as REST. Initial channel snapshots
-are capped at 128 tables, 256 rows per table, 2,048 rows total, and 1 MiB after encoding. Unchanged subscribers share
-the cached encoded snapshot. Site snapshots are capped at 256 sites, strings and tags are bounded, and raw decoder
-collections are reduced to scalar summaries before retention. Live HTTP admission is capped at 64 clients; each SSE
-hub, message stream, diagnostic stream, queue, and frame buffer has its own smaller bound.
+Supported subscription names are `channel_activity`, `decode_events`, `decode_messages`, `channel_diagnostics`,
+`tuner_diagnostics`, `calls`, and `activity`. Their parameters use the same `snake_case` names and validation
+as the corresponding REST scopes. `decode_messages` accepts exactly `configuration_id` and required positive
+`frequency_hz`; `timeslot` is available for decoder events and channel diagnostics, but not decoder messages. Tuner
+viewport changes update the existing logical subscription without reconnecting or rebuilding its shared source FFT.
+
+The stream uses a small fixed binary envelope around JSON event payloads and existing binary diagnostic frames.
+Initial channel snapshots are capped at 128 tables, 256 rows per table, 2,048 rows total, and 1 MiB after encoding.
+Unchanged subscribers share the cached encoded snapshot. Strings and tags are bounded before retention. Admission is
+capped at 32 browser documents. Metadata uses one bounded FIFO per topic, so a burst cannot evict another topic.
+Dense diagnostic topics use replaceable latest-value slots, and a persistently slow client is disconnected instead of
+accumulating data or applying receiver backpressure. A detected gap sends an authoritative snapshot for calls,
+channel activity, decoder events, or decoder messages; activity sends `activity_reset`, after which the browser
+reloads the current bounded REST page before applying newer live rows.
 
 Completed call audio is fetched from `/api/v1/calls/{id}/audio`. A call is rejected before encoding if its WAV would
 exceed 16 MiB. Pending WAV work is limited to 16 MiB total, the completed-call cache is limited to 512 calls and
 128 MiB, and the call ID must be one strict path segment. The server does not accept encoded separator smuggling.
-
-`/api/v1/live/decode-messages` accepts exactly `configuration_id` and required positive `frequency_hz` parameters.
-`timeslot` is available on decoder-event and channel-diagnostic scopes, but is rejected for decoder-message streams
-because that service does not filter messages by timeslot.
 
 ## Authentication and administration
 

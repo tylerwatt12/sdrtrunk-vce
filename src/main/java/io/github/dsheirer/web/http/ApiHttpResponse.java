@@ -80,7 +80,7 @@ public final class ApiHttpResponse
         sendJson(exchange, status, response);
     }
 
-    /** Encodes an SSE or diagnostic-state payload with the same snake-case field convention as JSON responses. */
+    /** Encodes a live-event or diagnostic-state payload with the same snake-case convention as JSON responses. */
     public static byte[] encodePayload(Object value) throws IOException
     {
         return OBJECT_MAPPER.writeValueAsBytes(normalize(OBJECT_MAPPER.valueToTree(value)));

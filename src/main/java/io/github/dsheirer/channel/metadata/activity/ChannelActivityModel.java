@@ -54,7 +54,7 @@ import io.github.dsheirer.preference.nowplaying.NowPlayingPreference;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
-import java.awt.EventQueue;
+import io.github.dsheirer.util.concurrent.ObserverThreadFactory;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -65,41 +65,79 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
-import javax.swing.Timer;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.LockSupport;
+import java.util.function.Supplier;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Session-only Now Playing activity model that keeps stable rows independent from temporary traffic chains.
  */
-public class ChannelActivityModel implements IChannelMetadataUpdateListener
+public class ChannelActivityModel implements IChannelMetadataUpdateListener, AutoCloseable
 {
+    private static final Logger mLog = LoggerFactory.getLogger(ChannelActivityModel.class);
     private static final int CONTROL_DECODE_HANG_MILLISECONDS = 15000;
     private static final int ACTIVITY_SWEEPER_INTERVAL_MILLISECONDS = 250;
+    private static final int INGRESS_CAPACITY = 1024;
+    private static final int LIFECYCLE_INGRESS_RESERVE = 64;
+    private static final int CHANNEL_STARTED = 1;
+    private static final int CHANNEL_STOPPED = 2;
+    private static final int CONTROL_QUALITY = 3;
+    private static final int AUDIO_CALL = 4;
+    private static final int METADATA_UPDATED = 5;
+    private static final int P25_CURRENT_CONTROL = 6;
+    private static final int SITE_METADATA = 7;
+    private static final int PROTOCOL_SITE_METADATA = 8;
+    private static final int TRUNKED_TRAFFIC = 9;
+    private static final int TRUNKED_CURRENT_CONTROL = 10;
+    private static final int TRAFFIC_ENCRYPTION = 11;
+    private static final int TRAFFIC_TALKER_ALIAS = 12;
+    private static final int CONFIGURATION_CHANGED = 13;
 
     private final AliasModel mAliasModel;
     private final NowPlayingPreference mNowPlayingPreference;
-    private final ChannelActivityTableModel mConventionalTable =
-        new ChannelActivityTableModel("Conventional", null, false);
-    private final Map<Channel,ChannelActivityTableModel> mTrunkedTables = new IdentityHashMap<>();
+    private final ChannelActivityTableState mConventionalTable;
+    private final Map<Channel,ChannelActivityTableState> mTrunkedTables = new IdentityHashMap<>();
     private final Map<Channel,SiteActivitySession> mSiteSessions = new IdentityHashMap<>();
     private final Set<Integer> mClosedTrunkedChannelIds = new HashSet<>();
     private final Map<ChannelMetadata,ChannelActivityRow> mMetadataRows = new IdentityHashMap<>();
-    private final Map<ChannelActivityRow,ChannelActivityTableModel> mRowTables = new IdentityHashMap<>();
+    private final Map<ChannelActivityRow,ChannelActivityTableState> mRowTables = new IdentityHashMap<>();
     private final Map<ChannelActivityRow,ExpiringRow> mPendingControlIdleRows = new IdentityHashMap<>();
-    private final Map<ChannelActivityTableModel,Set<ChannelActivityRow>> mPendingTableRefreshes = new IdentityHashMap<>();
+    private final Map<ChannelActivityTableState,Set<ChannelActivityRow>> mPendingTableRefreshes = new IdentityHashMap<>();
     private final Map<Channel,SiteIdentity> mSiteIdentities = new IdentityHashMap<>();
-    private final List<Listener<ChannelActivityTableModel>> mTableAddListeners = new ArrayList<>();
-    private final List<Listener<ChannelActivityTableModel>> mTableChangeListeners = new ArrayList<>();
+    private final Map<Channel,Object> mActiveIncarnations = new IdentityHashMap<>();
+    private final Map<String,ChannelActivitySnapshot> mLatestSnapshotsById = new HashMap<>();
+    private final List<Listener<ChannelActivityTableEvent>> mTableListeners = new CopyOnWriteArrayList<>();
     private final List<Listener<ChannelActivityEvent>> mActivityListeners = new CopyOnWriteArrayList<>();
-    private final Listener<ChannelActivitySnapshot> mTableSnapshotListener = snapshot ->
-        notifyActivityListeners(ChannelActivityEvent.Operation.UPSERT, snapshot);
-    private Timer mActivitySweeperTimer;
+    private final ChannelActivityIngressQueue mIngress;
+    private final AtomicLong mDroppedIngressCount = new AtomicLong();
+    private final AtomicLong mDroppedLifecycleCount = new AtomicLong();
+    private final AtomicLong mAcceptedIngressCount = new AtomicLong();
+    private final AtomicLong mProcessedIngressCount = new AtomicLong();
+    private final AtomicLong mCloseRequestRevision = new AtomicLong();
+    private final AtomicBoolean mLifecycleReconcileNeeded = new AtomicBoolean();
+    private final Object mLifecycleLock = new Object();
+    private final Runnable mAfterGenerationCaptureForTest;
+    private volatile List<ChannelActivityTableState> mTables;
+    private volatile SnapshotSet mSnapshotSet = new SnapshotSet(0, List.of());
+    private boolean mActivitySweeperRunning;
     private volatile boolean mEnabled;
+    private volatile boolean mWorkerRunning;
+    private volatile boolean mClosed;
+    private volatile long mGeneration;
+    private volatile long mAppliedGeneration = -1;
+    private volatile long mAppliedCloseRequestRevision;
+    private volatile Thread mWorker;
+    private volatile Supplier<List<ActiveChannel>> mActiveChannelSupplier;
 
-    private record ExpiringRow(ChannelActivityTableModel table, Channel parentChannel, long expiresAt)
+    private record ExpiringRow(ChannelActivityTableState table, Channel parentChannel, long expiresAt)
     {
     }
 
-    private record RowReference(SiteActivitySession session, ChannelActivityTableModel table, ChannelActivityRow row)
+    private record RowReference(SiteActivitySession session, ChannelActivityTableState table, ChannelActivityRow row)
     {
     }
 
@@ -111,14 +149,51 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         }
     }
 
+    /**
+     * Immutable authoritative renderer snapshot.  Revision changes whenever any table changes or is removed.
+     */
+    public record SnapshotSet(long revision, List<ChannelActivitySnapshot> tables)
+    {
+        public SnapshotSet
+        {
+            tables = tables != null ? List.copyOf(tables) : List.of();
+        }
+    }
+
+    /**
+     * One active processing-chain incarnation used to reconcile dropped start/stop observations worker-side.
+     */
+    public record ActiveChannel(Channel channel, List<ChannelMetadata> metadata, Object incarnation)
+    {
+        public ActiveChannel
+        {
+            metadata = metadata != null ? List.copyOf(metadata) : List.of();
+        }
+    }
+
     public ChannelActivityModel(AliasModel aliasModel, NowPlayingPreference nowPlayingPreference)
+    {
+        this(aliasModel, nowPlayingPreference, INGRESS_CAPACITY, LIFECYCLE_INGRESS_RESERVE, null);
+    }
+
+    ChannelActivityModel(AliasModel aliasModel, NowPlayingPreference nowPlayingPreference, int ingressCapacity,
+                         int lifecycleIngressReserve)
+    {
+        this(aliasModel, nowPlayingPreference, ingressCapacity, lifecycleIngressReserve, null);
+    }
+
+    ChannelActivityModel(AliasModel aliasModel, NowPlayingPreference nowPlayingPreference, int ingressCapacity,
+                         int lifecycleIngressReserve, Runnable afterGenerationCaptureForTest)
     {
         mAliasModel = aliasModel;
         mNowPlayingPreference = nowPlayingPreference;
-        mConventionalTable.addSnapshotListener(mTableSnapshotListener);
+        mAfterGenerationCaptureForTest = afterGenerationCaptureForTest;
+        mIngress = new ChannelActivityIngressQueue(ingressCapacity, lifecycleIngressReserve);
+        mConventionalTable = new ChannelActivityTableState("Conventional", null, false, this::tableSnapshotUpdated);
+        updateTablesSnapshot();
     }
 
-    public ChannelActivityTableModel getConventionalTable()
+    public ChannelActivityTableState getConventionalTable()
     {
         return mConventionalTable;
     }
@@ -126,12 +201,19 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
     /**
      * Current activity tables in display order for a renderer that is attaching after the model was populated.
      */
-    public List<ChannelActivityTableModel> getTables()
+    public List<ChannelActivityTableState> getTables()
     {
-        List<ChannelActivityTableModel> tables = new ArrayList<>(mTrunkedTables.size() + 1);
-        tables.add(mConventionalTable);
-        tables.addAll(mTrunkedTables.values());
-        return List.copyOf(tables);
+        return mTables;
+    }
+
+    public SnapshotSet getSnapshotSet()
+    {
+        return mSnapshotSet;
+    }
+
+    public void setActiveChannelSupplier(Supplier<List<ActiveChannel>> activeChannelSupplier)
+    {
+        mActiveChannelSupplier = activeChannelSupplier;
     }
 
     public boolean isEnabled()
@@ -141,31 +223,144 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
 
     public void setEnabled(boolean enabled)
     {
-        if(mEnabled != enabled)
+        synchronized(mLifecycleLock)
         {
-            mEnabled = enabled;
-            runOnSwing(this::clear);
+            if(mClosed || mEnabled == enabled)
+            {
+                return;
+            }
+
+            if(enabled)
+            {
+                mGeneration++;
+                mEnabled = true;
+                mLifecycleReconcileNeeded.set(true);
+                startWorker();
+            }
+            else
+            {
+                mEnabled = false;
+                mGeneration++;
+                mLifecycleReconcileNeeded.set(false);
+                mWorkerRunning = false;
+                signalWorker();
+                stopWorkerLocked();
+            }
+
+            signalWorker();
         }
     }
 
-    public void addTableAddListener(Listener<ChannelActivityTableModel> listener)
+    private void startWorker()
     {
-        mTableAddListeners.add(listener);
+        if(mWorkerRunning)
+        {
+            return;
+        }
+
+        Thread previous = mWorker;
+
+        if(previous != null && previous.isAlive())
+        {
+            throw new IllegalStateException("Previous channel activity worker has not terminated");
+        }
+
+        mWorkerRunning = true;
+        mWorker = new ObserverThreadFactory("channel activity").newThread(this::runWorker);
+        mWorker.start();
     }
 
-    public void removeTableAddListener(Listener<ChannelActivityTableModel> listener)
+    private void stopWorkerLocked()
     {
-        mTableAddListeners.remove(listener);
+        Thread worker = mWorker;
+
+        if(worker != null && worker != Thread.currentThread())
+        {
+            try
+            {
+                worker.join(TimeUnit.SECONDS.toMillis(2));
+            }
+            catch(InterruptedException interruptedException)
+            {
+                Thread.currentThread().interrupt();
+            }
+        }
+
+        if(worker == null || !worker.isAlive())
+        {
+            mWorker = null;
+        }
     }
 
-    public void addTableChangeListener(Listener<ChannelActivityTableModel> listener)
+    private boolean offer(int operation, Object first, Object second, Object third, Object fourth, Object fifth,
+                          Object sixth, long value)
     {
-        mTableChangeListeners.add(listener);
+        long generation = mGeneration;
+
+        if(mAfterGenerationCaptureForTest != null)
+        {
+            mAfterGenerationCaptureForTest.run();
+        }
+
+        if(!mEnabled || mClosed)
+        {
+            return false;
+        }
+
+        boolean accepted = mIngress.offer(operation, generation, isLifecycleOperation(operation), first, second,
+            third, fourth, fifth, sixth, value);
+
+        if(accepted)
+        {
+            mAcceptedIngressCount.incrementAndGet();
+            signalWorker();
+        }
+        else
+        {
+            mDroppedIngressCount.incrementAndGet();
+
+            if(isLifecycleOperation(operation))
+            {
+                mDroppedLifecycleCount.incrementAndGet();
+                mLifecycleReconcileNeeded.set(true);
+                signalWorker();
+            }
+        }
+
+        return accepted;
     }
 
-    public void removeTableChangeListener(Listener<ChannelActivityTableModel> listener)
+    private static boolean isLifecycleOperation(int operation)
     {
-        mTableChangeListeners.remove(listener);
+        return operation == CHANNEL_STARTED || operation == CHANNEL_STOPPED;
+    }
+
+    private void signalWorker()
+    {
+        Thread worker = mWorker;
+
+        if(worker != null)
+        {
+            LockSupport.unpark(worker);
+        }
+    }
+
+    public void addTableListener(Listener<ChannelActivityTableEvent> listener)
+    {
+        if(listener != null)
+        {
+            mTableListeners.add(listener);
+        }
+    }
+
+    public void removeTableListener(Listener<ChannelActivityTableEvent> listener)
+    {
+        mTableListeners.remove(listener);
+    }
+
+    int getTableListenerCount()
+    {
+        return mTableListeners.size();
     }
 
     public void addActivityListener(Listener<ChannelActivityEvent> listener)
@@ -173,13 +368,12 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         if(listener != null)
         {
             mActivityListeners.add(listener);
-            listener.receive(new ChannelActivityEvent(ChannelActivityEvent.Operation.UPSERT,
-                ChannelActivitySnapshot.from(mConventionalTable)));
+            long revision = mSnapshotSet.revision();
 
-            for(ChannelActivityTableModel table: mTrunkedTables.values())
+            for(ChannelActivitySnapshot snapshot: mSnapshotSet.tables())
             {
-                listener.receive(new ChannelActivityEvent(ChannelActivityEvent.Operation.UPSERT,
-                    ChannelActivitySnapshot.from(table)));
+                listener.receive(new ChannelActivityEvent(ChannelActivityEvent.Operation.UPSERT, snapshot,
+                    revision));
             }
         }
     }
@@ -189,11 +383,16 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         mActivityListeners.remove(listener);
     }
 
+    int getActivityListenerCount()
+    {
+        return mActivityListeners.size();
+    }
+
     private void notifyActivityListeners(ChannelActivityEvent.Operation operation, ChannelActivitySnapshot snapshot)
     {
         if(snapshot != null)
         {
-            ChannelActivityEvent event = new ChannelActivityEvent(operation, snapshot);
+            ChannelActivityEvent event = new ChannelActivityEvent(operation, snapshot, mSnapshotSet.revision());
 
             for(Listener<ChannelActivityEvent> listener: mActivityListeners)
             {
@@ -202,51 +401,104 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         }
     }
 
-    public void close(ChannelActivityTableModel tableModel)
+    private void tableSnapshotUpdated(ChannelActivitySnapshot snapshot)
     {
-        runOnSwingIfEnabled(() -> {
-            if(tableModel != null && tableModel.getOwnerChannel() != null)
+        if(snapshot != null)
+        {
+            mLatestSnapshotsById.put(snapshot.tableId(), snapshot);
+            publishSnapshotSet();
+            notifyActivityListeners(ChannelActivityEvent.Operation.UPSERT, snapshot);
+        }
+    }
+
+    private void tableSnapshotRemoved(ChannelActivitySnapshot snapshot)
+    {
+        if(snapshot != null)
+        {
+            mLatestSnapshotsById.remove(snapshot.tableId());
+            publishSnapshotSet();
+            notifyActivityListeners(ChannelActivityEvent.Operation.REMOVE, snapshot);
+        }
+    }
+
+    private void publishSnapshotSet()
+    {
+        List<ChannelActivitySnapshot> snapshots = new ArrayList<>(mLatestSnapshotsById.values());
+        snapshots.sort(java.util.Comparator
+            .comparingInt((ChannelActivitySnapshot snapshot) -> "conventional".equals(snapshot.tableId()) ? 0 : 1)
+            .thenComparing(ChannelActivitySnapshot::tableId));
+        mSnapshotSet = new SnapshotSet(mSnapshotSet.revision() + 1, snapshots);
+    }
+
+    public void close(ChannelActivityTableState tableState)
+    {
+        if(mEnabled && !mClosed && tableState != null)
+        {
+            tableState.requestClose();
+            mCloseRequestRevision.incrementAndGet();
+            signalWorker();
+        }
+    }
+
+    private void processClose(ChannelActivityTableState tableState)
+    {
+        if(tableState != null && tableState.getOwnerChannel() != null)
+        {
+            Channel owner = tableState.getOwnerChannel();
+            ChannelActivitySnapshot removedSnapshot = tableState.getLatestSnapshot();
+            mClosedTrunkedChannelIds.add(owner.getChannelID());
+            mTrunkedTables.remove(owner);
+            mSiteSessions.remove(owner);
+            updateTablesSnapshot();
+            notifyTableListeners(ChannelActivityTableEvent.Operation.REMOVE, tableState);
+            tableSnapshotRemoved(removedSnapshot);
+
+            for(ChannelActivityRow row: tableState.getRows())
             {
-                Channel owner = tableModel.getOwnerChannel();
-                ChannelActivitySnapshot removedSnapshot = ChannelActivitySnapshot.from(tableModel);
-                mClosedTrunkedChannelIds.add(owner.getChannelID());
-                mTrunkedTables.remove(owner);
-                mSiteSessions.remove(owner);
-                tableModel.removeSnapshotListener(mTableSnapshotListener);
-                notifyActivityListeners(ChannelActivityEvent.Operation.REMOVE, removedSnapshot);
-
-                for(ChannelActivityRow row: tableModel.getRows())
-                {
-                    clearTrafficGrantAgeOut(row);
-                    cancelPendingControlIdle(row);
-                    mRowTables.remove(row);
-                }
-
-                mPendingTableRefreshes.remove(tableModel);
-                stopActivitySweeperIfIdle();
+                clearTrafficGrantAgeOut(row);
+                cancelPendingControlIdle(row);
+                mRowTables.remove(row);
             }
-        });
+
+            mPendingTableRefreshes.remove(tableState);
+            stopActivitySweeperIfIdle();
+        }
     }
 
     public void channelStarted(Channel channel, List<ChannelMetadata> metadataList)
     {
-        if(!mEnabled || channel == null || channel.isTrafficChannel())
+        channelStarted(channel, metadataList, channel);
+    }
+
+    public void channelStarted(Channel channel, List<ChannelMetadata> metadataList, Object incarnation)
+    {
+        if(!mEnabled || channel == null)
         {
             return;
         }
 
-        runOnSwingIfEnabled(() -> {
-            mClosedTrunkedChannelIds.remove(channel.getChannelID());
+        offer(CHANNEL_STARTED, channel, metadataList, incarnation, null, null, null, 0);
+    }
 
-            if(isConfiguredTrunkedControlParent(channel))
-            {
-                ensureConfiguredControlRow(channel, "channel-started-control");
-            }
-            else if(metadataList != null)
-            {
-                addConventionalRows(channel, metadataList, "channel-started-conventional");
-            }
-        });
+    private void processChannelStarted(Channel channel, List<ChannelMetadata> metadataList, Object incarnation)
+    {
+        mActiveIncarnations.put(channel, incarnation != null ? incarnation : channel);
+
+        if(channel.isTrafficChannel())
+        {
+            return;
+        }
+
+        mClosedTrunkedChannelIds.remove(channel.getChannelID());
+
+        if(isConfiguredTrunkedControlParent(channel))
+        {
+            ensureConfiguredControlRow(channel, "channel-started-control");
+        }
+        else if(metadataList != null)
+        {
+            addConventionalRows(channel, metadataList, "channel-started-conventional");
+        }
     }
 
     public void channelStopped(Channel channel)
@@ -256,63 +508,63 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
             return;
         }
 
-        runOnSwingIfEnabled(() -> {
-            for(RowReference reference: getRowsForStoppedChannel(channel))
+        offer(CHANNEL_STOPPED, channel, null, null, null, null, null, 0);
+    }
+
+    private void processChannelStopped(Channel channel)
+    {
+        mActiveIncarnations.remove(channel);
+
+        for(RowReference reference: getRowsForStoppedChannel(channel))
+        {
+            ChannelActivityRow row = reference.row();
+            ChannelActivityTableState table = reference.table();
+
+            if(channel.isTrafficChannel())
             {
-                ChannelActivityRow row = reference.row();
-                ChannelActivityTableModel table = reference.table();
-
-                if(channel.isTrafficChannel())
+                if(row.getRole() == ChannelActivityRow.Role.TRAFFIC && table != null &&
+                    table.getOwnerChannel() != null)
                 {
-                    if(row.getRole() == ChannelActivityRow.Role.TRAFFIC && table != null &&
-                        table.getOwnerChannel() != null)
-                    {
-                        /*
-                         * Processing-chain shutdown queues this callback before the audio module emits its terminal
-                         * completion. Clear while the traffic child still owns the row; after release, that delayed
-                         * completion deliberately cannot find and mutate the reparented row.
-                         */
-                        clearVoiceQualityOnIdle(row);
-                        reference.session().releaseTrafficChannel(channel, row);
-                        row.setDecoder(getDecoder(table.getOwnerChannel()));
-                        table.refresh(row);
-                    }
-                }
-                else
-                {
-                    clearTrafficGrantAgeOut(row);
-                    cancelPendingControlIdle(row);
-                    row.clearControlQuality();
-                    row.clearVoiceQuality();
-
-                    if(table == mConventionalTable)
-                    {
-                        removeConventionalRow(row);
-                        continue;
-                    }
-                    else if(row.isControlRow())
-                    {
-                        markConfiguredControl(row, channel);
-                    }
-                    else
-                    {
-                        setIdle(row);
-                    }
-
+                    clearVoiceQualityOnIdle(row);
+                    reference.session().releaseTrafficChannel(channel, row);
+                    row.setDecoder(getDecoder(table.getOwnerChannel()));
                     table.refresh(row);
                 }
             }
-
-            if(!channel.isTrafficChannel())
+            else
             {
-                ChannelActivityTableModel trunked = mTrunkedTables.get(channel);
+                clearTrafficGrantAgeOut(row);
+                cancelPendingControlIdle(row);
+                row.clearControlQuality();
+                row.clearVoiceQuality();
 
-                if(trunked != null)
+                if(table == mConventionalTable)
                 {
-                    setControlActive(trunked, false);
+                    removeConventionalRow(row);
+                    continue;
                 }
+                else if(row.isControlRow())
+                {
+                    markConfiguredControl(row, channel);
+                }
+                else
+                {
+                    setIdle(row);
+                }
+
+                table.refresh(row);
             }
-        });
+        }
+
+        if(!channel.isTrafficChannel())
+        {
+            ChannelActivityTableState trunked = mTrunkedTables.get(channel);
+
+            if(trunked != null)
+            {
+                setControlActive(trunked, false);
+            }
+        }
     }
 
     public void receiveControlChannelQuality(ControlChannelQualitySnapshot snapshot)
@@ -322,50 +574,49 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
             return;
         }
 
-        runOnSwingIfEnabled(() -> {
-            /*
-             * P25 and explicitly trunked DMR channels can create their initial site session from quality. NXDN still
-             * relies on positively identified trunking activity.
-             */
-            SiteActivitySession session = isConfiguredTrunkedControlParent(snapshot.channel()) ?
-                getOrCreateSiteSession(snapshot.channel()) : mSiteSessions.get(snapshot.channel());
-            ChannelActivityTableModel table = session != null ? session.getTableModel() : null;
+        offer(CONTROL_QUALITY, snapshot, null, null, null, null, null, 0);
+    }
 
-            if(table == null)
+    private void processControlChannelQuality(ControlChannelQualitySnapshot snapshot)
+    {
+        SiteActivitySession session = isConfiguredTrunkedControlParent(snapshot.channel()) ?
+            getOrCreateSiteSession(snapshot.channel()) : mSiteSessions.get(snapshot.channel());
+        ChannelActivityTableState table = session != null ? session.getTableState() : null;
+
+        if(table == null)
+        {
+            return;
+        }
+
+        ChannelActivityRow row = table.get(session.controlKey(snapshot.frequencyHz()));
+
+        if(snapshot.active() && (row == null || row.getRole() != ChannelActivityRow.Role.CURRENT_CONTROL ||
+            !table.isControlActive()))
+        {
+            updateCurrentControl(session, table, snapshot.channel(), snapshot.frequencyHz());
+            row = table.get(session.controlKey(snapshot.frequencyHz()));
+        }
+        else if(snapshot.active())
+        {
+            cancelPendingControlIdle(row);
+            scheduleControlIdle(row, table, snapshot.channel());
+        }
+
+        if(row != null)
+        {
+            if(snapshot.active())
             {
-                return;
+                row.setControlQuality(snapshot.signalDbfs(), snapshot.decodeHealthPercent(), snapshot.validFrames(),
+                    snapshot.invalidFrames(), snapshot.correctedBits(), snapshot.syncLossBits(), snapshot.droppedBits(),
+                    snapshot.observedAtMs());
+            }
+            else
+            {
+                row.clearControlQuality();
             }
 
-            ChannelActivityRow row = table.get(session.controlKey(snapshot.frequencyHz()));
-
-            if(snapshot.active() && (row == null || row.getRole() != ChannelActivityRow.Role.CURRENT_CONTROL ||
-                !table.isControlActive()))
-            {
-                updateCurrentControl(session, table, snapshot.channel(), snapshot.frequencyHz());
-                row = table.get(session.controlKey(snapshot.frequencyHz()));
-            }
-            else if(snapshot.active())
-            {
-                cancelPendingControlIdle(row);
-                scheduleControlIdle(row, table, snapshot.channel());
-            }
-
-            if(row != null)
-            {
-                if(snapshot.active())
-                {
-                    row.setControlQuality(snapshot.signalDbfs(), snapshot.decodeHealthPercent(),
-                        snapshot.validFrames(), snapshot.invalidFrames(), snapshot.correctedBits(),
-                        snapshot.syncLossBits(), snapshot.droppedBits(), snapshot.observedAtMs());
-                }
-                else
-                {
-                    row.clearControlQuality();
-                }
-
-                table.refresh(row);
-            }
-        });
+            table.refresh(row);
+        }
     }
 
     /**
@@ -395,57 +646,65 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
             return;
         }
 
-        runOnSwingIfEnabled(() -> {
-            ChannelActivityRow row = findVoiceQualityRow(channel, snapshot);
+        offer(AUDIO_CALL, channel, event, null, null, null, null, 0);
+    }
 
-            if(row == null)
-            {
-                return;
-            }
+    private void processAudioCallEvent(Channel channel, AudioCallEvent event)
+    {
+        AudioCallSnapshot snapshot = event.snapshot();
+        boolean created = event.eventType() == AudioCallEventType.CALL_CREATED;
+        boolean completed = event.eventType() == AudioCallEventType.CALL_COMPLETED;
+        VoiceCallQuality quality = snapshot.voiceCallQuality();
+        boolean hasMeasurements = quality != null && quality.hasMeasurements();
+        ChannelActivityRow row = findVoiceQualityRow(channel, snapshot);
+
+        if(row == null)
+        {
+            return;
+        }
 
             /*
              * A linked segment may not carry diagnostic observations. Transfer ownership at creation while retaining
              * the prior segment's displayed quality, so any later terminal completion still belongs to this row.
              */
-            if(created)
+        if(created)
+        {
+            if(snapshot.linkedCallId() != null && snapshot.linkedCallId().equals(row.getVoiceCallId()) &&
+                row.getVoiceCallQuality() != null)
             {
-                if(snapshot.linkedCallId() != null && snapshot.linkedCallId().equals(row.getVoiceCallId()) &&
-                    row.getVoiceCallQuality() != null)
-                {
-                    row.setVoiceQuality(snapshot.callId(), row.getVoiceCallQuality());
-                    refreshVoiceQualityRow(row);
-                }
-
-                return;
+                row.setVoiceQuality(snapshot.callId(), row.getVoiceCallQuality());
+                refreshVoiceQualityRow(row);
             }
+
+            return;
+        }
 
             /*
              * CALL_COMPLETED is also emitted for linked one-minute audio segment rollovers. Preserve the live value
              * when a continuation is expected, and require exact ownership so a delayed completion cannot overwrite
              * a newer call before that call's first sampled voice frame.
              */
-            if(completed && !snapshot.callId().equals(row.getVoiceCallId()))
-            {
-                return;
-            }
+        if(completed && !snapshot.callId().equals(row.getVoiceCallId()))
+        {
+            return;
+        }
 
-            if(completed && !event.continuationExpected() &&
-                mNowPlayingPreference.isClearVoiceDecodeQualityOnCallEnd())
-            {
-                row.clearVoiceQuality();
-            }
-            else if(hasMeasurements)
-            {
-                row.setVoiceQuality(snapshot.callId(), quality);
-            }
+        if(completed && !event.continuationExpected() &&
+            mNowPlayingPreference.isClearVoiceDecodeQualityOnCallEnd())
+        {
+            row.clearVoiceQuality();
+        }
+        else if(hasMeasurements)
+        {
+            row.setVoiceQuality(snapshot.callId(), quality);
+        }
 
-            refreshVoiceQualityRow(row);
-        });
+        refreshVoiceQualityRow(row);
     }
 
     private void refreshVoiceQualityRow(ChannelActivityRow row)
     {
-        ChannelActivityTableModel table = mRowTables.get(row);
+        ChannelActivityTableState table = mRowTables.get(row);
 
         if(table != null)
         {
@@ -502,40 +761,54 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
             return;
         }
 
-        runOnSwingIfEnabled(() -> {
-            ChannelActivityRow row = mMetadataRows.get(channelMetadata);
+        if(channelMetadata != null)
+        {
+            offer(METADATA_UPDATED, channelMetadata, channelMetadataField, null, null, null, null, 0);
+        }
+    }
 
-            if(row != null)
-            {
-                updateFromMetadata(row, channelMetadata, row.getChannel());
-                mConventionalTable.refresh(row);
-            }
-        });
+    private void processMetadataUpdated(ChannelMetadata channelMetadata)
+    {
+        ChannelActivityRow row = mMetadataRows.get(channelMetadata);
+
+        if(row != null)
+        {
+            updateFromMetadata(row, channelMetadata, row.getChannel());
+            mConventionalTable.refresh(row);
+        }
     }
 
     public void p25CurrentControl(Channel parentChannel, long frequency)
     {
-        if(!mEnabled || parentChannel == null || !isP25TrunkedControlParent(parentChannel) || frequency <= 0)
+        if(!mEnabled || parentChannel == null || frequency <= 0)
         {
             return;
         }
 
-        runOnSwingIfEnabled(() -> {
-            sweepActivityExpirations();
-            SiteActivitySession session = getOrCreateSiteSession(parentChannel);
-            ChannelActivityTableModel table = session != null ? session.getTableModel() : null;
+        offer(P25_CURRENT_CONTROL, parentChannel, null, null, null, null, null, frequency);
+    }
 
-            if(table == null)
-            {
-                return;
-            }
+    private void processP25CurrentControl(Channel parentChannel, long frequency)
+    {
+        if(!isP25TrunkedControlParent(parentChannel))
+        {
+            return;
+        }
 
-            expireTrafficRows(session, table, parentChannel);
-            ChannelActivityRow row = session.configuredControl(frequency);
-            rememberRow(table, row);
-            row.setDecoder(getDecoder(parentChannel));
-            table.refresh(row);
-        });
+        sweepActivityExpirations();
+        SiteActivitySession session = getOrCreateSiteSession(parentChannel);
+        ChannelActivityTableState table = session != null ? session.getTableState() : null;
+
+        if(table == null)
+        {
+            return;
+        }
+
+        expireTrafficRows(session, table, parentChannel);
+        ChannelActivityRow row = session.configuredControl(frequency);
+        rememberRow(table, row);
+        row.setDecoder(getDecoder(parentChannel));
+        table.refresh(row);
     }
 
     public void receiveSiteMetadata(SiteMetadataEvent event)
@@ -545,6 +818,11 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
             return;
         }
 
+        offer(SITE_METADATA, event, null, null, null, null, null, 0);
+    }
+
+    private void processSiteMetadata(SiteMetadataEvent event)
+    {
         Channel parentChannel = event.channel();
         P25NetworkConfigurationSnapshot snapshot = event.snapshot();
 
@@ -553,90 +831,88 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
             return;
         }
 
-        runOnSwingIfEnabled(() -> {
-            sweepActivityExpirations();
-            SiteIdentity identity = getSiteIdentity(snapshot);
+        sweepActivityExpirations();
+        SiteIdentity identity = getSiteIdentity(snapshot);
 
-            if(identity != null && identity.hasAny())
+        if(identity != null && identity.hasAny())
+        {
+            mSiteIdentities.put(parentChannel, identity);
+            updateTrunkedTitle(parentChannel);
+        }
+
+        SiteActivitySession session = getOrCreateSiteSession(parentChannel);
+        ChannelActivityTableState table = session != null ? session.getTableState() : null;
+
+        if(table == null)
+        {
+            return;
+        }
+
+        expireTrafficRows(session, table, parentChannel);
+        Set<Long> promotedControlFrequencies = new HashSet<>();
+
+        for(P25NetworkConfigurationSnapshot.Channel channel: list(snapshot.channels()))
+        {
+            if(channel == null || channel.downlink() == null || channel.downlink() <= 0)
             {
-                mSiteIdentities.put(parentChannel, identity);
-                updateTrunkedTitle(parentChannel);
+                continue;
             }
 
-            SiteActivitySession session = getOrCreateSiteSession(parentChannel);
-            ChannelActivityTableModel table = session != null ? session.getTableModel() : null;
-
-            if(table == null)
+            if(channel.callsign() != null && !channel.callsign().isBlank())
             {
-                return;
-            }
-
-            expireTrafficRows(session, table, parentChannel);
-            Set<Long> promotedControlFrequencies = new HashSet<>();
-
-            for(P25NetworkConfigurationSnapshot.Channel channel: list(snapshot.channels()))
-            {
-                if(channel == null || channel.downlink() == null || channel.downlink() <= 0)
+                for(ChannelActivityRow callsignRow: session.callsign(channel.downlink(), channel.callsign()))
                 {
-                    continue;
-                }
-
-                if(channel.callsign() != null && !channel.callsign().isBlank())
-                {
-                    for(ChannelActivityRow callsignRow: session.callsign(channel.downlink(), channel.callsign()))
-                    {
-                        table.refresh(callsignRow);
-                    }
-                }
-
-                ChannelTag networkTag = ChannelTag.fromNetworkRole(channel.role());
-
-                if(networkTag == ChannelTag.CURRENT_CONTROL)
-                {
-                    promotedControlFrequencies.add(channel.downlink());
-                    SiteActivitySession.ControlUpdate update = session.currentControl(channel.downlink(),
-                        channel.descriptor());
-                    ChannelActivityRow row = update.current();
-                    rememberRow(table, row);
-                    row.setDecoder(getDecoder(parentChannel));
-                    cancelPendingControlIdle(row);
-                    scheduleControlIdle(row, table, parentChannel);
-                    setControlActive(table, true);
-                    table.refresh(row);
-
-                    for(ChannelActivityRow demoted: update.demoted())
-                    {
-                        cancelPendingControlIdle(demoted);
-                        demoted.setDecoder(getDecoder(parentChannel));
-                        table.refresh(demoted);
-                    }
-                }
-                else if(networkTag == ChannelTag.ALTERNATE_CONTROL)
-                {
-                    promotedControlFrequencies.add(channel.downlink());
-                    ChannelActivityRow row = session.alternateControl(channel.downlink(), channel.descriptor());
-                    rememberRow(table, row);
-                    cancelPendingControlIdle(row);
-                    row.setDecoder(getDecoder(parentChannel));
-                    table.refresh(row);
-                }
-                else if(networkTag == ChannelTag.DATA_ANNOUNCED)
-                {
-                    ChannelActivityRow row = session.announcedData(channel.downlink(), channel.descriptor());
-                    rememberRow(table, row);
-                    row.setDecoder(getDecoder(parentChannel));
-                    table.refresh(row);
+                    table.refresh(callsignRow);
                 }
             }
 
-            for(ChannelActivityRow row: session.reconcilePromotedControls(promotedControlFrequencies,
-                getConfiguredFrequency(parentChannel)))
+            ChannelTag networkTag = ChannelTag.fromNetworkRole(channel.role());
+
+            if(networkTag == ChannelTag.CURRENT_CONTROL)
             {
+                promotedControlFrequencies.add(channel.downlink());
+                SiteActivitySession.ControlUpdate update = session.currentControl(channel.downlink(),
+                    channel.descriptor());
+                ChannelActivityRow row = update.current();
+                rememberRow(table, row);
+                row.setDecoder(getDecoder(parentChannel));
                 cancelPendingControlIdle(row);
-                table.remove(row);
-                mRowTables.remove(row);
+                scheduleControlIdle(row, table, parentChannel);
+                setControlActive(table, true);
+                table.refresh(row);
+
+                for(ChannelActivityRow demoted: update.demoted())
+                {
+                    cancelPendingControlIdle(demoted);
+                    demoted.setDecoder(getDecoder(parentChannel));
+                    table.refresh(demoted);
+                }
             }
-        });
+            else if(networkTag == ChannelTag.ALTERNATE_CONTROL)
+            {
+                promotedControlFrequencies.add(channel.downlink());
+                ChannelActivityRow row = session.alternateControl(channel.downlink(), channel.descriptor());
+                rememberRow(table, row);
+                cancelPendingControlIdle(row);
+                row.setDecoder(getDecoder(parentChannel));
+                table.refresh(row);
+            }
+            else if(networkTag == ChannelTag.DATA_ANNOUNCED)
+            {
+                ChannelActivityRow row = session.announcedData(channel.downlink(), channel.descriptor());
+                rememberRow(table, row);
+                row.setDecoder(getDecoder(parentChannel));
+                table.refresh(row);
+            }
+        }
+
+        for(ChannelActivityRow row: session.reconcilePromotedControls(promotedControlFrequencies,
+            getConfiguredFrequency(parentChannel)))
+        {
+            cancelPendingControlIdle(row);
+            table.remove(row);
+            mRowTables.remove(row);
+        }
     }
 
     /**
@@ -645,7 +921,17 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
      */
     public void receiveProtocolSiteMetadata(ProtocolSiteMetadataEvent event)
     {
-        if(!mEnabled || !TrunkedSiteMetadataClassifier.isKnownTrunkingMetadata(event))
+        if(!mEnabled || event == null)
+        {
+            return;
+        }
+
+        offer(PROTOCOL_SITE_METADATA, event, null, null, null, null, null, 0);
+    }
+
+    private void processProtocolSiteMetadata(ProtocolSiteMetadataEvent event)
+    {
+        if(!TrunkedSiteMetadataClassifier.isKnownTrunkingMetadata(event))
         {
             return;
         }
@@ -658,17 +944,15 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
             return;
         }
 
-        runOnSwingIfEnabled(() -> {
-            SiteActivitySession session = getOrCreateSiteSession(parentChannel);
+        SiteActivitySession session = getOrCreateSiteSession(parentChannel);
 
-            if(session == null)
-            {
-                return;
-            }
+        if(session == null)
+        {
+            return;
+        }
 
-            removeConventionalRows(parentChannel);
-            ensureConfiguredControlRowIfMissing(session, "protocol-site-metadata-control-seed");
-        });
+        removeConventionalRows(parentChannel);
+        ensureConfiguredControlRowIfMissing(session, "protocol-site-metadata-control-seed");
     }
 
     public void p25TrafficGrant(Channel parentChannel, Channel trafficChannel, IChannelDescriptor channelDescriptor,
@@ -701,68 +985,79 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
                                     IdentifierCollection identifiers, DecodeEventType eventType,
                                     long controlFrequency)
     {
-        if(!mEnabled || !isTrunkingCapableParent(parentChannel) || channelDescriptor == null ||
-            channelDescriptor.getDownlinkFrequency() <= 0 || ChannelTag.fromService(eventType) == null)
+        if(!mEnabled || parentChannel == null || channelDescriptor == null ||
+            channelDescriptor.getDownlinkFrequency() <= 0)
+        {
+            return;
+        }
+
+        offer(TRUNKED_TRAFFIC, parentChannel, trafficChannel, channelDescriptor, timeslot, identifiers, eventType,
+            controlFrequency);
+    }
+
+    private void processTrunkedTrafficEvent(Channel parentChannel, Channel trafficChannel,
+                                            IChannelDescriptor channelDescriptor, Integer timeslot,
+                                            IdentifierCollection identifiers, DecodeEventType eventType,
+                                            long controlFrequency)
+    {
+        if(!isTrunkingCapableParent(parentChannel) || ChannelTag.fromService(eventType) == null)
         {
             return;
         }
 
         Integer normalizedTimeslot = timeslot != null && timeslot > 0 ? timeslot : null;
+        sweepActivityExpirations();
+        SiteActivitySession session = getOrCreateSiteSession(parentChannel);
+        ChannelActivityTableState table = session != null ? session.getTableState() : null;
 
-        runOnSwingIfEnabled(() -> {
-            sweepActivityExpirations();
-            SiteActivitySession session = getOrCreateSiteSession(parentChannel);
-            ChannelActivityTableModel table = session != null ? session.getTableModel() : null;
+        if(table == null)
+        {
+            return;
+        }
 
-            if(table == null)
-            {
-                return;
-            }
+        removeConventionalRows(parentChannel);
+        expireTrafficRows(session, table, parentChannel);
+        if(controlFrequency > 0)
+        {
+            updateCurrentControl(session, table, parentChannel, controlFrequency);
+        }
+        else
+        {
+            ensureConfiguredControlRowIfMissing(table, parentChannel, "trunked-traffic-event-control-seed");
+        }
 
-            removeConventionalRows(parentChannel);
-            expireTrafficRows(session, table, parentChannel);
-            if(controlFrequency > 0)
-            {
-                updateCurrentControl(session, table, parentChannel, controlFrequency);
-            }
-            else
-            {
-                ensureConfiguredControlRowIfMissing(table, parentChannel, "trunked-traffic-event-control-seed");
-            }
+        Channel rowChannel = trafficChannel != null ? trafficChannel : parentChannel;
+        ChannelActivityRow row = session.traffic(trafficChannel, channelDescriptor, normalizedTimeslot);
+        rememberRow(table, row);
+        clearTrafficGrantAgeOut(row);
+        boolean newCall = row.getState() == State.IDLE || isTargetChanged(row, identifiers);
+        boolean wasEncrypted = !newCall && row.getState() == State.ENCRYPTED;
 
-            Channel rowChannel = trafficChannel != null ? trafficChannel : parentChannel;
-            ChannelActivityRow row = session.traffic(trafficChannel, channelDescriptor, normalizedTimeslot);
-            rememberRow(table, row);
-            clearTrafficGrantAgeOut(row);
-            boolean newCall = row.getState() == State.IDLE || isTargetChanged(row, identifiers);
-            boolean wasEncrypted = !newCall && row.getState() == State.ENCRYPTED;
+        if(newCall)
+        {
+            row.clearCallDetails();
+            row.clearVoiceQuality();
+        }
 
-            if(newCall)
-            {
-                row.clearCallDetails();
-                row.clearVoiceQuality();
-            }
+        row.setDecoder(getDecoder(rowChannel));
+        updateCallDetails(row, identifiers, rowChannel);
+        ChannelTag serviceTag = ChannelTag.fromService(eventType);
 
-            row.setDecoder(getDecoder(rowChannel));
-            updateCallDetails(row, identifiers, rowChannel);
-            ChannelTag serviceTag = ChannelTag.fromService(eventType);
+        if(serviceTag != null)
+        {
+            session.addTag(channelDescriptor.getDownlinkFrequency(), serviceTag);
+        }
 
-            if(serviceTag != null)
-            {
-                session.addTag(channelDescriptor.getDownlinkFrequency(), serviceTag);
-            }
+        State state = getState(eventType);
 
-            State state = getState(eventType);
+        if(state == State.ENCRYPTED && row.getEncryptionDetails() == null)
+        {
+            row.setEncryptionDetails(VoiceEncryptionDisplay.ENCRYPTED);
+        }
 
-            if(state == State.ENCRYPTED && row.getEncryptionDetails() == null)
-            {
-                row.setEncryptionDetails(VoiceEncryptionDisplay.ENCRYPTED);
-            }
-
-            row.setState(getStickyTrafficState(row, state, wasEncrypted));
-            table.refresh(row);
-            scheduleTrafficGrantAgeOut(row);
-        });
+        row.setState(getStickyTrafficState(row, state, wasEncrypted));
+        table.refresh(row);
+        scheduleTrafficGrantAgeOut(row);
     }
 
     /**
@@ -771,60 +1066,82 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
      */
     public void trunkedCurrentControl(Channel parentChannel, long frequency)
     {
-        if(!mEnabled || !isTrunkingCapableParent(parentChannel) || frequency <= 0)
+        if(!mEnabled || parentChannel == null || frequency <= 0)
         {
             return;
         }
 
-        runOnSwingIfEnabled(() -> {
-            SiteActivitySession session = mSiteSessions.get(parentChannel);
-            ChannelActivityTableModel table = session != null ? session.getTableModel() : null;
+        offer(TRUNKED_CURRENT_CONTROL, parentChannel, null, null, null, null, null, frequency);
+    }
 
-            if(table != null)
-            {
-                updateCurrentControl(session, table, parentChannel, frequency);
-            }
-        });
+    private void processTrunkedCurrentControl(Channel parentChannel, long frequency)
+    {
+        if(!isTrunkingCapableParent(parentChannel))
+        {
+            return;
+        }
+
+        SiteActivitySession session = mSiteSessions.get(parentChannel);
+        ChannelActivityTableState table = session != null ? session.getTableState() : null;
+
+        if(table != null)
+        {
+            updateCurrentControl(session, table, parentChannel, frequency);
+        }
     }
 
     public void p25TrafficEncryptionDetails(Channel parentChannel, IChannelDescriptor channelDescriptor,
                                             IdentifierCollection identifiers, DecodeEventType eventType)
     {
-        long frequency = channelDescriptor != null ? channelDescriptor.getDownlinkFrequency() : 0;
-        Integer timeslot = getTimeslot(channelDescriptor);
-        String encryptionDetails = VoiceEncryptionDisplay.format(identifiers);
-
-        if(!mEnabled || parentChannel == null || !isP25TrunkedControlParent(parentChannel) || frequency <= 0 ||
-            encryptionDetails == null)
+        if(!mEnabled || parentChannel == null || channelDescriptor == null ||
+            channelDescriptor.getDownlinkFrequency() <= 0)
         {
             return;
         }
 
-        runOnSwingIfEnabled(() -> {
-            SiteActivitySession session = mSiteSessions.get(parentChannel);
-            ChannelActivityTableModel table = session != null ? session.getTableModel() : null;
+        offer(TRAFFIC_ENCRYPTION, parentChannel, channelDescriptor, identifiers, eventType, null, null, 0);
+    }
 
-            if(table == null)
-            {
-                return;
-            }
+    private void processTrafficEncryptionDetails(Channel parentChannel, IChannelDescriptor channelDescriptor,
+                                                 IdentifierCollection identifiers, DecodeEventType eventType)
+    {
+        if(!isP25TrunkedControlParent(parentChannel))
+        {
+            return;
+        }
 
-            ChannelActivityRow row = session.traffic(frequency, timeslot);
+        long frequency = channelDescriptor.getDownlinkFrequency();
+        Integer timeslot = getTimeslot(channelDescriptor);
+        String encryptionDetails = VoiceEncryptionDisplay.format(identifiers);
 
-            if(row == null || !isTrafficState(row.getState()))
-            {
-                return;
-            }
+        if(encryptionDetails == null)
+        {
+            return;
+        }
 
-            if(encryptionDetails.equals(row.getEncryptionDetails()) && row.getState() == State.ENCRYPTED)
-            {
-                return;
-            }
+        SiteActivitySession session = mSiteSessions.get(parentChannel);
+        ChannelActivityTableState table = session != null ? session.getTableState() : null;
 
-            row.setEncryptionDetails(encryptionDetails);
-            row.setState(State.ENCRYPTED);
-            table.refresh(row);
-        });
+        if(table == null)
+        {
+            return;
+        }
+
+        ChannelActivityRow row = session.traffic(frequency, timeslot);
+
+        if(row == null || !isTrafficState(row.getState()))
+        {
+            return;
+        }
+
+        if(encryptionDetails.equals(row.getEncryptionDetails()) && row.getState() == State.ENCRYPTED)
+        {
+            return;
+        }
+
+        row.setEncryptionDetails(encryptionDetails);
+        row.setState(State.ENCRYPTED);
+        table.refresh(row);
     }
 
     /**
@@ -833,34 +1150,42 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
     public void p25TrafficTalkerAlias(Channel parentChannel, IChannelDescriptor channelDescriptor,
                                       Identifier<?> talkerAlias)
     {
-        long frequency = channelDescriptor != null ? channelDescriptor.getDownlinkFrequency() : 0;
-        Integer timeslot = getTimeslot(channelDescriptor);
-
-        if(!mEnabled || parentChannel == null || !isP25TrunkedControlParent(parentChannel) || frequency <= 0 ||
-            talkerAlias == null || talkerAlias.getForm() != Form.TALKER_ALIAS)
+        if(!mEnabled || parentChannel == null || channelDescriptor == null ||
+            channelDescriptor.getDownlinkFrequency() <= 0 || talkerAlias == null)
         {
             return;
         }
 
-        runOnSwingIfEnabled(() -> {
-            SiteActivitySession session = mSiteSessions.get(parentChannel);
-            ChannelActivityTableModel table = session != null ? session.getTableModel() : null;
+        offer(TRAFFIC_TALKER_ALIAS, parentChannel, channelDescriptor, talkerAlias, null, null, null, 0);
+    }
 
-            if(table == null)
-            {
-                return;
-            }
+    private void processTrafficTalkerAlias(Channel parentChannel, IChannelDescriptor channelDescriptor,
+                                           Identifier<?> talkerAlias)
+    {
+        if(!isP25TrunkedControlParent(parentChannel) || talkerAlias.getForm() != Form.TALKER_ALIAS)
+        {
+            return;
+        }
 
-            ChannelActivityRow row = session.traffic(frequency, timeslot);
+        long frequency = channelDescriptor.getDownlinkFrequency();
+        Integer timeslot = getTimeslot(channelDescriptor);
+        SiteActivitySession session = mSiteSessions.get(parentChannel);
+        ChannelActivityTableState table = session != null ? session.getTableState() : null;
 
-            if(row == null || !isTrafficState(row.getState()) || talkerAlias.equals(row.getTalkerAlias()))
-            {
-                return;
-            }
+        if(table == null)
+        {
+            return;
+        }
 
-            row.setTalkerAlias(talkerAlias);
-            table.refresh(row);
-        });
+        ChannelActivityRow row = session.traffic(frequency, timeslot);
+
+        if(row == null || !isTrafficState(row.getState()) || talkerAlias.equals(row.getTalkerAlias()))
+        {
+            return;
+        }
+
+        row.setTalkerAlias(talkerAlias);
+        table.refresh(row);
     }
 
     public void channelConfigurationChanged(Channel channel)
@@ -870,33 +1195,36 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
             return;
         }
 
-        runOnSwingIfEnabled(() -> {
-            updateTrunkedTitle(channel);
+        offer(CONFIGURATION_CHANGED, channel, null, null, null, null, null, 0);
+    }
 
-            if(isConfiguredTrunkedControlParent(channel))
+    private void processChannelConfigurationChanged(Channel channel)
+    {
+        updateTrunkedTitle(channel);
+
+        if(isConfiguredTrunkedControlParent(channel))
+        {
+            removeConventionalRows(channel);
+            ensureConfiguredControlRow(channel, "channel-configuration-control-seed");
+            reconcileConfiguredControlRows(channel);
+        }
+        else
+        {
+            ChannelActivityTableState trunkedTable = mTrunkedTables.get(channel);
+
+            if(trunkedTable != null && channel.getDecodeConfiguration() instanceof DecodeConfigDMR)
             {
-                removeConventionalRows(channel);
-                ensureConfiguredControlRow(channel, "channel-configuration-control-seed");
-                reconcileConfiguredControlRows(channel);
+                processClose(trunkedTable);
             }
-            else
+
+            for(ChannelActivityRow row: mConventionalTable.getRows())
             {
-                ChannelActivityTableModel trunkedTable = mTrunkedTables.get(channel);
-
-                if(trunkedTable != null && channel.getDecodeConfiguration() instanceof DecodeConfigDMR)
+                if(row.getChannel() == channel)
                 {
-                    close(trunkedTable);
-                }
-
-                for(ChannelActivityRow row: mConventionalTable.getRows())
-                {
-                    if(row.getChannel() == channel)
-                    {
-                        mConventionalTable.refresh(row);
-                    }
+                    mConventionalTable.refresh(row);
                 }
             }
-        });
+        }
     }
 
     private void updateFromMetadata(ChannelActivityRow row, ChannelMetadata metadata, Channel channel)
@@ -1080,7 +1408,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         return -1;
     }
 
-    private void applyTrafficGrantAgeOut(ChannelActivityRow row, ChannelActivityTableModel table,
+    private void applyTrafficGrantAgeOut(ChannelActivityRow row, ChannelActivityTableState table,
                                          Channel parentChannel)
     {
         if(row != null)
@@ -1106,7 +1434,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         }
     }
 
-    private void expireTrafficRows(SiteActivitySession session, ChannelActivityTableModel table, Channel parentChannel)
+    private void expireTrafficRows(SiteActivitySession session, ChannelActivityTableState table, Channel parentChannel)
     {
         if(session == null || table == null)
         {
@@ -1127,7 +1455,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         flushQueuedRefreshes();
     }
 
-    private void scheduleControlIdle(ChannelActivityRow row, ChannelActivityTableModel table, Channel parentChannel)
+    private void scheduleControlIdle(ChannelActivityRow row, ChannelActivityTableState table, Channel parentChannel)
     {
         cancelPendingControlIdle(row);
 
@@ -1152,24 +1480,14 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
 
     private void startActivitySweeper()
     {
-        if(mActivitySweeperTimer == null)
-        {
-            mActivitySweeperTimer = new Timer(ACTIVITY_SWEEPER_INTERVAL_MILLISECONDS,
-                event -> sweepActivityExpirations());
-            mActivitySweeperTimer.setRepeats(true);
-        }
-
-        if(!mActivitySweeperTimer.isRunning())
-        {
-            mActivitySweeperTimer.start();
-        }
+        mActivitySweeperRunning = true;
     }
 
     private void stopActivitySweeperIfIdle()
     {
-        if(mActivitySweeperTimer != null && mPendingControlIdleRows.isEmpty())
+        if(mPendingControlIdleRows.isEmpty())
         {
-            mActivitySweeperTimer.stop();
+            mActivitySweeperRunning = false;
         }
     }
 
@@ -1197,7 +1515,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         stopActivitySweeperIfIdle();
     }
 
-    private void applyControlIdle(ChannelActivityRow row, ChannelActivityTableModel table, Channel parentChannel)
+    private void applyControlIdle(ChannelActivityRow row, ChannelActivityTableState table, Channel parentChannel)
     {
         if(row != null && row.hasTag(ChannelTag.CURRENT_CONTROL) &&
             row.getState() == State.CONTROL)
@@ -1212,7 +1530,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         }
     }
 
-    private void queueRefresh(ChannelActivityTableModel table, ChannelActivityRow row)
+    private void queueRefresh(ChannelActivityTableState table, ChannelActivityRow row)
     {
         if(table != null && row != null)
         {
@@ -1228,17 +1546,17 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
             return;
         }
 
-        Map<ChannelActivityTableModel,Set<ChannelActivityRow>> refreshes =
+        Map<ChannelActivityTableState,Set<ChannelActivityRow>> refreshes =
             new IdentityHashMap<>(mPendingTableRefreshes);
         mPendingTableRefreshes.clear();
 
-        for(Map.Entry<ChannelActivityTableModel,Set<ChannelActivityRow>> entry: refreshes.entrySet())
+        for(Map.Entry<ChannelActivityTableState,Set<ChannelActivityRow>> entry: refreshes.entrySet())
         {
             entry.getKey().refresh(entry.getValue());
         }
     }
 
-    private void rememberRow(ChannelActivityTableModel table, ChannelActivityRow row)
+    private void rememberRow(ChannelActivityTableState table, ChannelActivityRow row)
     {
         if(table != null && row != null)
         {
@@ -1268,7 +1586,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
 
         for(SiteActivitySession session: new ArrayList<>(mSiteSessions.values()))
         {
-            ChannelActivityTableModel table = session.getTableModel();
+            ChannelActivityTableState table = session.getTableState();
 
             for(ChannelActivityRow row: session.getRowsForStoppedChannel(channel))
             {
@@ -1303,7 +1621,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         }
     }
 
-    private void updateCurrentControl(SiteActivitySession session, ChannelActivityTableModel table,
+    private void updateCurrentControl(SiteActivitySession session, ChannelActivityTableState table,
                                       Channel parentChannel, long frequency)
     {
         SiteActivitySession.ControlUpdate update = session.currentControl(frequency, null);
@@ -1358,7 +1676,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         return ensureConfiguredControlRowIfMissing(session, action);
     }
 
-    private ChannelActivityRow ensureConfiguredControlRowIfMissing(ChannelActivityTableModel table, Channel channel,
+    private ChannelActivityRow ensureConfiguredControlRowIfMissing(ChannelActivityTableState table, Channel channel,
                                                                    String action)
     {
         SiteActivitySession session = getOrCreateSiteSession(channel);
@@ -1374,7 +1692,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
 
         long frequency = getConfiguredFrequency(session.getParentChannel());
 
-        if(frequency <= 0 || session.getTableModel().get(session.controlKey(frequency)) != null)
+        if(frequency <= 0 || session.getTableState().get(session.controlKey(frequency)) != null)
         {
             return null;
         }
@@ -1390,7 +1708,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         }
 
         Channel channel = session.getParentChannel();
-        ChannelActivityTableModel table = session.getTableModel();
+        ChannelActivityTableState table = session.getTableState();
         long frequency = getConfiguredFrequency(channel);
 
         if(frequency <= 0)
@@ -1408,7 +1726,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
     private void reconcileConfiguredControlRows(Channel channel)
     {
         SiteActivitySession session = mSiteSessions.get(channel);
-        ChannelActivityTableModel table = session != null ? session.getTableModel() : null;
+        ChannelActivityTableState table = session != null ? session.getTableState() : null;
 
         if(table == null)
         {
@@ -1452,7 +1770,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
             return null;
         }
 
-        ChannelActivityTableModel table = getOrCreateTrunkedTable(channel);
+        ChannelActivityTableState table = getOrCreateTrunkedTable(channel);
 
         if(table == null)
         {
@@ -1462,25 +1780,22 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         return mSiteSessions.computeIfAbsent(channel, key -> new SiteActivitySession(channel, table));
     }
 
-    private ChannelActivityTableModel getOrCreateTrunkedTable(Channel channel)
+    private ChannelActivityTableState getOrCreateTrunkedTable(Channel channel)
     {
         if(mClosedTrunkedChannelIds.contains(channel.getChannelID()))
         {
             return null;
         }
 
-        ChannelActivityTableModel table = mTrunkedTables.get(channel);
+        ChannelActivityTableState table = mTrunkedTables.get(channel);
 
         if(table == null)
         {
-            table = new ChannelActivityTableModel(getTrunkedTitle(channel), channel, true);
-            table.addSnapshotListener(mTableSnapshotListener);
+            table = new ChannelActivityTableState(getTrunkedTitle(channel), channel, true,
+                this::tableSnapshotUpdated);
             mTrunkedTables.put(channel, table);
-
-            for(Listener<ChannelActivityTableModel> listener: mTableAddListeners)
-            {
-                listener.receive(table);
-            }
+            updateTablesSnapshot();
+            notifyTableListeners(ChannelActivityTableEvent.Operation.ADD, table);
         }
 
         return table;
@@ -1488,7 +1803,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
 
     private void updateTrunkedTitle(Channel channel)
     {
-        ChannelActivityTableModel table = mTrunkedTables.get(channel);
+        ChannelActivityTableState table = mTrunkedTables.get(channel);
 
         if(table != null)
         {
@@ -1502,7 +1817,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         }
     }
 
-    private void setControlActive(ChannelActivityTableModel table, boolean controlActive)
+    private void setControlActive(ChannelActivityTableState table, boolean controlActive)
     {
         if(table != null && table.setControlActive(controlActive))
         {
@@ -1510,29 +1825,40 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         }
     }
 
-    private void notifyTableChanged(ChannelActivityTableModel table)
+    private void notifyTableChanged(ChannelActivityTableState table)
     {
-        for(Listener<ChannelActivityTableModel> listener: mTableChangeListeners)
+        notifyTableListeners(ChannelActivityTableEvent.Operation.UPDATE, table);
+    }
+
+    private void notifyTableListeners(ChannelActivityTableEvent.Operation operation, ChannelActivityTableState table)
+    {
+        ChannelActivityTableEvent event = new ChannelActivityTableEvent(operation, table);
+
+        for(Listener<ChannelActivityTableEvent> listener: mTableListeners)
         {
-            listener.receive(table);
+            listener.receive(event);
         }
+    }
+
+    private void updateTablesSnapshot()
+    {
+        List<ChannelActivityTableState> tables = new ArrayList<>(mTrunkedTables.size() + 1);
+        tables.add(mConventionalTable);
+        tables.addAll(mTrunkedTables.values());
+        mTables = List.copyOf(tables);
     }
 
     private void clear()
     {
-        if(mActivitySweeperTimer != null)
-        {
-            mActivitySweeperTimer.stop();
-        }
+        mActivitySweeperRunning = false;
 
         mConventionalTable.clear();
 
-        for(ChannelActivityTableModel table: mTrunkedTables.values())
+        for(ChannelActivityTableState table: mTrunkedTables.values())
         {
-            ChannelActivitySnapshot removedSnapshot = ChannelActivitySnapshot.from(table);
-            table.clear();
-            table.removeSnapshotListener(mTableSnapshotListener);
-            notifyActivityListeners(ChannelActivityEvent.Operation.REMOVE, removedSnapshot);
+            ChannelActivitySnapshot removedSnapshot = table.getLatestSnapshot();
+            notifyTableListeners(ChannelActivityTableEvent.Operation.REMOVE, table);
+            tableSnapshotRemoved(removedSnapshot);
         }
 
         mTrunkedTables.clear();
@@ -1543,6 +1869,8 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
         mPendingControlIdleRows.clear();
         mPendingTableRefreshes.clear();
         mSiteIdentities.clear();
+        mActiveIncarnations.clear();
+        updateTablesSnapshot();
     }
 
     private boolean isP25TrunkedControlParent(Channel channel)
@@ -1757,25 +2085,251 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener
             NowPlayingPreference.DEFAULT_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS;
     }
 
-    private void runOnSwing(Runnable runnable)
+    private void runWorker()
     {
-        if(EventQueue.isDispatchThread())
+        long nextSweep = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(ACTIVITY_SWEEPER_INTERVAL_MILLISECONDS);
+
+        try
         {
-            runnable.run();
+            while(mWorkerRunning)
+            {
+                reconcileGeneration();
+                int drained = 0;
+                ChannelActivityIngressQueue.Entry entry;
+
+                while(drained < INGRESS_CAPACITY && (entry = mIngress.poll()) != null)
+                {
+                    try
+                    {
+                        if(mEnabled && entry.generation() == mGeneration)
+                        {
+                            process(entry);
+                        }
+                    }
+                    catch(Throwable throwable)
+                    {
+                        if(throwable instanceof Error error)
+                        {
+                            throw error;
+                        }
+
+                        mLog.error("Error processing channel activity observation", throwable);
+                    }
+                    finally
+                    {
+                        mProcessedIngressCount.incrementAndGet();
+                    }
+
+                    drained++;
+                }
+
+                if(mEnabled)
+                {
+                    processPendingCloseRequests();
+
+                    if(mLifecycleReconcileNeeded.compareAndSet(true, false))
+                    {
+                        reconcileLifecycle();
+                    }
+                }
+
+                long now = System.nanoTime();
+
+                if(mEnabled && mActivitySweeperRunning && now >= nextSweep)
+                {
+                    sweepActivityExpirations();
+                    nextSweep = now + TimeUnit.MILLISECONDS.toNanos(ACTIVITY_SWEEPER_INTERVAL_MILLISECONDS);
+                }
+
+                if(drained == 0)
+                {
+                    long parkNanos = mActivitySweeperRunning && mEnabled ?
+                        Math.max(1, nextSweep - now) : TimeUnit.MILLISECONDS.toNanos(50);
+                    LockSupport.parkNanos(this, parkNanos);
+                }
+            }
         }
-        else
+        finally
         {
-            EventQueue.invokeLater(runnable);
+            clear();
+            mIngress.clear();
+            mAppliedGeneration = mGeneration;
+            mWorkerRunning = false;
+
+            if(Thread.currentThread() == mWorker)
+            {
+                mWorker = null;
+            }
         }
     }
 
-    private void runOnSwingIfEnabled(Runnable runnable)
+    private void processPendingCloseRequests()
     {
-        runOnSwing(() -> {
-            if(mEnabled)
+        long revision = mCloseRequestRevision.get();
+
+        for(ChannelActivityTableState table: new ArrayList<>(mTrunkedTables.values()))
+        {
+            if(table.consumeCloseRequest())
             {
-                runnable.run();
+                processClose(table);
             }
-        });
+        }
+
+        mAppliedCloseRequestRevision = revision;
+    }
+
+    private void reconcileLifecycle()
+    {
+        Supplier<List<ActiveChannel>> supplier = mActiveChannelSupplier;
+
+        if(supplier == null)
+        {
+            return;
+        }
+
+        try
+        {
+            List<ActiveChannel> activeChannels = supplier.get();
+            Map<Channel,ActiveChannel> activeByChannel = new IdentityHashMap<>();
+
+            for(ActiveChannel active: list(activeChannels))
+            {
+                if(active != null && active.channel() != null)
+                {
+                    activeByChannel.put(active.channel(), active);
+                }
+            }
+
+            for(Channel known: new ArrayList<>(mActiveIncarnations.keySet()))
+            {
+                if(!activeByChannel.containsKey(known))
+                {
+                    processChannelStopped(known);
+                }
+            }
+
+            for(ActiveChannel active: activeByChannel.values())
+            {
+                if(mActiveIncarnations.get(active.channel()) != active.incarnation())
+                {
+                    processChannelStarted(active.channel(), active.metadata(), active.incarnation());
+                }
+            }
+        }
+        catch(RuntimeException runtimeException)
+        {
+            mLifecycleReconcileNeeded.set(true);
+            mLog.error("Error reconciling channel activity lifecycle", runtimeException);
+        }
+    }
+
+    private void reconcileGeneration()
+    {
+        long generation = mGeneration;
+
+        if(mAppliedGeneration != generation)
+        {
+            clear();
+            mAppliedGeneration = generation;
+            mAppliedCloseRequestRevision = mCloseRequestRevision.get();
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private void process(ChannelActivityIngressQueue.Entry entry)
+    {
+        switch(entry.operation())
+        {
+            case CHANNEL_STARTED -> processChannelStarted((Channel)entry.first(),
+                (List<ChannelMetadata>)entry.second(), entry.third());
+            case CHANNEL_STOPPED -> processChannelStopped((Channel)entry.first());
+            case CONTROL_QUALITY -> processControlChannelQuality((ControlChannelQualitySnapshot)entry.first());
+            case AUDIO_CALL -> processAudioCallEvent((Channel)entry.first(), (AudioCallEvent)entry.second());
+            case METADATA_UPDATED -> processMetadataUpdated((ChannelMetadata)entry.first());
+            case P25_CURRENT_CONTROL -> processP25CurrentControl((Channel)entry.first(), entry.value());
+            case SITE_METADATA -> processSiteMetadata((SiteMetadataEvent)entry.first());
+            case PROTOCOL_SITE_METADATA -> processProtocolSiteMetadata((ProtocolSiteMetadataEvent)entry.first());
+            case TRUNKED_TRAFFIC -> processTrunkedTrafficEvent((Channel)entry.first(), (Channel)entry.second(),
+                (IChannelDescriptor)entry.third(), (Integer)entry.fourth(), (IdentifierCollection)entry.fifth(),
+                (DecodeEventType)entry.sixth(), entry.value());
+            case TRUNKED_CURRENT_CONTROL -> processTrunkedCurrentControl((Channel)entry.first(), entry.value());
+            case TRAFFIC_ENCRYPTION -> processTrafficEncryptionDetails((Channel)entry.first(),
+                (IChannelDescriptor)entry.second(), (IdentifierCollection)entry.third(),
+                (DecodeEventType)entry.fourth());
+            case TRAFFIC_TALKER_ALIAS -> processTrafficTalkerAlias((Channel)entry.first(),
+                (IChannelDescriptor)entry.second(), (Identifier<?>)entry.third());
+            case CONFIGURATION_CHANGED -> processChannelConfigurationChanged((Channel)entry.first());
+            default -> mLog.warn("Ignoring unknown channel activity operation [{}]", entry.operation());
+        }
+    }
+
+    long getDroppedIngressCount()
+    {
+        return mDroppedIngressCount.get();
+    }
+
+    long getDroppedLifecycleCount()
+    {
+        return mDroppedLifecycleCount.get();
+    }
+
+    int getTrackedActiveChannelCount()
+    {
+        return mActiveIncarnations.size();
+    }
+
+    int getRegularIngressCapacity()
+    {
+        return mIngress.regularCapacity();
+    }
+
+    boolean isWorkerAlive()
+    {
+        Thread worker = mWorker;
+        return worker != null && worker.isAlive();
+    }
+
+    boolean awaitIdle(long timeout, TimeUnit timeUnit)
+    {
+        long deadline = System.nanoTime() + timeUnit.toNanos(timeout);
+        long generation = mGeneration;
+        long accepted = mAcceptedIngressCount.get();
+        long closeRevision = mCloseRequestRevision.get();
+
+        while(System.nanoTime() < deadline)
+        {
+            if(mAppliedGeneration == generation && mProcessedIngressCount.get() >= accepted &&
+                mAppliedCloseRequestRevision >= closeRevision && !mLifecycleReconcileNeeded.get() &&
+                mIngress.size() == 0)
+            {
+                return true;
+            }
+
+            signalWorker();
+            LockSupport.parkNanos(this, TimeUnit.MILLISECONDS.toNanos(1));
+        }
+
+        return mAppliedGeneration == generation && mProcessedIngressCount.get() >= accepted &&
+            mAppliedCloseRequestRevision >= closeRevision && !mLifecycleReconcileNeeded.get() &&
+            mIngress.size() == 0;
+    }
+
+    @Override
+    public void close()
+    {
+        synchronized(mLifecycleLock)
+        {
+            if(mClosed)
+            {
+                return;
+            }
+
+            mClosed = true;
+            mEnabled = false;
+            mGeneration++;
+            mWorkerRunning = false;
+            signalWorker();
+            stopWorkerLocked();
+        }
     }
 }

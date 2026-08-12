@@ -17,21 +17,21 @@ import io.github.dsheirer.buffer.INativeBuffer;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.sample.complex.ComplexSamples;
 import io.github.dsheirer.sample.complex.InterleavedComplexSamples;
+import io.github.dsheirer.source.ISourceEventProcessor;
+import io.github.dsheirer.source.SourceEvent;
 import io.github.dsheirer.source.SourceException;
 import io.github.dsheirer.source.tuner.ITunerErrorListener;
 import io.github.dsheirer.source.tuner.TunerClass;
 import io.github.dsheirer.source.tuner.TunerController;
 import io.github.dsheirer.source.tuner.TunerType;
 import java.time.Duration;
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.util.Iterator;
 import java.util.List;
-import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
@@ -273,6 +273,31 @@ class TunerDiagnosticServiceTest
     }
 
     @Test
+    void nativeCallbackNeverWaitsForTheTunerControllerLock() throws Exception
+    {
+        FakeController controller = new FakeController(705_000_000L, 2_500_000.0);
+        FakeProcessorFactory processors = new FakeProcessorFactory();
+        TunerDiagnosticService service = service(List.of(
+            target(new Object(), TunerClass.RECORDING_TUNER, controller, 1)), processors);
+        service.tryOpen(service.targets().getFirst().targetId());
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        controller.getLock().lock();
+
+        try
+        {
+            Future<?> callback = executor.submit(() -> controller.emit(new EmptyNativeBuffer(1L)));
+            callback.get(250, java.util.concurrent.TimeUnit.MILLISECONDS);
+            assertTrue(processors.lastObservedAtMs.get() > 0);
+        }
+        finally
+        {
+            controller.getLock().unlock();
+            executor.shutdownNow();
+            service.close();
+        }
+    }
+
+    @Test
     void capturesTuningMetadataWithEachSampleBuffer()
     {
         FakeController controller = new FakeController(700_000_000L, 2_500_000.0);
@@ -323,7 +348,7 @@ class TunerDiagnosticServiceTest
     }
 
     @Test
-    void sharesLargestRequestedFftAcrossConflictingViewportsAndMaxPoolsWideViews() throws Exception
+    void sharesOneFixedSourceFftAcrossViewportsAndMaxPoolsWideViews() throws Exception
     {
         FakeController controller = new FakeController(100_000_000L, 8_192_000.0);
         FakeProcessorFactory processors = new FakeProcessorFactory();
@@ -338,48 +363,37 @@ class TunerDiagnosticServiceTest
 
         assertEquals(1, controller.addCount.get());
         assertEquals(1, processors.createCount.get());
-        assertEquals(32_768, processors.fftSize.get());
-        assertEquals(List.of(4_096, 8_192, 32_768), processors.sizeChanges);
+        assertEquals(TunerDiagnosticService.FFT_SIZE, processors.fftSize.get());
 
         TunerDiagnosticService.State fullState = full.state();
         TunerDiagnosticService.State eightTimesState = eightTimes.state();
         assertEquals(fullState.generation(), eightTimesState.generation());
         assertNotEquals(fullState.revision(), eightTimesState.revision());
 
-        //A callback already in flight from the replaced coarse processor may still reach the producer.  It remains
-        //useful to the full-span viewer but must not complete either higher-resolution session's refinement.
-        processors.publish(new TunerDiagnosticService.FftResult(System.currentTimeMillis(), 100_000_000L,
-            8_192_000L, 4_096, new float[4_096]));
-        assertEquals(4_096, full.poll(Duration.ZERO).fftSize());
-        assertNull(twoTimes.poll(Duration.ZERO));
-        assertNull(eightTimes.poll(Duration.ZERO));
-
-        float[] bins = new float[32_768];
+        float[] bins = new float[TunerDiagnosticService.FFT_SIZE];
         java.util.Arrays.fill(bins, -120.0f);
-        bins[12_347] = -12.5f;
+        bins[6_173] = -12.5f;
         processors.publish(new TunerDiagnosticService.FftResult(System.currentTimeMillis(), 100_000_000L,
-            8_192_000L, 32_768, bins));
+            8_192_000L, TunerDiagnosticService.FFT_SIZE, bins));
 
         DiagnosticStreamFrame fullFrame = full.poll(Duration.ZERO);
         DiagnosticStreamFrame twoFrame = twoTimes.poll(Duration.ZERO);
         DiagnosticStreamFrame eightFrame = eightTimes.poll(Duration.ZERO);
         assertEquals(0, fullFrame.firstBin());
-        assertEquals(32_768, fullFrame.sourceBinCount());
+        assertEquals(16_384, fullFrame.sourceBinCount());
         assertEquals(4_096, fullFrame.valueCount());
-        assertEquals(8_192, twoFrame.firstBin());
-        assertEquals(16_384, twoFrame.sourceBinCount());
+        assertEquals(4_096, twoFrame.firstBin());
+        assertEquals(8_192, twoFrame.sourceBinCount());
         assertEquals(4_096, twoFrame.valueCount());
-        assertEquals(14_336, eightFrame.firstBin());
-        assertEquals(4_096, eightFrame.sourceBinCount());
-        assertEquals(4_096, eightFrame.valueCount());
+        assertEquals(7_168, eightFrame.firstBin());
+        assertEquals(2_048, eightFrame.sourceBinCount());
+        assertEquals(2_048, eightFrame.valueCount());
         assertEquals(fullFrame.sequence(), twoFrame.sequence());
         assertEquals(twoFrame.sequence(), eightFrame.sequence());
-        assertEquals(-12.5f, encodedValue(fullFrame, 1_543));
 
         eightTimes.close();
-        assertEquals(8_192, processors.fftSize.get());
         twoTimes.close();
-        assertEquals(4_096, processors.fftSize.get());
+        assertEquals(TunerDiagnosticService.FFT_SIZE, processors.fftSize.get());
         assertEquals(0, controller.removeCount.get());
         full.close();
         assertEquals(1, controller.removeCount.get());
@@ -387,24 +401,20 @@ class TunerDiagnosticServiceTest
     }
 
     @Test
-    void selectsAdaptiveFftThresholdsAndBoundsViewportProjection()
+    void boundsViewportProjectionAgainstTheFixedSourceFft()
     {
         long sampleRate = 8_192_000L;
-        assertEquals(4_096, TunerDiagnosticService.requiredFftSize(sampleRate, null));
-        assertEquals(4_096, TunerDiagnosticService.requiredFftSize(sampleRate,
-            new TunerDiagnosticService.Viewport(96_000_000L, 102_000_001L)));
-        assertEquals(8_192, TunerDiagnosticService.requiredFftSize(sampleRate,
-            new TunerDiagnosticService.Viewport(98_000_000L, 102_000_000L)));
-        assertEquals(16_384, TunerDiagnosticService.requiredFftSize(sampleRate,
-            new TunerDiagnosticService.Viewport(99_000_000L, 101_000_000L)));
-        assertEquals(32_768, TunerDiagnosticService.requiredFftSize(sampleRate,
-            new TunerDiagnosticService.Viewport(99_500_000L, 100_500_000L)));
+        TunerDiagnosticService.FrameLayout full = TunerDiagnosticService.frameLayout(100_000_000L,
+            sampleRate, TunerDiagnosticService.FFT_SIZE, null);
+        assertEquals(0, full.firstBin());
+        assertEquals(16_384, full.sourceBinCount());
+        assertEquals(4_096, full.transmittedBinCount());
 
         TunerDiagnosticService.FrameLayout outside = TunerDiagnosticService.frameLayout(100_000_000L,
-            sampleRate, 32_768, new TunerDiagnosticService.Viewport(1, 2));
+            sampleRate, TunerDiagnosticService.FFT_SIZE, new TunerDiagnosticService.Viewport(1, 2));
         assertEquals(0, outside.firstBin());
-        assertEquals(4_096, outside.sourceBinCount());
-        assertEquals(4_096, outside.transmittedBinCount());
+        assertEquals(2_048, outside.sourceBinCount());
+        assertEquals(2_048, outside.transmittedBinCount());
     }
 
     @Test
@@ -442,7 +452,7 @@ class TunerDiagnosticServiceTest
     }
 
     @Test
-    void failedAdaptiveUpgradeLeavesExistingViewerLive() throws Exception
+    void viewportChangesNeverReconfigureTheSourceFft() throws Exception
     {
         FakeController controller = new FakeController(100_000_000L, 8_192_000.0);
         FakeProcessorFactory processors = new FakeProcessorFactory();
@@ -450,19 +460,251 @@ class TunerDiagnosticServiceTest
             target(new Object(), TunerClass.AIRSPY, controller, 1)), processors);
         String targetId = service.targets().getFirst().targetId();
         TunerDiagnosticService.Session full = service.tryOpen(targetId).session();
-        processors.failFftSize = 32_768;
-
-        assertEquals(TunerDiagnosticService.OpenStatus.UNAVAILABLE, service.tryOpen(targetId,
-            new TunerDiagnosticService.Viewport(99_488_000L, 100_512_000L)).status());
-        assertEquals(1, service.activeSessionCount());
+        TunerDiagnosticService.OpenResult zoomedResult = service.tryOpen(targetId,
+            new TunerDiagnosticService.Viewport(99_488_000L, 100_512_000L));
+        assertEquals(TunerDiagnosticService.OpenStatus.OPEN, zoomedResult.status());
+        assertEquals(2, service.activeSessionCount());
         assertEquals(1, service.activeProducerCount());
-        assertEquals(4_096, processors.fftSize.get());
+        assertEquals(1, processors.createCount.get());
+        assertEquals(TunerDiagnosticService.FFT_SIZE, processors.fftSize.get());
 
         processors.publish(new TunerDiagnosticService.FftResult(System.currentTimeMillis(), 100_000_000L,
-            8_192_000L, 4_096, new float[4_096]));
-        assertEquals(4_096, full.poll(Duration.ZERO).fftSize());
+            8_192_000L, TunerDiagnosticService.FFT_SIZE, new float[TunerDiagnosticService.FFT_SIZE]));
+        assertEquals(TunerDiagnosticService.FFT_SIZE, full.poll(Duration.ZERO).fftSize());
+        assertEquals(TunerDiagnosticService.FFT_SIZE, zoomedResult.session().poll(Duration.ZERO).fftSize());
+        zoomedResult.session().close();
         full.close();
         service.close();
+    }
+
+    @Test
+    void updatesOneSessionViewportWithoutReattachingOrRebuildingTheProducer() throws Exception
+    {
+        FakeController controller = new FakeController(100_000_000L, 8_192_000.0);
+        FakeProcessorFactory processors = new FakeProcessorFactory();
+        TunerDiagnosticService service = service(List.of(
+            target(new Object(), TunerClass.AIRSPY, controller, 1)), processors);
+        String targetId = service.targets().getFirst().targetId();
+        TunerDiagnosticService.Session session = service.tryOpen(targetId).session();
+        long generation = session.state().generation();
+
+        for(int x = 0; x < 100; x++)
+        {
+            long halfSpan = 128_000L + (x * 1_000L);
+            session.updateViewport(new TunerDiagnosticService.Viewport(100_000_000L - halfSpan,
+                100_000_000L + halfSpan));
+        }
+
+        TunerDiagnosticService.State state = session.state();
+        assertEquals(generation, state.generation());
+        assertEquals(1, controller.addCount.get());
+        assertEquals(0, controller.removeCount.get());
+        assertEquals(1, processors.createCount.get());
+        assertEquals(0, processors.closeCount.get());
+        assertEquals(1, service.activeProducerCount());
+        assertEquals(1, service.activeSessionCount());
+
+        processors.publish(new TunerDiagnosticService.FftResult(System.currentTimeMillis(), 100_000_000L,
+            8_192_000L, TunerDiagnosticService.FFT_SIZE, new float[TunerDiagnosticService.FFT_SIZE]));
+        DiagnosticStreamFrame frame = session.poll(Duration.ZERO);
+        assertEquals(state.firstBin(), frame.firstBin());
+        assertEquals(state.sourceBinCount(), frame.sourceBinCount());
+
+        session.close();
+        assertEquals(1, controller.removeCount.get());
+        assertEquals(1, processors.closeCount.get());
+        service.close();
+    }
+
+    @Test
+    void stateRevisionChangesOnlyWhenThatSessionStateChanges()
+    {
+        FakeController controller = new FakeController(100_000_000L, 8_192_000.0);
+        FakeProcessorFactory processors = new FakeProcessorFactory();
+        TunerDiagnosticService service = service(List.of(
+            target(new Object(), TunerClass.AIRSPY, controller, 1)), processors);
+        String targetId = service.targets().getFirst().targetId();
+        TunerDiagnosticService.Session first = service.tryOpen(targetId).session();
+        TunerDiagnosticService.Session second = service.tryOpen(targetId).session();
+
+        try
+        {
+            long firstRevision = first.state().revision();
+            long secondRevision = second.state().revision();
+            assertEquals(firstRevision, first.state().revision());
+            assertEquals(secondRevision, second.state().revision());
+
+            first.updateViewport(new TunerDiagnosticService.Viewport(99_500_000L, 100_500_000L));
+            assertTrue(first.state().revision() > firstRevision);
+            assertEquals(secondRevision, second.state().revision(),
+                "one viewer's zoom must not create state churn for another viewer");
+        }
+        finally
+        {
+            second.close();
+            first.close();
+            service.close();
+        }
+    }
+
+    @Test
+    void rapidViewportUpdatesCannotStrandPublishedFrames() throws Exception
+    {
+        FakeController controller = new FakeController(100_000_000L, 8_192_000.0);
+        FakeProcessorFactory processors = new FakeProcessorFactory();
+        TunerDiagnosticService service = service(List.of(
+            target(new Object(), TunerClass.AIRSPY, controller, 1)), processors);
+        String targetId = service.targets().getFirst().targetId();
+        TunerDiagnosticService.Session session = service.tryOpen(targetId).session();
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        CountDownLatch start = new CountDownLatch(1);
+        float[] values = new float[TunerDiagnosticService.FFT_SIZE];
+
+        try
+        {
+            Future<?> updater = executor.submit(() ->
+            {
+                await(start);
+
+                for(int x = 0; x < 500; x++)
+                {
+                    long halfSpan = 128_000L + x;
+                    session.updateViewport(new TunerDiagnosticService.Viewport(100_000_000L - halfSpan,
+                        100_000_000L + halfSpan));
+                }
+            });
+            Future<?> publisher = executor.submit(() ->
+            {
+                await(start);
+
+                for(int x = 0; x < 500; x++)
+                {
+                    processors.publish(new TunerDiagnosticService.FftResult(System.currentTimeMillis(),
+                        100_000_000L, 8_192_000L, TunerDiagnosticService.FFT_SIZE, values));
+                }
+            });
+
+            start.countDown();
+            updater.get(5, TimeUnit.SECONDS);
+            publisher.get(5, TimeUnit.SECONDS);
+            TunerDiagnosticService.Viewport finalViewport =
+                new TunerDiagnosticService.Viewport(99_500_000L, 100_500_000L);
+            session.updateViewport(finalViewport);
+            processors.publish(new TunerDiagnosticService.FftResult(System.currentTimeMillis(), 100_000_000L,
+                8_192_000L, TunerDiagnosticService.FFT_SIZE, values));
+
+            DiagnosticStreamFrame frame = session.poll(Duration.ofSeconds(1));
+            TunerDiagnosticService.State state = session.state();
+            assertTrue(frame != null);
+            assertEquals(state.firstBin(), frame.firstBin());
+            assertEquals(state.sourceBinCount(), frame.sourceBinCount());
+            assertEquals(1, controller.addCount.get());
+            assertEquals(0, controller.removeCount.get());
+            assertEquals(1, processors.createCount.get());
+        }
+        finally
+        {
+            executor.shutdownNow();
+            session.close();
+            service.close();
+        }
+    }
+
+    @Test
+    void rejectsAnOldLayoutFrameAfterAdvertisingANewViewport() throws Exception
+    {
+        FakeController controller = new FakeController(100_000_000L, 8_192_000.0);
+        FakeProcessorFactory processors = new FakeProcessorFactory();
+        TunerDiagnosticService service = service(List.of(
+            target(new Object(), TunerClass.AIRSPY, controller, 1)), processors);
+        String targetId = service.targets().getFirst().targetId();
+        TunerDiagnosticService.Session session = service.tryOpen(targetId).session();
+        float[] values = new float[TunerDiagnosticService.FFT_SIZE];
+
+        processors.publish(new TunerDiagnosticService.FftResult(System.currentTimeMillis(), 100_000_000L,
+            8_192_000L, TunerDiagnosticService.FFT_SIZE, values));
+        session.updateViewport(new TunerDiagnosticService.Viewport(99_500_000L, 100_500_000L));
+        TunerDiagnosticService.State state = session.state();
+
+        assertNull(session.poll(Duration.ZERO));
+
+        processors.publish(new TunerDiagnosticService.FftResult(System.currentTimeMillis(), 100_000_000L,
+            8_192_000L, TunerDiagnosticService.FFT_SIZE, values));
+        DiagnosticStreamFrame current = session.poll(Duration.ofSeconds(1));
+        assertTrue(current != null);
+        assertEquals(state.firstBin(), current.firstBin());
+        assertEquals(state.sourceBinCount(), current.sourceBinCount());
+
+        session.close();
+        service.close();
+    }
+
+    @Test
+    void nativeCallbackCarriesItsEntryEpochAcrossAConcurrentRetune() throws Exception
+    {
+        FakeController controller = new FakeController(100_000_000L, 8_192_000.0);
+        AtomicLong configuration = new AtomicLong(1);
+        AtomicLong receivedConfiguration = new AtomicLong();
+        CountDownLatch configurationCaptured = new CountDownLatch(1);
+        CountDownLatch releaseCallback = new CountDownLatch(1);
+        CountDownLatch received = new CountDownLatch(1);
+        TunerDiagnosticService.ProcessorFactory factory = (target, consumer) ->
+            new TunerDiagnosticService.FrameProcessor()
+            {
+                @Override
+                public void receive(INativeBuffer buffer, long observedAtEpochMs, long ingressConfiguration)
+                {
+                    receivedConfiguration.set(ingressConfiguration);
+                    received.countDown();
+                }
+
+                @Override
+                public long configuration()
+                {
+                    long captured = configuration.get();
+                    configurationCaptured.countDown();
+                    await(releaseCallback);
+                    return captured;
+                }
+
+                @Override
+                public void updateMetadata(long centerFrequencyHz, long sampleRateHz)
+                {
+                    configuration.incrementAndGet();
+                }
+
+                @Override
+                public void close()
+                {
+                }
+            };
+        List<TunerDiagnosticService.AvailableTarget> targets = List.of(
+            target(new Object(), TunerClass.AIRSPY, controller, 1));
+        TunerDiagnosticService service = new TunerDiagnosticService(() -> targets, factory);
+        String targetId = service.targets().getFirst().targetId();
+        TunerDiagnosticService.Session session = service.tryOpen(targetId).session();
+        long entryConfiguration = configuration.get();
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+
+        try
+        {
+            Future<?> callback = executor.submit(() -> controller.emit(new EmptyNativeBuffer(111)));
+            assertTrue(configurationCaptured.await(1, TimeUnit.SECONDS));
+            controller.retune(101_000_000L, 10_000_000.0);
+            assertTrue(configuration.get() > 1);
+            releaseCallback.countDown();
+            callback.get(1, TimeUnit.SECONDS);
+            assertTrue(received.await(1, TimeUnit.SECONDS));
+            assertEquals(entryConfiguration, receivedConfiguration.get(),
+                "a pre-retune buffer must retain the configuration captured at callback entry");
+        }
+        finally
+        {
+            releaseCallback.countDown();
+            executor.shutdownNow();
+            session.close();
+            service.close();
+        }
     }
 
     @Test
@@ -544,12 +786,6 @@ class TunerDiagnosticServiceTest
         }
     }
 
-    private static float encodedValue(DiagnosticStreamFrame frame, int index)
-    {
-        return ByteBuffer.wrap(frame.encoded()).order(ByteOrder.LITTLE_ENDIAN)
-            .getFloat(DiagnosticStreamFrame.HEADER_BYTES + index * Float.BYTES);
-    }
-
     private static TunerDiagnosticService service(List<TunerDiagnosticService.AvailableTarget> targets,
                                                   FakeProcessorFactory processors)
     {
@@ -570,48 +806,34 @@ class TunerDiagnosticServiceTest
         private final AtomicLong lastCenterFrequencyHz = new AtomicLong();
         private final AtomicLong lastSampleRateHz = new AtomicLong();
         private final AtomicInteger fftSize = new AtomicInteger();
-        private final List<Integer> sizeChanges = new CopyOnWriteArrayList<>();
         private final AtomicReference<Consumer<TunerDiagnosticService.FftResult>> consumer = new AtomicReference<>();
-        private volatile int failFftSize = -1;
 
         @Override
         public TunerDiagnosticService.FrameProcessor create(TunerDiagnosticService.TargetSnapshot target,
-                                                             int initialFftSize,
                                                              Consumer<TunerDiagnosticService.FftResult> consumer)
         {
             createCount.incrementAndGet();
-            fftSize.set(initialFftSize);
-            sizeChanges.add(initialFftSize);
+            fftSize.set(TunerDiagnosticService.FFT_SIZE);
             this.consumer.set(consumer);
             return new TunerDiagnosticService.FrameProcessor()
             {
                 @Override
-                public void receive(INativeBuffer buffer, long observedAtEpochMs, long centerFrequencyHz,
-                                    long sampleRateHz)
+                public void receive(INativeBuffer buffer, long observedAtEpochMs, long ingressConfiguration)
                 {
                     lastObservedAtMs.set(observedAtEpochMs);
+                }
+
+                @Override
+                public long configuration()
+                {
+                    return 1;
+                }
+
+                @Override
+                public void updateMetadata(long centerFrequencyHz, long sampleRateHz)
+                {
                     lastCenterFrequencyHz.set(centerFrequencyHz);
                     lastSampleRateHz.set(sampleRateHz);
-                }
-
-                @Override
-                public void setFftSize(int requestedFftSize)
-                {
-                    if(requestedFftSize == failFftSize)
-                    {
-                        throw new IllegalStateException("Test resize failure");
-                    }
-
-                    if(fftSize.getAndSet(requestedFftSize) != requestedFftSize)
-                    {
-                        sizeChanges.add(requestedFftSize);
-                    }
-                }
-
-                @Override
-                public int fftSize()
-                {
-                    return fftSize.get();
                 }
 
                 @Override
@@ -636,6 +858,7 @@ class TunerDiagnosticServiceTest
         private final AtomicInteger removeCount = new AtomicInteger();
         private final boolean mExistingListener;
         private volatile Listener<INativeBuffer> mListener;
+        private volatile ISourceEventProcessor mSourceEventProcessor;
         private boolean failAdd;
 
         private FakeController(long frequency, double sampleRate)
@@ -731,6 +954,21 @@ class TunerDiagnosticServiceTest
             return mExistingListener || mListener != null;
         }
 
+        @Override
+        public void addListener(ISourceEventProcessor processor)
+        {
+            mSourceEventProcessor = processor;
+        }
+
+        @Override
+        public void removeListener(ISourceEventProcessor processor)
+        {
+            if(mSourceEventProcessor == processor)
+            {
+                mSourceEventProcessor = null;
+            }
+        }
+
         private void emit(INativeBuffer buffer)
         {
             Listener<INativeBuffer> listener = mListener;
@@ -749,6 +987,17 @@ class TunerDiagnosticServiceTest
             {
                 mFrequency = frequency;
                 mSampleRate = sampleRate;
+                ISourceEventProcessor processor = mSourceEventProcessor;
+
+                if(processor != null)
+                {
+                    processor.process(SourceEvent.frequencyChange(null, frequency));
+                    processor.process(SourceEvent.sampleRateChange(sampleRate));
+                }
+            }
+            catch(SourceException exception)
+            {
+                throw new IllegalStateException(exception);
             }
             finally
             {

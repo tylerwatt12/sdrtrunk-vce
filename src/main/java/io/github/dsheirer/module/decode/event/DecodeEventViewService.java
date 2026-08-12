@@ -9,7 +9,6 @@ import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.channel.IChannelDescriptor;
-import io.github.dsheirer.controller.NamingThreadFactory;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
 import io.github.dsheirer.identifier.Identifier;
@@ -19,17 +18,22 @@ import io.github.dsheirer.module.ProcessingChain;
 import io.github.dsheirer.sample.Broadcaster;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.source.Source;
+import io.github.dsheirer.util.concurrent.BoundedMpscPairQueue;
+import io.github.dsheirer.util.concurrent.ObserverThreadFactory;
 import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.PriorityQueue;
-import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.RejectedExecutionException;
-import java.util.concurrent.ThreadPoolExecutor;
+import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BiConsumer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * UI-neutral, session-only projection of decoder events. Existing processing-chain histories own retention; this
@@ -37,23 +41,96 @@ import java.util.function.BiConsumer;
  */
 public class DecodeEventViewService implements AutoCloseable
 {
+    private static final Logger mLog = LoggerFactory.getLogger(DecodeEventViewService.class);
     public static final int HISTORY_SIZE = 200;
-    private static final int UPDATE_QUEUE_SIZE = 512;
+    static final int UPDATE_QUEUE_SIZE = 1_024;
+    private static final int SHARED_HISTORY_SIZE = 4_096;
+    private static final int MAXIMUM_DRAIN_PER_RUN = 512;
     private static final int DETAILS_MAXIMUM_LENGTH = 512;
     private static final int PARTY_MAXIMUM_IDENTIFIERS = 32;
     private static final int TEXT_MAXIMUM_LENGTH = 512;
+    private static final long DEFAULT_CLOSE_TIMEOUT_MILLISECONDS = 2_000;
     private final ChannelProcessingManager mChannelProcessingManager;
     private final AliasModel mAliasModel;
     private final Broadcaster<EventView> mBroadcaster = new Broadcaster<>();
-    private final ThreadPoolExecutor mExecutor = new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS,
-        new ArrayBlockingQueue<>(UPDATE_QUEUE_SIZE), new NamingThreadFactory("decode event views"),
-        new ThreadPoolExecutor.DiscardOldestPolicy());
+    private volatile BoundedMpscPairQueue<Channel,IDecodeEvent> mIngress =
+        new BoundedMpscPairQueue<>(UPDATE_QUEUE_SIZE);
+    private final ExecutorService mWorker = Executors.newSingleThreadExecutor(
+        new ObserverThreadFactory("sdrtrunk decode event views"));
+    private final Semaphore mWakeup = new Semaphore(0);
+    private final Map<String,EventView> mHistory = new LinkedHashMap<>();
+    private final AtomicLong mDroppedObservations = new AtomicLong();
+    private final AtomicLong mDemandGeneration = new AtomicLong();
+    private final AtomicBoolean mClosed = new AtomicBoolean();
+    private final AtomicBoolean mActive = new AtomicBoolean();
     private final BiConsumer<Channel,IDecodeEvent> mDecodeEventListener = this::receive;
+    private volatile List<EventView> mPublishedHistory = List.of();
+    private long mWorkerGeneration;
+    private final long mCloseTimeoutMilliseconds;
 
     public DecodeEventViewService(ChannelProcessingManager channelProcessingManager, AliasModel aliasModel)
     {
+        this(channelProcessingManager, aliasModel, DEFAULT_CLOSE_TIMEOUT_MILLISECONDS, TimeUnit.MILLISECONDS);
+    }
+
+    DecodeEventViewService(ChannelProcessingManager channelProcessingManager, AliasModel aliasModel,
+                           long closeTimeout, TimeUnit unit)
+    {
         mChannelProcessingManager = channelProcessingManager;
         mAliasModel = aliasModel;
+        java.util.Objects.requireNonNull(unit, "unit cannot be null");
+        mCloseTimeoutMilliseconds = Math.max(0, unit.toMillis(closeTimeout));
+        mWorker.execute(this::runWorker);
+    }
+
+    private void runWorker()
+    {
+        try
+        {
+            while(!mClosed.get())
+            {
+                if(mActive.get())
+                {
+                    long generation = mDemandGeneration.get();
+                    BoundedMpscPairQueue<Channel,IDecodeEvent> ingress = mIngress;
+
+                    if(mWorkerGeneration != generation)
+                    {
+                        clearHistoryOnWorker();
+                        mWorkerGeneration = generation;
+                    }
+
+                    drainSafely(generation, ingress);
+                }
+                else
+                {
+                    clearInactiveStateOnWorker();
+                }
+
+                try
+                {
+                    if(mActive.get())
+                    {
+                        mWakeup.tryAcquire(10, TimeUnit.MILLISECONDS);
+                    }
+                    else
+                    {
+                        mWakeup.acquire();
+                    }
+
+                    mWakeup.drainPermits();
+                }
+                catch(InterruptedException exception)
+                {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+        }
+        finally
+        {
+            cleanupOnWorker();
+        }
     }
 
     public BiConsumer<Channel,IDecodeEvent> getDecodeEventListener()
@@ -63,12 +140,49 @@ public class DecodeEventViewService implements AutoCloseable
 
     public void addListener(Listener<EventView> listener)
     {
-        mBroadcaster.addListener(listener);
+        if(listener == null || mClosed.get())
+        {
+            return;
+        }
+
+        synchronized(mBroadcaster)
+        {
+            if(mClosed.get())
+            {
+                return;
+            }
+
+            boolean firstListener = !mBroadcaster.hasListeners();
+            mBroadcaster.addListener(listener);
+
+            if(firstListener && mBroadcaster.hasListeners())
+            {
+                //A fresh queue gives each demand generation an exact ingress boundary without making a receiver
+                //callback allocate, lock, or wait for worker cleanup.
+                mIngress = new BoundedMpscPairQueue<>(UPDATE_QUEUE_SIZE);
+                mPublishedHistory = List.of();
+                mDemandGeneration.incrementAndGet();
+            }
+
+            mActive.set(mBroadcaster.hasListeners());
+            mWakeup.release();
+        }
     }
 
     public void removeListener(Listener<EventView> listener)
     {
-        mBroadcaster.removeListener(listener);
+        synchronized(mBroadcaster)
+        {
+            mBroadcaster.removeListener(listener);
+
+            if(!mBroadcaster.hasListeners())
+            {
+                mActive.set(false);
+                mPublishedHistory = List.of();
+                mDemandGeneration.incrementAndGet();
+                mWakeup.release();
+            }
+        }
     }
 
     /**
@@ -76,78 +190,22 @@ public class DecodeEventViewService implements AutoCloseable
      */
     public List<EventView> snapshot(Scope scope)
     {
-        if(scope == null || mChannelProcessingManager == null)
+        if(scope == null || !mActive.get() || mClosed.get())
         {
             return List.of();
         }
 
-        List<ProcessingChain> chains = mChannelProcessingManager.getProcessingChainsByConfiguration(
-            scope.configurationId(), scope.frequencyHz());
+        List<EventView> published = mPublishedHistory;
+        List<EventView> events = new ArrayList<>(Math.min(HISTORY_SIZE, published.size()));
 
-        if(chains.isEmpty())
+        for(int x = published.size() - 1; x >= 0 && events.size() < HISTORY_SIZE; x--)
         {
-            return List.of();
-        }
+            EventView event = published.get(x);
 
-        Comparator<EventCandidate> oldestFirst = Comparator.comparingLong(EventCandidate::timeStartMs)
-            .thenComparing(Comparator.comparingLong(EventCandidate::sequence).reversed());
-        PriorityQueue<EventCandidate> newest = new PriorityQueue<>(HISTORY_SIZE, oldestFirst);
-        IdentityHashMap<IDecodeEvent,EventCandidate> included = new IdentityHashMap<>();
-        IdentityHashMap<IDecodeEvent,Long> sourceFrequencies = new IdentityHashMap<>();
-        long sequence = 0;
-
-        for(ProcessingChain chain: chains)
-        {
-            Source source = chain.getSource();
-            Long sourceFrequency = source != null && source.getFrequency() > 0 ? source.getFrequency() : null;
-
-            for(IDecodeEvent event: chain.getDecodeEventHistory().getItems())
+            if(scope.matches(event))
             {
-                if(event == null || !matchesTimeslot(event, scope.timeslot()))
-                {
-                    continue;
-                }
-
-                EventCandidate existing = included.get(event);
-
-                if(existing != null)
-                {
-                    if(sourceFrequencies.get(event) == null && sourceFrequency != null)
-                    {
-                        sourceFrequencies.put(event, sourceFrequency);
-                    }
-
-                    continue;
-                }
-
-                EventCandidate candidate = new EventCandidate(event, sequence++);
-
-                if(newest.size() < HISTORY_SIZE)
-                {
-                    newest.add(candidate);
-                    included.put(event, candidate);
-                    sourceFrequencies.put(event, sourceFrequency);
-                }
-                else if(oldestFirst.compare(candidate, newest.peek()) > 0)
-                {
-                    EventCandidate removed = newest.remove();
-                    included.remove(removed.event());
-                    sourceFrequencies.remove(removed.event());
-                    newest.add(candidate);
-                    included.put(event, candidate);
-                    sourceFrequencies.put(event, sourceFrequency);
-                }
+                events.add(event);
             }
-        }
-
-        List<EventCandidate> candidates = new ArrayList<>(newest);
-        candidates.sort(Comparator.comparingLong(EventCandidate::timeStartMs).reversed()
-            .thenComparingLong(EventCandidate::sequence));
-        List<EventView> events = new ArrayList<>(candidates.size());
-
-        for(EventCandidate candidate: candidates)
-        {
-            events.add(view(scope.configurationId(), candidate.event(), sourceFrequencies.get(candidate.event())));
         }
 
         return List.copyOf(events);
@@ -155,25 +213,129 @@ public class DecodeEventViewService implements AutoCloseable
 
     void receive(Channel channel, IDecodeEvent event)
     {
-        if(channel == null || event == null || !mBroadcaster.hasListeners())
+        if(channel == null || event == null || mClosed.get() || !mActive.get())
         {
             return;
         }
 
-        String configurationId = channel.getConfigurationId();
-        ProcessingChain chain = mChannelProcessingManager != null ?
-            mChannelProcessingManager.getProcessingChain(channel) : null;
-        Source source = chain != null ? chain.getSource() : null;
-        Long sourceFrequency = source != null && source.getFrequency() > 0 ? source.getFrequency() : null;
+        BoundedMpscPairQueue<Channel,IDecodeEvent> ingress = mIngress;
 
+        if(!mActive.get())
+        {
+            return;
+        }
+
+        if(!ingress.offer(channel, event))
+        {
+            mDroppedObservations.incrementAndGet();
+        }
+    }
+
+    private void drainSafely(long generation, BoundedMpscPairQueue<Channel,IDecodeEvent> ingress)
+    {
         try
         {
-            mExecutor.execute(() -> mBroadcaster.broadcast(view(configurationId, event, sourceFrequency)));
+            drain(generation, ingress);
         }
-        catch(RejectedExecutionException _)
+        catch(RuntimeException exception)
         {
-            // Service is shutting down.
+            mLog.warn("Error processing a decoder event view observation", exception);
         }
+    }
+
+    private void cleanupOnWorker()
+    {
+        clearHistoryOnWorker();
+    }
+
+    private void clearHistoryOnWorker()
+    {
+        mHistory.clear();
+        mPublishedHistory = List.of();
+    }
+
+    private void clearInactiveStateOnWorker()
+    {
+        if(!mClosed.get() && !mActive.get())
+        {
+            clearHistoryOnWorker();
+            mWorkerGeneration = mDemandGeneration.get();
+        }
+    }
+
+    private void drain(long generation, BoundedMpscPairQueue<Channel,IDecodeEvent> ingress)
+    {
+        if(mClosed.get())
+        {
+            return;
+        }
+
+        List<EventView> batch = new ArrayList<>();
+
+        for(int count = 0; count < MAXIMUM_DRAIN_PER_RUN; count++)
+        {
+            BoundedMpscPairQueue.Entry<Channel,IDecodeEvent> observation = ingress.poll();
+
+            if(observation == null)
+            {
+                break;
+            }
+
+            Channel channel = observation.first();
+            IDecodeEvent event = observation.second();
+            String configurationId = channel.getConfigurationId();
+            ProcessingChain chain = mChannelProcessingManager != null ?
+                mChannelProcessingManager.getProcessingChain(channel) : null;
+            Source source = chain != null ? chain.getSource() : null;
+            Long sourceFrequency = source != null && source.getFrequency() > 0 ? source.getFrequency() : null;
+            EventView projected = view(configurationId, event, sourceFrequency);
+
+            if(mClosed.get() || !mActive.get() || mDemandGeneration.get() != generation || mIngress != ingress)
+            {
+                break;
+            }
+
+            mHistory.remove(projected.eventId());
+            mHistory.put(projected.eventId(), projected);
+
+            while(mHistory.size() > SHARED_HISTORY_SIZE)
+            {
+                mHistory.remove(mHistory.keySet().iterator().next());
+            }
+
+            batch.add(projected);
+        }
+
+        if(!batch.isEmpty() && mActive.get() && mDemandGeneration.get() == generation && mIngress == ingress)
+        {
+            //Publish authoritative cache before any live item can trigger a client's resync read.
+            mPublishedHistory = List.copyOf(mHistory.values());
+
+            for(EventView projected: batch)
+            {
+                if(mClosed.get() || !mActive.get() || mDemandGeneration.get() != generation || mIngress != ingress)
+                {
+                    break;
+                }
+
+                mBroadcaster.broadcast(projected);
+            }
+        }
+    }
+
+    long getDroppedObservationCount()
+    {
+        return mDroppedObservations.get();
+    }
+
+    int getPendingObservationCount()
+    {
+        return mIngress.size();
+    }
+
+    boolean isWorkerTerminated()
+    {
+        return mWorker.isTerminated();
     }
 
     EventView view(String configurationId, IDecodeEvent event)
@@ -187,8 +349,12 @@ public class DecodeEventViewService implements AutoCloseable
         Parties from = parties(identifiers, Role.FROM);
         Parties to = parties(identifiers, Role.TO);
         IChannelDescriptor descriptor = event.getChannelDescriptor();
-        Long frequency = descriptor != null && descriptor.getDownlinkFrequency() > 0 ?
-            descriptor.getDownlinkFrequency() : sourceFrequency;
+        Long frequency = sourceFrequency;
+
+        if(descriptor != null && descriptor.getDownlinkFrequency() > 0)
+        {
+            frequency = descriptor.getDownlinkFrequency();
+        }
         DecodeEventType type = event.getEventType();
 
         return new EventView(eventId(event), bounded(configurationId), event.getTimeStart(), event.getDuration(),
@@ -252,11 +418,6 @@ public class DecodeEventViewService implements AutoCloseable
         }
 
         return new Parties(join(values), join(aliases));
-    }
-
-    private static boolean matchesTimeslot(IDecodeEvent event, Integer timeslot)
-    {
-        return timeslot == null || event != null && event.hasTimeslot() && event.getTimeslot() == timeslot;
     }
 
     private static String eventId(IDecodeEvent event)
@@ -345,8 +506,32 @@ public class DecodeEventViewService implements AutoCloseable
     @Override
     public void close()
     {
-        mBroadcaster.clear();
-        mExecutor.shutdownNow();
+        synchronized(mBroadcaster)
+        {
+            if(!mClosed.compareAndSet(false, true))
+            {
+                return;
+            }
+
+            mActive.set(false);
+            mBroadcaster.clear();
+        }
+
+        //Only the observer worker consumes and clears ingress/history, including after a timed close returns.
+        mWakeup.release();
+        mWorker.shutdown();
+
+        try
+        {
+            if(!mWorker.awaitTermination(mCloseTimeoutMilliseconds, TimeUnit.MILLISECONDS))
+            {
+                mLog.warn("Timed out waiting for decoder-event observer cleanup");
+            }
+        }
+        catch(InterruptedException exception)
+        {
+            Thread.currentThread().interrupt();
+        }
     }
 
     public record Scope(String configurationId, Long frequencyHz, Integer timeslot)
@@ -391,11 +576,4 @@ public class DecodeEventViewService implements AutoCloseable
         private static final Parties EMPTY = new Parties(null, null);
     }
 
-    private record EventCandidate(IDecodeEvent event, long sequence)
-    {
-        private long timeStartMs()
-        {
-            return event.getTimeStart();
-        }
-    }
 }

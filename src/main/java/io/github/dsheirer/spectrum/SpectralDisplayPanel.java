@@ -19,7 +19,6 @@
 package io.github.dsheirer.spectrum;
 
 import com.jidesoft.swing.JideSplitPane;
-import io.github.dsheirer.buffer.INativeBuffer;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.ChannelModel;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
@@ -31,7 +30,6 @@ import io.github.dsheirer.gui.SplitPaneDividerHelper;
 import io.github.dsheirer.gui.theme.ThemeManager;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.preference.UserPreferences;
-import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.settings.ColorSetting.ColorSettingName;
 import io.github.dsheirer.settings.ColorSettingMenuItem;
 import io.github.dsheirer.settings.SettingsManager;
@@ -60,6 +58,7 @@ import java.awt.event.MouseEvent;
 import java.awt.event.MouseWheelEvent;
 import java.util.ArrayList;
 import java.util.Dictionary;
+import java.util.concurrent.atomic.AtomicBoolean;
 import net.miginfocom.swing.MigLayout;
 import org.apache.commons.math3.util.FastMath;
 
@@ -81,7 +80,7 @@ import javax.swing.event.ChangeListener;
 import javax.swing.event.MouseInputAdapter;
 
 public class SpectralDisplayPanel extends JPanel
-        implements Listener<INativeBuffer>, ISourceEventProcessor, IDFTWidthChangeProcessor
+        implements ISourceEventProcessor, IDFTWidthChangeProcessor
 {
     private static final long serialVersionUID = 1L;
 
@@ -109,6 +108,7 @@ public class SpectralDisplayPanel extends JPanel
     private String mSplitPanePreferenceKey;
     private JideSplitPane mSplitPane;
     private boolean mSplitPaneDividerRestored;
+    private final AtomicBoolean mDisposed = new AtomicBoolean();
 
     /**
      * Spectral Display Panel provides a frequency component display with a
@@ -155,6 +155,11 @@ public class SpectralDisplayPanel extends JPanel
 
     public void dispose()
     {
+        if(!mDisposed.compareAndSet(false, true))
+        {
+            return;
+        }
+
         /* De-register from receiving samples when the window closes */
         clearTuner();
 
@@ -398,8 +403,9 @@ public class SpectralDisplayPanel extends JPanel
          * Setup DFTProcessor to process samples and register the waterfall and
          * spectrum panel to receive the processed dft results
          */
+        //Remain inert until showTuner() attaches a real sample source.
         mComplexDftProcessor = new ComplexDftProcessor(
-            mUserPreferences != null ? mUserPreferences.getSpectrumPreference() : null);
+            mUserPreferences != null ? mUserPreferences.getSpectrumPreference() : null, false);
         mDFTConverter = new ComplexDecibelConverter();
         mComplexDftProcessor.addConverter(mDFTConverter);
 
@@ -431,15 +437,10 @@ public class SpectralDisplayPanel extends JPanel
      */
     public void process(SourceEvent event)
     {
-        mOverlayPanel.process(event);
-    }
-
-    /**
-     * Complex sample buffer receive method
-     */
-    @Override public void receive(INativeBuffer nativeBuffer)
-    {
-        mComplexDftProcessor.receive(nativeBuffer);
+        if(!mDisposed.get() && mOverlayPanel != null)
+        {
+            mOverlayPanel.process(event);
+        }
     }
 
     /**
@@ -448,16 +449,20 @@ public class SpectralDisplayPanel extends JPanel
      */
     public void showTuner(Tuner tuner)
     {
+        if(mDisposed.get())
+        {
+            return;
+        }
+
         clearTuner();
 
         mComplexDftProcessor.clearBuffer();
-
-        mComplexDftProcessor.start();
-
         mTuner = tuner;
 
         if(mTuner != null)
         {
+            mComplexDftProcessor.start();
+
             //Register the dft processor to receive samples from the tuner
             mTuner.getTunerController().addBufferListener(mComplexDftProcessor);
 
@@ -492,10 +497,21 @@ public class SpectralDisplayPanel extends JPanel
             mTuner = null;
         }
 
-        mComplexDftProcessor.stop();
-        mComplexDftProcessor.clearBuffer();
-        mSpectrumPanel.clearSpectrum();
-        mWaterfallPanel.clearWaterfall();
+        if(mComplexDftProcessor != null)
+        {
+            mComplexDftProcessor.stop();
+            mComplexDftProcessor.clearBuffer();
+        }
+
+        if(mSpectrumPanel != null)
+        {
+            mSpectrumPanel.clearSpectrum();
+        }
+
+        if(mWaterfallPanel != null)
+        {
+            mWaterfallPanel.clearWaterfall();
+        }
     }
 
     /**
@@ -770,13 +786,6 @@ public class SpectralDisplayPanel extends JPanel
 
                 contextMenu.add(zoomMenu);
 
-                if(mTuner != null)
-                {
-                    contextMenu.add(new JSeparator());
-                    contextMenu.add(new DisableSpectrumWaterfallMenuItem(SpectralDisplayPanel.this,
-                        mUserPreferences != null ? mUserPreferences.getSpectrumPreference() : null));
-                }
-
                 boolean separatorAdded = false;
 
                 for(DiscoveredTuner discoveredTuner : mDiscoveredTunerModel.getAvailableTuners())
@@ -789,8 +798,7 @@ public class SpectralDisplayPanel extends JPanel
                             separatorAdded = true;
                         }
 
-                        contextMenu.add(new ShowTunerMenuItem(mDiscoveredTunerModel, discoveredTuner.getTuner(),
-                            mUserPreferences != null ? mUserPreferences.getSpectrumPreference() : null));
+                        contextMenu.add(new ShowTunerMenuItem(mDiscoveredTunerModel, discoveredTuner.getTuner()));
                     }
                 }
 

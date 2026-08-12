@@ -84,10 +84,15 @@ public class ChannelActivityPanel extends JPanel
     private final UserPreferences mUserPreferences;
     private final NowPlayingPreference mNowPlayingPreference;
     private final Broadcaster<SelectedFrequencyContext> mSelectedFrequencyBroadcaster = new Broadcaster<>();
-    private final Listener<ChannelActivityTableModel> mTableAddListener =
-        tableModel -> SwingUtils.run(() -> addTable(tableModel));
-    private final Listener<ChannelActivityTableModel> mTableChangeListener =
-        tableModel -> SwingUtils.run(() -> updateTable(tableModel));
+    private final Listener<ChannelActivityTableEvent> mTableListener = event -> SwingUtils.run(() -> {
+        switch(event.operation())
+        {
+            case ADD -> addTable(event.table());
+            case UPDATE -> updateTable(event.table());
+            case REMOVE -> removeTable(event.table());
+        }
+    });
+    private final Map<ChannelActivityTableState,ChannelActivityTableModel> mModelsByState = new HashMap<>();
     private final Map<ChannelActivityTableModel,Component> mTabComponents = new HashMap<>();
     private final Map<ChannelActivityTableModel,ChannelActivityTable> mTables = new HashMap<>();
     private final Map<JTable,JTableColumnWidthMonitor> mColumnWidthMonitors = new HashMap<>();
@@ -104,18 +109,28 @@ public class ChannelActivityPanel extends JPanel
 
     public ChannelActivityPanel(ConfigurationManager configurationManager, IconModel iconModel, UserPreferences userPreferences)
     {
-        mChannelProcessingManager = configurationManager.getChannelProcessingManager();
+        this(configurationManager.getChannelProcessingManager(), iconModel, userPreferences);
+    }
+
+    ChannelActivityPanel(ChannelProcessingManager channelProcessingManager, IconModel iconModel,
+                         UserPreferences userPreferences)
+    {
+        mChannelProcessingManager = channelProcessingManager;
         mActivityModel = mChannelProcessingManager.getChannelActivityModel();
         mIconModel = iconModel;
         mUserPreferences = userPreferences;
         mNowPlayingPreference = userPreferences.getNowPlayingPreference();
         init();
-        setActive(true);
     }
 
     public void dispose()
     {
         setActive(false);
+    }
+
+    boolean isActive()
+    {
+        return mActive;
     }
 
     /**
@@ -139,12 +154,11 @@ public class ChannelActivityPanel extends JPanel
                 mRegisteredForPreferences = true;
             }
 
-            mActivityModel.addTableAddListener(mTableAddListener);
-            mActivityModel.addTableChangeListener(mTableChangeListener);
+            mActivityModel.addTableListener(mTableListener);
 
-            for(ChannelActivityTableModel tableModel: mActivityModel.getTables())
+            for(ChannelActivityTableState tableState: mActivityModel.getTables())
             {
-                addTable(tableModel);
+                addTable(tableState);
             }
         }
         else
@@ -155,8 +169,7 @@ public class ChannelActivityPanel extends JPanel
                 mRegisteredForPreferences = false;
             }
 
-            mActivityModel.removeTableAddListener(mTableAddListener);
-            mActivityModel.removeTableChangeListener(mTableChangeListener);
+            mActivityModel.removeTableListener(mTableListener);
             clearTables();
         }
     }
@@ -168,11 +181,13 @@ public class ChannelActivityPanel extends JPanel
         for(ChannelActivityTableModel tableModel: mTabComponents.keySet())
         {
             tableModel.setActivityViewVisible(false);
+            tableModel.close();
         }
 
         disposeTableWiring();
         mTabComponents.clear();
         mTables.clear();
+        mModelsByState.clear();
         mPendingSelectionRenders.clear();
 
         if(mTabbedPane != null)
@@ -261,8 +276,15 @@ public class ChannelActivityPanel extends JPanel
         return mTabbedPane;
     }
 
-    private void addTable(ChannelActivityTableModel tableModel)
+    private void addTable(ChannelActivityTableState tableState)
     {
+        if(tableState == null || mModelsByState.containsKey(tableState))
+        {
+            return;
+        }
+
+        ChannelActivityTableModel tableModel = new ChannelActivityTableModel(tableState);
+        mModelsByState.put(tableState, tableModel);
         JTable table = createTable(tableModel);
         JScrollPane scrollPane = new JScrollPane(table, ScrollPaneConstants.VERTICAL_SCROLLBAR_ALWAYS,
             ScrollPaneConstants.HORIZONTAL_SCROLLBAR_AS_NEEDED);
@@ -285,8 +307,16 @@ public class ChannelActivityPanel extends JPanel
         updateTableVisibility();
     }
 
-    private void updateTable(ChannelActivityTableModel tableModel)
+    private void updateTable(ChannelActivityTableState tableState)
     {
+        ChannelActivityTableModel tableModel = mModelsByState.get(tableState);
+
+        if(tableModel == null)
+        {
+            addTable(tableState);
+            return;
+        }
+
         Component component = mTabComponents.get(tableModel);
         int index = component != null ? getTabbedPane().indexOfComponent(component) : -1;
 
@@ -327,6 +357,21 @@ public class ChannelActivityPanel extends JPanel
 
     private void closeTab(ChannelActivityTableModel tableModel)
     {
+        if(tableModel != null)
+        {
+            mActivityModel.close(tableModel.getState());
+        }
+    }
+
+    private void removeTable(ChannelActivityTableState tableState)
+    {
+        ChannelActivityTableModel tableModel = mModelsByState.remove(tableState);
+
+        if(tableModel == null)
+        {
+            return;
+        }
+
         Component component = mTabComponents.remove(tableModel);
         int index = component != null ? getTabbedPane().indexOfComponent(component) : -1;
 
@@ -372,7 +417,7 @@ public class ChannelActivityPanel extends JPanel
             broadcastSelectedFrequencyContext(SelectedFrequencyContext.clear(), true);
         }
 
-        mActivityModel.close(tableModel);
+        tableModel.close();
         updateTableVisibility();
     }
 

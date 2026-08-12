@@ -199,7 +199,20 @@ class DMRTrafficChannelManagerTest
             Opcode.STANDARD_TALKGROUP_VOICE_CHANNEL_GRANT, 900L, false);
         manager.processChannelGrant(grant, new MutableIdentifierCollection(),
             Opcode.STANDARD_TALKGROUP_VOICE_CHANNEL_GRANT, 1_000L, false);
-        SwingUtilities.invokeAndWait(() -> {});
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(2);
+
+        while(System.nanoTime() < deadline)
+        {
+            if(activityModel.getTables().size() == 2 && activityModel.getTables().get(1).getRows().stream()
+                .anyMatch(row -> row.getFrequency() == 139_068_750L && Integer.valueOf(2).equals(row.getTimeslot())) &&
+                activityModel.getTables().get(1).getRows().stream()
+                    .anyMatch(row -> row.getFrequency() == 139_518_750L && Integer.valueOf(2).equals(row.getTimeslot())))
+            {
+                break;
+            }
+
+            Thread.sleep(5);
+        }
 
         assertEquals(2, activityModel.getTables().size());
         assertEquals("DMR: bus / 2.2", activityModel.getTables().get(1).getTitle());

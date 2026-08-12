@@ -41,6 +41,10 @@ final class StatsWebCallService implements AutoCloseable
     private static final int MAXIMUM_CLIENTS = 32;
     private static final int EVENT_QUEUE_CAPACITY = 256;
     private static final int MAXIMUM_CALLS = 512;
+    static final int MAXIMUM_SNAPSHOT_CALLS = 256;
+    static final int MAXIMUM_METADATA_TEXT_CHARACTERS = 256;
+    /** Maximum encoded size demonstrated for 256 calls when every externally derived field needs JSON escaping. */
+    static final int MAXIMUM_SNAPSHOT_JSON_BYTES = 4 * 1024 * 1024;
     private static final long MAXIMUM_AUDIO_BYTES = 128L * 1024L * 1024L;
     static final int MAXIMUM_CALL_AUDIO_BYTES = 16 * 1024 * 1024;
     static final long MAXIMUM_PENDING_AUDIO_BYTES = MAXIMUM_CALL_AUDIO_BYTES;
@@ -55,25 +59,47 @@ final class StatsWebCallService implements AutoCloseable
     private final AtomicLong mSequence = new AtomicLong();
     private final AtomicLong mPendingAudioBytes = new AtomicLong();
     private long mAudioBytes;
+    private long mRunGeneration;
     private volatile boolean mRunning;
 
-    void start()
+    synchronized void start()
     {
-        mRunning = true;
+        if(!mRunning)
+        {
+            mRunGeneration++;
+            mRunning = true;
+        }
     }
 
     synchronized void stop()
     {
-        mRunning = false;
+        if(mRunning)
+        {
+            mRunning = false;
+            mRunGeneration++;
+        }
+
         mCalls.clear();
         mAudioBytes = 0;
     }
 
     void receive(CompletedAudioCall call)
     {
+        long runGeneration;
+
+        synchronized(this)
+        {
+            if(!mRunning)
+            {
+                return;
+            }
+
+            runGeneration = mRunGeneration;
+        }
+
         AudioCallSnapshot snapshot = call != null ? call.snapshot() : null;
 
-        if(!mRunning || !mEventHub.hasSubscribers() || call == null || !call.hasAudio() || snapshot == null ||
+        if(!mEventHub.hasSubscribers() || call == null || !call.hasAudio() || snapshot == null ||
             snapshot.isDoNotMonitor() || snapshot.duplicate() || isUnresolvedTrafficCall(snapshot))
         {
             return;
@@ -91,7 +117,7 @@ final class StatsWebCallService implements AutoCloseable
             mEncoderExecutor.execute(() -> {
                 try
                 {
-                    cache(call, waveLength);
+                    cache(call, waveLength, runGeneration);
                 }
                 finally
                 {
@@ -109,6 +135,25 @@ final class StatsWebCallService implements AutoCloseable
     StatsLiveEventHub.Subscription subscribe()
     {
         return mRunning ? mEventHub.subscribe() : null;
+    }
+
+    /**
+     * Returns a bounded oldest-first metadata snapshot so a browser can fill a gap without replaying calls it has
+     * already accepted. Audio remains in the existing bounded cache and is fetched only if the browser plays it.
+     */
+    synchronized List<Map<String,Object>> snapshot()
+    {
+        evictExpired(System.currentTimeMillis());
+        List<CachedCall> cached = new ArrayList<>(mCalls.values());
+        int first = Math.max(0, cached.size() - MAXIMUM_SNAPSHOT_CALLS);
+        List<Map<String,Object>> result = new ArrayList<>(cached.size() - first);
+
+        for(int index = first; index < cached.size(); index++)
+        {
+            result.add(cached.get(index).metadata());
+        }
+
+        return List.copyOf(result);
     }
 
     private static boolean isUnresolvedTrafficCall(AudioCallSnapshot snapshot)
@@ -154,11 +199,14 @@ final class StatsWebCallService implements AutoCloseable
         return true;
     }
 
-    private void cache(CompletedAudioCall call, int waveLength)
+    private void cache(CompletedAudioCall call, int waveLength, long runGeneration)
     {
-        if(!mRunning)
+        synchronized(this)
         {
-            return;
+            if(!mRunning || mRunGeneration != runGeneration)
+            {
+                return;
+            }
         }
 
         byte[] wave = wave(call, waveLength);
@@ -175,13 +223,17 @@ final class StatsWebCallService implements AutoCloseable
 
         synchronized(this)
         {
+            if(!mRunning || mRunGeneration != runGeneration)
+            {
+                return;
+            }
+
             evictExpired(created);
             mCalls.put(id, cachedCall);
             mAudioBytes += wave.length;
             evictToLimits();
+            mEventHub.publish("call", metadata);
         }
-
-        mEventHub.publish("call", metadata);
     }
 
     private synchronized void evictExpired(long now)
@@ -225,19 +277,20 @@ final class StatsWebCallService implements AutoCloseable
         Identifier<?> target = identifiers != null ? identifiers.getToIdentifier() : null;
         AliasList aliasList = snapshot.aliasList();
         LinkedHashMap<String,Object> value = new LinkedHashMap<>();
-        value.put("call_id", id);
-        value.put("audio_url", StatsApiV1.CALLS + "/" + id + "/audio");
+        putText(value, "call_id", id);
+        putText(value, "audio_url", StatsApiV1.CALLS + "/" + id + "/audio");
         value.put("completed_at_ms", completedAt);
         value.put("duration_ms", call.getDuration());
-        put(value, "system", identifierValue(identifiers, IdentifierClass.CONFIGURATION, Form.SYSTEM, Role.ANY));
-        put(value, "channel", identifierValue(identifiers, IdentifierClass.CONFIGURATION, Form.CHANNEL, Role.ANY));
-        put(value, "decoder", identifierValue(identifiers, IdentifierClass.CONFIGURATION, Form.DECODER_TYPE, Role.ANY));
-        put(value, "source_id", value(source));
-        put(value, "source_alias", alias(aliasList, source));
-        put(value, "source_form", form(source));
-        put(value, "target_id", value(target));
-        put(value, "target_alias", alias(aliasList, target));
-        put(value, "target_form", form(target));
+        putText(value, "system", identifierValue(identifiers, IdentifierClass.CONFIGURATION, Form.SYSTEM, Role.ANY));
+        putText(value, "channel", identifierValue(identifiers, IdentifierClass.CONFIGURATION, Form.CHANNEL, Role.ANY));
+        putText(value, "decoder", identifierValue(identifiers, IdentifierClass.CONFIGURATION, Form.DECODER_TYPE,
+            Role.ANY));
+        putText(value, "source_id", value(source));
+        putText(value, "source_alias", alias(aliasList, source));
+        putText(value, "source_form", form(source));
+        putText(value, "target_id", value(target));
+        putText(value, "target_alias", alias(aliasList, target));
+        putText(value, "target_form", form(target));
         value.put("frequency_hz", longValue(identifiers, Form.CHANNEL_FREQUENCY));
         value.put("timeslot", snapshot.timeslot());
         value.put("encrypted", snapshot.encrypted());
@@ -315,12 +368,38 @@ final class StatsWebCallService implements AutoCloseable
         return null;
     }
 
-    private static void put(Map<String,Object> values, String key, Object value)
+    private static void putText(Map<String,Object> values, String key, Object value)
     {
-        if(value != null)
+        String bounded = boundedText(value);
+
+        if(bounded != null)
         {
-            values.put(key, value);
+            values.put(key, bounded);
         }
+    }
+
+    static String boundedText(Object value)
+    {
+        if(value == null)
+        {
+            return null;
+        }
+
+        String text = value.toString();
+
+        if(text.length() <= MAXIMUM_METADATA_TEXT_CHARACTERS)
+        {
+            return text;
+        }
+
+        int end = MAXIMUM_METADATA_TEXT_CHARACTERS;
+
+        if(Character.isHighSurrogate(text.charAt(end - 1)) && Character.isLowSurrogate(text.charAt(end)))
+        {
+            end--;
+        }
+
+        return text.substring(0, end);
     }
 
     static byte[] wave(CompletedAudioCall call)

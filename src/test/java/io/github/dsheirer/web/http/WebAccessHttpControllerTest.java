@@ -7,19 +7,29 @@ package io.github.dsheirer.web.http;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sun.net.httpserver.Headers;
+import com.sun.net.httpserver.HttpContext;
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpPrincipal;
 import com.sun.net.httpserver.HttpServer;
 import com.sun.net.httpserver.HttpsConfigurator;
 import com.sun.net.httpserver.HttpsServer;
 import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.web.auth.AccessTier;
 import io.github.dsheirer.web.auth.WebAccessService;
+import io.github.dsheirer.web.auth.WebAccessSession;
+import io.github.dsheirer.web.auth.WebAuthenticationService;
 import io.github.dsheirer.web.auth.WebCapability;
 import io.github.dsheirer.web.tls.TlsMaterial;
 import io.github.dsheirer.web.tls.TlsMaterialService;
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -34,6 +44,7 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.time.Duration;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -114,6 +125,13 @@ class WebAccessHttpControllerTest
             assertFalse(anonymous.at("/capabilities/dashboard").booleanValue());
             assertFalse(anonymous.at("/capabilities/admin-users").booleanValue());
             assertFalse(anonymous.at("/capabilities/admin-aliases").booleanValue());
+
+            HttpResponse<String> staleSession = send(client, request(origin, "/api/v1/auth/session")
+                .header("Cookie", WebAccessHttpController.SESSION_COOKIE_NAME + "=expired-session")
+                .GET());
+            assertEquals(200, staleSession.statusCode());
+            assertFalse(data(staleSession).get("authenticated").booleanValue());
+            assertTrue(staleSession.headers().firstValue("Set-Cookie").orElse("").contains("Max-Age=0"));
 
             HttpResponse<String> anonymousProtected = send(client, request(origin, "/protected").GET());
             assertEquals(401, anonymousProtected.statusCode());
@@ -242,6 +260,62 @@ class WebAccessHttpControllerTest
     }
 
     @Test
+    void failedLoginResponseDiscardsNewSessionAndPreservesExistingSession() throws Exception
+    {
+        Path database = mTemporaryDirectory.resolve("failed-login-response.sqlite");
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            SdrTrunkDatabaseSchema.create(connection);
+        }
+
+        WebAccessService accessService = new WebAccessService(database);
+        char[] provisionPassword = ADMIN_PASSWORD.toCharArray();
+
+        try
+        {
+            accessService.provisionOrResetPrimaryAdmin(provisionPassword);
+        }
+        finally
+        {
+            Arrays.fill(provisionPassword, '\u0000');
+        }
+
+        WebAuthenticationService authenticationService = new WebAuthenticationService(accessService);
+        WebAccessHttpController controller = new WebAccessHttpController(accessService, authenticationService);
+        char[] firstPassword = ADMIN_PASSWORD.toCharArray();
+        char[] secondPassword = ADMIN_PASSWORD.toCharArray();
+
+        try
+        {
+            WebAccessSession existing = authenticationService.login("admin", firstPassword, "first")
+                .get(30, java.util.concurrent.TimeUnit.SECONDS).session().orElseThrow();
+            WebAccessSession created = authenticationService.login("admin", secondPassword, "second")
+                .get(30, java.util.concurrent.TimeUnit.SECONDS).session().orElseThrow();
+            assertEquals(2, authenticationService.getActiveSessionCount());
+
+            assertThrows(IOException.class,
+                () -> controller.deliverLoginResponse(failingResponseExchange(), created, existing.sessionId()));
+
+            assertEquals(1, authenticationService.getActiveSessionCount());
+            assertTrue(authenticationService.resolveSession(existing.sessionId()).isPresent());
+            assertTrue(authenticationService.resolveSession(created.sessionId()).isEmpty());
+
+            assertThrows(IOException.class,
+                () -> controller.deliverLoginResponse(failingResponseExchange(), existing, existing.sessionId()));
+            assertEquals(1, authenticationService.getActiveSessionCount(),
+                "a failed response must not revoke a capacity-reused session");
+            assertTrue(authenticationService.resolveSession(existing.sessionId()).isPresent());
+        }
+        finally
+        {
+            Arrays.fill(firstPassword, '\u0000');
+            Arrays.fill(secondPassword, '\u0000');
+            controller.close();
+        }
+    }
+
+    @Test
     void marksTheSessionCookieSecureOnHttps() throws Exception
     {
         Path database = mTemporaryDirectory.resolve("https-sdrtrunk.sqlite");
@@ -304,6 +378,124 @@ class WebAccessHttpControllerTest
         String setCookie = response.headers().firstValue("Set-Cookie").orElseThrow();
         return new Login(json, setCookie.substring(0, setCookie.indexOf(';')), setCookie,
             json.get("csrf_token").textValue());
+    }
+
+    private static HttpExchange failingResponseExchange()
+    {
+        return new HttpExchange()
+        {
+            private final Headers mRequestHeaders = new Headers();
+            private final Headers mResponseHeaders = new Headers();
+            private final Map<String,Object> mAttributes = new HashMap<>();
+            private int mResponseCode = -1;
+
+            @Override
+            public Headers getRequestHeaders()
+            {
+                return mRequestHeaders;
+            }
+
+            @Override
+            public Headers getResponseHeaders()
+            {
+                return mResponseHeaders;
+            }
+
+            @Override
+            public URI getRequestURI()
+            {
+                return URI.create(WebAccessHttpController.LOGIN_PATH);
+            }
+
+            @Override
+            public String getRequestMethod()
+            {
+                return "POST";
+            }
+
+            @Override
+            public HttpContext getHttpContext()
+            {
+                return null;
+            }
+
+            @Override
+            public void close()
+            {
+            }
+
+            @Override
+            public InputStream getRequestBody()
+            {
+                return new ByteArrayInputStream(new byte[0]);
+            }
+
+            @Override
+            public OutputStream getResponseBody()
+            {
+                return new OutputStream()
+                {
+                    @Override
+                    public void write(int value) throws IOException
+                    {
+                        throw new IOException("simulated browser disconnect");
+                    }
+                };
+            }
+
+            @Override
+            public void sendResponseHeaders(int responseCode, long responseLength)
+            {
+                mResponseCode = responseCode;
+            }
+
+            @Override
+            public InetSocketAddress getRemoteAddress()
+            {
+                return new InetSocketAddress(InetAddress.getLoopbackAddress(), 12345);
+            }
+
+            @Override
+            public int getResponseCode()
+            {
+                return mResponseCode;
+            }
+
+            @Override
+            public InetSocketAddress getLocalAddress()
+            {
+                return new InetSocketAddress(InetAddress.getLoopbackAddress(), 8080);
+            }
+
+            @Override
+            public String getProtocol()
+            {
+                return "HTTP/1.1";
+            }
+
+            @Override
+            public Object getAttribute(String name)
+            {
+                return mAttributes.get(name);
+            }
+
+            @Override
+            public void setAttribute(String name, Object value)
+            {
+                mAttributes.put(name, value);
+            }
+
+            @Override
+            public void setStreams(InputStream input, OutputStream output)
+            {
+            }
+
+            @Override
+            public HttpPrincipal getPrincipal()
+            {
+                return null;
+            }
+        };
     }
 
     private static HttpRequest.Builder mutation(URI origin, String path, Login login)

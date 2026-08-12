@@ -39,7 +39,6 @@ import io.github.dsheirer.identifier.tone.ToneSequence;
 import io.github.dsheirer.module.decode.dcs.DCSCode;
 import io.github.dsheirer.protocol.Protocol;
 import java.io.IOException;
-import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
@@ -993,11 +992,7 @@ public final class AliasAdminHttpController
             }
         }
 
-        byte[] bytes;
-        try(InputStream inputStream = exchange.getRequestBody())
-        {
-            bytes = inputStream.readNBytes(MAXIMUM_JSON_BODY_BYTES + 1);
-        }
+        byte[] bytes = ApiRequestDecoder.readBody(exchange, MAXIMUM_JSON_BODY_BYTES);
 
         try
         {

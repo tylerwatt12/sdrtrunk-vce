@@ -50,6 +50,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import javax.swing.SwingUtilities;
 import org.junit.jupiter.api.Test;
@@ -74,7 +75,7 @@ class ChannelActivityModelTest
             }
         });
 
-        SwingUtilities.invokeAndWait(() -> {
+        run(model, () -> {
             model.setEnabled(true);
             model.channelStarted(channel, List.of(metadata));
         });
@@ -82,7 +83,7 @@ class ChannelActivityModelTest
         ChannelActivitySnapshot idle = snapshots.getLast();
         assertEquals("IDLE", idle.rows().getFirst().status());
 
-        SwingUtilities.invokeAndWait(() -> {
+        run(model, () -> {
             metadata.receive(new IdentifierUpdateNotification(ChannelStateIdentifier.CALL, Operation.ADD, 1));
             model.updated(metadata, io.github.dsheirer.channel.metadata.ChannelMetadataField.DECODER_STATE);
         });
@@ -90,7 +91,7 @@ class ChannelActivityModelTest
         ChannelActivitySnapshot call = snapshots.getLast();
         assertEquals("CALL", call.rows().getFirst().status());
 
-        SwingUtilities.invokeAndWait(() -> {
+        run(model, () -> {
             metadata.receive(new IdentifierUpdateNotification(ChannelStateIdentifier.IDLE, Operation.ADD, 1));
             model.updated(metadata, io.github.dsheirer.channel.metadata.ChannelMetadataField.DECODER_STATE);
         });
@@ -111,7 +112,7 @@ class ChannelActivityModelTest
         Channel parent = trunkedChannel("2.2", "Bus", "Site 5", trunkedDmrConfig(), 139_781_250L);
         ChannelMetadata metadata = new ChannelMetadata(aliasModel, 1);
 
-        SwingUtilities.invokeAndWait(() -> {
+        run(model, () -> {
             model.setEnabled(true);
             model.channelStarted(parent, List.of(metadata));
         });
@@ -120,11 +121,11 @@ class ChannelActivityModelTest
         assertTrue(model.getConventionalTable().getRows().isEmpty());
 
         DMRAbsoluteChannel traffic = new DMRAbsoluteChannel(838, 1, 139_968_750L, 0);
-        SwingUtilities.invokeAndWait(() -> model.trunkedTrafficEvent(parent, null, traffic, 1,
+        run(model, () -> model.trunkedTrafficEvent(parent, null, traffic, 1,
             new IdentifierCollection(), DecodeEventType.CALL_GROUP, 139_781_250L));
 
         assertEquals(2, model.getTables().size());
-        ChannelActivityTableModel table = model.getTables().get(1);
+        ChannelActivityTableState table = model.getTables().get(1);
         assertSame(parent, table.getOwnerChannel());
         assertEquals("DMR: Bus / Site 5 / 2.2", table.getTitle());
         assertEquals(2, table.getRows().size());
@@ -150,7 +151,7 @@ class ChannelActivityModelTest
         Channel parent = trunkedChannel("2.2", "Bus", "Site 5", trunkedDmrConfig(), 139_781_250L);
         DMRAbsoluteChannel traffic = new DMRAbsoluteChannel(838, 1, 139_968_750L, 0);
 
-        SwingUtilities.invokeAndWait(() -> {
+        run(model, () -> {
             model.setEnabled(true);
             model.trunkedTrafficEvent(parent, null, traffic, 1, new IdentifierCollection(),
                 DecodeEventType.CALL_GROUP_ENCRYPTED, 139_781_250L);
@@ -172,7 +173,7 @@ class ChannelActivityModelTest
         Channel channel = trunkedChannel("Repeater", "Local", "Hill", new DecodeConfigDMR(), 451_012_500L);
         ChannelMetadata metadata = new ChannelMetadata(aliasModel, 1);
 
-        SwingUtilities.invokeAndWait(() -> {
+        run(model, () -> {
             model.setEnabled(true);
             model.channelStarted(channel, List.of(metadata));
             metadata.receive(new IdentifierUpdateNotification(ChannelStateIdentifier.ENCRYPTED,
@@ -184,7 +185,7 @@ class ChannelActivityModelTest
         assertEquals(State.ENCRYPTED, row.getState());
         assertEquals("ENC", row.getEncryptionDetails());
 
-        SwingUtilities.invokeAndWait(() -> {
+        run(model, () -> {
             metadata.receive(new IdentifierUpdateNotification(ChannelStateIdentifier.CALL, Operation.ADD, 1));
             model.updated(metadata, io.github.dsheirer.channel.metadata.ChannelMetadataField.DECODER_STATE);
         });
@@ -202,7 +203,7 @@ class ChannelActivityModelTest
         ChannelMetadata metadata = new ChannelMetadata(aliasModel, 1);
         DMRAbsoluteChannel traffic = new DMRAbsoluteChannel(12, 1, 452_012_500L, 0);
 
-        SwingUtilities.invokeAndWait(() -> {
+        run(model, () -> {
             model.setEnabled(true);
             model.channelStarted(parent, List.of(metadata));
             model.trunkedTrafficEvent(parent, null, traffic, 1, new IdentifierCollection(),
@@ -224,7 +225,7 @@ class ChannelActivityModelTest
             Channel parent = trunkedChannel("Test", "System", "Site", config, 451_012_500L);
             ChannelMetadata metadata = new ChannelMetadata(aliasModel, 1);
 
-            SwingUtilities.invokeAndWait(() -> {
+            run(model, () -> {
                 model.setEnabled(true);
                 model.channelStarted(parent, List.of(metadata));
                 model.receiveControlChannelQuality(quality(parent, 451_012_500L, 1_000L, true));
@@ -258,7 +259,7 @@ class ChannelActivityModelTest
             Channel parent = trunkedChannel("Quiet", "System", "Site", testCase.getKey(), 451_012_500L);
             ChannelMetadata metadata = new ChannelMetadata(aliasModel, 1);
 
-            SwingUtilities.invokeAndWait(() -> {
+            run(model, () -> {
                 model.setEnabled(true);
                 model.channelStarted(parent, List.of(metadata));
                 model.receiveProtocolSiteMetadata(new ProtocolSiteMetadataEvent(
@@ -289,7 +290,7 @@ class ChannelActivityModelTest
         DMRNetworkConfigurationSnapshot unknown = new DMRNetworkConfigurationSnapshot(
             "DMR", null, 10, 20, null, null, null, null, 1, 2, List.of(), List.of());
 
-        SwingUtilities.invokeAndWait(() -> {
+        run(model, () -> {
             model.setEnabled(true);
             model.channelStarted(parent, List.of(metadata));
             model.receiveProtocolSiteMetadata(new ProtocolSiteMetadataEvent(parent, unknown, 1_000L));
@@ -307,7 +308,7 @@ class ChannelActivityModelTest
         Channel parent = trunkedChannel("2.2", "Bus", "Site 5", trunkedDmrConfig(), 139_781_250L);
         DMRAbsoluteChannel traffic = new DMRAbsoluteChannel(838, 1, 139_968_750L, 0);
 
-        SwingUtilities.invokeAndWait(() -> {
+        run(model, () -> {
             model.setEnabled(true);
             model.trunkedTrafficEvent(parent, null, traffic, 1, new IdentifierCollection(),
                 DecodeEventType.CALL_GROUP, 139_781_250L);
@@ -331,7 +332,7 @@ class ChannelActivityModelTest
         DMRAbsoluteChannel timeslotOne = new DMRAbsoluteChannel(838, 1, 139_968_750L, 0);
         DMRAbsoluteChannel timeslotTwo = new DMRAbsoluteChannel(838, 2, 139_968_750L, 0);
 
-        SwingUtilities.invokeAndWait(() -> {
+        run(model, () -> {
             model.setEnabled(true);
             model.trunkedTrafficEvent(parent, null, timeslotOne, 1, new IdentifierCollection(),
                 DecodeEventType.CALL_GROUP, 139_781_250L);
@@ -358,13 +359,13 @@ class ChannelActivityModelTest
         NXDNChannelLookup traffic = new NXDNChannelLookup(42);
         traffic.receive(null, Map.of(42, new ChannelFrequency(42, 452_012_500L, 0)));
 
-        SwingUtilities.invokeAndWait(() -> {
+        run(model, () -> {
             model.setEnabled(true);
             model.trunkedTrafficEvent(parent, null, traffic, 0, new IdentifierCollection(),
                 DecodeEventType.DATA_CALL, 451_012_500L);
         });
 
-        ChannelActivityTableModel table = model.getTables().get(1);
+        ChannelActivityTableState table = model.getTables().get(1);
         assertEquals("NXDN: County / Simulcast / North", table.getTitle());
         List<ChannelActivityRow> trafficRows = table.getRows().stream()
             .filter(row -> row.getRole() == ChannelActivityRow.Role.TRAFFIC)
@@ -386,12 +387,12 @@ class ChannelActivityModelTest
         source.setFrequency(856_137_500L);
         channel.setSourceConfiguration(source);
 
-        SwingUtilities.invokeAndWait(() -> {
+        run(model, () -> {
             model.setEnabled(true);
             model.channelStarted(channel, List.of());
         });
 
-        List<ChannelActivityTableModel> tables = model.getTables();
+        List<ChannelActivityTableState> tables = model.getTables();
         assertEquals(2, tables.size());
         assertSame(model.getConventionalTable(), tables.getFirst());
         assertSame(channel, tables.get(1).getOwnerChannel());
@@ -408,7 +409,7 @@ class ChannelActivityModelTest
         source.setFrequency(856_137_500L);
         channel.setSourceConfiguration(source);
 
-        SwingUtilities.invokeAndWait(() -> {
+        run(model, () -> {
             model.setEnabled(true);
             model.channelStarted(channel, List.of());
             model.receiveControlChannelQuality(new ControlChannelQualitySnapshot(channel, channel.getRadresGuid(),
@@ -424,7 +425,7 @@ class ChannelActivityModelTest
         assertEquals(1, row.getDecodeQuality().controlInvalidFrames());
         assertEquals(3, row.getDecodeQuality().controlCorrectedBits());
 
-        SwingUtilities.invokeAndWait(() -> model.receiveControlChannelQuality(new ControlChannelQualitySnapshot(
+        run(model, () -> model.receiveControlChannelQuality(new ControlChannelQualitySnapshot(
             channel, channel.getRadresGuid(), 856_137_500L, 2_000L, false, -20.5, -21.0, -25.0, -18.0,
             97.5, 100, 1, 3, 0, 0, 999L)));
         assertNull(row.getSignalDbfs());
@@ -455,7 +456,7 @@ class ChannelActivityModelTest
             identifiers, Set.of(), 1_000L, 1_020L, 1, 1, 1_000L, 1_020L,
             true, false, false, false, 50, false, null, voiceQuality);
 
-        SwingUtilities.invokeAndWait(() -> {
+        run(model, () -> {
             model.setEnabled(true);
             model.channelStarted(channel, List.of(metadata));
             model.receiveAudioCallEvent(channel, new AudioCallEvent(AudioCallEventType.AUDIO_FRAME, snapshot,
@@ -492,7 +493,7 @@ class ChannelActivityModelTest
             1_000L, 2_000L, 1, 1, 1_000L, 2_000L, true, false, false, false, 50, false, null,
             voiceQuality);
 
-        SwingUtilities.invokeAndWait(() -> {
+        run(model, () -> {
             model.setEnabled(true);
             model.channelStarted(channel, List.of(metadata));
             metadata.receive(new IdentifierUpdateNotification(ChannelStateIdentifier.CALL, Operation.ADD, 1));
@@ -509,12 +510,12 @@ class ChannelActivityModelTest
         AudioCallSnapshot stale = new AudioCallSnapshot(new AudioCallId(1, 2, 1), null, null, identifiers, Set.of(),
             1_000L, 2_000L, 1, 1, 1_000L, 2_000L, false, true, false, false, 50, false, null,
             voiceQuality);
-        SwingUtilities.invokeAndWait(() -> model.receiveAudioCallEvent(channel,
+        run(model, () -> model.receiveAudioCallEvent(channel,
             new AudioCallEvent(AudioCallEventType.CALL_COMPLETED, stale, 2_000L, null)));
         assertEquals(currentCallId, row.getVoiceCallId());
         assertNotNull(row.getVoiceCallQuality());
 
-        SwingUtilities.invokeAndWait(() -> model.receiveAudioCallEvent(channel,
+        run(model, () -> model.receiveAudioCallEvent(channel,
             new AudioCallEvent(AudioCallEventType.CALL_COMPLETED, current, 2_000L, null, true)));
         assertEquals(currentCallId, row.getVoiceCallId());
         assertNotNull(row.getVoiceCallQuality());
@@ -523,12 +524,12 @@ class ChannelActivityModelTest
         AudioCallSnapshot linkedWithoutMeasurements = new AudioCallSnapshot(linkedCallId, currentCallId, null,
             identifiers, Set.of(), 2_000L, 2_100L, 1, 1, 2_000L, 2_100L, true, false, false, false,
             50, false, null, new VoiceCallQuality(0, 0, 0, 5, 0, 0));
-        SwingUtilities.invokeAndWait(() -> model.receiveAudioCallEvent(channel,
+        run(model, () -> model.receiveAudioCallEvent(channel,
             new AudioCallEvent(AudioCallEventType.CALL_CREATED, linkedWithoutMeasurements, 2_000L, null)));
         assertEquals(linkedCallId, row.getVoiceCallId());
         assertEquals(voiceQuality, row.getVoiceCallQuality());
 
-        SwingUtilities.invokeAndWait(() -> model.receiveAudioCallEvent(channel,
+        run(model, () -> model.receiveAudioCallEvent(channel,
             new AudioCallEvent(AudioCallEventType.CALL_COMPLETED, linkedWithoutMeasurements, 2_100L, null)));
         assertNull(row.getVoiceCallId());
         assertNull(row.getVoiceCallQuality());
@@ -536,10 +537,10 @@ class ChannelActivityModelTest
 
         model.receiveAudioCallEvent(channel, new AudioCallEvent(AudioCallEventType.AUDIO_FRAME, current,
             2_000L, new float[160]));
-        SwingUtilities.invokeAndWait(() -> {});
+        run(model, () -> {});
         assertEquals(currentCallId, row.getVoiceCallId());
 
-        SwingUtilities.invokeAndWait(() -> {
+        run(model, () -> {
             metadata.receive(new IdentifierUpdateNotification(ChannelStateIdentifier.IDLE, Operation.ADD, 1));
             model.updated(metadata, io.github.dsheirer.channel.metadata.ChannelMetadataField.DECODER_STATE);
         });
@@ -547,7 +548,7 @@ class ChannelActivityModelTest
         assertNull(row.getVoiceCallQuality());
         assertNull(ChannelActivitySnapshot.from(model.getConventionalTable()).rows().getFirst().voiceQuality());
 
-        SwingUtilities.invokeAndWait(() -> model.receiveAudioCallEvent(channel,
+        run(model, () -> model.receiveAudioCallEvent(channel,
             new AudioCallEvent(AudioCallEventType.CALL_COMPLETED, current, 2_000L, null)));
         assertNull(row.getVoiceCallId());
         assertNull(row.getVoiceCallQuality());
@@ -584,7 +585,7 @@ class ChannelActivityModelTest
             1_000L, 2_000L, 1, 1, 1_000L, 2_000L, true, false, false, false, 50, false, null,
             voiceQuality);
 
-        SwingUtilities.invokeAndWait(() -> {
+        run(model, () -> {
             model.setEnabled(true);
             model.trunkedTrafficEvent(parent, trafficChannel, traffic, 1, identifiers,
                 DecodeEventType.CALL_GROUP, 139_781_250L);
@@ -599,12 +600,12 @@ class ChannelActivityModelTest
         assertEquals(callId, row.getVoiceCallId());
         assertNotNull(row.getVoiceCallQuality());
 
-        SwingUtilities.invokeAndWait(() -> model.channelStopped(trafficChannel));
+        run(model, () -> model.channelStopped(trafficChannel));
         assertSame(parent, row.getChannel());
         assertNull(row.getVoiceCallId());
         assertNull(row.getVoiceCallQuality());
 
-        SwingUtilities.invokeAndWait(() -> model.receiveAudioCallEvent(trafficChannel,
+        run(model, () -> model.receiveAudioCallEvent(trafficChannel,
             new AudioCallEvent(AudioCallEventType.CALL_COMPLETED, snapshot, 2_000L, null)));
         assertNull(row.getVoiceCallId());
         assertNull(row.getVoiceCallQuality());
@@ -614,7 +615,7 @@ class ChannelActivityModelTest
     void combinesControlVoiceAndDataTagsForTheSameFrequency()
     {
         Channel parent = new Channel("Test Site", ChannelType.STANDARD);
-        ChannelActivityTableModel table = new ChannelActivityTableModel("Test Site", parent, true);
+        ChannelActivityTableState table = new ChannelActivityTableState("Test Site", parent, true, null);
         SiteActivitySession session = new SiteActivitySession(parent, table);
         long frequency = 856_137_500L;
 
@@ -642,7 +643,7 @@ class ChannelActivityModelTest
     void reusesAlternateControlRowForFdmaVoiceTraffic()
     {
         Channel parent = new Channel("Test Site", ChannelType.STANDARD);
-        ChannelActivityTableModel table = new ChannelActivityTableModel("Test Site", parent, true);
+        ChannelActivityTableState table = new ChannelActivityTableState("Test Site", parent, true, null);
         SiteActivitySession session = new SiteActivitySession(parent, table);
         APCO25Channel channel = APCO25Channel.create(0, 459);
         channel.setFrequencyBand(new P25FrequencyBand(0, 851_006_250L, -45_000_000L, 6_250L, 12_500, 1));
@@ -667,7 +668,7 @@ class ChannelActivityModelTest
     void retainsSeparateRowsForTdmATimeslots()
     {
         Channel parent = new Channel("Test Site", ChannelType.STANDARD);
-        ChannelActivityTableModel table = new ChannelActivityTableModel("Test Site", parent, true);
+        ChannelActivityTableState table = new ChannelActivityTableState("Test Site", parent, true, null);
         SiteActivitySession session = new SiteActivitySession(parent, table);
         P25FrequencyBand band = new P25FrequencyBand(1, 851_012_500L, -45_000_000L, 12_500L, 12_500, 2);
         APCO25Channel timeslotOne = APCO25Channel.create(1, 2);
@@ -689,7 +690,7 @@ class ChannelActivityModelTest
     void retainsFdmaTrafficRowWhenControlAnnouncementIsWithdrawn()
     {
         Channel parent = new Channel("Test Site", ChannelType.STANDARD);
-        ChannelActivityTableModel table = new ChannelActivityTableModel("Test Site", parent, true);
+        ChannelActivityTableState table = new ChannelActivityTableState("Test Site", parent, true, null);
         SiteActivitySession session = new SiteActivitySession(parent, table);
         long frequency = 853_875_000L;
 
@@ -701,6 +702,12 @@ class ChannelActivityModelTest
         assertSame(alternate, traffic);
         assertSame(traffic, session.traffic(frequency, null));
         assertEquals(1, table.getRows().size());
+    }
+
+    private static void run(ChannelActivityModel model, Runnable runnable) throws Exception
+    {
+        SwingUtilities.invokeAndWait(runnable);
+        assertTrue(model.awaitIdle(5, TimeUnit.SECONDS), "channel activity worker did not become idle");
     }
 
     private static Channel trunkedChannel(String name, String system, String site,

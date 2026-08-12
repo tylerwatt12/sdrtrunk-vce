@@ -72,6 +72,17 @@ public final class WebAuthenticationService implements AutoCloseable
      */
     public CompletableFuture<LoginResult> login(String username, char[] password, String sourceKey)
     {
+        return login(username, password, sourceKey, null);
+    }
+
+    /**
+     * Schedules a login while retaining the caller's current session as a capacity-safe fallback.  A session is
+     * reused only after successful credential verification, only when a new session cannot be allocated, and only
+     * when it belongs to the exact current account metadata.
+     */
+    public CompletableFuture<LoginResult> login(String username, char[] password, String sourceKey,
+                                                 String existingSessionId)
+    {
         if(mClosed.get())
         {
             return CompletableFuture.completedFuture(LoginResult.of(LoginStatus.BUSY));
@@ -92,7 +103,8 @@ public final class WebAuthenticationService implements AutoCloseable
             return CompletableFuture.completedFuture(LoginResult.throttled(admission.retryAfterMillis()));
         }
 
-        LoginTask task = new LoginTask(boundedUsername(username), boundedPasswordCopy(password), boundedSourceKey);
+        LoginTask task = new LoginTask(boundedUsername(username), boundedPasswordCopy(password), boundedSourceKey,
+            existingSessionId);
 
         try
         {
@@ -137,7 +149,7 @@ public final class WebAuthenticationService implements AutoCloseable
         return mSessionManager.getActiveSessionCount();
     }
 
-    private LoginResult authenticate(String username, char[] password, String sourceKey)
+    private LoginResult authenticate(String username, char[] password, String sourceKey, String existingSessionId)
     {
         Optional<WebAccessAccount> authenticated = mAccessService.authenticate(username, password);
 
@@ -149,7 +161,7 @@ public final class WebAuthenticationService implements AutoCloseable
 
         mLoginThrottle.recordSuccess(sourceKey);
         WebAccessAccount account = authenticated.get();
-        Optional<WebAccessSession> session = mSessionManager.create(account);
+        Optional<WebAccessSession> session = mSessionManager.createOrReuseAtCapacity(account, existingSessionId);
 
         if(session.isEmpty())
         {
@@ -292,14 +304,16 @@ public final class WebAuthenticationService implements AutoCloseable
     {
         private final String mUsername;
         private final String mSourceKey;
+        private final String mExistingSessionId;
         private final CompletableFuture<LoginResult> completion = new CompletableFuture<>();
         private char[] mPassword;
 
-        private LoginTask(String username, char[] password, String sourceKey)
+        private LoginTask(String username, char[] password, String sourceKey, String existingSessionId)
         {
             mUsername = username;
             mPassword = password;
             mSourceKey = sourceKey;
+            mExistingSessionId = existingSessionId;
         }
 
         @Override
@@ -308,11 +322,12 @@ public final class WebAuthenticationService implements AutoCloseable
             try
             {
                 LoginResult result = mClosed.get() ? LoginResult.of(LoginStatus.BUSY) :
-                    authenticate(mUsername, mPassword, mSourceKey);
+                    authenticate(mUsername, mPassword, mSourceKey, mExistingSessionId);
 
                 // A timed-out HTTP request may cancel its completion while PBKDF2 is still finishing.  Never retain
                 // the session that task created when there is no caller left to receive its cookie.
-                if(!completion.complete(result) && result.session().isPresent())
+                if(!completion.complete(result) && result.session().isPresent() &&
+                    !result.session().get().sessionId().equals(mExistingSessionId))
                 {
                     mSessionManager.invalidate(result.session().get().sessionId());
                 }

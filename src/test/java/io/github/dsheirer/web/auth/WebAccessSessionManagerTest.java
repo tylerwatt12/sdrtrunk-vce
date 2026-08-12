@@ -95,6 +95,46 @@ class WebAccessSessionManagerTest
         }
     }
 
+    @Test
+    void reusesOnlyTheMatchingCurrentSessionWhenAnAccountReachesItsSessionLimit() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("reused-session.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        WebAccessService accessService = new WebAccessService(database);
+        WebAccessAccount primary = accessService.provisionOrResetPrimaryAdmin(
+            "primary admin password".toCharArray());
+        WebAccessAccount listener = accessService.createUser("listener", "listener password".toCharArray(),
+            AccessTier.USER);
+        MutableClock clock = new MutableClock(1_000);
+        WebAccessSessionManager.Configuration configuration = new WebAccessSessionManager.Configuration(16,
+            Duration.ofMinutes(5), Duration.ofMinutes(10), 32);
+
+        try(WebAccessSessionManager manager =
+                new WebAccessSessionManager(configuration, new SecureRandom(), clock))
+        {
+            WebAccessSession first = manager.create(primary).orElseThrow();
+
+            for(int session = 1; session < 8; session++)
+            {
+                assertTrue(manager.create(primary).isPresent());
+            }
+
+            WebAccessSession otherAccount = manager.create(listener).orElseThrow();
+            assertTrue(manager.create(primary).isEmpty(), "a cookie-less ninth session must be rejected");
+            assertTrue(manager.createOrReuseAtCapacity(primary, otherAccount.sessionId()).isEmpty(),
+                "a session for another account must not be reused");
+
+            clock.advance(Duration.ofMinutes(4));
+            WebAccessSession reused = manager.createOrReuseAtCapacity(primary, first.sessionId()).orElseThrow();
+            assertEquals(first.sessionId(), reused.sessionId());
+            assertEquals(first.csrfToken(), reused.csrfToken());
+            assertEquals(first.createdAtEpochMillis(), reused.createdAtEpochMillis());
+            assertEquals(first.expiresAtEpochMillis() + Duration.ofMinutes(4).toMillis(),
+                reused.expiresAtEpochMillis(), "reuse should refresh idle expiry without resetting absolute expiry");
+            assertEquals(9, manager.getActiveSessionCount());
+        }
+    }
+
     private static final class MutableClock extends Clock
     {
         private long mMillis;

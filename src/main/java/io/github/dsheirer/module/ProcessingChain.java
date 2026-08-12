@@ -600,11 +600,6 @@ public class ProcessingChain implements Listener<ChannelEvent>
             ((IMessageProvider)module).setMessageListener(mMessageBroadcaster);
         }
 
-        if(module instanceof IMessageProvider)
-        {
-            ((IMessageProvider)module).setMessageListener(mMessageBroadcaster);
-        }
-
         if(module instanceof IByteBufferProvider)
         {
             ((IByteBufferProvider)module).setBufferListener(mDemodulatedBitstreamBufferBroadcaster);
@@ -665,11 +660,6 @@ public class ProcessingChain implements Listener<ChannelEvent>
         if(module instanceof IHeartbeatProvider)
         {
             ((IHeartbeatProvider)module).removeHeartbeatListener(mHeartbeatBroadcaster);
-        }
-
-        if(module instanceof IMessageProvider)
-        {
-            ((IMessageProvider)module).setMessageListener(null);
         }
 
         if(module instanceof IMessageProvider)

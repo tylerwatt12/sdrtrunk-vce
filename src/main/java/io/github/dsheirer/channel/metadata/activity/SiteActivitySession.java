@@ -41,16 +41,16 @@ public class SiteActivitySession
 {
     private final String mSessionId;
     private final Channel mParentChannel;
-    private final ChannelActivityTableModel mTableModel;
+    private final ChannelActivityTableState mTableState;
     private final Map<Long,ChannelActivityRow> mControlRows = new HashMap<>();
     private final Map<String,ChannelActivityRow> mTrafficRows = new HashMap<>();
     private final Map<Long,String> mCallsigns = new HashMap<>();
     private Long mCurrentControlFrequency;
 
-    public SiteActivitySession(Channel parentChannel, ChannelActivityTableModel tableModel)
+    public SiteActivitySession(Channel parentChannel, ChannelActivityTableState tableState)
     {
         mParentChannel = parentChannel;
-        mTableModel = tableModel;
+        mTableState = tableState;
         mSessionId = parentChannel != null ? String.valueOf(parentChannel.getChannelID()) : "unknown";
     }
 
@@ -64,9 +64,9 @@ public class SiteActivitySession
         return mParentChannel;
     }
 
-    public ChannelActivityTableModel getTableModel()
+    public ChannelActivityTableState getTableState()
     {
-        return mTableModel;
+        return mTableState;
     }
 
     public ChannelActivityRow configuredControl(long frequency)
@@ -175,7 +175,7 @@ public class SiteActivitySession
 
         if(row == null)
         {
-            row = mTableModel.getOrCreate(key, mParentChannel, ChannelActivityRow.Role.TRAFFIC, frequency, null);
+            row = mTableState.getOrCreate(key, mParentChannel, ChannelActivityRow.Role.TRAFFIC, frequency, null);
             mTrafficRows.put(key, row);
             inheritFrequencyTags(row);
         }
@@ -208,7 +208,7 @@ public class SiteActivitySession
 
         if(row == null)
         {
-            row = mTableModel.getOrCreate(key, rowChannel, ChannelActivityRow.Role.TRAFFIC, frequency,
+            row = mTableState.getOrCreate(key, rowChannel, ChannelActivityRow.Role.TRAFFIC, frequency,
                 normalizedTimeslot);
             row.setOrigin(ChannelActivityRow.Origin.TRAFFIC_GRANT);
             mTrafficRows.put(key, row);
@@ -328,7 +328,7 @@ public class SiteActivitySession
 
         if(channel == mParentChannel)
         {
-            return mTableModel.getRows();
+            return mTableState.getRows();
         }
 
         List<ChannelActivityRow> rows = new ArrayList<>();
@@ -410,7 +410,7 @@ public class SiteActivitySession
                     row.clearCallDetails();
                 }
 
-                mTableModel.refresh(row);
+                mTableState.refresh(row);
             }
             else
             {
@@ -462,7 +462,7 @@ public class SiteActivitySession
 
         if(row == null)
         {
-            row = mTableModel.getOrCreate(controlKey(frequency), mParentChannel,
+            row = mTableState.getOrCreate(controlKey(frequency), mParentChannel,
                 ChannelActivityRow.Role.CONFIGURED_CONTROL, frequency, null);
             row.setOrigin(ChannelActivityRow.Origin.CONFIGURED_CONTROL);
             mControlRows.put(frequency, row);

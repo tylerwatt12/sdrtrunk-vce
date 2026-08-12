@@ -17,10 +17,12 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Predicate;
 
 /**
- * Bounded fan-out for server-sent events. Slow clients lose their oldest pending update and never block producers.
+ * Bounded fan-out for live browser events. Slow subscribers lose their oldest pending update and never block
+ * producers; each subscription exposes a monotonic drop count so stateful consumers can request one resnapshot.
  */
 final class StatsLiveEventHub implements AutoCloseable
 {
@@ -37,10 +39,15 @@ final class StatsLiveEventHub implements AutoCloseable
 
     Subscription subscribe()
     {
-        return subscribe(event -> true);
+        return subscribe(event -> true, null);
     }
 
     Subscription subscribe(Predicate<LiveEvent> filter)
+    {
+        return subscribe(filter, null);
+    }
+
+    Subscription subscribe(Predicate<LiveEvent> filter, Runnable closeAction)
     {
         while(true)
         {
@@ -57,7 +64,7 @@ final class StatsLiveEventHub implements AutoCloseable
             }
         }
 
-        Subscription subscription = new Subscription(filter != null ? filter : event -> true);
+        Subscription subscription = new Subscription(filter != null ? filter : event -> true, closeAction);
         mSubscriptions.add(subscription);
         return subscription;
     }
@@ -96,11 +103,14 @@ final class StatsLiveEventHub implements AutoCloseable
     {
         private final ArrayBlockingQueue<LiveEvent> mQueue = new ArrayBlockingQueue<>(mQueueCapacity);
         private final Predicate<LiveEvent> mFilter;
+        private final Runnable mCloseAction;
         private final AtomicBoolean mClosed = new AtomicBoolean();
+        private final AtomicLong mDroppedCount = new AtomicLong();
 
-        private Subscription(Predicate<LiveEvent> filter)
+        private Subscription(Predicate<LiveEvent> filter, Runnable closeAction)
         {
             mFilter = filter;
+            mCloseAction = closeAction;
         }
 
         private void offer(LiveEvent event)
@@ -111,6 +121,7 @@ final class StatsLiveEventHub implements AutoCloseable
             }
 
             mQueue.poll();
+            mDroppedCount.incrementAndGet();
             mQueue.offer(event);
         }
 
@@ -124,6 +135,11 @@ final class StatsLiveEventHub implements AutoCloseable
             return mClosed.get();
         }
 
+        long droppedCount()
+        {
+            return mDroppedCount.get();
+        }
+
         @Override
         public void close()
         {
@@ -131,7 +147,18 @@ final class StatsLiveEventHub implements AutoCloseable
             {
                 mSubscriptions.remove(this);
                 mSubscriberCount.decrementAndGet();
-                mQueue.clear();
+
+                try
+                {
+                    if(mCloseAction != null)
+                    {
+                        mCloseAction.run();
+                    }
+                }
+                finally
+                {
+                    mQueue.clear();
+                }
             }
         }
     }

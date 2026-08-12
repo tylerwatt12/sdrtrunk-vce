@@ -27,12 +27,18 @@ import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.protocol.Protocol;
+import io.github.dsheirer.web.http.ApiHttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.util.AbstractList;
 import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
 class StatsWebCallServiceTest
@@ -63,6 +69,7 @@ class StatsWebCallServiceTest
             assertEquals(49L, metadata.get("vc_decoded_frames"));
             assertEquals(1L, metadata.get("vc_repeated_frames"));
             assertEquals(4L, metadata.get("vc_fec_errors"));
+            assertEquals(List.of(metadata), service.snapshot());
 
             StatsWebCallService.CachedCall cached = service.get(String.valueOf(metadata.get("call_id")));
             assertNotNull(cached);
@@ -94,6 +101,81 @@ class StatsWebCallServiceTest
 
         CompletedAudioCall template = call();
         assertNull(StatsWebCallService.wave(new CompletedAudioCall(template.snapshot(), oversized)));
+    }
+
+    @Test
+    void boundsEveryCallMetadataStringAndTheMaximumRecoverySnapshot() throws Exception
+    {
+        String oversized = "x".repeat(StatsWebCallService.MAXIMUM_METADATA_TEXT_CHARACTERS + 100);
+        assertEquals(StatsWebCallService.MAXIMUM_METADATA_TEXT_CHARACTERS,
+            StatsWebCallService.boundedText(oversized).length());
+        String splitSurrogate = "x".repeat(StatsWebCallService.MAXIMUM_METADATA_TEXT_CHARACTERS - 1) +
+            "\uD83D\uDE00tail";
+        String boundedSurrogate = StatsWebCallService.boundedText(splitSurrogate);
+        assertEquals(StatsWebCallService.MAXIMUM_METADATA_TEXT_CHARACTERS - 1, boundedSurrogate.length());
+        assertFalse(Character.isHighSurrogate(boundedSurrogate.charAt(boundedSurrogate.length() - 1)));
+
+        //Control characters exercise JSON's largest common escaping expansion for each externally derived text field.
+        String maximallyEscaped = "\u0001".repeat(StatsWebCallService.MAXIMUM_METADATA_TEXT_CHARACTERS);
+        Map<String,Object> maximumCall = new LinkedHashMap<>();
+        maximumCall.put("call_id", "z".repeat(16));
+        maximumCall.put("audio_url", "/api/v1/calls/" + "z".repeat(16) + "/audio");
+
+        for(String field: List.of("system", "channel", "decoder", "source_id", "source_alias", "target_id",
+            "target_alias"))
+        {
+            maximumCall.put(field, maximallyEscaped);
+        }
+
+        maximumCall.put("source_form", "RADIO");
+        maximumCall.put("target_form", "TALKGROUP");
+        maximumCall.put("completed_at_ms", Long.MAX_VALUE);
+        maximumCall.put("duration_ms", Long.MAX_VALUE);
+        maximumCall.put("frequency_hz", Long.MAX_VALUE);
+        maximumCall.put("timeslot", Integer.MAX_VALUE);
+        maximumCall.put("encrypted", true);
+        maximumCall.put("vc_quality_pct", 100.0d);
+        maximumCall.put("vc_decoded_frames", Long.MAX_VALUE);
+        maximumCall.put("vc_repeated_frames", Long.MAX_VALUE);
+        maximumCall.put("vc_concealed_frames", Long.MAX_VALUE);
+        maximumCall.put("vc_missing_frames", Long.MAX_VALUE);
+        maximumCall.put("vc_fec_errors", Long.MAX_VALUE);
+        maximumCall.put("vc_fec_protected_bits", Long.MAX_VALUE);
+        List<Map<String,Object>> calls = new ArrayList<>(StatsWebCallService.MAXIMUM_SNAPSHOT_CALLS);
+
+        for(int index = 0; index < StatsWebCallService.MAXIMUM_SNAPSHOT_CALLS; index++)
+        {
+            calls.add(maximumCall);
+        }
+
+        byte[] encoded = ApiHttpResponse.encodePayload(Map.of("event", "snapshot", "data", Map.of("calls", calls)));
+        assertTrue(encoded.length <= StatsWebCallService.MAXIMUM_SNAPSHOT_JSON_BYTES,
+            () -> "Maximum call recovery snapshot encoded " + encoded.length + " bytes");
+    }
+
+    @Test
+    void truncatesPublishedConfigurationMetadata() throws Exception
+    {
+        StatsWebCallService service = new StatsWebCallService();
+        service.start();
+        String system = "system-".repeat(100);
+
+        try(StatsLiveEventHub.Subscription subscription = service.subscribe())
+        {
+            service.receive(call(true, true, false, system));
+            StatsLiveEventHub.LiveEvent event = subscription.poll(5, TimeUnit.SECONDS);
+            assertNotNull(event);
+            @SuppressWarnings("unchecked")
+            Map<String,Object> metadata = (Map<String,Object>)event.data();
+            assertEquals(StatsWebCallService.MAXIMUM_METADATA_TEXT_CHARACTERS,
+                String.valueOf(metadata.get("system")).length());
+            assertEquals(system.substring(0, StatsWebCallService.MAXIMUM_METADATA_TEXT_CHARACTERS),
+                metadata.get("system"));
+        }
+        finally
+        {
+            service.close();
+        }
     }
 
     @Test
@@ -195,6 +277,42 @@ class StatsWebCallServiceTest
         }
     }
 
+    @Test
+    void blockedEncodeFromPreviousRunCannotPopulateOrPublishRestartedRun() throws Exception
+    {
+        StatsWebCallService service = new StatsWebCallService();
+        CountDownLatch encodeStarted = new CountDownLatch(1);
+        CountDownLatch releaseEncode = new CountDownLatch(1);
+        CompletedAudioCall template = call();
+        CompletedAudioCall blocked = new CompletedAudioCall(template.snapshot(),
+            new BlockingAudioBuffers(new float[400], encodeStarted, releaseEncode));
+        service.start();
+
+        try(StatsLiveEventHub.Subscription subscription = service.subscribe())
+        {
+            service.receive(blocked);
+            assertTrue(encodeStarted.await(5, TimeUnit.SECONDS));
+            service.stop();
+            service.start();
+            service.receive(call());
+            releaseEncode.countDown();
+
+            StatsLiveEventHub.LiveEvent event = subscription.poll(5, TimeUnit.SECONDS);
+            assertNotNull(event);
+            @SuppressWarnings("unchecked")
+            Map<String,Object> metadata = (Map<String,Object>)event.data();
+            assertEquals(100L, metadata.get("duration_ms"));
+            assertEquals(List.of(metadata), service.snapshot());
+            assertEquals(1, ((Number)service.status().get("cached_calls")).intValue());
+            assertNull(subscription.poll(0, TimeUnit.MILLISECONDS));
+        }
+        finally
+        {
+            releaseEncode.countDown();
+            service.close();
+        }
+    }
+
     private static CompletedAudioCall call()
     {
         return call(true, true);
@@ -207,8 +325,14 @@ class StatsWebCallServiceTest
 
     private static CompletedAudioCall call(boolean includeTarget, boolean traffic, boolean logicalChannel)
     {
+        return call(includeTarget, traffic, logicalChannel, "Test System");
+    }
+
+    private static CompletedAudioCall call(boolean includeTarget, boolean traffic, boolean logicalChannel,
+                                           String systemName)
+    {
         List<Identifier> identifiers = new ArrayList<>();
-        identifiers.add(SystemConfigurationIdentifier.create("Test System"));
+        identifiers.add(SystemConfigurationIdentifier.create(systemName));
         identifiers.add(FrequencyConfigurationIdentifier.create(854_187_500L));
         identifiers.add(APCO25RadioIdentifier.createFrom(9001));
 
@@ -267,5 +391,57 @@ class StatsWebCallServiceTest
         }
 
         return buffers;
+    }
+
+    private static class BlockingAudioBuffers extends AbstractList<float[]>
+    {
+        private final float[] mAudio;
+        private final CountDownLatch mEncodeStarted;
+        private final CountDownLatch mReleaseEncode;
+        private final AtomicInteger mIteratorCount = new AtomicInteger();
+
+        private BlockingAudioBuffers(float[] audio, CountDownLatch encodeStarted, CountDownLatch releaseEncode)
+        {
+            mAudio = audio;
+            mEncodeStarted = encodeStarted;
+            mReleaseEncode = releaseEncode;
+        }
+
+        @Override
+        public float[] get(int index)
+        {
+            if(index != 0)
+            {
+                throw new IndexOutOfBoundsException(index);
+            }
+
+            return mAudio;
+        }
+
+        @Override
+        public int size()
+        {
+            return 1;
+        }
+
+        @Override
+        public Iterator<float[]> iterator()
+        {
+            if(mIteratorCount.incrementAndGet() == 2)
+            {
+                mEncodeStarted.countDown();
+
+                try
+                {
+                    mReleaseEncode.await();
+                }
+                catch(InterruptedException exception)
+                {
+                    Thread.currentThread().interrupt();
+                }
+            }
+
+            return List.of(mAudio).iterator();
+        }
     }
 }

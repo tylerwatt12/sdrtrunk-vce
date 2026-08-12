@@ -634,8 +634,6 @@ public abstract class TunerEditor<T extends Tuner,C extends TunerConfiguration> 
 
                 if(tuner != null)
                 {
-                    mUserPreferences.getSpectrumPreference().setDisplayEnabled(true);
-
                     ThreadPool.CACHED.submit(() -> mTunerManager.getDiscoveredTunerModel().broadcast(new TunerEvent(tuner,
                             TunerEvent.Event.REQUEST_MAIN_SPECTRAL_DISPLAY)));
                 }

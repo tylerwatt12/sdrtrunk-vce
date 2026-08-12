@@ -12,15 +12,24 @@
 package io.github.dsheirer.stats.activity;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.github.dsheirer.audio.call.AudioCallId;
+import io.github.dsheirer.audio.call.AudioCallSnapshot;
+import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.channel.quality.ControlChannelQualitySnapshot;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
+import io.github.dsheirer.identifier.configuration.ChannelConfigurationIdentifier;
+import io.github.dsheirer.identifier.configuration.DecoderTypeConfigurationIdentifier;
+import io.github.dsheirer.identifier.configuration.FrequencyConfigurationIdentifier;
+import io.github.dsheirer.identifier.configuration.SiteGuidConfigurationIdentifier;
 import io.github.dsheirer.metadata.site.ProtocolSiteMetadataEvent;
+import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.dmr.DMRChannelMode;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
 import io.github.dsheirer.module.decode.dmr.telemetry.DMRNetworkConfigurationSnapshot;
@@ -44,7 +53,12 @@ import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -52,6 +66,518 @@ class P25ActivityLogServiceLifecycleTest
 {
     @TempDir
     Path mTemporaryFolder;
+
+    @Test
+    void preferenceNotificationAfterDisposeCannotRestartTheWriter() throws Exception
+    {
+        Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
+        TestUserPreferences userPreferences =
+            new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
+        P25ActivityLogService service = new P25ActivityLogService(userPreferences);
+
+        service.dispose();
+        service.preferenceUpdated(PreferenceType.APPLICATION);
+
+        assertEquals(P25ActivityLogStatus.State.STOPPED, service.getStatus().state());
+        assertFalse(service.getStatus().summaryActive());
+    }
+
+    @Test
+    void blockedStatisticsProjectionNeverBlocksTheDecoderCallback() throws Exception
+    {
+        Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
+        TestUserPreferences userPreferences =
+            new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
+        P25ActivityLogService service = new P25ActivityLogService(userPreferences);
+        Channel channel = new Channel("Observer isolation", Channel.ChannelType.STANDARD);
+        channel.setDecodeConfiguration(new DecodeConfigNBFM());
+        CountDownLatch projectionEntered = new CountDownLatch(1);
+        CountDownLatch releaseProjection = new CountDownLatch(1);
+        AtomicReference<Thread> projectionThread = new AtomicReference<>();
+        DecodeEvent blocked = new DecodeEvent(DecodeEventType.CALL, System.currentTimeMillis())
+        {
+            @Override
+            public DecodeEventType getEventType()
+            {
+                projectionThread.compareAndSet(null, Thread.currentThread());
+                projectionEntered.countDown();
+
+                try
+                {
+                    releaseProjection.await(3, TimeUnit.SECONDS);
+                }
+                catch(InterruptedException exception)
+                {
+                    Thread.currentThread().interrupt();
+                }
+
+                return super.getEventType();
+            }
+        };
+        DecodeEvent ordinary = DecodeEvent.builder(DecodeEventType.CALL, System.currentTimeMillis()).build();
+        Thread decoderThread = Thread.currentThread();
+
+        try
+        {
+            service.getDecodeEventListener().accept(channel, blocked);
+            assertTrue(projectionEntered.await(2, TimeUnit.SECONDS));
+            long started = System.nanoTime();
+
+            for(int x = 0; x < P25ActivityLogService.OBSERVATION_QUEUE_SIZE + 16; x++)
+            {
+                service.getDecodeEventListener().accept(channel, ordinary);
+            }
+
+            long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
+            assertTrue(elapsedMs < 500, "bounded offers took " + elapsedMs + " ms");
+            assertTrue(service.getObservationDropCount() > 0);
+            assertFalse(decoderThread == projectionThread.get());
+        }
+        finally
+        {
+            releaseProjection.countDown();
+            service.dispose();
+        }
+    }
+
+    @Test
+    void blockedProjectionDisposeLeavesQueuedCleanupToWorkerAndSuppressesCommitCallbacks() throws Exception
+    {
+        Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
+        TestUserPreferences userPreferences =
+            new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
+        P25ActivityLogService service = new P25ActivityLogService(userPreferences, 25, TimeUnit.MILLISECONDS);
+        Channel channel = new Channel("Observer shutdown", Channel.ChannelType.STANDARD);
+        channel.setDecodeConfiguration(new DecodeConfigNBFM());
+        CountDownLatch projectionEntered = new CountDownLatch(1);
+        CountDownLatch releaseProjection = new CountDownLatch(1);
+        AtomicInteger callbacks = new AtomicInteger();
+        DecodeEvent blocked = new DecodeEvent(DecodeEventType.CALL, System.currentTimeMillis())
+        {
+            @Override
+            public DecodeEventType getEventType()
+            {
+                projectionEntered.countDown();
+
+                try
+                {
+                    releaseProjection.await();
+                }
+                catch(InterruptedException exception)
+                {
+                    Thread.currentThread().interrupt();
+                }
+
+                return super.getEventType();
+            }
+        };
+        DecodeEvent queued = DecodeEvent.builder(DecodeEventType.CALL, System.currentTimeMillis() + 1).build();
+        service.addActivityCommitListener(rowIds -> callbacks.incrementAndGet());
+
+        try
+        {
+            service.getDecodeEventListener().accept(channel, blocked);
+            assertTrue(projectionEntered.await(2, TimeUnit.SECONDS));
+            service.getDecodeEventListener().accept(channel, queued);
+            assertEquals(1, service.getPendingObservationCount());
+            var retiredEpoch = service.getObservationIngressForTest();
+
+            service.dispose();
+            assertFalse(service.isObservationWorkerTerminated());
+            assertEquals(0, service.getPendingObservationCount());
+            assertEquals(1, retiredEpoch.size(),
+                "dispose must abandon the old epoch instead of consuming it on the caller thread");
+
+            releaseProjection.countDown();
+            awaitWorkerTermination(service);
+            assertEquals(0, service.getPendingObservationCount());
+            assertEquals(0, callbacks.get());
+            service.getDecodeEventListener().accept(channel, queued);
+            assertEquals(0, service.getPendingObservationCount());
+        }
+        finally
+        {
+            releaseProjection.countDown();
+            service.dispose();
+        }
+    }
+
+    @Test
+    void callbackPausedAcrossDisableAndReenableCannotEnterTheNewObservationEpoch() throws Exception
+    {
+        Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
+        TestUserPreferences userPreferences =
+            new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
+        CountDownLatch activeEpochCaptured = new CountDownLatch(1);
+        CountDownLatch disabledEpochCaptured = new CountDownLatch(1);
+        CountDownLatch releaseActiveProducer = new CountDownLatch(1);
+        CountDownLatch releaseDisabledProducer = new CountDownLatch(1);
+        AtomicInteger producerSnapshot = new AtomicInteger();
+        Runnable pauseAfterSnapshot = () -> {
+            int snapshot = producerSnapshot.incrementAndGet();
+            CountDownLatch captured = snapshot == 1 ? activeEpochCaptured :
+                snapshot == 2 ? disabledEpochCaptured : null;
+            CountDownLatch release = snapshot == 1 ? releaseActiveProducer :
+                snapshot == 2 ? releaseDisabledProducer : null;
+
+            if(captured != null)
+            {
+                captured.countDown();
+
+                try
+                {
+                    release.await();
+                }
+                catch(InterruptedException exception)
+                {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        };
+        P25ActivityLogService service = new P25ActivityLogService(userPreferences, 2, TimeUnit.SECONDS,
+            pauseAfterSnapshot);
+        Channel channel = new Channel("Observation epochs", Channel.ChannelType.STANDARD);
+        channel.setRadresGuid("00000000-0000-0000-0000-000000000305");
+        channel.setDecodeConfiguration(new DecodeConfigNBFM());
+        long oldTimestamp = System.currentTimeMillis();
+        long disabledTimestamp = oldTimestamp + 5_000L;
+        long newTimestamp = oldTimestamp + 10_000L;
+        DecodeEvent staleActive = DecodeEvent.builder(DecodeEventType.CALL, oldTimestamp)
+            .channel(new StandardChannel(154_310_000L))
+            .identifiers(new IdentifierCollection())
+            .build();
+        DecodeEvent staleDisabled = DecodeEvent.builder(DecodeEventType.CALL, disabledTimestamp)
+            .channel(new StandardChannel(154_310_000L))
+            .identifiers(new IdentifierCollection())
+            .build();
+        DecodeEvent current = DecodeEvent.builder(DecodeEventType.CALL, newTimestamp)
+            .channel(new StandardChannel(154_310_000L))
+            .identifiers(new IdentifierCollection())
+            .build();
+        AtomicReference<Throwable> producerFailure = new AtomicReference<>();
+        Thread staleActiveProducer = new Thread(() -> {
+            try
+            {
+                service.getDecodeEventListener().accept(channel, staleActive);
+            }
+            catch(Throwable throwable)
+            {
+                producerFailure.set(throwable);
+            }
+        }, "stale active-epoch producer");
+        Thread staleDisabledProducer = new Thread(() -> {
+            try
+            {
+                service.getDecodeEventListener().accept(channel, staleDisabled);
+            }
+            catch(Throwable throwable)
+            {
+                producerFailure.compareAndSet(null, throwable);
+            }
+        }, "stale disabled-epoch producer");
+
+        try
+        {
+            staleActiveProducer.start();
+            assertTrue(activeEpochCaptured.await(2, TimeUnit.SECONDS));
+
+            applicationPreference.setCollectionEnabled(false);
+            service.preferenceUpdated(PreferenceType.APPLICATION);
+            staleDisabledProducer.start();
+            assertTrue(disabledEpochCaptured.await(2, TimeUnit.SECONDS));
+            applicationPreference.setCollectionEnabled(true);
+            service.preferenceUpdated(PreferenceType.APPLICATION);
+
+            releaseActiveProducer.countDown();
+            releaseDisabledProducer.countDown();
+            staleActiveProducer.join(TimeUnit.SECONDS.toMillis(2));
+            staleDisabledProducer.join(TimeUnit.SECONDS.toMillis(2));
+            assertFalse(staleActiveProducer.isAlive());
+            assertFalse(staleDisabledProducer.isAlive());
+            assertEquals(null, producerFailure.get());
+
+            service.getDecodeEventListener().accept(channel, current);
+            awaitCount(database, "p25_activity_event", 1);
+            assertEquals(newTimestamp, scalar(database,
+                "SELECT observed_at_ms FROM p25_activity_event"));
+        }
+        finally
+        {
+            releaseActiveProducer.countDown();
+            releaseDisabledProducer.countDown();
+            staleActiveProducer.join(TimeUnit.SECONDS.toMillis(2));
+            staleDisabledProducer.join(TimeUnit.SECONDS.toMillis(2));
+            service.dispose();
+        }
+    }
+
+    @Test
+    void completedCallPausedAcrossDisableAndReenableCannotWriteIntoTheNewEpoch() throws Exception
+    {
+        Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
+        TestUserPreferences userPreferences =
+            new TestUserPreferences(applicationPreference, new TestDirectoryPreference(mTemporaryFolder));
+        CountDownLatch oldEpochCaptured = new CountDownLatch(1);
+        CountDownLatch releaseOldOutput = new CountDownLatch(1);
+        AtomicBoolean pauseNextOutput = new AtomicBoolean();
+        Runnable pauseAfterSnapshot = () -> {
+            if(pauseNextOutput.compareAndSet(true, false))
+            {
+                oldEpochCaptured.countDown();
+
+                try
+                {
+                    releaseOldOutput.await();
+                }
+                catch(InterruptedException exception)
+                {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        };
+        P25ActivityLogService service = new P25ActivityLogService(userPreferences, 2, TimeUnit.SECONDS,
+            pauseAfterSnapshot);
+        Channel channel = new Channel("Completed-call epochs", Channel.ChannelType.STANDARD);
+        channel.setDecodeConfiguration(new DecodeConfigNBFM());
+        long frequency = 154_310_000L;
+        long start = System.currentTimeMillis();
+        DecodeEvent context = DecodeEvent.builder(DecodeEventType.CALL, start)
+            .channel(new StandardChannel(frequency))
+            .identifiers(new IdentifierCollection())
+            .build();
+        CompletedAudioCall stale = conventionalCompletedCall(1, channel.getConfigurationId(),
+            channel.getRadresGuid(), frequency, start + 1_000L);
+        CompletedAudioCall current = conventionalCompletedCall(2, channel.getConfigurationId(),
+            channel.getRadresGuid(), frequency, start + 2_000L);
+        AtomicReference<Throwable> producerFailure = new AtomicReference<>();
+        Thread staleProducer = new Thread(() -> {
+            try
+            {
+                service.receiveRecordedCall(stale);
+            }
+            catch(Throwable throwable)
+            {
+                producerFailure.set(throwable);
+            }
+        }, "stale completed-call producer");
+
+        try
+        {
+            service.getDecodeEventListener().accept(channel, context);
+            awaitCount(database, "p25_activity_event", 1);
+            assertEquals(new P25ActivityLogMapper().mapCompletedCallOutput(current.snapshot(),
+                    P25ActivityLogRecords.CallOutput.RECORDED).contextKey(),
+                scalarText(database, "SELECT context_key FROM receiver_context LIMIT 1"));
+
+            var retiredIngress = service.getObservationIngressForTest();
+            pauseNextOutput.set(true);
+            staleProducer.start();
+            assertTrue(oldEpochCaptured.await(2, TimeUnit.SECONDS));
+
+            applicationPreference.setCollectionEnabled(false);
+            service.preferenceUpdated(PreferenceType.APPLICATION);
+            applicationPreference.setCollectionEnabled(true);
+            service.preferenceUpdated(PreferenceType.APPLICATION);
+
+            releaseOldOutput.countDown();
+            staleProducer.join(TimeUnit.SECONDS.toMillis(2));
+            assertFalse(staleProducer.isAlive());
+            assertEquals(null, producerFailure.get());
+            var retiredOutput = retiredIngress.poll();
+            assertTrue(retiredOutput != null && retiredOutput.first() instanceof AudioCallSnapshot,
+                "the bounded statistics queue must retain only compact call metadata");
+            assertFalse(retiredOutput.first() instanceof CompletedAudioCall,
+                "completed-call audio buffers must never be retained by statistics ingress");
+
+            service.receiveRecordedCall(current);
+            awaitScalar(database,
+                "SELECT COALESCE(SUM(recorded_count), 0) FROM conventional_activity_summary", 1);
+            assertEquals(1, scalar(database,
+                "SELECT COALESCE(SUM(recorded_count), 0) FROM conventional_activity_summary"));
+        }
+        finally
+        {
+            releaseOldOutput.countDown();
+            staleProducer.join(TimeUnit.SECONDS.toMillis(2));
+            service.dispose();
+        }
+    }
+
+    @Test
+    void writerReplacementUsesDistinctInactiveAndActiveEpochs() throws Exception
+    {
+        Path firstDatabase = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
+        Path secondRoot = mTemporaryFolder.resolve("replacement");
+        Path secondDatabase = SdrTrunkDatabasePath.getDatabasePath(secondRoot);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(firstDatabase);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(secondDatabase);
+        TestApplicationPreference applicationPreference = new TestApplicationPreference(true, 30, true);
+        TestDirectoryPreference directoryPreference = new TestDirectoryPreference(mTemporaryFolder);
+        TestUserPreferences userPreferences = new TestUserPreferences(applicationPreference, directoryPreference);
+        CountDownLatch oldActiveCaptured = new CountDownLatch(1);
+        CountDownLatch inactiveCaptured = new CountDownLatch(1);
+        CountDownLatch releaseOldActive = new CountDownLatch(1);
+        CountDownLatch releaseInactive = new CountDownLatch(1);
+        CountDownLatch writerReadyToActivate = new CountDownLatch(1);
+        CountDownLatch allowWriterActivation = new CountDownLatch(1);
+        AtomicInteger producerSnapshot = new AtomicInteger();
+        Runnable pauseAfterSnapshot = () -> {
+            int snapshot = producerSnapshot.incrementAndGet();
+            CountDownLatch captured = snapshot == 1 ? oldActiveCaptured : snapshot == 2 ? inactiveCaptured : null;
+            CountDownLatch release = snapshot == 1 ? releaseOldActive : snapshot == 2 ? releaseInactive : null;
+
+            if(captured != null)
+            {
+                captured.countDown();
+
+                try
+                {
+                    release.await();
+                }
+                catch(InterruptedException exception)
+                {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        };
+        Runnable pauseBeforeActivation = () -> {
+            writerReadyToActivate.countDown();
+
+            try
+            {
+                allowWriterActivation.await();
+            }
+            catch(InterruptedException exception)
+            {
+                Thread.currentThread().interrupt();
+            }
+        };
+        P25ActivityLogService service = new P25ActivityLogService(userPreferences, 2, TimeUnit.SECONDS,
+            pauseAfterSnapshot, pauseBeforeActivation);
+        Channel channel = new Channel("Writer transition epochs", Channel.ChannelType.STANDARD);
+        channel.setRadresGuid("00000000-0000-0000-0000-000000000306");
+        channel.setDecodeConfiguration(new DecodeConfigNBFM());
+        long start = System.currentTimeMillis();
+        DecodeEvent oldActive = conventionalEvent(start);
+        DecodeEvent inactive = conventionalEvent(start + 5_000L);
+        DecodeEvent current = conventionalEvent(start + 10_000L);
+        AtomicReference<Throwable> producerFailure = new AtomicReference<>();
+        Thread oldActiveProducer = observationProducer(service, channel, oldActive, producerFailure,
+            "old writer epoch producer");
+        Thread inactiveProducer = observationProducer(service, channel, inactive, producerFailure,
+            "inactive writer epoch producer");
+
+        try
+        {
+            oldActiveProducer.start();
+            assertTrue(oldActiveCaptured.await(2, TimeUnit.SECONDS));
+            directoryPreference.setRoot(secondRoot);
+            service.preferenceUpdated(PreferenceType.DIRECTORY);
+            assertTrue(writerReadyToActivate.await(8, TimeUnit.SECONDS));
+
+            inactiveProducer.start();
+            assertTrue(inactiveCaptured.await(2, TimeUnit.SECONDS));
+            allowWriterActivation.countDown();
+            awaitWriterTransition(service, secondDatabase);
+
+            releaseOldActive.countDown();
+            releaseInactive.countDown();
+            oldActiveProducer.join(TimeUnit.SECONDS.toMillis(2));
+            inactiveProducer.join(TimeUnit.SECONDS.toMillis(2));
+            assertFalse(oldActiveProducer.isAlive());
+            assertFalse(inactiveProducer.isAlive());
+            assertEquals(null, producerFailure.get());
+
+            service.getDecodeEventListener().accept(channel, current);
+            awaitCount(secondDatabase, "p25_activity_event", 1);
+            assertEquals(start + 10_000L, scalar(secondDatabase,
+                "SELECT observed_at_ms FROM p25_activity_event"));
+            assertEquals(0, count(firstDatabase, "p25_activity_event"));
+        }
+        finally
+        {
+            releaseOldActive.countDown();
+            releaseInactive.countDown();
+            allowWriterActivation.countDown();
+            oldActiveProducer.join(TimeUnit.SECONDS.toMillis(2));
+            inactiveProducer.join(TimeUnit.SECONDS.toMillis(2));
+            service.dispose();
+        }
+    }
+
+    private static DecodeEvent conventionalEvent(long timestamp)
+    {
+        return DecodeEvent.builder(DecodeEventType.CALL, timestamp)
+            .channel(new StandardChannel(154_310_000L))
+            .identifiers(new IdentifierCollection())
+            .build();
+    }
+
+    private static CompletedAudioCall conventionalCompletedCall(long sequence, String configurationId, String guid,
+                                                                 long frequency, long timestamp)
+    {
+        MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
+        identifiers.update(ChannelConfigurationIdentifier.create(configurationId));
+        identifiers.update(SiteGuidConfigurationIdentifier.create(guid));
+        identifiers.update(FrequencyConfigurationIdentifier.create(frequency));
+        identifiers.update(DecoderTypeConfigurationIdentifier.create(DecoderType.NBFM));
+        AudioCallSnapshot snapshot = new AudioCallSnapshot(new AudioCallId(sequence, sequence + 1, 0), null, null,
+            identifiers, Set.of(), timestamp, timestamp + 100L, 1, 1, timestamp, timestamp + 100L,
+            false, true, false, true, 100, false);
+        return new CompletedAudioCall(snapshot, List.of(new float[800]));
+    }
+
+    private static Thread observationProducer(P25ActivityLogService service, Channel channel, DecodeEvent event,
+                                              AtomicReference<Throwable> failure, String name)
+    {
+        return new Thread(() -> {
+            try
+            {
+                service.getDecodeEventListener().accept(channel, event);
+            }
+            catch(Throwable throwable)
+            {
+                failure.compareAndSet(null, throwable);
+            }
+        }, name);
+    }
+
+    private static void awaitWriterTransition(P25ActivityLogService service, Path expectedPath)
+        throws InterruptedException
+    {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(8);
+
+        while((service.isWriterTransitionActiveForTest() ||
+            !expectedPath.equals(service.getCurrentDatabasePathForTest())) && System.nanoTime() < deadline)
+        {
+            Thread.sleep(5);
+        }
+
+        assertFalse(service.isWriterTransitionActiveForTest(), "writer transition did not finish");
+        assertEquals(expectedPath, service.getCurrentDatabasePathForTest());
+    }
+
+    private static void awaitWorkerTermination(P25ActivityLogService service) throws InterruptedException
+    {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(8);
+
+        while(!service.isObservationWorkerTerminated() && System.nanoTime() < deadline)
+        {
+            Thread.sleep(5);
+        }
+
+        assertTrue(service.isObservationWorkerTerminated(), "statistics observer did not terminate");
+    }
 
     @Test
     void countsOneConventionalP25StartNotItsMutableTrackerUpdates() throws Exception
@@ -367,6 +893,17 @@ class P25ActivityLogServiceLifecycleTest
         }
     }
 
+    private static String scalarText(Path database, String sql) throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement();
+            ResultSet resultSet = statement.executeQuery(sql))
+        {
+            assertTrue(resultSet.next());
+            return resultSet.getString(1);
+        }
+    }
+
     private static void awaitCount(Path database, String table, int expected) throws Exception
     {
         long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(5);
@@ -376,6 +913,20 @@ class P25ActivityLogServiceLifecycleTest
         {
             Thread.sleep(25);
             actual = count(database, table);
+        }
+
+        assertEquals(expected, actual);
+    }
+
+    private static void awaitScalar(Path database, String sql, long expected) throws Exception
+    {
+        long deadline = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(5);
+        long actual = scalar(database, sql);
+
+        while(actual != expected && System.currentTimeMillis() < deadline)
+        {
+            Thread.sleep(25);
+            actual = scalar(database, sql);
         }
 
         assertEquals(expected, actual);
@@ -503,7 +1054,7 @@ class P25ActivityLogServiceLifecycleTest
 
     private static class TestDirectoryPreference extends DirectoryPreference
     {
-        private final Path mRoot;
+        private Path mRoot;
 
         private TestDirectoryPreference(Path root)
         {
@@ -515,6 +1066,11 @@ class P25ActivityLogServiceLifecycleTest
         public Path getDirectoryApplicationRoot()
         {
             return mRoot;
+        }
+
+        private void setRoot(Path root)
+        {
+            mRoot = root;
         }
     }
 }

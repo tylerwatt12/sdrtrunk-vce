@@ -18,7 +18,6 @@
  */
 package io.github.dsheirer.spectrum;
 
-import io.github.dsheirer.preference.spectrum.SpectrumPreference;
 import io.github.dsheirer.source.tuner.Tuner;
 import io.github.dsheirer.source.tuner.TunerEvent;
 import io.github.dsheirer.source.tuner.ui.DiscoveredTunerModel;
@@ -28,25 +27,16 @@ import java.awt.EventQueue;
 
 public class ShowTunerMenuItem extends JMenuItem
 {
-    private DiscoveredTunerModel mDiscoveredTunerModel;
-    private Tuner mTuner;
-    private SpectrumPreference mSpectrumPreference;
+    private final DiscoveredTunerModel mDiscoveredTunerModel;
+    private final Tuner mTuner;
 
-    public ShowTunerMenuItem(DiscoveredTunerModel discoveredTunerModel, Tuner tuner,
-                             SpectrumPreference spectrumPreference)
+    public ShowTunerMenuItem(DiscoveredTunerModel discoveredTunerModel, Tuner tuner)
     {
         super(tuner != null ? "Show: " + tuner.getPreferredName() : "(empty)");
         mDiscoveredTunerModel = discoveredTunerModel;
         mTuner = tuner;
-        mSpectrumPreference = spectrumPreference;
 
-        addActionListener(e -> EventQueue.invokeLater(() ->
-        {
-            if(mSpectrumPreference != null)
-            {
-                mSpectrumPreference.setDisplayEnabled(true);
-            }
-            mDiscoveredTunerModel.broadcast(new TunerEvent(mTuner, TunerEvent.Event.REQUEST_MAIN_SPECTRAL_DISPLAY));
-        }));
+        addActionListener(e -> EventQueue.invokeLater(() -> mDiscoveredTunerModel.broadcast(
+            new TunerEvent(mTuner, TunerEvent.Event.REQUEST_MAIN_SPECTRAL_DISPLAY))));
     }
 }

@@ -12,13 +12,17 @@
 package io.github.dsheirer.stats;
 
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
+import io.github.dsheirer.module.Module;
 import io.github.dsheirer.module.ProcessingChain;
 import io.github.dsheirer.module.decode.FeedbackDecoder;
 import io.github.dsheirer.module.decode.PrimaryDecoder;
+import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.sample.SampleType;
-import io.github.dsheirer.sample.complex.ComplexSamplesToNativeBufferModule;
+import io.github.dsheirer.sample.complex.ComplexSamples;
+import io.github.dsheirer.sample.complex.IComplexSamplesListener;
 import io.github.dsheirer.source.Source;
 import io.github.dsheirer.spectrum.DFTSize;
+import io.github.dsheirer.util.concurrent.BoundedSpscFloatBatchQueue;
 import java.time.Duration;
 import java.util.Collections;
 import java.util.IdentityHashMap;
@@ -31,13 +35,14 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.atomic.AtomicReference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
  * Demand-owned selected-channel diagnostics.  Viewers of the same processing chain share one signal FFT and one
- * decoder symbol observer.  With no viewers this service owns no receiver listener, scheduled task, or worker.
+ * decoder symbol observer.  Web and HTTP threads only create leases; source resolution and processing-chain probe
+ * attachment are performed asynchronously on the shared low-priority diagnostic worker.  With no viewers this
+ * service owns no receiver listener, scheduled task, or worker.
  */
 public final class ChannelDiagnosticService implements AutoCloseable
 {
@@ -54,10 +59,12 @@ public final class ChannelDiagnosticService implements AutoCloseable
     private final ChannelProcessingManager mChannelProcessingManager;
     private final DiagnosticFftScheduler mFftScheduler;
     private final boolean mOwnsFftScheduler;
+    private final ChannelDiagnosticBindingScheduler mBindingScheduler = new ChannelDiagnosticBindingScheduler();
     private final Map<Scope,ScopeBinding> mBindings = new LinkedHashMap<>();
     private final Map<ProcessingChain,Producer> mProducers = new IdentityHashMap<>();
     private final Set<Session> mSessions = Collections.newSetFromMap(new IdentityHashMap<>());
     private final AtomicLong mGeneration = new AtomicLong();
+    private ChannelDiagnosticBindingScheduler.Task mBindingTask;
     private boolean mClosed;
 
     public ChannelDiagnosticService(ChannelProcessingManager channelProcessingManager)
@@ -101,18 +108,10 @@ public final class ChannelDiagnosticService implements AutoCloseable
             session = new Session(binding);
             mSessions.add(session);
             binding.add(session);
+            ensureBindingTask();
         }
 
-        try
-        {
-            binding.refresh(true);
-            return new OpenResult(OpenStatus.OPEN, session);
-        }
-        catch(RuntimeException exception)
-        {
-            session.close();
-            throw exception;
-        }
+        return new OpenResult(OpenStatus.OPEN, session);
     }
 
     /**
@@ -143,6 +142,11 @@ public final class ChannelDiagnosticService implements AutoCloseable
     synchronized int activeProducerCount()
     {
         return mProducers.size();
+    }
+
+    boolean hasBindingWorker()
+    {
+        return mBindingScheduler.hasWorker();
     }
 
     private synchronized Producer acquireProducer(ProcessingChain processingChain, BindingInfo info,
@@ -207,6 +211,47 @@ public final class ChannelDiagnosticService implements AutoCloseable
             mBindings.remove(binding.scope(), binding);
             binding.close();
         }
+
+        if(mSessions.isEmpty() && mBindingTask != null)
+        {
+            mBindingTask.close();
+            mBindingTask = null;
+        }
+    }
+
+    private synchronized void ensureBindingTask()
+    {
+        if(mBindingTask == null && !mClosed)
+        {
+            mBindingTask = mBindingScheduler.scheduleWithFixedDelay(this::refreshBindingsSafely, 4);
+        }
+    }
+
+    private void refreshBindingsSafely()
+    {
+        List<ScopeBinding> bindings;
+
+        synchronized(this)
+        {
+            if(mClosed)
+            {
+                return;
+            }
+
+            bindings = List.copyOf(mBindings.values());
+        }
+
+        for(ScopeBinding binding: bindings)
+        {
+            try
+            {
+                binding.refresh(false);
+            }
+            catch(RuntimeException exception)
+            {
+                mLog.warn("Unable to refresh selected-channel diagnostic binding", exception);
+            }
+        }
     }
 
     @Override
@@ -233,12 +278,20 @@ public final class ChannelDiagnosticService implements AutoCloseable
 
             mProducers.clear();
             mBindings.clear();
+
+            if(mBindingTask != null)
+            {
+                mBindingTask.close();
+                mBindingTask = null;
+            }
         }
 
         if(mOwnsFftScheduler)
         {
             mFftScheduler.close();
         }
+
+        mBindingScheduler.close();
     }
 
     public enum OpenStatus
@@ -286,7 +339,7 @@ public final class ChannelDiagnosticService implements AutoCloseable
         {
             if(!mSessionClosed.get())
             {
-                mBinding.refresh(false);
+                mBinding.requestRefresh();
             }
 
             return mBinding.state();
@@ -336,6 +389,7 @@ public final class ChannelDiagnosticService implements AutoCloseable
         private boolean mRetryProducer;
         private long mNextRefreshNanos;
         private long mStateRevision;
+        private volatile boolean mRefreshRequested = true;
         private volatile State mState;
 
         private ScopeBinding(Scope scope)
@@ -398,11 +452,12 @@ public final class ChannelDiagnosticService implements AutoCloseable
 
             long now = System.nanoTime();
 
-            if(!force && now < mNextRefreshNanos)
+            if(!force && !mRefreshRequested && now < mNextRefreshNanos)
             {
                 return;
             }
 
+            mRefreshRequested = false;
             mNextRefreshNanos = now + BINDING_REFRESH_NANOS;
             List<ProcessingChain> matches = mChannelProcessingManager.getProcessingChainsByConfiguration(
                 mScope.configurationId(), mScope.frequencyHz());
@@ -484,8 +539,13 @@ public final class ChannelDiagnosticService implements AutoCloseable
             }
 
             mProducer = producer;
-            mRetryProducer = false;
+            mRetryProducer = producer.hasTransientAttachmentFailure();
             updateProducerState(producer, info);
+        }
+
+        private void requestRefresh()
+        {
+            mRefreshRequested = true;
         }
 
         private void updateProducerState(Producer producer, BindingInfo info)
@@ -690,6 +750,12 @@ public final class ChannelDiagnosticService implements AutoCloseable
             return "live".equals(mSignalState) || "live".equals(mSymbolsState);
         }
 
+        private boolean hasTransientAttachmentFailure()
+        {
+            return (mInfo.signalSupported() && mSignalSource == null) ||
+                (mInfo.symbolsSupported() && mSymbolSource == null);
+        }
+
         private boolean isClosed()
         {
             return mClosed.get();
@@ -757,7 +823,7 @@ public final class ChannelDiagnosticService implements AutoCloseable
         private final ProcessingChain mProcessingChain;
         private final AtomicLong mSequence = new AtomicLong();
         private final AtomicBoolean mClosed = new AtomicBoolean();
-        private final ComplexSamplesToNativeBufferModule mTap = new ComplexSamplesToNativeBufferModule();
+        private final SignalTap mTap;
         private final DemandDftProcessor mDftProcessor;
 
         private SignalSource(Producer producer, ProcessingChain processingChain, BindingInfo info)
@@ -767,17 +833,17 @@ public final class ChannelDiagnosticService implements AutoCloseable
             DFTSize dftSize = info.fftSize() == DFTSize.FFT00512.getSize() ? DFTSize.FFT00512 : DFTSize.FFT01024;
             mDftProcessor = new DemandDftProcessor(producer.scheduler(), dftSize,
                 SIGNAL_FRAMES_PER_SECOND, this::publish);
+            mTap = new SignalTap(mDftProcessor);
             boolean moduleAdded = false;
 
             try
             {
-                mTap.setListener(mDftProcessor);
                 mProcessingChain.addModule(mTap);
                 moduleAdded = true;
             }
             catch(RuntimeException exception)
             {
-                mTap.removeListener();
+                mTap.close();
 
                 if(moduleAdded || mProcessingChain.getModules().contains(mTap))
                 {
@@ -815,7 +881,7 @@ public final class ChannelDiagnosticService implements AutoCloseable
                 return;
             }
 
-            mTap.removeListener();
+            mTap.close();
 
             try
             {
@@ -835,16 +901,68 @@ public final class ChannelDiagnosticService implements AutoCloseable
         }
     }
 
+    /**
+     * Processing-chain tap whose producer callback only offers the existing ComplexSamples reference to a fixed
+     * SPSC ingress.  Native-buffer adaptation and FFT work occur later on the diagnostic worker.
+     */
+    private static final class SignalTap extends Module implements IComplexSamplesListener, Listener<ComplexSamples>,
+        AutoCloseable
+    {
+        private final DemandDftProcessor mProcessor;
+        private final AtomicBoolean mClosed = new AtomicBoolean();
+
+        private SignalTap(DemandDftProcessor processor)
+        {
+            mProcessor = processor;
+        }
+
+        @Override
+        public Listener<ComplexSamples> getComplexSamplesListener()
+        {
+            return this;
+        }
+
+        @Override
+        public void receive(ComplexSamples samples)
+        {
+            if(!mClosed.get())
+            {
+                mProcessor.receive(samples);
+            }
+        }
+
+        @Override
+        public void close()
+        {
+            mClosed.set(true);
+        }
+
+        @Override
+        public void reset()
+        {
+        }
+
+        @Override
+        public void start()
+        {
+        }
+
+        @Override
+        public void stop()
+        {
+        }
+    }
+
     private static final class SymbolSource implements FeedbackDecoder.SymbolObserver, AutoCloseable
     {
         private final Producer mProducer;
         private final FeedbackDecoder mDecoder;
-        private final AtomicReference<float[]> mPendingBatch = new AtomicReference<>();
+        private final BoundedSpscFloatBatchQueue mBatches =
+            new BoundedSpscFloatBatchQueue(SYMBOL_BATCH_SIZE, 4);
         private final AtomicLong mSequence = new AtomicLong();
+        private final AtomicLong mDroppedSymbols = new AtomicLong();
         private final AtomicBoolean mClosed = new AtomicBoolean();
         private final DiagnosticFftScheduler.Task mDrainTask;
-        private float[] mBatch = new float[SYMBOL_BATCH_SIZE];
-        private int mPointer;
 
         private SymbolSource(Producer producer, FeedbackDecoder decoder)
         {
@@ -872,27 +990,31 @@ public final class ChannelDiagnosticService implements AutoCloseable
                 return;
             }
 
-            float[] batch = mBatch;
-            batch[mPointer++] = symbol;
-
-            if(mPointer == batch.length)
+            if(!mBatches.offer(symbol))
             {
-                mBatch = new float[SYMBOL_BATCH_SIZE];
-                mPointer = 0;
-                mPendingBatch.set(batch);
+                mDroppedSymbols.incrementAndGet();
             }
         }
 
         private void drain()
         {
-            float[] batch = mPendingBatch.getAndSet(null);
+            float[] batch;
 
-            if(batch != null && !mClosed.get())
+            while(!mClosed.get() && (batch = mBatches.poll()) != null)
             {
-                BindingInfo info = mProducer.info();
-                mProducer.publish(DiagnosticStreamFrame.float32(DiagnosticStreamFrame.TYPE_CHANNEL_SYMBOLS,
-                    mProducer.generation(), mSequence.incrementAndGet(), System.currentTimeMillis(),
-                    info.frequencyHz(), info.sampleRateHz(), 0, batch));
+                try
+                {
+                    BindingInfo info = mProducer.info();
+                    mProducer.publish(DiagnosticStreamFrame.float32(DiagnosticStreamFrame.TYPE_CHANNEL_SYMBOLS,
+                        mProducer.generation(), mSequence.incrementAndGet(), System.currentTimeMillis(),
+                        info.frequencyHz(), info.sampleRateHz(), 0, batch));
+                }
+                finally
+                {
+                    //DiagnosticStreamFrame copied the values into its encoded byte array, so this preallocated batch
+                    //can be returned to the producer without retaining or allocating another float array.
+                    mBatches.release();
+                }
             }
         }
 
@@ -902,7 +1024,6 @@ public final class ChannelDiagnosticService implements AutoCloseable
             if(mClosed.compareAndSet(false, true))
             {
                 mDecoder.removeSymbolObserver(this);
-                mPendingBatch.set(null);
                 mDrainTask.close();
             }
         }

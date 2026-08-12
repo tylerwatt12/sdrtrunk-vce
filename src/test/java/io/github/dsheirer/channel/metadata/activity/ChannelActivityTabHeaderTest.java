@@ -25,7 +25,8 @@ class ChannelActivityTabHeaderTest
     {
         AtomicReference<ChannelActivityTableModel> closed = new AtomicReference<>();
         AtomicBoolean selected = new AtomicBoolean();
-        ChannelActivityTableModel model = new ChannelActivityTableModel("County Site", null, true);
+        ChannelActivityTableModel model = new ChannelActivityTableModel(
+            new ChannelActivityTableState("County Site", null, true, null));
 
         SwingUtilities.invokeAndWait(() -> {
             ChannelActivityTabHeader header = new ChannelActivityTabHeader(model, () -> selected.set(true),
@@ -49,22 +50,28 @@ class ChannelActivityTabHeaderTest
     void activeControlReplacesCloseButtonWithStatusAndBlocksStaleAction() throws Exception
     {
         AtomicReference<ChannelActivityTableModel> closed = new AtomicReference<>();
-        ChannelActivityTableModel model = new ChannelActivityTableModel("Old Title", null, true);
+        ChannelActivityTableState state = new ChannelActivityTableState("Old Title", null, true, null);
+        ChannelActivityTableModel model = new ChannelActivityTableModel(state);
+        AtomicReference<ChannelActivityTabHeader> headerReference = new AtomicReference<>();
 
         SwingUtilities.invokeAndWait(() -> {
             ChannelActivityTabHeader header = new ChannelActivityTabHeader(model, () -> {}, closed::set);
-            model.setTitle("Current Site");
-            model.setControlActive(true);
+            headerReference.set(header);
+        });
+
+        state.setTitle("Current Site");
+        state.setControlActive(true);
+
+        SwingUtilities.invokeAndWait(() -> {
+            ChannelActivityTabHeader header = headerReference.get();
             header.getCloseButton().doClick();
             assertNull(closed.get());
-
             header.update();
 
             assertEquals("Current Site", header.getTitleLabel().getText());
             assertTrue(header.getActiveIndicator().isVisible());
             assertFalse(header.getCloseButton().isVisible());
             assertFalse(header.getCloseButton().isEnabled());
-
         });
     }
 }

@@ -28,18 +28,22 @@ import net.miginfocom.swing.MigLayout;
 import javax.swing.JFrame;
 import javax.swing.WindowConstants;
 import java.awt.EventQueue;
-import java.awt.event.WindowAdapter;
-import java.awt.event.WindowEvent;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 
 public class SpectrumFrame extends JFrame
 {
     private static final long serialVersionUID = 1L;
 
-    private SpectralDisplayPanel mSpectralDisplayPanel;
+    private final SpectralDisplayPanel mSpectralDisplayPanel;
+    private final Consumer<SpectrumFrame> mCloseListener;
+    private final AtomicBoolean mDisposed = new AtomicBoolean();
 
     public SpectrumFrame(ConfigurationManager configurationManager, SettingsManager settingsManager,
-                         DiscoveredTunerModel discoveredTunerModel, Tuner tuner, UserPreferences userPreferences)
+                         DiscoveredTunerModel discoveredTunerModel, Tuner tuner, UserPreferences userPreferences,
+                         Consumer<SpectrumFrame> closeListener)
     {
+        mCloseListener = closeListener;
         setTitle("sdrtrunk-vce [" + tuner.getPreferredName() + "]");
         setBounds(100, 100, 1280, 600);
         setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
@@ -52,16 +56,27 @@ public class SpectrumFrame extends JFrame
         mSpectralDisplayPanel.showTuner(tuner);
         add(mSpectralDisplayPanel, "grow");
 
-        /* Register a shutdown listener */
-        addWindowListener(new WindowAdapter()
+        EventQueue.invokeLater(() -> setVisible(true));
+    }
+
+    @Override
+    public void dispose()
+    {
+        if(mDisposed.compareAndSet(false, true))
         {
-            @Override
-            public void windowClosed(WindowEvent event)
+            try
             {
                 mSpectralDisplayPanel.dispose();
             }
-        });
+            finally
+            {
+                if(mCloseListener != null)
+                {
+                    mCloseListener.accept(this);
+                }
+            }
+        }
 
-        EventQueue.invokeLater(() -> setVisible(true));
+        super.dispose();
     }
 }

@@ -18,7 +18,7 @@ import org.junit.jupiter.api.Test;
 class ChannelActivitySelectionControllerTest
 {
     @Test
-    void modelInsertionCannotChangeLogicalSelection()
+    void modelInsertionCannotChangeLogicalSelection() throws Exception
     {
         ChannelActivityTableModel model = model();
         ChannelActivityRow selected = row(model, "selected", ChannelActivityRow.Role.TRAFFIC, 852_000_000L);
@@ -27,12 +27,12 @@ class ChannelActivitySelectionControllerTest
 
         row(model, "inserted-before", ChannelActivityRow.Role.TRAFFIC, 851_000_000L);
 
-        assertSame(selected, controller.resolveSelectedRow());
+        assertEquals(selected.getKey(), controller.resolveSelectedRow().getKey());
         assertEquals("selected", controller.getSelection().rowKey());
     }
 
     @Test
-    void newerUserSelectionWinsBeforePassiveModelRender()
+    void newerUserSelectionWinsBeforePassiveModelRender() throws Exception
     {
         ChannelActivityTableModel model = model();
         ChannelActivityRow previous = row(model, "previous", ChannelActivityRow.Role.TRAFFIC, 852_000_000L);
@@ -44,33 +44,33 @@ class ChannelActivitySelectionControllerTest
         row(model, "model-update", ChannelActivityRow.Role.TRAFFIC, 851_000_000L);
         controller.select(model, clicked);
 
-        assertSame(clicked, controller.resolveSelectedRow());
+        assertEquals(clicked.getKey(), controller.resolveSelectedRow().getKey());
         assertEquals("clicked", controller.getSelection().rowKey());
     }
 
     @Test
-    void removedExactFrequencySelectionClears()
+    void removedExactFrequencySelectionClears() throws Exception
     {
         ChannelActivityTableModel model = model();
         ChannelActivityRow selected = row(model, "traffic", ChannelActivityRow.Role.TRAFFIC, 852_000_000L);
         ChannelActivitySelectionController controller = new ChannelActivitySelectionController();
         controller.select(model, selected);
 
-        model.remove(selected);
+        remove(model, selected);
 
         assertNull(controller.resolveSelectedRow());
         assertNull(controller.getSelection());
     }
 
     @Test
-    void siteSelectionSurvivesEmptyModelAndBindsReplacementControl()
+    void siteSelectionSurvivesEmptyModelAndBindsReplacementControl() throws Exception
     {
         ChannelActivityTableModel model = model();
         ChannelActivityRow selected = row(model, "old-control", ChannelActivityRow.Role.CURRENT_CONTROL,
             851_000_000L);
         ChannelActivitySelectionController controller = new ChannelActivitySelectionController();
         controller.select(model, selected);
-        model.remove(selected);
+        remove(model, selected);
 
         assertNull(controller.resolveSelectedRow());
         assertNotNull(controller.getSelection());
@@ -79,13 +79,13 @@ class ChannelActivitySelectionControllerTest
         ChannelActivityRow replacement = row(model, "new-control", ChannelActivityRow.Role.CURRENT_CONTROL,
             852_000_000L);
 
-        assertSame(replacement, controller.resolveSelectedRow());
+        assertEquals(replacement.getKey(), controller.resolveSelectedRow().getKey());
         assertEquals("new-control", controller.getSelection().rowKey());
         assertEquals(852_000_000L, controller.getSelection().frequency());
     }
 
     @Test
-    void trafficRowWithControlEvidenceHasSiteScope()
+    void trafficRowWithControlEvidenceHasSiteScope() throws Exception
     {
         ChannelActivityTableModel model = model();
         ChannelActivityRow row = row(model, "shared", ChannelActivityRow.Role.TRAFFIC, 851_000_000L);
@@ -99,7 +99,7 @@ class ChannelActivitySelectionControllerTest
     }
 
     @Test
-    void switchingSystemsTablesClearsSelection()
+    void switchingSystemsTablesClearsSelection() throws Exception
     {
         ChannelActivityTableModel conventional = model("Conventional");
         ChannelActivityTableModel trunkedSite = model("Trunked Site");
@@ -114,7 +114,7 @@ class ChannelActivitySelectionControllerTest
     }
 
     @Test
-    void switchingBetweenTrunkedSiteTablesClearsSelection()
+    void switchingBetweenTrunkedSiteTablesClearsSelection() throws Exception
     {
         ChannelActivityTableModel firstSite = model("First Trunked Site");
         ChannelActivityTableModel secondSite = model("Second Trunked Site");
@@ -134,12 +134,22 @@ class ChannelActivitySelectionControllerTest
     private static ChannelActivityTableModel model(String title)
     {
         Channel owner = new Channel(title);
-        return new ChannelActivityTableModel(title, owner, true);
+        return new ChannelActivityTableModel(new ChannelActivityTableState(title, owner, true, null));
     }
 
     private static ChannelActivityRow row(ChannelActivityTableModel model, String key, ChannelActivityRow.Role role,
-                                          long frequency)
+                                          long frequency) throws Exception
     {
-        return model.getOrCreate(key, model.getOwnerChannel(), role, frequency, null);
+        ChannelActivityTableState state = model.getState();
+        state.getOrCreate(key, model.getOwnerChannel(), role, frequency, null);
+        state.refreshAllRows();
+        javax.swing.SwingUtilities.invokeAndWait(() -> {});
+        return model.get(key);
+    }
+
+    private static void remove(ChannelActivityTableModel model, ChannelActivityRow row) throws Exception
+    {
+        model.getState().remove(model.getState().get(row.getKey()));
+        javax.swing.SwingUtilities.invokeAndWait(() -> {});
     }
 }

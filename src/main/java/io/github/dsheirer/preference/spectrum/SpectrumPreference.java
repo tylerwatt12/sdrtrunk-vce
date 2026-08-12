@@ -16,7 +16,6 @@ import java.util.prefs.Preferences;
  */
 public class SpectrumPreference extends Preference
 {
-    public static final String KEY_DISPLAY_ENABLED = "spectral.display.enabled";
     public static final String KEY_DFT_SIZE = "spectral.display.dft.size";
     public static final String KEY_FRAME_RATE = "spectral.display.frame.rate";
     private final Preferences mPreferences = Preferences.userNodeForPackage(SpectrumPreference.class);
@@ -30,17 +29,6 @@ public class SpectrumPreference extends Preference
     public PreferenceType getPreferenceType()
     {
         return PreferenceType.SPECTRUM;
-    }
-
-    public boolean isDisplayEnabled()
-    {
-        return mPreferences.getBoolean(KEY_DISPLAY_ENABLED, true);
-    }
-
-    public void setDisplayEnabled(boolean enabled)
-    {
-        mPreferences.putBoolean(KEY_DISPLAY_ENABLED, enabled);
-        notifyPreferenceUpdated();
     }
 
     public DFTSize getDftSize()

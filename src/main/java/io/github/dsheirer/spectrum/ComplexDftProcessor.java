@@ -70,10 +70,23 @@ public class ComplexDftProcessor implements Listener<INativeBuffer>, IDFTWidthCh
 
     public ComplexDftProcessor(SpectrumPreference spectrumPreference)
     {
+        this(spectrumPreference, true);
+    }
+
+    /**
+     * Constructs a processor with optional automatic scheduling. Display owners that do not yet have a sample source
+     * can leave the processor stopped and explicitly start it when the source is attached.
+     */
+    ComplexDftProcessor(SpectrumPreference spectrumPreference, boolean startImmediately)
+    {
         mSpectrumPreference = spectrumPreference;
         mFrameRate = spectrumPreference != null ? spectrumPreference.getFrameRate() : 20;
         setWindowType(mWindowType);
-        start();
+
+        if(startImmediately)
+        {
+            start();
+        }
     }
 
     public void dispose()

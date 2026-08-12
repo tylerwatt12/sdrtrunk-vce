@@ -14,38 +14,66 @@ package io.github.dsheirer.stats;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivityEvent;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivitySnapshot;
+import io.github.dsheirer.channel.metadata.activity.ChannelActivityTableState;
+import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
-import io.github.dsheirer.metadata.site.ProtocolSiteMetadataEvent;
-import io.github.dsheirer.module.decode.dmr.telemetry.DMRNetworkConfigurationSnapshot;
+import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
+import io.github.dsheirer.module.decode.dmr.DMRChannelMode;
 import io.github.dsheirer.preference.UserPreferences;
+import io.github.dsheirer.source.config.SourceConfigTuner;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
 import org.junit.jupiter.api.Test;
 
 class StatsLiveServiceTest
 {
+    @org.junit.jupiter.api.io.TempDir
+    java.nio.file.Path mTemporaryDirectory;
+
     @Test
-    void ownsChannelActivityIndependentlyFromTheJavaInterface()
+    void ownsChannelActivityOnlyWhileAWebSubscriberNeedsIt()
     {
         ChannelProcessingManager manager = new ChannelProcessingManager(null, null, null, new UserPreferences());
         StatsLiveService service = new StatsLiveService(null, manager);
         assertFalse(manager.getChannelActivityModel().isEnabled());
 
         service.start();
-        assertTrue(manager.getChannelActivityModel().isEnabled());
+        assertFalse(manager.getChannelActivityModel().isEnabled());
+        assertFalse(service.isRawWorkerAlive());
 
-        manager.setChannelActivityEnabled("java-ui", true);
-        manager.setChannelActivityEnabled("java-ui", false);
-        assertTrue(manager.getChannelActivityModel().isEnabled());
+        try(StatsLiveEventHub.Subscription first = service.subscribeSystems();
+            StatsLiveEventHub.Subscription second = service.subscribeSystems())
+        {
+            assertNotNull(first);
+            assertNotNull(second);
+            assertEquals(2, service.getSystemsDemandCount());
+            assertTrue(manager.getChannelActivityModel().isEnabled());
+            assertTrue(service.isRawWorkerAlive());
+
+            first.close();
+            assertEquals(1, service.getSystemsDemandCount());
+            assertTrue(manager.getChannelActivityModel().isEnabled());
+
+            manager.setChannelActivityEnabled("java-ui", true);
+            second.close();
+            assertEquals(0, service.getSystemsDemandCount());
+            assertTrue(manager.getChannelActivityModel().isEnabled(),
+                "the independent Java renderer lease must remain active");
+            assertFalse(service.isRawWorkerAlive());
+            manager.setChannelActivityEnabled("java-ui", false);
+            assertFalse(manager.getChannelActivityModel().isEnabled());
+        }
 
         service.stop();
         assertFalse(manager.getChannelActivityModel().isEnabled());
@@ -53,9 +81,146 @@ class StatsLiveServiceTest
     }
 
     @Test
+    void projectionWorkerCanStopAndRestartWithoutDuplicatingConsumers() throws Exception
+    {
+        StatsLiveService service = new StatsLiveService(null, null);
+        ChannelActivityEvent event = conventionalActivity("CALL");
+
+        try
+        {
+            service.start();
+
+            try(StatsLiveEventHub.Subscription ignored = service.subscribeSystems())
+            {
+                service.receiveChannelActivity(event);
+                waitUntil(() -> !tables(service).isEmpty());
+            }
+
+            service.stop();
+            assertTrue(tables(service).isEmpty());
+
+            service.start();
+
+            try(StatsLiveEventHub.Subscription ignored = service.subscribeSystems())
+            {
+                service.receiveChannelActivity(event);
+                waitUntil(() -> !tables(service).isEmpty());
+                assertEquals(1, tables(service).size());
+            }
+        }
+        finally
+        {
+            service.close();
+        }
+    }
+
+    @Test
+    void activityCommitSaturationPublishesAnAuthoritativeReset() throws Exception
+    {
+        CountDownLatch lookupEntered = new CountDownLatch(1);
+        CountDownLatch releaseLookup = new CountDownLatch(1);
+        StatsWebDatabase database = new StatsWebDatabase(new UserPreferences(),
+            mTemporaryDirectory.resolve("activity-reset.sqlite"))
+        {
+            @Override
+            List<Map<String,Object>> activityByIds(List<Long> rowIds)
+            {
+                lookupEntered.countDown();
+
+                try
+                {
+                    releaseLookup.await(5, TimeUnit.SECONDS);
+                }
+                catch(InterruptedException exception)
+                {
+                    Thread.currentThread().interrupt();
+                }
+
+                return List.of(Map.of("id", rowIds.getFirst()));
+            }
+        };
+        StatsLiveService service = new StatsLiveService(database, null);
+        service.start();
+
+        try(StatsLiveEventHub.Subscription subscription = service.subscribeActivity(event -> true))
+        {
+            assertNotNull(subscription);
+            service.activityCommitted(List.of(1L));
+            assertTrue(lookupEntered.await(2, TimeUnit.SECONDS));
+
+            for(long id = 2; id <= StatsLiveService.EVENT_QUEUE_CAPACITY + 2L; id++)
+            {
+                service.activityCommitted(List.of(id));
+            }
+
+            StatsLiveEventHub.LiveEvent reset = subscription.poll(2, TimeUnit.SECONDS);
+            assertNotNull(reset);
+            assertEquals("activity_reset", reset.name());
+            assertEquals("source_overflow", ((Map<?,?>)reset.data()).get("reason"));
+        }
+        finally
+        {
+            releaseLookup.countDown();
+            service.close();
+        }
+    }
+
+    @Test
+    void racingActivitySubscribeAndStopCannotLeakSubscriptions() throws Exception
+    {
+        StatsLiveService service = new StatsLiveService(null, null);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+
+        try
+        {
+            for(int iteration = 0; iteration < 100; iteration++)
+            {
+                service.start();
+                CountDownLatch start = new CountDownLatch(1);
+                AtomicReference<StatsLiveEventHub.Subscription> opened = new AtomicReference<>();
+                var subscribe = executor.submit(() ->
+                {
+                    start.await();
+                    opened.set(service.subscribeActivity(event -> true));
+                    return null;
+                });
+                var stop = executor.submit(() ->
+                {
+                    start.await();
+                    service.stop();
+                    return null;
+                });
+                start.countDown();
+                subscribe.get(2, TimeUnit.SECONDS);
+                stop.get(2, TimeUnit.SECONDS);
+
+                if(opened.get() != null)
+                {
+                    assertTrue(opened.get().isClosed());
+                }
+
+                service.start();
+
+                try(StatsLiveEventHub.Subscription probe = service.subscribeActivity(event -> true))
+                {
+                    assertNotNull(probe, "a stop race must not consume reusable subscriber capacity");
+                }
+
+                service.stop();
+            }
+        }
+        finally
+        {
+            executor.shutdownNow();
+            service.close();
+        }
+    }
+
+    @Test
     void publishesConventionalStatusChangesWithStableTableIdentity() throws Exception
     {
         StatsLiveService service = new StatsLiveService(null, null);
+        service.start();
 
         try(StatsLiveEventHub.Subscription subscription = service.subscribeSystems())
         {
@@ -75,127 +240,146 @@ class StatsLiveServiceTest
     }
 
     @Test
-    void createsSerializableProtocolNeutralLiveSite()
-        throws Exception
+    void activityProjectionIsWorkerSideAndRawIngressDropsInsteadOfBlocking() throws Exception
     {
-        Channel channel = new Channel("Control");
-        channel.setSystem("Metro");
-        channel.setSite("Downtown");
-        channel.setAliasListName("County");
-        channel.setRadresGuid("00000000-0000-0000-0000-000000000456");
-        DMRNetworkConfigurationSnapshot snapshot = new DMRNetworkConfigurationSnapshot(
-            "DMR", "TIER_III", 10, 20, "Tier III Trunking", "SMALL", null, "Control",
-            1, 2, List.of(new DMRNetworkConfigurationSnapshot.Channel(
-                "DMRChannel", 42, 1, 451_000_000L, 456_000_000L)), List.of());
-        Map<String,Object> site = StatsLiveService.protocolSite(
-            new ProtocolSiteMetadataEvent(channel, snapshot, 1_000L),
-            Map.of("signal_dbfs", -25.5, "decode_health_pct", 98.0));
+        CountDownLatch projectionEntered = new CountDownLatch(1);
+        CountDownLatch releaseProjection = new CountDownLatch(1);
+        AtomicReference<Thread> projectionThread = new AtomicReference<>();
+        StatsLiveService service = new StatsLiveService(null, null, event -> {
+            projectionThread.set(Thread.currentThread());
+            projectionEntered.countDown();
 
-        assertEquals("DMR", site.get("protocol"));
-        assertEquals(3, site.get("protocol_code"));
-        assertEquals("TIER_III", site.get("variant"));
-        assertEquals(-25.5, site.get("signal_dbfs"));
-        assertEquals(10, site.get("network_id"));
-        assertEquals(20, site.get("site_id"));
-        assertEquals(Map.of("channels", 1, "neighbors", 0), site.get("detail_counts"));
-        assertEquals(true, site.get("details_truncated"));
-        assertFalse(site.containsKey("metadata"));
-        String json = new ObjectMapper().writeValueAsString(site);
-        assertFalse(json.contains("logicalChannelNumber"));
-        assertTrue(json.length() < 2_048);
-    }
+            try
+            {
+                releaseProjection.await(5, TimeUnit.SECONDS);
+            }
+            catch(InterruptedException interruptedException)
+            {
+                Thread.currentThread().interrupt();
+            }
+        });
 
-    @Test
-    void clearsAndExpiresQualityAndEvictsStaleSites() throws Exception
-    {
-        AtomicLong clock = new AtomicLong(1_000L);
-        StatsLiveService service = new StatsLiveService(null, null, clock::get);
-        Channel channel = channel();
-        ProtocolSiteMetadataEvent metadata = new ProtocolSiteMetadataEvent(channel, dmrSnapshot(), 1_000L);
-        service.process(metadata);
-        service.process(activity(channel.getRadresGuid(), true));
-        assertEquals(-25.5, liveSite(service).get("signal_dbfs"));
+        service.start();
 
-        service.process(activity(channel.getRadresGuid(), false));
-        assertFalse(liveSite(service).containsKey("signal_dbfs"));
-
-        service.process(activity(channel.getRadresGuid(), true));
-        clock.set(40_000L);
-        service.process(activity(channel.getRadresGuid(), true));
-        clock.set(46_001L);
-        service.process(new ProtocolSiteMetadataEvent(channel, dmrSnapshot(), clock.get()));
-        service.sweepExpired();
-        assertFalse(liveSite(service).containsKey("signal_dbfs"));
-
-        try(StatsLiveEventHub.Subscription subscription = service.subscribeSites())
+        try(StatsLiveEventHub.Subscription ignored = service.subscribeSystems())
         {
-            clock.set(76_002L);
-            service.sweepExpired();
-            assertTrue(sites(service).isEmpty());
-            StatsLiveEventHub.LiveEvent removed = subscription.poll(1, TimeUnit.SECONDS);
-            assertNotNull(removed);
-            assertEquals("site_removed", removed.name());
-            assertEquals(channel.getRadresGuid(), ((Map<?,?>)removed.data()).get("guid"));
+            Thread producer = Thread.currentThread();
+            ChannelActivityEvent event = conventionalActivity("CALL");
+            service.receiveChannelActivity(event);
+            assertTrue(projectionEntered.await(2, TimeUnit.SECONDS));
+
+            for(int index = 0; index < 256; index++)
+            {
+                service.receiveChannelActivity(event);
+            }
+
+            assertTrue(service.getDroppedRawEventCount() > 0);
+            assertFalse(producer == projectionThread.get());
+            assertTrue(projectionThread.get().getName().startsWith("stats live projection"));
         }
         finally
         {
+            releaseProjection.countDown();
             service.close();
         }
     }
 
     @Test
-    void snapshotDoesNotExpireSitesOutsideTheSerializedEventPipeline() throws Exception
+    void droppedRemoveConvergesFromAuthoritativeCoreSnapshot() throws Exception
     {
-        AtomicLong clock = new AtomicLong(1_000L);
-        StatsLiveService service = new StatsLiveService(null, null, clock::get);
-        Channel channel = channel();
-        service.process(new ProtocolSiteMetadataEvent(channel, dmrSnapshot(), clock.get()));
+        AliasModel aliasModel = new AliasModel();
+        ChannelProcessingManager manager = new ChannelProcessingManager(null, null, aliasModel,
+            new UserPreferences());
+        CountDownLatch projectionBlocked = new CountDownLatch(1);
+        CountDownLatch releaseProjection = new CountDownLatch(1);
+        StatsLiveService service = new StatsLiveService(null, manager, event -> {
+            projectionBlocked.countDown();
 
-        try(StatsLiveEventHub.Subscription subscription = service.subscribeSites())
+            try
+            {
+                releaseProjection.await(5, TimeUnit.SECONDS);
+            }
+            catch(InterruptedException interruptedException)
+            {
+                Thread.currentThread().interrupt();
+            }
+        });
+        Channel parent = trunkedDmrChannel();
+        service.start();
+
+        try(StatsLiveEventHub.Subscription subscription = service.subscribeSystems())
         {
-            clock.set(StatsLiveService.SITE_METADATA_LIVE_MILLISECONDS + 1_001L);
-            assertEquals(1, sites(service).size());
-            assertNull(subscription.poll(50, TimeUnit.MILLISECONDS));
+            StatsLiveEventHub.LiveEvent initial = subscription.poll(2, TimeUnit.SECONDS);
+            assertNotNull(initial);
+            assertEquals("activity_resync", initial.name());
+            service.receiveChannelActivity(conventionalActivity("CALL"));
+            assertTrue(projectionBlocked.await(2, TimeUnit.SECONDS));
+            manager.getChannelActivityModel().channelStarted(parent, List.of());
+            waitUntil(() -> manager.getChannelActivityModel().getTables().size() == 2);
+            ChannelActivityTableState removed = manager.getChannelActivityModel().getTables().stream()
+                .filter(table -> table.getOwnerChannel() == parent).findFirst().orElseThrow();
 
-            service.process(new ProtocolSiteMetadataEvent(channel, dmrSnapshot(), clock.get()));
-            assertEquals("site_metadata", subscription.poll(1, TimeUnit.SECONDS).name());
-            service.sweepExpired();
-            assertEquals(1, sites(service).size());
-            assertNull(subscription.poll(50, TimeUnit.MILLISECONDS));
+            for(int index = 0; index < 256; index++)
+            {
+                manager.getChannelActivityModel().channelConfigurationChanged(parent);
+            }
+
+            waitUntil(() -> service.getDroppedRawEventCount() > 0);
+            manager.getChannelActivityModel().close(removed);
+            waitUntil(() -> manager.getChannelActivityModel().getTables().size() == 1);
+            releaseProjection.countDown();
+
+            boolean resyncObserved = false;
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+
+            while(System.nanoTime() < deadline)
+            {
+                StatsLiveEventHub.LiveEvent event = subscription.poll(100, TimeUnit.MILLISECONDS);
+
+                if(event != null && "activity_resync".equals(event.name()))
+                {
+                    resyncObserved = true;
+                    break;
+                }
+            }
+
+            assertTrue(resyncObserved);
+            assertEquals(1, manager.getChannelActivityModel().getSnapshotSet().tables().size());
+            assertTrue(tables(service).stream().noneMatch(
+                table -> removed.getTableId().equals(table.get("table_id"))));
         }
         finally
         {
+            releaseProjection.countDown();
             service.close();
+            manager.shutdown();
         }
     }
 
-    private static Channel channel()
+    private static Channel trunkedDmrChannel()
     {
-        Channel channel = new Channel("Control");
+        Channel channel = new Channel("Bus", Channel.ChannelType.STANDARD);
         channel.setSystem("Metro");
-        channel.setSite("Downtown");
-        channel.setAliasListName("County");
-        channel.setRadresGuid("00000000-0000-0000-0000-000000000456");
+        channel.setSite("Garage");
+        DecodeConfigDMR configuration = new DecodeConfigDMR();
+        configuration.setChannelMode(DMRChannelMode.TRUNKED);
+        channel.setDecodeConfiguration(configuration);
+        SourceConfigTuner source = new SourceConfigTuner();
+        source.setFrequency(451_000_000L);
+        channel.setSourceConfiguration(source);
         return channel;
     }
 
-    private static DMRNetworkConfigurationSnapshot dmrSnapshot()
+    private static void waitUntil(BooleanSupplier condition) throws Exception
     {
-        return new DMRNetworkConfigurationSnapshot(
-            "DMR", "TIER_III", 10, 20, "Tier III Trunking", "SMALL", null, "Control",
-            1, 2, List.of(new DMRNetworkConfigurationSnapshot.Channel(
-            "DMRChannel", 42, 1, 451_000_000L, 456_000_000L)), List.of());
-    }
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
 
-    private static ChannelActivityEvent activity(String guid, boolean withQuality)
-    {
-        ChannelActivitySnapshot.Row row = new ChannelActivitySnapshot.Row("control", null, null, "CONTROL",
-            List.of("CONTROL"), "42", 451_000_000L, null, withQuality ? -25.5 : null,
-            withQuality ? 98.0 : null, withQuality ? 1_000L : 0L, 0L, 0L, 0L, 0L, 0L, null,
-            null, null, null, null, null, null, null, "DMR", null);
-        ChannelActivitySnapshot snapshot = new ChannelActivitySnapshot("channel-1", "DMR", "Control", null,
-            guid, false, true, List.of(row));
-        return new ChannelActivityEvent(ChannelActivityEvent.Operation.UPSERT, snapshot);
+        while(!condition.getAsBoolean() && System.nanoTime() < deadline)
+        {
+            Thread.sleep(5);
+        }
+
+        assertTrue(condition.getAsBoolean());
     }
 
     private static ChannelActivityEvent conventionalActivity(String status)
@@ -225,13 +409,9 @@ class StatsLiveServiceTest
     }
 
     @SuppressWarnings("unchecked")
-    private static List<Map<String,Object>> sites(StatsLiveService service)
+    private static List<Map<String,Object>> tables(StatsLiveService service)
     {
-        return (List<Map<String,Object>>)service.siteSnapshot().get("sites");
+        return (List<Map<String,Object>>)service.snapshot().get("tables");
     }
 
-    private static Map<String,Object> liveSite(StatsLiveService service)
-    {
-        return sites(service).getFirst();
-    }
 }

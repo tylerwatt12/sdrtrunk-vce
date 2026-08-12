@@ -16,17 +16,35 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
- * Demand-owned single worker for web diagnostic FFT calculations.  The worker exists only while at least one
- * diagnostic producer is active.  Fixed-delay scheduling prevents delayed diagnostic work from running catch-up
- * bursts that could compete with receiver processing.
+ * Single-threaded scheduler-lifetime executor for demand-owned web diagnostic FFT calculations. Fixed-delay
+ * scheduling prevents delayed diagnostic work from running catch-up bursts that could compete with receiver
+ * processing and places a hard one-thread ceiling on diagnostic CPU use. Keeping one executor for the scheduler
+ * lifetime also prevents a blocked task from an earlier demand cycle from overlapping a replacement task.
  */
 final class DiagnosticFftScheduler implements AutoCloseable
 {
-    private ScheduledThreadPoolExecutor mExecutor;
+    private static final Logger mLog = LoggerFactory.getLogger(DiagnosticFftScheduler.class);
+    private final ScheduledThreadPoolExecutor mExecutor;
     private int mTaskCount;
     private boolean mClosed;
+
+    DiagnosticFftScheduler()
+    {
+        mExecutor = new ScheduledThreadPoolExecutor(1, runnableTask ->
+        {
+            Thread thread = new Thread(runnableTask, "sdrtrunk web diagnostic FFT");
+            thread.setDaemon(true);
+            thread.setPriority(Math.max(Thread.MIN_PRIORITY, Thread.NORM_PRIORITY - 1));
+            return thread;
+        });
+        mExecutor.setRemoveOnCancelPolicy(true);
+        mExecutor.setExecuteExistingDelayedTasksAfterShutdownPolicy(false);
+        mExecutor.setContinueExistingPeriodicTasksAfterShutdownPolicy(false);
+    }
 
     synchronized Task scheduleWithFixedDelay(Runnable runnable, int framesPerSecond)
     {
@@ -42,51 +60,42 @@ final class DiagnosticFftScheduler implements AutoCloseable
             throw new IllegalArgumentException("Diagnostic frame rate must be between 1 and 60");
         }
 
-        if(mExecutor == null)
-        {
-            mExecutor = new ScheduledThreadPoolExecutor(1, runnableTask ->
-            {
-                Thread thread = new Thread(runnableTask, "sdrtrunk web diagnostic FFT");
-                thread.setDaemon(true);
-                thread.setPriority(Math.max(Thread.MIN_PRIORITY, Thread.NORM_PRIORITY - 1));
-                return thread;
-            });
-            mExecutor.setRemoveOnCancelPolicy(true);
-            mExecutor.setExecuteExistingDelayedTasksAfterShutdownPolicy(false);
-            mExecutor.setContinueExistingPeriodicTasksAfterShutdownPolicy(false);
-        }
-
-        ScheduledThreadPoolExecutor executor = mExecutor;
         mTaskCount++;
 
         try
         {
             long delayNanos = TimeUnit.SECONDS.toNanos(1) / framesPerSecond;
-            ScheduledFuture<?> future = executor.scheduleWithFixedDelay(runnable, 0, delayNanos,
+            Runnable guarded = () -> {
+                try
+                {
+                    runnable.run();
+                }
+                catch(Throwable throwable)
+                {
+                    if(throwable instanceof Error error)
+                    {
+                        throw error;
+                    }
+
+                    //Scheduled executors silently cancel periodic tasks after an uncaught exception.  Diagnostics
+                    //are loss-tolerant, so report the failure off the receiver path and keep later frames alive.
+                    mLog.warn("Diagnostic worker task failed; later observations will continue", throwable);
+                }
+            };
+            ScheduledFuture<?> future = mExecutor.scheduleWithFixedDelay(guarded, 0, delayNanos,
                 TimeUnit.NANOSECONDS);
-            return new Task(this, executor, future);
+            return new Task(this, future);
         }
         catch(RuntimeException exception)
         {
-            release(executor);
+            release();
             throw exception;
         }
     }
 
-    private synchronized void release(ScheduledThreadPoolExecutor executor)
+    private synchronized void release()
     {
-        if(executor != mExecutor)
-        {
-            return;
-        }
-
         mTaskCount = Math.max(0, mTaskCount - 1);
-
-        if(mTaskCount == 0)
-        {
-            mExecutor = null;
-            executor.shutdownNow();
-        }
     }
 
     synchronized int activeTaskCount()
@@ -96,7 +105,7 @@ final class DiagnosticFftScheduler implements AutoCloseable
 
     synchronized boolean hasWorker()
     {
-        return mExecutor != null;
+        return mTaskCount > 0;
     }
 
     @Override
@@ -109,26 +118,18 @@ final class DiagnosticFftScheduler implements AutoCloseable
 
         mClosed = true;
         mTaskCount = 0;
-        ScheduledThreadPoolExecutor executor = mExecutor;
-        mExecutor = null;
-
-        if(executor != null)
-        {
-            executor.shutdownNow();
-        }
+        mExecutor.shutdownNow();
     }
 
     static final class Task implements AutoCloseable
     {
         private final DiagnosticFftScheduler mOwner;
-        private final ScheduledThreadPoolExecutor mExecutor;
         private final ScheduledFuture<?> mFuture;
         private final AtomicBoolean mClosed = new AtomicBoolean();
 
-        private Task(DiagnosticFftScheduler owner, ScheduledThreadPoolExecutor executor, ScheduledFuture<?> future)
+        private Task(DiagnosticFftScheduler owner, ScheduledFuture<?> future)
         {
             mOwner = owner;
-            mExecutor = executor;
             mFuture = future;
         }
 
@@ -138,7 +139,7 @@ final class DiagnosticFftScheduler implements AutoCloseable
             if(mClosed.compareAndSet(false, true))
             {
                 mFuture.cancel(false);
-                mOwner.release(mExecutor);
+                mOwner.release();
             }
         }
     }

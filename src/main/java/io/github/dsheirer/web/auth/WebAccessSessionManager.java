@@ -55,6 +55,16 @@ public final class WebAccessSessionManager implements AutoCloseable
 
     public Optional<WebAccessSession> create(WebAccessAccount account)
     {
+        return createOrReuseAtCapacity(account, null);
+    }
+
+    /**
+     * Creates a new session when capacity permits.  At capacity, a caller that already holds a current session for
+     * the authenticated account may keep that session and refresh its idle lifetime.  The existing session's token,
+     * CSRF token, creation time, and absolute expiration are preserved.
+     */
+    Optional<WebAccessSession> createOrReuseAtCapacity(WebAccessAccount account, String existingSessionId)
+    {
         Objects.requireNonNull(account, "Web session account cannot be null");
         mLock.lock();
 
@@ -65,31 +75,24 @@ public final class WebAccessSessionManager implements AutoCloseable
             long accountSessions = mSessions.values().stream()
                 .filter(state -> state.account.username().equals(account.username()))
                 .count();
-
-            if(accountSessions >= Math.min(MAXIMUM_SESSIONS_PER_ACCOUNT, mConfiguration.maximumSessions()))
-            {
-                return Optional.empty();
-            }
-
             int reservedForPrimary = Math.min(PRIMARY_ADMIN_RESERVED_SESSIONS,
                 Math.max(0, mConfiguration.maximumSessions() - 1));
+            boolean accountCapacityReached = accountSessions >=
+                Math.min(MAXIMUM_SESSIONS_PER_ACCOUNT, mConfiguration.maximumSessions());
+            boolean accountClassCapacityReached = !account.primaryAdmin() &&
+                mSessions.size() >= mConfiguration.maximumSessions() - reservedForPrimary;
+            boolean totalCapacityReached = mSessions.size() >= mConfiguration.maximumSessions();
 
-            if(!account.primaryAdmin() &&
-                mSessions.size() >= mConfiguration.maximumSessions() - reservedForPrimary)
+            if(accountCapacityReached || accountClassCapacityReached || totalCapacityReached)
             {
-                return Optional.empty();
-            }
-
-            if(mSessions.size() >= mConfiguration.maximumSessions())
-            {
-                return Optional.empty();
+                return refreshMatchingSession(existingSessionId, account, now);
             }
 
             for(int attempt = 0; attempt < MAXIMUM_TOKEN_COLLISION_ATTEMPTS; attempt++)
             {
                 String sessionId = token();
 
-                if(!mSessions.containsKey(sessionId))
+                if(!sessionId.equals(existingSessionId) && !mSessions.containsKey(sessionId))
                 {
                     SessionState state = new SessionState(sessionId, token(), account, now,
                         saturatingAdd(now, mConfiguration.absoluteTimeout().toMillis()));
@@ -104,6 +107,24 @@ public final class WebAccessSessionManager implements AutoCloseable
         {
             mLock.unlock();
         }
+    }
+
+    private Optional<WebAccessSession> refreshMatchingSession(String sessionId, WebAccessAccount account, long now)
+    {
+        if(!hasExpectedTokenLength(sessionId))
+        {
+            return Optional.empty();
+        }
+
+        SessionState state = mSessions.get(sessionId);
+
+        if(state == null || !state.account.equals(account))
+        {
+            return Optional.empty();
+        }
+
+        state.lastSeenAtEpochMillis = Math.max(state.lastSeenAtEpochMillis, now);
+        return Optional.of(snapshot(state));
     }
 
     /**

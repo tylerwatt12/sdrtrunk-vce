@@ -11,6 +11,10 @@
 
 package io.github.dsheirer.stats;
 
+import com.fasterxml.jackson.core.JsonFactory;
+import com.fasterxml.jackson.core.StreamReadFeature;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.eventbus.Subscribe;
 import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpExchange;
@@ -47,6 +51,8 @@ import io.github.dsheirer.web.auth.WebCapability;
 import io.github.dsheirer.web.http.AliasAdminHttpController;
 import io.github.dsheirer.web.http.ApiHttpResponse;
 import io.github.dsheirer.web.http.ApiRequestDecoder;
+import io.github.dsheirer.web.http.EmbeddedHttpServerPolicy;
+import io.github.dsheirer.web.http.EmbeddedHttpServerShutdown;
 import io.github.dsheirer.web.http.WebAccessHttpController;
 import io.github.dsheirer.web.network.WebCertificateIdentity;
 import java.io.IOException;
@@ -55,6 +61,9 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.URLDecoder;
+import java.net.URLEncoder;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -63,16 +72,28 @@ import java.sql.SQLException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicLongArray;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicReferenceArray;
+import java.util.function.LongSupplier;
+import java.util.function.Supplier;
 import javax.net.ssl.SSLContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -88,8 +109,28 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
     private static final long AUTOMATIC_CERTIFICATE_MAINTENANCE_MINUTES = TimeUnit.HOURS.toMinutes(12);
     private static final int REQUEST_MAXIMUM_THREADS = 96;
     private static final int REQUEST_QUEUE_CAPACITY = 256;
-    private static final int MAXIMUM_LIVE_HTTP_CLIENTS = 64;
     private static final int MAXIMUM_WEB_INDEX_BYTES = 64 * 1024;
+    private static final int MAXIMUM_MULTIPLEX_CLIENTS = 32;
+    private static final int MAXIMUM_MULTIPLEX_CONTROL_BYTES = 32 * 1024;
+    private static final int MULTIPLEX_MAGIC = 0x534C4D58;
+    private static final int MULTIPLEX_VERSION = 1;
+    private static final int MULTIPLEX_HEADER_BYTES = 16;
+    private static final int MULTIPLEX_JSON = 1;
+    private static final int MULTIPLEX_DIAGNOSTIC = 2;
+    private static final int TOPIC_CONTROL = 0;
+    private static final int TOPIC_CHANNEL_ACTIVITY = 1;
+    private static final int TOPIC_CALLS = 2;
+    private static final int TOPIC_DECODE_EVENTS = 3;
+    private static final int TOPIC_DECODE_MESSAGES = 4;
+    private static final int TOPIC_CHANNEL_DIAGNOSTICS = 5;
+    private static final int TOPIC_TUNER_DIAGNOSTICS = 6;
+    private static final int TOPIC_ACTIVITY = 7;
+    private static final ObjectMapper MULTIPLEX_OBJECT_MAPPER = new ObjectMapper(JsonFactory.builder()
+        .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).build());
+    private static final Set<String> MULTIPLEX_TOPICS = Set.of("channel_activity", "calls", "decode_events",
+        "decode_messages", "channel_diagnostics", "tuner_diagnostics", "activity");
+    private static final Set<WebCapability> MULTIPLEX_CAPABILITIES = Set.of(WebCapability.LIVE_VIEW,
+        WebCapability.WEB_AUDIO_LISTEN, WebCapability.SYSTEMS_VIEW);
 
     private final UserPreferences mUserPreferences;
     private final StatsWebDatabase mDatabase;
@@ -106,7 +147,11 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
     private final StatsWebCallService mWebCallService = new StatsWebCallService();
     private final Semaphore mDecodeMessageClients = new Semaphore(16);
     private final Semaphore mDiagnosticClients = new Semaphore(32);
-    private final Semaphore mLiveHttpClients = new Semaphore(MAXIMUM_LIVE_HTTP_CLIENTS);
+    private final Semaphore mMultiplexClientPermits = new Semaphore(MAXIMUM_MULTIPLEX_CLIENTS);
+    private final Map<String,MultiplexClient> mMultiplexClients = new ConcurrentHashMap<>();
+    private final AtomicLong mMultiplexRejectedClients = new AtomicLong();
+    private final AtomicLong mMultiplexSlowDisconnects = new AtomicLong();
+    private final AtomicLong mMultiplexEventDrops = new AtomicLong();
     private final ChannelProcessingManager mChannelProcessingManager;
     private final P25ActivityLogService mActivityLogService;
     private final AliasAdministrationService mAliasAdministrationService;
@@ -158,6 +203,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
                                  AliasAdministrationService aliasAdministrationService,
                                  DecodeEventViewService decodeEventViewService, TunerManager tunerManager)
     {
+        EmbeddedHttpServerPolicy.configureBeforeServerInitialization();
         mUserPreferences = userPreferences;
         mChannelProcessingManager = channelProcessingManager;
         mActivityLogService = activityLogService;
@@ -587,24 +633,11 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
 
         new StatsApiV1Controller(mDatabase, this::status, mWebAccessHttpController, mTunerDiagnosticService)
             .register(server);
-        createProtectedLiveContext(server, StatsApiV1.LIVE_CHANNEL_ACTIVITY, WebCapability.LIVE_VIEW,
-            this::handleSystemsSse);
-        createProtectedLiveContext(server, StatsApiV1.LIVE_DECODE_EVENTS, WebCapability.LIVE_VIEW,
-            this::handleDecodeEventsSse);
-        createProtectedLiveContext(server, StatsApiV1.LIVE_DECODE_MESSAGES, WebCapability.LIVE_VIEW,
-            this::handleDecodeMessagesSse);
-        createProtectedLiveContext(server, StatsApiV1.LIVE_CHANNEL_DIAGNOSTICS, WebCapability.LIVE_VIEW,
-            this::handleChannelDiagnostics);
-        if(mTunerDiagnosticService != null)
-        {
-            createProtectedLiveContext(server, StatsApiV1.LIVE_TUNER_DIAGNOSTICS, WebCapability.LIVE_VIEW,
-                this::handleTunerDiagnostics);
-        }
-        createProtectedLiveContext(server, StatsApiV1.LIVE_SITES, WebCapability.LIVE_VIEW, this::handleSitesSse);
-        createProtectedLiveContext(server, StatsApiV1.LIVE_CALLS, WebCapability.WEB_AUDIO_LISTEN,
-            this::handleWebCallsSse);
-        createProtectedLiveContext(server, StatsApiV1.LIVE_ACTIVITY, WebCapability.SYSTEMS_VIEW,
-            this::handleActivitySse);
+        server.createContext(StatsApiV1.LIVE_MULTIPLEX,
+            mWebAccessHttpController.protectAny(MULTIPLEX_CAPABILITIES, this::handleLiveMultiplex));
+        server.createContext(StatsApiV1.LIVE_MULTIPLEX_CONTROL,
+            mWebAccessHttpController.protectAnyViewerControl(MULTIPLEX_CAPABILITIES,
+                this::handleLiveMultiplexControl));
         createProtectedContext(server, StatsApiV1.CALLS + "/", WebCapability.WEB_AUDIO_LISTEN,
             this::handleWebCallAudio);
         server.createContext(StatsApiV1.ROOT, StatsWebServerService::handleApiNotFound);
@@ -661,6 +694,20 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             return;
         }
 
+        List<MultiplexClient> clients = List.copyOf(mMultiplexClients.values());
+
+        for(MultiplexClient client: clients)
+        {
+            client.requestClose();
+        }
+
+        long closeDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+
+        for(MultiplexClient client: clients)
+        {
+            client.awaitOwnerClose(closeDeadline);
+        }
+
         if(mDecodeEventViewService != null)
         {
             synchronized(mDecodeEventSubscriptionLock)
@@ -701,8 +748,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
 
     private static void stopListener(ListenerRuntime listener)
     {
-        listener.server().stop(0);
-        listener.executor().shutdownNow();
+        EmbeddedHttpServerShutdown.stop(listener.server(), listener.executor());
     }
 
     private static boolean bindingsConflict(ListenerRuntime previous, RequestedConfiguration requested)
@@ -752,27 +798,6 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         server.createContext(path, mWebAccessHttpController.protect(capability, handler));
     }
 
-    private void createProtectedLiveContext(HttpServer server, String path, WebCapability capability,
-                                              HttpHandler handler)
-    {
-        createProtectedContext(server, path, capability, exchange -> {
-            if(!mLiveHttpClients.tryAcquire())
-            {
-                sendApiError(exchange, 429, "too_many_clients", "Too many live clients");
-                return;
-            }
-
-            try
-            {
-                handler.handle(exchange);
-            }
-            finally
-            {
-                mLiveHttpClients.release();
-            }
-        });
-    }
-
     private synchronized Map<String,Object> status()
     {
         Map<String,Object> status = new LinkedHashMap<>();
@@ -787,15 +812,14 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         server.put("statusMessage", runtimeState.statusMessage());
         server.put("assetsAvailable", listener != null &&
             Files.isRegularFile(listener.configuration().requested().assetRoot().resolve("index.html")));
-        server.put("liveChannels", Map.of(
-            "channelActivity", StatsApiV1.LIVE_CHANNEL_ACTIVITY,
-            "decodeEvents", StatsApiV1.LIVE_DECODE_EVENTS,
-            "decodeMessages", StatsApiV1.LIVE_DECODE_MESSAGES,
-            "channelDiagnostics", StatsApiV1.LIVE_CHANNEL_DIAGNOSTICS,
-            "tunerDiagnostics", StatsApiV1.LIVE_TUNER_DIAGNOSTICS,
-            "sites", StatsApiV1.LIVE_SITES,
-            "calls", StatsApiV1.LIVE_CALLS,
-            "activity", StatsApiV1.LIVE_ACTIVITY));
+        server.put("liveTransport", Map.of(
+            "stream", StatsApiV1.LIVE_MULTIPLEX,
+            "control", StatsApiV1.LIVE_MULTIPLEX_CONTROL,
+            "maximumClients", MAXIMUM_MULTIPLEX_CLIENTS,
+            "activeClients", mMultiplexClients.size(),
+            "rejectedClients", mMultiplexRejectedClients.get(),
+            "slowDisconnects", mMultiplexSlowDisconnects.get(),
+            "eventDrops", mMultiplexEventDrops.get()));
         status.put("server", server);
         status.put("database", mDatabase.status());
         status.put("statsLogging", statsLoggingStatusResponse());
@@ -916,99 +940,356 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         ApiHttpResponse.sendError(exchange, status, code, message);
     }
 
-    private void handleSystemsSse(HttpExchange exchange) throws IOException
+    private void handleLiveMultiplex(HttpExchange exchange) throws IOException
     {
-        if(!requireExactTextPath(exchange, StatsApiV1.LIVE_CHANNEL_ACTIVITY) || !requireMethod(exchange, "GET") ||
-            !requireNoQuery(exchange))
+        if(!requireExactTextPath(exchange, StatsApiV1.LIVE_MULTIPLEX) || !requireMethod(exchange, "GET"))
         {
             return;
         }
 
-        StatsLiveEventHub.Subscription subscription = mLiveService.subscribeSystems();
-
-        if(subscription == null)
-        {
-            sendApiError(exchange, 429, "too_many_clients", "Too many live clients");
-            return;
-        }
-
-        byte[] snapshot;
+        String clientId;
 
         try
         {
-            snapshot = mLiveService.encodedSnapshot();
+            StatsRequest request = StatsRequest.from(exchange.getRequestURI());
+            clientId = UUID.fromString(request.requiredText("client_id")).toString();
+            request.requireFullyConsumed();
         }
-        catch(IOException exception)
+        catch(StatsApiException | IllegalArgumentException exception)
         {
-            subscription.close();
-            sendApiError(exchange, 503, "snapshot_unavailable", "Live channel activity is temporarily unavailable");
+            sendApiError(exchange, 400, "invalid_parameter", "client_id must be a UUID");
             return;
         }
 
-        streamSse(exchange, subscription, "snapshot", new EncodedSsePayload(snapshot), event -> true);
-    }
-
-    private void handleDecodeEventsSse(HttpExchange exchange) throws IOException
-    {
-        if(!requireExactTextPath(exchange, StatsApiV1.LIVE_DECODE_EVENTS) || !requireMethod(exchange, "GET"))
+        if(!mMultiplexClientPermits.tryAcquire())
         {
+            mMultiplexRejectedClients.incrementAndGet();
+            sendApiError(exchange, 429, "too_many_clients", "Too many live browser connections");
             return;
         }
 
-        if(mDecodeEventViewService == null)
+        MultiplexClient client = new MultiplexClient(clientId, exchange);
+
+        if(mMultiplexClients.putIfAbsent(clientId, client) != null)
         {
-            sendApiError(exchange, 503, "service_unavailable", "Live decoder events are unavailable");
+            mMultiplexClientPermits.release();
+            sendApiError(exchange, 409, "client_in_use", "The live browser connection identifier is already in use");
             return;
         }
 
-        DecodeEventViewService.Scope scope;
-
-        try
-        {
-            scope = decodeEventScope(exchange.getRequestURI());
-        }
-        catch(StatsApiException e)
-        {
-            sendApiException(exchange, e);
-            return;
-        }
-
-        StatsLiveEventHub.Subscription subscription;
-
-        synchronized(mDecodeEventSubscriptionLock)
-        {
-            subscription = mDecodeEventHub.subscribe(
-                event -> event.data() instanceof DecodeEventViewService.EventView view && scope.matches(view));
-
-            if(subscription != null)
+        AtomicBoolean connectionReleased = new AtomicBoolean();
+        Runnable releaseConnection = () -> {
+            if(connectionReleased.compareAndSet(false, true))
             {
-                mDecodeEventViewService.addListener(mDecodeEventViewListener);
+                mMultiplexClients.remove(clientId, client);
+                mMultiplexClientPermits.release();
             }
-        }
+        };
+        MultiplexOutput output = null;
 
-        if(subscription == null)
+        try(client)
         {
-            sendApiError(exchange, 429, "too_many_clients", "Too many live clients");
-            return;
-        }
+            Headers headers = exchange.getResponseHeaders();
+            headers.set("Content-Type", "application/vnd.sdrtrunk.live+binary");
+            headers.set("Cache-Control", "no-store, no-transform");
+            headers.set("Connection", "keep-alive");
+            headers.set("X-Accel-Buffering", "no");
+            exchange.sendResponseHeaders(200, 0);
+            HttpServer server = exchange.getHttpContext().getServer();
+            MultiplexOutput connectedOutput = new MultiplexOutput(exchange.getResponseBody(), Duration.ofSeconds(8),
+                false, () -> {}, releaseConnection);
+            output = connectedOutput;
 
-        try
-        {
-            streamSse(exchange, subscription, "snapshot",
-                Map.of("events", mDecodeEventViewService.snapshot(scope)), event -> true);
-        }
-        finally
-        {
-            synchronized(mDecodeEventSubscriptionLock)
+            try(connectedOutput)
             {
-                subscription.close();
+                connectedOutput.start();
+                writeMultiplexJson(connectedOutput, TOPIC_CONTROL, "ready", Map.of("clientId", clientId));
+                long lastHeartbeat = System.nanoTime();
+                long lastAuthorizationCheck = 0;
 
-                if(!mDecodeEventHub.hasSubscribers())
+                while(mListener != null && mListener.server() == server && !client.isClosed() &&
+                    !connectedOutput.isFailed())
                 {
-                    mDecodeEventViewService.removeListener(mDecodeEventViewListener);
+                    long now = System.nanoTime();
+
+                    if(now - lastAuthorizationCheck >= TimeUnit.SECONDS.toNanos(1))
+                    {
+                        if(!mWebAccessHttpController.isRequestStillAuthorized(exchange))
+                        {
+                            break;
+                        }
+
+                        client.refreshAuthorization();
+                        lastAuthorizationCheck = now;
+                    }
+
+                    boolean wrote = client.pump(connectedOutput);
+
+                    if(now - lastHeartbeat >= TimeUnit.SECONDS.toNanos(10))
+                    {
+                        writeMultiplexJson(connectedOutput, TOPIC_CONTROL, "heartbeat",
+                            Map.of("time", System.currentTimeMillis()));
+                        wrote = true;
+                        lastHeartbeat = now;
+                    }
+
+                    if(connectedOutput.isPersistentlySlow())
+                    {
+                        mMultiplexSlowDisconnects.incrementAndGet();
+                        mLog.debug("Closing slow multiplex client [{}]", clientId);
+                        break;
+                    }
+
+                    if(wrote)
+                    {
+                        lastHeartbeat = now;
+                    }
+                    else
+                    {
+                        Thread.sleep(20);
+                    }
                 }
             }
         }
+        catch(InterruptedException exception)
+        {
+            Thread.currentThread().interrupt();
+        }
+        catch(IOException exception)
+        {
+            // Browser disconnected or a bounded slow-client connection was closed by the HTTP runtime.
+        }
+        finally
+        {
+            if(output != null)
+            {
+                mMultiplexEventDrops.addAndGet(output.eventDrops());
+            }
+
+            if(output == null || !output.isWriterStarted() || output.isWriterTerminated())
+            {
+                releaseConnection.run();
+            }
+        }
+    }
+
+    private void handleLiveMultiplexControl(HttpExchange exchange) throws IOException
+    {
+        if(!requireExactTextPath(exchange, StatsApiV1.LIVE_MULTIPLEX_CONTROL) ||
+            !requireMethod(exchange, "POST") || !requireNoQuery(exchange))
+        {
+            return;
+        }
+
+        JsonNode request;
+
+        try
+        {
+            byte[] body = ApiRequestDecoder.readBody(exchange, MAXIMUM_MULTIPLEX_CONTROL_BYTES);
+
+            if(body.length == 0 || body.length > MAXIMUM_MULTIPLEX_CONTROL_BYTES)
+            {
+                sendApiError(exchange, body.length == 0 ? 400 : 413,
+                    body.length == 0 ? "invalid_request" : "request_too_large",
+                    body.length == 0 ? "A viewer control body is required" : "The viewer control body is too large");
+                return;
+            }
+
+            request = MULTIPLEX_OBJECT_MAPPER.readTree(body);
+        }
+        catch(Exception exception)
+        {
+            sendApiError(exchange, 400, "invalid_request", "The viewer control body is invalid");
+            return;
+        }
+
+        try
+        {
+            if(request == null || !request.isObject() || request.size() != 3 ||
+                !request.has("client_id") || !request.has("revision") || !request.has("subscriptions"))
+            {
+                throw new IllegalArgumentException("The viewer control fields are invalid");
+            }
+
+            String clientId = UUID.fromString(requiredMultiplexText(request, "client_id")).toString();
+            long revision = request.path("revision").longValue();
+            JsonNode subscriptions = request.path("subscriptions");
+
+            if(!request.path("revision").isIntegralNumber() || !request.path("revision").canConvertToLong() ||
+                revision <= 0 || !subscriptions.isObject() ||
+                subscriptions.size() > MULTIPLEX_TOPICS.size())
+            {
+                throw new IllegalArgumentException("The viewer control values are invalid");
+            }
+
+            java.util.Iterator<String> names = subscriptions.fieldNames();
+
+            while(names.hasNext())
+            {
+                String name = names.next();
+                JsonNode parameters = subscriptions.get(name);
+
+                if(!MULTIPLEX_TOPICS.contains(name) || parameters == null || !parameters.isObject())
+                {
+                    throw new IllegalArgumentException("The viewer subscription is invalid");
+                }
+
+                validateMultiplexSubscription(name, parameters);
+            }
+
+            MultiplexClient client = mMultiplexClients.get(clientId);
+
+            if(client == null || client.isClosed())
+            {
+                sendApiError(exchange, 404, "client_not_found", "The live browser connection is not available");
+                return;
+            }
+
+            Map<String,JsonNode> requested = new LinkedHashMap<>();
+            subscriptions.fields().forEachRemaining(entry -> requested.put(entry.getKey(), entry.getValue().deepCopy()));
+            client.configure(new MultiplexConfiguration(revision, Map.copyOf(requested)));
+            ApiHttpResponse.sendData(exchange, 200, Map.of("revision", revision));
+        }
+        catch(IllegalArgumentException | StatsApiException exception)
+        {
+            sendApiError(exchange, 400, "invalid_request", exception.getMessage());
+        }
+    }
+
+    private static String requiredMultiplexText(JsonNode request, String field)
+    {
+        JsonNode value = request.get(field);
+
+        if(value == null || !value.isTextual() || value.textValue().isBlank() || value.textValue().length() > 256)
+        {
+            throw new IllegalArgumentException(field + " is invalid");
+        }
+
+        return value.textValue();
+    }
+
+    private static void validateMultiplexSubscription(String name, JsonNode parameters)
+    {
+        URI uri = multiplexSubscriptionUri(name, parameters);
+
+        switch(name)
+        {
+            case "channel_activity", "calls" -> {
+                if(parameters.size() != 0)
+                {
+                    throw new StatsApiException(400, "This live subscription does not accept parameters");
+                }
+            }
+            case "decode_events" -> decodeEventScope(uri);
+            case "decode_messages" -> decodeMessageScope(uri);
+            case "channel_diagnostics" -> channelDiagnosticScope(uri);
+            case "tuner_diagnostics" -> tunerDiagnosticRequest(uri);
+            case "activity" -> {
+                StatsRequest request = StatsRequest.from(uri);
+                validateActivityRequest(request);
+                request.requireFullyConsumed();
+            }
+            default -> throw new StatsApiException(400, "Unknown live subscription");
+        }
+    }
+
+    private static URI multiplexSubscriptionUri(String name, JsonNode parameters)
+    {
+        if(parameters.size() > 16)
+        {
+            throw new StatsApiException(400, "Too many live subscription parameters");
+        }
+
+        StringBuilder query = new StringBuilder();
+        parameters.fields().forEachRemaining(entry -> {
+            JsonNode value = entry.getValue();
+
+            if(value == null || (!value.isTextual() && !value.isNumber() && !value.isBoolean()))
+            {
+                throw new StatsApiException(400, "Live subscription parameters must be scalar values");
+            }
+
+            if(query.length() > 0)
+            {
+                query.append('&');
+            }
+
+            query.append(URLEncoder.encode(entry.getKey(), StandardCharsets.UTF_8)).append('=')
+                .append(URLEncoder.encode(value.asText(), StandardCharsets.UTF_8));
+        });
+        return URI.create("/multiplex/" + name + (query.isEmpty() ? "" : "?" + query));
+    }
+
+    private static TunerDiagnosticRequest tunerDiagnosticRequest(URI uri)
+    {
+        StatsRequest request = StatsRequest.from(uri);
+        String targetId = request.requiredText("target_id");
+        Long viewportStart = request.optionalLong("viewport_start_hz");
+        Long viewportEnd = request.optionalLong("viewport_end_hz");
+
+        if((viewportStart == null) != (viewportEnd == null))
+        {
+            throw new StatsApiException(400, "viewport_start_hz and viewport_end_hz must be supplied together");
+        }
+
+        TunerDiagnosticService.Viewport viewport = null;
+
+        if(viewportStart != null)
+        {
+            try
+            {
+                viewport = new TunerDiagnosticService.Viewport(viewportStart, viewportEnd);
+            }
+            catch(IllegalArgumentException exception)
+            {
+                throw new StatsApiException(400, "Tuner diagnostic viewport is invalid");
+            }
+        }
+
+        request.requireFullyConsumed();
+        return new TunerDiagnosticRequest(targetId, viewport);
+    }
+
+    private static void writeMultiplexJson(MultiplexOutput output, int topic, String event, Object data)
+        throws IOException
+    {
+        output.offerEvent(topic, encodeMultiplexEnvelope(MULTIPLEX_JSON, topic,
+            ApiHttpResponse.encodePayload(Map.of("event", event, "data", data))));
+    }
+
+    private static void writeMultiplexRecoveryJson(MultiplexOutput output, int topic, String event, Object data)
+        throws IOException
+    {
+        output.offerRecovery(topic, encodeMultiplexEnvelope(MULTIPLEX_JSON, topic,
+            ApiHttpResponse.encodePayload(Map.of("event", event, "data", data))));
+    }
+
+    private static void writeMultiplexDiagnostic(MultiplexOutput output, int topic, DiagnosticStreamFrame frame)
+    {
+        byte[] encoded = encodeMultiplexEnvelope(MULTIPLEX_DIAGNOSTIC, topic, frame.encoded());
+
+        if(frame.type() == DiagnosticStreamFrame.TYPE_STATE)
+        {
+            output.offerState(topic, encoded);
+        }
+        else
+        {
+            output.offerLatest(topic, encoded);
+        }
+    }
+
+    private static byte[] encodeMultiplexEnvelope(int kind, int topic, byte[] payload)
+    {
+        ByteBuffer envelope = ByteBuffer.allocate(Math.addExact(MULTIPLEX_HEADER_BYTES, payload.length))
+            .order(ByteOrder.BIG_ENDIAN);
+        envelope.putInt(MULTIPLEX_MAGIC);
+        envelope.put((byte)MULTIPLEX_VERSION);
+        envelope.put((byte)kind);
+        envelope.putShort((short)topic);
+        envelope.putInt(payload.length);
+        envelope.putInt(0);
+        envelope.put(payload);
+        return envelope.array();
     }
 
     static DecodeEventViewService.Scope decodeEventScope(URI uri)
@@ -1077,391 +1358,6 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         return new DecodeMessageViewService.Scope(configurationId, frequency);
     }
 
-    private void handleDecodeMessagesSse(HttpExchange exchange) throws IOException
-    {
-        if(!requireExactTextPath(exchange, StatsApiV1.LIVE_DECODE_MESSAGES) || !requireMethod(exchange, "GET"))
-        {
-            return;
-        }
-
-        if(mDecodeMessageViewService == null)
-        {
-            sendApiError(exchange, 503, "service_unavailable", "Live decoder messages are unavailable");
-            return;
-        }
-
-        DecodeMessageViewService.Scope scope;
-
-        try
-        {
-            scope = decodeMessageScope(exchange.getRequestURI());
-        }
-        catch(StatsApiException | IllegalArgumentException exception)
-        {
-            if(exception instanceof StatsApiException apiException)
-            {
-                sendApiException(exchange, apiException);
-            }
-            else
-            {
-                sendApiError(exchange, 400, "invalid_parameter", exception.getMessage());
-            }
-            return;
-        }
-
-        if(!mDecodeMessageClients.tryAcquire())
-        {
-            sendApiError(exchange, 429, "too_many_clients", "Too many live message clients");
-            return;
-        }
-
-        DecodeMessageViewService.Session session = mDecodeMessageViewService.openSession(scope);
-        WebAccessHttpController accessController = mWebAccessHttpController;
-
-        try(session)
-        {
-            if(accessController == null || !accessController.isRequestStillAuthorized(exchange))
-            {
-                sendApiError(exchange, 403, "access_denied", "Access changed before the live stream started");
-                return;
-            }
-
-            Headers headers = exchange.getResponseHeaders();
-            headers.set("Content-Type", "text/event-stream; charset=utf-8");
-            headers.set("Cache-Control", "no-store");
-            headers.set("Connection", "keep-alive");
-            headers.set("X-Accel-Buffering", "no");
-            exchange.sendResponseHeaders(200, 0);
-            HttpServer server = exchange.getHttpContext().getServer();
-            long lastHeartbeat = System.nanoTime();
-
-            try(OutputStream outputStream = exchange.getResponseBody())
-            {
-                writeSseEvent(outputStream, "snapshot",
-                    Map.of("messages", session.snapshot(), "bound", session.isBound()));
-                long generation = session.generation();
-
-                while(mListener != null && mListener.server() == server &&
-                    accessController.isRequestStillAuthorized(exchange))
-                {
-                    DecodeMessageViewService.MessageView message = session.poll(1, TimeUnit.SECONDS);
-
-                    if(!accessController.isRequestStillAuthorized(exchange))
-                    {
-                        break;
-                    }
-
-                    if(generation != session.generation())
-                    {
-                        writeSseEvent(outputStream, "snapshot",
-                            Map.of("messages", session.snapshot(), "bound", session.isBound()));
-                        generation = session.generation();
-                        lastHeartbeat = System.nanoTime();
-                    }
-
-                    if(message != null)
-                    {
-                        writeSseEvent(outputStream, "decode_message", message);
-                        lastHeartbeat = System.nanoTime();
-                    }
-                    else if(System.nanoTime() - lastHeartbeat >= TimeUnit.SECONDS.toNanos(15))
-                    {
-                        writeSseHeartbeat(outputStream);
-                        lastHeartbeat = System.nanoTime();
-                    }
-                }
-            }
-        }
-        catch(InterruptedException exception)
-        {
-            Thread.currentThread().interrupt();
-        }
-        catch(IOException exception)
-        {
-            // Client disconnected.
-        }
-        finally
-        {
-            mDecodeMessageClients.release();
-        }
-    }
-
-    private void handleChannelDiagnostics(HttpExchange exchange) throws IOException
-    {
-        if(!requireExactTextPath(exchange, StatsApiV1.LIVE_CHANNEL_DIAGNOSTICS) ||
-            !requireMethod(exchange, "GET"))
-        {
-            return;
-        }
-
-        if(mChannelDiagnosticService == null)
-        {
-            sendApiError(exchange, 503, "service_unavailable", "Channel diagnostics are unavailable");
-            return;
-        }
-
-        ChannelDiagnosticService.Scope scope;
-
-        try
-        {
-            scope = channelDiagnosticScope(exchange.getRequestURI());
-        }
-        catch(StatsApiException exception)
-        {
-            sendApiException(exchange, exception);
-            return;
-        }
-
-        if(!mDiagnosticClients.tryAcquire())
-        {
-            sendApiError(exchange, 429, "too_many_clients", "Too many diagnostic viewers");
-            return;
-        }
-
-        ChannelDiagnosticService.OpenResult result;
-
-        try
-        {
-            result = mChannelDiagnosticService.tryOpen(scope);
-        }
-        catch(RuntimeException exception)
-        {
-            mDiagnosticClients.release();
-            mLog.warn("Unable to start selected-channel diagnostics", exception);
-            sendApiError(exchange, 503, "service_unavailable", "Channel diagnostics could not be started");
-            return;
-        }
-
-        if(result.status() == ChannelDiagnosticService.OpenStatus.BUSY)
-        {
-            mDiagnosticClients.release();
-            sendApiError(exchange, 429, "too_many_clients", "Too many diagnostic viewers");
-            return;
-        }
-        else if(result.status() != ChannelDiagnosticService.OpenStatus.OPEN)
-        {
-            mDiagnosticClients.release();
-            sendApiError(exchange, 503, "service_unavailable", "Channel diagnostics are unavailable");
-            return;
-        }
-
-        ChannelDiagnosticService.Session session = result.session();
-        WebAccessHttpController accessController = mWebAccessHttpController;
-
-        try(session)
-        {
-            if(accessController == null || !accessController.isRequestStillAuthorized(exchange))
-            {
-                sendApiError(exchange, 403, "access_denied", "Access changed before the live stream started");
-                return;
-            }
-
-            Headers headers = exchange.getResponseHeaders();
-            headers.set("Content-Type", "application/vnd.sdrtrunk.diagnostics+binary");
-            headers.set("Cache-Control", "no-store, no-transform");
-            headers.set("Connection", "keep-alive");
-            headers.set("X-Accel-Buffering", "no");
-            exchange.sendResponseHeaders(200, 0);
-            HttpServer server = exchange.getHttpContext().getServer();
-            long stateRevision = -1;
-            long lastHeartbeat = System.nanoTime();
-
-            try(OutputStream outputStream = exchange.getResponseBody())
-            {
-                while(mListener != null && mListener.server() == server && !session.isClosed() &&
-                    accessController.isRequestStillAuthorized(exchange))
-                {
-                    ChannelDiagnosticService.State state = session.refresh();
-
-                    if(state.revision() != stateRevision)
-                    {
-                        writeDiagnosticState(outputStream, state.generation(), state.revision(), state);
-                        stateRevision = state.revision();
-                        lastHeartbeat = System.nanoTime();
-                    }
-
-                    DiagnosticStreamFrame frame = session.poll(Duration.ofMillis(250));
-
-                    if(!accessController.isRequestStillAuthorized(exchange))
-                    {
-                        break;
-                    }
-
-                    if(frame != null)
-                    {
-                        writeDiagnosticFrame(outputStream, frame);
-                        lastHeartbeat = System.nanoTime();
-                    }
-                    else if(System.nanoTime() - lastHeartbeat >= TimeUnit.SECONDS.toNanos(1))
-                    {
-                        writeDiagnosticFrame(outputStream, DiagnosticStreamFrame.heartbeat());
-                        lastHeartbeat = System.nanoTime();
-                    }
-                }
-            }
-        }
-        catch(InterruptedException exception)
-        {
-            Thread.currentThread().interrupt();
-        }
-        catch(IOException exception)
-        {
-            // Client disconnected.
-        }
-        finally
-        {
-            mDiagnosticClients.release();
-        }
-    }
-
-    private void handleTunerDiagnostics(HttpExchange exchange) throws IOException
-    {
-        if(!requireExactTextPath(exchange, StatsApiV1.LIVE_TUNER_DIAGNOSTICS) || !requireMethod(exchange, "GET"))
-        {
-            return;
-        }
-
-        if(mTunerDiagnosticService == null)
-        {
-            sendApiError(exchange, 503, "service_unavailable", "Tuner diagnostics are unavailable");
-            return;
-        }
-
-        String targetId;
-        TunerDiagnosticService.Viewport viewport = null;
-
-        try
-        {
-            StatsRequest request = StatsRequest.from(exchange.getRequestURI());
-            targetId = request.requiredText("target_id");
-            Long viewportStart = request.optionalLong("viewport_start_hz");
-            Long viewportEnd = request.optionalLong("viewport_end_hz");
-
-            if((viewportStart == null) != (viewportEnd == null))
-            {
-                throw new StatsApiException(400,
-                    "viewport_start_hz and viewport_end_hz must be supplied together");
-            }
-
-            if(viewportStart != null)
-            {
-                try
-                {
-                    viewport = new TunerDiagnosticService.Viewport(viewportStart, viewportEnd);
-                }
-                catch(IllegalArgumentException exception)
-                {
-                    throw new StatsApiException(400, "Tuner diagnostic viewport is invalid");
-                }
-            }
-
-            request.requireFullyConsumed();
-        }
-        catch(StatsApiException exception)
-        {
-            sendApiException(exchange, exception);
-            return;
-        }
-
-        if(!mDiagnosticClients.tryAcquire())
-        {
-            sendApiError(exchange, 429, "too_many_clients", "Too many diagnostic viewers");
-            return;
-        }
-
-        TunerDiagnosticService.OpenResult result;
-
-        try
-        {
-            result = mTunerDiagnosticService.tryOpen(targetId, viewport);
-        }
-        catch(RuntimeException exception)
-        {
-            mDiagnosticClients.release();
-            mLog.warn("Unable to start tuner diagnostics", exception);
-            sendApiError(exchange, 503, "service_unavailable", "Tuner diagnostics could not be started");
-            return;
-        }
-
-        if(result.status() != TunerDiagnosticService.OpenStatus.OPEN)
-        {
-            mDiagnosticClients.release();
-            int status = switch(result.status())
-            {
-                case BUSY -> 429;
-                case NOT_FOUND -> 404;
-                default -> 503;
-            };
-            sendApiError(exchange, status, status == 429 ? "too_many_clients" :
-                    (status == 404 ? "not_found" : "service_unavailable"),
-                status == 429 ? "Too many tuner diagnostic viewers" :
-                    (status == 404 ? "Tuner diagnostic target was not found" :
-                        "Tuner diagnostics are unavailable"));
-            return;
-        }
-
-        TunerDiagnosticService.Session session = result.session();
-        WebAccessHttpController accessController = mWebAccessHttpController;
-
-        try(session)
-        {
-            if(accessController == null || !accessController.isRequestStillAuthorized(exchange))
-            {
-                sendApiError(exchange, 403, "access_denied", "Access changed before the live stream started");
-                return;
-            }
-
-            Headers headers = exchange.getResponseHeaders();
-            headers.set("Content-Type", "application/vnd.sdrtrunk.diagnostics+binary");
-            headers.set("Cache-Control", "no-store, no-transform");
-            headers.set("Connection", "keep-alive");
-            headers.set("X-Accel-Buffering", "no");
-            exchange.sendResponseHeaders(200, 0);
-            HttpServer server = exchange.getHttpContext().getServer();
-            TunerDiagnosticService.State state = session.state();
-            long lastHeartbeat = System.nanoTime();
-
-            try(OutputStream outputStream = exchange.getResponseBody())
-            {
-                writeDiagnosticState(outputStream, state.generation(), state.revision(), state);
-
-                while(mListener != null && mListener.server() == server && !session.isClosed() &&
-                    accessController.isRequestStillAuthorized(exchange))
-                {
-                    DiagnosticStreamFrame frame = session.poll(Duration.ofMillis(250));
-
-                    if(!accessController.isRequestStillAuthorized(exchange))
-                    {
-                        break;
-                    }
-
-                    if(frame != null)
-                    {
-                        writeDiagnosticFrame(outputStream, frame);
-                        lastHeartbeat = System.nanoTime();
-                    }
-                    else if(System.nanoTime() - lastHeartbeat >= TimeUnit.SECONDS.toNanos(1))
-                    {
-                        writeDiagnosticFrame(outputStream, DiagnosticStreamFrame.heartbeat());
-                        lastHeartbeat = System.nanoTime();
-                    }
-                }
-            }
-        }
-        catch(InterruptedException exception)
-        {
-            Thread.currentThread().interrupt();
-        }
-        catch(IOException exception)
-        {
-            // Client disconnected.
-        }
-        finally
-        {
-            mDiagnosticClients.release();
-        }
-    }
-
     static ChannelDiagnosticService.Scope channelDiagnosticScope(URI uri)
     {
         DecodeEventViewService.Scope selected = decodeEventScope(uri);
@@ -1473,143 +1369,6 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
 
         return new ChannelDiagnosticService.Scope(selected.configurationId(), selected.frequencyHz(),
             selected.timeslot());
-    }
-
-    private void handleSitesSse(HttpExchange exchange) throws IOException
-    {
-        if(!requireExactTextPath(exchange, StatsApiV1.LIVE_SITES) || !requireMethod(exchange, "GET") ||
-            !requireNoQuery(exchange))
-        {
-            return;
-        }
-
-        StatsLiveEventHub.Subscription subscription = mLiveService.subscribeSites();
-
-        if(subscription == null)
-        {
-            sendApiError(exchange, 429, "too_many_clients", "Too many live clients");
-            return;
-        }
-
-        streamSse(exchange, subscription, "snapshot", mLiveService.siteSnapshot(),
-            event -> "site_metadata".equals(event.name()) || "site_removed".equals(event.name()));
-    }
-
-    private void handleWebCallsSse(HttpExchange exchange) throws IOException
-    {
-        if(!requireExactTextPath(exchange, StatsApiV1.LIVE_CALLS) || !requireMethod(exchange, "GET") ||
-            !requireNoQuery(exchange))
-        {
-            return;
-        }
-
-        StatsLiveEventHub.Subscription subscription = mWebCallService.subscribe();
-
-        if(subscription == null)
-        {
-            sendApiError(exchange, 429, "too_many_clients", "Too many live clients");
-            return;
-        }
-
-        streamSse(exchange, subscription, "ready", Map.of("state", "live"),
-            event -> "call".equals(event.name()));
-    }
-
-    private void handleActivitySse(HttpExchange exchange) throws IOException
-    {
-        if(!requireExactTextPath(exchange, StatsApiV1.LIVE_ACTIVITY) || !requireMethod(exchange, "GET"))
-        {
-            return;
-        }
-
-        StatsRequest request;
-
-        try
-        {
-            request = StatsRequest.from(exchange.getRequestURI());
-            validateActivityRequest(request);
-            request.requireFullyConsumed();
-        }
-        catch(StatsApiException e)
-        {
-            sendApiException(exchange, e);
-            return;
-        }
-
-        StatsLiveEventHub.Subscription subscription = mLiveService.subscribeActivity();
-
-        if(subscription == null)
-        {
-            sendApiError(exchange, 429, "too_many_clients", "Too many live clients");
-            return;
-        }
-
-        streamSse(exchange, subscription, "ready", Map.of("state", "live"),
-            event -> event.data() instanceof Map<?,?> row && matchesActivity(row, request));
-    }
-
-    private void streamSse(HttpExchange exchange, StatsLiveEventHub.Subscription subscription, String initialEvent,
-                           Object initialData, java.util.function.Predicate<StatsLiveEventHub.LiveEvent> filter)
-        throws IOException
-    {
-        WebAccessHttpController accessController = mWebAccessHttpController;
-
-        if(accessController == null || !accessController.isRequestStillAuthorized(exchange))
-        {
-            subscription.close();
-            sendApiError(exchange, 403, "access_denied", "Access changed before the live stream started");
-            return;
-        }
-
-        Headers headers = exchange.getResponseHeaders();
-        headers.set("Content-Type", "text/event-stream; charset=utf-8");
-        headers.set("Cache-Control", "no-store");
-        headers.set("Connection", "keep-alive");
-        headers.set("X-Accel-Buffering", "no");
-        exchange.sendResponseHeaders(200, 0);
-        HttpServer server = exchange.getHttpContext().getServer();
-
-        try(subscription; OutputStream outputStream = exchange.getResponseBody())
-        {
-            if(!accessController.isRequestStillAuthorized(exchange))
-            {
-                return;
-            }
-
-            writeSseEvent(outputStream, initialEvent, initialData);
-
-            while(mListener != null && mListener.server() == server && !subscription.isClosed() &&
-                accessController.isRequestStillAuthorized(exchange))
-            {
-                StatsLiveEventHub.LiveEvent event = subscription.poll(15, TimeUnit.SECONDS);
-
-                // Revocation can happen while poll is blocked.  Recheck immediately before every heartbeat or
-                // event write so a demoted/deleted account cannot receive one final post-revocation event.
-                if(!accessController.isRequestStillAuthorized(exchange))
-                {
-                    break;
-                }
-
-                if(event == null)
-                {
-                    outputStream.write((": heartbeat " + System.currentTimeMillis() + "\n\n")
-                        .getBytes(StandardCharsets.UTF_8));
-                    outputStream.flush();
-                }
-                else if(filter.test(event))
-                {
-                    writeSseEvent(outputStream, event.name(), event.data());
-                }
-            }
-        }
-        catch(InterruptedException e)
-        {
-            Thread.currentThread().interrupt();
-        }
-        catch(IOException e)
-        {
-            // Client disconnected.
-        }
     }
 
     private void handleWebCallAudio(HttpExchange exchange) throws IOException
@@ -1683,40 +1442,9 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         }
     }
 
-    private static void writeSseEvent(OutputStream outputStream, String event, Object data)
-        throws IOException
-    {
-        outputStream.write(("event: " + event + "\ndata: ").getBytes(StandardCharsets.UTF_8));
-        outputStream.write(data instanceof EncodedSsePayload encoded ? encoded.payload() :
-            ApiHttpResponse.encodePayload(StatsApiV1Payload.present(data)));
-        outputStream.write("\n\n".getBytes(StandardCharsets.UTF_8));
-        outputStream.flush();
-    }
-
     private static void handleApiNotFound(HttpExchange exchange) throws IOException
     {
         ApiHttpResponse.sendError(exchange, 404, "not_found", "Resource not found");
-    }
-
-    private static void writeSseHeartbeat(OutputStream outputStream) throws IOException
-    {
-        outputStream.write((": heartbeat " + System.currentTimeMillis() + "\n\n")
-            .getBytes(StandardCharsets.UTF_8));
-        outputStream.flush();
-    }
-
-    private static void writeDiagnosticState(OutputStream outputStream, long generation, long revision, Object state)
-        throws IOException
-    {
-        writeDiagnosticFrame(outputStream, DiagnosticStreamFrame.jsonState(generation, revision,
-            ApiHttpResponse.encodePayload(StatsApiV1Payload.present(state))));
-    }
-
-    private static void writeDiagnosticFrame(OutputStream outputStream, DiagnosticStreamFrame frame)
-        throws IOException
-    {
-        outputStream.write(frame.encoded());
-        outputStream.flush();
     }
 
     static boolean matchesActivity(Map<?,?> row, StatsRequest request)
@@ -1754,6 +1482,22 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
 
         return radio == null || numberEquals(row.get("source_radio_id"), radio) ||
             numberEquals(row.get("target_id"), radio) && numberEquals(row.get("target_kind_code"), 2);
+    }
+
+    static boolean matchesActivityEvent(StatsLiveEventHub.LiveEvent event, StatsRequest request)
+    {
+        return "activity_reset".equals(event.name()) ||
+            event.data() instanceof Map<?,?> row && matchesActivity(row, request);
+    }
+
+    /**
+     * Captures the source drop baseline before constructing an authoritative snapshot. Drops that happen while a
+     * snapshot is being built therefore remain newer than the returned baseline and force a second recovery pass.
+     */
+    static <T> RecoveryCapture<T> captureRecovery(LongSupplier droppedCount, Supplier<T> snapshotSupplier)
+    {
+        long baseline = droppedCount.getAsLong();
+        return new RecoveryCapture<>(baseline, snapshotSupplier.get());
     }
 
     private static boolean numberEquals(Object value, int expected)
@@ -2006,6 +1750,10 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
 
         mLiveService.close();
         mDecodeEventHub.close();
+        if(mDecodeMessageViewService != null)
+        {
+            mDecodeMessageViewService.close();
+        }
         if(mChannelDiagnosticService != null)
         {
             mChannelDiagnosticService.close();
@@ -2016,6 +1764,1299 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         }
         mDiagnosticFftScheduler.close();
         mWebCallService.close();
+    }
+
+    /**
+     * Bounded per-document writer. Each metadata topic has its own count- and byte-bounded FIFO so a burst in one
+     * feature cannot evict another feature's events. Dense diagnostics use one latest-value slot per topic, while
+     * authoritative recovery and diagnostic state use priority coalesced slots. Closing stops new work immediately;
+     * connection capacity remains charged until a blocked network writer actually terminates. Receiver and diagnostic
+     * producers never call this object directly.
+     */
+    static final class MultiplexOutput implements AutoCloseable
+    {
+        private static final int EVENT_CAPACITY_PER_TOPIC = 64;
+        static final int EVENT_BYTE_CAPACITY_PER_TOPIC = 256 * 1024;
+        private static final long MAXIMUM_EVENT_DROPS = 64;
+        private final OutputStream mOutputStream;
+        private final long mWriteStallNanos;
+        private final boolean mCloseStreamOnClose;
+        private final Runnable mAfterEmptyStatePoll;
+        private final Runnable mOnWriterTerminated;
+        private final Object mPendingLock = new Object();
+        private final AtomicReferenceArray<ArrayBlockingQueue<byte[]>> mEvents =
+            new AtomicReferenceArray<>(TOPIC_ACTIVITY + 1);
+        private final AtomicReferenceArray<byte[]> mStates = new AtomicReferenceArray<>(TOPIC_ACTIVITY + 1);
+        private final AtomicReferenceArray<byte[]> mLatest = new AtomicReferenceArray<>(TOPIC_ACTIVITY + 1);
+        private final AtomicBoolean mOutputClosed = new AtomicBoolean();
+        private final AtomicBoolean mFailed = new AtomicBoolean();
+        private final AtomicBoolean mWriterStarted = new AtomicBoolean();
+        private final AtomicBoolean mWriterTerminated = new AtomicBoolean();
+        private final AtomicLong mLastProgressNanos = new AtomicLong(System.nanoTime());
+        private final AtomicLong mWriteStartedNanos = new AtomicLong();
+        private final AtomicLong mEventDrops = new AtomicLong();
+        private final AtomicLongArray mTopicEventDrops = new AtomicLongArray(TOPIC_ACTIVITY + 1);
+        private final AtomicLongArray mRecentTopicEventDrops = new AtomicLongArray(TOPIC_ACTIVITY + 1);
+        private final long[] mPendingEventBytes = new long[TOPIC_ACTIVITY + 1];
+        private int mNextStateTopic = TOPIC_CHANNEL_ACTIVITY;
+        private int mNextEventTopic = TOPIC_CONTROL;
+        private int mNextTopic = TOPIC_CHANNEL_ACTIVITY;
+        private boolean mPreferLatest;
+        private Thread mWriter;
+
+        MultiplexOutput(OutputStream outputStream)
+        {
+            this(outputStream, Duration.ofSeconds(8), true, () -> {}, () -> {});
+        }
+
+        MultiplexOutput(OutputStream outputStream, Duration writeStall)
+        {
+            this(outputStream, writeStall, true, () -> {}, () -> {});
+        }
+
+        MultiplexOutput(OutputStream outputStream, Duration writeStall, Runnable afterEmptyStatePoll)
+        {
+            this(outputStream, writeStall, true, afterEmptyStatePoll, () -> {});
+        }
+
+        MultiplexOutput(OutputStream outputStream, Duration writeStall, boolean closeStreamOnClose,
+                        Runnable afterEmptyStatePoll)
+        {
+            this(outputStream, writeStall, closeStreamOnClose, afterEmptyStatePoll, () -> {});
+        }
+
+        MultiplexOutput(OutputStream outputStream, Duration writeStall, boolean closeStreamOnClose,
+                        Runnable afterEmptyStatePoll, Runnable onWriterTerminated)
+        {
+            mOutputStream = Objects.requireNonNull(outputStream, "Multiplex output stream cannot be null");
+            mWriteStallNanos = Objects.requireNonNull(writeStall, "Write stall duration cannot be null").toNanos();
+            mCloseStreamOnClose = closeStreamOnClose;
+            mAfterEmptyStatePoll = Objects.requireNonNull(afterEmptyStatePoll,
+                "Multiplex selection hook cannot be null");
+            mOnWriterTerminated = Objects.requireNonNull(onWriterTerminated,
+                "Multiplex writer termination callback cannot be null");
+
+            if(mWriteStallNanos <= 0)
+            {
+                throw new IllegalArgumentException("Write stall duration must be positive");
+            }
+
+            for(int topic = TOPIC_CONTROL; topic <= TOPIC_ACTIVITY; topic++)
+            {
+                mEvents.set(topic, new ArrayBlockingQueue<>(EVENT_CAPACITY_PER_TOPIC));
+            }
+        }
+
+        void start()
+        {
+            mWriter = new Thread(this::writeLoop, "stats web multiplex writer");
+            mWriter.setDaemon(true);
+            mWriter.setPriority(Thread.NORM_PRIORITY - 1);
+            mWriterStarted.set(true);
+
+            try
+            {
+                mWriter.start();
+            }
+            catch(RuntimeException exception)
+            {
+                mWriterStarted.set(false);
+                writerTerminated();
+                throw exception;
+            }
+        }
+
+        void offerEvent(int topic, byte[] envelope)
+        {
+            if(mOutputClosed.get() || !validTopic(topic))
+            {
+                return;
+            }
+
+            synchronized(mPendingLock)
+            {
+                if(mOutputClosed.get())
+                {
+                    return;
+                }
+
+                ArrayBlockingQueue<byte[]> events = mEvents.get(topic);
+
+                if(envelope.length > EVENT_BYTE_CAPACITY_PER_TOPIC)
+                {
+                    recordEventDrop(topic);
+                    return;
+                }
+
+                while(!events.isEmpty() && (events.remainingCapacity() == 0 ||
+                    mPendingEventBytes[topic] + envelope.length > EVENT_BYTE_CAPACITY_PER_TOPIC))
+                {
+                    byte[] dropped = events.poll();
+                    mPendingEventBytes[topic] -= dropped.length;
+                    recordEventDrop(topic);
+                }
+
+                if(events.offer(envelope))
+                {
+                    mPendingEventBytes[topic] += envelope.length;
+                }
+                else
+                {
+                    //The queue is mutated only under mPendingLock, but retain a bounded failure path if that changes.
+                    recordEventDrop(topic);
+                }
+            }
+        }
+
+        private void recordEventDrop(int topic)
+        {
+            mEventDrops.incrementAndGet();
+            mTopicEventDrops.incrementAndGet(topic);
+            mRecentTopicEventDrops.incrementAndGet(topic);
+        }
+
+        void offerRecovery(int topic, byte[] envelope)
+        {
+            if(mOutputClosed.get() || !validTopic(topic))
+            {
+                return;
+            }
+
+            synchronized(mPendingLock)
+            {
+                if(mOutputClosed.get())
+                {
+                    return;
+                }
+
+                clearEventsLocked(topic);
+                offerStateLocked(topic, envelope);
+            }
+        }
+
+        void clearTopic(int topic)
+        {
+            if(validTopic(topic))
+            {
+                synchronized(mPendingLock)
+                {
+                    clearEventsLocked(topic);
+                    mStates.set(topic, null);
+                    mLatest.set(topic, null);
+                }
+            }
+        }
+
+        void offerLatest(int topic, byte[] envelope)
+        {
+            if(!mOutputClosed.get() && topic >= 0 && topic < mLatest.length())
+            {
+                synchronized(mPendingLock)
+                {
+                    if(!mOutputClosed.get())
+                    {
+                        mLatest.set(topic, envelope);
+                    }
+                }
+            }
+        }
+
+        void offerState(int topic, byte[] envelope)
+        {
+            if(!mOutputClosed.get() && topic >= 0 && topic < mStates.length())
+            {
+                synchronized(mPendingLock)
+                {
+                    if(!mOutputClosed.get())
+                    {
+                        offerStateLocked(topic, envelope);
+                    }
+                }
+            }
+        }
+
+        private void offerStateLocked(int topic, byte[] envelope)
+        {
+            //A state frame changes the meaning/layout of dense frames. Discard any prior-layout latest frame and
+            //coalesce state independently from lossy metadata so viewport acknowledgement cannot be evicted.
+            mLatest.set(topic, null);
+            mStates.set(topic, envelope);
+        }
+
+        boolean isFailed()
+        {
+            return mFailed.get();
+        }
+
+        boolean isWriterStarted()
+        {
+            return mWriterStarted.get();
+        }
+
+        boolean isWriterTerminated()
+        {
+            return mWriterTerminated.get();
+        }
+
+        long eventDrops()
+        {
+            return mEventDrops.get();
+        }
+
+        long eventDrops(int topic)
+        {
+            return validTopic(topic) ? mTopicEventDrops.get(topic) : 0;
+        }
+
+        long pendingEventBytes(int topic)
+        {
+            synchronized(mPendingLock)
+            {
+                return validTopic(topic) ? mPendingEventBytes[topic] : 0;
+            }
+        }
+
+        boolean isPersistentlySlow()
+        {
+            long recentDrops = 0;
+
+            for(int topic = TOPIC_CONTROL; topic < mEvents.length(); topic++)
+            {
+                recentDrops += mRecentTopicEventDrops.get(topic);
+            }
+
+            if(recentDrops >= MAXIMUM_EVENT_DROPS)
+            {
+                return true;
+            }
+
+            long started = mWriteStartedNanos.get();
+            return started > mLastProgressNanos.get() && System.nanoTime() - started >= mWriteStallNanos;
+        }
+
+        private void writeLoop()
+        {
+            try
+            {
+                while(!mOutputClosed.get())
+                {
+                    byte[] envelope = pollPending();
+
+                    if(envelope == null)
+                    {
+                        Thread.sleep(20);
+                        continue;
+                    }
+
+                    mWriteStartedNanos.set(System.nanoTime());
+                    mOutputStream.write(envelope);
+                    mOutputStream.flush();
+                    mLastProgressNanos.set(System.nanoTime());
+                    mWriteStartedNanos.set(0);
+
+                    clearRecoveredDropWindows();
+                }
+            }
+            catch(InterruptedException exception)
+            {
+                Thread.currentThread().interrupt();
+            }
+            catch(IOException exception)
+            {
+                if(!mOutputClosed.get())
+                {
+                    mFailed.set(true);
+                }
+            }
+            catch(RuntimeException exception)
+            {
+                if(!mOutputClosed.get())
+                {
+                    mFailed.set(true);
+                }
+            }
+            finally
+            {
+                mOutputClosed.set(true);
+                closeStream();
+                writerTerminated();
+            }
+        }
+
+        private void writerTerminated()
+        {
+            if(mWriterTerminated.compareAndSet(false, true))
+            {
+                mOnWriterTerminated.run();
+            }
+        }
+
+        private byte[] pollPending()
+        {
+            synchronized(mPendingLock)
+            {
+                byte[] envelope = pollState();
+
+                if(envelope == null)
+                {
+                    mAfterEmptyStatePoll.run();
+                }
+
+                if(envelope == null && mPreferLatest)
+                {
+                    envelope = pollLatest();
+                }
+
+                if(envelope == null)
+                {
+                    envelope = pollEvent();
+                }
+
+                if(envelope == null)
+                {
+                    envelope = pollLatest();
+                }
+
+                mPreferLatest = !mPreferLatest;
+                return envelope;
+            }
+        }
+
+        private byte[] pollState()
+        {
+            for(int count = TOPIC_CHANNEL_ACTIVITY; count < mStates.length(); count++)
+            {
+                int topic = mNextStateTopic++;
+
+                if(mNextStateTopic >= mStates.length())
+                {
+                    mNextStateTopic = TOPIC_CHANNEL_ACTIVITY;
+                }
+
+                byte[] envelope = mStates.getAndSet(topic, null);
+
+                if(envelope != null)
+                {
+                    return envelope;
+                }
+            }
+
+            return null;
+        }
+
+        private byte[] pollEvent()
+        {
+            for(int count = TOPIC_CONTROL; count < mEvents.length(); count++)
+            {
+                int topic = mNextEventTopic++;
+
+                if(mNextEventTopic >= mEvents.length())
+                {
+                    mNextEventTopic = TOPIC_CONTROL;
+                }
+
+                byte[] envelope = mEvents.get(topic).poll();
+
+                if(envelope != null)
+                {
+                    mPendingEventBytes[topic] -= envelope.length;
+                    return envelope;
+                }
+            }
+
+            return null;
+        }
+
+        private byte[] pollLatest()
+        {
+            for(int count = TOPIC_CHANNEL_ACTIVITY; count < mLatest.length(); count++)
+            {
+                int topic = mNextTopic++;
+
+                if(mNextTopic >= mLatest.length())
+                {
+                    mNextTopic = TOPIC_CHANNEL_ACTIVITY;
+                }
+
+                if(topic >= mLatest.length())
+                {
+                    continue;
+                }
+
+                byte[] envelope = mLatest.getAndSet(topic, null);
+
+                if(envelope != null)
+                {
+                    return envelope;
+                }
+            }
+
+            return null;
+        }
+
+        private void clearRecoveredDropWindows()
+        {
+            synchronized(mPendingLock)
+            {
+                for(int topic = TOPIC_CONTROL; topic < mEvents.length(); topic++)
+                {
+                    if(mEvents.get(topic).size() < EVENT_CAPACITY_PER_TOPIC / 4)
+                    {
+                        mRecentTopicEventDrops.set(topic, 0);
+                    }
+                }
+            }
+        }
+
+        private boolean validTopic(int topic)
+        {
+            return topic >= TOPIC_CONTROL && topic < mEvents.length();
+        }
+
+        private void clearEventsLocked(int topic)
+        {
+            mEvents.get(topic).clear();
+            mPendingEventBytes[topic] = 0;
+        }
+
+        @Override
+        public void close()
+        {
+            if(!mOutputClosed.compareAndSet(false, true))
+            {
+                return;
+            }
+
+            synchronized(mPendingLock)
+            {
+                for(int topic = 0; topic < mLatest.length(); topic++)
+                {
+                    clearEventsLocked(topic);
+                    mStates.set(topic, null);
+                    mLatest.set(topic, null);
+                }
+            }
+
+            Thread writer = mWriter;
+
+            if(writer != null && writer != Thread.currentThread())
+            {
+                writer.interrupt();
+            }
+
+            if(mCloseStreamOnClose || !mWriterStarted.get())
+            {
+                closeStream();
+            }
+        }
+
+        private void closeStream()
+        {
+            try
+            {
+                mOutputStream.close();
+            }
+            catch(IOException exception)
+            {
+                //The browser already disconnected.
+            }
+        }
+    }
+
+    /** One browser document's logical subscriptions, all sampled by its single HTTP handler thread. */
+    private final class MultiplexClient implements AutoCloseable
+    {
+        private static final int MAXIMUM_EVENTS_PER_PUMP = 16;
+        private static final int MAXIMUM_RECOVERY_DISCARD = 512;
+        private final String mClientId;
+        private final HttpExchange mExchange;
+        private final MultiplexClientLifecycle mLifecycle = new MultiplexClientLifecycle(Thread.currentThread());
+        private final AtomicReference<MultiplexConfiguration> mRequested =
+            new AtomicReference<>(new MultiplexConfiguration(0, Map.of()));
+        private final Map<String,JsonNode> mActiveParameters = new LinkedHashMap<>();
+        private final LiveTopicRetryPolicy mTopicRetryPolicy = new LiveTopicRetryPolicy();
+        private final long[] mObservedOutputDrops = new long[TOPIC_ACTIVITY + 1];
+        private Set<String> mUnauthorizedTopics = Set.of();
+        private StatsLiveEventHub.Subscription mChannelActivity;
+        private StatsLiveEventHub.Subscription mCalls;
+        private StatsLiveEventHub.Subscription mDecodeEvents;
+        private DecodeEventViewService.Scope mDecodeEventScope;
+        private StatsLiveEventHub.Subscription mActivity;
+        private StatsRequest mActivityRequest;
+        private DecodeMessageViewService.Session mDecodeMessages;
+        private ChannelDiagnosticService.Session mChannelDiagnostics;
+        private TunerDiagnosticService.Session mTunerDiagnostics;
+        private long mDecodeMessageGeneration = -1;
+        private long mChannelStateRevision = -1;
+        private long mTunerStateRevision = -1;
+        private long mLastMessagePoll;
+        private long mLastTunerStatePoll;
+        private long mChannelActivityDrops;
+        private long mCallDrops;
+        private long mDecodeEventDrops;
+        private long mDecodeMessageDrops;
+        private long mActivityDrops;
+        private boolean mMessagePermit;
+        private boolean mChannelDiagnosticPermit;
+        private boolean mTunerDiagnosticPermit;
+
+        private MultiplexClient(String clientId, HttpExchange exchange)
+        {
+            mClientId = clientId;
+            mExchange = exchange;
+        }
+
+        private void configure(MultiplexConfiguration configuration)
+        {
+            mRequested.updateAndGet(current -> configuration.revision() > current.revision() ? configuration : current);
+        }
+
+        private boolean isClosed()
+        {
+            return mLifecycle.isCloseRequested();
+        }
+
+        private void requestClose()
+        {
+            mLifecycle.requestClose();
+        }
+
+        private void awaitOwnerClose(long deadlineNanos)
+        {
+            mLifecycle.awaitOwnerClose(deadlineNanos);
+        }
+
+        private void refreshAuthorization()
+        {
+            java.util.HashSet<String> denied = new java.util.HashSet<>();
+
+            for(String topic: MULTIPLEX_TOPICS)
+            {
+                if(!mWebAccessHttpController.isRequestStillAuthorized(mExchange, capabilityForTopic(topic)))
+                {
+                    denied.add(topic);
+                }
+            }
+
+            mUnauthorizedTopics = Set.copyOf(denied);
+        }
+
+        private boolean pump(MultiplexOutput output) throws IOException, InterruptedException
+        {
+            boolean wrote = reconcile(output);
+            wrote |= pumpEvents(output, TOPIC_CHANNEL_ACTIVITY, mChannelActivity);
+            wrote |= pumpEvents(output, TOPIC_CALLS, mCalls);
+            wrote |= pumpEvents(output, TOPIC_DECODE_EVENTS, mDecodeEvents);
+            wrote |= pumpActivity(output);
+
+            long now = System.nanoTime();
+
+            if(mDecodeMessages != null && now - mLastMessagePoll >= TimeUnit.MILLISECONDS.toNanos(100))
+            {
+                mLastMessagePoll = now;
+                long generation = mDecodeMessages.generation();
+
+                if(generation != mDecodeMessageGeneration)
+                {
+                    discardDecodeMessages();
+                    var recovery = captureRecovery(mDecodeMessages::droppedCount,
+                        () -> Map.of("messages", mDecodeMessages.snapshot(), "bound", mDecodeMessages.isBound()));
+                    mDecodeMessageDrops = recovery.dropBaseline();
+                    writeMultiplexRecoveryJson(output, TOPIC_DECODE_MESSAGES, "snapshot",
+                        recovery.snapshot());
+                    observeOutputDrops(output, TOPIC_DECODE_MESSAGES);
+                    mDecodeMessageGeneration = generation;
+                    wrote = true;
+                }
+
+                for(int count = 0; count < MAXIMUM_EVENTS_PER_PUMP; count++)
+                {
+                    DecodeMessageViewService.MessageView message = mDecodeMessages.poll(0, TimeUnit.NANOSECONDS);
+
+                    if(message == null)
+                    {
+                        break;
+                    }
+
+                    writeMultiplexJson(output, TOPIC_DECODE_MESSAGES, "decode_message", message);
+                    wrote = true;
+                }
+            }
+
+            wrote |= recoverMetadataGaps(output);
+
+            if(mChannelDiagnostics != null)
+            {
+                ChannelDiagnosticService.State state = mChannelDiagnostics.refresh();
+
+                if(state.revision() != mChannelStateRevision)
+                {
+                    writeMultiplexDiagnostic(output, TOPIC_CHANNEL_DIAGNOSTICS,
+                        diagnosticState(state.generation(), state.revision(), state));
+                    mChannelStateRevision = state.revision();
+                    wrote = true;
+                }
+
+                DiagnosticStreamFrame frame = mChannelDiagnostics.poll(Duration.ZERO);
+
+                if(frame != null)
+                {
+                    writeMultiplexDiagnostic(output, TOPIC_CHANNEL_DIAGNOSTICS, frame);
+                    wrote = true;
+                }
+            }
+
+            if(mTunerDiagnostics != null)
+            {
+                if(now - mLastTunerStatePoll >= TimeUnit.SECONDS.toNanos(1))
+                {
+                    mLastTunerStatePoll = now;
+                    TunerDiagnosticService.State state = mTunerDiagnostics.state();
+
+                    if(state.revision() != mTunerStateRevision)
+                    {
+                        writeMultiplexDiagnostic(output, TOPIC_TUNER_DIAGNOSTICS,
+                            diagnosticState(state.generation(), state.revision(), state));
+                        mTunerStateRevision = state.revision();
+                        wrote = true;
+                    }
+                }
+
+                DiagnosticStreamFrame frame = mTunerDiagnostics.poll(Duration.ZERO);
+
+                if(frame != null)
+                {
+                    writeMultiplexDiagnostic(output, TOPIC_TUNER_DIAGNOSTICS, frame);
+                    wrote = true;
+                }
+            }
+
+            return wrote;
+        }
+
+        private boolean recoverMetadataGaps(MultiplexOutput output) throws IOException, InterruptedException
+        {
+            boolean wrote = false;
+
+            if(mChannelActivity != null && metadataGap(output, TOPIC_CHANNEL_ACTIVITY,
+                mChannelActivity.droppedCount(), mChannelActivityDrops))
+            {
+                discardSubscription(mChannelActivity);
+                long dropBaseline = mChannelActivity.droppedCount();
+                byte[] snapshot = mLiveService.encodedSnapshot();
+                var recovery = new RecoveryCapture<>(dropBaseline, snapshot);
+                mChannelActivityDrops = recovery.dropBaseline();
+                writeMultiplexRecoveryJson(output, TOPIC_CHANNEL_ACTIVITY, "snapshot",
+                    MULTIPLEX_OBJECT_MAPPER.readTree(recovery.snapshot()));
+                observeOutputDrops(output, TOPIC_CHANNEL_ACTIVITY);
+                wrote = true;
+            }
+
+            if(mCalls != null && metadataGap(output, TOPIC_CALLS, mCalls.droppedCount(), mCallDrops))
+            {
+                discardSubscription(mCalls);
+                var recovery = captureRecovery(mCalls::droppedCount, mWebCallService::snapshot);
+                mCallDrops = recovery.dropBaseline();
+                writeMultiplexRecoveryJson(output, TOPIC_CALLS, "snapshot",
+                    Map.of("calls", recovery.snapshot()));
+                observeOutputDrops(output, TOPIC_CALLS);
+                wrote = true;
+            }
+
+            if(mDecodeEvents != null && mDecodeEventScope != null && metadataGap(output, TOPIC_DECODE_EVENTS,
+                mDecodeEvents.droppedCount(), mDecodeEventDrops))
+            {
+                discardSubscription(mDecodeEvents);
+                var recovery = captureRecovery(mDecodeEvents::droppedCount,
+                    () -> mDecodeEventViewService.snapshot(mDecodeEventScope));
+                mDecodeEventDrops = recovery.dropBaseline();
+                writeMultiplexRecoveryJson(output, TOPIC_DECODE_EVENTS, "snapshot",
+                    Map.of("events", recovery.snapshot()));
+                observeOutputDrops(output, TOPIC_DECODE_EVENTS);
+                wrote = true;
+            }
+
+            if(mDecodeMessages != null && metadataGap(output, TOPIC_DECODE_MESSAGES,
+                mDecodeMessages.droppedCount(), mDecodeMessageDrops))
+            {
+                discardDecodeMessages();
+                var recovery = captureRecovery(mDecodeMessages::droppedCount,
+                    () -> Map.of("messages", mDecodeMessages.snapshot(), "bound", mDecodeMessages.isBound()));
+                mDecodeMessageDrops = recovery.dropBaseline();
+                writeMultiplexRecoveryJson(output, TOPIC_DECODE_MESSAGES, "snapshot",
+                    recovery.snapshot());
+                observeOutputDrops(output, TOPIC_DECODE_MESSAGES);
+                wrote = true;
+            }
+
+            if(mActivity != null && metadataGap(output, TOPIC_ACTIVITY,
+                mActivity.droppedCount(), mActivityDrops))
+            {
+                discardSubscription(mActivity);
+                var recovery = captureRecovery(mActivity::droppedCount, () -> Map.of("reason", "live_gap"));
+                mActivityDrops = recovery.dropBaseline();
+                writeMultiplexRecoveryJson(output, TOPIC_ACTIVITY, "activity_reset",
+                    recovery.snapshot());
+                observeOutputDrops(output, TOPIC_ACTIVITY);
+                wrote = true;
+            }
+
+            return wrote;
+        }
+
+        private boolean metadataGap(MultiplexOutput output, int topic, long sourceDrops, long observedSourceDrops)
+        {
+            return output.eventDrops(topic) != mObservedOutputDrops[topic] || sourceDrops != observedSourceDrops;
+        }
+
+        private void observeOutputDrops(MultiplexOutput output, int topic)
+        {
+            mObservedOutputDrops[topic] = output.eventDrops(topic);
+        }
+
+        private void discardSubscription(StatsLiveEventHub.Subscription subscription) throws InterruptedException
+        {
+            for(int count = 0; count < MAXIMUM_RECOVERY_DISCARD; count++)
+            {
+                if(subscription.poll(0, TimeUnit.NANOSECONDS) == null)
+                {
+                    return;
+                }
+            }
+        }
+
+        private void discardDecodeMessages() throws InterruptedException
+        {
+            for(int count = 0; count < MAXIMUM_RECOVERY_DISCARD; count++)
+            {
+                if(mDecodeMessages.poll(0, TimeUnit.NANOSECONDS) == null)
+                {
+                    return;
+                }
+            }
+        }
+
+        private boolean reconcile(MultiplexOutput output) throws IOException
+        {
+            MultiplexConfiguration requested = mRequested.get();
+            boolean wrote = false;
+            long now = System.nanoTime();
+
+            for(String topic: MULTIPLEX_TOPICS)
+            {
+                JsonNode wanted = mUnauthorizedTopics.contains(topic) ? null : requested.subscriptions().get(topic);
+                JsonNode active = mActiveParameters.get(topic);
+
+                if(Objects.equals(wanted, active))
+                {
+                    continue;
+                }
+
+                if(wanted != null && active == null && !mTopicRetryPolicy.canAttempt(topic, wanted, now))
+                {
+                    continue;
+                }
+
+                if("tuner_diagnostics".equals(topic) && wanted != null && active != null &&
+                    mTunerDiagnostics != null && Objects.equals(wanted.path("target_id"), active.path("target_id")))
+                {
+                    try
+                    {
+                        TunerDiagnosticRequest request = tunerDiagnosticRequest(
+                            multiplexSubscriptionUri(topic, wanted));
+                        mTunerDiagnostics.updateViewport(request.viewport());
+                        TunerDiagnosticService.State state = mTunerDiagnostics.state();
+                        writeMultiplexDiagnostic(output, TOPIC_TUNER_DIAGNOSTICS,
+                            diagnosticState(state.generation(), state.revision(), state));
+                        mTunerStateRevision = state.revision();
+                        mLastTunerStatePoll = System.nanoTime();
+                        mActiveParameters.put(topic, wanted);
+                        mTopicRetryPolicy.succeeded(topic);
+                        wrote = true;
+                        continue;
+                    }
+                    catch(RuntimeException exception)
+                    {
+                        //The target/session changed concurrently. Reopen through the normal bounded path below.
+                    }
+                }
+
+                output.clearTopic(topicId(topic));
+                closeTopic(topic);
+                mActiveParameters.remove(topic);
+
+                if(wanted != null)
+                {
+                    try
+                    {
+                        openTopic(topic, wanted, output);
+                        mActiveParameters.put(topic, wanted);
+                        mTopicRetryPolicy.succeeded(topic);
+                    }
+                    catch(RuntimeException exception)
+                    {
+                        closeTopic(topic);
+                        mTopicRetryPolicy.failed(topic, wanted, now);
+                        mLog.debug("Unable to open multiplex topic [{}] for client [{}]", topic, mClientId,
+                            exception);
+                        writeMultiplexJson(output, topicId(topic), "error",
+                            Map.of("status", 503, "message", "The live subscription is temporarily unavailable"));
+                    }
+                    catch(IOException exception)
+                    {
+                        closeTopic(topic);
+                        throw exception;
+                    }
+
+                    wrote = true;
+                }
+                else
+                {
+                    mTopicRetryPolicy.clear(topic);
+                }
+            }
+
+            return wrote;
+        }
+
+        private void openTopic(String topic, JsonNode parameters, MultiplexOutput output) throws IOException
+        {
+            URI uri = multiplexSubscriptionUri(topic, parameters);
+
+            switch(topic)
+            {
+                case "channel_activity" -> {
+                    mChannelActivity = requiredSubscription(mLiveService.subscribeSystems(), topic);
+                    long dropBaseline = mChannelActivity.droppedCount();
+                    byte[] snapshot = mLiveService.encodedSnapshot();
+                    var recovery = new RecoveryCapture<>(dropBaseline, snapshot);
+                    mChannelActivityDrops = recovery.dropBaseline();
+                    writeMultiplexRecoveryJson(output, TOPIC_CHANNEL_ACTIVITY, "snapshot",
+                        MULTIPLEX_OBJECT_MAPPER.readTree(recovery.snapshot()));
+                    observeOutputDrops(output, TOPIC_CHANNEL_ACTIVITY);
+                }
+                case "calls" -> {
+                    mCalls = requiredSubscription(mWebCallService.subscribe(), topic);
+                    var recovery = captureRecovery(mCalls::droppedCount, mWebCallService::snapshot);
+                    mCallDrops = recovery.dropBaseline();
+                    writeMultiplexRecoveryJson(output, TOPIC_CALLS, "snapshot",
+                        Map.of("calls", recovery.snapshot()));
+                    observeOutputDrops(output, TOPIC_CALLS);
+                }
+                case "decode_events" -> {
+                    DecodeEventViewService.Scope scope = decodeEventScope(uri);
+
+                    synchronized(mDecodeEventSubscriptionLock)
+                    {
+                        mDecodeEvents = mDecodeEventHub.subscribe(event ->
+                            event.data() instanceof DecodeEventViewService.EventView view && scope.matches(view));
+
+                        if(mDecodeEvents != null)
+                        {
+                            mDecodeEventViewService.addListener(mDecodeEventViewListener);
+                        }
+                    }
+
+                    requiredSubscription(mDecodeEvents, topic);
+                    mDecodeEventScope = scope;
+                    var recovery = captureRecovery(mDecodeEvents::droppedCount,
+                        () -> mDecodeEventViewService.snapshot(scope));
+                    mDecodeEventDrops = recovery.dropBaseline();
+                    writeMultiplexRecoveryJson(output, TOPIC_DECODE_EVENTS, "snapshot",
+                        Map.of("events", recovery.snapshot()));
+                    observeOutputDrops(output, TOPIC_DECODE_EVENTS);
+                }
+                case "decode_messages" -> {
+                    if(mDecodeMessageViewService == null || !mDecodeMessageClients.tryAcquire())
+                    {
+                        throw new IllegalStateException("Decode message viewer capacity is in use");
+                    }
+
+                    mMessagePermit = true;
+                    mDecodeMessages = mDecodeMessageViewService.openSession(decodeMessageScope(uri));
+                    var recovery = captureRecovery(mDecodeMessages::droppedCount,
+                        () -> Map.of("messages", mDecodeMessages.snapshot(), "bound", mDecodeMessages.isBound()));
+                    mDecodeMessageDrops = recovery.dropBaseline();
+                    writeMultiplexRecoveryJson(output, TOPIC_DECODE_MESSAGES, "snapshot",
+                        recovery.snapshot());
+                    observeOutputDrops(output, TOPIC_DECODE_MESSAGES);
+                    mDecodeMessageGeneration = mDecodeMessages.generation();
+                }
+                case "channel_diagnostics" -> openChannelDiagnostics(uri, output);
+                case "tuner_diagnostics" -> openTunerDiagnostics(uri, output);
+                case "activity" -> {
+                    StatsRequest request = StatsRequest.from(uri);
+                    validateActivityRequest(request);
+                    request.requireFullyConsumed();
+                    mActivity = requiredSubscription(mLiveService.subscribeActivity(event ->
+                        matchesActivityEvent(event, request)), topic);
+                    mActivityRequest = request;
+                    var recovery = captureRecovery(mActivity::droppedCount,
+                        () -> Map.of("reason", "subscription_open"));
+                    mActivityDrops = recovery.dropBaseline();
+                    writeMultiplexRecoveryJson(output, TOPIC_ACTIVITY, "activity_reset",
+                        recovery.snapshot());
+                    observeOutputDrops(output, TOPIC_ACTIVITY);
+                }
+                default -> throw new IllegalArgumentException("Unknown multiplex topic");
+            }
+        }
+
+        private void openChannelDiagnostics(URI uri, MultiplexOutput output) throws IOException
+        {
+            if(mChannelDiagnosticService == null || !mDiagnosticClients.tryAcquire())
+            {
+                throw new IllegalStateException("Diagnostic viewer capacity is in use");
+            }
+
+            mChannelDiagnosticPermit = true;
+            ChannelDiagnosticService.OpenResult result = mChannelDiagnosticService.tryOpen(channelDiagnosticScope(uri));
+
+            if(result.status() != ChannelDiagnosticService.OpenStatus.OPEN)
+            {
+                throw new IllegalStateException("Channel diagnostics are unavailable: " + result.status());
+            }
+
+            mChannelDiagnostics = result.session();
+            ChannelDiagnosticService.State state = mChannelDiagnostics.state();
+            writeMultiplexDiagnostic(output, TOPIC_CHANNEL_DIAGNOSTICS,
+                diagnosticState(state.generation(), state.revision(), state));
+            mChannelStateRevision = state.revision();
+        }
+
+        private void openTunerDiagnostics(URI uri, MultiplexOutput output) throws IOException
+        {
+            if(mTunerDiagnosticService == null || !mDiagnosticClients.tryAcquire())
+            {
+                throw new IllegalStateException("Diagnostic viewer capacity is in use");
+            }
+
+            mTunerDiagnosticPermit = true;
+            TunerDiagnosticRequest request = tunerDiagnosticRequest(uri);
+            TunerDiagnosticService.OpenResult result =
+                mTunerDiagnosticService.tryOpen(request.targetId(), request.viewport());
+
+            if(result.status() != TunerDiagnosticService.OpenStatus.OPEN)
+            {
+                throw new IllegalStateException("Tuner diagnostics are unavailable: " + result.status());
+            }
+
+            mTunerDiagnostics = result.session();
+            TunerDiagnosticService.State state = mTunerDiagnostics.state();
+            writeMultiplexDiagnostic(output, TOPIC_TUNER_DIAGNOSTICS,
+                diagnosticState(state.generation(), state.revision(), state));
+            mTunerStateRevision = state.revision();
+            mLastTunerStatePoll = System.nanoTime();
+        }
+
+        private StatsLiveEventHub.Subscription requiredSubscription(StatsLiveEventHub.Subscription subscription,
+                                                                    String topic)
+        {
+            if(subscription == null)
+            {
+                throw new IllegalStateException(topic + " viewer capacity is in use");
+            }
+
+            return subscription;
+        }
+
+        private boolean pumpEvents(MultiplexOutput output, int topic,
+                                   StatsLiveEventHub.Subscription subscription)
+            throws IOException, InterruptedException
+        {
+            if(subscription == null)
+            {
+                return false;
+            }
+
+            boolean wrote = false;
+
+            for(int count = 0; count < MAXIMUM_EVENTS_PER_PUMP; count++)
+            {
+                StatsLiveEventHub.LiveEvent event = subscription.poll(0, TimeUnit.NANOSECONDS);
+
+                if(event == null)
+                {
+                    break;
+                }
+
+                writeMultiplexJson(output, topic, event.name(), event.data());
+                wrote = true;
+            }
+
+            return wrote;
+        }
+
+        private boolean pumpActivity(MultiplexOutput output) throws IOException, InterruptedException
+        {
+            if(mActivity == null || mActivityRequest == null)
+            {
+                return false;
+            }
+
+            boolean wrote = false;
+
+            for(int count = 0; count < MAXIMUM_EVENTS_PER_PUMP; count++)
+            {
+                StatsLiveEventHub.LiveEvent event = mActivity.poll(0, TimeUnit.NANOSECONDS);
+
+                if(event == null)
+                {
+                    break;
+                }
+
+                if(matchesActivityEvent(event, mActivityRequest))
+                {
+                    writeMultiplexJson(output, TOPIC_ACTIVITY, event.name(), event.data());
+                    wrote = true;
+                }
+            }
+
+            return wrote;
+        }
+
+        private void closeTopic(String topic)
+        {
+            switch(topic)
+            {
+                case "channel_activity" -> {
+                    mChannelActivity = closeSubscription(mChannelActivity);
+                    mChannelActivityDrops = 0;
+                }
+                case "calls" -> {
+                    mCalls = closeSubscription(mCalls);
+                    mCallDrops = 0;
+                }
+                case "decode_events" -> closeDecodeEvents();
+                case "decode_messages" -> closeDecodeMessages();
+                case "channel_diagnostics" -> closeChannelDiagnostics();
+                case "tuner_diagnostics" -> closeTunerDiagnostics();
+                case "activity" -> {
+                    mActivity = closeSubscription(mActivity);
+                    mActivityRequest = null;
+                    mActivityDrops = 0;
+                }
+                default -> { }
+            }
+        }
+
+        private StatsLiveEventHub.Subscription closeSubscription(StatsLiveEventHub.Subscription subscription)
+        {
+            if(subscription != null)
+            {
+                subscription.close();
+            }
+
+            return null;
+        }
+
+        private void closeDecodeEvents()
+        {
+            synchronized(mDecodeEventSubscriptionLock)
+            {
+                mDecodeEvents = closeSubscription(mDecodeEvents);
+
+                if(mDecodeEventViewService != null && !mDecodeEventHub.hasSubscribers())
+                {
+                    mDecodeEventViewService.removeListener(mDecodeEventViewListener);
+                }
+
+                mDecodeEventScope = null;
+                mDecodeEventDrops = 0;
+            }
+        }
+
+        private void closeDecodeMessages()
+        {
+            if(mDecodeMessages != null)
+            {
+                mDecodeMessages.close();
+                mDecodeMessages = null;
+            }
+
+            if(mMessagePermit)
+            {
+                mMessagePermit = false;
+                mDecodeMessageClients.release();
+            }
+
+            mDecodeMessageGeneration = -1;
+            mDecodeMessageDrops = 0;
+        }
+
+        private void closeChannelDiagnostics()
+        {
+            if(mChannelDiagnostics != null)
+            {
+                mChannelDiagnostics.close();
+                mChannelDiagnostics = null;
+            }
+
+            if(mChannelDiagnosticPermit)
+            {
+                mChannelDiagnosticPermit = false;
+                mDiagnosticClients.release();
+            }
+
+            mChannelStateRevision = -1;
+        }
+
+        private void closeTunerDiagnostics()
+        {
+            if(mTunerDiagnostics != null)
+            {
+                mTunerDiagnostics.close();
+                mTunerDiagnostics = null;
+            }
+
+            if(mTunerDiagnosticPermit)
+            {
+                mTunerDiagnosticPermit = false;
+                mDiagnosticClients.release();
+            }
+
+            mTunerStateRevision = -1;
+        }
+
+        @Override
+        public void close()
+        {
+            mLifecycle.closeOnOwner(() -> {
+                for(String topic: MULTIPLEX_TOPICS)
+                {
+                    closeTopic(topic);
+                }
+
+                mActiveParameters.clear();
+                mTopicRetryPolicy.clear();
+            });
+        }
+    }
+
+    /**
+     * Keeps external stop requests separate from logical-session cleanup. Only the multiplex handler thread may run
+     * the cleanup callback, and it can run it once even when stop/reload races normal handler completion.
+     */
+    static final class MultiplexClientLifecycle
+    {
+        private final Thread mOwner;
+        private final AtomicBoolean mCloseRequested = new AtomicBoolean();
+        private final AtomicBoolean mOwnerClosed = new AtomicBoolean();
+        private final CountDownLatch mOwnerCloseComplete = new CountDownLatch(1);
+
+        MultiplexClientLifecycle(Thread owner)
+        {
+            mOwner = Objects.requireNonNull(owner, "Multiplex owner thread cannot be null");
+        }
+
+        boolean isCloseRequested()
+        {
+            return mCloseRequested.get();
+        }
+
+        void requestClose()
+        {
+            if(mCloseRequested.compareAndSet(false, true) && !mOwnerClosed.get())
+            {
+                mOwner.interrupt();
+            }
+        }
+
+        void closeOnOwner(Runnable closeResources)
+        {
+            if(Thread.currentThread() != mOwner)
+            {
+                throw new IllegalStateException("Multiplex resources must be closed by their handler thread");
+            }
+
+            mCloseRequested.set(true);
+
+            if(!mOwnerClosed.compareAndSet(false, true))
+            {
+                return;
+            }
+
+            try
+            {
+                closeResources.run();
+            }
+            finally
+            {
+                mOwnerCloseComplete.countDown();
+            }
+        }
+
+        void awaitOwnerClose(long deadlineNanos)
+        {
+            if(Thread.currentThread() == mOwner || mOwnerCloseComplete.getCount() == 0)
+            {
+                return;
+            }
+
+            long remaining = deadlineNanos - System.nanoTime();
+
+            if(remaining <= 0)
+            {
+                return;
+            }
+
+            try
+            {
+                mOwnerCloseComplete.await(remaining, TimeUnit.NANOSECONDS);
+            }
+            catch(InterruptedException exception)
+            {
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+    private static DiagnosticStreamFrame diagnosticState(long generation, long revision, Object state)
+        throws IOException
+    {
+        return DiagnosticStreamFrame.jsonState(generation, revision,
+            ApiHttpResponse.encodePayload(StatsApiV1Payload.present(state)));
+    }
+
+    private static WebCapability capabilityForTopic(String topic)
+    {
+        return switch(topic)
+        {
+            case "calls" -> WebCapability.WEB_AUDIO_LISTEN;
+            case "activity" -> WebCapability.SYSTEMS_VIEW;
+            default -> WebCapability.LIVE_VIEW;
+        };
+    }
+
+    private static int topicId(String topic)
+    {
+        return switch(topic)
+        {
+            case "channel_activity" -> TOPIC_CHANNEL_ACTIVITY;
+            case "calls" -> TOPIC_CALLS;
+            case "decode_events" -> TOPIC_DECODE_EVENTS;
+            case "decode_messages" -> TOPIC_DECODE_MESSAGES;
+            case "channel_diagnostics" -> TOPIC_CHANNEL_DIAGNOSTICS;
+            case "tuner_diagnostics" -> TOPIC_TUNER_DIAGNOSTICS;
+            case "activity" -> TOPIC_ACTIVITY;
+            default -> TOPIC_CONTROL;
+        };
+    }
+
+    private record MultiplexConfiguration(long revision, Map<String,JsonNode> subscriptions)
+    {
+        private MultiplexConfiguration
+        {
+            subscriptions = Map.copyOf(subscriptions);
+        }
+    }
+
+    record RecoveryCapture<T>(long dropBaseline, T snapshot)
+    {
+    }
+
+    private record TunerDiagnosticRequest(String targetId, TunerDiagnosticService.Viewport viewport)
+    {
     }
 
     public record TlsActivation(TlsMaterial material, WebServerRuntimeState runtimeState)
@@ -2056,17 +3097,6 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
                 requested.httpsEnabled() != (certificateFingerprint != null))
             {
                 throw new IllegalArgumentException("Prepared web listener TLS state is invalid");
-            }
-        }
-    }
-
-    private record EncodedSsePayload(byte[] payload)
-    {
-        private EncodedSsePayload
-        {
-            if(payload == null)
-            {
-                throw new IllegalArgumentException("Encoded SSE payload is required");
             }
         }
     }

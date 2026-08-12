@@ -11,9 +11,10 @@
 
 package io.github.dsheirer.stats.activity;
 
+import io.github.dsheirer.audio.call.AudioCallSnapshot;
+import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.controller.channel.Channel;
-import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
@@ -232,13 +233,18 @@ class P25ActivityLogMapper
     P25ActivityLogRecords.CompletedCallOutput mapCompletedCallOutput(CompletedAudioCall call,
                                                                      P25ActivityLogRecords.CallOutput output)
     {
-        if(call == null || call.snapshot() == null || call.snapshot().identifierCollection() == null ||
-            output == null)
+        return mapCompletedCallOutput(call != null ? call.snapshot() : null, output);
+    }
+
+    P25ActivityLogRecords.CompletedCallOutput mapCompletedCallOutput(AudioCallSnapshot snapshot,
+                                                                     P25ActivityLogRecords.CallOutput output)
+    {
+        if(snapshot == null || snapshot.identifierCollection() == null || output == null)
         {
             return null;
         }
 
-        IdentifierCollection identifiers = call.snapshot().identifierCollection();
+        IdentifierCollection identifiers = snapshot.identifierCollection();
         IdentifierFacts facts = IdentifierFacts.from(identifiers);
         Identifier targetIdentifier = identifiers.getToIdentifier();
         Integer destination = destinationId(targetIdentifier);
@@ -248,8 +254,8 @@ class P25ActivityLogMapper
         String guid = blankToNull(facts.radresGuid());
         String contextKey = outputContextKey(guid, facts);
 
-        long timestamp = call.snapshot().startTimestamp() > 0 ? call.snapshot().startTimestamp() :
-            call.snapshot().lastActivityTimestamp();
+        long timestamp = snapshot.startTimestamp() > 0 ? snapshot.startTimestamp() :
+            snapshot.lastActivityTimestamp();
 
         if(timestamp <= 0)
         {
@@ -261,7 +267,7 @@ class P25ActivityLogMapper
             return null;
         }
 
-        Integer timeslot = call.snapshot().timeslot() > 0 ? Integer.valueOf(call.snapshot().timeslot()) :
+        Integer timeslot = snapshot.timeslot() > 0 ? Integer.valueOf(snapshot.timeslot()) :
             facts.timeslot();
         return new P25ActivityLogRecords.CompletedCallOutput(timestamp, contextKey, guid, facts.frequencyHertz(),
             timeslot, destination != null ? destination : 0, facts.targetForm(),

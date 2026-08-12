@@ -9,15 +9,10 @@ import io.github.dsheirer.channel.metadata.activity.ChannelActivityEvent;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivityModel;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivitySnapshot;
 import io.github.dsheirer.controller.NamingThreadFactory;
-import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
-import io.github.dsheirer.metadata.site.ProtocolSiteMetadataEvent;
-import io.github.dsheirer.metadata.site.ProtocolSiteMetadataListener;
-import io.github.dsheirer.metadata.site.SiteMetadataSnapshot;
-import io.github.dsheirer.module.decode.dmr.telemetry.DMRNetworkConfigurationSnapshot;
-import io.github.dsheirer.module.decode.nxdn.telemetry.NXDNNetworkConfigurationSnapshot;
-import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.sample.Listener;
+import io.github.dsheirer.util.concurrent.BoundedMpscReferenceQueue;
+import io.github.dsheirer.util.concurrent.ObserverThreadFactory;
 import io.github.dsheirer.web.http.ApiHttpResponse;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -29,145 +24,113 @@ import java.util.Objects;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.function.LongSupplier;
+import java.util.concurrent.locks.LockSupport;
+import java.util.function.Consumer;
+import java.util.function.Predicate;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Lightweight owner of live Systems and committed activity events for the Stats Server.
  */
-final class StatsLiveService implements AutoCloseable, ProtocolSiteMetadataListener
+final class StatsLiveService implements AutoCloseable
 {
+    private static final Logger mLog = LoggerFactory.getLogger(StatsLiveService.class);
     private static final String CHANNEL_ACTIVITY_CONSUMER = "stats-web-live";
-    private static final int MAXIMUM_SSE_CLIENTS = 32;
-    private static final int SSE_QUEUE_CAPACITY = 256;
-    private static final int EVENT_QUEUE_CAPACITY = 64;
+    private static final int MAXIMUM_LIVE_SUBSCRIBERS = 32;
+    private static final int LIVE_SUBSCRIBER_QUEUE_CAPACITY = 256;
+    static final int EVENT_QUEUE_CAPACITY = 64;
+    private static final int RAW_EVENT_QUEUE_CAPACITY = 64;
     static final int MAXIMUM_LIVE_TABLES = 128;
     static final int MAXIMUM_ROWS_PER_TABLE = 256;
     static final int MAXIMUM_TOTAL_LIVE_ROWS = 2_048;
     static final int MAXIMUM_SYSTEM_SNAPSHOT_BYTES = 1024 * 1024;
-    static final int MAXIMUM_LIVE_SITES = 256;
     private static final int MAXIMUM_LIVE_TEXT_LENGTH = 256;
     private static final int MAXIMUM_LIVE_TAGS = 16;
     private static final int MAXIMUM_LIVE_TAG_LENGTH = 64;
-    static final long SITE_METADATA_LIVE_MILLISECONDS = 30_000;
-    static final long QUALITY_LIVE_MILLISECONDS = 45_000;
     private final StatsWebDatabase mDatabase;
     private final ChannelActivityModel mActivityModel;
     private final ChannelProcessingManager mChannelProcessingManager;
-    private final LongSupplier mClock;
-    private final StatsLiveEventHub mSystemsHub = new StatsLiveEventHub(MAXIMUM_SSE_CLIENTS, SSE_QUEUE_CAPACITY);
-    private final StatsLiveEventHub mSitesHub = new StatsLiveEventHub(MAXIMUM_SSE_CLIENTS, SSE_QUEUE_CAPACITY);
-    private final StatsLiveEventHub mActivityHub = new StatsLiveEventHub(MAXIMUM_SSE_CLIENTS, SSE_QUEUE_CAPACITY);
+    private final Consumer<Object> mRawProjectionObserver;
+    private final Object mDemandLock = new Object();
+    private final StatsLiveEventHub mSystemsHub =
+        new StatsLiveEventHub(MAXIMUM_LIVE_SUBSCRIBERS, LIVE_SUBSCRIBER_QUEUE_CAPACITY);
+    private final StatsLiveEventHub mActivityHub =
+        new StatsLiveEventHub(MAXIMUM_LIVE_SUBSCRIBERS, LIVE_SUBSCRIBER_QUEUE_CAPACITY);
     private final Map<String,Map<String,Object>> mTables = new ConcurrentHashMap<>();
-    private final Map<String,Map<String,Object>> mSites = new ConcurrentHashMap<>();
-    private final Map<String,Map<String,Object>> mQualityByGuid = new ConcurrentHashMap<>();
-    private final Map<String,Long> mSiteReceivedAtByGuid = new ConcurrentHashMap<>();
-    private final Map<String,Long> mQualityReceivedAtByGuid = new ConcurrentHashMap<>();
     private final AtomicLong mSystemsRevision = new AtomicLong();
     private final Object mEncodedSnapshotLock = new Object();
-    private final ExecutorService mEventExecutor = new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS,
+    private final ExecutorService mActivityCommitExecutor = new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS,
         new ArrayBlockingQueue<>(EVENT_QUEUE_CAPACITY), new NamingThreadFactory("stats live events"),
-        new ThreadPoolExecutor.DiscardOldestPolicy());
-    private final ScheduledExecutorService mSweepExecutor = Executors.newSingleThreadScheduledExecutor(
-        new NamingThreadFactory("stats live expiry"));
-    private final Listener<ChannelActivityEvent> mChannelActivityListener = event -> {
-        PreparedActivityEvent prepared = prepare(event);
-
-        if(prepared != null)
-        {
-            execute(() -> process(prepared));
-        }
-    };
+        new ThreadPoolExecutor.AbortPolicy());
+    private final BoundedMpscReferenceQueue<Object> mRawEventQueue =
+        new BoundedMpscReferenceQueue<>(RAW_EVENT_QUEUE_CAPACITY);
+    private final AtomicLong mDroppedRawEventCount = new AtomicLong();
+    private final AtomicBoolean mActivityResyncNeeded = new AtomicBoolean();
+    private final AtomicBoolean mActivityResetPending = new AtomicBoolean();
+    private final AtomicLong mRunGeneration = new AtomicLong();
+    private final Listener<ChannelActivityEvent> mChannelActivityListener = this::receiveChannelActivity;
     private final AtomicBoolean mRunning = new AtomicBoolean();
+    private volatile boolean mRawWorkerRunning;
+    private volatile Thread mRawWorker;
     private volatile boolean mTablesTruncated;
-    private volatile boolean mSitesTruncated;
     private volatile int mRetainedActivityRows;
+    private volatile int mSystemsDemand;
+    private volatile long mAppliedActivitySourceRevision;
     private volatile EncodedSnapshot mEncodedSystemSnapshot;
-    private volatile ScheduledFuture<?> mSweepTask;
 
     StatsLiveService(StatsWebDatabase database, ChannelProcessingManager channelProcessingManager)
     {
-        this(database, channelProcessingManager, System::currentTimeMillis);
+        this(database, channelProcessingManager, null);
     }
 
-    StatsLiveService(StatsWebDatabase database, ChannelProcessingManager channelProcessingManager, LongSupplier clock)
+    StatsLiveService(StatsWebDatabase database, ChannelProcessingManager channelProcessingManager,
+                     Consumer<Object> rawProjectionObserver)
     {
         mDatabase = database;
         mChannelProcessingManager = channelProcessingManager;
         mActivityModel = channelProcessingManager != null ? channelProcessingManager.getChannelActivityModel() : null;
-        mClock = clock != null ? clock : System::currentTimeMillis;
+        mRawProjectionObserver = rawProjectionObserver != null ? rawProjectionObserver : ignored -> {};
     }
 
     void start()
     {
-        if(mRunning.compareAndSet(false, true))
+        synchronized(mDemandLock)
         {
-            try
+            if(mRunning.compareAndSet(false, true))
             {
-                if(mChannelProcessingManager != null)
-                {
-                    //The web live service owns this lease independently of the Java Systems tab.
-                    mChannelProcessingManager.setChannelActivityEnabled(CHANNEL_ACTIVITY_CONSUMER, true);
-                }
-
-                if(mActivityModel != null)
-                {
-                    mActivityModel.addActivityListener(mChannelActivityListener);
-                }
-
-                if(mChannelProcessingManager != null)
-                {
-                    mChannelProcessingManager.addProtocolSiteMetadataListener(this);
-                }
-
-                mSweepTask = mSweepExecutor.scheduleAtFixedRate(() -> execute(this::sweepExpired),
-                    5, 5, TimeUnit.SECONDS);
-            }
-            catch(RuntimeException exception)
-            {
-                stop();
-                throw exception;
+                mRunGeneration.incrementAndGet();
             }
         }
     }
 
     void stop()
     {
-        if(mRunning.compareAndSet(true, false))
+        synchronized(mDemandLock)
         {
-            ScheduledFuture<?> sweepTask = mSweepTask;
-            mSweepTask = null;
-
-            if(sweepTask != null)
+            if(mRunning.compareAndSet(true, false))
             {
-                sweepTask.cancel(false);
+                mRunGeneration.incrementAndGet();
             }
 
-            if(mActivityModel != null)
-            {
-                mActivityModel.removeActivityListener(mChannelActivityListener);
-            }
-
-            if(mChannelProcessingManager != null)
-            {
-                mChannelProcessingManager.removeProtocolSiteMetadataListener(this);
-                mChannelProcessingManager.setChannelActivityEnabled(CHANNEL_ACTIVITY_CONSUMER, false);
-            }
+            //Closing the reusable hubs invokes each Systems subscription's exactly-once demand release hook.
+            mSystemsHub.close();
+            mActivityHub.close();
+            mActivityResetPending.set(false);
+            releaseAllSystemsDemand();
+            resetSystemsState();
         }
+    }
 
+    private synchronized void resetSystemsState()
+    {
         mTables.clear();
-        mSites.clear();
-        mQualityByGuid.clear();
-        mSiteReceivedAtByGuid.clear();
-        mQualityReceivedAtByGuid.clear();
         mTablesTruncated = false;
-        mSitesTruncated = false;
         mRetainedActivityRows = 0;
         mSystemsRevision.incrementAndGet();
         mEncodedSystemSnapshot = null;
@@ -188,9 +151,20 @@ final class StatsLiveService implements AutoCloseable, ProtocolSiteMetadataListe
                 return;
             }
 
-            execute(() -> {
+            long generation = mRunGeneration.get();
+            executeActivityCommit(() -> {
+                if(!isCurrentRun(generation))
+                {
+                    return;
+                }
+
                 for(Map<String,Object> row: mDatabase.activityByIds(committed))
                 {
+                    if(!isCurrentRun(generation))
+                    {
+                        return;
+                    }
+
                     mActivityHub.publish("activity", row);
                 }
             });
@@ -199,17 +173,108 @@ final class StatsLiveService implements AutoCloseable, ProtocolSiteMetadataListe
 
     StatsLiveEventHub.Subscription subscribeSystems()
     {
-        return mSystemsHub.subscribe();
+        synchronized(mDemandLock)
+        {
+            if(!mRunning.get())
+            {
+                return null;
+            }
+
+            StatsLiveEventHub.Subscription subscription = mSystemsHub.subscribe(event -> true,
+                this::releaseSystemsDemand);
+
+            if(subscription == null)
+            {
+                return null;
+            }
+
+            try
+            {
+                acquireSystemsDemand();
+                return subscription;
+            }
+            catch(RuntimeException exception)
+            {
+                subscription.close();
+                throw exception;
+            }
+        }
     }
 
-    StatsLiveEventHub.Subscription subscribeActivity()
+    StatsLiveEventHub.Subscription subscribeActivity(Predicate<StatsLiveEventHub.LiveEvent> filter)
     {
-        return mActivityHub.subscribe();
+        synchronized(mDemandLock)
+        {
+            return mRunning.get() ? mActivityHub.subscribe(filter) : null;
+        }
     }
 
-    StatsLiveEventHub.Subscription subscribeSites()
+    private void acquireSystemsDemand()
     {
-        return mSitesHub.subscribe();
+        if(++mSystemsDemand > 1)
+        {
+            return;
+        }
+
+        try
+        {
+            if(mChannelProcessingManager != null)
+            {
+                mChannelProcessingManager.setChannelActivityEnabled(CHANNEL_ACTIVITY_CONSUMER, true);
+            }
+
+            if(mActivityModel != null)
+            {
+                mActivityModel.addActivityListener(mChannelActivityListener);
+                mActivityResyncNeeded.set(true);
+            }
+
+            startRawWorker();
+        }
+        catch(RuntimeException exception)
+        {
+            mSystemsDemand = 0;
+            releaseAllSystemsDemand();
+            throw exception;
+        }
+    }
+
+    private void releaseSystemsDemand()
+    {
+        synchronized(mDemandLock)
+        {
+            if(mSystemsDemand <= 0 || --mSystemsDemand > 0)
+            {
+                return;
+            }
+
+            releaseAllSystemsDemand();
+            resetSystemsState();
+        }
+    }
+
+    private void releaseAllSystemsDemand()
+    {
+        mSystemsDemand = 0;
+
+        if(mActivityModel != null)
+        {
+            mActivityModel.removeActivityListener(mChannelActivityListener);
+        }
+
+        if(mChannelProcessingManager != null)
+        {
+            mChannelProcessingManager.setChannelActivityEnabled(CHANNEL_ACTIVITY_CONSUMER, false);
+        }
+
+        stopRawWorker();
+        mActivityResyncNeeded.set(false);
+        mAppliedActivitySourceRevision = 0;
+    }
+
+    void receiveChannelActivity(ChannelActivityEvent event)
+    {
+        offerRawEvent(event);
     }
 
     Map<String,Object> snapshot()
@@ -255,6 +320,7 @@ final class StatsLiveService implements AutoCloseable, ProtocolSiteMetadataListe
         response.put("rows_included", rowsIncluded);
         response.put("rows_omitted", Math.max(0L, rowsTotal - rowsIncluded));
         response.put("truncated", mTablesTruncated || rowsTotal > rowsIncluded);
+        response.put("revision", mSystemsRevision.get());
         return Map.copyOf(response);
     }
 
@@ -313,37 +379,235 @@ final class StatsLiveService implements AutoCloseable, ProtocolSiteMetadataListe
         }
     }
 
-    Map<String,Object> siteSnapshot()
+    private void offerRawEvent(Object event)
     {
-        List<Map<String,Object>> sites = new ArrayList<>(mSites.values());
-        sites.sort(Comparator.comparing(row -> String.valueOf(row.getOrDefault("guid", ""))));
-        return Map.of("sites", sites, "limit", MAXIMUM_LIVE_SITES, "truncated", mSitesTruncated);
-    }
-
-    @Override
-    public void receiveProtocolSiteMetadata(ProtocolSiteMetadataEvent event)
-    {
-        if(mRunning.get())
+        if(event == null || !mRunning.get() || mSystemsDemand <= 0)
         {
-            PreparedSiteEvent prepared = prepare(event);
+            return;
+        }
 
-            if(prepared != null)
+        if(mRawEventQueue.offer(event))
+        {
+            Thread worker = mRawWorker;
+
+            if(worker != null)
             {
-                execute(() -> process(prepared));
+                LockSupport.unpark(worker);
+            }
+        }
+        else
+        {
+            mDroppedRawEventCount.incrementAndGet();
+
+            if(event instanceof ChannelActivityEvent)
+            {
+                mActivityResyncNeeded.set(true);
+            }
+
+            Thread worker = mRawWorker;
+
+            if(worker != null)
+            {
+                LockSupport.unpark(worker);
             }
         }
     }
 
-    private void execute(Runnable task)
+    private void startRawWorker()
+    {
+        if(mRawWorkerRunning)
+        {
+            return;
+        }
+
+        Thread previous = mRawWorker;
+
+        if(previous != null && previous.isAlive())
+        {
+            throw new IllegalStateException("Previous stats live projection worker has not terminated");
+        }
+
+        mRawWorkerRunning = true;
+        mRawWorker = new ObserverThreadFactory("stats live projection").newThread(this::runRawWorker);
+        mRawWorker.start();
+    }
+
+    private void runRawWorker()
+    {
+        Thread current = Thread.currentThread();
+
+        try
+        {
+            while(mRawWorkerRunning)
+            {
+                if(resyncActivityIfNeeded())
+                {
+                    continue;
+                }
+
+                Object event = mRawEventQueue.poll();
+
+                try
+                {
+                    if(event != null)
+                    {
+                        mRawProjectionObserver.accept(event);
+                    }
+
+                    if(event instanceof ChannelActivityEvent activityEvent)
+                    {
+                        long sourceRevision = activityEvent.revision();
+                        PreparedActivityEvent prepared = sourceRevision <= 0 ||
+                            sourceRevision > mAppliedActivitySourceRevision ? prepare(activityEvent) : null;
+
+                        if(prepared != null && mRunning.get())
+                        {
+                            process(prepared);
+
+                            if(sourceRevision > 0)
+                            {
+                                mAppliedActivitySourceRevision = sourceRevision;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        LockSupport.parkNanos(this, TimeUnit.MILLISECONDS.toNanos(50));
+                    }
+                }
+                catch(RuntimeException runtimeException)
+                {
+                    if(event == null || event instanceof ChannelActivityEvent)
+                    {
+                        mActivityResyncNeeded.set(true);
+                    }
+
+                    mLog.error("Error projecting stats live event", runtimeException);
+                }
+            }
+        }
+        finally
+        {
+            mRawEventQueue.clear();
+
+            if(current == mRawWorker)
+            {
+                mRawWorkerRunning = false;
+                mRawWorker = null;
+            }
+        }
+    }
+
+    private void stopRawWorker()
+    {
+        mRawWorkerRunning = false;
+        Thread worker = mRawWorker;
+
+        if(worker != null)
+        {
+            LockSupport.unpark(worker);
+
+            if(worker != Thread.currentThread())
+            {
+                try
+                {
+                    worker.join(TimeUnit.SECONDS.toMillis(2));
+                }
+                catch(InterruptedException interruptedException)
+                {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        }
+
+        if(worker == null || !worker.isAlive())
+        {
+            mRawWorker = null;
+        }
+    }
+
+    long getDroppedRawEventCount()
+    {
+        return mDroppedRawEventCount.get();
+    }
+
+    boolean isRawWorkerAlive()
+    {
+        Thread worker = mRawWorker;
+        return worker != null && worker.isAlive();
+    }
+
+    int getSystemsDemandCount()
+    {
+        return mSystemsDemand;
+    }
+
+    private boolean resyncActivityIfNeeded()
+    {
+        if(mRunning.get() && mActivityModel != null && mActivityResyncNeeded.compareAndSet(true, false))
+        {
+            mRawEventQueue.clear();
+            ChannelActivityModel.SnapshotSet snapshotSet = mActivityModel.getSnapshotSet();
+            replaceActivitySnapshot(snapshotSet);
+            mAppliedActivitySourceRevision = snapshotSet.revision();
+            return true;
+        }
+
+        return false;
+    }
+
+    private synchronized void replaceActivitySnapshot(ChannelActivityModel.SnapshotSet snapshotSet)
+    {
+        if(snapshotSet == null)
+        {
+            return;
+        }
+
+        mTables.clear();
+        mRetainedActivityRows = 0;
+        mTablesTruncated = false;
+
+        for(ChannelActivitySnapshot snapshot: snapshotSet.tables())
+        {
+            PreparedActivityEvent prepared = prepare(new ChannelActivityEvent(
+                ChannelActivityEvent.Operation.UPSERT, snapshot, snapshotSet.revision()));
+
+            if(prepared != null)
+            {
+                process(prepared, false);
+            }
+        }
+
+        systemsChanged();
+        mSystemsHub.publish("activity_resync", Map.of("source_revision", snapshotSet.revision(),
+            "snapshot", snapshot()));
+    }
+
+    private void executeActivityCommit(Runnable task)
     {
         try
         {
-            mEventExecutor.execute(task);
+            mActivityCommitExecutor.execute(() ->
+            {
+                mActivityResetPending.set(false);
+                task.run();
+            });
         }
-        catch(RuntimeException e)
+        catch(RejectedExecutionException exception)
         {
-            // Service is shutting down.
+            //Committed rows are already durable.  Tell the browser to refetch the bounded authoritative page instead
+            //of silently losing an update when the optional live projection worker is saturated.
+            if(mRunning.get() && !mActivityCommitExecutor.isShutdown() &&
+                mActivityResetPending.compareAndSet(false, true))
+            {
+                mActivityHub.publish("activity_reset", Map.of("reason", "source_overflow"));
+            }
         }
+    }
+
+    private boolean isCurrentRun(long generation)
+    {
+        return mRunning.get() && mRunGeneration.get() == generation;
     }
 
     void process(ChannelActivityEvent event)
@@ -357,6 +621,16 @@ final class StatsLiveService implements AutoCloseable, ProtocolSiteMetadataListe
     }
 
     private synchronized void process(PreparedActivityEvent event)
+    {
+        process(event, true);
+    }
+
+    /**
+     * Applies one already-projected table mutation while holding this service's state lock.  Snapshot recovery uses
+     * the same mutation path without publishing every intermediate table; consumers receive one authoritative
+     * resync after the replacement is complete.
+     */
+    private void process(PreparedActivityEvent event, boolean publish)
     {
         String tableId = event.tableId();
         Map<String,Object> table;
@@ -376,8 +650,17 @@ final class StatsLiveService implements AutoCloseable, ProtocolSiteMetadataListe
         {
             if(!mTables.containsKey(tableId) && mTables.size() >= MAXIMUM_LIVE_TABLES)
             {
-                mTablesTruncated = true;
-                systemsChanged();
+                if(!mTablesTruncated)
+                {
+                    mTablesTruncated = true;
+
+                    if(publish)
+                    {
+                        systemsChanged();
+                        mSystemsHub.publish("activity_resync", Map.of("snapshot", snapshot()));
+                    }
+                }
+
                 return;
             }
 
@@ -395,319 +678,12 @@ final class StatsLiveService implements AutoCloseable, ProtocolSiteMetadataListe
             mRetainedActivityRows = Math.max(0, mRetainedActivityRows - existingRows + retainedRows(table));
         }
 
-        systemsChanged();
-
-        mSystemsHub.publish("activity_table", Map.of("operation", event.operation().name().toLowerCase(),
-            "table_id", tableId, "table", table));
-
-        if(event.operation() == ChannelActivityEvent.Operation.REMOVE)
+        if(publish)
         {
-            clearSiteQuality(table.get("guid"));
+            systemsChanged();
+            mSystemsHub.publish("activity_table", Map.of("operation", event.operation().name().toLowerCase(),
+                "table_id", tableId, "table", table, "revision", mSystemsRevision.get()));
         }
-        else
-        {
-            updateSiteQuality(table);
-        }
-    }
-
-    void process(ProtocolSiteMetadataEvent event)
-    {
-        PreparedSiteEvent prepared = prepare(event);
-
-        if(prepared != null)
-        {
-            process(prepared);
-        }
-    }
-
-    private void process(PreparedSiteEvent event)
-    {
-        String guid = event.guid();
-        long receivedAt = mClock.getAsLong();
-
-        if(!mSites.containsKey(guid) && mSites.size() >= MAXIMUM_LIVE_SITES)
-        {
-            mSitesTruncated = true;
-            return;
-        }
-
-        LinkedHashMap<String,Object> liveSite = new LinkedHashMap<>(event.site());
-        Map<String,Object> quality = mQualityByGuid.get(guid);
-
-        if(quality != null)
-        {
-            liveSite.putAll(quality);
-        }
-
-        liveSite.put("live_received_at_ms", receivedAt);
-        Map<String,Object> site = Map.copyOf(liveSite);
-        Map<String,Object> previous = mSites.put(guid, site);
-        mSiteReceivedAtByGuid.put(guid, receivedAt);
-
-        if(!site.equals(previous))
-        {
-            mSitesHub.publish("site_metadata", site);
-        }
-    }
-
-    private void updateSiteQuality(Map<String,Object> table)
-    {
-        if(table == null || !(table.get("guid") instanceof String guid) || guid.isBlank() ||
-            !(table.get("rows") instanceof List<?> rows))
-        {
-            return;
-        }
-
-        Map<String,Object> best = null;
-
-        for(Object value: rows)
-        {
-            if(!(value instanceof Map<?,?> row) ||
-                !row.containsKey("signal_dbfs") && !row.containsKey("decode_health_pct"))
-            {
-                continue;
-            }
-
-            @SuppressWarnings("unchecked")
-            Map<String,Object> candidate = (Map<String,Object>)row;
-            String tags = String.valueOf(candidate.getOrDefault("tags", ""));
-
-            if(best == null || tags.contains("CONTROL"))
-            {
-                best = candidate;
-            }
-
-            if(tags.contains("CONTROL"))
-            {
-                break;
-            }
-        }
-
-        if(best == null)
-        {
-            clearSiteQuality(guid);
-            return;
-        }
-
-        LinkedHashMap<String,Object> quality = new LinkedHashMap<>();
-        put(quality, "frequency_hz", best.get("frequency_hz"));
-        put(quality, "signal_dbfs", best.get("signal_dbfs"));
-        put(quality, "decode_health_pct", best.get("decode_health_pct"));
-        long observedAt = best.get("quality_observed_at_ms") instanceof Number observed ?
-            observed.longValue() : 0;
-        long now = mClock.getAsLong();
-
-        if(observedAt <= 0 || (now > observedAt && now - observedAt > QUALITY_LIVE_MILLISECONDS))
-        {
-            clearSiteQuality(guid);
-            return;
-        }
-
-        quality.put("quality_observed_at_ms", observedAt);
-        Map<String,Object> previousQuality = mQualityByGuid.get(guid);
-        long receivedAt = now;
-
-        if(sameQualityObservation(previousQuality, quality) &&
-            previousQuality.get("quality_received_at_ms") instanceof Number previousReceivedAt)
-        {
-            receivedAt = previousReceivedAt.longValue();
-        }
-
-        quality.put("quality_received_at_ms", receivedAt);
-        Map<String,Object> immutableQuality = Map.copyOf(quality);
-        mQualityByGuid.put(guid, immutableQuality);
-        mQualityReceivedAtByGuid.put(guid, receivedAt);
-        Map<String,Object> current = mSites.get(guid);
-
-        if(current != null)
-        {
-            LinkedHashMap<String,Object> updated = new LinkedHashMap<>(current);
-            updated.putAll(immutableQuality);
-            Map<String,Object> immutable = Map.copyOf(updated);
-
-            if(!immutable.equals(current))
-            {
-                mSites.put(guid, immutable);
-                mSitesHub.publish("site_metadata", immutable);
-            }
-        }
-    }
-
-    private static boolean sameQualityObservation(Map<String,Object> previous, Map<String,Object> current)
-    {
-        return previous != null &&
-            Objects.equals(previous.get("frequency_hz"), current.get("frequency_hz")) &&
-            Objects.equals(previous.get("signal_dbfs"), current.get("signal_dbfs")) &&
-            Objects.equals(previous.get("decode_health_pct"), current.get("decode_health_pct")) &&
-            Objects.equals(previous.get("quality_observed_at_ms"), current.get("quality_observed_at_ms"));
-    }
-
-    void sweepExpired()
-    {
-        // Production callers serialize expiry with metadata and quality updates on mEventExecutor.
-        long now = mClock.getAsLong();
-
-        for(Map.Entry<String,Long> entry: mQualityReceivedAtByGuid.entrySet())
-        {
-            if(now - entry.getValue() > QUALITY_LIVE_MILLISECONDS &&
-                mQualityReceivedAtByGuid.remove(entry.getKey(), entry.getValue()))
-            {
-                clearSiteQuality(entry.getKey());
-            }
-        }
-
-        for(Map.Entry<String,Long> entry: mSiteReceivedAtByGuid.entrySet())
-        {
-            if(now - entry.getValue() > SITE_METADATA_LIVE_MILLISECONDS &&
-                mSiteReceivedAtByGuid.remove(entry.getKey(), entry.getValue()))
-            {
-                String guid = entry.getKey();
-                mSites.remove(guid);
-                mQualityByGuid.remove(guid);
-                mQualityReceivedAtByGuid.remove(guid);
-                mSitesHub.publish("site_removed", Map.of("guid", guid));
-            }
-        }
-    }
-
-    private void clearSiteQuality(Object guidValue)
-    {
-        if(!(guidValue instanceof String guid) || guid.isBlank())
-        {
-            return;
-        }
-
-        Map<String,Object> removed = mQualityByGuid.remove(guid);
-        mQualityReceivedAtByGuid.remove(guid);
-
-        if(removed == null)
-        {
-            return;
-        }
-
-        Map<String,Object> current = mSites.get(guid);
-
-        if(current != null)
-        {
-            LinkedHashMap<String,Object> updated = new LinkedHashMap<>(current);
-            updated.remove("frequency_hz");
-            updated.remove("signal_dbfs");
-            updated.remove("decode_health_pct");
-            updated.remove("quality_observed_at_ms");
-            updated.remove("quality_received_at_ms");
-            Map<String,Object> immutable = Map.copyOf(updated);
-
-            if(mSites.replace(guid, current, immutable))
-            {
-                mSitesHub.publish("site_metadata", immutable);
-            }
-        }
-    }
-
-    static Map<String,Object> protocolSite(ProtocolSiteMetadataEvent event, Map<String,Object> quality)
-    {
-        Channel channel = event.channel();
-        LinkedHashMap<String,Object> site = new LinkedHashMap<>();
-        site.put("guid", boundedText(channel.getRadresGuid(), MAXIMUM_LIVE_TEXT_LENGTH));
-        putText(site, "configured_system", channel.getSystem(), MAXIMUM_LIVE_TEXT_LENGTH);
-        putText(site, "configured_site", channel.getSite(), MAXIMUM_LIVE_TEXT_LENGTH);
-        putText(site, "channel_name", channel.getName(), MAXIMUM_LIVE_TEXT_LENGTH);
-        putText(site, "alias_list_name", channel.getAliasListName(), MAXIMUM_LIVE_TEXT_LENGTH);
-        site.put("protocol", event.snapshot().protocol().name());
-        site.put("protocol_code", switch(event.snapshot().protocol())
-        {
-            case APCO25, APCO25_PHASE2 -> 1;
-            case DMR -> 3;
-            case NXDN -> 4;
-            default -> 0;
-        });
-        putText(site, "decoder", event.snapshot().decoder(), MAXIMUM_LIVE_TEXT_LENGTH);
-        putText(site, "variant", event.snapshot().variant(), MAXIMUM_LIVE_TEXT_LENGTH);
-        site.put("observed_at_ms", event.observedAtEpochMilliseconds());
-        addProtocolSiteSummary(site, event.snapshot());
-
-        if(quality != null)
-        {
-            site.putAll(quality);
-        }
-
-        return Map.copyOf(site);
-    }
-
-    /**
-     * Projects decoder snapshots to a scalar, bounded live summary.  Detailed collections stay behind paged site
-     * resources and are never retained in the live cache or serialized into SSE events.
-     */
-    private static void addProtocolSiteSummary(Map<String,Object> site, SiteMetadataSnapshot snapshot)
-    {
-        LinkedHashMap<String,Integer> counts = new LinkedHashMap<>();
-
-        if(snapshot instanceof P25NetworkConfigurationSnapshot p25)
-        {
-            P25NetworkConfigurationSnapshot.Network network = p25.network();
-            P25NetworkConfigurationSnapshot.CurrentSite current = p25.currentSite();
-            P25NetworkConfigurationSnapshot.SiteStatus status = p25.siteStatus();
-            put(site, "wacn", network != null ? network.wacn() : null);
-            put(site, "system_id", current != null && current.system() != null ? current.system() :
-                network != null ? network.system() : null);
-            put(site, "nac", current != null && current.nac() != null ? current.nac() :
-                network != null ? network.nac() : null);
-            put(site, "rfss", current != null ? current.rfss() : null);
-            put(site, "site_id", current != null ? current.site() : null);
-            put(site, "lra", current != null && current.lra() != null ? current.lra() :
-                network != null ? network.lra() : null);
-            put(site, "rfss_network_active", current != null ? current.activeRfssNetworkConnection() : null);
-
-            if(status != null)
-            {
-                put(site, "broadcast_clock_ms", status.broadcastClockEpochMilliseconds());
-                put(site, "micro_slots", status.microSlots());
-                put(site, "data_service", status.dataService());
-                put(site, "data_access", status.dataAccess());
-                put(site, "wuid_lease_minutes", status.wuidLeaseMinutes());
-                put(site, "registration_service", status.registrationService());
-                put(site, "mfid", status.mfid());
-                put(site, "voice_service", status.voiceService());
-            }
-
-            counts.put("channels", size(p25.channels()));
-            counts.put("neighbors", size(p25.neighborSites()));
-            counts.put("frequency_bands", size(p25.frequencyBands()));
-            counts.put("foreign_frequency_bands", size(p25.foreignSystemBands()));
-            counts.put("patch_groups", size(p25.patchGroups()));
-            counts.put("talker_aliases", size(p25.talkerAliases()));
-        }
-        else if(snapshot instanceof DMRNetworkConfigurationSnapshot dmr)
-        {
-            put(site, "network_id", dmr.network());
-            put(site, "site_id", dmr.site());
-            put(site, "color_code_ts1", dmr.colorCodeTimeslot1());
-            put(site, "color_code_ts2", dmr.colorCodeTimeslot2());
-            counts.put("channels", size(dmr.channels()));
-            counts.put("neighbors", size(dmr.neighborSites()));
-        }
-        else if(snapshot instanceof NXDNNetworkConfigurationSnapshot nxdn)
-        {
-            NXDNNetworkConfigurationSnapshot.Location location = nxdn.currentLocation();
-            put(site, "ran", nxdn.ran());
-            put(site, "network_id", location != null ? location.integrator() : null);
-            put(site, "system_id", location != null ? location.system() : null);
-            put(site, "site_id", location != null && location.site() != null ? location.site() : nxdn.typeDSite());
-            put(site, "current_repeater", nxdn.currentRepeater());
-            counts.put("services", size(nxdn.services()));
-            counts.put("restrictions", size(nxdn.restrictions()));
-            counts.put("channels", size(nxdn.controlChannels()));
-            counts.put("neighbors", size(nxdn.neighborSites()));
-            counts.put("observed_repeaters", size(nxdn.observedRepeaters()));
-        }
-
-        site.put("detail_counts", Map.copyOf(counts));
-        site.put("details_truncated", counts.values().stream().anyMatch(count -> count > 0));
-    }
-
-    private static int size(java.util.Collection<?> values)
-    {
-        return values != null ? values.size() : 0;
     }
 
     private static PreparedActivityEvent prepare(ChannelActivityEvent event)
@@ -727,17 +703,6 @@ final class StatsLiveService implements AutoCloseable, ProtocolSiteMetadataListe
         Map<String,Object> table = event.operation() == ChannelActivityEvent.Operation.REMOVE ? null :
             activityTable(event.snapshot(), MAXIMUM_ROWS_PER_TABLE);
         return new PreparedActivityEvent(event.operation(), tableId, table);
-    }
-
-    private static PreparedSiteEvent prepare(ProtocolSiteMetadataEvent event)
-    {
-        if(event == null || !event.isUseful() || event.channel() == null || event.snapshot() == null)
-        {
-            return null;
-        }
-
-        String guid = boundedText(event.channel().getRadresGuid(), MAXIMUM_LIVE_TEXT_LENGTH);
-        return guid.isBlank() ? null : new PreparedSiteEvent(guid, protocolSite(event, null));
     }
 
     private void systemsChanged()
@@ -871,19 +836,13 @@ final class StatsLiveService implements AutoCloseable, ProtocolSiteMetadataListe
     public void close()
     {
         stop();
-        mEventExecutor.shutdownNow();
-        mSweepExecutor.shutdownNow();
+        mActivityCommitExecutor.shutdownNow();
         mSystemsHub.close();
-        mSitesHub.close();
         mActivityHub.close();
     }
 
     private record PreparedActivityEvent(ChannelActivityEvent.Operation operation, String tableId,
                                          Map<String,Object> table)
-    {
-    }
-
-    private record PreparedSiteEvent(String guid, Map<String,Object> site)
     {
     }
 

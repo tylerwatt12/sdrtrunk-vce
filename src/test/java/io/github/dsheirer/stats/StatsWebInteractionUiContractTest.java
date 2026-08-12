@@ -61,6 +61,22 @@ class StatsWebInteractionUiContractTest
     }
 
     @Test
+    void resynchronizesChannelActivityAfterRevisionGapsAndRemovals() throws Exception
+    {
+        String source = source();
+        String synchronize = function(source, "function synchronizeLiveChannelActivitySource()");
+        String snapshot = function(source, "function applyLiveChannelActivitySnapshot(snapshot)");
+
+        assertTrue(snapshot.contains("liveChannelActivityTables.clear()"));
+        assertTrue(snapshot.contains("liveChannelActivityNeedsResync = false"));
+        assertTrue(synchronize.contains("revision !== liveChannelActivityRevision + 1"));
+        assertTrue(synchronize.contains("liveChannelActivityNeedsResync = true"));
+        assertTrue(synchronize.contains("if (update.operation === 'remove')"));
+        assertTrue(synchronize.contains("source.addEventListener('activity_resync'"));
+        assertTrue(synchronize.contains("applyLiveChannelActivitySnapshot(resync?.snapshot || resync)"));
+    }
+
+    @Test
     void avoidsAdvertisingSeparatelyRestrictedLiveFeatures() throws Exception
     {
         String source = source();
@@ -181,9 +197,11 @@ class StatsWebInteractionUiContractTest
         String talkgroup = function(source, "async function renderTalkgroup()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"61\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"63\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
-        assertTrue(reload.contains("fetch('/', { method: 'HEAD', cache: 'no-store', credentials: 'same-origin' })"));
+        assertTrue(reload.contains("const response = await fetch('/', {"));
+        assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
+        assertTrue(reload.contains("signal: controller.signal"));
         assertTrue(reload.contains("response.headers.get('X-Sdrtrunk-Web-Revision')"));
         assertTrue(reload.contains("window.location.reload()"));
         assertTrue(status.contains("if (await reloadForWebClientRevision()) return;"));
@@ -301,7 +319,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(talkgroup.contains("talkgroupActivityHistorySection({ ...systemScope, talkgroup_id: id, kind })"));
         String activity = function(source, "async function renderActivity(scopeParameters, title = 'Activity')");
         assertFalse(activity.contains("scopeParameters.kind === 'patch'"));
-        assertTrue(activity.contains("liveConnection('/api/v1/live/activity', scopeParameters)"));
+        assertTrue(activity.contains("liveConnection('activity', scopeParameters)"));
         assertTrue(links.contains("rowGroupIdentityKind(row, explicitKind) === 'patch_group'"));
         assertTrue(radio.contains("radio.last_talkgroup_kind"));
         assertTrue(source.contains("render: (row) => groupIdentityLabel(row)"));
@@ -489,7 +507,7 @@ class StatsWebInteractionUiContractTest
             html.indexOf("rel=\"stylesheet\""));
         assertTrue(html.contains("id=\"theme-toggle\""));
         assertTrue(html.contains("/assets/app.css?v=45"));
-        assertTrue(html.contains("/assets/app.js?v=61"));
+        assertTrue(html.contains("/assets/app.js?v=63"));
         assertTrue(source.contains("window.localStorage.setItem(THEME_STORAGE_KEY"));
         assertTrue(source.contains("toggle.setAttribute('aria-pressed'"));
         assertTrue(css.contains(":root[data-theme=\"dark\"]"));
@@ -512,7 +530,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(html.contains("id=\"playback-volume\" type=\"range\""));
         assertTrue(html.contains("aria-label=\"Browser playback volume\""));
         assertTrue(html.contains("id=\"playback-volume-value\""));
-        assertTrue(html.contains("/assets/web-call-player.js?v=6"));
+        assertTrue(html.contains("/assets/web-call-player.js?v=8"));
         assertTrue(source.contains("VOLUME_KEY = 'sdrtrunk-vce.web-player.volume'"));
         assertTrue(source.contains("this.volume = this.readVolume()"));
         assertTrue(changeVolume.contains("this.gainNode.gain.value = this.volume"));
@@ -526,6 +544,25 @@ class StatsWebInteractionUiContractTest
         assertTrue(startCurrent.contains("source.connect(this.gainNode)"));
         assertTrue(css.contains(".playback-volume input:focus-visible"));
         assertTrue(css.contains("accent-color: #36a99e"));
+    }
+
+    @Test
+    void consumesCallSnapshotsIdempotentlyAndRefetchesActivityAfterATopicGap() throws Exception
+    {
+        String player = readText(WEB_CALL_PLAYER);
+        String ensureConnected = function(player, "  ensureConnected()");
+        String enqueue = function(player, "  enqueue(call)");
+        String snapshot = function(player, "  consumeSnapshot(snapshot)");
+        String activity = function(source(), "async function renderActivity(scopeParameters, title = 'Activity')");
+
+        assertTrue(ensureConnected.contains("addEventListener('snapshot'"));
+        assertTrue(enqueue.contains("this.knownCallIds.has(callId)"));
+        assertTrue(enqueue.contains("this.knownCallIds.add(callId)"));
+        assertTrue(snapshot.contains("snapshot?.calls"));
+        assertTrue(activity.contains("addEventListener('activity_reset'"));
+        assertTrue(activity.contains("api('/api/v1/activity'"));
+        assertTrue(activity.contains("tableController.replaceRows"));
+        assertTrue(activity.contains("const resetPending = new Map()"));
     }
 
     @Test
@@ -622,7 +659,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(events.contains("['events', 'messages', 'channel']"));
         assertTrue(events.contains("liveMessagesPane()"));
         assertTrue(events.contains("liveChannelPane()"));
-        assertTrue(events.contains("liveConnection('/api/v1/live/decode-events', parameters)"));
+        assertTrue(events.contains("liveConnection('decode_events', parameters)"));
         assertTrue(events.contains("configuration_id: selection.configurationId"));
         assertTrue(events.contains("parameters.frequency_hz = selection.frequencyHz"));
         assertTrue(events.contains("parameters.timeslot = selection.timeslot"));
@@ -638,12 +675,12 @@ class StatsWebInteractionUiContractTest
         assertTrue(events.contains("message.colSpan = 7"));
         assertTrue(events.contains("node('td', 'live-event-duration')"));
         assertTrue(events.contains("node('strong', 'live-event-duration-value', durationText)"));
-        assertTrue(messages.contains("liveConnection('/api/v1/live/decode-messages', parameters)"));
+        assertTrue(messages.contains("liveConnection('decode_messages', parameters)"));
         assertTrue(messages.contains("stream.addEventListener('decode_message'"));
         assertTrue(messages.contains("active && !collapsed && !paused && !document.hidden"));
-        assertTrue(channel.contains("binaryFrameConnection('/api/v1/live/channel-diagnostics', parameters"));
-        assertEquals(channel.indexOf("binaryFrameConnection('/api/v1/live/channel-diagnostics', parameters"),
-            channel.lastIndexOf("binaryFrameConnection('/api/v1/live/channel-diagnostics', parameters"));
+        assertTrue(channel.contains("binaryFrameConnection('channel_diagnostics', parameters"));
+        assertEquals(channel.indexOf("binaryFrameConnection('channel_diagnostics', parameters"),
+            channel.lastIndexOf("binaryFrameConnection('channel_diagnostics', parameters"));
         assertTrue(channel.contains("frame.type === DIAGNOSTIC_FRAME_TYPES.CHANNEL_SIGNAL"));
         assertTrue(channel.contains("frame.type !== DIAGNOSTIC_FRAME_TYPES.CHANNEL_SYMBOLS"));
         assertFalse(channel.contains("client_id"));
@@ -722,14 +759,17 @@ class StatsWebInteractionUiContractTest
     void opensDemandDrivenTunerSpectrumAndWaterfallInSharedModal() throws Exception
     {
         String source = source();
-        String binary = function(source, "function binaryFrameConnection(path, parameters = {}, callbacks = {})");
-        String activity = function(source, "function subscribeLiveChannelActivity(callbacks = {})");
+        String binary = function(source, "function binaryFrameConnection(topic, parameters = {}, callbacks = {})");
+        String diagnostic = function(source, "function decodeDiagnosticFrame(encoded)");
+        String activity = function(source, "function synchronizeLiveChannelActivitySource()");
+        String subscribeActivity = function(source, "function subscribeLiveChannelActivity(callbacks = {})");
         String frequencyMapping = function(source, "function tunerFrequencyAtBin(domain, coordinate)");
         String inverseFrequencyMapping = function(source, "function tunerBinAtFrequency(domain, frequencyHz)");
         String snapper = function(source, "function tunerSnapFrequency(frequencyHz)");
         String tuner = function(source, "function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum')");
         String refinement = function(tuner, "function queueViewportUpdate(immediate = false)");
         String pointerMove = function(tuner, "function onPlotPointerMove(event)");
+        String acceptFrame = function(tuner, "function acceptTunerFrame(frame)");
         String live = function(source, "async function renderLive()");
         String systems = function(source, "function liveSystemsSection(onSelectionChange)");
         String css = readText(APP_CSS);
@@ -738,7 +778,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(live.contains("spectrum.addEventListener('click', () => showTunerSpectrumModal())"));
         assertTrue(tuner.contains("openReadOnlyModal('Tuner Spectrum'"));
         assertTrue(tuner.contains("api('/api/v1/diagnostics/tuners')"));
-        assertTrue(tuner.contains("binaryFrameConnection('/api/v1/live/tuner-diagnostics'"));
+        assertTrue(tuner.contains("binaryFrameConnection('tuner_diagnostics'"));
         assertTrue(tuner.contains("frame.type !== DIAGNOSTIC_FRAME_TYPES.TUNER_FFT"));
         assertTrue(tuner.contains("const shouldRun = () => !disposed && !paused && !document.hidden"));
         assertTrue(tuner.contains("const waterfallBuffer = document.createElement('canvas')"));
@@ -750,13 +790,13 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("viewport_start_hz"));
         assertTrue(tuner.contains("viewport_end_hz"));
         assertTrue(tuner.contains("TUNER_SPECTRUM_REFINEMENT_DELAY_MS"));
-        assertTrue(refinement.contains("closeStreams();"));
-        assertTrue(refinement.contains("await closed;"));
-        assertTrue(refinement.contains("queuedEpoch !== streamEpoch"));
+        assertTrue(refinement.contains("stream.update(diagnosticParameters())"));
+        assertTrue(refinement.contains("awaitingViewportState = true"));
+        assertFalse(refinement.contains("closeStreams();"));
+        assertFalse(refinement.contains("await closed;"));
         assertTrue(tuner.contains("let streamRelease = Promise.resolve()"));
         assertTrue(tuner.contains("Promise.all([streamRelease, releaseConnection(active)])"));
         assertFalse(refinement.contains("closePendingStream();"));
-        assertTrue(refinement.indexOf("closeStreams();") < refinement.indexOf("openDiagnosticStream();"));
         assertFalse(tuner.contains("pendingStream"));
         assertFalse(tuner.contains("refiningStream"));
         assertFalse(tuner.contains("previous && previous !== candidate"));
@@ -764,16 +804,17 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("addEventListener('pointermove', onPlotPointerMove"));
         assertTrue(tuner.contains("if (!stream && !drag) openDiagnosticStream();"));
         assertTrue(pointerMove.contains("if (!drag.moved)"));
-        assertTrue(pointerMove.indexOf("closeStreams();") < pointerMove.indexOf("panBy("));
+        assertFalse(pointerMove.contains("closeStreams();"));
+        assertTrue(acceptFrame.contains("drag?.moved"));
         assertTrue(tuner.contains("if (moved) queueViewportUpdate(true);"));
         assertTrue(tuner.contains("event.key === 'ArrowLeft'"));
         assertTrue(tuner.contains("event.key === 'r' || event.key === 'R'"));
         assertTrue(tuner.contains("connectActiveChannels()"));
         assertTrue(tuner.contains("subscribeLiveChannelActivity({"));
         assertTrue(systems.contains("subscribeLiveChannelActivity({"));
-        assertTrue(activity.contains("new EventSource('/api/v1/live/channel-activity')"));
+        assertTrue(activity.contains("liveConnection('channel_activity', {}, false)"));
         assertTrue(activity.contains("liveChannelActivityTables"));
-        assertTrue(activity.contains("subscriber.snapshot?.({ tables: [...liveChannelActivityTables.values()] })"));
+        assertTrue(subscribeActivity.contains("invokeLiveSubscriber(subscriber, 'snapshot'"));
         assertTrue(tuner.contains("const tableChannelName = String(table?.channel_name || '').trim()"));
         assertTrue(tuner.contains("row.status === 'CONTROL' && row.tableChannelName"));
         assertTrue(tuner.contains("`${row.tableChannelName} · Control`"));
@@ -861,8 +902,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("generation === frame.generation && sequence !== null"));
         assertTrue(source.contains("sdrtrunk.wideband.lowerDisplayLimitDb"));
         assertTrue(source.contains("sdrtrunk.wideband.waterfallScrollSpeed"));
-        assertTrue(binary.contains("headerBytes >= 68 ? header.getInt32(64, true) : 0"));
-        assertTrue(binary.contains("headerBytes >= 72 ? header.getInt32(68, true) : valueCount"));
+        assertTrue(diagnostic.contains("headerBytes >= 68 ? header.getInt32(64, true) : 0"));
+        assertTrue(diagnostic.contains("headerBytes >= 72 ? header.getInt32(68, true) : valueCount"));
         assertTrue(css.contains(".tuner-spectrum-modal"));
         assertTrue(css.contains(".tuner-spectrum-plot"));
         assertTrue(css.contains(".tuner-spectrum-active-flag {\n  width: 12px;\n  height: 12px;\n  min-height: 12px;"));
@@ -880,9 +921,8 @@ class StatsWebInteractionUiContractTest
         assertFalse(css.contains(".tuner-spectrum-active-label"));
         assertTrue(css.contains(".tuner-spectrum-cursor-popup"));
         assertTrue(css.contains(".tuner-spectrum-display-controls"));
-        assertTrue(binary.contains("await reader.cancel().catch(() => {})"));
-        assertTrue(binary.contains("attemptController.abort()"));
-        assertTrue(binary.contains("whenClosed()"));
+        assertTrue(binary.contains("liveMultiplexer.subscribe(topic, parameters"));
+        assertTrue(binary.contains("return close();"));
         assertTrue(css.contains(".tuner-spectrum-waterfall .tuner-spectrum-active-flag {"));
         assertTrue(css.contains("height: 100%;"));
     }
@@ -897,7 +937,10 @@ class StatsWebInteractionUiContractTest
 
         assertTrue(events.contains("live-details-pause', 'Pause'"));
         assertTrue(events.contains("'Pause Events, Messages, and Channel'"));
-        assertTrue(events.contains("const shouldRun = () => !paused && selection?.configurationId"));
+        assertTrue(events.contains("eventsActive && !collapsed && !paused && !document.hidden"));
+        assertTrue(events.contains("eventsActive = id === 'events'"));
+        assertTrue(events.contains("document.addEventListener('visibilitychange', onVisibilityChange)"));
+        assertTrue(events.contains("document.removeEventListener('visibilitychange', onVisibilityChange)"));
         assertTrue(events.contains("pause.textContent = paused ? 'Resume' : 'Pause'"));
         assertTrue(events.contains("messagesController.setPaused(paused)"));
         assertTrue(events.contains("channelController.setPaused(paused)"));
@@ -905,6 +948,106 @@ class StatsWebInteractionUiContractTest
         assertTrue(messages.contains("setPaused(value) { paused = value; sync(); }"));
         assertTrue(channel.contains("active && !collapsed && !paused && !document.hidden"));
         assertTrue(channel.contains("setPaused(value) { paused = value; sync(); }"));
+    }
+
+    @Test
+    void usesOneMultiplexedLiveConnectionAndRetiresPerFeatureTransports() throws Exception
+    {
+        String source = source();
+        String player = readText(WEB_CALL_PLAYER);
+        assertTrue(source.contains("class LiveMultiplexer"));
+        assertTrue(source.contains("/api/v1/live/multiplex?client_id="));
+        assertTrue(source.contains("/api/v1/live/multiplex/control"));
+        assertEquals(source.indexOf("/api/v1/live/multiplex?client_id="),
+            source.lastIndexOf("/api/v1/live/multiplex?client_id="));
+        assertFalse(source.contains("EventSource"));
+        assertFalse(player.contains("EventSource"));
+        assertFalse(source.contains("/api/v1/live/channel-activity"));
+        assertFalse(source.contains("/api/v1/live/decode-events"));
+        assertFalse(source.contains("/api/v1/live/decode-messages"));
+        assertFalse(source.contains("/api/v1/live/channel-diagnostics"));
+        assertFalse(source.contains("/api/v1/live/tuner-diagnostics"));
+        assertTrue(source.contains("stream.update(diagnosticParameters())"));
+    }
+
+    @Test
+    void idlePlaybackAndHiddenLiveSystemsDoNotOwnLogicalSubscriptions() throws Exception
+    {
+        String source = source();
+        String playback = function(source, "function synchronizePlaybackAccess()");
+        String channelActivity = function(source, "function synchronizeLiveChannelActivitySource()");
+        String live = function(source, "function liveConnection(topic, parameters = {}, pageScoped = true)");
+        String activity = function(source, "async function renderActivity(scopeParameters, title = 'Activity')");
+        String player = readText(WEB_CALL_PLAYER);
+        String connect = function(player, "  connect(url, connectionFactory)");
+        String toggle = function(player, "  async togglePlayback()");
+
+        assertTrue(playback.contains("(topic) => liveConnection(topic, {}, false)"));
+        assertFalse(connect.contains("this.connectionFactory(this.connectionTopic)"));
+        assertTrue(connect.contains("return this.connectionHandle()"));
+        assertTrue(toggle.contains("this.ensureConnected()"));
+        assertTrue(channelActivity.contains("document.hidden || !liveChannelActivitySubscribers.size"));
+        assertTrue(channelActivity.contains("source.close()"));
+        assertTrue(live.contains("pageScoped && document.hidden"));
+        assertTrue(live.contains("subscription?.close()"));
+        assertTrue(live.contains("document.addEventListener('visibilitychange', synchronizeVisibility)"));
+        assertTrue(live.contains("document.removeEventListener('visibilitychange', synchronizeVisibility)"));
+        assertTrue(activity.contains("liveConnection('activity', scopeParameters)"));
+        assertTrue(source.contains("document.addEventListener('visibilitychange', " +
+            "synchronizeLiveChannelActivitySource)"));
+    }
+
+    @Test
+    void preservesConfirmedAuthenticationAcrossTransientRefreshFailures() throws Exception
+    {
+        String refresh = function(source(), "async function refreshAccessSession(refreshCurrentView = false)");
+
+        assertTrue(refresh.contains("if (error?.status === 401 || error?.status === 403)"));
+        assertTrue(refresh.contains("accessSession = anonymousAccessSession();"));
+        assertTrue(refresh.contains("} else if (!accessSessionAvailable) {"));
+        assertFalse(refresh.contains("catch (error) {\n    accessSession = anonymousAccessSession();"));
+    }
+
+    @Test
+    void boundsLiveHandshakeBodyReadsAndSilentConnectionsWithoutSharingCallbackFailures() throws Exception
+    {
+        String source = source();
+        String request = function(source, "async function requestJson(path, options = {})");
+        String invoke = function(source,
+            "function invokeLiveSubscriber(target, callback, ...parameters)");
+        String listener = function(source, "function invokeLiveListener(callback, ...parameters)");
+        String channelActivity = function(source, "function synchronizeLiveChannelActivitySource()");
+        String multiplexer = source.substring(source.indexOf("class LiveMultiplexer"),
+            source.indexOf("const liveMultiplexer = new LiveMultiplexer()"));
+
+        assertTrue(request.indexOf("result = await response.json()") <
+            request.indexOf("window.clearTimeout(timeout)"));
+        assertTrue(source.contains("const LIVE_MULTIPLEX_READY_TIMEOUT_MS = 10_000"));
+        assertTrue(source.contains("const LIVE_MULTIPLEX_LIVENESS_TIMEOUT_MS = 25_000"));
+        assertTrue(multiplexer.contains("const watchdog = window.setInterval"));
+        assertTrue(multiplexer.contains("watchdogTimedOut = true"));
+        assertTrue(multiplexer.contains("controller.abort()"));
+        assertTrue(invoke.contains("try {"));
+        assertTrue(invoke.contains("catch (error)"));
+        assertTrue(listener.contains("try {"));
+        assertTrue(listener.contains("catch (error)"));
+        assertTrue(multiplexer.contains("invokeLiveSubscriber(target, 'onEvent'"));
+        assertTrue(multiplexer.contains("invokeLiveSubscriber(target, 'onError'"));
+        assertTrue(multiplexer.contains("this.failedTopics.add(topic)"));
+        assertTrue(multiplexer.contains("this.failedTopics.delete(topic)"));
+        assertTrue(source.contains("invokeLiveListener(callback, { type: event"));
+        assertTrue(channelActivity.contains("invokeLiveSubscriber(target, 'activityTable', update)"));
+        assertTrue(source.contains("invokeLiveSubscriber(target, 'snapshot', current)"));
+        assertTrue(multiplexer.contains("error?.status === 401 || error?.status === 403"));
+        assertTrue(multiplexer.contains("!this.authorizationRecoveryUsed"));
+        assertTrue(multiplexer.contains("await refreshAccessSession(false)"));
+        assertTrue(multiplexer.contains("this.authorizationBlocked = true"));
+        assertTrue(multiplexer.contains("confirmedAccessRefresh()"));
+        assertTrue(multiplexer.contains("if (this.hasSubscribers()) this.restart()"));
+        assertTrue(source.contains("notifyConfirmedAccessRefresh = () => liveMultiplexer.confirmedAccessRefresh()"));
+        String refresh = function(source, "async function refreshAccessSession(refreshCurrentView = false)");
+        assertTrue(refresh.contains("{ csrf: false, page: false }"));
+        assertTrue(refresh.contains("notifyConfirmedAccessRefresh()"));
     }
 
     private static String source() throws Exception

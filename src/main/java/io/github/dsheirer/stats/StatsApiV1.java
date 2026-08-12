@@ -31,14 +31,8 @@ public final class StatsApiV1
     public static final String CONVENTIONAL_CONTEXTS = ROOT + "/conventional-contexts";
     public static final String EXPORTS = ROOT + "/exports";
     public static final String TUNER_DIAGNOSTICS = ROOT + "/diagnostics/tuners";
-    public static final String LIVE_CHANNEL_ACTIVITY = ROOT + "/live/channel-activity";
-    public static final String LIVE_DECODE_EVENTS = ROOT + "/live/decode-events";
-    public static final String LIVE_DECODE_MESSAGES = ROOT + "/live/decode-messages";
-    public static final String LIVE_CHANNEL_DIAGNOSTICS = ROOT + "/live/channel-diagnostics";
-    public static final String LIVE_TUNER_DIAGNOSTICS = ROOT + "/live/tuner-diagnostics";
-    public static final String LIVE_SITES = ROOT + "/live/sites";
-    public static final String LIVE_CALLS = ROOT + "/live/calls";
-    public static final String LIVE_ACTIVITY = ROOT + "/live/activity";
+    public static final String LIVE_MULTIPLEX = ROOT + "/live/multiplex";
+    public static final String LIVE_MULTIPLEX_CONTROL = ROOT + "/live/multiplex/control";
     public static final String CALLS = ROOT + "/calls";
 
     private StatsApiV1()

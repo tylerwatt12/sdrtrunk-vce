@@ -467,4 +467,38 @@ public class ChannelActivityRow
         mTargetAliases = Collections.emptyList();
         mEncryptionDetails = null;
     }
+
+    /**
+     * Creates a detached renderer copy.  Channel, identifier, alias, and quality objects are treated as immutable
+     * references; all row-owned collections and mutable scalar state are copied.
+     */
+    ChannelActivityRow copy()
+    {
+        ChannelActivityRow copy = new ChannelActivityRow(mKey, mChannel, mRole, mFrequency, mTimeslot);
+        copy.mTags.clear();
+        copy.mTags.addAll(mTags);
+        copy.mOrigin = mOrigin;
+        copy.mState = mState;
+        copy.mLcn = mLcn;
+        copy.mCallsign = mCallsign;
+        copy.mSource = mSource;
+        copy.mSourceAliases = List.copyOf(mSourceAliases);
+        copy.mTalkerAlias = mTalkerAlias;
+        copy.mTarget = mTarget;
+        copy.mTargetAliases = List.copyOf(mTargetAliases);
+        copy.mDecoder = mDecoder;
+        copy.mEncryptionDetails = mEncryptionDetails;
+        copy.mSignalDbfs = mSignalDbfs;
+        copy.mDecodeHealthPercent = mDecodeHealthPercent;
+        copy.mControlValidFrames = mControlValidFrames;
+        copy.mControlInvalidFrames = mControlInvalidFrames;
+        copy.mControlCorrectedBits = mControlCorrectedBits;
+        copy.mControlSyncLossBits = mControlSyncLossBits;
+        copy.mControlDroppedBits = mControlDroppedBits;
+        copy.mVoiceCallId = mVoiceCallId;
+        copy.mVoiceCallQuality = mVoiceCallQuality;
+        copy.mQualityObservedAt = mQualityObservedAt;
+        copy.mTrafficGrantExpiresAt = mTrafficGrantExpiresAt;
+        return copy;
+    }
 }

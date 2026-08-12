@@ -17,15 +17,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.channel.metadata.activity.ChannelActivityEvent;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivitySnapshot;
-import io.github.dsheirer.controller.channel.Channel;
-import io.github.dsheirer.metadata.site.ProtocolSiteMetadataEvent;
-import io.github.dsheirer.module.decode.dmr.telemetry.DMRNetworkConfigurationSnapshot;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.Test;
 
-/** Regression coverage for the hard live-state bounds exposed to SSE clients. */
+/** Regression coverage for the hard live-state bounds exposed to browser subscribers. */
 class StatsLiveServiceBoundsTest
 {
     @Test
@@ -56,29 +53,53 @@ class StatsLiveServiceBoundsTest
     }
 
     @Test
-    void capsTheActivityTableCacheAndMarksSnapshotsTruncated()
+    void capsTheActivityTableCacheAndPublishesTheTruncatedSnapshot() throws Exception
     {
         StatsLiveService service = new StatsLiveService(null, null);
 
         try
         {
-            for(int index = 0; index <= StatsLiveService.MAXIMUM_LIVE_TABLES; index++)
+            service.start();
+
+            for(int index = 0; index < StatsLiveService.MAXIMUM_LIVE_TABLES; index++)
             {
                 String tableId = "table-%03d".formatted(index);
                 service.process(activity(tableId, List.of(activityRow("row-" + index))));
             }
 
-            Map<String,Object> snapshot = service.snapshot();
-            List<Map<String,Object>> tables = tables(snapshot);
-            assertEquals(StatsLiveService.MAXIMUM_LIVE_TABLES, tables.size());
-            assertEquals(StatsLiveService.MAXIMUM_LIVE_TABLES, snapshot.get("table_limit"));
-            assertEquals(1, snapshot.get("tables_omitted_at_least"));
-            assertEquals(true, snapshot.get("truncated"));
-            assertEquals("table-000", tables.getFirst().get("table_id"));
-            assertEquals("table-%03d".formatted(StatsLiveService.MAXIMUM_LIVE_TABLES - 1),
-                tables.getLast().get("table_id"));
-            assertFalse(tables.stream().anyMatch(table ->
-                ("table-%03d".formatted(StatsLiveService.MAXIMUM_LIVE_TABLES)).equals(table.get("table_id"))));
+            long beforeTruncation = ((Number)service.snapshot().get("revision")).longValue();
+
+            try(StatsLiveEventHub.Subscription subscription = service.subscribeSystems())
+            {
+                service.process(activity("table-%03d".formatted(StatsLiveService.MAXIMUM_LIVE_TABLES),
+                    List.of(activityRow("omitted"))));
+                StatsLiveEventHub.LiveEvent resync = subscription.poll(1, java.util.concurrent.TimeUnit.SECONDS);
+                assertEquals("activity_resync", resync.name());
+                @SuppressWarnings("unchecked")
+                Map<String,Object> resyncSnapshot = (Map<String,Object>)((Map<?,?>)resync.data()).get("snapshot");
+                assertEquals(beforeTruncation + 1, ((Number)resyncSnapshot.get("revision")).longValue());
+                assertEquals(true, resyncSnapshot.get("truncated"));
+
+                Map<String,Object> snapshot = service.snapshot();
+                List<Map<String,Object>> tables = tables(snapshot);
+                assertEquals(StatsLiveService.MAXIMUM_LIVE_TABLES, tables.size());
+                assertEquals(StatsLiveService.MAXIMUM_LIVE_TABLES, snapshot.get("table_limit"));
+                assertEquals(1, snapshot.get("tables_omitted_at_least"));
+                assertEquals(true, snapshot.get("truncated"));
+                assertEquals("table-000", tables.getFirst().get("table_id"));
+                assertEquals("table-%03d".formatted(StatsLiveService.MAXIMUM_LIVE_TABLES - 1),
+                    tables.getLast().get("table_id"));
+                assertFalse(tables.stream().anyMatch(table ->
+                    ("table-%03d".formatted(StatsLiveService.MAXIMUM_LIVE_TABLES)).equals(table.get("table_id"))));
+
+                long revision = ((Number)snapshot.get("revision")).longValue();
+                service.process(activity("table-000", List.of(activityRow("updated"))));
+                assertEquals(revision + 1, ((Number)service.snapshot().get("revision")).longValue(),
+                    "the authoritative truncation snapshot must preserve contiguous revisions");
+                assertEquals("updated", rows(tables(service).getFirst()).getFirst().get("key"));
+            }
+
+            assertTrue(tables(service).isEmpty(), "The cache must be released with the final browser demand");
         }
         finally
         {
@@ -120,38 +141,6 @@ class StatsLiveServiceBoundsTest
         }
     }
 
-    @Test
-    void capsTheLiveSiteCacheAndMarksSnapshotsTruncated()
-    {
-        StatsLiveService service = new StatsLiveService(null, null);
-        DMRNetworkConfigurationSnapshot metadata = dmrSnapshot();
-
-        try
-        {
-            for(int index = 0; index <= StatsLiveService.MAXIMUM_LIVE_SITES; index++)
-            {
-                Channel channel = new Channel("Control " + index);
-                channel.setRadresGuid(siteGuid(index));
-                service.process(new ProtocolSiteMetadataEvent(channel, metadata, 1_000L + index));
-            }
-
-            Map<String,Object> snapshot = service.siteSnapshot();
-            List<Map<String,Object>> sites = sites(snapshot);
-            assertEquals(StatsLiveService.MAXIMUM_LIVE_SITES, sites.size());
-            assertEquals(StatsLiveService.MAXIMUM_LIVE_SITES, snapshot.get("limit"));
-            assertEquals(true, snapshot.get("truncated"));
-            assertEquals(siteGuid(0), sites.getFirst().get("guid"));
-            assertEquals(siteGuid(StatsLiveService.MAXIMUM_LIVE_SITES - 1),
-                sites.getLast().get("guid"));
-            assertFalse(sites.stream().anyMatch(site ->
-                siteGuid(StatsLiveService.MAXIMUM_LIVE_SITES).equals(site.get("guid"))));
-        }
-        finally
-        {
-            service.close();
-        }
-    }
-
     private static ChannelActivityEvent activity(String tableId, List<ChannelActivitySnapshot.Row> rows)
     {
         ChannelActivitySnapshot snapshot = new ChannelActivitySnapshot(tableId, "Live", "Control", null,
@@ -164,18 +153,6 @@ class StatsLiveServiceBoundsTest
         return new ChannelActivitySnapshot.Row(key, "Control", null, "ACTIVE", List.of("CONTROL"), "1",
             451_000_000L, null, -25.5, 98.0, 1_000L, 1L, 0L, 0L, 0L, 0L, null, null, null,
             null, null, null, null, null, "DMR", null);
-    }
-
-    private static DMRNetworkConfigurationSnapshot dmrSnapshot()
-    {
-        return new DMRNetworkConfigurationSnapshot(
-            "DMR", "TIER_III", 10, 20, "Tier III Trunking", "SMALL", null, "Control",
-            1, 2, List.of(), List.of());
-    }
-
-    private static String siteGuid(int index)
-    {
-        return "00000000-0000-0000-0000-%012d".formatted(index);
     }
 
     @SuppressWarnings("unchecked")
@@ -196,9 +173,4 @@ class StatsLiveServiceBoundsTest
         return (List<Map<String,Object>>)table.get("rows");
     }
 
-    @SuppressWarnings("unchecked")
-    private static List<Map<String,Object>> sites(Map<String,Object> snapshot)
-    {
-        return (List<Map<String,Object>>)snapshot.get("sites");
-    }
 }

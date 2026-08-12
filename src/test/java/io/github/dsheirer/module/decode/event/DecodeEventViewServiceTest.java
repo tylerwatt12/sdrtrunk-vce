@@ -9,8 +9,14 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.module.decode.p25.identifier.channel.StandardChannel;
 import io.github.dsheirer.protocol.Protocol;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
 import org.junit.jupiter.api.Test;
 
 class DecodeEventViewServiceTest
@@ -79,5 +85,182 @@ class DecodeEventViewServiceTest
             assertEquals(FREQUENCY, view.frequencyHz());
             assertTrue(new DecodeEventViewService.Scope(CONFIGURATION_ID, FREQUENCY, null).matches(view));
         }
+    }
+
+    @Test
+    void blockedProjectionNeverBlocksOrProjectsOnTheDecoderCallback() throws Exception
+    {
+        CountDownLatch projectionEntered = new CountDownLatch(1);
+        CountDownLatch releaseProjection = new CountDownLatch(1);
+        AtomicReference<Thread> projectionThread = new AtomicReference<>();
+        DecodeEvent blocked = new DecodeEvent(DecodeEventType.CALL_GROUP, 1_000L)
+        {
+            @Override
+            public DecodeEventType getEventType()
+            {
+                projectionThread.compareAndSet(null, Thread.currentThread());
+                projectionEntered.countDown();
+
+                try
+                {
+                    releaseProjection.await(3, TimeUnit.SECONDS);
+                }
+                catch(InterruptedException exception)
+                {
+                    Thread.currentThread().interrupt();
+                }
+
+                return super.getEventType();
+            }
+        };
+        DecodeEvent ordinary = DecodeEvent.builder(DecodeEventType.CALL_GROUP, 2_000L).build();
+        Channel channel = new Channel("test", Channel.ChannelType.STANDARD);
+        Thread decoderThread = Thread.currentThread();
+
+        try(DecodeEventViewService service = new DecodeEventViewService(null, null))
+        {
+            service.addListener(event -> { });
+            service.receive(channel, blocked);
+            assertTrue(projectionEntered.await(2, TimeUnit.SECONDS));
+            long started = System.nanoTime();
+
+            for(int x = 0; x < DecodeEventViewService.UPDATE_QUEUE_SIZE + 16; x++)
+            {
+                service.receive(channel, ordinary);
+            }
+
+            long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
+            assertTrue(elapsedMs < 250, "bounded offers took " + elapsedMs + " ms");
+            assertTrue(service.getDroppedObservationCount() > 0);
+            assertFalse(decoderThread == projectionThread.get());
+            releaseProjection.countDown();
+        }
+        finally
+        {
+            releaseProjection.countDown();
+        }
+    }
+
+    @Test
+    void zeroConsumersRejectIngressAndClearPublishedState()
+    {
+        AtomicInteger callbacks = new AtomicInteger();
+        io.github.dsheirer.sample.Listener<DecodeEventViewService.EventView> listener =
+            event -> callbacks.incrementAndGet();
+        Channel channel = new Channel("inactive", Channel.ChannelType.STANDARD);
+        DecodeEvent event = DecodeEvent.builder(DecodeEventType.CALL, 1_000L).build();
+        DecodeEventViewService.Scope scope = new DecodeEventViewService.Scope(channel.getConfigurationId(), null,
+            null);
+
+        try(DecodeEventViewService service = new DecodeEventViewService(null, null))
+        {
+            service.getDecodeEventListener().accept(channel, event);
+            assertEquals(0, service.getPendingObservationCount());
+            service.addListener(listener);
+            service.getDecodeEventListener().accept(channel, event);
+            await(() -> callbacks.get() == 1 && service.snapshot(scope).size() == 1);
+            service.removeListener(listener);
+            assertTrue(service.snapshot(scope).isEmpty());
+            service.getDecodeEventListener().accept(channel,
+                DecodeEvent.builder(DecodeEventType.CALL, 2_000L).build());
+            assertEquals(0, service.getPendingObservationCount());
+            assertEquals(1, callbacks.get());
+
+            service.addListener(listener);
+            assertTrue(service.snapshot(scope).isEmpty());
+            DecodeEvent replacement = DecodeEvent.builder(DecodeEventType.CALL, 3_000L).build();
+            service.getDecodeEventListener().accept(channel, replacement);
+            await(() -> callbacks.get() == 2 && service.snapshot(scope).size() == 1);
+            assertEquals(3_000L, service.snapshot(scope).getFirst().timeStartMs());
+        }
+    }
+
+    @Test
+    void blockedProjectionCloseRemainsWorkerOwnedAndCannotPublishAfterClose() throws Exception
+    {
+        CountDownLatch projectionEntered = new CountDownLatch(1);
+        CountDownLatch releaseProjection = new CountDownLatch(1);
+        AtomicInteger callbacks = new AtomicInteger();
+        DecodeEvent blocked = new DecodeEvent(DecodeEventType.CALL_GROUP, 1_000L)
+        {
+            @Override
+            public DecodeEventType getEventType()
+            {
+                projectionEntered.countDown();
+
+                try
+                {
+                    releaseProjection.await();
+                }
+                catch(InterruptedException exception)
+                {
+                    Thread.currentThread().interrupt();
+                }
+
+                return super.getEventType();
+            }
+        };
+        DecodeEventViewService service = new DecodeEventViewService(null, null, 25, TimeUnit.MILLISECONDS);
+        service.addListener(event -> callbacks.incrementAndGet());
+        service.getDecodeEventListener().accept(new Channel("test", Channel.ChannelType.STANDARD), blocked);
+        assertTrue(projectionEntered.await(2, TimeUnit.SECONDS));
+
+        service.close();
+        assertFalse(service.isWorkerTerminated());
+        assertEquals(0, callbacks.get());
+        assertEquals(0, service.getPendingObservationCount(),
+            "the worker owns and has already removed the blocked observation");
+
+        releaseProjection.countDown();
+        await(service::isWorkerTerminated);
+        service.getDecodeEventListener().accept(new Channel("closed", Channel.ChannelType.STANDARD),
+            DecodeEvent.builder(DecodeEventType.CALL, 2_000L).build());
+        assertEquals(0, callbacks.get());
+    }
+
+    @Test
+    void liveCallbackAlwaysObservesTheAuthoritativeCacheFirst() throws Exception
+    {
+        Channel channel = new Channel("ordered", Channel.ChannelType.STANDARD);
+        DecodeEvent event = DecodeEvent.builder(DecodeEventType.CALL, 4_000L).build();
+        DecodeEventViewService.Scope scope = new DecodeEventViewService.Scope(channel.getConfigurationId(), null,
+            null);
+        AtomicInteger callbacks = new AtomicInteger();
+        CountDownLatch callback = new CountDownLatch(1);
+
+        try(DecodeEventViewService service = new DecodeEventViewService(null, null))
+        {
+            service.addListener(view -> {
+                if(service.snapshot(scope).stream().anyMatch(cached -> cached.eventId().equals(view.eventId())))
+                {
+                    callbacks.incrementAndGet();
+                }
+
+                callback.countDown();
+            });
+            service.getDecodeEventListener().accept(channel, event);
+            assertTrue(callback.await(2, TimeUnit.SECONDS));
+            assertEquals(1, callbacks.get());
+        }
+    }
+
+    private static void await(BooleanSupplier condition)
+    {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
+
+        while(System.nanoTime() < deadline && !condition.getAsBoolean())
+        {
+            try
+            {
+                Thread.sleep(5);
+            }
+            catch(InterruptedException exception)
+            {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+
+        assertTrue(condition.getAsBoolean(), "condition was not met before timeout");
     }
 }

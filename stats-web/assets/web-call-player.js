@@ -5,6 +5,7 @@ class WebCallPlayer {
   constructor(ids) {
     this.ui = Object.fromEntries(Object.entries(ids).map(([key, id]) => [key, document.getElementById(id)]));
     this.queue = [];
+    this.knownCallIds = new Set();
     this.avoids = new Set();
     this.holdTarget = null;
     this.current = null;
@@ -17,7 +18,10 @@ class WebCallPlayer {
     this.progressFrame = null;
     this.transportToken = 0;
     this.events = null;
+    this.connectionTopic = null;
+    this.connectionFactory = null;
     this.loadToken = 0;
+    this.loadController = null;
     this.dropped = 0;
     this.paused = true;
     this.volume = this.readVolume();
@@ -28,11 +32,33 @@ class WebCallPlayer {
     this.render();
   }
 
-  connect(url) {
+  connect(url, connectionFactory) {
     if (this.events) this.events.close();
-    const events = new EventSource(url);
+    this.events = null;
+    if (typeof connectionFactory !== 'function') throw new Error('A shared live connection is required.');
+    this.connectionTopic = url;
+    this.connectionFactory = connectionFactory;
+    return this.connectionHandle();
+  }
+
+  connectionHandle() {
+    return {
+      close: () => {
+        if (this.events) this.events.close();
+        this.events = null;
+        this.connectionTopic = null;
+        this.connectionFactory = null;
+      }
+    };
+  }
+
+  ensureConnected() {
+    if (this.events) return this.events;
+    if (typeof this.connectionFactory !== 'function') return null;
+    const events = this.connectionFactory(this.connectionTopic);
     this.events = events;
     events.addEventListener('call', (event) => this.enqueue(JSON.parse(event.data)));
+    events.addEventListener('snapshot', (event) => this.consumeSnapshot(JSON.parse(event.data)));
     events.onopen = () => this.setStatus(this.paused ? (this.currentBuffer ? 'Paused' : 'Ready') :
       (this.source ? 'Listening' : this.current ? 'Buffering' : 'Waiting'));
     events.onerror = () => {
@@ -47,8 +73,11 @@ class WebCallPlayer {
       this.events = null;
     }
     this.transportToken++;
+    this.loadController?.abort();
+    this.loadController = null;
     this.paused = true;
     this.queue = [];
+    this.knownCallIds.clear();
     this.avoids.clear();
     this.holdTarget = null;
     this.stopCurrent();
@@ -59,7 +88,14 @@ class WebCallPlayer {
 
   // Recorded-call pages can feed this same queue by providing the same call shape and an audio_url.
   enqueue(call) {
-    if (!call?.audio_url || !this.isAllowed(call)) return;
+    if (!call?.audio_url) return;
+    const callId = String(call.call_id || '');
+    if (callId && this.knownCallIds.has(callId)) return;
+    if (callId) {
+      this.knownCallIds.add(callId);
+      while (this.knownCallIds.size > 1024) this.knownCallIds.delete(this.knownCallIds.values().next().value);
+    }
+    if (!this.isAllowed(call)) return;
 
     while (this.queue.length >= this.maximumQueued) {
       this.queue.shift();
@@ -69,6 +105,10 @@ class WebCallPlayer {
     this.queue.push(call);
     if (!this.paused && !this.current) this.playNext();
     else this.render();
+  }
+
+  consumeSnapshot(snapshot) {
+    (Array.isArray(snapshot?.calls) ? snapshot.calls : []).forEach((call) => this.enqueue(call));
   }
 
   bindControls() {
@@ -98,6 +138,12 @@ class WebCallPlayer {
       if (token !== this.transportToken) return;
       this.setStatus(this.currentBuffer ? 'Paused' : 'Ready');
     } else {
+      if (!this.ensureConnected()) {
+        this.paused = true;
+        this.setStatus('Unavailable');
+        this.render();
+        return;
+      }
       this.ensureAudioContext();
       await this.audioContext.resume();
       if (token !== this.transportToken) return;
@@ -171,15 +217,31 @@ class WebCallPlayer {
     this.currentBuffer = null;
     this.playbackOffset = 0;
     const token = ++this.loadToken;
+    this.loadController?.abort();
+    const loadController = new AbortController();
+    this.loadController = loadController;
+    let loadTimedOut = false;
+    let loadTimeout;
+    const timeoutFailure = new Promise((_, reject) => {
+      loadTimeout = window.setTimeout(() => {
+        loadTimedOut = true;
+        loadController.abort();
+        reject(new Error('Audio loading timed out.'));
+      }, 15_000);
+    });
     this.setStatus('Buffering');
     this.render();
 
     try {
-      const response = await fetch(this.current.audio_url, { cache: 'no-store', credentials: 'same-origin' });
-      if (!response.ok) throw new Error(`Audio returned ${response.status}`);
-      this.ensureAudioContext();
-      const data = await response.arrayBuffer();
-      const buffer = await this.audioContext.decodeAudioData(data);
+      const buffer = await Promise.race([(async () => {
+        const response = await fetch(this.current.audio_url, {
+          cache: 'no-store', credentials: 'same-origin', signal: loadController.signal
+        });
+        if (!response.ok) throw new Error(`Audio returned ${response.status}`);
+        this.ensureAudioContext();
+        const data = await response.arrayBuffer();
+        return this.audioContext.decodeAudioData(data);
+      })(), timeoutFailure]);
       if (token !== this.loadToken || !this.current) return;
       this.currentBuffer = buffer;
       if (!this.paused) this.startCurrent();
@@ -187,7 +249,8 @@ class WebCallPlayer {
         this.setStatus('Paused');
         this.render();
       }
-    } catch (_) {
+    } catch (error) {
+      if (error?.name === 'AbortError' && !loadTimedOut) return;
       if (token === this.loadToken) {
         this.stopCurrent();
         this.setStatus('Skipped unavailable call');
@@ -200,6 +263,9 @@ class WebCallPlayer {
           }
         }, 150);
       }
+    } finally {
+      window.clearTimeout(loadTimeout);
+      if (this.loadController === loadController) this.loadController = null;
     }
   }
 
@@ -244,6 +310,8 @@ class WebCallPlayer {
 
   stopCurrent() {
     this.loadToken++;
+    this.loadController?.abort();
+    this.loadController = null;
     this.stopSource();
     this.current = null;
     this.currentBuffer = null;

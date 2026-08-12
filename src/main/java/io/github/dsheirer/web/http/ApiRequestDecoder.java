@@ -5,11 +5,15 @@
  */
 package io.github.dsheirer.web.http;
 
+import com.sun.net.httpserver.HttpExchange;
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
+import java.util.Objects;
 
 /** Strict single-pass UTF-8 decoding shared by version-one path and query adapters. */
 public final class ApiRequestDecoder
@@ -72,6 +76,22 @@ public final class ApiRequestDecoder
         catch(CharacterCodingException exception)
         {
             throw new IllegalArgumentException("Invalid UTF-8 encoding", exception);
+        }
+    }
+
+    /** Reads at most {@code maximumBytes + 1} bytes so controllers can return request-too-large without buffering. */
+    public static byte[] readBody(HttpExchange exchange, int maximumBytes) throws IOException
+    {
+        Objects.requireNonNull(exchange, "HTTP exchange cannot be null");
+
+        if(maximumBytes < 0 || maximumBytes == Integer.MAX_VALUE)
+        {
+            throw new IllegalArgumentException("Maximum request body bytes is invalid");
+        }
+
+        try(InputStream inputStream = exchange.getRequestBody())
+        {
+            return inputStream.readNBytes(Math.addExact(maximumBytes, 1));
         }
     }
 }
