@@ -13,6 +13,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.channel.state.State;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
+import io.github.dsheirer.module.decode.am.DecodeConfigAM;
+import io.github.dsheirer.module.decode.analog.DecodeConfigAnalog;
 import io.github.dsheirer.module.decode.dmr.DMRChannelMode;
 import io.github.dsheirer.module.decode.dmr.channel.TimeslotFrequency;
 import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
@@ -26,6 +28,23 @@ import org.junit.jupiter.api.Test;
 
 class DecoderFactoryTest
 {
+    @Test
+    void createsAndCopiesAmConfiguration()
+    {
+        DecodeConfigAM original = (DecodeConfigAM)DecoderFactory.getDecodeConfiguration(DecoderType.AM);
+        original.setBandwidth(DecodeConfigAnalog.Bandwidth.BW_8_33);
+        original.setTalkgroup(77);
+        original.setOutputGain(1.75f);
+
+        DecodeConfigAM copy = (DecodeConfigAM)DecoderFactory.copy(original);
+
+        assertNotSame(original, copy);
+        assertEquals(DecoderType.AM, copy.getDecoderType());
+        assertEquals(DecodeConfigAnalog.Bandwidth.BW_8_33, copy.getBandwidth());
+        assertEquals(77, copy.getTalkgroup());
+        assertEquals(1.75f, copy.getOutputGain());
+    }
+
     @Test
     void deepCopiesDmrConfigurationAndFrequencyMap()
     {

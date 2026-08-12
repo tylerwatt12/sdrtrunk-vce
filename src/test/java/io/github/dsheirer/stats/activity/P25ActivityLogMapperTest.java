@@ -34,6 +34,7 @@ import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
 import io.github.dsheirer.identifier.patch.PatchGroup;
 import io.github.dsheirer.metadata.site.SiteMetadataEvent;
 import io.github.dsheirer.module.decode.DecoderType;
+import io.github.dsheirer.module.decode.am.DecodeConfigAM;
 import io.github.dsheirer.module.decode.dmr.DMRChannelMode;
 import io.github.dsheirer.module.decode.dmr.DMRConventionalCallEvent;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
@@ -358,6 +359,24 @@ class P25ActivityLogMapperTest
 
         assertEquals(record.dedupeKey(), continuation.dedupeKey());
         assertNotEquals(record.dedupeKey(), next.dedupeKey());
+    }
+
+    @Test
+    void mapsAmAsAProtocolNeutralConventionalAnalogContext()
+    {
+        MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
+        identifiers.update(FrequencyConfigurationIdentifier.create(118_500_000L));
+        DecodeEvent event = DecodeEvent.builder(DecodeEventType.CALL, 1_000L)
+            .duration(1_000L)
+            .identifiers(identifiers)
+            .build();
+
+        P25ActivityLogRecords.ActivityEvent record = new P25ActivityLogMapper().map(channel(DecoderType.AM), event);
+
+        assertNotNull(record);
+        assertEquals(P25ActivityLogRecords.ContextKind.CONVENTIONAL_ANALOG, record.contextKind());
+        assertEquals("AM", record.protocol());
+        assertEquals("GUID:" + GUID, record.contextKey());
     }
 
     @Test
@@ -1101,6 +1120,7 @@ class P25ActivityLogMapperTest
             decoderType == DecoderType.P25_PHASE1 ? ChannelType.TRAFFIC : ChannelType.STANDARD);
         channel.setDecodeConfiguration(switch(decoderType)
         {
+            case AM -> new DecodeConfigAM();
             case P25_CONVENTIONAL -> new DecodeConfigP25Conventional();
             case NBFM -> new DecodeConfigNBFM();
             default -> new DecodeConfigP25Phase1();

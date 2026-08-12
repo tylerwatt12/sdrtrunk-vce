@@ -25,6 +25,8 @@ import io.github.dsheirer.configuration.ConfigurationState;
 import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.module.decode.DecoderType;
+import io.github.dsheirer.module.decode.am.DecodeConfigAM;
+import io.github.dsheirer.module.decode.analog.DecodeConfigAnalog.Bandwidth;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.module.decode.p25.phase1.Modulation;
@@ -275,6 +277,48 @@ class ConfigurationDatabaseStoreTest
                 assertEquals("Retired Map", resultSet.getString("name"));
                 assertEquals(channelMapJson, resultSet.getString("config_json"));
             }
+        }
+    }
+
+    @Test
+    void roundTripsAMConventionalChannel() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("am-conventional.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        ConfigurationDatabaseStore store = new ConfigurationDatabaseStore(database);
+        Channel channel = new Channel("Airport Ground");
+        channel.setSystem("County Airport");
+        channel.setSite("Tower");
+        DecodeConfigAM decodeConfiguration = new DecodeConfigAM();
+        decodeConfiguration.setBandwidth(Bandwidth.BW_8_33);
+        decodeConfiguration.setTalkgroup(27);
+        decodeConfiguration.setOutputGain(1.5f);
+        channel.setDecodeConfiguration(decodeConfiguration);
+
+        SourceConfigTuner sourceConfig = new SourceConfigTuner();
+        sourceConfig.setFrequency(121_900_000L);
+        channel.setSourceConfiguration(sourceConfig);
+
+        ConfigurationState state = new ConfigurationState();
+        state.setChannels(List.of(channel));
+        replace(database, state);
+
+        Channel loaded = store.loadConfigurationState().getChannels().get(0);
+        DecodeConfigAM loadedDecodeConfiguration =
+            assertInstanceOf(DecodeConfigAM.class, loaded.getDecodeConfiguration());
+        assertEquals(DecoderType.AM, loadedDecodeConfiguration.getDecoderType());
+        assertEquals(Bandwidth.BW_8_33, loadedDecodeConfiguration.getBandwidth());
+        assertEquals(27, loadedDecodeConfiguration.getTalkgroup());
+        assertEquals(1.5f, loadedDecodeConfiguration.getOutputGain());
+
+        try(Connection connection = SdrTrunkDatabase.open(database);
+            Statement statement = connection.createStatement();
+            ResultSet resultSet = statement.executeQuery(
+                "SELECT decoder_type, primary_frequency_hz FROM configuration_channel"))
+        {
+            assertTrue(resultSet.next());
+            assertEquals("AM", resultSet.getString("decoder_type"));
+            assertEquals(121_900_000L, resultSet.getLong("primary_frequency_hz"));
         }
     }
 

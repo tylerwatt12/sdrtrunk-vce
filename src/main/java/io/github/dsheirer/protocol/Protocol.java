@@ -27,6 +27,7 @@ import java.util.Set;
  */
 public enum Protocol
 {
+    AM("AM", "AM", 0),
     APCO25("APCO-25", "APCO25PHASE1", 9600),
     APCO25_PHASE2("APCO-25 P2", "APCO25PHASE2", 12000),
     ARS("ARS", "ARS", 0),
@@ -64,7 +65,7 @@ public enum Protocol
     }
 
     public static final Set<Protocol> TALKGROUP_PROTOCOLS =
-        activeOnly(EnumSet.of(APCO25, DMR, FLEETSYNC, MDC1200, MPT1327, NBFM, NXDN));
+        activeOnly(EnumSet.of(AM, APCO25, DMR, FLEETSYNC, MDC1200, MPT1327, NBFM, NXDN));
 
     private static final Set<Protocol> RADIO_ID_PROTOCOLS = EnumSet.of(APCO25, DMR, NXDN);
 

@@ -712,6 +712,7 @@ public final class AliasAdminHttpController
     {
         return switch(Objects.requireNonNull(protocol, "Protocol cannot be null"))
         {
+            case AM -> "am";
             case APCO25, APCO25_PHASE2 -> "p25";
             case DMR -> "dmr";
             case NXDN -> "nxdn";
@@ -772,6 +773,7 @@ public final class AliasAdminHttpController
 
         return switch(protocol)
         {
+            case "am" -> protocolWithoutVariant(Protocol.AM, variant);
             case "p25" -> switch(variant)
             {
                 case "phase_1" -> Protocol.APCO25;

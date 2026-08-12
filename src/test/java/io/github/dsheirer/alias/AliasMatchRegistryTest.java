@@ -78,6 +78,7 @@ class AliasMatchRegistryTest
 
         assertTrue(AliasMatchRegistry.supports(nbfm, fleetsync));
         assertTrue(AliasMatchRegistry.supports(nbfm, mdc1200));
+        assertTrue(AliasMatchRegistry.supports(nbfm, new Talkgroup(Protocol.AM, 1)));
         assertTrue(AliasMatchRegistry.supports(nbfm, new Dcs()));
         assertTrue(AliasMatchRegistry.supports(nbfm, new Esn()));
 
@@ -90,6 +91,7 @@ class AliasMatchRegistryTest
         }
 
         assertTrue(AliasMatchRegistry.isChannelCompatible(nbfm, DecoderType.NBFM));
+        assertTrue(AliasMatchRegistry.isChannelCompatible(nbfm, DecoderType.AM));
     }
 
     @Test
@@ -103,7 +105,8 @@ class AliasMatchRegistryTest
             labels(AliasListFamily.DMR));
         assertEquals(Set.of("NXDN Talkgroup", "NXDN Talkgroup Range", "NXDN Radio ID", "NXDN Radio ID Range"),
             labels(AliasListFamily.NXDN));
-        assertEquals(Set.of("NBFM Talkgroup", "NBFM Talkgroup Range", "Digital Coded Squelch (DCS)",
+        assertEquals(Set.of("AM Talkgroup", "AM Talkgroup Range", "NBFM Talkgroup", "NBFM Talkgroup Range",
+                "Digital Coded Squelch (DCS)",
                 "Fleetsync Talkgroup", "Fleetsync Talkgroup Range", "MDC-1200 Talkgroup",
                 "MDC-1200 Talkgroup Range", "LoJack Transponder ESN", "User Status"),
             labels(AliasListFamily.NBFM));
