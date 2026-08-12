@@ -97,7 +97,6 @@ public class ControllerPanel extends JPanel
         boolean systemsVisible = mUserPreferences.getNowPlayingPreference()
             .isJavaInterfaceViewEnabled(JavaInterfaceView.SYSTEMS);
         mNowPlayingPanel.setSystemsActive(systemsVisible);
-        mConfigurationManager.getChannelProcessingManager().setChannelActivityEnabled("java-ui", systemsVisible);
         mTabbedPane.removeAll();
 
         if(systemsVisible)

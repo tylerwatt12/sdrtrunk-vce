@@ -42,75 +42,63 @@ class StatsLiveServiceTest
     java.nio.file.Path mTemporaryDirectory;
 
     @Test
-    void ownsChannelActivityOnlyWhileAWebSubscriberNeedsIt()
+    void browserSubscribersDoNotOwnReceiverActivityLifetime() throws Exception
     {
         ChannelProcessingManager manager = new ChannelProcessingManager(null, null, null, new UserPreferences());
         StatsLiveService service = new StatsLiveService(null, manager);
-        assertFalse(manager.getChannelActivityModel().isEnabled());
+        Channel channel = trunkedDmrChannel();
+        assertTrue(manager.getChannelActivityModel().isWorkerAlive());
 
         service.start();
-        assertFalse(manager.getChannelActivityModel().isEnabled());
-        assertFalse(service.isRawWorkerAlive());
 
         try(StatsLiveEventHub.Subscription first = service.subscribeSystems();
             StatsLiveEventHub.Subscription second = service.subscribeSystems())
         {
             assertNotNull(first);
             assertNotNull(second);
-            assertEquals(2, service.getSystemsDemandCount());
-            assertTrue(manager.getChannelActivityModel().isEnabled());
-            assertTrue(service.isRawWorkerAlive());
-
-            first.close();
-            assertEquals(1, service.getSystemsDemandCount());
-            assertTrue(manager.getChannelActivityModel().isEnabled());
-
-            manager.setChannelActivityEnabled("java-ui", true);
-            second.close();
-            assertEquals(0, service.getSystemsDemandCount());
-            assertTrue(manager.getChannelActivityModel().isEnabled(),
-                "the independent Java renderer lease must remain active");
-            assertFalse(service.isRawWorkerAlive());
-            manager.setChannelActivityEnabled("java-ui", false);
-            assertFalse(manager.getChannelActivityModel().isEnabled());
+            manager.getChannelActivityModel().channelStarted(channel, List.of());
+            waitUntil(() -> manager.getChannelActivityModel().getSnapshotSet().tables().size() == 2);
+            assertEquals(2, manager.getChannelActivityModel().getSnapshotSet().tables().size());
         }
 
+        assertTrue(manager.getChannelActivityModel().isWorkerAlive());
+        assertEquals(2, manager.getChannelActivityModel().getSnapshotSet().tables().size(),
+            "closing every browser must not clear receiver activity state");
         service.stop();
-        assertFalse(manager.getChannelActivityModel().isEnabled());
+        assertTrue(manager.getChannelActivityModel().isWorkerAlive());
         service.close();
+        manager.shutdown();
     }
 
     @Test
-    void projectionWorkerCanStopAndRestartWithoutDuplicatingConsumers() throws Exception
+    void webAdapterUsesTheCoreSnapshotWithoutASecondProjectionWorker() throws Exception
     {
-        StatsLiveService service = new StatsLiveService(null, null);
-        ChannelActivityEvent event = conventionalActivity("CALL");
+        ChannelProcessingManager manager = new ChannelProcessingManager(null, null, null, new UserPreferences());
+        StatsLiveService service = new StatsLiveService(null, manager);
+        Channel channel = trunkedDmrChannel();
 
         try
         {
             service.start();
+            manager.getChannelActivityModel().channelStarted(channel, List.of());
+            waitUntil(() -> manager.getChannelActivityModel().getSnapshotSet().tables().size() == 2);
 
             try(StatsLiveEventHub.Subscription ignored = service.subscribeSystems())
             {
-                service.receiveChannelActivity(event);
-                waitUntil(() -> !tables(service).isEmpty());
-            }
-
-            service.stop();
-            assertTrue(tables(service).isEmpty());
-
-            service.start();
-
-            try(StatsLiveEventHub.Subscription ignored = service.subscribeSystems())
-            {
-                service.receiveChannelActivity(event);
-                waitUntil(() -> !tables(service).isEmpty());
-                assertEquals(1, tables(service).size());
+                assertEquals(2, tables(service).size());
+                Map<String,Object> trunked = tables(service).stream()
+                    .filter(table -> !"conventional".equals(table.get("table_id"))).findFirst().orElseThrow();
+                @SuppressWarnings("unchecked")
+                List<Map<String,Object>> rows = (List<Map<String,Object>>)trunked.get("rows");
+                assertFalse(rows.isEmpty(), "the configured control row supplies the wideband channel marker");
+                assertTrue(Thread.getAllStackTraces().keySet().stream()
+                    .noneMatch(thread -> thread.isAlive() && thread.getName().startsWith("stats live projection")));
             }
         }
         finally
         {
             service.close();
+            manager.shutdown();
         }
     }
 
@@ -236,123 +224,6 @@ class StatsLiveServiceTest
         finally
         {
             service.close();
-        }
-    }
-
-    @Test
-    void activityProjectionIsWorkerSideAndRawIngressDropsInsteadOfBlocking() throws Exception
-    {
-        CountDownLatch projectionEntered = new CountDownLatch(1);
-        CountDownLatch releaseProjection = new CountDownLatch(1);
-        AtomicReference<Thread> projectionThread = new AtomicReference<>();
-        StatsLiveService service = new StatsLiveService(null, null, event -> {
-            projectionThread.set(Thread.currentThread());
-            projectionEntered.countDown();
-
-            try
-            {
-                releaseProjection.await(5, TimeUnit.SECONDS);
-            }
-            catch(InterruptedException interruptedException)
-            {
-                Thread.currentThread().interrupt();
-            }
-        });
-
-        service.start();
-
-        try(StatsLiveEventHub.Subscription ignored = service.subscribeSystems())
-        {
-            Thread producer = Thread.currentThread();
-            ChannelActivityEvent event = conventionalActivity("CALL");
-            service.receiveChannelActivity(event);
-            assertTrue(projectionEntered.await(2, TimeUnit.SECONDS));
-
-            for(int index = 0; index < 256; index++)
-            {
-                service.receiveChannelActivity(event);
-            }
-
-            assertTrue(service.getDroppedRawEventCount() > 0);
-            assertFalse(producer == projectionThread.get());
-            assertTrue(projectionThread.get().getName().startsWith("stats live projection"));
-        }
-        finally
-        {
-            releaseProjection.countDown();
-            service.close();
-        }
-    }
-
-    @Test
-    void droppedRemoveConvergesFromAuthoritativeCoreSnapshot() throws Exception
-    {
-        AliasModel aliasModel = new AliasModel();
-        ChannelProcessingManager manager = new ChannelProcessingManager(null, null, aliasModel,
-            new UserPreferences());
-        CountDownLatch projectionBlocked = new CountDownLatch(1);
-        CountDownLatch releaseProjection = new CountDownLatch(1);
-        StatsLiveService service = new StatsLiveService(null, manager, event -> {
-            projectionBlocked.countDown();
-
-            try
-            {
-                releaseProjection.await(5, TimeUnit.SECONDS);
-            }
-            catch(InterruptedException interruptedException)
-            {
-                Thread.currentThread().interrupt();
-            }
-        });
-        Channel parent = trunkedDmrChannel();
-        service.start();
-
-        try(StatsLiveEventHub.Subscription subscription = service.subscribeSystems())
-        {
-            StatsLiveEventHub.LiveEvent initial = subscription.poll(2, TimeUnit.SECONDS);
-            assertNotNull(initial);
-            assertEquals("activity_resync", initial.name());
-            service.receiveChannelActivity(conventionalActivity("CALL"));
-            assertTrue(projectionBlocked.await(2, TimeUnit.SECONDS));
-            manager.getChannelActivityModel().channelStarted(parent, List.of());
-            waitUntil(() -> manager.getChannelActivityModel().getTables().size() == 2);
-            ChannelActivityTableState removed = manager.getChannelActivityModel().getTables().stream()
-                .filter(table -> table.getOwnerChannel() == parent).findFirst().orElseThrow();
-
-            for(int index = 0; index < 256; index++)
-            {
-                manager.getChannelActivityModel().channelConfigurationChanged(parent);
-            }
-
-            waitUntil(() -> service.getDroppedRawEventCount() > 0);
-            manager.getChannelActivityModel().close(removed);
-            waitUntil(() -> manager.getChannelActivityModel().getTables().size() == 1);
-            releaseProjection.countDown();
-
-            boolean resyncObserved = false;
-            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-
-            while(System.nanoTime() < deadline)
-            {
-                StatsLiveEventHub.LiveEvent event = subscription.poll(100, TimeUnit.MILLISECONDS);
-
-                if(event != null && "activity_resync".equals(event.name()))
-                {
-                    resyncObserved = true;
-                    break;
-                }
-            }
-
-            assertTrue(resyncObserved);
-            assertEquals(1, manager.getChannelActivityModel().getSnapshotSet().tables().size());
-            assertTrue(tables(service).stream().noneMatch(
-                table -> removed.getTableId().equals(table.get("table_id"))));
-        }
-        finally
-        {
-            releaseProjection.countDown();
-            service.close();
-            manager.shutdown();
         }
     }
 

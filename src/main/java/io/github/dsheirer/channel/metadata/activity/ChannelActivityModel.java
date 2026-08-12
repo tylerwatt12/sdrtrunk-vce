@@ -119,16 +119,11 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
     private final AtomicLong mProcessedIngressCount = new AtomicLong();
     private final AtomicLong mCloseRequestRevision = new AtomicLong();
     private final AtomicBoolean mLifecycleReconcileNeeded = new AtomicBoolean();
-    private final Object mLifecycleLock = new Object();
-    private final Runnable mAfterGenerationCaptureForTest;
     private volatile List<ChannelActivityTableState> mTables;
     private volatile SnapshotSet mSnapshotSet = new SnapshotSet(0, List.of());
     private boolean mActivitySweeperRunning;
-    private volatile boolean mEnabled;
-    private volatile boolean mWorkerRunning;
+    private volatile boolean mWorkerRunning = true;
     private volatile boolean mClosed;
-    private volatile long mGeneration;
-    private volatile long mAppliedGeneration = -1;
     private volatile long mAppliedCloseRequestRevision;
     private volatile Thread mWorker;
     private volatile Supplier<List<ActiveChannel>> mActiveChannelSupplier;
@@ -173,24 +168,19 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
 
     public ChannelActivityModel(AliasModel aliasModel, NowPlayingPreference nowPlayingPreference)
     {
-        this(aliasModel, nowPlayingPreference, INGRESS_CAPACITY, LIFECYCLE_INGRESS_RESERVE, null);
+        this(aliasModel, nowPlayingPreference, INGRESS_CAPACITY, LIFECYCLE_INGRESS_RESERVE);
     }
 
     ChannelActivityModel(AliasModel aliasModel, NowPlayingPreference nowPlayingPreference, int ingressCapacity,
                          int lifecycleIngressReserve)
     {
-        this(aliasModel, nowPlayingPreference, ingressCapacity, lifecycleIngressReserve, null);
-    }
-
-    ChannelActivityModel(AliasModel aliasModel, NowPlayingPreference nowPlayingPreference, int ingressCapacity,
-                         int lifecycleIngressReserve, Runnable afterGenerationCaptureForTest)
-    {
         mAliasModel = aliasModel;
         mNowPlayingPreference = nowPlayingPreference;
-        mAfterGenerationCaptureForTest = afterGenerationCaptureForTest;
         mIngress = new ChannelActivityIngressQueue(ingressCapacity, lifecycleIngressReserve);
         mConventionalTable = new ChannelActivityTableState("Conventional", null, false, this::tableSnapshotUpdated);
         updateTablesSnapshot();
+        mWorker = new ObserverThreadFactory("channel activity").newThread(this::runWorker);
+        mWorker.start();
     }
 
     public ChannelActivityTableState getConventionalTable()
@@ -214,100 +204,19 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
     public void setActiveChannelSupplier(Supplier<List<ActiveChannel>> activeChannelSupplier)
     {
         mActiveChannelSupplier = activeChannelSupplier;
-    }
-
-    public boolean isEnabled()
-    {
-        return mEnabled;
-    }
-
-    public void setEnabled(boolean enabled)
-    {
-        synchronized(mLifecycleLock)
-        {
-            if(mClosed || mEnabled == enabled)
-            {
-                return;
-            }
-
-            if(enabled)
-            {
-                mGeneration++;
-                mEnabled = true;
-                mLifecycleReconcileNeeded.set(true);
-                startWorker();
-            }
-            else
-            {
-                mEnabled = false;
-                mGeneration++;
-                mLifecycleReconcileNeeded.set(false);
-                mWorkerRunning = false;
-                signalWorker();
-                stopWorkerLocked();
-            }
-
-            signalWorker();
-        }
-    }
-
-    private void startWorker()
-    {
-        if(mWorkerRunning)
-        {
-            return;
-        }
-
-        Thread previous = mWorker;
-
-        if(previous != null && previous.isAlive())
-        {
-            throw new IllegalStateException("Previous channel activity worker has not terminated");
-        }
-
-        mWorkerRunning = true;
-        mWorker = new ObserverThreadFactory("channel activity").newThread(this::runWorker);
-        mWorker.start();
-    }
-
-    private void stopWorkerLocked()
-    {
-        Thread worker = mWorker;
-
-        if(worker != null && worker != Thread.currentThread())
-        {
-            try
-            {
-                worker.join(TimeUnit.SECONDS.toMillis(2));
-            }
-            catch(InterruptedException interruptedException)
-            {
-                Thread.currentThread().interrupt();
-            }
-        }
-
-        if(worker == null || !worker.isAlive())
-        {
-            mWorker = null;
-        }
+        mLifecycleReconcileNeeded.set(true);
+        signalWorker();
     }
 
     private boolean offer(int operation, Object first, Object second, Object third, Object fourth, Object fifth,
                           Object sixth, long value)
     {
-        long generation = mGeneration;
-
-        if(mAfterGenerationCaptureForTest != null)
-        {
-            mAfterGenerationCaptureForTest.run();
-        }
-
-        if(!mEnabled || mClosed)
+        if(mClosed)
         {
             return false;
         }
 
-        boolean accepted = mIngress.offer(operation, generation, isLifecycleOperation(operation), first, second,
+        boolean accepted = mIngress.offer(operation, isLifecycleOperation(operation), first, second,
             third, fourth, fifth, sixth, value);
 
         if(accepted)
@@ -372,8 +281,8 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
 
             for(ChannelActivitySnapshot snapshot: mSnapshotSet.tables())
             {
-                listener.receive(new ChannelActivityEvent(ChannelActivityEvent.Operation.UPSERT, snapshot,
-                    revision));
+                deliver(listener, new ChannelActivityEvent(ChannelActivityEvent.Operation.UPSERT, snapshot,
+                    revision), "activity");
             }
         }
     }
@@ -396,7 +305,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
 
             for(Listener<ChannelActivityEvent> listener: mActivityListeners)
             {
-                listener.receive(event);
+                deliver(listener, event, "activity");
             }
         }
     }
@@ -432,7 +341,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
 
     public void close(ChannelActivityTableState tableState)
     {
-        if(mEnabled && !mClosed && tableState != null)
+        if(!mClosed && tableState != null)
         {
             tableState.requestClose();
             mCloseRequestRevision.incrementAndGet();
@@ -472,7 +381,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
 
     public void channelStarted(Channel channel, List<ChannelMetadata> metadataList, Object incarnation)
     {
-        if(!mEnabled || channel == null)
+        if(channel == null)
         {
             return;
         }
@@ -503,7 +412,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
 
     public void channelStopped(Channel channel)
     {
-        if(!mEnabled || channel == null)
+        if(channel == null)
         {
             return;
         }
@@ -569,7 +478,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
 
     public void receiveControlChannelQuality(ControlChannelQualitySnapshot snapshot)
     {
-        if(!mEnabled || snapshot == null || snapshot.channel() == null || snapshot.frequencyHz() <= 0)
+        if(snapshot == null || snapshot.channel() == null || snapshot.frequencyHz() <= 0)
         {
             return;
         }
@@ -626,7 +535,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
      */
     public void receiveAudioCallEvent(Channel channel, AudioCallEvent event)
     {
-        if(!mEnabled || channel == null || event == null || event.snapshot() == null ||
+        if(channel == null || event == null || event.snapshot() == null ||
             event.snapshot().callId() == null)
         {
             return;
@@ -756,7 +665,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
     @Override
     public void updated(ChannelMetadata channelMetadata, ChannelMetadataField channelMetadataField)
     {
-        if(!mEnabled)
+        if(mClosed)
         {
             return;
         }
@@ -780,7 +689,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
 
     public void p25CurrentControl(Channel parentChannel, long frequency)
     {
-        if(!mEnabled || parentChannel == null || frequency <= 0)
+        if(parentChannel == null || frequency <= 0)
         {
             return;
         }
@@ -813,7 +722,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
 
     public void receiveSiteMetadata(SiteMetadataEvent event)
     {
-        if(!mEnabled || event == null || event.channel() == null || event.snapshot() == null)
+        if(event == null || event.channel() == null || event.snapshot() == null)
         {
             return;
         }
@@ -921,7 +830,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
      */
     public void receiveProtocolSiteMetadata(ProtocolSiteMetadataEvent event)
     {
-        if(!mEnabled || event == null)
+        if(event == null)
         {
             return;
         }
@@ -958,7 +867,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
     public void p25TrafficGrant(Channel parentChannel, Channel trafficChannel, IChannelDescriptor channelDescriptor,
                                 IdentifierCollection identifiers, DecodeEventType eventType)
     {
-        if(!mEnabled || parentChannel == null || !isP25TrunkedControlParent(parentChannel) || channelDescriptor == null ||
+        if(parentChannel == null || !isP25TrunkedControlParent(parentChannel) || channelDescriptor == null ||
             channelDescriptor.getDownlinkFrequency() <= 0)
         {
             return;
@@ -985,7 +894,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
                                     IdentifierCollection identifiers, DecodeEventType eventType,
                                     long controlFrequency)
     {
-        if(!mEnabled || parentChannel == null || channelDescriptor == null ||
+        if(parentChannel == null || channelDescriptor == null ||
             channelDescriptor.getDownlinkFrequency() <= 0)
         {
             return;
@@ -1066,7 +975,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
      */
     public void trunkedCurrentControl(Channel parentChannel, long frequency)
     {
-        if(!mEnabled || parentChannel == null || frequency <= 0)
+        if(parentChannel == null || frequency <= 0)
         {
             return;
         }
@@ -1093,7 +1002,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
     public void p25TrafficEncryptionDetails(Channel parentChannel, IChannelDescriptor channelDescriptor,
                                             IdentifierCollection identifiers, DecodeEventType eventType)
     {
-        if(!mEnabled || parentChannel == null || channelDescriptor == null ||
+        if(parentChannel == null || channelDescriptor == null ||
             channelDescriptor.getDownlinkFrequency() <= 0)
         {
             return;
@@ -1150,7 +1059,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
     public void p25TrafficTalkerAlias(Channel parentChannel, IChannelDescriptor channelDescriptor,
                                       Identifier<?> talkerAlias)
     {
-        if(!mEnabled || parentChannel == null || channelDescriptor == null ||
+        if(parentChannel == null || channelDescriptor == null ||
             channelDescriptor.getDownlinkFrequency() <= 0 || talkerAlias == null)
         {
             return;
@@ -1190,7 +1099,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
 
     public void channelConfigurationChanged(Channel channel)
     {
-        if(!mEnabled || channel == null)
+        if(channel == null)
         {
             return;
         }
@@ -1836,7 +1745,20 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
 
         for(Listener<ChannelActivityTableEvent> listener: mTableListeners)
         {
+            deliver(listener, event, "table");
+        }
+    }
+
+    private static <T> void deliver(Listener<T> listener, T event, String type)
+    {
+        try
+        {
             listener.receive(event);
+        }
+        catch(Throwable throwable)
+        {
+            rethrowFatal(throwable);
+            mLog.error("Error delivering channel activity {} update", type, throwable);
         }
     }
 
@@ -2093,73 +2015,81 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
         {
             while(mWorkerRunning)
             {
-                reconcileGeneration();
-                int drained = 0;
-                ChannelActivityIngressQueue.Entry entry;
-
-                while(drained < INGRESS_CAPACITY && (entry = mIngress.poll()) != null)
+                try
                 {
-                    try
+                    int drained = 0;
+                    ChannelActivityIngressQueue.Entry entry;
+
+                    while(drained < INGRESS_CAPACITY && (entry = mIngress.poll()) != null)
                     {
-                        if(mEnabled && entry.generation() == mGeneration)
+                        try
                         {
                             process(entry);
                         }
-                    }
-                    catch(Throwable throwable)
-                    {
-                        if(throwable instanceof Error error)
+                        catch(Throwable throwable)
                         {
-                            throw error;
+                            rethrowFatal(throwable);
+                            mLog.error("Error processing channel activity observation", throwable);
+                        }
+                        finally
+                        {
+                            mProcessedIngressCount.incrementAndGet();
                         }
 
-                        mLog.error("Error processing channel activity observation", throwable);
-                    }
-                    finally
-                    {
-                        mProcessedIngressCount.incrementAndGet();
+                        drained++;
                     }
 
-                    drained++;
-                }
-
-                if(mEnabled)
-                {
                     processPendingCloseRequests();
 
                     if(mLifecycleReconcileNeeded.compareAndSet(true, false))
                     {
                         reconcileLifecycle();
                     }
+
+                    long now = System.nanoTime();
+
+                    if(mActivitySweeperRunning && now >= nextSweep)
+                    {
+                        sweepActivityExpirations();
+                        nextSweep = now + TimeUnit.MILLISECONDS.toNanos(ACTIVITY_SWEEPER_INTERVAL_MILLISECONDS);
+                    }
+
+                    if(drained == 0)
+                    {
+                        long parkNanos = mActivitySweeperRunning ? Math.max(1, nextSweep - now) :
+                            TimeUnit.MILLISECONDS.toNanos(50);
+                        LockSupport.parkNanos(this, parkNanos);
+                    }
                 }
-
-                long now = System.nanoTime();
-
-                if(mEnabled && mActivitySweeperRunning && now >= nextSweep)
+                catch(Throwable throwable)
                 {
-                    sweepActivityExpirations();
-                    nextSweep = now + TimeUnit.MILLISECONDS.toNanos(ACTIVITY_SWEEPER_INTERVAL_MILLISECONDS);
-                }
-
-                if(drained == 0)
-                {
-                    long parkNanos = mActivitySweeperRunning && mEnabled ?
-                        Math.max(1, nextSweep - now) : TimeUnit.MILLISECONDS.toNanos(50);
-                    LockSupport.parkNanos(this, parkNanos);
+                    rethrowFatal(throwable);
+                    mLog.error("Error maintaining channel activity state", throwable);
                 }
             }
         }
         finally
         {
-            clear();
-            mIngress.clear();
-            mAppliedGeneration = mGeneration;
+            if(mClosed)
+            {
+                clear();
+                mIngress.clear();
+            }
+
             mWorkerRunning = false;
 
             if(Thread.currentThread() == mWorker)
             {
                 mWorker = null;
             }
+        }
+    }
+
+    private static void rethrowFatal(Throwable throwable)
+    {
+        if(throwable instanceof VirtualMachineError error)
+        {
+            throw error;
         }
     }
 
@@ -2223,18 +2153,6 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
         }
     }
 
-    private void reconcileGeneration()
-    {
-        long generation = mGeneration;
-
-        if(mAppliedGeneration != generation)
-        {
-            clear();
-            mAppliedGeneration = generation;
-            mAppliedCloseRequestRevision = mCloseRequestRevision.get();
-        }
-    }
-
     @SuppressWarnings("unchecked")
     private void process(ChannelActivityIngressQueue.Entry entry)
     {
@@ -2283,7 +2201,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
         return mIngress.regularCapacity();
     }
 
-    boolean isWorkerAlive()
+    public boolean isWorkerAlive()
     {
         Thread worker = mWorker;
         return worker != null && worker.isAlive();
@@ -2292,13 +2210,12 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
     boolean awaitIdle(long timeout, TimeUnit timeUnit)
     {
         long deadline = System.nanoTime() + timeUnit.toNanos(timeout);
-        long generation = mGeneration;
         long accepted = mAcceptedIngressCount.get();
         long closeRevision = mCloseRequestRevision.get();
 
         while(System.nanoTime() < deadline)
         {
-            if(mAppliedGeneration == generation && mProcessedIngressCount.get() >= accepted &&
+            if(mProcessedIngressCount.get() >= accepted &&
                 mAppliedCloseRequestRevision >= closeRevision && !mLifecycleReconcileNeeded.get() &&
                 mIngress.size() == 0)
             {
@@ -2309,7 +2226,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
             LockSupport.parkNanos(this, TimeUnit.MILLISECONDS.toNanos(1));
         }
 
-        return mAppliedGeneration == generation && mProcessedIngressCount.get() >= accepted &&
+        return mProcessedIngressCount.get() >= accepted &&
             mAppliedCloseRequestRevision >= closeRevision && !mLifecycleReconcileNeeded.get() &&
             mIngress.size() == 0;
     }
@@ -2317,19 +2234,26 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
     @Override
     public void close()
     {
-        synchronized(mLifecycleLock)
+        if(mClosed)
         {
-            if(mClosed)
-            {
-                return;
-            }
+            return;
+        }
 
-            mClosed = true;
-            mEnabled = false;
-            mGeneration++;
-            mWorkerRunning = false;
-            signalWorker();
-            stopWorkerLocked();
+        mClosed = true;
+        mWorkerRunning = false;
+        signalWorker();
+        Thread worker = mWorker;
+
+        if(worker != null && worker != Thread.currentThread())
+        {
+            try
+            {
+                worker.join(TimeUnit.SECONDS.toMillis(2));
+            }
+            catch(InterruptedException interruptedException)
+            {
+                Thread.currentThread().interrupt();
+            }
         }
     }
 }

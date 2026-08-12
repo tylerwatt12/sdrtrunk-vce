@@ -7002,7 +7002,6 @@ const TUNER_SPECTRUM_MINIMUM_FLOOR_DB = -200;
 const TUNER_SPECTRUM_MAXIMUM_FLOOR_DB = -40;
 const TUNER_SPECTRUM_MAXIMUM_ZOOM = 8;
 const TUNER_SPECTRUM_ZOOM_FACTOR = 1.5;
-const TUNER_SPECTRUM_REFINEMENT_DELAY_MS = 180;
 const TUNER_SPECTRUM_SMOOTHING_ALPHA = 0.25;
 const TUNER_SPECTRUM_FLOOR_STORAGE_KEY = 'sdrtrunk.wideband.lowerDisplayLimitDb';
 const TUNER_WATERFALL_SPEED_STORAGE_KEY = 'sdrtrunk.wideband.waterfallScrollSpeed';
@@ -7132,6 +7131,12 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
   targetLabel.append(targetSelect);
   const status = badge('Loading', 'state-stale');
   const toolbarActions = node('div', 'tuner-spectrum-toolbar-actions');
+  const zoomIn = node('button', 'button secondary', 'Zoom in');
+  zoomIn.type = 'button';
+  zoomIn.disabled = true;
+  const zoomOut = node('button', 'button secondary', 'Zoom out');
+  zoomOut.type = 'button';
+  zoomOut.disabled = true;
   const resetZoom = node('button', 'button secondary', 'Reset zoom');
   resetZoom.type = 'button';
   resetZoom.disabled = true;
@@ -7139,7 +7144,7 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
   pause.type = 'button';
   pause.disabled = true;
   pause.setAttribute('aria-pressed', 'false');
-  toolbarActions.append(resetZoom, pause);
+  toolbarActions.append(zoomIn, zoomOut, resetZoom, pause);
   toolbar.append(targetLabel, status, toolbarActions);
 
   const displayControls = node('div', 'tuner-spectrum-display-controls');
@@ -7262,7 +7267,6 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
   let viewport = null;
   let refining = false;
   let awaitingViewportState = false;
-  let refinementTimer = null;
   let hoverRatio = null;
   let hoverCanvas = null;
   let hoverYRatio = null;
@@ -7302,7 +7306,6 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
     returnFocusSelector,
     cleanup: () => {
       disposed = true;
-      window.clearTimeout(refinementTimer);
       cancelDrag();
       closeStreams();
       closeActiveChannels();
@@ -7362,6 +7365,8 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
       ['Latency', Number.isFinite(latencyMs) ? `${Math.round(latencyMs)} ms` : '—']
     ];
     updateDiagnosticReadouts(readouts, values);
+    zoomIn.disabled = !shouldRun() || !fullViewport || !viewport || zoom >= TUNER_SPECTRUM_MAXIMUM_ZOOM - 0.0001;
+    zoomOut.disabled = !shouldRun() || !fullViewport || !viewport || zoom <= 1.0001;
     resetZoom.disabled = !shouldRun() || !fullViewport || !viewport || zoom <= 1.0001;
     layout.classList.toggle('zoomed', zoom > 1.0001);
   };
@@ -7667,7 +7672,7 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
     viewport = { startHz: domain.startHz, endHz: domain.endHz };
     if (domainChanged && domain.endHz - domain.startHz < frame.sampleRateHz - 0.5) {
       viewport = { ...nextFull };
-      queueViewportUpdate(true);
+      queueViewportUpdate();
       renderActiveChannels();
       return;
     }
@@ -7715,31 +7720,22 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
     stream = candidate;
   }
 
-  function queueViewportUpdate(immediate = false) {
-    window.clearTimeout(refinementTimer);
-    refinementTimer = null;
+  function queueViewportUpdate() {
+    awaitingViewportState = true;
     setRefining(true);
-    const update = () => {
-      if (disposed || !shouldRun()) return;
-      awaitingViewportState = true;
-      if (stream) {
-        if (!stream.update(diagnosticParameters())) {
-          awaitingViewportState = false;
-          setRefining(false);
-        }
-      } else openDiagnosticStream();
-    };
-    if (immediate) update();
-    else refinementTimer = window.setTimeout(() => {
-      refinementTimer = null;
-      update();
-    }, TUNER_SPECTRUM_REFINEMENT_DELAY_MS);
+    if (disposed || !shouldRun()) {
+      awaitingViewportState = false;
+      setRefining(false);
+    } else if (stream) {
+      if (!stream.update(diagnosticParameters())) {
+        awaitingViewportState = false;
+        setRefining(false);
+      }
+    } else openDiagnosticStream();
   }
 
   function sync() {
     if (!shouldRun()) {
-      window.clearTimeout(refinementTimer);
-      refinementTimer = null;
       closeStreams();
       closeActiveChannels();
       if (disposed) return;
@@ -7818,8 +7814,7 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
     setReadouts();
     renderActiveChannels();
     if (hoverRatio !== null) updateCursor(hoverRatio);
-    if (requestMode === 'immediate') queueViewportUpdate(true);
-    else if (requestMode === 'debounced') queueViewportUpdate(false);
+    if (requestMode !== 'none') queueViewportUpdate();
   }
 
   function zoomAt(anchor, factor) {
@@ -8004,7 +7999,7 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
     if (!drag || drag.pointerId !== event.pointerId) return;
     const moved = drag.moved;
     cancelDrag();
-    if (moved) queueViewportUpdate(true);
+    if (moved) queueViewportUpdate();
   }
 
   function onPlotPointerLeave(event) {
@@ -8015,7 +8010,7 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
     if (!drag || drag.pointerId !== event.pointerId) return;
     const moved = drag.moved;
     cancelDrag(false);
-    if (moved) queueViewportUpdate(true);
+    if (moved) queueViewportUpdate();
   }
 
   function addPlotInteractions(canvas) {
@@ -8213,13 +8208,17 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
   }
 
   targetSelect.addEventListener('change', () => {
-    window.clearTimeout(refinementTimer);
-    refinementTimer = null;
     closeStreams();
     closeActiveChannels();
     resetViewportForTarget();
     resetPlots('Waiting for tuner data…');
     sync();
+  });
+  zoomIn.addEventListener('click', () => {
+    if (canInteract()) zoomAt(0.5, 1 / TUNER_SPECTRUM_ZOOM_FACTOR);
+  });
+  zoomOut.addEventListener('click', () => {
+    if (canInteract()) zoomAt(0.5, TUNER_SPECTRUM_ZOOM_FACTOR);
   });
   resetZoom.addEventListener('click', resetViewport);
   pause.addEventListener('click', () => {

@@ -14,11 +14,8 @@ import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.channel.metadata.ChannelMetadata;
 import io.github.dsheirer.channel.metadata.ChannelMetadataField;
 import io.github.dsheirer.controller.channel.Channel;
-import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
 import io.github.dsheirer.module.decode.dmr.DMRChannelMode;
-import io.github.dsheirer.module.decode.dmr.channel.DMRAbsoluteChannel;
-import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.nbfm.DecodeConfigNBFM;
 import io.github.dsheirer.preference.nowplaying.NowPlayingPreference;
 import io.github.dsheirer.source.config.SourceConfigTuner;
@@ -59,7 +56,6 @@ class ChannelActivityIsolationTest
 
         try
         {
-            model.setEnabled(true);
             model.channelStarted(channel(), List.of(new ChannelMetadata(aliasModel, 1)));
             assertTrue(model.awaitIdle(2, TimeUnit.SECONDS));
             assertEquals(1, model.getSnapshotSet().tables().getFirst().rows().size());
@@ -103,7 +99,6 @@ class ChannelActivityIsolationTest
                 }
             }
         });
-        model.setEnabled(true);
         model.channelStarted(channel, List.of(new ChannelMetadata(aliasModel, 1)));
         assertTrue(projectionBlocked.await(2, TimeUnit.SECONDS));
         ChannelMetadata unmapped = new ChannelMetadata(aliasModel, 1);
@@ -132,6 +127,33 @@ class ChannelActivityIsolationTest
     }
 
     @Test
+    void brokenRendererCannotKillOrClearTheAuthoritativeWorker() throws Exception
+    {
+        AliasModel aliasModel = new AliasModel();
+        ChannelActivityModel model = model(aliasModel);
+        AtomicBoolean failOnce = new AtomicBoolean(true);
+        model.addActivityListener(event ->
+        {
+            if(!event.snapshot().rows().isEmpty() && failOnce.compareAndSet(true, false))
+            {
+                throw new AssertionError("simulated renderer failure");
+            }
+        });
+
+        Channel channel = channel();
+        model.channelStarted(channel, List.of(new ChannelMetadata(aliasModel, 1)));
+        assertTrue(model.awaitIdle(2, TimeUnit.SECONDS));
+        assertTrue(model.isWorkerAlive());
+        assertEquals(1, model.getSnapshotSet().tables().getFirst().rows().size());
+
+        model.channelConfigurationChanged(channel);
+        assertTrue(model.awaitIdle(2, TimeUnit.SECONDS));
+        assertTrue(model.isWorkerAlive());
+        assertEquals(1, model.getSnapshotSet().tables().getFirst().rows().size());
+        model.close();
+    }
+
+    @Test
     void droppedStartReconcilesAfterTheAuthoritativeChainIsPublished() throws Exception
     {
         AliasModel aliasModel = new AliasModel();
@@ -140,7 +162,6 @@ class ChannelActivityIsolationTest
         AtomicReference<List<ChannelActivityModel.ActiveChannel>> activeChannels =
             new AtomicReference<>(List.of());
         model.setActiveChannelSupplier(activeChannels::get);
-        model.setEnabled(true);
         assertTrue(model.awaitIdle(2, TimeUnit.SECONDS));
 
         CountDownLatch projectionBlocked = new CountDownLatch(1);
@@ -235,7 +256,6 @@ class ChannelActivityIsolationTest
                 }
             }
         });
-        model.setEnabled(true);
         assertTrue(projectionBlocked.await(2, TimeUnit.SECONDS));
         ChannelActivityTableState trunked = model.getTables().stream()
             .filter(table -> table.getOwnerChannel() == parent).findFirst().orElseThrow();
@@ -273,93 +293,19 @@ class ChannelActivityIsolationTest
     }
 
     @Test
-    void disableClearsStateAndCloseStopsWorker() throws Exception
+    void workerOwnsStateForModelLifetimeAndCloseStopsIt() throws Exception
     {
         AliasModel aliasModel = new AliasModel();
         ChannelActivityModel model = model(aliasModel);
         Channel channel = channel();
         ChannelMetadata metadata = new ChannelMetadata(aliasModel, 1);
-        model.setEnabled(true);
         model.channelStarted(channel, List.of(metadata));
         assertTrue(model.awaitIdle(2, TimeUnit.SECONDS));
         assertEquals(1, model.getSnapshotSet().tables().getFirst().rows().size());
-
-        model.setEnabled(false);
-        assertFalse(model.isWorkerAlive());
-        assertTrue(model.awaitIdle(2, TimeUnit.SECONDS));
-        assertEquals(0, model.getSnapshotSet().tables().getFirst().rows().size());
-        model.channelStarted(channel, List.of(metadata));
-        assertEquals(0, model.getSnapshotSet().tables().getFirst().rows().size());
-
-        model.setEnabled(true);
         assertTrue(model.isWorkerAlive());
-        model.channelStarted(channel, List.of(metadata));
-        assertTrue(model.awaitIdle(2, TimeUnit.SECONDS));
-        assertEquals(1, model.getSnapshotSet().tables().getFirst().rows().size());
-        model.setEnabled(false);
-        assertFalse(model.isWorkerAlive());
 
         model.close();
         assertFalse(model.isWorkerAlive());
-    }
-
-    @Test
-    void staleTrafficObservationCannotCrossDisableAndReenable() throws Exception
-    {
-        AliasModel aliasModel = new AliasModel();
-        CountDownLatch generationCaptured = new CountDownLatch(1);
-        CountDownLatch releaseOffer = new CountDownLatch(1);
-        AtomicBoolean blockOnce = new AtomicBoolean();
-        ChannelActivityModel model = new ChannelActivityModel(aliasModel, new NowPlayingPreference(type -> {}),
-            8, 2, () -> {
-                if(blockOnce.compareAndSet(false, true))
-                {
-                    generationCaptured.countDown();
-
-                    try
-                    {
-                        releaseOffer.await(5, TimeUnit.SECONDS);
-                    }
-                    catch(InterruptedException interruptedException)
-                    {
-                        Thread.currentThread().interrupt();
-                    }
-                }
-            });
-        Channel parent = trunkedDmrChannel();
-        DMRAbsoluteChannel traffic = new DMRAbsoluteChannel(12, 1, 451_012_500L, 0);
-        Thread staleProducer = new Thread(() -> model.trunkedTrafficEvent(parent, null, traffic, 1,
-            new IdentifierCollection(), DecodeEventType.CALL_GROUP, 451_000_000L),
-            "stale channel activity producer");
-
-        try
-        {
-            model.setEnabled(true);
-            assertTrue(model.awaitIdle(2, TimeUnit.SECONDS));
-            staleProducer.start();
-            assertTrue(generationCaptured.await(2, TimeUnit.SECONDS));
-
-            model.setEnabled(false);
-            model.setEnabled(true);
-            releaseOffer.countDown();
-            staleProducer.join(TimeUnit.SECONDS.toMillis(2));
-            assertFalse(staleProducer.isAlive());
-            assertTrue(model.awaitIdle(2, TimeUnit.SECONDS));
-            assertEquals(1, model.getSnapshotSet().tables().size(),
-                "an observation from the retired demand generation must not create a Systems table");
-
-            model.trunkedTrafficEvent(parent, null, traffic, 1, new IdentifierCollection(),
-                DecodeEventType.CALL_GROUP, 451_000_000L);
-            assertTrue(model.awaitIdle(2, TimeUnit.SECONDS));
-            assertEquals(2, model.getSnapshotSet().tables().size(),
-                "a fresh observation in the current generation must still be processed");
-        }
-        finally
-        {
-            releaseOffer.countDown();
-            staleProducer.join(TimeUnit.SECONDS.toMillis(2));
-            model.close();
-        }
     }
 
     @Test

@@ -53,7 +53,7 @@ class StatsLiveServiceBoundsTest
     }
 
     @Test
-    void capsTheActivityTableCacheAndPublishesTheTruncatedSnapshot() throws Exception
+    void capsTheAuthoritativeSnapshotWithoutBrowserOwnedCache() throws Exception
     {
         StatsLiveService service = new StatsLiveService(null, null);
 
@@ -67,18 +67,12 @@ class StatsLiveServiceBoundsTest
                 service.process(activity(tableId, List.of(activityRow("row-" + index))));
             }
 
-            long beforeTruncation = ((Number)service.snapshot().get("revision")).longValue();
-
             try(StatsLiveEventHub.Subscription subscription = service.subscribeSystems())
             {
                 service.process(activity("table-%03d".formatted(StatsLiveService.MAXIMUM_LIVE_TABLES),
                     List.of(activityRow("omitted"))));
-                StatsLiveEventHub.LiveEvent resync = subscription.poll(1, java.util.concurrent.TimeUnit.SECONDS);
-                assertEquals("activity_resync", resync.name());
-                @SuppressWarnings("unchecked")
-                Map<String,Object> resyncSnapshot = (Map<String,Object>)((Map<?,?>)resync.data()).get("snapshot");
-                assertEquals(beforeTruncation + 1, ((Number)resyncSnapshot.get("revision")).longValue());
-                assertEquals(true, resyncSnapshot.get("truncated"));
+                StatsLiveEventHub.LiveEvent update = subscription.poll(1, java.util.concurrent.TimeUnit.SECONDS);
+                assertEquals("activity_table", update.name());
 
                 Map<String,Object> snapshot = service.snapshot();
                 List<Map<String,Object>> tables = tables(snapshot);
@@ -99,7 +93,8 @@ class StatsLiveServiceBoundsTest
                 assertEquals("updated", rows(tables(service).getFirst()).getFirst().get("key"));
             }
 
-            assertTrue(tables(service).isEmpty(), "The cache must be released with the final browser demand");
+            assertEquals(StatsLiveService.MAXIMUM_LIVE_TABLES, tables(service).size(),
+                "browser disconnect must not change authoritative activity state");
         }
         finally
         {

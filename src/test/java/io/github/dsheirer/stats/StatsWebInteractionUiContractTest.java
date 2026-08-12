@@ -507,7 +507,7 @@ class StatsWebInteractionUiContractTest
             html.indexOf("rel=\"stylesheet\""));
         assertTrue(html.contains("id=\"theme-toggle\""));
         assertTrue(html.contains("/assets/app.css?v=45"));
-        assertTrue(html.contains("/assets/app.js?v=63"));
+        assertTrue(html.contains("/assets/app.js?v=66"));
         assertTrue(source.contains("window.localStorage.setItem(THEME_STORAGE_KEY"));
         assertTrue(source.contains("toggle.setAttribute('aria-pressed'"));
         assertTrue(css.contains(":root[data-theme=\"dark\"]"));
@@ -767,7 +767,7 @@ class StatsWebInteractionUiContractTest
         String inverseFrequencyMapping = function(source, "function tunerBinAtFrequency(domain, frequencyHz)");
         String snapper = function(source, "function tunerSnapFrequency(frequencyHz)");
         String tuner = function(source, "function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum')");
-        String refinement = function(tuner, "function queueViewportUpdate(immediate = false)");
+        String refinement = function(tuner, "function queueViewportUpdate()");
         String pointerMove = function(tuner, "function onPlotPointerMove(event)");
         String acceptFrame = function(tuner, "function acceptTunerFrame(frame)");
         String live = function(source, "async function renderLive()");
@@ -789,7 +789,9 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("closeStreams()"));
         assertTrue(tuner.contains("viewport_start_hz"));
         assertTrue(tuner.contains("viewport_end_hz"));
-        assertTrue(tuner.contains("TUNER_SPECTRUM_REFINEMENT_DELAY_MS"));
+        assertFalse(tuner.contains("TUNER_SPECTRUM_REFINEMENT_DELAY_MS"));
+        assertTrue(tuner.contains("'Zoom in'"));
+        assertTrue(tuner.contains("'Zoom out'"));
         assertTrue(refinement.contains("stream.update(diagnosticParameters())"));
         assertTrue(refinement.contains("awaitingViewportState = true"));
         assertFalse(refinement.contains("closeStreams();"));
@@ -806,7 +808,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(pointerMove.contains("if (!drag.moved)"));
         assertFalse(pointerMove.contains("closeStreams();"));
         assertTrue(acceptFrame.contains("drag?.moved"));
-        assertTrue(tuner.contains("if (moved) queueViewportUpdate(true);"));
+        assertTrue(tuner.contains("if (moved) queueViewportUpdate();"));
         assertTrue(tuner.contains("event.key === 'ArrowLeft'"));
         assertTrue(tuner.contains("event.key === 'r' || event.key === 'R'"));
         assertTrue(tuner.contains("connectActiveChannels()"));
@@ -897,7 +899,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("if (!shouldRun() || !fullViewport || zoomAmount() <= 1.0001) return"));
         assertTrue(tuner.contains("(fullViewport && domainChanged)"));
         assertFalse(tuner.contains("frame.sampleRateHz - 0.5 && !refining"));
-        assertTrue(tuner.contains("queueViewportUpdate(true);\n      renderActiveChannels();\n      return;"));
+        assertTrue(tuner.contains("queueViewportUpdate();\n      renderActiveChannels();\n      return;"));
         assertTrue(tuner.contains("if (domainChanged) renderActiveChannels()"));
         assertTrue(tuner.contains("generation === frame.generation && sequence !== null"));
         assertTrue(source.contains("sdrtrunk.wideband.lowerDisplayLimitDb"));

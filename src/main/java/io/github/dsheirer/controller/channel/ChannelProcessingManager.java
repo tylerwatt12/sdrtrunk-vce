@@ -110,7 +110,6 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
 
     private ChannelMetadataModel mChannelMetadataModel;
     private ChannelActivityModel mChannelActivityModel;
-    private final Set<String> mChannelActivityConsumers = ConcurrentHashMap.newKeySet();
     private EventLogManager mEventLogManager;
     private TunerManager mTunerManager;
     private AliasModel mAliasModel;
@@ -151,72 +150,6 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     public ChannelActivityModel getChannelActivityModel()
     {
         return mChannelActivityModel;
-    }
-
-    public void setChannelActivityEnabled(boolean enabled)
-    {
-        setChannelActivityEnabled("java-ui", enabled);
-    }
-
-    /**
-     * Keeps the shared activity model running while at least one renderer is using it.
-     */
-    public synchronized void setChannelActivityEnabled(String consumer, boolean enabled)
-    {
-        if(consumer == null || consumer.isBlank())
-        {
-            return;
-        }
-
-        if(enabled)
-        {
-            mChannelActivityConsumers.add(consumer);
-        }
-        else
-        {
-            mChannelActivityConsumers.remove(consumer);
-        }
-
-        boolean shouldEnable = !mChannelActivityConsumers.isEmpty();
-
-        if(mChannelActivityModel.isEnabled() == shouldEnable)
-        {
-            return;
-        }
-
-        mChannelActivityModel.setEnabled(shouldEnable);
-
-        if(shouldEnable)
-        {
-            seedChannelActivityModel();
-        }
-    }
-
-    private void seedChannelActivityModel()
-    {
-        Map<Channel,ProcessingChain> processingChains;
-
-        mLock.lock();
-
-        try
-        {
-            processingChains = new HashMap<>(mProcessingChainsMap);
-        }
-        finally
-        {
-            mLock.unlock();
-        }
-
-        for(Map.Entry<Channel,ProcessingChain> entry: processingChains.entrySet())
-        {
-            ProcessingChain processingChain = entry.getValue();
-
-            if(processingChain != null && processingChain.getChannelState() != null)
-            {
-                mChannelActivityModel.channelStarted(entry.getKey(),
-                    processingChain.getChannelState().getChannelMetadata(), processingChain);
-            }
-        }
     }
 
     private List<ChannelActivityModel.ActiveChannel> getActiveChannelActivitySnapshot()

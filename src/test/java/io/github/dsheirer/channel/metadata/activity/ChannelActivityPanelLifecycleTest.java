@@ -26,14 +26,12 @@ class ChannelActivityPanelLifecycleTest
             assertFalse(panel.isActive());
             assertEquals(0, manager.getChannelActivityModel().getTableListenerCount());
 
-            manager.setChannelActivityEnabled("stats-web-test", true);
             assertEquals(0, manager.getChannelActivityModel().getTableListenerCount(),
-                "web activity demand must not attach the hidden Swing renderer");
+                "the always-running activity core must not attach the hidden Swing renderer");
         }
         finally
         {
             panel.dispose();
-            manager.setChannelActivityEnabled("stats-web-test", false);
             manager.shutdown();
         }
     }

@@ -76,7 +76,6 @@ class ChannelActivityModelTest
         });
 
         run(model, () -> {
-            model.setEnabled(true);
             model.channelStarted(channel, List.of(metadata));
         });
 
@@ -113,7 +112,6 @@ class ChannelActivityModelTest
         ChannelMetadata metadata = new ChannelMetadata(aliasModel, 1);
 
         run(model, () -> {
-            model.setEnabled(true);
             model.channelStarted(parent, List.of(metadata));
         });
 
@@ -152,7 +150,6 @@ class ChannelActivityModelTest
         DMRAbsoluteChannel traffic = new DMRAbsoluteChannel(838, 1, 139_968_750L, 0);
 
         run(model, () -> {
-            model.setEnabled(true);
             model.trunkedTrafficEvent(parent, null, traffic, 1, new IdentifierCollection(),
                 DecodeEventType.CALL_GROUP_ENCRYPTED, 139_781_250L);
         });
@@ -174,7 +171,6 @@ class ChannelActivityModelTest
         ChannelMetadata metadata = new ChannelMetadata(aliasModel, 1);
 
         run(model, () -> {
-            model.setEnabled(true);
             model.channelStarted(channel, List.of(metadata));
             metadata.receive(new IdentifierUpdateNotification(ChannelStateIdentifier.ENCRYPTED,
                 Operation.ADD, 1));
@@ -204,7 +200,6 @@ class ChannelActivityModelTest
         DMRAbsoluteChannel traffic = new DMRAbsoluteChannel(12, 1, 452_012_500L, 0);
 
         run(model, () -> {
-            model.setEnabled(true);
             model.channelStarted(parent, List.of(metadata));
             model.trunkedTrafficEvent(parent, null, traffic, 1, new IdentifierCollection(),
                 DecodeEventType.CALL_GROUP, 451_012_500L);
@@ -226,7 +221,6 @@ class ChannelActivityModelTest
             ChannelMetadata metadata = new ChannelMetadata(aliasModel, 1);
 
             run(model, () -> {
-                model.setEnabled(true);
                 model.channelStarted(parent, List.of(metadata));
                 model.receiveControlChannelQuality(quality(parent, 451_012_500L, 1_000L, true));
             });
@@ -260,7 +254,6 @@ class ChannelActivityModelTest
             ChannelMetadata metadata = new ChannelMetadata(aliasModel, 1);
 
             run(model, () -> {
-                model.setEnabled(true);
                 model.channelStarted(parent, List.of(metadata));
                 model.receiveProtocolSiteMetadata(new ProtocolSiteMetadataEvent(
                     parent, testCase.getValue(), 1_000L));
@@ -291,7 +284,6 @@ class ChannelActivityModelTest
             "DMR", null, 10, 20, null, null, null, null, 1, 2, List.of(), List.of());
 
         run(model, () -> {
-            model.setEnabled(true);
             model.channelStarted(parent, List.of(metadata));
             model.receiveProtocolSiteMetadata(new ProtocolSiteMetadataEvent(parent, unknown, 1_000L));
         });
@@ -309,7 +301,6 @@ class ChannelActivityModelTest
         DMRAbsoluteChannel traffic = new DMRAbsoluteChannel(838, 1, 139_968_750L, 0);
 
         run(model, () -> {
-            model.setEnabled(true);
             model.trunkedTrafficEvent(parent, null, traffic, 1, new IdentifierCollection(),
                 DecodeEventType.CALL_GROUP, 139_781_250L);
             model.receiveControlChannelQuality(quality(parent, 139_781_250L, 2_000L, true));
@@ -333,7 +324,6 @@ class ChannelActivityModelTest
         DMRAbsoluteChannel timeslotTwo = new DMRAbsoluteChannel(838, 2, 139_968_750L, 0);
 
         run(model, () -> {
-            model.setEnabled(true);
             model.trunkedTrafficEvent(parent, null, timeslotOne, 1, new IdentifierCollection(),
                 DecodeEventType.CALL_GROUP, 139_781_250L);
             model.trunkedTrafficEvent(parent, null, timeslotTwo, 2, new IdentifierCollection(),
@@ -360,7 +350,6 @@ class ChannelActivityModelTest
         traffic.receive(null, Map.of(42, new ChannelFrequency(42, 452_012_500L, 0)));
 
         run(model, () -> {
-            model.setEnabled(true);
             model.trunkedTrafficEvent(parent, null, traffic, 0, new IdentifierCollection(),
                 DecodeEventType.DATA_CALL, 451_012_500L);
         });
@@ -388,7 +377,6 @@ class ChannelActivityModelTest
         channel.setSourceConfiguration(source);
 
         run(model, () -> {
-            model.setEnabled(true);
             model.channelStarted(channel, List.of());
         });
 
@@ -410,7 +398,6 @@ class ChannelActivityModelTest
         channel.setSourceConfiguration(source);
 
         run(model, () -> {
-            model.setEnabled(true);
             model.channelStarted(channel, List.of());
             model.receiveControlChannelQuality(new ControlChannelQualitySnapshot(channel, channel.getRadresGuid(),
                 856_137_500L, 1_000L, true, -20.5, -21.0, -25.0, -18.0, 97.5,
@@ -457,7 +444,6 @@ class ChannelActivityModelTest
             true, false, false, false, 50, false, null, voiceQuality);
 
         run(model, () -> {
-            model.setEnabled(true);
             model.channelStarted(channel, List.of(metadata));
             model.receiveAudioCallEvent(channel, new AudioCallEvent(AudioCallEventType.AUDIO_FRAME, snapshot,
                 1_020L, new float[160]));
@@ -494,7 +480,6 @@ class ChannelActivityModelTest
             voiceQuality);
 
         run(model, () -> {
-            model.setEnabled(true);
             model.channelStarted(channel, List.of(metadata));
             metadata.receive(new IdentifierUpdateNotification(ChannelStateIdentifier.CALL, Operation.ADD, 1));
             model.updated(metadata, io.github.dsheirer.channel.metadata.ChannelMetadataField.DECODER_STATE);
@@ -586,7 +571,6 @@ class ChannelActivityModelTest
             voiceQuality);
 
         run(model, () -> {
-            model.setEnabled(true);
             model.trunkedTrafficEvent(parent, trafficChannel, traffic, 1, identifiers,
                 DecodeEventType.CALL_GROUP, 139_781_250L);
             model.receiveAudioCallEvent(trafficChannel, new AudioCallEvent(AudioCallEventType.AUDIO_FRAME,

@@ -45,7 +45,7 @@ final class ChannelActivityIngressQueue
         }
     }
 
-    boolean offer(int operation, long generation, boolean lifecycle, Object first, Object second, Object third,
+    boolean offer(int operation, boolean lifecycle, Object first, Object second, Object third,
                   Object fourth, Object fifth, Object sixth, long value)
     {
         if(!lifecycle && !reserveRegularSlot())
@@ -65,7 +65,6 @@ final class ChannelActivityIngressQueue
                 if(mProducerSequence.compareAndSet(sequence, sequence + 1))
                 {
                     cell.mOperation = operation;
-                    cell.mGeneration = generation;
                     cell.mLifecycle = lifecycle;
                     cell.mFirst = first;
                     cell.mSecond = second;
@@ -131,7 +130,7 @@ final class ChannelActivityIngressQueue
             return null;
         }
 
-        Entry entry = new Entry(cell.mOperation, cell.mGeneration, cell.mLifecycle, cell.mFirst, cell.mSecond, cell.mThird,
+        Entry entry = new Entry(cell.mOperation, cell.mLifecycle, cell.mFirst, cell.mSecond, cell.mThird,
             cell.mFourth, cell.mFifth, cell.mSixth, cell.mValue);
         cell.mFirst = null;
         cell.mSecond = null;
@@ -169,7 +168,7 @@ final class ChannelActivityIngressQueue
         }
     }
 
-    record Entry(int operation, long generation, boolean lifecycle, Object first, Object second, Object third, Object fourth,
+    record Entry(int operation, boolean lifecycle, Object first, Object second, Object third, Object fourth,
                  Object fifth, Object sixth, long value)
     {
     }
@@ -178,7 +177,6 @@ final class ChannelActivityIngressQueue
     {
         private final AtomicLong mSequence;
         private int mOperation;
-        private long mGeneration;
         private boolean mLifecycle;
         private Object mFirst;
         private Object mSecond;

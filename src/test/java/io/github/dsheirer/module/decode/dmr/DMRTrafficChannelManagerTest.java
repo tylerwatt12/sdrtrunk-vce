@@ -194,7 +194,6 @@ class DMRTrafficChannelManagerTest
         mapping.setDownlinkFrequency(139_068_750L);
         grant.setTimeslotFrequency(mapping);
 
-        SwingUtilities.invokeAndWait(() -> activityModel.setEnabled(true));
         manager.processChannelGrant(controlTimeslotCall, new MutableIdentifierCollection(),
             Opcode.STANDARD_TALKGROUP_VOICE_CHANNEL_GRANT, 900L, false);
         manager.processChannelGrant(grant, new MutableIdentifierCollection(),
@@ -250,7 +249,6 @@ class DMRTrafficChannelManagerTest
         mapping.setDownlinkFrequency(452_012_500L);
         grant.setTimeslotFrequency(mapping);
 
-        SwingUtilities.invokeAndWait(() -> activityModel.setEnabled(true));
         manager.processChannelGrant(grant, new MutableIdentifierCollection(),
             Opcode.STANDARD_TALKGROUP_VOICE_CHANNEL_GRANT, 1_000L, false);
         SwingUtilities.invokeAndWait(() -> {});

@@ -11,8 +11,6 @@ import io.github.dsheirer.channel.metadata.activity.ChannelActivitySnapshot;
 import io.github.dsheirer.controller.NamingThreadFactory;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
 import io.github.dsheirer.sample.Listener;
-import io.github.dsheirer.util.concurrent.BoundedMpscReferenceQueue;
-import io.github.dsheirer.util.concurrent.ObserverThreadFactory;
 import io.github.dsheirer.web.http.ApiHttpResponse;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -22,30 +20,24 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.locks.LockSupport;
-import java.util.function.Consumer;
 import java.util.function.Predicate;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
- * Lightweight owner of live Systems and committed activity events for the Stats Server.
+ * Bounded web adapter for the authoritative channel-activity snapshot and committed activity events.
+ * Channel state is owned by {@link ChannelActivityModel}; this class never starts another projection worker or
+ * changes receiver-side activity lifetime when browser subscribers connect or disconnect.
  */
 final class StatsLiveService implements AutoCloseable
 {
-    private static final Logger mLog = LoggerFactory.getLogger(StatsLiveService.class);
-    private static final String CHANNEL_ACTIVITY_CONSUMER = "stats-web-live";
     private static final int MAXIMUM_LIVE_SUBSCRIBERS = 32;
     private static final int LIVE_SUBSCRIBER_QUEUE_CAPACITY = 256;
     static final int EVENT_QUEUE_CAPACITY = 64;
-    private static final int RAW_EVENT_QUEUE_CAPACITY = 64;
     static final int MAXIMUM_LIVE_TABLES = 128;
     static final int MAXIMUM_ROWS_PER_TABLE = 256;
     static final int MAXIMUM_TOTAL_LIVE_ROWS = 2_048;
@@ -55,285 +47,220 @@ final class StatsLiveService implements AutoCloseable
     private static final int MAXIMUM_LIVE_TAG_LENGTH = 64;
     private final StatsWebDatabase mDatabase;
     private final ChannelActivityModel mActivityModel;
-    private final ChannelProcessingManager mChannelProcessingManager;
-    private final Consumer<Object> mRawProjectionObserver;
-    private final Object mDemandLock = new Object();
     private final StatsLiveEventHub mSystemsHub =
         new StatsLiveEventHub(MAXIMUM_LIVE_SUBSCRIBERS, LIVE_SUBSCRIBER_QUEUE_CAPACITY);
     private final StatsLiveEventHub mActivityHub =
         new StatsLiveEventHub(MAXIMUM_LIVE_SUBSCRIBERS, LIVE_SUBSCRIBER_QUEUE_CAPACITY);
-    private final Map<String,Map<String,Object>> mTables = new ConcurrentHashMap<>();
-    private final AtomicLong mSystemsRevision = new AtomicLong();
-    private final Object mEncodedSnapshotLock = new Object();
     private final ExecutorService mActivityCommitExecutor = new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS,
         new ArrayBlockingQueue<>(EVENT_QUEUE_CAPACITY), new NamingThreadFactory("stats live events"),
         new ThreadPoolExecutor.AbortPolicy());
-    private final BoundedMpscReferenceQueue<Object> mRawEventQueue =
-        new BoundedMpscReferenceQueue<>(RAW_EVENT_QUEUE_CAPACITY);
-    private final AtomicLong mDroppedRawEventCount = new AtomicLong();
-    private final AtomicBoolean mActivityResyncNeeded = new AtomicBoolean();
     private final AtomicBoolean mActivityResetPending = new AtomicBoolean();
     private final AtomicLong mRunGeneration = new AtomicLong();
-    private final Listener<ChannelActivityEvent> mChannelActivityListener = this::receiveChannelActivity;
     private final AtomicBoolean mRunning = new AtomicBoolean();
-    private volatile boolean mRawWorkerRunning;
-    private volatile Thread mRawWorker;
-    private volatile boolean mTablesTruncated;
-    private volatile int mRetainedActivityRows;
-    private volatile int mSystemsDemand;
-    private volatile long mAppliedActivitySourceRevision;
+    private final Object mLifecycleLock = new Object();
+    private final Object mEncodedSnapshotLock = new Object();
+    private final Listener<ChannelActivityEvent> mChannelActivityListener = this::receiveChannelActivity;
+
+    /* Package-private standalone state exists only for bounded projection tests without a receiver manager. */
+    private final Map<String,ChannelActivitySnapshot> mStandaloneSnapshots = new LinkedHashMap<>();
+    private long mStandaloneRevision;
     private volatile EncodedSnapshot mEncodedSystemSnapshot;
 
     StatsLiveService(StatsWebDatabase database, ChannelProcessingManager channelProcessingManager)
     {
-        this(database, channelProcessingManager, null);
-    }
-
-    StatsLiveService(StatsWebDatabase database, ChannelProcessingManager channelProcessingManager,
-                     Consumer<Object> rawProjectionObserver)
-    {
         mDatabase = database;
-        mChannelProcessingManager = channelProcessingManager;
         mActivityModel = channelProcessingManager != null ? channelProcessingManager.getChannelActivityModel() : null;
-        mRawProjectionObserver = rawProjectionObserver != null ? rawProjectionObserver : ignored -> {};
     }
 
     void start()
     {
-        synchronized(mDemandLock)
+        synchronized(mLifecycleLock)
         {
             if(mRunning.compareAndSet(false, true))
             {
                 mRunGeneration.incrementAndGet();
+
+                if(mActivityModel != null)
+                {
+                    mActivityModel.addActivityListener(mChannelActivityListener);
+                }
             }
         }
     }
 
     void stop()
     {
-        synchronized(mDemandLock)
+        synchronized(mLifecycleLock)
         {
             if(mRunning.compareAndSet(true, false))
             {
                 mRunGeneration.incrementAndGet();
+
+                if(mActivityModel != null)
+                {
+                    mActivityModel.removeActivityListener(mChannelActivityListener);
+                }
             }
 
-            //Closing the reusable hubs invokes each Systems subscription's exactly-once demand release hook.
             mSystemsHub.close();
             mActivityHub.close();
             mActivityResetPending.set(false);
-            releaseAllSystemsDemand();
-            resetSystemsState();
+            mEncodedSystemSnapshot = null;
         }
-    }
-
-    private synchronized void resetSystemsState()
-    {
-        mTables.clear();
-        mTablesTruncated = false;
-        mRetainedActivityRows = 0;
-        mSystemsRevision.incrementAndGet();
-        mEncodedSystemSnapshot = null;
     }
 
     void activityCommitted(List<Long> rowIds)
     {
-        if(rowIds != null && !rowIds.isEmpty() && mActivityHub.hasSubscribers())
+        if(rowIds == null || rowIds.isEmpty() || !mActivityHub.hasSubscribers())
         {
-            List<Long> committed = rowIds.stream()
-                .filter(Objects::nonNull)
-                .distinct()
-                .limit(StatsWebDatabase.MAXIMUM_ACTIVITY_EVENT_BATCH)
-                .toList();
+            return;
+        }
 
-            if(committed.isEmpty())
+        List<Long> committed = rowIds.stream().filter(Objects::nonNull).distinct()
+            .limit(StatsWebDatabase.MAXIMUM_ACTIVITY_EVENT_BATCH).toList();
+
+        if(committed.isEmpty())
+        {
+            return;
+        }
+
+        long generation = mRunGeneration.get();
+        executeActivityCommit(() ->
+        {
+            if(!isCurrentRun(generation))
             {
                 return;
             }
 
-            long generation = mRunGeneration.get();
-            executeActivityCommit(() -> {
+            for(Map<String,Object> row: mDatabase.activityByIds(committed))
+            {
                 if(!isCurrentRun(generation))
                 {
                     return;
                 }
 
-                for(Map<String,Object> row: mDatabase.activityByIds(committed))
-                {
-                    if(!isCurrentRun(generation))
-                    {
-                        return;
-                    }
-
-                    mActivityHub.publish("activity", row);
-                }
-            });
-        }
+                mActivityHub.publish("activity", row);
+            }
+        });
     }
 
     StatsLiveEventHub.Subscription subscribeSystems()
     {
-        synchronized(mDemandLock)
+        synchronized(mLifecycleLock)
         {
-            if(!mRunning.get())
-            {
-                return null;
-            }
-
-            StatsLiveEventHub.Subscription subscription = mSystemsHub.subscribe(event -> true,
-                this::releaseSystemsDemand);
-
-            if(subscription == null)
-            {
-                return null;
-            }
-
-            try
-            {
-                acquireSystemsDemand();
-                return subscription;
-            }
-            catch(RuntimeException exception)
-            {
-                subscription.close();
-                throw exception;
-            }
+            return mRunning.get() ? mSystemsHub.subscribe() : null;
         }
     }
 
     StatsLiveEventHub.Subscription subscribeActivity(Predicate<StatsLiveEventHub.LiveEvent> filter)
     {
-        synchronized(mDemandLock)
+        synchronized(mLifecycleLock)
         {
             return mRunning.get() ? mActivityHub.subscribe(filter) : null;
         }
     }
 
-    private void acquireSystemsDemand()
+    void receiveChannelActivity(ChannelActivityEvent event)
     {
-        if(++mSystemsDemand > 1)
+        if(!mRunning.get() || event == null || event.snapshot() == null || event.operation() == null)
         {
             return;
         }
 
-        try
-        {
-            if(mChannelProcessingManager != null)
-            {
-                mChannelProcessingManager.setChannelActivityEnabled(CHANNEL_ACTIVITY_CONSUMER, true);
-            }
+        PreparedActivityEvent prepared = prepare(event);
 
-            if(mActivityModel != null)
-            {
-                mActivityModel.addActivityListener(mChannelActivityListener);
-                mActivityResyncNeeded.set(true);
-            }
-
-            startRawWorker();
-        }
-        catch(RuntimeException exception)
+        if(prepared == null)
         {
-            mSystemsDemand = 0;
-            releaseAllSystemsDemand();
-            throw exception;
+            return;
         }
+
+        mEncodedSystemSnapshot = null;
+        LinkedHashMap<String,Object> update = new LinkedHashMap<>();
+        update.put("operation", prepared.operation().name().toLowerCase());
+        update.put("table_id", prepared.tableId());
+
+        if(prepared.table() != null)
+        {
+            update.put("table", prepared.table());
+        }
+
+        update.put("revision", event.revision() > 0 ? event.revision() : currentSnapshotSet().revision());
+        mSystemsHub.publish("activity_table", Map.copyOf(update));
     }
 
-    private void releaseSystemsDemand()
+    /** Test-only direct projection path. Production snapshots always come from ChannelActivityModel. */
+    void process(ChannelActivityEvent event)
     {
-        synchronized(mDemandLock)
+        if(event == null || event.snapshot() == null || event.operation() == null)
         {
-            if(mSystemsDemand <= 0 || --mSystemsDemand > 0)
+            return;
+        }
+
+        synchronized(mStandaloneSnapshots)
+        {
+            if(event.operation() == ChannelActivityEvent.Operation.REMOVE)
             {
-                return;
+                mStandaloneSnapshots.remove(event.snapshot().tableId());
+            }
+            else
+            {
+                mStandaloneSnapshots.put(event.snapshot().tableId(), event.snapshot());
             }
 
-            releaseAllSystemsDemand();
-            resetSystemsState();
-        }
-    }
-
-    private void releaseAllSystemsDemand()
-    {
-        mSystemsDemand = 0;
-
-        if(mActivityModel != null)
-        {
-            mActivityModel.removeActivityListener(mChannelActivityListener);
+            mStandaloneRevision++;
         }
 
-        if(mChannelProcessingManager != null)
-        {
-            mChannelProcessingManager.setChannelActivityEnabled(CHANNEL_ACTIVITY_CONSUMER, false);
-        }
-
-        stopRawWorker();
-        mActivityResyncNeeded.set(false);
-        mAppliedActivitySourceRevision = 0;
-    }
-
-    void receiveChannelActivity(ChannelActivityEvent event)
-    {
-        offerRawEvent(event);
+        receiveChannelActivity(new ChannelActivityEvent(event.operation(), event.snapshot(), mStandaloneRevision));
     }
 
     Map<String,Object> snapshot()
     {
-        return snapshot(MAXIMUM_TOTAL_LIVE_ROWS);
+        return snapshot(currentSnapshotSet(), MAXIMUM_TOTAL_LIVE_ROWS);
     }
 
-    private Map<String,Object> snapshot(int maximumRows)
+    private Map<String,Object> snapshot(ChannelActivityModel.SnapshotSet source, int maximumRows)
     {
-        List<Map<String,Object>> tables = new ArrayList<>(mTables.values());
-        tables.sort(Comparator.comparing(row -> String.valueOf(row.getOrDefault("table_id", ""))));
-        List<Map<String,Object>> bounded = new ArrayList<>(tables.size());
+        List<ChannelActivitySnapshot> snapshots = source.tables().stream().sorted(Comparator
+            .comparingInt((ChannelActivitySnapshot table) -> "conventional".equals(table.tableId()) ? 0 : 1)
+            .thenComparing(ChannelActivitySnapshot::tableId)).toList();
+        List<Map<String,Object>> tables = new ArrayList<>(Math.min(snapshots.size(), MAXIMUM_LIVE_TABLES));
         int rowsIncluded = 0;
-        long rowsTotal = 0;
+        long rowsTotal = snapshots.stream().mapToLong(table -> table.rows().size()).sum();
+        int tableCount = Math.min(snapshots.size(), MAXIMUM_LIVE_TABLES);
 
-        for(Map<String,Object> table: tables)
+        for(int index = 0; index < tableCount; index++)
         {
-            @SuppressWarnings("unchecked")
-            List<Map<String,Object>> rows = table.get("rows") instanceof List<?> values ?
-                (List<Map<String,Object>>)(List<?>)values : List.of();
-            int originalTotal = table.get("rows_total") instanceof Number number ?
-                Math.max(0, number.intValue()) : rows.size();
+            ChannelActivitySnapshot table = snapshots.get(index);
             int available = Math.max(0, maximumRows - rowsIncluded);
-            int included = Math.min(rows.size(), available);
-            LinkedHashMap<String,Object> copy = new LinkedHashMap<>(table);
-            copy.put("rows", included == rows.size() ? rows : List.copyOf(rows.subList(0, included)));
-            copy.put("rows_truncated", originalTotal > included);
-            copy.put("rows_omitted", Math.max(0, originalTotal - included));
-            bounded.add(Map.copyOf(copy));
+            int rowLimit = Math.min(MAXIMUM_ROWS_PER_TABLE, available);
+            Map<String,Object> projected = activityTable(table, rowLimit);
+            tables.add(projected);
+            int included = projected.get("rows") instanceof List<?> rows ? rows.size() : 0;
             rowsIncluded += included;
-            rowsTotal += originalTotal;
         }
 
         LinkedHashMap<String,Object> response = new LinkedHashMap<>();
-        response.put("tables", List.copyOf(bounded));
+        response.put("tables", List.copyOf(tables));
         response.put("table_limit", MAXIMUM_LIVE_TABLES);
         response.put("row_limit_per_table", MAXIMUM_ROWS_PER_TABLE);
         response.put("row_limit_total", MAXIMUM_TOTAL_LIVE_ROWS);
         response.put("encoded_byte_limit", MAXIMUM_SYSTEM_SNAPSHOT_BYTES);
-        response.put("tables_included", bounded.size());
-        response.put("tables_omitted_at_least", mTablesTruncated ? 1 : 0);
+        response.put("tables_included", tables.size());
+        response.put("tables_omitted_at_least", Math.max(0, snapshots.size() - tableCount));
         response.put("rows_total", rowsTotal);
         response.put("rows_included", rowsIncluded);
         response.put("rows_omitted", Math.max(0L, rowsTotal - rowsIncluded));
-        response.put("truncated", mTablesTruncated || rowsTotal > rowsIncluded);
-        response.put("revision", mSystemsRevision.get());
+        response.put("truncated", snapshots.size() > tableCount || rowsTotal > rowsIncluded);
+        response.put("revision", source.revision());
         return Map.copyOf(response);
     }
 
-    /**
-     * Encodes and caches the initial channel-activity snapshot once per revision.  A binary search lowers the global
-     * row allowance when necessary, so the actual wire payload never exceeds the byte budget.
-     */
     byte[] encodedSnapshot() throws IOException
     {
-        long revision = mSystemsRevision.get();
+        ChannelActivityModel.SnapshotSet source = currentSnapshotSet();
         EncodedSnapshot cached = mEncodedSystemSnapshot;
 
-        if(cached != null && cached.revision() == revision)
+        if(cached != null && cached.revision() == source.revision())
         {
             return cached.payload();
         }
@@ -342,7 +269,7 @@ final class StatsLiveService implements AutoCloseable
         {
             cached = mEncodedSystemSnapshot;
 
-            if(cached != null && cached.revision() == revision)
+            if(cached != null && cached.revision() == source.revision())
             {
                 return cached.payload();
             }
@@ -355,7 +282,7 @@ final class StatsLiveService implements AutoCloseable
             {
                 int candidateLimit = low + (high - low) / 2;
                 byte[] candidate = ApiHttpResponse.encodePayload(
-                    StatsApiV1Payload.present(snapshot(candidateLimit)));
+                    StatsApiV1Payload.present(snapshot(source, candidateLimit)));
 
                 if(candidate.length <= MAXIMUM_SYSTEM_SNAPSHOT_BYTES)
                 {
@@ -373,214 +300,24 @@ final class StatsLiveService implements AutoCloseable
                 throw new IOException("Live channel-activity metadata exceeds the snapshot byte budget");
             }
 
-            EncodedSnapshot encoded = new EncodedSnapshot(revision, best);
+            EncodedSnapshot encoded = new EncodedSnapshot(source.revision(), best);
             mEncodedSystemSnapshot = encoded;
             return encoded.payload();
         }
     }
 
-    private void offerRawEvent(Object event)
+    private ChannelActivityModel.SnapshotSet currentSnapshotSet()
     {
-        if(event == null || !mRunning.get() || mSystemsDemand <= 0)
+        if(mActivityModel != null)
         {
-            return;
+            return mActivityModel.getSnapshotSet();
         }
 
-        if(mRawEventQueue.offer(event))
+        synchronized(mStandaloneSnapshots)
         {
-            Thread worker = mRawWorker;
-
-            if(worker != null)
-            {
-                LockSupport.unpark(worker);
-            }
+            return new ChannelActivityModel.SnapshotSet(mStandaloneRevision,
+                List.copyOf(mStandaloneSnapshots.values()));
         }
-        else
-        {
-            mDroppedRawEventCount.incrementAndGet();
-
-            if(event instanceof ChannelActivityEvent)
-            {
-                mActivityResyncNeeded.set(true);
-            }
-
-            Thread worker = mRawWorker;
-
-            if(worker != null)
-            {
-                LockSupport.unpark(worker);
-            }
-        }
-    }
-
-    private void startRawWorker()
-    {
-        if(mRawWorkerRunning)
-        {
-            return;
-        }
-
-        Thread previous = mRawWorker;
-
-        if(previous != null && previous.isAlive())
-        {
-            throw new IllegalStateException("Previous stats live projection worker has not terminated");
-        }
-
-        mRawWorkerRunning = true;
-        mRawWorker = new ObserverThreadFactory("stats live projection").newThread(this::runRawWorker);
-        mRawWorker.start();
-    }
-
-    private void runRawWorker()
-    {
-        Thread current = Thread.currentThread();
-
-        try
-        {
-            while(mRawWorkerRunning)
-            {
-                if(resyncActivityIfNeeded())
-                {
-                    continue;
-                }
-
-                Object event = mRawEventQueue.poll();
-
-                try
-                {
-                    if(event != null)
-                    {
-                        mRawProjectionObserver.accept(event);
-                    }
-
-                    if(event instanceof ChannelActivityEvent activityEvent)
-                    {
-                        long sourceRevision = activityEvent.revision();
-                        PreparedActivityEvent prepared = sourceRevision <= 0 ||
-                            sourceRevision > mAppliedActivitySourceRevision ? prepare(activityEvent) : null;
-
-                        if(prepared != null && mRunning.get())
-                        {
-                            process(prepared);
-
-                            if(sourceRevision > 0)
-                            {
-                                mAppliedActivitySourceRevision = sourceRevision;
-                            }
-                        }
-                    }
-                    else
-                    {
-                        LockSupport.parkNanos(this, TimeUnit.MILLISECONDS.toNanos(50));
-                    }
-                }
-                catch(RuntimeException runtimeException)
-                {
-                    if(event == null || event instanceof ChannelActivityEvent)
-                    {
-                        mActivityResyncNeeded.set(true);
-                    }
-
-                    mLog.error("Error projecting stats live event", runtimeException);
-                }
-            }
-        }
-        finally
-        {
-            mRawEventQueue.clear();
-
-            if(current == mRawWorker)
-            {
-                mRawWorkerRunning = false;
-                mRawWorker = null;
-            }
-        }
-    }
-
-    private void stopRawWorker()
-    {
-        mRawWorkerRunning = false;
-        Thread worker = mRawWorker;
-
-        if(worker != null)
-        {
-            LockSupport.unpark(worker);
-
-            if(worker != Thread.currentThread())
-            {
-                try
-                {
-                    worker.join(TimeUnit.SECONDS.toMillis(2));
-                }
-                catch(InterruptedException interruptedException)
-                {
-                    Thread.currentThread().interrupt();
-                }
-            }
-        }
-
-        if(worker == null || !worker.isAlive())
-        {
-            mRawWorker = null;
-        }
-    }
-
-    long getDroppedRawEventCount()
-    {
-        return mDroppedRawEventCount.get();
-    }
-
-    boolean isRawWorkerAlive()
-    {
-        Thread worker = mRawWorker;
-        return worker != null && worker.isAlive();
-    }
-
-    int getSystemsDemandCount()
-    {
-        return mSystemsDemand;
-    }
-
-    private boolean resyncActivityIfNeeded()
-    {
-        if(mRunning.get() && mActivityModel != null && mActivityResyncNeeded.compareAndSet(true, false))
-        {
-            mRawEventQueue.clear();
-            ChannelActivityModel.SnapshotSet snapshotSet = mActivityModel.getSnapshotSet();
-            replaceActivitySnapshot(snapshotSet);
-            mAppliedActivitySourceRevision = snapshotSet.revision();
-            return true;
-        }
-
-        return false;
-    }
-
-    private synchronized void replaceActivitySnapshot(ChannelActivityModel.SnapshotSet snapshotSet)
-    {
-        if(snapshotSet == null)
-        {
-            return;
-        }
-
-        mTables.clear();
-        mRetainedActivityRows = 0;
-        mTablesTruncated = false;
-
-        for(ChannelActivitySnapshot snapshot: snapshotSet.tables())
-        {
-            PreparedActivityEvent prepared = prepare(new ChannelActivityEvent(
-                ChannelActivityEvent.Operation.UPSERT, snapshot, snapshotSet.revision()));
-
-            if(prepared != null)
-            {
-                process(prepared, false);
-            }
-        }
-
-        systemsChanged();
-        mSystemsHub.publish("activity_resync", Map.of("source_revision", snapshotSet.revision(),
-            "snapshot", snapshot()));
     }
 
     private void executeActivityCommit(Runnable task)
@@ -595,8 +332,6 @@ final class StatsLiveService implements AutoCloseable
         }
         catch(RejectedExecutionException exception)
         {
-            //Committed rows are already durable.  Tell the browser to refetch the bounded authoritative page instead
-            //of silently losing an update when the optional live projection worker is saturated.
             if(mRunning.get() && !mActivityCommitExecutor.isShutdown() &&
                 mActivityResetPending.compareAndSet(false, true))
             {
@@ -610,89 +345,8 @@ final class StatsLiveService implements AutoCloseable
         return mRunning.get() && mRunGeneration.get() == generation;
     }
 
-    void process(ChannelActivityEvent event)
-    {
-        PreparedActivityEvent prepared = prepare(event);
-
-        if(prepared != null)
-        {
-            process(prepared);
-        }
-    }
-
-    private synchronized void process(PreparedActivityEvent event)
-    {
-        process(event, true);
-    }
-
-    /**
-     * Applies one already-projected table mutation while holding this service's state lock.  Snapshot recovery uses
-     * the same mutation path without publishing every intermediate table; consumers receive one authoritative
-     * resync after the replacement is complete.
-     */
-    private void process(PreparedActivityEvent event, boolean publish)
-    {
-        String tableId = event.tableId();
-        Map<String,Object> table;
-
-        if(event.operation() == ChannelActivityEvent.Operation.REMOVE)
-        {
-            table = mTables.remove(tableId);
-
-            if(table == null)
-            {
-                return;
-            }
-
-            mRetainedActivityRows = Math.max(0, mRetainedActivityRows - retainedRows(table));
-        }
-        else
-        {
-            if(!mTables.containsKey(tableId) && mTables.size() >= MAXIMUM_LIVE_TABLES)
-            {
-                if(!mTablesTruncated)
-                {
-                    mTablesTruncated = true;
-
-                    if(publish)
-                    {
-                        systemsChanged();
-                        mSystemsHub.publish("activity_resync", Map.of("snapshot", snapshot()));
-                    }
-                }
-
-                return;
-            }
-
-            Map<String,Object> existing = mTables.get(tableId);
-            int existingRows = retainedRows(existing);
-            int available = Math.max(0, MAXIMUM_TOTAL_LIVE_ROWS - (mRetainedActivityRows - existingRows));
-            table = limitActivityTable(event.table(), Math.min(MAXIMUM_ROWS_PER_TABLE, available));
-            Map<String,Object> previous = mTables.put(tableId, table);
-
-            if(table.equals(previous))
-            {
-                return;
-            }
-
-            mRetainedActivityRows = Math.max(0, mRetainedActivityRows - existingRows + retainedRows(table));
-        }
-
-        if(publish)
-        {
-            systemsChanged();
-            mSystemsHub.publish("activity_table", Map.of("operation", event.operation().name().toLowerCase(),
-                "table_id", tableId, "table", table, "revision", mSystemsRevision.get()));
-        }
-    }
-
     private static PreparedActivityEvent prepare(ChannelActivityEvent event)
     {
-        if(event == null || event.snapshot() == null || event.operation() == null)
-        {
-            return null;
-        }
-
         String tableId = boundedText(event.snapshot().tableId(), MAXIMUM_LIVE_TEXT_LENGTH);
 
         if(tableId.isBlank())
@@ -703,37 +357,6 @@ final class StatsLiveService implements AutoCloseable
         Map<String,Object> table = event.operation() == ChannelActivityEvent.Operation.REMOVE ? null :
             activityTable(event.snapshot(), MAXIMUM_ROWS_PER_TABLE);
         return new PreparedActivityEvent(event.operation(), tableId, table);
-    }
-
-    private void systemsChanged()
-    {
-        mSystemsRevision.incrementAndGet();
-        mEncodedSystemSnapshot = null;
-    }
-
-    private static int retainedRows(Map<String,Object> table)
-    {
-        return table != null && table.get("rows") instanceof List<?> rows ? rows.size() : 0;
-    }
-
-    private static Map<String,Object> limitActivityTable(Map<String,Object> table, int maximumRows)
-    {
-        if(table == null)
-        {
-            return Map.of();
-        }
-
-        @SuppressWarnings("unchecked")
-        List<Map<String,Object>> rows = table.get("rows") instanceof List<?> values ?
-            (List<Map<String,Object>>)(List<?>)values : List.of();
-        int included = Math.min(rows.size(), Math.max(0, maximumRows));
-        int total = table.get("rows_total") instanceof Number number ? Math.max(0, number.intValue()) : rows.size();
-        LinkedHashMap<String,Object> bounded = new LinkedHashMap<>(table);
-        bounded.put("rows", included == rows.size() ? rows : List.copyOf(rows.subList(0, included)));
-        bounded.put("rows_total", total);
-        bounded.put("rows_omitted", Math.max(0, total - included));
-        bounded.put("rows_truncated", total > included);
-        return Map.copyOf(bounded);
     }
 
     private static Map<String,Object> activityTable(ChannelActivitySnapshot snapshot, int maximumRows)
@@ -747,12 +370,11 @@ final class StatsLiveService implements AutoCloseable
         table.put("closeable", snapshot.closeable());
         table.put("control_active", snapshot.controlActive());
         int rowCount = snapshot.rows().size();
-        int rowLimit = Math.min(MAXIMUM_ROWS_PER_TABLE, Math.max(0, maximumRows));
-        table.put("rows", snapshot.rows().stream().limit(rowLimit)
-            .map(StatsLiveService::activityRow).toList());
+        int included = Math.min(rowCount, Math.max(0, maximumRows));
+        table.put("rows", snapshot.rows().stream().limit(included).map(StatsLiveService::activityRow).toList());
         table.put("rows_total", rowCount);
-        table.put("rows_omitted", Math.max(0, rowCount - rowLimit));
-        table.put("rows_truncated", rowCount > rowLimit);
+        table.put("rows_omitted", rowCount - included);
+        table.put("rows_truncated", rowCount > included);
         return Map.copyOf(table);
     }
 
@@ -763,11 +385,8 @@ final class StatsLiveService implements AutoCloseable
         putText(row, "channel_name", snapshot.channelName(), MAXIMUM_LIVE_TEXT_LENGTH);
         putText(row, "configuration_id", snapshot.configurationId(), MAXIMUM_LIVE_TEXT_LENGTH);
         row.put("status", boundedText(snapshot.status(), MAXIMUM_LIVE_TEXT_LENGTH));
-        List<String> tags = snapshot.tags() != null ? snapshot.tags().stream()
-            .filter(Objects::nonNull)
-            .limit(MAXIMUM_LIVE_TAGS)
-            .map(tag -> boundedText(tag, MAXIMUM_LIVE_TAG_LENGTH))
-            .toList() : List.of();
+        List<String> tags = snapshot.tags() != null ? snapshot.tags().stream().filter(Objects::nonNull)
+            .limit(MAXIMUM_LIVE_TAGS).map(tag -> boundedText(tag, MAXIMUM_LIVE_TAG_LENGTH)).toList() : List.of();
         row.put("tags", tags);
         row.put("tags_truncated", snapshot.tags() != null && (snapshot.tags().size() > tags.size() ||
             snapshot.tags().stream().filter(Objects::nonNull)
@@ -776,6 +395,7 @@ final class StatsLiveService implements AutoCloseable
         row.put("frequency_hz", snapshot.frequencyHz());
         put(row, "signal_dbfs", snapshot.signalDbfs());
         put(row, "decode_health_pct", snapshot.decodeHealthPercent());
+
         if(snapshot.decodeHealthPercent() != null)
         {
             row.put("cc_valid_frames", snapshot.controlValidFrames());
@@ -784,6 +404,7 @@ final class StatsLiveService implements AutoCloseable
             row.put("cc_sync_loss_bits", snapshot.controlSyncLossBits());
             row.put("cc_dropped_bits", snapshot.controlDroppedBits());
         }
+
         if(snapshot.voiceQuality() != null && snapshot.voiceQuality().hasMeasurements())
         {
             row.put("vc_quality_pct", snapshot.voiceQuality().qualityPercent());
@@ -794,10 +415,12 @@ final class StatsLiveService implements AutoCloseable
             row.put("vc_fec_errors", snapshot.voiceQuality().fecErrorCount());
             row.put("vc_fec_protected_bits", snapshot.voiceQuality().fecProtectedBitCount());
         }
+
         if(snapshot.qualityObservedAtMs() > 0)
         {
             row.put("quality_observed_at_ms", snapshot.qualityObservedAtMs());
         }
+
         put(row, "timeslot", snapshot.timeslot());
         putText(row, "source_id", snapshot.sourceId(), MAXIMUM_LIVE_TEXT_LENGTH);
         putText(row, "source_alias", snapshot.sourceAlias(), MAXIMUM_LIVE_TEXT_LENGTH);
@@ -837,8 +460,6 @@ final class StatsLiveService implements AutoCloseable
     {
         stop();
         mActivityCommitExecutor.shutdownNow();
-        mSystemsHub.close();
-        mActivityHub.close();
     }
 
     private record PreparedActivityEvent(ChannelActivityEvent.Operation operation, String tableId,
