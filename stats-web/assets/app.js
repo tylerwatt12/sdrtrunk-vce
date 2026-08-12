@@ -15,6 +15,7 @@ const VOICE_QUALITY_WARMUP_FRAMES = 50;
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
 const THEME_STORAGE_KEY = 'sdrtrunk_theme';
 const ACCESS_CAPABILITIES = Object.freeze({
+  SITE_ACCESS: 'site-access',
   DASHBOARD: 'dashboard',
   LIVE: 'live',
   TUNER_SPECTRUM: 'tuner-spectrum',
@@ -481,8 +482,9 @@ function updateAccessControls() {
     action.textContent = 'Sign Out';
     action.disabled = false;
   } else {
-    label.textContent = 'Public';
-    label.title = 'Using public access';
+    const signInRequired = accessSession.capabilities?.[ACCESS_CAPABILITIES.SITE_ACCESS] === false;
+    label.textContent = signInRequired ? 'Sign in required' : 'Public';
+    label.title = signInRequired ? 'This receiver requires an account for all site features' : 'Using public access';
     action.textContent = 'Sign In';
     action.disabled = false;
   }
@@ -10442,17 +10444,32 @@ function accessPolicyIdentity(policy) {
   return wrapper;
 }
 
+function wholeSiteAccessControl(policy, statusHost) {
+  const wrapper = node('div', 'admin-site-access-control');
+  const copy = node('div', 'admin-site-access-copy');
+  copy.append(node('strong', '', 'Whole-site access'),
+    node('p', '', 'Set the minimum tier for every receiver page, API, live stream, audio request, diagnostic, and ' +
+      'export. The application shell and sign-in endpoints remain public so authorized users can sign in.'));
+  const control = node('label', 'admin-site-access-tier');
+  control.append(node('span', '', 'Minimum tier'), accessPolicyTierControl(policy, statusHost));
+  wrapper.append(copy, control);
+  return wrapper;
+}
+
 async function renderAdminAccess() {
   const response = await requestJson('/api/v1/admin/access', { csrf: false });
   const policies = adminAccessPolicies(response).sort((left, right) =>
     (left.displayName || left.id).localeCompare(right.displayName || right.id));
+  const sitePolicy = policies.find((policy) => policy.id === ACCESS_CAPABILITIES.SITE_ACCESS);
+  const featurePolicies = policies.filter((policy) => policy.id !== ACCESS_CAPABILITIES.SITE_ACCESS);
   const statusHost = node('div', 'admin-operation-status');
   statusHost.setAttribute('role', 'status');
   const body = node('div', 'admin-section-body');
   body.append(node('p', 'admin-section-intro',
-    'Each capability protects its page and backing APIs together. New capabilities appear here automatically.'),
-    statusHost,
-    table(policies, [
+    'Whole-site access applies first. Each capability below can then require a higher tier for its page and backing ' +
+      'APIs.'), statusHost);
+  if (sitePolicy) body.append(wholeSiteAccessControl(sitePolicy, statusHost));
+  body.append(table(featurePolicies, [
       { id: 'capability', label: 'Capability', width: 310, render: accessPolicyIdentity,
         sortValue: (policy) => policy.displayName || policy.id },
       { id: 'required-tier', label: 'Required tier', width: 170,
@@ -10463,7 +10480,7 @@ async function renderAdminAccess() {
         sortValue: (policy) => accessTierRank(policy.defaultTier) },
       { id: 'policy-status', label: 'Policy', width: 130,
         render: (policy) => policy.configurable && !policy.id.startsWith('admin-') ? 'Configurable' : 'Fixed' }
-    ], 'No access capabilities were returned', { type: 'admin-access', sortable: false }));
+    ], 'No feature access capabilities were returned', { type: 'admin-access', sortable: false }));
   content.append(section('Access policy', body));
 }
 

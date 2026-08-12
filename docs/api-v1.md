@@ -194,6 +194,9 @@ CSRF token and the capability enforced for that resource.
 Session `capabilities` is an object whose values are booleans. The administrator access-policy resource returns one
 `capabilities` array; each entry has `id`, `display_name`, `required_tier`, `default_tier`, and `configurable`.
 Alternate array, map, tier-object, numeric, and string capability representations are not supported.
+The `site-access` capability is a global minimum applied before every feature capability. Setting it to `user` or
+`admin` protects all receiver pages, APIs, live transports, audio, diagnostics, and exports; the static application
+shell and `/api/v1/auth/*` remain reachable so a user can establish a session.
 
 Wire enum values are explicit and case-sensitive; Java enum names and alternate casing are rejected:
 

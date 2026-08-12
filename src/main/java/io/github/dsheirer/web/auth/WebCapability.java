@@ -22,6 +22,7 @@ import java.util.regex.Pattern;
  */
 public enum WebCapability
 {
+    SITE_ACCESS("site-access", "Entire website", AccessTier.PUBLIC),
     DASHBOARD_VIEW("dashboard", "Dashboard", AccessTier.PUBLIC),
     LIVE_VIEW("live", "Live", AccessTier.PUBLIC),
     TUNER_SPECTRUM_VIEW("tuner-spectrum", "Tuner Spectrum"),
