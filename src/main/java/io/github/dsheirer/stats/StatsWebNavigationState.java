@@ -35,4 +35,12 @@ public record StatsWebNavigationState(boolean running, int port, boolean https, 
     {
         return URI.create((https ? "https" : "http") + "://127.0.0.1:" + port + "/");
     }
+
+    /**
+     * Loopback address for the web Alias editor.
+     */
+    public URI aliasEditorUri()
+    {
+        return baseUri().resolve("?view=aliases");
+    }
 }

@@ -43,6 +43,8 @@ class StatsWebServerServiceBindAddressTest
 
         assertEquals(URI.create("http://127.0.0.1:8090/"), http.baseUri());
         assertEquals(URI.create("https://127.0.0.1:8443/"), https.baseUri());
+        assertEquals(URI.create("http://127.0.0.1:8090/?view=aliases"), http.aliasEditorUri());
+        assertEquals(URI.create("https://127.0.0.1:8443/?view=aliases"), https.aliasEditorUri());
     }
 
     @Test

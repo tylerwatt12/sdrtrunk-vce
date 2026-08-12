@@ -137,6 +137,16 @@ public class JavaFxWindowManager extends Application
     {
         mStatsWebServerService = statsWebServerService;
 
+        if(mConfigurationEditor != null)
+        {
+            execute(() -> {
+                if(mConfigurationEditor != null)
+                {
+                    mConfigurationEditor.setStatsWebServerService(statsWebServerService);
+                }
+            });
+        }
+
         if(mUserPreferencesEditor != null)
         {
             execute(() -> {
@@ -336,7 +346,8 @@ public class JavaFxWindowManager extends Application
     {
         if(mConfigurationEditor == null)
         {
-            mConfigurationEditor = new ConfigurationEditor(mConfigurationManager, mTunerManager, mUserPreferences);
+            mConfigurationEditor = new ConfigurationEditor(mConfigurationManager, mTunerManager, mUserPreferences,
+                mStatsWebServerService);
         }
 
         return mConfigurationEditor;

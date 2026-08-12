@@ -32,6 +32,7 @@ import io.github.dsheirer.gui.preference.ViewUserPreferenceEditorRequest;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
+import io.github.dsheirer.stats.StatsWebServerService;
 import io.github.dsheirer.util.ThreadPool;
 import io.github.dsheirer.util.TimeStamp;
 import javafx.application.Platform;
@@ -67,6 +68,7 @@ public class ConfigurationEditor extends BorderPane
     private ConfigurationManager mConfigurationManager;
     private TunerManager mTunerManager;
     private UserPreferences mUserPreferences;
+    private StatsWebServerService mStatsWebServerService;
     private MenuBar mMenuBar;
     private TabPane mTabPane;
     private Tab mChannelsTab;
@@ -82,11 +84,26 @@ public class ConfigurationEditor extends BorderPane
      * @param tunerManager for tuners
      * @param userPreferences for settings
      */
-    public ConfigurationEditor(ConfigurationManager configurationManager, TunerManager tunerManager, UserPreferences userPreferences)
+    public ConfigurationEditor(ConfigurationManager configurationManager, TunerManager tunerManager,
+                               UserPreferences userPreferences)
+    {
+        this(configurationManager, tunerManager, userPreferences, null);
+    }
+
+    /**
+     * Constructs an instance with access to the embedded web interface.
+     * @param configurationManager for alias and channel models
+     * @param tunerManager for tuners
+     * @param userPreferences for settings
+     * @param statsWebServerService for web-interface navigation, or null in standalone editor testing
+     */
+    public ConfigurationEditor(ConfigurationManager configurationManager, TunerManager tunerManager,
+                               UserPreferences userPreferences, StatsWebServerService statsWebServerService)
     {
         mConfigurationManager = configurationManager;
         mTunerManager = tunerManager;
         mUserPreferences = userPreferences;
+        mStatsWebServerService = statsWebServerService;
 
         //Throw a new runnable back onto the FX thread to lazy load the editor content after the editor has been
         //constructed and shown.
@@ -94,6 +111,19 @@ public class ConfigurationEditor extends BorderPane
             setTop(getMenuBar());
             setCenter(getTabPane());
         });
+    }
+
+    /**
+     * Connects the editor to the embedded web interface when it becomes available after construction.
+     */
+    public void setStatsWebServerService(StatsWebServerService statsWebServerService)
+    {
+        mStatsWebServerService = statsWebServerService;
+
+        if(mAliasEditor != null)
+        {
+            mAliasEditor.setStatsWebServerService(statsWebServerService);
+        }
     }
 
     /**
@@ -212,6 +242,12 @@ public class ConfigurationEditor extends BorderPane
         {
             mAliasesTab = new Tab("Aliases");
             mAliasesTab.setContent(getAliasEditor());
+            mAliasesTab.selectedProperty().addListener((observable, oldValue, selected) -> {
+                if(selected)
+                {
+                    getAliasEditor().showRetirementNotice();
+                }
+            });
         }
 
         return mAliasesTab;
@@ -221,7 +257,7 @@ public class ConfigurationEditor extends BorderPane
     {
         if(mAliasEditor == null)
         {
-            mAliasEditor = new AliasEditor(mConfigurationManager, mUserPreferences);
+            mAliasEditor = new AliasEditor(mConfigurationManager, mUserPreferences, mStatsWebServerService);
         }
 
         return mAliasEditor;

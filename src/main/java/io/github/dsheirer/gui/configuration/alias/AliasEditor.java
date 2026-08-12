@@ -22,8 +22,20 @@ package io.github.dsheirer.gui.configuration.alias;
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.configuration.ConfigurationManager;
+import io.github.dsheirer.eventbus.MyEventBus;
+import io.github.dsheirer.gui.preference.PreferenceEditorType;
+import io.github.dsheirer.gui.preference.ViewUserPreferenceEditorRequest;
 import io.github.dsheirer.preference.UserPreferences;
+import io.github.dsheirer.stats.StatsWebNavigationState;
+import io.github.dsheirer.stats.StatsWebServerService;
+import java.awt.Desktop;
+import java.net.URI;
+import java.util.Optional;
+import javafx.application.Platform;
 import javafx.geometry.Insets;
+import javafx.scene.control.Alert;
+import javafx.scene.control.ButtonBar;
+import javafx.scene.control.ButtonType;
 import javafx.scene.control.Tab;
 import javafx.scene.control.TabPane;
 
@@ -32,29 +44,130 @@ import javafx.scene.control.TabPane;
  */
 public class AliasEditor extends TabPane
 {
+    private static final String RETIREMENT_MESSAGE = "The Alias editor in the Java desktop interface will be retired " +
+        "in a future release. Please try the web Alias editor and report any missing workflows before the transition.";
     private ConfigurationManager mConfigurationManager;
     private UserPreferences mUserPreferences;
+    private StatsWebServerService mStatsWebServerService;
     private AliasConfigurationEditor mAliasConfigurationEditor;
     private AliasViewByIdentifierEditor mAliasViewByIdentifierEditor;
     private Tab mAliasConfigurationTab;
     private Tab mAliasIdentifierTab;
     private Tab mAliasRecordingTab;
+    private boolean mRetirementNoticeShown;
 
     /**
      * Constructs an instance
      * @param configurationManager for alias model access
      * @param userPreferences for settings
      */
-    public AliasEditor(ConfigurationManager configurationManager, UserPreferences userPreferences)
+    public AliasEditor(ConfigurationManager configurationManager, UserPreferences userPreferences,
+                       StatsWebServerService statsWebServerService)
     {
         mConfigurationManager = configurationManager;
         mUserPreferences = userPreferences;
+        mStatsWebServerService = statsWebServerService;
 
         setPadding(new Insets(4,0,0,0));
         setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
         Tab viewByTab = new Tab("View By:");
         viewByTab.setDisable(true);
         getTabs().addAll(viewByTab, getAliasConfigurationTab(), getAliasIdentifierTab(), getAliasRecordingTab());
+    }
+
+    /**
+     * Updates the embedded web-interface service used by the retirement notice.
+     */
+    public void setStatsWebServerService(StatsWebServerService statsWebServerService)
+    {
+        mStatsWebServerService = statsWebServerService;
+    }
+
+    /**
+     * Shows the Java Alias-editor retirement notice at most once for this application launch.
+     */
+    public void showRetirementNotice()
+    {
+        if(!mRetirementNoticeShown)
+        {
+            mRetirementNoticeShown = true;
+            Platform.runLater(this::showRetirementNoticeNow);
+        }
+    }
+
+    private void showRetirementNoticeNow()
+    {
+        boolean webAliasEditorAvailable = isWebAliasEditorAvailable();
+        ButtonType webButton = new ButtonType(webAliasEditorAvailable ? "Open Web Alias Editor" :
+            "Web Interface Settings", ButtonBar.ButtonData.OK_DONE);
+        ButtonType continueButton = new ButtonType("Continue in Java", ButtonBar.ButtonData.CANCEL_CLOSE);
+        Alert alert = new Alert(Alert.AlertType.INFORMATION, RETIREMENT_MESSAGE, continueButton, webButton);
+        alert.setTitle("Java Alias Editor Retirement");
+        alert.setHeaderText("Try the web Alias editor");
+
+        if(getScene() != null && getScene().getWindow() != null)
+        {
+            alert.initOwner(getScene().getWindow());
+        }
+
+        Optional<ButtonType> result = alert.showAndWait();
+        if(result.isPresent() && result.get() == webButton)
+        {
+            if(webAliasEditorAvailable)
+            {
+                openWebAliasEditor();
+            }
+            else
+            {
+                openWebInterfaceSettings();
+            }
+        }
+    }
+
+    private boolean isWebAliasEditorAvailable()
+    {
+        return mStatsWebServerService != null && mStatsWebServerService.getNavigationState().running();
+    }
+
+    private void openWebAliasEditor()
+    {
+        StatsWebNavigationState navigation = mStatsWebServerService != null ?
+            mStatsWebServerService.getNavigationState() : null;
+
+        if(navigation == null || !navigation.running())
+        {
+            openWebInterfaceSettings();
+            return;
+        }
+
+        URI aliasEditorUri = navigation.aliasEditorUri();
+
+        try
+        {
+            if(!Desktop.isDesktopSupported() || !Desktop.getDesktop().isSupported(Desktop.Action.BROWSE))
+            {
+                throw new IllegalStateException("Desktop browser integration is unavailable");
+            }
+
+            Desktop.getDesktop().browse(aliasEditorUri);
+        }
+        catch(Exception exception)
+        {
+            Alert alert = new Alert(Alert.AlertType.WARNING,
+                "Unable to open the web browser. Open " + aliasEditorUri + " manually.", ButtonType.OK);
+            alert.setTitle("Web Alias Editor");
+            alert.setHeaderText("The web browser could not be opened");
+            if(getScene() != null && getScene().getWindow() != null)
+            {
+                alert.initOwner(getScene().getWindow());
+            }
+            alert.showAndWait();
+        }
+    }
+
+    private void openWebInterfaceSettings()
+    {
+        MyEventBus.getGlobalEventBus().post(new ViewUserPreferenceEditorRequest(PreferenceEditorType.WEB_SERVER));
     }
 
     /**
@@ -113,7 +226,7 @@ public class AliasEditor extends TabPane
     {
         if(mAliasIdentifierTab == null)
         {
-            mAliasIdentifierTab = new Tab("Identifier");
+            mAliasIdentifierTab = new Tab("Browse by Identifier");
             mAliasIdentifierTab.setContent(getAliasViewByIdentifierEditor());
         }
 

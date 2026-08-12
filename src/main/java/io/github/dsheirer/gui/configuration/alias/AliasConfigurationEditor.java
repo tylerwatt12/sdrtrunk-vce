@@ -46,6 +46,7 @@ import javafx.geometry.Orientation;
 import javafx.geometry.Pos;
 import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
+import javafx.scene.control.ButtonBase;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.ChoiceDialog;
 import javafx.scene.control.ComboBox;
@@ -61,10 +62,12 @@ import javafx.scene.control.TableView;
 import javafx.scene.control.TextField;
 import javafx.scene.control.TextFormatter;
 import javafx.scene.control.TextInputDialog;
+import javafx.scene.control.Tooltip;
 import javafx.scene.control.cell.PropertyValueFactory;
 import javafx.scene.image.ImageView;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.Rectangle;
@@ -702,6 +705,7 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
             mButtonBox = new VBox();
             mButtonBox.setPadding(new Insets(10, 10, 10, 10));
             mButtonBox.setSpacing(10);
+            mButtonBox.setMinWidth(Region.USE_PREF_SIZE);
 
             Button fillerButton = new Button();
             fillerButton.setVisible(false);
@@ -719,7 +723,7 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
             mNewAliasButton = new Button("New");
             mNewAliasButton.setDisable(true);
             mNewAliasButton.setAlignment(Pos.CENTER);
-            mNewAliasButton.setMaxWidth(Double.MAX_VALUE);
+            configureAliasActionButton(mNewAliasButton, "Create a new Alias in the selected Alias List");
             mNewAliasButton.setOnAction(event ->
             {
                 if(!resolveModifiedAliasDraft())
@@ -753,7 +757,7 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
         {
             mDeleteAliasButton = new Button("Delete");
             mDeleteAliasButton.setDisable(true);
-            mDeleteAliasButton.setMaxWidth(Double.MAX_VALUE);
+            configureAliasActionButton(mDeleteAliasButton, "Delete the selected Aliases");
             mDeleteAliasButton.setOnAction(event ->
             {
                 List<Long> aliasIds = getAliasTableView().getSelectionModel().getSelectedItems().stream()
@@ -799,7 +803,7 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
         {
             mCloneAliasButton = new Button("Clone");
             mCloneAliasButton.setDisable(true);
-            mCloneAliasButton.setMaxWidth(Double.MAX_VALUE);
+            configureAliasActionButton(mCloneAliasButton, "Clone the selected Alias");
             mCloneAliasButton.setOnAction(event ->
             {
                 Alias selected = getAliasTableView().getSelectionModel().getSelectedItem();
@@ -837,6 +841,7 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
         {
             mMoveToAliasButton = new MenuButton("Move To");
             mMoveToAliasButton.setDisable(true);
+            configureAliasActionButton(mMoveToAliasButton, "Move the selected Aliases to another compatible Alias List");
             mMoveToAliasButton.setOnShowing(event ->
             {
                 mMoveToAliasButton.getItems().clear();
@@ -874,6 +879,13 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
         }
 
         return mMoveToAliasButton;
+    }
+
+    private static void configureAliasActionButton(ButtonBase button, String tooltip)
+    {
+        button.setMinWidth(Region.USE_PREF_SIZE);
+        button.setMaxWidth(Double.MAX_VALUE);
+        button.setTooltip(new Tooltip(tooltip));
     }
 
     public class MoveToAliasListItem extends MenuItem
