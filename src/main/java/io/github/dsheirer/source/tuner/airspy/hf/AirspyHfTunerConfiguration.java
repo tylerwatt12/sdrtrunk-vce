@@ -64,6 +64,13 @@ public class AirspyHfTunerConfiguration extends TunerConfiguration
         return mSampleRate;
     }
 
+    @JsonIgnore
+    @Override
+    public int getConfiguredSampleRate()
+    {
+        return getSampleRate();
+    }
+
     /**
      * Sets the sample rate
      * @param sampleRate in Hertz

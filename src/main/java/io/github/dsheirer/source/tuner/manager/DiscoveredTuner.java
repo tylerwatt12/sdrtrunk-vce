@@ -23,6 +23,7 @@ import io.github.dsheirer.source.SourceException;
 import io.github.dsheirer.source.tuner.ITunerErrorListener;
 import io.github.dsheirer.source.tuner.Tuner;
 import io.github.dsheirer.source.tuner.TunerClass;
+import io.github.dsheirer.source.tuner.TunerType;
 import io.github.dsheirer.source.tuner.configuration.TunerConfiguration;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -129,7 +130,7 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
     /**
      * Sets the enabled state of this discovered tuner
      */
-    public void setEnabled(boolean enabled)
+    public synchronized void setEnabled(boolean enabled)
     {
         //If there was a change in state
         if(mEnabled ^ enabled)
@@ -140,14 +141,53 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
 
             if(mEnabled)
             {
-                start();
-                setTunerStatus(TunerStatus.ENABLED);
+                if(startAndApplyConfiguration())
+                {
+                    setTunerStatus(TunerStatus.ENABLED);
+                }
             }
             else
             {
                 stop();
                 setTunerStatus(TunerStatus.DISABLED);
             }
+        }
+    }
+
+    /**
+     * Starts this tuner and restores its saved configuration while it is still unavailable to channel allocation.
+     *
+     * @return true when the tuner is ready to become available
+     */
+    private boolean startAndApplyConfiguration()
+    {
+        try
+        {
+            start();
+
+            if(getTunerStatus() == TunerStatus.ERROR)
+            {
+                return false;
+            }
+
+            if(!hasTuner())
+            {
+                setErrorMessage("Tuner unavailable [" + getId() + "]");
+                return false;
+            }
+
+            if(hasTunerConfiguration() && mTunerConfiguration.getTunerType() != TunerType.RECORDING)
+            {
+                getTuner().getTunerController().apply(mTunerConfiguration);
+            }
+
+            return true;
+        }
+        catch(Exception e)
+        {
+            mLog.error("Error restoring tuner configuration before enabling tuner [{}]", getId(), e);
+            setErrorMessage("Unable to restore tuner configuration [" + getId() + "]");
+            return false;
         }
     }
 
@@ -315,9 +355,10 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
 
             if(isEnabled())
             {
-                //Change status to enabled so that we can attempt to start, but don't notify listeners yet.
-                setTunerStatus(TunerStatus.ENABLED);
-                start();
+                if(startAndApplyConfiguration())
+                {
+                    setTunerStatus(TunerStatus.ENABLED);
+                }
             }
             else
             {

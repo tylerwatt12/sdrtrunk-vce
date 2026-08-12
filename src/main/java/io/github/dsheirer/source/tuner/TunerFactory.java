@@ -496,6 +496,21 @@ public class TunerFactory
                             return new R8xTunerEditor(userPreferences, tunerManager, discoveredTuner);
                     }
                 }
+
+                if(discoveredTuner.getTunerConfiguration() instanceof E4KTunerConfiguration)
+                {
+                    return new E4KTunerEditor(userPreferences, tunerManager, discoveredTuner);
+                }
+                else if(discoveredTuner.getTunerConfiguration() instanceof FC0013TunerConfiguration)
+                {
+                    return new FC0013TunerEditor(userPreferences, tunerManager, discoveredTuner);
+                }
+                else if(discoveredTuner.getTunerConfiguration() instanceof R820TTunerConfiguration ||
+                        discoveredTuner.getTunerConfiguration() instanceof R828DTunerConfiguration)
+                {
+                    return new R8xTunerEditor(userPreferences, tunerManager, discoveredTuner);
+                }
+
                 return new RTL2832UnknownTunerEditor(userPreferences, tunerManager, discoveredTuner);
             case TEST_TUNER:
             case UNKNOWN:

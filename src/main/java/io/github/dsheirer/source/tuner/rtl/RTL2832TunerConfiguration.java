@@ -18,6 +18,7 @@
  */
 package io.github.dsheirer.source.tuner.rtl;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import io.github.dsheirer.source.tuner.configuration.TunerConfiguration;
@@ -59,6 +60,13 @@ public abstract class RTL2832TunerConfiguration extends TunerConfiguration
     public RTL2832TunerController.SampleRate getSampleRate()
     {
         return mSampleRate;
+    }
+
+    @JsonIgnore
+    @Override
+    public int getConfiguredSampleRate()
+    {
+        return getSampleRate() != null ? getSampleRate().getRate() : 0;
     }
 
     public void setSampleRate(RTL2832TunerController.SampleRate sampleRate)

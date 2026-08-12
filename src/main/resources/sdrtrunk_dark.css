@@ -456,3 +456,17 @@
 {
     -fx-background-color: #ffffff;
 }
+
+/* The squelch diagnostic legend uses the same colours as its six plotted lines. */
+.noise-squelch-chart .default-color0.chart-symbol,
+.noise-squelch-chart .default-color0.chart-line-symbol { -fx-background-color: #ff5555; }
+.noise-squelch-chart .default-color1.chart-symbol,
+.noise-squelch-chart .default-color1.chart-line-symbol { -fx-background-color: #55aaff; }
+.noise-squelch-chart .default-color2.chart-symbol,
+.noise-squelch-chart .default-color2.chart-line-symbol { -fx-background-color: #55ff7f; }
+.noise-squelch-chart .default-color3.chart-symbol,
+.noise-squelch-chart .default-color3.chart-line-symbol { -fx-background-color: #ffd34f; }
+.noise-squelch-chart .default-color4.chart-symbol,
+.noise-squelch-chart .default-color4.chart-line-symbol { -fx-background-color: #cf9bff; }
+.noise-squelch-chart .default-color5.chart-symbol,
+.noise-squelch-chart .default-color5.chart-line-symbol { -fx-background-color: #4fe6ff; }

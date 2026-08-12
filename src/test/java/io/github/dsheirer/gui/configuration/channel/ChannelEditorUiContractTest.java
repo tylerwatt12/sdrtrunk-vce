@@ -20,6 +20,7 @@
 package io.github.dsheirer.gui.configuration.channel;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -32,6 +33,10 @@ class ChannelEditorUiContractTest
 {
     private static final Path CHANNEL_EDITOR =
         Path.of("src/main/java/io/github/dsheirer/gui/configuration/channel/ChannelEditor.java");
+    private static final Path ANALOG_EDITOR =
+        Path.of("src/main/java/io/github/dsheirer/gui/configuration/channel/NBFMConfigurationEditor.java");
+    private static final Path SQUELCH_DIAGNOSTIC =
+        Path.of("src/main/java/io/github/dsheirer/gui/squelch/NoiseSquelchView.java");
 
     @Test
     void actionColumnRetainsItsPreferredWidth() throws Exception
@@ -41,5 +46,22 @@ class ChannelEditorUiContractTest
         assertTrue(source.contains("mButtonBox.setMinWidth(Region.USE_PREF_SIZE)"));
         assertTrue(source.contains("mButtonBox.getChildren().addAll(getNewButton(), getCloneButton(), " +
             "getDeleteButton())"));
+    }
+
+    @Test
+    void analogSquelchSettingsBelongToTheChannelEditorAndDiagnosticsRemainReadOnly() throws Exception
+    {
+        String editor = Files.readString(ANALOG_EDITOR);
+        String diagnostic = Files.readString(SQUELCH_DIAGNOSTIC);
+
+        assertTrue(editor.contains("new TitledPane(\"Squelch\""));
+        assertTrue(editor.contains("config.setSquelchNoiseOpenThreshold(noiseOpen)"));
+        assertTrue(editor.contains("config.setSquelchNoiseCloseThreshold(noiseClose)"));
+        assertTrue(editor.contains("config.setSquelchHysteresisOpenThreshold(hysteresisOpen)"));
+        assertTrue(editor.contains("config.setSquelchHysteresisCloseThreshold(hysteresisClose)"));
+        assertFalse(diagnostic.contains(".setNoiseThreshold("));
+        assertFalse(diagnostic.contains(".setHysteresisThreshold("));
+        assertFalse(diagnostic.contains(".setSquelchOverride("));
+        assertFalse(diagnostic.contains("scheduleConfigurationSave"));
     }
 }

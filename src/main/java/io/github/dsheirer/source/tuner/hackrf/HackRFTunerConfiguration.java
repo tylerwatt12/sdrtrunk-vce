@@ -88,6 +88,13 @@ public class HackRFTunerConfiguration extends TunerConfiguration
         return mSampleRate;
     }
 
+    @JsonIgnore
+    @Override
+    public int getConfiguredSampleRate()
+    {
+        return getSampleRate() != null ? getSampleRate().getRate() : 0;
+    }
+
     public void setSampleRate(HackRFSampleRate sampleRate)
     {
         mSampleRate = sampleRate;

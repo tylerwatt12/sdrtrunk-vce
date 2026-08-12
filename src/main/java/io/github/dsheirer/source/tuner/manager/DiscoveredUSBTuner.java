@@ -96,7 +96,7 @@ public class DiscoveredUSBTuner extends DiscoveredTuner
     @Override
     public void start()
     {
-        if(isAvailable() && !hasTuner())
+        if(isEnabled() && !hasTuner())
         {
             try
             {

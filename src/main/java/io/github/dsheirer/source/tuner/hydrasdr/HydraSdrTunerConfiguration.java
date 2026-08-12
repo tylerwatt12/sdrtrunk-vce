@@ -18,6 +18,7 @@
  */
 package io.github.dsheirer.source.tuner.hydrasdr;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import io.github.dsheirer.source.tuner.TunerType;
 import io.github.dsheirer.source.tuner.hydrasdr.HydraSdrTunerController.Gain;
 import io.github.dsheirer.source.tuner.configuration.TunerConfiguration;
@@ -55,6 +56,13 @@ public class HydraSdrTunerConfiguration extends TunerConfiguration
     public int getSampleRate()
     {
         return mSampleRate;
+    }
+
+    @JsonIgnore
+    @Override
+    public int getConfiguredSampleRate()
+    {
+        return getSampleRate();
     }
 
     public void setSampleRate(int sampleRate)

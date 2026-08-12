@@ -158,6 +158,11 @@ public abstract class TunerEditor<T extends Tuner,C extends TunerConfiguration> 
             return (int)getTuner().getTunerController().getSampleRate();
         }
 
+        if(hasConfiguration())
+        {
+            return getConfiguration().getConfiguredSampleRate();
+        }
+
         return 0;
     }
 
@@ -381,51 +386,56 @@ public abstract class TunerEditor<T extends Tuner,C extends TunerConfiguration> 
                 {
                     if(!isLoading())
                     {
-                        setLoading(true);
-
-                        long minimum = getMinimumFrequencyTextField().getFrequency();
-                        long maximum = getMaximumFrequencyTextField().getFrequency();
-
-                        if(minimum < getMinimumTunableFrequency())
-                        {
-                            showInvalidFrequencyDialog(getMinimumFrequencyTextField().getText(),
-                                            "is below the supported frequency range for this tuner");
-                            getMinimumFrequencyTextField().setFrequency(mExistingFrequency);
-                            return;
-                        }
-
-                        if((minimum + getCurrentSampleRate()) > maximum)
-                        {
-                            long newMaximum = minimum + getCurrentSampleRate();
-
-                            if(newMaximum <= getMaximumTunableFrequency())
-                            {
-                                maximum = newMaximum;
-                                getMaximumFrequencyTextField().setFrequency(maximum);
-                            }
-                            else
-                            {
-                                showInvalidFrequencyDialog(getMinimumFrequencyTextField().getText(),
-                                                "is invalid for current sample rate and maximum supported frequency for this tuner");
-                                getMinimumFrequencyTextField().setFrequency(mExistingFrequency);
-                                return;
-                            }
-                        }
-
-                        if(hasTuner())
-                        {
-                            getTuner().getTunerController().setFrequencyExtents(minimum, maximum);
-                        }
-
-                        adjustFrequencyControl(minimum, maximum);
-                        setLoading(false);
-                        save();
+                        updateMinimumFrequency(mExistingFrequency);
                     }
                 }
             });
         }
 
         return mMinimumFrequencyTextField;
+    }
+
+    private void updateMinimumFrequency(long existingFrequency)
+    {
+        setLoading(true);
+
+        try
+        {
+            long minimum = getMinimumFrequencyTextField().getFrequency();
+            long maximum = getMaximumFrequencyTextField().getFrequency();
+
+            if(minimum < getMinimumTunableFrequency())
+            {
+                showInvalidFrequencyDialog(getMinimumFrequencyTextField().getText(),
+                        "is below the supported frequency range for this tuner");
+                getMinimumFrequencyTextField().setFrequency(existingFrequency);
+                return;
+            }
+
+            if((minimum + getCurrentSampleRate()) > maximum)
+            {
+                long newMaximum = minimum + getCurrentSampleRate();
+
+                if(newMaximum <= getMaximumTunableFrequency())
+                {
+                    maximum = newMaximum;
+                    getMaximumFrequencyTextField().setFrequency(maximum);
+                }
+                else
+                {
+                    showInvalidFrequencyDialog(getMinimumFrequencyTextField().getText(),
+                            "is invalid for current sample rate and maximum supported frequency for this tuner");
+                    getMinimumFrequencyTextField().setFrequency(existingFrequency);
+                    return;
+                }
+            }
+
+            saveFrequencyExtents(minimum, maximum);
+        }
+        finally
+        {
+            setLoading(false);
+        }
     }
 
     /**
@@ -526,51 +536,79 @@ public abstract class TunerEditor<T extends Tuner,C extends TunerConfiguration> 
                 {
                     if(!isLoading())
                     {
-
-                        setLoading(true);
-                        long minimum = getMinimumFrequencyTextField().getFrequency();
-                        long maximum = getMaximumFrequencyTextField().getFrequency();
-
-                        if(maximum > getMaximumTunableFrequency())
-                        {
-                            showInvalidFrequencyDialog(getMaximumFrequencyTextField().getText(),
-                                    "is above the supported frequency range for this tuner");
-                            getMaximumFrequencyTextField().setFrequency(mExistingFrequency);
-                            return;
-                        }
-
-                        if((maximum - getCurrentSampleRate()) < minimum)
-                        {
-                            long newMinimum = maximum - getCurrentSampleRate();
-
-                            if(newMinimum >= getMinimumTunableFrequency())
-                            {
-                                minimum = newMinimum;
-                                getMinimumFrequencyTextField().setFrequency(minimum);
-                            }
-                            else
-                            {
-                                showInvalidFrequencyDialog(getMaximumFrequencyTextField().getText(),
-                                                "is invalid for current sample rate and minimum supported frequency for this tuner");
-                                getMaximumFrequencyTextField().setFrequency(mExistingFrequency);
-                                return;
-                            }
-                        }
-
-                        if(hasTuner())
-                        {
-                            getTuner().getTunerController().setFrequencyExtents(minimum, maximum);
-                        }
-
-                        adjustFrequencyControl(minimum, maximum);
-                        setLoading(false);
-                        save();
+                        updateMaximumFrequency(mExistingFrequency);
                     }
                 }
             });
         }
 
         return mMaximumFrequencyTextField;
+    }
+
+    private void updateMaximumFrequency(long existingFrequency)
+    {
+        setLoading(true);
+
+        try
+        {
+            long minimum = getMinimumFrequencyTextField().getFrequency();
+            long maximum = getMaximumFrequencyTextField().getFrequency();
+
+            if(maximum > getMaximumTunableFrequency())
+            {
+                showInvalidFrequencyDialog(getMaximumFrequencyTextField().getText(),
+                        "is above the supported frequency range for this tuner");
+                getMaximumFrequencyTextField().setFrequency(existingFrequency);
+                return;
+            }
+
+            if((maximum - getCurrentSampleRate()) < minimum)
+            {
+                long newMinimum = maximum - getCurrentSampleRate();
+
+                if(newMinimum >= getMinimumTunableFrequency())
+                {
+                    minimum = newMinimum;
+                    getMinimumFrequencyTextField().setFrequency(minimum);
+                }
+                else
+                {
+                    showInvalidFrequencyDialog(getMaximumFrequencyTextField().getText(),
+                            "is invalid for current sample rate and minimum supported frequency for this tuner");
+                    getMaximumFrequencyTextField().setFrequency(existingFrequency);
+                    return;
+                }
+            }
+
+            saveFrequencyExtents(minimum, maximum);
+        }
+        finally
+        {
+            setLoading(false);
+        }
+    }
+
+    /**
+     * Saves only the frequency extent fields.  Hardware-specific editor save methods also read gain and sample-rate
+     * controls, which are intentionally unavailable while a tuner is disabled.
+     */
+    private void saveFrequencyExtents(long minimum, long maximum)
+    {
+        if(hasTuner())
+        {
+            getTuner().getTunerController().setFrequencyExtents(minimum, maximum);
+            adjustFrequencyControl(minimum, maximum);
+        }
+
+        if(hasConfiguration())
+        {
+            getConfiguration().setMinimumFrequency(minimum);
+            getConfiguration().setMaximumFrequency(maximum);
+
+            long center = hasTuner() ? getTuner().getTunerController().getFrequency() : getConfiguration().getFrequency();
+            getConfiguration().setFrequency(Math.max(minimum, Math.min(maximum, center)));
+            saveConfiguration();
+        }
     }
 
     /**
@@ -582,13 +620,11 @@ public abstract class TunerEditor<T extends Tuner,C extends TunerConfiguration> 
         {
             mResetFrequenciesButton = new JButton("Reset");
             mResetFrequenciesButton.addActionListener(e -> {
-
                 long min = getMinimumTunableFrequency();
                 long max = getMaximumTunableFrequency();
-                getTuner().getTunerController().setFrequencyExtents(min, max);
                 getMinimumFrequencyTextField().setFrequency(min);
                 getMaximumFrequencyTextField().setFrequency(max);
-                save();
+                saveFrequencyExtents(min, max);
             });
         }
 
@@ -942,10 +978,11 @@ public abstract class TunerEditor<T extends Tuner,C extends TunerConfiguration> 
             getFrequencyControl().clearListeners();
             getFrequencyControl().addListener(mFrequencyAndCorrectionChangeListener);
             boolean hasTunerUnlocked = hasTuner() && !getTuner().getTunerController().isLockedSampleRate();
+            boolean canEditExtents = hasTunerUnlocked || (!hasTuner() && hasConfiguration());
             getFrequencyControl().setEnabled(hasTunerUnlocked);
-            getMinimumFrequencyTextField().setEnabled(hasTunerUnlocked);
-            getMaximumFrequencyTextField().setEnabled(hasTunerUnlocked);
-            getResetFrequenciesButton().setEnabled(hasTunerUnlocked);
+            getMinimumFrequencyTextField().setEnabled(canEditExtents);
+            getMaximumFrequencyTextField().setEnabled(canEditExtents);
+            getResetFrequenciesButton().setEnabled(canEditExtents);
             getTunerLockedStatusLabel().setVisible(hasTuner() && getTuner().getTunerController().isLockedSampleRate());
             getFrequencyCorrectionSpinner().setEnabled(hasTuner());
             getAutoPPMCheckBox().setEnabled(hasTuner());
@@ -967,10 +1004,19 @@ public abstract class TunerEditor<T extends Tuner,C extends TunerConfiguration> 
             }
             else
             {
-                getFrequencyControl().setFrequency(0, false);
-                getFrequencyCorrectionSpinner().setValue(0);
-                getAutoPPMCheckBox().setSelected(false);
-                getCenterFrequencyLockCheckBox().setSelected(false);
+                long minimum = hasConfiguration() && getConfiguration().getMinimumFrequency() > 0 ?
+                        getConfiguration().getMinimumFrequency() : getMinimumTunableFrequency();
+                long maximum = hasConfiguration() && getConfiguration().getMaximumFrequency() > 0 ?
+                        getConfiguration().getMaximumFrequency() : getMaximumTunableFrequency();
+                getMinimumFrequencyTextField().setFrequency(minimum);
+                getMaximumFrequencyTextField().setFrequency(maximum);
+                getFrequencyControl().setFrequency(hasConfiguration() ? getConfiguration().getFrequency() : 0, false);
+                getFrequencyCorrectionSpinner().setValue(hasConfiguration() ?
+                        getConfiguration().getFrequencyCorrection() : 0);
+                getAutoPPMCheckBox().setSelected(hasConfiguration() &&
+                        getConfiguration().getAutoPPMCorrectionEnabled());
+                getCenterFrequencyLockCheckBox().setSelected(hasConfiguration() &&
+                        getConfiguration().isCenterFrequencyLocked());
                 getMeasuredPPMLabel().setText("");
             }
         }

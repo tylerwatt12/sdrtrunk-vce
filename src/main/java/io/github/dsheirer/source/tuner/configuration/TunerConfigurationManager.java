@@ -118,6 +118,11 @@ public class TunerConfigurationManager implements IDiscoveredTunerStatusListener
     {
         if(current == TunerStatus.DISABLED)
         {
+            if(!discoveredTuner.hasTunerConfiguration())
+            {
+                findTunerConfiguration(discoveredTuner.getId()).ifPresent(discoveredTuner::setTunerConfiguration);
+            }
+
             addDisabledTuner(discoveredTuner);
         }
         else if(current == TunerStatus.ENABLED)
@@ -132,11 +137,13 @@ public class TunerConfigurationManager implements IDiscoveredTunerStatusListener
                 {
                     TunerConfiguration tunerConfiguration = getTunerConfiguration(tunerType, discoveredTuner.getId());
 
-                    if(tunerConfiguration != null)
+                    if(tunerConfiguration != null &&
+                            tunerConfiguration != discoveredTuner.getTunerConfiguration())
                     {
                         discoveredTuner.setTunerConfiguration(tunerConfiguration);
-                        saveConfigurations();
                     }
+
+                    saveConfigurations();
                 }
             }
         }
@@ -317,6 +324,29 @@ public class TunerConfigurationManager implements IDiscoveredTunerStatusListener
         TunerConfiguration config = TunerFactory.getTunerConfiguration(type, uniqueID);
         addTunerConfiguration(config);
         return config;
+    }
+
+    /**
+     * Finds an existing configuration using the discovered tuner's stable identifier.  This lookup is used for a
+     * tuner that starts disabled, before its hardware-specific tuner type can be queried.
+     *
+     * @param uniqueID stable discovered tuner identifier
+     * @return matching saved configuration, if one exists
+     */
+    Optional<TunerConfiguration> findTunerConfiguration(String uniqueID)
+    {
+        mLock.lock();
+
+        try
+        {
+            return mTunerConfigurations.stream()
+                    .filter(config -> config.getUniqueID() != null && config.getUniqueID().equalsIgnoreCase(uniqueID))
+                    .findFirst();
+        }
+        finally
+        {
+            mLock.unlock();
+        }
     }
 
     /**

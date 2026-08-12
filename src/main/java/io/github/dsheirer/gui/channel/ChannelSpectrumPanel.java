@@ -125,7 +125,7 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
         mTunerManager = configurationManager.getTunerManager();
         mUserPreferences = userPreferences;
         mComplexDftProcessor = new ComplexDftProcessor(mUserPreferences.getSpectrumPreference());
-        mNoiseSquelchView = new NoiseSquelchView(mConfigurationManager);
+        mNoiseSquelchView = new NoiseSquelchView();
         setLayout(new MigLayout("insets 0", GROW_FILL, GROW_FILL));
 
         JPanel fftPanel = new JPanel();

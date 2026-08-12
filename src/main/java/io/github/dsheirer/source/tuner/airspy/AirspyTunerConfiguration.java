@@ -18,6 +18,7 @@
  */
 package io.github.dsheirer.source.tuner.airspy;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import io.github.dsheirer.source.tuner.TunerType;
 import io.github.dsheirer.source.tuner.airspy.AirspyTunerController.Gain;
 import io.github.dsheirer.source.tuner.configuration.TunerConfiguration;
@@ -54,6 +55,13 @@ public class AirspyTunerConfiguration extends TunerConfiguration
     public int getSampleRate()
     {
         return mSampleRate;
+    }
+
+    @JsonIgnore
+    @Override
+    public int getConfiguredSampleRate()
+    {
+        return getSampleRate();
     }
 
     public void setSampleRate(int sampleRate)

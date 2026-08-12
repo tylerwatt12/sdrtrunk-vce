@@ -19,6 +19,7 @@
 
 package io.github.dsheirer.source.tuner.sdrplay;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import io.github.dsheirer.source.tuner.configuration.TunerConfiguration;
@@ -77,6 +78,13 @@ public abstract class RspTunerConfiguration extends TunerConfiguration
     public RspSampleRate getSampleRate()
     {
         return mRspSampleRate;
+    }
+
+    @JsonIgnore
+    @Override
+    public int getConfiguredSampleRate()
+    {
+        return getSampleRate() != null ? (int)getSampleRate().getEffectiveSampleRate() : 0;
     }
 
     /**

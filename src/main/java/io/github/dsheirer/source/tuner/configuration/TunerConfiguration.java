@@ -76,6 +76,18 @@ public abstract class TunerConfiguration
     public abstract TunerType getTunerType();
 
     /**
+     * Sample rate stored with this configuration.  Editors use this value to validate frequency extents while the
+     * tuner is disabled and no live controller is available.
+     *
+     * @return configured sample rate in hertz, or zero when the tuner configuration has no sample-rate setting
+     */
+    @JsonIgnore
+    public int getConfiguredSampleRate()
+    {
+        return 0;
+    }
+
+    /**
      * Normal constructor
      */
     protected TunerConfiguration(String uniqueID)

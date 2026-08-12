@@ -25,6 +25,7 @@ import io.github.dsheirer.gui.configuration.decoder.AuxDecoderConfigurationEdito
 import io.github.dsheirer.gui.configuration.eventlog.EventLogConfigurationEditor;
 import io.github.dsheirer.gui.configuration.source.FrequencyEditor;
 import io.github.dsheirer.gui.configuration.source.SourceConfigurationEditor;
+import io.github.dsheirer.dsp.squelch.NoiseSquelch;
 import io.github.dsheirer.dsp.squelch.SquelchTailRemover;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.am.DecodeConfigAM;
@@ -50,6 +51,7 @@ import javafx.collections.ListChangeListener;
 import javafx.geometry.HPos;
 import javafx.geometry.Insets;
 import javafx.scene.control.ComboBox;
+import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.Spinner;
 import javafx.scene.control.SpinnerValueFactory;
@@ -73,6 +75,7 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
     private TitledPane mDecoderPane;
     private TitledPane mEventLogPane;
     private TitledPane mRecordPane;
+    private TitledPane mSquelchPane;
     private TitledPane mSourcePane;
     private TextField mTalkgroupField;
     private ToggleSwitch mAudioFilterEnable;
@@ -85,6 +88,10 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
     private Spinner<Integer> mVoiceEnhanceAmountSpinner;
     private Spinner<Double> mBassBoostSpinner;
     private Spinner<Double> mOutputGainSpinner;
+    private Spinner<Double> mNoiseOpenSpinner;
+    private Spinner<Double> mNoiseCloseSpinner;
+    private Spinner<Integer> mHysteresisOpenSpinner;
+    private Spinner<Integer> mHysteresisCloseSpinner;
     private TextFormatter<Integer> mTalkgroupTextFormatter;
     private ToggleSwitch mBasebandRecordSwitch;
     private SegmentedButton mBandwidthButton;
@@ -120,6 +127,7 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
         mDecoderType = decoderType;
         getTitledPanesBox().getChildren().add(getSourcePane());
         getTitledPanesBox().getChildren().add(getDecoderPane());
+        getTitledPanesBox().getChildren().add(getSquelchPane());
         getTitledPanesBox().getChildren().add(getAuxDecoderPane());
         getTitledPanesBox().getChildren().add(getEventLogPane());
         getTitledPanesBox().getChildren().add(getRecordPane());
@@ -276,6 +284,52 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
         }
 
         return mEventLogPane;
+    }
+
+    private TitledPane getSquelchPane()
+    {
+        if(mSquelchPane == null)
+        {
+            GridPane gridPane = new GridPane();
+            gridPane.setPadding(new Insets(10));
+            gridPane.setHgap(10);
+            gridPane.setVgap(10);
+
+            Label noiseOpenLabel = new Label("Noise Open");
+            GridPane.setHalignment(noiseOpenLabel, HPos.RIGHT);
+            gridPane.add(noiseOpenLabel, 0, 0);
+            gridPane.add(getNoiseOpenSpinner(), 1, 0);
+
+            Label noiseCloseLabel = new Label("Noise Close");
+            GridPane.setHalignment(noiseCloseLabel, HPos.RIGHT);
+            gridPane.add(noiseCloseLabel, 2, 0);
+            gridPane.add(getNoiseCloseSpinner(), 3, 0);
+
+            Label hysteresisOpenLabel = new Label("Hysteresis Open");
+            GridPane.setHalignment(hysteresisOpenLabel, HPos.RIGHT);
+            gridPane.add(hysteresisOpenLabel, 0, 1);
+            gridPane.add(getHysteresisOpenSpinner(), 1, 1);
+
+            Label hysteresisCloseLabel = new Label("Hysteresis Close");
+            GridPane.setHalignment(hysteresisCloseLabel, HPos.RIGHT);
+            gridPane.add(hysteresisCloseLabel, 2, 1);
+            gridPane.add(getHysteresisCloseSpinner(), 3, 1);
+
+            Button defaultsButton = new Button("Defaults");
+            defaultsButton.setTooltip(new Tooltip("Restore the default noise and hysteresis thresholds"));
+            defaultsButton.setOnAction(event -> {
+                getNoiseOpenSpinner().getValueFactory().setValue(noiseSpinnerValue(NoiseSquelch.DEFAULT_NOISE_OPEN_THRESHOLD));
+                getNoiseCloseSpinner().getValueFactory().setValue(noiseSpinnerValue(NoiseSquelch.DEFAULT_NOISE_CLOSE_THRESHOLD));
+                getHysteresisOpenSpinner().getValueFactory().setValue(NoiseSquelch.DEFAULT_HYSTERESIS_OPEN_THRESHOLD);
+                getHysteresisCloseSpinner().getValueFactory().setValue(NoiseSquelch.DEFAULT_HYSTERESIS_CLOSE_THRESHOLD);
+            });
+            gridPane.add(defaultsButton, 4, 1);
+
+            mSquelchPane = new TitledPane("Squelch", gridPane);
+            mSquelchPane.setExpanded(true);
+        }
+
+        return mSquelchPane;
     }
 
     private TitledPane getAuxDecoderPane()
@@ -580,6 +634,69 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
         return mOutputGainSpinner;
     }
 
+    private Spinner<Double> getNoiseOpenSpinner()
+    {
+        if(mNoiseOpenSpinner == null)
+        {
+            mNoiseOpenSpinner = new Spinner<>(noiseSpinnerValue(NoiseSquelch.MINIMUM_NOISE_THRESHOLD),
+                    noiseSpinnerValue(NoiseSquelch.MAXIMUM_NOISE_THRESHOLD),
+                    noiseSpinnerValue(NoiseSquelch.DEFAULT_NOISE_OPEN_THRESHOLD), 0.01);
+            configureSquelchSpinner(mNoiseOpenSpinner, "Noise threshold that opens the squelch");
+        }
+
+        return mNoiseOpenSpinner;
+    }
+
+    private Spinner<Double> getNoiseCloseSpinner()
+    {
+        if(mNoiseCloseSpinner == null)
+        {
+            mNoiseCloseSpinner = new Spinner<>(noiseSpinnerValue(NoiseSquelch.MINIMUM_NOISE_THRESHOLD),
+                    noiseSpinnerValue(NoiseSquelch.MAXIMUM_NOISE_THRESHOLD),
+                    noiseSpinnerValue(NoiseSquelch.DEFAULT_NOISE_CLOSE_THRESHOLD), 0.01);
+            configureSquelchSpinner(mNoiseCloseSpinner, "Noise threshold that closes the squelch");
+        }
+
+        return mNoiseCloseSpinner;
+    }
+
+    private Spinner<Integer> getHysteresisOpenSpinner()
+    {
+        if(mHysteresisOpenSpinner == null)
+        {
+            mHysteresisOpenSpinner = new Spinner<>(NoiseSquelch.MINIMUM_HYSTERESIS_THRESHOLD,
+                    NoiseSquelch.MAXIMUM_HYSTERESIS_THRESHOLD, NoiseSquelch.DEFAULT_HYSTERESIS_OPEN_THRESHOLD);
+            configureSquelchSpinner(mHysteresisOpenSpinner, "Consecutive 10 ms windows required to open squelch");
+        }
+
+        return mHysteresisOpenSpinner;
+    }
+
+    private Spinner<Integer> getHysteresisCloseSpinner()
+    {
+        if(mHysteresisCloseSpinner == null)
+        {
+            mHysteresisCloseSpinner = new Spinner<>(NoiseSquelch.MINIMUM_HYSTERESIS_THRESHOLD,
+                    NoiseSquelch.MAXIMUM_HYSTERESIS_THRESHOLD, NoiseSquelch.DEFAULT_HYSTERESIS_CLOSE_THRESHOLD);
+            configureSquelchSpinner(mHysteresisCloseSpinner, "Consecutive 10 ms windows required to close squelch");
+        }
+
+        return mHysteresisCloseSpinner;
+    }
+
+    private void configureSquelchSpinner(Spinner<?> spinner, String tooltip)
+    {
+        spinner.setPrefWidth(100);
+        spinner.getStyleClass().add(Spinner.STYLE_CLASS_SPLIT_ARROWS_HORIZONTAL);
+        spinner.setTooltip(new Tooltip(tooltip));
+        spinner.valueProperty().addListener((observable, oldValue, newValue) -> modifiedProperty().set(true));
+    }
+
+    private static double noiseSpinnerValue(float value)
+    {
+        return Math.round(value * 100.0) / 100.0;
+    }
+
     private TextField getTalkgroupField()
     {
         if(mTalkgroupField == null)
@@ -659,6 +776,7 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
     {
         if(config instanceof DecodeConfigNBFM analog && analog.getDecoderType() == mDecoderType)
         {
+            getSquelchPane().setDisable(false);
             getBandwidthButton().setDisable(false);
             DecodeConfigNBFM decodeConfigNBFM = analog;
             final DecodeConfigNBFM.Bandwidth bandwidth = (decodeConfigNBFM.getBandwidth() != null ?
@@ -691,9 +809,20 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
             getBassBoostSpinner().getValueFactory().setValue((double)decodeConfigNBFM.getBassBoostDb());
             getOutputGainSpinner().setDisable(false);
             getOutputGainSpinner().getValueFactory().setValue((double)decodeConfigNBFM.getOutputGain());
+            getNoiseOpenSpinner().setDisable(false);
+            getNoiseOpenSpinner().getValueFactory().setValue(
+                    noiseSpinnerValue(decodeConfigNBFM.getSquelchNoiseOpenThreshold()));
+            getNoiseCloseSpinner().setDisable(false);
+            getNoiseCloseSpinner().getValueFactory().setValue(
+                    noiseSpinnerValue(decodeConfigNBFM.getSquelchNoiseCloseThreshold()));
+            getHysteresisOpenSpinner().setDisable(false);
+            getHysteresisOpenSpinner().getValueFactory().setValue(decodeConfigNBFM.getSquelchHysteresisOpenThreshold());
+            getHysteresisCloseSpinner().setDisable(false);
+            getHysteresisCloseSpinner().getValueFactory().setValue(decodeConfigNBFM.getSquelchHysteresisCloseThreshold());
         }
         else
         {
+            getSquelchPane().setDisable(true);
             getBandwidthButton().setDisable(true);
 
             for(Toggle toggle: getBandwidthButton().getToggleGroup().getToggles())
@@ -723,6 +852,14 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
             getBassBoostSpinner().getValueFactory().setValue(0.0);
             getOutputGainSpinner().setDisable(true);
             getOutputGainSpinner().getValueFactory().setValue(1.0);
+            getNoiseOpenSpinner().setDisable(true);
+            getNoiseOpenSpinner().getValueFactory().setValue(noiseSpinnerValue(NoiseSquelch.DEFAULT_NOISE_OPEN_THRESHOLD));
+            getNoiseCloseSpinner().setDisable(true);
+            getNoiseCloseSpinner().getValueFactory().setValue(noiseSpinnerValue(NoiseSquelch.DEFAULT_NOISE_CLOSE_THRESHOLD));
+            getHysteresisOpenSpinner().setDisable(true);
+            getHysteresisOpenSpinner().getValueFactory().setValue(NoiseSquelch.DEFAULT_HYSTERESIS_OPEN_THRESHOLD);
+            getHysteresisCloseSpinner().setDisable(true);
+            getHysteresisCloseSpinner().getValueFactory().setValue(NoiseSquelch.DEFAULT_HYSTERESIS_CLOSE_THRESHOLD);
         }
     }
 
@@ -769,6 +906,14 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
         config.setVoiceEnhanceAmount(getVoiceEnhanceAmountSpinner().getValue());
         config.setBassBoostDb(getBassBoostSpinner().getValue().floatValue());
         config.setOutputGain(getOutputGainSpinner().getValue().floatValue());
+        float noiseOpen = getNoiseOpenSpinner().getValue().floatValue();
+        float noiseClose = Math.max(noiseOpen, getNoiseCloseSpinner().getValue().floatValue());
+        int hysteresisOpen = getHysteresisOpenSpinner().getValue();
+        int hysteresisClose = Math.max(hysteresisOpen, getHysteresisCloseSpinner().getValue());
+        config.setSquelchNoiseOpenThreshold(noiseOpen);
+        config.setSquelchNoiseCloseThreshold(noiseClose);
+        config.setSquelchHysteresisOpenThreshold(hysteresisOpen);
+        config.setSquelchHysteresisCloseThreshold(hysteresisClose);
         getItem().setDecodeConfiguration(config);
     }
 
