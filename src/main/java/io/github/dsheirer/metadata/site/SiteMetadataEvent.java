@@ -18,8 +18,14 @@ import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSna
  * Stable, session-observed site metadata for an external consumer.
  */
 public record SiteMetadataEvent(Channel channel, P25NetworkConfigurationSnapshot snapshot,
-                                long observedAtEpochMilliseconds)
+                                long observedAtEpochMilliseconds, long sourceFrequency)
 {
+    public SiteMetadataEvent(Channel channel, P25NetworkConfigurationSnapshot snapshot,
+                             long observedAtEpochMilliseconds)
+    {
+        this(channel, snapshot, observedAtEpochMilliseconds, 0);
+    }
+
     public boolean isUseful()
     {
         return channel != null && snapshot != null && snapshot.isUseful();

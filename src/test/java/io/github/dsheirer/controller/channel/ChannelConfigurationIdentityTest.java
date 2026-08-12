@@ -14,10 +14,12 @@ package io.github.dsheirer.controller.channel;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
@@ -62,6 +64,7 @@ class ChannelConfigurationIdentityTest
         Channel channel = new Channel("Control");
         String uppercase = "11111111-2222-3333-AAAA-BBBBBBBBBBBB";
         channel.setConfigurationId("  " + uppercase + "  ");
+        channel.setP25SiteIdentity(new P25SiteIdentity(0xBEE00, 0x123, 1, 2));
 
         Channel clone = channel.copyOf();
 
@@ -69,6 +72,20 @@ class ChannelConfigurationIdentityTest
         assertFalse(channel.isConfigurationIdPersistenceRequired());
         assertNotEquals(channel.getConfigurationId(), clone.getConfigurationId());
         assertTrue(clone.isConfigurationIdPersistenceRequired());
+        assertNull(clone.getP25SiteIdentity());
+    }
+
+    @Test
+    void bindsFirstP25SiteIdentityImmutably()
+    {
+        Channel channel = new Channel("Control");
+        P25SiteIdentity first = new P25SiteIdentity(0xBEE00, 0x123, 1, 2);
+        P25SiteIdentity other = new P25SiteIdentity(0xA0001, 0x456, 3, 4);
+
+        assertTrue(channel.bindP25SiteIdentity(first));
+        assertTrue(channel.bindP25SiteIdentity(first));
+        assertFalse(channel.bindP25SiteIdentity(other));
+        assertEquals(first, channel.getP25SiteIdentity());
     }
 
     private static void assertValid(String value)

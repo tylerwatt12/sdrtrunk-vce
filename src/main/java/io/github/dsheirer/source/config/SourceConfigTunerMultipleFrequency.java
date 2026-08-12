@@ -63,6 +63,11 @@ public class SourceConfigTunerMultipleFrequency extends SourceConfiguration
     public void setFrequencies(List<Long> frequencies)
     {
         mFrequencies = frequencies != null ? new CopyOnWriteArrayList<>(frequencies) : new CopyOnWriteArrayList<>();
+
+        if(mPreferredFrequency != null && !mFrequencies.contains(mPreferredFrequency))
+        {
+            mPreferredFrequency = null;
+        }
     }
 
     /**

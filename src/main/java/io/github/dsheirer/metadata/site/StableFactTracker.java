@@ -110,6 +110,34 @@ public class StableFactTracker<V,K>
         return promoteIfAllowed(mCandidateValue, mCandidateKey, timestamp, promotionGuard);
     }
 
+    /**
+     * Replaces the stable value immediately when the observation has already passed its protocol-specific validity
+     * and authority checks. No challenger state or time-based confirmation is used.
+     */
+    public Result observeAuthoritative(V value, long timestamp, Predicate<V> promotionGuard)
+    {
+        Objects.requireNonNull(promotionGuard);
+
+        if(value == null)
+        {
+            return Result.NONE;
+        }
+
+        K key = mKeyFunction.apply(value);
+
+        if(key == null)
+        {
+            return Result.NONE;
+        }
+
+        if(mStableValue != null && timestamp < mStableLastSeenTimestamp)
+        {
+            return Result.NONE;
+        }
+
+        return promoteIfAllowed(value, key, timestamp, promotionGuard);
+    }
+
     public Result observe(V value, long timestamp, FactConfirmationPolicy policy, Predicate<V> promotionGuard)
     {
         Objects.requireNonNull(policy);
