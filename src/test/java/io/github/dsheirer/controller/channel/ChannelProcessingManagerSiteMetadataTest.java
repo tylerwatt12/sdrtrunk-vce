@@ -11,8 +11,11 @@
 
 package io.github.dsheirer.controller.channel;
 
+import io.github.dsheirer.alias.AliasModel;
+import io.github.dsheirer.channel.metadata.ChannelMetadata;
 import io.github.dsheirer.metadata.site.ProtocolSiteMetadataEvent;
 import io.github.dsheirer.metadata.site.SiteMetadataEvent;
+import io.github.dsheirer.module.decode.nbfm.DecodeConfigNBFM;
 import io.github.dsheirer.module.decode.dmr.telemetry.DMRNetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.preference.UserPreferences;
@@ -32,6 +35,36 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class ChannelProcessingManagerSiteMetadataTest
 {
+    @Test
+    public void configurationReloadDoesNotCloseActivityModel() throws Exception
+    {
+        AliasModel aliasModel = new AliasModel();
+        ChannelProcessingManager manager = new ChannelProcessingManager(null, null, aliasModel,
+            new UserPreferences());
+        CountDownLatch populated = new CountDownLatch(1);
+        manager.getChannelActivityModel().addActivityListener(event ->
+        {
+            if(!event.snapshot().rows().isEmpty())
+            {
+                populated.countDown();
+            }
+        });
+
+        try
+        {
+            manager.shutdown();
+            Channel channel = new Channel("reloaded", Channel.ChannelType.STANDARD);
+            channel.setDecodeConfiguration(new DecodeConfigNBFM());
+            manager.getChannelActivityModel().channelStarted(channel,
+                List.of(new ChannelMetadata(aliasModel, 1)));
+            assertTrue(populated.await(2, TimeUnit.SECONDS));
+        }
+        finally
+        {
+            manager.close();
+        }
+    }
+
     @Test
     public void siteMetadataListenersDoNotBlockTheCallingThread() throws Exception
     {

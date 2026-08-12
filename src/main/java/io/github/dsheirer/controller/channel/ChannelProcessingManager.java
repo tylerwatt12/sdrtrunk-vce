@@ -878,7 +878,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     }
 
     /**
-     * Stops all currently processing channels to prepare for shutdown.
+     * Stops all currently processing channels.
      */
     public void shutdown()
     {
@@ -903,7 +903,14 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
                 mLog.error("Error stopping channel [{}] - {}", channel.getName(), ce.getMessage());
             }
         }
+    }
 
+    /**
+     * Permanently releases this manager after all channels have stopped.
+     */
+    public void close()
+    {
+        shutdown();
         mChannelActivityModel.close();
     }
 

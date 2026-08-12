@@ -840,7 +840,7 @@ public class SDRTrunk implements Listener<TunerEvent>
             mConfigurationManager.getChannelProcessingManager().removeControlChannelQualityListener(
                 mControlChannelQualityRegistry);
         }
-        mConfigurationManager.getChannelProcessingManager().shutdown();
+        mConfigurationManager.getChannelProcessingManager().close();
         if(mP25ActivityLogService != null)
         {
             mConfigurationManager.getChannelProcessingManager().removeChannelDecodeEventListener(
