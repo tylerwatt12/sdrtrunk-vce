@@ -17,15 +17,26 @@ import io.github.dsheirer.database.upgrade.ApplicationMigrationService;
 import io.github.dsheirer.database.upgrade.PreviousBuildLocator;
 import io.github.dsheirer.portable.PortableApplicationPaths;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultPath;
+import io.github.dsheirer.web.auth.Pbkdf2PasswordHasher;
+import io.github.dsheirer.web.auth.WebAccessService;
 import java.awt.GraphicsEnvironment;
 import java.io.IOException;
+import java.io.Reader;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.SQLException;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
+import javax.swing.BorderFactory;
+import javax.swing.Box;
+import javax.swing.BoxLayout;
 import javax.swing.JFileChooser;
+import javax.swing.JLabel;
 import javax.swing.JOptionPane;
+import javax.swing.JPanel;
+import javax.swing.JPasswordField;
 import javax.swing.filechooser.FileNameExtensionFilter;
 
 /**
@@ -61,6 +72,7 @@ public final class SdrTrunkDatabaseBootstrap
 
             ApplicationMigrationService.MigrationState state =
                 ApplicationMigrationService.readMigrationState(databasePath);
+            String existingAdminSetupState = InitialAdminSetup.readState(databasePath);
 
             if(!state.supported())
             {
@@ -119,6 +131,17 @@ public final class SdrTrunkDatabaseBootstrap
             }
 
             SdrTrunkDatabaseStartup.validateGlobalDatabase(databasePath);
+
+            if(state.requiresMigration())
+            {
+                InitialAdminSetup.restoreExistingProfileState(databasePath, existingAdminSetupState);
+            }
+
+            if(!completeInitialAdminSetup(databasePath, options, headless))
+            {
+                return BootstrapResult.cancelled();
+            }
+
             prepareVault(normalizedDataRoot);
             return BootstrapResult.existingProfile();
         }
@@ -151,7 +174,8 @@ public final class SdrTrunkDatabaseBootstrap
         else if(headless)
         {
             throw new IOException("No portable SDRTrunk database exists at " + databasePath +
-                ". Start once with --fresh, --import-xml <path>, or --upgrade-data <previous-folder>.");
+                ". Start once with --fresh, --import-xml <path>, or --upgrade-data <previous-folder>. New " +
+                "headless installations also require --admin-password-file <path>.");
         }
         else
         {
@@ -163,8 +187,190 @@ public final class SdrTrunkDatabaseBootstrap
             }
         }
 
+        InitialAdminSetup.initializeNewProfile(databasePath);
+
+        if(!completeInitialAdminSetup(databasePath, options, headless))
+        {
+            return BootstrapResult.cancelled();
+        }
+
         prepareVault(normalizedDataRoot);
         return result;
+    }
+
+    private static boolean completeInitialAdminSetup(Path databasePath, Options options, boolean headless)
+        throws IOException, SQLException
+    {
+        if(!InitialAdminSetup.isPasswordRequired(databasePath))
+        {
+            return true;
+        }
+
+        char[] password;
+
+        if(options.adminPasswordFile() != null)
+        {
+            password = readPasswordFile(options.adminPasswordFile());
+        }
+        else if(headless)
+        {
+            throw new IOException("This new installation requires an administrator password. Start again with " +
+                "--admin-password-file <path>. The file must contain only the password and must be removed or " +
+                "secured after setup.");
+        }
+        else
+        {
+            Optional<char[]> prompted = requestInitialAdminPassword();
+
+            if(prompted.isEmpty())
+            {
+                return false;
+            }
+
+            password = prompted.get();
+        }
+
+        try
+        {
+            InitialAdminSetup.provision(databasePath, password);
+            return true;
+        }
+        finally
+        {
+            Arrays.fill(password, '\u0000');
+        }
+    }
+
+    private static Optional<char[]> requestInitialAdminPassword()
+    {
+        JPasswordField passwordField = new JPasswordField(28);
+        JPasswordField confirmationField = new JPasswordField(28);
+        JPanel fields = new JPanel();
+        fields.setLayout(new BoxLayout(fields, BoxLayout.Y_AXIS));
+        fields.setBorder(BorderFactory.createEmptyBorder(4, 4, 4, 4));
+        fields.add(new JLabel("<html><b>Create the administrator password</b><br><br>" +
+            "The web interface is enabled by default. Every new installation requires a password for the fixed " +
+            "administrator account <b>" + WebAccessService.PRIMARY_ADMIN_USERNAME + "</b> before it can start." +
+            "</html>"));
+        fields.add(Box.createVerticalStrut(14));
+        fields.add(new JLabel("Password (" + Pbkdf2PasswordHasher.MINIMUM_PASSWORD_CHARACTERS + "-" +
+            Pbkdf2PasswordHasher.MAXIMUM_PASSWORD_CHARACTERS + " characters)"));
+        fields.add(passwordField);
+        fields.add(Box.createVerticalStrut(8));
+        fields.add(new JLabel("Confirm password"));
+        fields.add(confirmationField);
+        Object[] buttons = {"Save and Continue", "Quit"};
+
+        try
+        {
+            while(true)
+            {
+                int selected = JOptionPane.showOptionDialog(null, fields, TITLE, JOptionPane.DEFAULT_OPTION,
+                    JOptionPane.PLAIN_MESSAGE, null, buttons, buttons[0]);
+
+                if(selected != 0)
+                {
+                    return Optional.empty();
+                }
+
+                char[] password = passwordField.getPassword();
+                char[] confirmation = confirmationField.getPassword();
+                boolean accepted = false;
+
+                try
+                {
+                    if(password.length < Pbkdf2PasswordHasher.MINIMUM_PASSWORD_CHARACTERS ||
+                        password.length > Pbkdf2PasswordHasher.MAXIMUM_PASSWORD_CHARACTERS)
+                    {
+                        JOptionPane.showMessageDialog(null,
+                            "Password must contain " + Pbkdf2PasswordHasher.MINIMUM_PASSWORD_CHARACTERS + "-" +
+                                Pbkdf2PasswordHasher.MAXIMUM_PASSWORD_CHARACTERS + " characters.",
+                            TITLE, JOptionPane.WARNING_MESSAGE);
+                        continue;
+                    }
+
+                    if(!Arrays.equals(password, confirmation))
+                    {
+                        JOptionPane.showMessageDialog(null, "Passwords do not match.", TITLE,
+                            JOptionPane.WARNING_MESSAGE);
+                        continue;
+                    }
+
+                    passwordField.setText("");
+                    confirmationField.setText("");
+                    accepted = true;
+                    return Optional.of(password);
+                }
+                finally
+                {
+                    Arrays.fill(confirmation, '\u0000');
+
+                    if(!accepted)
+                    {
+                        Arrays.fill(password, '\u0000');
+                    }
+                }
+            }
+        }
+        finally
+        {
+            passwordField.setText("");
+            confirmationField.setText("");
+        }
+    }
+
+    private static char[] readPasswordFile(Path path) throws IOException
+    {
+        Path normalized = path.toAbsolutePath().normalize();
+        char[] buffer = new char[Pbkdf2PasswordHasher.MAXIMUM_PASSWORD_CHARACTERS + 3];
+        int length = 0;
+
+        try
+        {
+            try(Reader reader = Files.newBufferedReader(normalized, StandardCharsets.UTF_8))
+            {
+                while(length < buffer.length)
+                {
+                    int count = reader.read(buffer, length, buffer.length - length);
+
+                    if(count < 0)
+                    {
+                        break;
+                    }
+
+                    length += count;
+                }
+
+                if(length == buffer.length || reader.read() >= 0)
+                {
+                    throw new IOException("Administrator password file is too large: " + normalized);
+                }
+            }
+
+            if(length > 0 && buffer[length - 1] == '\n')
+            {
+                length--;
+
+                if(length > 0 && buffer[length - 1] == '\r')
+                {
+                    length--;
+                }
+            }
+
+            if(length < Pbkdf2PasswordHasher.MINIMUM_PASSWORD_CHARACTERS ||
+                length > Pbkdf2PasswordHasher.MAXIMUM_PASSWORD_CHARACTERS)
+            {
+                throw new IOException("Administrator password file must contain " +
+                    Pbkdf2PasswordHasher.MINIMUM_PASSWORD_CHARACTERS + "-" +
+                    Pbkdf2PasswordHasher.MAXIMUM_PASSWORD_CHARACTERS + " characters");
+            }
+
+            return Arrays.copyOf(buffer, length);
+        }
+        finally
+        {
+            Arrays.fill(buffer, '\u0000');
+        }
     }
 
     private static BootstrapResult runInteractive(Path databasePath, Path dataRoot)
@@ -467,7 +673,8 @@ public final class SdrTrunkDatabaseBootstrap
         }
     }
 
-    private record Options(boolean fresh, Path importXml, Path upgradeData, boolean upgradeCurrent)
+    private record Options(boolean fresh, Path importXml, Path upgradeData, boolean upgradeCurrent,
+                           Path adminPasswordFile)
     {
         private static Options parse(String[] args)
         {
@@ -475,6 +682,7 @@ public final class SdrTrunkDatabaseBootstrap
             Path importXml = null;
             Path upgradeData = null;
             boolean upgradeCurrent = false;
+            Path adminPasswordFile = null;
 
             for(int x = 0; x < args.length; x++)
             {
@@ -482,6 +690,15 @@ public final class SdrTrunkDatabaseBootstrap
                 {
                     case "--fresh" -> fresh = true;
                     case "--upgrade-current" -> upgradeCurrent = true;
+                    case "--admin-password-file" ->
+                    {
+                        if(++x >= args.length)
+                        {
+                            throw new IllegalArgumentException("Missing path after --admin-password-file");
+                        }
+
+                        adminPasswordFile = Path.of(args[x]);
+                    }
                     case "--import-xml" ->
                     {
                         if(++x >= args.length)
@@ -513,7 +730,7 @@ public final class SdrTrunkDatabaseBootstrap
                     "--upgrade-data, or --upgrade-current");
             }
 
-            return new Options(fresh, importXml, upgradeData, upgradeCurrent);
+            return new Options(fresh, importXml, upgradeData, upgradeCurrent, adminPasswordFile);
         }
     }
 }

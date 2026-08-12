@@ -157,7 +157,7 @@ public final class WebAccessService
     }
 
     /**
-     * Local JavaFX bootstrap/recovery operation for the fixed primary account.  It must not be exposed as an
+     * Local desktop bootstrap/recovery operation for the fixed primary account.  It must not be exposed as an
      * unauthenticated web route.
      */
     public WebAccessAccount provisionOrResetPrimaryAdmin(char[] password) throws IOException, SQLException
