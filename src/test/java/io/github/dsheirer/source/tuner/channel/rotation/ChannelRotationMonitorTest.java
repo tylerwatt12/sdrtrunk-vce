@@ -15,12 +15,25 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import io.github.dsheirer.channel.state.DecoderStateEvent;
 import io.github.dsheirer.channel.state.State;
 import io.github.dsheirer.source.SourceEvent;
+import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
 class ChannelRotationMonitorTest
 {
+    @Test
+    void usesTwoSecondDefaultAndTenSecondMaximum()
+    {
+        SourceConfigTunerMultipleFrequency source = new SourceConfigTunerMultipleFrequency();
+        assertEquals(2_000, ChannelRotationMonitor.CHANNEL_ROTATION_DELAY_DEFAULT);
+        assertEquals(10_000, ChannelRotationMonitor.CHANNEL_ROTATION_DELAY_MAXIMUM);
+        assertEquals(2_000, source.getFrequencyRotationDelay());
+
+        source.setFrequencyRotationDelay(20_000);
+        assertEquals(10_000, source.getFrequencyRotationDelay());
+    }
+
     @Test
     void searchesUsingConfiguredRotationDelay()
     {
@@ -54,7 +67,7 @@ class ChannelRotationMonitorTest
     private static ChannelRotationMonitor monitor(AtomicInteger rotations)
     {
         ChannelRotationMonitor monitor = new ChannelRotationMonitor(List.of(State.CONTROL), 500,
-            ChannelRotationMonitor.ACTIVE_STATE_LOSS_DELAY_DEFAULT, null);
+            ChannelRotationMonitor.ACTIVE_STATE_LOSS_DELAY_DEFAULT);
         monitor.setSourceEventListener(event -> {
             assertEquals(SourceEvent.Event.REQUEST_FREQUENCY_ROTATION, event.getEvent());
             rotations.incrementAndGet();

@@ -7005,6 +7005,10 @@ const TUNER_SPECTRUM_ZOOM_FACTOR = 1.5;
 const TUNER_SPECTRUM_SMOOTHING_ALPHA = 0.25;
 const TUNER_SPECTRUM_FLOOR_STORAGE_KEY = 'sdrtrunk.wideband.lowerDisplayLimitDb';
 const TUNER_WATERFALL_SPEED_STORAGE_KEY = 'sdrtrunk.wideband.waterfallScrollSpeed';
+const TUNER_WATERFALL_CHANNELS_STORAGE_KEY = 'sdrtrunk.wideband.highlightWaterfallChannels';
+const TUNER_CHANNEL_VISUAL_BANDWIDTH_HZ = 25_000;
+const TUNER_CHANNEL_MINIMUM_WIDTH_PX = 3.5;
+const TUNER_CHANNEL_MAXIMUM_WIDTH_PX = 14;
 const TUNER_FREQUENCY_RASTERS = Object.freeze([
   Object.freeze({ id: 'vhf-land-mobile', minHz: 150_000_000, maxHz: 173_997_500,
     originHz: 150_000_000, stepHz: 2_500, label: 'VHF land mobile' }),
@@ -7049,6 +7053,23 @@ function tunerStoredNumber(key, fallback, minimum, maximum) {
 function storeTunerNumber(key, value) {
   try {
     window.localStorage.setItem(key, String(value));
+  } catch (error) {
+    // Privacy modes can disable local storage. The control still works for the current page.
+  }
+}
+
+function tunerStoredBoolean(key, fallback) {
+  try {
+    const value = window.localStorage.getItem(key);
+    return value === null ? fallback : value === 'true';
+  } catch (error) {
+    return fallback;
+  }
+}
+
+function storeTunerBoolean(key, value) {
+  try {
+    window.localStorage.setItem(key, String(Boolean(value)));
   } catch (error) {
     // Privacy modes can disable local storage. The control still works for the current page.
   }
@@ -7194,8 +7215,15 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
   smoothInput.checked = false;
   smoothControl.title = 'Average successive frames to make the FFT trace steadier.';
   smoothControl.append(smoothInput, node('span', '', 'Smooth FFT'));
+  const waterfallChannelsControl = node('label', 'tuner-spectrum-toggle-control');
+  const waterfallChannelsInput = node('input');
+  waterfallChannelsInput.type = 'checkbox';
+  waterfallChannelsInput.checked = tunerStoredBoolean(TUNER_WATERFALL_CHANNELS_STORAGE_KEY, false);
+  waterfallChannelsControl.title = 'Show known and active channel bandwidths over the waterfall.';
+  waterfallChannelsControl.append(waterfallChannelsInput,
+    node('span', '', 'Highlight channels on waterfall'));
   const toggleControls = node('div', 'tuner-spectrum-option-toggles');
-  toggleControls.append(snapControl, smoothControl);
+  toggleControls.append(snapControl, smoothControl, waterfallChannelsControl);
   optionsPanel.append(floorControl, floorHelp, speedControl, toggleControls);
   options.append(optionsSummary, optionsPanel);
   options.addEventListener('toggle', () => {
@@ -8085,12 +8113,13 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
     const byFrequency = new Map();
     activeChannelTables.forEach((table) => {
       const tableChannelName = String(table?.channel_name || '').trim();
+      const tableTitle = String(table?.title || '').trim();
       (Array.isArray(table?.rows) ? table.rows : []).forEach((row) => {
         const frequencyHz = Number(row?.frequency_hz);
         const status = tunerActivityStatus(row);
         if (!Number.isFinite(frequencyHz) || frequencyHz < viewport.startHz ||
             frequencyHz > viewport.endHz || !status) return;
-        const decorated = { ...row, status, frequencyHz, tableId: table.table_id, tableChannelName };
+        const decorated = { ...row, status, frequencyHz, tableId: table.table_id, tableChannelName, tableTitle };
         let carrier = byFrequency.get(frequencyHz);
         if (!carrier) {
           carrier = { frequencyHz, status, rows: [] };
@@ -8105,8 +8134,8 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
   }
 
   function activeChannelLabel(row) {
-    if (row.status === 'CONTROL' && row.tableChannelName) {
-      return `${row.tableChannelName} · Control`;
+    if (row.status === 'CONTROL') {
+      return row.tableTitle || row.tableChannelName || 'Control';
     }
     return row.target_alias || row.target_id || row.channel_name || row.lcn || row.tableChannelName || row.status;
   }
@@ -8171,16 +8200,22 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
       return;
     }
     const carriers = activeCarriers();
+    const visibleSpanHz = Math.max(1, viewport.endHz - viewport.startHz);
+    const waterfallPlotWidth = Math.max(0, waterfall.host.getBoundingClientRect().width);
+    const waterfallFlagWidth = Math.max(TUNER_CHANNEL_MINIMUM_WIDTH_PX,
+      Math.min(TUNER_CHANNEL_MAXIMUM_WIDTH_PX,
+        waterfallPlotWidth * TUNER_CHANNEL_VISUAL_BANDWIDTH_HZ / visibleSpanHz));
     const signature = JSON.stringify([viewport.startHz, viewport.endHz,
+      waterfallChannelsInput.checked, waterfallFlagWidth,
       carriers.map((carrier) => [carrier.frequencyHz, carrier.status, activeCarrierDescription(carrier)])]);
     if (signature === activeFlagSignature) return;
     if (hoverFlag) hideCursor();
     activeFlagSignature = signature;
-    const spanHz = viewport.endHz - viewport.startHz;
-    activeFlagLayers.forEach((layer) => layer.replaceChildren(...carriers.map((carrier) => {
+    const createFlags = (waterfallLayer) => carriers.map((carrier) => {
       const flag = node('button', `tuner-spectrum-active-flag status-${carrier.status.toLowerCase()}`);
       flag.type = 'button';
-      flag.style.left = `${((carrier.frequencyHz - viewport.startHz) / spanHz * 100).toFixed(3)}%`;
+      flag.style.left = `${((carrier.frequencyHz - viewport.startHz) / visibleSpanHz * 100).toFixed(3)}%`;
+      if (waterfallLayer) flag.style.width = `${waterfallFlagWidth.toFixed(2)}px`;
       flag.style.zIndex = String(TUNER_ACTIVITY_PRIORITY[carrier.status]);
       const details = activeCarrierDescription(carrier).replaceAll('\n', ', ');
       flag.setAttribute('aria-label', `${TUNER_ACTIVITY_LABELS[carrier.status]}, ${
@@ -8190,7 +8225,9 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
       flag.addEventListener('focus', () => showActiveFlag(carrier, flag));
       flag.addEventListener('blur', () => hideActiveFlag(flag));
       return flag;
-    })));
+    });
+    spectrumActiveFlags.replaceChildren(...createFlags(false));
+    waterfallActiveFlags.replaceChildren(...(waterfallChannelsInput.checked ? createFlags(true) : []));
     if (hoverRatio !== null) updateCursor(hoverRatio);
   }
 
@@ -8257,6 +8294,11 @@ function showTunerSpectrumModal(returnFocusSelector = '#open-tuner-spectrum') {
     if (hoverRatio !== null) updateCursor(hoverRatio);
     if (!refining) scheduleDraw('spectrum');
   });
+  waterfallChannelsInput.addEventListener('change', () => {
+    storeTunerBoolean(TUNER_WATERFALL_CHANNELS_STORAGE_KEY, waterfallChannelsInput.checked);
+    activeFlagSignature = '';
+    renderActiveChannels();
+  });
   [spectrum.canvas, waterfall.canvas].forEach(addPlotInteractions);
   const onVisibilityChange = () => sync();
   const onResize = () => {
@@ -8320,7 +8362,6 @@ function liveEventsPanel(onCollapse) {
   tabBar.setAttribute('role', 'tablist');
   tabBar.setAttribute('aria-label', 'Live details');
   const controls = node('div', 'live-details-controls');
-  const connection = badge('Waiting', 'state-stale');
   const pause = node('button', 'button secondary live-details-pause', 'Pause');
   pause.type = 'button';
   pause.setAttribute('aria-label', 'Pause Events, Messages, and Channel');
@@ -8328,7 +8369,7 @@ function liveEventsPanel(onCollapse) {
   const collapse = node('button', 'button secondary live-details-collapse', 'Collapse');
   collapse.type = 'button';
   collapse.setAttribute('aria-expanded', 'true');
-  controls.append(connection, pause, collapse);
+  controls.append(pause, collapse);
   header.append(tabBar, controls);
 
   const body = node('div', 'live-details-body');
@@ -8452,14 +8493,9 @@ function liveEventsPanel(onCollapse) {
   const sync = () => {
     if (!shouldRun()) {
       closeStream();
-      connection.textContent = selection && paused ? 'Paused' : 'Waiting';
-      connection.className = 'badge state-stale';
       return;
     }
     if (stream) return;
-
-    connection.textContent = 'Connecting';
-    connection.className = 'badge state-stale';
     const epoch = ++streamEpoch;
     const parameters = { configuration_id: selection.configurationId };
     if (selection.frequencyHz) parameters.frequency_hz = selection.frequencyHz;
@@ -8481,16 +8517,6 @@ function liveEventsPanel(onCollapse) {
     stream.addEventListener('decode_event', (event) => {
       if (epoch === streamEpoch) addEvent(JSON.parse(event.data));
     });
-    stream.onopen = () => {
-      if (epoch !== streamEpoch) return;
-      connection.textContent = 'Live';
-      connection.className = 'badge state-current';
-    };
-    stream.onerror = () => {
-      if (epoch !== streamEpoch) return;
-      connection.textContent = 'Reconnecting';
-      connection.className = 'badge state-stale';
-    };
   };
 
   const select = (nextSelection) => {

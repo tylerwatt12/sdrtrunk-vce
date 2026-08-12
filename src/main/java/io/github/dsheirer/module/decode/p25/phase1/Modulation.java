@@ -24,6 +24,7 @@ package io.github.dsheirer.module.decode.p25.phase1;
  */
 public enum Modulation
 {
+    AUTO("Auto"),
     CQPSK("Simulcast (LSM)"),
     C4FM("Normal (C4FM)");
 

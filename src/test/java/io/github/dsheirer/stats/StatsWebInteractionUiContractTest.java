@@ -818,14 +818,18 @@ class StatsWebInteractionUiContractTest
         assertTrue(activity.contains("liveChannelActivityTables"));
         assertTrue(subscribeActivity.contains("invokeLiveSubscriber(subscriber, 'snapshot'"));
         assertTrue(tuner.contains("const tableChannelName = String(table?.channel_name || '').trim()"));
-        assertTrue(tuner.contains("row.status === 'CONTROL' && row.tableChannelName"));
-        assertTrue(tuner.contains("`${row.tableChannelName} · Control`"));
+        assertTrue(tuner.contains("const tableTitle = String(table?.title || '').trim()"));
+        assertTrue(tuner.contains("row.tableTitle || row.tableChannelName || 'Control'"));
+        assertFalse(tuner.contains("`${row.tableChannelName} · Control`"));
         assertTrue(tuner.contains("snapInput.type = 'checkbox'"));
         assertTrue(tuner.contains("snapInput.checked = true"));
         assertTrue(tuner.contains("'Snap frequency'"));
         assertTrue(tuner.contains("smoothInput.type = 'checkbox'"));
         assertTrue(tuner.contains("smoothInput.checked = false"));
         assertTrue(tuner.contains("'Smooth FFT'"));
+        assertTrue(tuner.contains("waterfallChannelsInput.type = 'checkbox'"));
+        assertTrue(tuner.contains("TUNER_WATERFALL_CHANNELS_STORAGE_KEY, false"));
+        assertTrue(tuner.contains("'Highlight channels on waterfall'"));
         assertTrue(tuner.contains("toolbarActions.append(options)"));
         assertTrue(tuner.contains("optionsPanel.append(floorControl, floorHelp, speedControl, toggleControls)"));
         assertTrue(tuner.contains("optionsSummary.setAttribute('aria-expanded', 'false')"));
@@ -858,6 +862,9 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("waterfall.host.insertBefore(waterfallActiveFlags, waterfall.guide)"));
         assertTrue(tuner.contains("`tuner-spectrum-active-flag status-${carrier.status.toLowerCase()}`"));
         assertTrue(tuner.contains("flag.style.left ="));
+        assertTrue(tuner.contains("waterfallPlotWidth * TUNER_CHANNEL_VISUAL_BANDWIDTH_HZ / visibleSpanHz"));
+        assertTrue(tuner.contains("if (waterfallLayer) flag.style.width"));
+        assertTrue(tuner.contains("waterfallChannelsInput.checked ? createFlags(true) : []"));
         assertTrue(tuner.contains("flag.addEventListener('pointerenter'"));
         assertTrue(tuner.contains("flag.addEventListener('focus'"));
         assertTrue(tuner.contains("showActiveFlag(carrier, flag)"));
@@ -904,6 +911,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("generation === frame.generation && sequence !== null"));
         assertTrue(source.contains("sdrtrunk.wideband.lowerDisplayLimitDb"));
         assertTrue(source.contains("sdrtrunk.wideband.waterfallScrollSpeed"));
+        assertTrue(source.contains("sdrtrunk.wideband.highlightWaterfallChannels"));
+        assertTrue(source.contains("const TUNER_CHANNEL_VISUAL_BANDWIDTH_HZ = 25_000"));
         assertTrue(diagnostic.contains("headerBytes >= 68 ? header.getInt32(64, true) : 0"));
         assertTrue(diagnostic.contains("headerBytes >= 72 ? header.getInt32(68, true) : valueCount"));
         assertTrue(css.contains(".tuner-spectrum-modal"));
@@ -939,6 +948,7 @@ class StatsWebInteractionUiContractTest
 
         assertTrue(events.contains("live-details-pause', 'Pause'"));
         assertTrue(events.contains("'Pause Events, Messages, and Channel'"));
+        assertFalse(events.contains("const connection = badge('Waiting'"));
         assertTrue(events.contains("eventsActive && !collapsed && !paused && !document.hidden"));
         assertTrue(events.contains("eventsActive = id === 'events'"));
         assertTrue(events.contains("document.addEventListener('visibilitychange', onVisibilityChange)"));

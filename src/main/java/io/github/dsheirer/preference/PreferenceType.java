@@ -32,7 +32,6 @@ public enum PreferenceType
     ENCRYPTION_KEYS,
     JMBE_LIBRARY,
     MP3,
-    MULTI_FREQUENCY,
     NOW_PLAYING,
     PLAYBACK,
     RADIO_REFERENCE,

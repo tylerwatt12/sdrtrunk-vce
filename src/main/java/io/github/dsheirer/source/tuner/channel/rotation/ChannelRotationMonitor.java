@@ -24,8 +24,6 @@ import io.github.dsheirer.channel.state.DecoderStateEvent;
 import io.github.dsheirer.channel.state.IDecoderStateEventListener;
 import io.github.dsheirer.channel.state.State;
 import io.github.dsheirer.module.Module;
-import io.github.dsheirer.preference.PreferenceType;
-import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.source.ISourceEventProvider;
 import io.github.dsheirer.source.SourceEvent;
@@ -45,12 +43,11 @@ public class ChannelRotationMonitor extends Module implements ISourceEventProvid
         Listener<DecoderStateEvent>
 {
     public static final int CHANNEL_ROTATION_DELAY_MINIMUM = 200;
-    public static final int CHANNEL_ROTATION_DELAY_DEFAULT = 500;
-    public static final int CHANNEL_ROTATION_DELAY_MAXIMUM = 2000;
+    public static final int CHANNEL_ROTATION_DELAY_DEFAULT = 2000;
+    public static final int CHANNEL_ROTATION_DELAY_MAXIMUM = 10000;
     public static final int ACTIVE_STATE_LOSS_DELAY_DEFAULT = 2000;
 
     private static final Logger mLog = LoggerFactory.getLogger(ChannelRotationMonitor.class);
-    private UserPreferences mUserPreferences;
     private Collection<State> mActiveStates;
     private ScheduledFuture<?> mScheduledFuture;
     private Listener<SourceEvent> mSourceEventListener;
@@ -65,9 +62,9 @@ public class ChannelRotationMonitor extends Module implements ISourceEventProvid
      * @param activeStates to monitor
      * @param rotationDelay specifies how long to remain on each frequency before rotating (in milliseconds).
      */
-    public ChannelRotationMonitor(Collection<State> activeStates, long rotationDelay, UserPreferences userPreferences)
+    public ChannelRotationMonitor(Collection<State> activeStates, long rotationDelay)
     {
-        this(activeStates, rotationDelay, 0, userPreferences);
+        this(activeStates, rotationDelay, 0);
     }
 
     /**
@@ -75,15 +72,12 @@ public class ChannelRotationMonitor extends Module implements ISourceEventProvid
      * @param activeStates to monitor
      * @param rotationDelay how long to seek on each frequency before rotating, in milliseconds
      * @param activeStateLossDelay how long to tolerate silence after an active state was observed, in milliseconds
-     * @param userPreferences user preferences
      */
-    public ChannelRotationMonitor(Collection<State> activeStates, long rotationDelay, long activeStateLossDelay,
-                                  UserPreferences userPreferences)
+    public ChannelRotationMonitor(Collection<State> activeStates, long rotationDelay, long activeStateLossDelay)
     {
         mActiveStates = activeStates;
         mRotationDelay = rotationDelay;
         mActiveStateLossDelay = activeStateLossDelay;
-        mUserPreferences = userPreferences;
 
         if(mRotationDelay < CHANNEL_ROTATION_DELAY_MINIMUM)
         {
@@ -177,19 +171,6 @@ public class ChannelRotationMonitor extends Module implements ISourceEventProvid
             mSourceEventListener.receive(SourceEvent.frequencyRotationRequest());
             mLastActiveTimestamp = currentTimeMillis;
             mActiveStateObserved = false;
-        }
-    }
-
-    /**
-     * Guava event bus method to receive notifications when user preferences are updated.  This allows us to
-     * dynamically adjust rotation delay if/when the user changes the rotation delay value.
-     */
-    @Subscribe
-    public void preferenceUpdated(PreferenceType preferenceType)
-    {
-        if(preferenceType == PreferenceType.MULTI_FREQUENCY)
-        {
-            mRotationDelay = mUserPreferences.getChannelMultiFrequencyPreference().getRotationDelay();
         }
     }
 
