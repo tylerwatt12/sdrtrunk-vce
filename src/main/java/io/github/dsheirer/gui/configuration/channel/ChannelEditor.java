@@ -61,6 +61,7 @@ import javafx.scene.control.cell.PropertyValueFactory;
 import javafx.scene.input.MouseButton;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 import javafx.scene.paint.Color;
 import javafx.util.Callback;
@@ -525,6 +526,7 @@ public class ChannelEditor extends SplitPane implements IFilterProcessor, IAlias
         {
             mButtonBox = new VBox();
             mButtonBox.setSpacing(10);
+            mButtonBox.setMinWidth(Region.USE_PREF_SIZE);
             mButtonBox.getChildren().addAll(getNewButton(), getCloneButton(), getDeleteButton());
         }
 
