@@ -50,22 +50,22 @@ public class NoiseSquelch implements INoiseSquelchController
     private float[] mFilteredBuffer = new float[0];
     private float[] mAudioBuffer = new float[0];
     private float mMeanAccumulator;
-    private float mNoiseOpenThreshold = DEFAULT_NOISE_OPEN_THRESHOLD;
-    private float mNoiseCloseThreshold = DEFAULT_NOISE_CLOSE_THRESHOLD;
+    private volatile float mNoiseOpenThreshold = DEFAULT_NOISE_OPEN_THRESHOLD;
+    private volatile float mNoiseCloseThreshold = DEFAULT_NOISE_CLOSE_THRESHOLD;
     private volatile boolean mSquelch = true;
     private volatile boolean mSquelchOverride = false;
     private int mMeanAccumulatorPointer;
     private int mVarianceWindowSize;
-    private int mHysteresisOpenThreshold = DEFAULT_HYSTERESIS_OPEN_THRESHOLD;
-    private int mHysteresisCloseThreshold = DEFAULT_HYSTERESIS_CLOSE_THRESHOLD;
-    private int mHysteresisCount = 0;
+    private volatile int mHysteresisOpenThreshold = DEFAULT_HYSTERESIS_OPEN_THRESHOLD;
+    private volatile int mHysteresisCloseThreshold = DEFAULT_HYSTERESIS_CLOSE_THRESHOLD;
+    private volatile int mHysteresisCount = 0;
     private int mSquelchStateBroadcastCounter = 0;
     private int mSquelchOpenIndex = 0;
     private int mAudioBufferFilterDelay;
     private IRealFilter mHighPassFilter;
     private Listener<float[]> mAudioListener;
     private Listener<SquelchState> mSquelchStateListener;
-    private Listener<NoiseSquelchState> mNoiseSquelchStateListener;
+    private volatile Listener<NoiseSquelchState> mNoiseSquelchStateListener;
 
     /**
      * Constructs an instance
@@ -188,9 +188,11 @@ public class NoiseSquelch implements INoiseSquelchController
      */
     private void broadcastNoiseSquelchState(float noise)
     {
-        if(mNoiseSquelchStateListener != null)
+        Listener<NoiseSquelchState> listener = mNoiseSquelchStateListener;
+
+        if(listener != null)
         {
-            mNoiseSquelchStateListener.receive(new NoiseSquelchState(mSquelch, mSquelchOverride, noise,
+            listener.receive(new NoiseSquelchState(mSquelch, mSquelchOverride, noise,
                     mNoiseOpenThreshold, mNoiseCloseThreshold, mHysteresisCount, mHysteresisOpenThreshold,
                     mHysteresisCloseThreshold));
         }

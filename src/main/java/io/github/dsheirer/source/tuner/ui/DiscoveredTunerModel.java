@@ -82,7 +82,9 @@ public class DiscoveredTunerModel extends AbstractTableModel implements Listener
      */
     public List<DiscoveredTuner> getAvailableTuners()
     {
-        return mDiscoveredTuners.stream().filter(discoveredTuner -> discoveredTuner.hasTuner()).toList();
+        return mDiscoveredTuners.stream()
+            .filter(discoveredTuner -> discoveredTuner.isAvailable() && discoveredTuner.hasTuner())
+            .toList();
     }
 
     /**

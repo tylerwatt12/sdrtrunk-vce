@@ -23,13 +23,11 @@ import io.github.dsheirer.channel.metadata.activity.SelectedFrequencyContext;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.dsp.filter.channelizer.PolyphaseChannelSource;
 import io.github.dsheirer.gui.SplitPaneDividerHelper;
-import io.github.dsheirer.gui.squelch.NoiseSquelchView;
 import io.github.dsheirer.gui.symbol.SymbolView;
 import io.github.dsheirer.gui.theme.ThemeManager;
 import io.github.dsheirer.module.ProcessingChain;
 import io.github.dsheirer.module.decode.FeedbackDecoder;
 import io.github.dsheirer.module.decode.PrimaryDecoder;
-import io.github.dsheirer.module.decode.nbfm.NBFMDecoder;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.sample.Listener;
@@ -75,7 +73,7 @@ import javax.swing.SpinnerNumberModel;
 import javax.swing.event.MouseInputAdapter;
 
 /**
- * Display for channel FFT and squelch details
+ * Display for channel FFT and decoder symbols.
  */
 public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFrequencyContext>
 {
@@ -86,7 +84,6 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
     private static final int CHANNEL_SPECTRUM_MINIMUM_WIDTH = 160;
     private static final String GROW_FILL = "[grow,fill]";
     private static final String SPLIT_PANE_DIVIDER_IDENTIFIER = "channel.spectrum.panel.split.pane.divider";
-    private static final String CARD_NOISE_SQUELCH = "noise_squelch";
     private static final String CARD_SYMBOL = "symbol";
     private static final String CARD_EMPTY = "empty";
     private final ConfigurationManager mConfigurationManager;
@@ -105,9 +102,7 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
     private final JLabel mViewedFrequencyValueLabel;
     private boolean mPanelVisible = false;
     private boolean mDftProcessing = false;
-    private final NoiseSquelchView mNoiseSquelchView;
     private final SymbolView mSymbolView = new SymbolView();
-    private final JFXPanel mNoiseSquelchPanel;
     private final JFXPanel mSymbolPanel;
     private JButton mInspectRfButton;
     private JSplitPane mSplitPane;
@@ -125,7 +120,6 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
         mTunerManager = configurationManager.getTunerManager();
         mUserPreferences = userPreferences;
         mComplexDftProcessor = new ComplexDftProcessor(mUserPreferences.getSpectrumPreference());
-        mNoiseSquelchView = new NoiseSquelchView();
         setLayout(new MigLayout("insets 0", GROW_FILL, GROW_FILL));
 
         JPanel fftPanel = new JPanel();
@@ -215,30 +209,25 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
 
         fftPanel.add(layeredPanel);
 
-        mNoiseSquelchPanel = new JFXPanel();
         mSymbolPanel = new JFXPanel();
-        ThemeManager.getInstance().registerSwing(mNoiseSquelchPanel);
         ThemeManager.getInstance().registerSwing(mSymbolPanel);
 
-        //Spin noise squelch panel construction off onto the JavafX UI thread.
+        //Construct the symbol panel on the JavaFX UI thread.
         Platform.runLater(() -> {
-            Scene scene = new Scene(mNoiseSquelchView);
-            ThemeManager.getInstance().register(scene);
-            mNoiseSquelchPanel.setScene(scene);
-            Scene scene2 = new Scene(mSymbolView);
+            Scene scene = new Scene(mSymbolView);
             URL resource = getClass().getResource("/sdrtrunk_style.css");
 
             if(resource != null)
             {
-                scene2.getStylesheets().add(resource.toExternalForm());
+                scene.getStylesheets().add(resource.toExternalForm());
             }
             else
             {
                 LOGGER.warn("Can't find stylesheet resource for sdrtrunk");
             }
 
-            ThemeManager.getInstance().register(scene2);
-            mSymbolPanel.setScene(scene2);
+            ThemeManager.getInstance().register(scene);
+            mSymbolPanel.setScene(scene);
         });
 
         //Keep all right-side panels in a CardLayout so JFXPanel instances are never removed from the
@@ -247,7 +236,6 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
         //channel switch — resulting in hundreds of leaked threads.
         mRightCardLayout = new CardLayout();
         mRightCardPanel = new JPanel(mRightCardLayout);
-        mRightCardPanel.add(mNoiseSquelchPanel, CARD_NOISE_SQUELCH);
         mRightCardPanel.add(mSymbolPanel, CARD_SYMBOL);
         mRightCardPanel.add(new JPanel(), CARD_EMPTY);
         mRightCardPanel.setMinimumSize(new Dimension(CHANNEL_SPECTRUM_MINIMUM_WIDTH, 0));
@@ -364,7 +352,6 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
 
         updateFFTProcessing();
         updateInspectRfButton();
-        mNoiseSquelchView.setShowing(visible);
         mSymbolView.setShowing(visible);
     }
 
@@ -529,7 +516,6 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
     {
         if(mProcessingChain != null)
         {
-            mNoiseSquelchView.setController(null);
             mSymbolView.removeSymbolProvider();
             mSymbolView.setProtocol("");
             mProcessingChain.removeSourceEventListener(mSourceEventProcessor);
@@ -547,12 +533,7 @@ public class ChannelSpectrumPanel extends JPanel implements Listener<SelectedFre
             mProcessingChain.addSourceEventListener(mSourceEventProcessor);
 
             PrimaryDecoder primaryDecoder = mProcessingChain.getPrimaryDecoder();
-            if(primaryDecoder instanceof NBFMDecoder nbfmDecoder)
-            {
-                mRightCardLayout.show(mRightCardPanel, CARD_NOISE_SQUELCH);
-                mNoiseSquelchView.setController(nbfmDecoder);
-            }
-            else if(primaryDecoder instanceof FeedbackDecoder feedbackDecoder)
+            if(primaryDecoder instanceof FeedbackDecoder feedbackDecoder)
             {
                 mRightCardLayout.show(mRightCardPanel, CARD_SYMBOL);
                 mSymbolView.setSymbolProvider(feedbackDecoder);

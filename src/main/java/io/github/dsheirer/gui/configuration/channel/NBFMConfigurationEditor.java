@@ -25,6 +25,7 @@ import io.github.dsheirer.gui.configuration.decoder.AuxDecoderConfigurationEdito
 import io.github.dsheirer.gui.configuration.eventlog.EventLogConfigurationEditor;
 import io.github.dsheirer.gui.configuration.source.FrequencyEditor;
 import io.github.dsheirer.gui.configuration.source.SourceConfigurationEditor;
+import io.github.dsheirer.gui.squelch.NoiseSquelchView;
 import io.github.dsheirer.dsp.squelch.NoiseSquelch;
 import io.github.dsheirer.dsp.squelch.SquelchTailRemover;
 import io.github.dsheirer.module.decode.DecoderType;
@@ -32,6 +33,8 @@ import io.github.dsheirer.module.decode.am.DecodeConfigAM;
 import io.github.dsheirer.module.decode.config.AuxDecodeConfiguration;
 import io.github.dsheirer.module.decode.config.DecodeConfiguration;
 import io.github.dsheirer.module.decode.nbfm.DecodeConfigNBFM;
+import io.github.dsheirer.module.decode.nbfm.NBFMDecoder;
+import io.github.dsheirer.module.ProcessingChain;
 import io.github.dsheirer.module.log.EventLogType;
 import io.github.dsheirer.module.log.config.EventLogConfiguration;
 import io.github.dsheirer.configuration.ConfigurationManager;
@@ -52,6 +55,9 @@ import javafx.geometry.HPos;
 import javafx.geometry.Insets;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Button;
+import javafx.scene.control.ButtonType;
+import javafx.scene.control.Dialog;
+import javafx.scene.control.Alert;
 import javafx.scene.control.Label;
 import javafx.scene.control.Spinner;
 import javafx.scene.control.SpinnerValueFactory;
@@ -92,6 +98,9 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
     private Spinner<Double> mNoiseCloseSpinner;
     private Spinner<Integer> mHysteresisOpenSpinner;
     private Spinner<Integer> mHysteresisCloseSpinner;
+    private Button mLiveSquelchButton;
+    private Dialog<ButtonType> mLiveSquelchDialog;
+    private boolean mLoadingSquelchControls;
     private TextFormatter<Integer> mTalkgroupTextFormatter;
     private ToggleSwitch mBasebandRecordSwitch;
     private SegmentedButton mBandwidthButton;
@@ -324,6 +333,8 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
                 getHysteresisCloseSpinner().getValueFactory().setValue(NoiseSquelch.DEFAULT_HYSTERESIS_CLOSE_THRESHOLD);
             });
             gridPane.add(defaultsButton, 4, 1);
+
+            gridPane.add(getLiveSquelchButton(), 4, 0);
 
             mSquelchPane = new TitledPane("Squelch", gridPane);
             mSquelchPane.setExpanded(true);
@@ -689,7 +700,129 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
         spinner.setPrefWidth(100);
         spinner.getStyleClass().add(Spinner.STYLE_CLASS_SPLIT_ARROWS_HORIZONTAL);
         spinner.setTooltip(new Tooltip(tooltip));
-        spinner.valueProperty().addListener((observable, oldValue, newValue) -> modifiedProperty().set(true));
+        spinner.valueProperty().addListener((observable, oldValue, newValue) -> {
+            if(!mLoadingSquelchControls)
+            {
+                modifiedProperty().set(true);
+            }
+        });
+    }
+
+    private Button getLiveSquelchButton()
+    {
+        if(mLiveSquelchButton == null)
+        {
+            mLiveSquelchButton = new Button("Live Adjuster…");
+            mLiveSquelchButton.setDisable(true);
+            mLiveSquelchButton.setTooltip(new Tooltip("Adjust squelch with live signal feedback while this channel is running"));
+            mLiveSquelchButton.setOnAction(event -> showLiveSquelchAdjuster());
+        }
+
+        return mLiveSquelchButton;
+    }
+
+    private void showLiveSquelchAdjuster()
+    {
+        if(getItem() == null || !getItem().isProcessing())
+        {
+            showLiveSquelchUnavailable();
+            return;
+        }
+
+        ProcessingChain processingChain = getConfigurationManager().getChannelProcessingManager()
+            .getProcessingChain(getItem());
+
+        if(processingChain == null || !(processingChain.getPrimaryDecoder() instanceof NBFMDecoder decoder))
+        {
+            showLiveSquelchUnavailable();
+            return;
+        }
+
+        NoiseSquelchView view = new NoiseSquelchView(getConfigurationManager());
+        Dialog<ButtonType> dialog = new Dialog<>();
+        dialog.setTitle("Live Squelch Adjuster - " + getItem().getName());
+        dialog.setResizable(true);
+        dialog.getDialogPane().getButtonTypes().add(ButtonType.CLOSE);
+        dialog.getDialogPane().setContent(view);
+        dialog.getDialogPane().setPrefSize(900, 600);
+
+        if(getLiveSquelchButton().getScene() != null)
+        {
+            dialog.initOwner(getLiveSquelchButton().getScene().getWindow());
+        }
+
+        mLiveSquelchDialog = dialog;
+        view.setController(decoder);
+        view.setShowing(true);
+
+        try
+        {
+            dialog.showAndWait();
+        }
+        finally
+        {
+            view.setShowing(false);
+            view.setController(null);
+            mLiveSquelchDialog = null;
+
+            if(getItem() != null && getItem().getDecodeConfiguration() instanceof DecodeConfigNBFM config)
+            {
+                loadSquelchControls(config);
+            }
+        }
+    }
+
+    private void showLiveSquelchUnavailable()
+    {
+        Alert alert = new Alert(Alert.AlertType.INFORMATION,
+            "Start this channel before opening the live squelch adjuster.", ButtonType.OK);
+        alert.setHeaderText("Live squelch feedback is unavailable");
+
+        if(getLiveSquelchButton().getScene() != null)
+        {
+            alert.initOwner(getLiveSquelchButton().getScene().getWindow());
+        }
+
+        alert.showAndWait();
+    }
+
+    private void loadSquelchControls(DecodeConfigNBFM config)
+    {
+        boolean modified = modifiedProperty().get();
+        mLoadingSquelchControls = true;
+
+        try
+        {
+            getNoiseOpenSpinner().getValueFactory().setValue(noiseSpinnerValue(config.getSquelchNoiseOpenThreshold()));
+            getNoiseCloseSpinner().getValueFactory().setValue(noiseSpinnerValue(config.getSquelchNoiseCloseThreshold()));
+            getHysteresisOpenSpinner().getValueFactory().setValue(config.getSquelchHysteresisOpenThreshold());
+            getHysteresisCloseSpinner().getValueFactory().setValue(config.getSquelchHysteresisCloseThreshold());
+        }
+        finally
+        {
+            mLoadingSquelchControls = false;
+            modifiedProperty().set(modified);
+        }
+    }
+
+    @Override
+    protected void channelProcessingStateChanged(boolean processing)
+    {
+        getLiveSquelchButton().setDisable(!processing);
+
+        if(!processing && mLiveSquelchDialog != null)
+        {
+            mLiveSquelchDialog.close();
+        }
+    }
+
+    @Override
+    public void dispose()
+    {
+        if(mLiveSquelchDialog != null)
+        {
+            mLiveSquelchDialog.close();
+        }
     }
 
     private static double noiseSpinnerValue(float value)
@@ -810,15 +943,11 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
             getOutputGainSpinner().setDisable(false);
             getOutputGainSpinner().getValueFactory().setValue((double)decodeConfigNBFM.getOutputGain());
             getNoiseOpenSpinner().setDisable(false);
-            getNoiseOpenSpinner().getValueFactory().setValue(
-                    noiseSpinnerValue(decodeConfigNBFM.getSquelchNoiseOpenThreshold()));
             getNoiseCloseSpinner().setDisable(false);
-            getNoiseCloseSpinner().getValueFactory().setValue(
-                    noiseSpinnerValue(decodeConfigNBFM.getSquelchNoiseCloseThreshold()));
             getHysteresisOpenSpinner().setDisable(false);
-            getHysteresisOpenSpinner().getValueFactory().setValue(decodeConfigNBFM.getSquelchHysteresisOpenThreshold());
             getHysteresisCloseSpinner().setDisable(false);
-            getHysteresisCloseSpinner().getValueFactory().setValue(decodeConfigNBFM.getSquelchHysteresisCloseThreshold());
+            loadSquelchControls(decodeConfigNBFM);
+            getLiveSquelchButton().setDisable(getItem() == null || !getItem().isProcessing());
         }
         else
         {
@@ -860,6 +989,7 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
             getHysteresisOpenSpinner().getValueFactory().setValue(NoiseSquelch.DEFAULT_HYSTERESIS_OPEN_THRESHOLD);
             getHysteresisCloseSpinner().setDisable(true);
             getHysteresisCloseSpinner().getValueFactory().setValue(NoiseSquelch.DEFAULT_HYSTERESIS_CLOSE_THRESHOLD);
+            getLiveSquelchButton().setDisable(true);
         }
     }
 

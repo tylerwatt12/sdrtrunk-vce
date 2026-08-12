@@ -41,7 +41,7 @@ public class NoiseSquelchTestApplication extends Application
         //Register FontAwesome so we can use the fonts in Swing windows
         IconFontFX.register(FontAwesome.getIconFont());
 
-        NoiseSquelchView view = new NoiseSquelchView();
+        NoiseSquelchView view = new NoiseSquelchView(null);
         view.setShowing(true);
         Scene scene = new Scene(view, 700, 500);
         primaryStage.setTitle("Noise Squelch View");
