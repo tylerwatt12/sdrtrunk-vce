@@ -726,6 +726,7 @@ public class DecoderFactory
                     DecodeConfigP25Phase1 originalP25 = (DecodeConfigP25Phase1)config;
                     DecodeConfigP25Phase1 copyP25 = new DecodeConfigP25Phase1();
                     copyP25.setIgnoreDataCalls(originalP25.getIgnoreDataCalls());
+                    copyP25.setLearnAnnouncedControlChannels(originalP25.getLearnAnnouncedControlChannels());
                     copyP25.setModulation(originalP25.getModulation());
                     copyP25.setTrafficChannelPoolSize(originalP25.getTrafficChannelPoolSize());
                     return copyP25;
@@ -737,6 +738,10 @@ public class DecoderFactory
                 case P25_PHASE2:
                     DecodeConfigP25Phase2 originalP25P2 = (DecodeConfigP25Phase2)config;
                     DecodeConfigP25Phase2 copyP25P2 = new DecodeConfigP25Phase2();
+                    copyP25P2.setIgnoreDataCalls(originalP25P2.getIgnoreDataCalls());
+                    copyP25P2.setLearnAnnouncedControlChannels(
+                        originalP25P2.getLearnAnnouncedControlChannels());
+                    copyP25P2.setTrafficChannelPoolSize(originalP25P2.getTrafficChannelPoolSize());
 
                     if(originalP25P2.getScrambleParameters() != null)
                     {

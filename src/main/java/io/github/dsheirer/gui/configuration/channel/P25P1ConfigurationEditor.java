@@ -294,7 +294,7 @@ public class P25P1ConfigurationEditor extends ChannelConfigurationEditor
             mLearnAnnouncedControlChannelsCheckBox = new CheckBox("Learn announced control channels");
             mLearnAnnouncedControlChannelsCheckBox.setDisable(true);
             mLearnAnnouncedControlChannelsCheckBox.setTooltip(new Tooltip(
-                "Adds stabilized current and alternate control channel frequencies announced by this site to the source list"));
+                "Maintains verified current and alternate controls announced by the immutable learned site identity"));
             mLearnAnnouncedControlChannelsCheckBox.selectedProperty()
                 .addListener((observable, oldValue, newValue) -> modifiedProperty().set(true));
         }

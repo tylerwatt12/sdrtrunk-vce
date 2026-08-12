@@ -11,36 +11,43 @@
 
 package io.github.dsheirer.metadata.site;
 
+import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
-import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Learns stable, over-the-air announced P25 control channels into the owning configuration channel.
+ * Maintains the verified, over-the-air announced P25 control channels for one immutable site identity.
  */
 public class SiteControlChannelLearner implements SiteMetadataListener
 {
     private static final Logger LOGGER = LoggerFactory.getLogger(SiteControlChannelLearner.class);
     private static final String ROLE_CURRENT_CONTROL = "primary_control";
     private static final String ROLE_SECONDARY_CONTROL = "secondary_control";
+    static final long ABSENT_FREQUENCY_RECONCILIATION_DELAY_MILLISECONDS = TimeUnit.MINUTES.toMillis(10);
 
-    private final ConfigurationManager mConfigurationManager;
-    private final Map<Integer,Set<Long>> mLearnedFrequenciesByChannel = new HashMap<>();
+    private final Runnable mConfigurationSaveScheduler;
+    private final Map<String,Long> mMatchingIdentityObservedSince = new HashMap<>();
+    private final Map<String,Long> mLastObservedSourceFrequency = new HashMap<>();
 
-    /**
-     * Constructs an instance.
-     */
     public SiteControlChannelLearner(ConfigurationManager configurationManager)
     {
-        mConfigurationManager = configurationManager;
+        this(configurationManager != null ? configurationManager::scheduleConfigurationSave : () -> {});
+    }
+
+    SiteControlChannelLearner(Runnable configurationSaveScheduler)
+    {
+        mConfigurationSaveScheduler = configurationSaveScheduler != null ? configurationSaveScheduler : () -> {};
     }
 
     @Override
@@ -61,31 +68,78 @@ public class SiteControlChannelLearner implements SiteMetadataListener
             return;
         }
 
-        Set<Long> controlFrequencies = getControlChannelFrequencies(event.snapshot());
+        P25SiteIdentity observedIdentity = P25SiteIdentity.from(event.snapshot());
+        Set<Long> advertisedFrequencies = getControlChannelFrequencies(event.snapshot());
+        long sourceFrequency = event.sourceFrequency();
+        String channelKey = channel.getConfigurationId();
+
+        //A complete identity is authoritative only when the site identifies the frequency currently being decoded as
+        //one of its own controls. This prevents stale snapshots from authorizing a different tuning epoch.
+        if(observedIdentity == null || sourceFrequency <= 0 || !advertisedFrequencies.contains(sourceFrequency))
+        {
+            mMatchingIdentityObservedSince.remove(channelKey);
+            return;
+        }
+
+        P25SiteIdentity boundIdentity = channel.getP25SiteIdentity();
+
+        if(boundIdentity != null && !boundIdentity.equals(observedIdentity))
+        {
+            mMatchingIdentityObservedSince.remove(channelKey);
+            mLastObservedSourceFrequency.put(channelKey, sourceFrequency);
+
+            if(removeRejectedLearnedSource(channel, decodeConfig, sourceConfig, sourceFrequency))
+            {
+                LOGGER.warn("Removed learned P25 control channel {} Hz for channel {}; decoded identity {} does not " +
+                    "match bound identity {}", sourceFrequency, channel.getName(), observedIdentity.display(),
+                    boundIdentity.display());
+                configurationChanged(channel, sourceConfig);
+            }
+
+            return;
+        }
 
         boolean changed = false;
-        Set<Long> learned = mLearnedFrequenciesByChannel.computeIfAbsent(channel.getChannelID(),
-            ignored -> new LinkedHashSet<>());
 
-        for(Long frequency: controlFrequencies)
+        if(boundIdentity == null)
+        {
+            channel.bindP25SiteIdentity(observedIdentity);
+            boundIdentity = observedIdentity;
+            changed = true;
+            LOGGER.info("Bound P25 channel {} to site identity {}", channel.getName(), boundIdentity.display());
+        }
+
+        for(Long frequency: advertisedFrequencies)
         {
             if(frequency != null && frequency > 0 && !sourceConfig.getFrequencies().contains(frequency))
             {
                 sourceConfig.addFrequency(frequency);
-                learned.add(frequency);
+                decodeConfig.addLearnedControlFrequency(frequency);
                 changed = true;
-                LOGGER.info("Learned announced P25 control channel {} Hz for channel {}", frequency, channel.getName());
+                LOGGER.info("Learned announced P25 control channel {} Hz for channel {} ({})", frequency,
+                    channel.getName(), boundIdentity.display());
             }
         }
 
-        if(reconcileLearnedFrequencies(sourceConfig, learned, controlFrequencies))
+        long observedAt = event.observedAtEpochMilliseconds() > 0 ? event.observedAtEpochMilliseconds() :
+            System.currentTimeMillis();
+        Long matchingSince = mMatchingIdentityObservedSince.get(channelKey);
+        Long lastSourceFrequency = mLastObservedSourceFrequency.put(channelKey, sourceFrequency);
+
+        if(matchingSince == null || observedAt < matchingSince || lastSourceFrequency == null ||
+            lastSourceFrequency != sourceFrequency)
+        {
+            mMatchingIdentityObservedSince.put(channelKey, observedAt);
+        }
+        else if(observedAt - matchingSince >= ABSENT_FREQUENCY_RECONCILIATION_DELAY_MILLISECONDS &&
+            reconcileAbsentLearnedFrequencies(decodeConfig, sourceConfig, advertisedFrequencies))
         {
             changed = true;
         }
 
         if(changed)
         {
-            mConfigurationManager.scheduleConfigurationSave();
+            configurationChanged(channel, sourceConfig);
         }
     }
 
@@ -112,23 +166,39 @@ public class SiteControlChannelLearner implements SiteMetadataListener
 
     private boolean isCurrentSiteControlChannel(String role)
     {
-        return ROLE_CURRENT_CONTROL.equals(role) || "current_control".equals(role) || ROLE_SECONDARY_CONTROL.equals(role);
+        return ROLE_CURRENT_CONTROL.equals(role) || "current_control".equals(role) ||
+            ROLE_SECONDARY_CONTROL.equals(role);
     }
 
-    private boolean reconcileLearnedFrequencies(SourceConfigTunerMultipleFrequency sourceConfig, Set<Long> learned,
-                                                Set<Long> promoted)
+    private boolean removeRejectedLearnedSource(Channel channel, DecodeConfigP25 decodeConfig,
+                                                SourceConfigTunerMultipleFrequency sourceConfig,
+                                                long sourceFrequency)
     {
-        if(learned.isEmpty())
+        if(!decodeConfig.getLearnedControlFrequencies().contains(sourceFrequency) ||
+            !sourceConfig.getFrequencies().contains(sourceFrequency) || sourceConfig.getFrequencies().size() <= 1)
         {
             return false;
         }
 
-        Set<Long> remove = new LinkedHashSet<>();
-        long preferredFrequency = sourceConfig.getPreferredFrequency();
+        List<Long> retained = sourceConfig.getFrequencies().stream()
+            .filter(frequency -> frequency != sourceFrequency)
+            .toList();
+        sourceConfig.setFrequencies(retained);
+        decodeConfig.removeLearnedControlFrequency(sourceFrequency);
+        return true;
+    }
 
-        for(Long frequency: learned)
+    private boolean reconcileAbsentLearnedFrequencies(DecodeConfigP25 decodeConfig,
+                                                       SourceConfigTunerMultipleFrequency sourceConfig,
+                                                       Set<Long> advertised)
+    {
+        Set<Long> remove = new LinkedHashSet<>();
+
+        for(Long frequency: decodeConfig.getLearnedControlFrequencies())
         {
-            if(frequency != null && frequency != preferredFrequency && !promoted.contains(frequency))
+            if(frequency != null && !advertised.contains(frequency) &&
+                sourceConfig.getFrequencies().contains(frequency) &&
+                sourceConfig.getFrequencies().size() - remove.size() > 1)
             {
                 remove.add(frequency);
             }
@@ -142,7 +212,21 @@ public class SiteControlChannelLearner implements SiteMetadataListener
         sourceConfig.setFrequencies(sourceConfig.getFrequencies().stream()
             .filter(frequency -> !remove.contains(frequency))
             .toList());
-        learned.removeAll(remove);
+
+        for(Long frequency: remove)
+        {
+            decodeConfig.removeLearnedControlFrequency(frequency);
+            LOGGER.info("Removed P25 control channel {} Hz because the bound site no longer advertises it", frequency);
+        }
+
         return true;
+    }
+
+    private void configurationChanged(Channel channel, SourceConfigTunerMultipleFrequency sourceConfig)
+    {
+        //Refresh the channel's observable frequency list and cached tuner-channel projections after mutating the live
+        //rotation configuration.
+        channel.setSourceConfiguration(sourceConfig);
+        mConfigurationSaveScheduler.run();
     }
 }
