@@ -26,6 +26,7 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import javafx.animation.KeyFrame;
@@ -51,6 +52,7 @@ public class ReceiverQueuesView extends BorderPane
     private static final DateTimeFormatter LOCAL_TIMESTAMP = DateTimeFormatter.ISO_OFFSET_DATE_TIME;
     private static final DateTimeFormatter UTC_TIMESTAMP = DateTimeFormatter.ISO_INSTANT;
     private static final int CHANNELIZER_BATCH_SAMPLE_COUNT = 1024;
+    private static final int CHANNEL_OUTPUT_SLOTS = 24;
 
     private final TunerManager mTunerManager;
     private final TextArea mReadout = new TextArea();
@@ -113,6 +115,7 @@ public class ReceiverQueuesView extends BorderPane
         mCurrentLocalTimestamp = LOCAL_TIMESTAMP.format(captured.atZone(ZoneId.systemDefault()));
         mCurrentReadout = render(captured, System.nanoTime());
         double scrollTop = mReadout.getScrollTop();
+        double scrollLeft = mReadout.getScrollLeft();
         int anchor = mReadout.getAnchor();
         int caret = mReadout.getCaretPosition();
         boolean firstRender = mReadout.getText().isEmpty();
@@ -127,6 +130,7 @@ public class ReceiverQueuesView extends BorderPane
             int length = mCurrentReadout.length();
             mReadout.selectRange(Math.min(anchor, length), Math.min(caret, length));
             mReadout.setScrollTop(scrollTop);
+            mReadout.setScrollLeft(scrollLeft);
         }
 
         mCopyStatus.setText("Live readout captured " + mCurrentLocalTimestamp);
@@ -163,12 +167,13 @@ public class ReceiverQueuesView extends BorderPane
         sb.append("  Values are a best-effort instant and can change independently while the snapshot is assembled.\n");
         sb.append("  Waiting = still in the queue. In-flight = drained from the queue but still held/being processed.\n");
         sb.append("  Dropped = queue-overflow loss. Discarded also includes shutdown/stopped-race cleanup.\n");
+        sb.append("  Each tuner uses 24 fixed channel rows; adding or removing a tuner changes the total line count.\n");
 
-        List<DiscoveredTuner> tuners = mTunerManager.getAvailableTuners();
+        List<DiscoveredTuner> tuners = mTunerManager.getDiscoveredTunerModel().getDiscoveredTuners();
 
         if(tuners.isEmpty())
         {
-            sb.append("\nNo enabled tuner is currently available.\n");
+            sb.append("\nNo tuner has been discovered.\n");
             return sb.toString();
         }
 
@@ -189,66 +194,60 @@ public class ReceiverQueuesView extends BorderPane
         sb.append("TUNER ").append(tunerNumber).append(": ").append(discoveredTuner.getId()).append('\n');
         sb.append("Status         : ").append(discoveredTuner.getTunerStatus()).append('\n');
 
+        String centerAndSample = "unavailable during tuner lifecycle change";
+        String metricsStatus = "unavailable during tuner lifecycle change";
+        ReceiverQueueMetricsSnapshot snapshot = null;
+
         try
         {
             Tuner tuner = discoveredTuner.getTuner();
 
-            if(tuner == null)
+            if(tuner != null)
             {
-                sb.append("Metrics        : tuner instance is unavailable during a lifecycle change\n");
-                return;
-            }
+                centerAndSample = formatFrequency(tuner.getTunerController().getFrequency()) + " / " +
+                    formatRate(tuner.getTunerController().getSampleRate());
+                ChannelSourceManager sourceManager = tuner.getChannelSourceManager();
 
-            sb.append("Center/sample  : ").append(formatFrequency(tuner.getTunerController().getFrequency())).append(" / ")
-                .append(formatRate(tuner.getTunerController().getSampleRate())).append('\n');
-
-            ChannelSourceManager sourceManager = tuner.getChannelSourceManager();
-
-            if(!(sourceManager instanceof PolyphaseChannelSourceManager polyphaseManager))
-            {
-                sb.append("Metrics        : not a live polyphase tuner source\n");
-                return;
-            }
-
-            ReceiverQueueMetricsSnapshot snapshot = polyphaseManager.getQueueMetricsSnapshot();
-            renderRawInput(sb, snapshot.rawInput(), capturedNanos);
-            List<ChannelQueueMetrics> channels = snapshot.channels();
-            double channelizerOutputRate = channels.isEmpty() ? Double.NaN : channels.getFirst().sampleRate();
-            renderQueue(sb, "IFFT (tuner-wide)", snapshot.ifft(), capturedNanos, channelizerOutputRate);
-            sb.append("\n  ACTIVE CHANNEL OUTPUTS: ").append(channels.size()).append('\n');
-
-            if(channels.isEmpty())
-            {
-                sb.append("    none\n");
+                if(sourceManager instanceof PolyphaseChannelSourceManager polyphaseManager)
+                {
+                    snapshot = polyphaseManager.getQueueMetricsSnapshot();
+                    metricsStatus = snapshot.rawInput() == null && snapshot.ifft() == null ?
+                        "unavailable during tuner lifecycle change" : "available";
+                }
+                else
+                {
+                    metricsStatus = "not a live polyphase tuner source";
+                }
             }
             else
             {
-                int channelNumber = 0;
-
-                for(ChannelQueueMetrics channel: channels)
-                {
-                    channelNumber++;
-                    sb.append("\n    CHANNEL ").append(channelNumber).append(": ")
-                        .append(formatFrequency(channel.requestedFrequency())).append("; output rate ")
-                        .append(formatRate(channel.sampleRate())).append('\n');
-                    renderQueue(sb, "Output", channel.output(), capturedNanos, channel.sampleRate());
-                }
+                metricsStatus = "tuner instance is unavailable during a lifecycle change";
             }
         }
         catch(RuntimeException e)
         {
-            sb.append("Metrics        : unavailable during tuner lifecycle change (")
-                .append(e.getClass().getSimpleName()).append(")\n");
+            metricsStatus = "unavailable during tuner lifecycle change (" + e.getClass().getSimpleName() + ")";
         }
+
+        sb.append("Center/sample  : ").append(centerAndSample).append('\n');
+        sb.append("Metrics        : ").append(metricsStatus).append('\n');
+
+        NativeBufferMetrics rawInput = snapshot != null ? snapshot.rawInput() : null;
+        QueueMetrics ifft = snapshot != null ? snapshot.ifft() : null;
+        List<ChannelQueueMetrics> channels = snapshot != null ? snapshot.channels() : List.of();
+        double channelizerOutputRate = channels.isEmpty() ? Double.NaN : channels.getFirst().sampleRate();
+        renderRawInput(sb, rawInput, capturedNanos);
+        renderQueue(sb, "IFFT (tuner-wide)", ifft, capturedNanos, channelizerOutputRate);
+        renderChannelOutputs(sb, channels, capturedNanos);
     }
 
-    private void renderRawInput(StringBuilder sb, NativeBufferMetrics metrics, long capturedNanos)
+    static void renderRawInput(StringBuilder sb, NativeBufferMetrics metrics, long capturedNanos)
     {
         sb.append("\n  RAW TUNER IQ (before channelizer)\n");
 
         if(metrics == null)
         {
-            sb.append("    unavailable or not started\n");
+            appendUnavailableRawInput(sb);
             return;
         }
 
@@ -284,21 +283,19 @@ public class ReceiverQueuesView extends BorderPane
         sb.append("    Last ingress: ").append(formatAge(capturedNanos, metrics.lastIngressNanos())).append('\n');
         sb.append("    Last finish : ").append(formatAge(capturedNanos, metrics.lastCompletionNanos())).append('\n');
 
-        if(metrics.inFlightBuffers() > 0)
-        {
-            sb.append("    Active age  : ").append(formatAge(capturedNanos, metrics.activeSinceNanos())).append('\n');
-        }
+        sb.append("    Active age  : ").append(metrics.inFlightBuffers() > 0 ?
+            formatAge(capturedNanos, metrics.activeSinceNanos()) : "inactive").append('\n');
     }
 
-    private void renderQueue(StringBuilder sb, String label, QueueMetrics metrics, long capturedNanos,
-                             double channelSampleRate)
+    static void renderQueue(StringBuilder sb, String label, QueueMetrics metrics, long capturedNanos,
+                            double channelSampleRate)
     {
         String indent = label.equals("Output") ? "      " : "    ";
         sb.append(label.equals("Output") ? "" : "\n  ").append(label.toUpperCase(Locale.ROOT)).append('\n');
 
         if(metrics == null)
         {
-            sb.append(indent).append("unavailable or not started\n");
+            appendUnavailableQueue(sb, indent);
             return;
         }
 
@@ -319,11 +316,159 @@ public class ReceiverQueuesView extends BorderPane
         sb.append(indent).append("Last ingress: ").append(formatAge(capturedNanos, metrics.lastIngressNanos())).append('\n');
         sb.append(indent).append("Last finish : ").append(formatAge(capturedNanos, metrics.lastCompletionNanos())).append('\n');
 
-        if(metrics.callbackActive())
+        sb.append(indent).append("Callback age: ").append(metrics.callbackActive() ?
+            formatAge(capturedNanos, metrics.activeSinceNanos()) : "inactive").append('\n');
+    }
+
+    private static void appendUnavailableRawInput(StringBuilder sb)
+    {
+        sb.append("    State       : unavailable or not started\n");
+        sb.append("    Queue limit : unavailable\n");
+        sb.append("    Waiting     : unavailable\n");
+        sb.append("    In-flight   : unavailable\n");
+        sb.append("    Retained    : unavailable\n");
+        sb.append("    High water  : unavailable\n");
+        sb.append("    Received    : unavailable\n");
+        sb.append("    Processed   : unavailable\n");
+        sb.append("    Dropped     : unavailable\n");
+        sb.append("    Cleanup     : unavailable\n");
+        sb.append("    Last ingress: unavailable\n");
+        sb.append("    Last finish : unavailable\n");
+        sb.append("    Active age  : inactive\n");
+    }
+
+    private static void appendUnavailableQueue(StringBuilder sb, String indent)
+    {
+        sb.append(indent).append("State       : unavailable or not started\n");
+        sb.append(indent).append("Queue limit : unavailable\n");
+        sb.append(indent).append("Outstanding : unavailable\n");
+        sb.append(indent).append("High water  : unavailable\n");
+        sb.append(indent).append("Totals      : unavailable\n");
+        sb.append(indent).append("Loss/cleanup: unavailable\n");
+        sb.append(indent).append("Last ingress: unavailable\n");
+        sb.append(indent).append("Last finish : unavailable\n");
+        sb.append(indent).append("Callback age: inactive\n");
+    }
+
+    /**
+     * Renders a fixed-size channel table so normal traffic-channel starts and stops do not change the readout's line
+     * count or scrollbar range.  Any unusually large overflow is reported without expanding the table.
+     */
+    static void renderChannelOutputs(StringBuilder sb, List<ChannelQueueMetrics> channels, long capturedNanos)
+    {
+        List<ChannelQueueMetrics> sorted = new ArrayList<>(channels);
+        sorted.sort((left, right) -> Long.compare(left.requestedFrequency(), right.requestedFrequency()));
+        int visibleCount = Math.min(sorted.size(), CHANNEL_OUTPUT_SLOTS);
+
+        sb.append("\n  ACTIVE CHANNEL OUTPUTS: ").append(channels.size()).append('\n');
+        sb.append("    Fixed slots: ").append(CHANNEL_OUTPUT_SLOTS)
+            .append(" (inactive slots remain visible to keep this readout stable)\n");
+        sb.append("    #  Frequency      Rate         State       Queue W+F/limit  High  ")
+            .append("Received/Accepted/Processed  Dropped/Discarded  Last in / finish  Callback\n");
+
+        for(int slot = 0; slot < CHANNEL_OUTPUT_SLOTS; slot++)
         {
-            sb.append(indent).append("Callback age: ").append(formatAge(capturedNanos, metrics.activeSinceNanos()))
-                .append('\n');
+            if(slot < visibleCount)
+            {
+                appendChannelOutputRow(sb, slot + 1, sorted.get(slot), capturedNanos);
+            }
+            else
+            {
+                sb.append(String.format(Locale.US, "    %2d  %-13s %-12s %-11s %-16s %-5s %-28s %-18s %-17s %s\n",
+                    slot + 1, "-- inactive --", "-", "-", "-", "-", "-", "-", "-", "-"));
+            }
         }
+
+        appendHiddenChannelSummary(sb, sorted.subList(visibleCount, sorted.size()), capturedNanos);
+    }
+
+    private static void appendHiddenChannelSummary(StringBuilder sb, List<ChannelQueueMetrics> hidden,
+                                                   long capturedNanos)
+    {
+        int unavailable = 0;
+        int maximumOutstanding = 0;
+        int maximumHighWater = 0;
+        int activeCallbacks = 0;
+        long dropped = 0;
+        long discarded = 0;
+        long oldestActiveSince = Long.MAX_VALUE;
+
+        for(ChannelQueueMetrics channel: hidden)
+        {
+            QueueMetrics metrics = channel.output();
+
+            if(metrics == null)
+            {
+                unavailable++;
+                continue;
+            }
+
+            maximumOutstanding = Math.max(maximumOutstanding, metrics.outstanding());
+            maximumHighWater = Math.max(maximumHighWater, metrics.highWaterOutstanding());
+            dropped += metrics.dropped();
+            discarded += metrics.discarded();
+
+            if(metrics.callbackActive())
+            {
+                activeCallbacks++;
+
+                if(metrics.activeSinceNanos() > 0)
+                {
+                    oldestActiveSince = Math.min(oldestActiveSince, metrics.activeSinceNanos());
+                }
+            }
+        }
+
+        String oldestCallback = activeCallbacks > 0 && oldestActiveSince < Long.MAX_VALUE ?
+            compactAge(capturedNanos, oldestActiveSince) : "inactive";
+        sb.append("    Additional active outputs not shown: ").append(hidden.size())
+            .append("; unavailable ").append(unavailable)
+            .append("; max outstanding/high ").append(maximumOutstanding).append('/').append(maximumHighWater)
+            .append("; dropped/discarded ").append(formatCount(dropped)).append('/').append(formatCount(discarded))
+            .append("; active callbacks ").append(activeCallbacks)
+            .append("; oldest callback ").append(oldestCallback).append('\n');
+    }
+
+    private static void appendChannelOutputRow(StringBuilder sb, int slot, ChannelQueueMetrics channel,
+                                               long capturedNanos)
+    {
+        QueueMetrics metrics = channel.output();
+
+        if(metrics == null)
+        {
+            sb.append(String.format(Locale.US, "    %2d  %-13s %-12s %-11s %-16s %-5s %-28s %-18s %-17s %s\n",
+                slot, compactFrequency(channel.requestedFrequency()), formatRate(channel.sampleRate()), "unavailable",
+                "-", "-", "-", "-", "-", "-"));
+            return;
+        }
+
+        String state = metrics.running() ? (metrics.callbackActive() ? "run/active" : "run/idle") : "stopped";
+        String limit = metrics.unbounded() ? "unbounded" : Integer.toString(metrics.configuredLimit());
+        String queue = metrics.waiting() + "+" + metrics.inFlight() + "/" + limit;
+        String totals = formatCount(metrics.received()) + "/" + formatCount(metrics.accepted()) + "/" +
+            formatCount(metrics.processed());
+        String loss = formatCount(metrics.dropped()) + "/" + formatCount(metrics.discarded());
+        String progress = compactAge(capturedNanos, metrics.lastIngressNanos()) + " / " +
+            compactAge(capturedNanos, metrics.lastCompletionNanos());
+        String callback = metrics.callbackActive() ? compactAge(capturedNanos, metrics.activeSinceNanos()) : "inactive";
+        sb.append(String.format(Locale.US, "    %2d  %-13s %-12s %-11s %-16s %-5d %-28s %-18s %-17s %s\n",
+            slot, compactFrequency(channel.requestedFrequency()), formatRate(channel.sampleRate()), state, queue,
+            metrics.highWaterOutstanding(), totals, loss, progress, callback));
+    }
+
+    private static String compactFrequency(long frequency)
+    {
+        return String.format(Locale.US, "%.6f MHz", frequency / 1_000_000.0);
+    }
+
+    private static String compactAge(long capturedNanos, long eventNanos)
+    {
+        if(eventNanos <= 0)
+        {
+            return "never";
+        }
+
+        return String.format(Locale.US, "%.3fs", Math.max(0, capturedNanos - eventNanos) / 1_000_000_000.0);
     }
 
     private static String formatBatchDuration(int batches, double channelSampleRate)

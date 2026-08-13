@@ -33,7 +33,6 @@ import io.github.dsheirer.preference.UserPreferences;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import java.util.function.Predicate;
 import javafx.application.Platform;
 import javafx.beans.property.ReadOnlyObjectWrapper;
 import javafx.beans.value.ObservableValue;
@@ -98,7 +97,8 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
     private Button mDeleteAliasListButton;
     private FilteredList<Alias> mAliasFilteredList;
     private SortedList<Alias> mAliasSortedList;
-    private AliasPredicate mAliasPredicate;
+    private boolean mAliasSelectionRefreshPending;
+    private boolean mAliasSelectionRefreshRequested;
 
     /**
      * Constructs an instance
@@ -130,7 +130,7 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
     @Override
     public void prepareForAliasListRefresh()
     {
-        getAliasTableView().getSelectionModel().select(null);
+        getAliasTableView().getSelectionModel().clearSelection();
     }
 
     /**
@@ -164,7 +164,7 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
         }
     }
 
-    private void setAliases(List<Alias> aliases)
+    private void setAliases()
     {
         //Prompt the user to save if the contents of the current channel editor have been modified
         if(getAliasItemEditor().modifiedProperty().get())
@@ -189,6 +189,10 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
                 getAliasItemEditor().save();
             }
         }
+
+        //Saving can change a sorted/filtered field and therefore alter the table selection.  Read the final selection
+        //only after the draft has been resolved so the editor cannot be left showing the pre-save row.
+        List<Alias> aliases = new ArrayList<>(getAliasTableView().getSelectionModel().getSelectedItems());
 
         if(aliases.size() <= 1)
         {
@@ -273,21 +277,8 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
 
     private void update()
     {
-        getAliasFilteredList().setPredicate(null);
-        getAliasPredicate().setAliasListName(getAliasListNameComboBox().getSelectionModel().getSelectedItem());
-        getAliasPredicate().setSearchText(getSearchField().getText());
-        getAliasFilteredList().setPredicate(getAliasPredicate());
-    }
-
-    private AliasPredicate getAliasPredicate()
-    {
-        if(mAliasPredicate == null)
-        {
-            mAliasPredicate = new AliasPredicate();
-            mAliasPredicate.setAliasListName(getAliasListNameComboBox().getSelectionModel().getSelectedItem());
-        }
-
-        return mAliasPredicate;
+        getAliasFilteredList().setPredicate(new AliasPredicate(
+            getAliasListNameComboBox().getSelectionModel().getSelectedItem(), getSearchField().getText()));
     }
 
     private AliasListDefinition getAliasListDefinition(String name)
@@ -311,6 +302,13 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
                         AliasListDefinition definition = getAliasListDefinition(newValue);
                         getNewAliasButton().setDisable(definition == null ||
                             AliasMatchRegistry.allowed(definition).isEmpty());
+
+                        if(oldValue != null)
+                        {
+                            getAliasTableView().getSelectionModel().clearSelection();
+                            scheduleAliasSelectionRefresh();
+                        }
+
                         update();
                     });
 
@@ -509,18 +507,49 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
             mAliasTableView.setItems(getAliasSortedList());
             mAliasTableView.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
             mAliasTableView.getSelectionModel().getSelectedItems().addListener(
-                (ListChangeListener.Change<? extends Alias> c) ->
-                    Platform.runLater(() -> setAliases(mAliasTableView.getSelectionModel().getSelectedItems())));
+                (ListChangeListener.Change<? extends Alias> c) -> scheduleAliasSelectionRefresh());
         }
 
         return mAliasTableView;
+    }
+
+    private void scheduleAliasSelectionRefresh()
+    {
+        mAliasSelectionRefreshRequested = true;
+
+        if(!mAliasSelectionRefreshPending)
+        {
+            mAliasSelectionRefreshPending = true;
+            Platform.runLater(() ->
+            {
+                mAliasSelectionRefreshRequested = false;
+
+                try
+                {
+                    setAliases();
+                }
+                finally
+                {
+                    mAliasSelectionRefreshPending = false;
+
+                    //A save or sorted-list mutation can raise another selection event while this refresh is active.
+                    //Run one more coalesced pass so that the last table selection always wins.
+                    if(mAliasSelectionRefreshRequested)
+                    {
+                        scheduleAliasSelectionRefresh();
+                    }
+                }
+            });
+        }
     }
 
     private FilteredList<Alias> getAliasFilteredList()
     {
         if(mAliasFilteredList == null)
         {
-            mAliasFilteredList = new FilteredList<>(mConfigurationManager.getAliasModel().aliasList(), getAliasPredicate());
+            mAliasFilteredList = new FilteredList<>(mConfigurationManager.getAliasModel().aliasList(),
+                new AliasPredicate(getAliasListNameComboBox().getSelectionModel().getSelectedItem(),
+                    getSearchField().getText()));
         }
 
         return mAliasFilteredList;
@@ -927,50 +956,4 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
         }
     }
 
-    /**
-     * Alias filter predicate
-     */
-    public class AliasPredicate implements Predicate<Alias>
-    {
-        private String mAliasListName;
-        private String mSearchText;
-
-        @Override
-        public boolean test(Alias alias)
-        {
-            if(mAliasListName == null)
-            {
-                return false;
-            }
-            else if(mAliasListName.equals(alias.getAliasListName()))
-            {
-                return (alias.getName() != null && alias.getName().toLowerCase().contains(mSearchText)) ||
-                        (alias.getDescription() != null &&
-                            alias.getDescription().toLowerCase().contains(mSearchText)) ||
-                        (alias.getGroup() != null && alias.getGroup().toLowerCase().contains(mSearchText));
-            }
-
-            return false;
-        }
-
-        public void setAliasListName(String aliasListName)
-        {
-            if(aliasListName != null)
-            {
-                mAliasListName = aliasListName;
-            }
-        }
-
-        public void setSearchText(String searchText)
-        {
-            if(searchText != null)
-            {
-                mSearchText = searchText.toLowerCase();
-            }
-            else
-            {
-                mSearchText = null;
-            }
-        }
-    }
 }

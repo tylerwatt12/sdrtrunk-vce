@@ -86,6 +86,16 @@ public class DiscoveredTunerModel extends AbstractTableModel implements Listener
     }
 
     /**
+     * Lock-free snapshot of every discovered device, including disabled and error-state tuners whose live tuner
+     * instance is temporarily unavailable.  Diagnostic views use this so a failing tuner does not disappear at the
+     * moment its failure state is most useful.
+     */
+    public List<DiscoveredTuner> getDiscoveredTuners()
+    {
+        return List.copyOf(mDiscoveredTuners);
+    }
+
+    /**
      * Find the discovered tuner that matches the instantiated tuner
      * @param tuner to match
      * @return matching discovered tuner
