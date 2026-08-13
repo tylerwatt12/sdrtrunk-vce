@@ -15,13 +15,12 @@ import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.controller.NamingThreadFactory;
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.controller.channel.Channel.ChannelType;
 import io.github.dsheirer.controller.channel.ChannelException;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
 import io.github.dsheirer.module.ProcessingChain;
-import io.github.dsheirer.util.ThreadPool;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -33,19 +32,23 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.LongSupplier;
 import javafx.application.Platform;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Exclusive, expiring control lease for the receiver debug harness.  All receiver lifecycle work is serialized on one
- * bounded worker.  A session owns the running state of saved standard channels and restores the exact state it found
- * when the session ends or expires.
+ * bounded worker. A session restores only the saved standard channels it actually changed, using each channel's state
+ * immediately before the first successful change made by that session.
  */
 final class DebugHarnessControlService implements DebugHarnessControlAdapter, AutoCloseable
 {
+    private static final Logger mLog = LoggerFactory.getLogger(DebugHarnessControlService.class);
     static final long MINIMUM_SESSION_SECONDS = 10;
     static final long MAXIMUM_SESSION_SECONDS = 900;
     static final long DEFAULT_SESSION_SECONDS = 60;
@@ -53,6 +56,7 @@ final class DebugHarnessControlService implements DebugHarnessControlAdapter, Au
     static final int MAXIMUM_FREQUENCIES_PER_CHANNEL = 64;
     static final int MAXIMUM_CHANNEL_TEXT_LENGTH = 256;
     private static final long CALL_TIMEOUT_SECONDS = 30;
+    static final long CLOSE_QUIESCE_TIMEOUT_SECONDS = 5;
     private static final int QUEUE_CAPACITY = 8;
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
@@ -60,30 +64,40 @@ final class DebugHarnessControlService implements DebugHarnessControlAdapter, Au
     private final LongSupplier mNanoTime;
     private final LongSupplier mWallClock;
     private final ExpiryScheduler mExpiryScheduler;
+    private final AutoCloseable mOwnedExpiryScheduler;
     private final ThreadPoolExecutor mExecutor;
+    private final Object mPriorityLock = new Object();
+    private final Object mRestoreLock = new Object();
+    private volatile Runnable mPriorityTask;
     private volatile boolean mClosed;
     private volatile Session mSession;
     private volatile Future<?> mExpiryFuture;
 
     DebugHarnessControlService(ConfigurationManager configurationManager)
     {
-        this(new ApplicationChannelRuntime(configurationManager), System::nanoTime, System::currentTimeMillis,
-            (task, delay, unit) -> ThreadPool.SCHEDULED.schedule(task, delay, unit));
+        this(new ApplicationChannelRuntime(configurationManager), System::nanoTime, System::currentTimeMillis);
     }
 
     DebugHarnessControlService(ChannelRuntime runtime, LongSupplier nanoTime, LongSupplier wallClock)
     {
-        this(runtime, nanoTime, wallClock,
-            (task, delay, unit) -> ThreadPool.SCHEDULED.schedule(task, delay, unit));
+        this(runtime, nanoTime, wallClock, ownedScheduler());
     }
 
     DebugHarnessControlService(ChannelRuntime runtime, LongSupplier nanoTime, LongSupplier wallClock,
                                ExpiryScheduler expiryScheduler)
     {
+        this(runtime, nanoTime, wallClock, expiryScheduler, expiryScheduler instanceof AutoCloseable closeable ?
+            closeable : null);
+    }
+
+    private DebugHarnessControlService(ChannelRuntime runtime, LongSupplier nanoTime, LongSupplier wallClock,
+                                       ExpiryScheduler expiryScheduler, AutoCloseable ownedExpiryScheduler)
+    {
         mRuntime = Objects.requireNonNull(runtime);
         mNanoTime = Objects.requireNonNull(nanoTime);
         mWallClock = Objects.requireNonNull(wallClock);
         mExpiryScheduler = Objects.requireNonNull(expiryScheduler);
+        mOwnedExpiryScheduler = ownedExpiryScheduler;
         mExecutor = new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(QUEUE_CAPACITY),
             new NamingThreadFactory("receiver debug control"), new ThreadPoolExecutor.AbortPolicy());
     }
@@ -127,26 +141,15 @@ final class DebugHarnessControlService implements DebugHarnessControlAdapter, Au
                     MAXIMUM_SESSION_SECONDS, Map.of());
             }
 
-            ChannelCatalogSnapshot catalog = mRuntime.listSavedChannels(MAXIMUM_SAVED_CHANNELS);
-            List<ChannelSnapshot> channels = catalog.channels();
-
-            if(catalog.totalCount() > MAXIMUM_SAVED_CHANNELS)
-            {
-                return result(409, "There are too many saved channels for one bounded debug session", Map.of(
-                    "saved_channel_count", catalog.totalCount(), "channel_limit", MAXIMUM_SAVED_CHANNELS));
-            }
-
-            Map<String,Boolean> baseline = new LinkedHashMap<>();
-
-            for(ChannelSnapshot channel: channels)
-            {
-                baseline.put(channel.configurationId(), channel.state().isStarted());
-            }
-
             long nowNanos = mNanoTime.getAsLong();
             mSession = new Session(UUID.randomUUID().toString(), 1, duration, deadline(nowNanos, duration),
-                expiresAt(mWallClock.getAsLong(), duration), baseline);
-            scheduleExpiry(mSession);
+                expiresAt(mWallClock.getAsLong(), duration), new LinkedHashMap<>());
+
+            if(!scheduleExpiry(mSession))
+            {
+                mSession = null;
+                return result(503, "Debug control expiry coordinator is unavailable", Map.of());
+            }
             return result(201, null, sessionView(mSession));
         }, "Unable to create debug control session");
     }
@@ -213,17 +216,26 @@ final class DebugHarnessControlService implements DebugHarnessControlAdapter, Au
                 return result(404, "Saved channel was not found", sessionView(mSession));
             }
 
-            if(!mSession.baseline().containsKey(normalizedId))
-            {
-                return result(409, "Saved channel was added after this debug session began", sessionView(mSession));
-            }
-
             if(!channel.runnable())
             {
                 return result(409, "Saved channel is retired or unsupported", sessionView(mSession));
             }
 
+            Session session = mSession;
+
+            if(!session.touched().containsKey(normalizedId) &&
+                session.touched().size() >= MAXIMUM_SAVED_CHANNELS)
+            {
+                return result(409, "This debug session has reached its changed-channel limit", sessionView(session));
+            }
+
+            if(mClosed)
+            {
+                return result(503, "Debug control service is closing", Map.of());
+            }
+
             boolean changed;
+            RuntimeState preTouchState = channel.state();
             long acceptedNanos = mNanoTime.getAsLong();
             long acceptedWallClock = mWallClock.getAsLong();
 
@@ -233,12 +245,36 @@ final class DebugHarnessControlService implements DebugHarnessControlAdapter, Au
             }
             catch(ChannelException e)
             {
-                return result(409, safeMessage(e, "Unable to change saved channel state"), sessionView(mSession));
+                return result(409, safeMessage(e, "Unable to change saved channel state"), sessionView(session));
             }
 
-            mSession = mSession.advanced(deadline(acceptedNanos, mSession.durationSeconds()),
-                expiresAt(acceptedWallClock, mSession.durationSeconds()));
-            scheduleExpiry(mSession);
+            if(mClosed)
+            {
+                return result(503, "Debug control service is closing", Map.of());
+            }
+
+            ChannelTouch touch = session.touched().get(normalizedId);
+
+            if(changed && touch == null)
+            {
+                session.touched().put(normalizedId, new ChannelTouch(preTouchState.isRunning(), processing));
+            }
+            else if(touch != null)
+            {
+                session.touched().put(normalizedId, touch.withLastRequested(processing));
+            }
+
+            mSession = session.advanced(deadline(acceptedNanos, session.durationSeconds()),
+                expiresAt(acceptedWallClock, session.durationSeconds()));
+
+            if(!scheduleExpiry(mSession))
+            {
+                RestoreOutcome outcome = restoreSessionOutcome("expiry_unavailable");
+                String error = "skipped_application_shutdown".equals(outcome.body().get("restore_outcome")) ?
+                    "Debug control service is closing; no channel restoration was attempted" :
+                    "Debug control expiry coordinator is unavailable";
+                return result(503, error, outcome.body());
+            }
             Map<String,Object> view = new LinkedHashMap<>(sessionView(mSession));
             view.put("configuration_id", normalizedId);
             view.put("requested_processing", processing);
@@ -248,70 +284,151 @@ final class DebugHarnessControlService implements DebugHarnessControlAdapter, Au
     }
 
     @Override
-    public void close()
+    public synchronized void close()
     {
-        mClosed = true;
-        mSession = null;
+        if(mClosed)
+        {
+            return;
+        }
+
+        //Reject new requests before interrupting queued and active work. The session remains available to an active
+        //wrapper until it observes mClosed, but close itself never restores session-owned channel state.
+        synchronized(mRestoreLock)
+        {
+            mClosed = true;
+        }
         cancelExpiry();
+
+        if(mOwnedExpiryScheduler != null)
+        {
+            try
+            {
+                mOwnedExpiryScheduler.close();
+            }
+            catch(Exception _)
+            {
+                //Nothing to restore during application shutdown.
+            }
+        }
+
         mExecutor.shutdownNow();
+
+        try
+        {
+            if(!mExecutor.awaitTermination(CLOSE_QUIESCE_TIMEOUT_SECONDS, TimeUnit.SECONDS))
+            {
+                mLog.warn("Receiver debug control worker did not quiesce within {} seconds",
+                    CLOSE_QUIESCE_TIMEOUT_SECONDS);
+            }
+        }
+        catch(InterruptedException _)
+        {
+            Thread.currentThread().interrupt();
+            mLog.warn("Interrupted while waiting for receiver debug control worker to quiesce");
+        }
+        finally
+        {
+            mSession = null;
+
+            synchronized(mPriorityLock)
+            {
+                mPriorityTask = null;
+            }
+        }
     }
 
     private HttpResult restoreSession(String disposition)
     {
-        Session session = mSession;
+        RestoreOutcome outcome = restoreSessionOutcome(disposition);
+        return result(outcome.status(), outcome.error(), outcome.body());
+    }
 
-        if(session == null)
+    private RestoreOutcome restoreSessionOutcome(String disposition)
+    {
+        synchronized(mRestoreLock)
         {
-            return result(404, "No debug control session is active", Map.of());
+            Session session = mSession;
+
+            if(session == null)
+            {
+                return new RestoreOutcome(404, "No debug control session is active", Map.of(
+                    "restore_outcome", "not_started", "restore_attempted", false));
+            }
+
+            if(mClosed)
+            {
+                return new RestoreOutcome(503, "Debug control service is closing", restoreBody(session, disposition,
+                    "skipped_application_shutdown", false, List.of(), List.of(), List.of()));
+            }
+
+            mSession = null;
+            cancelExpiry();
+            List<String> restored = new ArrayList<>();
+            List<String> skippedExternalChanges = new ArrayList<>();
+            List<Map<String,String>> failures = new ArrayList<>();
+
+            restoreTouchedState(session, false, restored, skippedExternalChanges, failures);
+            restoreTouchedState(session, true, restored, skippedExternalChanges, failures);
+            String restoreOutcome = failures.isEmpty() ?
+                skippedExternalChanges.isEmpty() ? "complete" : "complete_with_external_changes_skipped" : "partial";
+            return new RestoreOutcome(failures.isEmpty() ? 200 : 207, null, restoreBody(session, disposition,
+                restoreOutcome, true, restored, skippedExternalChanges, failures));
         }
+    }
 
-        mSession = null;
-        cancelExpiry();
-        List<String> restored = new ArrayList<>();
-        List<Map<String,String>> failures = new ArrayList<>();
-
-        restoreBaselineState(session, false, restored, failures);
-        restoreBaselineState(session, true, restored, failures);
-
+    private static Map<String,Object> restoreBody(Session session, String disposition, String restoreOutcome,
+                                                   boolean attempted, List<String> restored,
+                                                   List<String> skippedExternalChanges,
+                                                   List<Map<String,String>> failures)
+    {
         Map<String,Object> body = new LinkedHashMap<>();
         body.put("session_id", session.id());
         body.put("state", disposition);
+        body.put("restore_outcome", restoreOutcome);
+        body.put("restore_attempted", attempted);
         body.put("restored_configuration_ids", restored);
+        body.put("restore_skipped_external_change_configuration_ids", skippedExternalChanges);
         body.put("restore_failures", failures);
-        return result(failures.isEmpty() ? 200 : 207, null, body);
+        return body;
     }
 
-    private void restoreBaselineState(Session session, boolean processing, List<String> restored,
-                                      List<Map<String,String>> failures)
+    private void restoreTouchedState(Session session, boolean processing, List<String> restored,
+                                     List<String> skippedExternalChanges, List<Map<String,String>> failures)
     {
-        for(Map.Entry<String,Boolean> baseline: session.baseline().entrySet())
+        for(Map.Entry<String,ChannelTouch> entry: session.touched().entrySet())
         {
-            if(baseline.getValue() != processing)
+            ChannelTouch touch = entry.getValue();
+
+            if(touch.baselineProcessing() != processing)
             {
                 continue;
             }
 
             try
             {
-                ChannelSnapshot channel = find(baseline.getKey());
+                ChannelSnapshot channel = find(entry.getKey());
 
                 if(channel == null)
                 {
-                    failures.add(Map.of("configuration_id", baseline.getKey(), "error", "Saved channel was removed"));
+                    failures.add(Map.of("configuration_id", entry.getKey(), "error", "Saved channel was removed"));
                 }
-                else if(!channel.runnable() && baseline.getValue())
+                else if(channel.state().isRunning() != touch.lastRequestedProcessing())
                 {
-                    failures.add(Map.of("configuration_id", baseline.getKey(),
+                    skippedExternalChanges.add(entry.getKey());
+                }
+                else if(!channel.runnable() && touch.baselineProcessing())
+                {
+                    failures.add(Map.of("configuration_id", entry.getKey(),
                         "error", "Saved channel is retired or unsupported"));
                 }
-                else if(mRuntime.setProcessing(baseline.getKey(), baseline.getValue()))
+                else if(mRuntime.setProcessing(entry.getKey(), touch.baselineProcessing()))
                 {
-                    restored.add(baseline.getKey());
+                    restored.add(entry.getKey());
                 }
             }
             catch(Exception e)
             {
-                failures.add(Map.of("configuration_id", baseline.getKey(),
+                failures.add(Map.of("configuration_id", entry.getKey(),
                     "error", safeMessage(e, "Unable to restore saved channel")));
             }
         }
@@ -325,52 +442,104 @@ final class DebugHarnessControlService implements DebugHarnessControlAdapter, Au
         }
     }
 
-    private void scheduleExpiry(Session session)
+    private boolean scheduleExpiry(Session session)
     {
         cancelExpiry();
 
         if(!mClosed && session != null)
         {
             long delay = Math.max(0L, session.deadlineNanos() - mNanoTime.getAsLong());
-            mExpiryFuture = mExpiryScheduler.schedule(() -> enqueueExpiry(session.id(), session.deadlineNanos()),
-                delay, TimeUnit.NANOSECONDS);
+
+            try
+            {
+                mExpiryFuture = mExpiryScheduler.schedule(() -> prioritizeExpiry(session.id(), session.deadlineNanos()),
+                    delay, TimeUnit.NANOSECONDS);
+                return true;
+            }
+            catch(RejectedExecutionException e)
+            {
+                return false;
+            }
         }
+
+        return false;
     }
 
-    private void enqueueExpiry(String sessionId, long expectedDeadline)
+    private void prioritizeExpiry(String sessionId, long expectedDeadline)
     {
-        if(mClosed)
+        Session current = mSession;
+
+        if(mClosed || current == null || !current.id().equals(sessionId) ||
+            current.deadlineNanos() != expectedDeadline)
+        {
+            return;
+        }
+
+        synchronized(mPriorityLock)
+        {
+            current = mSession;
+
+            if(!mClosed && current != null && current.id().equals(sessionId) &&
+                current.deadlineNanos() == expectedDeadline)
+            {
+                mPriorityTask = () -> expireSession(sessionId, expectedDeadline);
+            }
+        }
+
+        trySubmitPriority();
+    }
+
+    private void trySubmitPriority()
+    {
+        Runnable priority = mPriorityTask;
+
+        if(priority == null || mClosed)
         {
             return;
         }
 
         try
         {
-            mExecutor.execute(() -> {
-                Session current = mSession;
-
-                if(!mClosed && current != null && current.id().equals(sessionId) &&
-                    current.deadlineNanos() == expectedDeadline)
-                {
-                    if(mNanoTime.getAsLong() >= expectedDeadline)
-                    {
-                        restoreSession("expired");
-                    }
-                    else
-                    {
-                        scheduleExpiry(current);
-                    }
-                }
-            });
+            mExecutor.execute(this::runPriorityTask);
         }
-        catch(RejectedExecutionException e)
+        catch(RejectedExecutionException _)
         {
-            if(!mClosed)
+            //A full queue already contains an ordinary wrapper that checks the priority slot before doing its work.
+        }
+    }
+
+    private void runPriorityTask()
+    {
+        Runnable task;
+
+        synchronized(mPriorityLock)
+        {
+            task = mPriorityTask;
+            mPriorityTask = null;
+        }
+
+        if(task != null)
+        {
+            task.run();
+        }
+    }
+
+    private void expireSession(String sessionId, long expectedDeadline)
+    {
+        Session current = mSession;
+
+        if(!mClosed && current != null && current.id().equals(sessionId) && current.deadlineNanos() == expectedDeadline)
+        {
+            if(mNanoTime.getAsLong() >= expectedDeadline)
             {
-                //Do not replace the tracked current-lease future from this scheduler thread.  A stale retry is harmless
-                //because the worker validates both the session identifier and exact monotonic deadline.
-                mExpiryScheduler.schedule(() -> enqueueExpiry(sessionId, expectedDeadline), 250,
-                    TimeUnit.MILLISECONDS);
+                restoreSession("expired");
+            }
+            else
+            {
+                if(!scheduleExpiry(current))
+                {
+                    restoreSession("expiry_unavailable");
+                }
             }
         }
     }
@@ -476,11 +645,18 @@ final class DebugHarnessControlService implements DebugHarnessControlAdapter, Au
             mExecutor.execute(() -> {
                 try
                 {
+                    //An expired lease takes priority over every queued ordinary request.  It can be delayed only by
+                    //the one lifecycle operation already active on this serial worker.
+                    runPriorityTask();
                     future.complete(supplier.get());
                 }
                 catch(Exception e)
                 {
                     future.completeExceptionally(e);
+                }
+                finally
+                {
+                    trySubmitPriority();
                 }
             });
         }
@@ -506,6 +682,16 @@ final class DebugHarnessControlService implements DebugHarnessControlAdapter, Au
         {
             return failure(failureMessage, 500, failureMessage);
         }
+    }
+
+    int pendingRequestCount()
+    {
+        return mExecutor.getQueue().size();
+    }
+
+    boolean isClosed()
+    {
+        return mClosed;
     }
 
     @SuppressWarnings("unchecked")
@@ -605,23 +791,35 @@ final class DebugHarnessControlService implements DebugHarnessControlAdapter, Au
             return mJsonValue;
         }
 
-        boolean isStarted()
+        boolean isRunning()
         {
-            return this != STOPPED;
+            return this == RUNNING;
         }
     }
 
+    private record ChannelTouch(boolean baselineProcessing, boolean lastRequestedProcessing)
+    {
+        ChannelTouch withLastRequested(boolean processing)
+        {
+            return new ChannelTouch(baselineProcessing, processing);
+        }
+    }
+
+    private record RestoreOutcome(int status, String error, Map<String,Object> body)
+    {
+    }
+
     private record Session(String id, long revision, long durationSeconds, long deadlineNanos,
-                           long expiresAtMilliseconds, Map<String,Boolean> baseline)
+                           long expiresAtMilliseconds, Map<String,ChannelTouch> touched)
     {
         Session
         {
-            baseline = Collections.unmodifiableMap(new LinkedHashMap<>(baseline));
+            touched = new LinkedHashMap<>(touched);
         }
 
         Session advanced(long deadlineNanos, long expiresAtMilliseconds)
         {
-            return new Session(id, revision + 1, durationSeconds, deadlineNanos, expiresAtMilliseconds, baseline);
+            return new Session(id, revision + 1, durationSeconds, deadlineNanos, expiresAtMilliseconds, touched);
         }
     }
 
@@ -633,6 +831,55 @@ final class DebugHarnessControlService implements DebugHarnessControlAdapter, Au
     interface ExpiryScheduler
     {
         Future<?> schedule(Runnable task, long delay, TimeUnit unit);
+    }
+
+    private static OwnedExpiryScheduler ownedScheduler()
+    {
+        return new OwnedExpiryScheduler();
+    }
+
+    static final class OwnedExpiryScheduler implements ExpiryScheduler, AutoCloseable
+    {
+        private final ScheduledThreadPoolExecutor mExecutor = new ScheduledThreadPoolExecutor(1, runnable -> {
+            Thread thread = new Thread(runnable, "receiver debug expiry coordinator");
+            thread.setDaemon(true);
+            thread.setPriority(Thread.MIN_PRIORITY);
+            return thread;
+        });
+
+        OwnedExpiryScheduler()
+        {
+            //Each lease renewal replaces the prior deadline. Remove cancelled timers immediately so repeated control
+            //requests cannot accumulate delayed tasks during a long-running session.
+            mExecutor.setRemoveOnCancelPolicy(true);
+            mExecutor.setExecuteExistingDelayedTasksAfterShutdownPolicy(false);
+        }
+
+        @Override
+        public Future<?> schedule(Runnable task, long delay, TimeUnit unit)
+        {
+            return mExecutor.schedule(task, delay, unit);
+        }
+
+        @Override
+        public void close()
+        {
+            mExecutor.shutdownNow();
+
+            try
+            {
+                if(!mExecutor.awaitTermination(CLOSE_QUIESCE_TIMEOUT_SECONDS, TimeUnit.SECONDS))
+                {
+                    mLog.warn("Receiver debug expiry coordinator did not quiesce within {} seconds",
+                        CLOSE_QUIESCE_TIMEOUT_SECONDS);
+                }
+            }
+            catch(InterruptedException _)
+            {
+                Thread.currentThread().interrupt();
+                mLog.warn("Interrupted while waiting for receiver debug expiry coordinator to quiesce");
+            }
+        }
     }
 
     private static final class ApplicationChannelRuntime implements ChannelRuntime
@@ -658,9 +905,14 @@ final class DebugHarnessControlService implements DebugHarnessControlAdapter, Au
             List<Channel> channels = mConfigurationManager.getChannelModel().getChannels();
             int limit = Math.max(0, Math.min(MAXIMUM_SAVED_CHANNELS, requestedLimit));
 
-            for(int x = 0; x < channels.size() && x < limit; x++)
+            for(int x = 0; x < channels.size() && snapshots.size() < limit; x++)
             {
                 Channel channel = channels.get(x);
+
+                if(!isSavedStandard(channel))
+                {
+                    continue;
+                }
                 ProcessingChain chain = mProcessingManager.getProcessingChain(channel);
                 RuntimeState state = chain == null ? RuntimeState.STOPPED :
                     chain.isProcessing() ? RuntimeState.RUNNING : RuntimeState.REGISTERED_NOT_RUNNING;
@@ -673,7 +925,9 @@ final class DebugHarnessControlService implements DebugHarnessControlAdapter, Au
                     ChannelConfigurationPolicy.isActive(channel), state));
             }
 
-            return new ChannelCatalogSnapshot(channels.size(), snapshots);
+            int standardCount = (int)channels.stream()
+                .filter(DebugHarnessControlService::isSavedStandard).count();
+            return new ChannelCatalogSnapshot(standardCount, snapshots);
         }
 
         @Override
@@ -682,7 +936,7 @@ final class DebugHarnessControlService implements DebugHarnessControlAdapter, Au
             return onConfigurationThread(() -> {
                 Channel channel = resolveCurrent(configurationId);
 
-                if(channel == null)
+                if(!isSavedStandard(channel))
                 {
                     return null;
                 }
@@ -711,19 +965,30 @@ final class DebugHarnessControlService implements DebugHarnessControlAdapter, Au
             }
 
             ProcessingChain chain = mProcessingManager.getProcessingChain(channel);
-            boolean started = chain != null;
-
-            if(started == processing)
-            {
-                return false;
-            }
 
             if(processing)
             {
+                if(chain != null && chain.isProcessing())
+                {
+                    return false;
+                }
+
+                if(chain != null)
+                {
+                    //A registered but non-running chain is transient/degraded. Remove it before requesting a fresh,
+                    //fully running chain instead of treating mere map registration as success.
+                    mProcessingManager.stop(channel);
+                }
+
                 mProcessingManager.start(channel);
             }
             else
             {
+                if(chain == null)
+                {
+                    return false;
+                }
+
                 mProcessingManager.stop(channel);
             }
 
@@ -739,7 +1004,7 @@ final class DebugHarnessControlService implements DebugHarnessControlAdapter, Au
         {
             for(Channel channel: mConfigurationManager.getChannelModel().getChannels())
             {
-                if(configurationId.equals(channel.getConfigurationId()))
+                if(isSavedStandard(channel) && configurationId.equals(channel.getConfigurationId()))
                 {
                     return channel;
                 }
@@ -783,6 +1048,11 @@ final class DebugHarnessControlService implements DebugHarnessControlAdapter, Au
         {
             return value != null ? value : "";
         }
+    }
+
+    static boolean isSavedStandard(Channel channel)
+    {
+        return channel != null && channel.getChannelType() == ChannelType.STANDARD;
     }
 
     private static String boundedText(String value)

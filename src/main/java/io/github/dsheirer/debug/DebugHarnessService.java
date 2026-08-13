@@ -38,6 +38,8 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.LongSupplier;
+import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -56,8 +58,11 @@ public final class DebugHarnessService implements AutoCloseable
     private static final int MAXIMUM_REQUEST_BODY_BYTES = 8_192;
     private static final int MAXIMUM_THREAD_COUNT = 256;
     private static final int MAXIMUM_THREAD_DEPTH = 32;
+    static final int MAXIMUM_THREAD_SNAPSHOT_BYTES = 512 * 1_024;
+    static final long THREAD_SNAPSHOT_COOLDOWN_NANOSECONDS = TimeUnit.SECONDS.toNanos(30L);
     private static final int HTTP_WORKERS = 2;
     private static final int HTTP_QUEUE_CAPACITY = 8;
+    static final long SHUTDOWN_TIMEOUT_MILLISECONDS = 2_000L;
 
     private final DebugHarnessConfiguration mConfiguration;
     private final DebugHarnessTelemetry mTelemetry;
@@ -65,6 +70,11 @@ public final class DebugHarnessService implements AutoCloseable
     private final int mRequestedPort;
     private final ThreadPoolExecutor mHttpExecutor;
     private final ScheduledExecutorService mSampler;
+    private final LongSupplier mNanoClock;
+    private final Supplier<byte[]> mThreadSnapshotSupplier;
+    private final Object mThreadSnapshotLock = new Object();
+    private volatile byte[] mCachedThreadSnapshot;
+    private volatile long mThreadSnapshotCreatedNanos;
     private volatile HttpServer mServer;
 
     public DebugHarnessService(DebugHarnessConfiguration configuration, TunerManager tunerManager,
@@ -79,10 +89,21 @@ public final class DebugHarnessService implements AutoCloseable
     DebugHarnessService(DebugHarnessConfiguration configuration, DebugHarnessTelemetry telemetry,
                         DebugHarnessControlAdapter controls, int requestedPort)
     {
+        this(configuration, telemetry, controls, requestedPort, System::nanoTime,
+            DebugHarnessService::collectThreadSnapshot);
+    }
+
+    /** Test seam for verifying that clients cannot amplify JVM-wide thread-dump work. */
+    DebugHarnessService(DebugHarnessConfiguration configuration, DebugHarnessTelemetry telemetry,
+                        DebugHarnessControlAdapter controls, int requestedPort, LongSupplier nanoClock,
+                        Supplier<byte[]> threadSnapshotSupplier)
+    {
         mConfiguration = configuration;
         mTelemetry = telemetry;
         mControls = controls;
         mRequestedPort = requestedPort;
+        mNanoClock = nanoClock;
+        mThreadSnapshotSupplier = threadSnapshotSupplier;
         mHttpExecutor = new ThreadPoolExecutor(HTTP_WORKERS, HTTP_WORKERS, 0L, TimeUnit.MILLISECONDS,
             new ArrayBlockingQueue<>(HTTP_QUEUE_CAPACITY), lowPriorityThreadFactory("receiver debug http"),
             new ThreadPoolExecutor.AbortPolicy());
@@ -118,6 +139,22 @@ public final class DebugHarnessService implements AutoCloseable
     {
         HttpServer server = mServer;
         return server != null ? server.getAddress().getPort() : -1;
+    }
+
+    /** Package-visible saturation observations used to prove the diagnostics executor remains bounded. */
+    int getActiveHttpWorkerCount()
+    {
+        return mHttpExecutor.getActiveCount();
+    }
+
+    int getQueuedHttpRequestCount()
+    {
+        return mHttpExecutor.getQueue().size();
+    }
+
+    boolean areDiagnosticWorkersTerminated()
+    {
+        return mSampler.isTerminated() && mHttpExecutor.isTerminated();
     }
 
     private void handle(HttpExchange exchange)
@@ -227,7 +264,7 @@ public final class DebugHarnessService implements AutoCloseable
             return;
         }
 
-        sendJson(exchange, 200, threadSnapshot());
+        sendJson(exchange, 200, cachedThreadSnapshot());
     }
 
     private void handleSession(HttpExchange exchange) throws IOException
@@ -350,7 +387,69 @@ public final class DebugHarnessService implements AutoCloseable
         return output.toByteArray();
     }
 
-    private static byte[] threadSnapshot()
+    private byte[] cachedThreadSnapshot()
+    {
+        long now = mNanoClock.getAsLong();
+        byte[] cached = mCachedThreadSnapshot;
+
+        if(isFreshThreadSnapshot(cached, now))
+        {
+            return cached;
+        }
+
+        synchronized(mThreadSnapshotLock)
+        {
+            now = mNanoClock.getAsLong();
+            cached = mCachedThreadSnapshot;
+
+            if(isFreshThreadSnapshot(cached, now))
+            {
+                return cached;
+            }
+
+            byte[] captured;
+
+            try
+            {
+                captured = mThreadSnapshotSupplier.get();
+            }
+            catch(RuntimeException e)
+            {
+                captured = json(Map.of("error", "Thread snapshot is unavailable", "type",
+                    e.getClass().getSimpleName()));
+            }
+
+            cached = enforceThreadSnapshotLimit(captured);
+            mCachedThreadSnapshot = cached;
+            mThreadSnapshotCreatedNanos = now;
+            return cached;
+        }
+    }
+
+    private boolean isFreshThreadSnapshot(byte[] cached, long now)
+    {
+        if(cached == null)
+        {
+            return false;
+        }
+
+        long age = now - mThreadSnapshotCreatedNanos;
+        return age >= 0L && age < THREAD_SNAPSHOT_COOLDOWN_NANOSECONDS;
+    }
+
+    private static byte[] enforceThreadSnapshotLimit(byte[] captured)
+    {
+        if(captured != null && captured.length <= MAXIMUM_THREAD_SNAPSHOT_BYTES)
+        {
+            return captured;
+        }
+
+        return json(Map.of("error", "Thread snapshot exceeded the bounded response size", "truncated", true,
+            "captured_bytes", captured != null ? captured.length : 0,
+            "response_byte_limit", MAXIMUM_THREAD_SNAPSHOT_BYTES));
+    }
+
+    private static byte[] collectThreadSnapshot()
     {
         ThreadMXBean bean = ManagementFactory.getThreadMXBean();
         ThreadInfo[] infos;
@@ -396,8 +495,42 @@ public final class DebugHarnessService implements AutoCloseable
         result.put("thread_limit", MAXIMUM_THREAD_COUNT);
         result.put("threads_truncated", infos.length > count);
         result.put("stack_depth_limit", MAXIMUM_THREAD_DEPTH);
+        result.put("response_byte_limit", MAXIMUM_THREAD_SNAPSHOT_BYTES);
         result.put("threads", threads);
-        return json(result);
+        byte[] serialized = json(result);
+
+        if(serialized.length <= MAXIMUM_THREAD_SNAPSHOT_BYTES)
+        {
+            return serialized;
+        }
+
+        //Find the largest prefix that fits.  This retains useful diagnostic data while guaranteeing a hard response
+        //bound even when thread names and stack frames are unusually large.
+        int low = 0;
+        int high = threads.size();
+        byte[] best = json(Map.of("intrusive", true, "threads", List.of(), "response_truncated", true,
+            "response_byte_limit", MAXIMUM_THREAD_SNAPSHOT_BYTES));
+
+        while(low <= high)
+        {
+            int middle = (low + high) >>> 1;
+            result.put("threads", threads.subList(0, middle));
+            result.put("included_thread_count", middle);
+            result.put("response_truncated", true);
+            byte[] candidate = json(result);
+
+            if(candidate.length <= MAXIMUM_THREAD_SNAPSHOT_BYTES)
+            {
+                best = candidate;
+                low = middle + 1;
+            }
+            else
+            {
+                high = middle - 1;
+            }
+        }
+
+        return enforceThreadSnapshotLimit(best);
     }
 
     private static void requireMethod(HttpExchange exchange, String method, byte[] body) throws IOException
@@ -470,6 +603,8 @@ public final class DebugHarnessService implements AutoCloseable
     @Override
     public synchronized void close()
     {
+        //Stop the listener before closing any dependent worker.  No new request can enter controls or diagnostics
+        //after this point, while already-running handlers are still permitted a bounded period to quiesce below.
         HttpServer server = mServer;
         mServer = null;
 
@@ -477,9 +612,6 @@ public final class DebugHarnessService implements AutoCloseable
         {
             server.stop(0);
         }
-
-        mSampler.shutdownNow();
-        mHttpExecutor.shutdownNow();
 
         if(mControls instanceof AutoCloseable closeable)
         {
@@ -491,6 +623,28 @@ public final class DebugHarnessService implements AutoCloseable
             {
                 mLog.debug("Error closing receiver debug controls", e);
             }
+        }
+
+        //Interrupt both groups before waiting for either one so a stuck sampler cannot delay cancellation of HTTP.
+        mSampler.shutdownNow();
+        mHttpExecutor.shutdownNow();
+        awaitTermination(mSampler, "receiver debug sampler");
+        awaitTermination(mHttpExecutor, "receiver debug HTTP workers");
+    }
+
+    private static void awaitTermination(java.util.concurrent.ExecutorService executor, String name)
+    {
+        try
+        {
+            if(!executor.awaitTermination(SHUTDOWN_TIMEOUT_MILLISECONDS, TimeUnit.MILLISECONDS))
+            {
+                mLog.warn("Timed out waiting {} ms for {} to stop", SHUTDOWN_TIMEOUT_MILLISECONDS, name);
+            }
+        }
+        catch(InterruptedException e)
+        {
+            Thread.currentThread().interrupt();
+            mLog.debug("Interrupted while waiting for {} to stop", name);
         }
     }
 

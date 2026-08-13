@@ -881,13 +881,13 @@ public class SDRTrunk implements Listener<TunerEvent>
         mUserPreferences.getSwingPreference().setInt(CHANNEL_SPECTRUM_SPLIT_PANE_DIVIDER_IDENTIFIER,
             mControllerPanel.getNowPlayingPanel().getChannelSpectrumPanelDividerLocation());
         mUserPreferences.getSwingPreference().flush();
-        mControllerPanel.dispose();
-        mJavaFxWindowManager.shutdown();
         if(mDebugHarnessService != null)
         {
             mDebugHarnessService.close();
             mDebugHarnessService = null;
         }
+        mControllerPanel.dispose();
+        mJavaFxWindowManager.shutdown();
         mLog.info("Stopping channels ...");
         if(mStatsWebServerService != null)
         {
