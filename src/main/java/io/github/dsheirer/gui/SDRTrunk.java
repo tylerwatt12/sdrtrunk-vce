@@ -34,6 +34,8 @@ import io.github.dsheirer.controller.ControllerPanel;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.ChannelException;
 import io.github.dsheirer.controller.channel.ChannelSelectionManager;
+import io.github.dsheirer.debug.DebugHarnessConfiguration;
+import io.github.dsheirer.debug.DebugHarnessService;
 import io.github.dsheirer.database.SdrTrunkDatabaseBootstrap;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.dsp.filter.channelizer.ReceiverQueueProfile;
@@ -158,6 +160,7 @@ public class SDRTrunk implements Listener<TunerEvent>
     private AudioRecordingManager mAudioRecordingManager;
     private AudioStreamingManager mAudioStreamingManager;
     private ControlChannelQualityRegistry mControlChannelQualityRegistry;
+    private DebugHarnessService mDebugHarnessService;
     private BroadcastStatusPanel mBroadcastStatusPanel;
     private ControllerPanel mControllerPanel;
     private IconModel mIconModel;
@@ -365,6 +368,9 @@ public class SDRTrunk implements Listener<TunerEvent>
 
                 startChannelsWithoutDialog(mConfigurationManager.getChannelModel().getAutoStartChannels());
             }
+
+            //Do not expose receiver controls until normal startup has established the configured channel state.
+            startDebugHarness();
         });
     }
 
@@ -406,6 +412,32 @@ public class SDRTrunk implements Listener<TunerEvent>
             catch(ChannelException | RuntimeException e)
             {
                 mLog.error("Channel: " + channel.getName() + " auto-start failed: " + e.getMessage(), e);
+            }
+        }
+    }
+
+    /** Starts the restart-scoped loopback debug harness when explicitly enabled by JVM properties. */
+    private void startDebugHarness()
+    {
+        try
+        {
+            DebugHarnessConfiguration configuration = DebugHarnessConfiguration.fromSystemProperties();
+
+            if(configuration.enabled())
+            {
+                mDebugHarnessService = new DebugHarnessService(configuration, mTunerManager,
+                    mControlChannelQualityRegistry, mConfigurationManager);
+                mDebugHarnessService.start();
+            }
+        }
+        catch(Exception e)
+        {
+            mLog.error("Receiver debug harness could not start; receiver operation will continue", e);
+
+            if(mDebugHarnessService != null)
+            {
+                mDebugHarnessService.close();
+                mDebugHarnessService = null;
             }
         }
     }
@@ -851,6 +883,11 @@ public class SDRTrunk implements Listener<TunerEvent>
         mUserPreferences.getSwingPreference().flush();
         mControllerPanel.dispose();
         mJavaFxWindowManager.shutdown();
+        if(mDebugHarnessService != null)
+        {
+            mDebugHarnessService.close();
+            mDebugHarnessService = null;
+        }
         mLog.info("Stopping channels ...");
         if(mStatsWebServerService != null)
         {

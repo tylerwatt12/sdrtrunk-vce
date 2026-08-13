@@ -19,10 +19,13 @@
 
 package io.github.dsheirer.channel.quality;
 
+import io.github.dsheirer.controller.channel.Channel;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ControlChannelQualityRegistryTest
@@ -77,6 +80,27 @@ class ControlChannelQualityRegistryTest
         assertEquals(2, registry.size());
         assertTrue(registry.getDecodeHealthPercent("nan").isEmpty());
         assertTrue(registry.getDecodeHealthPercent("too-high").isEmpty());
+    }
+
+    @Test
+    void diagnosticProjectionIsBoundedAndExcludesMutableChannelObject()
+    {
+        ControlChannelQualityRegistry registry = new ControlChannelQualityRegistry();
+
+        for(int x = 0; x < 30; x++)
+        {
+            registry.receive(quality(String.format("site-%02d", x), 9_000L + x, true, 90.0d));
+        }
+
+        ControlChannelQualityRegistry.DiagnosticQualityBatch batch = registry.getDiagnosticSnapshots(4);
+        assertEquals(30, batch.totalCount());
+        assertEquals(4, batch.snapshots().size());
+        assertTrue(batch.snapshots().stream().allMatch(snapshot -> snapshot.frequencyHz() == 851_012_500L));
+        assertFalse(batch.snapshots().stream().anyMatch(snapshot -> snapshot.siteIdentity().isBlank()));
+        assertTrue(java.util.Arrays.stream(
+                ControlChannelQualityRegistry.DiagnosticQualitySnapshot.class.getRecordComponents())
+            .noneMatch(component -> component.getType() == Channel.class));
+        assertThrows(IllegalArgumentException.class, () -> registry.getDiagnosticSnapshots(-1));
     }
 
     private static ControlChannelQualitySnapshot quality(String guid, long observedAt, boolean active,
