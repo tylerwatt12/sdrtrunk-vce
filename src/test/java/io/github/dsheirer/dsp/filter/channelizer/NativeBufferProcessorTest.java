@@ -23,6 +23,7 @@ import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -195,6 +196,132 @@ public class NativeBufferProcessorTest
     }
 
     @Test
+    public void unboundedProfileRetainsAllQueuedIqAndReportsMetrics() throws Exception
+    {
+        CountDownLatch firstBufferStarted = new CountDownLatch(1);
+        CountDownLatch releaseFirstBuffer = new CountDownLatch(1);
+        CountDownLatch allBuffersProcessed = new CountDownLatch(13);
+        NativeBufferProcessor processor = new NativeBufferProcessor("retain all", 1_000_000, 0, buffer -> {
+            int id = ((TestNativeBuffer)buffer).id();
+
+            if(id == -1)
+            {
+                firstBufferStarted.countDown();
+
+                try
+                {
+                    releaseFirstBuffer.await(5, TimeUnit.SECONDS);
+                }
+                catch(InterruptedException ie)
+                {
+                    Thread.currentThread().interrupt();
+                }
+            }
+
+            allBuffersProcessed.countDown();
+        });
+
+        try
+        {
+            processor.start();
+            processor.receive(new TestNativeBuffer(-1, 10_000));
+            assertTrue(firstBufferStarted.await(2, TimeUnit.SECONDS));
+
+            for(int id = 0; id < 12; id++)
+            {
+                processor.receive(new TestNativeBuffer(id, 10_000));
+            }
+
+            ReceiverQueueMetricsSnapshot.NativeBufferMetrics metrics = processor.getQueueMetrics();
+            assertTrue(metrics.unbounded());
+            assertEquals(12, metrics.waitingBuffers());
+            assertEquals(120_000, metrics.waitingSamples());
+            assertEquals(120, metrics.waitingMilliseconds());
+            assertEquals(1, metrics.inFlightBuffers());
+            assertEquals(10_000, metrics.inFlightSamples());
+            assertEquals(13, metrics.receivedBuffers());
+            assertEquals(0, metrics.droppedBuffers());
+            assertTrue(metrics.activeSinceNanos() > 0);
+            assertTrue(metrics.running());
+
+            releaseFirstBuffer.countDown();
+            assertTrue(allBuffersProcessed.await(5, TimeUnit.SECONDS));
+            metrics = awaitProcessedBuffers(processor, 13);
+            assertEquals(0, metrics.waitingBuffers());
+            assertEquals(0, metrics.inFlightBuffers());
+            assertEquals(13, metrics.processedBuffers());
+            assertTrue(metrics.lastCompletionNanos() > 0);
+        }
+        finally
+        {
+            releaseFirstBuffer.countDown();
+            processor.dispose();
+            assertTrue(processor.awaitTermination(5, TimeUnit.SECONDS));
+        }
+    }
+
+    @Test
+    public void metricsSnapshotDoesNotWaitForBlockedConsumer() throws Exception
+    {
+        CountDownLatch consumerStarted = new CountDownLatch(1);
+        CountDownLatch releaseConsumer = new CountDownLatch(1);
+        NativeBufferProcessor processor = new NativeBufferProcessor("nonblocking metrics", 1_000_000,
+            MAXIMUM_QUEUE_DURATION_MILLISECONDS, buffer -> {
+                consumerStarted.countDown();
+
+                try
+                {
+                    releaseConsumer.await(5, TimeUnit.SECONDS);
+                }
+                catch(InterruptedException ie)
+                {
+                    Thread.currentThread().interrupt();
+                }
+            });
+
+        try
+        {
+            processor.start();
+            processor.receive(new TestNativeBuffer(1, 10_000));
+            assertTrue(consumerStarted.await(2, TimeUnit.SECONDS));
+            processor.receive(new TestNativeBuffer(2, 10_000));
+
+            CountDownLatch snapshotsComplete = new CountDownLatch(1);
+            Thread snapshotReader = new Thread(() -> {
+                for(int x = 0; x < 10_000; x++)
+                {
+                    processor.getQueueMetrics();
+                }
+
+                snapshotsComplete.countDown();
+            });
+            snapshotReader.start();
+
+            long ingressStarted = System.nanoTime();
+
+            for(int x = 0; x < 100; x++)
+            {
+                processor.receive(new TestNativeBuffer(10 + x, 1_000));
+            }
+
+            assertTrue(System.nanoTime() - ingressStarted < TimeUnit.MILLISECONDS.toNanos(500),
+                "Producer handoff waited for a blocked consumer or metrics reader");
+            assertTrue(snapshotsComplete.await(500, TimeUnit.MILLISECONDS),
+                "Metrics snapshots did not remain constant-time");
+            ReceiverQueueMetricsSnapshot.NativeBufferMetrics metrics = processor.getQueueMetrics();
+            assertTrue(metrics.waitingBuffers() > 0);
+            assertEquals(1, metrics.inFlightBuffers());
+            assertFalse(metrics.unbounded());
+        }
+        finally
+        {
+            releaseConsumer.countDown();
+            processor.dispose();
+            assertTrue(processor.awaitTermination(5, TimeUnit.SECONDS));
+        }
+    }
+
+    @Test
     public void tunerCanConfigureSampleRateAfterConstruction() throws Exception
     {
         CountDownLatch processed = new CountDownLatch(1);
@@ -327,8 +454,81 @@ public class NativeBufferProcessorTest
         }
     }
 
+    @Test
+    public void stopRestartCleansOldGenerationWithoutMixingItWithTheNewRun() throws Exception
+    {
+        List<Integer> received = new CopyOnWriteArrayList<>();
+        CountDownLatch oldCallbackStarted = new CountDownLatch(1);
+        CountDownLatch releaseOldCallback = new CountDownLatch(1);
+        CountDownLatch newBufferProcessed = new CountDownLatch(1);
+        NativeBufferProcessor processor = new NativeBufferProcessor("generation lifecycle", 1_000_000,
+            MAXIMUM_QUEUE_DURATION_MILLISECONDS, buffer -> {
+                int id = ((TestNativeBuffer)buffer).id();
+                received.add(id);
+
+                if(id == 0)
+                {
+                    oldCallbackStarted.countDown();
+
+                    try
+                    {
+                        releaseOldCallback.await(5, TimeUnit.SECONDS);
+                    }
+                    catch(InterruptedException exception)
+                    {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+                else if(id == 3)
+                {
+                    newBufferProcessed.countDown();
+                }
+            });
+
+        try
+        {
+            processor.start();
+            processor.receive(new TestNativeBuffer(0, 10_000));
+            assertTrue(oldCallbackStarted.await(2, TimeUnit.SECONDS));
+            processor.receive(new TestNativeBuffer(1, 10_000));
+            processor.receive(new TestNativeBuffer(2, 10_000));
+            processor.stop();
+            processor.start();
+            processor.receive(new TestNativeBuffer(3, 10_000));
+            releaseOldCallback.countDown();
+            assertTrue(newBufferProcessed.await(2, TimeUnit.SECONDS));
+
+            ReceiverQueueMetricsSnapshot.NativeBufferMetrics metrics = processor.getQueueMetrics();
+            assertEquals(List.of(0, 3), received);
+            assertEquals(2, metrics.cleanupBuffers());
+            assertEquals(20_000, metrics.cleanupSamples());
+            assertEquals(20, metrics.cleanupMilliseconds());
+        }
+        finally
+        {
+            releaseOldCallback.countDown();
+            processor.dispose();
+            assertTrue(processor.awaitTermination(5, TimeUnit.SECONDS));
+        }
+    }
+
     private record ReceiverProfile(String name, int sampleRate, int bufferSamples)
     {
+    }
+
+    private static ReceiverQueueMetricsSnapshot.NativeBufferMetrics awaitProcessedBuffers(
+        NativeBufferProcessor processor, long expected) throws InterruptedException
+    {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        ReceiverQueueMetricsSnapshot.NativeBufferMetrics metrics = processor.getQueueMetrics();
+
+        while(metrics.processedBuffers() < expected && System.nanoTime() < deadline)
+        {
+            Thread.sleep(1);
+            metrics = processor.getQueueMetrics();
+        }
+
+        return metrics;
     }
 
     private record TestNativeBuffer(int id, int sampleCount) implements INativeBuffer

@@ -73,13 +73,13 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
 
     private Broadcaster<SourceEvent> mSourceEventBroadcaster = new Broadcaster<>();
     private INativeBufferProvider mNativeBufferProvider;
-    private List<PolyphaseChannelSource> mChannelSources = new CopyOnWriteArrayList<>();
+    private final List<PolyphaseChannelSource> mChannelSources = new CopyOnWriteArrayList<>();
     private ChannelCalculator mChannelCalculator;
     private SynthesisFilterManager mFilterManager = new SynthesisFilterManager();
-    private ComplexPolyphaseChannelizerM2 mPolyphaseChannelizer;
+    private volatile ComplexPolyphaseChannelizerM2 mPolyphaseChannelizer;
     private ChannelSourceEventListener mChannelSourceEventListener = new ChannelSourceEventListener();
     private NativeBufferReceiver mNativeBufferReceiver = new NativeBufferReceiver();
-    private NativeBufferProcessor mBufferProcessor;
+    private final NativeBufferProcessor mBufferProcessor;
     private final Object mChannelizerLock = new Object();
     private Map<Integer,float[]> mOutputProcessorFilters = new HashMap<>();
     private TunerController mTunerController;
@@ -153,6 +153,34 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
         }
 
         return sb.toString();
+    }
+
+    /**
+     * Returns a bounded, constant-time snapshot of receiver queue counters.  The channel-source collection is
+     * copy-on-write so this read does not acquire the channelizer lifecycle lock or delay live sample processing.
+     */
+    public ReceiverQueueMetricsSnapshot getQueueMetricsSnapshot()
+    {
+        List<ReceiverQueueMetricsSnapshot.ChannelQueueMetrics> channelMetrics = new ArrayList<>(mChannelSources.size());
+
+        for(PolyphaseChannelSource channelSource: mChannelSources)
+        {
+            try
+            {
+                channelMetrics.add(new ReceiverQueueMetricsSnapshot.ChannelQueueMetrics(
+                    channelSource.getTunerChannel().getFrequency(), channelSource.getSampleRate(),
+                    channelSource.getQueueMetrics()));
+            }
+            catch(RuntimeException exception)
+            {
+                //A channel can be disposed or reconfigured while the non-owning diagnostic observer reads it.
+            }
+        }
+
+        ComplexPolyphaseChannelizerM2 channelizer = mPolyphaseChannelizer;
+        return new ReceiverQueueMetricsSnapshot(System.nanoTime(), mBufferProcessor.getQueueMetrics(),
+            channelizer != null ? ReceiverQueueMetricsSnapshot.QueueMetrics.from(channelizer.getQueueMetrics()) : null,
+            channelMetrics);
     }
 
     public void stopAllChannels()
@@ -471,7 +499,7 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
      * anticipate that these two threads will contend for access to this update required flag, we use an update lock
      * to protect access to the flag.
      */
-    public class NativeBufferReceiver implements Listener<INativeBuffer>
+    public class NativeBufferReceiver implements NativeBufferProcessor.GenerationAwareListener
     {
         private boolean mOutputProcessorUpdateRequired = false;
 
@@ -518,8 +546,13 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
          * @param nativeBuffer of sample to process.
          */
         @Override
-        public void receive(INativeBuffer nativeBuffer)
+        public void receive(INativeBuffer nativeBuffer, long nativeBufferGeneration)
         {
+            if(!mBufferProcessor.isCurrentRunGeneration(nativeBufferGeneration))
+            {
+                return;
+            }
+
             if(mOutputProcessorUpdateRequired)
             {
                 try
@@ -535,13 +568,22 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
 
             if(mPolyphaseChannelizer != null)
             {
+                ComplexPolyphaseChannelizerM2 channelizer = mPolyphaseChannelizer;
                 Iterator<InterleavedComplexSamples> iterator = nativeBuffer.iteratorInterleaved();
+                long producerGeneration = channelizer.getProducerGeneration();
+
+                //The native-buffer worker checked this generation before entering the callback.  Check it again after
+                //capturing the channelizer token so Stop/Restart cannot relabel that old buffer with a new-run token.
+                if(!mBufferProcessor.isCurrentRunGeneration(nativeBufferGeneration))
+                {
+                    return;
+                }
 
                 while(iterator.hasNext())
                 {
                     try
                     {
-                        mPolyphaseChannelizer.receive(iterator.next());
+                        channelizer.receive(iterator.next(), producerGeneration);
                     }
                     catch(Exception exception)
                     {

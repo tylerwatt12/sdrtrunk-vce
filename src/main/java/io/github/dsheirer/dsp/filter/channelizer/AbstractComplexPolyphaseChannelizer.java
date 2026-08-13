@@ -104,7 +104,25 @@ public abstract class AbstractComplexPolyphaseChannelizer implements Listener<In
      */
     protected void dispatch(ComplexPolyphaseChannelizerM2.ChannelResultsBuffer channelResultsBuffer)
     {
-        PolyphaseChannelSource[] channels = mChannels.toArray(new PolyphaseChannelSource[0]);
+        dispatch(channelResultsBuffer, getChannelSnapshot());
+    }
+
+    /**
+     * Captures the exact downstream targets for one batch.  Lifecycle changes after this snapshot cannot redirect an
+     * older batch to channels that were registered by a newer tuner run.
+     */
+    protected PolyphaseChannelSource[] getChannelSnapshot()
+    {
+        return mChannels.toArray(new PolyphaseChannelSource[0]);
+    }
+
+    /**
+     * Dispatches to a previously captured target set.  Each target owns one release claim; a target that throws before
+     * accepting its claim is released here so one bad channel cannot strand the shared tuner-wide batch.
+     */
+    protected void dispatch(ComplexPolyphaseChannelizerM2.ChannelResultsBuffer channelResultsBuffer,
+                            PolyphaseChannelSource[] channels)
+    {
 
         if(channels.length == 0)
         {
@@ -114,9 +132,17 @@ public abstract class AbstractComplexPolyphaseChannelizer implements Listener<In
 
         channelResultsBuffer.prepareForConsumers(channels.length);
 
-        for(PolyphaseChannelSource channel : channels)
+        for(PolyphaseChannelSource channel: channels)
         {
-            channel.receiveChannelResults(channelResultsBuffer);
+            try
+            {
+                channel.receiveChannelResults(channelResultsBuffer);
+            }
+            catch(Throwable throwable)
+            {
+                channelResultsBuffer.release();
+                mLog.error("Error dispatching polyphase channel results", throwable);
+            }
         }
     }
 

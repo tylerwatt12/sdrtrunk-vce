@@ -21,6 +21,7 @@ package io.github.dsheirer.dsp.filter.channelizer.output;
 import io.github.dsheirer.dsp.filter.channelizer.ComplexPolyphaseChannelizerM2;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.sample.complex.ComplexSamples;
+import io.github.dsheirer.util.Dispatcher;
 import java.util.List;
 
 public interface IPolyphaseChannelOutputProcessor
@@ -29,6 +30,11 @@ public interface IPolyphaseChannelOutputProcessor
      * Description of the state/configuration of this output processor
      */
     String getStateDescription();
+
+    /**
+     * Constant-time, lock-free diagnostic snapshot of this channel's output queue.
+     */
+    Dispatcher.Metrics getQueueMetrics();
 
     /**
      * Start processing channel results

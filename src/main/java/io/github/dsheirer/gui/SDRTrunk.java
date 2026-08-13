@@ -36,6 +36,7 @@ import io.github.dsheirer.controller.channel.ChannelException;
 import io.github.dsheirer.controller.channel.ChannelSelectionManager;
 import io.github.dsheirer.database.SdrTrunkDatabaseBootstrap;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
+import io.github.dsheirer.dsp.filter.channelizer.ReceiverQueueProfile;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.gui.configuration.LegacyPlaylistImportDialog;
 import io.github.dsheirer.gui.configuration.ViewConfigurationRequest;
@@ -620,6 +621,9 @@ public class SDRTrunk implements Listener<TunerEvent>
 
         viewMenu.add(new JSeparator());
         viewMenu.add(new TunersMenu());
+        JMenuItem receiverQueuesMenuItem = new JMenuItem("Receiver Queues...");
+        receiverQueuesMenuItem.addActionListener(e -> mJavaFxWindowManager.showReceiverQueues());
+        viewMenu.add(receiverQueuesMenuItem);
         viewMenu.add(new JSeparator());
         JMenuItem resetColumnWidthsMenuItem = new JMenuItem("Reset Table Column Widths");
         resetColumnWidthsMenuItem.addActionListener(e -> {
@@ -1328,6 +1332,8 @@ public class SDRTrunk implements Listener<TunerEvent>
 
         try
         {
+            //Resolve the restart-only receiver queue policy before any tuner or real-time receiver path is created.
+            ReceiverQueueProfile.getActive();
             Path dataRoot = PortableApplicationPaths.getDataRoot();
             Path databasePath = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
 

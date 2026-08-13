@@ -19,6 +19,7 @@
 package io.github.dsheirer.dsp.filter.channelizer.output;
 
 import io.github.dsheirer.dsp.filter.channelizer.ComplexPolyphaseChannelizerM2;
+import io.github.dsheirer.dsp.filter.channelizer.ReceiverQueueProfile;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.sample.complex.ComplexSamples;
 import io.github.dsheirer.source.heartbeat.HeartbeatManager;
@@ -29,7 +30,6 @@ import org.slf4j.LoggerFactory;
 public abstract class ChannelOutputProcessor implements IPolyphaseChannelOutputProcessor
 {
     private static final Logger mLog = LoggerFactory.getLogger(ChannelOutputProcessor.class);
-
     private Dispatcher<ComplexPolyphaseChannelizerM2.ChannelResultsBuffer> mChannelResultsDispatcher;
     private HeartbeatManager mHeartbeatManager;
     protected Listener<ComplexSamples> mComplexSamplesListener;
@@ -48,7 +48,9 @@ public abstract class ChannelOutputProcessor implements IPolyphaseChannelOutputP
         mInputChannelCount = inputChannelCount;
         //Process 1/10th of the sample rate per second at a rate of 20 times a second (200% of anticipated rate)
         mHeartbeatManager = heartbeatManager;
-        mChannelResultsDispatcher = new Dispatcher<>(threadName,20, mHeartbeatManager);
+        mChannelResultsDispatcher = new Dispatcher<>(threadName, 20, mHeartbeatManager,
+            ReceiverQueueProfile.getActive().getChannelOutputQueueCapacity(),
+            ComplexPolyphaseChannelizerM2.ChannelResultsBuffer::release);
         mChannelResultsDispatcher.setListener(channelResultsBuffer -> {
             try
             {
@@ -74,7 +76,18 @@ public abstract class ChannelOutputProcessor implements IPolyphaseChannelOutputP
     @Override
     public void stop()
     {
-        mChannelResultsDispatcher.flushAndStop();
+        //Queued channel results are stale at shutdown.  Discarding invokes release() so shared batches can be recycled
+        //without forcing old samples through the decoder on the stopping thread.
+        mChannelResultsDispatcher.stop();
+    }
+
+    /**
+     * Lock-free snapshot of this channel's output queue.
+     */
+    @Override
+    public Dispatcher.Metrics getQueueMetrics()
+    {
+        return mChannelResultsDispatcher.getQueueMetrics();
     }
 
     /**

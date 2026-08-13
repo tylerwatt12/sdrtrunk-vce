@@ -19,6 +19,7 @@
 package io.github.dsheirer.source.tuner.manager;
 
 import io.github.dsheirer.dsp.filter.channelizer.PolyphaseChannelManager;
+import io.github.dsheirer.dsp.filter.channelizer.ReceiverQueueMetricsSnapshot;
 import io.github.dsheirer.source.SourceEvent;
 import io.github.dsheirer.source.SourceException;
 import io.github.dsheirer.source.tuner.TunerController;
@@ -38,7 +39,7 @@ import org.slf4j.LoggerFactory;
 public class PolyphaseChannelSourceManager extends ChannelSourceManager
 {
     private static final Logger mLog = LoggerFactory.getLogger(PolyphaseChannelSourceManager.class);
-    private PolyphaseChannelManager mPolyphaseChannelManager;
+    private volatile PolyphaseChannelManager mPolyphaseChannelManager;
     private TunerController mTunerController;
 
     /**
@@ -64,6 +65,16 @@ public class PolyphaseChannelSourceManager extends ChannelSourceManager
         sb.append("\n\t").append(mPolyphaseChannelManager.getStateDescription());
 
         return sb.toString();
+    }
+
+    /**
+     * Constant-time receiver queue snapshot for diagnostics.  Returns an unavailable snapshot if disposal races the
+     * observer; it never waits for the channelizer lifecycle lock.
+     */
+    public ReceiverQueueMetricsSnapshot getQueueMetricsSnapshot()
+    {
+        PolyphaseChannelManager manager = mPolyphaseChannelManager;
+        return manager != null ? manager.getQueueMetricsSnapshot() : ReceiverQueueMetricsSnapshot.unavailable();
     }
 
     @Override

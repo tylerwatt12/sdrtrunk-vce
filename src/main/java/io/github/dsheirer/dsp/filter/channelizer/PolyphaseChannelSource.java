@@ -41,7 +41,7 @@ import org.slf4j.LoggerFactory;
 public class PolyphaseChannelSource extends TunerChannelSource implements Listener<ComplexSamples>
 {
     private Logger mLog = LoggerFactory.getLogger(PolyphaseChannelSource.class);
-    private IPolyphaseChannelOutputProcessor mPolyphaseChannelOutputProcessor;
+    private volatile IPolyphaseChannelOutputProcessor mPolyphaseChannelOutputProcessor;
     private Listener<ComplexSamples> mSamplesListener;
     private double mChannelSampleRate;
     private long mIndexCenterFrequency;
@@ -77,6 +77,16 @@ public class PolyphaseChannelSource extends TunerChannelSource implements Listen
     public String getStateDescription()
     {
         return mPolyphaseChannelOutputProcessor.getStateDescription();
+    }
+
+    /**
+     * Constant-time, lock-free diagnostic snapshot of this channel's output queue.  A processor can be absent for a
+     * brief interval while tuner configuration is being applied.
+     */
+    public ReceiverQueueMetricsSnapshot.QueueMetrics getQueueMetrics()
+    {
+        IPolyphaseChannelOutputProcessor processor = mPolyphaseChannelOutputProcessor;
+        return processor != null ? ReceiverQueueMetricsSnapshot.QueueMetrics.from(processor.getQueueMetrics()) : null;
     }
 
     /**

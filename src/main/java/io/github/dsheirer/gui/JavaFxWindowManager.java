@@ -33,6 +33,7 @@ import io.github.dsheirer.gui.preference.UserPreferencesEditor;
 import io.github.dsheirer.gui.preference.ViewUserPreferenceEditorRequest;
 import io.github.dsheirer.gui.preference.encryption.EncryptionKeyPreferenceEditor;
 import io.github.dsheirer.gui.preference.encryption.ViewEncryptionKeyPreferenceEditorRequest;
+import io.github.dsheirer.gui.receiver.ReceiverQueuesView;
 import io.github.dsheirer.gui.theme.ThemeManager;
 import io.github.dsheirer.gui.viewer.MessageRecordingViewer;
 import io.github.dsheirer.gui.viewer.ViewRecordingViewerRequest;
@@ -75,6 +76,7 @@ public class JavaFxWindowManager extends Application
     public static final String USER_PREFERENCES_EDITOR = "preferences";
     public static final String STAGE_MONITOR_KEY_CALIBRATION_DIALOG = "calibration.dialog";
     public static final String STAGE_MONITOR_KEY_RECORDING_VIEWER = "recording.viewer";
+    public static final String STAGE_MONITOR_KEY_RECEIVER_QUEUES = "receiver.queues";
     public static final String STAGE_MONITOR_KEY_ICON_MANAGER_EDITOR = "icon.manager";
     public static final String STAGE_MONITOR_KEY_JMBE_EDITOR = "jmbe.editor";
     public static final String STAGE_MONITOR_KEY_CONFIGURATION_EDITOR = "configuration";
@@ -91,6 +93,7 @@ public class JavaFxWindowManager extends Application
     private EncryptionKeyPreferenceEditor mEncryptionKeyPreferenceEditor;
     private UserPreferencesEditor mUserPreferencesEditor;
     private MessageRecordingViewer mMessageRecordingViewer;
+    private ReceiverQueuesView mReceiverQueuesView;
 
     private Stage mIconManagerStage;
     private Stage mJmbeEditorStage;
@@ -98,6 +101,7 @@ public class JavaFxWindowManager extends Application
     private Stage mEncryptionKeyStage;
     private Stage mUserPreferencesStage;
     private Stage mRecordingViewerStage;
+    private Stage mReceiverQueuesStage;
     private JFXPanel mStatusPanel;
 
     /**
@@ -231,6 +235,51 @@ public class JavaFxWindowManager extends Application
         }
 
         return mMessageRecordingViewer;
+    }
+
+    /**
+     * Shows the non-modal, read-only receiver queue metrics window.
+     */
+    public void showReceiverQueues()
+    {
+        Runnable show = () -> restoreStage(getReceiverQueuesStage());
+
+        if(Platform.isFxApplicationThread())
+        {
+            show.run();
+        }
+        else
+        {
+            Platform.runLater(show);
+        }
+    }
+
+    private Stage getReceiverQueuesStage()
+    {
+        if(mReceiverQueuesStage == null)
+        {
+            Scene scene = new Scene(getReceiverQueuesView(), 900, 750);
+            ThemeManager.getInstance().register(scene);
+            mReceiverQueuesStage = new Stage();
+            mReceiverQueuesStage.setTitle("sdrtrunk-vce - Receiver Queues");
+            mReceiverQueuesStage.setScene(scene);
+            mReceiverQueuesStage.setOnShown(event -> getReceiverQueuesView().start());
+            mReceiverQueuesStage.setOnHidden(event -> getReceiverQueuesView().stop());
+            ApplicationIcon.apply(mReceiverQueuesStage);
+            mUserPreferences.getJavaFxPreferences().monitor(mReceiverQueuesStage, STAGE_MONITOR_KEY_RECEIVER_QUEUES);
+        }
+
+        return mReceiverQueuesStage;
+    }
+
+    private ReceiverQueuesView getReceiverQueuesView()
+    {
+        if(mReceiverQueuesView == null)
+        {
+            mReceiverQueuesView = new ReceiverQueuesView(mTunerManager);
+        }
+
+        return mReceiverQueuesView;
     }
 
     public Stage getIconManagerStage()
