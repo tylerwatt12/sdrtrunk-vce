@@ -211,7 +211,7 @@ class StatsWebInteractionUiContractTest
         String talkgroup = function(source, "async function renderTalkgroup()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"68\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"69\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -521,8 +521,8 @@ class StatsWebInteractionUiContractTest
             html.indexOf("rel=\"stylesheet\""));
         assertTrue(html.contains("id=\"theme-toggle\""));
         assertTrue(html.contains("id=\"mobile-theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=53"));
-        assertTrue(html.contains("/assets/app.js?v=78"));
+        assertTrue(html.contains("/assets/app.css?v=54"));
+        assertTrue(html.contains("/assets/app.js?v=79"));
         assertTrue(source.contains("MOBILE_THEME_STORAGE_KEY = 'sdrtrunk_mobile_theme'"));
         assertTrue(source.contains("mode === 'mobile' ? MOBILE_THEME_STORAGE_KEY : THEME_STORAGE_KEY"));
         assertTrue(source.contains("toggle.setAttribute('aria-pressed'"));
@@ -641,6 +641,9 @@ class StatsWebInteractionUiContractTest
         assertTrue(css.contains("transition: opacity 600ms ease;"));
         assertTrue(css.contains(".playback-progress.ending"));
         assertTrue(css.contains("transition-duration: 800ms;"));
+        assertTrue(css.contains(".mobile-listener-shell .playback-progress.active"));
+        assertTrue(css.contains("height: 12px;"));
+        assertTrue(css.contains("width: calc(var(--playback-progress) * 100%);"));
     }
 
     @Test
@@ -687,12 +690,16 @@ class StatsWebInteractionUiContractTest
         String audio = function(source, "async function renderAdminWebAudio()");
 
         assertTrue(html.contains("id=\"mobile-listener-shell\""));
-        assertTrue(html.contains("id=\"mobile-listener-desktop\""));
+        assertFalse(html.contains("id=\"mobile-listener-desktop\""));
+        assertFalse(html.contains("id=\"mobile-listener-open\""));
         assertTrue(html.contains("id=\"mobile-theme-toggle\""));
         assertTrue(html.contains("data-listener-view=\"scan-lists\""));
         assertTrue(html.contains("data-listener-view=\"queue\""));
         assertTrue(shell.contains("mobileSlot.append(bar)"));
         assertTrue(shell.contains("app.hidden = true"));
+        assertTrue(shell.contains("const mobile = compactListenerMedia.matches"));
+        assertFalse(source.contains("LISTENER_MODE_STORAGE_KEY"));
+        assertFalse(source.contains("setListenerModePreference"));
         assertTrue(function(source, "function initializePlaybackHeader()")
             .contains("!subscriptions.contains(event.target)"));
         assertTrue(function(source, "function initializePlaybackHeader()").contains("!mobileTrigger"));
@@ -914,6 +921,10 @@ class StatsWebInteractionUiContractTest
         assertTrue(parameters.contains("experiment_fps"));
         assertTrue(parameters.contains("experiment_max_decimation"));
         assertTrue(parameters.contains("experiment_iq_queue_ms"));
+        assertTrue(tuner.contains("let experimentDraftDirty = false"));
+        assertTrue(acceptState.contains("if (!experimentDraftDirty)"));
+        assertTrue(tuner.contains("control.addEventListener('change', () => { experimentDraftDirty = true; })"));
+        assertTrue(tuner.contains("experimentDraftDirty = false"));
         assertTrue(tuner.contains("'Receiver IQ drops'"));
         assertTrue(tuner.contains("Number(row?.decode_health_pct)"));
         assertTrue(tuner.contains("'VCE CPU'"));

@@ -3,7 +3,7 @@ const content = document.getElementById('content');
 const tableOnly = route.get('layout') === 'table';
 const WEB_CLIENT_REVISION = document.querySelector('meta[name="sdrtrunk-web-revision"]')?.content?.trim() || '';
 const TABLE_WIDTH_COOKIE = 'sdrtrunk_table_widths_v4';
-const ALIAS_CATALOG_COLUMNS_STORAGE_KEY = 'sdrtrunk_alias_catalog_enrichment_columns_v1';
+const ALIAS_CATALOG_COLUMNS_STORAGE_KEY = 'sdrtrunk_alias_catalog_columns_v2';
 const TABLE_WIDTH_MINIMUM = 48;
 const TABLE_WIDTH_MAXIMUM = 1200;
 const SYSTEM_DIRECTORY_SITE_LIMIT = 100;
@@ -15,7 +15,6 @@ const VOICE_QUALITY_WARMUP_FRAMES = 50;
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
 const THEME_STORAGE_KEY = 'sdrtrunk_theme';
 const MOBILE_THEME_STORAGE_KEY = 'sdrtrunk_mobile_theme';
-const LISTENER_MODE_STORAGE_KEY = 'sdrtrunk-vce.listener-mode';
 const themePreferences = { desktop: null, mobile: null };
 const COMPACT_LISTENER_MEDIA = '(max-width: 760px), (pointer: coarse) and (max-width: 1024px)';
 const ALIAS_LIST_FAMILY_LABELS = Object.freeze({
@@ -212,8 +211,8 @@ const SERVER_TABLE_DEFAULT_SORTS = {
 };
 const CONVENTIONAL_IDENTITY_PAGE_LIMIT = 100;
 const ALIAS_CATALOG_DEFAULT_ENRICHMENT_COLUMNS = Object.freeze([
-  'calls', 'recorded', 'streamed', 'encrypted-evidence', 'grants', 'joins', 'emergency', 'logout',
-  'relationships', 'last-evidence'
+  'alias', 'description', 'identifier', 'matcher', 'group', 'calls', 'recorded', 'streamed',
+  'encrypted-evidence', 'grants', 'joins', 'emergency', 'logout', 'relationships', 'last-evidence'
 ]);
 let serviceStatus = null;
 let webClientReloadAttempted = false;
@@ -1932,6 +1931,68 @@ function aliasCatalogCoreColumns() {
   ];
 }
 
+function aliasJoinedValues(values) {
+  return Array.isArray(values) && values.length ? values.join(', ') : '—';
+}
+
+function aliasCustomConfigurationColumns() {
+  const raw = (id, label, field, fullLabel = '') => ({
+    id, label, field, group: 'Raw Matcher Values', fullLabel,
+    render: (row) => aliasRawValue(row[field]),
+    sortValue: (row) => row[field] === null || row[field] === undefined ? '' : row[field]
+  });
+  return [
+    { id: 'alias-id', label: 'Alias ID', group: 'Identity', fullLabel: 'Durable Alias identifier',
+      render: (row) => aliasRawValue(row.alias_id), className: 'numeric' },
+    { id: 'alias-list', label: 'Alias List', group: 'Identity', render: aliasListCatalogLink,
+      className: 'alias-cell', sortValue: (row) => row.alias_list_name || '' },
+    { id: 'alias-list-id', label: 'Alias List ID', group: 'Identity',
+      render: (row) => aliasRawValue(row.alias_list_id), className: 'numeric' },
+    { id: 'family', label: 'Family', group: 'Identity', render: (row) => availableValue(row.family) },
+    { id: 'alias', label: 'Alias', group: 'Identity', render: aliasDetailLink,
+      className: 'alias-cell', sortValue: (row) => row.name || '' },
+    { id: 'description', label: 'Description', group: 'Appearance', render: (row) =>
+      availableValue(row.description), className: 'alias-cell' },
+    { id: 'group', label: 'Group', group: 'Appearance', render: (row) =>
+      availableValue(row.group), className: 'alias-cell' },
+    { id: 'color', label: 'Color', group: 'Appearance', render: aliasColorValue },
+    { id: 'icon', label: 'Icon', group: 'Appearance', render: (row) => availableValue(row.icon_name) },
+    { id: 'matcher', label: 'Matcher', group: 'Matcher', render: (row) =>
+      availableValue(row.matcher_label || row.matcher_type) },
+    { id: 'matcher-type', label: 'Matcher Type', group: 'Matcher', render: (row) =>
+      availableValue(row.matcher_type) },
+    { id: 'identity-type', label: 'Identity Type', group: 'Matcher', render: (row) =>
+      availableValue(row.identity_type) },
+    { id: 'protocol', label: 'Protocol', group: 'Matcher', render: (row) => availableValue(row.protocol) },
+    { id: 'protocol-variant', label: 'Protocol Variant', group: 'Matcher', render: (row) =>
+      availableValue(row.protocol_variant) },
+    { id: 'identifier', label: 'Identifier', group: 'Matcher', render: (row) =>
+      availableValue(row.identifier_display), className: 'numeric' },
+    { id: 'exact', label: 'Exact', group: 'Matcher', render: (row) =>
+      row.exact === null || row.exact === undefined ? '—' : yesNoKnown(row.exact) },
+    { id: 'ranged', label: 'Ranged', group: 'Matcher', render: (row) =>
+      row.ranged === null || row.ranged === undefined ? '—' : yesNoKnown(row.ranged) },
+    raw('value', 'Value', 'value'),
+    raw('minimum', 'Minimum', 'min_value'),
+    raw('maximum', 'Maximum', 'max_value'),
+    { id: 'text-value', label: 'Text Value', group: 'Raw Matcher Values', render: (row) =>
+      availableValue(row.text_value) },
+    raw('numeric-value', 'Numeric Value', 'numeric_value'),
+    { id: 'tone-sequence', label: 'Tone Sequence', group: 'Raw Matcher Values', render: (row) =>
+      availableValue(row.tone_sequence) },
+    { id: 'scan-lists', label: 'Scan Lists', group: 'Call Handling', render: (row) =>
+      aliasJoinedValues(row.scan_lists), className: 'alias-cell' },
+    { id: 'record', label: 'Record', group: 'Call Handling', render: (row) => yesNoKnown(row.record_enabled) },
+    { id: 'broadcast-channels', label: 'Stream Destinations', group: 'Call Handling', render: (row) =>
+      aliasJoinedValues(row.broadcast_channels), className: 'alias-cell' },
+    { id: 'stream-as-talkgroup', label: 'Stream as Talkgroup', group: 'Call Handling', render: (row) =>
+      aliasRawValue(row.stream_as_talkgroup) },
+    { id: 'behavior', label: 'Behavior', group: 'Call Handling', render: aliasBehavior },
+    { id: 'overlap', label: 'Overlap', group: 'Validation', render: (row) => row.overlap ?
+      badge('Conflict', 'state-stale', 'This identifier overlaps another alias') : '—' }
+  ];
+}
+
 function aliasCatalogEnrichmentColumns() {
   const count = (id, label, field, group, fullLabel, sort = field) => ({
     id, label, field, group, fullLabel, sort,
@@ -2016,7 +2077,7 @@ function aliasColumnChooser(definitions, selected, onChange) {
   panel.setAttribute('role', 'group');
   panel.setAttribute('aria-label', 'Optional Alias Catalog columns');
   panel.append(node('p', 'column-chooser-help',
-    'Configuration columns remain visible. Choose any call, signaling, and relationship evidence columns.'));
+    'Choose any Alias configuration, call handling, matcher, activity, signaling, or relationship columns.'));
   const groups = node('div', 'column-chooser-groups');
   const checkboxes = new Map();
   const grouped = new Map();
@@ -2597,6 +2658,8 @@ function aliasEditorBaseColumns(admin, rows, onSelectionChange) {
   columns.push(
     { id: 'alias', label: 'Alias', group: 'Configuration', render: aliasDetailLink,
       className: 'alias-cell', sort: 'name', sortValue: (row) => row.name || '' },
+    { id: 'description', label: 'Description', group: 'Configuration', render: (row) =>
+      availableValue(row.description), className: 'alias-cell' },
     { id: 'identifier', label: 'Identifier', group: 'Configuration', render: (row) =>
       availableValue(row.identifier_display), sort: 'value', className: 'numeric',
       sortValue: (row) => row.identifier_display || '' },
@@ -2622,11 +2685,11 @@ function aliasEditorColumns(view, admin, rows, onSelectionChange, selectedCustom
         'current-affiliations', 'evidence-state', 'last-evidence'].includes(column.id))];
   }
   if (view === 'custom') {
-    return [...base, ...enrichment.filter((column) => selectedCustom.has(column.id))];
+    const selection = admin ? base.filter((column) => column.id === 'select') : [];
+    const definitions = [...aliasCustomConfigurationColumns(), ...enrichment];
+    return [...selection, ...definitions.filter((column) => selectedCustom.has(column.id))];
   }
   return [...base,
-    { id: 'description', label: 'Description', group: 'Configuration', render: (row) =>
-      availableValue(row.description), className: 'alias-cell' },
     { id: 'behavior', label: 'Behavior', group: 'Call Handling', render: aliasBehavior },
     { id: 'overlap', label: 'Overlap', group: 'Validation', render: (row) => row.overlap ?
       badge('Conflict', 'state-stale', 'This identifier overlaps another alias') : '—' }];
@@ -3367,6 +3430,29 @@ function aliasBulkStreamChoices(options) {
   return fieldset;
 }
 
+function aliasBulkBinaryOperation(ariaLabel, positiveDescription, negativeDescription) {
+  const operation = node('div', 'alias-membership-operation');
+  operation.setAttribute('role', 'group');
+  operation.setAttribute('aria-label', ariaLabel);
+  let selected = 'add';
+  [['add', '+', positiveDescription], ['remove', '−', negativeDescription]]
+    .forEach(([value, label, description]) => {
+      const button = node('button', '', label);
+      button.type = 'button';
+      button.title = description;
+      button.setAttribute('aria-label', description);
+      button.setAttribute('aria-pressed', String(value === selected));
+      button.addEventListener('click', () => {
+        selected = value;
+        operation.querySelectorAll('button').forEach((candidate) =>
+          candidate.setAttribute('aria-pressed', String(candidate === button)));
+        operation.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+      operation.append(button);
+    });
+  return { element: operation, value: () => selected };
+}
+
 function openAliasBulkModal(kind) {
   const ids = [...aliasEditorSelection].filter((id) => Number.isInteger(id) && id > 0).slice(0, 500);
   if (!ids.length) return;
@@ -3392,18 +3478,14 @@ function openAliasBulkModal(kind) {
       return { alias_list_id: Number(select.value) };
     };
   } else if (kind === 'group') {
-    const operation = aliasSelect('groupOperation', [
-      { value: '', label: 'Leave unchanged' }, { value: 'set', label: 'Set group' },
-      { value: 'clear', label: 'Clear group' }
-    ], '');
+    const operation = aliasBulkBinaryOperation('Group change', 'Assign group', 'Clear group');
     const group = aliasTextInput('group');
-    group.disabled = true;
-    operation.addEventListener('change', () => { group.disabled = operation.value !== 'set'; });
-    form.append(aliasFormField('Group change', operation), aliasFormField('Group name', group));
+    operation.element.addEventListener('change', () => { group.disabled = operation.value() !== 'add'; });
+    form.append(aliasFormField('Group change', operation.element), aliasFormField('Group name', group));
     readChange = () => {
-      if (!operation.value) throw new Error('Choose how the group should change');
-      if (operation.value === 'set' && !group.value.trim()) throw new Error('Enter a group name');
-      return { group_operation: operation.value, group: operation.value === 'set' ? group.value.trim() : null };
+      if (operation.value() === 'add' && !group.value.trim()) throw new Error('Enter a group name');
+      return { group_operation: operation.value() === 'add' ? 'set' : 'clear',
+        group: operation.value() === 'add' ? group.value.trim() : null };
     };
   } else if (kind === 'scan-lists') {
     const scanList = aliasSelect('scanListId', [{ value: '', label: 'Choose a scan list' },
@@ -3411,41 +3493,18 @@ function openAliasBulkModal(kind) {
         value: row.id ?? row.scan_list_id,
         label: `${row.name}${row.published === false ? ' · not published' : ''}`
       }))], '');
-    const operation = node('div', 'alias-membership-operation');
-    operation.setAttribute('role', 'group');
-    operation.setAttribute('aria-label', 'Membership change');
-    let membershipOperation = 'add';
-    [['add', '+', 'Add selected aliases'], ['remove', '−', 'Remove selected aliases']]
-      .forEach(([value, label, description]) => {
-        const button = node('button', '', label);
-        button.type = 'button';
-        button.title = description;
-        button.setAttribute('aria-label', description);
-        button.setAttribute('aria-pressed', String(value === membershipOperation));
-        button.addEventListener('click', () => {
-          membershipOperation = value;
-          operation.querySelectorAll('button').forEach((candidate) =>
-            candidate.setAttribute('aria-pressed', String(candidate === button)));
-          operation.dispatchEvent(new Event('change', { bubbles: true }));
-        });
-        operation.append(button);
-      });
-    form.append(aliasFormField('Scan list', scanList), aliasFormField('Membership change', operation));
+    const operation = aliasBulkBinaryOperation('Membership change', 'Add selected aliases',
+      'Remove selected aliases');
+    form.append(aliasFormField('Scan list', scanList), aliasFormField('Membership change', operation.element));
     readChange = () => {
       const scanListId = Number(scanList.value);
       if (!Number.isInteger(scanListId) || scanListId <= 0) throw new Error('Choose a scan list');
-      return { scan_list_id: scanListId, operation: membershipOperation };
+      return { scan_list_id: scanListId, operation: operation.value() };
     };
   } else if (kind === 'record') {
-    const operation = aliasSelect('recordOperation', [
-      { value: '', label: 'Leave unchanged' }, { value: 'ENABLE', label: 'Enable recording' },
-      { value: 'DISABLE', label: 'Disable recording' }
-    ], '');
-    form.append(aliasFormField('Recording change', operation));
-    readChange = () => {
-      if (!operation.value) throw new Error('Choose how recording should change');
-      return { recordable: operation.value === 'ENABLE' };
-    };
+    const operation = aliasBulkBinaryOperation('Recording change', 'Enable recording', 'Disable recording');
+    form.append(aliasFormField('Recording change', operation.element));
+    readChange = () => ({ recordable: operation.value() === 'add' });
   } else if (kind === 'stream') {
     const operation = aliasSelect('streamOperation', [
       { value: '', label: 'Leave unchanged' }, { value: 'add', label: 'Add destinations' },
@@ -4023,7 +4082,7 @@ async function renderAliases() {
     return;
   }
 
-  const definitions = aliasCatalogEnrichmentColumns();
+  const definitions = [...aliasCustomConfigurationColumns(), ...aliasCatalogEnrichmentColumns()];
   const selectedCustom = readAliasCatalogColumnSelection(definitions);
   const tableHost = node('div', 'alias-catalog-table-host alias-editor-table-host');
   let bulkBar = null;
@@ -6029,21 +6088,6 @@ window.addEventListener('beforeunload', (event) => {
   liveConnections.clear();
 });
 
-function listenerModePreference() {
-  try {
-    const value = window.localStorage.getItem(LISTENER_MODE_STORAGE_KEY);
-    return value === 'mobile' || value === 'desktop' ? value : null;
-  } catch (_) {
-    return null;
-  }
-}
-
-function setListenerModePreference(value) {
-  try {
-    window.localStorage.setItem(LISTENER_MODE_STORAGE_KEY, value);
-  } catch (_) { }
-}
-
 function setMobileListenerView(view) {
   const shell = document.getElementById('mobile-listener-shell');
   if (!shell) return;
@@ -6068,10 +6112,8 @@ function applyListenerShellMode() {
   const bar = document.getElementById('playback-bar');
   const desktopSlot = document.getElementById('desktop-playback-slot');
   const mobileSlot = document.getElementById('mobile-playback-slot');
-  const openButton = document.getElementById('mobile-listener-open');
   if (!shell || !app || !bar || !desktopSlot || !mobileSlot || !compactListenerMedia) return;
-  const preference = listenerModePreference();
-  const mobile = preference === 'mobile' || (preference !== 'desktop' && compactListenerMedia.matches);
+  const mobile = compactListenerMedia.matches;
   document.body.classList.toggle('mobile-listener-active', mobile);
   document.body.dataset.listenerShell = mobile ? 'mobile' : 'desktop';
   applyTheme(mobile ? 'mobile' : 'desktop');
@@ -6079,14 +6121,12 @@ function applyListenerShellMode() {
     mobileSlot.append(bar);
     app.hidden = true;
     shell.hidden = false;
-    openButton.hidden = true;
     bar.setAttribute('aria-label', 'Mobile web call playback');
     setMobileListenerView(shell.dataset.listenerView || 'listen');
   } else {
     desktopSlot.append(bar);
     app.hidden = false;
     shell.hidden = true;
-    openButton.hidden = !compactListenerMedia.matches;
     bar.setAttribute('aria-label', 'Web call playback');
     const subscriptions = bar.querySelector('.playback-subscriptions');
     const queue = bar.querySelector('.playback-queue');
@@ -6100,16 +6140,6 @@ function initializeListenerShell() {
   compactListenerMedia = window.matchMedia(COMPACT_LISTENER_MEDIA);
   document.querySelectorAll('#mobile-listener-shell [data-listener-view]').forEach((button) => {
     button.addEventListener('click', () => setMobileListenerView(button.dataset.listenerView));
-  });
-  document.getElementById('mobile-listener-desktop')?.addEventListener('click', () => {
-    setListenerModePreference('desktop');
-    applyListenerShellMode();
-    document.getElementById('mobile-listener-open')?.focus();
-  });
-  document.getElementById('mobile-listener-open')?.addEventListener('click', () => {
-    setListenerModePreference('mobile');
-    applyListenerShellMode();
-    document.getElementById('playback-play')?.focus();
   });
   compactListenerMedia.addEventListener('change', applyListenerShellMode);
   applyListenerShellMode();
@@ -7617,6 +7647,7 @@ function tunerSpectrumPanel() {
   let experimentSettings = { fftSize: 4096, fps: 10, maximumDecimation: 32, iqQueueMs: 100 };
   let experimentState = null;
   let experimentBaseline = null;
+  let experimentDraftDirty = false;
   let spectrumDirty = true;
   let waterfallDirty = true;
   let drawPending = false;
@@ -8151,10 +8182,12 @@ function tunerSpectrumPanel() {
       maximumDecimation: Number(tunerState?.maximum_decimation || experimentSettings.maximumDecimation),
       iqQueueMs: Number(tunerState?.iq_queue_duration_milliseconds || experimentSettings.iqQueueMs)
     };
-    experimentFftSize.value = String(experimentSettings.fftSize);
-    experimentFps.value = String(experimentSettings.fps);
-    experimentLens.value = String(experimentSettings.maximumDecimation);
-    experimentIqQueue.value = String(experimentSettings.iqQueueMs);
+    if (!experimentDraftDirty) {
+      experimentFftSize.value = String(experimentSettings.fftSize);
+      experimentFps.value = String(experimentSettings.fps);
+      experimentLens.value = String(experimentSettings.maximumDecimation);
+      experimentIqQueue.value = String(experimentSettings.iqQueueMs);
+    }
     if (firstExperimentState) resetExperimentMeasurement();
     analysisViewport = stateViewport(tunerState, 'visible') || requestedViewport() ||
       (fullViewport ? { ...fullViewport } : null);
@@ -8870,11 +8903,15 @@ function tunerSpectrumPanel() {
     };
   }
   function applySelectedExperiment() {
-    if (!shouldRun() || refining) return;
+    if (!shouldRun()) return;
     experimentSettings = selectedExperimentSettings();
+    experimentDraftDirty = false;
     resetExperimentMeasurement();
     queueViewportUpdate(true);
   }
+  [experimentFftSize, experimentFps, experimentLens, experimentIqQueue].forEach((control) => {
+    control.addEventListener('change', () => { experimentDraftDirty = true; });
+  });
   applyExperiment.addEventListener('click', applySelectedExperiment);
   restoreExperiment.addEventListener('click', () => {
     experimentFftSize.value = '4096';
@@ -9962,6 +9999,11 @@ function siteIdentity(site) {
   ].filter(Boolean).join(' · ');
 }
 
+function p25DecoderMode(value) {
+  return ({ AUTO: 'Automatic', C4FM: 'Normal (C4FM)', CQPSK: 'Simulcast (LSM / CQPSK)' })[
+    String(value || '').trim().toUpperCase()] || availableValue(value);
+}
+
 function p25SiteDetailRows(site) {
   return [
     ['Callsign', callsignLink(site.callsign)], ['WACN', hexDecimalPair(site.wacn, 5)],
@@ -9969,6 +10011,9 @@ function p25SiteDetailRows(site) {
     ['RFSS', hexDecimalPair(site.rfss, 2)], ['Site', hexDecimalPair(site.site_id, 2)],
     ['Local Registration Area', hexDecimalPair(site.lra, 2)],
     ['Manufacturer', site.mfid_display],
+    ['Configured Decoder Mode', p25DecoderMode(site.p25_decoder_mode)],
+    ['Auto Starting Preference', String(site.p25_decoder_mode || '').toUpperCase() === 'AUTO' ?
+      p25DecoderMode(site.p25_auto_preferred_decoder_mode) : ''],
     ['Broadcast Clock', dateTime(site.broadcast_clock_ms)],
     ['Data', yesNoKnown(site.data_service)], ['Data Access', site.data_access],
     ['Working Unit ID Lease Time', site.wuid_lease_minutes == null ? '' :

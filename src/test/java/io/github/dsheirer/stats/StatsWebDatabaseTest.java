@@ -3742,7 +3742,8 @@ class StatsWebDatabaseTest
                 INSERT INTO configuration_channel (
                     sort_order, system_name, site_name, name, radres_guid, decoder_type, config_json
                 ) VALUES (1, 'Ohio MARCS', 'Cuyahoga County', 'MARCS Cleveland Simulcast',
-                    'test-site-guid', 'P25-1', '{}')
+                    'test-site-guid', 'P25-1',
+                    '{"decodeConfiguration":{"modulation":"AUTO","autoPreferredModulation":"CQPSK"}}')
                 """);
             statement.executeUpdate("""
                 INSERT INTO p25_site_activity_bucket (context_id, bucket_start_ms, call_count)
@@ -3774,6 +3775,8 @@ class StatsWebDatabaseTest
         assertEquals("Cuyahoga County", site.get("configured_site"));
         assertEquals("MARCS Cleveland Simulcast", site.get("configured_name"));
         assertEquals("Cleveland Simulcast", site.get("channel_name"));
+        assertEquals("AUTO", site.get("p25_decoder_mode"));
+        assertEquals("CQPSK", site.get("p25_auto_preferred_decoder_mode"));
 
         Map<String,Object> quality = rowsFrom(mDatabase.qualityHistory(request(
             "/api/quality?guid=" + GUID + "&include_history=false")), "sites").getFirst();

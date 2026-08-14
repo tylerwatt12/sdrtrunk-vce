@@ -3413,7 +3413,7 @@ th.numeric {
 :root[data-theme="dark"] .dashboard-filter-button.active,
 :root[data-theme="dark"] .signal-range-button.active,
 :root[data-theme="dark"] .button:not(.secondary):not(.disabled),
-:root[data-theme="dark"] button:not(.secondary):not(.playback-command):not(.theme-toggle):not(.auth-action):not(.table-sort-control):not(.systems-live-tab):not(.live-details-tab):not(.channel-diagnostic-view-button):not(.mobile-listener-desktop):not(.mobile-listener-theme):not([data-listener-view]) {
+:root[data-theme="dark"] button:not(.secondary):not(.playback-command):not(.theme-toggle):not(.auth-action):not(.table-sort-control):not(.systems-live-tab):not(.live-details-tab):not(.channel-diagnostic-view-button):not(.mobile-listener-theme):not([data-listener-view]) {
   color: #071a18;
   border-color: #69cec2;
 }
@@ -4377,14 +4377,6 @@ th.numeric {
   }
 }
 
-.mobile-listener-open {
-  min-height: 27px;
-  padding: 3px 8px;
-  color: #dce4eb;
-  background: #2c3944;
-  border-color: #5b6873;
-}
-
 .mobile-listener-shell[hidden] {
   display: none;
 }
@@ -4491,7 +4483,6 @@ body.mobile-listener-active {
   gap: 8px;
 }
 
-.mobile-listener-desktop,
 .mobile-listener-theme {
   min-height: 44px;
   padding: 8px 12px;
@@ -4695,6 +4686,32 @@ body.mobile-listener-active {
   bottom: calc(74px + env(safe-area-inset-bottom));
   left: 0;
   z-index: 2;
+  height: 12px;
+  background: rgb(7 94 87 / 24%);
+  border-top: 1px solid rgb(99 169 161 / 60%);
+}
+
+.mobile-listener-shell .playback-progress.active {
+  opacity: 1;
+}
+
+.mobile-listener-shell .playback-progress.active.paused {
+  opacity: .6;
+}
+
+.mobile-listener-shell .playback-progress::before {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: calc(var(--playback-progress) * 100%);
+  background: #16a394;
+  content: '';
+}
+
+.mobile-listener-shell .playback-progress-glow {
+  width: clamp(72px, 22vw, 140px);
+  height: 12px;
+  background: linear-gradient(90deg, transparent 0%, #72f4e3 70%, #d5fffa 100%);
+  box-shadow: 0 0 12px rgb(114 244 227 / 72%);
 }
 
 .mobile-listener-shell[data-listener-view="listen"] .playback-subscriptions,

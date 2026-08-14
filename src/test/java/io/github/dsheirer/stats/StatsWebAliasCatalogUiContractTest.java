@@ -58,6 +58,8 @@ class StatsWebAliasCatalogUiContractTest
         String tabs = function(source, "function aliasEditorViewTabs(selectedList)");
         String columns = function(source, "function aliasEditorColumns(view, admin, rows, onSelectionChange, selectedCustom)");
         String optional = function(source, "function aliasCatalogEnrichmentColumns()");
+        String configuration = function(source, "function aliasCustomConfigurationColumns()");
+        String base = function(source, "function aliasEditorBaseColumns(admin, rows, onSelectionChange)");
 
         for(String label: new String[]{"Configure", "Call Use", "System Evidence", "Custom"})
         {
@@ -68,6 +70,15 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(columns.contains("view === 'custom'"));
         assertTrue(source.contains("aliasColumnChooser(definitions, selectedCustom"));
         assertTrue(source.contains("exportCsvLink('aliases', exportContext)"));
+        assertTrue(base.contains("id: 'description'"));
+        for(String facet: new String[]{"alias-id", "alias-list", "family", "alias", "description", "group",
+            "color", "icon", "matcher", "matcher-type", "identity-type", "protocol", "protocol-variant",
+            "identifier", "exact", "ranged", "value", "minimum", "maximum", "text-value",
+            "numeric-value", "tone-sequence", "scan-lists", "record", "broadcast-channels",
+            "stream-as-talkgroup", "behavior", "overlap"})
+        {
+            assertTrue(configuration.contains("'" + facet + "'"), () -> "Missing custom Alias facet " + facet);
+        }
         for(String field: new String[]{"call_count", "recorded_count", "streamed_count",
             "encrypted_evidence_count", "grant_count", "join_count", "emergency_count", "register_count",
             "logout_count", "relationship_count", "current_affiliation_count", "metrics_state",
@@ -165,7 +176,7 @@ class StatsWebAliasCatalogUiContractTest
 
         assertTrue(bulk.contains("slice(0, 500)"));
         assertTrue(bulk.contains("explicitly selected aliases"));
-        for(String operation: new String[]{"Leave unchanged", "group_operation", "recordable",
+        for(String operation: new String[]{"group_operation", "recordable",
             "stream_operation", "broadcast_channels", "alias_list_id", "icon_name", "delete",
             "/api/v1/admin/scan-lists/", "alias_ids"})
         {
@@ -173,10 +184,17 @@ class StatsWebAliasCatalogUiContractTest
         }
         assertTrue(source.contains("['move', 'Move'], ['group', 'Group'], ['scan-lists', 'Scan Lists']"));
         assertTrue(source.contains("['stream', 'Stream'], ['appearance', 'Appearance'], ['delete', 'Delete']"));
-        assertTrue(bulk.contains("let membershipOperation = 'add'"));
-        assertTrue(bulk.contains("['add', '+', 'Add selected aliases']"));
-        assertTrue(bulk.contains("['remove', '−', 'Remove selected aliases']"));
+        String binary = function(source,
+            "function aliasBulkBinaryOperation(ariaLabel, positiveDescription, negativeDescription)");
+        assertTrue(binary.contains("let selected = 'add'"));
+        assertTrue(binary.contains("['add', '+', positiveDescription]"));
+        assertTrue(binary.contains("['remove', '−', negativeDescription]"));
+        assertTrue(bulk.contains("aliasBulkBinaryOperation('Membership change', 'Add selected aliases'"));
+        assertTrue(bulk.contains("aliasBulkBinaryOperation('Recording change', 'Enable recording', 'Disable recording')"));
+        assertTrue(bulk.contains("aliasBulkBinaryOperation('Group change', 'Assign group', 'Clear group')"));
         assertFalse(bulk.contains("aliasSelect('membershipOperation'"));
+        assertFalse(bulk.contains("aliasSelect('recordOperation'"));
+        assertFalse(bulk.contains("aliasSelect('groupOperation'"));
         assertTrue(columns.contains("event.shiftKey"));
         assertTrue(source.contains("event.metaKey || event.ctrlKey"));
     }
