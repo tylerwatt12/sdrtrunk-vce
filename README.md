@@ -21,10 +21,11 @@ This project is currently an **alpha release**. Back up your receiver data befor
 
 - **Stable browser activity screen:** Live Systems has one Conventional tab and stable tabs for each trunked site.
   Frequencies stay in place instead of constantly moving around.
-- **Built-in webserver and scanner:** View live systems, sites, channels, talkgroups, radios, activity, and statistics
-  from a browser. Subscribe to one or more administrator-defined scan lists; assign normal Aliases or an Alias List's
-  global unmatched-talkgroup policy to them. Overlapping routes are deduplicated before completed calls enter the
-  conversation-aware browser queue.
+- **Built-in webserver and scanner:** New profiles start the website on local-only HTTPS by default, while preserving
+  an operator's saved enabled or disabled choice. View live systems, sites, channels, talkgroups, radios, activity,
+  and statistics from a browser. Subscribe to one or more administrator-defined scan lists; assign normal Aliases or
+  an Alias List's global unmatched-talkgroup policy to them. Overlapping routes are deduplicated before completed
+  calls enter the conversation-aware browser queue.
 - **Portable setup:** Each VCE installation keeps its own database, settings, tuners, JMBE library, logs, recordings,
   statistics, and web files. It does not rely on the sdrtrunk in the userprofile, so you can rest assured it will not overwrite files from previous versions of sdrtrunk
 - **Safe importing and upgrades:** VCE allows you to import an existing SDRTrunk XML playlist, or migrate to a new version from a previous VCE database with the built-in Application Migrator.

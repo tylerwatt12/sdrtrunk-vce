@@ -23,11 +23,11 @@ and Alpha 9 while leaving the original installation unchanged.
 - **Web administration.** The Admin portal can create users, reset passwords, delete users, revoke their sessions,
   change User/Admin membership, and change feature access. The fixed primary `admin` password remains local-only and
   is set from JavaFX under Web Server preferences. Passwords must contain 7–256 characters.
-- **Automatic HTTPS for other devices.** **This computer** keeps local-only HTTP on `127.0.0.1`. Selecting **Other
-  devices** listens on IPv4 with HTTPS and automatically creates and maintains a local certificate for the computer's
-  current LAN/VPN addresses. JavaFX shows usable browser URLs, certificate
-  identity, coverage, fingerprint, and expiration, with Copy and Open controls. A self-signed certificate encrypts
-  traffic but may still produce a browser trust warning.
+- **Automatic HTTPS by default.** New profiles start the website on local-only HTTPS at `127.0.0.1:8090`; an operator's
+  saved enabled or disabled choice remains in effect. Selecting **Other devices** listens on IPv4 with HTTPS and
+  automatically creates and maintains a local certificate for the computer's current LAN/VPN addresses. JavaFX shows
+  usable browser URLs, certificate identity, coverage, fingerprint, and expiration, with Copy and Open controls. A
+  self-signed certificate encrypts traffic but may still produce a browser trust warning.
 - **Custom certificates without stopping the server.** Administrators can import PKCS#12/PFX material or a PEM
   certificate with its matching RSA/EC private key. Changes to the network mode, port, password, or certificate
   restart the web listener automatically.
