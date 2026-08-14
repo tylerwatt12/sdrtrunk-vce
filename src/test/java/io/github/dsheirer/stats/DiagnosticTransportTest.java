@@ -101,6 +101,73 @@ class DiagnosticTransportTest
     }
 
     @Test
+    void constructsTheTunerFftOnlyOnTheDiagnosticWorker() throws Exception
+    {
+        DiagnosticFftScheduler scheduler = new DiagnosticFftScheduler();
+        Thread producerThread = Thread.currentThread();
+        TunerDiagnosticService.TunerFftProcessor processor = new TunerDiagnosticService.TunerFftProcessor(scheduler,
+            100_000_000L, 10_000_000L, ignored -> {});
+
+        try
+        {
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+
+            while(processor.initializationThread() == null && System.nanoTime() < deadline)
+            {
+                Thread.onSpinWait();
+            }
+
+            assertNotSame(producerThread, processor.initializationThread());
+            assertTrue(processor.initializationThread().getName().contains("diagnostic FFT"));
+        }
+        finally
+        {
+            processor.close();
+            scheduler.close();
+        }
+    }
+
+    @Test
+    void saturatedTunerIngressAndCloseNeverWaitForTheWorker() throws Exception
+    {
+        DiagnosticFftScheduler scheduler = new DiagnosticFftScheduler();
+        CountDownLatch workerStarted = new CountDownLatch(1);
+        CountDownLatch releaseWorker = new CountDownLatch(1);
+        DiagnosticFftScheduler.Task blocker = scheduler.scheduleWithFixedDelay(() ->
+        {
+            workerStarted.countDown();
+            awaitUninterruptibly(releaseWorker);
+        }, 20);
+        assertTrue(workerStarted.await(1, TimeUnit.SECONDS));
+        TunerDiagnosticService.TunerFftProcessor processor = new TunerDiagnosticService.TunerFftProcessor(scheduler,
+            100_000_000L, 10_000_000L, ignored -> {});
+        FloatNativeBuffer buffer = new FloatNativeBuffer(new float[4_096], 1, 1);
+
+        try
+        {
+            assertTimeoutPreemptively(Duration.ofMillis(250), () ->
+            {
+                long configuration = processor.configuration();
+
+                for(int x = 0; x < 100; x++)
+                {
+                    processor.receive(buffer, x + 1, configuration);
+                }
+            });
+            assertEquals(92, processor.droppedBufferCount());
+            assertTimeoutPreemptively(Duration.ofMillis(250), processor::close,
+                "closing a diagnostic lease must not wait for worker-owned FFT or queue state");
+        }
+        finally
+        {
+            processor.close();
+            releaseWorker.countDown();
+            blocker.close();
+            scheduler.close();
+        }
+    }
+
+    @Test
     void bindingLifecycleUsesASeparateFailureDomainFromDiagnostics() throws Exception
     {
         DiagnosticFftScheduler scheduler = new DiagnosticFftScheduler();

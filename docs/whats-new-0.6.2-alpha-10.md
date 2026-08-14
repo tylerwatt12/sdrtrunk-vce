@@ -53,10 +53,10 @@ and Alpha 9 while leaving the original installation unchanged.
   appears when the selected decoder supplies compatible demodulated symbols.
 - **Shared Pause control.** Pause/Resume applies to Events, Messages, and Channel diagnostics. Pausing, collapsing,
   changing pages, hiding a tab, or closing a diagnostic view releases its stream.
-- **Whole-tuner spectrum and waterfall.** The browser Tuner Spectrum page shows already-running tuners without starting,
-  retuning, or reconfiguring them. It supports tuner selection, pause, pan, up to 8× zoom, refined FFT detail,
-  waterfall frequency/power/time inspection, a configurable lower display limit, waterfall speed, optional frequency
-  snapping, and FFT smoothing.
+- **Whole-tuner spectrum and waterfall.** The administrator-only browser Tuner Spectrum page shows one already-running
+  tuner without starting, retuning, or reconfiguring it. It supports tuner selection, pause, pan, up to 16× zoom,
+  refined FFT detail, waterfall frequency/power/time inspection, a configurable lower display limit, waterfall speed,
+  optional frequency snapping, and FFT smoothing.
 - **Spectrum channel flags.** Small colored flags mark encrypted voice, voice, data, control, other active carriers,
   and idle conventional channels. Hovering a flag shows the available channel, system, talkgroup, source, timeslot,
   LCN, decoder, and encryption details. Idle conventional flags change to active as activity arrives.
@@ -88,10 +88,11 @@ and Alpha 9 while leaving the original installation unchanged.
 - **Live selects the active control channel initially.** Opening a trunked-system Live tab selects its currently active
   control-channel row when one is known. A manually selected alternate control or traffic channel remains selected;
   updates do not force the view back.
-- **Diagnostics are demand-driven and shared.** Viewers of the same channel or tuner share a bounded producer and
+- **Diagnostics are demand-driven and bounded.** Viewers of the same selected channel share one bounded producer and
   latest-only binary frames. When nobody is viewing, no diagnostic sample listener, scheduled FFT work, or worker is
-  active. Selected-channel diagnostics support up to 32 sessions sharing one 512-bin producer at 5 frames per second;
-  tuner diagnostics support up to 32 sessions and two tuner producers at 10 frames per second.
+  active. Selected-channel diagnostics support up to 32 sessions sharing one 512-bin producer at 5 frames per second.
+  Whole-tuner diagnostics permit one administrator session and one tuner at a time. They use one 2,048-bin worker at
+  5 frames per second, with a filtered and decimated analysis lens for additional detail while zoomed.
 - **The Java receiver window is smaller.** The old Systems workspace and its embedded Details, Events, Messages,
   signal, and symbol panels are removed. Browser Live Systems owns those activity workflows. Java keeps Map when
   enabled and Tuners; selected-channel and tuner-wide FFT/waterfall diagnostics remain in the website.

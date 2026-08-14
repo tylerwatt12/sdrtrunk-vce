@@ -69,7 +69,7 @@ and double-encoded or separator-smuggling resource names are rejected.
 | `GET /api/v1/conventional-contexts/{context}` | One context and a paged RF summary. |
 | `GET /api/v1/conventional-contexts/{context}/talkgroups` | Paged DMR conventional talkgroups. |
 | `GET /api/v1/conventional-contexts/{context}/radios` | Paged DMR conventional radios. |
-| `GET /api/v1/diagnostics/tuners` | Available passive tuner diagnostic targets. |
+| `GET /api/v1/diagnostics/tuners` | Available passive tuner diagnostic targets. Administrator access is required. |
 
 Common collection parameters are `limit`, `offset`, `q`, `sort`, and `direction`. `limit` defaults to 100 and must be
 between 1 and 500; `offset` must be between 0 and 100,000. Detailed activity uses the positive `before_id` cursor.

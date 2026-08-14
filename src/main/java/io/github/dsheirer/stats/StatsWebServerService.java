@@ -1182,6 +1182,15 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             Map<String,JsonNode> requested = new LinkedHashMap<>();
             subscriptions.fields().forEachRemaining(entry -> requested.put(entry.getKey(), entry.getValue().deepCopy()));
             client.configure(new MultiplexConfiguration(revision, Map.copyOf(requested)));
+
+            //An accepted empty control document is the browser's final unsubscribe handshake.  Request owner-thread
+            //shutdown before acknowledging it so tuner/channel diagnostic leases cannot outlive a locally closed
+            //multiplex connection when the browser aborts the GET immediately after this response.
+            if(requested.isEmpty())
+            {
+                client.requestClose();
+            }
+
             ApiHttpResponse.sendData(exchange, 200, Map.of("revision", revision));
         }
         catch(IllegalArgumentException | StatsApiException exception)

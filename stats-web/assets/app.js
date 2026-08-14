@@ -5367,6 +5367,9 @@ class LiveMultiplexer {
     this.controlInFlight = false;
     this.controlPending = false;
     this.controlRevision = 0;
+    this.controlDesiredRevision = 0;
+    this.controlAppliedRevision = 0;
+    this.controlWaiters = [];
     this.authorizationRecoveryUsed = false;
     this.authorizationBlocked = false;
     this.reconnectDelay = 500;
@@ -5399,9 +5402,8 @@ class LiveMultiplexer {
           this.subscribers.delete(topic);
           this.parameters.delete(topic);
         }
-        this.queueControl();
-        this.closeIfIdle();
-        return Promise.resolve();
+        const desiredRevision = this.queueControl(true);
+        return this.closeIfIdle(desiredRevision);
       },
       update: (nextParameters = {}) => {
         if (closed) return false;
@@ -5571,13 +5573,15 @@ class LiveMultiplexer {
   }
 
   queueControl(immediate = false) {
+    const desiredRevision = ++this.controlDesiredRevision;
     this.controlPending = true;
-    if (!this.ready || this.controlInFlight) return;
+    if (!this.ready || this.controlInFlight) return desiredRevision;
     if (this.controlTimer !== null) window.clearTimeout(this.controlTimer);
     this.controlTimer = window.setTimeout(() => {
       this.controlTimer = null;
       void this.sendControl();
     }, immediate ? 0 : 20);
+    return desiredRevision;
   }
 
   async sendControl() {
@@ -5586,6 +5590,7 @@ class LiveMultiplexer {
     this.controlInFlight = true;
     const controlClientId = this.clientId;
     const revision = ++this.controlRevision;
+    const desiredRevision = this.controlDesiredRevision;
     const subscriptions = {};
     this.subscribers.forEach((targets, topic) => {
       if (targets.size) subscriptions[topic] = this.parameters.get(topic) || {};
@@ -5597,9 +5602,12 @@ class LiveMultiplexer {
         page: false,
         timeoutMs: 5_000
       });
+      this.controlAppliedRevision = Math.max(this.controlAppliedRevision, desiredRevision);
+      this.settleControlWaiters(desiredRevision, true);
       this.authorizationRecoveryUsed = false;
       this.authorizationBlocked = false;
     } catch (error) {
+      this.settleControlWaiters(desiredRevision, false);
       if (this.ready && this.clientId === controlClientId) {
         this.dispatchError(error);
         if (error?.status === 401 || error?.status === 403) {
@@ -5618,9 +5626,31 @@ class LiveMultiplexer {
     }
   }
 
-  closeIfIdle() {
-    if (this.hasSubscribers()) return;
-    this.stop();
+  settleControlWaiters(revision, delivered) {
+    const pending = [];
+    this.controlWaiters.forEach((waiter) => {
+      if (waiter.revision <= revision) waiter.resolve(delivered);
+      else pending.push(waiter);
+    });
+    this.controlWaiters = pending;
+  }
+
+  waitForControlRevision(revision) {
+    if (this.controlAppliedRevision >= revision) return Promise.resolve(true);
+    return new Promise((resolve) => this.controlWaiters.push({ revision, resolve }));
+  }
+
+  closeIfIdle(revision = this.controlDesiredRevision) {
+    if (this.hasSubscribers()) return Promise.resolve();
+    if (!this.ready || !this.clientId) {
+      this.stop();
+      return Promise.resolve();
+    }
+    return this.waitForControlRevision(revision).then(() => {
+      if (this.hasSubscribers()) return;
+      if (this.controlDesiredRevision > revision) return this.closeIfIdle(this.controlDesiredRevision);
+      this.stop();
+    });
   }
 
   stop() {
@@ -5631,6 +5661,8 @@ class LiveMultiplexer {
     if (this.controlTimer !== null) window.clearTimeout(this.controlTimer);
     this.reconnectTimer = null;
     this.controlTimer = null;
+    this.controlPending = false;
+    this.settleControlWaiters(Number.MAX_SAFE_INTEGER, false);
     this.controller?.abort();
     this.controller = null;
     const reader = this.reader;
@@ -7173,8 +7205,9 @@ function tunerWaterfallPalette() {
 const TUNER_SPECTRUM_DEFAULT_FLOOR_DB = -140;
 const TUNER_SPECTRUM_MINIMUM_FLOOR_DB = -200;
 const TUNER_SPECTRUM_MAXIMUM_FLOOR_DB = -40;
-const TUNER_SPECTRUM_MAXIMUM_ZOOM = 8;
+const TUNER_SPECTRUM_MAXIMUM_ZOOM = 16;
 const TUNER_SPECTRUM_ZOOM_FACTOR = 1.5;
+const TUNER_SPECTRUM_VIEWPORT_DEBOUNCE_MS = 160;
 const TUNER_SPECTRUM_SMOOTHING_ALPHA = 0.25;
 const TUNER_SPECTRUM_FLOOR_STORAGE_KEY = 'sdrtrunk.wideband.lowerDisplayLimitDb';
 const TUNER_WATERFALL_SPEED_STORAGE_KEY = 'sdrtrunk.wideband.waterfallScrollSpeed';
@@ -7475,8 +7508,10 @@ function tunerSpectrumPanel() {
   let droppedFrames = 0;
   let fullViewport = null;
   let viewport = null;
+  let analysisViewport = null;
   let refining = false;
   let awaitingViewportState = false;
+  let viewportUpdateTimer = null;
   let hoverRatio = null;
   let hoverCanvas = null;
   let hoverYRatio = null;
@@ -7550,18 +7585,21 @@ function tunerSpectrumPanel() {
   }
 
   const setReadouts = () => {
-    const center = Number(frameMetadata?.centerFrequencyHz || 0);
-    const sampleRate = Number(frameMetadata?.sampleRateHz || 0);
+    const center = fullViewport ? (fullViewport.startHz + fullViewport.endHz) / 2 : 0;
+    const sampleRate = fullViewport ? fullViewport.endHz - fullViewport.startHz : 0;
     const fftSize = Number(frameMetadata?.fftSize || fftValues.length || 0);
     const visibleSpan = viewport ? viewport.endHz - viewport.startHz : sampleRate;
     const zoom = sampleRate > 0 && visibleSpan > 0 ? sampleRate / visibleSpan : 1;
-    const resolution = tunerFrameDomain(frameMetadata, fftValues.length).sentBinWidthHz || null;
+    const frameDomain = tunerFrameDomain(frameMetadata, fftValues.length);
+    const analysisSpan = frameDomain.endHz > frameDomain.startHz ? frameDomain.endHz - frameDomain.startHz : 0;
+    const resolution = frameDomain.sentBinWidthHz || null;
     const fps = frameTimes.length > 1 ? (frameTimes.length - 1) * 1000 /
       Math.max(1, frameTimes[frameTimes.length - 1] - frameTimes[0]) : null;
     const values = [
       ['Center', center ? `${frequency(center)} MHz` : '—'],
       ['Full span', sampleRate ? formatTunerSpan(sampleRate) : '—'],
       ['Visible span', visibleSpan ? formatTunerSpan(visibleSpan) : '—'],
+      ['Analysis span', analysisSpan ? formatTunerSpan(analysisSpan) : '—'],
       ['Zoom', `${zoom.toFixed(2)}×`],
       ['Sent bins', fftValues.length ? number(fftValues.length) : '—'],
       ['FFT detail', fftSize ? number(fftSize) : '—'],
@@ -7623,7 +7661,7 @@ function tunerSpectrumPanel() {
       context.lineTo(cssWidth * line / 4, cssHeight);
       context.stroke();
     }
-    const spectrumValues = displayedSpectrumValues();
+    const spectrumValues = visibleSpectrumValues();
     if (spectrumValues.length < 2) return;
     context.strokeStyle = '#55c7ff';
     context.lineWidth = 1.35;
@@ -7668,7 +7706,8 @@ function tunerSpectrumPanel() {
   };
 
   const addWaterfallFrame = () => {
-    if (!fftValues.length) return;
+    const visibleValues = visibleSpectrumValues(false);
+    if (!visibleValues.length) return;
     const size = ensureWaterfallBuffer();
     waterfallScrollAccumulator += waterfallSpeed;
     const rowCount = Math.min(size.height, Math.floor(waterfallScrollAccumulator));
@@ -7676,12 +7715,12 @@ function tunerSpectrumPanel() {
     waterfallScrollAccumulator -= rowCount;
     const row = waterfallRowImage;
     for (let x = 0; x < size.width; x += 1) {
-      const firstBin = Math.min(fftValues.length - 1, Math.floor(x * fftValues.length / size.width));
-      const lastBin = Math.min(fftValues.length,
-        Math.max(firstBin + 1, Math.ceil((x + 1) * fftValues.length / size.width)));
+      const firstBin = Math.min(visibleValues.length - 1, Math.floor(x * visibleValues.length / size.width));
+      const lastBin = Math.min(visibleValues.length,
+        Math.max(firstBin + 1, Math.ceil((x + 1) * visibleValues.length / size.width)));
       let raw = -Infinity;
       for (let bin = firstBin; bin < lastBin; bin += 1) {
-        if (Number.isFinite(fftValues[bin])) raw = Math.max(raw, fftValues[bin]);
+        if (Number.isFinite(visibleValues[bin])) raw = Math.max(raw, visibleValues[bin]);
       }
       const value = Number.isFinite(raw) ? Math.max(dbFloor, Math.min(0, raw)) : dbFloor;
       const color = Math.max(0, Math.min(255, Math.round((value - dbFloor) / (0 - dbFloor) * 255)));
@@ -7777,6 +7816,9 @@ function tunerSpectrumPanel() {
 
   function closeStreams() {
     streamEpoch += 1;
+    if (viewportUpdateTimer !== null) window.clearTimeout(viewportUpdateTimer);
+    viewportUpdateTimer = null;
+    awaitingViewportState = false;
     const active = stream;
     stream = null;
     streamRelease = Promise.all([streamRelease, releaseConnection(active)]).then(() => {});
@@ -7795,21 +7837,63 @@ function tunerSpectrumPanel() {
     return parameters;
   }
 
+  function stateNumber(state, ...keys) {
+    for (const key of keys) {
+      const value = state?.[key];
+      if (value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value))) {
+        return Number(value);
+      }
+    }
+    return null;
+  }
+
+  function requestedViewport() {
+    return fullViewport && viewport && zoomAmount() > 1.0001 ? {
+      startHz: Math.round(viewport.startHz), endHz: Math.round(viewport.endHz)
+    } : null;
+  }
+
+  function stateViewport(state, prefix) {
+    const start = stateNumber(state, `${prefix}_start_frequency_hz`, `${prefix}_start_hz`);
+    const end = stateNumber(state, `${prefix}_end_frequency_hz`, `${prefix}_end_hz`);
+    return start !== null && end !== null && end > start ? { startHz: start, endHz: end } : null;
+  }
+
+  function sameViewport(left, right, toleranceHz = 1) {
+    return !!left && !!right && Math.abs(left.startHz - right.startHz) <= toleranceHz &&
+      Math.abs(left.endHz - right.endHz) <= toleranceHz;
+  }
+
+  function stateMatchesRequest(state) {
+    const desired = requestedViewport();
+    const requested = stateViewport(state, 'requested');
+    return desired ? sameViewport(desired, requested) : !requested;
+  }
+
   function acceptTunerState(frame) {
     const tunerState = diagnosticJsonPayload(frame);
-    awaitingViewportState = false;
     const streamState = String(tunerState?.stream_state ?? tunerState?.state ??
       (tunerState?.bound ? 'live' : 'waiting')).toLowerCase();
     const live = streamState === 'live' || streamState === 'active';
     const unavailable = streamState === 'unavailable' || streamState === 'closed';
-    frameMetadata = {
-      ...(frameMetadata || {}),
-      centerFrequencyHz: Number(tunerState?.center_frequency_hz) || 0,
-      sampleRateHz: Number(tunerState?.sample_rate_hz) || 0,
-      fftSize: Number(tunerState?.fft_size) || 0,
-      firstBin: Number(tunerState?.first_bin) || 0,
-      sourceBinCount: Number(tunerState?.source_bin_count) || 0
-    };
+    const center = stateNumber(tunerState, 'center_frequency_hz');
+    const sampleRate = stateNumber(tunerState, 'sample_rate_hz');
+    if (center > 0 && sampleRate > 0) {
+      const nextFull = { startHz: center - sampleRate / 2, endHz: center + sampleRate / 2 };
+      const changed = fullViewport && !sameViewport(fullViewport, nextFull);
+      fullViewport = nextFull;
+      if (!viewport || changed) viewport = { ...nextFull };
+      if (changed) {
+        analysisViewport = null;
+        resetWaterfallBuffer(1, 1);
+        clearSpectrumSmoothing();
+        if (shouldRun()) queueViewportUpdate(true);
+      }
+    }
+    if (awaitingViewportState && !stateMatchesRequest(tunerState)) return;
+    awaitingViewportState = false;
+    analysisViewport = stateViewport(tunerState, 'visible') || requestedViewport() ||
+      (fullViewport ? { ...fullViewport } : null);
     setOverlay(live ? '' : (tunerState?.reason || tunerState?.message || 'Waiting for tuner samples…'));
     setStatus(live ? (refining ? 'Refining' : 'Live') : (unavailable ? 'Unavailable' : 'Waiting'),
       live && !refining ? 'state-current' : 'state-stale');
@@ -7826,9 +7910,25 @@ function tunerSpectrumPanel() {
       smoothedFftValues : fftValues;
   }
 
+  function visibleSpectrumValues(useSmoothing = true) {
+    const values = useSmoothing ? displayedSpectrumValues() : fftValues;
+    if (!values.length || !frameMetadata || !viewport) return values;
+    const domain = tunerFrameDomain(frameMetadata, values.length);
+    const span = domain.endHz - domain.startHz;
+    if (!(span > 0)) return values;
+    const visibleStart = Math.max(domain.startHz, viewport.startHz);
+    const visibleEnd = Math.min(domain.endHz, viewport.endHz);
+    if (visibleEnd <= visibleStart) return values.subarray(0, 0);
+    const first = Math.max(0, Math.min(values.length - 1,
+      Math.floor((visibleStart - domain.startHz) / span * values.length)));
+    const end = Math.max(first + 1, Math.min(values.length,
+      Math.ceil((visibleEnd - domain.startHz) / span * values.length)));
+    return values.subarray(first, end);
+  }
+
   function updateSpectrumPeak() {
     peak = null;
-    const values = displayedSpectrumValues();
+    const values = visibleSpectrumValues();
     for (let index = 0; index < values.length; index += 1) {
       if (Number.isFinite(values[index]) && (!Number.isFinite(peak) || values[index] > peak)) {
         peak = values[index];
@@ -7861,13 +7961,22 @@ function tunerSpectrumPanel() {
     const values = diagnosticFloatPayload(frame);
     if (!values.length) return;
     const domain = tunerFrameDomain(frame, values.length);
-    const nextFull = { startHz: domain.fullStartHz, endHz: domain.fullEndHz };
-    const domainChanged = !fullViewport || Math.abs(fullViewport.startHz - nextFull.startHz) >= 0.5 ||
-      Math.abs(fullViewport.endHz - nextFull.endHz) >= 0.5;
-    if ((generation >= 0 && generation !== frame.generation) || (fullViewport && domainChanged)) {
+    const nextAnalysis = { startHz: domain.startHz, endHz: domain.endHz };
+    const tolerance = Math.max(1, domain.sentBinWidthHz * 1.5);
+    if ((analysisViewport && !sameViewport(analysisViewport, nextAnalysis, tolerance)) ||
+        (viewport && (domain.startHz > viewport.startHz + tolerance ||
+          domain.endHz < viewport.endHz - tolerance))) return;
+    const previousDomain = frameMetadata ? tunerFrameDomain(frameMetadata, fftValues.length) : null;
+    const analysisChanged = !previousDomain || !sameViewport(
+      { startHz: previousDomain.startHz, endHz: previousDomain.endHz }, nextAnalysis, tolerance) ||
+      previousDomain.transmittedBinCount !== domain.transmittedBinCount;
+    const generationChanged = generation >= 0 && generation !== frame.generation;
+    if (generationChanged || analysisChanged) {
       droppedFrames = 0;
+      //Rows from another analysis lens cannot gain the new lens's frequency detail.
       resetWaterfallBuffer(1, 1);
       hoverFlag = null;
+      clearSpectrumSmoothing();
     } else if (sequence !== null && frame.sequence > sequence + 1) {
       droppedFrames += frame.sequence - sequence - 1;
     }
@@ -7876,14 +7985,7 @@ function tunerSpectrumPanel() {
     fftValues = values;
     updateSpectrumSmoothing(values, frame, domain);
     frameMetadata = frame;
-    fullViewport = nextFull;
-    viewport = { startHz: domain.startHz, endHz: domain.endHz };
-    if (domainChanged && domain.endHz - domain.startHz < frame.sampleRateHz - 0.5) {
-      viewport = { ...nextFull };
-      queueViewportUpdate();
-      renderActiveChannels();
-      return;
-    }
+    analysisViewport = nextAnalysis;
     updateSpectrumPeak();
     const now = performance.now();
     frameTimes.push(now);
@@ -7894,7 +7996,7 @@ function tunerSpectrumPanel() {
     setStatus('Live', 'state-current');
     addWaterfallFrame();
     setReadouts();
-    if (domainChanged) renderActiveChannels();
+    if (analysisChanged) renderActiveChannels();
     if (hoverRatio !== null) updateCursor(hoverRatio);
     scheduleDraw();
   }
@@ -7928,18 +8030,28 @@ function tunerSpectrumPanel() {
     stream = candidate;
   }
 
-  function queueViewportUpdate() {
+  function queueViewportUpdate(immediate = false) {
     awaitingViewportState = true;
     setRefining(true);
+    if (viewportUpdateTimer !== null) window.clearTimeout(viewportUpdateTimer);
+    viewportUpdateTimer = null;
     if (disposed || !shouldRun()) {
       awaitingViewportState = false;
       setRefining(false);
-    } else if (stream) {
-      if (!stream.update(diagnosticParameters())) {
+      return;
+    }
+    viewportUpdateTimer = window.setTimeout(() => {
+      viewportUpdateTimer = null;
+      if (disposed || !shouldRun()) {
         awaitingViewportState = false;
         setRefining(false);
-      }
-    } else openDiagnosticStream();
+      } else if (stream) {
+        if (!stream.update(diagnosticParameters())) {
+          awaitingViewportState = false;
+          setRefining(false);
+        }
+      } else openDiagnosticStream();
+    }, immediate ? 0 : TUNER_SPECTRUM_VIEWPORT_DEBOUNCE_MS);
   }
 
   function sync() {
@@ -8022,7 +8134,7 @@ function tunerSpectrumPanel() {
     setReadouts();
     renderActiveChannels();
     if (hoverRatio !== null) updateCursor(hoverRatio);
-    if (requestMode !== 'none') queueViewportUpdate();
+    if (requestMode !== 'none') queueViewportUpdate(requestMode === 'immediate');
   }
 
   function zoomAt(anchor, factor) {
@@ -8479,9 +8591,11 @@ function tunerSpectrumPanel() {
     if (center > 0 && sampleRate > 0) {
       fullViewport = { startHz: center - sampleRate / 2, endHz: center + sampleRate / 2 };
       viewport = { ...fullViewport };
+      analysisViewport = { ...fullViewport };
     } else {
       fullViewport = null;
       viewport = null;
+      analysisViewport = null;
     }
   }
 

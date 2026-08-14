@@ -22,6 +22,8 @@ class StatsWebInteractionUiContractTest
     private static final Path APP_CSS = Path.of("stats-web", "assets", "app.css");
     private static final Path WEB_CALL_PLAYER = Path.of("stats-web", "assets", "web-call-player.js");
     private static final Path INDEX_HTML = Path.of("stats-web", "index.html");
+    private static final Path WEB_SERVER = Path.of("src", "main", "java", "io", "github", "dsheirer", "stats",
+        "StatsWebServerService.java");
 
     @Test
     void normalizesCheckedOutWebAssetLineEndings()
@@ -519,7 +521,7 @@ class StatsWebInteractionUiContractTest
             html.indexOf("rel=\"stylesheet\""));
         assertTrue(html.contains("id=\"theme-toggle\""));
         assertTrue(html.contains("/assets/app.css?v=50"));
-        assertTrue(html.contains("/assets/app.js?v=73"));
+        assertTrue(html.contains("/assets/app.js?v=74"));
         assertTrue(source.contains("window.localStorage.setItem(THEME_STORAGE_KEY"));
         assertTrue(source.contains("toggle.setAttribute('aria-pressed'"));
         assertTrue(css.contains(":root[data-theme=\"dark\"]"));
@@ -857,9 +859,12 @@ class StatsWebInteractionUiContractTest
         String inverseFrequencyMapping = function(source, "function tunerBinAtFrequency(domain, frequencyHz)");
         String snapper = function(source, "function tunerSnapFrequency(frequencyHz)");
         String tuner = function(source, "function tunerSpectrumPanel()");
-        String refinement = function(tuner, "function queueViewportUpdate()");
+        String parameters = function(tuner, "function diagnosticParameters()");
+        String refinement = function(tuner, "function queueViewportUpdate(immediate = false)");
         String pointerMove = function(tuner, "function onPlotPointerMove(event)");
+        String acceptState = function(tuner, "function acceptTunerState(frame)");
         String acceptFrame = function(tuner, "function acceptTunerFrame(frame)");
+        String visibleValues = function(tuner, "function visibleSpectrumValues(useSmoothing = true)");
         String live = function(source, "async function renderLive()");
         String systems = function(source, "function liveSystemsSection(onSelectionChange)");
         String css = readText(APP_CSS);
@@ -884,13 +889,17 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("nextWaterfallRow = (nextWaterfallRow - 1 + size.height) % size.height"));
         assertTrue(tuner.contains("close: () =>"));
         assertTrue(tuner.contains("closeStreams()"));
-        assertTrue(tuner.contains("viewport_start_hz"));
-        assertTrue(tuner.contains("viewport_end_hz"));
-        assertFalse(tuner.contains("TUNER_SPECTRUM_REFINEMENT_DELAY_MS"));
+        assertTrue(parameters.contains("zoomAmount() > 1.0001"));
+        assertTrue(parameters.contains("parameters.viewport_start_hz"));
+        assertTrue(parameters.contains("parameters.viewport_end_hz"));
+        assertTrue(source.contains("const TUNER_SPECTRUM_VIEWPORT_DEBOUNCE_MS = 160"));
+        assertTrue(source.contains("const TUNER_SPECTRUM_MAXIMUM_ZOOM = 16"));
         assertTrue(tuner.contains("'Zoom in'"));
         assertTrue(tuner.contains("'Zoom out'"));
         assertTrue(refinement.contains("stream.update(diagnosticParameters())"));
         assertTrue(refinement.contains("awaitingViewportState = true"));
+        assertTrue(refinement.contains("window.setTimeout"));
+        assertTrue(refinement.contains("immediate ? 0 : TUNER_SPECTRUM_VIEWPORT_DEBOUNCE_MS"));
         assertFalse(refinement.contains("closeStreams();"));
         assertFalse(refinement.contains("await closed;"));
         assertTrue(tuner.contains("let streamRelease = Promise.resolve()"));
@@ -951,7 +960,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("previous + TUNER_SPECTRUM_SMOOTHING_ALPHA * (current - previous)"));
         assertTrue(tuner.contains("domain.rawBinWidthHz"));
         assertTrue(tuner.contains("domain.sourceBinCount, domain.transmittedBinCount"));
-        assertTrue(tuner.contains("const spectrumValues = displayedSpectrumValues()"));
+        assertTrue(tuner.contains("const spectrumValues = visibleSpectrumValues()"));
         assertTrue(tuner.contains("const value = displayedSpectrumValues()[index]"));
         assertTrue(tuner.contains("clearSpectrumSmoothing()"));
         assertTrue(source.contains("const TUNER_SPECTRUM_SMOOTHING_ALPHA = 0.25"));
@@ -995,7 +1004,9 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("const signature = JSON.stringify([viewport.startHz, viewport.endHz"));
         assertTrue(tuner.contains("if (signature === activeFlagSignature) return;"));
         assertTrue(tuner.contains("waterfallObservedAtRows = new Float64Array(waterfallBuffer.height)"));
-        assertTrue(tuner.contains("tunerFrameDomain(frameMetadata, fftValues.length).sentBinWidthHz"));
+        assertTrue(tuner.contains("const frameDomain = tunerFrameDomain(frameMetadata, fftValues.length)"));
+        assertTrue(tuner.contains("const resolution = frameDomain.sentBinWidthHz"));
+        assertTrue(tuner.contains("['Analysis span'"));
         assertTrue(tuner.contains("['Displayed resolution'"));
         assertTrue(source.contains("const TUNER_FREQUENCY_RASTERS = Object.freeze(["));
         assertTrue(source.contains("id: 'vhf-land-mobile', minHz: 150_000_000, maxHz: 173_997_500"));
@@ -1021,10 +1032,26 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("sourceBinCount"));
         assertTrue(tuner.contains("resetZoom.disabled = !shouldRun()"));
         assertTrue(tuner.contains("if (!shouldRun() || !fullViewport || zoomAmount() <= 1.0001) return"));
-        assertTrue(tuner.contains("(fullViewport && domainChanged)"));
-        assertFalse(tuner.contains("frame.sampleRateHz - 0.5 && !refining"));
-        assertTrue(tuner.contains("queueViewportUpdate();\n      renderActiveChannels();\n      return;"));
-        assertTrue(tuner.contains("if (domainChanged) renderActiveChannels()"));
+        assertTrue(acceptState.contains("center_frequency_hz"));
+        assertTrue(acceptState.contains("sample_rate_hz"));
+        assertTrue(acceptState.contains("stateViewport(tunerState, 'visible')"));
+        assertTrue(acceptState.contains("stateMatchesRequest(tunerState)"));
+        assertFalse(acceptState.contains("frameMetadata ="));
+        assertTrue(acceptFrame.contains("const nextAnalysis = { startHz: domain.startHz, endHz: domain.endHz }"));
+        assertTrue(acceptFrame.contains("analysisViewport && !sameViewport"));
+        assertTrue(acceptFrame.contains("domain.startHz > viewport.startHz"));
+        assertTrue(acceptFrame.contains("domain.endHz < viewport.endHz"));
+        assertTrue(acceptFrame.contains("if (generationChanged || analysisChanged)"));
+        assertTrue(acceptFrame.contains("resetWaterfallBuffer(1, 1)"));
+        assertTrue(acceptFrame.contains("if (analysisChanged) renderActiveChannels()"));
+        assertTrue(acceptFrame.contains("frameMetadata = frame"));
+        assertFalse(acceptFrame.contains("fullViewport = nextFull"));
+        assertTrue(visibleValues.contains("const domain = tunerFrameDomain(frameMetadata, values.length)"));
+        assertTrue(visibleValues.contains("Math.max(domain.startHz, viewport.startHz)"));
+        assertTrue(visibleValues.contains("Math.min(domain.endHz, viewport.endHz)"));
+        assertTrue(visibleValues.contains("return values.subarray(first, end)"));
+        assertTrue(tuner.contains("const visibleValues = visibleSpectrumValues(false)"));
+        assertTrue(tuner.contains("queueViewportUpdate(requestMode === 'immediate')"));
         assertTrue(tuner.contains("generation === frame.generation && sequence !== null"));
         assertTrue(source.contains("sdrtrunk.wideband.lowerDisplayLimitDb"));
         assertTrue(source.contains("sdrtrunk.wideband.waterfallScrollSpeed"));
@@ -1103,6 +1130,36 @@ class StatsWebInteractionUiContractTest
         assertFalse(source.contains("/api/v1/live/channel-diagnostics"));
         assertFalse(source.contains("/api/v1/live/tuner-diagnostics"));
         assertTrue(source.contains("stream.update(diagnosticParameters())"));
+    }
+
+    @Test
+    void deliversFinalEmptyMultiplexControlBeforeAbortingTheConnection() throws Exception
+    {
+        String source = source();
+        String server = readText(WEB_SERVER);
+        String multiplexer = source.substring(source.indexOf("class LiveMultiplexer"),
+            source.indexOf("const liveMultiplexer = new LiveMultiplexer()"));
+
+        assertTrue(multiplexer.contains("subscribers.delete(subscriber)"));
+        assertTrue(multiplexer.contains("this.parameters.delete(topic)"));
+        assertTrue(multiplexer.contains("const desiredRevision = this.queueControl(true)"));
+        assertTrue(multiplexer.contains("return this.closeIfIdle(desiredRevision)"));
+        assertTrue(multiplexer.contains("const subscriptions = {}"));
+        assertTrue(multiplexer.contains("if (targets.size) subscriptions[topic]"));
+        assertTrue(multiplexer.contains("return this.waitForControlRevision(revision).then"));
+
+        int controlPost = multiplexer.indexOf("await requestJson('/api/v1/live/multiplex/control'");
+        int controlApplied = multiplexer.indexOf("this.controlAppliedRevision = Math.max", controlPost);
+        int waitedClose = multiplexer.indexOf("return this.waitForControlRevision(revision).then");
+        int idleStop = multiplexer.indexOf("this.stop();", waitedClose);
+        int abort = multiplexer.indexOf("this.controller?.abort()", idleStop);
+        assertTrue(controlPost >= 0 && controlPost < controlApplied);
+        assertTrue(waitedClose >= 0 && waitedClose < idleStop);
+        assertTrue(idleStop < abort);
+        assertTrue(multiplexer.contains("this.settleControlWaiters(Number.MAX_SAFE_INTEGER, false)"));
+        assertTrue(server.contains("if(requested.isEmpty())"));
+        assertTrue(server.indexOf("client.requestClose();", server.indexOf("if(requested.isEmpty())")) <
+            server.indexOf("ApiHttpResponse.sendData(exchange, 200", server.indexOf("if(requested.isEmpty())")));
     }
 
     @Test

@@ -6,6 +6,7 @@
 package io.github.dsheirer.stats;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.sun.net.httpserver.HttpServer;
@@ -69,8 +70,9 @@ class StatsWebTunerSpectrumAccessTest
             assertEquals(401, client.send(HttpRequest.newBuilder(target).GET().build(),
                 HttpResponse.BodyHandlers.discarding()).statusCode());
 
-            accessService.setCapabilityTier(WebCapability.TUNER_SPECTRUM_VIEW, AccessTier.PUBLIC);
-            assertEquals(200, client.send(HttpRequest.newBuilder(target).GET().build(),
+            assertThrows(IllegalArgumentException.class,
+                () -> accessService.setCapabilityTier(WebCapability.TUNER_SPECTRUM_VIEW, AccessTier.PUBLIC));
+            assertEquals(401, client.send(HttpRequest.newBuilder(target).GET().build(),
                 HttpResponse.BodyHandlers.discarding()).statusCode());
 
             assertTrue(StatsWebServerService.MULTIPLEX_CAPABILITIES.contains(

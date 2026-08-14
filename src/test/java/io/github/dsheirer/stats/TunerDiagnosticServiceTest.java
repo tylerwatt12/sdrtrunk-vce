@@ -9,8 +9,8 @@ package io.github.dsheirer.stats;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.buffer.INativeBuffer;
@@ -27,6 +27,7 @@ import io.github.dsheirer.source.tuner.TunerType;
 import java.time.Duration;
 import java.util.Iterator;
 import java.util.List;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -77,7 +78,6 @@ class TunerDiagnosticServiceTest
         assertEquals(4, first.activeChannelCount());
         assertEquals(0, controller.addCount.get());
         assertEquals(0, processors.createCount.get());
-        assertEquals(2, enumerations.get());
 
         service.close();
         assertEquals(0, controller.removeCount.get());
@@ -102,104 +102,110 @@ class TunerDiagnosticServiceTest
     }
 
     @Test
-    void sharesOneProducerAndImmediatelyDetachesAfterTheLastViewer()
+    void permitsExactlyOneSessionAndDetachesItImmediately()
     {
-        FakeController controller = new FakeController(773_106_250L, 10_000_000.0);
+        FakeController firstController = new FakeController(773_106_250L, 10_000_000.0);
+        FakeController secondController = new FakeController(851_000_000L, 8_000_000.0);
         FakeProcessorFactory processors = new FakeProcessorFactory();
-        TunerDiagnosticService service = service(List.of(target(new Object(), TunerClass.AIRSPY, controller, 2)),
-            processors);
-        String targetId = service.targets().getFirst().targetId();
+        TunerDiagnosticService service = service(List.of(
+            target(new Object(), TunerClass.AIRSPY, firstController, 2),
+            target(new Object(), TunerClass.RTL2832, secondController, 1)), processors);
+        List<TunerDiagnosticService.Target> targets = service.targets();
 
-        TunerDiagnosticService.Session first = service.tryOpen(targetId).session();
-        TunerDiagnosticService.Session second = service.tryOpen(targetId).session();
-        assertEquals(1, controller.addCount.get());
-        assertEquals(1, processors.createCount.get());
+        TunerDiagnosticService.OpenResult first = service.tryOpen(targets.get(0).targetId());
+        assertEquals(TunerDiagnosticService.OpenStatus.OPEN, first.status());
+        assertEquals(TunerDiagnosticService.OpenStatus.BUSY,
+            service.tryOpen(targets.get(0).targetId()).status());
+        assertEquals(TunerDiagnosticService.OpenStatus.BUSY,
+            service.tryOpen(targets.get(1).targetId()).status());
         assertEquals(1, service.activeProducerCount());
-        assertEquals(2, service.activeSessionCount());
-        assertEquals(TunerDiagnosticService.FFT_SIZE, first.state().fftSize());
-        assertEquals(TunerDiagnosticService.FRAMES_PER_SECOND, first.state().framesPerSecond());
-
-        first.close();
-        assertEquals(0, controller.removeCount.get());
-        assertEquals(0, processors.closeCount.get());
         assertEquals(1, service.activeSessionCount());
+        assertEquals(TunerDiagnosticService.FFT_SIZE, first.session().state().fftSize());
+        assertEquals(TunerDiagnosticService.FRAMES_PER_SECOND, first.session().state().framesPerSecond());
 
-        second.close();
-        assertEquals(1, controller.removeCount.get());
+        first.session().close();
+        assertEquals(1, firstController.addCount.get() + secondController.addCount.get());
+        assertEquals(1, firstController.removeCount.get() + secondController.removeCount.get());
         assertEquals(1, processors.closeCount.get());
         assertEquals(0, service.activeProducerCount());
         assertEquals(0, service.activeSessionCount());
 
-        TunerDiagnosticService.Session reopened = service.tryOpen(targetId).session();
-        assertEquals(2, controller.addCount.get());
-        assertEquals(2, processors.createCount.get());
+        TunerDiagnosticService.Session reopened = service.tryOpen(targets.get(1).targetId()).session();
+        assertNotNull(reopened);
         reopened.close();
         service.close();
     }
 
     @Test
-    void closesAllActiveSessionsWithoutClosingTheService()
+    void concurrentOpenRaceHasOneWinner()
+        throws Exception
     {
-        FakeController firstController = new FakeController(150_000_000L, 2_500_000.0);
-        FakeController secondController = new FakeController(250_000_000L, 2_400_000.0);
+        FakeController controller = new FakeController(100_000_000L, 10_000_000.0);
         FakeProcessorFactory processors = new FakeProcessorFactory();
         TunerDiagnosticService service = service(List.of(
-            target(new Object(), TunerClass.AIRSPY, firstController, 1),
-            target(new Object(), TunerClass.RTL2832, secondController, 1)), processors);
-        List<TunerDiagnosticService.Target> targets = service.targets();
-        TunerDiagnosticService.Session first = service.tryOpen(targets.get(0).targetId()).session();
-        TunerDiagnosticService.Session firstShared = service.tryOpen(targets.get(0).targetId()).session();
-        TunerDiagnosticService.Session second = service.tryOpen(targets.get(1).targetId()).session();
+            target(new Object(), TunerClass.AIRSPY, controller, 1)), processors);
+        String targetId = service.targets().getFirst().targetId();
+        ExecutorService executor = Executors.newFixedThreadPool(8);
+        CountDownLatch start = new CountDownLatch(1);
+        AtomicInteger opened = new AtomicInteger();
+        ConcurrentLinkedQueue<TunerDiagnosticService.Session> sessions = new ConcurrentLinkedQueue<>();
+        List<Future<?>> attempts = java.util.stream.IntStream.range(0, 32).mapToObj(ignored -> executor.submit(() ->
+        {
+            await(start);
+            TunerDiagnosticService.OpenResult result = service.tryOpen(targetId);
+
+            if(result.status() == TunerDiagnosticService.OpenStatus.OPEN)
+            {
+                opened.incrementAndGet();
+                sessions.add(result.session());
+            }
+        })).toList();
+
+        try
+        {
+            start.countDown();
+
+            for(Future<?> attempt: attempts)
+            {
+                attempt.get(2, TimeUnit.SECONDS);
+            }
+
+            assertEquals(1, opened.get());
+            assertEquals(1, controller.addCount.get());
+            assertEquals(1, processors.createCount.get());
+        }
+        finally
+        {
+            sessions.forEach(TunerDiagnosticService.Session::close);
+            executor.shutdownNow();
+            service.close();
+        }
+
+        assertEquals(controller.addCount.get(), controller.removeCount.get());
+        assertEquals(processors.createCount.get(), processors.closeCount.get());
+    }
+
+    @Test
+    void closesTheActiveSessionWithoutClosingTheService()
+    {
+        FakeController controller = new FakeController(150_000_000L, 2_500_000.0);
+        FakeProcessorFactory processors = new FakeProcessorFactory();
+        TunerDiagnosticService service = service(List.of(
+            target(new Object(), TunerClass.AIRSPY, controller, 1)), processors);
+        String targetId = service.targets().getFirst().targetId();
+        TunerDiagnosticService.Session session = service.tryOpen(targetId).session();
 
         service.closeActiveSessions();
 
-        assertTrue(first.isClosed());
-        assertTrue(firstShared.isClosed());
-        assertTrue(second.isClosed());
-        assertEquals(1, firstController.removeCount.get());
-        assertEquals(1, secondController.removeCount.get());
-        assertEquals(2, processors.closeCount.get());
-        assertEquals(0, service.activeProducerCount());
+        assertTrue(session.isClosed());
+        assertEquals(1, controller.removeCount.get());
+        assertEquals(1, processors.closeCount.get());
         assertEquals(0, service.activeSessionCount());
 
-        TunerDiagnosticService.Session reopened = service.tryOpen(targets.get(0).targetId()).session();
-        assertFalse(reopened.isClosed());
-        assertEquals(2, firstController.addCount.get());
+        TunerDiagnosticService.Session reopened = service.tryOpen(targetId).session();
+        assertNotNull(reopened);
         reopened.close();
         service.close();
-    }
-
-    @Test
-    void boundsDistinctProducersAndTotalSessions()
-    {
-        FakeProcessorFactory processors = new FakeProcessorFactory();
-        List<TunerDiagnosticService.AvailableTarget> threeTargets = List.of(
-            target(new Object(), TunerClass.AIRSPY, new FakeController(100_000_000L, 2_500_000.0), 1),
-            target(new Object(), TunerClass.RTL2832, new FakeController(200_000_000L, 2_400_000.0), 1),
-            target(new Object(), TunerClass.HACKRF, new FakeController(300_000_000L, 8_000_000.0), 1));
-        TunerDiagnosticService service = service(threeTargets, processors);
-        List<TunerDiagnosticService.Target> targets = service.targets();
-
-        assertEquals(TunerDiagnosticService.OpenStatus.OPEN, service.tryOpen(targets.get(0).targetId()).status());
-        assertEquals(TunerDiagnosticService.OpenStatus.OPEN, service.tryOpen(targets.get(1).targetId()).status());
-        assertEquals(TunerDiagnosticService.OpenStatus.BUSY, service.tryOpen(targets.get(2).targetId()).status());
-        assertEquals(TunerDiagnosticService.MAXIMUM_PRODUCERS, service.activeProducerCount());
-        service.close();
-
-        FakeController controller = new FakeController(400_000_000L, 2_500_000.0);
-        TunerDiagnosticService sessionBoundService = service(
-            List.of(target(new Object(), TunerClass.AIRSPY, controller, 1)), new FakeProcessorFactory());
-        String targetId = sessionBoundService.targets().getFirst().targetId();
-
-        for(int x = 0; x < TunerDiagnosticService.MAXIMUM_SESSIONS; x++)
-        {
-            assertEquals(TunerDiagnosticService.OpenStatus.OPEN, sessionBoundService.tryOpen(targetId).status());
-        }
-
-        assertEquals(TunerDiagnosticService.OpenStatus.BUSY, sessionBoundService.tryOpen(targetId).status());
-        assertEquals(1, controller.addCount.get());
-        sessionBoundService.close();
-        assertEquals(1, controller.removeCount.get());
     }
 
     @Test
@@ -228,12 +234,12 @@ class TunerDiagnosticServiceTest
         assertEquals(1, failingController.addCount.get());
         assertEquals(1, failingController.removeCount.get());
         assertEquals(1, failingProcessors.closeCount.get());
-        assertEquals(0, failingService.activeProducerCount());
+        assertEquals(0, failingService.activeSessionCount());
         failingService.close();
     }
 
     @Test
-    void releasesAnOpenProducerWhenItsTunerDisappears()
+    void releasesTheSessionWhenItsTunerDisappears()
     {
         FakeController controller = new FakeController(650_000_000L, 2_500_000.0);
         AtomicReference<List<TunerDiagnosticService.AvailableTarget>> available = new AtomicReference<>(List.of(
@@ -247,33 +253,13 @@ class TunerDiagnosticServiceTest
         assertTrue(session.isClosed());
         assertEquals(1, controller.removeCount.get());
         assertEquals(1, processors.closeCount.get());
-        assertEquals(0, service.activeProducerCount());
         assertEquals(0, service.activeSessionCount());
         service.close();
     }
 
     @Test
-    void capturesObservationTimeAtTheTunerCallbackBoundary()
-    {
-        FakeController controller = new FakeController(700_000_000L, 2_500_000.0);
-        FakeProcessorFactory processors = new FakeProcessorFactory();
-        TunerDiagnosticService service = service(List.of(
-            target(new Object(), TunerClass.RECORDING_TUNER, controller, 1)), processors);
-        String targetId = service.targets().getFirst().targetId();
-        service.tryOpen(targetId);
-        long before = System.currentTimeMillis();
-
-        controller.emit(new EmptyNativeBuffer(123L));
-
-        long after = System.currentTimeMillis();
-        assertTrue(processors.lastObservedAtMs.get() >= before);
-        assertTrue(processors.lastObservedAtMs.get() <= after);
-        assertNotEquals(123L, processors.lastObservedAtMs.get());
-        service.close();
-    }
-
-    @Test
-    void nativeCallbackNeverWaitsForTheTunerControllerLock() throws Exception
+    void tunerCallbackOnlyCapturesTimeAndNeverWaitsForTheControllerLock()
+        throws Exception
     {
         FakeController controller = new FakeController(705_000_000L, 2_500_000.0);
         FakeProcessorFactory processors = new FakeProcessorFactory();
@@ -282,12 +268,14 @@ class TunerDiagnosticServiceTest
         service.tryOpen(service.targets().getFirst().targetId());
         ExecutorService executor = Executors.newSingleThreadExecutor();
         controller.getLock().lock();
+        long before = System.currentTimeMillis();
 
         try
         {
-            Future<?> callback = executor.submit(() -> controller.emit(new EmptyNativeBuffer(1L)));
-            callback.get(250, java.util.concurrent.TimeUnit.MILLISECONDS);
-            assertTrue(processors.lastObservedAtMs.get() > 0);
+            Future<?> callback = executor.submit(() -> controller.emit(new EmptyNativeBuffer(123L)));
+            callback.get(250, TimeUnit.MILLISECONDS);
+            assertTrue(processors.lastObservedAtMs.get() >= before);
+            assertNotEquals(123L, processors.lastObservedAtMs.get());
         }
         finally
         {
@@ -298,7 +286,7 @@ class TunerDiagnosticServiceTest
     }
 
     @Test
-    void capturesTuningMetadataWithEachSampleBuffer()
+    void capturesRetuneMetadataWithoutReadingTheControllerOnTheSampleCallback()
     {
         FakeController controller = new FakeController(700_000_000L, 2_500_000.0);
         FakeProcessorFactory processors = new FakeProcessorFactory();
@@ -318,329 +306,180 @@ class TunerDiagnosticServiceTest
     }
 
     @Test
-    void fansOutOneEncodedFrameInstanceAndDropsObsoleteFrames() throws Exception
+    void outputQueueKeepsOnlyTheNewestFrame()
+        throws Exception
     {
         FakeController controller = new FakeController(800_000_000L, 10_000_000.0);
         FakeProcessorFactory processors = new FakeProcessorFactory();
         TunerDiagnosticService service = service(List.of(
             target(new Object(), TunerClass.AIRSPY, controller, 1)), processors);
-        String targetId = service.targets().getFirst().targetId();
-        TunerDiagnosticService.Session first = service.tryOpen(targetId).session();
-        TunerDiagnosticService.Session second = service.tryOpen(targetId).session();
+        TunerDiagnosticService.Session session = service.tryOpen(service.targets().getFirst().targetId()).session();
         float[] values = new float[TunerDiagnosticService.FFT_SIZE];
-        TunerDiagnosticService.FftResult shared = new TunerDiagnosticService.FftResult(System.currentTimeMillis(),
-            800_000_000L, 10_000_000L, TunerDiagnosticService.FFT_SIZE, values);
 
-        processors.publish(shared);
+        for(int x = 0; x < 3; x++)
+        {
+            processors.publish(new TunerDiagnosticService.FftResult(System.currentTimeMillis(), 800_000_000L,
+                10_000_000L, TunerDiagnosticService.FFT_SIZE, values));
+        }
 
-        DiagnosticStreamFrame firstShared = first.poll(Duration.ZERO);
-        assertSame(firstShared, second.poll(Duration.ZERO));
-
-        processors.publish(new TunerDiagnosticService.FftResult(System.currentTimeMillis(), 800_000_000L,
-            10_000_000L, TunerDiagnosticService.FFT_SIZE, values));
-        processors.publish(new TunerDiagnosticService.FftResult(System.currentTimeMillis(), 800_000_000L,
-            10_000_000L, TunerDiagnosticService.FFT_SIZE, values));
-
-        assertEquals(3, first.poll(Duration.ZERO).sequence());
-        first.close();
-        second.close();
+        DiagnosticStreamFrame frame = session.poll(Duration.ZERO);
+        assertNotNull(frame);
+        assertEquals(3, frame.sequence());
+        assertNull(session.poll(Duration.ZERO));
+        session.close();
         service.close();
     }
 
     @Test
-    void sharesOneFixedSourceFftAcrossViewportsAndMaxPoolsWideViews() throws Exception
+    void selectsGuardedD1D2D4AndD8AnalysisPlans()
     {
-        FakeController controller = new FakeController(100_000_000L, 8_192_000.0);
+        long center = 100_000_000L;
+        long sampleRate = 10_000_000L;
+        TunerDiagnosticService.AnalysisPlan overview = TunerDiagnosticService.analysisPlan(center, sampleRate, null);
+        TunerDiagnosticService.AnalysisPlan d2 = TunerDiagnosticService.analysisPlan(center, sampleRate,
+            centered(center, 3_500_000L));
+        TunerDiagnosticService.AnalysisPlan d4 = TunerDiagnosticService.analysisPlan(center, sampleRate,
+            centered(center, 1_800_000L));
+        TunerDiagnosticService.AnalysisPlan guardedFromD8 = TunerDiagnosticService.analysisPlan(center, sampleRate,
+            centered(center, 1_100_000L));
+        TunerDiagnosticService.AnalysisPlan d8 = TunerDiagnosticService.analysisPlan(center, sampleRate,
+            centered(center, 900_000L));
+        TunerDiagnosticService.AnalysisPlan maximumDetail = TunerDiagnosticService.analysisPlan(center, sampleRate,
+            centered(center, 100_000L));
+
+        assertEquals(1, overview.decimation());
+        assertEquals(10_000_000L, overview.sampleRateHz());
+        assertEquals(2, d2.decimation());
+        assertEquals(5_000_000L, d2.sampleRateHz());
+        assertEquals(4, d4.decimation());
+        assertEquals(2_500_000L, d4.sampleRateHz());
+        assertEquals(4, guardedFromD8.decimation(),
+            "a viewport wider than the central 80% must stay out of the D8 transition band");
+        assertEquals(8, d8.decimation());
+        assertEquals(1_250_000L, d8.sampleRateHz());
+        assertEquals(8, maximumDetail.decimation());
+        assertEquals(d8.sampleRateHz(), maximumDetail.sampleRateHz(),
+            "views below tunerSpan/8 reuse the bounded max-detail lens");
+        assertEquals(610.3515625, maximumDetail.sampleRateHz() / (double)TunerDiagnosticService.FFT_SIZE,
+            0.0001);
+    }
+
+    @Test
+    void preservesTheGuardAtTheTunerEdgeOrFallsBackToOverview()
+    {
+        TunerDiagnosticService.AnalysisPlan touchingEdge = TunerDiagnosticService.analysisPlan(100_000_000L,
+            10_000_000L, new TunerDiagnosticService.Viewport(104_300_000L, 104_900_000L));
+        TunerDiagnosticService.AnalysisPlan guardedEdge = TunerDiagnosticService.analysisPlan(100_000_000L,
+            10_000_000L, new TunerDiagnosticService.Viewport(104_200_000L, 104_700_000L));
+
+        assertEquals(1, touchingEdge.decimation(),
+            "a zoom lens must not trade anti-alias guard for resolution at the sampled band edge");
+        assertEquals(8, guardedEdge.decimation());
+        assertEquals(104_375_000L, guardedEdge.centerFrequencyHz());
+        assertEquals(103_750_000.0, guardedEdge.startFrequencyHz());
+        assertEquals(105_000_000.0, guardedEdge.endFrequencyHz());
+    }
+
+    @Test
+    void stateKeepsFullTunerBoundsWhileFramesDescribeTheAnalysisLens()
+        throws Exception
+    {
+        FakeController controller = new FakeController(100_000_000L, 10_000_000.0);
         FakeProcessorFactory processors = new FakeProcessorFactory();
         TunerDiagnosticService service = service(List.of(
             target(new Object(), TunerClass.AIRSPY, controller, 3)), processors);
-        String targetId = service.targets().getFirst().targetId();
-        TunerDiagnosticService.Session full = service.tryOpen(targetId).session();
-        TunerDiagnosticService.Session twoTimes = service.tryOpen(targetId,
-            new TunerDiagnosticService.Viewport(97_952_000L, 102_048_000L)).session();
-        TunerDiagnosticService.Session eightTimes = service.tryOpen(targetId,
-            new TunerDiagnosticService.Viewport(99_488_000L, 100_512_000L)).session();
+        TunerDiagnosticService.Viewport viewport = centered(100_000_000L, 800_000L);
+        TunerDiagnosticService.Session session = service.tryOpen(service.targets().getFirst().targetId(), viewport)
+            .session();
+        TunerDiagnosticService.State state = session.state();
 
-        assertEquals(1, controller.addCount.get());
-        assertEquals(1, processors.createCount.get());
-        assertEquals(TunerDiagnosticService.FFT_SIZE, processors.fftSize.get());
+        assertEquals(100_000_000L, state.centerFrequencyHz());
+        assertEquals(10_000_000L, state.sampleRateHz());
+        assertEquals(viewport.startFrequencyHz(), state.requestedStartFrequencyHz().longValue());
+        assertEquals(viewport.endFrequencyHz(), state.requestedEndFrequencyHz().longValue());
+        assertEquals(99_375_000.0, state.visibleStartFrequencyHz());
+        assertEquals(100_625_000.0, state.visibleEndFrequencyHz());
+        assertEquals(0, state.firstBin());
+        assertEquals(TunerDiagnosticService.FFT_SIZE, state.sourceBinCount());
+        assertEquals(TunerDiagnosticService.FFT_SIZE, state.transmittedBinCount());
 
-        TunerDiagnosticService.State fullState = full.state();
-        TunerDiagnosticService.State eightTimesState = eightTimes.state();
-        assertEquals(fullState.generation(), eightTimesState.generation());
-        assertNotEquals(fullState.revision(), eightTimesState.revision());
-
-        float[] bins = new float[TunerDiagnosticService.FFT_SIZE];
-        java.util.Arrays.fill(bins, -120.0f);
-        bins[6_173] = -12.5f;
         processors.publish(new TunerDiagnosticService.FftResult(System.currentTimeMillis(), 100_000_000L,
-            8_192_000L, TunerDiagnosticService.FFT_SIZE, bins));
-
-        DiagnosticStreamFrame fullFrame = full.poll(Duration.ZERO);
-        DiagnosticStreamFrame twoFrame = twoTimes.poll(Duration.ZERO);
-        DiagnosticStreamFrame eightFrame = eightTimes.poll(Duration.ZERO);
-        assertEquals(0, fullFrame.firstBin());
-        assertEquals(16_384, fullFrame.sourceBinCount());
-        assertEquals(4_096, fullFrame.valueCount());
-        assertEquals(4_096, twoFrame.firstBin());
-        assertEquals(8_192, twoFrame.sourceBinCount());
-        assertEquals(4_096, twoFrame.valueCount());
-        assertEquals(7_168, eightFrame.firstBin());
-        assertEquals(2_048, eightFrame.sourceBinCount());
-        assertEquals(2_048, eightFrame.valueCount());
-        assertEquals(fullFrame.sequence(), twoFrame.sequence());
-        assertEquals(twoFrame.sequence(), eightFrame.sequence());
-
-        eightTimes.close();
-        twoTimes.close();
-        assertEquals(TunerDiagnosticService.FFT_SIZE, processors.fftSize.get());
-        assertEquals(0, controller.removeCount.get());
-        full.close();
-        assertEquals(1, controller.removeCount.get());
-        service.close();
-    }
-
-    @Test
-    void boundsViewportProjectionAgainstTheFixedSourceFft()
-    {
-        long sampleRate = 8_192_000L;
-        TunerDiagnosticService.FrameLayout full = TunerDiagnosticService.frameLayout(100_000_000L,
-            sampleRate, TunerDiagnosticService.FFT_SIZE, null);
-        assertEquals(0, full.firstBin());
-        assertEquals(16_384, full.sourceBinCount());
-        assertEquals(4_096, full.transmittedBinCount());
-
-        TunerDiagnosticService.FrameLayout outside = TunerDiagnosticService.frameLayout(100_000_000L,
-            sampleRate, TunerDiagnosticService.FFT_SIZE, new TunerDiagnosticService.Viewport(1, 2));
-        assertEquals(0, outside.firstBin());
-        assertEquals(2_048, outside.sourceBinCount());
-        assertEquals(2_048, outside.transmittedBinCount());
-    }
-
-    @Test
-    void recalculatesZoomedSessionMetadataAfterRetune() throws Exception
-    {
-        FakeController controller = new FakeController(100_000_000L, 8_192_000.0);
-        FakeProcessorFactory processors = new FakeProcessorFactory();
-        TunerDiagnosticService service = service(List.of(
-            target(new Object(), TunerClass.AIRSPY, controller, 1)), processors);
-        String targetId = service.targets().getFirst().targetId();
-        TunerDiagnosticService.Session session = service.tryOpen(targetId,
-            new TunerDiagnosticService.Viewport(99_488_000L, 100_512_000L)).session();
-        TunerDiagnosticService.State before = session.state();
-
-        controller.retune(200_000_000L, 4_096_000.0);
-        TunerDiagnosticService.State after = session.state();
-
-        assertTrue(after.revision() > before.revision());
-        assertEquals(200_000_000L, after.centerFrequencyHz());
-        assertEquals(4_096_000L, after.sampleRateHz());
-        assertEquals(16_384, after.fftSize());
-        assertEquals(197_952_000.0, after.visibleStartFrequencyHz());
-        assertEquals(198_976_000.0, after.visibleEndFrequencyHz());
-
-        processors.publish(new TunerDiagnosticService.FftResult(System.currentTimeMillis(), 200_000_000L,
-            4_096_000L, 16_384, new float[16_384]));
+            1_250_000L, TunerDiagnosticService.FFT_SIZE, new float[TunerDiagnosticService.FFT_SIZE]));
         DiagnosticStreamFrame frame = session.poll(Duration.ZERO);
-        assertEquals(200_000_000L, frame.centerFrequencyHz());
-        assertEquals(4_096_000, frame.sampleRateHz());
-        assertEquals(16_384, frame.fftSize());
-        assertEquals(after.firstBin(), frame.firstBin());
-        assertEquals(after.sourceBinCount(), frame.sourceBinCount());
+        assertNotNull(frame);
+        assertEquals(100_000_000L, frame.centerFrequencyHz());
+        assertEquals(1_250_000L, frame.sampleRateHz());
+        assertEquals(0, frame.firstBin());
+        assertEquals(TunerDiagnosticService.FFT_SIZE, frame.valueCount());
         session.close();
         service.close();
     }
 
     @Test
-    void viewportChangesNeverReconfigureTheSourceFft() throws Exception
+    void viewportChangesDoNotReattachAndRejectAnObsoleteAnalysisFrame()
+        throws Exception
     {
-        FakeController controller = new FakeController(100_000_000L, 8_192_000.0);
+        FakeController controller = new FakeController(100_000_000L, 10_000_000.0);
         FakeProcessorFactory processors = new FakeProcessorFactory();
         TunerDiagnosticService service = service(List.of(
             target(new Object(), TunerClass.AIRSPY, controller, 1)), processors);
-        String targetId = service.targets().getFirst().targetId();
-        TunerDiagnosticService.Session full = service.tryOpen(targetId).session();
-        TunerDiagnosticService.OpenResult zoomedResult = service.tryOpen(targetId,
-            new TunerDiagnosticService.Viewport(99_488_000L, 100_512_000L));
-        assertEquals(TunerDiagnosticService.OpenStatus.OPEN, zoomedResult.status());
-        assertEquals(2, service.activeSessionCount());
-        assertEquals(1, service.activeProducerCount());
-        assertEquals(1, processors.createCount.get());
-        assertEquals(TunerDiagnosticService.FFT_SIZE, processors.fftSize.get());
-
-        processors.publish(new TunerDiagnosticService.FftResult(System.currentTimeMillis(), 100_000_000L,
-            8_192_000L, TunerDiagnosticService.FFT_SIZE, new float[TunerDiagnosticService.FFT_SIZE]));
-        assertEquals(TunerDiagnosticService.FFT_SIZE, full.poll(Duration.ZERO).fftSize());
-        assertEquals(TunerDiagnosticService.FFT_SIZE, zoomedResult.session().poll(Duration.ZERO).fftSize());
-        zoomedResult.session().close();
-        full.close();
-        service.close();
-    }
-
-    @Test
-    void updatesOneSessionViewportWithoutReattachingOrRebuildingTheProducer() throws Exception
-    {
-        FakeController controller = new FakeController(100_000_000L, 8_192_000.0);
-        FakeProcessorFactory processors = new FakeProcessorFactory();
-        TunerDiagnosticService service = service(List.of(
-            target(new Object(), TunerClass.AIRSPY, controller, 1)), processors);
-        String targetId = service.targets().getFirst().targetId();
-        TunerDiagnosticService.Session session = service.tryOpen(targetId).session();
+        TunerDiagnosticService.Session session = service.tryOpen(service.targets().getFirst().targetId()).session();
         long generation = session.state().generation();
+        long oldRevision = session.state().revision();
+        processors.publish(new TunerDiagnosticService.FftResult(System.currentTimeMillis(), 100_000_000L,
+            10_000_000L, TunerDiagnosticService.FFT_SIZE, new float[TunerDiagnosticService.FFT_SIZE]));
 
-        for(int x = 0; x < 100; x++)
-        {
-            long halfSpan = 128_000L + (x * 1_000L);
-            session.updateViewport(new TunerDiagnosticService.Viewport(100_000_000L - halfSpan,
-                100_000_000L + halfSpan));
-        }
-
+        TunerDiagnosticService.Viewport viewport = centered(100_000_000L, 800_000L);
+        session.updateViewport(viewport);
         TunerDiagnosticService.State state = session.state();
+
         assertEquals(generation, state.generation());
+        assertTrue(state.revision() > oldRevision);
         assertEquals(1, controller.addCount.get());
         assertEquals(0, controller.removeCount.get());
         assertEquals(1, processors.createCount.get());
-        assertEquals(0, processors.closeCount.get());
-        assertEquals(1, service.activeProducerCount());
-        assertEquals(1, service.activeSessionCount());
+        assertEquals(viewport, processors.lastViewport.get());
+        assertNull(session.poll(Duration.ZERO), "the queued overview frame must not be labelled as zoom data");
 
         processors.publish(new TunerDiagnosticService.FftResult(System.currentTimeMillis(), 100_000_000L,
-            8_192_000L, TunerDiagnosticService.FFT_SIZE, new float[TunerDiagnosticService.FFT_SIZE]));
-        DiagnosticStreamFrame frame = session.poll(Duration.ZERO);
-        assertEquals(state.firstBin(), frame.firstBin());
-        assertEquals(state.sourceBinCount(), frame.sourceBinCount());
-
+            1_250_000L, TunerDiagnosticService.FFT_SIZE, new float[TunerDiagnosticService.FFT_SIZE]));
+        assertNotNull(session.poll(Duration.ofSeconds(1)));
         session.close();
-        assertEquals(1, controller.removeCount.get());
-        assertEquals(1, processors.closeCount.get());
         service.close();
     }
 
     @Test
-    void stateRevisionChangesOnlyWhenThatSessionStateChanges()
+    void recalculatesTheLensAfterSampleRateChanges()
+        throws Exception
     {
-        FakeController controller = new FakeController(100_000_000L, 8_192_000.0);
+        FakeController controller = new FakeController(100_000_000L, 10_000_000.0);
         FakeProcessorFactory processors = new FakeProcessorFactory();
         TunerDiagnosticService service = service(List.of(
             target(new Object(), TunerClass.AIRSPY, controller, 1)), processors);
-        String targetId = service.targets().getFirst().targetId();
-        TunerDiagnosticService.Session first = service.tryOpen(targetId).session();
-        TunerDiagnosticService.Session second = service.tryOpen(targetId).session();
+        TunerDiagnosticService.Viewport viewport = centered(100_000_000L, 800_000L);
+        TunerDiagnosticService.Session session = service.tryOpen(service.targets().getFirst().targetId(), viewport)
+            .session();
 
-        try
-        {
-            long firstRevision = first.state().revision();
-            long secondRevision = second.state().revision();
-            assertEquals(firstRevision, first.state().revision());
-            assertEquals(secondRevision, second.state().revision());
-
-            first.updateViewport(new TunerDiagnosticService.Viewport(99_500_000L, 100_500_000L));
-            assertTrue(first.state().revision() > firstRevision);
-            assertEquals(secondRevision, second.state().revision(),
-                "one viewer's zoom must not create state churn for another viewer");
-        }
-        finally
-        {
-            second.close();
-            first.close();
-            service.close();
-        }
-    }
-
-    @Test
-    void rapidViewportUpdatesCannotStrandPublishedFrames() throws Exception
-    {
-        FakeController controller = new FakeController(100_000_000L, 8_192_000.0);
-        FakeProcessorFactory processors = new FakeProcessorFactory();
-        TunerDiagnosticService service = service(List.of(
-            target(new Object(), TunerClass.AIRSPY, controller, 1)), processors);
-        String targetId = service.targets().getFirst().targetId();
-        TunerDiagnosticService.Session session = service.tryOpen(targetId).session();
-        ExecutorService executor = Executors.newFixedThreadPool(2);
-        CountDownLatch start = new CountDownLatch(1);
-        float[] values = new float[TunerDiagnosticService.FFT_SIZE];
-
-        try
-        {
-            Future<?> updater = executor.submit(() ->
-            {
-                await(start);
-
-                for(int x = 0; x < 500; x++)
-                {
-                    long halfSpan = 128_000L + x;
-                    session.updateViewport(new TunerDiagnosticService.Viewport(100_000_000L - halfSpan,
-                        100_000_000L + halfSpan));
-                }
-            });
-            Future<?> publisher = executor.submit(() ->
-            {
-                await(start);
-
-                for(int x = 0; x < 500; x++)
-                {
-                    processors.publish(new TunerDiagnosticService.FftResult(System.currentTimeMillis(),
-                        100_000_000L, 8_192_000L, TunerDiagnosticService.FFT_SIZE, values));
-                }
-            });
-
-            start.countDown();
-            updater.get(5, TimeUnit.SECONDS);
-            publisher.get(5, TimeUnit.SECONDS);
-            TunerDiagnosticService.Viewport finalViewport =
-                new TunerDiagnosticService.Viewport(99_500_000L, 100_500_000L);
-            session.updateViewport(finalViewport);
-            processors.publish(new TunerDiagnosticService.FftResult(System.currentTimeMillis(), 100_000_000L,
-                8_192_000L, TunerDiagnosticService.FFT_SIZE, values));
-
-            DiagnosticStreamFrame frame = session.poll(Duration.ofSeconds(1));
-            TunerDiagnosticService.State state = session.state();
-            assertTrue(frame != null);
-            assertEquals(state.firstBin(), frame.firstBin());
-            assertEquals(state.sourceBinCount(), frame.sourceBinCount());
-            assertEquals(1, controller.addCount.get());
-            assertEquals(0, controller.removeCount.get());
-            assertEquals(1, processors.createCount.get());
-        }
-        finally
-        {
-            executor.shutdownNow();
-            session.close();
-            service.close();
-        }
-    }
-
-    @Test
-    void rejectsAnOldLayoutFrameAfterAdvertisingANewViewport() throws Exception
-    {
-        FakeController controller = new FakeController(100_000_000L, 8_192_000.0);
-        FakeProcessorFactory processors = new FakeProcessorFactory();
-        TunerDiagnosticService service = service(List.of(
-            target(new Object(), TunerClass.AIRSPY, controller, 1)), processors);
-        String targetId = service.targets().getFirst().targetId();
-        TunerDiagnosticService.Session session = service.tryOpen(targetId).session();
-        float[] values = new float[TunerDiagnosticService.FFT_SIZE];
-
-        processors.publish(new TunerDiagnosticService.FftResult(System.currentTimeMillis(), 100_000_000L,
-            8_192_000L, TunerDiagnosticService.FFT_SIZE, values));
-        session.updateViewport(new TunerDiagnosticService.Viewport(99_500_000L, 100_500_000L));
+        controller.retune(100_000_000L, 8_000_000.0);
         TunerDiagnosticService.State state = session.state();
 
-        assertNull(session.poll(Duration.ZERO));
+        assertEquals(8_000_000L, state.sampleRateHz());
+        assertEquals(99_500_000.0, state.visibleStartFrequencyHz());
+        assertEquals(100_500_000.0, state.visibleEndFrequencyHz());
+        assertEquals(8_000_000L, processors.lastSampleRateHz.get());
 
         processors.publish(new TunerDiagnosticService.FftResult(System.currentTimeMillis(), 100_000_000L,
-            8_192_000L, TunerDiagnosticService.FFT_SIZE, values));
-        DiagnosticStreamFrame current = session.poll(Duration.ofSeconds(1));
-        assertTrue(current != null);
-        assertEquals(state.firstBin(), current.firstBin());
-        assertEquals(state.sourceBinCount(), current.sourceBinCount());
-
+            1_000_000L, TunerDiagnosticService.FFT_SIZE, new float[TunerDiagnosticService.FFT_SIZE]));
+        DiagnosticStreamFrame frame = session.poll(Duration.ofSeconds(1));
+        assertNotNull(frame);
+        assertEquals(1_000_000L, frame.sampleRateHz());
         session.close();
         service.close();
     }
 
     @Test
-    void nativeCallbackCarriesItsEntryEpochAcrossAConcurrentRetune() throws Exception
+    void nativeCallbackCarriesItsEntryEpochAcrossAConcurrentRetune()
+        throws Exception
     {
         FakeController controller = new FakeController(100_000_000L, 8_192_000.0);
         AtomicLong configuration = new AtomicLong(1);
@@ -681,8 +520,7 @@ class TunerDiagnosticServiceTest
         List<TunerDiagnosticService.AvailableTarget> targets = List.of(
             target(new Object(), TunerClass.AIRSPY, controller, 1));
         TunerDiagnosticService service = new TunerDiagnosticService(() -> targets, factory);
-        String targetId = service.targets().getFirst().targetId();
-        TunerDiagnosticService.Session session = service.tryOpen(targetId).session();
+        TunerDiagnosticService.Session session = service.tryOpen(service.targets().getFirst().targetId()).session();
         long entryConfiguration = configuration.get();
         ExecutorService executor = Executors.newSingleThreadExecutor();
 
@@ -691,12 +529,10 @@ class TunerDiagnosticServiceTest
             Future<?> callback = executor.submit(() -> controller.emit(new EmptyNativeBuffer(111)));
             assertTrue(configurationCaptured.await(1, TimeUnit.SECONDS));
             controller.retune(101_000_000L, 10_000_000.0);
-            assertTrue(configuration.get() > 1);
             releaseCallback.countDown();
             callback.get(1, TimeUnit.SECONDS);
             assertTrue(received.await(1, TimeUnit.SECONDS));
-            assertEquals(entryConfiguration, receivedConfiguration.get(),
-                "a pre-retune buffer must retain the configuration captured at callback entry");
+            assertEquals(entryConfiguration, receivedConfiguration.get());
         }
         finally
         {
@@ -707,70 +543,10 @@ class TunerDiagnosticServiceTest
         }
     }
 
-    @Test
-    void keepsAttachAndDetachBalancedDuringConcurrentPublicationAndClosure() throws Exception
+    private static TunerDiagnosticService.Viewport centered(long centerFrequencyHz, long spanHz)
     {
-        FakeController controller = new FakeController(900_000_000L, 10_000_000.0);
-        FakeProcessorFactory processors = new FakeProcessorFactory();
-        TunerDiagnosticService service = service(List.of(
-            target(new Object(), TunerClass.AIRSPY, controller, 1)), processors);
-        String targetId = service.targets().getFirst().targetId();
-        service.tryOpen(targetId);
-        float[] values = new float[TunerDiagnosticService.FFT_SIZE];
-        TunerDiagnosticService.FftResult frame = new TunerDiagnosticService.FftResult(System.currentTimeMillis(),
-            900_000_000L, 10_000_000L, TunerDiagnosticService.FFT_SIZE, values);
-        CountDownLatch start = new CountDownLatch(1);
-        ExecutorService executor = Executors.newFixedThreadPool(3);
-
-        try
-        {
-            Future<?> publisher = executor.submit(() ->
-            {
-                await(start);
-
-                for(int x = 0; x < 500; x++)
-                {
-                    processors.publish(frame);
-                }
-            });
-            Future<?> viewer = executor.submit(() ->
-            {
-                await(start);
-
-                for(int x = 0; x < 100; x++)
-                {
-                    TunerDiagnosticService.OpenResult result = service.tryOpen(targetId);
-
-                    if(result.session() != null)
-                    {
-                        result.session().close();
-                    }
-                }
-            });
-            Future<?> closer = executor.submit(() ->
-            {
-                await(start);
-
-                for(int x = 0; x < 100; x++)
-                {
-                    service.closeActiveSessions();
-                }
-            });
-            start.countDown();
-            publisher.get();
-            viewer.get();
-            closer.get();
-        }
-        finally
-        {
-            service.close();
-            executor.shutdownNow();
-        }
-
-        assertEquals(controller.addCount.get(), controller.removeCount.get());
-        assertEquals(processors.createCount.get(), processors.closeCount.get());
-        assertEquals(0, service.activeProducerCount());
-        assertEquals(0, service.activeSessionCount());
+        return new TunerDiagnosticService.Viewport(centerFrequencyHz - spanHz / 2,
+            centerFrequencyHz + spanHz / 2);
     }
 
     private static void await(CountDownLatch latch)
@@ -805,7 +581,7 @@ class TunerDiagnosticServiceTest
         private final AtomicLong lastObservedAtMs = new AtomicLong();
         private final AtomicLong lastCenterFrequencyHz = new AtomicLong();
         private final AtomicLong lastSampleRateHz = new AtomicLong();
-        private final AtomicInteger fftSize = new AtomicInteger();
+        private final AtomicReference<TunerDiagnosticService.Viewport> lastViewport = new AtomicReference<>();
         private final AtomicReference<Consumer<TunerDiagnosticService.FftResult>> consumer = new AtomicReference<>();
 
         @Override
@@ -813,7 +589,6 @@ class TunerDiagnosticServiceTest
                                                              Consumer<TunerDiagnosticService.FftResult> consumer)
         {
             createCount.incrementAndGet();
-            fftSize.set(TunerDiagnosticService.FFT_SIZE);
             this.consumer.set(consumer);
             return new TunerDiagnosticService.FrameProcessor()
             {
@@ -837,6 +612,12 @@ class TunerDiagnosticServiceTest
                 }
 
                 @Override
+                public void updateViewport(TunerDiagnosticService.Viewport viewport)
+                {
+                    lastViewport.set(viewport);
+                }
+
+                @Override
                 public void close()
                 {
                     closeCount.incrementAndGet();
@@ -846,7 +627,12 @@ class TunerDiagnosticServiceTest
 
         private void publish(TunerDiagnosticService.FftResult frame)
         {
-            consumer.get().accept(frame);
+            Consumer<TunerDiagnosticService.FftResult> active = consumer.get();
+
+            if(active != null)
+            {
+                active.accept(frame);
+            }
         }
     }
 

@@ -88,9 +88,8 @@ class WebAccessServiceTest
         assertFalse(service.isAllowed(AccessTier.PUBLIC, WebCapability.WEB_AUDIO_LISTEN));
         assertTrue(service.isAllowed(AccessTier.USER, WebCapability.CREDITS_VIEW));
         assertFalse(service.isAllowed(AccessTier.USER, WebCapability.ADMIN_ACCESS));
-        WebAccessService.CapabilityPolicy spectrumPolicy =
-            service.setCapabilityTier(WebCapability.TUNER_SPECTRUM_VIEW, AccessTier.USER);
-        assertEquals(AccessTier.USER, spectrumPolicy.requiredTier());
+        assertThrows(IllegalArgumentException.class,
+            () -> service.setCapabilityTier(WebCapability.TUNER_SPECTRUM_VIEW, AccessTier.USER));
         assertThrows(IllegalArgumentException.class,
             () -> service.setCapabilityTier(WebCapability.ADMIN_USERS, AccessTier.PUBLIC));
 
@@ -99,7 +98,7 @@ class WebAccessServiceTest
         assertEquals(AccessTier.USER, restarted.requiredTier(WebCapability.DASHBOARD_VIEW));
         assertEquals(AccessTier.USER, restarted.requiredTier(WebCapability.SITE_ACCESS));
         assertFalse(restarted.isAllowed(AccessTier.PUBLIC, WebCapability.CREDITS_VIEW));
-        assertEquals(AccessTier.USER, restarted.requiredTier(WebCapability.TUNER_SPECTRUM_VIEW));
+        assertEquals(AccessTier.ADMIN, restarted.requiredTier(WebCapability.TUNER_SPECTRUM_VIEW));
         assertEquals(reset, restarted.authenticate("user.one", replacementPassword).orElseThrow());
         assertFalse(settingJson(database).contains(new String(replacementPassword)));
 
@@ -141,7 +140,7 @@ class WebAccessServiceTest
 
         assertEquals(AccessTier.PUBLIC, WebCapability.CREDITS_VIEW.defaultTier());
         assertEquals(AccessTier.ADMIN, WebCapability.TUNER_SPECTRUM_VIEW.defaultTier());
-        assertTrue(WebCapability.TUNER_SPECTRUM_VIEW.configurable());
+        assertFalse(WebCapability.TUNER_SPECTRUM_VIEW.configurable());
         assertEquals(AccessTier.ADMIN, WebCapability.ADMIN_USERS.defaultTier());
         assertFalse(WebCapability.ADMIN_USERS.configurable());
         assertFalse(WebCapability.ADMIN_ACCESS.configurable());
@@ -149,6 +148,22 @@ class WebAccessServiceTest
         assertFalse(WebCapability.ADMIN_AUDIO.configurable());
         assertTrue(AccessTier.ADMIN.allows(AccessTier.USER));
         assertFalse(AccessTier.PUBLIC.allows(AccessTier.USER));
+    }
+
+    @Test
+    void ignoresRetiredTunerSpectrumPolicyOverride() throws Exception
+    {
+        Path database = database();
+        WebAccessService service = new WebAccessService(database);
+        service.provisionOrResetPrimaryAdmin("primary admin password".toCharArray());
+        String current = settingJson(database);
+        String legacy = current.replace("\"policyOverrides\":{}",
+            "\"policyOverrides\":{\"tuner-spectrum\":\"PUBLIC\"}");
+        assertFalse(current.equals(legacy));
+        writeSetting(database, legacy);
+
+        assertEquals(AccessTier.ADMIN,
+            new WebAccessService(database).requiredTier(WebCapability.TUNER_SPECTRUM_VIEW));
     }
 
     private Path database() throws Exception

@@ -25,7 +25,7 @@ public enum WebCapability
     SITE_ACCESS("site-access", "Entire website", AccessTier.PUBLIC),
     DASHBOARD_VIEW("dashboard", "Dashboard", AccessTier.PUBLIC),
     LIVE_VIEW("live", "Live", AccessTier.PUBLIC),
-    TUNER_SPECTRUM_VIEW("tuner-spectrum", "Tuner Spectrum"),
+    TUNER_SPECTRUM_VIEW("tuner-spectrum", "Tuner Spectrum", AccessTier.ADMIN, false),
     SYSTEMS_VIEW("systems", "Systems & Sites", AccessTier.PUBLIC),
     CONVENTIONAL_VIEW("conventional", "Conventional", AccessTier.PUBLIC),
     ALIASES_VIEW("aliases", "Aliases", AccessTier.PUBLIC),

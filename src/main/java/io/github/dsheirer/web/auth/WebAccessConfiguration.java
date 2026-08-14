@@ -81,6 +81,13 @@ record WebAccessConfiguration(int formatVersion, WebAdminCredential primaryAdmin
 
             if(!capability.configurable())
             {
+                //Tuner Spectrum was configurable before it became an exclusive administrator diagnostic.  Ignore
+                //that one retired override so existing bounded settings documents continue to load safely.
+                if(capability == WebCapability.TUNER_SPECTRUM_VIEW)
+                {
+                    continue;
+                }
+
                 throw new IllegalArgumentException("A fixed web capability cannot have a policy override");
             }
 
