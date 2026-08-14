@@ -26,10 +26,12 @@ import java.util.function.Predicate;
  */
 final class StatsLiveEventHub implements AutoCloseable
 {
-    private final int mMaximumSubscribers;
+    private volatile int mMaximumSubscribers;
     private final int mQueueCapacity;
     private final Set<Subscription> mSubscriptions = ConcurrentHashMap.newKeySet();
     private final AtomicInteger mSubscriberCount = new AtomicInteger();
+    private final AtomicLong mRejectedSubscriptions = new AtomicLong();
+    private final AtomicLong mDroppedEvents = new AtomicLong();
 
     StatsLiveEventHub(int maximumSubscribers, int queueCapacity)
     {
@@ -55,6 +57,7 @@ final class StatsLiveEventHub implements AutoCloseable
 
             if(current >= mMaximumSubscribers)
             {
+                mRejectedSubscriptions.incrementAndGet();
                 return null;
             }
 
@@ -72,6 +75,52 @@ final class StatsLiveEventHub implements AutoCloseable
     boolean hasSubscribers()
     {
         return !mSubscriptions.isEmpty();
+    }
+
+    /** Returns true when at least one current subscriber would accept this event. */
+    boolean hasMatchingSubscriber(String name, Object data)
+    {
+        LiveEvent event = new LiveEvent(name, data);
+
+        for(Subscription subscription : mSubscriptions)
+        {
+            if(subscription.accepts(event))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    int subscriberCount()
+    {
+        return mSubscriberCount.get();
+    }
+
+    int maximumSubscribers()
+    {
+        return mMaximumSubscribers;
+    }
+
+    void setMaximumSubscribers(int maximumSubscribers)
+    {
+        mMaximumSubscribers = Math.max(1, maximumSubscribers);
+    }
+
+    int queueCapacity()
+    {
+        return mQueueCapacity;
+    }
+
+    long rejectedSubscriptions()
+    {
+        return mRejectedSubscriptions.get();
+    }
+
+    long droppedEvents()
+    {
+        return mDroppedEvents.get();
     }
 
     void publish(String name, Object data)
@@ -106,6 +155,7 @@ final class StatsLiveEventHub implements AutoCloseable
         private final Runnable mCloseAction;
         private final AtomicBoolean mClosed = new AtomicBoolean();
         private final AtomicLong mDroppedCount = new AtomicLong();
+        private final AtomicLong mPendingDroppedEvents = new AtomicLong();
 
         private Subscription(Predicate<LiveEvent> filter, Runnable closeAction)
         {
@@ -115,14 +165,26 @@ final class StatsLiveEventHub implements AutoCloseable
 
         private void offer(LiveEvent event)
         {
-            if(mClosed.get() || !mFilter.test(event) || mQueue.offer(event))
+            if(!accepts(event) || mQueue.offer(event))
             {
                 return;
             }
 
             mQueue.poll();
             mDroppedCount.incrementAndGet();
+            mPendingDroppedEvents.incrementAndGet();
             mQueue.offer(event);
+            StatsLiveEventHub.this.mDroppedEvents.incrementAndGet();
+        }
+
+        private boolean accepts(LiveEvent event)
+        {
+            return !mClosed.get() && mFilter.test(event);
+        }
+
+        long drainDroppedEvents()
+        {
+            return mPendingDroppedEvents.getAndSet(0L);
         }
 
         LiveEvent poll(long timeout, TimeUnit unit) throws InterruptedException

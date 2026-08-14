@@ -131,10 +131,10 @@ class WebAccessServiceTest
     @Test
     void definesEveryExistingCapabilityAndLocksAdminPolicies()
     {
-        assertEquals(13, WebCapability.registry().size());
+        assertEquals(14, WebCapability.registry().size());
 
         for(String id: new String[]{"site-access", "dashboard", "live", "tuner-spectrum", "systems", "conventional", "aliases", "credits",
-            "csv-export", "call-audio", "admin-users", "admin-access", "admin-aliases"})
+            "csv-export", "call-audio", "admin-users", "admin-access", "admin-aliases", "admin-audio"})
         {
             assertTrue(WebCapability.fromId(id).isPresent(), id);
         }
@@ -146,6 +146,7 @@ class WebAccessServiceTest
         assertFalse(WebCapability.ADMIN_USERS.configurable());
         assertFalse(WebCapability.ADMIN_ACCESS.configurable());
         assertFalse(WebCapability.ADMIN_ALIASES.configurable());
+        assertFalse(WebCapability.ADMIN_AUDIO.configurable());
         assertTrue(AccessTier.ADMIN.allows(AccessTier.USER));
         assertFalse(AccessTier.PUBLIC.allows(AccessTier.USER));
     }

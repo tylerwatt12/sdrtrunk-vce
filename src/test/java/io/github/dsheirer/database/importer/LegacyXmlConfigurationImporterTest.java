@@ -94,7 +94,6 @@ class LegacyXmlConfigurationImporterTest
             .equals(alias.getMatchIdentifier().valueProperty().get())));
         assertTrue(aliases.stream().allMatch(alias -> alias.getBroadcastChannels().stream()
             .allMatch(channel -> channel.toString().equals(channel.valueProperty().get()))));
-        assertTrue(aliases.stream().allMatch(alias -> alias.getPlaybackPriority() == 50));
         assertTrue(aliases.stream().allMatch(alias -> alias.getStreamTalkgroupAlias() != null &&
             alias.getStreamTalkgroupAlias().getValue() == 42 &&
             alias.getStreamTalkgroupAlias().toString().equals(

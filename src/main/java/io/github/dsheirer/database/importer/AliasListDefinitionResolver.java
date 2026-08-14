@@ -197,8 +197,8 @@ public final class AliasListDefinitionResolver
                 continue;
             }
 
-            definition.setUnmatchedTalkgroupPolicy(new UnmatchedTalkgroupPolicy(catchAll.getPlaybackPriority(),
-                catchAll.isRecordable(), catchAll.getBroadcastChannels().stream()
+            definition.setUnmatchedTalkgroupPolicy(new UnmatchedTalkgroupPolicy(catchAll.isRecordable(),
+                catchAll.getBroadcastChannels().stream()
                     .map(BroadcastChannel::getChannelName).toList()));
             aliases.remove(catchAll);
         }

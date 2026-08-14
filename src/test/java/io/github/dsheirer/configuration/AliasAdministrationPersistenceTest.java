@@ -26,15 +26,19 @@ import io.github.dsheirer.audio.broadcast.broadcastify.BroadcastifyCallConfigura
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.database.alias.AliasDatabaseStore;
+import io.github.dsheirer.database.scanlist.ScanListDatabaseStore;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.directory.DirectoryPreference;
 import io.github.dsheirer.protocol.Protocol;
+import io.github.dsheirer.scanlist.ScanList;
+import io.github.dsheirer.scanlist.ScanListConfiguration;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -75,7 +79,7 @@ class AliasAdministrationPersistenceTest
                 try
                 {
                     service.bulkEdit(new AliasAdministrationService.BulkEdit(aliasIds, null, 0x123456, null,
-                        null, true, null, null, null, null, false), second.revision());
+                        true, null, null, null, null, false), second.revision());
                 }
                 catch(Throwable throwable)
                 {
@@ -148,7 +152,7 @@ class AliasAdministrationPersistenceTest
             assertEquals(secondAliasId,
                 cachedAliasList.getAliases(APCO25Talkgroup.create(101)).getFirst().getId());
             service.updateUnmatchedTalkgroupPolicy(aliasListId,
-                new UnmatchedTalkgroupPolicy(100, false, List.of("Old Stream")), service.currentRevision());
+                new UnmatchedTalkgroupPolicy(false, List.of("Old Stream")), service.currentRevision());
 
             Alias replacement = service.getAlias(aliasId).alias();
             replacement.setName("Changed");
@@ -208,6 +212,76 @@ class AliasAdministrationPersistenceTest
         }
     }
 
+    @Test
+    void failedScanListFlushRestoresDefinitionsAndMemberships() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("scan-list-rollback-data");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        Files.createDirectories(database.getParent());
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        FailingConfigurationManager manager = new FailingConfigurationManager(new TestUserPreferences(dataRoot));
+
+        try
+        {
+            manager.init();
+            AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
+            AliasAdministrationService.MutationResult list = service.createAliasList(
+                "County P25", AliasListFamily.P25, service.currentRevision());
+            AliasAdministrationService.MutationResult alias = service.createAlias(
+                alias("Dispatch", list.aliasListId(), 101), list.revision());
+            long aliasId = alias.aliasIds().getFirst();
+            AliasAdministrationService.ScanListMutationResult created = service.createScanList(
+                new ScanList(ScanList.UNASSIGNED_ID, 10, "SouthWest", "Southwest calls", true, false),
+                alias.revision());
+            long scanListId = created.scanListId();
+            AliasAdministrationService.ScanListMutationResult configured = service.updateScanListMemberships(
+                scanListId, List.of(aliasId),
+                AliasAdministrationService.MembershipOperation.ADD, created.revision());
+            ScanListDatabaseStore store = new ScanListDatabaseStore(database);
+            ScanListConfiguration baseline = store.loadConfiguration();
+
+            manager.failNextSave();
+            assertThrows(AliasAdministrationService.PersistenceException.class, () -> service.updateScanList(
+                scanListId, new ScanList(scanListId, 2, "Renamed", "Changed", true, false),
+                configured.revision()));
+            assertScanListStateEquals(baseline, manager.getScanListModel().configuration());
+            assertScanListStateEquals(baseline, store.loadConfiguration());
+
+            manager.failNextSave();
+            assertThrows(AliasAdministrationService.PersistenceException.class,
+                () -> service.updateScanListMemberships(scanListId, List.of(aliasId),
+                    AliasAdministrationService.MembershipOperation.REMOVE, service.currentRevision()));
+            assertScanListStateEquals(baseline, manager.getScanListModel().configuration());
+            assertScanListStateEquals(baseline, store.loadConfiguration());
+            assertEquals(Set.of(aliasId), service.getScanList(scanListId).aliasIds());
+
+            int aliasesBeforeAtomicCreate = manager.getAliasModel().getAliases().size();
+            manager.failNextSave();
+            assertThrows(AliasAdministrationService.PersistenceException.class,
+                () -> service.createAlias(alias("Rejected Atomic", list.aliasListId(), 103), List.of(scanListId),
+                    service.currentRevision()));
+            assertEquals(aliasesBeforeAtomicCreate, manager.getAliasModel().getAliases().size());
+            assertScanListStateEquals(baseline, manager.getScanListModel().configuration());
+            assertScanListStateEquals(baseline, store.loadConfiguration());
+
+            UnmatchedTalkgroupPolicy baselinePolicy = manager.getAliasModel()
+                .getAliasListDefinition(list.aliasListId()).getUnmatchedTalkgroupPolicy();
+            manager.failNextSave();
+            assertThrows(AliasAdministrationService.PersistenceException.class,
+                () -> service.updateUnmatchedTalkgroupPolicy(list.aliasListId(),
+                    new UnmatchedTalkgroupPolicy(true, List.of()), List.of(scanListId),
+                    service.currentRevision()));
+            assertEquals(baselinePolicy, manager.getAliasModel().getAliasListDefinition(list.aliasListId())
+                .getUnmatchedTalkgroupPolicy());
+            assertScanListStateEquals(baseline, manager.getScanListModel().configuration());
+            assertScanListStateEquals(baseline, store.loadConfiguration());
+        }
+        finally
+        {
+            MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
+        }
+    }
+
     private static void assertStoredDefaults(Path database, List<Long> aliasIds) throws Exception
     {
         AliasDatabaseStore store = new AliasDatabaseStore(database);
@@ -217,6 +291,13 @@ class AliasAdministrationPersistenceTest
         assertEquals(aliasIds.size(), aliases.size());
         assertEquals(List.of(0, 0), aliases.stream().map(Alias::getColor).toList());
         assertEquals(List.of(false, false), aliases.stream().map(Alias::isRecordable).toList());
+    }
+
+    private static void assertScanListStateEquals(ScanListConfiguration expected, ScanListConfiguration actual)
+    {
+        assertEquals(expected.scanLists(), actual.scanLists());
+        assertEquals(expected.aliasMemberships(), actual.aliasMemberships());
+        assertEquals(expected.unmatchedAliasListMemberships(), actual.unmatchedAliasListMemberships());
     }
 
     private static void awaitState(Thread thread, Thread.State expected, Duration timeout) throws Exception

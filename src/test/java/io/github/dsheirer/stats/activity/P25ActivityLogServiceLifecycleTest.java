@@ -533,7 +533,7 @@ class P25ActivityLogServiceLifecycleTest
         identifiers.update(DecoderTypeConfigurationIdentifier.create(DecoderType.NBFM));
         AudioCallSnapshot snapshot = new AudioCallSnapshot(new AudioCallId(sequence, sequence + 1, 0), null, null,
             identifiers, Set.of(), timestamp, timestamp + 100L, 1, 1, timestamp, timestamp + 100L,
-            false, true, false, true, 100, false);
+            false, true, false, true, false);
         return new CompletedAudioCall(snapshot, List.of(new float[800]));
     }
 

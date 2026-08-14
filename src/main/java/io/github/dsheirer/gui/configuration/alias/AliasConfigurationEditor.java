@@ -34,7 +34,6 @@ import io.github.dsheirer.preference.UserPreferences;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import java.util.function.Predicate;
 import javafx.application.Platform;
 import javafx.beans.property.ReadOnlyObjectWrapper;
 import javafx.beans.value.ObservableValue;
@@ -102,7 +101,6 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
     private Button mDeleteAliasListButton;
     private FilteredList<Alias> mAliasFilteredList;
     private SortedList<Alias> mAliasSortedList;
-    private AliasPredicate mAliasPredicate;
     private boolean mIgnoreAliasSelectionChanges;
     private boolean mAliasSelectionRefreshPending;
 
@@ -118,8 +116,10 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
         mUserPreferences = userPreferences;
 
         VBox leftBox = new VBox();
-        VBox.setVgrow(getAliasTableView(), Priority.ALWAYS);
-        leftBox.getChildren().addAll(getSearchAndListSelectionBox(), getAliasTableView());
+        HBox searchAndListSelection = getSearchAndListSelectionBox();
+        TableView<Alias> aliasTable = getAliasTableView();
+        VBox.setVgrow(aliasTable, Priority.ALWAYS);
+        leftBox.getChildren().addAll(searchAndListSelection, aliasTable);
 
         HBox topBox = new HBox();
         HBox.setHgrow(leftBox, Priority.ALWAYS);
@@ -136,7 +136,7 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
     @Override
     public void prepareForAliasListRefresh()
     {
-        getAliasTableView().getSelectionModel().select(null);
+        getAliasTableView().getSelectionModel().clearSelection();
     }
 
     /**
@@ -382,21 +382,8 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
 
     private void update()
     {
-        getAliasFilteredList().setPredicate(null);
-        getAliasPredicate().setAliasListName(getAliasListNameComboBox().getSelectionModel().getSelectedItem());
-        getAliasPredicate().setSearchText(getSearchField().getText());
-        getAliasFilteredList().setPredicate(getAliasPredicate());
-    }
-
-    private AliasPredicate getAliasPredicate()
-    {
-        if(mAliasPredicate == null)
-        {
-            mAliasPredicate = new AliasPredicate();
-            mAliasPredicate.setAliasListName(getAliasListNameComboBox().getSelectionModel().getSelectedItem());
-        }
-
-        return mAliasPredicate;
+        getAliasFilteredList().setPredicate(new AliasPredicate(
+            getAliasListNameComboBox().getSelectionModel().getSelectedItem(), getSearchField().getText()));
     }
 
     private AliasListDefinition getAliasListDefinition(String name)
@@ -420,6 +407,13 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
                         AliasListDefinition definition = getAliasListDefinition(newValue);
                         getNewAliasButton().setDisable(definition == null ||
                             AliasMatchRegistry.allowed(definition).isEmpty());
+
+                        if(oldValue != null && !mIgnoreAliasSelectionChanges)
+                        {
+                            getAliasTableView().getSelectionModel().clearSelection();
+                            scheduleAliasSelectionRefresh();
+                        }
+
                         update();
                     });
 
@@ -579,10 +573,6 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
             iconColumn.setCellValueFactory(new PropertyValueFactory<>("iconName"));
             iconColumn.setCellFactory(new IconTableCellFactory());
 
-            TableColumn<Alias, Integer> priorityColumn = new TableColumn<>("Listen");
-            priorityColumn.setCellFactory(new PriorityCellFactory());
-            priorityColumn.setCellValueFactory(new PropertyValueFactory<>("priority"));
-
             TableColumn<Alias, Boolean> recordColumn = new TableColumn<>("Record");
             recordColumn.setCellValueFactory(new PropertyValueFactory<>("recordable"));
             recordColumn.setCellFactory(new IconCell(FontAwesome.SQUARE, Color.RED));
@@ -634,7 +624,6 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
             mAliasTableView.getColumns().add(groupColumn);
             mAliasTableView.getColumns().add(colorColumn);
             mAliasTableView.getColumns().add(iconColumn);
-            mAliasTableView.getColumns().add(priorityColumn);
             mAliasTableView.getColumns().add(recordColumn);
             mAliasTableView.getColumns().add(streamColumn);
             mAliasTableView.getColumns().add(typeColumn);
@@ -645,33 +634,38 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
             mAliasTableView.setItems(getAliasSortedList());
             mAliasTableView.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
             mAliasTableView.getSelectionModel().getSelectedItems().addListener(
-                (ListChangeListener.Change<? extends Alias> c) -> {
-                    if(!mIgnoreAliasSelectionChanges && !mAliasSelectionRefreshPending)
-                    {
-                        mAliasSelectionRefreshPending = true;
-                        Platform.runLater(() ->
-                        {
-                            try
-                            {
-                                setAliases();
-                            }
-                            finally
-                            {
-                                mAliasSelectionRefreshPending = false;
-                            }
-                        });
-                    }
-                });
+                (ListChangeListener.Change<? extends Alias> c) -> scheduleAliasSelectionRefresh());
         }
 
         return mAliasTableView;
+    }
+
+    private void scheduleAliasSelectionRefresh()
+    {
+        if(!mIgnoreAliasSelectionChanges && !mAliasSelectionRefreshPending)
+        {
+            mAliasSelectionRefreshPending = true;
+            Platform.runLater(() ->
+            {
+                try
+                {
+                    setAliases();
+                }
+                finally
+                {
+                    mAliasSelectionRefreshPending = false;
+                }
+            });
+        }
     }
 
     private FilteredList<Alias> getAliasFilteredList()
     {
         if(mAliasFilteredList == null)
         {
-            mAliasFilteredList = new FilteredList<>(mConfigurationManager.getAliasModel().aliasList(), getAliasPredicate());
+            mAliasFilteredList = new FilteredList<>(mConfigurationManager.getAliasModel().aliasList(),
+                new AliasPredicate(getAliasListNameComboBox().getSelectionModel().getSelectedItem(),
+                    getSearchField().getText()));
         }
 
         return mAliasFilteredList;
@@ -916,7 +910,7 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
                 }
 
                 AliasAdministrationService.BulkEdit edit = new AliasAdministrationService.BulkEdit(aliasIds,
-                    mDefinition.getId(), null, null, null, null, null, null, null, null, false);
+                    mDefinition.getId(), null, null, null, null, null, null, null, false);
                 AliasMutationUi.execute(getMoveToAliasButton(), "Move Aliases", () ->
                     mConfigurationManager.getAliasAdministrationService().bulkEdit(edit));
             });
@@ -1027,50 +1021,6 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
         }
     }
 
-    public class PriorityCellFactory implements Callback<TableColumn<Alias, Integer>, TableCell<Alias, Integer>>
-    {
-        @Override
-        public TableCell<Alias, Integer> call(TableColumn<Alias, Integer> param)
-        {
-            return new TableCell<Alias, Integer>()
-            {
-                @Override
-                protected void updateItem(Integer item, boolean empty)
-                {
-                    if(empty)
-                    {
-                        setText(null);
-                        setGraphic(null);
-                    }
-                    else if(item == io.github.dsheirer.alias.id.priority.Priority.DO_NOT_MONITOR)
-                    {
-                        setText("Mute");
-                        final IconNode iconNode = new IconNode(FontAwesome.VOLUME_OFF);
-                        iconNode.setIconSize(20);
-                        iconNode.setFill(Color.RED);
-                        setGraphic(iconNode);
-                    }
-                    else if(item == io.github.dsheirer.alias.id.priority.Priority.DEFAULT_PRIORITY)
-                    {
-                        setText("Default");
-                        final IconNode iconNode = new IconNode(FontAwesome.VOLUME_UP);
-                        iconNode.setIconSize(20);
-                        iconNode.setFill(Color.GREEN);
-                        setGraphic(iconNode);
-                    }
-                    else
-                    {
-                        setText(item.toString());
-                        final IconNode iconNode = new IconNode(FontAwesome.VOLUME_UP);
-                        iconNode.setIconSize(20);
-                        iconNode.setFill(Color.GREEN);
-                        setGraphic(iconNode);
-                    }
-                }
-            };
-        }
-    }
-
     public class IconTableCellFactory implements Callback<TableColumn<Alias, String>, TableCell<Alias, String>>
     {
         @Override
@@ -1114,50 +1064,4 @@ public class AliasConfigurationEditor extends SplitPane implements IAliasListRef
         }
     }
 
-    /**
-     * Alias filter predicate
-     */
-    public class AliasPredicate implements Predicate<Alias>
-    {
-        private String mAliasListName;
-        private String mSearchText;
-
-        @Override
-        public boolean test(Alias alias)
-        {
-            if(mAliasListName == null)
-            {
-                return false;
-            }
-            else if(mAliasListName.equals(alias.getAliasListName()))
-            {
-                return (alias.getName() != null && alias.getName().toLowerCase().contains(mSearchText)) ||
-                        (alias.getDescription() != null &&
-                            alias.getDescription().toLowerCase().contains(mSearchText)) ||
-                        (alias.getGroup() != null && alias.getGroup().toLowerCase().contains(mSearchText));
-            }
-
-            return false;
-        }
-
-        public void setAliasListName(String aliasListName)
-        {
-            if(aliasListName != null)
-            {
-                mAliasListName = aliasListName;
-            }
-        }
-
-        public void setSearchText(String searchText)
-        {
-            if(searchText != null)
-            {
-                mSearchText = searchText.toLowerCase();
-            }
-            else
-            {
-                mSearchText = null;
-            }
-        }
-    }
 }

@@ -33,6 +33,7 @@ import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.alias.AliasDatabaseStore;
 import io.github.dsheirer.database.configuration.ConfigurationDatabaseStore;
 import io.github.dsheirer.database.configuration.ConfigurationSnapshotDatabaseStore;
+import io.github.dsheirer.database.scanlist.ScanListDatabaseStore;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.gui.configuration.IAliasListRefreshListener;
 import io.github.dsheirer.icon.IconModel;
@@ -40,6 +41,8 @@ import io.github.dsheirer.module.log.EventLogManager;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.service.radioreference.RadioReference;
+import io.github.dsheirer.scanlist.ScanListConfiguration;
+import io.github.dsheirer.scanlist.ScanListModel;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.util.ThreadPool;
 import java.nio.file.Path;
@@ -78,7 +81,9 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     private RadioReference mRadioReference;
     private AliasDatabaseStore mAliasDatabaseStore;
     private ConfigurationDatabaseStore mConfigurationDatabaseStore;
+    private ScanListDatabaseStore mScanListDatabaseStore;
     private final AliasAdministrationService mAliasAdministrationService;
+    private final ScanListModel mScanListModel;
     private AtomicBoolean mConfigurationSavePending = new AtomicBoolean();
     private AtomicBoolean mConfigurationDirty = new AtomicBoolean();
     private final AtomicLong mAliasConfigurationRevision = new AtomicLong();
@@ -109,6 +114,8 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         mIconModel = iconModel;
         mAliasDatabaseStore = new AliasDatabaseStore(SdrTrunkDatabasePath.getDatabasePath(userPreferences));
         mConfigurationDatabaseStore = new ConfigurationDatabaseStore(SdrTrunkDatabasePath.getDatabasePath(userPreferences));
+        mScanListDatabaseStore = new ScanListDatabaseStore(SdrTrunkDatabasePath.getDatabasePath(userPreferences));
+        mScanListModel = new ScanListModel(this::scanListConfigurationChanged);
         mAliasAdministrationService = new AliasAdministrationService(this);
 
         mBroadcastModel = new BroadcastModel(mAliasModel, mIconModel, userPreferences);
@@ -128,9 +135,10 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         //Register for alias and channel events so that we can save configuration changes.
         mChannelModel.addListener(this);
 
-        mAliasModel.aliasList().addListener((ListChangeListener.Change<? extends Alias> c) -> aliasConfigurationChanged());
+        mAliasModel.aliasList().addListener(
+            (ListChangeListener.Change<? extends Alias> c) -> aliasModelConfigurationChanged());
         mAliasModel.aliasListDefinitions().addListener(
-            (ListChangeListener.Change<? extends AliasListDefinition> c) -> aliasConfigurationChanged());
+            (ListChangeListener.Change<? extends AliasListDefinition> c) -> aliasModelConfigurationChanged());
 
         mBroadcastModel.addListener(broadcastEvent -> {
             switch(broadcastEvent.getEvent())
@@ -148,7 +156,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     }
 
     /**
-     * Serializes headless web configuration-model access shared by the channel and Listen-list administrator
+     * Serializes headless web configuration-model access shared by the channel and scan-list administrator
      * services.  Desktop builds instead use the JavaFX application thread.  This lock is never acquired by tuner,
      * sample, decoder, recorder, broadcaster, or browser-audio delivery paths.
      */
@@ -225,6 +233,14 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     }
 
     /**
+     * Runtime scan-list catalog and immutable reverse membership indexes.
+     */
+    public ScanListModel getScanListModel()
+    {
+        return mScanListModel;
+    }
+
+    /**
      * Icon manager
      */
     public IconModel getIconModel()
@@ -279,6 +295,15 @@ public class ConfigurationManager implements Listener<ChannelEvent>
      * notification from their editor.
      */
     public void aliasListDefinitionChanged()
+    {
+        aliasConfigurationChanged();
+    }
+
+    /**
+     * Marks a scan-list definition or membership as changed. Scan-list administration shares the Alias configuration
+     * revision so edits through either surface use one optimistic-concurrency boundary.
+     */
+    public void scanListConfigurationChanged()
     {
         aliasConfigurationChanged();
     }
@@ -454,6 +479,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     {
         ConfigurationState configurationState = loadConfigurationState();
         AliasSnapshot aliasSnapshot = loadAliases();
+        ScanListConfiguration scanListConfiguration = loadScanLists();
         validateAliasListAssignments(configurationState, aliasSnapshot.definitions());
 
         clearModels();
@@ -462,6 +488,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
 
         try
         {
+            mScanListModel.replaceConfiguration(scanListConfiguration);
             mAliasModel.setAliasListDefinitions(aliasSnapshot.definitions());
             mAliasModel.addAliases(aliasSnapshot.aliases());
             mBroadcastModel.addBroadcastConfigurations(configurationState.getBroadcastConfigurations());
@@ -667,6 +694,23 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         }
     }
 
+    private ScanListConfiguration loadScanLists()
+    {
+        try
+        {
+            ScanListConfiguration configuration = mScanListDatabaseStore.loadConfiguration();
+            mLog.debug("Loaded [{}] scan lists from SQLite [{}]", configuration.scanLists().size(),
+                mScanListDatabaseStore.getDatabasePath());
+            return configuration;
+        }
+        catch(Exception e)
+        {
+            mLog.error("Error loading scan lists from SQLite database [" +
+                mScanListDatabaseStore.getDatabasePath() + "]", e);
+            throw new ConfigurationLoadException("Unable to load validated scan-list configuration from SQLite", e);
+        }
+    }
+
     boolean saveConfigurationSnapshotToDatabase()
     {
         try
@@ -674,6 +718,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
             ConfigurationState databaseState = new ConfigurationState();
             databaseState.setAliases(new ArrayList<>(mAliasModel.getAliases()));
             databaseState.setAliasListDefinitions(new ArrayList<>(mAliasModel.aliasListDefinitions()));
+            databaseState.setScanListConfiguration(mScanListModel.configuration());
             databaseState.setBroadcastConfigurations(new ArrayList<>(mBroadcastModel.getBroadcastConfigurations()));
             databaseState.setChannels(new ArrayList<>(mChannelModel.getChannels()));
             validateAliasListAssignments(databaseState, databaseState.getAliasListDefinitions());
@@ -713,6 +758,28 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     {
         mAliasConfigurationRevision.incrementAndGet();
         scheduleAliasSave();
+    }
+
+    /**
+     * Keeps normalized scan-list joins aligned when desktop, import, or external configuration paths remove Alias
+     * owners without going through the web administration service. Loading deliberately skips reconciliation because
+     * the Alias model is populated incrementally after the complete scan-list snapshot is loaded.
+     */
+    private void aliasModelConfigurationChanged()
+    {
+        if(!mConfigurationLoading)
+        {
+            boolean scanListsChanged = mScanListModel.retainMembershipOwners(
+                mAliasModel.getAliases().stream().map(Alias::getId).toList(),
+                mAliasModel.aliasListDefinitions().stream().map(AliasListDefinition::getId).toList());
+            if(scanListsChanged)
+            {
+                //The scan-list model callback already advanced the shared revision and scheduled the snapshot save.
+                return;
+            }
+        }
+
+        aliasConfigurationChanged();
     }
 
     /**

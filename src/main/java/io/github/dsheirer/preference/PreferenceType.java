@@ -33,7 +33,6 @@ public enum PreferenceType
     JMBE_LIBRARY,
     MP3,
     NOW_PLAYING,
-    PLAYBACK,
     RADIO_REFERENCE,
     RECORD,
     SPECTRUM,

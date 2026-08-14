@@ -13,10 +13,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.sun.net.httpserver.Headers;
 import io.github.dsheirer.message.DecodeMessageViewService;
 import io.github.dsheirer.module.decode.event.DecodeEventViewService;
+import io.github.dsheirer.scanlist.ScanList;
+import io.github.dsheirer.scanlist.ScanListConfiguration;
+import io.github.dsheirer.scanlist.ScanListModel;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class StatsWebServerServiceBindAddressTest
@@ -121,10 +125,13 @@ class StatsWebServerServiceBindAddressTest
     @Test
     void acceptsOnlyOneStrictCallAudioIdentifierSegment()
     {
-        assertEquals("abc123", StatsWebServerService.callAudioId(URI.create(
+        String callId = "0123456789abcdef0123456789abcdef-abc123";
+        assertEquals(callId, StatsWebServerService.callAudioId(URI.create(
+            "/api/v1/calls/" + callId + "/audio")));
+        assertEquals(callId, StatsWebServerService.callAudioId(URI.create(
+            "/api/v1/calls/%30" + callId.substring(1) + "/audio")));
+        assertEquals(null, StatsWebServerService.callAudioId(URI.create(
             "/api/v1/calls/abc123/audio")));
-        assertEquals("abc", StatsWebServerService.callAudioId(URI.create(
-            "/api/v1/calls/%61bc/audio")));
         assertEquals(null, StatsWebServerService.callAudioId(URI.create(
             "/api/v1/calls/abc%2Faudio")));
         assertEquals(null, StatsWebServerService.callAudioId(URI.create(
@@ -133,6 +140,36 @@ class StatsWebServerServiceBindAddressTest
             "/api/v1/calls/abc+def/audio")));
         assertEquals(null, StatsWebServerService.callAudioId(URI.create(
             "/api/v1/calls/abc/def/audio")));
+    }
+
+    @Test
+    void selectsPublishedScanListsFromRepeatedStrictParameters()
+    {
+        ScanListModel model = new ScanListModel(null);
+        model.replaceConfiguration(new ScanListConfiguration(List.of(
+            new ScanList(1, 0, "Default", null, true, true),
+            new ScanList(2, 1, "SouthWest", null, true, false),
+            new ScanList(3, 2, "Cleveland", null, true, false),
+            new ScanList(4, 3, "Draft", null, false, false)), Map.of(), Map.of()));
+
+        assertEquals(Set.of(1L), StatsWebServerService.selectedScanListIds(
+            URI.create("/api/v1/live/calls"), model, 2));
+        assertEquals(Set.of(2L, 3L), StatsWebServerService.selectedScanListIds(
+            URI.create("/api/v1/live/calls?scan_list_id=2&scan_list_id=3"), model, 2));
+        assertEquals(Set.of(2L), StatsWebServerService.selectedScanListIds(
+            URI.create("/api/v1/live/calls?scan_list_id=2&scan_list_id=2"), model, 1));
+
+        for(String query : List.of("scan_list_id=0", "scan_list_id=-1", "scan_list_id=01",
+            "scan_list_id=missing", "other=2", "scan_list_id=4", "scan_list_id=99"))
+        {
+            assertThrows(StatsApiException.class, () -> StatsWebServerService.selectedScanListIds(
+                URI.create("/api/v1/live/calls?" + query), model, 2), query);
+        }
+
+        assertThrows(StatsApiException.class, () -> StatsWebServerService.selectedScanListIds(
+            URI.create("/api/v1/live/calls?scan_list_id=1&scan_list_id=2"), model, 1));
+        assertThrows(StatsApiException.class, () -> StatsWebServerService.selectedScanListIds(
+            URI.create("/api/v1/live/calls"), null, 2));
     }
 
     @Test

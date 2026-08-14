@@ -19,6 +19,7 @@
 
 package io.github.dsheirer.gui.configuration.channel;
 
+import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.gui.control.IntegerTextField;
 import io.github.dsheirer.gui.configuration.eventlog.EventLogConfigurationEditor;
 import io.github.dsheirer.gui.configuration.record.RecordConfigurationEditor;
@@ -72,6 +73,7 @@ public class P25P2ConfigurationEditor extends ChannelConfigurationEditor
     private ToggleSwitch mIgnoreDataCallsButton;
     private CheckBox mLearnAnnouncedControlChannelsCheckBox;
     private Spinner<Integer> mTrafficChannelPoolSizeSpinner;
+    private P25SiteIdentityView mP25SiteIdentityView;
 
     /**
      * Constructs an instance
@@ -92,6 +94,20 @@ public class P25P2ConfigurationEditor extends ChannelConfigurationEditor
     public DecoderType getDecoderType()
     {
         return DecoderType.P25_PHASE2;
+    }
+
+    @Override
+    public void setItem(Channel channel)
+    {
+        super.setItem(channel);
+        getP25SiteIdentityView().setChannel(channel);
+    }
+
+    @Override
+    public void dispose()
+    {
+        getP25SiteIdentityView().dispose();
+        super.dispose();
     }
 
     private TitledPane getSourcePane()
@@ -163,6 +179,9 @@ public class P25P2ConfigurationEditor extends ChannelConfigurationEditor
             GridPane.setConstraints(getNacTextField(), 5, row);
             gridPane.getChildren().add(getNacTextField());
 
+            GridPane.setConstraints(getP25SiteIdentityView(), 0, ++row, 6, 1);
+            gridPane.getChildren().add(getP25SiteIdentityView());
+
             Label noteLabel = new Label("Note: WACN/System/NAC values are auto-detected (ie not required) from " +
                     "the control channel and are only required when decoding individual traffic channels");
             GridPane.setHalignment(noteLabel, HPos.LEFT);
@@ -174,6 +193,16 @@ public class P25P2ConfigurationEditor extends ChannelConfigurationEditor
         }
 
         return mDecoderPane;
+    }
+
+    private P25SiteIdentityView getP25SiteIdentityView()
+    {
+        if(mP25SiteIdentityView == null)
+        {
+            mP25SiteIdentityView = new P25SiteIdentityView();
+        }
+
+        return mP25SiteIdentityView;
     }
 
     private TitledPane getEventLogPane()

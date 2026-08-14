@@ -97,25 +97,35 @@ class ApplicationDatabaseMigratorTest
 
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
-            assertEquals("5", metadata(connection, "alias_schema_version"));
+            assertEquals(Integer.toString(SdrTrunkDatabaseSchema.ALIAS_SCHEMA_VERSION),
+                metadata(connection, "alias_schema_version"));
             assertEquals(Integer.toString(P25ActivityLogSchema.SCHEMA_VERSION),
                 metadata(connection, "p25_activity_schema_version"));
-            assertEquals("-1:1", scalar(connection, """
-                SELECT unmatched_talkgroup_priority || ':' || unmatched_talkgroup_record_enabled
-                FROM alias_list WHERE id=1
+            assertEquals("Default:1:1", scalar(connection, """
+                SELECT name || ':' || published || ':' || is_default
+                FROM scan_list
                 """));
-            assertEquals("100:0", scalar(connection, """
-                SELECT unmatched_talkgroup_priority || ':' || unmatched_talkgroup_record_enabled
-                FROM alias_list WHERE id=2
-                """));
-            assertEquals("4:1|6:0|9:1", scalar(connection, """
+            assertEquals("1:1|2:0|5:1|6:0|7:1", scalar(connection, """
                 SELECT group_concat(policy, '|')
                 FROM (
-                    SELECT unmatched_talkgroup_priority || ':' ||
-                           unmatched_talkgroup_record_enabled AS policy
+                    SELECT id || ':' || unmatched_talkgroup_record_enabled AS policy
                     FROM alias_list
-                    WHERE id IN (5, 6, 7)
+                    WHERE id IN (1, 2, 5, 6, 7)
                     ORDER BY id
+                )
+                """));
+            assertEquals("103|104|105|106|107|111|112|113", scalar(connection, """
+                SELECT group_concat(alias_id, '|')
+                FROM (
+                    SELECT alias_id FROM alias_scan_list_membership ORDER BY alias_id
+                )
+                """));
+            assertEquals("5|6|7", scalar(connection, """
+                SELECT group_concat(alias_list_id, '|')
+                FROM (
+                    SELECT alias_list_id
+                    FROM alias_list_unmatched_talkgroup_scan_list_membership
+                    ORDER BY alias_list_id
                 )
                 """));
             assertEquals("Safe Stream", scalar(connection, """
@@ -130,7 +140,7 @@ class ApplicationDatabaseMigratorTest
                     ORDER BY alias_list_id
                 )
                 """));
-            assertEquals("8", scalar(connection, "SELECT COUNT(*) FROM alias"));
+            assertEquals("9", scalar(connection, "SELECT COUNT(*) FROM alias"));
             assertEquals("0", scalar(connection, """
                 SELECT COUNT(*) FROM alias
                 WHERE matcher_type IN (
@@ -747,7 +757,7 @@ class ApplicationDatabaseMigratorTest
             Alpha9DatabaseMigration.validateSource(connection);
             assertEquals("4", metadata(connection, "alias_schema_version"));
             assertEquals("24", metadata(connection, "p25_activity_schema_version"));
-            assertEquals("14", scalar(connection, "SELECT COUNT(*) FROM alias"));
+            assertEquals("15", scalar(connection, "SELECT COUNT(*) FROM alias"));
             assertEquals("2", scalar(connection, """
                 SELECT COUNT(*) FROM alias
                 WHERE matcher_type IN (
@@ -860,6 +870,8 @@ class ApplicationDatabaseMigratorTest
                         'P25_FULLY_QUALIFIED_RADIO_ID', 'APCO25', 1800001, NULL, NULL, 781824, 840),
                     (103, 1, 'Retained Talkgroup', NULL, 0, 1, 5,
                         'TALKGROUP', 'APCO25', 43, NULL, NULL, NULL, NULL),
+                    (114, 2, 'Do Not Listen', NULL, 0, 0, -1,
+                        'TALKGROUP', 'APCO25', 44, NULL, NULL, NULL, NULL),
                     (104, 2, 'Styled Catchall', 'Keep this appearance', 0, 1, 8,
                         'TALKGROUP_RANGE', 'APCO25', NULL, 0, 65535, NULL, NULL),
                     (105, 3, 'Ambiguous A', NULL, 0, 1, 8,

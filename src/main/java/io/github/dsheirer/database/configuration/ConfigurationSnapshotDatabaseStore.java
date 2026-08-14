@@ -14,6 +14,8 @@ package io.github.dsheirer.database.configuration;
 import io.github.dsheirer.configuration.ConfigurationState;
 import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.database.alias.AliasDatabaseStore;
+import io.github.dsheirer.database.scanlist.ScanListDatabaseStore;
+import io.github.dsheirer.scanlist.ScanListConfiguration;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -45,8 +47,12 @@ public class ConfigurationSnapshotDatabaseStore
 
             try
             {
+                ScanListDatabaseStore scanListStore = new ScanListDatabaseStore(mDatabasePath);
+                ScanListConfiguration scanListConfiguration = state.getScanListConfiguration() != null ?
+                    state.getScanListConfiguration() : scanListStore.loadConfiguration(connection);
                 new AliasDatabaseStore(mDatabasePath).replaceAliases(connection, state.getAliases(),
                     state.getAliasListDefinitions());
+                scanListStore.replaceConfiguration(connection, scanListConfiguration);
                 new ConfigurationDatabaseStore(mDatabasePath).replaceConfigurationState(connection, state);
                 connection.commit();
             }

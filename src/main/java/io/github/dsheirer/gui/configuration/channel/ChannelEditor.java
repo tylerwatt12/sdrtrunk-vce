@@ -27,6 +27,7 @@ import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
+import io.github.dsheirer.util.ThreadPool;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -34,8 +35,10 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.function.Predicate;
 import javafx.application.Platform;
+import javafx.beans.binding.Bindings;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.beans.value.ObservableValue;
+import javafx.collections.ListChangeListener;
 import javafx.collections.ObservableList;
 import javafx.collections.transformation.FilteredList;
 import javafx.collections.transformation.SortedList;
@@ -51,6 +54,7 @@ import javafx.scene.control.Menu;
 import javafx.scene.control.MenuButton;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.SeparatorMenuItem;
+import javafx.scene.control.SelectionMode;
 import javafx.scene.control.SplitPane;
 import javafx.scene.control.TableCell;
 import javafx.scene.control.TableColumn;
@@ -133,7 +137,7 @@ public class ChannelEditor extends SplitPane implements IFilterProcessor, IAlias
     @Override
     public void prepareForAliasListRefresh()
     {
-        getChannelTableView().getSelectionModel().select(null);
+        getChannelTableView().getSelectionModel().clearSelection();
     }
 
     /**
@@ -152,10 +156,16 @@ public class ChannelEditor extends SplitPane implements IFilterProcessor, IAlias
             if(channel != null)
             {
                 getSearchField().setText(null);
-                getChannelTableView().getSelectionModel().select(channel);
-                getChannelTableView().scrollTo(channel);
+                selectChannel(channel);
             }
         }
+    }
+
+    private void selectChannel(Channel channel)
+    {
+        getChannelTableView().getSelectionModel().clearSelection();
+        getChannelTableView().getSelectionModel().select(channel);
+        getChannelTableView().scrollTo(channel);
     }
 
     private void setChannel(Channel channel)
@@ -184,8 +194,7 @@ public class ChannelEditor extends SplitPane implements IFilterProcessor, IAlias
             }
         }
 
-        getCloneButton().setDisable(channel == null);
-        getDeleteButton().setDisable(channel == null);
+        updateSingleChannelActions();
 
         if(channel == null)
         {
@@ -241,8 +250,7 @@ public class ChannelEditor extends SplitPane implements IFilterProcessor, IAlias
         Channel channel = new Channel();
         channel.setDecodeConfiguration(DecoderFactory.getDecodeConfiguration(decoderType));
         mConfigurationManager.getChannelModel().addChannel(channel);
-        getChannelTableView().getSelectionModel().select(channel);
-        getChannelTableView().scrollTo(channel);
+        selectChannel(channel);
     }
 
     private SegmentedButton getViewSegmentedButton()
@@ -409,6 +417,7 @@ public class ChannelEditor extends SplitPane implements IFilterProcessor, IAlias
         if(mChannelTableView == null)
         {
             mChannelTableView = new TableView<>();
+            mChannelTableView.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
 
             TableColumn<Channel,Boolean> playingColumn = new TableColumn<>("Playing");
             playingColumn.setPrefWidth(75);
@@ -499,6 +508,8 @@ public class ChannelEditor extends SplitPane implements IFilterProcessor, IAlias
             mChannelTableView.setItems(sortedList);
             mChannelTableView.getSelectionModel().selectedItemProperty()
                 .addListener((observable, oldValue, newValue) -> setChannel(newValue));
+            mChannelTableView.getSelectionModel().getSelectedItems().addListener(
+                (ListChangeListener<Channel>)change -> updateSingleChannelActions());
             mChannelTableView.setOnMouseClicked(event -> {
                 if(event.getButton().equals(MouseButton.PRIMARY) && event.getClickCount() == 2)
                 {
@@ -527,7 +538,8 @@ public class ChannelEditor extends SplitPane implements IFilterProcessor, IAlias
             mButtonBox = new VBox();
             mButtonBox.setSpacing(10);
             mButtonBox.setMinWidth(Region.USE_PREF_SIZE);
-            mButtonBox.getChildren().addAll(getNewButton(), getCloneButton(), getDeleteButton());
+            mButtonBox.getChildren().addAll(getNewButton(), createChannelActionButton("Start", true),
+                createChannelActionButton("Stop", false), getCloneButton(), getDeleteButton());
         }
 
         return mButtonBox;
@@ -564,6 +576,58 @@ public class ChannelEditor extends SplitPane implements IFilterProcessor, IAlias
         }
 
         return mNewButton;
+    }
+
+    private Button createChannelActionButton(String label, boolean start)
+    {
+        Button button = new Button(label);
+        button.setMaxWidth(Double.MAX_VALUE);
+        button.disableProperty().bind(Bindings.isEmpty(getChannelTableView().getSelectionModel().getSelectedItems()));
+        button.setOnAction(event -> setSelectedChannelsProcessing(start));
+        return button;
+    }
+
+    private void setSelectedChannelsProcessing(boolean start)
+    {
+        List<Channel> channels = List.copyOf(getChannelTableView().getSelectionModel().getSelectedItems());
+
+        if(channels.isEmpty())
+        {
+            return;
+        }
+
+        ThreadPool.CACHED.execute(() -> {
+            for(Channel channel: channels)
+            {
+                if(channel.isProcessing() == start)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    if(start)
+                    {
+                        mConfigurationManager.getChannelProcessingManager().start(channel);
+                    }
+                    else
+                    {
+                        mConfigurationManager.getChannelProcessingManager().stop(channel);
+                    }
+                }
+                catch(Exception e)
+                {
+                    mLog.error("Couldn't " + (start ? "start" : "stop") + " channel [" + channel.getName() + "]", e);
+                }
+            }
+        });
+    }
+
+    private void updateSingleChannelActions()
+    {
+        int selected = getChannelTableView().getSelectionModel().getSelectedItems().size();
+        getCloneButton().setDisable(selected != 1);
+        getDeleteButton().setDisable(selected != 1);
     }
 
     private Button getDeleteButton()
@@ -618,9 +682,13 @@ public class ChannelEditor extends SplitPane implements IFilterProcessor, IAlias
             mCloneButton.setMaxWidth(Double.MAX_VALUE);
             mCloneButton.setOnAction(event -> {
                 Channel selected = getChannelTableView().getSelectionModel().getSelectedItem();
-                Channel copy = selected.copyOf();
-                mConfigurationManager.getChannelModel().addChannel(copy);
-                getChannelTableView().getSelectionModel().select(copy);
+
+                if(selected != null)
+                {
+                    Channel copy = selected.copyOf();
+                    mConfigurationManager.getChannelModel().addChannel(copy);
+                    selectChannel(copy);
+                }
             });
         }
 

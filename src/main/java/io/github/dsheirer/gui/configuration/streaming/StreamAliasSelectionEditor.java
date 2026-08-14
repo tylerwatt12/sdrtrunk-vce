@@ -404,7 +404,7 @@ public class StreamAliasSelectionEditor extends VBox
     {
         List<Long> aliasIds = aliases.stream().map(Alias::getId).toList();
         AliasAdministrationService.BulkEdit edit = new AliasAdministrationService.BulkEdit(aliasIds, null, null,
-            null, null, null, null, null, operation, List.of(stream), false);
+            null, null, null, null, operation, List.of(stream), false);
         AliasMutationUi.execute(owner, "Update Alias Stream", () ->
             mConfigurationManager.getAliasAdministrationService().bulkEdit(edit)).ifPresent(ignored ->
             updateListFilters());

@@ -84,11 +84,14 @@ class StatsCsvExportTest
     }
 
     @Test
-    void aliasExportOmitsRetiredFullyQualifiedMatcherFields() throws Exception
+    void aliasExportIncludesScanListMembershipAndOmitsRetiredFields() throws Exception
     {
-        StatsCsvExport export = StatsCsvExport.create("aliases", "County", List.of(Map.of(
-            "alias_id", 1, "alias_list_id", 2, "alias_list_name", "County", "family", "P25",
-            "name", "Dispatch", "matcher_type", "TALKGROUP", "protocol", "APCO25_PHASE2", "value", 100)));
+        StatsCsvExport export = StatsCsvExport.create("aliases", "County", List.of(Map.ofEntries(
+            Map.entry("alias_id", 1), Map.entry("alias_list_id", 2), Map.entry("alias_list_name", "County"),
+            Map.entry("family", "P25"), Map.entry("name", "Dispatch"),
+            Map.entry("matcher_type", "TALKGROUP"), Map.entry("protocol", "APCO25_PHASE2"),
+            Map.entry("value", 100), Map.entry("scan_list_ids", List.of(1L, 2L)),
+            Map.entry("scan_lists", List.of("Default", "Cleveland")))));
         String csv = new String(export.content(), 3, export.content().length - 3, StandardCharsets.UTF_8);
 
         try(CSVParser parser = CSVFormat.RFC4180.builder().setHeader().setSkipHeaderRecord(true).get()
@@ -99,12 +102,17 @@ class StatsCsvExportTest
             assertFalse(parser.getHeaderMap().containsKey("p25_system_id"));
             assertFalse(parser.getHeaderMap().containsKey("p25_system_id_hex"));
             assertFalse(parser.getHeaderMap().containsKey("fully_qualified"));
+            assertFalse(parser.getHeaderMap().containsKey("priority"));
+            assertTrue(parser.getHeaderMap().containsKey("scan_list_ids"));
+            assertTrue(parser.getHeaderMap().containsKey("scan_lists"));
             CSVRecord row = parser.getRecords().getFirst();
             assertEquals("100", row.get("value"));
             assertEquals("p25", row.get("family"));
             assertEquals("talkgroup", row.get("matcher_type"));
             assertEquals("p25", row.get("protocol"));
             assertEquals("phase_2", row.get("protocol_variant"));
+            assertEquals("1; 2", row.get("scan_list_ids"));
+            assertEquals("Default; Cleveland", row.get("scan_lists"));
         }
     }
 

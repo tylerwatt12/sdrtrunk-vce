@@ -24,7 +24,7 @@ class P25P2DecoderHDQPSKTest
         AtomicInteger softSymbolCount = new AtomicInteger();
         AtomicInteger hardSymbolCount = new AtomicInteger();
         AtomicBoolean invalidSoftSymbol = new AtomicBoolean();
-        decoder.addSymbolObserver(symbol ->
+        decoder.setSymbolListener(symbol ->
         {
             softSymbolCount.incrementAndGet();
 

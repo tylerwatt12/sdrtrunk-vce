@@ -13,14 +13,12 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Renderer-neutral mutable state for one Systems activity table.
+ * Renderer-neutral mutable state for one browser Live Systems activity table.
  *
- * <p>All mutation is confined to {@link ChannelActivityModel}'s activity worker.  Published web and desktop views are
- * immutable, so neither renderer needs a lock or access to live receiver state.</p>
+ * <p>All mutation is confined to {@link ChannelActivityModel}'s activity worker. Published snapshots are immutable,
+ * so web consumers never need a lock or access to live receiver state.</p>
  */
 public final class ChannelActivityTableState
 {
@@ -31,23 +29,18 @@ public final class ChannelActivityTableState
 
     private String mTitle;
     private final Channel mOwnerChannel;
-    private final boolean mCloseable;
     private boolean mControlActive;
     private List<ChannelActivitySnapshot.IdentifierField> mIdentifiers = List.of();
     private final List<ChannelActivityRow> mRows = new ArrayList<>();
     private final Map<String,ChannelActivityRow> mRowsByKey = new HashMap<>();
-    private final List<Listener<ChannelActivityTableView>> mViewListeners = new CopyOnWriteArrayList<>();
     private final Listener<ChannelActivitySnapshot> mSnapshotListener;
-    private final AtomicBoolean mCloseRequested = new AtomicBoolean();
     private volatile ChannelActivitySnapshot mLatestSnapshot;
-    private volatile ChannelActivityTableView mLatestView;
 
-    public ChannelActivityTableState(String title, Channel ownerChannel, boolean closeable,
+    public ChannelActivityTableState(String title, Channel ownerChannel,
                                      Listener<ChannelActivitySnapshot> snapshotListener)
     {
         mTitle = title;
         mOwnerChannel = ownerChannel;
-        mCloseable = closeable;
         mSnapshotListener = snapshotListener;
         publish();
     }
@@ -71,11 +64,6 @@ public final class ChannelActivityTableState
     public Channel getOwnerChannel()
     {
         return mOwnerChannel;
-    }
-
-    public boolean isCloseable()
-    {
-        return mCloseable;
     }
 
     public boolean isControlActive()
@@ -147,7 +135,7 @@ public final class ChannelActivityTableState
     }
 
     /**
-     * Worker-thread view of the live rows.  Renderers must consume {@link #getLatestView()} instead.
+     * Worker-thread view of the live rows. Consumers outside the activity worker use the immutable snapshot.
      */
     public List<ChannelActivityRow> getRows()
     {
@@ -177,67 +165,19 @@ public final class ChannelActivityTableState
         }
     }
 
-    public void refreshAllRows()
-    {
-        publish();
-    }
-
     public ChannelActivitySnapshot getLatestSnapshot()
     {
         return mLatestSnapshot;
     }
 
-    ChannelActivityTableView getLatestView()
-    {
-        return mLatestView;
-    }
-
-    void addViewListener(Listener<ChannelActivityTableView> listener)
-    {
-        if(listener != null)
-        {
-            mViewListeners.add(listener);
-            listener.receive(mLatestView);
-        }
-    }
-
-    void removeViewListener(Listener<ChannelActivityTableView> listener)
-    {
-        mViewListeners.remove(listener);
-    }
-
-    void requestClose()
-    {
-        mCloseRequested.set(true);
-    }
-
-    boolean consumeCloseRequest()
-    {
-        return mCloseRequested.compareAndSet(true, false);
-    }
-
-    boolean isCloseRequested()
-    {
-        return mCloseRequested.get();
-    }
-
     private void publish()
     {
         ChannelActivitySnapshot snapshot = ChannelActivitySnapshot.from(this);
-        List<ChannelActivityRow> rowCopies = mRows.stream().map(ChannelActivityRow::copy).toList();
-        ChannelActivityTableView view = new ChannelActivityTableView(getTableId(), mTitle, mOwnerChannel, mCloseable,
-            mControlActive, rowCopies);
         mLatestSnapshot = snapshot;
-        mLatestView = view;
 
         if(mSnapshotListener != null)
         {
             mSnapshotListener.receive(snapshot);
-        }
-
-        for(Listener<ChannelActivityTableView> listener: mViewListeners)
-        {
-            listener.receive(view);
         }
     }
 }

@@ -22,9 +22,7 @@ import com.google.common.eventbus.Subscribe;
 import com.google.common.util.concurrent.MoreExecutors;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.audio.call.AudioCallEvent;
-import io.github.dsheirer.channel.metadata.ChannelAndMetadata;
 import io.github.dsheirer.channel.metadata.ChannelMetadata;
-import io.github.dsheirer.channel.metadata.ChannelMetadataModel;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivityModel;
 import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
 import io.github.dsheirer.channel.quality.ControlChannelQualityMonitor;
@@ -94,8 +92,6 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     private static final Logger mLog = LoggerFactory.getLogger(ChannelProcessingManager.class);
     private static final String TUNER_UNAVAILABLE_DESCRIPTION = "TUNER UNAVAILABLE";
     private static final String CONFIGURATION_UNAVAILABLE_DESCRIPTION = "CHANNEL CONFIGURATION UNAVAILABLE";
-    private static final long NOW_PLAYING_TRAFFIC_CHANNEL_HANG_TIME_MILLISECONDS =
-        Math.max(0, Long.getLong("sdrtrunk.nowPlaying.trafficChannelHangMs", 5000L));
     private Map<Channel,ProcessingChain> mProcessingChainsMap = new ConcurrentHashMap<>();
     private Lock mLock = new ReentrantLock();
 
@@ -108,7 +104,6 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     private List<ProtocolSiteMetadataListener> mProtocolSiteMetadataListeners = new CopyOnWriteArrayList<>();
     private Broadcaster<ChannelEvent> mChannelEventBroadcaster = new Broadcaster<>();
 
-    private ChannelMetadataModel mChannelMetadataModel;
     private ChannelActivityModel mChannelActivityModel;
     private EventLogManager mEventLogManager;
     private TunerManager mTunerManager;
@@ -133,18 +128,8 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         mTunerManager = tunerManager;
         mAliasModel = aliasModel;
         mUserPreferences = userPreferences;
-        mChannelMetadataModel = new ChannelMetadataModel();
         mChannelActivityModel = new ChannelActivityModel(aliasModel, userPreferences.getNowPlayingPreference());
         mChannelActivityModel.setActiveChannelSupplier(this::getActiveChannelActivitySnapshot);
-        mChannelMetadataModel.addUpdateListener(mChannelActivityModel);
-    }
-
-    /**
-     * Channel metadata model containing metadata for each channel or channel time-slice that is currently processing.
-     */
-    public ChannelMetadataModel getChannelMetadataModel()
-    {
-        return mChannelMetadataModel;
     }
 
     public ChannelActivityModel getChannelActivityModel()
@@ -210,45 +195,6 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     public ProcessingChain getProcessingChain(Channel channel)
     {
         return mProcessingChainsMap.get(channel);
-    }
-
-    /**
-     * Returns the active processing chain whose source frequency exactly matches the requested frequency.
-     *
-     * This is intentionally frequency-only selection support for the Now Playing activity view.  It does not fall back
-     * to owner/control/traffic chains when the source frequency differs from the selected row.
-     *
-     * @param frequency selected row frequency in hertz
-     * @param timeslot selected row timeslot, reserved for future decoder-specific disambiguation
-     * @return exact-frequency processing chain or null
-     */
-    public ProcessingChain getProcessingChainByFrequency(long frequency, Integer timeslot)
-    {
-        if(frequency <= 0)
-        {
-            return null;
-        }
-
-        mLock.lock();
-
-        try
-        {
-            for(ProcessingChain processingChain: mProcessingChainsMap.values())
-            {
-                Source source = processingChain != null ? processingChain.getSource() : null;
-
-                if(source != null && source.getFrequency() == frequency)
-                {
-                    return processingChain;
-                }
-            }
-        }
-        finally
-        {
-            mLock.unlock();
-        }
-
-        return null;
     }
 
     /**
@@ -743,7 +689,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     }
 
     /**
-     * Thread-safe add processing chain and add channel metadata to channel metadata model.
+     * Thread-safe add processing chain and attach its metadata directly to the bounded activity model.
      * @param channel for the processing chain
      * @param processingChain to add
      * @return true if processing chain was added or false if it was not added due to there already
@@ -759,8 +705,6 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         {
             mProcessingChainsMap.computeIfAbsent(channel, key -> {
                 added[0] = true;
-                getChannelMetadataModel().add(new ChannelAndMetadata(key,
-                    processingChain.getChannelState().getChannelMetadata()));
                 return processingChain;
             });
 
@@ -770,6 +714,11 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
                 //full, its worker can now reconcile the dropped start from the authoritative map.
                 getChannelActivityModel().channelStarted(channel,
                     processingChain.getChannelState().getChannelMetadata(), processingChain);
+
+                for(ChannelMetadata metadata: processingChain.getChannelState().getChannelMetadata())
+                {
+                    metadata.setUpdateEventListener(mChannelActivityModel);
+                }
             }
         }
         finally
@@ -798,11 +747,10 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
             if(removed != null)
             {
                 getChannelActivityModel().channelStopped(channel);
-                long hangTime = channel.isTrafficChannel() ? NOW_PLAYING_TRAFFIC_CHANNEL_HANG_TIME_MILLISECONDS : 0;
 
                 for(ChannelMetadata channelMetadata: removed.getChannelState().getChannelMetadata())
                 {
-                    getChannelMetadataModel().remove(channelMetadata, hangTime);
+                    channelMetadata.removeUpdateEventListener();
                 }
             }
         }
@@ -937,8 +885,6 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
             });
 
             mProcessingChainsMap.put(request.getTrafficChannel(), processingChain);
-            mChannelMetadataModel.updateChannelMetadataToChannelMap(processingChain.getChannelState().getChannelMetadata(),
-                request.getTrafficChannel());
             mChannelActivityModel.channelStopped(request.getCurrentChannel());
             mChannelActivityModel.channelStarted(request.getTrafficChannel(),
                 processingChain.getChannelState().getChannelMetadata(), processingChain);

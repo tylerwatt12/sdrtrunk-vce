@@ -7,7 +7,9 @@
 package io.github.dsheirer.stats;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -65,5 +67,45 @@ class StatsLiveEventHubTest
         hub.close();
 
         assertEquals(1, closes.get());
+    }
+
+    @Test
+    void reportsExactOverflowSeparatelyForEachSubscriber() throws Exception
+    {
+        StatsLiveEventHub hub = new StatsLiveEventHub(2, 1);
+
+        try(StatsLiveEventHub.Subscription all = hub.subscribe();
+            StatsLiveEventHub.Subscription selected = hub.subscribe(event -> "selected".equals(event.name())))
+        {
+            hub.publish("selected", 1);
+            hub.publish("unrelated", 2);
+            hub.publish("selected", 3);
+
+            assertEquals(2, all.drainDroppedEvents());
+            assertEquals(1, selected.drainDroppedEvents());
+            assertEquals(3, hub.droppedEvents());
+            assertEquals(0, all.drainDroppedEvents());
+            assertEquals(0, selected.drainDroppedEvents());
+            assertEquals(3, all.poll(1, TimeUnit.SECONDS).data());
+            assertEquals(3, selected.poll(1, TimeUnit.SECONDS).data());
+        }
+
+        hub.close();
+    }
+
+    @Test
+    void detectsWhetherAnyCurrentSubscriberAcceptsAnEvent()
+    {
+        StatsLiveEventHub hub = new StatsLiveEventHub(2, 2);
+        assertFalse(hub.hasMatchingSubscriber("selected", 1));
+
+        StatsLiveEventHub.Subscription subscription =
+            hub.subscribe(event -> "selected".equals(event.name()));
+        assertFalse(hub.hasMatchingSubscriber("unrelated", 1));
+        assertTrue(hub.hasMatchingSubscriber("selected", 1));
+
+        subscription.close();
+        assertFalse(hub.hasMatchingSubscriber("selected", 1));
+        hub.close();
     }
 }

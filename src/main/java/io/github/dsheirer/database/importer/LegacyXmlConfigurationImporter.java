@@ -580,7 +580,9 @@ public class LegacyXmlConfigurationImporter
                     case RetiredAliasIdentifier ignored -> { }
                     case BroadcastChannel broadcastChannel -> template.addBroadcastChannel(broadcastChannel);
                     case Record ignored -> template.setRecordable(true);
-                    case Priority priority -> template.setCallPriority(priority.getPriority());
+                    //Priority was receiver-local playback state.  Keep parsing legacy XML, but intentionally do not
+                    //carry that retired behavior into the current configuration model.
+                    case Priority ignored -> { }
                     case NonRecordable ignored -> {
                         if(playlistVersion > 2)
                         {

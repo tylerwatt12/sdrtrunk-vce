@@ -21,7 +21,6 @@ package io.github.dsheirer.audio.call;
 
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
-import io.github.dsheirer.alias.id.priority.Priority;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import java.util.Set;
 
@@ -33,7 +32,7 @@ public record AudioCallSnapshot(AudioCallId callId, AudioCallId linkedCallId, Al
                                 long startTimestamp, long lastActivityTimestamp, int burstCount,
                                 long burstGeneration, long lastBurstStartTimestamp, long lastBurstEndTimestamp,
                                 boolean burstActive, boolean complete, boolean encrypted, boolean recordAudio,
-                                int monitorPriority, boolean duplicate,
+                                boolean duplicate,
                                 AudioCallRecordingMetadata recordingMetadata, VoiceCallQuality voiceCallQuality)
 {
     public AudioCallSnapshot(AudioCallId callId, AudioCallId linkedCallId, AliasList aliasList,
@@ -41,11 +40,11 @@ public record AudioCallSnapshot(AudioCallId callId, AudioCallId linkedCallId, Al
                              long startTimestamp, long lastActivityTimestamp, int burstCount,
                              long burstGeneration, long lastBurstStartTimestamp, long lastBurstEndTimestamp,
                              boolean burstActive, boolean complete, boolean encrypted, boolean recordAudio,
-                             int monitorPriority, boolean duplicate)
+                             boolean duplicate)
     {
         this(callId, linkedCallId, aliasList, identifierCollection, broadcastChannels, startTimestamp,
             lastActivityTimestamp, burstCount, burstGeneration, lastBurstStartTimestamp, lastBurstEndTimestamp,
-            burstActive, complete, encrypted, recordAudio, monitorPriority, duplicate,
+            burstActive, complete, encrypted, recordAudio, duplicate,
             AudioCallRecordingMetadata.captureAtSnapshot(aliasList, identifierCollection), VoiceCallQuality.EMPTY);
     }
 
@@ -54,11 +53,11 @@ public record AudioCallSnapshot(AudioCallId callId, AudioCallId linkedCallId, Al
                              long startTimestamp, long lastActivityTimestamp, int burstCount,
                              long burstGeneration, long lastBurstStartTimestamp, long lastBurstEndTimestamp,
                              boolean burstActive, boolean complete, boolean encrypted, boolean recordAudio,
-                             int monitorPriority, boolean duplicate, AudioCallRecordingMetadata recordingMetadata)
+                             boolean duplicate, AudioCallRecordingMetadata recordingMetadata)
     {
         this(callId, linkedCallId, aliasList, identifierCollection, broadcastChannels, startTimestamp,
             lastActivityTimestamp, burstCount, burstGeneration, lastBurstStartTimestamp, lastBurstEndTimestamp,
-            burstActive, complete, encrypted, recordAudio, monitorPriority, duplicate, recordingMetadata,
+            burstActive, complete, encrypted, recordAudio, duplicate, recordingMetadata,
             VoiceCallQuality.EMPTY);
     }
 
@@ -77,11 +76,6 @@ public record AudioCallSnapshot(AudioCallId callId, AudioCallId linkedCallId, Al
         return callId != null ? callId.timeslot() : 0;
     }
 
-    public boolean isDoNotMonitor()
-    {
-        return monitorPriority <= Priority.DO_NOT_MONITOR;
-    }
-
     public boolean isLinked()
     {
         return linkedCallId != null;
@@ -96,7 +90,7 @@ public record AudioCallSnapshot(AudioCallId callId, AudioCallId linkedCallId, Al
     {
         return new AudioCallSnapshot(callId, linkedCallId, aliasList, identifierCollection, broadcastChannels,
             startTimestamp, lastActivityTimestamp, burstCount, burstGeneration, lastBurstStartTimestamp,
-            lastBurstEndTimestamp, burstActive, complete, encrypted, recordAudio, monitorPriority, newDuplicate,
+            lastBurstEndTimestamp, burstActive, complete, encrypted, recordAudio, newDuplicate,
             recordingMetadata, voiceCallQuality);
     }
 
@@ -104,7 +98,7 @@ public record AudioCallSnapshot(AudioCallId callId, AudioCallId linkedCallId, Al
     {
         return new AudioCallSnapshot(callId, linkedCallId, aliasList, identifierCollection, broadcastChannels,
             startTimestamp, lastActivityTimestamp, burstCount, burstGeneration, lastBurstStartTimestamp,
-            lastBurstEndTimestamp, burstActive, complete, encrypted, recordAudio, monitorPriority, duplicate,
+            lastBurstEndTimestamp, burstActive, complete, encrypted, recordAudio, duplicate,
             recordingMetadata, quality);
     }
 }

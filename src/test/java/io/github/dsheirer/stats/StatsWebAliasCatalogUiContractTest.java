@@ -38,6 +38,20 @@ class StatsWebAliasCatalogUiContractTest
     }
 
     @Test
+    void labelsTheSharedAmNbfmAliasFamilyWithoutChangingItsApiValue() throws Exception
+    {
+        String source = source();
+        String label = function(source, "function aliasListFamilyLabel(value)");
+        String create = function(source, "function openAliasListCreateModal()");
+
+        assertTrue(source.contains("NBFM: 'Conventional Analog (AM/NBFM)'"));
+        assertTrue(label.contains("ALIAS_LIST_FAMILY_LABELS[family]"));
+        assertTrue(create.contains("value: value.toLowerCase(), label"));
+        assertTrue(function(source, "function aliasListFamily(row)").contains("toUpperCase()"));
+        assertTrue(source.contains("['P25', 'DMR', 'NXDN', 'NBFM']"));
+    }
+
+    @Test
     void separatesConfigurationCallsEvidenceAndCustomColumns() throws Exception
     {
         String source = source();
@@ -76,7 +90,10 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(renderer.contains("const admin = aliasAdminAllowed()"));
         assertTrue(renderer.contains("admin ? requestJson('/api/v1/admin/alias-lists'"));
         assertTrue(editor.contains("/api/v1/admin/aliases/options?alias_list_id="));
-        assertTrue(editor.contains("method: editing ? 'PUT' : 'POST'"));
+        assertTrue(editor.contains("method: 'PUT', body: { revision, alias: payload }"));
+        assertTrue(editor.contains("method: 'POST', body: { revision, alias: payload }"));
+        assertFalse(editor.contains("requestedScanLists"));
+        assertFalse(editor.contains("its scan-list membership could not be saved"));
         assertTrue(source.contains("method: 'DELETE', body: { revision }"));
         assertTrue(source.contains("/api/v1/admin/alias-lists/${id}/delete-impact"));
         assertTrue(source.contains("code === 'stale_revision'"));
@@ -91,7 +108,7 @@ class StatsWebAliasCatalogUiContractTest
         String editorPayload = function(source, "function aliasEditorPayload(form, options)");
         String tabs = function(source, "function aliasEditorModalTabs(panels, initial = 'basics')");
 
-        for(String label: new String[]{"Basics", "Identifier", "Audio & Streams", "Usage & Evidence"})
+        for(String label: new String[]{"Basics", "Identifier", "Call Handling", "Usage & Evidence"})
         {
             assertTrue(tabs.contains("'" + label + "'"), () -> "Missing modal tab " + label);
         }
@@ -148,12 +165,13 @@ class StatsWebAliasCatalogUiContractTest
 
         assertTrue(bulk.contains("slice(0, 500)"));
         assertTrue(bulk.contains("explicitly selected aliases"));
-        for(String operation: new String[]{"Leave unchanged", "group_operation", "listen_enabled", "recordable",
-            "stream_operation", "broadcast_channels", "alias_list_id", "icon_name", "delete"})
+        for(String operation: new String[]{"Leave unchanged", "group_operation", "recordable",
+            "stream_operation", "broadcast_channels", "alias_list_id", "icon_name", "delete",
+            "/api/v1/admin/scan-lists/", "alias_ids"})
         {
             assertTrue(bulk.contains(operation), () -> "Missing bulk contract " + operation);
         }
-        assertTrue(source.contains("['move', 'Move'], ['group', 'Group'], ['listen', 'Listen']"));
+        assertTrue(source.contains("['move', 'Move'], ['group', 'Group'], ['scan-lists', 'Scan Lists']"));
         assertTrue(source.contains("['stream', 'Stream'], ['appearance', 'Appearance'], ['delete', 'Delete']"));
         assertTrue(columns.contains("event.shiftKey"));
         assertTrue(source.contains("event.metaKey || event.ctrlKey"));
@@ -166,11 +184,13 @@ class StatsWebAliasCatalogUiContractTest
         String renderer = function(source, "async function renderAliases()");
         String filters = function(source, "function aliasEditorFilterToolbar(listResponse, options = null)");
 
-        for(String parameter: new String[]{"group", "listen", "record", "stream", "evidence", "use"})
+        for(String parameter: new String[]{"group", "record", "stream", "evidence", "use"})
         {
             assertTrue(renderer.contains(parameter + ": route.get('" + parameter + "')"),
                 () -> "Missing server filter " + parameter);
         }
+        assertTrue(renderer.contains("scan_list_id: route.get('scanListId')"));
+        assertTrue(filters.contains("selectFilter('Scan list', 'scanListId'"));
         assertTrue(renderer.contains("last_activity_before: route.get('lastActivityBefore')"));
         assertTrue(renderer.contains("last_activity_after: route.get('lastActivityAfter')"));
         assertTrue(filters.contains("'Call use'"));
@@ -187,6 +207,8 @@ class StatsWebAliasCatalogUiContractTest
         String source = source();
         String tabs = function(source, "function aliasEditorViewTabs(selectedList)");
         String renderer = function(source, "async function renderAliases()");
+        String discoverySupport = function(source, "function observedTalkgroupDiscoverySupported(selectedList)");
+        String unmatchedSupport = function(source, "function unmatchedTalkgroupsSupported(selectedList)");
         String policy = function(source, "function openUnmatchedTalkgroupPolicyModal(selectedList)");
         String observed = function(source, "function renderObservedTalkgroups(main, page, selectedList)");
         String prefill = function(source, "function observedTalkgroupPrefill(row, selectedList)");
@@ -207,6 +229,11 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(renderer.contains("options?.alias_list && options?.revision !== undefined"));
         assertTrue(renderer.contains("aliasEditorContext.selectedList = selectedList"));
         assertTrue(source.contains("aliasTab: 'discover'"));
+        assertTrue(tabs.contains("observedTalkgroupDiscoverySupported(selectedList)"));
+        assertTrue(renderer.contains("observedTalkgroupDiscoverySupported(selectedList)"));
+        assertTrue(discoverySupport.contains("['P25', 'DMR', 'NXDN']"));
+        assertFalse(discoverySupport.contains("'NBFM'"));
+        assertTrue(unmatchedSupport.contains("['P25', 'DMR', 'NXDN', 'NBFM']"));
         assertTrue(observed.contains("observedTalkgroupMatchKind(row) !== 'exact'"));
         assertTrue(observed.contains("defaultSort: 'last_seen'"));
         assertTrue(observed.contains("pager({ ...page, rows })"));
@@ -215,10 +242,18 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(policy.contains("selectedList?.unmatched_talkgroup_policy"));
         assertTrue(prefill.contains("selectedList?.unmatched_talkgroup_policy"));
         assertTrue(policy.contains("/unmatched-talkgroups"));
-        for(String field: new String[]{"listen_enabled", "priority", "recordable", "broadcast_channels"})
+        for(String field: new String[]{"recordable", "broadcast_channels", "scan_list_ids"})
         {
             assertTrue(policy.contains(field), () -> "Missing unmatched policy field " + field);
         }
+        assertTrue(policy.contains("aliasScanListChoices(options, policy.scan_list_ids || [])"));
+        assertTrue(policy.contains("selectedAliasScanListIds(form)"));
+        assertTrue(policy.contains("'Unknown talkgroup scan-list delivery'"));
+        assertTrue(policy.contains("'Save Global Settings'"));
+        assertTrue(prefill.contains("scan_list_ids: [...(policy.scan_list_ids || [])]"));
+        assertTrue(renderer.contains("'Global Settings'"));
+        assertFalse(policy.contains("listen_enabled"));
+        assertFalse(policy.contains("priority"));
 
         assertTrue(prefill.contains("name: ''"));
         assertTrue(prefill.contains("type: 'talkgroup'"));
@@ -254,7 +289,7 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(prefill.contains("copy_actions_from_alias_id"));
         assertTrue(editor.contains("rangeActionsPromise"));
         assertTrue(editor.contains("/api/v1/admin/aliases/${Number(prefill.copy_actions_from_alias_id)}"));
-        assertTrue(editor.contains("['listen_enabled', 'priority', 'recordable', 'broadcast_channels']"));
+        assertTrue(editor.contains("['recordable', 'broadcast_channels', 'scan_list_ids']"));
         assertTrue(editor.contains("selectedStreams.has(streamName) && (editing || configuredStreams.has(streamName))"));
     }
 
@@ -265,7 +300,8 @@ class StatsWebAliasCatalogUiContractTest
         for(String selector: new String[]{".alias-editor-workspace", ".alias-list-rail", ".alias-list-mobile",
             ".alias-list-summary", ".alias-editor-table-host", ".alias-bulk-bar", ".alias-editor-modal",
             ".alias-modal-tabs", ".alias-editor-grid", ".alias-stream-options", ".alias-tone-row",
-            ".observed-talkgroup-table-host", ".observed-talkgroup-detail", ".alias-policy-modal"})
+            ".alias-scan-list-option", ".observed-talkgroup-table-host", ".observed-talkgroup-detail",
+            ".alias-policy-modal"})
         {
             assertTrue(css.contains(selector), () -> "Missing Alias Editor style " + selector);
         }

@@ -21,6 +21,9 @@ import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.application.ApplicationPreference;
 import io.github.dsheirer.preference.directory.DirectoryPreference;
+import io.github.dsheirer.scanlist.ScanList;
+import io.github.dsheirer.scanlist.ScanListConfiguration;
+import io.github.dsheirer.scanlist.ScanListModel;
 import java.io.InputStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
@@ -74,7 +77,10 @@ class StatsApiV1HttpContractTest
         TestApplicationPreference applicationPreference = new TestApplicationPreference();
         TestUserPreferences preferences = new TestUserPreferences(applicationPreference,
             new TestDirectoryPreference(dataRoot));
-        mService = new StatsWebServerService(preferences);
+        ScanListModel scanListModel = new ScanListModel(null);
+        scanListModel.replaceConfiguration(new ScanListConfiguration(List.of(
+            new ScanList(1, 0, "Default", null, true, true)), Map.of(), Map.of()));
+        mService = new StatsWebServerService(preferences, null, null, null, null, null, scanListModel);
         WebServerRuntimeState state = mService.getRuntimeState();
         assertTrue(state.running(), state.statusMessage());
         mOrigin = URI.create("http://127.0.0.1:" + state.port());
@@ -251,6 +257,7 @@ class StatsApiV1HttpContractTest
             Map.entry("QUALITY", "/api/v1/quality"),
             Map.entry("ALIAS_LISTS", "/api/v1/alias-lists"),
             Map.entry("ALIASES", "/api/v1/aliases"),
+            Map.entry("SCAN_LISTS", "/api/v1/scan-lists"),
             Map.entry("SYSTEMS", "/api/v1/systems"),
             Map.entry("SITES", "/api/v1/sites"),
             Map.entry("ACTIVITY", "/api/v1/activity"),

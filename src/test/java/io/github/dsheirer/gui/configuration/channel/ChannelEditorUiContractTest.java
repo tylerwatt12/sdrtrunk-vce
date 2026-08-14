@@ -33,12 +33,12 @@ class ChannelEditorUiContractTest
 {
     private static final Path CHANNEL_EDITOR =
         Path.of("src/main/java/io/github/dsheirer/gui/configuration/channel/ChannelEditor.java");
+    private static final Path CHANNEL_CONFIGURATION_EDITOR =
+        Path.of("src/main/java/io/github/dsheirer/gui/configuration/channel/ChannelConfigurationEditor.java");
     private static final Path ANALOG_EDITOR =
         Path.of("src/main/java/io/github/dsheirer/gui/configuration/channel/NBFMConfigurationEditor.java");
     private static final Path SQUELCH_DIAGNOSTIC =
         Path.of("src/main/java/io/github/dsheirer/gui/squelch/NoiseSquelchView.java");
-    private static final Path CHANNEL_DIAGNOSTIC =
-        Path.of("src/main/java/io/github/dsheirer/gui/channel/ChannelSpectrumPanel.java");
 
     @Test
     void actionColumnRetainsItsPreferredWidth() throws Exception
@@ -46,8 +46,25 @@ class ChannelEditorUiContractTest
         String source = Files.readString(CHANNEL_EDITOR);
 
         assertTrue(source.contains("mButtonBox.setMinWidth(Region.USE_PREF_SIZE)"));
-        assertTrue(source.contains("mButtonBox.getChildren().addAll(getNewButton(), getCloneButton(), " +
-            "getDeleteButton())"));
+        assertTrue(source.contains("createChannelActionButton(\"Start\", true)"));
+        assertTrue(source.contains("createChannelActionButton(\"Stop\", false)"));
+    }
+
+    @Test
+    void supportsSimpleMultiChannelStartAndStop() throws Exception
+    {
+        String source = Files.readString(CHANNEL_EDITOR);
+        String configurationEditor = Files.readString(CHANNEL_CONFIGURATION_EDITOR);
+
+        assertTrue(source.contains("setSelectionMode(SelectionMode.MULTIPLE)"));
+        assertTrue(source.contains("List.copyOf(getChannelTableView().getSelectionModel().getSelectedItems())"));
+        assertTrue(source.contains("setSelectedChannelsProcessing(start)"));
+        assertTrue(source.contains("if(channel.isProcessing() == start)"));
+        assertTrue(source.contains("ThreadPool.CACHED.execute"));
+        assertTrue(source.contains("getSelectionModel().clearSelection()"));
+        assertTrue(configurationEditor.contains("Channel channel = getItem()"));
+        assertTrue(configurationEditor.contains("start(channel)"));
+        assertTrue(configurationEditor.contains("stop(channel)"));
     }
 
     @Test
@@ -55,7 +72,6 @@ class ChannelEditorUiContractTest
     {
         String editor = Files.readString(ANALOG_EDITOR);
         String adjuster = Files.readString(SQUELCH_DIAGNOSTIC);
-        String channelDiagnostic = Files.readString(CHANNEL_DIAGNOSTIC);
 
         assertTrue(editor.contains("new TitledPane(\"Squelch\""));
         assertTrue(editor.contains("config.setSquelchNoiseOpenThreshold(noiseOpen)"));
@@ -68,8 +84,6 @@ class ChannelEditorUiContractTest
         assertTrue(adjuster.contains("mController.setNoiseThreshold(open, close)"));
         assertTrue(adjuster.contains("mController.setHysteresisThreshold(open, close)"));
         assertTrue(adjuster.contains("mConfigurationManager.scheduleConfigurationSave()"));
-        assertFalse(channelDiagnostic.contains("NoiseSquelchView"));
-        assertFalse(channelDiagnostic.contains("CARD_NOISE_SQUELCH"));
     }
 
     @Test

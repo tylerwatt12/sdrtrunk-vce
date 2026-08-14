@@ -51,9 +51,11 @@ public class AliasEditor extends TabPane
     private StatsWebServerService mStatsWebServerService;
     private AliasConfigurationEditor mAliasConfigurationEditor;
     private AliasViewByIdentifierEditor mAliasViewByIdentifierEditor;
+    private AliasViewByScanListEditor mAliasViewByScanListEditor;
     private Tab mAliasConfigurationTab;
     private Tab mAliasIdentifierTab;
     private Tab mAliasRecordingTab;
+    private Tab mAliasScanListTab;
     private boolean mRetirementNoticeShown;
 
     /**
@@ -72,7 +74,8 @@ public class AliasEditor extends TabPane
         setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
         Tab viewByTab = new Tab("View By:");
         viewByTab.setDisable(true);
-        getTabs().addAll(viewByTab, getAliasConfigurationTab(), getAliasIdentifierTab(), getAliasRecordingTab());
+        getTabs().addAll(viewByTab, getAliasConfigurationTab(), getAliasIdentifierTab(), getAliasRecordingTab(),
+            getAliasScanListTab());
     }
 
     /**
@@ -252,5 +255,33 @@ public class AliasEditor extends TabPane
         }
 
         return mAliasRecordingTab;
+    }
+
+    private Tab getAliasScanListTab()
+    {
+        if(mAliasScanListTab == null)
+        {
+            mAliasScanListTab = new Tab("Scan Lists");
+            mAliasScanListTab.setContent(getAliasViewByScanListEditor());
+            mAliasScanListTab.selectedProperty().addListener((observable, oldValue, selected) ->
+            {
+                if(selected)
+                {
+                    getAliasViewByScanListEditor().refresh();
+                }
+            });
+        }
+
+        return mAliasScanListTab;
+    }
+
+    private AliasViewByScanListEditor getAliasViewByScanListEditor()
+    {
+        if(mAliasViewByScanListEditor == null)
+        {
+            mAliasViewByScanListEditor = new AliasViewByScanListEditor(mConfigurationManager);
+        }
+
+        return mAliasViewByScanListEditor;
     }
 }

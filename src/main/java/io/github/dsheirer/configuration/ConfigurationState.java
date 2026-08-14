@@ -26,6 +26,7 @@ import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.scanlist.ScanListConfiguration;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -36,6 +37,7 @@ public class ConfigurationState
     private List<AliasListDefinition> mAliasListDefinitions = new ArrayList<>();
     private List<BroadcastConfiguration> mBroadcastConfigurations = new ArrayList<>();
     private List<Channel> mChannels = new ArrayList<>();
+    private ScanListConfiguration mScanListConfiguration;
 
     public List<Alias> getAliases()
     {
@@ -60,6 +62,21 @@ public class ConfigurationState
     public void setAliasListDefinitions(List<AliasListDefinition> aliasListDefinitions)
     {
         mAliasListDefinitions = aliasListDefinitions != null ? aliasListDefinitions : new ArrayList<>();
+    }
+
+    /**
+     * Complete scan-list configuration. A null value means that a partial or legacy configuration snapshot does not
+     * own scan lists, so snapshot persistence must retain the existing database configuration.
+     */
+    @JsonIgnore
+    public ScanListConfiguration getScanListConfiguration()
+    {
+        return mScanListConfiguration;
+    }
+
+    public void setScanListConfiguration(ScanListConfiguration scanListConfiguration)
+    {
+        mScanListConfiguration = scanListConfiguration;
     }
 
     public List<Channel> getChannels()

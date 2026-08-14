@@ -7,19 +7,29 @@ package io.github.dsheirer.module.decode.am;
 
 import io.github.dsheirer.dsp.am.AmplitudeDemodulator;
 import io.github.dsheirer.dsp.gain.AudioGainAndDcFilter;
+import io.github.dsheirer.dsp.squelch.CarrierSquelch;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.nbfm.NBFMDecoder;
+import java.util.Objects;
 
 /**
  * AM envelope decoder using the shared conventional analog audio path.
  */
 public class AMDecoder extends NBFMDecoder
 {
-    private final AudioGainAndDcFilter mAudioGain = new AudioGainAndDcFilter(0.5f, 16.0f, 0.75f);
+    private final AudioGainAndDcFilter mAudioGain;
 
     public AMDecoder(DecodeConfigAM config)
     {
-        super(config, new AmplitudeDemodulator());
+        this(config, new AudioGainAndDcFilter(0.5f, 16.0f, 0.75f));
+    }
+
+    AMDecoder(DecodeConfigAM config, AudioGainAndDcFilter audioGain)
+    {
+        super(config, new AmplitudeDemodulator(), new CarrierSquelch(config.getSquelchNoiseOpenThreshold(),
+            config.getSquelchNoiseCloseThreshold(), config.getSquelchHysteresisOpenThreshold(),
+            config.getSquelchHysteresisCloseThreshold()));
+        mAudioGain = Objects.requireNonNull(audioGain);
     }
 
     @Override
@@ -38,5 +48,11 @@ public class AMDecoder extends NBFMDecoder
     protected float[] processOutputAudio(float[] audio)
     {
         return mAudioGain.process(audio);
+    }
+
+    @Override
+    protected void onCallStart()
+    {
+        mAudioGain.reset();
     }
 }

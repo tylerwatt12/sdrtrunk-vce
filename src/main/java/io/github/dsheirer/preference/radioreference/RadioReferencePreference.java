@@ -53,7 +53,6 @@ public class RadioReferencePreference extends Preference
     private static final String SHOW_CHANNEL_EDITOR_NATIONAL = "create.and.show.editor.national";
     private static final String SHOW_CHANNEL_EDITOR_STATE = "create.and.show.editor.state";
     private static final String SHOW_CHANNEL_EDITOR_COUNTY = "create.and.show.editor.county";
-    private static final String ENCRYPTED_TALKGROUP_DO_NOT_MONITOR = "encrypted.talkgroup.import.do.not.monitor";
     private static final String CREATE_AND_SHOW_CHANNEL_EDITOR = "create.and.show.channel.editor";
 
     private String mUserName;
@@ -63,7 +62,6 @@ public class RadioReferencePreference extends Preference
     private Boolean mShowChannelEditorNational;
     private Boolean mShowChannelEditorState;
     private Boolean mShowChannelEditorCounty;
-    private Boolean mEncryptedTalkgroupImport;
     private Boolean mCreateAndShowChannelEditor;
     private int mPreferredCountryId = INVALID_ID;
     private int mPreferredStateId = INVALID_ID;
@@ -461,32 +459,6 @@ public class RadioReferencePreference extends Preference
                 break;
         }
     }
-
-    /**
-     * Indicates if radio reference encrypted talgkroups should be imported as Do Not Monitor priority.
-     * @return true if set to do not monitor
-     */
-    public boolean isEncryptedTalkgroupDoNotMonitor()
-    {
-        if(mEncryptedTalkgroupImport == null)
-        {
-            mEncryptedTalkgroupImport = mPreferences.getBoolean(ENCRYPTED_TALKGROUP_DO_NOT_MONITOR, true);
-        }
-
-        return mEncryptedTalkgroupImport;
-    }
-
-    /**
-     * Set the import encrypted talkgroups as Do Not Monitor
-     * @param doNotMonitor true if set to do not monitor
-     */
-    public void setEncryptedTalkgroupDoNotMonitor(boolean doNotMonitor)
-    {
-        mEncryptedTalkgroupImport = doNotMonitor;
-        mPreferences.putBoolean(ENCRYPTED_TALKGROUP_DO_NOT_MONITOR, doNotMonitor);
-        notifyPreferenceUpdated();
-    }
-
 
     /**
      * Indicates if should show channel editor after trunked channel configuration create

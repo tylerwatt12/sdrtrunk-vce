@@ -48,9 +48,9 @@ public final class ChannelDiagnosticService implements AutoCloseable
 {
     private static final Logger mLog = LoggerFactory.getLogger(ChannelDiagnosticService.class);
     public static final int MAXIMUM_SESSIONS = 32;
-    public static final int MAXIMUM_PRODUCERS = 4;
-    public static final int MAXIMUM_FFT_SIZE = 1_024;
-    public static final int SIGNAL_FRAMES_PER_SECOND = 20;
+    public static final int MAXIMUM_PRODUCERS = 1;
+    public static final int MAXIMUM_FFT_SIZE = 512;
+    public static final int SIGNAL_FRAMES_PER_SECOND = 5;
     public static final int SYMBOL_BATCH_SIZE = 240;
     public static final int MAXIMUM_VISIBLE_SYMBOLS = 4_800;
     private static final long BINDING_REFRESH_NANOS = TimeUnit.MILLISECONDS.toNanos(250);

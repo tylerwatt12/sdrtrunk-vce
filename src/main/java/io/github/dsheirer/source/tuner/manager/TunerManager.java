@@ -692,7 +692,12 @@ public class TunerManager implements IDiscoveredTunerStatusListener
                                          ChannelSpecification channelSpecification, String threadName,
                                          SortedSet<TunerChannel> tunerChannels)
     {
-        synchronized(discoveredTuner)
+        if(!discoveredTuner.tryAcquireForAllocation())
+        {
+            return null;
+        }
+
+        try
         {
             if(!discoveredTuner.isAvailable() || !discoveredTuner.hasTuner())
             {
@@ -728,6 +733,10 @@ public class TunerManager implements IDiscoveredTunerStatusListener
             }
 
             return source;
+        }
+        finally
+        {
+            discoveredTuner.releaseAfterAllocation();
         }
     }
 

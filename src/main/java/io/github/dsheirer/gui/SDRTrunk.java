@@ -29,7 +29,6 @@ import io.github.dsheirer.audio.call.DuplicateCallPriorityProvider;
 import io.github.dsheirer.audio.broadcast.AudioStreamingManager;
 import io.github.dsheirer.audio.broadcast.BroadcastFormat;
 import io.github.dsheirer.audio.broadcast.BroadcastStatusPanel;
-import io.github.dsheirer.audio.playback.AudioPlaybackManager;
 import io.github.dsheirer.channel.quality.ControlChannelQualityRegistry;
 import io.github.dsheirer.controller.ControllerPanel;
 import io.github.dsheirer.controller.channel.Channel;
@@ -139,7 +138,6 @@ public class SDRTrunk implements Listener<TunerEvent>
     private Preferences mPreferences;
 
     private static final String PREFERENCE_BROADCAST_STATUS_VISIBLE = "sdrtrunk.broadcast.status.visible";
-    private static final String PREFERENCE_NOW_PLAYING_LOWER_VIEWS_VISIBLE = "sdrtrunk.now.playing.details.visible";
     private static final String PREFERENCE_RESOURCE_STATUS_VISIBLE = "sdrtrunk.resource.status.visible";
     private static final String PREFERENCE_UPDATE_FOOTER_MIGRATION =
         "sdrtrunk.resource.status.update.icon.migration.1";
@@ -149,16 +147,12 @@ public class SDRTrunk implements Listener<TunerEvent>
     private static final String WINDOW_FRAME_IDENTIFIER = BASE_WINDOW_NAME + ".frame";
     private static final String MAIN_SPLIT_PANE_DIVIDER_IDENTIFIER = BASE_WINDOW_NAME + ".split.pane.divider";
     private static final String SPECTRAL_DISPLAY_DIVIDER_IDENTIFIER = BASE_WINDOW_NAME + ".spectral.display.divider";
-    private static final String NOW_PLAYING_SPLIT_PANE_DIVIDER_IDENTIFIER = "now.playing.split.pane.divider";
-    private static final String CHANNEL_SPECTRUM_SPLIT_PANE_DIVIDER_IDENTIFIER = "channel.spectrum.panel.split.pane.divider";
     private static final int MAIN_SPECTRAL_MINIMUM_HEIGHT = 120;
     private static final int MAIN_CONTROLLER_MINIMUM_HEIGHT = 180;
 
     private boolean mBroadcastStatusVisible;
     private boolean mResourceStatusVisible;
-    private boolean mNowPlayingLowerViewsVisible;
     private AudioCallCoordinator mAudioCallCoordinator;
-    private AudioPlaybackManager mAudioPlaybackManager;
     private P25ActivityLogService mP25ActivityLogService;
     private DecodeEventViewService mDecodeEventViewService;
     private StatsWebServerService mStatsWebServerService;
@@ -256,8 +250,6 @@ public class SDRTrunk implements Listener<TunerEvent>
 
         new ChannelSelectionManager(mConfigurationManager.getChannelModel());
 
-        mAudioPlaybackManager = new AudioPlaybackManager(mUserPreferences);
-
         mP25ActivityLogService = new P25ActivityLogService(mUserPreferences);
 
         mAudioRecordingManager = new AudioRecordingManager(mUserPreferences,
@@ -275,15 +267,15 @@ public class SDRTrunk implements Listener<TunerEvent>
 
         mStatsWebServerService = new StatsWebServerService(mUserPreferences,
             mConfigurationManager.getChannelProcessingManager(), mP25ActivityLogService,
-            mConfigurationManager.getAliasAdministrationService(), mDecodeEventViewService, mTunerManager);
+            mConfigurationManager.getAliasAdministrationService(), mDecodeEventViewService, mTunerManager,
+            mConfigurationManager.getScanListModel());
 
         if(mJavaFxWindowManager != null)
         {
             mJavaFxWindowManager.setStatsWebServerService(mStatsWebServerService);
         }
         mControlChannelQualityRegistry = new ControlChannelQualityRegistry();
-        mAudioCallCoordinator = new AudioCallCoordinator(mUserPreferences, mAudioPlaybackManager,
-            mAudioRecordingManager,
+        mAudioCallCoordinator = new AudioCallCoordinator(mUserPreferences, mAudioRecordingManager,
             mAudioStreamingManager, mStatsWebServerService::receive, DuplicateCallPriorityProvider.NONE);
 
         mConfigurationManager.getChannelProcessingManager().addAudioCallListener(mAudioCallCoordinator);
@@ -302,16 +294,10 @@ public class SDRTrunk implements Listener<TunerEvent>
         MapService mapService = new MapService(aliasModel);
         mConfigurationManager.getChannelProcessingManager().addDecodeEventListener(mapService);
 
-        mNowPlayingLowerViewsVisible = mPreferences.getBoolean(PREFERENCE_NOW_PLAYING_LOWER_VIEWS_VISIBLE, true);
-
         if(!GraphicsEnvironment.isHeadless())
         {
-            mControllerPanel = new ControllerPanel(mConfigurationManager, mAudioPlaybackManager, mIconModel, mapService,
-                    mSettingsManager, mTunerManager, mUserPreferences, mStatsWebServerService,
-                    mNowPlayingLowerViewsVisible, visible -> {
-                        mNowPlayingLowerViewsVisible = visible;
-                        mPreferences.putBoolean(PREFERENCE_NOW_PLAYING_LOWER_VIEWS_VISIBLE, visible);
-                    });
+            mControllerPanel = new ControllerPanel(mConfigurationManager, mIconModel, mapService,
+                    mSettingsManager, mTunerManager, mUserPreferences);
         }
 
         if(!GraphicsEnvironment.isHeadless())
@@ -818,10 +804,6 @@ public class SDRTrunk implements Listener<TunerEvent>
         }
 
         mUserPreferences.getSwingPreference().setDimension(CONTROLLER_PANEL_IDENTIFIER, mControllerPanel.getSize());
-        mUserPreferences.getSwingPreference().setInt(NOW_PLAYING_SPLIT_PANE_DIVIDER_IDENTIFIER,
-            mControllerPanel.getNowPlayingPanel().getSplitPaneDividerLocation());
-        mUserPreferences.getSwingPreference().setInt(CHANNEL_SPECTRUM_SPLIT_PANE_DIVIDER_IDENTIFIER,
-            mControllerPanel.getNowPlayingPanel().getChannelSpectrumPanelDividerLocation());
         mUserPreferences.getSwingPreference().flush();
         mControllerPanel.dispose();
         mJavaFxWindowManager.shutdown();
@@ -863,10 +845,9 @@ public class SDRTrunk implements Listener<TunerEvent>
         {
             mAudioCallCoordinator.dispose();
         }
-        if(mAudioPlaybackManager != null)
+        if(mAudioStreamingManager != null)
         {
-            mAudioPlaybackManager.dispose();
-            mAudioPlaybackManager = null;
+            mAudioStreamingManager.stop();
         }
         mAudioRecordingManager.stop();
         if(mControlChannelQualityRegistry != null)
@@ -946,12 +927,11 @@ public class SDRTrunk implements Listener<TunerEvent>
 
     private JPanel getMainControlPanel()
     {
-        JPanel panel = new JPanel(new MigLayout("insets 2 6 2 6", "[][][][grow,fill][][]", "[]"));
+        JPanel panel = new JPanel(new MigLayout("insets 2 6 2 6", "[][][][grow,fill][]", "[]"));
         panel.add(getConfigurationEditorShortcutButton());
         panel.add(getUserPreferencesShortcutButton());
         panel.add(getWebInterfaceButton());
         panel.add(new JPanel(), "grow");
-        panel.add(mControllerPanel.getNowPlayingPanel().getLowerViewsToggleButton());
         panel.add(getSpectrumWaterfallToggleButton());
         return panel;
     }

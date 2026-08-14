@@ -21,9 +21,6 @@ package io.github.dsheirer.audio.call;
 
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.audio.broadcast.AudioStreamingManager;
-import io.github.dsheirer.audio.playback.AudioPlaybackManager;
-import io.github.dsheirer.audio.playback.ManagedPlayableAudioCall;
-import io.github.dsheirer.controller.NamingThreadFactory;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierClass;
@@ -33,6 +30,7 @@ import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.duplicate.ICallManagementProvider;
 import io.github.dsheirer.record.AudioRecordingManager;
 import io.github.dsheirer.sample.Listener;
+import io.github.dsheirer.util.concurrent.ObserverThreadFactory;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -40,37 +38,65 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.LockSupport;
 import java.util.function.Consumer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Serialized owner of live audio call state. Normalizes immutable producer events, applies duplicate suppression,
- * feeds live calls to receiver-local speaker playback, and emits the elected completed immutable call for recording,
- * configured streaming providers, and browser playback.
+ * and emits the elected completed immutable call for recording, configured streaming providers, and browser
+ * playback. Completed-call consumers run on the coordinator worker and must perform only bounded, nonblocking
+ * handoffs; the production recording, streaming, and browser consumers each own their downstream queue and limits.
  */
 public class AudioCallCoordinator implements Listener<AudioCallEvent>
 {
-    static final long DEFAULT_STREAMING_DUPLICATE_WATCHDOG_MILLISECONDS = 1_000L;
-    static final long DEFAULT_STREAMING_DUPLICATE_ORPHAN_CEILING_MILLISECONDS = 10_000L;
+    private static final Logger mLog = LoggerFactory.getLogger(AudioCallCoordinator.class);
+    static final long DEFAULT_DUPLICATE_COMPLETION_WATCHDOG_MILLISECONDS = 1_000L;
+    static final long DEFAULT_DUPLICATE_COMPLETION_ORPHAN_CEILING_MILLISECONDS = 10_000L;
+    static final int DEFAULT_INGRESS_CAPACITY = 4_096;
+    static final int DEFAULT_LIFECYCLE_INGRESS_RESERVE = 256;
+    static final int MAXIMUM_ACTIVE_CALLS = 128;
+    static final int MAXIMUM_TRACKED_OVERFLOWED_CALLS = 256;
+    static final long MAXIMUM_AUDIO_SAMPLES_PER_CALL = 512_000L;
+    private static final long SHUTDOWN_DRAIN_MILLISECONDS = 2_000L;
+    private static final int EVENT = 1;
+    private static final int ABORT = 2;
+    private static final int WATCHDOG = 3;
 
-    private final Object mStateLock = new Object();
-    private final ScheduledThreadPoolExecutor mExecutor;
+    private final AudioCallIngressQueue mIngress;
+    private final ScheduledThreadPoolExecutor mWatchdogScheduler;
+    private final Thread mWorker;
     private final Map<AudioCallId, ManagedAudioCall> mCalls = new HashMap<>();
     private final Map<Long, DuplicateGroup> mDuplicateGroups = new HashMap<>();
+    private final List<CompletedAudioCall> mPendingFanouts = new ArrayList<>();
+    private final Set<AudioCallId> mOverflowedCallIds = ConcurrentHashMap.newKeySet();
+    private final AtomicInteger mOverflowedCallCount = new AtomicInteger();
+    private final AtomicLong mIngressGeneration = new AtomicLong(1L);
+    private final AtomicBoolean mAbortAllPending = new AtomicBoolean();
+    private final AtomicLong mAcceptedIngressCount = new AtomicLong();
+    private final AtomicLong mDroppedIngressCount = new AtomicLong();
+    private final AtomicLong mDroppedLifecycleCount = new AtomicLong();
+    private final AtomicLong mAbortedCallCount = new AtomicLong();
+    private final AtomicInteger mActiveReceives = new AtomicInteger();
     private final ICallManagementProvider mCallManagementProvider;
     private final DuplicateCallPriorityProvider mDuplicateCallPriorityProvider;
-    private final Consumer<ManagedPlayableAudioCall> mPlaybackConsumer;
     private final Consumer<CompletedAudioCall> mRecordingConsumer;
     private final Consumer<CompletedAudioCall> mStreamingConsumer;
     private final Consumer<CompletedAudioCall> mWebConsumer;
-    private final WebCallDeliveryListener mWebCallDeliveryListener;
-    private final long mStreamingDuplicateWatchdogMilliseconds;
-    private final long mStreamingDuplicateOrphanCeilingMilliseconds;
+    private final long mDuplicateCompletionWatchdogMilliseconds;
+    private final long mDuplicateCompletionOrphanCeilingMilliseconds;
     private long mNextRegistrationOrdinal;
     private long mNextDuplicateGroupOrdinal;
+    private volatile boolean mAccepting = true;
     private volatile boolean mDisposed;
 
     public AudioCallCoordinator(UserPreferences userPreferences, AudioRecordingManager audioRecordingManager,
@@ -78,18 +104,6 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
                                 Consumer<CompletedAudioCall> webConsumer)
     {
         this(userPreferences, audioRecordingManager, audioStreamingManager, webConsumer,
-            DuplicateCallPriorityProvider.NONE);
-    }
-
-    /**
-     * Constructs an audio-call coordinator with receiver-local speaker playback.
-     */
-    public AudioCallCoordinator(UserPreferences userPreferences, AudioPlaybackManager audioPlaybackManager,
-                                AudioRecordingManager audioRecordingManager,
-                                AudioStreamingManager audioStreamingManager,
-                                Consumer<CompletedAudioCall> webConsumer)
-    {
-        this(userPreferences, audioPlaybackManager, audioRecordingManager, audioStreamingManager, webConsumer,
             DuplicateCallPriorityProvider.NONE);
     }
 
@@ -102,69 +116,11 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
                                 Consumer<CompletedAudioCall> webConsumer,
                                 DuplicateCallPriorityProvider duplicateCallPriorityProvider)
     {
-        this(userPreferences.getCallManagementPreference(), null,
-            audioRecordingManager != null ? audioRecordingManager::receive : null,
-            audioStreamingManager != null ? audioStreamingManager::receive : null, webConsumer,
-            duplicateCallPriorityProvider, DEFAULT_STREAMING_DUPLICATE_WATCHDOG_MILLISECONDS,
-            DEFAULT_STREAMING_DUPLICATE_ORPHAN_CEILING_MILLISECONDS, null);
-    }
-
-    /**
-     * Constructs an audio-call coordinator with receiver-local speaker playback and deterministic duplicate-election
-     * hooks. Speaker playback follows the live winner while completed-call consumers share the final election.
-     */
-    public AudioCallCoordinator(UserPreferences userPreferences, AudioPlaybackManager audioPlaybackManager,
-                                AudioRecordingManager audioRecordingManager,
-                                AudioStreamingManager audioStreamingManager,
-                                Consumer<CompletedAudioCall> webConsumer,
-                                DuplicateCallPriorityProvider duplicateCallPriorityProvider)
-    {
         this(userPreferences.getCallManagementPreference(),
-            audioPlaybackManager != null ? audioPlaybackManager::receive : null,
             audioRecordingManager != null ? audioRecordingManager::receive : null,
             audioStreamingManager != null ? audioStreamingManager::receive : null, webConsumer,
-            duplicateCallPriorityProvider,
-            DEFAULT_STREAMING_DUPLICATE_WATCHDOG_MILLISECONDS,
-            DEFAULT_STREAMING_DUPLICATE_ORPHAN_CEILING_MILLISECONDS, null);
-    }
-
-    /**
-     * Constructs an audio-call coordinator with both the compatibility completed-call web consumer and the ordered
-     * browser-delivery lifecycle. Runtime wiring should normally pass {@code null} for the compatibility consumer
-     * when selecting the lifecycle listener so that one browser adapter does not receive each call twice.
-     */
-    public AudioCallCoordinator(UserPreferences userPreferences, AudioRecordingManager audioRecordingManager,
-                                AudioStreamingManager audioStreamingManager,
-                                Consumer<CompletedAudioCall> webConsumer,
-                                DuplicateCallPriorityProvider duplicateCallPriorityProvider,
-                                WebCallDeliveryListener webCallDeliveryListener)
-    {
-        this(userPreferences.getCallManagementPreference(),
-            null,
-            audioRecordingManager != null ? audioRecordingManager::receive : null,
-            audioStreamingManager != null ? audioStreamingManager::receive : null, webConsumer,
-            duplicateCallPriorityProvider,
-            DEFAULT_STREAMING_DUPLICATE_WATCHDOG_MILLISECONDS,
-            DEFAULT_STREAMING_DUPLICATE_ORPHAN_CEILING_MILLISECONDS, webCallDeliveryListener);
-    }
-
-    /**
-     * Constructs an audio-call coordinator with receiver-local speaker playback and ordered browser delivery.
-     */
-    public AudioCallCoordinator(UserPreferences userPreferences, AudioPlaybackManager audioPlaybackManager,
-                                AudioRecordingManager audioRecordingManager,
-                                AudioStreamingManager audioStreamingManager,
-                                Consumer<CompletedAudioCall> webConsumer,
-                                DuplicateCallPriorityProvider duplicateCallPriorityProvider,
-                                WebCallDeliveryListener webCallDeliveryListener)
-    {
-        this(userPreferences.getCallManagementPreference(),
-            audioPlaybackManager != null ? audioPlaybackManager::receive : null,
-            audioRecordingManager != null ? audioRecordingManager::receive : null,
-            audioStreamingManager != null ? audioStreamingManager::receive : null, webConsumer,
-            duplicateCallPriorityProvider,
-            DEFAULT_STREAMING_DUPLICATE_WATCHDOG_MILLISECONDS,
-            DEFAULT_STREAMING_DUPLICATE_ORPHAN_CEILING_MILLISECONDS, webCallDeliveryListener);
+            duplicateCallPriorityProvider, DEFAULT_DUPLICATE_COMPLETION_WATCHDOG_MILLISECONDS,
+            DEFAULT_DUPLICATE_COMPLETION_ORPHAN_CEILING_MILLISECONDS);
     }
 
     AudioCallCoordinator(ICallManagementProvider callManagementProvider,
@@ -172,22 +128,10 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
                          Consumer<CompletedAudioCall> streamingConsumer,
                          Consumer<CompletedAudioCall> webConsumer)
     {
-        this(callManagementProvider, null, recordingConsumer, streamingConsumer, webConsumer,
+        this(callManagementProvider, recordingConsumer, streamingConsumer, webConsumer,
             DuplicateCallPriorityProvider.NONE,
-            DEFAULT_STREAMING_DUPLICATE_WATCHDOG_MILLISECONDS,
-            DEFAULT_STREAMING_DUPLICATE_ORPHAN_CEILING_MILLISECONDS, null);
-    }
-
-    AudioCallCoordinator(ICallManagementProvider callManagementProvider,
-                         Consumer<ManagedPlayableAudioCall> playbackConsumer,
-                         Consumer<CompletedAudioCall> recordingConsumer,
-                         Consumer<CompletedAudioCall> streamingConsumer,
-                         Consumer<CompletedAudioCall> webConsumer)
-    {
-        this(callManagementProvider, playbackConsumer, recordingConsumer, streamingConsumer, webConsumer,
-            DuplicateCallPriorityProvider.NONE,
-            DEFAULT_STREAMING_DUPLICATE_WATCHDOG_MILLISECONDS,
-            DEFAULT_STREAMING_DUPLICATE_ORPHAN_CEILING_MILLISECONDS, null);
+            DEFAULT_DUPLICATE_COMPLETION_WATCHDOG_MILLISECONDS,
+            DEFAULT_DUPLICATE_COMPLETION_ORPHAN_CEILING_MILLISECONDS);
     }
 
     AudioCallCoordinator(ICallManagementProvider callManagementProvider,
@@ -195,12 +139,13 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
                          Consumer<CompletedAudioCall> streamingConsumer,
                          Consumer<CompletedAudioCall> webConsumer,
                          DuplicateCallPriorityProvider duplicateCallPriorityProvider,
-                         long streamingDuplicateWatchdogMilliseconds)
+                         long duplicateCompletionWatchdogMilliseconds)
     {
-        this(callManagementProvider, null, recordingConsumer, streamingConsumer, webConsumer,
+        this(callManagementProvider, recordingConsumer, streamingConsumer, webConsumer,
             duplicateCallPriorityProvider,
-            streamingDuplicateWatchdogMilliseconds,
-            deriveOrphanCeilingMilliseconds(streamingDuplicateWatchdogMilliseconds), null);
+            duplicateCompletionWatchdogMilliseconds,
+            deriveOrphanCeilingMilliseconds(duplicateCompletionWatchdogMilliseconds),
+            DEFAULT_INGRESS_CAPACITY, DEFAULT_LIFECYCLE_INGRESS_RESERVE);
     }
 
     AudioCallCoordinator(ICallManagementProvider callManagementProvider,
@@ -208,12 +153,13 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
                          Consumer<CompletedAudioCall> streamingConsumer,
                          Consumer<CompletedAudioCall> webConsumer,
                          DuplicateCallPriorityProvider duplicateCallPriorityProvider,
-                         long streamingDuplicateWatchdogMilliseconds,
-                         long streamingDuplicateOrphanCeilingMilliseconds)
+                         long duplicateCompletionWatchdogMilliseconds,
+                         long duplicateCompletionOrphanCeilingMilliseconds)
     {
-        this(callManagementProvider, null, recordingConsumer, streamingConsumer, webConsumer,
-            duplicateCallPriorityProvider,
-            streamingDuplicateWatchdogMilliseconds, streamingDuplicateOrphanCeilingMilliseconds, null);
+        this(callManagementProvider, recordingConsumer, streamingConsumer, webConsumer,
+            duplicateCallPriorityProvider, duplicateCompletionWatchdogMilliseconds,
+            duplicateCompletionOrphanCeilingMilliseconds, DEFAULT_INGRESS_CAPACITY,
+            DEFAULT_LIFECYCLE_INGRESS_RESERVE);
     }
 
     AudioCallCoordinator(ICallManagementProvider callManagementProvider,
@@ -221,41 +167,26 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
                          Consumer<CompletedAudioCall> streamingConsumer,
                          Consumer<CompletedAudioCall> webConsumer,
                          DuplicateCallPriorityProvider duplicateCallPriorityProvider,
-                         long streamingDuplicateWatchdogMilliseconds,
-                         long streamingDuplicateOrphanCeilingMilliseconds,
-                         WebCallDeliveryListener webCallDeliveryListener)
-    {
-        this(callManagementProvider, null, recordingConsumer, streamingConsumer, webConsumer,
-            duplicateCallPriorityProvider,
-            streamingDuplicateWatchdogMilliseconds, streamingDuplicateOrphanCeilingMilliseconds,
-            webCallDeliveryListener);
-    }
-
-    AudioCallCoordinator(ICallManagementProvider callManagementProvider,
-                         Consumer<ManagedPlayableAudioCall> playbackConsumer,
-                         Consumer<CompletedAudioCall> recordingConsumer,
-                         Consumer<CompletedAudioCall> streamingConsumer,
-                         Consumer<CompletedAudioCall> webConsumer,
-                         DuplicateCallPriorityProvider duplicateCallPriorityProvider,
-                         long streamingDuplicateWatchdogMilliseconds,
-                         long streamingDuplicateOrphanCeilingMilliseconds,
-                         WebCallDeliveryListener webCallDeliveryListener)
+                         long duplicateCompletionWatchdogMilliseconds,
+                         long duplicateCompletionOrphanCeilingMilliseconds,
+                         int ingressCapacity, int lifecycleIngressReserve)
     {
         mCallManagementProvider = callManagementProvider;
-        mPlaybackConsumer = playbackConsumer;
         mRecordingConsumer = recordingConsumer;
         mStreamingConsumer = streamingConsumer;
         mWebConsumer = webConsumer;
-        mWebCallDeliveryListener = webCallDeliveryListener;
         mDuplicateCallPriorityProvider = duplicateCallPriorityProvider != null ?
             duplicateCallPriorityProvider : DuplicateCallPriorityProvider.NONE;
-        mStreamingDuplicateWatchdogMilliseconds = Math.max(0L, streamingDuplicateWatchdogMilliseconds);
-        mStreamingDuplicateOrphanCeilingMilliseconds = Math.max(mStreamingDuplicateWatchdogMilliseconds,
-            streamingDuplicateOrphanCeilingMilliseconds);
-        mExecutor = new ScheduledThreadPoolExecutor(1,
-            new NamingThreadFactory("sdrtrunk audio coordinator"));
-        mExecutor.setRemoveOnCancelPolicy(true);
-        mExecutor.setExecuteExistingDelayedTasksAfterShutdownPolicy(false);
+        mDuplicateCompletionWatchdogMilliseconds = Math.max(0L, duplicateCompletionWatchdogMilliseconds);
+        mDuplicateCompletionOrphanCeilingMilliseconds = Math.max(mDuplicateCompletionWatchdogMilliseconds,
+            duplicateCompletionOrphanCeilingMilliseconds);
+        mIngress = new AudioCallIngressQueue(ingressCapacity, lifecycleIngressReserve);
+        mWatchdogScheduler = new ScheduledThreadPoolExecutor(1,
+            new ObserverThreadFactory("audio-call watchdog"));
+        mWatchdogScheduler.setRemoveOnCancelPolicy(true);
+        mWatchdogScheduler.setExecuteExistingDelayedTasksAfterShutdownPolicy(false);
+        mWorker = new ObserverThreadFactory("audio-call coordinator").newThread(this::runWorker);
+        mWorker.start();
     }
 
     private static long deriveOrphanCeilingMilliseconds(long watchdogMilliseconds)
@@ -275,37 +206,384 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
     @Override
     public void receive(AudioCallEvent event)
     {
-        if(event != null && !mDisposed)
+        if(event == null || event.snapshot() == null || event.callId() == null || !mAccepting)
         {
-            try
+            return;
+        }
+
+        mActiveReceives.incrementAndGet();
+
+        try
+        {
+            //Close the race where shutdown begins after the initial fast-path check but before this producer is
+            //registered. The worker remains alive while a registered receive is in progress.
+            if(!mAccepting)
             {
-                mExecutor.execute(() -> {
-                    synchronized(mStateLock)
-                    {
-                        if(!mDisposed)
-                        {
-                            process(event);
-                        }
-                    }
-                });
+                return;
             }
-            catch(RejectedExecutionException _)
+
+            AudioCallId callId = event.callId();
+
+            if(mAbortAllPending.get())
             {
-                //The coordinator was disposed between the state check and task submission.
+                mDroppedIngressCount.incrementAndGet();
+                return;
+            }
+
+            if(mOverflowedCallIds.contains(callId))
+            {
+                mDroppedIngressCount.incrementAndGet();
+
+                if(event.eventType() == AudioCallEventType.CALL_COMPLETED)
+                {
+                    offerAbort(callId, mIngressGeneration.get());
+                    clearOverflowMarker(callId);
+                }
+
+                return;
+            }
+
+            long generation = mIngressGeneration.get();
+            boolean lifecycle = isLifecycleEvent(event);
+
+            if(mIngress.offer(EVENT, lifecycle, event, 0L, generation))
+            {
+                mAcceptedIngressCount.incrementAndGet();
+                signalWorker();
+            }
+            else if(lifecycle)
+            {
+                mDroppedIngressCount.incrementAndGet();
+                mDroppedLifecycleCount.incrementAndGet();
+                requestAbortAll();
+            }
+            else
+            {
+                mDroppedIngressCount.incrementAndGet();
+
+                if(markOverflowed(callId))
+                {
+                    mAbortedCallCount.incrementAndGet();
+                    offerAbort(callId, generation);
+                }
+            }
+        }
+        finally
+        {
+            mActiveReceives.decrementAndGet();
+
+            if(!mAccepting)
+            {
+                signalWorker();
             }
         }
     }
 
-    public void dispose()
+    public synchronized void dispose()
     {
-        mDisposed = true;
-        mExecutor.shutdownNow();
-
-        synchronized(mStateLock)
+        if(!mAccepting)
         {
-            abandonAllWebReservations(WebCallDeliveryEvent.Abandoned.Reason.SHUTDOWN);
-            mCalls.clear();
-            mDuplicateGroups.clear();
+            return;
+        }
+
+        mAccepting = false;
+        mWatchdogScheduler.shutdownNow();
+        signalWorker();
+
+        try
+        {
+            mWorker.join(SHUTDOWN_DRAIN_MILLISECONDS);
+        }
+        catch(InterruptedException _)
+        {
+            Thread.currentThread().interrupt();
+        }
+
+        if(mWorker.isAlive())
+        {
+            mDisposed = true;
+            mWorker.interrupt();
+            mLog.warn("Audio-call coordinator did not drain within {} milliseconds; remaining calls were discarded",
+                SHUTDOWN_DRAIN_MILLISECONDS);
+        }
+    }
+
+    private static boolean isLifecycleEvent(AudioCallEvent event)
+    {
+        return event.eventType() == AudioCallEventType.CALL_CREATED ||
+            event.eventType() == AudioCallEventType.CALL_COMPLETED;
+    }
+
+    private void offerAbort(AudioCallId callId, long generation)
+    {
+        if(!mDisposed && callId != null)
+        {
+            if(mIngress.offer(ABORT, true, callId, 0L, generation))
+            {
+                mAcceptedIngressCount.incrementAndGet();
+                signalWorker();
+            }
+            else
+            {
+                mDroppedLifecycleCount.incrementAndGet();
+                requestAbortAll();
+            }
+        }
+    }
+
+    private boolean markOverflowed(AudioCallId callId)
+    {
+        if(callId == null || mOverflowedCallIds.contains(callId))
+        {
+            return false;
+        }
+
+        int count = mOverflowedCallCount.get();
+
+        while(count < MAXIMUM_TRACKED_OVERFLOWED_CALLS)
+        {
+            if(mOverflowedCallCount.compareAndSet(count, count + 1))
+            {
+                if(mOverflowedCallIds.add(callId))
+                {
+                    return true;
+                }
+
+                mOverflowedCallCount.decrementAndGet();
+                return false;
+            }
+
+            count = mOverflowedCallCount.get();
+        }
+
+        requestAbortAll();
+        return false;
+    }
+
+    private void clearOverflowMarker(AudioCallId callId)
+    {
+        if(callId != null && mOverflowedCallIds.remove(callId))
+        {
+            mOverflowedCallCount.decrementAndGet();
+        }
+    }
+
+    private void clearOverflowMarkers()
+    {
+        mOverflowedCallIds.clear();
+        mOverflowedCallCount.set(0);
+    }
+
+    private void requestAbortAll()
+    {
+        if(!mDisposed && mAbortAllPending.compareAndSet(false, true))
+        {
+            mIngressGeneration.incrementAndGet();
+            signalWorker();
+        }
+    }
+
+    private void signalWorker()
+    {
+        LockSupport.unpark(mWorker);
+    }
+
+    private void runWorker()
+    {
+        try
+        {
+            while(!mDisposed && (mAccepting || mActiveReceives.get() > 0 || mIngress.size() > 0 ||
+                mAbortAllPending.get()))
+            {
+                if(mAbortAllPending.get())
+                {
+                    abortAllState();
+                    mIngress.clear();
+                    clearOverflowMarkers();
+                    mAbortAllPending.set(false);
+                }
+
+                int drained = 0;
+                AudioCallIngressQueue.Entry entry;
+
+                while(!mDisposed && drained < mIngress.capacity() && (entry = mIngress.poll()) != null)
+                {
+                    try
+                    {
+                        if(entry.generation() == mIngressGeneration.get())
+                        {
+                            process(entry);
+                            drainPendingFanouts();
+                        }
+                    }
+                    catch(Throwable throwable)
+                    {
+                        rethrowFatal(throwable);
+                        mLog.error("Error processing audio-call coordinator command", throwable);
+                    }
+
+                    drained++;
+
+                    if(mAbortAllPending.get())
+                    {
+                        break;
+                    }
+                }
+
+                if(drained == 0 && !mAbortAllPending.get())
+                {
+                    LockSupport.parkNanos(this, TimeUnit.MILLISECONDS.toNanos(50));
+                }
+            }
+        }
+        finally
+        {
+            abortAllState();
+            mIngress.clear();
+            clearOverflowMarkers();
+            mDisposed = true;
+        }
+    }
+
+    private void process(AudioCallIngressQueue.Entry entry)
+    {
+        switch(entry.operation())
+        {
+            case EVENT -> process((AudioCallEvent)entry.payload());
+            case ABORT -> abortCall((AudioCallId)entry.payload());
+            case WATCHDOG -> processWatchdog(entry.value());
+            default -> mLog.warn("Ignoring unknown audio-call coordinator operation [{}]", entry.operation());
+        }
+    }
+
+    private void processWatchdog(long groupId)
+    {
+        DuplicateGroup group = mDuplicateGroups.get(groupId);
+
+        if(group != null)
+        {
+            group.resolutionWatchdog = null;
+            evaluateResolutionWatchdog(groupId);
+        }
+    }
+
+    private void abortAllState()
+    {
+        for(DuplicateGroup group: mDuplicateGroups.values())
+        {
+            cancelResolutionWatchdog(group);
+        }
+
+        mCalls.clear();
+        mDuplicateGroups.clear();
+        mPendingFanouts.clear();
+    }
+
+    private void abortCall(AudioCallId callId)
+    {
+        ManagedAudioCall context = mCalls.remove(callId);
+
+        if(context == null)
+        {
+            return;
+        }
+
+        context.audioBuffers.clear();
+
+        if(context.duplicateGroupId == null)
+        {
+            return;
+        }
+
+        DuplicateGroup group = mDuplicateGroups.remove(context.duplicateGroupId);
+
+        if(group == null)
+        {
+            return;
+        }
+
+        cancelResolutionWatchdog(group);
+
+        //Dissolve an overloaded cohort. Any healthy live members become independent calls and can be grouped again
+        //by their next accepted update; already completed healthy candidates are released once as independent calls.
+        for(AudioCallId activeCallId: group.activeMemberCallIds)
+        {
+            if(!activeCallId.equals(callId))
+            {
+                ManagedAudioCall active = mCalls.get(activeCallId);
+
+                if(active != null)
+                {
+                    active.duplicateGroupId = null;
+                    setDuplicateState(active, false);
+                }
+            }
+        }
+
+        List<CompletedCandidate> candidates = new ArrayList<>(group.completedCandidates.values());
+        candidates.sort((first, second) -> compareElectionOrder(first.completedAudioCall.snapshot(),
+            first.registrationOrdinal, second.completedAudioCall.snapshot(), second.registrationOrdinal));
+
+        for(CompletedCandidate candidate: candidates)
+        {
+            if(!candidate.completedAudioCall.snapshot().callId().equals(callId))
+            {
+                CompletedAudioCall call = candidate.completedAudioCall;
+
+                if(call.snapshot().duplicate())
+                {
+                    call = new CompletedAudioCall(call.snapshot().withDuplicate(false), call.audioBuffers(),
+                        call.resolvedPolicy());
+                }
+
+                queueFanout(mergeOutputPolicy(call, List.of(call.snapshot())));
+            }
+        }
+    }
+
+    private void drainPendingFanouts()
+    {
+        for(CompletedAudioCall completedAudioCall: mPendingFanouts)
+        {
+            deliver("recording", mRecordingConsumer, completedAudioCall);
+            deliver("streaming", mStreamingConsumer, completedAudioCall);
+            deliver("browser", mWebConsumer, completedAudioCall);
+        }
+
+        mPendingFanouts.clear();
+    }
+
+    private void deliver(String name, Consumer<CompletedAudioCall> consumer, CompletedAudioCall completedAudioCall)
+    {
+        if(consumer == null || completedAudioCall == null)
+        {
+            return;
+        }
+
+        try
+        {
+            consumer.accept(completedAudioCall);
+        }
+        catch(Throwable throwable)
+        {
+            rethrowFatal(throwable);
+            mLog.warn("Completed-call {} consumer failed", name, throwable);
+        }
+    }
+
+    private void queueFanout(CompletedAudioCall completedAudioCall)
+    {
+        if(completedAudioCall != null)
+        {
+            mPendingFanouts.add(completedAudioCall);
+        }
+    }
+
+    private static void rethrowFatal(Throwable throwable)
+    {
+        if(throwable instanceof VirtualMachineError error)
+        {
+            throw error;
         }
     }
 
@@ -318,60 +596,86 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
             return;
         }
 
+        if(mOverflowedCallIds.contains(incomingSnapshot.callId()))
+        {
+            abortCall(incomingSnapshot.callId());
+
+            if(event.eventType() == AudioCallEventType.CALL_COMPLETED)
+            {
+                clearOverflowMarker(incomingSnapshot.callId());
+            }
+
+            return;
+        }
+
         ManagedAudioCall context = mCalls.get(incomingSnapshot.callId());
 
         if(context == null)
         {
-            context = new ManagedAudioCall(incomingSnapshot, createPlaybackCall(incomingSnapshot),
-                mNextRegistrationOrdinal++);
+            if(mCalls.size() >= MAXIMUM_ACTIVE_CALLS)
+            {
+                if(markOverflowed(incomingSnapshot.callId()))
+                {
+                    mAbortedCallCount.incrementAndGet();
+                }
+
+                return;
+            }
+
+            context = new ManagedAudioCall(incomingSnapshot, mNextRegistrationOrdinal++);
             mCalls.put(incomingSnapshot.callId(), context);
-            openWebReservation(context, incomingSnapshot, event.eventTimestamp(), false);
-        }
-        else if(!context.webReservationOpen && !context.webDeliveryFinalized &&
-            (isProgressEvent(event) || event.eventType() == AudioCallEventType.CALL_COMPLETED))
-        {
-            openWebReservation(context, incomingSnapshot, event.eventTimestamp(), true);
         }
 
         // Ownership boundary:
         // 1) producers emit immutable AudioCallEvent/AudioCallSnapshot objects
-        // 2) the coordinator is the only writer of live call state and live playback-call buffers
-        // 3) receiver-local playback reads the managed live call while recording, configured streaming providers,
-        //    and browser playback consume the one elected completed immutable call
-        context.snapshot = incomingSnapshot.withDuplicate(context.snapshot != null && context.snapshot.duplicate());
+        // 2) the coordinator is the only writer of live call state and completed-call audio buffers
+        // 3) recording, configured streaming providers, and browser playback consume the one elected completed
+        //    immutable call
+        boolean duplicate = context.snapshot != null && context.snapshot.duplicate();
+        context.snapshot = incomingSnapshot.duplicate() == duplicate ? incomingSnapshot :
+            incomingSnapshot.withDuplicate(duplicate);
 
         if(isProgressEvent(event))
         {
             context.lastProgressNanos = System.nanoTime();
         }
 
-        if(context.playbackCall != null)
-        {
-            context.playbackCall.updateSnapshot(context.snapshot);
-        }
+        float[] audioFrame = event.audioFrameView();
 
-        if(event.audioFrame() != null)
+        if(audioFrame != null)
         {
-            context.audioBuffers.add(event.audioFrame());
-
-            if(context.playbackCall != null)
+            if(context.audioSampleCount > MAXIMUM_AUDIO_SAMPLES_PER_CALL - audioFrame.length)
             {
-                context.playbackCall.appendAudio(event.audioFrame());
+                if(markOverflowed(incomingSnapshot.callId()))
+                {
+                    mAbortedCallCount.incrementAndGet();
+                }
+
+                abortCall(incomingSnapshot.callId());
+                return;
             }
+
+            context.audioBuffers.add(audioFrame);
+            context.audioSampleCount += audioFrame.length;
         }
 
         updateDuplicateState(context);
-        releasePlaybackCall(context);
 
         if(event.eventType() == AudioCallEventType.CALL_COMPLETED)
         {
             CompletedAudioCall completedAudioCall =
                 new CompletedAudioCall(context.snapshot, List.copyOf(context.audioBuffers));
-            handleResolvedCompletion(context, completedAudioCall);
 
-            cancelWebReservationWatchdog(context);
-            mCalls.remove(context.snapshot.callId());
-            finishDuplicateGroupMember(context);
+            try
+            {
+                handleResolvedCompletion(context, completedAudioCall);
+            }
+            finally
+            {
+                mCalls.remove(context.snapshot.callId());
+                finishDuplicateGroupMember(context);
+                clearOverflowMarker(context.snapshot.callId());
+            }
         }
     }
 
@@ -382,244 +686,6 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
             case CALL_CREATED, ACTIVITY, METADATA_UPDATED, BURST_STARTED, BURST_ENDED, AUDIO_FRAME -> true;
             case DUPLICATE_UPDATED, CALL_COMPLETED -> false;
         };
-    }
-
-    private ManagedPlayableAudioCall createPlaybackCall(AudioCallSnapshot snapshot)
-    {
-        if(mPlaybackConsumer == null || snapshot == null)
-        {
-            return null;
-        }
-
-        ManagedPlayableAudioCall playbackCall = new ManagedPlayableAudioCall(snapshot);
-        return playbackCall;
-    }
-
-    /**
-     * Publishes a live call only after its current snapshot, audio and duplicate state have been applied. This closes
-     * the race where the playback manager could accept the object between construction and the first policy update.
-     */
-    private void releasePlaybackCall(ManagedAudioCall context)
-    {
-        if(context != null && context.playbackCall != null && !context.playbackReleased)
-        {
-            context.playbackReleased = true;
-            mPlaybackConsumer.accept(context.playbackCall);
-        }
-    }
-
-    /**
-     * Reserves a chronological browser-delivery position without retaining audio. A call that previously lost its
-     * reservation to the inactivity watchdog receives a new event-time position so it cannot later be inserted
-     * behind a publication watermark the browser spool has already advanced.
-     */
-    private void openWebReservation(ManagedAudioCall context, AudioCallSnapshot snapshot, long eventTimestamp,
-                                    boolean reopenedAfterInactivity)
-    {
-        if(mWebCallDeliveryListener == null || context == null || snapshot == null ||
-            snapshot.callId() == null || context.webReservationOpen || context.webDeliveryFinalized)
-        {
-            return;
-        }
-
-        long orderTimestamp;
-
-        if(reopenedAfterInactivity)
-        {
-            orderTimestamp = eventTimestamp > 0L ? eventTimestamp : System.currentTimeMillis();
-        }
-        else if(snapshot.startTimestamp() > 0L)
-        {
-            orderTimestamp = snapshot.startTimestamp();
-        }
-        else
-        {
-            orderTimestamp = eventTimestamp > 0L ? eventTimestamp : System.currentTimeMillis();
-        }
-
-        WebCallDeliveryEvent.OrderKey orderKey =
-            new WebCallDeliveryEvent.OrderKey(orderTimestamp, context.registrationOrdinal, snapshot.callId());
-        context.webOrderKey = orderKey;
-        context.webReservationOpen = true;
-        DuplicateGroup group = getDuplicateGroup(context);
-
-        if(group != null)
-        {
-            group.memberWebOrderKeys.put(snapshot.callId(), orderKey);
-        }
-
-        notifyWebDelivery(new WebCallDeliveryEvent.Opened(orderKey));
-        scheduleWebReservationWatchdog(context,
-            TimeUnit.MILLISECONDS.toNanos(mStreamingDuplicateOrphanCeilingMilliseconds));
-    }
-
-    private void scheduleWebReservationWatchdog(ManagedAudioCall context, long delayNanos)
-    {
-        if(mDisposed || mWebCallDeliveryListener == null || context == null ||
-            !context.webReservationOpen || context.webOrderKey == null)
-        {
-            return;
-        }
-
-        cancelWebReservationWatchdog(context);
-        AudioCallId callId = context.snapshot.callId();
-        WebCallDeliveryEvent.OrderKey orderKey = context.webOrderKey;
-
-        try
-        {
-            context.webReservationWatchdog = mExecutor.schedule(() -> {
-                synchronized(mStateLock)
-                {
-                    if(!mDisposed)
-                    {
-                        evaluateWebReservationWatchdog(callId, orderKey);
-                    }
-                }
-            }, Math.max(0L, delayNanos), TimeUnit.NANOSECONDS);
-        }
-        catch(RejectedExecutionException _)
-        {
-            context.webReservationWatchdog = null;
-        }
-    }
-
-    private void evaluateWebReservationWatchdog(AudioCallId callId,
-                                                WebCallDeliveryEvent.OrderKey orderKey)
-    {
-        ManagedAudioCall context = mCalls.get(callId);
-
-        if(context == null || !context.webReservationOpen || !orderKey.equals(context.webOrderKey))
-        {
-            return;
-        }
-
-        context.webReservationWatchdog = null;
-        long now = System.nanoTime();
-        long inactivityDeadline = safeAddNanos(context.lastProgressNanos,
-            TimeUnit.MILLISECONDS.toNanos(mStreamingDuplicateOrphanCeilingMilliseconds));
-
-        if(now < inactivityDeadline)
-        {
-            scheduleWebReservationWatchdog(context, inactivityDeadline - now);
-        }
-        else
-        {
-            abandonWebReservation(context, WebCallDeliveryEvent.Abandoned.Reason.INACTIVITY);
-        }
-    }
-
-    private void abandonWebReservation(ManagedAudioCall context,
-                                       WebCallDeliveryEvent.Abandoned.Reason reason)
-    {
-        if(context == null || !context.webReservationOpen || context.webOrderKey == null)
-        {
-            return;
-        }
-
-        WebCallDeliveryEvent.OrderKey orderKey = context.webOrderKey;
-        cancelWebReservationWatchdog(context);
-        context.webOrderKey = null;
-        context.webReservationOpen = false;
-        DuplicateGroup group = getDuplicateGroup(context);
-
-        if(group != null)
-        {
-            group.memberWebOrderKeys.remove(context.snapshot.callId());
-        }
-
-        notifyWebDelivery(new WebCallDeliveryEvent.Abandoned(orderKey, reason));
-    }
-
-    private void cancelWebReservationWatchdog(ManagedAudioCall context)
-    {
-        if(context != null && context.webReservationWatchdog != null)
-        {
-            context.webReservationWatchdog.cancel(false);
-            context.webReservationWatchdog = null;
-        }
-    }
-
-    private void abandonAllWebReservations(WebCallDeliveryEvent.Abandoned.Reason reason)
-    {
-        if(mWebCallDeliveryListener == null)
-        {
-            return;
-        }
-
-        Set<WebCallDeliveryEvent.OrderKey> openOrderKeys = new HashSet<>();
-
-        for(ManagedAudioCall context : mCalls.values())
-        {
-            cancelWebReservationWatchdog(context);
-
-            if(context.webReservationOpen && context.webOrderKey != null)
-            {
-                openOrderKeys.add(context.webOrderKey);
-                context.webReservationOpen = false;
-                context.webDeliveryFinalized = true;
-                context.webOrderKey = null;
-            }
-        }
-
-        for(DuplicateGroup group : mDuplicateGroups.values())
-        {
-            openOrderKeys.addAll(group.memberWebOrderKeys.values());
-            group.memberWebOrderKeys.clear();
-        }
-
-        for(WebCallDeliveryEvent.OrderKey orderKey : openOrderKeys)
-        {
-            notifyWebDelivery(new WebCallDeliveryEvent.Abandoned(orderKey, reason));
-        }
-    }
-
-    /**
-     * Closes every physical reservation represented by one logical call. Recording and configured streaming have
-     * already received the call before this transient browser handoff; the coordinator retains no PCM afterward.
-     */
-    private void resolveWebDelivery(WebCallDeliveryEvent.OrderKey orderKey,
-                                    Set<AudioCallId> sourceCallIds,
-                                    CompletedAudioCall completedAudioCall)
-    {
-        if(mWebCallDeliveryListener == null || orderKey == null || completedAudioCall == null ||
-            sourceCallIds == null || sourceCallIds.isEmpty())
-        {
-            return;
-        }
-
-        for(AudioCallId sourceCallId : sourceCallIds)
-        {
-            ManagedAudioCall context = mCalls.get(sourceCallId);
-
-            if(context != null)
-            {
-                cancelWebReservationWatchdog(context);
-                context.webReservationOpen = false;
-                context.webDeliveryFinalized = true;
-                context.webOrderKey = null;
-            }
-        }
-
-        notifyWebDelivery(new WebCallDeliveryEvent.Resolved(orderKey, sourceCallIds, completedAudioCall));
-    }
-
-    /**
-     * The lifecycle recipient is required to be non-blocking. A faulty browser adapter cannot be allowed to unwind
-     * coordinator state or interrupt recording/upload fanout on the latency-sensitive audio path.
-     */
-    private void notifyWebDelivery(WebCallDeliveryEvent event)
-    {
-        if(mWebCallDeliveryListener != null && event != null)
-        {
-            try
-            {
-                mWebCallDeliveryListener.receive(event);
-            }
-            catch(RuntimeException _)
-            {
-                //Isolate an optional browser adapter from radio, recording, and configured streaming.
-            }
-        }
     }
 
     /**
@@ -780,11 +846,6 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
         group.activeMemberCallIds.add(call.snapshot.callId());
         group.memberSnapshots.put(call.snapshot.callId(), call.snapshot);
 
-        if(call.webReservationOpen && call.webOrderKey != null)
-        {
-            group.memberWebOrderKeys.put(call.snapshot.callId(), call.webOrderKey);
-        }
-
         setDuplicateState(call, !group.liveWinnerCallId.equals(call.snapshot.callId()));
     }
 
@@ -793,11 +854,6 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
         if(call.snapshot.duplicate() != duplicate)
         {
             call.snapshot = call.snapshot.withDuplicate(duplicate);
-
-            if(call.playbackCall != null)
-            {
-                call.playbackCall.updateSnapshot(call.snapshot);
-            }
         }
     }
 
@@ -887,8 +943,8 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
     /**
      * Sends a single call through immediately. Once the first member of a duplicate cohort completes, the cohort is
      * sealed and one bounded election supplies the same resolved logical call to recording, configured streaming, and
-     * browser playback. The watchdog follows coordinator-local member progress and only treats an inactive member as
-     * orphaned; a separate ceiling bounds a producer that reports progress forever without completing.
+     * browser playback. The completion watchdog follows coordinator-local member progress and only treats an inactive
+     * member as orphaned; a separate ceiling bounds a producer that reports progress forever without completing.
      */
     private void handleResolvedCompletion(ManagedAudioCall context, CompletedAudioCall completedAudioCall)
     {
@@ -899,9 +955,7 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
         {
             CompletedAudioCall resolvedCall =
                 mergeOutputPolicy(completedAudioCall, List.of(completedAudioCall.snapshot()));
-            fanout(resolvedCall);
-            resolveWebDelivery(context.webOrderKey, Set.of(completedAudioCall.snapshot().callId()),
-                resolvedCall);
+            queueFanout(resolvedCall);
             return;
         }
 
@@ -918,9 +972,9 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
         {
             group.resolutionWatchdogStarted = true;
             group.resolutionOrphanDeadlineNanos = safeAddNanos(System.nanoTime(),
-                TimeUnit.MILLISECONDS.toNanos(mStreamingDuplicateOrphanCeilingMilliseconds));
+                TimeUnit.MILLISECONDS.toNanos(mDuplicateCompletionOrphanCeilingMilliseconds));
             scheduleResolutionWatchdog(group,
-                TimeUnit.MILLISECONDS.toNanos(mStreamingDuplicateWatchdogMilliseconds));
+                TimeUnit.MILLISECONDS.toNanos(mDuplicateCompletionWatchdogMilliseconds));
         }
     }
 
@@ -935,19 +989,19 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
 
         try
         {
-            group.resolutionWatchdog = mExecutor.schedule(() -> {
-                synchronized(mStateLock)
+            long generation = mIngressGeneration.get();
+            group.resolutionWatchdog = mWatchdogScheduler.schedule(() -> {
+                if(!mDisposed)
                 {
-                    if(!mDisposed)
+                    if(mIngress.offer(WATCHDOG, true, null, groupId, generation))
                     {
-                        DuplicateGroup currentGroup = mDuplicateGroups.get(groupId);
-
-                        if(currentGroup != null)
-                        {
-                            currentGroup.resolutionWatchdog = null;
-                        }
-
-                        evaluateResolutionWatchdog(groupId);
+                        mAcceptedIngressCount.incrementAndGet();
+                        signalWorker();
+                    }
+                    else
+                    {
+                        mDroppedLifecycleCount.incrementAndGet();
+                        requestAbortAll();
                     }
                 }
             }, Math.max(0L, delayNanos), TimeUnit.NANOSECONDS);
@@ -1001,7 +1055,7 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
 
         long inactivityDeadline = latestProgress != Long.MIN_VALUE ?
             safeAddNanos(latestProgress,
-                TimeUnit.MILLISECONDS.toNanos(mStreamingDuplicateWatchdogMilliseconds)) : now;
+                TimeUnit.MILLISECONDS.toNanos(mDuplicateCompletionWatchdogMilliseconds)) : now;
 
         if(now < inactivityDeadline)
         {
@@ -1057,10 +1111,7 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
                     winner.completedAudioCall.audioBuffers(), winner.completedAudioCall.resolvedPolicy());
                 CompletedAudioCall resolvedCall =
                     mergeOutputPolicy(measuredWinner, group.memberSnapshots.values());
-                fanout(resolvedCall);
-                resolveWebDelivery(minimumWebOrderKey(group), Set.copyOf(group.memberCallIds),
-                    resolvedCall);
-                group.memberWebOrderKeys.clear();
+                queueFanout(resolvedCall);
             }
         }
         finally
@@ -1079,22 +1130,8 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
         {
             if(call.duplicateGroupId != null)
             {
-                DuplicateGroup group = mDuplicateGroups.get(call.duplicateGroupId);
                 setDuplicateState(call, false);
                 call.duplicateGroupId = null;
-
-                /*
-                 * A bounded duplicate election may already have closed this still-live physical call's browser
-                 * reservation as part of the elected logical call. If duplicate detection is then disabled, the
-                 * core recording and streaming paths release this call to complete independently. Reopen its web
-                 * lifecycle at the current time as well; using the original start time could insert it behind a
-                 * publication watermark that the browser spool has already advanced.
-                 */
-                if(group != null && group.resolutionDecisionMade && call.webDeliveryFinalized)
-                {
-                    call.webDeliveryFinalized = false;
-                    openWebReservation(call, call.snapshot, System.currentTimeMillis(), true);
-                }
             }
         }
 
@@ -1134,16 +1171,8 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
 
             CompletedAudioCall resolvedCall =
                 mergeOutputPolicy(completedCall, List.of(completedCall.snapshot()));
-            fanout(resolvedCall);
-            AudioCallId callId = completedCall.snapshot().callId();
-            resolveWebDelivery(group.memberWebOrderKeys.remove(callId), Set.of(callId), resolvedCall);
+            queueFanout(resolvedCall);
         }
-    }
-
-    private WebCallDeliveryEvent.OrderKey minimumWebOrderKey(DuplicateGroup group)
-    {
-        return group != null ? group.memberWebOrderKeys.values().stream().min(
-            WebCallDeliveryEvent.OrderKey::compareTo).orElse(null) : null;
     }
 
     private void cancelResolutionWatchdog(DuplicateGroup group)
@@ -1299,7 +1328,7 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
             winnerSnapshot.lastActivityTimestamp(), winnerSnapshot.burstCount(), winnerSnapshot.burstGeneration(),
             winnerSnapshot.lastBurstStartTimestamp(), winnerSnapshot.lastBurstEndTimestamp(),
             winnerSnapshot.burstActive(), winnerSnapshot.complete(), winnerSnapshot.encrypted(),
-            resolvedPolicy.recordAudio(), winnerSnapshot.monitorPriority(), false, mergedMetadata,
+            resolvedPolicy.recordAudio(), false, mergedMetadata,
             winnerSnapshot.voiceCallQuality());
         return new CompletedAudioCall(mergedSnapshot, winner.audioBuffers(), resolvedPolicy);
     }
@@ -1466,22 +1495,11 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
             normalizedFirst.compareTo(normalizedSecond);
     }
 
-    private void fanout(CompletedAudioCall completedAudioCall)
+    public CoordinatorQueueStatus getQueueStatus()
     {
-        if(mRecordingConsumer != null)
-        {
-            mRecordingConsumer.accept(completedAudioCall);
-        }
-
-        if(mStreamingConsumer != null)
-        {
-            mStreamingConsumer.accept(completedAudioCall);
-        }
-
-        if(mWebConsumer != null)
-        {
-            mWebConsumer.accept(completedAudioCall);
-        }
+        return new CoordinatorQueueStatus(mIngress.size(), mIngress.regularCapacity(), mIngress.capacity(),
+            mAcceptedIngressCount.get(), mDroppedIngressCount.get(), mDroppedLifecycleCount.get(),
+            mAbortedCallCount.get());
     }
 
     private boolean hasText(String value)
@@ -1575,21 +1593,14 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
     {
         private AudioCallSnapshot snapshot;
         private final List<float[]> audioBuffers = new ArrayList<>();
-        private final ManagedPlayableAudioCall playbackCall;
         private final long registrationOrdinal;
+        private long audioSampleCount;
         private long lastProgressNanos = System.nanoTime();
         private Long duplicateGroupId;
-        private WebCallDeliveryEvent.OrderKey webOrderKey;
-        private ScheduledFuture<?> webReservationWatchdog;
-        private boolean playbackReleased;
-        private boolean webReservationOpen;
-        private boolean webDeliveryFinalized;
 
-        private ManagedAudioCall(AudioCallSnapshot snapshot, ManagedPlayableAudioCall playbackCall,
-                                 long registrationOrdinal)
+        private ManagedAudioCall(AudioCallSnapshot snapshot, long registrationOrdinal)
         {
             this.snapshot = snapshot;
-            this.playbackCall = playbackCall;
             this.registrationOrdinal = registrationOrdinal;
         }
     }
@@ -1604,7 +1615,6 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
         private final Set<AudioCallId> completedMemberCallIds = new HashSet<>();
         private final Map<AudioCallId, AudioCallSnapshot> memberSnapshots = new HashMap<>();
         private final Map<AudioCallId, CompletedCandidate> completedCandidates = new HashMap<>();
-        private final Map<AudioCallId, WebCallDeliveryEvent.OrderKey> memberWebOrderKeys = new HashMap<>();
         private final AudioCallSnapshot anchorSnapshot;
         private ScheduledFuture<?> resolutionWatchdog;
         private long resolutionOrphanDeadlineNanos;
@@ -1627,6 +1637,12 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
 
     private record VoiceQualityScore(double missingAndConcealedRate, double repeatedRate,
                                      double normalizedFecCorrectionRate)
+    {
+    }
+
+    public record CoordinatorQueueStatus(int ingressDepth, int regularIngressCapacity, int totalIngressCapacity,
+                                         long acceptedIngress, long droppedIngress, long droppedLifecycle,
+                                         long abortedCalls)
     {
     }
 }

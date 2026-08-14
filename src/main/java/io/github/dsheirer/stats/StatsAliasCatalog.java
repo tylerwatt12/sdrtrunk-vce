@@ -49,6 +49,8 @@ final class StatsAliasCatalog
     static final int MAX_BROADCAST_CHANNEL_NAME_CHARACTERS =
         AliasAdministrationService.MAX_BROADCAST_CHANNEL_NAME_LENGTH;
     static final int MAX_BROADCAST_CHANNEL_ROWS = StatsSqlRows.MAXIMUM_MATERIALIZED_ROWS;
+    static final int MAX_SCAN_LISTS_PER_ALIAS = AliasAdministrationService.MAX_SCAN_LISTS;
+    static final int MAX_SCAN_LIST_MEMBERSHIP_ROWS = StatsSqlRows.MAXIMUM_MATERIALIZED_ROWS;
     private static final EnrichmentAdmission ENRICHMENT_ADMISSION = new EnrichmentAdmission(2);
     private static final Map<String,String> FAMILIES = Map.of(
         "p25", "P25", "dmr", "DMR", "nxdn", "NXDN", "nbfm", "NBFM");
@@ -364,8 +366,7 @@ final class StatsAliasCatalog
         StringBuilder sql = new StringBuilder("""
             SELECT alias.id AS alias_id, alias.alias_list_id, alias_list.name AS alias_list_name,
                 alias_list.family, alias.name, alias.description, alias.group_name AS `group`, alias.color,
-                alias.icon_name, alias.stream_as_talkgroup, alias.record_enabled, alias.priority,
-                alias.matcher_type,
+                alias.icon_name, alias.stream_as_talkgroup, alias.record_enabled, alias.matcher_type,
                 CASE
                     WHEN alias.matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE') THEN 'talkgroup'
                     WHEN alias.matcher_type IN ('RADIO_ID', 'RADIO_ID_RANGE') THEN 'radio'
@@ -412,6 +413,7 @@ final class StatsAliasCatalog
         parameters.add(offset);
         List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
         attachBroadcastChannels(connection, rows);
+        attachScanLists(connection, rows);
 
         for(Map<String,Object> row: rows)
         {
@@ -495,6 +497,79 @@ final class StatsAliasCatalog
         }
     }
 
+    private static void attachScanLists(Connection connection, List<Map<String,Object>> aliases)
+        throws SQLException
+    {
+        List<Long> aliasIds = aliases.stream().map(row -> nullableNumber(row.get("alias_id")))
+            .filter(java.util.Objects::nonNull).distinct().toList();
+        Map<Long,List<Long>> scanListIds = new HashMap<>();
+        Map<Long,List<String>> scanListNames = new HashMap<>();
+        long membershipTotal = 0;
+
+        for(int start = 0; start < aliasIds.size(); start += 500)
+        {
+            List<Long> chunk = aliasIds.subList(start, Math.min(start + 500, aliasIds.size()));
+            List<Map<String,Object>> counts = queryRows(connection, """
+                SELECT alias_id, count(*) AS membership_count
+                FROM alias_scan_list_membership
+                WHERE alias_id IN (%s)
+                GROUP BY alias_id
+                ORDER BY alias_id
+                """.formatted(placeholders(chunk.size())), chunk.toArray());
+
+            for(Map<String,Object> count: counts)
+            {
+                long memberships = number(count.get("membership_count"));
+
+                if(memberships > MAX_SCAN_LISTS_PER_ALIAS)
+                {
+                    throw new StatsApiException(413, "alias_scan_lists_too_large",
+                        "An alias has too many scan-list memberships");
+                }
+
+                membershipTotal += memberships;
+
+                if(membershipTotal > MAX_SCAN_LIST_MEMBERSHIP_ROWS)
+                {
+                    throw new StatsApiException(413, "alias_scan_lists_too_large",
+                        "Alias scan-list memberships exceed the response safety limit");
+                }
+            }
+        }
+
+        for(int start = 0; start < aliasIds.size(); start += 500)
+        {
+            List<Long> chunk = aliasIds.subList(start, Math.min(start + 500, aliasIds.size()));
+            List<Map<String,Object>> memberships = queryRows(connection, """
+                SELECT membership.alias_id, list.id AS scan_list_id, list.name AS scan_list_name
+                FROM alias_scan_list_membership membership
+                JOIN scan_list list ON list.id = membership.scan_list_id
+                WHERE membership.alias_id IN (%s)
+                ORDER BY membership.alias_id, list.sort_order, lower(list.name), list.id
+                """.formatted(placeholders(chunk.size())), chunk.toArray());
+
+            for(Map<String,Object> membership: memberships)
+            {
+                Long aliasId = nullableNumber(membership.get("alias_id"));
+                Long scanListId = nullableNumber(membership.get("scan_list_id"));
+                String scanListName = text(membership.get("scan_list_name"));
+
+                if(aliasId != null && scanListId != null && scanListName != null)
+                {
+                    scanListIds.computeIfAbsent(aliasId, ignored -> new ArrayList<>()).add(scanListId);
+                    scanListNames.computeIfAbsent(aliasId, ignored -> new ArrayList<>()).add(scanListName);
+                }
+            }
+        }
+
+        for(Map<String,Object> alias: aliases)
+        {
+            Long aliasId = nullableNumber(alias.get("alias_id"));
+            alias.put("scan_list_ids", List.copyOf(scanListIds.getOrDefault(aliasId, List.of())));
+            alias.put("scan_lists", List.copyOf(scanListNames.getOrDefault(aliasId, List.of())));
+        }
+    }
+
     private static void addFilters(StringBuilder sql, List<Object> parameters, StatsRequest request)
     {
         String family = request.text("family");
@@ -575,14 +650,24 @@ final class StatsAliasCatalog
             parameters.add(group);
         }
 
-        String listen = request.text("listen");
-        if(listen != null)
+        String scanListId = request.text("scan_list_id");
+        if(scanListId != null)
         {
-            switch(listen)
+            try
             {
-                case "enabled" -> sql.append(" AND coalesce(alias.priority, 100) <> -1");
-                case "disabled" -> sql.append(" AND alias.priority = -1");
-                default -> throw new StatsApiException(400, "listen is invalid");
+                if(!scanListId.matches("[1-9][0-9]*"))
+                {
+                    throw new NumberFormatException();
+                }
+
+                sql.append(" AND EXISTS (SELECT 1 FROM alias_scan_list_membership membership " +
+                    "WHERE membership.alias_id = alias.id AND membership.scan_list_id = ?)");
+                parameters.add(Long.parseLong(scanListId));
+            }
+            catch(NumberFormatException e)
+            {
+                throw new StatsApiException(400, "invalid_parameter",
+                    "scan_list_id must be a positive decimal integer", "scan_list_id");
             }
         }
 

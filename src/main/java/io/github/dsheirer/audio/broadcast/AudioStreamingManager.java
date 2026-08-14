@@ -41,16 +41,20 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
-import java.util.concurrent.LinkedTransferQueue;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -61,12 +65,23 @@ import org.slf4j.LoggerFactory;
 public class AudioStreamingManager
 {
     private static final Logger mLog = LoggerFactory.getLogger(AudioStreamingManager.class);
-    private LinkedTransferQueue<CompletedAudioCall> mNewAudioCalls = new LinkedTransferQueue<>();
-    private List<CompletedAudioCall> mAudioCalls = new ArrayList<>();
-    private Listener<AudioRecording> mAudioRecordingListener;
-    private BroadcastFormat mBroadcastFormat;
-    private UserPreferences mUserPreferences;
+    static final int MAXIMUM_QUEUED_CALLS = 128;
+    static final long MAXIMUM_SOURCE_BYTES_PER_CALL = 64L * 1024L * 1024L;
+    static final long MAXIMUM_QUEUED_SOURCE_BYTES = 256L * 1024L * 1024L;
+    private final ConcurrentLinkedQueue<QueuedCall> mNewAudioCalls = new ConcurrentLinkedQueue<>();
+    private final AtomicInteger mRetainedCallCount = new AtomicInteger();
+    private final AtomicLong mRetainedSourceBytes = new AtomicLong();
+    private final AtomicLong mDroppedCalls = new AtomicLong();
+    private final AtomicLong mFailedCalls = new AtomicLong();
+    private final ReentrantLock mProcessingLock = new ReentrantLock();
+    private final ReentrantLock mHandoffLock = new ReentrantLock();
+    private final Listener<AudioRecording> mAudioRecordingListener;
+    private final BroadcastFormat mBroadcastFormat;
+    private final UserPreferences mUserPreferences;
     private final Consumer<CompletedAudioCall> mStreamedCallConsumer;
+    private final ScheduledExecutorService mScheduler;
+    private final StreamingRecordingWriter mRecordingWriter;
+    private volatile boolean mAcceptingCalls;
     private ScheduledFuture<?> mAudioSegmentProcessorFuture;
     private int mNextRecordingNumber = 1;
 
@@ -85,37 +100,86 @@ public class AudioStreamingManager
                                  UserPreferences userPreferences,
                                  Consumer<CompletedAudioCall> streamedCallConsumer)
     {
+        this(listener, broadcastFormat, userPreferences, streamedCallConsumer, ThreadPool.SCHEDULED,
+            (call, path, preferences, identifiers) ->
+                AudioCallRecorder.write(call, path, RecordFormat.MP3, preferences, identifiers));
+    }
+
+    AudioStreamingManager(Listener<AudioRecording> listener, BroadcastFormat broadcastFormat,
+                          UserPreferences userPreferences, Consumer<CompletedAudioCall> streamedCallConsumer,
+                          ScheduledExecutorService scheduler, StreamingRecordingWriter recordingWriter)
+    {
         mAudioRecordingListener = listener;
-        mBroadcastFormat = broadcastFormat;
-        mUserPreferences = userPreferences;
+        mBroadcastFormat = Objects.requireNonNull(broadcastFormat, "Broadcast format cannot be null");
+        mUserPreferences = Objects.requireNonNull(userPreferences, "User preferences cannot be null");
         mStreamedCallConsumer = streamedCallConsumer;
+        mScheduler = Objects.requireNonNull(scheduler, "Streaming scheduler cannot be null");
+        mRecordingWriter = Objects.requireNonNull(recordingWriter, "Streaming recording writer cannot be null");
     }
 
     /**
      * Starts the scheduled completed-call processor.
      */
-    public void start()
+    public synchronized void start()
     {
         if(mAudioSegmentProcessorFuture == null)
         {
-            mAudioSegmentProcessorFuture = ThreadPool.SCHEDULED.scheduleAtFixedRate(new AudioSegmentProcessor(),
-                0, 250, TimeUnit.MILLISECONDS);
+            mHandoffLock.lock();
+
+            try
+            {
+                mAudioSegmentProcessorFuture = mScheduler.scheduleAtFixedRate(new AudioSegmentProcessor(),
+                    0, 250, TimeUnit.MILLISECONDS);
+                mAcceptingCalls = true;
+            }
+            catch(RuntimeException exception)
+            {
+                mAcceptingCalls = false;
+                releaseQueuedCalls("streaming processor could not start");
+                throw exception;
+            }
+            finally
+            {
+                mHandoffLock.unlock();
+            }
         }
     }
 
     /**
      * Stops the scheduled completed-call processor.
      */
-    public void stop()
+    public synchronized void stop()
     {
-        if(mAudioSegmentProcessorFuture != null)
+        ScheduledFuture<?> processor;
+        mHandoffLock.lock();
+
+        try
         {
-            mAudioSegmentProcessorFuture.cancel(true);
+            mAcceptingCalls = false;
+            processor = mAudioSegmentProcessorFuture;
             mAudioSegmentProcessorFuture = null;
         }
+        finally
+        {
+            mHandoffLock.unlock();
+        }
 
-        mNewAudioCalls.clear();
-        mAudioCalls.clear();
+        if(processor != null)
+        {
+            //Do not interrupt an encoder/file handoff. The processing lock waits for it before releasing the queue.
+            processor.cancel(false);
+        }
+
+        mProcessingLock.lock();
+
+        try
+        {
+            releaseQueuedCalls("streaming manager stopped");
+        }
+        finally
+        {
+            mProcessingLock.unlock();
+        }
     }
 
     /**
@@ -162,8 +226,7 @@ public class AudioStreamingManager
 
             try
             {
-                AudioCallRecorder.write(completedAudioCall, path, RecordFormat.MP3, mUserPreferences,
-                    identifierCollection);
+                mRecordingWriter.write(completedAudioCall, path, mUserPreferences, identifierCollection);
 
                 if(!Files.isRegularFile(path) || Files.size(path) <= 0)
                 {
@@ -337,55 +400,79 @@ public class AudioStreamingManager
          */
         private void processAudioSegments()
         {
-            mNewAudioCalls.drainTo(mAudioCalls);
+            mProcessingLock.lock();
 
-            Iterator<CompletedAudioCall> it = mAudioCalls.iterator();
-            CompletedAudioCall completedAudioCall;
-            while(it.hasNext())
+            try
             {
-                completedAudioCall = it.next();
-                boolean sentToStreamer = false;
+                QueuedCall queuedCall = mNewAudioCalls.poll();
 
-                if(completedAudioCall.snapshot().duplicate() &&
-                    mUserPreferences.getCallManagementPreference().isDuplicateStreamingSuppressionEnabled())
+                while(queuedCall != null)
                 {
-                    it.remove();
-                }
-                else
-                {
-                    it.remove();
+                    CompletedAudioCall completedAudioCall = queuedCall.call();
 
-                    if(mAudioRecordingListener != null && completedAudioCall.snapshot().hasBroadcastChannels())
+                    try
                     {
-                        IdentifierCollection identifiers =
-                            new IdentifierCollection(completedAudioCall.snapshot().identifierCollection().getIdentifiers());
+                        boolean attemptedStreaming = false;
+                        boolean sentToStreamer = false;
 
-                        if(identifiers.getToIdentifier() instanceof PatchGroupIdentifier patchGroupIdentifier)
+                        try
                         {
-                            if(mUserPreferences.getCallManagementPreference()
-                                .getPatchGroupStreamingOption() == PatchGroupStreamingOption.TALKGROUPS)
+                            if(!(completedAudioCall.snapshot().duplicate() && mUserPreferences
+                                .getCallManagementPreference().isDuplicateStreamingSuppressionEnabled()) &&
+                                mAudioRecordingListener != null &&
+                                completedAudioCall.snapshot().hasBroadcastChannels())
                             {
-                                sentToStreamer |= processPatchGroupTalkgroups(completedAudioCall, identifiers,
-                                    patchGroupIdentifier.getValue());
-                            }
-                            else
-                            {
-                                sentToStreamer |= processAudioCall(completedAudioCall, identifiers,
-                                    completedAudioCall.snapshot().broadcastChannels());
+                                attemptedStreaming = true;
+                                IdentifierCollection identifiers = new IdentifierCollection(
+                                    completedAudioCall.snapshot().identifierCollection().getIdentifiers());
+
+                                if(identifiers.getToIdentifier() instanceof PatchGroupIdentifier patchGroupIdentifier)
+                                {
+                                    if(mUserPreferences.getCallManagementPreference()
+                                        .getPatchGroupStreamingOption() == PatchGroupStreamingOption.TALKGROUPS)
+                                    {
+                                        sentToStreamer = processPatchGroupTalkgroups(completedAudioCall, identifiers,
+                                            patchGroupIdentifier.getValue());
+                                    }
+                                    else
+                                    {
+                                        sentToStreamer = processAudioCall(completedAudioCall, identifiers,
+                                            completedAudioCall.snapshot().broadcastChannels());
+                                    }
+                                }
+                                else
+                                {
+                                    sentToStreamer = processAudioCall(completedAudioCall, identifiers,
+                                        completedAudioCall.snapshot().broadcastChannels());
+                                }
                             }
                         }
-                        else
+                        catch(RuntimeException exception)
                         {
-                            sentToStreamer |= processAudioCall(completedAudioCall, identifiers,
-                                completedAudioCall.snapshot().broadcastChannels());
+                            attemptedStreaming = true;
+                            mLog.warn("Error processing completed call for streaming", exception);
+                        }
+
+                        if(sentToStreamer)
+                        {
+                            notifyStreamed(completedAudioCall);
+                        }
+                        else if(attemptedStreaming)
+                        {
+                            failStreaming();
                         }
                     }
-                }
+                    finally
+                    {
+                        releaseReservation(queuedCall.sourceBytes());
+                    }
 
-                if(sentToStreamer)
-                {
-                    notifyStreamed(completedAudioCall);
+                    queuedCall = mNewAudioCalls.poll();
                 }
+            }
+            finally
+            {
+                mProcessingLock.unlock();
             }
         }
 
@@ -405,9 +492,181 @@ public class AudioStreamingManager
 
     public void receive(CompletedAudioCall completedAudioCall)
     {
-        if(completedAudioCall != null)
+        if(completedAudioCall == null)
         {
-            mNewAudioCalls.add(completedAudioCall);
+            return;
+        }
+
+        long sourceBytes = sourceBytes(completedAudioCall);
+
+        if(sourceBytes <= 0 || sourceBytes > MAXIMUM_SOURCE_BYTES_PER_CALL)
+        {
+            dropStreaming("invalid or oversized source audio");
+            return;
+        }
+
+        //A completed-call producer must never wait behind an encoder, scheduled drain, or shutdown operation.
+        if(!mHandoffLock.tryLock())
+        {
+            dropStreaming("streaming manager is changing state");
+            return;
+        }
+
+        boolean callReserved = false;
+        boolean sourceBytesReserved = false;
+
+        try
+        {
+            if(!mAcceptingCalls)
+            {
+                dropStreaming("streaming manager is not accepting calls");
+                return;
+            }
+
+            if(!reserveCall())
+            {
+                dropStreaming("streaming queue call limit reached");
+                return;
+            }
+
+            callReserved = true;
+
+            if(!reserveSourceBytes(sourceBytes))
+            {
+                mRetainedCallCount.decrementAndGet();
+                callReserved = false;
+                dropStreaming("streaming queue source-audio limit reached");
+                return;
+            }
+
+            sourceBytesReserved = true;
+
+            //ConcurrentLinkedQueue is lock-free and this handoff never waits for the encoder or file system.
+            mNewAudioCalls.offer(new QueuedCall(completedAudioCall, sourceBytes));
+            callReserved = false;
+            sourceBytesReserved = false;
+        }
+        catch(RuntimeException exception)
+        {
+            if(sourceBytesReserved)
+            {
+                mRetainedSourceBytes.addAndGet(-sourceBytes);
+            }
+
+            if(callReserved)
+            {
+                mRetainedCallCount.decrementAndGet();
+            }
+
+            dropStreaming("unexpected queue handoff failure");
+            mLog.warn("Unable to queue completed call for streaming", exception);
+        }
+        finally
+        {
+            mHandoffLock.unlock();
+        }
+    }
+
+    public StreamingQueueStatus getQueueStatus()
+    {
+        return new StreamingQueueStatus(mRetainedCallCount.get(), mRetainedSourceBytes.get(),
+            mDroppedCalls.get(), mFailedCalls.get(), mAcceptingCalls, mProcessingLock.isLocked(),
+            mProcessingLock.getQueueLength());
+    }
+
+    private boolean reserveCall()
+    {
+        int current = mRetainedCallCount.get();
+
+        while(current < MAXIMUM_QUEUED_CALLS)
+        {
+            if(mRetainedCallCount.compareAndSet(current, current + 1))
+            {
+                return true;
+            }
+
+            current = mRetainedCallCount.get();
+        }
+
+        return false;
+    }
+
+    private boolean reserveSourceBytes(long sourceBytes)
+    {
+        long current = mRetainedSourceBytes.get();
+
+        while(current <= MAXIMUM_QUEUED_SOURCE_BYTES - sourceBytes)
+        {
+            if(mRetainedSourceBytes.compareAndSet(current, current + sourceBytes))
+            {
+                return true;
+            }
+
+            current = mRetainedSourceBytes.get();
+        }
+
+        return false;
+    }
+
+    private static long sourceBytes(CompletedAudioCall call)
+    {
+        long samples = 0;
+
+        if(call.audioBuffers() != null)
+        {
+            for(float[] buffer: call.audioBuffers())
+            {
+                if(buffer != null)
+                {
+                    if(samples > Long.MAX_VALUE - buffer.length)
+                    {
+                        return -1;
+                    }
+
+                    samples += buffer.length;
+                }
+            }
+        }
+
+        return samples > 0 && samples <= Long.MAX_VALUE / Float.BYTES ? samples * Float.BYTES : -1;
+    }
+
+    private void releaseQueuedCalls(String reason)
+    {
+        QueuedCall queuedCall = mNewAudioCalls.poll();
+
+        while(queuedCall != null)
+        {
+            releaseReservation(queuedCall.sourceBytes());
+            dropStreaming(reason);
+            queuedCall = mNewAudioCalls.poll();
+        }
+    }
+
+    private void releaseReservation(long sourceBytes)
+    {
+        mRetainedSourceBytes.addAndGet(-sourceBytes);
+        mRetainedCallCount.decrementAndGet();
+    }
+
+    private void dropStreaming(String reason)
+    {
+        long dropped = mDroppedCalls.incrementAndGet();
+
+        if(dropped == 1 || dropped % 100 == 0)
+        {
+            mLog.warn("Dropped completed call streaming handoff because {} ({} dropped since startup)",
+                reason, dropped);
+        }
+    }
+
+    private void failStreaming()
+    {
+        long failed = mFailedCalls.incrementAndGet();
+
+        if(failed == 1 || failed % 100 == 0)
+        {
+            mLog.warn("Failed to create a completed call streaming recording ({} failed since startup)", failed);
         }
     }
 
@@ -424,5 +683,20 @@ public class AudioStreamingManager
                 mLog.warn("Streamed-call stats listener failed", e);
             }
         }
+    }
+
+    public record StreamingQueueStatus(int retainedCalls, long retainedSourceBytes, long droppedCalls,
+                                       long failedCalls, boolean acceptingCalls, boolean writerActive,
+                                       int waitingDrains)
+    {
+    }
+
+    private record QueuedCall(CompletedAudioCall call, long sourceBytes) {}
+
+    @FunctionalInterface
+    interface StreamingRecordingWriter
+    {
+        void write(CompletedAudioCall completedAudioCall, Path path, UserPreferences userPreferences,
+                   IdentifierCollection identifierCollection) throws IOException;
     }
 }

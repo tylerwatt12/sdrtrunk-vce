@@ -27,6 +27,7 @@ import io.github.dsheirer.source.tuner.TunerType;
 import io.github.dsheirer.source.tuner.configuration.TunerConfiguration;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.locks.ReentrantLock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -40,6 +41,7 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
     private volatile boolean mEnabled = true;
     private String mErrorMessage;
     private List<IDiscoveredTunerStatusListener> mListeners = new CopyOnWriteArrayList<>();
+    private final ReentrantLock mAllocationLifecycleLock = new ReentrantLock();
     protected Tuner mTuner;
     protected TunerConfiguration mTunerConfiguration;
 
@@ -130,28 +132,54 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
     /**
      * Sets the enabled state of this discovered tuner
      */
-    public synchronized void setEnabled(boolean enabled)
+    public void setEnabled(boolean enabled)
     {
-        //If there was a change in state
-        if(mEnabled ^ enabled)
+        mAllocationLifecycleLock.lock();
+
+        try
         {
-            mErrorMessage = null;
-
-            mEnabled = enabled;
-
-            if(mEnabled)
+            //If there was a change in state
+            if(mEnabled ^ enabled)
             {
-                if(startAndApplyConfiguration())
+                mErrorMessage = null;
+
+                mEnabled = enabled;
+
+                if(mEnabled)
                 {
-                    setTunerStatus(TunerStatus.ENABLED);
+                    if(startAndApplyConfiguration())
+                    {
+                        setTunerStatus(TunerStatus.ENABLED);
+                    }
+                }
+                else
+                {
+                    setTunerStatus(TunerStatus.DISABLED);
+                    stop();
                 }
             }
-            else
-            {
-                setTunerStatus(TunerStatus.DISABLED);
-                stop();
-            }
         }
+        finally
+        {
+            mAllocationLifecycleLock.unlock();
+        }
+    }
+
+    /**
+     * Attempts to reserve this tuner's enable/disable lifecycle for a channel allocation without waiting.  Allocation
+     * can originate on a decoder callback, so it must fail fast while tuner hardware is starting or stopping.
+     */
+    boolean tryAcquireForAllocation()
+    {
+        return mAllocationLifecycleLock.tryLock();
+    }
+
+    /**
+     * Releases a successful allocation lifecycle reservation.
+     */
+    void releaseAfterAllocation()
+    {
+        mAllocationLifecycleLock.unlock();
     }
 
     /**

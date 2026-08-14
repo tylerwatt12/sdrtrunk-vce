@@ -21,7 +21,6 @@ import io.github.dsheirer.alias.id.AliasIDType;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.alias.id.dcs.Dcs;
 import io.github.dsheirer.alias.id.esn.Esn;
-import io.github.dsheirer.alias.id.priority.Priority;
 import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.alias.id.radio.RadioRange;
 import io.github.dsheirer.alias.id.status.UnitStatusID;
@@ -57,8 +56,8 @@ import java.util.StringJoiner;
 /**
  * SQLite persistence for alias-list definitions and their aliases.
  *
- * <p>Alias schema v5 gives both lists and aliases durable identities. Each alias row contains exactly one operational
- * matcher. Recording, playback, and streaming routes remain behavior attached to that matcher. A list-level unmatched
+ * <p>Alias schema v6 gives both lists and aliases durable identities. Each alias row contains exactly one operational
+ * matcher. Recording and streaming routes remain behavior attached to that matcher. A list-level unmatched
  * talkgroup policy carries actions only and is never represented as an alias or match identifier.</p>
  */
 public class AliasDatabaseStore
@@ -137,8 +136,7 @@ public class AliasDatabaseStore
         Set<Long> loadedDefinitionIds = new HashSet<>();
 
         try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT id, name, family, unmatched_talkgroup_priority,
-                   unmatched_talkgroup_record_enabled
+            SELECT id, name, family, unmatched_talkgroup_record_enabled
             FROM alias_list
             ORDER BY id
             """);
@@ -155,7 +153,6 @@ public class AliasDatabaseStore
                 try
                 {
                     policy = new UnmatchedTalkgroupPolicy(
-                        resultSet.getInt("unmatched_talkgroup_priority"),
                         getBoolean(resultSet, "unmatched_talkgroup_record_enabled"),
                         streamDestinations.getOrDefault(definitionId, List.of()));
                 }
@@ -204,7 +201,7 @@ public class AliasDatabaseStore
         try(PreparedStatement statement = connection.prepareStatement("""
             SELECT alias.id, alias.alias_list_id, alias.name, alias.description,
                    alias.group_name, alias.color, alias.icon_name, alias.stream_as_talkgroup,
-                   alias.record_enabled, alias.priority,
+                   alias.record_enabled,
                    alias.matcher_type, alias.protocol, alias.value,
                    alias.min_value, alias.max_value, alias.text_value,
                    alias.numeric_value, alias.tone_sequence
@@ -252,16 +249,6 @@ public class AliasDatabaseStore
                     alias.setMatchIdentifier(matcher);
                 }
                 alias.setRecordable(getBoolean(resultSet, "record_enabled"));
-                Integer priority = getInteger(resultSet, "priority");
-                if(priority != null)
-                {
-                    if(!isValidPriority(priority))
-                    {
-                        throw new SQLException("Alias [" + alias.getName() +
-                            "] has invalid stored priority [" + priority + "]");
-                    }
-                    alias.setCallPriority(priority);
-                }
                 aliases.put(aliasId, alias);
             }
 
@@ -310,7 +297,7 @@ public class AliasDatabaseStore
                     "] must declare a protocol family");
             }
             UnmatchedTalkgroupPolicy policy = definition.getUnmatchedTalkgroupPolicy();
-            if(policy == null || !UnmatchedTalkgroupPolicy.isValidPlaybackPriority(policy.getPlaybackPriority()))
+            if(policy == null)
             {
                 throw new SQLException("Alias list [" + definition.getName() +
                     "] has an invalid unmatched talkgroup policy");
@@ -396,9 +383,8 @@ public class AliasDatabaseStore
             {
                 try(PreparedStatement statement = connection.prepareStatement("""
                     INSERT INTO alias_list (
-                        name, family, unmatched_talkgroup_priority,
-                        unmatched_talkgroup_record_enabled
-                    ) VALUES (?, ?, ?, ?)
+                        name, family, unmatched_talkgroup_record_enabled
+                    ) VALUES (?, ?, ?)
                     """, Statement.RETURN_GENERATED_KEYS))
                 {
                     bindDefinition(statement, definition, 1);
@@ -417,9 +403,8 @@ public class AliasDatabaseStore
             {
                 try(PreparedStatement statement = connection.prepareStatement("""
                     INSERT INTO alias_list (
-                        id, name, family, unmatched_talkgroup_priority,
-                        unmatched_talkgroup_record_enabled
-                    ) VALUES (?, ?, ?, ?, ?)
+                        id, name, family, unmatched_talkgroup_record_enabled
+                    ) VALUES (?, ?, ?, ?)
                     """))
                 {
                     statement.setLong(1, definition.getId());
@@ -438,8 +423,7 @@ public class AliasDatabaseStore
         statement.setString(offset, definition.getName());
         statement.setString(offset + 1, definition.getFamily().name());
         UnmatchedTalkgroupPolicy policy = definition.getUnmatchedTalkgroupPolicy();
-        statement.setInt(offset + 2, policy.getPlaybackPriority());
-        statement.setInt(offset + 3, policy.isRecordEnabled() ? 1 : 0);
+        statement.setInt(offset + 2, policy.isRecordEnabled() ? 1 : 0);
     }
 
     private void insertUnmatchedTalkgroupStreams(Connection connection, AliasListDefinition definition)
@@ -531,10 +515,10 @@ public class AliasDatabaseStore
                 try(PreparedStatement statement = connection.prepareStatement("""
                     INSERT INTO alias (
                         alias_list_id, name, description, group_name, color, icon_name,
-                        stream_as_talkgroup, record_enabled, priority, matcher_type,
+                        stream_as_talkgroup, record_enabled, matcher_type,
                         protocol, value, min_value, max_value, text_value, numeric_value,
                         tone_sequence
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, Statement.RETURN_GENERATED_KEYS))
                 {
                     bindAlias(statement, alias, 1);
@@ -556,10 +540,10 @@ public class AliasDatabaseStore
                 try(PreparedStatement statement = connection.prepareStatement("""
                     INSERT INTO alias (
                         id, alias_list_id, name, description, group_name, color, icon_name,
-                        stream_as_talkgroup, record_enabled, priority, matcher_type,
+                        stream_as_talkgroup, record_enabled, matcher_type,
                         protocol, value, min_value, max_value, text_value, numeric_value,
                         tone_sequence
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """))
                 {
                     statement.setLong(1, aliasId);
@@ -589,15 +573,14 @@ public class AliasDatabaseStore
         StreamAsTalkgroup streamAsTalkgroup = alias.getStreamTalkgroupAlias();
         setInteger(statement, offset + 6, streamAsTalkgroup != null ? streamAsTalkgroup.getValue() : null);
         statement.setInt(offset + 7, alias.isRecordable() ? 1 : 0);
-        setInteger(statement, offset + 8, alias.hasCallPriority() ? alias.getPlaybackPriority() : null);
-        statement.setString(offset + 9, matcher.type());
-        statement.setString(offset + 10, matcher.protocol());
-        setInteger(statement, offset + 11, matcher.value());
-        setInteger(statement, offset + 12, matcher.minimum());
-        setInteger(statement, offset + 13, matcher.maximum());
-        statement.setString(offset + 14, matcher.textValue());
-        setInteger(statement, offset + 15, matcher.numericValue());
-        statement.setString(offset + 16, matcher.toneSequence());
+        statement.setString(offset + 8, matcher.type());
+        statement.setString(offset + 9, matcher.protocol());
+        setInteger(statement, offset + 10, matcher.value());
+        setInteger(statement, offset + 11, matcher.minimum());
+        setInteger(statement, offset + 12, matcher.maximum());
+        statement.setString(offset + 13, matcher.textValue());
+        setInteger(statement, offset + 14, matcher.numericValue());
+        statement.setString(offset + 15, matcher.toneSequence());
     }
 
     private MatcherData matcherData(Alias alias) throws SQLException
@@ -886,12 +869,6 @@ public class AliasDatabaseStore
             throw new SQLException(column + " must be stored as integer 0 or 1");
         }
         return value == 1;
-    }
-
-    private static boolean isValidPriority(int priority)
-    {
-        return priority == Priority.DO_NOT_MONITOR ||
-            (Priority.MIN_PRIORITY <= priority && priority < Priority.MAX_PRIORITY);
     }
 
     private static void setInteger(PreparedStatement statement, int index, Integer value) throws SQLException

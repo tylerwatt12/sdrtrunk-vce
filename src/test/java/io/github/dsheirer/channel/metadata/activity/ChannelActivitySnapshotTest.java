@@ -17,7 +17,7 @@ class ChannelActivitySnapshotTest
     void normalizesNullTopLevelValues()
     {
         ChannelActivitySnapshot snapshot = new ChannelActivitySnapshot(null, null, null, null, null, null, null,
-            false, false, null, null);
+            false, null, null);
 
         assertEquals("", snapshot.tableId());
         assertEquals("", snapshot.title());
@@ -33,7 +33,7 @@ class ChannelActivitySnapshotTest
     void normalizesUnnamedOwnerChannel()
     {
         Channel owner = new Channel();
-        ChannelActivityTableState table = new ChannelActivityTableState(null, owner, true, null);
+        ChannelActivityTableState table = new ChannelActivityTableState(null, owner, null);
         ChannelActivitySnapshot snapshot = ChannelActivitySnapshot.from(table);
 
         assertEquals("", snapshot.title());
@@ -48,7 +48,7 @@ class ChannelActivitySnapshotTest
         owner.setSite("Downtown Simulcast");
         owner.setName("Primary Control");
         ChannelActivitySnapshot snapshot = ChannelActivitySnapshot.from(
-            new ChannelActivityTableState("Decoded title", owner, true, null));
+            new ChannelActivityTableState("Decoded title", owner, null));
 
         assertEquals("County System", snapshot.systemName());
         assertEquals("Downtown Simulcast", snapshot.siteName());

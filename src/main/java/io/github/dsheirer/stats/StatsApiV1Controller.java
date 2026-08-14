@@ -123,9 +123,9 @@ final class StatsApiV1Controller
     {
         if(segments.isEmpty())
         {
-            request.requireOnly("family", "type", "matcher", "list", "group", "listen", "record", "stream",
-                "q", "sort", "direction", "evidence", "use", "last_activity_after", "last_activity_before",
-                "limit", "offset");
+            request.requireOnly("family", "type", "matcher", "list", "group", "scan_list_id", "record",
+                "stream", "q", "sort", "direction", "evidence", "use", "last_activity_after",
+                "last_activity_before", "limit", "offset");
             return page(mDatabase.aliases(request));
         }
         else if(segments.size() == 1)
@@ -413,9 +413,9 @@ final class StatsApiV1Controller
                 request.requireOnly("context", "q", "sort", "direction");
             case "signal-health" -> request.requireOnly();
             case "site-quality" -> request.requireOnly("guid", "range", "points");
-            case "aliases" -> request.requireOnly("family", "type", "matcher", "list", "group", "listen",
-                "record", "stream", "q", "sort", "direction", "evidence", "use", "last_activity_after",
-                "last_activity_before");
+            case "aliases" -> request.requireOnly("family", "type", "matcher", "list", "group",
+                "scan_list_id", "record", "stream", "q", "sort", "direction", "evidence", "use",
+                "last_activity_after", "last_activity_before");
             default -> throw new StatsApiException(400, "invalid_export", "Unsupported CSV dataset", "dataset");
         }
     }

@@ -20,9 +20,6 @@ package io.github.dsheirer.controller;
 
 import com.google.common.eventbus.Subscribe;
 import com.jidesoft.swing.JideTabbedPane;
-import io.github.dsheirer.audio.playback.AudioPanel;
-import io.github.dsheirer.audio.playback.AudioPlaybackManager;
-import io.github.dsheirer.channel.metadata.NowPlayingPanel;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.icon.IconModel;
 import io.github.dsheirer.map.MapPanel;
@@ -33,12 +30,10 @@ import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.preference.nowplaying.NowPlayingPreference.JavaInterfaceView;
 import io.github.dsheirer.settings.SettingsManager;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
-import io.github.dsheirer.stats.StatsWebServerService;
 import io.github.dsheirer.source.tuner.ui.TunerViewPanel;
 import io.github.dsheirer.util.SwingUtils;
 import java.awt.Component;
 import java.awt.Dimension;
-import java.util.function.Consumer;
 import net.miginfocom.swing.MigLayout;
 
 import javax.swing.JPanel;
@@ -47,39 +42,21 @@ public class ControllerPanel extends JPanel
 {
     private static final long serialVersionUID = 1L;
 
-    private AudioPanel mAudioPanel;
-    private NowPlayingPanel mNowPlayingPanel;
     private MapPanel mMapPanel;
     private TunerViewPanel mTunerManagerPanel;
     private JideTabbedPane mTabbedPane;
-    private ConfigurationManager mConfigurationManager;
     private UserPreferences mUserPreferences;
 
-    public ControllerPanel(ConfigurationManager configurationManager, AudioPlaybackManager audioPlaybackManager,
-                           IconModel iconModel, MapService mapService, SettingsManager settingsManager,
-                           TunerManager tunerManager, UserPreferences userPreferences,
-                           StatsWebServerService statsWebServerService, boolean lowerViewsVisible,
-                           Consumer<Boolean> lowerViewsVisibilityListener)
+    public ControllerPanel(ConfigurationManager configurationManager, IconModel iconModel, MapService mapService,
+                           SettingsManager settingsManager, TunerManager tunerManager,
+                           UserPreferences userPreferences)
     {
-        mConfigurationManager = configurationManager;
         mUserPreferences = userPreferences;
-        mAudioPanel = new AudioPanel(iconModel, userPreferences, settingsManager, audioPlaybackManager,
-            configurationManager.getAliasModel());
-        mNowPlayingPanel = new NowPlayingPanel(configurationManager, iconModel, userPreferences, settingsManager,
-            statsWebServerService, lowerViewsVisible, lowerViewsVisibilityListener);
         mMapPanel = new MapPanel(mapService, configurationManager.getAliasModel(), iconModel, settingsManager);
         mTunerManagerPanel = new TunerViewPanel(tunerManager, userPreferences);
 
         init();
         MyEventBus.getGlobalEventBus().register(this);
-    }
-
-    /**
-     * Now playing panel.
-     */
-    public NowPlayingPanel getNowPlayingPanel()
-    {
-        return mNowPlayingPanel;
     }
 
     @Subscribe
@@ -94,15 +71,7 @@ public class ControllerPanel extends JPanel
     private void refreshTabs()
     {
         Component selected = mTabbedPane.getSelectedComponent();
-        boolean systemsVisible = mUserPreferences.getNowPlayingPreference()
-            .isJavaInterfaceViewEnabled(JavaInterfaceView.SYSTEMS);
-        mNowPlayingPanel.setSystemsActive(systemsVisible);
         mTabbedPane.removeAll();
-
-        if(systemsVisible)
-        {
-            mTabbedPane.addTab("Systems", mNowPlayingPanel);
-        }
 
         if(mUserPreferences.getNowPlayingPreference().isJavaInterfaceViewEnabled(JavaInterfaceView.MAP))
         {
@@ -123,15 +92,11 @@ public class ControllerPanel extends JPanel
     public void dispose()
     {
         MyEventBus.getGlobalEventBus().unregister(this);
-        mAudioPanel.dispose();
-        mNowPlayingPanel.dispose();
     }
 
     private void init()
     {
-        setLayout(new MigLayout("insets 0 0 0 0 ", "[grow,fill]", "[]0[grow,fill]0[]"));
-
-        add(mAudioPanel, "wrap");
+        setLayout(new MigLayout("insets 0 0 0 0 ", "[grow,fill]", "[grow,fill]"));
 
         mTabbedPane = new JideTabbedPane();
         mTabbedPane.setFont(this.getFont());
@@ -140,6 +105,6 @@ public class ControllerPanel extends JPanel
         //Set preferred size to influence the split between these panels
         mTabbedPane.setPreferredSize(new Dimension(880, 500));
 
-        add(mTabbedPane, "wrap");
+        add(mTabbedPane);
     }
 }

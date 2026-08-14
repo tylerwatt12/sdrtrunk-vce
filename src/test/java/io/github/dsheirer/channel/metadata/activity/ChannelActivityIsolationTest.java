@@ -25,53 +25,10 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
-import javax.swing.SwingUtilities;
 import org.junit.jupiter.api.Test;
 
 class ChannelActivityIsolationTest
 {
-    @Test
-    void corePublishesWhileSwingIsBlockedAndAdapterCatchesUp() throws Exception
-    {
-        AliasModel aliasModel = new AliasModel();
-        ChannelActivityModel model = model(aliasModel);
-        ChannelActivityTableModel adapter = new ChannelActivityTableModel(model.getConventionalTable());
-        SwingUtilities.invokeAndWait(() -> {});
-        CountDownLatch edtBlocked = new CountDownLatch(1);
-        CountDownLatch releaseEdt = new CountDownLatch(1);
-        SwingUtilities.invokeLater(() -> {
-            edtBlocked.countDown();
-
-            try
-            {
-                releaseEdt.await(5, TimeUnit.SECONDS);
-            }
-            catch(InterruptedException interruptedException)
-            {
-                Thread.currentThread().interrupt();
-            }
-        });
-
-        assertTrue(edtBlocked.await(2, TimeUnit.SECONDS));
-
-        try
-        {
-            model.channelStarted(channel(), List.of(new ChannelMetadata(aliasModel, 1)));
-            assertTrue(model.awaitIdle(2, TimeUnit.SECONDS));
-            assertEquals(1, model.getSnapshotSet().tables().getFirst().rows().size());
-            assertEquals(0, adapter.getRowCount(), "blocked desktop renderer must not block core publication");
-        }
-        finally
-        {
-            releaseEdt.countDown();
-        }
-
-        SwingUtilities.invokeAndWait(() -> {});
-        assertEquals(1, adapter.getRowCount());
-        adapter.close();
-        model.close();
-    }
-
     @Test
     void saturatedIngressDropsWithoutRunningProjectionOnProducer() throws Exception
     {
@@ -227,7 +184,7 @@ class ChannelActivityIsolationTest
     }
 
     @Test
-    void lifecycleCloseUsesReservedCapacityAfterRegularIngressSaturates() throws Exception
+    void lifecycleStopUsesReservedCapacityAfterRegularIngressSaturates() throws Exception
     {
         AliasModel aliasModel = new AliasModel();
         ChannelActivityModel model = new ChannelActivityModel(aliasModel, new NowPlayingPreference(type -> {}),
@@ -257,8 +214,8 @@ class ChannelActivityIsolationTest
             }
         });
         assertTrue(projectionBlocked.await(2, TimeUnit.SECONDS));
-        ChannelActivityTableState trunked = model.getTables().stream()
-            .filter(table -> table.getOwnerChannel() == parent).findFirst().orElseThrow();
+        String trunkedTableId = model.getTables().stream()
+            .filter(table -> table.getOwnerChannel() == parent).findFirst().orElseThrow().getTableId();
 
         try
         {
@@ -277,7 +234,6 @@ class ChannelActivityIsolationTest
 
             model.channelStopped(parent);
             assertTrue(model.getDroppedLifecycleCount() > 0);
-            model.close(trunked);
         }
         finally
         {
@@ -285,10 +241,15 @@ class ChannelActivityIsolationTest
         }
 
         assertTrue(model.awaitIdle(5, TimeUnit.SECONDS));
-        assertEquals(1, model.getTables().size());
         assertEquals(0, model.getTrackedActiveChannelCount());
+
+        DecodeConfigDMR configuration = (DecodeConfigDMR)parent.getDecodeConfiguration();
+        configuration.setChannelMode(DMRChannelMode.CONVENTIONAL);
+        model.channelConfigurationChanged(parent);
+        assertTrue(model.awaitIdle(5, TimeUnit.SECONDS));
+        assertEquals(1, model.getTables().size());
         assertFalse(model.getSnapshotSet().tables().stream()
-            .anyMatch(snapshot -> trunked.getTableId().equals(snapshot.tableId())));
+            .anyMatch(snapshot -> trunkedTableId.equals(snapshot.tableId())));
         model.close();
     }
 
@@ -311,7 +272,7 @@ class ChannelActivityIsolationTest
     @Test
     void publishedSnapshotsAreDetachedFromWorkerState()
     {
-        ChannelActivityTableState state = new ChannelActivityTableState("Conventional", null, false, null);
+        ChannelActivityTableState state = new ChannelActivityTableState("Conventional", null, null);
         ChannelActivityRow row = state.getOrCreate("row", null, ChannelActivityRow.Role.CONVENTIONAL,
             155_000_000L, null);
         state.refresh(row);

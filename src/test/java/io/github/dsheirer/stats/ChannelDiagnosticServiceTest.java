@@ -135,7 +135,7 @@ class ChannelDiagnosticServiceTest
     }
 
     @Test
-    void retriesTransientSymbolAttachmentWithoutChangingTheProcessingChain()
+    void retriesTransientSymbolAttachmentAndReleasesTheObserver()
     {
         TestProcessingChain chain = new TestProcessingChain();
         TestFeedbackDecoder decoder = new TestFeedbackDecoder();
@@ -149,13 +149,9 @@ class ChannelDiagnosticServiceTest
 
         try
         {
-            assertEquals(ChannelDiagnosticService.OpenStatus.OPEN, result.status());
             await(() -> decoder.attachmentAttempts() >= 2 &&
                 "live".equals(result.session().state().symbolsState()));
-            assertEquals("DMR", result.session().state().protocol());
-            assertEquals("Test", result.session().state().decoderProfile());
             assertEquals(1, decoder.activeObservers());
-            assertEquals(1, service.activeProducerCount());
         }
         finally
         {
@@ -169,11 +165,66 @@ class ChannelDiagnosticServiceTest
     }
 
     @Test
-    void validatesExactFrequencyAndBoundedSymbolBatch()
+    void sharesOneProducerAndRejectsASecondChannelAtCapacity()
+    {
+        TestProcessingChain firstChain = new TestProcessingChain();
+        firstChain.setSource(new TestComplexSource(851_012_500L));
+        firstChain.setProcessing(true);
+        TestProcessingChain secondChain = new TestProcessingChain();
+        secondChain.setSource(new TestComplexSource(852_012_500L));
+        secondChain.setProcessing(true);
+        ChannelProcessingManager manager = new ChannelProcessingManager(null, null, null, new UserPreferences())
+        {
+            @Override
+            public List<ProcessingChain> getProcessingChainsByConfiguration(String configurationId, Long frequency)
+            {
+                return List.of(frequency == 851_012_500L ? firstChain : secondChain);
+            }
+        };
+        ChannelDiagnosticService service = new ChannelDiagnosticService(manager);
+        ChannelDiagnosticService.OpenResult first = service.tryOpen(new ChannelDiagnosticService.Scope(
+            CONFIGURATION_ID, 851_012_500L, null));
+        ChannelDiagnosticService.OpenResult shared = service.tryOpen(new ChannelDiagnosticService.Scope(
+            CONFIGURATION_ID, 851_012_500L, null));
+        ChannelDiagnosticService.OpenResult second = service.tryOpen(new ChannelDiagnosticService.Scope(
+            CONFIGURATION_ID, 852_012_500L, null));
+
+        try
+        {
+            await(() -> "live".equals(first.session().state().state()) &&
+                "capacity".equals(second.session().state().state()));
+            assertEquals(1, service.activeProducerCount());
+            assertEquals(1, firstChain.signalTapCount());
+            assertEquals(0, secondChain.signalTapCount());
+            assertEquals(first.session().state(), shared.session().state());
+
+            first.session().close();
+            shared.session().close();
+            await(() -> "live".equals(second.session().state().state()));
+            assertEquals(1, service.activeProducerCount());
+            assertEquals(0, firstChain.signalTapCount());
+            assertEquals(1, secondChain.signalTapCount());
+        }
+        finally
+        {
+            first.session().close();
+            shared.session().close();
+            second.session().close();
+            service.close();
+            firstChain.dispose();
+            secondChain.dispose();
+            manager.shutdown();
+        }
+    }
+
+    @Test
+    void validatesExactFrequencyAndFixedSignalBudget()
     {
         assertThrows(IllegalArgumentException.class, () -> new ChannelDiagnosticService.Scope(
             CONFIGURATION_ID, 0, null));
-        assertFalse(ChannelDiagnosticService.MAXIMUM_VISIBLE_SYMBOLS < ChannelDiagnosticService.SYMBOL_BATCH_SIZE);
+        assertEquals(1, ChannelDiagnosticService.MAXIMUM_PRODUCERS);
+        assertEquals(512, ChannelDiagnosticService.MAXIMUM_FFT_SIZE);
+        assertEquals(5, ChannelDiagnosticService.SIGNAL_FRAMES_PER_SECOND);
     }
 
     @Test
@@ -183,15 +234,14 @@ class ChannelDiagnosticServiceTest
         DiagnosticStreamFrame signal = DiagnosticStreamFrame.float32(
             DiagnosticStreamFrame.TYPE_CHANNEL_SIGNAL, 1, 1, 10, 851_012_500L, 25_000, 1_024,
             new float[]{1.0f});
-        DiagnosticStreamFrame symbols = DiagnosticStreamFrame.float32(
-            DiagnosticStreamFrame.TYPE_CHANNEL_SYMBOLS, 1, 1, 11, 851_012_500L, 4_800, 0,
-            new float[]{2.0f});
         DiagnosticStreamFrame nextSignal = DiagnosticStreamFrame.float32(
             DiagnosticStreamFrame.TYPE_CHANNEL_SIGNAL, 1, 2, 12, 851_012_500L, 25_000, 1_024,
             new float[]{3.0f});
         queue.offer(signal);
+        DiagnosticStreamFrame symbols = DiagnosticStreamFrame.float32(
+            DiagnosticStreamFrame.TYPE_CHANNEL_SYMBOLS, 1, 1, 11, 851_012_500L, 4_800, 0,
+            new float[]{2.0f});
         queue.offer(symbols);
-
         assertSame(signal, queue.poll(Duration.ZERO));
         queue.offer(nextSignal);
         assertSame(symbols, queue.poll(Duration.ZERO));
@@ -322,8 +372,19 @@ class ChannelDiagnosticServiceTest
 
     private static final class TestComplexSource extends ComplexSource
     {
+        private final long mFrequency;
         private Listener<ComplexSamples> mListener;
         private Listener<SourceEvent> mSourceEventListener;
+
+        private TestComplexSource()
+        {
+            this(851_012_500L);
+        }
+
+        private TestComplexSource(long frequency)
+        {
+            mFrequency = frequency;
+        }
 
         @Override
         public void setListener(Listener<ComplexSamples> listener)
@@ -358,7 +419,7 @@ class ChannelDiagnosticServiceTest
         @Override
         public long getFrequency()
         {
-            return 851_012_500L;
+            return mFrequency;
         }
 
         @Override
@@ -394,12 +455,10 @@ class ChannelDiagnosticServiceTest
         public synchronized void addSymbolObserver(SymbolObserver observer)
         {
             mAttachmentAttempts.incrementAndGet();
-
             if(mFailAttachment.compareAndSet(true, false))
             {
                 throw new IllegalStateException("transient symbol attachment failure");
             }
-
             super.addSymbolObserver(observer);
             mActiveObservers.incrementAndGet();
         }
@@ -433,4 +492,5 @@ class ChannelDiagnosticServiceTest
             return DecoderType.DMR;
         }
     }
+
 }

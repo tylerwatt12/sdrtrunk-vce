@@ -32,7 +32,6 @@ public class CallManagementPreference extends Preference implements ICallManagem
 {
     private static final String PREFERENCE_KEY_DETECT_DUPLICATE_TALKGROUP = "duplicate.call.detect.talkgroup";
     private static final String PREFERENCE_KEY_DETECT_DUPLICATE_RADIO = "duplicate.call.detect.radio";
-    private static final String PREFERENCE_KEY_SUPPRESS_DUPLICATE_PLAYBACK = "suppress.duplicate.audio.playback";
     private static final String PREFERENCE_KEY_SUPPRESS_DUPLICATE_RECORDING = "suppress.duplicate.audio.recording";
     private static final String PREFERENCE_KEY_SUPPRESS_DUPLICATE_STREAMING = "suppress.duplicate.audio.streaming";
     private static final String PREFERENCE_KEY_PATCHGROUP_STREAMING = "patchgroup.streaming";
@@ -40,7 +39,6 @@ public class CallManagementPreference extends Preference implements ICallManagem
     private Preferences mPreferences = Preferences.userNodeForPackage(CallManagementPreference.class);
     private Boolean mDuplicateCallDetectionByTalkgroupEnabled;
     private Boolean mDuplicateCallDetectionByRadioEnabled;
-    private Boolean mDuplicatePlaybackSuppressionEnabled;
     private Boolean mDuplicateRecordingSuppressionEnabled;
     private Boolean mDuplicateStreamingSuppressionEnabled;
     private PatchGroupStreamingOption mPatchGroupStreamingOption;
@@ -112,29 +110,6 @@ public class CallManagementPreference extends Preference implements ICallManagem
     {
         mPreferences.putBoolean(PREFERENCE_KEY_DETECT_DUPLICATE_RADIO, enabled);
         mDuplicateCallDetectionByRadioEnabled = enabled;
-        notifyPreferenceUpdated();
-    }
-
-    /**
-     * Preference for suppressig playback of duplicate calls.
-     */
-    public boolean isDuplicatePlaybackSuppressionEnabled()
-    {
-        if(mDuplicatePlaybackSuppressionEnabled == null)
-        {
-            mDuplicatePlaybackSuppressionEnabled = mPreferences.getBoolean(PREFERENCE_KEY_SUPPRESS_DUPLICATE_PLAYBACK, true);
-        }
-
-        return mDuplicatePlaybackSuppressionEnabled;
-    }
-
-    /**
-     * Sets the preference for suppressing playback of duplicate calls.
-     */
-    public void setDuplicatePlaybackSuppressionEnabled(boolean enabled)
-    {
-        mPreferences.putBoolean(PREFERENCE_KEY_SUPPRESS_DUPLICATE_PLAYBACK, enabled);
-        mDuplicatePlaybackSuppressionEnabled = enabled;
         notifyPreferenceUpdated();
     }
 

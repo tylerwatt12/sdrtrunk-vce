@@ -21,7 +21,6 @@ package io.github.dsheirer.alias;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
-import io.github.dsheirer.alias.id.priority.Priority;
 import io.github.dsheirer.alias.id.talkgroup.StreamAsTalkgroup;
 import java.awt.Color;
 import java.util.Collection;
@@ -57,7 +56,6 @@ public class Alias
     private final BooleanProperty mStreamable = new SimpleBooleanProperty();
     private final BooleanProperty mOverlap = new SimpleBooleanProperty();
     private final IntegerProperty mColor = new SimpleIntegerProperty();
-    private final IntegerProperty mPriority = new SimpleIntegerProperty(Priority.DEFAULT_PRIORITY);
     private final StringProperty mAliasListName = new SimpleStringProperty();
     private final StringProperty mDescription = new SimpleStringProperty();
     private final StringProperty mGroup = new SimpleStringProperty();
@@ -157,12 +155,6 @@ public class Alias
         }
 
         mMatchIdentifier.set(identifier);
-    }
-
-    @JsonIgnore
-    public IntegerProperty priorityProperty()
-    {
-        return mPriority;
     }
 
     @JsonIgnore
@@ -342,30 +334,6 @@ public class Alias
     }
 
     @JsonIgnore
-    public int getPlaybackPriority()
-    {
-        return mPriority.get();
-    }
-
-    public boolean hasCallPriority()
-    {
-        return getPlaybackPriority() != Priority.DEFAULT_PRIORITY;
-    }
-
-    public void setCallPriority(int priority)
-    {
-        if(priority == Priority.DO_NOT_MONITOR ||
-            (Priority.MIN_PRIORITY <= priority && priority < Priority.MAX_PRIORITY))
-        {
-            mPriority.set(priority);
-        }
-        else
-        {
-            mPriority.set(Priority.DEFAULT_PRIORITY);
-        }
-    }
-
-    @JsonIgnore
     public boolean isRecordable()
     {
         return mRecordable.get();
@@ -444,7 +412,7 @@ public class Alias
     {
         return alias -> new Observable[] {alias.recordableProperty(), alias.streamableProperty(),
             alias.colorProperty(), alias.aliasListNameProperty(), alias.descriptionProperty(), alias.groupProperty(),
-            alias.iconNameProperty(), alias.nameProperty(), alias.overlapProperty(), alias.priorityProperty(),
+            alias.iconNameProperty(), alias.nameProperty(), alias.overlapProperty(),
             alias.streamTalkgroupAliasProperty(), alias.matchIdentifierProperty(), alias.broadcastChannels()};
     }
 }

@@ -54,6 +54,6 @@ class CallOutputDeduplicatorTest
     private static AudioCallSnapshot snapshot(AudioCallId callId, AudioCallId linkedCallId)
     {
         return new AudioCallSnapshot(callId, linkedCallId, null, new MutableIdentifierCollection(), Set.of(),
-            1_000, 2_000, 1, 1, 1_000, 2_000, false, true, false, true, 100, false);
+            1_000, 2_000, 1, 1, 1_000, 2_000, false, true, false, true, false);
     }
 }

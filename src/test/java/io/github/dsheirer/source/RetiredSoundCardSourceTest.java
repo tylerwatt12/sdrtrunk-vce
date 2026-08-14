@@ -12,8 +12,6 @@
 package io.github.dsheirer.source;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -55,18 +53,21 @@ class RetiredSoundCardSourceTest
     }
 
     @Test
-    void receiverCallPlaybackAndStereoOutputRemainPackaged()
+    void receiverCallPlaybackAndStereoOutputAreNotPackaged()
     {
         for(String playbackClass : new String[]{
+            "io.github.dsheirer.audio.IAudioController",
             "io.github.dsheirer.audio.playback.AudioPlaybackManager",
+            "io.github.dsheirer.audio.playback.AudioPanel",
             "io.github.dsheirer.audio.playback.AudioOutput",
+            "io.github.dsheirer.audio.playback.ManagedPlayableAudioCall",
             "io.github.dsheirer.preference.playback.PlaybackPreference"})
         {
-            assertDoesNotThrow(() -> Class.forName(playbackClass), playbackClass);
+            assertThrows(ClassNotFoundException.class, () -> Class.forName(playbackClass), playbackClass);
         }
 
-        assertEquals(2, AudioFormats.PCM_SIGNED_8000_HZ_16BITS_STEREO.getChannels());
-        assertEquals(4, AudioFormats.PCM_SIGNED_8000_HZ_16BITS_STEREO.getFrameSize());
+        assertThrows(NoSuchFieldException.class,
+            () -> AudioFormats.class.getField("PCM_SIGNED_8000_HZ_16BITS_STEREO"));
     }
 
     @Test

@@ -31,7 +31,6 @@ import io.github.dsheirer.gui.configuration.alias.AliasMutationUi;
 import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.module.decode.DecoderType;
-import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.rrapi.type.System;
 import io.github.dsheirer.rrapi.type.Talkgroup;
 import io.github.dsheirer.rrapi.type.TalkgroupCategory;
@@ -60,7 +59,6 @@ import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
-import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
@@ -84,7 +82,6 @@ public class SystemTalkgroupSelectionEditor extends GridPane
 {
 
     private final TalkgroupCategory ALL_TALKGROUPS = new TalkgroupCategory();
-    private UserPreferences mUserPreferences;
     private ConfigurationManager mConfigurationManager;
     private TableView<AliasedTalkgroup> mTalkgroupTableView;
     private ComboBox<TalkgroupCategory> mTalkgroupCategoryComboBox;
@@ -105,14 +102,12 @@ public class SystemTalkgroupSelectionEditor extends GridPane
     private Label mImportResultLabel;
     private Label mPlaceholderLabel;
     private ProgressIndicator mProgressIndicator;
-    private CheckBox mEncryptedAsDoNotMonitorCheckBox;
 
-    public SystemTalkgroupSelectionEditor(UserPreferences userPreferences, ConfigurationManager configurationManager)
+    public SystemTalkgroupSelectionEditor(ConfigurationManager configurationManager)
     {
         //Register to receive flash alias box requests
         MyEventBus.getGlobalEventBus().register(this);
 
-        mUserPreferences = userPreferences;
         mConfigurationManager = configurationManager;
 
         ALL_TALKGROUPS.setName("(All Talkgroups)");
@@ -136,10 +131,6 @@ public class SystemTalkgroupSelectionEditor extends GridPane
         listBox.getChildren().addAll(importLabel, getAliasListNameComboBox());
         GridPane.setConstraints(listBox, 0, row);
         getChildren().add(listBox);
-
-        GridPane.setConstraints(getEncryptedAsDoNotMonitorCheckBox(), 1, row);
-        GridPane.setHalignment(getEncryptedAsDoNotMonitorCheckBox(), HPos.CENTER);
-        getChildren().add(getEncryptedAsDoNotMonitorCheckBox());
 
         HBox searchBox = new HBox();
         searchBox.setSpacing(5);
@@ -199,22 +190,6 @@ public class SystemTalkgroupSelectionEditor extends GridPane
     {
         clear();
         setLoading(true);
-    }
-
-    private CheckBox getEncryptedAsDoNotMonitorCheckBox()
-    {
-        if(mEncryptedAsDoNotMonitorCheckBox == null)
-        {
-            mEncryptedAsDoNotMonitorCheckBox = new CheckBox("Set Encrypted Talkgroups To Muted");
-            mEncryptedAsDoNotMonitorCheckBox.setDisable(true);
-            mEncryptedAsDoNotMonitorCheckBox.selectedProperty().set(mUserPreferences.getRadioReferencePreference()
-                .isEncryptedTalkgroupDoNotMonitor());
-            mEncryptedAsDoNotMonitorCheckBox.selectedProperty()
-                .addListener((observable, oldValue, newValue) -> mUserPreferences.getRadioReferencePreference()
-                    .setEncryptedTalkgroupDoNotMonitor(mEncryptedAsDoNotMonitorCheckBox.isSelected()));
-        }
-
-        return mEncryptedAsDoNotMonitorCheckBox;
     }
 
     private void setLoading(boolean loading)
@@ -291,7 +266,6 @@ public class SystemTalkgroupSelectionEditor extends GridPane
             !getCurrentSystem().getName().isBlank();
         getAliasListNameComboBox().setDisable(!supported || !hasSystemName);
         updateImportButtonState();
-        getEncryptedAsDoNotMonitorCheckBox().setDisable(!supported);
         setLoading(false);
     }
 
@@ -510,9 +484,6 @@ public class SystemTalkgroupSelectionEditor extends GridPane
             String group = (talkgroupCategory != null ? talkgroupCategory.getName() : null);
             Alias alias = getRadioReferenceDecoder().createAlias(talkgroup, getCurrentSystem(),
                 definition, group);
-
-            RadioReferenceAliasPlaybackPolicy.apply(alias, talkgroup,
-                getEncryptedAsDoNotMonitorCheckBox().selectedProperty().get());
 
             createdAliases.add(alias);
         }
@@ -774,7 +745,6 @@ public class SystemTalkgroupSelectionEditor extends GridPane
         getTalkgroupEditor().setTalkgroup(selected != null ? selected.getTalkgroup() : null,
             getCurrentSystem(), getRadioReferenceDecoder(), selected != null ? selected.getAlias() : null,
             aliasListName, talkgroupCategory,
-            getEncryptedAsDoNotMonitorCheckBox().selectedProperty().get(),
             selected != null ? selected.getImportStatus() :
                 (isCurrentSystemSupported() ? ImportStatus.NOT_PRESENT : ImportStatus.NOT_COMPATIBLE));
     }

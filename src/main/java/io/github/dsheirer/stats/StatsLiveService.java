@@ -370,7 +370,6 @@ final class StatsLiveService implements AutoCloseable
         table.put("channel_name", boundedText(snapshot.channelName(), MAXIMUM_LIVE_TEXT_LENGTH));
         putText(table, "configuration_id", snapshot.configurationId(), MAXIMUM_LIVE_TEXT_LENGTH);
         putText(table, "guid", snapshot.guid(), MAXIMUM_LIVE_TEXT_LENGTH);
-        table.put("closeable", snapshot.closeable());
         table.put("control_active", snapshot.controlActive());
         table.put("identifiers", snapshot.identifiers().stream().limit(MAXIMUM_LIVE_IDENTIFIERS)
             .map(StatsLiveService::activityIdentifier).toList());

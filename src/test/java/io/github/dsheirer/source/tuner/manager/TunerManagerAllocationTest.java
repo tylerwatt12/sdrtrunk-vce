@@ -34,6 +34,8 @@ import java.util.SortedSet;
 import java.util.TreeSet;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
@@ -138,7 +140,8 @@ class TunerManagerAllocationTest
         assertTrue(sourceManager.mAllocationEntered.await(2, TimeUnit.SECONDS));
         disable.start();
         assertTrue(disableStarted.await(2, TimeUnit.SECONDS));
-        assertTrue(awaitBlocked(disable), "Disable must wait for the in-flight allocation lifecycle boundary");
+        assertTrue(awaitLifecycleWait(disable),
+            "Disable must wait for the in-flight allocation lifecycle boundary");
         assertEquals(1, sourceManager.mStopEntered.getCount(),
             "Tuner teardown must not start while allocation is active");
 
@@ -159,13 +162,83 @@ class TunerManagerAllocationTest
             null, "after-disable"));
     }
 
-    private static boolean awaitBlocked(Thread thread) throws InterruptedException
+    @Test
+    void allocationDoesNotWaitBehindDisableHardwareTeardown() throws Exception
+    {
+        TrackingTunerController controller = createController(857_000_000);
+        BlockingChannelSourceManager sourceManager = new BlockingChannelSourceManager();
+        CoordinatedDiscoveredTuner discoveredTuner = new CoordinatedDiscoveredTuner(controller, sourceManager);
+        TunerManager tunerManager = new TunerManager(null);
+        tunerManager.getDiscoveredTunerModel().addDiscoveredTuner(discoveredTuner);
+        AtomicReference<Source> allocationResult = new AtomicReference<>();
+        AtomicReference<Throwable> allocationFailure = new AtomicReference<>();
+        AtomicReference<Throwable> disableFailure = new AtomicReference<>();
+        CountDownLatch allocationReturned = new CountDownLatch(1);
+        discoveredTuner.coordinateNextAllocation();
+
+        Thread allocation = new Thread(() -> {
+            try
+            {
+                allocationResult.set(tunerManager.getSource(new TunerChannel(857_000_000, 12_500),
+                    CHANNEL_SPECIFICATION, null, "disable-reverse-overlap"));
+            }
+            catch(Throwable t)
+            {
+                allocationFailure.set(t);
+            }
+            finally
+            {
+                allocationReturned.countDown();
+            }
+        }, "test decoder-side tuner allocation");
+        Thread disable = new Thread(() -> {
+            try
+            {
+                discoveredTuner.setEnabled(false);
+            }
+            catch(Throwable t)
+            {
+                disableFailure.set(t);
+            }
+        }, "test tuner disable teardown");
+
+        try
+        {
+            allocation.start();
+            assertTrue(discoveredTuner.mBeforeLifecycleReservation.await(2, TimeUnit.SECONDS));
+            disable.start();
+            assertTrue(sourceManager.mStopEntered.await(2, TimeUnit.SECONDS));
+
+            discoveredTuner.mContinueAllocation.countDown();
+            assertTrue(allocationReturned.await(2, TimeUnit.SECONDS),
+                "Decoder-side allocation must fail fast while tuner hardware teardown owns the lifecycle");
+            assertNull(allocationResult.get());
+            assertNull(allocationFailure.get());
+            assertEquals(1, sourceManager.mAllocationEntered.getCount(),
+                "A busy tuner lifecycle must be rejected before channel-source allocation");
+            assertTrue(disable.isAlive(), "Hardware teardown should remain blocked until the test releases it");
+        }
+        finally
+        {
+            discoveredTuner.mContinueAllocation.countDown();
+            sourceManager.mReleaseAllocation.countDown();
+            sourceManager.mReleaseStop.countDown();
+            allocation.join(2_000);
+            disable.join(2_000);
+        }
+
+        assertFalse(allocation.isAlive());
+        assertFalse(disable.isAlive());
+        assertNull(disableFailure.get());
+    }
+
+    private static boolean awaitLifecycleWait(Thread thread) throws InterruptedException
     {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
 
         while(System.nanoTime() < deadline)
         {
-            if(thread.getState() == Thread.State.BLOCKED)
+            if(thread.getState() == Thread.State.BLOCKED || thread.getState() == Thread.State.WAITING)
             {
                 return true;
             }
@@ -273,6 +346,42 @@ class TunerManagerAllocationTest
                     throw new IllegalStateException("Unable to start allocation test tuner", se);
                 }
             }
+        }
+    }
+
+    private static class CoordinatedDiscoveredTuner extends TestDiscoveredTuner
+    {
+        private final AtomicBoolean mCoordinateAllocation = new AtomicBoolean();
+        private final AtomicInteger mHasTunerChecks = new AtomicInteger();
+        private final CountDownLatch mBeforeLifecycleReservation = new CountDownLatch(1);
+        private final CountDownLatch mContinueAllocation = new CountDownLatch(1);
+
+        private CoordinatedDiscoveredTuner(TrackingTunerController controller, ChannelSourceManager sourceManager)
+        {
+            super(controller, sourceManager);
+        }
+
+        private void coordinateNextAllocation()
+        {
+            mHasTunerChecks.set(0);
+            mCoordinateAllocation.set(true);
+        }
+
+        @Override
+        public boolean hasTuner()
+        {
+            boolean hasTuner = super.hasTuner();
+
+            //The first check builds TunerManager's available-tuner snapshot.  Pause on the second check, immediately
+            //before it reserves the lifecycle, so disable can begin hardware teardown in that exact race window.
+            if(mCoordinateAllocation != null && mCoordinateAllocation.get() && mHasTunerChecks.incrementAndGet() == 2 &&
+                mCoordinateAllocation.compareAndSet(true, false))
+            {
+                mBeforeLifecycleReservation.countDown();
+                BlockingChannelSourceManager.await(mContinueAllocation);
+            }
+
+            return hasTuner;
         }
     }
 

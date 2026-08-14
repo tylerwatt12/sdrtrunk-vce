@@ -41,10 +41,14 @@ import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifi
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.protocol.Protocol;
+import io.github.dsheirer.record.AudioCallRecorder;
+import io.github.dsheirer.record.RecordFormat;
 import io.github.dsheirer.sample.Listener;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -53,12 +57,20 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -72,6 +84,9 @@ public class AudioStreamingManagerTest
     private static final int TALKGROUP_2 = 200;
     private static final int TALKGROUP_3 = 300;
     private static final int RADIO_1 = 9999;
+
+    @TempDir
+    Path mTemporaryFolder;
 
     @Test
     public void testPatchGroupStreamingAsPatchGroup()
@@ -224,6 +239,193 @@ public class AudioStreamingManagerTest
         }
     }
 
+    @Test
+    void completedCallHandoffIsBoundedByCallCountAndStopReleasesReservations()
+    {
+        UserPreferences preferences = new UserPreferences();
+        ManualStreamingScheduler scheduler = new ManualStreamingScheduler();
+        AudioStreamingManager manager = new AudioStreamingManager(recording -> {}, BroadcastFormat.MP3,
+            preferences, null, scheduler, (call, path, userPreferences, identifiers) ->
+                AudioCallRecorder.write(call, path, RecordFormat.MP3, userPreferences, identifiers));
+        CompletedAudioCall call = getCompletedAudioCall();
+        long sourceBytes = 100L * 500L * Float.BYTES;
+
+        try
+        {
+            manager.start();
+
+            assertTimeoutPreemptively(Duration.ofSeconds(2), () -> {
+                for(int index = 0; index < AudioStreamingManager.MAXIMUM_QUEUED_CALLS + 2; index++)
+                {
+                    manager.receive(call);
+                }
+            }, "A saturated streaming handoff must not wait for its consumer");
+
+            AudioStreamingManager.StreamingQueueStatus status = manager.getQueueStatus();
+            assertEquals(AudioStreamingManager.MAXIMUM_QUEUED_CALLS, status.retainedCalls());
+            assertEquals(AudioStreamingManager.MAXIMUM_QUEUED_CALLS * sourceBytes,
+                status.retainedSourceBytes());
+            assertEquals(2, status.droppedCalls());
+
+            manager.stop();
+            status = manager.getQueueStatus();
+            assertEquals(0, status.retainedCalls());
+            assertEquals(0, status.retainedSourceBytes());
+            assertEquals(AudioStreamingManager.MAXIMUM_QUEUED_CALLS + 2L, status.droppedCalls());
+            assertFalse(status.acceptingCalls());
+        }
+        finally
+        {
+            manager.stop();
+            scheduler.shutdownNow();
+        }
+    }
+
+    @Test
+    void completedCallHandoffIsBoundedByRetainedSourceBytes()
+    {
+        UserPreferences preferences = new UserPreferences();
+        ManualStreamingScheduler scheduler = new ManualStreamingScheduler();
+        AudioStreamingManager manager = new AudioStreamingManager(recording -> {}, BroadcastFormat.MP3,
+            preferences, null, scheduler, (call, path, userPreferences, identifiers) ->
+                AudioCallRecorder.write(call, path, RecordFormat.MP3, userPreferences, identifiers));
+        float[] sharedEightMiBBuffer = new float[2 * 1024 * 1024];
+        CompletedAudioCall call = withAudioBuffers(List.of(sharedEightMiBBuffer));
+
+        try
+        {
+            manager.start();
+
+            assertTimeoutPreemptively(Duration.ofSeconds(2), () -> {
+                for(int index = 0; index < 40; index++)
+                {
+                    manager.receive(call);
+                }
+            }, "The retained-audio limit must reject without waiting");
+
+            AudioStreamingManager.StreamingQueueStatus status = manager.getQueueStatus();
+            assertEquals(32, status.retainedCalls());
+            assertEquals(AudioStreamingManager.MAXIMUM_QUEUED_SOURCE_BYTES,
+                status.retainedSourceBytes());
+            assertEquals(8, status.droppedCalls());
+
+            manager.stop();
+            assertEquals(0, manager.getQueueStatus().retainedCalls());
+            assertEquals(0, manager.getQueueStatus().retainedSourceBytes());
+        }
+        finally
+        {
+            manager.stop();
+            scheduler.shutdownNow();
+        }
+    }
+
+    @Test
+    void successfulAndFailedDeliveriesReleaseReservations() throws Exception
+    {
+        UserPreferences preferences = new UserPreferences();
+        Path originalDirectory = preferences.getDirectoryPreference().getDirectoryStreaming();
+        ManualStreamingScheduler scheduler = new ManualStreamingScheduler();
+        AtomicInteger delivered = new AtomicInteger();
+        AudioStreamingManager successful = new AudioStreamingManager(recording -> delivered.incrementAndGet(),
+            BroadcastFormat.MP3, preferences, null, scheduler,
+            (call, path, userPreferences, identifiers) ->
+                Files.write(path, new byte[]{1}, StandardOpenOption.CREATE_NEW));
+        AudioStreamingManager failed = new AudioStreamingManager(recording -> {}, BroadcastFormat.MP3,
+            preferences, null, scheduler, (call, path, userPreferences, identifiers) -> {
+                throw new IOException("expected test failure");
+            });
+
+        try
+        {
+            preferences.getDirectoryPreference().setDirectoryStreaming(mTemporaryFolder);
+            successful.start();
+            successful.receive(getCompletedAudioCall());
+            successful.new AudioSegmentProcessor().run();
+            assertEquals(1, delivered.get());
+            assertEquals(0, successful.getQueueStatus().retainedCalls());
+            assertEquals(0, successful.getQueueStatus().retainedSourceBytes());
+            assertEquals(0, successful.getQueueStatus().failedCalls());
+
+            failed.start();
+            failed.receive(getCompletedAudioCall());
+            failed.new AudioSegmentProcessor().run();
+            assertEquals(0, failed.getQueueStatus().retainedCalls());
+            assertEquals(0, failed.getQueueStatus().retainedSourceBytes());
+            assertEquals(1, failed.getQueueStatus().failedCalls());
+        }
+        finally
+        {
+            successful.stop();
+            failed.stop();
+            scheduler.shutdownNow();
+            preferences.getDirectoryPreference().setDirectoryStreaming(originalDirectory);
+        }
+    }
+
+    @Test
+    void stopWaitsForInFlightWriterAndLeavesNoReservation() throws Exception
+    {
+        UserPreferences preferences = new UserPreferences();
+        Path originalDirectory = preferences.getDirectoryPreference().getDirectoryStreaming();
+        ManualStreamingScheduler scheduler = new ManualStreamingScheduler();
+        CountDownLatch writerEntered = new CountDownLatch(1);
+        CountDownLatch releaseWriter = new CountDownLatch(1);
+        AtomicInteger writes = new AtomicInteger();
+        AudioStreamingManager manager = new AudioStreamingManager(recording -> {}, BroadcastFormat.MP3,
+            preferences, null, scheduler, (call, path, userPreferences, identifiers) -> {
+                if(writes.getAndIncrement() == 0)
+                {
+                    writerEntered.countDown();
+
+                    try
+                    {
+                        if(!releaseWriter.await(2, TimeUnit.SECONDS))
+                        {
+                            throw new IOException("Timed out waiting to release the streaming writer");
+                        }
+                    }
+                    catch(InterruptedException exception)
+                    {
+                        Thread.currentThread().interrupt();
+                        throw new IOException("Interrupted test writer", exception);
+                    }
+                }
+
+                Files.write(path, new byte[]{1}, StandardOpenOption.CREATE_NEW);
+            });
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+
+        try
+        {
+            preferences.getDirectoryPreference().setDirectoryStreaming(mTemporaryFolder);
+            manager.start();
+            manager.receive(getCompletedAudioCall());
+            manager.receive(getCompletedAudioCall());
+            Future<?> processor = executor.submit(manager.new AudioSegmentProcessor());
+            assertTrue(writerEntered.await(1, TimeUnit.SECONDS));
+            Future<?> stopping = executor.submit(manager::stop);
+            assertTrue(awaitWaitingDrain(manager, 1, TimeUnit.SECONDS));
+            assertFalse(stopping.isDone(), "Stop must wait for an in-flight streaming writer");
+            releaseWriter.countDown();
+            processor.get(2, TimeUnit.SECONDS);
+            stopping.get(2, TimeUnit.SECONDS);
+
+            assertEquals(2, writes.get());
+            assertEquals(0, manager.getQueueStatus().retainedCalls());
+            assertEquals(0, manager.getQueueStatus().retainedSourceBytes());
+            assertFalse(manager.getQueueStatus().acceptingCalls());
+        }
+        finally
+        {
+            releaseWriter.countDown();
+            manager.stop();
+            executor.shutdownNow();
+            scheduler.shutdownNow();
+            preferences.getDirectoryPreference().setDirectoryStreaming(originalDirectory);
+        }
+    }
+
     /**
      * Cleanup any generated streaming recordings.
      * @param streamingDirectory
@@ -250,6 +452,30 @@ public class AudioStreamingManagerTest
                 e.printStackTrace();
             }
         }
+    }
+
+    private static CompletedAudioCall withAudioBuffers(List<float[]> audioBuffers)
+    {
+        CompletedAudioCall template = getCompletedAudioCall();
+        return new CompletedAudioCall(template.snapshot(), audioBuffers);
+    }
+
+    private static boolean awaitWaitingDrain(AudioStreamingManager manager, long timeout, TimeUnit unit)
+        throws InterruptedException
+    {
+        long deadline = System.nanoTime() + unit.toNanos(timeout);
+
+        while(System.nanoTime() < deadline)
+        {
+            if(manager.getQueueStatus().waitingDrains() > 0)
+            {
+                return true;
+            }
+
+            Thread.sleep(10);
+        }
+
+        return manager.getQueueStatus().waitingDrains() > 0;
     }
 
     private static CompletedAudioCall getCompletedAudioCall()
@@ -288,7 +514,6 @@ public class AudioStreamingManagerTest
             true,
             false,
             false,
-            100,
             false);
         return new CompletedAudioCall(snapshot, audioBuffers);
     }
@@ -328,7 +553,7 @@ public class AudioStreamingManagerTest
         long now = System.currentTimeMillis();
         AudioCallSnapshot snapshot = new AudioCallSnapshot(
             new AudioCallId(2L, 1L, TimeslotMessage.TIMESLOT_0), null, aliasList, identifierCollection,
-            frozenRoutes, now, now, 1, 1, now, now, false, true, false, false, 100, false);
+            frozenRoutes, now, now, 1, 1, now, now, false, true, false, false, false);
         return new RoutingFixture(new CompletedAudioCall(snapshot, audioBuffers), firstPatchedAlias);
     }
 
@@ -386,5 +611,20 @@ public class AudioStreamingManagerTest
 
     private record RoutingFixture(CompletedAudioCall call, Alias firstPatchedAlias)
     {
+    }
+
+    private static class ManualStreamingScheduler extends ScheduledThreadPoolExecutor
+    {
+        private ManualStreamingScheduler()
+        {
+            super(1);
+        }
+
+        @Override
+        public ScheduledFuture<?> scheduleAtFixedRate(Runnable command, long initialDelay, long period,
+                                                       TimeUnit unit)
+        {
+            return super.scheduleAtFixedRate(command, 1, 1, TimeUnit.DAYS);
+        }
     }
 }

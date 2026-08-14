@@ -37,7 +37,6 @@ import io.github.dsheirer.module.Module;
 import io.github.dsheirer.sample.Broadcaster;
 import io.github.dsheirer.sample.Listener;
 import java.util.Collection;
-import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicLong;
@@ -50,6 +49,7 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
 {
     public static final long DEFAULT_SEGMENT_AUDIO_SAMPLE_LENGTH = 60L * 8000; // 1 minute @ 8kHz
     public static final int DEFAULT_TIMESLOT = 0;
+    private static final int AUDIO_FRAME_SNAPSHOT_INTERVAL = 50;
     private static final AtomicLong NEXT_PRODUCER_ID =
         new AtomicLong(ThreadLocalRandom.current().nextLong());
     private final int mMaxSegmentAudioSampleLength;
@@ -67,6 +67,7 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
     private AudioCallId mPreviousAudioCallId;
     private boolean mLinkNextAudioCallToPrevious;
     private MutableAudioCallBuilder mCurrentAudioCall;
+    private AudioCallSnapshot mLastPublishedAudioCallSnapshot;
 
     /**
      * Constructs an abstract audio module
@@ -122,6 +123,7 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
                 mCurrentAudioCall.complete();
                 emitAudioCallEvent(AudioCallEventType.CALL_COMPLETED, null, mLinkNextAudioCallToPrevious);
                 mCurrentAudioCall = null;
+                mLastPublishedAudioCallSnapshot = null;
                 mPreviousAudioCallId = mCurrentAudioCallId;
                 mCurrentAudioCallId = null;
                 mCurrentLinkedAudioCallId = null;
@@ -145,6 +147,7 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
             if(mCurrentAudioCall == null)
             {
                 mCurrentAudioCall = new MutableAudioCallBuilder(mAliasList, getTimeslot());
+                mLastPublishedAudioCallSnapshot = null;
                 mCurrentAudioCallId = new AudioCallId(mProducerId, mNextAudioCallSequence++, getTimeslot());
                 mCurrentLinkedAudioCallId = mLinkNextAudioCallToPrevious ? mPreviousAudioCallId : null;
                 mLinkNextAudioCallToPrevious = false;
@@ -198,6 +201,7 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
         {
             MutableAudioCallBuilder audioCall = getAudioCall();
             audioCall.begin();
+            mLastPublishedAudioCallSnapshot = null;
             emitAudioCallEvent(AudioCallEventType.ACTIVITY, null);
             return audioCall;
         }
@@ -319,6 +323,33 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
         return createSnapshot(mCurrentAudioCall, mCurrentAudioCallId, mCurrentLinkedAudioCallId);
     }
 
+    /**
+     * A voice decoder can publish fifty audio frames per second.  The identifiers, Alias actions, and broadcast
+     * destinations normally do not change between those frames, so rebuilding those collections on every decoder
+     * callback adds avoidable work to the real-time path.  Structural changes always receive a fresh snapshot; audio
+     * diagnostics refresh on the first frame and once per second.  Other frames reuse the latest immutable snapshot,
+     * while the terminal event captures the complete final state.
+     */
+    private AudioCallSnapshot getSnapshotForEvent(AudioCallEventType eventType)
+    {
+        boolean refresh = switch(eventType)
+        {
+            case CALL_CREATED, METADATA_UPDATED, BURST_STARTED, BURST_ENDED, DUPLICATE_UPDATED,
+                CALL_COMPLETED -> true;
+            case AUDIO_FRAME -> mCurrentAudioCall != null &&
+                (mCurrentAudioCall.getAudioBufferCount() == 1 ||
+                    mCurrentAudioCall.getAudioBufferCount() % AUDIO_FRAME_SNAPSHOT_INTERVAL == 0);
+            case ACTIVITY -> false;
+        };
+
+        if(refresh || mLastPublishedAudioCallSnapshot == null)
+        {
+            mLastPublishedAudioCallSnapshot = getCurrentAudioCallSnapshot();
+        }
+
+        return mLastPublishedAudioCallSnapshot;
+    }
+
     private AudioCallSnapshot createSnapshot(MutableAudioCallBuilder audioCall, AudioCallId callId, AudioCallId linkedCallId)
     {
         if(audioCall == null || callId == null)
@@ -329,13 +360,13 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
         IdentifierCollection identifierCollection =
             new IdentifierCollection(audioCall.getIdentifierCollection().getIdentifiers());
         identifierCollection.setTimeslot(callId.timeslot());
-        Set<BroadcastChannel> broadcastChannels = new HashSet<>(audioCall.getBroadcastChannels());
+        Set<BroadcastChannel> broadcastChannels = Set.copyOf(audioCall.getBroadcastChannels());
 
         return new AudioCallSnapshot(callId, linkedCallId, mAliasList, identifierCollection, broadcastChannels,
             audioCall.getStartTimestamp(), audioCall.getLastActivityTimestamp(), audioCall.getBurstCount(),
             audioCall.getBurstGeneration(), audioCall.getLastBurstStartTimestamp(),
             audioCall.getLastBurstEndTimestamp(), audioCall.isBurstActive(), audioCall.isComplete(), audioCall.isEncrypted(),
-            audioCall.isRecordAudio(), audioCall.getMonitorPriority(), audioCall.isDuplicate(),
+            audioCall.isRecordAudio(), audioCall.isDuplicate(),
             audioCall.getRecordingMetadata(), audioCall.getVoiceCallQuality());
     }
 
@@ -351,12 +382,12 @@ public abstract class AbstractAudioModule extends Module implements IAudioCallPr
             return;
         }
 
-        AudioCallSnapshot snapshot = getCurrentAudioCallSnapshot();
+        AudioCallSnapshot snapshot = getSnapshotForEvent(eventType);
 
         if(snapshot != null)
         {
-            mAudioCallEventListener.receive(new AudioCallEvent(eventType, snapshot, System.currentTimeMillis(),
-                audioFrame, continuationExpected));
+            mAudioCallEventListener.receive(new AudioCallEvent(eventType, snapshot, audioFrame,
+                continuationExpected));
         }
     }
 

@@ -50,7 +50,6 @@ class AliasOneToOneTest
         original.setDescription("Primary dispatch");
         original.setMatchIdentifier(new Talkgroup(Protocol.APCO25, 100));
         original.setRecordable(true);
-        original.setCallPriority(4);
         original.addBroadcastChannel("Stream A");
         original.setStreamTalkgroupAlias(new StreamAsTalkgroup(900));
 
@@ -63,7 +62,6 @@ class AliasOneToOneTest
         assertNotSame(original.getMatchIdentifier(), copy.getMatchIdentifier());
         assertEquals(100, ((Talkgroup)copy.getMatchIdentifier()).getValue());
         assertTrue(copy.isRecordable());
-        assertEquals(4, copy.getPlaybackPriority());
         assertTrue(copy.hasBroadcastChannel("Stream A"));
         assertEquals(900, copy.getStreamTalkgroupAlias().getValue());
     }

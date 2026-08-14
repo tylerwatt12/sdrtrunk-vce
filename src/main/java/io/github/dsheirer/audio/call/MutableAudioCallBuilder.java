@@ -23,7 +23,6 @@ import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.UnmatchedTalkgroupPolicy;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
-import io.github.dsheirer.alias.id.priority.Priority;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.IdentifierUpdateNotification;
@@ -62,7 +61,6 @@ public class MutableAudioCallBuilder implements Listener<IdentifierUpdateNotific
     private boolean mEncrypted;
     private boolean mRecordAudioOverride;
     private boolean mRecordAudio;
-    private int mMonitorPriority = Priority.DEFAULT_PRIORITY;
     private int mBurstCount;
     private int mAudioBufferCount;
     private long mDecodedVoiceFrameCount;
@@ -147,11 +145,6 @@ public class MutableAudioCallBuilder implements Listener<IdentifierUpdateNotific
     {
         mRecordAudioOverride = recordAudio;
         recomputeAliasActions();
-    }
-
-    public int getMonitorPriority()
-    {
-        return mMonitorPriority;
     }
 
     public Set<BroadcastChannel> getBroadcastChannels()
@@ -349,7 +342,6 @@ public class MutableAudioCallBuilder implements Listener<IdentifierUpdateNotific
     private void recomputeAliasActions()
     {
         boolean recordAudio = mRecordAudioOverride;
-        int monitorPriority = Priority.DEFAULT_PRIORITY;
         Set<BroadcastChannel> broadcastChannels = new HashSet<>();
 
         for(Identifier<?> identifier: mIdentifierCollection.getIdentifiers())
@@ -365,12 +357,6 @@ public class MutableAudioCallBuilder implements Listener<IdentifierUpdateNotific
 
                 broadcastChannels.addAll(alias.getBroadcastChannels());
 
-                int playbackPriority = alias.getPlaybackPriority();
-
-                if(playbackPriority < monitorPriority)
-                {
-                    monitorPriority = playbackPriority;
-                }
             }
 
             UnmatchedTalkgroupPolicy unmatchedPolicy = mAliasList.getUnmatchedTalkgroupPolicy(identifier);
@@ -387,15 +373,10 @@ public class MutableAudioCallBuilder implements Listener<IdentifierUpdateNotific
                     broadcastChannels.add(new BroadcastChannel(destination));
                 }
 
-                if(unmatchedPolicy.getPlaybackPriority() < monitorPriority)
-                {
-                    monitorPriority = unmatchedPolicy.getPlaybackPriority();
-                }
             }
         }
 
         mRecordAudio = recordAudio;
-        mMonitorPriority = monitorPriority;
         mBroadcastChannels.clear();
         mBroadcastChannels.addAll(broadcastChannels);
     }

@@ -322,7 +322,6 @@ class AliasListDefinitionResolverTest
         state.setChannels(List.of(channel("Metro P25", "Metro", new DecodeConfigP25Phase1())));
         Alias catchAll = alias("Unknown Talkgroups", "Metro",
             new TalkgroupRange(Protocol.APCO25, 1, 0xFFFF));
-        catchAll.setCallPriority(-1);
         catchAll.setRecordable(true);
         catchAll.addBroadcastChannel("Calls");
         state.setAliases(List.of(catchAll));
@@ -332,7 +331,6 @@ class AliasListDefinitionResolverTest
         assertTrue(state.getAliases().isEmpty());
         UnmatchedTalkgroupPolicy policy = state.getAliasListDefinitions().getFirst()
             .getUnmatchedTalkgroupPolicy();
-        assertEquals(-1, policy.getPlaybackPriority());
         assertTrue(policy.isRecordEnabled());
         assertEquals(List.of("Calls"), policy.getStreamDestinationNames());
     }
@@ -344,14 +342,14 @@ class AliasListDefinitionResolverTest
         Alias dmr = alias("Unknown DMR", "DMR List", new TalkgroupRange(Protocol.DMR, 1, 0xFFFFFF));
         dmr.setRecordable(true);
         Alias nxdn = alias("Unknown NXDN", "NXDN List", new TalkgroupRange(Protocol.NXDN, 1, 0xFFFF));
-        nxdn.setCallPriority(-1);
         state.setAliases(List.of(dmr, nxdn));
 
         AliasListDefinitionResolver.normalizeLegacyState(state);
 
         assertTrue(state.getAliases().isEmpty());
         assertTrue(definition(state, "DMR List").getUnmatchedTalkgroupPolicy().isRecordEnabled());
-        assertEquals(-1, definition(state, "NXDN List").getUnmatchedTalkgroupPolicy().getPlaybackPriority());
+        assertEquals(UnmatchedTalkgroupPolicy.DEFAULT,
+            definition(state, "NXDN List").getUnmatchedTalkgroupPolicy());
     }
 
     @Test
@@ -420,7 +418,6 @@ class AliasListDefinitionResolverTest
         Alias first = alias("Unknown One", "Metro", new TalkgroupRange(Protocol.APCO25, 0, 0xFFFF));
         first.setRecordable(true);
         Alias second = alias("Unknown Two", "Metro", new TalkgroupRange(Protocol.APCO25, 1, 0xFFFF));
-        second.setCallPriority(-1);
         state.setAliases(List.of(first, second));
 
         AliasListDefinitionResolver.normalizeLegacyState(state);
@@ -429,7 +426,6 @@ class AliasListDefinitionResolverTest
         assertEquals(UnmatchedTalkgroupPolicy.DEFAULT,
             state.getAliasListDefinitions().getFirst().getUnmatchedTalkgroupPolicy());
         assertTrue(state.getAliases().stream().anyMatch(Alias::isRecordable));
-        assertTrue(state.getAliases().stream().anyMatch(alias -> alias.getPlaybackPriority() == -1));
     }
 
     private static Alias alias(String name, String aliasList, AliasID matcher)

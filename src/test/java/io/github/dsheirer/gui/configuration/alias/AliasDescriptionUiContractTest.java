@@ -29,10 +29,11 @@ class AliasDescriptionUiContractTest
     {
         String configurationEditor =
             Files.readString(ALIAS_UI_DIRECTORY.resolve("AliasConfigurationEditor.java"));
+        String aliasPredicate = Files.readString(ALIAS_UI_DIRECTORY.resolve("AliasPredicate.java"));
         String itemEditor = Files.readString(ALIAS_UI_DIRECTORY.resolve("AliasItemEditor.java"));
 
         assertTrue(configurationEditor.contains("descriptionColumn.setText(\"Description\")"));
-        assertTrue(configurationEditor.contains("alias.getDescription().toLowerCase().contains(mSearchText)"));
+        assertTrue(aliasPredicate.contains("contains(alias.getDescription())"));
         assertTrue(itemEditor.contains("new Label(\"Description\")"));
         assertTrue(itemEditor.contains("replacement.setDescription(getDescriptionField().getText())"));
         assertTrue(itemEditor.contains(".replaceAlias("));

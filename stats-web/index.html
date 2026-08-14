@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="sdrtrunk-web-revision" content="65">
+  <meta name="sdrtrunk-web-revision" content="67">
   <title>sdrtrunk-vce</title>
   <script>
     (() => {
@@ -16,7 +16,7 @@
       }
     })();
   </script>
-  <link rel="stylesheet" href="/assets/app.css?v=48">
+  <link rel="stylesheet" href="/assets/app.css?v=50">
 </head>
 <body>
   <div class="app-shell">
@@ -30,7 +30,7 @@
           <a data-view="systems" href="/?view=systems" hidden>Systems &amp; Sites</a>
           <a data-view="conventional" href="/?view=conventional" hidden>Conventional</a>
           <a data-view="aliases" href="/?view=aliases" hidden>Aliases</a>
-          <a data-view="admin" href="/?view=admin&amp;tab=users" hidden>Admin</a>
+          <a data-view="admin" href="/?view=admin&amp;tab=scan-lists" hidden>Admin</a>
           <a data-view="credits" href="/?view=credits" hidden>Credits</a>
         </nav>
         <div class="header-controls">
@@ -39,17 +39,21 @@
             <span id="auth-session-label" class="auth-session-label" hidden></span>
             <button type="button" id="auth-action" class="auth-action" disabled>Checking access</button>
           </div>
+          <button type="button" id="mobile-listener-open" class="mobile-listener-open" hidden>Mobile listener</button>
           <button type="button" id="theme-toggle" class="theme-toggle" aria-pressed="false"
             aria-label="Use dark theme">Dark</button>
         </div>
       </header>
-      <section class="playback-bar" id="playback-bar" aria-label="Web call playback">
-        <button type="button" id="playback-play" class="playback-command" aria-pressed="false">Play</button>
-        <button type="button" id="playback-skip" class="playback-command">Skip</button>
-        <button type="button" id="playback-replay" class="playback-command">Replay</button>
-        <button type="button" id="playback-hold" class="playback-command">Hold</button>
-        <button type="button" id="playback-avoid" class="playback-command">Avoid</button>
-        <button type="button" id="playback-clear" class="playback-command">Clear</button>
+      <div id="desktop-playback-slot">
+        <section class="playback-bar" id="playback-bar" aria-label="Web call playback">
+        <div class="playback-controls" role="group" aria-label="Playback controls">
+          <button type="button" id="playback-play" class="playback-command" aria-pressed="false">Play</button>
+          <button type="button" id="playback-skip" class="playback-command">Skip</button>
+          <button type="button" id="playback-replay" class="playback-command">Replay</button>
+          <button type="button" id="playback-hold" class="playback-command">Hold</button>
+          <button type="button" id="playback-avoid" class="playback-command">Avoid</button>
+          <button type="button" id="playback-clear" class="playback-command">Clear</button>
+        </div>
         <label class="playback-volume" title="Browser playback volume">
           <span class="playback-field">Vol</span>
           <input id="playback-volume" type="range" min="0" max="1" step="0.05" value="1"
@@ -62,25 +66,63 @@
             <strong class="playback-current-primary">Idle</strong>
           </div>
         </div>
+        <details class="playback-subscriptions">
+          <summary><span class="playback-field">Scan lists</span>
+            <strong id="playback-scan-list-summary">Loading</strong></summary>
+          <div class="playback-subscription-panel">
+            <div class="playback-panel-heading">Listen to one or more scan lists</div>
+            <div id="playback-scan-list-options" class="playback-scan-list-options"></div>
+            <div id="playback-scan-list-status" class="playback-panel-note" role="status">
+              Loading available scan lists…
+            </div>
+            <div id="playback-capacity" class="playback-capacity">Listener capacity unavailable</div>
+          </div>
+        </details>
         <details class="playback-queue">
           <summary><span class="playback-field">Queued</span> <strong id="playback-queued">0</strong>
             <span class="playback-dropped" id="playback-dropped"></span></summary>
           <div id="playback-queue-list" class="playback-queue-list">No queued calls</div>
         </details>
-        <label class="playback-limit"><span class="playback-field">Max</span>
-          <input id="playback-max-queued" type="number" min="1" max="500" step="1" value="100">
+        <label class="playback-limit"><span class="playback-field"><span class="playback-limit-short">Max</span>
+          <span class="playback-limit-long">Maximum queued calls</span></span>
+          <input id="playback-max-queued" type="number" min="1" max="500" step="1" value="100"
+            aria-label="Maximum queued calls">
         </label>
+        <output id="playback-missed" class="playback-missed" role="status" aria-live="polite">Missed 0</output>
         <div id="playback-status" class="playback-status">Checking access</div>
         <div id="playback-progress" class="playback-progress" aria-hidden="true">
           <span id="playback-progress-glow" class="playback-progress-glow"></span>
         </div>
-      </section>
+        </section>
+      </div>
     </div>
     <main id="content" class="content" aria-live="polite">
       <div class="loading">Loading</div>
     </main>
   </div>
-  <script src="/assets/web-call-player.js?v=8"></script>
-  <script src="/assets/app.js?v=70"></script>
+  <section id="mobile-listener-shell" class="mobile-listener-shell" data-listener-view="listen" hidden
+    aria-label="Mobile call listener">
+    <header class="mobile-listener-header">
+      <div>
+        <div class="mobile-listener-brand">sdrtrunk-vce</div>
+        <h1 id="mobile-listener-title">Listen</h1>
+      </div>
+      <button type="button" id="mobile-listener-desktop" class="mobile-listener-desktop">Desktop site</button>
+    </header>
+    <main class="mobile-listener-main">
+      <div id="mobile-playback-slot"></div>
+    </main>
+    <nav class="mobile-listener-nav" aria-label="Listener views">
+      <button type="button" data-listener-view="listen" aria-pressed="true">Listen</button>
+      <button type="button" data-listener-view="scan-lists" aria-pressed="false">
+        Scan Lists <span id="mobile-listener-scan-count">0</span>
+      </button>
+      <button type="button" data-listener-view="queue" aria-pressed="false">
+        Queue <span id="mobile-listener-queue-count">0</span>
+      </button>
+    </nav>
+  </section>
+  <script src="/assets/web-call-player.js?v=9"></script>
+  <script src="/assets/app.js?v=73"></script>
 </body>
 </html>

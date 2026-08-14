@@ -26,7 +26,7 @@ class AudioCallRecorderTest
     {
         AudioCallSnapshot snapshot = new AudioCallSnapshot(new AudioCallId(1, 1, 0), null, null,
             new IdentifierCollection(), Set.of(), 1_000L, 2_000L, 1, 1, 1_000L, 2_000L,
-            false, true, false, true, 50, false, null,
+            false, true, false, true, false, null,
             new VoiceCallQuality(49, 1, 0, 0, 4, 6_850));
         CompletedAudioCall call = new CompletedAudioCall(snapshot, List.of(new float[160]));
         Map<AudioMetadata,String> metadata = new EnumMap<>(AudioMetadata.class);

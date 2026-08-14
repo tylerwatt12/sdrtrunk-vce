@@ -63,6 +63,7 @@ class AliasAdminHttpControllerTest
         HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
         server.createContext(AliasAdminHttpController.ALIAS_LISTS_PATH, controller::handle);
         server.createContext(AliasAdminHttpController.ALIASES_PATH, controller::handle);
+        server.createContext(AliasAdminHttpController.SCAN_LISTS_PATH, controller::handle);
         server.start();
 
         try
@@ -76,6 +77,7 @@ class AliasAdminHttpControllerTest
             assertTrue(catalogEnvelope.get("data").has("alias_lists"));
             JsonNode catalog = json(catalogResponse);
             long revision = catalog.get("revision").longValue();
+            long defaultScanListId = catalog.at("/scan_lists/0/id").longValue();
             JsonNode createdList = json(send(client, jsonRequest(origin,
                 AliasAdminHttpController.ALIAS_LISTS_PATH)
                 .POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(Map.of(
@@ -83,11 +85,20 @@ class AliasAdminHttpControllerTest
             long aliasListId = createdList.get("alias_list_id").longValue();
             revision = createdList.get("revision").longValue();
 
+            JsonNode createdScanList = json(send(client, jsonRequest(origin,
+                AliasAdminHttpController.SCAN_LISTS_PATH).POST(HttpRequest.BodyPublishers.ofString(
+                OBJECT_MAPPER.writeValueAsString(Map.of("revision", revision, "scan_list", Map.of(
+                    "sort_order", 1, "name", "Cleveland", "description", "Cleveland calls",
+                    "published", true, "default", false)))))));
+            long clevelandScanListId = createdScanList.get("scan_list_id").longValue();
+            revision = createdScanList.get("revision").longValue();
+
             JsonNode policyChanged = json(send(client, jsonRequest(origin,
                 AliasAdminHttpController.ALIAS_LISTS_PATH + "/" + aliasListId + "/unmatched-talkgroups")
                 .PUT(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(Map.of(
-                    "revision", revision, "listen_enabled", false, "recordable", true,
-                    "broadcast_channels", java.util.List.of("Primary")))))));
+                    "revision", revision, "recordable", true,
+                    "broadcast_channels", java.util.List.of("Primary"),
+                    "scan_list_ids", java.util.List.of(defaultScanListId, clevelandScanListId)))))));
             revision = policyChanged.get("revision").longValue();
             JsonNode policyCatalog = json(send(client,
                 request(origin, AliasAdminHttpController.ALIAS_LISTS_PATH).GET()));
@@ -95,28 +106,51 @@ class AliasAdminHttpControllerTest
             assertEquals("p25", policyCatalog.at("/alias_lists/0/family").textValue());
             assertFalse(policyCatalog.at("/alias_lists/0").has("id"));
             JsonNode policy = policyCatalog.at("/alias_lists/0/unmatched_talkgroup_policy");
-            assertFalse(policy.get("listen_enabled").booleanValue());
-            assertTrue(policy.get("priority").isNull());
             assertTrue(policy.get("recordable").booleanValue());
             assertEquals("Primary", policy.at("/broadcast_channels/0").textValue());
-            assertEquals(4, policy.size());
+            assertEquals(2, policy.get("scan_list_ids").size());
+            assertEquals(3, policy.size());
             assertTrue(aliasChanges.get() >= 2);
 
             JsonNode defaultPolicyChanged = json(send(client, jsonRequest(origin,
                 AliasAdminHttpController.ALIAS_LISTS_PATH + "/" + aliasListId + "/unmatched-talkgroups")
                 .PUT(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(Map.of(
-                    "revision", revision, "listen_enabled", true, "priority", 100, "recordable", true,
-                    "broadcast_channels", java.util.List.of("Primary")))))));
+                    "revision", revision, "recordable", true,
+                    "broadcast_channels", java.util.List.of("Primary"),
+                    "scan_list_ids", java.util.List.of(defaultScanListId)))))));
             revision = defaultPolicyChanged.get("revision").longValue();
             policyCatalog = json(send(client,
                 request(origin, AliasAdminHttpController.ALIAS_LISTS_PATH).GET()));
-            assertTrue(policyCatalog.at("/alias_lists/0/unmatched_talkgroup_policy/listen_enabled").booleanValue());
-            assertEquals(100,
-                policyCatalog.at("/alias_lists/0/unmatched_talkgroup_policy/priority").intValue());
+            assertEquals(defaultScanListId,
+                policyCatalog.at("/alias_lists/0/unmatched_talkgroup_policy/scan_list_ids/0").longValue());
+
+            JsonNode addedUnmatchedMembership = json(send(client, jsonRequest(origin,
+                AliasAdminHttpController.SCAN_LISTS_PATH + "/" + clevelandScanListId + "/members")
+                .PUT(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(Map.of(
+                    "revision", revision, "operation", "add", "alias_ids", java.util.List.of(),
+                    "unmatched_alias_list_ids", java.util.List.of(aliasListId)))))));
+            revision = addedUnmatchedMembership.get("revision").longValue();
+            JsonNode aliasOwnersReplaced = json(send(client, jsonRequest(origin,
+                AliasAdminHttpController.SCAN_LISTS_PATH + "/" + clevelandScanListId + "/members")
+                .PUT(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(Map.of(
+                    "revision", revision, "operation", "replace", "alias_ids", java.util.List.of()))))));
+            revision = aliasOwnersReplaced.get("revision").longValue();
+            JsonNode clevelandDetail = json(send(client, request(origin,
+                AliasAdminHttpController.SCAN_LISTS_PATH + "/" + clevelandScanListId).GET()));
+            assertEquals(aliasListId, clevelandDetail.at("/unmatched_alias_list_ids/0").longValue());
+            assertEquals(1, clevelandDetail.get("unmatched_alias_list_ids_total").intValue());
+            assertFalse(clevelandDetail.get("unmatched_alias_list_ids_truncated").booleanValue());
+            JsonNode scanListCatalog = json(send(client,
+                request(origin, AliasAdminHttpController.SCAN_LISTS_PATH).GET()));
+            JsonNode clevelandSummary = java.util.stream.StreamSupport.stream(
+                    scanListCatalog.get("scan_lists").spliterator(), false)
+                .filter(row -> row.get("id").longValue() == clevelandScanListId).findFirst().orElseThrow();
+            assertEquals(1, clevelandSummary.get("unmatched_alias_list_count").intValue());
 
             JsonNode p25Options = json(send(client, request(origin,
                 AliasAdminHttpController.OPTIONS_PATH + "?alias_list_id=" + aliasListId).GET()));
             assertEquals(aliasListId, p25Options.at("/alias_list/alias_list_id").longValue());
+            assertEquals(2, p25Options.at("/alias_list/unmatched_talkgroup_policy/scan_list_ids").size());
             assertFalse(p25Options.at("/alias_list").has("id"));
             assertEquals(200, send(client, request(origin,
                 AliasAdminHttpController.OPTIONS_PATH + "?alias_list_id=" + encodedDecimal(aliasListId)).GET())
@@ -151,7 +185,19 @@ class AliasAdminHttpControllerTest
                 revision = matcherCreated.get("revision").longValue();
             }
 
+            int aliasesBeforeRejectedCreate = manager.getAliasModel().getAliases().size();
+            Map<String,Object> rejectedMembershipCreate = new java.util.LinkedHashMap<>(
+                alias(aliasListId, "Rejected Membership", false));
+            rejectedMembershipCreate.put("matcher", Map.of("type", "talkgroup", "protocol", "p25",
+                "variant", "phase_2", "value", 150));
+            rejectedMembershipCreate.put("scan_list_ids", java.util.List.of(9_999_999L));
+            assertEquals(404, send(client, jsonRequest(origin, AliasAdminHttpController.ALIASES_PATH)
+                .POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(
+                    Map.of("revision", revision, "alias", rejectedMembershipCreate))))).statusCode());
+            assertEquals(aliasesBeforeRejectedCreate, manager.getAliasModel().getAliases().size());
+
             Map<String,Object> aliasPayload = alias(aliasListId, "Dispatch", false);
+            aliasPayload.put("scan_list_ids", java.util.List.of(defaultScanListId, clevelandScanListId));
             Map<String,Object> create = Map.of("revision", revision, "alias", aliasPayload);
             JsonNode created = json(send(client, jsonRequest(origin, AliasAdminHttpController.ALIASES_PATH)
                 .POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(create)))));
@@ -165,7 +211,7 @@ class AliasAdminHttpControllerTest
             assertEquals("talkgroup", live.at("/alias/matcher/type").textValue());
             assertEquals("p25", live.at("/alias/matcher/protocol").textValue());
             assertEquals("phase_2", live.at("/alias/matcher/variant").textValue());
-            assertTrue(live.at("/alias/listen_enabled").booleanValue());
+            assertEquals(2, live.at("/alias/scan_list_ids").size());
             assertEquals(200, send(client, request(origin,
                 AliasAdminHttpController.ALIASES_PATH + "/" + encodedDecimal(aliasId)).GET()).statusCode());
             assertEquals(400, send(client, request(origin,
@@ -218,8 +264,10 @@ class AliasAdminHttpControllerTest
                 .POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(
                     Map.of("revision", revision, "alias", retiredMatcher))))).statusCode());
 
-            Map<String,Object> update = Map.of("revision", revision,
-                "alias", alias(aliasListId, "Dispatch Updated", true));
+            Map<String,Object> updatedAlias = new java.util.LinkedHashMap<>(
+                alias(aliasListId, "Dispatch Updated", true));
+            updatedAlias.put("scan_list_ids", java.util.List.of(defaultScanListId, clevelandScanListId));
+            Map<String,Object> update = Map.of("revision", revision, "alias", updatedAlias);
             JsonNode updated = json(send(client, jsonRequest(origin,
                 AliasAdminHttpController.ALIASES_PATH + "/" + aliasId)
                 .PUT(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(update)))));
@@ -228,6 +276,7 @@ class AliasAdminHttpControllerTest
                 AliasAdminHttpController.ALIASES_PATH + "/" + aliasId).GET()));
             assertEquals("Dispatch Updated", live.at("/alias/name").textValue());
             assertTrue(live.at("/alias/recordable").booleanValue());
+            assertEquals(2, live.at("/alias/scan_list_ids").size());
 
             Map<String,Object> bulk = new java.util.LinkedHashMap<>();
             bulk.put("revision", revision);
@@ -275,11 +324,54 @@ class AliasAdminHttpControllerTest
                 AliasAdminHttpController.OPTIONS_PATH + "?alias_list_id=" + nbfmListId).GET()));
             assertTrue(java.util.stream.StreamSupport.stream(options.get("dcs_codes").spliterator(), false)
                 .noneMatch(node -> "unknown".equals(node.textValue())));
-            assertEquals(400, send(client, jsonRequest(origin,
+
+            Map<String,Object> amAlias = new java.util.LinkedHashMap<>(alias(nbfmListId, "Airband Tower", false));
+            amAlias.put("matcher", Map.of("type", "talkgroup", "protocol", "am", "value", 1));
+            amAlias.put("scan_list_ids", java.util.List.of(defaultScanListId, clevelandScanListId));
+            JsonNode createdAm = json(send(client, jsonRequest(origin, AliasAdminHttpController.ALIASES_PATH)
+                .POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(
+                    Map.of("revision", revision, "alias", amAlias))))));
+            long amAliasId = createdAm.at("/alias_ids/0").longValue();
+            revision = createdAm.get("revision").longValue();
+            JsonNode liveAm = json(send(client, request(origin,
+                AliasAdminHttpController.ALIASES_PATH + "/" + amAliasId).GET()));
+            assertEquals("am", liveAm.at("/alias/matcher/protocol").textValue());
+            assertFalse(liveAm.at("/alias/matcher").has("variant"));
+            assertEquals(2, liveAm.at("/alias/scan_list_ids").size());
+            assertTrue(java.util.stream.StreamSupport.stream(
+                liveAm.at("/alias/scan_list_ids").spliterator(), false)
+                .anyMatch(node -> node.longValue() == defaultScanListId));
+            assertTrue(java.util.stream.StreamSupport.stream(
+                liveAm.at("/alias/scan_list_ids").spliterator(), false)
+                .anyMatch(node -> node.longValue() == clevelandScanListId));
+
+            JsonNode nbfmPolicyChanged = json(send(client, jsonRequest(origin,
                 AliasAdminHttpController.ALIAS_LISTS_PATH + "/" + nbfmListId + "/unmatched-talkgroups")
                 .PUT(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(Map.of(
-                    "revision", revision, "listen_enabled", true, "recordable", false,
-                    "broadcast_channels", java.util.List.of()))))).statusCode());
+                    "revision", revision, "recordable", false,
+                    "broadcast_channels", java.util.List.of(),
+                    "scan_list_ids", java.util.List.of(clevelandScanListId)))))));
+            revision = nbfmPolicyChanged.get("revision").longValue();
+            JsonNode nbfmOptions = json(send(client, request(origin,
+                AliasAdminHttpController.OPTIONS_PATH + "?alias_list_id=" + nbfmListId).GET()));
+            assertEquals(clevelandScanListId,
+                nbfmOptions.at("/alias_list/unmatched_talkgroup_policy/scan_list_ids/0").longValue());
+
+            JsonNode nbfmAddedFromScanList = json(send(client, jsonRequest(origin,
+                AliasAdminHttpController.SCAN_LISTS_PATH + "/" + defaultScanListId + "/members")
+                .PUT(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(Map.of(
+                    "revision", revision, "operation", "add", "alias_ids", java.util.List.of(),
+                    "unmatched_alias_list_ids", java.util.List.of(nbfmListId)))))));
+            revision = nbfmAddedFromScanList.get("revision").longValue();
+            nbfmOptions = json(send(client, request(origin,
+                AliasAdminHttpController.OPTIONS_PATH + "?alias_list_id=" + nbfmListId).GET()));
+            assertEquals(2, nbfmOptions.at("/alias_list/unmatched_talkgroup_policy/scan_list_ids").size());
+            assertTrue(java.util.stream.StreamSupport.stream(
+                nbfmOptions.at("/alias_list/unmatched_talkgroup_policy/scan_list_ids").spliterator(), false)
+                .anyMatch(node -> node.longValue() == defaultScanListId));
+            assertTrue(java.util.stream.StreamSupport.stream(
+                nbfmOptions.at("/alias_list/unmatched_talkgroup_policy/scan_list_ids").spliterator(), false)
+                .anyMatch(node -> node.longValue() == clevelandScanListId));
 
             Map<String,Object> invalidDcs = new java.util.LinkedHashMap<>(alias(nbfmListId, "Invalid DCS", false));
             invalidDcs.put("matcher", Map.of("type", "dcs", "code", "unknown"));
@@ -372,8 +464,6 @@ class AliasAdminHttpControllerTest
         value.put("group", "Operations");
         value.put("color", 0);
         value.put("icon_name", null);
-        value.put("listen_enabled", true);
-        value.put("priority", null);
         value.put("recordable", recordable);
         value.put("broadcast_channels", java.util.List.of());
         value.put("stream_as_talkgroup", null);

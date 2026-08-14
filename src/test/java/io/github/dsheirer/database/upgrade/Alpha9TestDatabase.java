@@ -97,6 +97,9 @@ public final class Alpha9TestDatabase
     {
         statement.executeUpdate("DROP VIEW alias_talkgroup");
         statement.executeUpdate("DROP VIEW alias_radio");
+        statement.executeUpdate("DROP TABLE alias_list_unmatched_talkgroup_scan_list_membership");
+        statement.executeUpdate("DROP TABLE alias_scan_list_membership");
+        statement.executeUpdate("DROP TABLE scan_list");
         statement.executeUpdate("DROP TABLE alias_list_unmatched_talkgroup_stream");
         statement.executeUpdate("DROP TABLE alias_broadcast_channel");
         statement.executeUpdate("DROP TABLE alias");

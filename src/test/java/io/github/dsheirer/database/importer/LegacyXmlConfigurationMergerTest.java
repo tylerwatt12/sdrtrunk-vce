@@ -48,7 +48,7 @@ class LegacyXmlConfigurationMergerTest
 
         ConfigurationState imported = state("county", "control", "calls", 200);
         imported.getAliasListDefinitions().getFirst().setUnmatchedTalkgroupPolicy(
-            new UnmatchedTalkgroupPolicy(-1, true, List.of("calls")));
+            new UnmatchedTalkgroupPolicy(true, List.of("calls")));
         Alias importedSourceAlias = imported.getAliases().getFirst();
         Channel importedSourceChannel = imported.getChannels().getFirst();
         RadioResolveConfiguration importedSourceStream =
@@ -81,7 +81,6 @@ class LegacyXmlConfigurationMergerTest
         assertEquals("county (Imported)", importedDefinition.getName());
         assertEquals(AliasListFamily.P25, importedDefinition.getFamily());
         assertEquals(AliasListDefinition.UNASSIGNED_ID, importedDefinition.getId());
-        assertEquals(-1, importedDefinition.getUnmatchedTalkgroupPolicy().getPlaybackPriority());
         assertTrue(importedDefinition.getUnmatchedTalkgroupPolicy().isRecordEnabled());
         assertEquals(List.of("calls (Imported)"),
             importedDefinition.getUnmatchedTalkgroupPolicy().getStreamDestinationNames());
@@ -130,7 +129,6 @@ class LegacyXmlConfigurationMergerTest
         sourceAlias.setDescription("Primary dispatch");
         sourceAlias.setGroup("Dispatch");
         sourceAlias.setRecordable(true);
-        sourceAlias.setCallPriority(25);
 
         Channel sourceChannel = imported.getChannels().getFirst();
         sourceChannel.setConfigurationId(EXISTING_CONFIGURATION_ID);
@@ -155,7 +153,6 @@ class LegacyXmlConfigurationMergerTest
         assertEquals("Primary dispatch", copiedAlias.getDescription());
         assertEquals("Dispatch", copiedAlias.getGroup());
         assertTrue(copiedAlias.isRecordable());
-        assertEquals(25, copiedAlias.getPlaybackPriority());
         assertTrue(copiedAlias.hasBroadcastChannel("Metro Calls"));
         assertEquals(1234, ((Talkgroup)copiedAlias.getMatchIdentifier()).getValue());
 

@@ -471,12 +471,12 @@ class ChannelActivityModelTest
         VoiceCallQuality voiceQuality = new VoiceCallQuality(1, 0, 0, 0, 2, 47);
         AudioCallSnapshot snapshot = new AudioCallSnapshot(new AudioCallId(1, 1, 1), null, null,
             identifiers, Set.of(), 1_000L, 1_020L, 1, 1, 1_000L, 1_020L,
-            true, false, false, false, 50, false, null, voiceQuality);
+            true, false, false, false, false, null, voiceQuality);
 
         run(model, () -> {
             model.channelStarted(channel, List.of(metadata));
             model.receiveAudioCallEvent(channel, new AudioCallEvent(AudioCallEventType.AUDIO_FRAME, snapshot,
-                1_020L, new float[160]));
+                new float[160]));
         });
 
         ChannelActivityRow row = model.getConventionalTable().getRows().getFirst();
@@ -506,7 +506,7 @@ class ChannelActivityModelTest
         VoiceCallQuality voiceQuality = new VoiceCallQuality(50, 0, 0, 0, 2, 47);
         AudioCallId currentCallId = new AudioCallId(1, 1, 1);
         AudioCallSnapshot current = new AudioCallSnapshot(currentCallId, null, null, identifiers, Set.of(),
-            1_000L, 2_000L, 1, 1, 1_000L, 2_000L, true, false, false, false, 50, false, null,
+            1_000L, 2_000L, 1, 1, 1_000L, 2_000L, true, false, false, false, false, null,
             voiceQuality);
 
         run(model, () -> {
@@ -514,7 +514,7 @@ class ChannelActivityModelTest
             metadata.receive(new IdentifierUpdateNotification(ChannelStateIdentifier.CALL, Operation.ADD, 1));
             model.updated(metadata, io.github.dsheirer.channel.metadata.ChannelMetadataField.DECODER_STATE);
             model.receiveAudioCallEvent(channel, new AudioCallEvent(AudioCallEventType.AUDIO_FRAME, current,
-                2_000L, new float[160]));
+                new float[160]));
         });
 
         ChannelActivityRow row = model.getConventionalTable().getRows().getFirst();
@@ -523,35 +523,35 @@ class ChannelActivityModelTest
         assertNotNull(row.getVoiceCallQuality());
 
         AudioCallSnapshot stale = new AudioCallSnapshot(new AudioCallId(1, 2, 1), null, null, identifiers, Set.of(),
-            1_000L, 2_000L, 1, 1, 1_000L, 2_000L, false, true, false, false, 50, false, null,
+            1_000L, 2_000L, 1, 1, 1_000L, 2_000L, false, true, false, false, false, null,
             voiceQuality);
         run(model, () -> model.receiveAudioCallEvent(channel,
-            new AudioCallEvent(AudioCallEventType.CALL_COMPLETED, stale, 2_000L, null)));
+            new AudioCallEvent(AudioCallEventType.CALL_COMPLETED, stale, null)));
         assertEquals(currentCallId, row.getVoiceCallId());
         assertNotNull(row.getVoiceCallQuality());
 
         run(model, () -> model.receiveAudioCallEvent(channel,
-            new AudioCallEvent(AudioCallEventType.CALL_COMPLETED, current, 2_000L, null, true)));
+            new AudioCallEvent(AudioCallEventType.CALL_COMPLETED, current, null, true)));
         assertEquals(currentCallId, row.getVoiceCallId());
         assertNotNull(row.getVoiceCallQuality());
 
         AudioCallId linkedCallId = new AudioCallId(1, 3, 1);
         AudioCallSnapshot linkedWithoutMeasurements = new AudioCallSnapshot(linkedCallId, currentCallId, null,
             identifiers, Set.of(), 2_000L, 2_100L, 1, 1, 2_000L, 2_100L, true, false, false, false,
-            50, false, null, new VoiceCallQuality(0, 0, 0, 5, 0, 0));
+            false, null, new VoiceCallQuality(0, 0, 0, 5, 0, 0));
         run(model, () -> model.receiveAudioCallEvent(channel,
-            new AudioCallEvent(AudioCallEventType.CALL_CREATED, linkedWithoutMeasurements, 2_000L, null)));
+            new AudioCallEvent(AudioCallEventType.CALL_CREATED, linkedWithoutMeasurements, null)));
         assertEquals(linkedCallId, row.getVoiceCallId());
         assertEquals(voiceQuality, row.getVoiceCallQuality());
 
         run(model, () -> model.receiveAudioCallEvent(channel,
-            new AudioCallEvent(AudioCallEventType.CALL_COMPLETED, linkedWithoutMeasurements, 2_100L, null)));
+            new AudioCallEvent(AudioCallEventType.CALL_COMPLETED, linkedWithoutMeasurements, null)));
         assertNull(row.getVoiceCallId());
         assertNull(row.getVoiceCallQuality());
         assertEquals(95.0d, row.getDecodeQuality().controlPercent());
 
         model.receiveAudioCallEvent(channel, new AudioCallEvent(AudioCallEventType.AUDIO_FRAME, current,
-            2_000L, new float[160]));
+            new float[160]));
         run(model, () -> {});
         assertEquals(currentCallId, row.getVoiceCallId());
 
@@ -564,7 +564,7 @@ class ChannelActivityModelTest
         assertNull(ChannelActivitySnapshot.from(model.getConventionalTable()).rows().getFirst().voiceQuality());
 
         run(model, () -> model.receiveAudioCallEvent(channel,
-            new AudioCallEvent(AudioCallEventType.CALL_COMPLETED, current, 2_000L, null)));
+            new AudioCallEvent(AudioCallEventType.CALL_COMPLETED, current, null)));
         assertNull(row.getVoiceCallId());
         assertNull(row.getVoiceCallQuality());
     }
@@ -597,14 +597,14 @@ class ChannelActivityModelTest
         AudioCallId callId = new AudioCallId(1, 1, 1);
         VoiceCallQuality voiceQuality = new VoiceCallQuality(50, 0, 0, 0, 2, 47);
         AudioCallSnapshot snapshot = new AudioCallSnapshot(callId, null, null, identifiers, Set.of(),
-            1_000L, 2_000L, 1, 1, 1_000L, 2_000L, true, false, false, false, 50, false, null,
+            1_000L, 2_000L, 1, 1, 1_000L, 2_000L, true, false, false, false, false, null,
             voiceQuality);
 
         run(model, () -> {
             model.trunkedTrafficEvent(parent, trafficChannel, traffic, 1, identifiers,
                 DecodeEventType.CALL_GROUP, 139_781_250L);
             model.receiveAudioCallEvent(trafficChannel, new AudioCallEvent(AudioCallEventType.AUDIO_FRAME,
-                snapshot, 2_000L, new float[160]));
+                snapshot, new float[160]));
         });
 
         ChannelActivityRow row = model.getTables().get(1).getRows().stream()
@@ -620,7 +620,7 @@ class ChannelActivityModelTest
         assertNull(row.getVoiceCallQuality());
 
         run(model, () -> model.receiveAudioCallEvent(trafficChannel,
-            new AudioCallEvent(AudioCallEventType.CALL_COMPLETED, snapshot, 2_000L, null)));
+            new AudioCallEvent(AudioCallEventType.CALL_COMPLETED, snapshot, null)));
         assertNull(row.getVoiceCallId());
         assertNull(row.getVoiceCallQuality());
     }
@@ -629,7 +629,7 @@ class ChannelActivityModelTest
     void combinesControlVoiceAndDataTagsForTheSameFrequency()
     {
         Channel parent = new Channel("Test Site", ChannelType.STANDARD);
-        ChannelActivityTableState table = new ChannelActivityTableState("Test Site", parent, true, null);
+        ChannelActivityTableState table = new ChannelActivityTableState("Test Site", parent, null);
         SiteActivitySession session = new SiteActivitySession(parent, table);
         long frequency = 856_137_500L;
 
@@ -657,7 +657,7 @@ class ChannelActivityModelTest
     void reusesAlternateControlRowForFdmaVoiceTraffic()
     {
         Channel parent = new Channel("Test Site", ChannelType.STANDARD);
-        ChannelActivityTableState table = new ChannelActivityTableState("Test Site", parent, true, null);
+        ChannelActivityTableState table = new ChannelActivityTableState("Test Site", parent, null);
         SiteActivitySession session = new SiteActivitySession(parent, table);
         APCO25Channel channel = APCO25Channel.create(0, 459);
         channel.setFrequencyBand(new P25FrequencyBand(0, 851_006_250L, -45_000_000L, 6_250L, 12_500, 1));
@@ -682,7 +682,7 @@ class ChannelActivityModelTest
     void retainsSeparateRowsForTdmATimeslots()
     {
         Channel parent = new Channel("Test Site", ChannelType.STANDARD);
-        ChannelActivityTableState table = new ChannelActivityTableState("Test Site", parent, true, null);
+        ChannelActivityTableState table = new ChannelActivityTableState("Test Site", parent, null);
         SiteActivitySession session = new SiteActivitySession(parent, table);
         P25FrequencyBand band = new P25FrequencyBand(1, 851_012_500L, -45_000_000L, 12_500L, 12_500, 2);
         APCO25Channel timeslotOne = APCO25Channel.create(1, 2);
@@ -704,7 +704,7 @@ class ChannelActivityModelTest
     void retainsFdmaTrafficRowWhenControlAnnouncementIsWithdrawn()
     {
         Channel parent = new Channel("Test Site", ChannelType.STANDARD);
-        ChannelActivityTableState table = new ChannelActivityTableState("Test Site", parent, true, null);
+        ChannelActivityTableState table = new ChannelActivityTableState("Test Site", parent, null);
         SiteActivitySession session = new SiteActivitySession(parent, table);
         long frequency = 853_875_000L;
 

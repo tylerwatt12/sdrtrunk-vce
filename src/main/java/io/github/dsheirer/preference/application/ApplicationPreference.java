@@ -23,6 +23,7 @@ import io.github.dsheirer.gui.theme.Theme;
 import io.github.dsheirer.preference.Preference;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.sample.Listener;
+import io.github.dsheirer.stats.WebCallConfiguration;
 import java.util.prefs.Preferences;
 
 /**
@@ -45,6 +46,16 @@ public class ApplicationPreference extends Preference
     private static final String PREFERENCE_KEY_STATS_WEB_SERVER_HTTPS_ENABLED = "stats.web.server.https.enabled";
     private static final String PREFERENCE_KEY_STATS_WEB_SERVER_CERTIFICATE_MODE =
         "stats.web.server.certificate.mode";
+    private static final String PREFERENCE_KEY_WEB_CALL_MAXIMUM_LISTENERS =
+        "stats.web.call.maximum.listeners";
+    private static final String PREFERENCE_KEY_WEB_CALL_MAXIMUM_SELECTED_SCAN_LISTS =
+        "stats.web.call.maximum.selected.scan.lists";
+    private static final String PREFERENCE_KEY_WEB_CALL_MAXIMUM_BROWSER_QUEUE_CALLS =
+        "stats.web.call.maximum.browser.queue.calls";
+    private static final String PREFERENCE_KEY_WEB_CALL_MAXIMUM_CACHED_CALLS =
+        "stats.web.call.maximum.cached.calls";
+    private static final String PREFERENCE_KEY_WEB_CALL_MAXIMUM_CACHED_AUDIO_MIB =
+        "stats.web.call.maximum.cached.audio.mib";
     public static final boolean DEFAULT_STATS_LOGGING_ENABLED = false;
     public static final boolean DEFAULT_STATS_DETAILED_HISTORY_ENABLED = false;
     public static final boolean DEFAULT_STATS_WEB_SERVER_ENABLED = true;
@@ -69,6 +80,11 @@ public class ApplicationPreference extends Preference
     private Boolean mStatsWebServerAnyIpEnabled;
     private Boolean mStatsWebServerHttpsEnabled;
     private WebCertificateMode mStatsWebServerCertificateMode;
+    private Integer mWebCallMaximumListeners;
+    private Integer mWebCallMaximumSelectedScanLists;
+    private Integer mWebCallMaximumBrowserQueueCalls;
+    private Integer mWebCallMaximumCachedCalls;
+    private Integer mWebCallMaximumCachedAudioMiB;
     private Theme mTheme;
     private Double mGuiScale;
 
@@ -348,6 +364,54 @@ public class ApplicationPreference extends Preference
         mStatsWebServerCertificateMode = mode == null ? WebCertificateMode.AUTOMATIC : mode;
         mPreferences.put(PREFERENCE_KEY_STATS_WEB_SERVER_CERTIFICATE_MODE,
             mStatsWebServerCertificateMode.name());
+        notifyPreferenceUpdated();
+    }
+
+    /**
+     * Returns the operator-owned capacity settings for completed-call browser audio.
+     */
+    public WebCallConfiguration getWebCallConfiguration()
+    {
+        if(mWebCallMaximumListeners == null)
+        {
+            mWebCallMaximumListeners = mPreferences.getInt(PREFERENCE_KEY_WEB_CALL_MAXIMUM_LISTENERS,
+                WebCallConfiguration.DEFAULT_MAXIMUM_LISTENERS);
+            mWebCallMaximumSelectedScanLists = mPreferences.getInt(
+                PREFERENCE_KEY_WEB_CALL_MAXIMUM_SELECTED_SCAN_LISTS,
+                WebCallConfiguration.DEFAULT_MAXIMUM_SELECTED_SCAN_LISTS);
+            mWebCallMaximumBrowserQueueCalls = mPreferences.getInt(
+                PREFERENCE_KEY_WEB_CALL_MAXIMUM_BROWSER_QUEUE_CALLS,
+                WebCallConfiguration.DEFAULT_MAXIMUM_BROWSER_QUEUE_CALLS);
+            mWebCallMaximumCachedCalls = mPreferences.getInt(PREFERENCE_KEY_WEB_CALL_MAXIMUM_CACHED_CALLS,
+                WebCallConfiguration.DEFAULT_MAXIMUM_CACHED_CALLS);
+            mWebCallMaximumCachedAudioMiB = mPreferences.getInt(
+                PREFERENCE_KEY_WEB_CALL_MAXIMUM_CACHED_AUDIO_MIB,
+                WebCallConfiguration.DEFAULT_MAXIMUM_CACHED_AUDIO_MIB);
+        }
+
+        return new WebCallConfiguration(mWebCallMaximumListeners, mWebCallMaximumSelectedScanLists,
+            mWebCallMaximumBrowserQueueCalls, mWebCallMaximumCachedCalls, mWebCallMaximumCachedAudioMiB);
+    }
+
+    /**
+     * Atomically updates the related in-memory values and persistent settings before publishing one service update.
+     */
+    public void setWebCallConfiguration(WebCallConfiguration configuration)
+    {
+        WebCallConfiguration prepared = configuration != null ? configuration : WebCallConfiguration.defaults();
+        mWebCallMaximumListeners = prepared.maximumListeners();
+        mWebCallMaximumSelectedScanLists = prepared.maximumSelectedScanLists();
+        mWebCallMaximumBrowserQueueCalls = prepared.maximumBrowserQueueCalls();
+        mWebCallMaximumCachedCalls = prepared.maximumCachedCalls();
+        mWebCallMaximumCachedAudioMiB = prepared.maximumCachedAudioMiB();
+        mPreferences.putInt(PREFERENCE_KEY_WEB_CALL_MAXIMUM_LISTENERS, mWebCallMaximumListeners);
+        mPreferences.putInt(PREFERENCE_KEY_WEB_CALL_MAXIMUM_SELECTED_SCAN_LISTS,
+            mWebCallMaximumSelectedScanLists);
+        mPreferences.putInt(PREFERENCE_KEY_WEB_CALL_MAXIMUM_BROWSER_QUEUE_CALLS,
+            mWebCallMaximumBrowserQueueCalls);
+        mPreferences.putInt(PREFERENCE_KEY_WEB_CALL_MAXIMUM_CACHED_CALLS, mWebCallMaximumCachedCalls);
+        mPreferences.putInt(PREFERENCE_KEY_WEB_CALL_MAXIMUM_CACHED_AUDIO_MIB,
+            mWebCallMaximumCachedAudioMiB);
         notifyPreferenceUpdated();
     }
 

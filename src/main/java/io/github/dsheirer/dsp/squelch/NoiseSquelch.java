@@ -36,7 +36,7 @@ import java.util.Arrays;
  * when there is no signal detected. Register an audio listener to receive squelch controlled audio and a squelch state
  * listener to receive squelch toggle indications.
  */
-public class NoiseSquelch implements INoiseSquelchController
+public class NoiseSquelch implements IAnalogSquelch
 {
     public static final int DEFAULT_HYSTERESIS_OPEN_THRESHOLD = 4;
     public static final int DEFAULT_HYSTERESIS_CLOSE_THRESHOLD = 6;
@@ -371,6 +371,12 @@ public class NoiseSquelch implements INoiseSquelchController
             broadcast(mSquelchOpenIndex, samples.length);
             mSquelchOpenIndex = 0;
         }
+    }
+
+    @Override
+    public void process(float[] audio, float[] i, float[] q)
+    {
+        process(audio);
     }
 
     /**

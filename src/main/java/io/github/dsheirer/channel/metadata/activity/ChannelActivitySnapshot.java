@@ -14,11 +14,11 @@ import java.util.Objects;
 import java.util.stream.Collectors;
 
 /**
- * Immutable renderer-neutral snapshot of one Systems activity table.
+ * Immutable snapshot of one browser Live Systems activity table.
  */
 public record ChannelActivitySnapshot(String tableId, String title, String systemName, String siteName,
-                                      String channelName, String configurationId, String guid, boolean closeable,
-                                      boolean controlActive, List<IdentifierField> identifiers, List<Row> rows)
+                                      String channelName, String configurationId, String guid, boolean controlActive,
+                                      List<IdentifierField> identifiers, List<Row> rows)
 {
     public ChannelActivitySnapshot
     {
@@ -41,7 +41,7 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
         return new ChannelActivitySnapshot(tableId, table != null ? table.getTitle() : "",
             owner != null ? owner.getSystem() : "", owner != null ? owner.getSite() : "",
             owner != null ? owner.getName() : "Conventional", owner != null ? owner.getConfigurationId() : null,
-            guid, table != null && table.isCloseable(), table != null && table.isControlActive(),
+            guid, table != null && table.isControlActive(),
             table != null ? table.getIdentifiers() : List.of(), rows);
     }
 

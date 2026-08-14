@@ -30,6 +30,7 @@ import io.github.dsheirer.alias.id.talkgroup.TalkgroupRange;
 import io.github.dsheirer.alias.id.tone.TonesID;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
+import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.dcs.DCSIdentifier;
 import io.github.dsheirer.identifier.esn.ESNIdentifier;
@@ -49,6 +50,7 @@ import java.util.Collections;
 import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -75,6 +77,30 @@ public class AliasList
     private final String mName;
     private final AliasListDefinition mDefinition;
     private final ObservableList<Alias> mAliases = FXCollections.observableArrayList(Alias.extractor());
+
+    /**
+     * Frozen classification of the destination talkgroup for one call.  Only {@link #UNMATCHED} qualifies for an
+     * Alias List's global unmatched-talkgroup behavior.
+     */
+    public enum TalkgroupMatchStatus
+    {
+        NOT_APPLICABLE,
+        MATCHED,
+        UNMATCHED
+    }
+
+    /**
+     * Immutable result produced from one published lookup-index snapshot for an entire call.
+     */
+    public record CallMatchResult(Set<Long> matchedAliasIds, TalkgroupMatchStatus talkgroupMatchStatus)
+    {
+        public CallMatchResult
+        {
+            matchedAliasIds = matchedAliasIds != null ? Set.copyOf(matchedAliasIds) : Set.of();
+            talkgroupMatchStatus = talkgroupMatchStatus != null ? talkgroupMatchStatus :
+                TalkgroupMatchStatus.NOT_APPLICABLE;
+        }
+    }
 
     /**
      * List of aliases where all aliases share the same list name.  Contains
@@ -419,6 +445,12 @@ public class AliasList
         return mDefinition != null ? mDefinition.getName() : mName;
     }
 
+    /** Durable alias-list identity, or zero for an intentionally empty compatibility list. */
+    public long getId()
+    {
+        return mDefinition != null ? mDefinition.getId() : 0L;
+    }
+
     /**
      * Reconciles this runtime lookup list against the AliasModel's complete ordered snapshot. This preserves the
      * deterministic winner for overlapping matchers while rebuilding the lock-free lookup index only once.
@@ -617,10 +649,13 @@ public class AliasList
      */
     public List<Alias> getAliases(Identifier<?> identifier)
     {
+        return getAliases(identifier, mLookupIndex);
+    }
+
+    private List<Alias> getAliases(Identifier<?> identifier, LookupIndex index)
+    {
         if(identifier != null)
         {
-            LookupIndex index = mLookupIndex;
-
             switch(identifier.getForm())
             {
                 case TALKGROUP:
@@ -697,7 +732,8 @@ public class AliasList
                 case ESN:
                     if(identifier instanceof ESNIdentifier esnidentifier)
                     {
-                        return toList(getESNAlias(esnidentifier.getValue()));
+                        String esn = esnidentifier.getValue();
+                        return toList(esn != null ? index.mESNMap.get(esn.toLowerCase()) : null);
                     }
                     break;
                 case UNIT_STATUS:
@@ -750,6 +786,48 @@ public class AliasList
     }
 
     /**
+     * Resolves every matched durable Alias ID and the destination-talkgroup status from one immutable lookup-index
+     * publication.  This prevents a concurrent Alias edit from producing IDs from one index generation and an
+     * unmatched decision from another.
+     */
+    public CallMatchResult getCallMatchResult(IdentifierCollection identifiers)
+    {
+        if(identifiers == null)
+        {
+            return new CallMatchResult(Set.of(), TalkgroupMatchStatus.NOT_APPLICABLE);
+        }
+
+        LookupIndex index = mLookupIndex;
+        Set<Long> matchedAliasIds = new LinkedHashSet<>();
+        TalkgroupMatchStatus talkgroupMatchStatus = TalkgroupMatchStatus.NOT_APPLICABLE;
+
+        for(Identifier<?> identifier: identifiers.getIdentifiers())
+        {
+            for(Alias alias: getAliases(identifier, index))
+            {
+                if(alias != null && alias.getId() > Alias.UNASSIGNED_ID)
+                {
+                    matchedAliasIds.add(alias.getId());
+                }
+            }
+
+            TalkgroupMatchStatus identifierStatus = talkgroupMatchStatus(identifier, index);
+
+            if(identifierStatus == TalkgroupMatchStatus.MATCHED)
+            {
+                talkgroupMatchStatus = identifierStatus;
+            }
+            else if(identifierStatus == TalkgroupMatchStatus.UNMATCHED &&
+                talkgroupMatchStatus == TalkgroupMatchStatus.NOT_APPLICABLE)
+            {
+                talkgroupMatchStatus = identifierStatus;
+            }
+        }
+
+        return new CallMatchResult(matchedAliasIds, talkgroupMatchStatus);
+    }
+
+    /**
      * Returns this list's action-only fallback when the supplied talkgroup destination has no matching real alias.
      * A patch group is considered matched when its patch talkgroup or any patched talkgroup has an exact or range
      * alias. Patched radio aliases do not turn an unknown talkgroup into a known talkgroup.
@@ -759,57 +837,69 @@ public class AliasList
      */
     public UnmatchedTalkgroupPolicy getUnmatchedTalkgroupPolicy(Identifier<?> identifier)
     {
+        return talkgroupMatchStatus(identifier, mLookupIndex) == TalkgroupMatchStatus.UNMATCHED ?
+            mDefinition.getUnmatchedTalkgroupPolicy() : null;
+    }
+
+    /**
+     * Classifies the destination talkgroup represented by a call's identifiers.  A patch group is matched when its
+     * patch talkgroup or any patched talkgroup has an exact or range alias; patched-radio aliases deliberately do not
+     * make the destination talkgroup known.  If a collection contains more than one eligible destination, any real
+     * talkgroup match wins so a partially attributed call is not also routed as globally unmatched.
+     */
+    public TalkgroupMatchStatus getTalkgroupMatchStatus(IdentifierCollection identifiers)
+    {
+        return getCallMatchResult(identifiers).talkgroupMatchStatus();
+    }
+
+    private TalkgroupMatchStatus talkgroupMatchStatus(Identifier<?> identifier, LookupIndex index)
+    {
         if(mDefinition == null || identifier == null || identifier.getRole() != Role.TO ||
             !supportsUnmatchedTalkgroup(mDefinition.getFamily(), identifier.getProtocol()))
         {
-            return null;
+            return TalkgroupMatchStatus.NOT_APPLICABLE;
         }
 
-        LookupIndex index = mLookupIndex;
+        TalkgroupAliasList talkgroups =
+            index.mTalkgroupProtocolMap.get(lookupProtocol(identifier.getProtocol()));
 
-        if(identifier.getForm() == Form.TALKGROUP &&
-            identifier instanceof TalkgroupIdentifier talkgroupIdentifier)
+        if(identifier.getForm() == Form.TALKGROUP && identifier instanceof TalkgroupIdentifier talkgroupIdentifier)
         {
-            TalkgroupAliasList talkgroups =
-                index.mTalkgroupProtocolMap.get(lookupProtocol(identifier.getProtocol()));
-            return talkgroups == null || talkgroups.getAlias(talkgroupIdentifier) == null ?
-                mDefinition.getUnmatchedTalkgroupPolicy() : null;
+            return talkgroups != null && talkgroups.getAlias(talkgroupIdentifier) != null ?
+                TalkgroupMatchStatus.MATCHED : TalkgroupMatchStatus.UNMATCHED;
         }
 
-        if(identifier.getForm() == Form.PATCH_GROUP &&
-            identifier instanceof PatchGroupIdentifier patchGroupIdentifier)
+        if(identifier.getForm() == Form.PATCH_GROUP && identifier instanceof PatchGroupIdentifier patchGroupIdentifier)
         {
             PatchGroup patchGroup = patchGroupIdentifier.getValue();
+
             if(patchGroup == null || patchGroup.getPatchGroup() == null)
             {
-                return null;
+                return TalkgroupMatchStatus.NOT_APPLICABLE;
             }
-
-            TalkgroupAliasList talkgroups =
-                index.mTalkgroupProtocolMap.get(lookupProtocol(patchGroupIdentifier.getProtocol()));
 
             if(talkgroups == null)
             {
-                return mDefinition.getUnmatchedTalkgroupPolicy();
+                return TalkgroupMatchStatus.UNMATCHED;
             }
 
             if(talkgroups.getAlias(patchGroup.getPatchGroup()) != null)
             {
-                return null;
+                return TalkgroupMatchStatus.MATCHED;
             }
 
             for(TalkgroupIdentifier patchedTalkgroup: patchGroup.getPatchedTalkgroupIdentifiers())
             {
                 if(talkgroups.getAlias(patchedTalkgroup) != null)
                 {
-                    return null;
+                    return TalkgroupMatchStatus.MATCHED;
                 }
             }
 
-            return mDefinition.getUnmatchedTalkgroupPolicy();
+            return TalkgroupMatchStatus.UNMATCHED;
         }
 
-        return null;
+        return TalkgroupMatchStatus.NOT_APPLICABLE;
     }
 
     private static boolean supportsUnmatchedTalkgroup(AliasListFamily family, Protocol protocol)
@@ -824,7 +914,7 @@ public class AliasList
             case P25 -> protocol == Protocol.APCO25 || protocol == Protocol.APCO25_PHASE2;
             case DMR -> protocol == Protocol.DMR;
             case NXDN -> protocol == Protocol.NXDN;
-            default -> false;
+            case NBFM -> protocol == Protocol.AM || protocol == Protocol.NBFM;
         };
     }
 

@@ -56,6 +56,40 @@ class SdrTrunkDatabaseStartupTest
     }
 
     @Test
+    void createsAndValidatesUnmatchedTalkgroupScanListMembershipSchema() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("unmatched-scan-lists.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            try(ResultSet resultSet = statement.executeQuery("""
+                SELECT sql FROM sqlite_master
+                WHERE type = 'table'
+                  AND name = 'alias_list_unmatched_talkgroup_scan_list_membership'
+                """))
+            {
+                assertTrue(resultSet.next());
+                assertTrue(resultSet.getString("sql").contains("PRIMARY KEY(alias_list_id, scan_list_id)"));
+                assertTrue(resultSet.getString("sql").contains("WITHOUT ROWID"));
+            }
+
+            try(ResultSet resultSet = statement.executeQuery("""
+                SELECT sql FROM sqlite_master
+                WHERE type = 'index'
+                  AND name = 'idx_alias_list_unmatched_talkgroup_scan_list_by_list'
+                """))
+            {
+                assertTrue(resultSet.next());
+                assertTrue(resultSet.getString("sql").contains("scan_list_id, alias_list_id"));
+            }
+        }
+
+        SdrTrunkDatabaseStartup.validateGlobalDatabase(database);
+    }
+
+    @Test
     void rejectsIncompleteExistingSchemaWithoutRepairingIt() throws Exception
     {
         Path database = mTemporaryFolder.resolve("sdrtrunk.sqlite");

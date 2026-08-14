@@ -10,9 +10,8 @@
  */
 package io.github.dsheirer.stats;
 
-import io.github.dsheirer.alias.Alias;
-import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.audio.call.AudioCallSnapshot;
+import io.github.dsheirer.audio.call.AudioCallRecordingMetadata;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.controller.NamingThreadFactory;
 import io.github.dsheirer.identifier.Form;
@@ -20,17 +19,26 @@ import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.Role;
+import io.github.dsheirer.identifier.patch.PatchGroup;
+import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
+import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
+import io.github.dsheirer.scanlist.ScanListModel;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -38,35 +46,73 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 final class StatsWebCallService implements AutoCloseable
 {
-    private static final int MAXIMUM_CLIENTS = 32;
     private static final int EVENT_QUEUE_CAPACITY = 256;
-    private static final int MAXIMUM_CALLS = 512;
     static final int MAXIMUM_SNAPSHOT_CALLS = 256;
     static final int MAXIMUM_METADATA_TEXT_CHARACTERS = 256;
     /** Maximum encoded size demonstrated for 256 calls when every externally derived field needs JSON escaping. */
     static final int MAXIMUM_SNAPSHOT_JSON_BYTES = 4 * 1024 * 1024;
-    private static final long MAXIMUM_AUDIO_BYTES = 128L * 1024L * 1024L;
     static final int MAXIMUM_CALL_AUDIO_BYTES = 16 * 1024 * 1024;
     static final long MAXIMUM_PENDING_AUDIO_BYTES = MAXIMUM_CALL_AUDIO_BYTES;
     static final int WAVE_HEADER_BYTES = 44;
     private static final long MAXIMUM_AGE_MS = TimeUnit.MINUTES.toMillis(30);
     private static final int SAMPLE_RATE = 8000;
-    private final StatsLiveEventHub mEventHub = new StatsLiveEventHub(MAXIMUM_CLIENTS, EVENT_QUEUE_CAPACITY);
-    private final ExecutorService mEncoderExecutor = new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS,
+    private final StatsLiveEventHub mEventHub;
+    private final CompletedCallScanListMatcher mScanListMatcher;
+    private final ThreadPoolExecutor mEncoderExecutor = new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS,
         new ArrayBlockingQueue<>(2), new NamingThreadFactory("stats completed call audio"),
         new ThreadPoolExecutor.AbortPolicy());
     private final Map<String,CachedCall> mCalls = new LinkedHashMap<>();
+    /** Prevents browser call-ID deduplication from mistaking post-restart calls for an earlier server session. */
+    private final String mInstanceId = UUID.randomUUID().toString().replace("-", "");
     private final AtomicLong mSequence = new AtomicLong();
     private final AtomicLong mPendingAudioBytes = new AtomicLong();
+    private final AtomicLong mReceivedCalls = new AtomicLong();
+    private final AtomicLong mPublishedCalls = new AtomicLong();
+    private final AtomicLong mDroppedNoListeners = new AtomicLong();
+    private final AtomicLong mDroppedNoMatchingListeners = new AtomicLong();
+    private final AtomicLong mDroppedInvalidCalls = new AtomicLong();
+    private final AtomicLong mDroppedNoScanList = new AtomicLong();
+    private final AtomicLong mDroppedPendingCapacity = new AtomicLong();
+    private final AtomicLong mDroppedEncoderCapacity = new AtomicLong();
+    private final AtomicLong mAudioFetchMisses = new AtomicLong();
+    private final AtomicLong mAgeEvictions = new AtomicLong();
+    private final AtomicLong mCapacityEvictions = new AtomicLong();
+    private final AtomicLong mRunGeneration = new AtomicLong();
+    private final AtomicInteger mActiveAudioResponses = new AtomicInteger();
+    private final AtomicLong mRejectedAudioResponses = new AtomicLong();
     private long mAudioBytes;
-    private long mRunGeneration;
+    private volatile WebCallConfiguration mConfiguration;
     private volatile boolean mRunning;
+
+    StatsWebCallService()
+    {
+        this(null, WebCallConfiguration.defaults());
+    }
+
+    StatsWebCallService(WebCallConfiguration configuration)
+    {
+        this(null, configuration);
+    }
+
+    StatsWebCallService(ScanListModel scanListModel, WebCallConfiguration configuration)
+    {
+        mConfiguration = configuration != null ? configuration : WebCallConfiguration.defaults();
+        mEventHub = new StatsLiveEventHub(mConfiguration.maximumListeners(), EVENT_QUEUE_CAPACITY);
+        mScanListMatcher = scanListModel != null ? new CompletedCallScanListMatcher(scanListModel) : null;
+    }
+
+    synchronized void configure(WebCallConfiguration configuration)
+    {
+        mConfiguration = configuration != null ? configuration : WebCallConfiguration.defaults();
+        mEventHub.setMaximumSubscribers(mConfiguration.maximumListeners());
+        evictToLimits();
+    }
 
     synchronized void start()
     {
         if(!mRunning)
         {
-            mRunGeneration++;
+            mRunGeneration.incrementAndGet();
             mRunning = true;
         }
     }
@@ -76,7 +122,7 @@ final class StatsWebCallService implements AutoCloseable
         if(mRunning)
         {
             mRunning = false;
-            mRunGeneration++;
+            mRunGeneration.incrementAndGet();
         }
 
         mCalls.clear();
@@ -85,30 +131,49 @@ final class StatsWebCallService implements AutoCloseable
 
     void receive(CompletedAudioCall call)
     {
-        long runGeneration;
-
-        synchronized(this)
-        {
-            if(!mRunning)
-            {
-                return;
-            }
-
-            runGeneration = mRunGeneration;
-        }
-
+        mReceivedCalls.incrementAndGet();
+        long generation = mRunGeneration.get();
         AudioCallSnapshot snapshot = call != null ? call.snapshot() : null;
 
-        if(!mEventHub.hasSubscribers() || call == null || !call.hasAudio() || snapshot == null ||
-            snapshot.isDoNotMonitor() || snapshot.duplicate() || isUnresolvedTrafficCall(snapshot))
+        if(!mRunning || !mEventHub.hasSubscribers())
         {
+            mDroppedNoListeners.incrementAndGet();
+            return;
+        }
+
+        if(call == null || !call.hasAudio() || snapshot == null || snapshot.duplicate() ||
+            isUnresolvedTrafficCall(snapshot))
+        {
+            mDroppedInvalidCalls.incrementAndGet();
+            return;
+        }
+
+        Set<Long> scanListIds = mScanListMatcher != null ? mScanListMatcher.match(call) : Set.of();
+
+        if(mScanListMatcher != null && scanListIds.isEmpty())
+        {
+            mDroppedNoScanList.incrementAndGet();
+            return;
+        }
+
+        if(!mEventHub.hasMatchingSubscriber("call", Map.of("scan_list_ids", scanListIds)))
+        {
+            mDroppedNoMatchingListeners.incrementAndGet();
             return;
         }
 
         int waveLength = checkedWaveLength(call.audioBuffers());
 
-        if(waveLength < 0 || !reservePendingAudio(waveLength))
+        if(waveLength < 0)
         {
+            mDroppedInvalidCalls.incrementAndGet();
+            return;
+        }
+
+        if(!reservePendingAudio(waveLength))
+        {
+            mDroppedPendingCapacity.incrementAndGet();
+            publishMissed(generation, scanListIds, "pending_audio_capacity");
             return;
         }
 
@@ -117,7 +182,7 @@ final class StatsWebCallService implements AutoCloseable
             mEncoderExecutor.execute(() -> {
                 try
                 {
-                    cache(call, waveLength, runGeneration);
+                    cache(call, waveLength, scanListIds, generation);
                 }
                 finally
                 {
@@ -128,11 +193,37 @@ final class StatsWebCallService implements AutoCloseable
         catch(RuntimeException e)
         {
             mPendingAudioBytes.addAndGet(-waveLength);
-            // Service is shutting down.
+            mDroppedEncoderCapacity.incrementAndGet();
+            publishMissed(generation, scanListIds, "encoder_capacity");
         }
     }
 
-    StatsLiveEventHub.Subscription subscribe()
+    /** Bounds concurrent WAV responses independently from the bounded SSE listener set. */
+    boolean tryAcquireAudioResponse()
+    {
+        while(true)
+        {
+            int current = mActiveAudioResponses.get();
+
+            if(current >= mConfiguration.maximumListeners())
+            {
+                mRejectedAudioResponses.incrementAndGet();
+                return false;
+            }
+
+            if(mActiveAudioResponses.compareAndSet(current, current + 1))
+            {
+                return true;
+            }
+        }
+    }
+
+    void releaseAudioResponse()
+    {
+        mActiveAudioResponses.updateAndGet(current -> Math.max(0, current - 1));
+    }
+
+    synchronized StatsLiveEventHub.Subscription subscribe()
     {
         return mRunning ? mEventHub.subscribe() : null;
     }
@@ -143,8 +234,16 @@ final class StatsWebCallService implements AutoCloseable
      */
     synchronized List<Map<String,Object>> snapshot()
     {
+        return snapshot(Set.of());
+    }
+
+    /** Returns the bounded recovery snapshot visible to the selected scan lists. */
+    synchronized List<Map<String,Object>> snapshot(Set<Long> scanListIds)
+    {
         evictExpired(System.currentTimeMillis());
-        List<CachedCall> cached = new ArrayList<>(mCalls.values());
+        Set<Long> selected = scanListIds != null ? Set.copyOf(scanListIds) : Set.of();
+        List<CachedCall> cached = mCalls.values().stream()
+            .filter(call -> selected.isEmpty() || matchesScanLists(call.metadata(), selected)).toList();
         int first = Math.max(0, cached.size() - MAXIMUM_SNAPSHOT_CALLS);
         List<Map<String,Object>> result = new ArrayList<>(cached.size() - first);
 
@@ -154,6 +253,41 @@ final class StatsWebCallService implements AutoCloseable
         }
 
         return List.copyOf(result);
+    }
+
+    synchronized StatsLiveEventHub.Subscription subscribe(Set<Long> scanListIds)
+    {
+        if(!mRunning)
+        {
+            return null;
+        }
+
+        Set<Long> selected = scanListIds != null ? Set.copyOf(scanListIds) : Set.of();
+        return mEventHub.subscribe(event -> matchesScanLists(event, selected));
+    }
+
+    private static boolean matchesScanLists(StatsLiveEventHub.LiveEvent event, Set<Long> selected)
+    {
+        if(selected.isEmpty() || event == null || !(event.data() instanceof Map<?,?> metadata) ||
+            !(metadata.get("scan_list_ids") instanceof Collection<?> matches))
+        {
+            return false;
+        }
+
+        for(Object value : matches)
+        {
+            if(value instanceof Number number && selected.contains(number.longValue()))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static boolean matchesScanLists(Map<?,?> metadata, Set<Long> selected)
+    {
+        return matchesScanLists(new StatsLiveEventHub.LiveEvent("call", metadata), selected);
     }
 
     private static boolean isUnresolvedTrafficCall(AudioCallSnapshot snapshot)
@@ -166,17 +300,51 @@ final class StatsWebCallService implements AutoCloseable
     synchronized CachedCall get(String id)
     {
         evictExpired(System.currentTimeMillis());
-        return mCalls.get(id);
+        CachedCall call = mCalls.get(id);
+
+        if(call == null)
+        {
+            mAudioFetchMisses.incrementAndGet();
+        }
+
+        return call;
     }
 
     synchronized Map<String,Object> status()
     {
         evictExpired(System.currentTimeMillis());
-        return Map.of("cached_calls", mCalls.size(), "cached_audio_bytes", mAudioBytes,
-            "maximum_calls", MAXIMUM_CALLS, "maximum_audio_bytes", MAXIMUM_AUDIO_BYTES,
-            "maximum_call_audio_bytes", MAXIMUM_CALL_AUDIO_BYTES,
-            "pending_audio_bytes", mPendingAudioBytes.get(),
-            "maximum_pending_audio_bytes", MAXIMUM_PENDING_AUDIO_BYTES);
+        WebCallConfiguration configuration = mConfiguration;
+        Map<String,Object> status = new LinkedHashMap<>();
+        status.put("cached_calls", mCalls.size());
+        status.put("cached_audio_bytes", mAudioBytes);
+        status.put("active_listeners", mEventHub.subscriberCount());
+        status.put("maximum_listeners", configuration.maximumListeners());
+        status.put("active_audio_responses", mActiveAudioResponses.get());
+        status.put("maximum_audio_responses", configuration.maximumListeners());
+        status.put("rejected_audio_responses", mRejectedAudioResponses.get());
+        status.put("maximum_selected_scan_lists", configuration.maximumSelectedScanLists());
+        status.put("maximum_browser_queue_calls", configuration.maximumBrowserQueueCalls());
+        status.put("maximum_calls", configuration.maximumCachedCalls());
+        status.put("maximum_audio_bytes", configuration.maximumCachedAudioBytes());
+        status.put("maximum_call_audio_bytes", MAXIMUM_CALL_AUDIO_BYTES);
+        status.put("pending_audio_bytes", mPendingAudioBytes.get());
+        status.put("maximum_pending_audio_bytes", MAXIMUM_PENDING_AUDIO_BYTES);
+        status.put("encoder_queue_depth", mEncoderExecutor.getQueue().size());
+        status.put("event_queue_capacity", mEventHub.queueCapacity());
+        status.put("received_calls", mReceivedCalls.get());
+        status.put("published_calls", mPublishedCalls.get());
+        status.put("dropped_no_listeners", mDroppedNoListeners.get());
+        status.put("dropped_no_matching_listeners", mDroppedNoMatchingListeners.get());
+        status.put("dropped_invalid_calls", mDroppedInvalidCalls.get());
+        status.put("dropped_no_scan_list", mDroppedNoScanList.get());
+        status.put("dropped_pending_capacity", mDroppedPendingCapacity.get());
+        status.put("dropped_encoder_capacity", mDroppedEncoderCapacity.get());
+        status.put("dropped_sse_events", mEventHub.droppedEvents());
+        status.put("rejected_listeners", mEventHub.rejectedSubscriptions());
+        status.put("audio_fetch_misses", mAudioFetchMisses.get());
+        status.put("age_evictions", mAgeEvictions.get());
+        status.put("capacity_evictions", mCapacityEvictions.get());
+        return Map.copyOf(status);
     }
 
     private boolean reservePendingAudio(int waveLength)
@@ -199,14 +367,11 @@ final class StatsWebCallService implements AutoCloseable
         return true;
     }
 
-    private void cache(CompletedAudioCall call, int waveLength, long runGeneration)
+    private void cache(CompletedAudioCall call, int waveLength, Set<Long> scanListIds, long generation)
     {
-        synchronized(this)
+        if(!isCurrentGeneration(generation))
         {
-            if(!mRunning || mRunGeneration != runGeneration)
-            {
-                return;
-            }
+            return;
         }
 
         byte[] wave = wave(call, waveLength);
@@ -216,14 +381,15 @@ final class StatsWebCallService implements AutoCloseable
             return;
         }
 
-        String id = Long.toUnsignedString(mSequence.incrementAndGet(), 36);
+        long sequence = mSequence.incrementAndGet();
+        String id = mInstanceId + "-" + Long.toUnsignedString(sequence, 36);
         long created = System.currentTimeMillis();
-        Map<String,Object> metadata = metadata(id, call, created);
+        Map<String,Object> metadata = metadata(id, sequence, call, created, scanListIds);
         CachedCall cachedCall = new CachedCall(metadata, wave, created);
 
         synchronized(this)
         {
-            if(!mRunning || mRunGeneration != runGeneration)
+            if(!isCurrentGeneration(generation))
             {
                 return;
             }
@@ -233,6 +399,21 @@ final class StatsWebCallService implements AutoCloseable
             mAudioBytes += wave.length;
             evictToLimits();
             mEventHub.publish("call", metadata);
+            mPublishedCalls.incrementAndGet();
+        }
+    }
+
+    private boolean isCurrentGeneration(long generation)
+    {
+        return mRunning && generation == mRunGeneration.get();
+    }
+
+    private void publishMissed(long generation, Set<Long> scanListIds, String reason)
+    {
+        if(isCurrentGeneration(generation))
+        {
+            mEventHub.publish("missed", Map.of("scan_list_ids", scanListIds.stream().sorted().toList(),
+                "missed_calls", 1, "exact", true, "reason", reason));
         }
     }
 
@@ -248,14 +429,21 @@ final class StatsWebCallService implements AutoCloseable
             }
         }
 
-        expired.forEach(this::remove);
+        expired.forEach(id -> {
+            remove(id);
+            mAgeEvictions.incrementAndGet();
+        });
     }
 
     private void evictToLimits()
     {
-        while(mCalls.size() > MAXIMUM_CALLS || mAudioBytes > MAXIMUM_AUDIO_BYTES)
+        WebCallConfiguration configuration = mConfiguration;
+
+        while(mCalls.size() > configuration.maximumCachedCalls() ||
+            mAudioBytes > configuration.maximumCachedAudioBytes())
         {
             remove(mCalls.keySet().iterator().next());
+            mCapacityEvictions.incrementAndGet();
         }
     }
 
@@ -269,28 +457,36 @@ final class StatsWebCallService implements AutoCloseable
         }
     }
 
-    private static Map<String,Object> metadata(String id, CompletedAudioCall call, long completedAt)
+    private static Map<String,Object> metadata(String id, long sequence, CompletedAudioCall call, long completedAt,
+                                               Set<Long> scanListIds)
     {
         AudioCallSnapshot snapshot = call.snapshot();
         IdentifierCollection identifiers = snapshot.identifierCollection();
         Identifier<?> source = identifiers != null ? identifiers.getFromIdentifier() : null;
         Identifier<?> target = identifiers != null ? identifiers.getToIdentifier() : null;
-        AliasList aliasList = snapshot.aliasList();
+        AudioCallRecordingMetadata recordingMetadata = snapshot.recordingMetadata();
         LinkedHashMap<String,Object> value = new LinkedHashMap<>();
         putText(value, "call_id", id);
         putText(value, "audio_url", StatsApiV1.CALLS + "/" + id + "/audio");
+        value.put("order_sequence", sequence);
+        value.put("started_at_ms", snapshot.startTimestamp());
         value.put("completed_at_ms", completedAt);
         value.put("duration_ms", call.getDuration());
-        putText(value, "system", identifierValue(identifiers, IdentifierClass.CONFIGURATION, Form.SYSTEM, Role.ANY));
-        putText(value, "channel", identifierValue(identifiers, IdentifierClass.CONFIGURATION, Form.CHANNEL, Role.ANY));
+        putText(value, "system", recordingMetadata != null ? recordingMetadata.systemName() :
+            identifierValue(identifiers, IdentifierClass.CONFIGURATION, Form.SYSTEM, Role.ANY));
+        putText(value, "channel", recordingMetadata != null ? recordingMetadata.channelName() :
+            identifierValue(identifiers, IdentifierClass.CONFIGURATION, Form.CHANNEL, Role.ANY));
         putText(value, "decoder", identifierValue(identifiers, IdentifierClass.CONFIGURATION, Form.DECODER_TYPE,
             Role.ANY));
-        putText(value, "source_id", value(source));
-        putText(value, "source_alias", alias(aliasList, source));
+        putText(value, "source_id", recordingMetadata != null ? recordingMetadata.sourceValue() : value(source));
+        putText(value, "source_alias", recordingMetadata != null ? recordingMetadata.sourceAlias() : null);
         putText(value, "source_form", form(source));
-        putText(value, "target_id", value(target));
-        putText(value, "target_alias", alias(aliasList, target));
+        putText(value, "target_id", recordingMetadata != null ? recordingMetadata.destinationValue() : value(target));
+        putText(value, "target_alias", recordingMetadata != null ? recordingMetadata.destinationAlias() : null);
         putText(value, "target_form", form(target));
+        putText(value, "conversation_key", conversationKey(identifiers, target));
+        value.put("scan_list_ids", scanListIds != null ? scanListIds.stream()
+            .sorted(Comparator.naturalOrder()).toList() : List.of());
         value.put("frequency_hz", longValue(identifiers, Form.CHANNEL_FREQUENCY));
         value.put("timeslot", snapshot.timeslot());
         value.put("encrypted", snapshot.encrypted());
@@ -305,6 +501,37 @@ final class StatsWebCallService implements AutoCloseable
             value.put("vc_fec_protected_bits", snapshot.voiceCallQuality().fecProtectedBitCount());
         }
         return Map.copyOf(value);
+    }
+
+    private static String conversationKey(IdentifierCollection identifiers, Identifier<?> target)
+    {
+        Object systemValue = identifierValue(identifiers, IdentifierClass.CONFIGURATION, Form.SYSTEM, Role.ANY);
+        String system = systemValue != null ? systemValue.toString().trim().toLowerCase(Locale.ROOT) : "unknown";
+        String protocol = target != null && target.getProtocol() != null ?
+            target.getProtocol().name().toLowerCase(Locale.ROOT) : "unknown";
+        Object destination = target != null ? target.getValue() : null;
+
+        if(target instanceof TalkgroupIdentifier talkgroup)
+        {
+            destination = talkgroup.getValue();
+        }
+        else if(target instanceof PatchGroupIdentifier patchIdentifier)
+        {
+            PatchGroup patchGroup = patchIdentifier.getValue();
+
+            if(patchGroup != null && patchGroup.getPatchGroup() != null)
+            {
+                destination = patchGroup.getPatchGroup().getValue();
+            }
+        }
+
+        if(destination != null)
+        {
+            return protocol + ":" + system + ":" + destination;
+        }
+
+        long frequency = longValue(identifiers, Form.CHANNEL_FREQUENCY);
+        return protocol + ":" + system + ":frequency:" + frequency;
     }
 
     private static Object identifierValue(IdentifierCollection identifiers, IdentifierClass identifierClass,
@@ -351,21 +578,6 @@ final class StatsWebCallService implements AutoCloseable
         }
 
         return 0;
-    }
-
-    private static String alias(AliasList aliasList, Identifier<?> identifier)
-    {
-        if(aliasList != null && identifier != null)
-        {
-            List<Alias> aliases = aliasList.getAliases(identifier);
-
-            if(!aliases.isEmpty())
-            {
-                return aliases.getFirst().getName();
-            }
-        }
-
-        return null;
     }
 
     private static void putText(Map<String,Object> values, String key, Object value)

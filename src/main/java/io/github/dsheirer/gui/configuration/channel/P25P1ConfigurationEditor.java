@@ -19,6 +19,7 @@
 
 package io.github.dsheirer.gui.configuration.channel;
 
+import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.gui.configuration.eventlog.EventLogConfigurationEditor;
 import io.github.dsheirer.gui.configuration.record.RecordConfigurationEditor;
 import io.github.dsheirer.gui.configuration.source.FrequencyEditor;
@@ -76,6 +77,7 @@ public class P25P1ConfigurationEditor extends ChannelConfigurationEditor
     private ToggleButton mAutoToggleButton;
     private ToggleButton mC4FMToggleButton;
     private ToggleButton mLSMToggleButton;
+    private P25SiteIdentityView mP25SiteIdentityView;
 
     /**
      * Constructs an instance
@@ -97,6 +99,20 @@ public class P25P1ConfigurationEditor extends ChannelConfigurationEditor
     public DecoderType getDecoderType()
     {
         return DecoderType.P25_PHASE1;
+    }
+
+    @Override
+    public void setItem(Channel channel)
+    {
+        super.setItem(channel);
+        getP25SiteIdentityView().setChannel(channel);
+    }
+
+    @Override
+    public void dispose()
+    {
+        getP25SiteIdentityView().dispose();
+        super.dispose();
     }
 
     private TitledPane getSourcePane()
@@ -150,14 +166,27 @@ public class P25P1ConfigurationEditor extends ChannelConfigurationEditor
             GridPane.setConstraints(getLearnAnnouncedControlChannelsCheckBox(), 1, 1, 5, 1);
             gridPane.getChildren().add(getLearnAnnouncedControlChannelsCheckBox());
 
+            GridPane.setConstraints(getP25SiteIdentityView(), 0, 2, 6, 1);
+            gridPane.getChildren().add(getP25SiteIdentityView());
+
             Label modulationHelpLabel = new Label("Auto: detects the received waveform.  C4FM: non-simulcast.  LSM: simulcast.");
-            GridPane.setConstraints(modulationHelpLabel, 0, 2, 6, 1);
+            GridPane.setConstraints(modulationHelpLabel, 0, 3, 6, 1);
             gridPane.getChildren().add(modulationHelpLabel);
 
             mDecoderPane.setContent(gridPane);
         }
 
         return mDecoderPane;
+    }
+
+    private P25SiteIdentityView getP25SiteIdentityView()
+    {
+        if(mP25SiteIdentityView == null)
+        {
+            mP25SiteIdentityView = new P25SiteIdentityView();
+        }
+
+        return mP25SiteIdentityView;
     }
 
     private TitledPane getEventLogPane()

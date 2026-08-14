@@ -21,7 +21,7 @@ import java.util.List;
  */
 public final class SdrTrunkDatabaseSchema
 {
-    public static final int ALIAS_SCHEMA_VERSION = 5;
+    public static final int ALIAS_SCHEMA_VERSION = 6;
     public static final int CONFIGURATION_SCHEMA_VERSION = 2;
     public static final int SETTINGS_SCHEMA_VERSION = 2;
     public static final int ICON_SCHEMA_VERSION = 2;
@@ -33,10 +33,6 @@ public final class SdrTrunkDatabaseSchema
             family TEXT NOT NULL CHECK(family IN (
                 'P25', 'DMR', 'NXDN', 'NBFM'
             )),
-            unmatched_talkgroup_priority INTEGER NOT NULL DEFAULT 100 CHECK(
-                unmatched_talkgroup_priority = -1 OR
-                unmatched_talkgroup_priority BETWEEN 1 AND 100
-            ),
             unmatched_talkgroup_record_enabled INTEGER NOT NULL DEFAULT 0 CHECK(
                 unmatched_talkgroup_record_enabled IN (0, 1)
             ),
@@ -54,7 +50,6 @@ public final class SdrTrunkDatabaseSchema
             icon_name TEXT,
             stream_as_talkgroup INTEGER,
             record_enabled INTEGER NOT NULL DEFAULT 0,
-            priority INTEGER,
             matcher_type TEXT NOT NULL CHECK(matcher_type IN (
                 'TALKGROUP',
                 'TALKGROUP_RANGE',
@@ -74,6 +69,36 @@ public final class SdrTrunkDatabaseSchema
             numeric_value INTEGER,
             tone_sequence TEXT
         )
+        """;
+    private static final String SCAN_LIST_TABLE_SQL = """
+        CREATE TABLE IF NOT EXISTS scan_list (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sort_order INTEGER NOT NULL DEFAULT 0 CHECK(sort_order >= 0),
+            name TEXT NOT NULL COLLATE NOCASE CHECK(
+                length(trim(name)) BETWEEN 1 AND 100
+            ),
+            description TEXT CHECK(
+                description IS NULL OR length(trim(description)) BETWEEN 1 AND 1000
+            ),
+            published INTEGER NOT NULL DEFAULT 1 CHECK(published IN (0, 1)),
+            is_default INTEGER NOT NULL DEFAULT 0 CHECK(is_default IN (0, 1)),
+            CHECK(is_default = 0 OR published = 1),
+            UNIQUE(name)
+        )
+        """;
+    private static final String ALIAS_SCAN_LIST_MEMBERSHIP_TABLE_SQL = """
+        CREATE TABLE IF NOT EXISTS alias_scan_list_membership (
+            alias_id INTEGER NOT NULL REFERENCES alias(id) ON DELETE CASCADE,
+            scan_list_id INTEGER NOT NULL REFERENCES scan_list(id) ON DELETE CASCADE,
+            PRIMARY KEY(alias_id, scan_list_id)
+        ) WITHOUT ROWID
+        """;
+    private static final String ALIAS_LIST_UNMATCHED_TALKGROUP_SCAN_LIST_MEMBERSHIP_TABLE_SQL = """
+        CREATE TABLE IF NOT EXISTS alias_list_unmatched_talkgroup_scan_list_membership (
+            alias_list_id INTEGER NOT NULL REFERENCES alias_list(id) ON DELETE CASCADE,
+            scan_list_id INTEGER NOT NULL REFERENCES scan_list(id) ON DELETE CASCADE,
+            PRIMARY KEY(alias_list_id, scan_list_id)
+        ) WITHOUT ROWID
         """;
     private static final String ALIAS_BROADCAST_CHANNEL_TABLE_SQL = """
         CREATE TABLE IF NOT EXISTS alias_broadcast_channel (
@@ -98,6 +123,24 @@ public final class SdrTrunkDatabaseSchema
             ALIAS_BROADCAST_CHANNEL_TABLE_SQL),
         new SqliteSchemaValidator.Definition("table", "alias_list_unmatched_talkgroup_stream",
             ALIAS_LIST_UNMATCHED_TALKGROUP_STREAM_TABLE_SQL),
+        new SqliteSchemaValidator.Definition("table", "scan_list", SCAN_LIST_TABLE_SQL),
+        new SqliteSchemaValidator.Definition("table", "alias_scan_list_membership",
+            ALIAS_SCAN_LIST_MEMBERSHIP_TABLE_SQL),
+        new SqliteSchemaValidator.Definition("table", "alias_list_unmatched_talkgroup_scan_list_membership",
+            ALIAS_LIST_UNMATCHED_TALKGROUP_SCAN_LIST_MEMBERSHIP_TABLE_SQL),
+        new SqliteSchemaValidator.Definition("index", "idx_scan_list_one_default", """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_scan_list_one_default
+            ON scan_list(is_default)
+            WHERE is_default = 1
+            """),
+        new SqliteSchemaValidator.Definition("index", "idx_alias_scan_list_by_list", """
+            CREATE INDEX IF NOT EXISTS idx_alias_scan_list_by_list
+            ON alias_scan_list_membership(scan_list_id, alias_id)
+            """),
+        new SqliteSchemaValidator.Definition("index", "idx_alias_list_unmatched_talkgroup_scan_list_by_list", """
+            CREATE INDEX IF NOT EXISTS idx_alias_list_unmatched_talkgroup_scan_list_by_list
+            ON alias_list_unmatched_talkgroup_scan_list_membership(scan_list_id, alias_list_id)
+            """),
         new SqliteSchemaValidator.Definition("index", "idx_alias_talkgroup_value", """
             CREATE INDEX IF NOT EXISTS idx_alias_talkgroup_value
             ON alias(protocol, value, alias_list_id, id)
@@ -161,6 +204,9 @@ public final class SdrTrunkDatabaseSchema
         "idx_alias_radio_value",
         "idx_alias_radio_range",
         "idx_alias_broadcast_channel_name",
+        "idx_scan_list_one_default",
+        "idx_alias_scan_list_by_list",
+        "idx_alias_list_unmatched_talkgroup_scan_list_by_list",
         "idx_configuration_channel_sort",
         "idx_configuration_channel_alias_list",
         "idx_configuration_channel_decoder",
@@ -181,14 +227,19 @@ public final class SdrTrunkDatabaseSchema
         return List.of(
             new SqliteSchemaValidator.Table("database_metadata", "key", "value", "updated_at_ms"),
             new SqliteSchemaValidator.Table("alias_list", "id", "name", "family",
-                "unmatched_talkgroup_priority", "unmatched_talkgroup_record_enabled"),
+                "unmatched_talkgroup_record_enabled"),
             new SqliteSchemaValidator.Table("alias", "id", "alias_list_id", "name", "description",
                 "group_name", "color", "icon_name", "stream_as_talkgroup", "record_enabled",
-                "priority", "matcher_type", "protocol", "value", "min_value",
+                "matcher_type", "protocol", "value", "min_value",
                 "max_value", "text_value", "numeric_value", "tone_sequence"),
             new SqliteSchemaValidator.Table("alias_broadcast_channel", "id", "alias_id", "channel_name"),
             new SqliteSchemaValidator.Table("alias_list_unmatched_talkgroup_stream", "id", "alias_list_id",
                 "channel_name"),
+            new SqliteSchemaValidator.Table("scan_list", "id", "sort_order", "name", "description", "published",
+                "is_default"),
+            new SqliteSchemaValidator.Table("alias_scan_list_membership", "alias_id", "scan_list_id"),
+            new SqliteSchemaValidator.Table("alias_list_unmatched_talkgroup_scan_list_membership", "alias_list_id",
+                "scan_list_id"),
             new SqliteSchemaValidator.Table("configuration_channel", "id", "sort_order", "system_name", "site_name",
                 "name", "alias_list_name", "radres_guid", "auto_start", "auto_start_order", "decoder_type",
                 "source_type", "primary_frequency_hz", "frequency_count", "recording_enabled",
@@ -227,6 +278,11 @@ public final class SdrTrunkDatabaseSchema
             {
                 statement.executeUpdate(definition.sql());
             }
+            statement.executeUpdate("""
+                INSERT INTO scan_list (sort_order, name, description, published, is_default)
+                SELECT 0, 'Default', NULL, 1, 1
+                WHERE NOT EXISTS (SELECT 1 FROM scan_list)
+                """);
             statement.executeUpdate("""
                 CREATE TABLE IF NOT EXISTS configuration_channel (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -20,6 +20,7 @@ import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
+import io.github.dsheirer.source.config.SourceConfigTuner;
 import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -51,6 +52,44 @@ class SiteControlChannelLearnerTest
         assertEquals(new P25SiteIdentity(WACN, SYSTEM, RFSS, SITE), channel.getP25SiteIdentity());
         assertEquals(List.of(PRIMARY, MANUAL, ALTERNATE), frequencies(channel));
         assertEquals(List.of(ALTERNATE), decode.getLearnedControlFrequencies());
+        assertEquals(1, saves.get());
+    }
+
+    @Test
+    void bindsIdentityWithoutFrequencyLearningOrFrequencyMutation()
+    {
+        AtomicInteger saves = new AtomicInteger();
+        SiteControlChannelLearner learner = new SiteControlChannelLearner(saves::incrementAndGet);
+        Channel channel = channel(List.of(PRIMARY, MANUAL), false);
+
+        learner.receiveSiteMetadata(event(channel, PRIMARY, 1_000, WACN, SYSTEM, RFSS, SITE,
+            List.of(PRIMARY, ALTERNATE)));
+
+        assertEquals(new P25SiteIdentity(WACN, SYSTEM, RFSS, SITE), channel.getP25SiteIdentity());
+        assertEquals(List.of(PRIMARY, MANUAL), frequencies(channel));
+        assertTrue(decode(channel).getLearnedControlFrequencies().isEmpty());
+        assertEquals(1, saves.get());
+    }
+
+    @Test
+    void bindsIdentityForSingleFrequencyTunerSource()
+    {
+        AtomicInteger saves = new AtomicInteger();
+        SiteControlChannelLearner learner = new SiteControlChannelLearner(saves::incrementAndGet);
+        Channel channel = new Channel("Control");
+        DecodeConfigP25Phase1 decode = new DecodeConfigP25Phase1();
+        decode.setLearnAnnouncedControlChannels(true);
+        channel.setDecodeConfiguration(decode);
+        SourceConfigTuner source = new SourceConfigTuner();
+        source.setFrequency(PRIMARY);
+        channel.setSourceConfiguration(source);
+
+        learner.receiveSiteMetadata(event(channel, PRIMARY, 1_000, WACN, SYSTEM, RFSS, SITE,
+            List.of(PRIMARY, ALTERNATE)));
+
+        assertEquals(new P25SiteIdentity(WACN, SYSTEM, RFSS, SITE), channel.getP25SiteIdentity());
+        assertEquals(PRIMARY, source.getFrequency());
+        assertTrue(decode.getLearnedControlFrequencies().isEmpty());
         assertEquals(1, saves.get());
     }
 
@@ -153,9 +192,14 @@ class SiteControlChannelLearnerTest
 
     private static Channel channel(List<Long> frequencies)
     {
+        return channel(frequencies, true);
+    }
+
+    private static Channel channel(List<Long> frequencies, boolean learnAnnouncedControlChannels)
+    {
         Channel channel = new Channel("Control");
         DecodeConfigP25Phase1 decode = new DecodeConfigP25Phase1();
-        decode.setLearnAnnouncedControlChannels(true);
+        decode.setLearnAnnouncedControlChannels(learnAnnouncedControlChannels);
         channel.setDecodeConfiguration(decode);
         SourceConfigTunerMultipleFrequency source = new SourceConfigTunerMultipleFrequency();
         source.setFrequencies(frequencies);

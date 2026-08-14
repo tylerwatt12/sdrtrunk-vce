@@ -19,6 +19,7 @@
 
 package io.github.dsheirer.audio.call;
 
+import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
@@ -41,7 +42,7 @@ import java.util.Set;
  * <p>The elected snapshot continues to own audio, RF/site metadata, and the mutable runtime alias-list reference used
  * by existing streaming code. This compact value separately preserves every cohort member's channel/talkgroup match
  * context and frozen output decisions, so a losing receiver copy cannot silently remove a recording destination,
- * configured stream, or Listen-list match.</p>
+ * configured stream, or scan-list match.</p>
  */
 public record ResolvedCallPolicy(boolean recordAudio, boolean destinationTalkgroupRecordEnabled,
                                  Set<String> broadcastRoutingKeys, List<MatchContext> matchContexts)
@@ -153,11 +154,13 @@ public record ResolvedCallPolicy(boolean recordAudio, boolean destinationTalkgro
     }
 
     /**
-     * One cohort member's immutable Listen-list and output-policy evidence. Site is deliberately absent: talkgroup
+     * One cohort member's immutable scan-list and output-policy evidence. Site is deliberately absent: talkgroup
      * membership is site-independent, while exact channel membership uses the stable channel configuration identity.
      */
-    public record MatchContext(String channelConfigurationId, String aliasListName, String systemName,
-                               List<DestinationIdentity> destinationIdentities, boolean recordAudio,
+    public record MatchContext(String channelConfigurationId, long aliasListId, String aliasListName,
+                               String systemName, List<DestinationIdentity> destinationIdentities,
+                               Set<Long> matchedAliasIds, AliasList.TalkgroupMatchStatus talkgroupMatchStatus,
+                               boolean recordAudio,
                                boolean destinationTalkgroupRecordEnabled, Set<String> broadcastRoutingKeys)
     {
         public MatchContext
@@ -167,13 +170,39 @@ public record ResolvedCallPolicy(boolean recordAudio, boolean destinationTalkgro
             systemName = normalize(systemName);
             destinationIdentities = destinationIdentities != null ?
                 List.copyOf(new LinkedHashSet<>(destinationIdentities)) : List.of();
+            matchedAliasIds = matchedAliasIds != null ? Set.copyOf(matchedAliasIds) : Set.of();
+            talkgroupMatchStatus = talkgroupMatchStatus != null ? talkgroupMatchStatus :
+                AliasList.TalkgroupMatchStatus.NOT_APPLICABLE;
             broadcastRoutingKeys = immutableStrings(broadcastRoutingKeys);
+        }
+
+        /** Compatibility constructor for contexts that do not carry runtime alias-list matching evidence. */
+        public MatchContext(String channelConfigurationId, long aliasListId, String aliasListName,
+                            String systemName, List<DestinationIdentity> destinationIdentities,
+                            Set<Long> matchedAliasIds, boolean recordAudio,
+                            boolean destinationTalkgroupRecordEnabled, Set<String> broadcastRoutingKeys)
+        {
+            this(channelConfigurationId, aliasListId, aliasListName, systemName, destinationIdentities,
+                matchedAliasIds, AliasList.TalkgroupMatchStatus.NOT_APPLICABLE, recordAudio,
+                destinationTalkgroupRecordEnabled, broadcastRoutingKeys);
         }
 
         private static MatchContext capture(AudioCallSnapshot snapshot, boolean recordAudio,
                                             boolean destinationRecordEnabled, Set<String> broadcastRoutingKeys)
         {
             Set<DestinationIdentity> destinations = new LinkedHashSet<>();
+            Set<Long> matchedAliasIds = Set.of();
+            AliasList runtimeAliasList = snapshot.aliasList();
+            AliasList.TalkgroupMatchStatus talkgroupMatchStatus =
+                AliasList.TalkgroupMatchStatus.NOT_APPLICABLE;
+
+            if(runtimeAliasList != null)
+            {
+                AliasList.CallMatchResult callMatchResult =
+                    runtimeAliasList.getCallMatchResult(snapshot.identifierCollection());
+                matchedAliasIds = callMatchResult.matchedAliasIds();
+                talkgroupMatchStatus = callMatchResult.talkgroupMatchStatus();
+            }
 
             if(snapshot.identifierCollection() != null)
             {
@@ -205,6 +234,7 @@ public record ResolvedCallPolicy(boolean recordAudio, boolean destinationTalkgro
             String channelIdentity = configurationValue(snapshot, Form.UNIQUE_ID);
             String aliasList = configurationValue(snapshot, Form.ALIAS_LIST);
             String system = configurationValue(snapshot, Form.SYSTEM);
+            long aliasListId = runtimeAliasList != null ? runtimeAliasList.getId() : 0L;
 
             if(channelIdentity == null && metadata != null)
             {
@@ -216,18 +246,25 @@ public record ResolvedCallPolicy(boolean recordAudio, boolean destinationTalkgro
                 aliasList = metadata.aliasListName();
             }
 
+            if(aliasList == null && runtimeAliasList != null)
+            {
+                aliasList = runtimeAliasList.getName();
+            }
+
             if(system == null && metadata != null)
             {
                 system = metadata.systemName();
             }
 
-            return new MatchContext(channelIdentity, aliasList, system, List.copyOf(destinations), recordAudio,
-                destinationRecordEnabled, broadcastRoutingKeys);
+            return new MatchContext(channelIdentity, aliasListId, aliasList, system, List.copyOf(destinations),
+                matchedAliasIds, talkgroupMatchStatus, recordAudio, destinationRecordEnabled,
+                broadcastRoutingKeys);
         }
 
         public boolean hasMatchingIdentity()
         {
-            return channelConfigurationId != null || !destinationIdentities.isEmpty();
+            return channelConfigurationId != null || !destinationIdentities.isEmpty() || !matchedAliasIds.isEmpty() ||
+                talkgroupMatchStatus != AliasList.TalkgroupMatchStatus.NOT_APPLICABLE;
         }
 
         public boolean hasOutputPolicy()

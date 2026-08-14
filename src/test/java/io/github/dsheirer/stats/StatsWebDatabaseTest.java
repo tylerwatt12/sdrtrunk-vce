@@ -328,6 +328,14 @@ class StatsWebDatabaseTest
                 INSERT INTO alias_broadcast_channel(alias_id, channel_name)
                 VALUES(1, 'Primary'), (1, 'Archive')
                 """);
+            statement.executeUpdate("""
+                INSERT INTO scan_list(id, sort_order, name, description, published, is_default)
+                VALUES(2, 1, 'Cleveland', 'Cleveland-area calls', 1, 0)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias_scan_list_membership(alias_id, scan_list_id)
+                VALUES(1, 1), (1, 2), (3, 2)
+                """);
         }
 
         Map<String,Object> lists = mDatabase.aliasLists(request("/api/v1/alias-lists"));
@@ -347,6 +355,9 @@ class StatsWebDatabaseTest
         assertEquals(1L, number(dispatch.get("join_relationship_count")));
         assertEquals(1L, number(dispatch.get("current_affiliation_count")));
         assertEquals(List.of("Archive", "Primary"), dispatch.get("broadcast_channels"));
+        assertEquals(List.of(1L, 2L), dispatch.get("scan_list_ids"));
+        assertEquals(List.of("Default", "Cleveland"), dispatch.get("scan_lists"));
+        assertFalse(dispatch.containsKey("priority"));
 
         Map<String,Object> range = aliases.getLast();
         assertEquals("covered_no_evidence", range.get("metrics_state"));
@@ -355,6 +366,7 @@ class StatsWebDatabaseTest
 
         Map<String,Object> detail = mDatabase.alias(request("/api/alias?id=1"));
         assertEquals(1L, number(map(detail, "alias").get("alias_list_id")));
+        assertEquals(List.of(1L, 2L), map(detail, "alias").get("scan_list_ids"));
         Map<String,Object> breakdown = rowsFrom(detail, "breakdown").getFirst();
         assertEquals("scope:1", breakdown.get("scope_key"));
         assertEquals("p25:BEE00:348", breakdown.get("scope_label"));
@@ -363,6 +375,9 @@ class StatsWebDatabaseTest
         List<CSVRecord> csv = csvRows(mDatabase.csvExport(request(
             "/api/export.csv?dataset=aliases&list=County&type=talkgroup&sort=call_count&direction=desc")));
         assertEquals(List.of("Dispatch", "County Range"), csv.stream().map(row -> row.get("name")).toList());
+        assertEquals("1; 2", csv.getFirst().get("scan_list_ids"));
+        assertEquals("Default; Cleveland", csv.getFirst().get("scan_lists"));
+        assertFalse(csv.getFirst().isMapped("priority"));
     }
 
     @Test
@@ -1381,7 +1396,7 @@ class StatsWebDatabaseTest
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
-                UPDATE alias SET group_name='Operations', priority=-1, record_enabled=1 WHERE id=1
+                UPDATE alias SET group_name='Operations', record_enabled=1 WHERE id=1
                 """);
             statement.executeUpdate("""
                 INSERT INTO alias_broadcast_channel(alias_id, channel_name) VALUES(1, 'Primary')
@@ -1393,11 +1408,16 @@ class StatsWebDatabaseTest
                        (5, 1, 'Range B', 'TALKGROUP_RANGE', 'APCO25_PHASE2', NULL, 57050, 57200),
                        (6, 1, 'AAA No Calls', 'TALKGROUP', 'APCO25', 59000, NULL, NULL)
                 """);
+            statement.executeUpdate("""
+                INSERT INTO alias_scan_list_membership(alias_id, scan_list_id) VALUES(1, 1)
+                """);
         }
 
         List<Map<String,Object>> configured = rows(mDatabase.aliases(request(
-            "/api/aliases?list=1&group=operations&listen=disabled&record=enabled&stream=present")));
+            "/api/aliases?list=1&group=operations&scan_list_id=1&record=enabled&stream=present")));
         assertEquals(List.of("Dispatch"), configured.stream().map(row -> row.get("name")).toList());
+        assertEquals(List.of(1L), configured.getFirst().get("scan_list_ids"));
+        assertEquals(List.of("Default"), configured.getFirst().get("scan_lists"));
         assertEquals(true, configured.getFirst().get("overlap"));
         assertEquals(List.of("overlap"), configured.getFirst().get("configuration_errors"));
 
@@ -1426,8 +1446,13 @@ class StatsWebDatabaseTest
 
         assertTrue(rows(mDatabase.aliases(request(
             "/api/v1/aliases?list=1&evidence=observed&last_activity_before=1999"))).isEmpty());
-        assertEquals(400, assertThrows(StatsApiException.class, () ->
-            mDatabase.aliases(request("/api/aliases?list=1&listen=maybe"))).status());
+        for(String scanListId: List.of("0", "01", "-1", "maybe", "9223372036854775808"))
+        {
+            StatsApiException exception = assertThrows(StatsApiException.class, () ->
+                mDatabase.aliases(request("/api/aliases?list=1&scan_list_id=" + scanListId)));
+            assertEquals(400, exception.status());
+            assertEquals("scan_list_id", exception.field());
+        }
         assertEquals(400, assertThrows(StatsApiException.class, () ->
             mDatabase.aliases(request("/api/aliases?list=1&evidence=unknown"))).status());
     }

@@ -33,7 +33,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * Session-only row for the Now Playing activity tables.
+ * Session-only row for browser Live Systems activity.
  */
 public class ChannelActivityRow
 {

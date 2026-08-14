@@ -35,17 +35,17 @@ import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
+import java.util.List;
 import org.controlsfx.control.ToggleSwitch;
 
 /**
- * Preference settings for the Now Playing activity view.
+ * Preference settings for browser Live activity and optional Java desktop views.
  */
 public class NowPlayingPreferenceEditor extends HBox
 {
     private final NowPlayingPreference mNowPlayingPreference;
     private GridPane mEditorPane;
     private ToggleSwitch mRetainIdleCallDetailsToggle;
-    private ToggleSwitch mAdvancedEncryptionToggle;
     private Spinner<Integer> mTrafficGrantAgeOutSpinner;
     private CheckBox mShowControlDecodeQualityCheckBox;
     private CheckBox mShowVoiceDecodeQualityCheckBox;
@@ -89,17 +89,13 @@ public class NowPlayingPreferenceEditor extends HBox
             GridPane.setHgrow(tabSeparator, Priority.ALWAYS);
             mEditorPane.add(tabSeparator, 0, row++, 3, 1);
 
-            Label nowPlayingLabel = new Label("Systems Activity Settings");
+            Label nowPlayingLabel = new Label("Live Activity Settings");
             nowPlayingLabel.setStyle("-fx-font-weight: bold; -fx-font-size: 1.08em;");
             mEditorPane.add(nowPlayingLabel, 0, row, 2, 1);
 
             GridPane.setHalignment(getRetainIdleCallDetailsToggle(), HPos.RIGHT);
             mEditorPane.add(getRetainIdleCallDetailsToggle(), 0, ++row);
             mEditorPane.add(new Label("Retain Last Call Source/Target On Idle Rows"), 1, row, 2, 1);
-
-            GridPane.setHalignment(getAdvancedEncryptionToggle(), HPos.RIGHT);
-            mEditorPane.add(getAdvancedEncryptionToggle(), 0, ++row);
-            mEditorPane.add(new Label("Show Encryption Algorithm And Key"), 1, row, 2, 1);
 
             GridPane.setHalignment(getShowControlDecodeQualityCheckBox(), HPos.RIGHT);
             mEditorPane.add(getShowControlDecodeQualityCheckBox(), 0, ++row);
@@ -139,7 +135,7 @@ public class NowPlayingPreferenceEditor extends HBox
     {
         HBox controls = new HBox(12);
 
-        for(JavaInterfaceView view: JavaInterfaceView.values())
+        for(JavaInterfaceView view: List.of(JavaInterfaceView.MAP, JavaInterfaceView.SPECTRUM))
         {
             CheckBox checkBox = new CheckBox(view.getLabel());
             checkBox.setSelected(mNowPlayingPreference.isJavaInterfaceViewEnabled(view));
@@ -162,19 +158,6 @@ public class NowPlayingPreferenceEditor extends HBox
         }
 
         return mRetainIdleCallDetailsToggle;
-    }
-
-    private ToggleSwitch getAdvancedEncryptionToggle()
-    {
-        if(mAdvancedEncryptionToggle == null)
-        {
-            mAdvancedEncryptionToggle = new ToggleSwitch();
-            mAdvancedEncryptionToggle.setSelected(mNowPlayingPreference.isAdvancedEncryptionStatus());
-            mAdvancedEncryptionToggle.selectedProperty().addListener((observable, oldValue, advanced) ->
-                mNowPlayingPreference.setAdvancedEncryptionStatus(advanced));
-        }
-
-        return mAdvancedEncryptionToggle;
     }
 
     private Spinner<Integer> getTrafficGrantAgeOutSpinner()

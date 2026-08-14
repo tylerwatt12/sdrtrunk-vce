@@ -16,6 +16,11 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.github.dsheirer.alias.Alias;
+import io.github.dsheirer.alias.AliasList;
+import io.github.dsheirer.alias.AliasListDefinition;
+import io.github.dsheirer.alias.AliasListFamily;
+import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.patch.PatchGroup;
@@ -98,11 +103,50 @@ class ResolvedCallPolicyTest
             ResolvedCallPolicy.DestinationQualifier.networkAndSystem(0xABCDE, 0x321))));
     }
 
+    @Test
+    void capturesTalkgroupStatusAndAliasIdsFromOneLookupPublication()
+    {
+        AliasListDefinition definition = new AliasListDefinition("County", AliasListFamily.P25);
+        AliasList aliasList = new AliasList(definition);
+        Alias alias = new Alias("Dispatch");
+        alias.setId(101);
+        alias.setMatchIdentifier(new Talkgroup(Protocol.APCO25, 1200));
+        aliasList.addAlias(alias);
+        Identifier<?> destination = APCO25Talkgroup.create(1200);
+        IdentifierCollection identifiers = new IdentifierCollection(List.of(destination))
+        {
+            private int mReads;
+
+            @Override
+            public List<Identifier> getIdentifiers()
+            {
+                if(++mReads == 2)
+                {
+                    aliasList.removeAlias(alias);
+                }
+
+                return super.getIdentifiers();
+            }
+        };
+
+        ResolvedCallPolicy policy = ResolvedCallPolicy.capture(snapshot(aliasList, identifiers));
+        ResolvedCallPolicy.MatchContext context = policy.matchContexts().getFirst();
+
+        assertTrue(aliasList.getAliases(destination).isEmpty(), "The test must publish a replacement lookup index");
+        assertEquals(AliasList.TalkgroupMatchStatus.MATCHED, context.talkgroupMatchStatus());
+        assertEquals(Set.of(101L), context.matchedAliasIds());
+    }
+
     private static AudioCallSnapshot snapshot(Identifier<?> destination)
     {
+        return snapshot(null, new IdentifierCollection(List.of(destination)));
+    }
+
+    private static AudioCallSnapshot snapshot(AliasList aliasList, IdentifierCollection identifiers)
+    {
         long now = System.currentTimeMillis();
-        return new AudioCallSnapshot(new AudioCallId(1, 1, 0), null, null,
-            new IdentifierCollection(List.of(destination)), Set.of(), now, now, 1, 1, now, now,
-            false, false, false, false, 50, false);
+        return new AudioCallSnapshot(new AudioCallId(1, 1, 0), null, aliasList,
+            identifiers, Set.of(), now, now, 1, 1, now, now,
+            false, false, false, false, false);
     }
 }

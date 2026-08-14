@@ -61,7 +61,7 @@ class StatsLiveServiceBoundsTest
             0L, null, 2, "1201", "RADIO", "Engine 1", "Portable 12", "Engine 1 · TA: Portable 12",
             "4400", "TALKGROUP", "Fire Dispatch", "P25_PHASE1", null);
         ChannelActivitySnapshot snapshot = new ChannelActivitySnapshot("site", "Live", "County", "Downtown",
-            "Primary", null, null, false, true,
+            "Primary", null, null, true,
             List.of(new ChannelActivitySnapshot.IdentifierField("System", "WACN", "BEE00"),
                 new ChannelActivitySnapshot.IdentifierField("Site", "NAC", "343")), List.of(row));
 
@@ -171,7 +171,7 @@ class StatsLiveServiceBoundsTest
     private static ChannelActivityEvent activity(String tableId, List<ChannelActivitySnapshot.Row> rows)
     {
         ChannelActivitySnapshot snapshot = new ChannelActivitySnapshot(tableId, "Live", "System", "Site",
-            "Control", null, null, false, true, List.of(), rows);
+            "Control", null, null, true, List.of(), rows);
         return new ChannelActivityEvent(ChannelActivityEvent.Operation.UPSERT, snapshot);
     }
 

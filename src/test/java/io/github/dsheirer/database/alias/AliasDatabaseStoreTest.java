@@ -53,7 +53,7 @@ class AliasDatabaseStoreTest
         Path database = database("round-trip.sqlite");
         AliasDatabaseStore store = new AliasDatabaseStore(database);
         AliasListDefinition definition = definition("Lake County", AliasListFamily.P25);
-        definition.setUnmatchedTalkgroupPolicy(new UnmatchedTalkgroupPolicy(-1, true,
+        definition.setUnmatchedTalkgroupPolicy(new UnmatchedTalkgroupPolicy(true,
             List.of("Unknown Calls", "Archive")));
         Alias alias = alias("County Fire Dispatch", definition, 1001);
         alias.setDescription("Countywide fire dispatch");
@@ -62,7 +62,6 @@ class AliasDatabaseStoreTest
         alias.setIconName("Fire Truck");
         alias.setStreamTalkgroupAlias(new StreamAsTalkgroup(42));
         alias.setRecordable(true);
-        alias.setCallPriority(5);
         alias.addBroadcastChannel(new BroadcastChannel("RadioResolve"));
 
         replace(store, List.of(alias), List.of(definition));
@@ -75,7 +74,6 @@ class AliasDatabaseStoreTest
         Alias loaded = store.loadAliases(definitions).getFirst();
         assertEquals("Lake County", definitions.getFirst().getName());
         assertEquals(AliasListFamily.P25, definitions.getFirst().getFamily());
-        assertEquals(-1, definitions.getFirst().getUnmatchedTalkgroupPolicy().getPlaybackPriority());
         assertTrue(definitions.getFirst().getUnmatchedTalkgroupPolicy().isRecordEnabled());
         assertEquals(List.of("Unknown Calls", "Archive"),
             definitions.getFirst().getUnmatchedTalkgroupPolicy().getStreamDestinationNames());
@@ -87,7 +85,6 @@ class AliasDatabaseStoreTest
         assertEquals("Fire Truck", loaded.getIconName());
         assertEquals(42, loaded.getStreamTalkgroupAlias().getValue());
         assertTrue(loaded.isRecordable());
-        assertEquals(5, loaded.getPlaybackPriority());
         assertEquals("RadioResolve", loaded.getBroadcastChannels().iterator().next().getChannelName());
         assertEquals("RadioResolve", loaded.getBroadcastChannels().iterator().next().valueProperty().get());
         assertEquals(1001, ((Talkgroup)loaded.getMatchIdentifier()).getValue());
@@ -119,8 +116,7 @@ class AliasDatabaseStoreTest
         try(Connection connection = SdrTrunkDatabase.open(database))
         {
             Set<String> aliasListColumns = columns(connection, "alias_list");
-            assertEquals(Set.of("id", "name", "family", "unmatched_talkgroup_priority",
-                "unmatched_talkgroup_record_enabled"), aliasListColumns);
+            assertEquals(Set.of("id", "name", "family", "unmatched_talkgroup_record_enabled"), aliasListColumns);
             assertFalse(aliasListColumns.contains("system_name"));
             assertFalse(aliasListColumns.contains("assignable"));
             assertFalse(aliasListColumns.contains("needs_review"));
@@ -133,8 +129,11 @@ class AliasDatabaseStoreTest
             assertFalse(aliasColumns.contains("compatibility_reason"));
             assertFalse(aliasColumns.contains("wacn"));
             assertFalse(aliasColumns.contains("p25_system_id"));
+            assertFalse(aliasColumns.contains("priority"));
             assertFalse(hasTable(connection, "alias_action"));
             assertTrue(hasTable(connection, "alias_list_unmatched_talkgroup_stream"));
+            assertTrue(hasTable(connection, "scan_list"));
+            assertTrue(hasTable(connection, "alias_scan_list_membership"));
             assertFalse(indexes(connection).contains("idx_alias_list_name"));
             assertFalse(indexes(connection).contains("idx_alias_broadcast_channel_alias"));
             assertFalse(indexes(connection).contains("idx_alias_action_alias"));
@@ -251,13 +250,6 @@ class AliasDatabaseStoreTest
         assertThrows(SQLException.class, familyStore::loadAliasListDefinitions);
         assertEquals("NOT_A_FAMILY",
             scalarText(familyStore.getDatabasePath(), "SELECT family FROM alias_list"));
-
-        AliasDatabaseStore priorityStore = populatedStore("malformed-unmatched-priority.sqlite");
-        bypassChecks(priorityStore.getDatabasePath(),
-            "UPDATE alias_list SET unmatched_talkgroup_priority = 0");
-        assertThrows(SQLException.class, priorityStore::loadAliasListDefinitions);
-        assertEquals("0", scalarText(priorityStore.getDatabasePath(),
-            "SELECT unmatched_talkgroup_priority FROM alias_list"));
 
         AliasDatabaseStore recordStore = populatedStore("malformed-unmatched-record.sqlite");
         bypassChecks(recordStore.getDatabasePath(),

@@ -276,7 +276,9 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
                 text("name", "name"),
                 text("description", "description"), text("group", "group"), number("color", "color"),
                 text("icon", "icon_name"), number("stream_as_talkgroup", "stream_as_talkgroup"),
-                number("record_enabled", "record_enabled"), number("priority", "priority"),
+                number("record_enabled", "record_enabled"),
+                text("scan_list_ids", row -> joinedValues(row.get("scan_list_ids"))),
+                text("scan_lists", row -> joinedValues(row.get("scan_lists"))),
                 text("identity_type", "identity_type"),
                 text("matcher_type", row -> StatsApiV1Payload.aliasMatcherType(
                     String.valueOf(row.get("matcher_type")))),
@@ -306,6 +308,12 @@ record StatsCsvExport(String fileName, byte[] content, int rowCount)
             );
             default -> throw new StatsApiException(400, "Unsupported CSV dataset");
         };
+    }
+
+    private static String joinedValues(Object value)
+    {
+        return value instanceof List<?> values ?
+            String.join("; ", values.stream().map(String::valueOf).toList()) : "";
     }
 
     private static Column text(String header, String key)

@@ -254,8 +254,7 @@ public final class LegacyXmlConfigurationMerger
             destinations.add(importedStreamNames.getOrDefault(normalize(destination), destination));
         }
 
-        definition.setUnmatchedTalkgroupPolicy(new UnmatchedTalkgroupPolicy(policy.getPlaybackPriority(),
-            policy.isRecordEnabled(), destinations));
+        definition.setUnmatchedTalkgroupPolicy(new UnmatchedTalkgroupPolicy(policy.isRecordEnabled(), destinations));
     }
 
     private static void regenerateUniqueConfigurationId(Channel channel, Set<String> used)

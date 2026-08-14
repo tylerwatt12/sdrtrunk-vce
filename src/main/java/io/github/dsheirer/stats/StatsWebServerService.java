@@ -36,6 +36,8 @@ import io.github.dsheirer.preference.nowplaying.NowPlayingPreference;
 import io.github.dsheirer.preference.application.ApplicationPreference;
 import io.github.dsheirer.preference.application.WebCertificateMode;
 import io.github.dsheirer.sample.Listener;
+import io.github.dsheirer.scanlist.ScanList;
+import io.github.dsheirer.scanlist.ScanListModel;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.stats.activity.P25ActivityCommitListener;
 import io.github.dsheirer.stats.activity.P25ActivityLogPath;
@@ -54,6 +56,7 @@ import io.github.dsheirer.web.http.ApiRequestDecoder;
 import io.github.dsheirer.web.http.EmbeddedHttpServerPolicy;
 import io.github.dsheirer.web.http.EmbeddedHttpServerShutdown;
 import io.github.dsheirer.web.http.WebAccessHttpController;
+import io.github.dsheirer.web.http.WebCallConfigurationHttpController;
 import io.github.dsheirer.web.network.WebCertificateIdentity;
 import java.io.IOException;
 import java.io.InputStream;
@@ -72,6 +75,7 @@ import java.sql.SQLException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -88,6 +92,7 @@ import java.util.concurrent.Semaphore;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicLongArray;
 import java.util.concurrent.atomic.AtomicReference;
@@ -144,7 +149,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
     private final Object mDecodeEventSubscriptionLock = new Object();
     private final Listener<DecodeEventViewService.EventView> mDecodeEventViewListener =
         event -> mDecodeEventHub.publish("decode_event", event);
-    private final StatsWebCallService mWebCallService = new StatsWebCallService();
+    private final StatsWebCallService mWebCallService;
     private final Semaphore mDecodeMessageClients = new Semaphore(16);
     private final Semaphore mDiagnosticClients = new Semaphore(32);
     private final Semaphore mMultiplexClientPermits = new Semaphore(MAXIMUM_MULTIPLEX_CLIENTS);
@@ -155,6 +160,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
     private final ChannelProcessingManager mChannelProcessingManager;
     private final P25ActivityLogService mActivityLogService;
     private final AliasAdministrationService mAliasAdministrationService;
+    private final ScanListModel mScanListModel;
     private final Path mWebAccessDatabasePath;
     private final WebTlsMaterialService mTlsMaterialService;
     private final ScheduledExecutorService mTlsMaintenanceExecutor;
@@ -203,8 +209,21 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
                                  AliasAdministrationService aliasAdministrationService,
                                  DecodeEventViewService decodeEventViewService, TunerManager tunerManager)
     {
+        this(userPreferences, channelProcessingManager, activityLogService, aliasAdministrationService,
+            decodeEventViewService, tunerManager, null);
+    }
+
+    public StatsWebServerService(UserPreferences userPreferences, ChannelProcessingManager channelProcessingManager,
+                                 P25ActivityLogService activityLogService,
+                                 AliasAdministrationService aliasAdministrationService,
+                                 DecodeEventViewService decodeEventViewService, TunerManager tunerManager,
+                                 ScanListModel scanListModel)
+    {
         EmbeddedHttpServerPolicy.configureBeforeServerInitialization();
         mUserPreferences = userPreferences;
+        mScanListModel = scanListModel;
+        mWebCallService = new StatsWebCallService(mScanListModel,
+            mUserPreferences.getApplicationPreference().getWebCallConfiguration());
         mChannelProcessingManager = channelProcessingManager;
         mActivityLogService = activityLogService;
         mAliasAdministrationService = aliasAdministrationService;
@@ -238,6 +257,10 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
     {
         if(preferenceType == PreferenceType.APPLICATION || preferenceType == PreferenceType.DIRECTORY)
         {
+            if(preferenceType == PreferenceType.APPLICATION)
+            {
+                mWebCallService.configure(mUserPreferences.getApplicationPreference().getWebCallConfiguration());
+            }
             updateServerState();
         }
     }
@@ -629,7 +652,16 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
                 WebCapability.ADMIN_ALIASES, aliasController::handle);
             server.createContext(AliasAdminHttpController.ALIAS_LISTS_PATH, protectedAliases);
             server.createContext(AliasAdminHttpController.ALIASES_PATH, protectedAliases);
+            server.createContext(AliasAdminHttpController.SCAN_LISTS_PATH, protectedAliases);
         }
+
+        WebCallConfigurationHttpController webCallConfigurationController =
+            new WebCallConfigurationHttpController(
+                () -> mUserPreferences.getApplicationPreference().getWebCallConfiguration(),
+                configuration -> mUserPreferences.getApplicationPreference().setWebCallConfiguration(configuration),
+                mWebCallService::status);
+        server.createContext(WebCallConfigurationHttpController.PATH, mWebAccessHttpController.protectApi(
+            WebCapability.ADMIN_AUDIO, webCallConfigurationController::handle));
 
         new StatsApiV1Controller(mDatabase, this::status, mWebAccessHttpController, mTunerDiagnosticService)
             .register(server);
@@ -638,6 +670,8 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         server.createContext(StatsApiV1.LIVE_MULTIPLEX_CONTROL,
             mWebAccessHttpController.protectAnyViewerControl(MULTIPLEX_CAPABILITIES,
                 this::handleLiveMultiplexControl));
+        createProtectedContext(server, StatsApiV1.SCAN_LISTS, WebCapability.WEB_AUDIO_LISTEN,
+            this::handleScanLists);
         createProtectedContext(server, StatsApiV1.CALLS + "/", WebCapability.WEB_AUDIO_LISTEN,
             this::handleWebCallAudio);
         server.createContext(StatsApiV1.ROOT, StatsWebServerService::handleApiNotFound);
@@ -1168,18 +1202,19 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         return value.textValue();
     }
 
-    private static void validateMultiplexSubscription(String name, JsonNode parameters)
+    private void validateMultiplexSubscription(String name, JsonNode parameters)
     {
         URI uri = multiplexSubscriptionUri(name, parameters);
 
         switch(name)
         {
-            case "channel_activity", "calls" -> {
+            case "channel_activity" -> {
                 if(parameters.size() != 0)
                 {
                     throw new StatsApiException(400, "This live subscription does not accept parameters");
                 }
             }
+            case "calls" -> selectedScanListIds(uri);
             case "decode_events" -> decodeEventScope(uri);
             case "decode_messages" -> decodeMessageScope(uri);
             case "channel_diagnostics" -> channelDiagnosticScope(uri);
@@ -1201,23 +1236,46 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         }
 
         StringBuilder query = new StringBuilder();
+        AtomicInteger valueCount = new AtomicInteger();
         parameters.fields().forEachRemaining(entry -> {
             JsonNode value = entry.getValue();
 
-            if(value == null || (!value.isTextual() && !value.isNumber() && !value.isBoolean()))
+            if(value == null)
             {
-                throw new StatsApiException(400, "Live subscription parameters must be scalar values");
+                throw new StatsApiException(400, "Live subscription parameters cannot be null");
             }
 
-            if(query.length() > 0)
+            if(value.isArray())
             {
-                query.append('&');
+                for(JsonNode item: value)
+                {
+                    appendMultiplexParameter(query, entry.getKey(), item, valueCount);
+                }
             }
-
-            query.append(URLEncoder.encode(entry.getKey(), StandardCharsets.UTF_8)).append('=')
-                .append(URLEncoder.encode(value.asText(), StandardCharsets.UTF_8));
+            else
+            {
+                appendMultiplexParameter(query, entry.getKey(), value, valueCount);
+            }
         });
         return URI.create("/multiplex/" + name + (query.isEmpty() ? "" : "?" + query));
+    }
+
+    private static void appendMultiplexParameter(StringBuilder query, String name, JsonNode value,
+                                                 AtomicInteger valueCount)
+    {
+        if(value == null || (!value.isTextual() && !value.isNumber() && !value.isBoolean()) ||
+            valueCount.incrementAndGet() > WebCallConfiguration.MAXIMUM_SELECTED_SCAN_LISTS)
+        {
+            throw new StatsApiException(400, "Live subscription parameters must contain bounded scalar values");
+        }
+
+        if(query.length() > 0)
+        {
+            query.append('&');
+        }
+
+        query.append(URLEncoder.encode(name, StandardCharsets.UTF_8)).append('=')
+            .append(URLEncoder.encode(value.asText(), StandardCharsets.UTF_8));
     }
 
     private static TunerDiagnosticRequest tunerDiagnosticRequest(URI uri)
@@ -1371,6 +1429,135 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             selected.timeslot());
     }
 
+    private void handleScanLists(HttpExchange exchange) throws IOException
+    {
+        if(!requireExactTextPath(exchange, StatsApiV1.SCAN_LISTS) || !requireMethod(exchange, "GET") ||
+            !requireNoQuery(exchange))
+        {
+            return;
+        }
+
+        if(mScanListModel == null)
+        {
+            sendApiError(exchange, 503, "service_unavailable", "Scan lists are unavailable");
+            return;
+        }
+
+        List<Map<String,Object>> rows = mScanListModel.configuration().scanLists().stream()
+            .filter(ScanList::isPublished).map(scanList -> {
+                Map<String,Object> row = new LinkedHashMap<>();
+                row.put("id", scanList.getId());
+                row.put("name", scanList.getName());
+                if(scanList.getDescription() != null)
+                {
+                    row.put("description", scanList.getDescription());
+                }
+                row.put("default", scanList.isDefault());
+                return Map.copyOf(row);
+            }).toList();
+        WebCallConfiguration configuration =
+            mUserPreferences.getApplicationPreference().getWebCallConfiguration();
+        ApiHttpResponse.sendData(exchange, 200, Map.of("scan_lists", rows,
+            "maximum_selected_scan_lists", configuration.maximumSelectedScanLists(),
+            "maximum_browser_queue_calls", configuration.maximumBrowserQueueCalls(),
+            "maximum_grouped_calls", 4));
+    }
+
+    Set<Long> selectedScanListIds(URI uri)
+    {
+        return selectedScanListIds(uri, mScanListModel,
+            mUserPreferences.getApplicationPreference().getWebCallConfiguration().maximumSelectedScanLists());
+    }
+
+    static Set<Long> selectedScanListIds(URI uri, ScanListModel scanListModel, int maximum)
+    {
+        if(scanListModel == null)
+        {
+            throw new StatsApiException(503, "service_unavailable", "Scan lists are unavailable");
+        }
+
+        String query = uri != null ? uri.getRawQuery() : null;
+        Set<Long> selected = new LinkedHashSet<>();
+
+        if(query != null && !query.isBlank())
+        {
+            if(query.length() > StatsRequest.MAX_QUERY_LENGTH)
+            {
+                throw new StatsApiException(400, "invalid_parameter", "query is too long", "query");
+            }
+
+            String[] parameters = query.split("&", -1);
+
+            if(parameters.length > StatsRequest.MAX_PARAMETER_COUNT)
+            {
+                throw new StatsApiException(400, "invalid_parameter", "query contains too many parameters",
+                    "query");
+            }
+
+            for(String parameter : parameters)
+            {
+                String[] parts = parameter.split("=", 2);
+                String name;
+                String value;
+
+                try
+                {
+                    name = ApiRequestDecoder.decodeComponent(parts[0], true);
+                    value = parts.length == 2 ? ApiRequestDecoder.decodeComponent(parts[1], true) : "";
+                }
+                catch(IllegalArgumentException exception)
+                {
+                    throw new StatsApiException(400, "invalid_parameter", "query encoding is invalid", "query");
+                }
+
+                if(!"scan_list_id".equals(name) || !value.matches("[1-9][0-9]*"))
+                {
+                    throw new StatsApiException(400, "invalid_parameter",
+                        "Only positive scan_list_id values are allowed", "scan_list_id");
+                }
+
+                try
+                {
+                    selected.add(Long.parseLong(value));
+                }
+                catch(NumberFormatException exception)
+                {
+                    throw new StatsApiException(400, "invalid_parameter", "scan_list_id is invalid",
+                        "scan_list_id");
+                }
+
+                if(selected.size() > maximum)
+                {
+                    throw new StatsApiException(400, "invalid_parameter",
+                        "Select no more than " + maximum + " scan lists", "scan_list_id");
+                }
+            }
+        }
+
+        if(selected.isEmpty())
+        {
+            ScanList defaultScanList = scanListModel.defaultScanList();
+
+            if(defaultScanList.isPublished())
+            {
+                selected.add(defaultScanList.getId());
+            }
+        }
+
+        for(Long scanListId : selected)
+        {
+            ScanList scanList = scanListModel.scanList(scanListId);
+
+            if(scanList == null || !scanList.isPublished())
+            {
+                throw new StatsApiException(400, "invalid_parameter", "scan_list_id is unavailable",
+                    "scan_list_id");
+            }
+        }
+
+        return Set.copyOf(selected);
+    }
+
     private void handleWebCallAudio(HttpExchange exchange) throws IOException
     {
         if(!requireMethod(exchange, "GET"))
@@ -1382,6 +1569,26 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         {
             return;
         }
+
+        if(!mWebCallService.tryAcquireAudioResponse())
+        {
+            sendApiError(exchange, 429, "too_many_audio_responses",
+                "Too many call-audio responses are active");
+            return;
+        }
+
+        try
+        {
+            handleAdmittedWebCallAudio(exchange);
+        }
+        finally
+        {
+            mWebCallService.releaseAudioResponse();
+        }
+    }
+
+    private void handleAdmittedWebCallAudio(HttpExchange exchange) throws IOException
+    {
 
         String id = callAudioId(exchange.getRequestURI());
 
@@ -1434,7 +1641,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         {
             String id = ApiRequestDecoder.decodeComponent(rawId, false);
             return id.indexOf('/') < 0 && id.indexOf('\\') < 0 && id.indexOf('%') < 0 &&
-                id.matches("[0-9a-z]+") ? id : null;
+                id.matches("[0-9a-f]{32}-[0-9a-z]{1,13}") ? id : null;
         }
         catch(IllegalArgumentException exception)
         {
@@ -2279,6 +2486,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         private Set<String> mUnauthorizedTopics = Set.of();
         private StatsLiveEventHub.Subscription mChannelActivity;
         private StatsLiveEventHub.Subscription mCalls;
+        private Set<Long> mCallScanListIds = Set.of();
         private StatsLiveEventHub.Subscription mDecodeEvents;
         private DecodeEventViewService.Scope mDecodeEventScope;
         private StatsLiveEventHub.Subscription mActivity;
@@ -2455,10 +2663,11 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             if(mCalls != null && metadataGap(output, TOPIC_CALLS, mCalls.droppedCount(), mCallDrops))
             {
                 discardSubscription(mCalls);
-                var recovery = captureRecovery(mCalls::droppedCount, mWebCallService::snapshot);
+                var recovery = captureRecovery(mCalls::droppedCount,
+                    () -> mWebCallService.snapshot(mCallScanListIds));
                 mCallDrops = recovery.dropBaseline();
                 writeMultiplexRecoveryJson(output, TOPIC_CALLS, "snapshot",
-                    Map.of("calls", recovery.snapshot()));
+                    callSnapshot(recovery.snapshot()));
                 observeOutputDrops(output, TOPIC_CALLS);
                 wrote = true;
             }
@@ -2636,11 +2845,13 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
                     observeOutputDrops(output, TOPIC_CHANNEL_ACTIVITY);
                 }
                 case "calls" -> {
-                    mCalls = requiredSubscription(mWebCallService.subscribe(), topic);
-                    var recovery = captureRecovery(mCalls::droppedCount, mWebCallService::snapshot);
+                    mCallScanListIds = selectedScanListIds(uri);
+                    mCalls = requiredSubscription(mWebCallService.subscribe(mCallScanListIds), topic);
+                    var recovery = captureRecovery(mCalls::droppedCount,
+                        () -> mWebCallService.snapshot(mCallScanListIds));
                     mCallDrops = recovery.dropBaseline();
                     writeMultiplexRecoveryJson(output, TOPIC_CALLS, "snapshot",
-                        Map.of("calls", recovery.snapshot()));
+                        callSnapshot(recovery.snapshot()));
                     observeOutputDrops(output, TOPIC_CALLS);
                 }
                 case "decode_events" -> {
@@ -2825,6 +3036,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
                 }
                 case "calls" -> {
                     mCalls = closeSubscription(mCalls);
+                    mCallScanListIds = Set.of();
                     mCallDrops = 0;
                 }
                 case "decode_events" -> closeDecodeEvents();
@@ -2838,6 +3050,19 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
                 }
                 default -> { }
             }
+        }
+
+        private Map<String,Object> callSnapshot(List<Map<String,Object>> calls)
+        {
+            WebCallConfiguration configuration =
+                mUserPreferences.getApplicationPreference().getWebCallConfiguration();
+            Map<String,Object> snapshot = new LinkedHashMap<>();
+            snapshot.put("calls", calls);
+            snapshot.put("listener_token", mClientId);
+            snapshot.put("scan_list_ids", mCallScanListIds);
+            snapshot.put("maximum_browser_queue_calls", configuration.maximumBrowserQueueCalls());
+            snapshot.put("maximum_grouped_calls", 4);
+            return Map.copyOf(snapshot);
         }
 
         private StatsLiveEventHub.Subscription closeSubscription(StatsLiveEventHub.Subscription subscription)

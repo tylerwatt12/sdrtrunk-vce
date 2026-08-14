@@ -5,6 +5,7 @@
  */
 package io.github.dsheirer.web.http;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.StreamReadFeature;
 import com.fasterxml.jackson.databind.DeserializationFeature;
@@ -22,7 +23,6 @@ import io.github.dsheirer.alias.id.AliasIDType;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.alias.id.dcs.Dcs;
 import io.github.dsheirer.alias.id.esn.Esn;
-import io.github.dsheirer.alias.id.priority.Priority;
 import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.alias.id.radio.RadioFormat;
 import io.github.dsheirer.alias.id.radio.RadioRange;
@@ -38,6 +38,7 @@ import io.github.dsheirer.identifier.tone.Tone;
 import io.github.dsheirer.identifier.tone.ToneSequence;
 import io.github.dsheirer.module.decode.dcs.DCSCode;
 import io.github.dsheirer.protocol.Protocol;
+import io.github.dsheirer.scanlist.ScanList;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -60,6 +61,7 @@ public final class AliasAdminHttpController
 {
     public static final String ALIAS_LISTS_PATH = "/api/v1/admin/alias-lists";
     public static final String ALIASES_PATH = "/api/v1/admin/aliases";
+    public static final String SCAN_LISTS_PATH = "/api/v1/admin/scan-lists";
     public static final String OPTIONS_PATH = ALIASES_PATH + "/options";
     public static final String BULK_PATH = ALIASES_PATH + "/bulk";
     private static final Logger mLog = LoggerFactory.getLogger(AliasAdminHttpController.class);
@@ -137,6 +139,10 @@ public final class AliasAdminHttpController
             {
                 handleAliases(exchange, path);
             }
+            else if(path.equals(SCAN_LISTS_PATH) || path.startsWith(SCAN_LISTS_PATH + "/"))
+            {
+                handleScanLists(exchange, path);
+            }
             else
             {
                 throw error(404, "not_found", "Not found");
@@ -207,7 +213,10 @@ public final class AliasAdminHttpController
                     AliasAdministrationService.Catalog catalog = mService.catalog();
                     sendData(exchange, 200, Map.of("revision", catalog.revision(), "aliasLists",
                         boundedCollection(catalog.aliasLists(), "alias_lists").stream()
-                            .map(AliasAdminHttpController::aliasListView).toList()));
+                            .map(definition -> aliasListView(definition,
+                                catalog.unmatchedAliasListMemberships().getOrDefault(definition.getId(), Set.of())))
+                            .toList(), "scanLists", catalog.scanLists().stream()
+                            .map(AliasAdminHttpController::scanListView).toList()));
                 }
                 case "POST" -> {
                     if(mService.catalog().aliasLists().size() >= MAXIMUM_ADMIN_COLLECTION_ITEMS)
@@ -254,10 +263,10 @@ public final class AliasAdminHttpController
             requireMethod(exchange, "PUT");
             UnmatchedPolicyRequest request = readJson(exchange, UnmatchedPolicyRequest.class);
             UnmatchedTalkgroupPolicy replacement = new UnmatchedTalkgroupPolicy(
-                unmatchedPlaybackPriority(required(request.listenEnabled(), "listen_enabled"), request.priority()),
                 required(request.recordable(), "recordable"), requiredChannels(request.broadcastChannels()));
             sendData(exchange, 200, mutationResponse(changed(mService.updateUnmatchedTalkgroupPolicy(aliasListId,
-                replacement, requiredRevision(request.revision())))));
+                replacement, boundedIds(request.scanListIds(), "scan_list_ids"),
+                requiredRevision(request.revision())))));
             return;
         }
 
@@ -294,8 +303,11 @@ public final class AliasAdminHttpController
             {
                 case "POST" -> {
                     AliasRequest request = readJson(exchange, AliasRequest.class);
-                    AliasAdministrationService.MutationResult result = changed(mService.createAlias(
-                        toAlias(request.alias()), requiredRevision(request.revision())));
+                    AliasPayload payload = required(request.alias(), "alias");
+                    AliasAdministrationService.MutationResult result = changed(payload.scanListIds() != null ?
+                        mService.createAlias(toAlias(payload), boundedIds(payload.scanListIds(), "scan_list_ids"),
+                            requiredRevision(request.revision())) :
+                        mService.createAlias(toAlias(payload), requiredRevision(request.revision())));
 
                     if(!result.aliasIds().isEmpty())
                     {
@@ -317,17 +329,107 @@ public final class AliasAdminHttpController
             case "GET" -> {
                 requireNoBody(exchange);
                 AliasAdministrationService.AliasEntry entry = mService.getAlias(aliasId);
-                sendData(exchange, 200, Map.of("revision", entry.revision(), "alias", aliasView(entry.alias())));
+                sendData(exchange, 200, Map.of("revision", entry.revision(), "alias",
+                    aliasView(entry.alias(), entry.scanListIds())));
             }
             case "PUT" -> {
                 AliasRequest request = readJson(exchange, AliasRequest.class);
-                sendData(exchange, 200, mutationResponse(changed(mService.replaceAlias(aliasId,
-                    toAlias(request.alias()), requiredRevision(request.revision())))));
+                AliasPayload payload = required(request.alias(), "alias");
+                AliasAdministrationService.MutationResult result = payload.scanListIds() != null ?
+                    mService.replaceAlias(aliasId, toAlias(payload), boundedIds(payload.scanListIds(),
+                        "scan_list_ids"), requiredRevision(request.revision())) :
+                    mService.replaceAlias(aliasId, toAlias(payload), requiredRevision(request.revision()));
+                sendData(exchange, 200, mutationResponse(changed(result)));
             }
             case "DELETE" -> {
                 RevisionRequest request = readJson(exchange, RevisionRequest.class);
                 sendData(exchange, 200, mutationResponse(changed(mService.deleteAlias(aliasId,
                     requiredRevision(request.revision())))));
+            }
+            default -> methodNotAllowed(exchange, "GET, PUT, DELETE");
+        }
+    }
+
+    private void handleScanLists(HttpExchange exchange, String path) throws Exception
+    {
+        String membersSuffix = "/members";
+        boolean members = path.endsWith(membersSuffix);
+        String itemPath = members ? path.substring(0, path.length() - membersSuffix.length()) : path;
+
+        if(SCAN_LISTS_PATH.equals(itemPath))
+        {
+            if(members)
+            {
+                throw error(404, "not_found", "Not found");
+            }
+
+            requireNoQuery(exchange);
+            switch(exchange.getRequestMethod())
+            {
+                case "GET" -> {
+                    requireNoBody(exchange);
+                    AliasAdministrationService.ScanListCatalog catalog = mService.scanListCatalog();
+                    sendData(exchange, 200, Map.of("revision", catalog.revision(), "scanLists",
+                        catalog.scanLists().stream().map(AliasAdminHttpController::scanListSummaryView).toList()));
+                }
+                case "POST" -> {
+                    ScanListRequest request = readJson(exchange, ScanListRequest.class);
+                    AliasAdministrationService.ScanListMutationResult result = mService.createScanList(
+                        toScanList(ScanList.UNASSIGNED_ID, required(request.scanList(), "scan_list")),
+                        requiredRevision(request.revision()));
+                    exchange.getResponseHeaders().set("Location", SCAN_LISTS_PATH + "/" + result.scanListId());
+                    mAliasChanged.run();
+                    sendData(exchange, 201, scanListMutationResponse(result));
+                }
+                default -> methodNotAllowed(exchange, "GET, POST");
+            }
+            return;
+        }
+
+        long scanListId = requiredItemId(itemPath, SCAN_LISTS_PATH);
+        requireNoQuery(exchange);
+
+        if(members)
+        {
+            requireMethod(exchange, "PUT");
+            ScanListMembershipRequest request = readJson(exchange, ScanListMembershipRequest.class);
+            AliasAdministrationService.ScanListMutationResult result = mService.updateScanListMemberships(
+                scanListId, request.aliasIds() != null ? boundedIds(request.aliasIds(), "alias_ids") : null,
+                request.unmatchedAliasListIds() != null ?
+                    boundedIds(request.unmatchedAliasListIds(), "unmatched_alias_list_ids") : null,
+                membershipOperation(requiredText(request.operation(), "operation", 16)),
+                requiredRevision(request.revision()));
+            mAliasChanged.run();
+            sendData(exchange, 200, scanListMutationResponse(result));
+            return;
+        }
+
+        switch(exchange.getRequestMethod())
+        {
+            case "GET" -> {
+                requireNoBody(exchange);
+                AliasAdministrationService.ScanListEntry entry = mService.getScanList(scanListId);
+                Map<String,Object> response = new LinkedHashMap<>();
+                response.put("revision", entry.revision());
+                response.put("scanList", scanListView(entry.scanList()));
+                putBoundedIds(response, "aliasIds", entry.aliasIds());
+                putBoundedIds(response, "unmatchedAliasListIds", entry.unmatchedAliasListIds());
+                sendData(exchange, 200, response);
+            }
+            case "PUT" -> {
+                ScanListRequest request = readJson(exchange, ScanListRequest.class);
+                AliasAdministrationService.ScanListMutationResult result = mService.updateScanList(scanListId,
+                    toScanList(scanListId, required(request.scanList(), "scan_list")),
+                    requiredRevision(request.revision()));
+                mAliasChanged.run();
+                sendData(exchange, 200, scanListMutationResponse(result));
+            }
+            case "DELETE" -> {
+                RevisionRequest request = readJson(exchange, RevisionRequest.class);
+                AliasAdministrationService.ScanListMutationResult result = mService.deleteScanList(scanListId,
+                    requiredRevision(request.revision()));
+                mAliasChanged.run();
+                sendData(exchange, 200, scanListMutationResponse(result));
             }
             default -> methodNotAllowed(exchange, "GET, PUT, DELETE");
         }
@@ -340,14 +442,13 @@ public final class AliasAdminHttpController
         AliasAdministrationService.Options options = mService.options(requiredIdQuery(exchange, "alias_list_id"));
         Map<String,Object> response = new LinkedHashMap<>();
         response.put("revision", options.revision());
-        response.put("aliasList", aliasListView(options.aliasList()));
+        response.put("aliasList", aliasListView(options.aliasList(), options.unmatchedScanListIds()));
         response.put("matchers", boundedCollection(options.matchers(), "matchers").stream()
             .map(descriptor -> matcherOption(descriptor, options.aliasList())).toList());
         response.put("iconNames", boundedCollection(options.iconNames(), "icon_names"));
         response.put("streamNames", boundedCollection(options.streamNames(), "stream_names"));
         response.put("groupNames", boundedCollection(options.groupNames(), "group_names"));
-        response.put("playbackPriorities", boundedCollection(options.playbackPriorities(),
-            "playback_priorities"));
+        response.put("scanLists", options.scanLists().stream().map(AliasAdminHttpController::scanListView).toList());
 
         if(options.matchers().stream().anyMatch(descriptor -> descriptor.type() == AliasIDType.DCS))
         {
@@ -370,8 +471,8 @@ public final class AliasAdminHttpController
         AliasAdministrationService.BulkEdit edit = new AliasAdministrationService.BulkEdit(
             requiredIds(request.aliasIds()), optionalPositive(request.aliasListId(), "alias_list_id"), request.color(),
             optionalText(request.iconName(), "icon_name", MAXIMUM_TEXT_CHARACTERS),
-            bulkPlaybackPriority(request.listenEnabled(), request.priority()), request.recordable(),
-            groupOperation(request.groupOperation()), optionalText(request.group(), "group", MAXIMUM_TEXT_CHARACTERS),
+            request.recordable(), groupOperation(request.groupOperation()),
+            optionalText(request.group(), "group", MAXIMUM_TEXT_CHARACTERS),
             streamOperation(request.streamOperation()), optionalChannels(request.broadcastChannels()),
             Boolean.TRUE.equals(request.delete()));
         sendData(exchange, 200,
@@ -407,7 +508,6 @@ public final class AliasAdminHttpController
         alias.setGroup(optionalText(payload.group(), "group", MAXIMUM_TEXT_CHARACTERS));
         alias.setColor(required(payload.color(), "color"));
         alias.setIconName(optionalText(payload.iconName(), "icon_name", MAXIMUM_TEXT_CHARACTERS));
-        alias.setCallPriority(playbackPriority(required(payload.listenEnabled(), "listen_enabled"), payload.priority()));
         alias.setRecordable(required(payload.recordable(), "recordable"));
         alias.setBroadcastChannels(requiredChannels(payload.broadcastChannels()).stream()
             .map(BroadcastChannel::new).toList());
@@ -514,15 +614,13 @@ public final class AliasAdminHttpController
         return new ToneSequence(result);
     }
 
-    private static AliasView aliasView(Alias alias)
+    private static AliasView aliasView(Alias alias, Set<Long> scanListIds)
     {
-        int priority = alias.getPlaybackPriority();
         return new AliasView(alias.getId(), alias.getAliasListId(), alias.getName(), alias.getDescription(),
-            alias.getGroup(), alias.getColor(), alias.getIconName(), priority != Priority.DO_NOT_MONITOR,
-            alias.hasCallPriority() && priority != Priority.DO_NOT_MONITOR ? priority : null, alias.isRecordable(),
+            alias.getGroup(), alias.getColor(), alias.getIconName(), alias.isRecordable(),
             alias.getBroadcastChannels().stream().map(BroadcastChannel::getChannelName).toList(),
             alias.getStreamTalkgroupAlias() != null ? alias.getStreamTalkgroupAlias().getValue() : null,
-            alias.overlapProperty().get(), matcherView(alias.getMatchIdentifier()));
+            alias.overlapProperty().get(), matcherView(alias.getMatchIdentifier()), scanListIds);
     }
 
     private static Map<String,Object> matcherView(AliasID matcher)
@@ -600,27 +698,60 @@ public final class AliasAdminHttpController
         return response;
     }
 
-    private static Map<String,Object> aliasListView(AliasListDefinition definition)
+    private static Map<String,Object> aliasListView(AliasListDefinition definition, Set<Long> unmatchedScanListIds)
     {
         Map<String,Object> response = new LinkedHashMap<>();
         response.put("aliasListId", definition.getId());
         response.put("name", definition.getName());
         response.put("family", familyName(definition.getFamily()));
         response.put("unmatchedTalkgroupPolicy", unmatchedTalkgroupPolicyView(
-            definition.getUnmatchedTalkgroupPolicy()));
+            definition.getUnmatchedTalkgroupPolicy(), unmatchedScanListIds));
         return response;
     }
 
-    private static Map<String,Object> unmatchedTalkgroupPolicyView(UnmatchedTalkgroupPolicy policy)
+    private static Map<String,Object> unmatchedTalkgroupPolicyView(UnmatchedTalkgroupPolicy policy,
+                                                                    Set<Long> scanListIds)
     {
-        int playbackPriority = policy.getPlaybackPriority();
-        boolean listenEnabled = playbackPriority != Priority.DO_NOT_MONITOR;
         Map<String,Object> response = new LinkedHashMap<>();
-        response.put("listenEnabled", listenEnabled);
-        response.put("priority", listenEnabled ? playbackPriority : null);
         response.put("recordable", policy.isRecordEnabled());
         response.put("broadcastChannels", policy.getStreamDestinationNames());
+        response.put("scanListIds", scanListIds.stream().sorted().toList());
         return response;
+    }
+
+    private static Map<String,Object> scanListSummaryView(AliasAdministrationService.ScanListSummary summary)
+    {
+        Map<String,Object> response = new LinkedHashMap<>(scanListView(summary.scanList()));
+        response.put("aliasCount", summary.aliasCount());
+        response.put("unmatchedAliasListCount", summary.unmatchedAliasListCount());
+        return response;
+    }
+
+    private static Map<String,Object> scanListView(ScanList scanList)
+    {
+        Map<String,Object> response = new LinkedHashMap<>();
+        response.put("id", scanList.getId());
+        response.put("sortOrder", scanList.getSortOrder());
+        response.put("name", scanList.getName());
+        response.put("description", scanList.getDescription());
+        response.put("published", scanList.isPublished());
+        response.put("default", scanList.isDefault());
+        return response;
+    }
+
+    private static ScanList toScanList(long id, ScanListPayload payload) throws RequestException
+    {
+        return new ScanList(id, bounded(payload.sortOrder(), "sort_order", 0, 1_000_000),
+            requiredText(payload.name(), "name", ScanList.MAXIMUM_NAME_LENGTH),
+            optionalText(payload.description(), "description", ScanList.MAXIMUM_DESCRIPTION_LENGTH),
+            required(payload.published(), "published"), required(payload.defaultScanList(), "default"));
+    }
+
+    private static Map<String,Object> scanListMutationResponse(
+        AliasAdministrationService.ScanListMutationResult result)
+    {
+        return Map.of("revision", result.revision(), "scanListId", result.scanListId(),
+            "affected", result.affected());
     }
 
     private static List<String> matcherFields(AliasIDType type)
@@ -721,47 +852,6 @@ public final class AliasAdminHttpController
             case MDC1200 -> "mdc1200";
             default -> throw new IllegalArgumentException("Unsupported alias protocol");
         };
-    }
-
-    private static int playbackPriority(boolean listenEnabled, Integer priority) throws RequestException
-    {
-        if(!listenEnabled)
-        {
-            if(priority != null)
-            {
-                throw invalid("priority must be null when listening is disabled");
-            }
-            return Priority.DO_NOT_MONITOR;
-        }
-        return priority == null ? Priority.DEFAULT_PRIORITY : bounded(priority, "priority", Priority.MIN_PRIORITY,
-            Priority.MAX_PRIORITY - 1);
-    }
-
-    private static Integer bulkPlaybackPriority(Boolean listenEnabled, Integer priority) throws RequestException
-    {
-        if(listenEnabled == null)
-        {
-            if(priority != null)
-            {
-                throw invalid("listen_enabled is required when priority is supplied");
-            }
-            return null;
-        }
-        return playbackPriority(listenEnabled, priority);
-    }
-
-    private static int unmatchedPlaybackPriority(boolean listenEnabled, Integer priority) throws RequestException
-    {
-        if(!listenEnabled)
-        {
-            if(priority != null)
-            {
-                throw invalid("priority must be null when listening is disabled");
-            }
-            return Priority.DO_NOT_MONITOR;
-        }
-        return priority == null ? Priority.DEFAULT_PRIORITY : bounded(priority, "priority", Priority.MIN_PRIORITY,
-            Priority.MAX_PRIORITY);
     }
 
     private static Protocol requiredProtocol(String protocol, String variant) throws RequestException
@@ -865,6 +955,18 @@ public final class AliasAdminHttpController
         };
     }
 
+    private static AliasAdministrationService.MembershipOperation membershipOperation(String value)
+        throws RequestException
+    {
+        return switch(value)
+        {
+            case "add" -> AliasAdministrationService.MembershipOperation.ADD;
+            case "remove" -> AliasAdministrationService.MembershipOperation.REMOVE;
+            case "replace" -> AliasAdministrationService.MembershipOperation.REPLACE;
+            default -> throw invalid("operation is invalid");
+        };
+    }
+
     private static List<String> requiredChannels(List<String> channels) throws RequestException
     {
         if(channels == null || channels.size() > AliasAdministrationService.MAX_BROADCAST_CHANNELS)
@@ -905,6 +1007,32 @@ public final class AliasAdminHttpController
             }
         }
         return List.copyOf(ids);
+    }
+
+    private static List<Long> boundedIds(List<Long> ids, String field) throws RequestException
+    {
+        if(ids == null || ids.size() > MAXIMUM_ADMIN_COLLECTION_ITEMS)
+        {
+            throw invalid(field + " is invalid");
+        }
+        Set<Long> unique = new HashSet<>();
+        for(Long id : ids)
+        {
+            if(id == null || id <= 0 || !unique.add(id))
+            {
+                throw invalid(field + " must contain positive unique IDs");
+            }
+        }
+        return List.copyOf(ids);
+    }
+
+    private static void putBoundedIds(Map<String,Object> response, String field, Set<Long> ids)
+    {
+        List<Long> ordered = ids.stream().sorted().toList();
+        int returned = Math.min(ordered.size(), MAXIMUM_ADMIN_COLLECTION_ITEMS);
+        response.put(field, ordered.subList(0, returned));
+        response.put(field + "Total", ordered.size());
+        response.put(field + "Truncated", returned < ordered.size());
     }
 
     private static long requiredIdQuery(HttpExchange exchange, String name) throws RequestException
@@ -1189,21 +1317,25 @@ public final class AliasAdminHttpController
 
     private record CreateListRequest(Long revision, String name, String family) {}
     private record DeleteListRequest(Long revision, Boolean confirmed) {}
-    private record UnmatchedPolicyRequest(Long revision, Boolean listenEnabled, Integer priority,
-                                          Boolean recordable, List<String> broadcastChannels) {}
+    private record UnmatchedPolicyRequest(Long revision, Boolean recordable, List<String> broadcastChannels,
+                                          List<Long> scanListIds) {}
     private record RevisionRequest(Long revision) {}
     private record AliasRequest(Long revision, AliasPayload alias) {}
     private record BulkRequest(Long revision, List<Long> aliasIds, Long aliasListId, Integer color, String iconName,
-                               Boolean listenEnabled, Integer priority, Boolean recordable,
-                               String groupOperation, String group, String streamOperation,
+                               Boolean recordable, String groupOperation, String group, String streamOperation,
                                List<String> broadcastChannels, Boolean delete) {}
     private record AliasPayload(Long aliasListId, String name, String description, String group, Integer color,
-                                String iconName, Boolean listenEnabled, Integer priority, Boolean recordable,
-                                List<String> broadcastChannels, Integer streamAsTalkgroup, MatcherPayload matcher) {}
+                                String iconName, Boolean recordable, List<String> broadcastChannels,
+                                Integer streamAsTalkgroup, MatcherPayload matcher, List<Long> scanListIds) {}
     private record AliasView(long id, long aliasListId, String name, String description, String group, int color,
-                             String iconName, boolean listenEnabled, Integer priority, boolean recordable,
+                             String iconName, boolean recordable,
                              List<String> broadcastChannels, Integer streamAsTalkgroup, boolean overlap,
-                             Map<String,Object> matcher) {}
+                             Map<String,Object> matcher, Set<Long> scanListIds) {}
+    private record ScanListRequest(Long revision, ScanListPayload scanList) {}
+    private record ScanListPayload(Integer sortOrder, String name, String description, Boolean published,
+                                   @JsonProperty("default") Boolean defaultScanList) {}
+    private record ScanListMembershipRequest(Long revision, String operation, List<Long> aliasIds,
+                                             List<Long> unmatchedAliasListIds) {}
     private record TonePayload(String tone, Integer duration) {}
 
     private record MatcherPayload(String type, String protocol, String variant, Integer value, Integer minimum,

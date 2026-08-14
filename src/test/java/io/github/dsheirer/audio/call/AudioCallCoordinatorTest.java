@@ -19,8 +19,12 @@
 
 package io.github.dsheirer.audio.call;
 
+import io.github.dsheirer.alias.Alias;
+import io.github.dsheirer.alias.AliasList;
+import io.github.dsheirer.alias.AliasListDefinition;
+import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
-import io.github.dsheirer.audio.playback.ManagedPlayableAudioCall;
+import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.configuration.SiteGuidConfigurationIdentifier;
@@ -29,13 +33,17 @@ import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifi
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.preference.duplicate.ICallManagementProvider;
 import io.github.dsheirer.preference.duplicate.TestCallManagementProvider;
+import io.github.dsheirer.protocol.Protocol;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import org.junit.jupiter.api.Test;
 
@@ -43,37 +51,29 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AudioCallCoordinatorTest
 {
     @Test
-    void liveSpeakerCallReceivesAudioAndCompletionWithoutChangingCompletedFanout() throws Exception
+    void completedCallRetainsAudioWithoutReceiverSpeakerPlayback() throws Exception
     {
-        List<ManagedPlayableAudioCall> playbackCalls = new CopyOnWriteArrayList<>();
         List<CompletedAudioCall> completedCalls = new CopyOnWriteArrayList<>();
         AudioCallCoordinator coordinator = new AudioCallCoordinator(
-            new TestCallManagementProvider(false, false), playbackCalls::add,
-            completedCalls::add, null, null);
+            new TestCallManagementProvider(false, false), completedCalls::add, null, null);
 
         try
         {
             float[] audio = new float[] {0.25f, -0.5f};
             AudioCallSnapshot active = snapshot(1, 1, 1200, false, false);
-            coordinator.receive(new AudioCallEvent(AudioCallEventType.AUDIO_FRAME, active,
-                System.currentTimeMillis(), audio));
+            coordinator.receive(new AudioCallEvent(AudioCallEventType.AUDIO_FRAME, active, audio));
 
-            awaitCondition(() -> playbackCalls.size() == 1 &&
-                playbackCalls.getFirst().getAudioBufferCount() == 1,
-                "Expected one live speaker call with its first audio frame");
-            ManagedPlayableAudioCall playbackCall = playbackCalls.getFirst();
-            assertEquals(active.callId(), playbackCall.callId());
-            assertArrayEquals(audio, playbackCall.getAudioBuffer(0));
-            assertFalse(playbackCall.isComplete());
+            assertTrue(completedCalls.isEmpty(), "A live frame must remain buffered until call completion");
 
             coordinator.receive(completionEvent(active));
-            awaitCondition(() -> playbackCall.isComplete() && completedCalls.size() == 1,
-                "Expected the same live call to close and one completed call to fan out");
+            awaitCondition(() -> completedCalls.size() == 1,
+                "Expected one completed call to fan out");
             assertEquals(active.callId(), completedCalls.getFirst().snapshot().callId());
             assertArrayEquals(audio, completedCalls.getFirst().audioBuffers().getFirst());
         }
@@ -84,16 +84,50 @@ class AudioCallCoordinatorTest
     }
 
     @Test
-    void stickyLiveSpeakerWinnerRemainsIndependentFromFinalQualityElection() throws Exception
+    void completedCallFreezesUnmatchedTalkgroupEvidenceForWebDelivery() throws Exception
+    {
+        AliasListDefinition definition = new AliasListDefinition("County", AliasListFamily.P25);
+        definition.setId(10);
+        AliasList aliasList = new AliasList(definition);
+        List<CompletedAudioCall> completedCalls = new CopyOnWriteArrayList<>();
+        AudioCallCoordinator coordinator = new AudioCallCoordinator(
+            new TestCallManagementProvider(false, false), null, null, completedCalls::add);
+
+        try
+        {
+            AudioCallSnapshot active = withAliasList(snapshot(2, 1, 999, false, false), aliasList);
+            coordinator.receive(audioEvent(active, 160));
+            coordinator.receive(completionEvent(active));
+            awaitCondition(() -> completedCalls.size() == 1, "Expected one completed web call");
+
+            ResolvedCallPolicy.MatchContext context =
+                completedCalls.getFirst().resolvedPolicy().matchContexts().getFirst();
+            assertEquals(10L, context.aliasListId());
+            assertEquals(AliasList.TalkgroupMatchStatus.UNMATCHED, context.talkgroupMatchStatus());
+
+            Alias subsequentlyCreated = new Alias("Now known");
+            subsequentlyCreated.setId(101);
+            subsequentlyCreated.setMatchIdentifier(new Talkgroup(Protocol.APCO25, 999));
+            aliasList.addAlias(subsequentlyCreated);
+            assertEquals(AliasList.TalkgroupMatchStatus.UNMATCHED, context.talkgroupMatchStatus(),
+                "A completed call must not be reclassified by a later alias edit");
+        }
+        finally
+        {
+            coordinator.dispose();
+        }
+    }
+
+    @Test
+    void finalQualityElectionSelectsTheCleanerCompletedCall() throws Exception
     {
         String liveWinnerGuid = "00000000-0000-0000-0000-000000000201";
         String finalWinnerGuid = "00000000-0000-0000-0000-000000000202";
-        List<ManagedPlayableAudioCall> playbackCalls = new CopyOnWriteArrayList<>();
         List<CompletedAudioCall> completedCalls = new CopyOnWriteArrayList<>();
         AudioCallCoordinator coordinator = new AudioCallCoordinator(
-            new TestCallManagementProvider(true, false, true), playbackCalls::add,
-            completedCalls::add, null, null, DuplicateCallPriorityProvider.NONE,
-            100L, 1_000L, null);
+            new TestCallManagementProvider(true, false, true), completedCalls::add, null, null,
+            DuplicateCallPriorityProvider.NONE,
+            100L, 1_000L);
 
         try
         {
@@ -108,16 +142,6 @@ class AudioCallCoordinatorTest
             coordinator.receive(audioEvent(liveWinner, 800));
             coordinator.receive(audioEvent(finalWinner, 800));
 
-            awaitCondition(() -> playbackCalls.size() == 2 &&
-                playbackCalls.stream().anyMatch(ManagedPlayableAudioCall::isDuplicate),
-                "Expected duplicate state on the live speaker calls");
-            ManagedPlayableAudioCall livePlayback = playbackCalls.stream()
-                .filter(call -> call.callId().equals(liveWinner.callId())).findFirst().orElseThrow();
-            ManagedPlayableAudioCall suppressedPlayback = playbackCalls.stream()
-                .filter(call -> call.callId().equals(finalWinner.callId())).findFirst().orElseThrow();
-            assertFalse(livePlayback.isDuplicate(), "The first stable live candidate remains audible");
-            assertTrue(suppressedPlayback.isDuplicate(), "The other live candidate is suppressed at the speaker");
-
             coordinator.receive(completionEvent(liveWinner));
             coordinator.receive(completionEvent(finalWinner));
             awaitCondition(() -> completedCalls.size() == 1, "Expected one final logical call");
@@ -131,31 +155,23 @@ class AudioCallCoordinatorTest
     }
 
     @Test
-    void playbackConsumerSeesDuplicateDecisionOnFirstPublication() throws Exception
+    void coordinatorApiHasNoLivePlaybackOrBrowserReservationDependencies()
     {
-        List<Boolean> duplicateAtPublication = new CopyOnWriteArrayList<>();
-        AudioCallCoordinator coordinator = new AudioCallCoordinator(
-            new TestCallManagementProvider(true, false),
-            call -> duplicateAtPublication.add(call.isDuplicate()), null, null, null);
-
-        try
+        for(var constructor : AudioCallCoordinator.class.getDeclaredConstructors())
         {
-            AudioCallSnapshot first = snapshot(41, 1, 1200, 9001, "Test System", null,
-                1_000L, 2_000L, 1, false);
-            AudioCallSnapshot second = snapshot(42, 2, 1200, 9002, "Test System", null,
-                1_000L, 2_000L, 1, false);
-            coordinator.receive(audioEvent(first, 160));
-            coordinator.receive(audioEvent(second, 160));
+            for(Class<?> parameterType : constructor.getParameterTypes())
+            {
+                assertFalse(parameterType.getPackageName().equals("io.github.dsheirer.audio.playback"),
+                    "The coordinator must not accept a receiver-speaker playback dependency");
+                assertFalse(parameterType.getName().equals("io.github.dsheirer.audio.call.WebCallDeliveryListener"),
+                    "The coordinator must not accept the retired browser reservation lifecycle");
+            }
+        }
 
-            awaitCondition(() -> duplicateAtPublication.size() == 2,
-                "Expected both physical calls to reach the playback preference gate");
-            assertEquals(List.of(false, true), duplicateAtPublication,
-                "The duplicate loser must never be published briefly as an ordinary call");
-        }
-        finally
-        {
-            coordinator.dispose();
-        }
+        assertThrows(ClassNotFoundException.class,
+            () -> Class.forName("io.github.dsheirer.audio.call.WebCallDeliveryEvent"));
+        assertThrows(ClassNotFoundException.class,
+            () -> Class.forName("io.github.dsheirer.audio.call.WebCallDeliveryListener"));
     }
 
     @Test
@@ -173,10 +189,8 @@ class AudioCallCoordinatorTest
             AudioCallSnapshot snapshot1 = snapshot(1, 100, 1200, false, false);
             AudioCallSnapshot snapshot2 = snapshot(2, 200, 1200, false, false);
 
-            coordinator.receive(new AudioCallEvent(AudioCallEventType.CALL_CREATED, snapshot1,
-                System.currentTimeMillis(), audio1));
-            coordinator.receive(new AudioCallEvent(AudioCallEventType.CALL_CREATED, snapshot2,
-                System.currentTimeMillis(), audio2));
+            coordinator.receive(new AudioCallEvent(AudioCallEventType.CALL_CREATED, snapshot1, audio1));
+            coordinator.receive(new AudioCallEvent(AudioCallEventType.CALL_CREATED, snapshot2, audio2));
             coordinator.receive(completionEvent(snapshot1));
             coordinator.receive(completionEvent(snapshot2));
 
@@ -219,10 +233,8 @@ class AudioCallCoordinatorTest
             AudioCallSnapshot active = snapshot(10, 300, 4400, false, false);
             AudioCallSnapshot completed = snapshot(10, 300, 4400, true, false);
 
-            coordinator.receive(new AudioCallEvent(AudioCallEventType.AUDIO_FRAME, active,
-                System.currentTimeMillis(), audio));
-            coordinator.receive(new AudioCallEvent(AudioCallEventType.CALL_COMPLETED, completed,
-                System.currentTimeMillis(), null));
+            coordinator.receive(new AudioCallEvent(AudioCallEventType.AUDIO_FRAME, active, audio));
+            coordinator.receive(new AudioCallEvent(AudioCallEventType.CALL_COMPLETED, completed, null));
 
             assertTrue(completionLatch.await(1, TimeUnit.SECONDS), "Expected completed call fanout");
             assertEquals(1, recorded.size());
@@ -238,135 +250,6 @@ class AudioCallCoordinatorTest
             assertArrayEquals(audio, recordedCall.audioBuffers().getFirst());
             assertSame(recordedCall, streamedCall);
             assertSame(recordedCall, webCalls.getFirst());
-        }
-        finally
-        {
-            coordinator.dispose();
-        }
-    }
-
-    @Test
-    void webLifecycleExposesEarlierActiveReservationWhenLaterCallResolves() throws Exception
-    {
-        List<WebCallDeliveryEvent> webEvents = new CopyOnWriteArrayList<>();
-        List<CompletedAudioCall> recorded = new CopyOnWriteArrayList<>();
-        AudioCallCoordinator coordinator = new AudioCallCoordinator(
-            new TestCallManagementProvider(false, false), recorded::add, null, null,
-            DuplicateCallPriorityProvider.NONE, 25L, 500L, webEvents::add);
-
-        try
-        {
-            AudioCallSnapshot earlier = snapshot(31, 1, 1200, 9001, "First System", null,
-                1_000L, 1_500L, 1, false);
-            AudioCallSnapshot later = snapshot(32, 2, 2200, 9002, "Second System", null,
-                2_000L, 2_500L, 1, false);
-            coordinator.receive(audioEvent(earlier, 160));
-            coordinator.receive(audioEvent(later, 160));
-            awaitCondition(() -> webEventsOfType(webEvents, WebCallDeliveryEvent.Opened.class).size() == 2,
-                "Expected chronological reservations for both active calls");
-
-            coordinator.receive(completionEvent(later));
-            awaitCondition(() -> webEventsOfType(webEvents, WebCallDeliveryEvent.Resolved.class).size() == 1,
-                "The later completed call should be available to spool immediately");
-            List<WebCallDeliveryEvent.Opened> opened =
-                webEventsOfType(webEvents, WebCallDeliveryEvent.Opened.class);
-            WebCallDeliveryEvent.OrderKey earlierKey = opened.stream()
-                .map(WebCallDeliveryEvent.Opened::orderKey)
-                .filter(key -> key.callId().equals(earlier.callId())).findFirst().orElseThrow();
-            WebCallDeliveryEvent.Resolved laterResolved =
-                webEventsOfType(webEvents, WebCallDeliveryEvent.Resolved.class).getFirst();
-            assertEquals(Set.of(later.callId()), laterResolved.sourceCallIds());
-            assertTrue(earlierKey.compareTo(laterResolved.orderKey()) < 0,
-                "The lifecycle must leave an earlier reservation visible so publication waits");
-            assertEquals(1, recorded.size(), "Core recording fanout must not wait for web publication order");
-
-            coordinator.receive(completionEvent(earlier));
-            awaitCondition(() -> webEventsOfType(webEvents, WebCallDeliveryEvent.Resolved.class).size() == 2,
-                "Expected the earlier reservation to resolve");
-            List<WebCallDeliveryEvent.Resolved> resolved =
-                webEventsOfType(webEvents, WebCallDeliveryEvent.Resolved.class);
-            assertEquals(later.callId(), resolved.get(0).call().snapshot().callId(),
-                "Resolution callbacks carry completed calls immediately, even in reverse start order");
-            assertEquals(earlier.callId(), resolved.get(1).call().snapshot().callId());
-        }
-        finally
-        {
-            coordinator.dispose();
-        }
-    }
-
-    @Test
-    void webLifecycleClosesDuplicatePhysicalReservationsWithOneLogicalCall() throws Exception
-    {
-        List<WebCallDeliveryEvent> webEvents = new CopyOnWriteArrayList<>();
-        List<CompletedAudioCall> recorded = new CopyOnWriteArrayList<>();
-        AudioCallCoordinator coordinator = new AudioCallCoordinator(
-            new TestCallManagementProvider(true, false), recorded::add, null, null,
-            DuplicateCallPriorityProvider.NONE, 25L, 500L, webEvents::add);
-
-        try
-        {
-            AudioCallSnapshot first = snapshot(33, 1, 3300, 9001, "Test System", null,
-                1_000L, 1_500L, 1, false);
-            AudioCallSnapshot second = snapshot(34, 2, 3300, 9002, "Test System", null,
-                1_100L, 1_600L, 1, false);
-            coordinator.receive(audioEvent(first, 160));
-            coordinator.receive(audioEvent(second, 160));
-            coordinator.receive(completionEvent(second));
-            coordinator.receive(completionEvent(first));
-
-            awaitCondition(() -> webEventsOfType(webEvents, WebCallDeliveryEvent.Resolved.class).size() == 1,
-                "Expected one browser lifecycle resolution for the logical duplicate");
-            assertEquals(2, webEventsOfType(webEvents, WebCallDeliveryEvent.Opened.class).size());
-            WebCallDeliveryEvent.Resolved resolved =
-                webEventsOfType(webEvents, WebCallDeliveryEvent.Resolved.class).getFirst();
-            assertEquals(Set.of(first.callId(), second.callId()), resolved.sourceCallIds());
-            WebCallDeliveryEvent.OrderKey earliestOpen =
-                webEventsOfType(webEvents, WebCallDeliveryEvent.Opened.class).stream()
-                    .map(WebCallDeliveryEvent.Opened::orderKey).min(WebCallDeliveryEvent.OrderKey::compareTo)
-                    .orElseThrow();
-            assertEquals(earliestOpen, resolved.orderKey());
-            assertEquals(1, recorded.size());
-            assertSame(recorded.getFirst(), resolved.call(),
-                "Recording and browser spooling must share the exact resolved immutable call");
-        }
-        finally
-        {
-            coordinator.dispose();
-        }
-    }
-
-    @Test
-    void webLifecycleAbandonsSilentReservationAndReopensAtCurrentEventTime() throws Exception
-    {
-        List<WebCallDeliveryEvent> webEvents = new CopyOnWriteArrayList<>();
-        AudioCallCoordinator coordinator = new AudioCallCoordinator(
-            new TestCallManagementProvider(false, false), null, null, null,
-            DuplicateCallPriorityProvider.NONE, 20L, 60L, webEvents::add);
-
-        try
-        {
-            AudioCallSnapshot call = snapshot(35, 1, 4400, 9001, "Test System", null,
-                1_000L, 1_500L, 1, false);
-            coordinator.receive(audioEvent(call, 160));
-            awaitCondition(() -> webEventsOfType(webEvents, WebCallDeliveryEvent.Abandoned.class).size() == 1,
-                "Expected the bounded silent-call reservation watchdog");
-            WebCallDeliveryEvent.Abandoned abandoned =
-                webEventsOfType(webEvents, WebCallDeliveryEvent.Abandoned.class).getFirst();
-            assertEquals(WebCallDeliveryEvent.Abandoned.Reason.INACTIVITY, abandoned.reason());
-
-            coordinator.receive(completionEvent(call));
-            awaitCondition(() -> webEventsOfType(webEvents, WebCallDeliveryEvent.Resolved.class).size() == 1,
-                "A late completion must reopen and then resolve a new reservation");
-            List<WebCallDeliveryEvent.Opened> opened =
-                webEventsOfType(webEvents, WebCallDeliveryEvent.Opened.class);
-            assertEquals(2, opened.size());
-            WebCallDeliveryEvent.OrderKey reopenedKey = opened.get(1).orderKey();
-            WebCallDeliveryEvent.Resolved resolved =
-                webEventsOfType(webEvents, WebCallDeliveryEvent.Resolved.class).getFirst();
-            assertTrue(reopenedKey.compareTo(abandoned.orderKey()) > 0,
-                "A reopened orphan must not insert behind an already advanced publication watermark");
-            assertEquals(reopenedKey, resolved.orderKey());
         }
         finally
         {
@@ -817,8 +700,7 @@ class AudioCallCoordinatorTest
             AudioCallSnapshot empty = snapshot(212, 2, 1200, 9002, "Test System", emptyGuid,
                 900L, 1_900L, 1, false);
             coordinator.receive(audioEvent(playable, 160));
-            coordinator.receive(new AudioCallEvent(AudioCallEventType.CALL_CREATED, empty,
-                System.currentTimeMillis(), null));
+            coordinator.receive(new AudioCallEvent(AudioCallEventType.CALL_CREATED, empty, null));
             coordinator.receive(completionEvent(empty));
             coordinator.receive(completionEvent(playable));
 
@@ -957,8 +839,7 @@ class AudioCallCoordinatorTest
                 Set.of(new BroadcastChannel("Stream A"), streamC));
             float[] winnerAudio = new float[800];
             winnerAudio[0] = 0.75f;
-            coordinator.receive(new AudioCallEvent(AudioCallEventType.AUDIO_FRAME, winner,
-                System.currentTimeMillis(), winnerAudio));
+            coordinator.receive(new AudioCallEvent(AudioCallEventType.AUDIO_FRAME, winner, winnerAudio));
             coordinator.receive(audioEvent(recordMember, 800));
             coordinator.receive(audioEvent(destinationRecordMember, 800));
             coordinator.receive(completionEvent(destinationRecordMember));
@@ -1134,7 +1015,7 @@ class AudioCallCoordinatorTest
     }
 
     @Test
-    void streamingWatchdogBoundsDelayForLingeringMember() throws Exception
+    void duplicateCompletionWatchdogBoundsDelayForLingeringMember() throws Exception
     {
         List<CompletedAudioCall> streamed = new CopyOnWriteArrayList<>();
         List<CompletedAudioCall> webCalls = new CopyOnWriteArrayList<>();
@@ -1158,7 +1039,7 @@ class AudioCallCoordinatorTest
             assertFalse(streamingFanout.await(100, TimeUnit.MILLISECONDS),
                 "The watchdog should not fire before its bounded timeout");
             assertTrue(streamingFanout.await(2, TimeUnit.SECONDS),
-                "A lingering member must not block streaming forever");
+                "A lingering member must not block completed-call fanout forever");
             assertEquals(completed.callId(), streamed.getFirst().snapshot().callId());
 
             coordinator.receive(completionEvent(lingering));
@@ -1203,7 +1084,7 @@ class AudioCallCoordinatorTest
             coordinator.receive(completionEvent(second));
 
             awaitCondition(() -> streamed.size() == 2 && recorded.size() == 2,
-                "Disabling detection should release live state and pending streaming candidates");
+                "Disabling detection should release live state and pending completion candidates");
             assertFalse(streamed.getFirst().snapshot().duplicate());
             assertFalse(streamed.get(1).snapshot().duplicate());
             assertFalse(getCompletedCall(recorded, second.callId()).snapshot().duplicate(),
@@ -1216,53 +1097,7 @@ class AudioCallCoordinatorTest
     }
 
     @Test
-    void detectionToggleReopensWebLifecycleForLiveMemberAfterResolvedElection() throws Exception
-    {
-        MutableCallManagementProvider preferences = new MutableCallManagementProvider(true, false, true);
-        List<WebCallDeliveryEvent> webEvents = new CopyOnWriteArrayList<>();
-        List<CompletedAudioCall> recorded = new CopyOnWriteArrayList<>();
-        AudioCallCoordinator coordinator = new AudioCallCoordinator(preferences, recorded::add, null, null,
-            DuplicateCallPriorityProvider.NONE, 20L, 60L, webEvents::add);
-
-        try
-        {
-            AudioCallSnapshot first = snapshot(81, 1, 1200, 9001, "Test System", null,
-                1_000L, 2_000L, 1, false);
-            AudioCallSnapshot lingering = snapshot(82, 2, 1200, 9002, "Test System", null,
-                1_000L, 2_000L, 1, false);
-            coordinator.receive(audioEvent(first, 160));
-            coordinator.receive(audioEvent(lingering, 160));
-            coordinator.receive(completionEvent(first));
-
-            awaitCondition(() -> webEventsOfType(webEvents, WebCallDeliveryEvent.Resolved.class).size() == 1,
-                "Expected the bounded duplicate election to resolve one browser call");
-            assertEquals(2, webEventsOfType(webEvents, WebCallDeliveryEvent.Opened.class).size());
-
-            preferences.setDetectionEnabled(false);
-            coordinator.receive(audioEvent(lingering, 160));
-            awaitCondition(() -> webEventsOfType(webEvents, WebCallDeliveryEvent.Opened.class).size() == 3,
-                "The released live member must receive a fresh browser reservation");
-            WebCallDeliveryEvent.OrderKey reopened =
-                webEventsOfType(webEvents, WebCallDeliveryEvent.Opened.class).getLast().orderKey();
-
-            coordinator.receive(completionEvent(lingering));
-            awaitCondition(() -> webEventsOfType(webEvents, WebCallDeliveryEvent.Resolved.class).size() == 2,
-                "The released live member must complete independently for browser playback");
-            WebCallDeliveryEvent.Resolved resolved =
-                webEventsOfType(webEvents, WebCallDeliveryEvent.Resolved.class).getLast();
-            assertEquals(reopened, resolved.orderKey());
-            assertEquals(Set.of(lingering.callId()), resolved.sourceCallIds());
-            assertEquals(2, recorded.size(),
-                "Browser lifecycle must stay aligned with recording after duplicate detection is disabled");
-        }
-        finally
-        {
-            coordinator.dispose();
-        }
-    }
-
-    @Test
-    void disposeCancelsPendingStreamingSelection() throws Exception
+    void disposeCancelsPendingDuplicateSelection() throws Exception
     {
         CountDownLatch streamed = new CountDownLatch(1);
         AudioCallCoordinator coordinator = new AudioCallCoordinator(
@@ -1282,10 +1117,192 @@ class AudioCallCoordinatorTest
             assertFalse(streamed.await(100, TimeUnit.MILLISECONDS));
             coordinator.dispose();
             assertFalse(streamed.await(700, TimeUnit.MILLISECONDS),
-                "Disposal should cancel delayed streaming work");
+                "Disposal should cancel delayed duplicate completion work");
         }
         finally
         {
+            coordinator.dispose();
+        }
+    }
+
+    @Test
+    void fullIngressAbortsPartialCallWithoutCallerRunsAndLaterCallSucceeds() throws Exception
+    {
+        BlockingCallManagementProvider preferences = new BlockingCallManagementProvider(false, 1);
+        List<CompletedAudioCall> recorded = new CopyOnWriteArrayList<>();
+        AtomicReference<Thread> consumerThread = new AtomicReference<>();
+        AudioCallCoordinator coordinator = new AudioCallCoordinator(preferences, call -> {
+            consumerThread.set(Thread.currentThread());
+            recorded.add(call);
+        }, null, null, DuplicateCallPriorityProvider.NONE, 100L, 1_000L, 8, 2);
+
+        try
+        {
+            AudioCallSnapshot blocked = snapshot(301, 1, 1001, false, false);
+            AudioCallSnapshot overflowed = snapshot(302, 1, 1002, false, false);
+            AudioCallSnapshot later = snapshot(303, 1, 1003, false, false);
+            coordinator.receive(audioEvent(blocked, 160));
+            assertTrue(preferences.awaitBlocked(), "The owner worker should be blocked off the producer thread");
+            assertFalse(preferences.blockedThread().equals(Thread.currentThread()));
+
+            long started = System.nanoTime();
+
+            for(int frame = 0; frame < 7; frame++)
+            {
+                coordinator.receive(audioEvent(overflowed, 160));
+            }
+
+            coordinator.receive(completionEvent(overflowed));
+            long elapsedMilliseconds = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
+            assertTrue(elapsedMilliseconds < 500,
+                "A full coordinator must shed work without running coordinator logic on the producer");
+            AudioCallCoordinator.CoordinatorQueueStatus saturated = coordinator.getQueueStatus();
+            assertEquals(8, saturated.ingressDepth());
+            assertEquals(6, saturated.regularIngressCapacity());
+            assertEquals(1, saturated.abortedCalls());
+            assertTrue(saturated.droppedIngress() >= 2);
+
+            preferences.release();
+            awaitCondition(() -> coordinator.getQueueStatus().ingressDepth() == 0,
+                "The bounded ingress should drain after the owner resumes");
+            coordinator.receive(audioEvent(later, 160));
+            coordinator.receive(completionEvent(later));
+            awaitCondition(() -> recorded.size() == 1, "The next healthy call should complete normally");
+            assertEquals(later.callId(), recorded.getFirst().snapshot().callId());
+            assertFalse(consumerThread.get().equals(Thread.currentThread()),
+                "Completed-call projection must stay off the producing thread");
+        }
+        finally
+        {
+            preferences.release();
+            coordinator.dispose();
+        }
+    }
+
+    @Test
+    void throwingConsumerIsIsolatedAndSubsequentCallsStillFanOut() throws Exception
+    {
+        AtomicInteger recordingAttempts = new AtomicInteger();
+        List<CompletedAudioCall> streamed = new CopyOnWriteArrayList<>();
+        List<CompletedAudioCall> webCalls = new CopyOnWriteArrayList<>();
+        AudioCallCoordinator coordinator = new AudioCallCoordinator(new TestCallManagementProvider(false, false),
+            call -> {
+                recordingAttempts.incrementAndGet();
+                throw new IllegalStateException("expected test failure");
+            }, streamed::add, webCalls::add);
+
+        try
+        {
+            AudioCallSnapshot first = snapshot(311, 1, 1101, false, false);
+            AudioCallSnapshot second = snapshot(312, 1, 1102, false, false);
+            coordinator.receive(audioEvent(first, 160));
+            coordinator.receive(completionEvent(first));
+            coordinator.receive(audioEvent(second, 160));
+            coordinator.receive(completionEvent(second));
+
+            awaitCondition(() -> recordingAttempts.get() == 2 && streamed.size() == 2 && webCalls.size() == 2,
+                "One failed consumer must not skip other consumers or later calls");
+            assertEquals(first.callId(), streamed.get(0).snapshot().callId());
+            assertEquals(second.callId(), streamed.get(1).snapshot().callId());
+        }
+        finally
+        {
+            coordinator.dispose();
+        }
+    }
+
+    @Test
+    void saturatedNonblockingConsumerDoesNotBlockOtherConsumersOrProducer() throws Exception
+    {
+        ArrayBlockingQueue<CompletedAudioCall> recordingQueue = new ArrayBlockingQueue<>(1);
+        AtomicInteger droppedRecordings = new AtomicInteger();
+        List<CompletedAudioCall> streamed = new CopyOnWriteArrayList<>();
+        List<CompletedAudioCall> webCalls = new CopyOnWriteArrayList<>();
+        AudioCallCoordinator coordinator = new AudioCallCoordinator(new TestCallManagementProvider(false, false),
+            call -> {
+                if(!recordingQueue.offer(call))
+                {
+                    droppedRecordings.incrementAndGet();
+                }
+            }, streamed::add, webCalls::add);
+
+        try
+        {
+            long receiveStarted = System.nanoTime();
+            AudioCallSnapshot first = snapshot(321, 1, 1201, false, false);
+            AudioCallSnapshot second = snapshot(322, 1, 1202, false, false);
+            coordinator.receive(audioEvent(first, 160));
+            coordinator.receive(completionEvent(first));
+            coordinator.receive(audioEvent(second, 160));
+            coordinator.receive(completionEvent(second));
+            assertTrue(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - receiveStarted) < 250,
+                "A saturated downstream queue cannot backpressure the decoder callback");
+            awaitCondition(() -> streamed.size() == 2 && webCalls.size() == 2,
+                "A saturated recording queue must not skip the other nonblocking consumers");
+            assertEquals(1, recordingQueue.size());
+            assertEquals(1, droppedRecordings.get());
+        }
+        finally
+        {
+            coordinator.dispose();
+        }
+    }
+
+    @Test
+    void disposeDrainsAcceptedCompletionBeforeDownstreamManagersStop()
+    {
+        List<CompletedAudioCall> recorded = new CopyOnWriteArrayList<>();
+        List<CompletedAudioCall> streamed = new CopyOnWriteArrayList<>();
+        List<CompletedAudioCall> webCalls = new CopyOnWriteArrayList<>();
+        AudioCallCoordinator coordinator = new AudioCallCoordinator(new TestCallManagementProvider(false, false),
+            recorded::add, streamed::add, webCalls::add);
+        AudioCallSnapshot call = snapshot(323, 1, 1203, false, false);
+
+        coordinator.receive(audioEvent(call, 160));
+        coordinator.receive(completionEvent(call));
+        coordinator.dispose();
+
+        assertEquals(1, recorded.size(), "Shutdown must preserve an already-accepted recording handoff");
+        assertEquals(1, streamed.size(), "Shutdown must preserve an already-accepted streaming handoff");
+        assertEquals(1, webCalls.size(), "Shutdown must preserve an already-accepted browser handoff");
+    }
+
+    @Test
+    void overflowedDuplicateMemberIsDiscardedAndHealthyPeerCompletesOnce() throws Exception
+    {
+        BlockingCallManagementProvider preferences = new BlockingCallManagementProvider(true, 3);
+        List<CompletedAudioCall> recorded = new CopyOnWriteArrayList<>();
+        AudioCallCoordinator coordinator = new AudioCallCoordinator(preferences, recorded::add, null, null,
+            DuplicateCallPriorityProvider.NONE, 100L, 1_000L, 8, 2);
+
+        try
+        {
+            AudioCallSnapshot overflowed = snapshot(331, 1, 1300, false, false);
+            AudioCallSnapshot healthy = snapshot(332, 1, 1300, false, false);
+            coordinator.receive(audioEvent(overflowed, 160));
+            coordinator.receive(audioEvent(healthy, 160));
+            coordinator.receive(audioEvent(overflowed, 160));
+            assertTrue(preferences.awaitBlocked(), "The duplicate cohort should exist before saturation");
+
+            for(int frame = 0; frame < 7; frame++)
+            {
+                coordinator.receive(audioEvent(overflowed, 160));
+            }
+
+            coordinator.receive(completionEvent(healthy));
+            preferences.release();
+            awaitCondition(() -> recorded.size() == 1,
+                "The healthy duplicate member should survive its peer's overload");
+            assertEquals(healthy.callId(), recorded.getFirst().snapshot().callId());
+            assertFalse(recorded.getFirst().snapshot().duplicate());
+
+            coordinator.receive(completionEvent(overflowed));
+            Thread.sleep(100);
+            assertEquals(1, recorded.size(), "The overflowed partial call must never fan out");
+        }
+        finally
+        {
+            preferences.release();
             coordinator.dispose();
         }
     }
@@ -1315,13 +1332,12 @@ class AudioCallCoordinatorTest
 
         return new AudioCallSnapshot(callId, null, null, new IdentifierCollection(identifiers), Set.of(),
             startTimestamp, lastActivityTimestamp, burstCount, burstCount, startTimestamp,
-            lastActivityTimestamp, false, complete, false, true, 50, false);
+            lastActivityTimestamp, false, complete, false, true, false);
     }
 
     private static AudioCallEvent audioEvent(AudioCallSnapshot snapshot, int sampleCount)
     {
-        return new AudioCallEvent(AudioCallEventType.AUDIO_FRAME, snapshot, System.currentTimeMillis(),
-            new float[sampleCount]);
+        return new AudioCallEvent(AudioCallEventType.AUDIO_FRAME, snapshot, new float[sampleCount]);
     }
 
     private static AudioCallEvent completionEvent(AudioCallSnapshot snapshot)
@@ -1330,9 +1346,9 @@ class AudioCallCoordinatorTest
             snapshot.aliasList(), snapshot.identifierCollection(), snapshot.broadcastChannels(),
             snapshot.startTimestamp(), snapshot.lastActivityTimestamp(), snapshot.burstCount(),
             snapshot.burstGeneration(), snapshot.lastBurstStartTimestamp(), snapshot.lastBurstEndTimestamp(),
-            false, true, snapshot.encrypted(), snapshot.recordAudio(), snapshot.monitorPriority(),
-            snapshot.duplicate(), snapshot.recordingMetadata(), snapshot.voiceCallQuality());
-        return new AudioCallEvent(AudioCallEventType.CALL_COMPLETED, completed, System.currentTimeMillis(), null);
+            false, true, snapshot.encrypted(), snapshot.recordAudio(), snapshot.duplicate(),
+            snapshot.recordingMetadata(), snapshot.voiceCallQuality());
+        return new AudioCallEvent(AudioCallEventType.CALL_COMPLETED, completed, null);
     }
 
     private static AudioCallSnapshot withVoiceQuality(AudioCallSnapshot snapshot, VoiceCallQuality quality)
@@ -1341,8 +1357,18 @@ class AudioCallCoordinatorTest
             snapshot.identifierCollection(), snapshot.broadcastChannels(), snapshot.startTimestamp(),
             snapshot.lastActivityTimestamp(), snapshot.burstCount(), snapshot.burstGeneration(),
             snapshot.lastBurstStartTimestamp(), snapshot.lastBurstEndTimestamp(), snapshot.burstActive(),
-            snapshot.complete(), snapshot.encrypted(), snapshot.recordAudio(), snapshot.monitorPriority(),
-            snapshot.duplicate(), snapshot.recordingMetadata(), quality);
+            snapshot.complete(), snapshot.encrypted(), snapshot.recordAudio(), snapshot.duplicate(),
+            snapshot.recordingMetadata(), quality);
+    }
+
+    private static AudioCallSnapshot withAliasList(AudioCallSnapshot snapshot, AliasList aliasList)
+    {
+        return new AudioCallSnapshot(snapshot.callId(), snapshot.linkedCallId(), aliasList,
+            snapshot.identifierCollection(), snapshot.broadcastChannels(), snapshot.startTimestamp(),
+            snapshot.lastActivityTimestamp(), snapshot.burstCount(), snapshot.burstGeneration(),
+            snapshot.lastBurstStartTimestamp(), snapshot.lastBurstEndTimestamp(), snapshot.burstActive(),
+            snapshot.complete(), snapshot.encrypted(), snapshot.recordAudio(), snapshot.duplicate(),
+            snapshot.recordingMetadata(), snapshot.voiceCallQuality());
     }
 
     private static AudioCallSnapshot withPolicy(AudioCallSnapshot snapshot, boolean recordAudio,
@@ -1360,8 +1386,8 @@ class AudioCallCoordinatorTest
             snapshot.identifierCollection(), broadcastChannels, snapshot.startTimestamp(),
             snapshot.lastActivityTimestamp(), snapshot.burstCount(), snapshot.burstGeneration(),
             snapshot.lastBurstStartTimestamp(), snapshot.lastBurstEndTimestamp(), snapshot.burstActive(),
-            snapshot.complete(), snapshot.encrypted(), recordAudio, snapshot.monitorPriority(), snapshot.duplicate(),
-            policyMetadata, snapshot.voiceCallQuality());
+            snapshot.complete(), snapshot.encrypted(), recordAudio, snapshot.duplicate(), policyMetadata,
+            snapshot.voiceCallQuality());
     }
 
     private static AudioCallSnapshot withRecordingMetadata(AudioCallSnapshot snapshot, String aliasListName,
@@ -1380,8 +1406,8 @@ class AudioCallCoordinatorTest
             snapshot.identifierCollection(), snapshot.broadcastChannels(), snapshot.startTimestamp(),
             snapshot.lastActivityTimestamp(), snapshot.burstCount(), snapshot.burstGeneration(),
             snapshot.lastBurstStartTimestamp(), snapshot.lastBurstEndTimestamp(), snapshot.burstActive(),
-            snapshot.complete(), snapshot.encrypted(), snapshot.recordAudio(), snapshot.monitorPriority(),
-            snapshot.duplicate(), recordingMetadata, snapshot.voiceCallQuality());
+            snapshot.complete(), snapshot.encrypted(), snapshot.recordAudio(), snapshot.duplicate(),
+            recordingMetadata, snapshot.voiceCallQuality());
     }
 
     private static boolean hasDestination(ResolvedCallPolicy policy, String value)
@@ -1469,12 +1495,6 @@ class AudioCallCoordinatorTest
         assertTrue(condition.getAsBoolean(), message);
     }
 
-    private static <T extends WebCallDeliveryEvent> List<T> webEventsOfType(
-        List<WebCallDeliveryEvent> events, Class<T> eventType)
-    {
-        return events.stream().filter(eventType::isInstance).map(eventType::cast).toList();
-    }
-
     private static class MutableCallManagementProvider implements ICallManagementProvider
     {
         private final boolean mByTalkgroup;
@@ -1517,6 +1537,70 @@ class AudioCallCoordinatorTest
         public boolean isDuplicateStreamingSuppressionEnabled()
         {
             return mSuppressStreaming;
+        }
+    }
+
+    private static class BlockingCallManagementProvider implements ICallManagementProvider
+    {
+        private final boolean mDuplicateEnabled;
+        private final int mBlockInvocation;
+        private final AtomicInteger mInvocations = new AtomicInteger();
+        private final CountDownLatch mBlocked = new CountDownLatch(1);
+        private final CountDownLatch mRelease = new CountDownLatch(1);
+        private final AtomicReference<Thread> mBlockedThread = new AtomicReference<>();
+
+        private BlockingCallManagementProvider(boolean duplicateEnabled, int blockInvocation)
+        {
+            mDuplicateEnabled = duplicateEnabled;
+            mBlockInvocation = blockInvocation;
+        }
+
+        @Override
+        public boolean isDuplicateCallDetectionEnabled()
+        {
+            if(mInvocations.incrementAndGet() == mBlockInvocation)
+            {
+                mBlockedThread.set(Thread.currentThread());
+                mBlocked.countDown();
+
+                try
+                {
+                    mRelease.await(2, TimeUnit.SECONDS);
+                }
+                catch(InterruptedException _)
+                {
+                    Thread.currentThread().interrupt();
+                }
+            }
+
+            return mDuplicateEnabled;
+        }
+
+        @Override
+        public boolean isDuplicateCallDetectionByTalkgroupEnabled()
+        {
+            return mDuplicateEnabled;
+        }
+
+        @Override
+        public boolean isDuplicateCallDetectionByRadioEnabled()
+        {
+            return false;
+        }
+
+        private boolean awaitBlocked() throws InterruptedException
+        {
+            return mBlocked.await(1, TimeUnit.SECONDS);
+        }
+
+        private Thread blockedThread()
+        {
+            return mBlockedThread.get();
+        }
+
+        private void release()
+        {
+            mRelease.countDown();
         }
     }
 }

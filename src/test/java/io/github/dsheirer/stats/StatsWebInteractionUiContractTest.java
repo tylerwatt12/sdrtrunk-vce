@@ -117,7 +117,7 @@ class StatsWebInteractionUiContractTest
     }
 
     @Test
-    void keepsSignalSymbolsAndTunerSpectrumVisibleWithoutDesktopViewGates() throws Exception
+    void keepsSignalAndTunerSpectrumVisibleWithoutDesktopViewGates() throws Exception
     {
         String source = source();
         String live = function(source, "async function renderLive()");
@@ -127,6 +127,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(live.contains("liveEventsPanel"));
         assertTrue(channel.contains("diagnostic('Signal', 'Selected channel signal spectrum')"));
         assertTrue(channel.contains("diagnostic('Symbols', 'Selected channel demodulated symbols')"));
+        assertTrue(channel.contains("DIAGNOSTIC_FRAME_TYPES.CHANNEL_SYMBOLS"));
         assertTrue(tuner.contains("plot('FFT', 'Tuner frequency spectrum'"));
         assertTrue(tuner.contains("plot('Waterfall', 'Tuner spectrum history'"));
         assertFalse(live.contains("java-ui"));
@@ -208,7 +209,7 @@ class StatsWebInteractionUiContractTest
         String talkgroup = function(source, "async function renderTalkgroup()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"65\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"67\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -517,8 +518,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(html.indexOf("localStorage.getItem('sdrtrunk_theme')") <
             html.indexOf("rel=\"stylesheet\""));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=48"));
-        assertTrue(html.contains("/assets/app.js?v=70"));
+        assertTrue(html.contains("/assets/app.css?v=50"));
+        assertTrue(html.contains("/assets/app.js?v=73"));
         assertTrue(source.contains("window.localStorage.setItem(THEME_STORAGE_KEY"));
         assertTrue(source.contains("toggle.setAttribute('aria-pressed'"));
         assertTrue(css.contains(":root[data-theme=\"dark\"]"));
@@ -541,7 +542,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(html.contains("id=\"playback-volume\" type=\"range\""));
         assertTrue(html.contains("aria-label=\"Browser playback volume\""));
         assertTrue(html.contains("id=\"playback-volume-value\""));
-        assertTrue(html.contains("/assets/web-call-player.js?v=8"));
+        assertTrue(html.contains("/assets/web-call-player.js?v=9"));
         assertTrue(source.contains("VOLUME_KEY = 'sdrtrunk-vce.web-player.volume'"));
         assertTrue(source.contains("this.volume = this.readVolume()"));
         assertTrue(changeVolume.contains("this.gainNode.gain.value = this.volume"));
@@ -567,8 +568,8 @@ class StatsWebInteractionUiContractTest
         String activity = function(source(), "async function renderActivity(scopeParameters, title = 'Activity')");
 
         assertTrue(ensureConnected.contains("addEventListener('snapshot'"));
-        assertTrue(enqueue.contains("this.knownCallIds.has(callId)"));
-        assertTrue(enqueue.contains("this.knownCallIds.add(callId)"));
+        assertTrue(enqueue.contains("this.seenCallIds.has(normalized._logicalCallId)"));
+        assertTrue(enqueue.contains("this.rememberCallId(normalized._logicalCallId)"));
         assertTrue(snapshot.contains("snapshot?.calls"));
         assertTrue(activity.contains("addEventListener('activity_reset'"));
         assertTrue(activity.contains("api('/api/v1/activity'"));
@@ -635,6 +636,92 @@ class StatsWebInteractionUiContractTest
     }
 
     @Test
+    void subscribesToBoundedScanListsDeduplicatesCallsAndSchedulesConversationLanes() throws Exception
+    {
+        String html = readText(INDEX_HTML);
+        String source = readText(WEB_CALL_PLAYER);
+        String enqueue = function(source, "  enqueue(call)");
+        String parameters = function(source, "  subscriptionParameters()");
+        String synchronize = function(source, "  synchronizeSubscription()");
+        String normalize = function(source, "  normalizeCall(value)");
+        String schedule = function(source, "  chooseNextLane(lanes, lastKey, consecutive)");
+
+        assertTrue(html.contains("id=\"playback-scan-list-options\""));
+        assertTrue(html.contains("id=\"playback-missed\""));
+        assertTrue(parameters.contains("scan_list_id: [...this.selectedScanListIds]"));
+        assertTrue(synchronize.contains("this.events.update(this.subscriptionParameters())"));
+        assertTrue(source.contains("maximum_selected_scan_lists"));
+        assertTrue(source.contains("maximum_browser_queue_calls"));
+        assertTrue(normalize.contains("value.logical_call_id ?? value.call_id"));
+        assertTrue(normalize.contains("value.matched_scan_list_ids ?? value.scan_list_ids"));
+        assertTrue(enqueue.contains("this.seenCallIds.has(normalized._logicalCallId)"));
+        assertTrue(enqueue.indexOf("callMatchesSelection(normalized)") <
+            enqueue.indexOf("rememberCallId(normalized._logicalCallId)"));
+        assertTrue(source.contains("MAXIMUM_SEEN_CALL_IDS = 2048"));
+        assertTrue(source.contains("MAXIMUM_CONSECUTIVE_CONVERSATION_CALLS = 4"));
+        assertTrue(schedule.contains("consecutive < WebCallPlayer.MAXIMUM_CONSECUTIVE_CONVERSATION_CALLS"));
+        assertTrue(source.contains("first._startedAtMs - second._startedAtMs"));
+        assertTrue(source.contains("events.addEventListener('missed'"));
+        assertTrue(source.contains("this.missedCountExact"));
+    }
+
+    @Test
+    void providesDedicatedMobileListenerAndBoundedAdministratorAudioControls() throws Exception
+    {
+        String html = Files.readString(INDEX_HTML);
+        String source = source();
+        String css = Files.readString(APP_CSS);
+        String shell = function(source, "function applyListenerShellMode()");
+        String admin = function(source, "async function renderAdmin()");
+        String scanLists = function(source, "async function renderAdminScanLists()");
+        String audio = function(source, "async function renderAdminWebAudio()");
+
+        assertTrue(html.contains("id=\"mobile-listener-shell\""));
+        assertTrue(html.contains("id=\"mobile-listener-desktop\""));
+        assertTrue(html.contains("data-listener-view=\"scan-lists\""));
+        assertTrue(html.contains("data-listener-view=\"queue\""));
+        assertTrue(shell.contains("mobileSlot.append(bar)"));
+        assertTrue(shell.contains("app.hidden = true"));
+        assertTrue(function(source, "function initializePlaybackHeader()")
+            .contains("!subscriptions.contains(event.target)"));
+        assertTrue(function(source, "function initializePlaybackHeader()").contains("!mobileTrigger"));
+        assertTrue(source.contains("COMPACT_LISTENER_MEDIA"));
+        assertTrue(css.contains("height: 100dvh"));
+        assertTrue(css.contains("env(safe-area-inset-bottom"));
+
+        assertTrue(html.contains("view=admin&amp;tab=scan-lists"));
+        assertTrue(admin.contains("label: 'Scan Lists'"));
+        assertTrue(admin.contains("label: 'Listener Status'"));
+        assertTrue(scanLists.contains("requestJson('/api/v1/admin/scan-lists'"));
+        assertTrue(scanLists.contains("'No scan lists are configured'"));
+        assertTrue(scanLists.contains("unmatched_alias_list_count"));
+        assertTrue(scanLists.contains("'Unknown routes'"));
+        assertTrue(scanLists.contains("Alias List\\'s Global Settings"));
+        String editScanList = function(source, "function openScanListAdminModal(scanList, revision)");
+        String deleteScanList = function(source, "function openDeleteScanListAdminModal(scanList, revision)");
+        assertTrue(deleteScanList.contains("unmatched_alias_list_count"));
+        assertTrue(deleteScanList.contains("global unmatched-"));
+        assertTrue(source.contains("/api/v1/admin/scan-lists/${scanList.id}"));
+        assertTrue(editScanList.contains("await refreshPlaybackScanLists(true)"));
+        assertTrue(deleteScanList.contains("await refreshPlaybackScanLists(true)"));
+        assertFalse(editScanList.contains("location.reload"));
+        assertFalse(deleteScanList.contains("location.reload"));
+        assertTrue(audio.contains("requestJson('/api/v1/admin/web-audio'"));
+        assertTrue(audio.contains("'Refresh Status'"));
+        for(String field: new String[]{"maximum_listeners", "maximum_selected_scan_lists",
+            "maximum_browser_queue_calls", "maximum_cached_calls", "maximum_cached_audio_mib"})
+        {
+            assertTrue(audio.contains(field), () -> "Missing web-audio setting " + field);
+        }
+        for(String counter: new String[]{"dropped_sse_events", "rejected_listeners", "audio_fetch_misses",
+            "rejected_audio_responses", "active_audio_responses", "age_evictions", "capacity_evictions",
+            "encoder_queue_depth", "event_queue_capacity"})
+        {
+            assertTrue(audio.contains(counter), () -> "Missing listener status counter " + counter);
+        }
+    }
+
+    @Test
     void separatesLiveTabSignalStrengthFromDecodeQuality() throws Exception
     {
         String source = source();
@@ -693,11 +780,10 @@ class StatsWebInteractionUiContractTest
         assertEquals(channel.indexOf("binaryFrameConnection('channel_diagnostics', parameters"),
             channel.lastIndexOf("binaryFrameConnection('channel_diagnostics', parameters"));
         assertTrue(channel.contains("frame.type === DIAGNOSTIC_FRAME_TYPES.CHANNEL_SIGNAL"));
-        assertTrue(channel.contains("frame.type !== DIAGNOSTIC_FRAME_TYPES.CHANNEL_SYMBOLS"));
+        assertTrue(channel.contains("DIAGNOSTIC_FRAME_TYPES.CHANNEL_SYMBOLS"));
         assertFalse(channel.contains("client_id"));
         assertTrue(channel.contains("diagnosticGrid.append(signalDiagnostic.card, symbolDiagnostic.card)"));
         assertTrue(channel.contains("let signalSequence = 0"));
-        assertTrue(channel.contains("let symbolSequence = 0"));
         assertTrue(channel.contains("['Center'"));
         assertTrue(channel.contains("['Peak'"));
         assertTrue(channel.contains("['Decoder', state?.decoder_profile || state?.protocol || '—']"));
@@ -708,16 +794,8 @@ class StatsWebInteractionUiContractTest
         assertFalse(channel.contains("['Range'"));
         assertFalse(channel.contains("['Age'"));
         assertFalse(channel.contains("ageText"));
-        assertTrue(channel.contains("maximum_visible_symbols"));
-        assertTrue(channel.contains("const denominator = Math.max(1, symbolValues.length - 1)"));
-        assertTrue(channel.contains("symbolValues = new Float32Array(maximumSymbols)"));
-        assertTrue(channel.contains("symbolValues.fill(Number.NaN)"));
-        assertTrue(channel.contains("symbolValues[symbolCursor] = incoming[index]"));
-        assertTrue(channel.contains("symbolCursor = (symbolCursor + 1) % capacity"));
-        assertTrue(channel.contains("symbolCount = Math.min(capacity, symbolCount + 1)"));
-        assertFalse(channel.contains("if (symbolValues.length >= maximum) symbolValues = []"));
-        assertFalse(channel.contains("symbolsNeedClear"));
-        assertFalse(channel.contains("symbolValues.splice"));
+        assertTrue(channel.contains("symbolDiagnostic"));
+        assertTrue(channel.contains("symbolValues"));
         assertTrue(channel.contains("['FFT', 'Waterfall']"));
         assertTrue(channel.contains("signalViewToggle.setAttribute('aria-label', 'Signal graph view')"));
         assertTrue(channel.contains("button.setAttribute('aria-pressed'"));
@@ -762,7 +840,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(css.contains(":not(.live-details-tab):not(.channel-diagnostic-view-button)"));
         assertTrue(css.contains(":root[data-theme=\"dark\"] .channel-diagnostic-view-button[aria-pressed=\"true\"]"));
         assertTrue(css.contains(".channel-diagnostic-view-button:hover {\n  color: var(--ink);"));
-        assertTrue(css.contains("grid-template-columns: repeat(2, minmax(0, 1fr))"));
+        assertTrue(css.contains(".channel-diagnostic-grid {"));
+        assertTrue(css.contains("grid-template-columns: minmax(0, 1fr)"));
         assertTrue(css.contains(".channel-diagnostic-grid"));
     }
 
@@ -1030,7 +1109,7 @@ class StatsWebInteractionUiContractTest
     void idlePlaybackAndHiddenLiveSystemsDoNotOwnLogicalSubscriptions() throws Exception
     {
         String source = source();
-        String playback = function(source, "function synchronizePlaybackAccess()");
+        String playback = function(source, "function synchronizePlaybackAccess(accessChanged = false)");
         String channelActivity = function(source, "function synchronizeLiveChannelActivitySource()");
         String live = function(source, "function liveConnection(topic, parameters = {}, pageScoped = true)");
         String activity = function(source, "async function renderActivity(scopeParameters, title = 'Activity')");
@@ -1038,7 +1117,7 @@ class StatsWebInteractionUiContractTest
         String connect = function(player, "  connect(url, connectionFactory)");
         String toggle = function(player, "  async togglePlayback()");
 
-        assertTrue(playback.contains("(topic) => liveConnection(topic, {}, false)"));
+        assertTrue(playback.contains("(topic, parameters) => liveConnection(topic, parameters, false)"));
         assertFalse(connect.contains("this.connectionFactory(this.connectionTopic)"));
         assertTrue(connect.contains("return this.connectionHandle()"));
         assertTrue(toggle.contains("this.ensureConnected()"));

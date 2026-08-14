@@ -387,7 +387,7 @@ public class AliasViewByRecordingEditor extends VBox
     {
         List<Long> aliasIds = aliases.stream().map(Alias::getId).toList();
         AliasAdministrationService.BulkEdit edit = new AliasAdministrationService.BulkEdit(aliasIds, null, null,
-            null, null, recordable, null, null, null, null, false);
+            null, recordable, null, null, null, null, false);
         AliasMutationUi.execute(owner, "Update Alias Recording", () ->
             mConfigurationManager.getAliasAdministrationService().bulkEdit(edit)).ifPresent(ignored ->
             updateListFilters());

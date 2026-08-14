@@ -32,6 +32,7 @@ import io.github.dsheirer.dsp.filter.fir.real.IRealFilter;
 import io.github.dsheirer.dsp.filter.resample.RealResampler;
 import io.github.dsheirer.dsp.fm.FmDemodulatorFactory;
 import io.github.dsheirer.dsp.fm.IDemodulator;
+import io.github.dsheirer.dsp.squelch.IAnalogSquelch;
 import io.github.dsheirer.dsp.squelch.INoiseSquelchController;
 import io.github.dsheirer.dsp.squelch.NoiseSquelch;
 import io.github.dsheirer.dsp.squelch.NoiseSquelchState;
@@ -60,7 +61,7 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
     private static final double DEMODULATED_AUDIO_SAMPLE_RATE = 8000.0;
     private final IDemodulator mDemodulator;
     private final SourceEventProcessor mSourceEventProcessor = new SourceEventProcessor();
-    private final NoiseSquelch mNoiseSquelch;
+    private final IAnalogSquelch mSquelch;
     private IRealFilter mIBasebandFilter;
     private IRealFilter mQBasebandFilter;
     private IRealDecimationFilter mIDecimationFilter;
@@ -109,16 +110,19 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
      */
     public NBFMDecoder(DecodeConfigNBFM config)
     {
-        this(config, FmDemodulatorFactory.getFmDemodulator());
+        this(config, FmDemodulatorFactory.getFmDemodulator(), new NoiseSquelch(config.getSquelchNoiseOpenThreshold(),
+            config.getSquelchNoiseCloseThreshold(), config.getSquelchHysteresisOpenThreshold(),
+            config.getSquelchHysteresisCloseThreshold()));
     }
 
     /**
      * Shared analog audio path with an injected modulation-specific demodulator.
      */
-    protected NBFMDecoder(DecodeConfigNBFM config, IDemodulator demodulator)
+    protected NBFMDecoder(DecodeConfigNBFM config, IDemodulator demodulator, IAnalogSquelch squelch)
     {
         super(config);
         mDemodulator = java.util.Objects.requireNonNull(demodulator);
+        mSquelch = java.util.Objects.requireNonNull(squelch);
 
         //Save channel bandwidth to setup channel baseband filter.
         mChannelBandwidth = config.getBandwidth().getValue();
@@ -130,20 +134,17 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
         mBassBoostDb = config.getBassBoostDb();
         mOutputGain = config.getOutputGain();
         mSquelchTailRemovalEnabled = config.isSquelchTailRemovalEnabled();
-        mNoiseSquelch = new NoiseSquelch(config.getSquelchNoiseOpenThreshold(), config.getSquelchNoiseCloseThreshold(),
-                config.getSquelchHysteresisOpenThreshold(), config.getSquelchHysteresisCloseThreshold());
-
         if(mSquelchTailRemovalEnabled)
         {
             mSquelchTailRemover = new SquelchTailRemover(config.getSquelchTailRemovalMs(), config.getSquelchHeadRemovalMs());
         }
 
         //Send squelch controlled audio to the resampler and notify the decoder state that the call continues.
-        mNoiseSquelch.setAudioListener(audio -> {
+        mSquelch.setAudioListener(audio -> {
             // if squelch is closing (it hasn't propagated yet to mute the audio)
             //  call the resampler with lastBatch set to true. This will zero pad the input buffer and ensure
             //  the output buffer gets emptied.
-            if(mNoiseSquelch.isSquelched())
+            if(mSquelch.isSquelched())
             {
                 float[] processedAudio = applyDeemphasis(audio);
 
@@ -174,7 +175,7 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
         });
 
         //Notify the decoder state of call starts and ends
-        mNoiseSquelch.setSquelchStateListener(squelchState -> {
+        mSquelch.setSquelchStateListener(squelchState -> {
             if(squelchState == SquelchState.SQUELCH)
             {
                 if(mSquelchTailRemovalEnabled)
@@ -192,6 +193,7 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
                 resetAudioLowPassFilter();
                 resetVoiceEnhanceFilter();
                 resetBassBoostFilter();
+                onCallStart();
 
                 if(mSquelchTailRemovalEnabled)
                 {
@@ -230,7 +232,7 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
     @Override
     public void setNoiseSquelchStateListener(Listener<NoiseSquelchState> listener)
     {
-        mNoiseSquelch.setNoiseSquelchStateListener(listener);
+        mSquelch.setNoiseSquelchStateListener(listener);
     }
 
     /**
@@ -241,7 +243,7 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
     @Override
     public void setNoiseThreshold(float open, float close)
     {
-        mNoiseSquelch.setNoiseThreshold(open, close);
+        mSquelch.setNoiseThreshold(open, close);
 
         //Update the channel configuration and schedule a configuration save.
         getDecodeConfiguration().setSquelchNoiseOpenThreshold(open);
@@ -256,7 +258,7 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
     @Override
     public void setHysteresisThreshold(int open, int close)
     {
-        mNoiseSquelch.setHysteresisThreshold(open, close);
+        mSquelch.setHysteresisThreshold(open, close);
         getDecodeConfiguration().setSquelchHysteresisOpenThreshold(open);
         getDecodeConfiguration().setSquelchHysteresisCloseThreshold(close);
     }
@@ -268,7 +270,7 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
     @Override
     public void setSquelchOverride(boolean override)
     {
-        mNoiseSquelch.setSquelchOverride(override);
+        mSquelch.setSquelchOverride(override);
     }
 
     /**
@@ -323,6 +325,14 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
     }
 
     /**
+     * Invoked when squelch opens, before audio for the new call is processed.
+     */
+    protected void onCallStart()
+    {
+        //Optional modulation-specific state reset.
+    }
+
+    /**
      * Implements the IRealBufferProvider interface to register a listener for demodulated audio samples.
      *
      * @param listener to receive demodulated, resampled audio sample buffers.
@@ -372,11 +382,11 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
 
         float[] demodulated = mDemodulator.demodulate(filteredI, filteredQ);
 
-        mNoiseSquelch.process(demodulated);
+        mSquelch.process(demodulated, filteredI, filteredQ);
 
         //Once we process the sample buffer, if the ending state is squelch closed, update the decoder state that we
         // are idle.
-        if(mNoiseSquelch.isSquelched())
+        if(mSquelch.isSquelched())
         {
             notifyIdle();
         }
@@ -475,7 +485,7 @@ public class NBFMDecoder extends SquelchControlDecoder implements ISourceEventLi
             throw new IllegalStateException(getDecoderType().name() + " demodulator with channel bandwidth [" + mChannelBandwidth + "] requires a channel sample rate of [" + (2.0 * mChannelBandwidth + "] - sample rate of [" + decimatedSampleRate + "] is not supported"));
         }
 
-        mNoiseSquelch.setSampleRate(decimatedSampleRate);
+        mSquelch.setSampleRate(decimatedSampleRate);
 
         int passBandStop = (int) (mChannelBandwidth * .8);
         int stopBandStart = (int) mChannelBandwidth;

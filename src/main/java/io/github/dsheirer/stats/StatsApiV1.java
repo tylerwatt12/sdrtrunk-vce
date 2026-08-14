@@ -25,6 +25,7 @@ public final class StatsApiV1
     public static final String QUALITY = ROOT + "/quality";
     public static final String ALIAS_LISTS = ROOT + "/alias-lists";
     public static final String ALIASES = ROOT + "/aliases";
+    public static final String SCAN_LISTS = ROOT + "/scan-lists";
     public static final String SYSTEMS = ROOT + "/systems";
     public static final String SITES = ROOT + "/sites";
     public static final String ACTIVITY = ROOT + "/activity";

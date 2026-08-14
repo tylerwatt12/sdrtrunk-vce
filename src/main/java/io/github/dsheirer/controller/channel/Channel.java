@@ -363,8 +363,7 @@ public class Channel extends Configuration
     }
 
     /**
-     * Indicates if this channel has been selected for prioritized audio output
-     * and display of processing chain products
+     * Indicates if this channel has been selected for display of processing chain products.
      */
     @JsonIgnore
     public boolean isSelected()

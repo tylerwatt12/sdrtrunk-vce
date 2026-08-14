@@ -43,7 +43,6 @@ public class CallManagementPreferenceEditor extends HBox
     private GridPane mEditorPane;
     private ToggleSwitch mDetectDuplicateTalkgroups;
     private ToggleSwitch mDetectDuplicateRadios;
-    private ToggleSwitch mSuppressDuplicateListening;
     private ToggleSwitch mSuppressDuplicateRecording;
     private ToggleSwitch mSuppressDuplicateStreaming;
     private ComboBox<PatchGroupStreamingOption> mPatchGroupStreamingOptionComboBox;
@@ -113,14 +112,6 @@ public class CallManagementPreferenceEditor extends HBox
             GridPane.setConstraints(suppressionLabel, 0, ++row, 2, 1);
             mEditorPane.getChildren().add(suppressionLabel);
 
-            GridPane.setConstraints(getSuppressDuplicateListening(), 0, ++row);
-            mEditorPane.getChildren().add(getSuppressDuplicateListening());
-
-            Label listeningLabel = new Label("Listening");
-            listeningLabel.setWrapText(true);
-            GridPane.setConstraints(listeningLabel, 1, row);
-            mEditorPane.getChildren().add(listeningLabel);
-
             GridPane.setConstraints(getSuppressDuplicateRecording(), 0, ++row);
             mEditorPane.getChildren().add(getSuppressDuplicateRecording());
 
@@ -178,22 +169,6 @@ public class CallManagementPreferenceEditor extends HBox
         }
 
         return mDetectDuplicateRadios;
-    }
-
-    private ToggleSwitch getSuppressDuplicateListening()
-    {
-        if(mSuppressDuplicateListening == null)
-        {
-            mSuppressDuplicateListening = new ToggleSwitch();
-            mSuppressDuplicateListening.disableProperty()
-                .bind(Bindings.and(getDetectDuplicateTalkgroups().selectedProperty().not(),
-                    getDetectDuplicateRadios().selectedProperty().not()));
-            mSuppressDuplicateListening.setSelected(mPreference.isDuplicatePlaybackSuppressionEnabled());
-            mSuppressDuplicateListening.selectedProperty()
-                .addListener((observable, oldValue, newValue) -> mPreference.setDuplicatePlaybackSuppressionEnabled(newValue));
-        }
-
-        return mSuppressDuplicateListening;
     }
 
     private ToggleSwitch getSuppressDuplicateRecording()

@@ -14,6 +14,11 @@ const DECODE_DEGRADED_MINIMUM_PERCENT = 75;
 const VOICE_QUALITY_WARMUP_FRAMES = 50;
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
 const THEME_STORAGE_KEY = 'sdrtrunk_theme';
+const LISTENER_MODE_STORAGE_KEY = 'sdrtrunk-vce.listener-mode';
+const COMPACT_LISTENER_MEDIA = '(max-width: 760px), (pointer: coarse) and (max-width: 1024px)';
+const ALIAS_LIST_FAMILY_LABELS = Object.freeze({
+  P25: 'P25', DMR: 'DMR', NXDN: 'NXDN', NBFM: 'Conventional Analog (AM/NBFM)'
+});
 const ACCESS_CAPABILITIES = Object.freeze({
   SITE_ACCESS: 'site-access',
   DASHBOARD: 'dashboard',
@@ -26,6 +31,7 @@ const ACCESS_CAPABILITIES = Object.freeze({
   CSV_EXPORT: 'csv-export',
   CALL_AUDIO: 'call-audio',
   ADMIN_ALIASES: 'admin-aliases',
+  ADMIN_AUDIO: 'admin-audio',
   ADMIN_USERS: 'admin-users',
   ADMIN_ACCESS: 'admin-access'
 });
@@ -217,6 +223,9 @@ let aliasEditorContext = null;
 let accessSession = anonymousAccessSession();
 let accessSessionAvailable = false;
 let notifyConfirmedAccessRefresh = () => {};
+let playbackScanListRequest = 0;
+let playbackScanListLoading = false;
+let compactListenerMedia = null;
 
 if (tableOnly) {
   document.body.classList.add('table-only');
@@ -438,7 +447,9 @@ function viewAccessCapability(view) {
 function viewAllowed(view) {
   if (view === 'admin') {
     return accessSession.tier === 'ADMIN' &&
-      (capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_USERS) ||
+      (capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_ALIASES) ||
+        capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_AUDIO) ||
+        capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_USERS) ||
         capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_ACCESS));
   }
   const capability = viewAccessCapability(view);
@@ -627,9 +638,10 @@ async function refreshAccessSession(refreshCurrentView = false) {
       accessSession = anonymousAccessSession();
     }
   }
+  const accessChanged = previousSignature !== accessSessionSignature();
   updateAccessControls();
-  synchronizePlaybackAccess();
-  if (refreshCurrentView && previousSignature !== accessSessionSignature()) await render();
+  synchronizePlaybackAccess(accessChanged);
+  if (refreshCurrentView && accessChanged) await render();
   return accessSession;
 }
 
@@ -714,6 +726,11 @@ function yesNoKnown(value) {
 function protocol(value) {
   const named = { am: 'AM', p25: 'P25', dmr: 'DMR', nxdn: 'NXDN', nbfm: 'NBFM' };
   return named[String(value || '').toLowerCase()] || value || '';
+}
+
+function aliasListFamilyLabel(value) {
+  const family = String(value?.family ?? value ?? '').trim().toUpperCase();
+  return ALIAS_LIST_FAMILY_LABELS[family] || family || 'Unknown';
 }
 
 function decoderLabel(value, compact = false) {
@@ -1841,10 +1858,10 @@ function aliasMetricsState(value) {
 
 function aliasBehavior(row) {
   const values = [];
-  const priority = row.priority === null || row.priority === undefined ? Number.NaN : Number(row.priority);
-  if (priority === -1) values.push(badge('Muted', 'state-stale', 'This alias is not monitored for audio'));
-  else if (Number.isFinite(priority) && priority >= 0 && priority < 100) {
-    values.push(badge(`Priority ${identifierNumber(priority)}`, '', 'Audio monitoring priority'));
+  const scanLists = Array.isArray(row.scan_lists) ? row.scan_lists.filter(Boolean) : [];
+  if (scanLists.length) {
+    values.push(badge(scanLists.length === 1 ? `Scan · ${scanLists[0]}` : `Scan Lists ×${scanLists.length}`,
+      'state-current', scanLists.join(', ')));
   }
   if (Number(row.record_enabled)) values.push(badge('Record', 'state-current'));
   const destinations = Array.isArray(row.broadcast_channels) ? row.broadcast_channels.length : 0;
@@ -1852,7 +1869,7 @@ function aliasBehavior(row) {
   if (row.stream_as_talkgroup !== null && row.stream_as_talkgroup !== undefined) {
     values.push(badge(`As TG ${identifierNumber(row.stream_as_talkgroup)}`));
   }
-  return values.length ? badgeGroup(values) : badge('Default', 'state-historical');
+  return values.length ? badgeGroup(values) : badge('No call actions', 'state-historical');
 }
 
 function aliasDetailLink(row) {
@@ -2076,7 +2093,7 @@ function aliasCatalogFilterToolbar(listResponse) {
   };
 
   const lists = (listResponse.rows || []).map((row) => [String(row.alias_list_id),
-    [row.name, row.family, `${number(row.alias_count)} aliases`].filter(Boolean).join(' · ')]);
+    [row.name, aliasListFamilyLabel(row), `${number(row.alias_count)} aliases`].filter(Boolean).join(' · ')]);
   const preferredFamilies = ['P25', 'DMR', 'NXDN', 'NBFM'];
   const families = [...new Set((listResponse.rows || []).map((row) => String(row.family || '').trim())
     .filter(Boolean))].sort((left, right) => {
@@ -2090,7 +2107,8 @@ function aliasCatalogFilterToolbar(listResponse) {
   });
   form.append(
     selectFilter('Alias List', 'list', [['', 'All alias lists'], ...lists]),
-    selectFilter('Family', 'family', [['', 'All families'], ...families.map((family) => [family, family])]),
+    selectFilter('Family', 'family', [['', 'All families'],
+      ...families.map((family) => [family, aliasListFamilyLabel(family)])]),
     selectFilter('Identity', 'type', [['', 'All identities'], ['talkgroup', 'Talkgroups'],
       ['radio', 'Radios'], ['other', 'Other']])
   );
@@ -2219,7 +2237,7 @@ function aliasDetailContent(alias, breakdown) {
   const wrapper = node('div', 'alias-detail');
   wrapper.append(section('Configuration', keyValues([
     ['Alias List', aliasListLink(alias.alias_list_name, alias.alias_list_id)],
-    ['Family', availableValue(alias.family)],
+    ['Family', aliasListFamilyLabel(alias)],
     ['Alias', availableValue(alias.name)],
     ['Description', availableValue(alias.description)],
     ['Group', availableValue(alias.group)],
@@ -2337,7 +2355,7 @@ function aliasListRail(lists, selectedList, admin) {
   const draw = () => {
     const query = search.value.trim().toLowerCase();
     const matches = lists.filter((row) => !query || String(row.name || '').toLowerCase().includes(query) ||
-      aliasListFamily(row).toLowerCase().includes(query));
+      aliasListFamily(row).toLowerCase().includes(query) || aliasListFamilyLabel(row).toLowerCase().includes(query));
     list.replaceChildren();
     if (!matches.length) {
       list.append(node('div', 'empty alias-list-empty', 'No matching alias lists'));
@@ -2352,7 +2370,7 @@ function aliasListRail(lists, selectedList, admin) {
       }
       const label = node('span', 'alias-list-item-name', row.name || `Alias List ${identifierNumber(id)}`);
       const detail = node('span', 'alias-list-item-detail');
-      detail.append(node('span', 'alias-list-family', aliasListFamily(row) || 'Unknown'),
+      detail.append(node('span', 'alias-list-family', aliasListFamilyLabel(row)),
         node('span', '', `${number(row.alias_count || 0)} aliases`));
       link.append(label, detail);
       list.append(link);
@@ -2369,7 +2387,7 @@ function aliasListRail(lists, selectedList, admin) {
   prompt.value = '';
   select.append(prompt);
   lists.forEach((row) => {
-    const option = node('option', '', `${row.name} · ${aliasListFamily(row)} · ${number(row.alias_count || 0)}`);
+    const option = node('option', '', `${row.name} · ${aliasListFamilyLabel(row)} · ${number(row.alias_count || 0)}`);
     option.value = String(aliasListId(row));
     option.selected = aliasListId(row) === aliasListId(selectedList);
     select.append(option);
@@ -2390,7 +2408,7 @@ function aliasListRail(lists, selectedList, admin) {
 
 function aliasEditorViewTabs(selectedList) {
   const id = aliasListId(selectedList);
-  const supportsDiscovery = unmatchedTalkgroupsSupported(selectedList);
+  const supportsDiscovery = observedTalkgroupDiscoverySupported(selectedList);
   const allowed = supportsDiscovery ? ['configure', 'discover', 'calls', 'evidence', 'custom'] :
     ['configure', 'calls', 'evidence', 'custom'];
   const active = allowed.includes(route.get('aliasTab')) ?
@@ -2476,7 +2494,9 @@ function aliasEditorFilterToolbar(listResponse, options = null) {
     selectFilter('Matcher', 'matcher', [['', 'All matchers'],
       ...matcherOptions.map((entry) => [entry.value, entry.label])]),
     groupFilterWrapper, groupList,
-    selectFilter('Listen', 'listen', [['', 'Any'], ['enabled', 'Enabled'], ['disabled', 'Disabled']]),
+    selectFilter('Scan list', 'scanListId', [['', 'Any scan list'],
+      ...(options?.scan_lists || []).map((row) => [String(row.id ?? row.scan_list_id),
+        `${row.name}${row.published === false ? ' · not published' : ''}`])]),
     selectFilter('Record', 'record', [['', 'Any'], ['enabled', 'Enabled'], ['disabled', 'Disabled']]),
     selectFilter('Stream', 'stream', [['', 'Any'], ['present', 'Configured'], ['none', 'None']]),
     selectFilter('Evidence', 'evidence', [['', 'Any'], ['observed', 'Observed'],
@@ -2495,7 +2515,7 @@ function aliasEditorFilterToolbar(listResponse, options = null) {
       return wrapper;
     })(),
     node('button', '', 'Apply'));
-  const activeFilters = ['q', 'type', 'matcher', 'group', 'listen', 'record', 'stream', 'evidence', 'use',
+  const activeFilters = ['q', 'type', 'matcher', 'group', 'scanListId', 'record', 'stream', 'evidence', 'use',
     'lastActivityAfter', 'lastActivityBefore'];
   if (activeFilters.some((key) => route.get(key))) {
     form.append(anchor('Clear', href('aliases', {
@@ -2608,6 +2628,41 @@ function aliasFormField(label, control, help = '') {
   return wrapper;
 }
 
+function aliasScanListChoices(options, selectedValues = []) {
+  const fieldset = node('fieldset', 'alias-stream-options alias-scan-list-options');
+  fieldset.append(node('legend', '', 'Scan list membership'));
+  const selected = new Set((selectedValues || []).map((value) => Number(value))
+    .filter((value) => Number.isInteger(value) && value > 0));
+  const scanLists = Array.isArray(options?.scan_lists) ? options.scan_lists : [];
+  if (!scanLists.length) {
+    fieldset.append(node('div', 'empty', 'No scan lists configured'));
+    return fieldset;
+  }
+  scanLists.forEach((scanList) => {
+    const id = Number(scanList?.id ?? scanList?.scan_list_id);
+    if (!Number.isInteger(id) || id <= 0) return;
+    const label = node('label', 'alias-check-option alias-scan-list-option');
+    const checkbox = node('input');
+    checkbox.type = 'checkbox';
+    checkbox.name = 'scanListId';
+    checkbox.value = String(id);
+    checkbox.checked = selected.has(id);
+    const copy = node('span');
+    copy.append(node('strong', '', scanList.name || `Scan list ${id}`));
+    const detail = [scanList.description, scanList.published === false ? 'Not published to listeners' : null]
+      .filter(Boolean).join(' · ');
+    if (detail) copy.append(node('small', '', detail));
+    label.append(checkbox, copy);
+    fieldset.append(label);
+  });
+  return fieldset;
+}
+
+function selectedAliasScanListIds(root) {
+  return [...root.querySelectorAll('[name="scanListId"]:checked')]
+    .map((checkbox) => Number(checkbox.value)).filter((value) => Number.isInteger(value) && value > 0);
+}
+
 function aliasSelect(name, values, selectedValue = '', includeBlank = false) {
   const select = node('select');
   select.name = name;
@@ -2677,10 +2732,8 @@ function openAliasListCreateModal() {
   const name = aliasTextInput('name');
   name.required = true;
   name.maxLength = 25;
-  const family = aliasSelect('family', [
-    { value: 'p25', label: 'P25' }, { value: 'dmr', label: 'DMR' },
-    { value: 'nxdn', label: 'NXDN' }, { value: 'nbfm', label: 'NBFM' }
-  ], 'p25');
+  const family = aliasSelect('family', Object.entries(ALIAS_LIST_FAMILY_LABELS)
+    .map(([value, label]) => ({ value: value.toLowerCase(), label })), 'p25');
   const errorHost = node('div', 'alias-form-message');
   form.append(node('p', 'modal-introduction',
     'A list owns one protocol family. Channels can share the list when their protocol matches.'),
@@ -2940,7 +2993,7 @@ function aliasEditorModalTabs(panels, initial = 'basics') {
       button.setAttribute('aria-selected', String(active));
     });
   };
-  [['basics', 'Basics'], ['identifier', 'Identifier'], ['audio', 'Audio & Streams'],
+  [['basics', 'Basics'], ['identifier', 'Identifier'], ['audio', 'Call Handling'],
     ['usage', 'Usage & Evidence']].forEach(([id, label]) => {
     const button = node('button', 'secondary', label);
     button.type = 'button';
@@ -2971,8 +3024,6 @@ function aliasEditorPayload(form, options) {
     throw new Error(`The identifier must be between ${identifierNumber(descriptor.minimum)} and ${
       identifierNumber(descriptor.maximum)}`);
   }
-  const listenEnabled = form.elements.listenEnabled.checked;
-  const priorityValue = form.elements.priority.value;
   const streamValue = form.elements.streamAsTalkgroup.value.trim();
   return {
     alias_list_id: Number(form.elements.aliasListId.value),
@@ -2981,8 +3032,7 @@ function aliasEditorPayload(form, options) {
     group: form.elements.group.value.trim(),
     color: aliasEditorColorValue(form.elements.color),
     icon_name: form.elements.iconName.value || null,
-    listen_enabled: listenEnabled,
-    priority: listenEnabled && priorityValue !== '' ? Number(priorityValue) : null,
+    scan_list_ids: selectedAliasScanListIds(form),
     recordable: form.elements.recordable.checked,
     broadcast_channels: [...form.querySelectorAll('[name="broadcastChannel"]:checked')]
       .map((checkbox) => checkbox.value),
@@ -3024,7 +3074,7 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
       if (Number(rangeActionsResponse.alias.alias_list_id) !== selectedListId) {
         throw new Error('The covering range alias changed lists. Reload Discover and try again.');
       }
-      ['listen_enabled', 'priority', 'recordable', 'broadcast_channels'].forEach((field) => {
+      ['recordable', 'broadcast_channels', 'scan_list_ids'].forEach((field) => {
         source[field] = rangeActionsResponse.alias[field];
       });
     }
@@ -3108,23 +3158,13 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
     });
     identifier.append(aliasFormField('Identifier type', matcherType), matcherNotice, matcherHost);
 
-    const listen = node('input');
-    listen.type = 'checkbox';
-    listen.name = 'listenEnabled';
-    listen.checked = source.listen_enabled !== false;
-    const priorityOptions = [{ value: '', label: 'Default' }, ...(options.playback_priorities || [])
-      .filter((value) => Number(value) >= 0 && Number(value) < 100)
-      .map((value) => ({ value, label: `Priority ${value}` }))];
-    const priority = aliasSelect('priority', priorityOptions, source.priority ?? '');
-    priority.disabled = !listen.checked;
-    listen.addEventListener('change', () => { priority.disabled = !listen.checked; });
+    const scanLists = aliasScanListChoices(options, source.scan_list_ids || []);
     const record = node('input');
     record.type = 'checkbox';
     record.name = 'recordable';
     record.checked = Boolean(source.recordable);
     const audioGrid = node('div', 'alias-editor-grid');
-    audioGrid.append(aliasFormField('Listen', listen, 'Play matching calls through the receiver and web player'),
-      aliasFormField('Listen priority', priority), aliasFormField('Record calls', record));
+    audioGrid.append(aliasFormField('Record calls', record));
     const streams = node('fieldset', 'alias-stream-options');
     streams.append(node('legend', '', 'Streaming destinations'));
     const selectedStreams = new Set(source.broadcast_channels || []);
@@ -3147,7 +3187,7 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
     streamAs.min = '1';
     streamAs.max = '65535';
     streamAs.step = '1';
-    audio.append(audioGrid, streams, aliasFormField('Stream as talkgroup', streamAs,
+    audio.append(scanLists, audioGrid, streams, aliasFormField('Stream as talkgroup', streamAs,
       'Optional talkgroup ID sent to configured streaming destinations'));
 
     usage.append(analytics ? aliasUsageContent(analytics) :
@@ -3194,9 +3234,16 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
       save.disabled = true;
       try {
         const payload = aliasEditorPayload(form, options);
-        const result = await requestJson(editing ? `/api/v1/admin/aliases/${id}` : '/api/v1/admin/aliases', {
-          method: editing ? 'PUT' : 'POST', body: { revision, alias: payload }
-        });
+        let result;
+        if (editing) {
+          result = await requestJson(`/api/v1/admin/aliases/${id}`, {
+            method: 'PUT', body: { revision, alias: payload }
+          });
+        } else {
+          result = await requestJson('/api/v1/admin/aliases', {
+            method: 'POST', body: { revision, alias: payload }
+          });
+        }
         await finishAliasMutation(modal, result, { list: payload.alias_list_id });
       } catch (error) {
         aliasMutationError(errorHost, error, () => {
@@ -3223,7 +3270,7 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
 function openAliasDeleteModal(id, name, revision) {
   const body = node('div', 'alias-confirmation');
   body.append(node('p', '', `Delete ${name || `Alias ${id}`} from this alias list?`),
-    node('p', 'muted', 'This removes its identifier and all Listen, recording, and streaming settings.'));
+    node('p', 'muted', 'This removes its identifier, scan-list membership, recording, and streaming settings.'));
   const errorHost = node('div', 'alias-form-message');
   const cancel = node('button', 'button secondary', 'Cancel');
   cancel.type = 'button';
@@ -3257,7 +3304,7 @@ function aliasBulkBar(onClear) {
   bar.hidden = !aliasEditorSelection.size;
   const count = node('strong', 'alias-bulk-count', `${number(aliasEditorSelection.size)} selected`);
   const actions = [
-    ['move', 'Move'], ['group', 'Group'], ['listen', 'Listen'], ['record', 'Record'],
+    ['move', 'Move'], ['group', 'Group'], ['scan-lists', 'Scan Lists'], ['record', 'Record'],
     ['stream', 'Stream'], ['appearance', 'Appearance'], ['delete', 'Delete']
   ];
   bar.append(count);
@@ -3310,7 +3357,7 @@ function openAliasBulkModal(kind) {
     const targets = aliasEditorContext.lists.filter((row) => aliasListId(row) !== aliasListId(current) &&
       aliasListFamily(row) === aliasListFamily(current));
     const select = aliasSelect('aliasListId', [{ value: '', label: 'Leave unchanged' }, ...targets.map((row) => ({
-      value: aliasListId(row), label: `${row.name} · ${aliasListFamily(row)}`
+      value: aliasListId(row), label: `${row.name} · ${aliasListFamilyLabel(row)}`
     }))], '');
     form.append(aliasFormField('Move to alias list', select,
       'Only lists with a compatible protocol are available.'));
@@ -3332,22 +3379,22 @@ function openAliasBulkModal(kind) {
       if (operation.value === 'set' && !group.value.trim()) throw new Error('Enter a group name');
       return { group_operation: operation.value, group: operation.value === 'set' ? group.value.trim() : null };
     };
-  } else if (kind === 'listen') {
-    const operation = aliasSelect('listenOperation', [
-      { value: '', label: 'Leave unchanged' }, { value: 'DEFAULT', label: 'Enable · default priority' },
-      { value: 'PRIORITY', label: 'Enable · selected priority' }, { value: 'DISABLE', label: 'Disable Listen' }
+  } else if (kind === 'scan-lists') {
+    const scanList = aliasSelect('scanListId', [{ value: '', label: 'Choose a scan list' },
+      ...(options.scan_lists || []).map((row) => ({
+        value: row.id ?? row.scan_list_id,
+        label: `${row.name}${row.published === false ? ' · not published' : ''}`
+      }))], '');
+    const operation = aliasSelect('membershipOperation', [
+      { value: '', label: 'Choose an operation' }, { value: 'add', label: 'Add selected aliases' },
+      { value: 'remove', label: 'Remove selected aliases' }
     ], '');
-    const priority = aliasSelect('priority', (options.playback_priorities || []).filter((value) =>
-      Number(value) >= 0 && Number(value) < 100).map((value) => ({ value, label: `Priority ${value}` })), '');
-    priority.disabled = true;
-    operation.addEventListener('change', () => { priority.disabled = operation.value !== 'PRIORITY'; });
-    form.append(aliasFormField('Listen change', operation), aliasFormField('Priority', priority));
+    form.append(aliasFormField('Scan list', scanList), aliasFormField('Membership change', operation));
     readChange = () => {
-      if (!operation.value) throw new Error('Choose how Listen should change');
-      if (operation.value === 'DISABLE') return { listen_enabled: false, priority: null };
-      if (operation.value === 'DEFAULT') return { listen_enabled: true, priority: null };
-      if (!priority.value) throw new Error('Choose a priority');
-      return { listen_enabled: true, priority: Number(priority.value) };
+      const scanListId = Number(scanList.value);
+      if (!Number.isInteger(scanListId) || scanListId <= 0) throw new Error('Choose a scan list');
+      if (!operation.value) throw new Error('Choose how membership should change');
+      return { scan_list_id: scanListId, operation: operation.value };
     };
   } else if (kind === 'record') {
     const operation = aliasSelect('recordOperation', [
@@ -3407,7 +3454,8 @@ function openAliasBulkModal(kind) {
     confirm.append(checkbox, node('span', '',
       `I understand this permanently deletes exactly ${number(ids.length)} selected aliases.`));
     form.append(node('div', 'logging-notice warning',
-      'Deleting an alias also removes its identifier and its Listen, recording, and streaming settings.'), confirm);
+      'Deleting an alias also removes its identifier, scan-list membership, recording, and streaming settings.'),
+      confirm);
     readChange = () => {
       if (!checkbox.checked) throw new Error('Confirm the deletion first');
       return { delete: true };
@@ -3431,11 +3479,23 @@ function openAliasBulkModal(kind) {
     event.preventDefault();
     errorHost.replaceChildren();
     try {
-      Object.assign(payload, readChange());
+      const change = readChange();
       submit.disabled = true;
-      const result = await requestJson('/api/v1/admin/aliases/bulk', {
-        method: 'POST', body: payload
-      });
+      let result;
+      if (kind === 'scan-lists') {
+        result = await requestJson(`/api/v1/admin/scan-lists/${change.scan_list_id}/members`, {
+          method: 'PUT', body: {
+            revision: payload.revision,
+            operation: change.operation,
+            alias_ids: ids
+          }
+        });
+      } else {
+        Object.assign(payload, change);
+        result = await requestJson('/api/v1/admin/aliases/bulk', {
+          method: 'POST', body: payload
+        });
+      }
       await finishAliasMutation(modal, result, kind === 'move' ? { list: payload.alias_list_id } : {});
     } catch (error) {
       aliasMutationError(errorHost, error, () => {
@@ -3448,8 +3508,12 @@ function openAliasBulkModal(kind) {
   });
 }
 
-function unmatchedTalkgroupsSupported(selectedList) {
+function observedTalkgroupDiscoverySupported(selectedList) {
   return ['P25', 'DMR', 'NXDN'].includes(aliasListFamily(selectedList));
+}
+
+function unmatchedTalkgroupsSupported(selectedList) {
+  return ['P25', 'DMR', 'NXDN', 'NBFM'].includes(aliasListFamily(selectedList));
 }
 
 function openUnmatchedTalkgroupPolicyModal(selectedList) {
@@ -3458,26 +3522,19 @@ function openUnmatchedTalkgroupPolicyModal(selectedList) {
   const policy = selectedList?.unmatched_talkgroup_policy || {};
   const form = node('form', 'alias-editor-form alias-policy-form');
   form.append(node('p', 'modal-introduction',
-    'These settings apply only when a received talkgroup has no exact alias or covering range in this list.'));
+    'These settings apply only when a received talkgroup has no exact alias or covering range in this list. ' +
+    'Assigning scan lists keeps newly observed talkgroups available to listeners until an alias is created.'));
 
-  const listen = node('input');
-  listen.type = 'checkbox';
-  listen.name = 'listenEnabled';
-  listen.checked = Boolean(policy.listen_enabled);
-  const priorityValues = (options.playback_priorities || []).filter((value) =>
-    Number(value) >= 1 && Number(value) < 100).map((value) => ({ value, label: `Priority ${value}` }));
-  const selectedPriority = Number(policy.priority) >= 1 && Number(policy.priority) < 100 ?
-    Number(policy.priority) : '';
-  const priority = aliasSelect('priority', [{ value: '', label: 'Default' }, ...priorityValues], selectedPriority);
-  priority.disabled = !listen.checked;
-  listen.addEventListener('change', () => { priority.disabled = !listen.checked; });
   const record = node('input');
   record.type = 'checkbox';
   record.name = 'recordable';
   record.checked = Boolean(policy.recordable);
   const behavior = node('div', 'alias-editor-grid');
-  behavior.append(aliasFormField('Listen', listen, 'Play unmatched talkgroup calls'),
-    aliasFormField('Listen priority', priority), aliasFormField('Record calls', record));
+  behavior.append(aliasFormField('Record calls', record));
+
+  const scanLists = aliasScanListChoices(options, policy.scan_list_ids || []);
+  const scanListLegend = scanLists.querySelector('legend');
+  if (scanListLegend) scanListLegend.textContent = 'Unknown talkgroup scan-list delivery';
 
   const streams = node('fieldset', 'alias-stream-options');
   streams.append(node('legend', '', 'Streaming destinations'));
@@ -3501,10 +3558,10 @@ function openUnmatchedTalkgroupPolicyModal(selectedList) {
   const errorHost = node('div', 'alias-form-message');
   const cancel = node('button', 'button secondary', 'Cancel');
   cancel.type = 'button';
-  const save = node('button', 'button', 'Save Unmatched Policy');
+  const save = node('button', 'button', 'Save Global Settings');
   save.type = 'submit';
-  form.append(behavior, streams, errorHost, aliasModalFooter(cancel, save));
-  const modal = openReadOnlyModal(`Unmatched Talkgroups · ${selectedList.name}`, form, {
+  form.append(behavior, scanLists, streams, errorHost, aliasModalFooter(cancel, save));
+  const modal = openReadOnlyModal(`Global Settings · ${selectedList.name}`, form, {
     id: `unmatched-talkgroups-${listId}`,
     className: 'alias-editor-modal alias-policy-modal',
     returnFocusSelector: '.alias-policy-button'
@@ -3521,11 +3578,10 @@ function openUnmatchedTalkgroupPolicyModal(selectedList) {
       const result = await requestJson(`/api/v1/admin/alias-lists/${listId}/unmatched-talkgroups`, {
         method: 'PUT', body: {
           revision: Number(aliasEditorContext?.revision ?? options.revision ?? 0),
-          listen_enabled: listen.checked,
-          priority: listen.checked && priority.value ? Number(priority.value) : null,
           recordable: record.checked,
           broadcast_channels: [...streams.querySelectorAll('[name="broadcastChannel"]:checked')]
-            .map((checkbox) => checkbox.value)
+            .map((checkbox) => checkbox.value),
+          scan_list_ids: selectedAliasScanListIds(form)
         }
       });
       await finishAliasMutation(modal, result);
@@ -3645,8 +3701,6 @@ function observedTalkgroupPrefill(row, selectedList) {
     throw new Error(observedTalkgroupPromotionReason(row));
   }
   const policy = selectedList?.unmatched_talkgroup_policy || {};
-  const priority = Number(policy.priority) >= 1 && Number(policy.priority) < 100 ?
-    Number(policy.priority) : null;
   const matchedAliasId = Number(row.matched_alias_id);
   const talkgroupId = Number(row.talkgroup_id);
   let matcher;
@@ -3672,10 +3726,9 @@ function observedTalkgroupPrefill(row, selectedList) {
     group: '',
     color: 0,
     icon_name: null,
-    listen_enabled: Boolean(policy.listen_enabled),
-    priority,
     recordable: Boolean(policy.recordable),
     broadcast_channels: [...(policy.broadcast_channels || [])],
+    scan_list_ids: [...(policy.scan_list_ids || [])],
     stream_as_talkgroup: null,
     matcher,
     copy_actions_from_alias_id: observedTalkgroupMatchKind(row) === 'range' && Number.isInteger(matchedAliasId) &&
@@ -3862,13 +3915,13 @@ async function renderAliases() {
     return;
   }
 
-  const allowedViews = unmatchedTalkgroupsSupported(selectedList) ?
+  const allowedViews = observedTalkgroupDiscoverySupported(selectedList) ?
     ['configure', 'discover', 'calls', 'evidence', 'custom'] : ['configure', 'calls', 'evidence', 'custom'];
   const view = allowedViews.includes(route.get('aliasTab')) ?
     route.get('aliasTab') : 'configure';
   const filters = {
     list: aliasListId(selectedList), type: route.get('type'), matcher: route.get('matcher'),
-    group: route.get('group'), listen: route.get('listen'), record: route.get('record'),
+    group: route.get('group'), scan_list_id: route.get('scanListId'), record: route.get('record'),
     stream: route.get('stream'), evidence: route.get('evidence'), use: route.get('use'),
     last_activity_before: route.get('lastActivityBefore'), last_activity_after: route.get('lastActivityAfter')
   };
@@ -3882,7 +3935,10 @@ async function renderAliases() {
   aliasEditorContext.options = options;
   if (options?.alias_list && options?.revision !== undefined &&
       aliasListId(options.alias_list) === aliasListId(selectedList)) {
-    selectedList = { ...selectedList, ...options.alias_list };
+    const unmatchedPolicy = selectedList.unmatched_talkgroup_policy ||
+      options.alias_list.unmatched_talkgroup_policy;
+    selectedList = { ...selectedList, ...options.alias_list,
+      ...(unmatchedPolicy ? { unmatched_talkgroup_policy: unmatchedPolicy } : {}) };
     const selectedIndex = lists.findIndex((row) => aliasListId(row) === aliasListId(selectedList));
     if (selectedIndex >= 0) lists[selectedIndex] = selectedList;
     aliasEditorContext.selectedList = selectedList;
@@ -3895,7 +3951,7 @@ async function renderAliases() {
 
   const summary = node('section', 'alias-list-summary');
   const summaryCopy = node('div', 'alias-list-summary-copy');
-  summaryCopy.append(node('h2', '', selectedList.name), badge(aliasListFamily(selectedList), 'state-current'),
+  summaryCopy.append(node('h2', '', selectedList.name), badge(aliasListFamilyLabel(selectedList), 'state-current'),
     node('span', 'muted', `${number(selectedList.alias_count || 0)} aliases · ` +
       `${number(selectedList.assigned_channel_count || 0)} assigned channels`));
   summary.append(summaryCopy);
@@ -3909,7 +3965,7 @@ async function renderAliases() {
     remove.addEventListener('click', () => openAliasListDeleteModal(selectedList));
     listActions.append(add);
     if (unmatchedTalkgroupsSupported(selectedList)) {
-      const policy = node('button', 'button secondary alias-policy-button', 'Unmatched Talkgroups');
+      const policy = node('button', 'button secondary alias-policy-button', 'Global Settings');
       policy.type = 'button';
       policy.addEventListener('click', () => openUnmatchedTalkgroupPolicyModal(selectedList));
       listActions.append(policy);
@@ -3986,7 +4042,8 @@ async function renderAliases() {
   }
   const exportContext = { list: aliasListId(selectedList) };
   const exportFilters = new Map([
-    ['type', 'type'], ['matcher', 'matcher'], ['group', 'group'], ['listen', 'listen'],
+    ['type', 'type'], ['matcher', 'matcher'], ['group', 'group'],
+    ['scanListId', 'scan_list_id'],
     ['record', 'record'], ['stream', 'stream'], ['evidence', 'evidence'], ['use', 'use'],
     ['lastActivityBefore', 'last_activity_before'], ['lastActivityAfter', 'last_activity_after']
   ]);
@@ -5900,6 +5957,91 @@ window.addEventListener('beforeunload', (event) => {
   liveConnections.clear();
 });
 
+function listenerModePreference() {
+  try {
+    const value = window.localStorage.getItem(LISTENER_MODE_STORAGE_KEY);
+    return value === 'mobile' || value === 'desktop' ? value : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function setListenerModePreference(value) {
+  try {
+    window.localStorage.setItem(LISTENER_MODE_STORAGE_KEY, value);
+  } catch (_) { }
+}
+
+function setMobileListenerView(view) {
+  const shell = document.getElementById('mobile-listener-shell');
+  if (!shell) return;
+  const selected = ['listen', 'scan-lists', 'queue'].includes(view) ? view : 'listen';
+  shell.dataset.listenerView = selected;
+  const titles = { listen: 'Listen', 'scan-lists': 'Scan Lists', queue: 'Call Queue' };
+  const title = document.getElementById('mobile-listener-title');
+  if (title) title.textContent = titles[selected];
+  shell.querySelectorAll('[data-listener-view]').forEach((button) => {
+    button.setAttribute('aria-pressed', String(button.dataset.listenerView === selected));
+  });
+  const subscriptions = document.querySelector('.playback-subscriptions');
+  const queue = document.querySelector('.playback-queue');
+  if (subscriptions) subscriptions.open = selected === 'scan-lists';
+  if (queue) queue.open = selected === 'queue';
+}
+
+function applyListenerShellMode() {
+  if (tableOnly) return;
+  const shell = document.getElementById('mobile-listener-shell');
+  const app = document.querySelector('.app-shell');
+  const bar = document.getElementById('playback-bar');
+  const desktopSlot = document.getElementById('desktop-playback-slot');
+  const mobileSlot = document.getElementById('mobile-playback-slot');
+  const openButton = document.getElementById('mobile-listener-open');
+  if (!shell || !app || !bar || !desktopSlot || !mobileSlot || !compactListenerMedia) return;
+  const preference = listenerModePreference();
+  const mobile = preference === 'mobile' || (preference !== 'desktop' && compactListenerMedia.matches);
+  document.body.classList.toggle('mobile-listener-active', mobile);
+  document.body.dataset.listenerShell = mobile ? 'mobile' : 'desktop';
+  if (mobile) {
+    mobileSlot.append(bar);
+    app.hidden = true;
+    shell.hidden = false;
+    openButton.hidden = true;
+    bar.setAttribute('aria-label', 'Mobile web call playback');
+    setMobileListenerView(shell.dataset.listenerView || 'listen');
+  } else {
+    desktopSlot.append(bar);
+    app.hidden = false;
+    shell.hidden = true;
+    openButton.hidden = !compactListenerMedia.matches;
+    bar.setAttribute('aria-label', 'Web call playback');
+    const subscriptions = bar.querySelector('.playback-subscriptions');
+    const queue = bar.querySelector('.playback-queue');
+    if (subscriptions) subscriptions.open = false;
+    if (queue) queue.open = false;
+  }
+}
+
+function initializeListenerShell() {
+  if (tableOnly) return;
+  compactListenerMedia = window.matchMedia(COMPACT_LISTENER_MEDIA);
+  document.querySelectorAll('#mobile-listener-shell [data-listener-view]').forEach((button) => {
+    button.addEventListener('click', () => setMobileListenerView(button.dataset.listenerView));
+  });
+  document.getElementById('mobile-listener-desktop')?.addEventListener('click', () => {
+    setListenerModePreference('desktop');
+    applyListenerShellMode();
+    document.getElementById('mobile-listener-open')?.focus();
+  });
+  document.getElementById('mobile-listener-open')?.addEventListener('click', () => {
+    setListenerModePreference('mobile');
+    applyListenerShellMode();
+    document.getElementById('playback-play')?.focus();
+  });
+  compactListenerMedia.addEventListener('change', applyListenerShellMode);
+  applyListenerShellMode();
+}
+
 function initializePlaybackHeader() {
   if (tableOnly) return;
   const bar = document.getElementById('playback-bar');
@@ -5908,9 +6050,40 @@ function initializePlaybackHeader() {
     bar.setAttribute('aria-disabled', 'true');
     bar.querySelectorAll('button, input').forEach((control) => { control.disabled = true; });
   }
+  document.addEventListener('click', (event) => {
+    const subscriptions = document.querySelector('.playback-subscriptions');
+    const mobileTrigger = event.target?.closest?.('[data-listener-view="scan-lists"]');
+    if (subscriptions?.open && !subscriptions.contains(event.target) && !mobileTrigger) subscriptions.open = false;
+  });
 }
 
-function synchronizePlaybackAccess() {
+async function refreshPlaybackScanLists(force = false) {
+  const player = window.sdrtrunkWebPlayer;
+  if (!player || !capabilityAllowed(ACCESS_CAPABILITIES.CALL_AUDIO)) return;
+  if (playbackScanListLoading && !force) return;
+  const request = ++playbackScanListRequest;
+  playbackScanListLoading = true;
+  player.setScanListsLoading();
+  try {
+    const response = await api('/api/v1/scan-lists');
+    if (request !== playbackScanListRequest || player !== window.sdrtrunkWebPlayer ||
+        !capabilityAllowed(ACCESS_CAPABILITIES.CALL_AUDIO)) return;
+    const rows = Array.isArray(response?.rows) ? response.rows :
+      (Array.isArray(response?.scan_lists) ? response.scan_lists : []);
+    const limits = response?.limits && typeof response.limits === 'object' ?
+      { ...response, ...response.limits } : response;
+    player.setScanLists(rows, limits);
+  } catch (error) {
+    if (request !== playbackScanListRequest || player !== window.sdrtrunkWebPlayer) return;
+    const message = error?.status === 404 ? 'Scan lists are not available on this receiver' :
+      'Unable to load scan lists';
+    player.setScanListsUnavailable(message);
+  } finally {
+    if (request === playbackScanListRequest) playbackScanListLoading = false;
+  }
+}
+
+function synchronizePlaybackAccess(accessChanged = false) {
   if (tableOnly) return;
   const allowed = capabilityAllowed(ACCESS_CAPABILITIES.CALL_AUDIO);
   const bar = document.getElementById('playback-bar');
@@ -5920,6 +6093,8 @@ function synchronizePlaybackAccess() {
   bar.setAttribute('aria-disabled', String(!allowed));
 
   if (!allowed) {
+    playbackScanListRequest++;
+    playbackScanListLoading = false;
     const unavailableMessage = !accessSessionAvailable ? 'Access unavailable' :
       (accessSession.authenticated ? 'Web audio unavailable' : 'Sign in for web audio');
     if (window.sdrtrunkWebPlayer) window.sdrtrunkWebPlayer.disconnect(unavailableMessage);
@@ -5941,17 +6116,26 @@ function synchronizePlaybackAccess() {
       current: 'playback-current',
       queued: 'playback-queued',
       dropped: 'playback-dropped',
+      missed: 'playback-missed',
       queueList: 'playback-queue-list',
       maximumQueued: 'playback-max-queued',
       status: 'playback-status',
-      progress: 'playback-progress'
+      progress: 'playback-progress',
+      scanListSummary: 'playback-scan-list-summary',
+      scanListOptions: 'playback-scan-list-options',
+      scanListStatus: 'playback-scan-list-status',
+      capacity: 'playback-capacity',
+      mobileScanCount: 'mobile-listener-scan-count',
+      mobileQueueCount: 'mobile-listener-queue-count'
     });
   }
   bar.querySelectorAll('button, input').forEach((control) => { control.disabled = false; });
   window.sdrtrunkWebPlayer.render();
+  window.sdrtrunkWebPlayer.renderScanLists();
+  if (accessChanged || !window.sdrtrunkWebPlayer.scanListsReady()) refreshPlaybackScanLists(accessChanged);
   if (!window.sdrtrunkWebPlayer.connectionFactory) {
     window.sdrtrunkWebPlayer.connect('calls',
-      (topic) => liveConnection(topic, {}, false));
+      (topic, parameters) => liveConnection(topic, parameters, false));
   }
 }
 
@@ -6858,8 +7042,8 @@ function liveChannelPane() {
           symbolValues.fill(Number.NaN);
           symbolCursor = 0;
           symbolCount = 0;
-        const signalState = state?.signal_state;
-        const symbolsState = state?.symbols_state;
+          const signalState = state?.signal_state;
+          const symbolsState = state?.symbols_state;
           updateDiagnosticState(signalDiagnostic, signalState,
             state?.signal_reason, 'Signal diagnostics are unavailable.');
           updateDiagnosticState(symbolDiagnostic, symbolsState,
@@ -10487,22 +10671,363 @@ async function renderAdminAccess() {
   content.append(section('Access policy', body));
 }
 
+function scanListAdminPayload(controls) {
+  return {
+    sort_order: Number(controls.sortOrder.value),
+    name: controls.name.value.trim(),
+    description: controls.description.value.trim(),
+    published: controls.published.checked,
+    default: controls.defaultScanList.checked
+  };
+}
+
+function openScanListAdminModal(scanList, revision) {
+  const editing = Boolean(scanList);
+  const form = node('form', 'admin-form scan-list-admin-form');
+  const name = node('input');
+  name.required = true;
+  name.maxLength = 100;
+  name.value = scanList?.name || '';
+  const description = node('textarea');
+  description.maxLength = 1000;
+  description.rows = 4;
+  description.value = scanList?.description || '';
+  const sortOrder = node('input');
+  sortOrder.type = 'number';
+  sortOrder.min = '0';
+  sortOrder.max = '1000000';
+  sortOrder.step = '1';
+  sortOrder.required = true;
+  sortOrder.value = String(scanList?.sort_order ?? 0);
+  const published = node('input');
+  published.type = 'checkbox';
+  published.checked = scanList?.published !== false;
+  const defaultScanList = node('input');
+  defaultScanList.type = 'checkbox';
+  defaultScanList.checked = scanList?.default === true;
+  if (scanList?.default === true) {
+    defaultScanList.disabled = true;
+    published.disabled = true;
+  }
+  const syncDefault = () => {
+    if (defaultScanList.checked) {
+      published.checked = true;
+      published.disabled = true;
+    } else if (scanList?.default !== true) published.disabled = false;
+  };
+  defaultScanList.addEventListener('change', syncDefault);
+  const message = node('div', 'admin-form-message');
+  message.setAttribute('role', 'alert');
+  const cancel = node('button', 'secondary', 'Cancel');
+  cancel.type = 'button';
+  const submit = node('button', '', editing ? 'Save Scan List' : 'Create Scan List');
+  submit.type = 'submit';
+  const actions = node('div', 'admin-form-actions');
+  actions.append(cancel, submit);
+  form.append(formField('Name', name, 'Shown to listeners; up to 100 characters.'),
+    formField('Description', description, 'Optional context for listeners.'),
+    formField('Display order', sortOrder, 'Lower numbers appear first.'),
+    formField('Available to listeners', published,
+      'Unpublished lists remain configurable but cannot be selected in the listener.'),
+    formField('Default scan list', defaultScanList, scanList?.default === true ?
+      'Choose another list as the default before changing or deleting this one.' :
+      'Making this the default replaces the current default.'), message, actions);
+  const modal = openReadOnlyModal(editing ? `Edit scan list · ${scanList.name}` : 'Create scan list', form, {
+    id: editing ? `edit-scan-list-${scanList.id}` : 'create-scan-list',
+    className: 'admin-modal scan-list-admin-modal',
+    returnFocusSelector: editing ? `.admin-scan-list-edit[data-scan-list-id="${scanList.id}"]` :
+      '#admin-create-scan-list'
+  });
+  if (!modal) return;
+  cancel.addEventListener('click', modal.close);
+  form.addEventListener('input', () => modal.setDirty(true));
+  form.addEventListener('change', () => modal.setDirty(true));
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!form.reportValidity() || submit.disabled) return;
+    submit.disabled = true;
+    message.textContent = editing ? 'Saving scan list…' : 'Creating scan list…';
+    try {
+      const path = editing ? `/api/v1/admin/scan-lists/${scanList.id}` : '/api/v1/admin/scan-lists';
+      await requestJson(path, {
+        method: editing ? 'PUT' : 'POST',
+        body: { revision, scan_list: scanListAdminPayload({
+          name, description, sortOrder, published, defaultScanList
+        }) }
+      });
+      modal.setDirty(false);
+      modal.close();
+      await refreshPlaybackScanLists(true);
+      await render();
+    } catch (error) {
+      message.textContent = error.status === 409 ?
+        `${error.message} Reload Scan Lists and try again.` : error.message;
+      submit.disabled = false;
+    }
+  });
+  name.focus();
+}
+
+function openDeleteScanListAdminModal(scanList, revision) {
+  if (scanList.default === true) return;
+  const body = node('div', 'admin-confirmation');
+  const aliasCount = Number(scanList.alias_count || 0);
+  const unmatchedAliasListCount = Number(scanList.unmatched_alias_list_count || 0);
+  body.append(node('p', '', `Delete ${scanList.name}?`),
+    node('p', 'muted', `This removes the list from ${number(aliasCount)} aliases and the global unmatched-` +
+      `talkgroup settings of ${number(unmatchedAliasListCount)} alias lists. The aliases and alias lists ` +
+      'themselves are preserved.'));
+  const message = node('div', 'admin-form-message');
+  message.setAttribute('role', 'alert');
+  const cancel = node('button', 'secondary', 'Cancel');
+  cancel.type = 'button';
+  const remove = node('button', 'danger', 'Delete Scan List');
+  remove.type = 'button';
+  const actions = node('div', 'admin-form-actions');
+  actions.append(cancel, remove);
+  body.append(message, actions);
+  const modal = openReadOnlyModal(`Delete scan list · ${scanList.name}`, body, {
+    id: `delete-scan-list-${scanList.id}`, className: 'admin-modal',
+    returnFocusSelector: `.admin-scan-list-delete[data-scan-list-id="${scanList.id}"]`
+  });
+  if (!modal) return;
+  cancel.addEventListener('click', modal.close);
+  remove.addEventListener('click', async () => {
+    if (remove.disabled) return;
+    remove.disabled = true;
+    message.textContent = 'Deleting scan list…';
+    try {
+      await requestJson(`/api/v1/admin/scan-lists/${scanList.id}`, {
+        method: 'DELETE', body: { revision }
+      });
+      modal.close();
+      await refreshPlaybackScanLists(true);
+      await render();
+    } catch (error) {
+      message.textContent = error.status === 409 ?
+        `${error.message} Reload Scan Lists and try again.` : error.message;
+      remove.disabled = false;
+    }
+  });
+  remove.focus();
+}
+
+function adminScanListIdentity(scanList) {
+  const wrapper = node('div', 'admin-capability-identity');
+  wrapper.append(node('strong', '', scanList.name));
+  if (scanList.default === true) wrapper.append(badge('Default', 'state-current'));
+  if (scanList.published === false) wrapper.append(badge('Not published', 'state-stale'));
+  return wrapper;
+}
+
+function adminScanListActions(scanList, revision) {
+  const actions = node('div', 'admin-row-actions');
+  const edit = node('button', 'secondary admin-scan-list-edit', 'Edit');
+  edit.type = 'button';
+  edit.dataset.scanListId = String(scanList.id);
+  edit.addEventListener('click', () => openScanListAdminModal(scanList, revision));
+  const remove = node('button', 'secondary danger-outline admin-scan-list-delete', 'Delete');
+  remove.type = 'button';
+  remove.dataset.scanListId = String(scanList.id);
+  remove.disabled = scanList.default === true;
+  if (remove.disabled) remove.title = 'Choose another default scan list before deleting this one.';
+  remove.addEventListener('click', () => openDeleteScanListAdminModal(scanList, revision));
+  actions.append(edit, remove);
+  return actions;
+}
+
+async function renderAdminScanLists() {
+  const response = await requestJson('/api/v1/admin/scan-lists', { csrf: false });
+  const revision = Number(response?.revision ?? 0);
+  const scanLists = Array.isArray(response?.scan_lists) ? response.scan_lists : [];
+  const create = node('button', '', 'Create Scan List');
+  create.type = 'button';
+  create.id = 'admin-create-scan-list';
+  create.addEventListener('click', () => openScanListAdminModal(null, revision));
+  const body = node('div', 'admin-section-body');
+  body.append(node('p', 'admin-section-intro',
+    'Scan lists group aliases from any alias list, and overlapping listener subscriptions are deduplicated. ' +
+    'Manage membership from the paginated Alias Editor by searching, selecting up to 500 aliases, and using the ' +
+    'Scan Lists bulk action. Route unknown talkgroups from an Alias List\'s Global Settings.'),
+    table(scanLists, [
+      { id: 'scan-list', label: 'Scan list', width: 240, render: adminScanListIdentity,
+        sortValue: (row) => Number(row.sort_order || 0) },
+      { id: 'description', label: 'Description', render: (row) => availableValue(row.description) },
+      { id: 'aliases', label: 'Aliases', width: 100, className: 'numeric',
+        render: (row) => number(row.alias_count || 0), sortValue: (row) => Number(row.alias_count || 0) },
+      { id: 'unmatched-alias-lists', label: 'Unknown routes', width: 130, className: 'numeric',
+        render: (row) => number(row.unmatched_alias_list_count || 0),
+        sortValue: (row) => Number(row.unmatched_alias_list_count || 0) },
+      { id: 'actions', label: 'Actions', width: 180, sortable: false,
+        render: (row) => adminScanListActions(row, revision) }
+    ], 'No scan lists are configured', { type: 'admin-scan-lists', sortable: false }));
+  const actions = node('div', 'section-title-actions');
+  actions.append(anchor('Manage Alias Membership', href('aliases', { aliasTab: 'configure' }),
+    'button secondary'), create);
+  content.append(section('Scan-list management', body, actions));
+}
+
+function adminAudioNumberField(configuration, limits, key, label, help) {
+  const input = node('input');
+  input.type = 'number';
+  input.name = key;
+  input.required = true;
+  input.step = '1';
+  input.value = String(configuration?.[key] ?? '');
+  const range = limits?.[key] || {};
+  if (Number.isFinite(Number(range.minimum))) input.min = String(range.minimum);
+  if (Number.isFinite(Number(range.maximum))) input.max = String(range.maximum);
+  return formField(label, input, `${help} Allowed range: ${number(range.minimum)}–${number(range.maximum)}.`);
+}
+
+function adminStatusNumber(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric >= 0 ? number(numeric) : '—';
+}
+
+function adminStatusBytes(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric < 0) return '—';
+  if (numeric >= 1073741824) return `${(numeric / 1073741824).toFixed(1)} GB`;
+  if (numeric >= 1048576) return `${(numeric / 1048576).toFixed(numeric >= 10485760 ? 0 : 1)} MB`;
+  if (numeric >= 1024) return `${(numeric / 1024).toFixed(0)} KB`;
+  return `${number(numeric)} B`;
+}
+
+function adminStatusRatio(status, currentKey, maximumKey, formatter = adminStatusNumber) {
+  return `${formatter(status?.[currentKey])} / ${formatter(status?.[maximumKey])}`;
+}
+
+function adminListenerStatusGroup(title, entries) {
+  const group = node('section', 'admin-listener-status-group');
+  group.append(node('h3', '', title));
+  const values = node('dl', 'admin-listener-status-values');
+  entries.forEach(([label, value]) => {
+    values.append(node('dt', '', label), node('dd', '', value));
+  });
+  group.append(values);
+  return group;
+}
+
+async function renderAdminWebAudio() {
+  const response = await requestJson('/api/v1/admin/web-audio', { csrf: false });
+  const configuration = response?.configuration || {};
+  const limits = response?.limits || {};
+  const status = response?.status || {};
+  const form = node('form', 'admin-form admin-audio-form');
+  let formDirty = false;
+  const fields = [
+    ['maximum_listeners', 'Simultaneous listeners', 'Admission limit for browser-audio connections.'],
+    ['maximum_selected_scan_lists', 'Scan lists per listener', 'Maximum lists one listener may subscribe to.'],
+    ['maximum_browser_queue_calls', 'Browser queue calls', 'Maximum queue size offered to each browser.'],
+    ['maximum_cached_calls', 'Cached calls', 'Maximum completed calls retained for browser retrieval.'],
+    ['maximum_cached_audio_mib', 'Cached audio (MiB)', 'Maximum memory used by completed-call audio.']
+  ];
+  fields.forEach(([key, label, help]) => form.append(
+    adminAudioNumberField(configuration, limits, key, label, help)));
+  const message = node('div', 'admin-form-message');
+  message.setAttribute('role', 'status');
+  const save = node('button', '', 'Save Web Audio Settings');
+  save.type = 'submit';
+  const actions = node('div', 'admin-form-actions');
+  actions.append(save);
+  form.append(message, actions);
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!form.reportValidity() || save.disabled) return;
+    save.disabled = true;
+    message.textContent = 'Saving web-audio settings…';
+    try {
+      const body = Object.fromEntries(fields.map(([key]) => [key, Number(form.elements[key].value)]));
+      await requestJson('/api/v1/admin/web-audio', { method: 'PUT', body });
+      formDirty = false;
+      message.textContent = 'Web-audio settings saved.';
+    } catch (error) {
+      message.textContent = error.message;
+    } finally {
+      save.disabled = false;
+    }
+  });
+  form.addEventListener('input', () => { formDirty = true; });
+  const runtime = metrics([
+    ['Active listeners', status.active_listeners || 0],
+    ['Cached calls', status.cached_calls || 0],
+    ['Published calls', status.published_calls || 0],
+    ['Dropped calls', Number(status.dropped_no_listeners || 0) +
+      Number(status.dropped_no_matching_listeners || 0) + Number(status.dropped_invalid_calls || 0) +
+      Number(status.dropped_no_scan_list || 0) + Number(status.dropped_pending_capacity || 0) +
+      Number(status.dropped_encoder_capacity || 0)]
+  ], true);
+  const statusDetails = node('div', 'admin-listener-status-grid');
+  statusDetails.append(
+    adminListenerStatusGroup('Delivery', [
+      ['Listeners / maximum', adminStatusRatio(status, 'active_listeners', 'maximum_listeners')],
+      ['Audio responses / maximum', adminStatusRatio(status, 'active_audio_responses',
+        'maximum_audio_responses')],
+      ['Received calls', adminStatusNumber(status.received_calls)],
+      ['Published calls', adminStatusNumber(status.published_calls)],
+      ['SSE events dropped', adminStatusNumber(status.dropped_sse_events)],
+      ['Listeners rejected', adminStatusNumber(status.rejected_listeners)],
+      ['Audio responses rejected', adminStatusNumber(status.rejected_audio_responses)]
+    ]),
+    adminListenerStatusGroup('Cache & pipeline', [
+      ['Cached calls / maximum', adminStatusRatio(status, 'cached_calls', 'maximum_calls')],
+      ['Cached audio / maximum', adminStatusRatio(status, 'cached_audio_bytes', 'maximum_audio_bytes',
+        adminStatusBytes)],
+      ['Pending audio / maximum', adminStatusRatio(status, 'pending_audio_bytes',
+        'maximum_pending_audio_bytes', adminStatusBytes)],
+      ['Per-call audio limit', adminStatusBytes(status.maximum_call_audio_bytes)],
+      ['Encoder queue depth', adminStatusNumber(status.encoder_queue_depth)],
+      ['SSE event queue capacity', adminStatusNumber(status.event_queue_capacity)]
+    ]),
+    adminListenerStatusGroup('Call drops', [
+      ['No listeners', adminStatusNumber(status.dropped_no_listeners)],
+      ['No matching subscription', adminStatusNumber(status.dropped_no_matching_listeners)],
+      ['No scan-list membership', adminStatusNumber(status.dropped_no_scan_list)],
+      ['Invalid call', adminStatusNumber(status.dropped_invalid_calls)],
+      ['Pending-audio capacity', adminStatusNumber(status.dropped_pending_capacity)],
+      ['Encoder capacity', adminStatusNumber(status.dropped_encoder_capacity)]
+    ]),
+    adminListenerStatusGroup('Retrieval & eviction', [
+      ['Audio fetch misses', adminStatusNumber(status.audio_fetch_misses)],
+      ['Age evictions', adminStatusNumber(status.age_evictions)],
+      ['Capacity evictions', adminStatusNumber(status.capacity_evictions)]
+    ])
+  );
+  const body = node('div', 'admin-section-body admin-audio-settings');
+  body.append(node('p', 'admin-section-intro',
+    'Live listener status and bounded completed-call browser-audio controls. Settings update without a restart.'),
+    runtime, statusDetails, form);
+  const refresh = node('button', 'secondary', 'Refresh Status');
+  refresh.type = 'button';
+  refresh.addEventListener('click', async () => {
+    if (formDirty && !window.confirm('Discard unsaved web-audio setting changes and refresh status?')) return;
+    refresh.disabled = true;
+    await render();
+  });
+  content.append(section('Listener status & capacity', body, refresh));
+}
+
 async function renderAdmin() {
   const availableTabs = [
+    { id: 'scan-lists', label: 'Scan Lists', capability: ACCESS_CAPABILITIES.ADMIN_ALIASES },
+    { id: 'web-audio', label: 'Listener Status', capability: ACCESS_CAPABILITIES.ADMIN_AUDIO },
     { id: 'users', label: 'Users', capability: ACCESS_CAPABILITIES.ADMIN_USERS },
     { id: 'access', label: 'Access', capability: ACCESS_CAPABILITIES.ADMIN_ACCESS }
   ].filter((item) => capabilityAllowed(item.capability));
   if (!availableTabs.length) throw Object.assign(new Error('Administrator access is unavailable.'), { status: 403 });
-  const requested = route.get('tab') || 'users';
+  const requested = route.get('tab') || 'scan-lists';
   const active = availableTabs.some((item) => item.id === requested) ? requested : availableTabs[0].id;
   if (active !== requested) {
     route.set('tab', active);
     window.history.replaceState({}, '', currentHref());
   }
   content.append(pageHeader('Administration',
-    'Manage web users and the Public, User, and Admin access tiers'),
+    'Manage scan lists, browser audio, web users, and access tiers'),
     tabs(availableTabs.map((item) => ({ ...item, href: href('admin', { tab: item.id }) })), active));
-  if (active === 'access') await renderAdminAccess();
+  if (active === 'scan-lists') await renderAdminScanLists();
+  else if (active === 'web-audio') await renderAdminWebAudio();
+  else if (active === 'access') await renderAdminAccess();
   else await renderAdminUsers();
 }
 
@@ -10650,11 +11175,13 @@ async function loadStatus(refreshCurrentView = false) {
   if (await reloadForWebClientRevision()) return;
   if (accessSessionAvailable && !capabilityAllowed(ACCESS_CAPABILITIES.DASHBOARD)) {
     serviceStatus = null;
+    window.sdrtrunkWebPlayer?.updateCapacity(null);
     document.getElementById('server-status').textContent = 'Status restricted';
     return;
   }
   try {
     serviceStatus = await api('/api/v1/status', {}, { page: false });
+    window.sdrtrunkWebPlayer?.updateCapacity(serviceStatus.webPlayer || serviceStatus.web_player || null);
     const database = serviceStatus.database || {};
     const logging = statsLoggingState();
     const size = (Number(database.database_bytes || 0) / 1048576).toFixed(1);
@@ -10664,6 +11191,7 @@ async function loadStatus(refreshCurrentView = false) {
       `${summaryLabel} · ${size} MB`;
   } catch (error) {
     serviceStatus = null;
+    window.sdrtrunkWebPlayer?.updateCapacity(null);
     document.getElementById('server-status').textContent = 'Database unavailable';
   }
 
@@ -10754,6 +11282,7 @@ window.addEventListener('popstate', () => {
 });
 initializeThemeToggle();
 initializeAccessControls();
+initializeListenerShell();
 initializePlaybackHeader();
 refreshAccessSession(false)
   .then(() => loadStatus(false))

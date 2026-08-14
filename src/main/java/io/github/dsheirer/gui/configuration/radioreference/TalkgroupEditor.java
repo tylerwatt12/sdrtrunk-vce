@@ -67,7 +67,6 @@ public class TalkgroupEditor extends GridPane
     private Talkgroup mTalkgroup;
     private TalkgroupCategory mTalkgroupCategory;
     private Alias mAlias;
-    private boolean mSetEncryptedDoNotMonitor;
     private SystemTalkgroupSelectionEditor.ImportStatus mImportStatus;
 
     public TalkgroupEditor(ConfigurationManager configurationManager)
@@ -165,7 +164,6 @@ public class TalkgroupEditor extends GridPane
 
     public void setTalkgroup(Talkgroup talkgroup, System system, RadioReferenceDecoder decoder, Alias alias,
                              String aliasListName, TalkgroupCategory talkgroupCategory,
-                             boolean setEncryptedDoNotMonitor,
                              SystemTalkgroupSelectionEditor.ImportStatus importStatus)
     {
         mRadioReferenceDecoder = decoder;
@@ -174,7 +172,6 @@ public class TalkgroupEditor extends GridPane
         mAliasListName = aliasListName;
         mTalkgroupCategory = talkgroupCategory;
         mAlias = alias;
-        mSetEncryptedDoNotMonitor = setEncryptedDoNotMonitor;
         mImportStatus = importStatus;
 
         if(talkgroup != null)
@@ -335,7 +332,7 @@ public class TalkgroupEditor extends GridPane
                     if(currentAlias != null)
                     {
                         setTalkgroup(mTalkgroup, mSystem, mRadioReferenceDecoder, currentAlias, mAliasListName,
-                            mTalkgroupCategory, mSetEncryptedDoNotMonitor, currentStatus);
+                            mTalkgroupCategory, currentStatus);
                         MyEventBus.getGlobalEventBus().post(new ViewAliasRequest(currentAlias));
                         return;
                     }
@@ -359,7 +356,6 @@ public class TalkgroupEditor extends GridPane
                         getAliasGroupTextField().getText());
                     alias.setName(getAliasNameTextField().getText());
                     alias.setDescription(getAliasDescriptionTextField().getText());
-                    RadioReferenceAliasPlaybackPolicy.apply(alias, mTalkgroup, mSetEncryptedDoNotMonitor);
                     long revision = mConfigurationManager.getAliasAdministrationService().currentRevision();
 
                     AliasMutationUi.execute(getCreateAliasButton(), "Create RadioReference Alias", () ->
@@ -411,7 +407,7 @@ public class TalkgroupEditor extends GridPane
                 if(alias != mAlias || status != mImportStatus)
                 {
                     setTalkgroup(mTalkgroup, mSystem, mRadioReferenceDecoder, alias, mAliasListName,
-                        mTalkgroupCategory, mSetEncryptedDoNotMonitor, status);
+                        mTalkgroupCategory, status);
                 }
 
                 if(alias != null && status != SystemTalkgroupSelectionEditor.ImportStatus.NOT_COMPATIBLE)

@@ -218,7 +218,6 @@ class SystemTalkgroupSelectionEditorTest
         alias.setGroup("Local group");
         alias.setColor(0x123456);
         alias.setIconName("Local icon");
-        alias.setCallPriority(7);
         alias.setRecordable(true);
         alias.addBroadcastChannel("Local Stream");
         alias.setStreamTalkgroupAlias(new StreamAsTalkgroup(9001));
@@ -241,7 +240,6 @@ class SystemTalkgroupSelectionEditorTest
         assertEquals("New group", replacement.getGroup());
         assertEquals(0x123456, replacement.getColor());
         assertEquals("Local icon", replacement.getIconName());
-        assertEquals(7, replacement.getPlaybackPriority());
         assertTrue(replacement.isRecordable());
         assertTrue(replacement.hasBroadcastChannel("Local Stream"));
         assertEquals(9001, replacement.getStreamTalkgroupAlias().getValue());

@@ -29,13 +29,12 @@ import org.jspecify.annotations.Nullable;
  * @param continuationExpected true when a completed audio segment is immediately followed by a linked segment for
  * the same continuing call
  */
-public record AudioCallEvent(AudioCallEventType eventType, AudioCallSnapshot snapshot, long eventTimestamp,
+public record AudioCallEvent(AudioCallEventType eventType, AudioCallSnapshot snapshot,
                              float @Nullable [] audioFrame, boolean continuationExpected)
 {
-    public AudioCallEvent(AudioCallEventType eventType, AudioCallSnapshot snapshot, long eventTimestamp,
-                          float @Nullable [] audioFrame)
+    public AudioCallEvent(AudioCallEventType eventType, AudioCallSnapshot snapshot, float @Nullable [] audioFrame)
     {
-        this(eventType, snapshot, eventTimestamp, audioFrame, false);
+        this(eventType, snapshot, audioFrame, false);
     }
 
     public AudioCallEvent
@@ -54,6 +53,16 @@ public record AudioCallEvent(AudioCallEventType eventType, AudioCallSnapshot sna
         return audioFrame != null ? audioFrame.clone() : null;
     }
 
+    /**
+     * Coordinator-only read view of the frame owned by this immutable event.  Keeping this package-private lets the
+     * asynchronous handoff transfer the producer's single defensive copy without cloning every frame a second time.
+     * Consumers must treat the returned array as read-only.
+     */
+    float @Nullable [] audioFrameView()
+    {
+        return audioFrame;
+    }
+
     @Override
     public boolean equals(Object o)
     {
@@ -67,8 +76,7 @@ public record AudioCallEvent(AudioCallEventType eventType, AudioCallSnapshot sna
             return false;
         }
 
-        return eventTimestamp == that.eventTimestamp &&
-            continuationExpected == that.continuationExpected &&
+        return continuationExpected == that.continuationExpected &&
             eventType == that.eventType &&
             Objects.equals(snapshot, that.snapshot) &&
             Arrays.equals(audioFrame, that.audioFrame);
@@ -77,7 +85,7 @@ public record AudioCallEvent(AudioCallEventType eventType, AudioCallSnapshot sna
     @Override
     public int hashCode()
     {
-        int result = Objects.hash(eventType, snapshot, eventTimestamp, continuationExpected);
+        int result = Objects.hash(eventType, snapshot, continuationExpected);
         result = 31 * result + Arrays.hashCode(audioFrame);
         return result;
     }
@@ -88,7 +96,6 @@ public record AudioCallEvent(AudioCallEventType eventType, AudioCallSnapshot sna
         return "AudioCallEvent[" +
             "eventType=" + eventType +
             ", snapshot=" + snapshot +
-            ", eventTimestamp=" + eventTimestamp +
             ", audioFrame=" + Arrays.toString(audioFrame) +
             ", continuationExpected=" + continuationExpected +
             "]";

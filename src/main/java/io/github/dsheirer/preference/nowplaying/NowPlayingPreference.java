@@ -24,12 +24,11 @@ import io.github.dsheirer.sample.Listener;
 import java.util.prefs.Preferences;
 
 /**
- * Preferences for the Now Playing activity view.
+ * Preferences for browser Live activity and optional Java desktop views.
  */
 public class NowPlayingPreference extends Preference
 {
     private static final String PREFERENCE_KEY_RETAIN_IDLE_CALL_DETAILS = "retain.idle.call.details";
-    private static final String PREFERENCE_KEY_ADVANCED_P25_ENCRYPTION_STATUS = "advanced.p25.encryption.status";
     private static final String PREFERENCE_KEY_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS =
         "traffic.grant.age.out.milliseconds";
     private static final String PREFERENCE_KEY_SHOW_CONTROL_DECODE_QUALITY = "show.control.decode.quality";
@@ -44,7 +43,6 @@ public class NowPlayingPreference extends Preference
 
     private final Preferences mPreferences = Preferences.userNodeForPackage(NowPlayingPreference.class);
     private Boolean mRetainIdleCallDetails;
-    private Boolean mAdvancedEncryptionStatus;
     private Integer mTrafficGrantAgeOutMilliseconds;
     private Boolean mShowControlDecodeQuality;
     private Boolean mShowVoiceDecodeQuality;
@@ -56,7 +54,6 @@ public class NowPlayingPreference extends Preference
      */
     public enum JavaInterfaceView
     {
-        SYSTEMS("Systems", "java.tab.systems.visible", false),
         MAP("Map", "java.tab.map.visible", false),
         SPECTRUM("Spectrum", "java.spectrum.view.enabled", false);
 
@@ -112,7 +109,7 @@ public class NowPlayingPreference extends Preference
     }
 
     /**
-     * Indicates if idle Now Playing rows retain the last call source/target details.
+     * Indicates if idle Live activity rows retain the last call source/target details.
      */
     public boolean isRetainIdleCallDetails()
     {
@@ -132,48 +129,6 @@ public class NowPlayingPreference extends Preference
         mRetainIdleCallDetails = retain;
         mPreferences.putBoolean(PREFERENCE_KEY_RETAIN_IDLE_CALL_DETAILS, retain);
         notifyPreferenceUpdated();
-    }
-
-    /**
-     * Indicates if protocol-aware encryption details should replace ENCRYPTED status text.
-     */
-    public boolean isAdvancedEncryptionStatus()
-    {
-        if(mAdvancedEncryptionStatus == null)
-        {
-            mAdvancedEncryptionStatus = mPreferences.getBoolean(PREFERENCE_KEY_ADVANCED_P25_ENCRYPTION_STATUS,
-                false);
-        }
-
-        return mAdvancedEncryptionStatus;
-    }
-
-    /**
-     * Sets protocol-aware encryption status rendering.  The legacy preference key is retained for compatibility.
-     */
-    public void setAdvancedEncryptionStatus(boolean advanced)
-    {
-        mAdvancedEncryptionStatus = advanced;
-        mPreferences.putBoolean(PREFERENCE_KEY_ADVANCED_P25_ENCRYPTION_STATUS, advanced);
-        notifyPreferenceUpdated();
-    }
-
-    /**
-     * @deprecated use {@link #isAdvancedEncryptionStatus()}
-     */
-    @Deprecated
-    public boolean isAdvancedP25EncryptionStatus()
-    {
-        return isAdvancedEncryptionStatus();
-    }
-
-    /**
-     * @deprecated use {@link #setAdvancedEncryptionStatus(boolean)}
-     */
-    @Deprecated
-    public void setAdvancedP25EncryptionStatus(boolean advanced)
-    {
-        setAdvancedEncryptionStatus(advanced);
     }
 
     public int getTrafficGrantAgeOutMilliseconds()

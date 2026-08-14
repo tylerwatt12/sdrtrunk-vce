@@ -209,13 +209,11 @@ final class Alpha9DatabaseMigration
         {
             statement.executeUpdate("""
                 INSERT INTO alias_list (
-                    id, name, family, unmatched_talkgroup_priority,
-                    unmatched_talkgroup_record_enabled
+                    id, name, family, unmatched_talkgroup_record_enabled
                 )
                 SELECT source.id,
                        source.name,
                        source.family,
-                       COALESCE(candidate.priority, 100),
                        COALESCE(candidate.record_enabled, 0)
                 FROM alpha9_alias_list AS source
                 LEFT JOIN alpha9_alias_conversion_candidate AS conversion
@@ -233,12 +231,12 @@ final class Alpha9DatabaseMigration
             statement.executeUpdate("""
                 INSERT INTO alias (
                     id, alias_list_id, name, description, group_name, color, icon_name,
-                    stream_as_talkgroup, record_enabled, priority, matcher_type, protocol,
+                    stream_as_talkgroup, record_enabled, matcher_type, protocol,
                     value, min_value, max_value, text_value, numeric_value, tone_sequence
                 )
                 SELECT source.id, source.alias_list_id, source.name, source.description, source.group_name,
                        source.color, source.icon_name, source.stream_as_talkgroup, source.record_enabled,
-                       source.priority, source.matcher_type, source.protocol, source.value, source.min_value,
+                       source.matcher_type, source.protocol, source.value, source.min_value,
                        source.max_value, source.text_value, source.numeric_value, source.tone_sequence
                 FROM alpha9_alias AS source
                 LEFT JOIN alpha9_alias_conversion_candidate AS conversion ON conversion.alias_id = source.id
@@ -248,6 +246,28 @@ final class Alpha9DatabaseMigration
                       'P25_FULLY_QUALIFIED_RADIO_ID'
                   )
                 ORDER BY source.id
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias_scan_list_membership (alias_id, scan_list_id)
+                SELECT source.id, default_list.id
+                FROM alpha9_alias AS source
+                JOIN alias AS retained ON retained.id = source.id
+                CROSS JOIN scan_list AS default_list
+                WHERE default_list.is_default = 1
+                  AND COALESCE(source.priority, 100) <> -1
+                ORDER BY source.id
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias_list_unmatched_talkgroup_scan_list_membership (
+                    alias_list_id, scan_list_id
+                )
+                SELECT conversion.alias_list_id, default_list.id
+                FROM alpha9_alias_conversion_candidate AS conversion
+                JOIN alpha9_alias AS source ON source.id = conversion.alias_id
+                CROSS JOIN scan_list AS default_list
+                WHERE default_list.is_default = 1
+                  AND COALESCE(source.priority, 100) <> -1
+                ORDER BY conversion.alias_list_id
                 """);
             statement.executeUpdate("""
                 INSERT INTO alias_broadcast_channel (id, alias_id, channel_name)

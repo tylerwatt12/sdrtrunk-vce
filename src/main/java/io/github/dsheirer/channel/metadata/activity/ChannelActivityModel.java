@@ -77,7 +77,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Session-only Now Playing activity model that keeps stable rows independent from temporary traffic chains.
+ * Session-only browser activity model that keeps stable rows independent from temporary traffic chains.
  */
 public class ChannelActivityModel implements IChannelMetadataUpdateListener, AutoCloseable
 {
@@ -105,7 +105,6 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
     private final ChannelActivityTableState mConventionalTable;
     private final Map<Channel,ChannelActivityTableState> mTrunkedTables = new IdentityHashMap<>();
     private final Map<Channel,SiteActivitySession> mSiteSessions = new IdentityHashMap<>();
-    private final Set<Integer> mClosedTrunkedChannelIds = new HashSet<>();
     private final Map<ChannelMetadata,ChannelActivityRow> mMetadataRows = new IdentityHashMap<>();
     private final Map<ChannelActivityRow,ChannelActivityTableState> mRowTables = new IdentityHashMap<>();
     private final Map<ChannelActivityRow,ExpiringRow> mPendingControlIdleRows = new IdentityHashMap<>();
@@ -113,21 +112,18 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
     private final Map<Channel,SiteIdentity> mSiteIdentities = new IdentityHashMap<>();
     private final Map<Channel,Object> mActiveIncarnations = new IdentityHashMap<>();
     private final Map<String,ChannelActivitySnapshot> mLatestSnapshotsById = new HashMap<>();
-    private final List<Listener<ChannelActivityTableEvent>> mTableListeners = new CopyOnWriteArrayList<>();
     private final List<Listener<ChannelActivityEvent>> mActivityListeners = new CopyOnWriteArrayList<>();
     private final ChannelActivityIngressQueue mIngress;
     private final AtomicLong mDroppedIngressCount = new AtomicLong();
     private final AtomicLong mDroppedLifecycleCount = new AtomicLong();
     private final AtomicLong mAcceptedIngressCount = new AtomicLong();
     private final AtomicLong mProcessedIngressCount = new AtomicLong();
-    private final AtomicLong mCloseRequestRevision = new AtomicLong();
     private final AtomicBoolean mLifecycleReconcileNeeded = new AtomicBoolean();
     private volatile List<ChannelActivityTableState> mTables;
     private volatile SnapshotSet mSnapshotSet = new SnapshotSet(0, List.of());
     private boolean mActivitySweeperRunning;
     private volatile boolean mWorkerRunning = true;
     private volatile boolean mClosed;
-    private volatile long mAppliedCloseRequestRevision;
     private volatile Thread mWorker;
     private volatile Supplier<List<ActiveChannel>> mActiveChannelSupplier;
 
@@ -180,7 +176,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
         mAliasModel = aliasModel;
         mNowPlayingPreference = nowPlayingPreference;
         mIngress = new ChannelActivityIngressQueue(ingressCapacity, lifecycleIngressReserve);
-        mConventionalTable = new ChannelActivityTableState("Conventional", null, false, this::tableSnapshotUpdated);
+        mConventionalTable = new ChannelActivityTableState("Conventional", null, this::tableSnapshotUpdated);
         updateTablesSnapshot();
         mWorker = new ObserverThreadFactory("channel activity").newThread(this::runWorker);
         mWorker.start();
@@ -257,24 +253,6 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
         }
     }
 
-    public void addTableListener(Listener<ChannelActivityTableEvent> listener)
-    {
-        if(listener != null)
-        {
-            mTableListeners.add(listener);
-        }
-    }
-
-    public void removeTableListener(Listener<ChannelActivityTableEvent> listener)
-    {
-        mTableListeners.remove(listener);
-    }
-
-    int getTableListenerCount()
-    {
-        return mTableListeners.size();
-    }
-
     public void addActivityListener(Listener<ChannelActivityEvent> listener)
     {
         if(listener != null)
@@ -342,27 +320,15 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
         mSnapshotSet = new SnapshotSet(mSnapshotSet.revision() + 1, snapshots);
     }
 
-    public void close(ChannelActivityTableState tableState)
-    {
-        if(!mClosed && tableState != null)
-        {
-            tableState.requestClose();
-            mCloseRequestRevision.incrementAndGet();
-            signalWorker();
-        }
-    }
-
-    private void processClose(ChannelActivityTableState tableState)
+    private void removeTrunkedTable(ChannelActivityTableState tableState)
     {
         if(tableState != null && tableState.getOwnerChannel() != null)
         {
             Channel owner = tableState.getOwnerChannel();
             ChannelActivitySnapshot removedSnapshot = tableState.getLatestSnapshot();
-            mClosedTrunkedChannelIds.add(owner.getChannelID());
             mTrunkedTables.remove(owner);
             mSiteSessions.remove(owner);
             updateTablesSnapshot();
-            notifyTableListeners(ChannelActivityTableEvent.Operation.REMOVE, tableState);
             tableSnapshotRemoved(removedSnapshot);
 
             for(ChannelActivityRow row: tableState.getRows())
@@ -400,8 +366,6 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
         {
             return;
         }
-
-        mClosedTrunkedChannelIds.remove(channel.getChannelID());
 
         if(isConfiguredTrunkedControlParent(channel))
         {
@@ -1129,7 +1093,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
 
             if(trunkedTable != null && channel.getDecodeConfiguration() instanceof DecodeConfigDMR)
             {
-                processClose(trunkedTable);
+                removeTrunkedTable(trunkedTable);
             }
 
             for(ChannelActivityRow row: mConventionalTable.getRows())
@@ -1697,20 +1661,13 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
 
     private ChannelActivityTableState getOrCreateTrunkedTable(Channel channel)
     {
-        if(mClosedTrunkedChannelIds.contains(channel.getChannelID()))
-        {
-            return null;
-        }
-
         ChannelActivityTableState table = mTrunkedTables.get(channel);
 
         if(table == null)
         {
-            table = new ChannelActivityTableState(getTrunkedTitle(channel), channel, true,
-                this::tableSnapshotUpdated);
+            table = new ChannelActivityTableState(getTrunkedTitle(channel), channel, this::tableSnapshotUpdated);
             mTrunkedTables.put(channel, table);
             updateTablesSnapshot();
-            notifyTableListeners(ChannelActivityTableEvent.Operation.ADD, table);
         }
 
         return table;
@@ -1727,31 +1684,15 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
             if(!title.equals(table.getTitle()))
             {
                 table.setTitle(title);
-                notifyTableChanged(table);
             }
         }
     }
 
     private void setControlActive(ChannelActivityTableState table, boolean controlActive)
     {
-        if(table != null && table.setControlActive(controlActive))
+        if(table != null)
         {
-            notifyTableChanged(table);
-        }
-    }
-
-    private void notifyTableChanged(ChannelActivityTableState table)
-    {
-        notifyTableListeners(ChannelActivityTableEvent.Operation.UPDATE, table);
-    }
-
-    private void notifyTableListeners(ChannelActivityTableEvent.Operation operation, ChannelActivityTableState table)
-    {
-        ChannelActivityTableEvent event = new ChannelActivityTableEvent(operation, table);
-
-        for(Listener<ChannelActivityTableEvent> listener: mTableListeners)
-        {
-            deliver(listener, event, "table");
+            table.setControlActive(controlActive);
         }
     }
 
@@ -1785,13 +1726,11 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
         for(ChannelActivityTableState table: mTrunkedTables.values())
         {
             ChannelActivitySnapshot removedSnapshot = table.getLatestSnapshot();
-            notifyTableListeners(ChannelActivityTableEvent.Operation.REMOVE, table);
             tableSnapshotRemoved(removedSnapshot);
         }
 
         mTrunkedTables.clear();
         mSiteSessions.clear();
-        mClosedTrunkedChannelIds.clear();
         mMetadataRows.clear();
         mRowTables.clear();
         mPendingControlIdleRows.clear();
@@ -2100,8 +2039,6 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
                         drained++;
                     }
 
-                    processPendingCloseRequests();
-
                     if(mLifecycleReconcileNeeded.compareAndSet(true, false))
                     {
                         reconcileLifecycle();
@@ -2152,21 +2089,6 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
         {
             throw error;
         }
-    }
-
-    private void processPendingCloseRequests()
-    {
-        long revision = mCloseRequestRevision.get();
-
-        for(ChannelActivityTableState table: new ArrayList<>(mTrunkedTables.values()))
-        {
-            if(table.consumeCloseRequest())
-            {
-                processClose(table);
-            }
-        }
-
-        mAppliedCloseRequestRevision = revision;
     }
 
     private void reconcileLifecycle()
@@ -2272,13 +2194,11 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
     {
         long deadline = System.nanoTime() + timeUnit.toNanos(timeout);
         long accepted = mAcceptedIngressCount.get();
-        long closeRevision = mCloseRequestRevision.get();
 
         while(System.nanoTime() < deadline)
         {
             if(mProcessedIngressCount.get() >= accepted &&
-                mAppliedCloseRequestRevision >= closeRevision && !mLifecycleReconcileNeeded.get() &&
-                mIngress.size() == 0)
+                !mLifecycleReconcileNeeded.get() && mIngress.size() == 0)
             {
                 return true;
             }
@@ -2288,8 +2208,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
         }
 
         return mProcessedIngressCount.get() >= accepted &&
-            mAppliedCloseRequestRevision >= closeRevision && !mLifecycleReconcileNeeded.get() &&
-            mIngress.size() == 0;
+            !mLifecycleReconcileNeeded.get() && mIngress.size() == 0;
     }
 
     @Override

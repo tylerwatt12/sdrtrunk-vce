@@ -213,7 +213,7 @@ public class SystemEditor extends VBox
     {
         if(mSystemTalkgroupSelectionEditor == null)
         {
-            mSystemTalkgroupSelectionEditor = new SystemTalkgroupSelectionEditor(mUserPreferences, mConfigurationManager);
+            mSystemTalkgroupSelectionEditor = new SystemTalkgroupSelectionEditor(mConfigurationManager);
         }
 
         return mSystemTalkgroupSelectionEditor;
