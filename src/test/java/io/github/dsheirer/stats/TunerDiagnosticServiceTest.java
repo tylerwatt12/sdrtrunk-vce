@@ -149,17 +149,18 @@ class TunerDiagnosticServiceTest
         CountDownLatch start = new CountDownLatch(1);
         AtomicInteger opened = new AtomicInteger();
         ConcurrentLinkedQueue<TunerDiagnosticService.Session> sessions = new ConcurrentLinkedQueue<>();
-        List<Future<?>> attempts = java.util.stream.IntStream.range(0, 32).mapToObj(ignored -> executor.submit(() ->
-        {
-            await(start);
-            TunerDiagnosticService.OpenResult result = service.tryOpen(targetId);
-
-            if(result.status() == TunerDiagnosticService.OpenStatus.OPEN)
+        List<? extends Future<?>> attempts = java.util.stream.IntStream.range(0, 32)
+            .mapToObj(ignored -> executor.submit(() ->
             {
-                opened.incrementAndGet();
-                sessions.add(result.session());
-            }
-        })).toList();
+                await(start);
+                TunerDiagnosticService.OpenResult result = service.tryOpen(targetId);
+
+                if(result.status() == TunerDiagnosticService.OpenStatus.OPEN)
+                {
+                    opened.incrementAndGet();
+                    sessions.add(result.session());
+                }
+            })).toList();
 
         try
         {
@@ -360,7 +361,7 @@ class TunerDiagnosticServiceTest
         assertEquals(8, maximumDetail.decimation());
         assertEquals(d8.sampleRateHz(), maximumDetail.sampleRateHz(),
             "views below tunerSpan/8 reuse the bounded max-detail lens");
-        assertEquals(610.3515625, maximumDetail.sampleRateHz() / (double)TunerDiagnosticService.FFT_SIZE,
+        assertEquals(76.2939453125, maximumDetail.sampleRateHz() / (double)TunerDiagnosticService.FFT_SIZE,
             0.0001);
     }
 

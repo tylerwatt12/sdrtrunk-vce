@@ -56,16 +56,16 @@ import org.slf4j.LoggerFactory;
  * worker, and one output slot.  Opening another tuner or viewer returns {@link OpenStatus#BUSY}.  The service never
  * initializes, retunes, or reconfigures tuner hardware.</p>
  *
- * <p>The worker uses a small full-band FFT for the overview.  A narrow viewport switches that same worker to a zoom
- * lens: it mixes the requested center to baseband, anti-alias filters and decimates by two, four, or eight, then runs
- * the same small FFT.  Only one analysis path is active at a time.</p>
+ * <p>The worker uses a fixed high-resolution full-band FFT for the overview.  A narrow viewport switches that same
+ * worker to a zoom lens: it mixes the requested center to baseband, anti-alias filters and decimates by two, four,
+ * or eight, then runs the same FFT.  Only one analysis path is active at a time.</p>
  */
 public final class TunerDiagnosticService implements AutoCloseable
 {
     private static final Logger mLog = LoggerFactory.getLogger(TunerDiagnosticService.class);
-    public static final int FFT_SIZE = 2_048;
+    public static final int FFT_SIZE = 16_384;
     public static final int MAXIMUM_TRANSMITTED_BINS = FFT_SIZE;
-    public static final int FRAMES_PER_SECOND = 5;
+    public static final int FRAMES_PER_SECOND = 10;
     private static final int MAXIMUM_DECIMATION = 8;
     /** Keeps the requested view out of the anti-alias filter transition band. */
     private static final double USABLE_LENS_FRACTION = 0.80;

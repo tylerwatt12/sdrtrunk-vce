@@ -91,8 +91,8 @@ and Alpha 9 while leaving the original installation unchanged.
 - **Diagnostics are demand-driven and bounded.** Viewers of the same selected channel share one bounded producer and
   latest-only binary frames. When nobody is viewing, no diagnostic sample listener, scheduled FFT work, or worker is
   active. Selected-channel diagnostics support up to 32 sessions sharing one 512-bin producer at 5 frames per second.
-  Whole-tuner diagnostics permit one administrator session and one tuner at a time. They use one 2,048-bin worker at
-  5 frames per second, with a filtered and decimated analysis lens for additional detail while zoomed.
+  Whole-tuner diagnostics permit one administrator session and one tuner at a time. They use one 16,384-bin worker at
+  10 frames per second, with a filtered and decimated analysis lens for additional detail while zoomed.
 - **The Java receiver window is smaller.** The old Systems workspace and its embedded Details, Events, Messages,
   signal, and symbol panels are removed. Browser Live Systems owns those activity workflows. Java keeps Map when
   enabled and Tuners; selected-channel and tuner-wide FFT/waterfall diagnostics remain in the website.
