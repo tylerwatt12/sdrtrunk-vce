@@ -53,7 +53,7 @@ and Alpha 9 while leaving the original installation unchanged.
   appears when the selected decoder supplies compatible demodulated symbols.
 - **Shared Pause control.** Pause/Resume applies to Events, Messages, and Channel diagnostics. Pausing, collapsing,
   changing pages, hiding a tab, or closing a diagnostic view releases its stream.
-- **Whole-tuner spectrum and waterfall.** The Tuner Spectrum dialog shows already-running tuners without starting,
+- **Whole-tuner spectrum and waterfall.** The browser Tuner Spectrum page shows already-running tuners without starting,
   retuning, or reconfiguring them. It supports tuner selection, pause, pan, up to 8× zoom, refined FFT detail,
   waterfall frequency/power/time inspection, a configurable lower display limit, waterfall speed, optional frequency
   snapping, and FFT smoothing.
@@ -94,7 +94,7 @@ and Alpha 9 while leaving the original installation unchanged.
   tuner diagnostics support up to 32 sessions and two tuner producers at 10 frames per second.
 - **The Java receiver window is smaller.** The old Systems workspace and its embedded Details, Events, Messages,
   signal, and symbol panels are removed. Browser Live Systems owns those activity workflows. Java keeps Map when
-  enabled, Tuners, and the separate on-demand whole-tuner Spectrum view.
+  enabled and Tuners; selected-channel and tuner-wide FFT/waterfall diagnostics remain in the website.
 - **Receiver-local playback is retired.** Java speaker output, output-device selection, and local Hold, Avoid,
   priority, and backlog controls are removed. Recording, broadcast streaming, and browser call playback remain.
 - **Frequency snapping uses fixed rasters.** Supported ranges use 2.5 kHz spacing in VHF, 6.25 kHz in the configured
@@ -160,6 +160,9 @@ and Alpha 9 while leaving the original installation unchanged.
 
 ## Removed
 
+- **Receiver-local tuner Spectrum/Waterfall displays.** The main-window Spectrum toggle, tuner View/New Spectrum
+  actions, embedded panel, and separate spectrum windows are removed. The browser's selected-channel and tuner-wide
+  FFT/waterfall diagnostics remain demand-driven and supported.
 - **P25 Fully Qualified Talkgroup and Fully Qualified Radio Alias matching.** These identifier types are no longer
   selectable or used for desktop, web, runtime, or SQLite Alias matching. Ordinary local P25 talkgroup and radio
   Aliases remain supported. The decoder may still retain fully-qualified identity evidence for diagnostics, but it

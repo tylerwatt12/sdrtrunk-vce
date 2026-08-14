@@ -16,7 +16,7 @@ class ComplexDftProcessorTest
     @Test
     void inactiveConstructionDoesNotScheduleDftWork()
     {
-        ComplexDftProcessor processor = new ComplexDftProcessor(null, false);
+        ComplexDftProcessor processor = new ComplexDftProcessor(false);
 
         try
         {

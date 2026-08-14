@@ -35,7 +35,6 @@ public enum PreferenceType
     NOW_PLAYING,
     RADIO_REFERENCE,
     RECORD,
-    SPECTRUM,
     TALKGROUP_FORMAT,
     TUNER,
     VOICE_DECRYPTION_MODULE;

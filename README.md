@@ -44,7 +44,8 @@ Alpha 10 expands the built-in website and strengthens P25 decoding.
 - **Live diagnostics add Events, Messages, and bounded Signal and Symbols views**, plus a demand-driven whole-tuner
   FFT and waterfall with zoom, smoothing, frequency snapping, and channel flags.
 - **The Java receiver window is deliberately smaller:** Map (when enabled) and Tuners remain, while the old Systems
-  workspace and its embedded diagnostics are removed. The separate on-demand tuner Spectrum view remains available.
+  workspace, embedded diagnostics, and receiver-local tuner Spectrum/Waterfall displays are removed. Both selected-
+  channel and tuner-wide FFT/waterfall diagnostics remain available in the website.
 - **P25 NAC, CRC, and error-correction handling is stricter**, while bounded weak-voice recovery preserves usable
   Phase 1 audio and late encryption details remain attached to the correct call.
 - **The exact Alpha 8/Alpha 9 database layout uses the built-in migrator.** Alpha 8 and Alpha 9 shipped the same
@@ -195,6 +196,7 @@ For more detail, see [Portable Startup And Storage](docs/portable-startup-and-st
 These older or experimental features are not included:
 
 - Receiver-local speaker playback, output-device selection, and the desktop Hold, Avoid, priority, and backlog controls
+- Receiver-local tuner Spectrum/Waterfall panels and separate spectrum windows; web diagnostics remain supported
 - Local alias actions and the Actions editor
 - LTR Standard, LTR-Net, Passport, and MPT-1327 decoders
 - Funcube Dongle Pro/Pro+ tuners

@@ -35,7 +35,6 @@ import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
-import java.util.List;
 import org.controlsfx.control.ToggleSwitch;
 
 /**
@@ -135,14 +134,12 @@ public class NowPlayingPreferenceEditor extends HBox
     {
         HBox controls = new HBox(12);
 
-        for(JavaInterfaceView view: List.of(JavaInterfaceView.MAP, JavaInterfaceView.SPECTRUM))
-        {
-            CheckBox checkBox = new CheckBox(view.getLabel());
-            checkBox.setSelected(mNowPlayingPreference.isJavaInterfaceViewEnabled(view));
-            checkBox.setOnAction(event ->
-                mNowPlayingPreference.setJavaInterfaceViewEnabled(view, checkBox.isSelected()));
-            controls.getChildren().add(checkBox);
-        }
+        JavaInterfaceView view = JavaInterfaceView.MAP;
+        CheckBox checkBox = new CheckBox(view.getLabel());
+        checkBox.setSelected(mNowPlayingPreference.isJavaInterfaceViewEnabled(view));
+        checkBox.setOnAction(event ->
+            mNowPlayingPreference.setJavaInterfaceViewEnabled(view, checkBox.isSelected()));
+        controls.getChildren().add(checkBox);
 
         return controls;
     }

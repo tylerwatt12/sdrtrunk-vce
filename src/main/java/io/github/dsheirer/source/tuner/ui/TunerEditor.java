@@ -81,8 +81,6 @@ public abstract class TunerEditor<T extends Tuner,C extends TunerConfiguration> 
     private JFrequencyControl mFrequencyControl;
     private JSpinner mFrequencyCorrectionSpinner;
     private JButton mEnabledButton;
-    private JButton mViewSpectrumButton;
-    private JButton mNewSpectrumButton;
     private JButton mRestartTunerButton;
     private JToggleButton mRecordButton;
     private final RecordingStatusListener mRecordingStatusListener = new RecordingStatusListener();
@@ -632,54 +630,6 @@ public abstract class TunerEditor<T extends Tuner,C extends TunerConfiguration> 
     }
 
     /**
-     * Button requesting to show tuner in new spectral display
-     */
-    protected JButton getNewSpectrumButton()
-    {
-        if(mNewSpectrumButton == null)
-        {
-            mNewSpectrumButton = new JButton("New Spectrum Display");
-            mNewSpectrumButton.setToolTipText("Show this tuner in a new (separate) spectral display window");
-            mNewSpectrumButton.addActionListener(e ->
-            {
-                Tuner tuner = getTuner();
-
-                if(tuner != null)
-                {
-                    ThreadPool.CACHED.submit(() -> mTunerManager.getDiscoveredTunerModel().broadcast(new TunerEvent(tuner,
-                            TunerEvent.Event.REQUEST_NEW_SPECTRAL_DISPLAY)));
-                }
-            });
-        }
-
-        return mNewSpectrumButton;
-    }
-
-    /**
-     * Button requesting to show tuner in main spectral display
-     */
-    protected JButton getViewSpectrumButton()
-    {
-        if(mViewSpectrumButton == null)
-        {
-            mViewSpectrumButton = new JButton("View Spectrum");
-            mViewSpectrumButton.setToolTipText("Show this tuner in the spectral display");
-            mViewSpectrumButton.addActionListener(e ->
-            {
-                Tuner tuner = getTuner();
-
-                if(tuner != null)
-                {
-                    ThreadPool.CACHED.submit(() -> mTunerManager.getDiscoveredTunerModel().broadcast(new TunerEvent(tuner,
-                            TunerEvent.Event.REQUEST_MAIN_SPECTRAL_DISPLAY)));
-                }
-            });
-        }
-
-        return mViewSpectrumButton;
-    }
-
-    /**
      * Button to change enable, disable, or error restart status.
      */
     protected JButton getEnabledButton()
@@ -901,11 +851,9 @@ public abstract class TunerEditor<T extends Tuner,C extends TunerConfiguration> 
          */
         public ButtonPanel()
         {
-            setLayout(new MigLayout("insets 0,fill", "[][][][][][grow,fill]", ""));
+            setLayout(new MigLayout("insets 0,fill", "[][][][grow,fill]", ""));
             add(getEnabledButton());
             add(getRecordButton());
-            add(getViewSpectrumButton());
-            add(getNewSpectrumButton());
             add(getRestartTunerButton(), "wrap");
             add(getRecordingStatusLabel(), "span");
         }
@@ -927,8 +875,6 @@ public abstract class TunerEditor<T extends Tuner,C extends TunerConfiguration> 
             {
                 getRecordingStatusLabel().setText(" ");
             }
-            getViewSpectrumButton().setEnabled(tunerStatus.isAvailable() && getDiscoveredTuner().hasTuner());
-            getNewSpectrumButton().setEnabled(tunerStatus.isAvailable() && getDiscoveredTuner().hasTuner());
             getRestartTunerButton().setVisible(tunerStatus == TunerStatus.ERROR);
 
             if(getDiscoveredTuner().isEnabled())

@@ -27,6 +27,12 @@ class JavaDesktopSystemsRemovalUiContractTest
         Path.of("src/main/java/io/github/dsheirer/preference/nowplaying/NowPlayingPreference.java");
     private static final Path PREFERENCE_EDITOR =
         Path.of("src/main/java/io/github/dsheirer/gui/preference/nowplaying/NowPlayingPreferenceEditor.java");
+    private static final Path TUNER_EDITOR =
+        Path.of("src/main/java/io/github/dsheirer/source/tuner/ui/TunerEditor.java");
+    private static final Path TUNER_EVENT =
+        Path.of("src/main/java/io/github/dsheirer/source/tuner/TunerEvent.java");
+    private static final Path USER_PREFERENCES =
+        Path.of("src/main/java/io/github/dsheirer/preference/UserPreferences.java");
 
     @Test
     void controllerContainsOnlyOptionalMapAndTunersTabs() throws Exception
@@ -54,11 +60,33 @@ class JavaDesktopSystemsRemovalUiContractTest
         assertFalse(application.contains("getLowerViewsToggleButton"));
         assertFalse(application.contains("getNowPlayingPanel"));
         assertTrue(preference.contains("MAP(\"Map\""));
-        assertTrue(preference.contains("SPECTRUM(\"Spectrum\""));
+        assertFalse(preference.contains("SPECTRUM(\"Spectrum\""));
         assertFalse(preference.contains("SYSTEMS(\"Systems\""));
         assertFalse(editor.contains("Systems Activity Settings"));
         assertFalse(editor.contains("JavaInterfaceView.values()"));
-        assertTrue(editor.contains("List.of(JavaInterfaceView.MAP, JavaInterfaceView.SPECTRUM)"));
+        assertFalse(editor.contains("JavaInterfaceView.SPECTRUM"));
+    }
+
+    @Test
+    void applicationHasNoReceiverLocalSpectrumOrWaterfall() throws Exception
+    {
+        String application = Files.readString(APPLICATION);
+        String tunerEditor = Files.readString(TUNER_EDITOR);
+        String tunerEvent = Files.readString(TUNER_EVENT);
+        String userPreferences = Files.readString(USER_PREFERENCES);
+
+        assertFalse(application.contains("SpectralDisplayPanel"));
+        assertFalse(application.contains("SpectrumFrame"));
+        assertFalse(application.contains("SpectrumWaterfall"));
+        assertFalse(application.contains("TunersMenu"));
+        assertFalse(tunerEditor.contains("View Spectrum"));
+        assertFalse(tunerEditor.contains("New Spectrum Display"));
+        assertFalse(tunerEvent.contains("SPECTRAL_DISPLAY"));
+        assertFalse(userPreferences.contains("SpectrumPreference"));
+        assertFalse(Files.exists(Path.of(
+            "src/main/java/io/github/dsheirer/spectrum/WaterfallPanel.java")));
+        assertFalse(Files.exists(Path.of(
+            "src/main/java/io/github/dsheirer/spectrum/SpectralDisplayPanel.java")));
     }
 
     @Test

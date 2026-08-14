@@ -35,7 +35,6 @@ import io.github.dsheirer.preference.nowplaying.NowPlayingPreference;
 import io.github.dsheirer.preference.radioreference.RadioReferencePreference;
 import io.github.dsheirer.preference.record.RecordPreference;
 import io.github.dsheirer.preference.source.TunerPreference;
-import io.github.dsheirer.preference.spectrum.SpectrumPreference;
 import io.github.dsheirer.preference.swing.SwingPreference;
 import io.github.dsheirer.sample.Listener;
 
@@ -70,7 +69,6 @@ public class UserPreferences implements Listener<PreferenceType>
     private RecordPreference mRecordPreference;
     private TalkgroupFormatPreference mTalkgroupFormatPreference;
     private TunerPreference mTunerPreference;
-    private SpectrumPreference mSpectrumPreference;
     private VectorCalibrationPreference mVectorCalibrationPreference;
 
     private SwingPreference mSwingPreference = new SwingPreference();
@@ -198,12 +196,6 @@ public class UserPreferences implements Listener<PreferenceType>
         return mTunerPreference;
     }
 
-    public SpectrumPreference getSpectrumPreference()
-    {
-        return mSpectrumPreference;
-    }
-
-
     /**
      * Swing window location/size user preferences
      */
@@ -238,7 +230,6 @@ public class UserPreferences implements Listener<PreferenceType>
         mRecordPreference = new RecordPreference(this::receive);
         mTalkgroupFormatPreference = new TalkgroupFormatPreference(this::receive);
         mTunerPreference = new TunerPreference(this::receive);
-        mSpectrumPreference = new SpectrumPreference(this::receive);
         mVectorCalibrationPreference = new VectorCalibrationPreference(this::receive);
     }
 

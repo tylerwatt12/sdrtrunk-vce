@@ -54,8 +54,7 @@ public class NowPlayingPreference extends Preference
      */
     public enum JavaInterfaceView
     {
-        MAP("Map", "java.tab.map.visible", false),
-        SPECTRUM("Spectrum", "java.spectrum.view.enabled", false);
+        MAP("Map", "java.tab.map.visible", false);
 
         private final String mLabel;
         private final String mPreferenceKey;

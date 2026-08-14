@@ -22,7 +22,6 @@ import io.github.dsheirer.buffer.INativeBuffer;
 import io.github.dsheirer.controller.NamingThreadFactory;
 import io.github.dsheirer.dsp.window.WindowFactory;
 import io.github.dsheirer.dsp.window.WindowType;
-import io.github.dsheirer.preference.spectrum.SpectrumPreference;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.spectrum.converter.DFTResultsConverter;
 import java.io.IOException;
@@ -51,7 +50,6 @@ public class ComplexDftProcessor implements Listener<INativeBuffer>, IDFTWidthCh
     private volatile DFTSize mNewDFTSize = DFTSize.FFT04096;
     private FloatFFT_1D mFFT = new FloatFFT_1D(mDFTSize.getSize());
     private int mFrameRate;
-    private final SpectrumPreference mSpectrumPreference;
     private AtomicBoolean mRunning = new AtomicBoolean();
     private final AtomicBoolean mDisposed = new AtomicBoolean();
     private ScheduledFuture<?> mProcessorTaskHandle;
@@ -65,22 +63,16 @@ public class ComplexDftProcessor implements Listener<INativeBuffer>, IDFTWidthCh
 
     public ComplexDftProcessor()
     {
-        this(null);
-    }
-
-    public ComplexDftProcessor(SpectrumPreference spectrumPreference)
-    {
-        this(spectrumPreference, true);
+        this(true);
     }
 
     /**
      * Constructs a processor with optional automatic scheduling. Display owners that do not yet have a sample source
      * can leave the processor stopped and explicitly start it when the source is attached.
      */
-    ComplexDftProcessor(SpectrumPreference spectrumPreference, boolean startImmediately)
+    ComplexDftProcessor(boolean startImmediately)
     {
-        mSpectrumPreference = spectrumPreference;
-        mFrameRate = spectrumPreference != null ? spectrumPreference.getFrameRate() : 20;
+        mFrameRate = 20;
         setWindowType(mWindowType);
 
         if(startImmediately)
@@ -178,10 +170,6 @@ public class ComplexDftProcessor implements Listener<INativeBuffer>, IDFTWidthCh
         }
 
         mFrameRate = framesPerSecond;
-        if(mSpectrumPreference != null)
-        {
-            mSpectrumPreference.setFrameRate(mFrameRate);
-        }
         restart();
     }
 
