@@ -109,7 +109,7 @@ record DiagnosticStreamFrame(int type, long generation, long sequence, long obse
                 sampleRateHz, fftSize, values);
         }
 
-        if(quantizationBits != 8 && quantizationBits != 16)
+        if(quantizationBits != 2 && quantizationBits != 4 && quantizationBits != 8 && quantizationBits != 16)
         {
             throw new IllegalArgumentException("Diagnostic quantization is not supported");
         }
@@ -121,17 +121,31 @@ record DiagnosticStreamFrame(int type, long generation, long sequence, long obse
             throw new IllegalArgumentException("Diagnostic sample rate is invalid");
         }
 
-        int bytesPerValue = quantizationBits / Byte.SIZE;
-        int maximumCode = quantizationBits == 8 ? 0xFF : 0xFFFF;
-        ByteBuffer buffer = header(TYPE_TUNER_FFT, Math.multiplyExact(values.length, bytesPerValue), values.length,
+        int payloadBytes = Math.toIntExact(((long)values.length * quantizationBits + 7) / Byte.SIZE);
+        int maximumCode = (1 << quantizationBits) - 1;
+        ByteBuffer buffer = header(TYPE_TUNER_FFT, payloadBytes, values.length,
             generation, sequence, observedAtEpochMs, 0, centerFrequencyHz, (int)sampleRateHz, fftSize, 0, fftSize);
+        int packed = 0;
+        int packedBits = 0;
 
         for(float raw: values)
         {
             float value = Float.isFinite(raw) ? Math.max(-196.0f, Math.min(20.0f, raw)) : -196.0f;
             int code = Math.round((value + 196.0f) * maximumCode / 216.0f);
 
-            if(quantizationBits == 8)
+            if(quantizationBits < 8)
+            {
+                packed |= code << packedBits;
+                packedBits += quantizationBits;
+
+                if(packedBits == Byte.SIZE)
+                {
+                    buffer.put((byte)packed);
+                    packed = 0;
+                    packedBits = 0;
+                }
+            }
+            else if(quantizationBits == 8)
             {
                 buffer.put((byte)code);
             }
@@ -139,6 +153,11 @@ record DiagnosticStreamFrame(int type, long generation, long sequence, long obse
             {
                 buffer.putShort((short)code);
             }
+        }
+
+        if(packedBits > 0)
+        {
+            buffer.put((byte)packed);
         }
 
         long encodedAt = System.currentTimeMillis();

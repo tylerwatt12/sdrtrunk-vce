@@ -146,26 +146,26 @@ class TunerDiagnosticServiceTest
         TunerDiagnosticService service = service(List.of(
             target(new Object(), TunerClass.AIRSPY, controller, 1, queue)), processors);
         TunerDiagnosticService.ExperimentSettings settings =
-            new TunerDiagnosticService.ExperimentSettings(32_768, 15, 16, 200, 8);
+            new TunerDiagnosticService.ExperimentSettings(65_536, 15, 64, 200, 2);
         TunerDiagnosticService.Session session = service.tryOpen(service.targets().getFirst().targetId(), null,
             settings).session();
         TunerDiagnosticService.State state = session.state();
 
-        assertEquals(32_768, state.fftSize());
+        assertEquals(65_536, state.fftSize());
         assertEquals(15, state.framesPerSecond());
-        assertEquals(16, state.maximumDecimation());
+        assertEquals(64, state.maximumDecimation());
         assertEquals(200, state.iqQueueDurationMilliseconds());
-        assertEquals(8, state.quantizationBits());
+        assertEquals(2, state.quantizationBits());
         assertEquals(7, state.receiverDroppedBuffers());
         assertEquals(9, state.receiverDroppedMilliseconds());
         assertEquals(settings, processors.lastSettings.get());
         assertEquals(List.of(200L), queue.requests);
 
         TunerDiagnosticService.ExperimentSettings lighter =
-            new TunerDiagnosticService.ExperimentSettings(1_024, 2, 8, 50, 16);
+            new TunerDiagnosticService.ExperimentSettings(256, 2, 8, 50, 4);
         session.updateExperiment(lighter);
         assertEquals(lighter, processors.lastSettings.get());
-        assertEquals(1_024, session.state().fftSize());
+        assertEquals(256, session.state().fftSize());
         assertEquals(List.of(200L, 50L), queue.requests);
 
         session.close();

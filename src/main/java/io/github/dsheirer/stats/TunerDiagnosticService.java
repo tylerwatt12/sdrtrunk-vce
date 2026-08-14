@@ -435,8 +435,8 @@ public final class TunerDiagnosticService implements AutoCloseable
     {
         public ExperimentSettings
         {
-            if(fftSize != 1_024 && fftSize != 2_048 && fftSize != 4_096 && fftSize != 8_192 && fftSize != 16_384 &&
-                fftSize != 32_768)
+            if(fftSize != 256 && fftSize != 512 && fftSize != 1_024 && fftSize != 2_048 && fftSize != 4_096 &&
+                fftSize != 8_192 && fftSize != 16_384 && fftSize != 32_768 && fftSize != 65_536)
             {
                 throw new IllegalArgumentException("Experimental FFT size is not supported");
             }
@@ -448,7 +448,7 @@ public final class TunerDiagnosticService implements AutoCloseable
             }
 
             if(maximumDecimation != 1 && maximumDecimation != 8 && maximumDecimation != 16 &&
-                maximumDecimation != 32)
+                maximumDecimation != 32 && maximumDecimation != 64)
             {
                 throw new IllegalArgumentException("Experimental analysis lens is not supported");
             }
@@ -459,7 +459,8 @@ public final class TunerDiagnosticService implements AutoCloseable
                 throw new IllegalArgumentException("Experimental IQ queue duration is not supported");
             }
 
-            if(quantizationBits != 8 && quantizationBits != 16 && quantizationBits != 32)
+            if(quantizationBits != 2 && quantizationBits != 4 && quantizationBits != 8 && quantizationBits != 16 &&
+                quantizationBits != 32)
             {
                 throw new IllegalArgumentException("Experimental quantization is not supported");
             }

@@ -6036,15 +6036,19 @@ function diagnosticJsonPayload(frame) {
 
 function diagnosticFloatPayload(frame) {
   const count = Math.max(0, Number(frame.valueCount || 0));
-  const bytesPerValue = count > 0 ? frame.payload.byteLength / count : 0;
-  if (![1, 2, 4].includes(bytesPerValue)) throw new Error('The diagnostic stream returned unsupported values.');
+  const payloadBytes = frame.payload.byteLength;
+  const valueBits = payloadBytes === count * 4 ? 32 : payloadBytes === count * 2 ? 16 :
+    payloadBytes === count ? 8 : payloadBytes === Math.ceil(count / 2) ? 4 :
+      payloadBytes === Math.ceil(count / 4) ? 2 : 0;
+  if (!valueBits) throw new Error('The diagnostic stream returned unsupported values.');
   const values = new Float32Array(count);
   const data = new DataView(frame.payload.buffer, frame.payload.byteOffset, frame.payload.byteLength);
-  const maximumCode = bytesPerValue === 1 ? 0xFF : 0xFFFF;
+  const maximumCode = valueBits === 32 ? 0 : (1 << valueBits) - 1;
   for (let index = 0; index < count; index += 1) {
-    if (bytesPerValue === 4) values[index] = data.getFloat32(index * 4, true);
+    if (valueBits === 32) values[index] = data.getFloat32(index * 4, true);
     else {
-      const code = bytesPerValue === 1 ? data.getUint8(index) : data.getUint16(index * 2, true);
+      const code = valueBits === 16 ? data.getUint16(index * 2, true) : valueBits === 8 ? data.getUint8(index) :
+        data.getUint8(Math.floor(index * valueBits / 8)) >> (index * valueBits % 8) & maximumCode;
       values[index] = -196 + code * 216 / maximumCode;
     }
   }
@@ -7531,17 +7535,20 @@ function tunerSpectrumPanel() {
     return select;
   };
   const experimentFftSize = experimentSelect('FFT bins',
-    [[1024, '1,024'], [2048, '2,048'], [4096, '4,096 (default)'], [8192, '8,192 · high load'],
-      [16384, '16,384 · high load'], [32768, '32,768 · very high load']], 4096);
+    [[256, '256 · extreme low detail'], [512, '512 · very low detail'], [1024, '1,024'], [2048, '2,048'],
+      [4096, '4,096 (default)'], [8192, '8,192 · high load'], [16384, '16,384 · high load'],
+      [32768, '32,768 · very high load'], [65536, '65,536 · extreme load']], 4096);
   const experimentFps = experimentSelect('Requested FPS',
-    [[1, '1'], [2, '2'], [5, '5'], [10, '10 (default)'], [15, '15 · high load'],
-      [20, '20 · high load']], 10);
+    [[1, '1 · extreme low'], [2, '2'], [5, '5'], [10, '10 (default)'], [15, '15 · high load'],
+      [20, '20 · extreme high']], 10);
   const experimentLens = experimentSelect('Maximum analysis lens',
-    [[1, 'D1 · overview only'], [8, 'D8'], [16, 'D16'], [32, 'D32 (default)']], 32);
+    [[1, 'D1 · overview only'], [8, 'D8'], [16, 'D16'], [32, 'D32 (default)'],
+      [64, 'D64 · extreme']], 32);
   const experimentIqQueue = experimentSelect('Receiver IQ queue',
     [[50, '50 ms'], [100, '100 ms (default)'], [150, '150 ms'], [200, '200 ms']], 100);
   const experimentQuantization = experimentSelect('Spectrum quantization',
-    [[32, '32-bit float (default)'], [16, '16-bit'], [8, '8-bit']], 32);
+    [[32, '32-bit float (default)'], [16, '16-bit'], [8, '8-bit'], [4, '4-bit · very coarse'],
+      [2, '2-bit · extreme']], 32);
   const experimentActions = node('div', 'tuner-spectrum-experiment-actions');
   const applyExperiment = node('button', 'button secondary', 'Apply experiment');
   applyExperiment.type = 'button';

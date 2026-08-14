@@ -543,6 +543,18 @@ class DiagnosticTransportTest
         assertEquals(0, Byte.toUnsignedInt(eightBit.encoded()[DiagnosticStreamFrame.HEADER_BYTES]));
         assertEquals(128, Byte.toUnsignedInt(eightBit.encoded()[DiagnosticStreamFrame.HEADER_BYTES + 1]));
         assertEquals(255, Byte.toUnsignedInt(eightBit.encoded()[DiagnosticStreamFrame.HEADER_BYTES + 2]));
+
+        float[] packedValues = {-196.0f, -124.0f, -52.0f, 20.0f};
+        DiagnosticStreamFrame fourBit = DiagnosticStreamFrame.tunerFft(1, 2, 3, 100_000_000L,
+            10_000_000L, packedValues.length, 4, packedValues);
+        DiagnosticStreamFrame twoBit = DiagnosticStreamFrame.tunerFft(1, 2, 3, 100_000_000L,
+            10_000_000L, packedValues.length, 2, packedValues);
+
+        assertEquals(DiagnosticStreamFrame.HEADER_BYTES + 2, fourBit.encoded().length);
+        assertEquals(0x50, Byte.toUnsignedInt(fourBit.encoded()[DiagnosticStreamFrame.HEADER_BYTES]));
+        assertEquals(0xFA, Byte.toUnsignedInt(fourBit.encoded()[DiagnosticStreamFrame.HEADER_BYTES + 1]));
+        assertEquals(DiagnosticStreamFrame.HEADER_BYTES + 1, twoBit.encoded().length);
+        assertEquals(0xE4, Byte.toUnsignedInt(twoBit.encoded()[DiagnosticStreamFrame.HEADER_BYTES]));
     }
 
     @Test

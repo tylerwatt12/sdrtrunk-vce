@@ -211,7 +211,7 @@ class StatsWebInteractionUiContractTest
         String talkgroup = function(source, "async function renderTalkgroup()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"71\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"72\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -522,7 +522,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(html.contains("id=\"theme-toggle\""));
         assertTrue(html.contains("id=\"mobile-theme-toggle\""));
         assertTrue(html.contains("/assets/app.css?v=55"));
-        assertTrue(html.contains("/assets/app.js?v=81"));
+        assertTrue(html.contains("/assets/app.js?v=82"));
         assertTrue(source.contains("MOBILE_THEME_STORAGE_KEY = 'sdrtrunk_mobile_theme'"));
         assertTrue(source.contains("mode === 'mobile' ? MOBILE_THEME_STORAGE_KEY : THEME_STORAGE_KEY"));
         assertTrue(source.contains("toggle.setAttribute('aria-pressed'"));
@@ -915,17 +915,23 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("'Temporary spectrum experiment'"));
         assertTrue(tuner.contains("'FFT bins'"));
         assertTrue(tuner.contains("[32768, '32,768 · very high load']"));
+        assertTrue(tuner.contains("[256, '256 · extreme low detail']"));
+        assertTrue(tuner.contains("[65536, '65,536 · extreme load']"));
         assertTrue(tuner.contains("'Requested FPS'"));
         assertTrue(tuner.contains("'Maximum analysis lens'"));
         assertTrue(tuner.contains("'Receiver IQ queue'"));
         assertTrue(tuner.contains("'Spectrum quantization'"));
+        assertTrue(tuner.contains("[4, '4-bit · very coarse']"));
+        assertTrue(tuner.contains("[2, '2-bit · extreme']"));
         assertTrue(parameters.contains("experiment_fft_size"));
         assertTrue(parameters.contains("experiment_fps"));
         assertTrue(parameters.contains("experiment_max_decimation"));
         assertTrue(parameters.contains("experiment_iq_queue_ms"));
         assertTrue(parameters.contains("experiment_quantization_bits"));
-        assertTrue(source.contains("bytesPerValue === 1"));
-        assertTrue(source.contains("bytesPerValue === 4"));
+        assertTrue(source.contains("valueBits === 32"));
+        assertTrue(source.contains("valueBits === 16"));
+        assertTrue(source.contains("Math.ceil(count / 2) ? 4"));
+        assertTrue(source.contains("Math.ceil(count / 4) ? 2"));
         assertTrue(tuner.contains("let experimentDraftDirty = false"));
         assertTrue(acceptState.contains("if (!experimentDraftDirty)"));
         assertTrue(tuner.contains("control.addEventListener('change', () => { experimentDraftDirty = true; })"));
