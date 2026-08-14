@@ -11,6 +11,12 @@
 package io.github.dsheirer.gui.receiver;
 
 import io.github.dsheirer.application.ApplicationInfo;
+import io.github.dsheirer.debug.ReceiverIncidentController;
+import io.github.dsheirer.debug.ReceiverIncidentController.IncidentCaptureResult;
+import io.github.dsheirer.debug.ReceiverIncidentController.IncidentReportState;
+import io.github.dsheirer.debug.ReceiverIncidentController.IncidentState;
+import io.github.dsheirer.debug.ReceiverIncidentController.ReceiverIncidentStatus;
+import io.github.dsheirer.debug.ReceiverIncidentController.ThreadDumpState;
 import io.github.dsheirer.dsp.filter.channelizer.ReceiverQueueMetricsSnapshot;
 import io.github.dsheirer.dsp.filter.channelizer.ReceiverQueueMetricsSnapshot.ChannelQueueMetrics;
 import io.github.dsheirer.dsp.filter.channelizer.ReceiverQueueMetricsSnapshot.NativeBufferMetrics;
@@ -22,6 +28,7 @@ import io.github.dsheirer.source.tuner.manager.DiscoveredTuner;
 import io.github.dsheirer.source.tuner.manager.PolyphaseChannelSourceManager;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import java.lang.management.ManagementFactory;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
@@ -29,17 +36,20 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.function.Supplier;
 import javafx.animation.KeyFrame;
 import javafx.animation.Timeline;
 import javafx.geometry.Insets;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.TextArea;
+import javafx.scene.control.Tooltip;
 import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
+import javafx.scene.layout.VBox;
 import javafx.util.Duration;
 
 /**
@@ -53,32 +63,60 @@ public class ReceiverQueuesView extends BorderPane
     private static final DateTimeFormatter UTC_TIMESTAMP = DateTimeFormatter.ISO_INSTANT;
     private static final int CHANNELIZER_BATCH_SAMPLE_COUNT = 1024;
     private static final int CHANNEL_OUTPUT_SLOTS = 24;
+    private static final String INCIDENT_RELATIVE_DIRECTORY = "diagnostics/receiver-incidents/";
 
     private final TunerManager mTunerManager;
+    private final Supplier<ReceiverIncidentController> mIncidentControllerSupplier;
     private final TextArea mReadout = new TextArea();
-    private final Label mCopyStatus = new Label();
+    private final Label mActionStatus = new Label();
+    private final Label mIncidentStatus = new Label();
+    private final Tooltip mIncidentStatusTooltip = new Tooltip();
     private final Timeline mTimeline;
     private String mCurrentReadout = "";
     private String mCurrentLocalTimestamp = "";
 
     public ReceiverQueuesView(TunerManager tunerManager)
     {
+        this(tunerManager, () -> null);
+    }
+
+    public ReceiverQueuesView(TunerManager tunerManager, ReceiverIncidentController incidentController)
+    {
+        this(tunerManager, () -> incidentController);
+    }
+
+    public ReceiverQueuesView(TunerManager tunerManager,
+                              Supplier<ReceiverIncidentController> incidentControllerSupplier)
+    {
         mTunerManager = tunerManager;
+        mIncidentControllerSupplier = incidentControllerSupplier != null ? incidentControllerSupplier : () -> null;
 
         Button copyButton = new Button("Copy Snapshot");
         copyButton.setOnAction(event -> copySnapshot());
-
-        HBox controls = new HBox(10, copyButton, mCopyStatus);
-        controls.setPadding(new Insets(8));
+        Button captureIncidentButton = new Button("Capture Incident");
+        captureIncidentButton.setOnAction(event -> captureIncident(false));
+        Button captureWithThreadsButton = new Button("Capture Incident + Threads");
+        captureWithThreadsButton.setOnAction(event -> captureIncident(true));
+        Button copyLatestIncidentButton = new Button("Copy Latest Incident");
+        copyLatestIncidentButton.setOnAction(event -> copyLatestIncident());
+        HBox controls = new HBox(10, copyButton, captureIncidentButton, captureWithThreadsButton,
+            copyLatestIncidentButton, mActionStatus);
+        controls.setPadding(new Insets(8, 8, 0, 8));
+        HBox.setHgrow(mActionStatus, Priority.ALWAYS);
+        mIncidentStatus.setMaxWidth(Double.MAX_VALUE);
+        mIncidentStatus.setTooltip(mIncidentStatusTooltip);
+        VBox.setVgrow(mIncidentStatus, Priority.NEVER);
+        VBox header = new VBox(5, controls, mIncidentStatus);
+        header.setPadding(new Insets(0, 0, 8, 0));
+        VBox.setMargin(mIncidentStatus, new Insets(0, 8, 0, 8));
 
         mReadout.setEditable(false);
         mReadout.setWrapText(false);
         mReadout.setStyle("-fx-font-family: monospace;");
 
-        setTop(controls);
+        setTop(header);
         setCenter(mReadout);
         BorderPane.setMargin(mReadout, new Insets(0, 8, 8, 8));
-        HBox.setHgrow(mCopyStatus, Priority.ALWAYS);
 
         mTimeline = new Timeline(new KeyFrame(Duration.seconds(1), event -> refresh()));
         mTimeline.setCycleCount(Timeline.INDEFINITE);
@@ -106,7 +144,97 @@ public class ReceiverQueuesView extends BorderPane
         ClipboardContent content = new ClipboardContent();
         content.putString(mCurrentReadout);
         Clipboard.getSystemClipboard().setContent(content);
-        mCopyStatus.setText("Copied snapshot captured " + mCurrentLocalTimestamp);
+        mActionStatus.setText("Copied queue snapshot captured " + mCurrentLocalTimestamp);
+    }
+
+    private void captureIncident(boolean includeThreads)
+    {
+        ReceiverIncidentController controller = incidentController();
+
+        if(controller == null)
+        {
+            mActionStatus.setText("The receiver flight recorder is unavailable.");
+            return;
+        }
+
+        String reason = includeThreads ? "Manual capture with thread dump from Receiver Queues" :
+            "Manual capture from Receiver Queues";
+        IncidentCaptureResult result = controller.captureIncident(reason, includeThreads);
+        mActionStatus.setText(switch(result)
+        {
+            case STARTED -> includeThreads ?
+                "Incident recording started; a thread dump was requested." : "Incident recording started.";
+            case COALESCED -> includeThreads ?
+                "Added the thread-dump request to the incident already being recorded." :
+                "Added this request to the incident already being recorded.";
+            case REJECTED_BUSY -> "Diagnostics are busy; the request was not started.";
+            case REJECTED_CLOSED -> "The receiver flight recorder is closed.";
+        });
+        updateIncidentStatus();
+    }
+
+    private void copyLatestIncident()
+    {
+        ReceiverIncidentController controller = incidentController();
+
+        if(controller == null)
+        {
+            mActionStatus.setText("The receiver flight recorder is unavailable.");
+            return;
+        }
+
+        String incident = composeLatestIncidentClipboard(controller.getStatus(), controller.getLatestIncidentText(),
+            controller.getLatestIncidentJson());
+
+        if(incident == null || incident.isBlank())
+        {
+            mActionStatus.setText("No completed incident is available to copy yet.");
+            return;
+        }
+
+        ClipboardContent content = new ClipboardContent();
+        content.putString(incident);
+        Clipboard.getSystemClipboard().setContent(content);
+        mActionStatus.setText("Copied the latest completed incident.");
+    }
+
+    static String composeLatestIncidentClipboard(ReceiverIncidentStatus status, String summary, byte[] json)
+    {
+        if(status == null || status.latestIncidentReportState() != IncidentReportState.SAVED ||
+            status.savedIncidentCount() <= 0 || status.latestIncidentAtMs() <= 0 ||
+            status.latestIncidentFileName() == null || status.latestIncidentFileName().isBlank() ||
+            json == null || json.length == 0)
+        {
+            return "";
+        }
+
+        String evidence = new String(json, StandardCharsets.UTF_8);
+
+        if(evidence.isBlank())
+        {
+            return "";
+        }
+
+        StringBuilder report = new StringBuilder(summary != null ? summary.length() + evidence.length() + 256 :
+            evidence.length() + 256);
+        report.append("RECEIVER INCIDENT TROUBLESHOOTING REPORT\n");
+        report.append("Portable saved report: ").append(INCIDENT_RELATIVE_DIRECTORY)
+            .append(fileNameOnly(status.latestIncidentFileName())).append("\n\n");
+
+        if(summary != null && !summary.isBlank())
+        {
+            report.append("SUMMARY\n").append(summary.strip()).append("\n\n");
+        }
+
+        report.append("FULL BOUNDED JSON EVIDENCE\n").append(evidence.strip()).append('\n');
+        return report.toString();
+    }
+
+    private static String fileNameOnly(String value)
+    {
+        String normalized = value.replace('\\', '/');
+        int separator = normalized.lastIndexOf('/');
+        return separator >= 0 ? normalized.substring(separator + 1) : normalized;
     }
 
     private void refresh()
@@ -114,6 +242,7 @@ public class ReceiverQueuesView extends BorderPane
         Instant captured = Instant.now();
         mCurrentLocalTimestamp = LOCAL_TIMESTAMP.format(captured.atZone(ZoneId.systemDefault()));
         mCurrentReadout = render(captured, System.nanoTime());
+        updateIncidentStatus();
         double scrollTop = mReadout.getScrollTop();
         double scrollLeft = mReadout.getScrollLeft();
         int anchor = mReadout.getAnchor();
@@ -133,7 +262,10 @@ public class ReceiverQueuesView extends BorderPane
             mReadout.setScrollLeft(scrollLeft);
         }
 
-        mCopyStatus.setText("Live readout captured " + mCurrentLocalTimestamp);
+        if(mActionStatus.getText().isBlank())
+        {
+            mActionStatus.setText("Live readout captured " + mCurrentLocalTimestamp);
+        }
     }
 
     private String render(Instant captured, long capturedNanos)
@@ -154,6 +286,7 @@ public class ReceiverQueuesView extends BorderPane
         sb.append("Java heap      : ").append(formatBytes(runtime.totalMemory() - runtime.freeMemory())).append(" used / ")
             .append(formatBytes(runtime.totalMemory())).append(" committed / ")
             .append(formatBytes(runtime.maxMemory())).append(" maximum\n");
+        renderIncidentSummary(sb, incidentStatus());
 
         if(profile.isRetainAll())
         {
@@ -186,6 +319,216 @@ public class ReceiverQueuesView extends BorderPane
         }
 
         return sb.toString();
+    }
+
+    private ReceiverIncidentStatus incidentStatus()
+    {
+        ReceiverIncidentController controller = incidentController();
+        return controller != null ? controller.getStatus() : null;
+    }
+
+    private ReceiverIncidentController incidentController()
+    {
+        try
+        {
+            return mIncidentControllerSupplier.get();
+        }
+        catch(RuntimeException e)
+        {
+            return null;
+        }
+    }
+
+    private void updateIncidentStatus()
+    {
+        ReceiverIncidentStatus status = incidentStatus();
+        String banner = formatIncidentBanner(status);
+        mIncidentStatus.setText(banner);
+        mIncidentStatusTooltip.setText(banner);
+        mIncidentStatus.setStyle(incidentBannerStyle(status));
+    }
+
+    static String formatIncidentBanner(ReceiverIncidentStatus status)
+    {
+        if(status == null)
+        {
+            return "Flight recorder unavailable — queue snapshots remain available.";
+        }
+
+        StringBuilder sb = new StringBuilder("Flight recorder: ");
+
+        if(status.state() == IncidentState.RECORDING)
+        {
+            sb.append("RECORDING — ").append(valueOrNone(status.activeReason()));
+
+            if(status.threadDumpState() == ThreadDumpState.SCHEDULED ||
+                status.threadDumpState() == ThreadDumpState.CAPTURING)
+            {
+                sb.append(" — thread dump ")
+                    .append(status.threadDumpState() == ThreadDumpState.SCHEDULED ? "scheduled" : "in progress");
+            }
+        }
+        else if(status.state() == IncidentState.CLOSED)
+        {
+            sb.append("closed");
+        }
+        else
+        {
+            sb.append("ARMED — ").append(status.retainedSamples()).append('/')
+                .append(status.retainedSampleLimit()).append(" recent samples retained");
+        }
+
+        if(status.threadDumpState() == ThreadDumpState.CAPTURED && status.lastThreadDumpAtMs() > 0)
+        {
+            sb.append(" — Thread dump captured ").append(formatLocalTimestamp(status.lastThreadDumpAtMs()))
+                .append(" — ").append(valueOrNone(status.lastThreadDumpReason()));
+        }
+        else if(status.threadDumpState() == ThreadDumpState.FAILED)
+        {
+            sb.append(" — Thread dump failed");
+
+            if(status.lastThreadDumpAtMs() > 0)
+            {
+                sb.append(' ').append(formatLocalTimestamp(status.lastThreadDumpAtMs()));
+            }
+
+            sb.append(" — ").append(valueOrNone(status.lastThreadDumpReason()));
+
+            if(status.lastError() != null && !status.lastError().isBlank())
+            {
+                sb.append(" (").append(valueOrNone(status.lastError())).append(')');
+            }
+        }
+
+        if(status.latestIncidentReportState() == IncidentReportState.CAPTURED_PENDING_SAVE)
+        {
+            sb.append(" — Incident evidence captured in memory; durable save is pending");
+        }
+        else if(status.latestIncidentReportState() == IncidentReportState.SAVED &&
+            status.latestIncidentFileName() != null)
+        {
+            sb.append(" — Incident report saved: ").append(INCIDENT_RELATIVE_DIRECTORY)
+                .append(fileNameOnly(status.latestIncidentFileName()));
+        }
+        else if(status.latestIncidentReportState() == IncidentReportState.SAVE_FAILED)
+        {
+            sb.append(" — Incident report save FAILED");
+
+            if(status.lastError() != null && !status.lastError().isBlank())
+            {
+                sb.append(" — ").append(valueOrNone(status.lastError()));
+            }
+        }
+
+        return sb.toString();
+    }
+
+    static void renderIncidentSummary(StringBuilder sb, ReceiverIncidentStatus status)
+    {
+        if(status == null)
+        {
+            sb.append("Flight recorder : unavailable\n");
+            sb.append("Latest incident : none saved\n");
+            sb.append("Thread dump     : none captured\n");
+            return;
+        }
+
+        sb.append("Flight recorder : ");
+
+        if(status.state() == IncidentState.RECORDING)
+        {
+            sb.append("RECORDING — ").append(valueOrNone(status.activeReason()));
+        }
+        else
+        {
+            sb.append(status.state()).append(" — ").append(status.retainedSamples()).append('/')
+                .append(status.retainedSampleLimit()).append(" recent samples retained");
+        }
+
+        sb.append('\n');
+        sb.append("Latest incident : ");
+
+        if(status.latestIncidentReportState() == IncidentReportState.CAPTURED_PENDING_SAVE)
+        {
+            sb.append("captured in memory; durable save pending");
+        }
+        else if(status.latestIncidentReportState() == IncidentReportState.SAVE_FAILED)
+        {
+            sb.append("SAVE FAILED — ").append(valueOrNone(status.lastError()));
+        }
+        else if(status.latestIncidentReportState() == IncidentReportState.SAVED &&
+            status.latestIncidentAtMs() > 0)
+        {
+            sb.append(formatLocalTimestamp(status.latestIncidentAtMs())).append(" — ")
+                .append(valueOrNone(status.latestIncidentReason())).append(" — ")
+                .append(valueOrNone(status.latestIncidentFileName()));
+        }
+        else
+        {
+            sb.append("none saved");
+        }
+
+        sb.append('\n');
+        sb.append("Thread dump     : ");
+
+        if(status.threadDumpState() == ThreadDumpState.NONE)
+        {
+            sb.append("none captured");
+        }
+        else
+        {
+            sb.append(status.threadDumpState());
+
+            if(status.lastThreadDumpAtMs() > 0)
+            {
+                sb.append(" at ").append(formatLocalTimestamp(status.lastThreadDumpAtMs()));
+            }
+
+            sb.append(" — ").append(valueOrNone(status.lastThreadDumpReason()));
+
+            if(status.lastThreadDumpDurationMs() > 0)
+            {
+                sb.append(" — ").append(status.lastThreadDumpDurationMs()).append(" ms");
+            }
+
+            if(status.threadDumpState() == ThreadDumpState.FAILED && status.lastError() != null &&
+                !status.lastError().isBlank())
+            {
+                sb.append(" — ").append(valueOrNone(status.lastError()));
+            }
+        }
+
+        sb.append('\n');
+    }
+
+    private static String incidentBannerStyle(ReceiverIncidentStatus status)
+    {
+        if(status != null && (status.threadDumpState() == ThreadDumpState.FAILED ||
+            status.latestIncidentReportState() == IncidentReportState.SAVE_FAILED || status.lastError() != null &&
+            !status.lastError().isBlank()))
+        {
+            return "-fx-text-fill: #b00020; -fx-font-weight: bold;";
+        }
+
+        if(status != null && (status.threadDumpState() == ThreadDumpState.CAPTURED ||
+            status.threadDumpState() == ThreadDumpState.SCHEDULED ||
+            status.threadDumpState() == ThreadDumpState.CAPTURING || status.state() == IncidentState.RECORDING ||
+            status.latestIncidentReportState() == IncidentReportState.CAPTURED_PENDING_SAVE))
+        {
+            return "-fx-text-fill: #b26a00; -fx-font-weight: bold;";
+        }
+
+        return "-fx-text-fill: #2e6b37;";
+    }
+
+    private static String formatLocalTimestamp(long epochMilliseconds)
+    {
+        return LOCAL_TIMESTAMP.format(Instant.ofEpochMilli(epochMilliseconds).atZone(ZoneId.systemDefault()));
+    }
+
+    private static String valueOrNone(String value)
+    {
+        return value == null || value.isBlank() ? "none" : value.replace('\r', ' ').replace('\n', ' ');
     }
 
     private void renderTuner(StringBuilder sb, int tunerNumber, DiscoveredTuner discoveredTuner, long capturedNanos)

@@ -8,9 +8,14 @@ package io.github.dsheirer.gui.receiver;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.github.dsheirer.debug.ReceiverIncidentController.IncidentReportState;
+import io.github.dsheirer.debug.ReceiverIncidentController.IncidentState;
+import io.github.dsheirer.debug.ReceiverIncidentController.ReceiverIncidentStatus;
+import io.github.dsheirer.debug.ReceiverIncidentController.ThreadDumpState;
 import io.github.dsheirer.dsp.filter.channelizer.ReceiverQueueMetricsSnapshot.ChannelQueueMetrics;
 import io.github.dsheirer.dsp.filter.channelizer.ReceiverQueueMetricsSnapshot.NativeBufferMetrics;
 import io.github.dsheirer.dsp.filter.channelizer.ReceiverQueueMetricsSnapshot.QueueMetrics;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -35,6 +40,9 @@ class ReceiverQueuesViewUiContractTest
         assertTrue(source.contains(": \"inactive\""));
         assertTrue(source.contains("mReadout.setScrollLeft(scrollLeft)"));
         assertTrue(source.contains("getDiscoveredTunerModel().getDiscoveredTuners()"));
+        assertTrue(source.contains("Capture Incident + Threads"));
+        assertTrue(source.contains("Copy Latest Incident"));
+        assertTrue(source.contains("Thread dump captured"));
     }
 
     @Test
@@ -56,6 +64,101 @@ class ReceiverQueuesViewUiContractTest
         assertEquals(renderRaw(null, now).lines().count(), renderRaw(nativeMetrics(true, now), now).lines().count());
         assertEquals(renderQueue(null, now).lines().count(), renderQueue(queueMetrics(false, now), now).lines().count());
         assertEquals(renderQueue(null, now).lines().count(), renderQueue(queueMetrics(true, now), now).lines().count());
+    }
+
+    @Test
+    void incidentSummaryAlwaysUsesThreeStableLines()
+    {
+        assertEquals(3, renderIncident(null).lines().count());
+        assertEquals(3, renderIncident(status(IncidentState.ARMED, ThreadDumpState.NONE, null)).lines().count());
+        assertEquals(3, renderIncident(status(IncidentState.RECORDING, ThreadDumpState.SCHEDULED, null)).lines().count());
+        assertEquals(3, renderIncident(status(IncidentState.ARMED, ThreadDumpState.CAPTURED, null)).lines().count());
+        assertEquals(3, renderIncident(status(IncidentState.ARMED, ThreadDumpState.FAILED,
+            "Thread capture was unavailable")).lines().count());
+        assertEquals(3, renderIncident(status(IncidentState.ARMED, ThreadDumpState.CAPTURED, null,
+            IncidentReportState.CAPTURED_PENDING_SAVE)).lines().count());
+        assertEquals(3, renderIncident(status(IncidentState.ARMED, ThreadDumpState.CAPTURED,
+            "Unable to save report", IncidentReportState.SAVE_FAILED)).lines().count());
+    }
+
+    @Test
+    void threadDumpBannerGivesFriendlyPersistentTimestampReasonAndFailure()
+    {
+        String captured = ReceiverQueuesView.formatIncidentBanner(
+            status(IncidentState.ARMED, ThreadDumpState.CAPTURED, null));
+        assertTrue(captured.contains("Thread dump captured"));
+        assertTrue(captured.contains("automatic: raw IQ queue remained above 75%"));
+        assertTrue(captured.contains("1970-01-"));
+
+        String failed = ReceiverQueuesView.formatIncidentBanner(
+            status(IncidentState.ARMED, ThreadDumpState.FAILED, "Thread capture was unavailable"));
+        assertTrue(failed.contains("Thread dump failed"));
+        assertTrue(failed.contains("Thread capture was unavailable"));
+
+        String pending = ReceiverQueuesView.formatIncidentBanner(status(IncidentState.ARMED,
+            ThreadDumpState.CAPTURED, null, IncidentReportState.CAPTURED_PENDING_SAVE));
+        assertTrue(pending.contains("captured in memory; durable save is pending"));
+        String saveFailed = ReceiverQueuesView.formatIncidentBanner(status(IncidentState.ARMED,
+            ThreadDumpState.CAPTURED, "Unable to save report", IncidentReportState.SAVE_FAILED));
+        assertTrue(saveFailed.contains("Incident report save FAILED"));
+    }
+
+    @Test
+    void latestIncidentClipboardContainsSavedPathTimelineAndThreadEvidence()
+    {
+        String json = """
+            {"timeline":[{"raw_queue_ms":100}],"thread_dumps":[{"threads":[{"name":"native buffer processor"}]}]}
+            """;
+        ReceiverIncidentStatus saved = status(IncidentState.ARMED, ThreadDumpState.CAPTURED, null);
+        String copied = ReceiverQueuesView.composeLatestIncidentClipboard(saved,
+            "Triggered by sustained raw queue pressure",
+            json.getBytes(StandardCharsets.UTF_8));
+
+        assertTrue(copied.contains("RECEIVER INCIDENT TROUBLESHOOTING REPORT"));
+        assertTrue(copied.contains("diagnostics/receiver-incidents/receiver-incident.json"));
+        assertTrue(copied.contains("Triggered by sustained raw queue pressure"));
+        assertTrue(copied.contains("raw_queue_ms"));
+        assertTrue(copied.contains("native buffer processor"));
+        assertEquals("", ReceiverQueuesView.composeLatestIncidentClipboard(saved, "summary", new byte[0]));
+        assertEquals("", ReceiverQueuesView.composeLatestIncidentClipboard(saved, "summary",
+            "   \n".getBytes(StandardCharsets.UTF_8)));
+        assertEquals("", ReceiverQueuesView.composeLatestIncidentClipboard(statusWithoutSavedIncident(), "summary",
+            "{\"incident\":null}".getBytes(StandardCharsets.UTF_8)));
+        assertEquals("", ReceiverQueuesView.composeLatestIncidentClipboard(status(IncidentState.ARMED,
+            ThreadDumpState.CAPTURED, null, IncidentReportState.CAPTURED_PENDING_SAVE), "summary",
+            json.getBytes(StandardCharsets.UTF_8)));
+    }
+
+    private static String renderIncident(ReceiverIncidentStatus status)
+    {
+        StringBuilder sb = new StringBuilder();
+        ReceiverQueuesView.renderIncidentSummary(sb, status);
+        return sb.toString();
+    }
+
+    private static ReceiverIncidentStatus status(IncidentState incidentState, ThreadDumpState threadDumpState,
+                                                  String error)
+    {
+        return status(incidentState, threadDumpState, error, IncidentReportState.SAVED);
+    }
+
+    private static ReceiverIncidentStatus status(IncidentState incidentState, ThreadDumpState threadDumpState,
+                                                  String error, IncidentReportState reportState)
+    {
+        boolean saved = reportState == IncidentReportState.SAVED;
+        return new ReceiverIncidentStatus(incidentState, "summary", 123, 900,
+            incidentState == IncidentState.RECORDING ? "manual capture" : null,
+            incidentState == IncidentState.RECORDING ? 500L : 0L, 120_500L, 1, threadDumpState,
+            threadDumpState == ThreadDumpState.NONE ? 0L : 172_800_000L,
+            "automatic: raw IQ queue remained above 75%", 37L, saved ? 1 : 0, saved ? 2_000L : 0L,
+            saved ? "automatic receiver queue incident" : null, saved ? "receiver-incident.json" : null, error,
+            reportState);
+    }
+
+    private static ReceiverIncidentStatus statusWithoutSavedIncident()
+    {
+        return new ReceiverIncidentStatus(IncidentState.ARMED, "armed", 123, 900, null, 0L, 0L, 0,
+            ThreadDumpState.NONE, 0L, null, 0L, 0, 0L, null, null, null, IncidentReportState.NONE);
     }
 
     private static String render(List<ChannelQueueMetrics> channels, long now)

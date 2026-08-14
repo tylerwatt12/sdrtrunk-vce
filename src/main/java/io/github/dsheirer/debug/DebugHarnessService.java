@@ -63,6 +63,12 @@ public final class DebugHarnessService implements AutoCloseable
     private static final int HTTP_WORKERS = 2;
     private static final int HTTP_QUEUE_CAPACITY = 8;
     static final long SHUTDOWN_TIMEOUT_MILLISECONDS = 2_000L;
+    private static final byte[] EMPTY_INCIDENT_INDEX =
+        "{\"incidents\":[]}".getBytes(StandardCharsets.UTF_8);
+    private static final byte[] EMPTY_LATEST_INCIDENT =
+        "{\"incident\":null}".getBytes(StandardCharsets.UTF_8);
+    private static final byte[] INCIDENT_CACHE_UNAVAILABLE =
+        "{\"error\":\"Incident cache is unavailable\"}".getBytes(StandardCharsets.UTF_8);
 
     private final DebugHarnessConfiguration mConfiguration;
     private final DebugHarnessTelemetry mTelemetry;
@@ -72,17 +78,36 @@ public final class DebugHarnessService implements AutoCloseable
     private final ScheduledExecutorService mSampler;
     private final LongSupplier mNanoClock;
     private final Supplier<byte[]> mThreadSnapshotSupplier;
+    private final Supplier<byte[]> mIncidentIndexSupplier;
+    private final Supplier<byte[]> mLatestIncidentSupplier;
     private final Object mThreadSnapshotLock = new Object();
     private volatile byte[] mCachedThreadSnapshot;
     private volatile long mThreadSnapshotCreatedNanos;
+    private volatile boolean mSamplerStarted;
     private volatile HttpServer mServer;
 
     public DebugHarnessService(DebugHarnessConfiguration configuration, TunerManager tunerManager,
                                ControlChannelQualityRegistry qualityRegistry,
                                ConfigurationManager configurationManager)
     {
+        this(configuration, tunerManager, qualityRegistry, configurationManager, null);
+    }
+
+    public DebugHarnessService(DebugHarnessConfiguration configuration, TunerManager tunerManager,
+                               ControlChannelQualityRegistry qualityRegistry,
+                               ConfigurationManager configurationManager,
+                               ReceiverIncidentController incidentController)
+    {
         this(configuration, new DebugHarnessTelemetry(tunerManager, qualityRegistry),
-            new DebugHarnessControlService(configurationManager), configuration.port());
+            new DebugHarnessControlService(configurationManager), configuration.port(), System::nanoTime,
+            DebugHarnessService::collectThreadSnapshot,
+            incidentController != null ? incidentController::getIncidentIndexJson : () -> EMPTY_INCIDENT_INDEX,
+            incidentController != null ? incidentController::getLatestIncidentJson : () -> EMPTY_LATEST_INCIDENT);
+
+        if(incidentController != null)
+        {
+            mTelemetry.setIncidentController(incidentController);
+        }
     }
 
     /** Test seam permitting an ephemeral port and a fake control boundary. */
@@ -90,7 +115,7 @@ public final class DebugHarnessService implements AutoCloseable
                         DebugHarnessControlAdapter controls, int requestedPort)
     {
         this(configuration, telemetry, controls, requestedPort, System::nanoTime,
-            DebugHarnessService::collectThreadSnapshot);
+            DebugHarnessService::collectThreadSnapshot, () -> EMPTY_INCIDENT_INDEX, () -> EMPTY_LATEST_INCIDENT);
     }
 
     /** Test seam for verifying that clients cannot amplify JVM-wide thread-dump work. */
@@ -98,21 +123,43 @@ public final class DebugHarnessService implements AutoCloseable
                         DebugHarnessControlAdapter controls, int requestedPort, LongSupplier nanoClock,
                         Supplier<byte[]> threadSnapshotSupplier)
     {
+        this(configuration, telemetry, controls, requestedPort, nanoClock, threadSnapshotSupplier,
+            () -> EMPTY_INCIDENT_INDEX, () -> EMPTY_LATEST_INCIDENT);
+    }
+
+    /** Test seam for cached incident reports; suppliers must only return already-produced bytes. */
+    DebugHarnessService(DebugHarnessConfiguration configuration, DebugHarnessTelemetry telemetry,
+                        DebugHarnessControlAdapter controls, int requestedPort, LongSupplier nanoClock,
+                        Supplier<byte[]> threadSnapshotSupplier, Supplier<byte[]> incidentIndexSupplier,
+                        Supplier<byte[]> latestIncidentSupplier)
+    {
         mConfiguration = configuration;
         mTelemetry = telemetry;
         mControls = controls;
         mRequestedPort = requestedPort;
         mNanoClock = nanoClock;
         mThreadSnapshotSupplier = threadSnapshotSupplier;
+        mIncidentIndexSupplier = incidentIndexSupplier;
+        mLatestIncidentSupplier = latestIncidentSupplier;
         mHttpExecutor = new ThreadPoolExecutor(HTTP_WORKERS, HTTP_WORKERS, 0L, TimeUnit.MILLISECONDS,
             new ArrayBlockingQueue<>(HTTP_QUEUE_CAPACITY), lowPriorityThreadFactory("receiver debug http"),
             new ThreadPoolExecutor.AbortPolicy());
         mSampler = Executors.newSingleThreadScheduledExecutor(lowPriorityThreadFactory("receiver debug sampler"));
     }
 
-    /** Starts the service when enabled.  A bind failure is reported to the caller and cannot stop the receiver. */
+    /**
+     * Starts the in-process one-Hz sampler for the flight recorder, then binds the loopback service only when the
+     * harness is enabled.  A bind failure is reported to the caller and cannot stop the receiver or sampler.
+     */
     public synchronized void start() throws IOException
     {
+        if(!mSamplerStarted)
+        {
+            mSampler.scheduleWithFixedDelay(mTelemetry::sample, 0L,
+                DebugHarnessTelemetry.EXPECTED_SAMPLE_INTERVAL_MILLISECONDS, TimeUnit.MILLISECONDS);
+            mSamplerStarted = true;
+        }
+
         if(!mConfiguration.enabled() || mServer != null)
         {
             return;
@@ -123,8 +170,6 @@ public final class DebugHarnessService implements AutoCloseable
         server.createContext(ROOT + "/", this::handle);
         server.setExecutor(mHttpExecutor);
         mServer = server;
-        mSampler.scheduleWithFixedDelay(mTelemetry::sample, 0L,
-            DebugHarnessTelemetry.EXPECTED_SAMPLE_INTERVAL_MILLISECONDS, TimeUnit.MILLISECONDS);
         server.start();
         mLog.info("Receiver debug harness listening on http://127.0.0.1:{}{} (controls: {})",
             getPort(), ROOT, mConfiguration.controlsAllowed() ? "enabled" : "disabled");
@@ -182,6 +227,9 @@ public final class DebugHarnessService implements AutoCloseable
             {
                 case ROOT + "/status" -> handleStatus(exchange);
                 case ROOT + "/snapshot" -> requireMethod(exchange, "GET", mTelemetry.getCachedJson());
+                case ROOT + "/incidents" -> requireMethod(exchange, "GET", cachedIncidentBytes(mIncidentIndexSupplier));
+                case ROOT + "/incidents/latest" ->
+                    requireMethod(exchange, "GET", cachedIncidentBytes(mLatestIncidentSupplier));
                 case ROOT + "/channels" -> handleChannels(exchange);
                 case ROOT + "/threads" -> handleThreads(exchange);
                 case ROOT + "/session" -> handleSession(exchange);
@@ -232,7 +280,7 @@ public final class DebugHarnessService implements AutoCloseable
         status.put("port", getPort());
         status.put("controls_allowed", mConfiguration.controlsAllowed());
         status.put("telemetry_interval_ms", DebugHarnessTelemetry.EXPECTED_SAMPLE_INTERVAL_MILLISECONDS);
-        status.put("endpoints", List.of("status", "snapshot", "channels", "threads", "session",
+        status.put("endpoints", List.of("status", "snapshot", "incidents", "incidents/latest", "channels", "threads", "session",
             "channels/start", "channels/stop"));
         sendJson(exchange, 200, json(status));
     }
@@ -447,6 +495,19 @@ public final class DebugHarnessService implements AutoCloseable
         return json(Map.of("error", "Thread snapshot exceeded the bounded response size", "truncated", true,
             "captured_bytes", captured != null ? captured.length : 0,
             "response_byte_limit", MAXIMUM_THREAD_SNAPSHOT_BYTES));
+    }
+
+    private static byte[] cachedIncidentBytes(Supplier<byte[]> supplier)
+    {
+        try
+        {
+            byte[] cached = supplier != null ? supplier.get() : null;
+            return cached != null ? cached : INCIDENT_CACHE_UNAVAILABLE;
+        }
+        catch(RuntimeException e)
+        {
+            return INCIDENT_CACHE_UNAVAILABLE;
+        }
     }
 
     private static byte[] collectThreadSnapshot()

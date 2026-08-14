@@ -36,6 +36,7 @@ import io.github.dsheirer.controller.channel.ChannelException;
 import io.github.dsheirer.controller.channel.ChannelSelectionManager;
 import io.github.dsheirer.debug.DebugHarnessConfiguration;
 import io.github.dsheirer.debug.DebugHarnessService;
+import io.github.dsheirer.debug.ReceiverIncidentController;
 import io.github.dsheirer.database.SdrTrunkDatabaseBootstrap;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.dsp.filter.channelizer.ReceiverQueueProfile;
@@ -161,6 +162,7 @@ public class SDRTrunk implements Listener<TunerEvent>
     private AudioStreamingManager mAudioStreamingManager;
     private ControlChannelQualityRegistry mControlChannelQualityRegistry;
     private DebugHarnessService mDebugHarnessService;
+    private ReceiverIncidentController mReceiverIncidentController;
     private BroadcastStatusPanel mBroadcastStatusPanel;
     private ControllerPanel mControllerPanel;
     private IconModel mIconModel;
@@ -240,9 +242,19 @@ public class SDRTrunk implements Listener<TunerEvent>
         EventLogManager eventLogManager = new EventLogManager(aliasModel, mUserPreferences);
         mConfigurationManager = new ConfigurationManager(mUserPreferences, mTunerManager, aliasModel, eventLogManager, mIconModel);
 
+        try
+        {
+            mReceiverIncidentController = ReceiverIncidentController.createDefault();
+        }
+        catch(RuntimeException e)
+        {
+            mLog.error("Receiver incident flight recorder could not be armed; receiver operation will continue", e);
+        }
+
         if(!GraphicsEnvironment.isHeadless())
         {
-            mJavaFxWindowManager = new JavaFxWindowManager(mUserPreferences, mTunerManager, mConfigurationManager);
+            mJavaFxWindowManager = new JavaFxWindowManager(mUserPreferences, mTunerManager, mConfigurationManager,
+                () -> mReceiverIncidentController);
         }
 
         CalibrationManager calibrationManager = CalibrationManager.getInstance(mUserPreferences);
@@ -416,29 +428,26 @@ public class SDRTrunk implements Listener<TunerEvent>
         }
     }
 
-    /** Starts the restart-scoped loopback debug harness when explicitly enabled by JVM properties. */
+    /**
+     * Starts the one-Hz receiver flight-recorder sampler.  The optional HTTP harness binds only when explicitly
+     * enabled by JVM properties; incident recording itself remains armed for normal troubleshooting builds.
+     */
     private void startDebugHarness()
     {
         try
         {
             DebugHarnessConfiguration configuration = DebugHarnessConfiguration.fromSystemProperties();
 
-            if(configuration.enabled())
-            {
-                mDebugHarnessService = new DebugHarnessService(configuration, mTunerManager,
-                    mControlChannelQualityRegistry, mConfigurationManager);
-                mDebugHarnessService.start();
-            }
+            mDebugHarnessService = new DebugHarnessService(configuration, mTunerManager,
+                mControlChannelQualityRegistry, mConfigurationManager, mReceiverIncidentController);
+            mDebugHarnessService.start();
         }
         catch(Exception e)
         {
             mLog.error("Receiver debug harness could not start; receiver operation will continue", e);
 
-            if(mDebugHarnessService != null)
-            {
-                mDebugHarnessService.close();
-                mDebugHarnessService = null;
-            }
+            //A bind failure must not disarm the already-started in-process flight recorder sampler.  Keep the service
+            //for orderly shutdown; the loopback listener remains absent.
         }
     }
 
@@ -885,6 +894,11 @@ public class SDRTrunk implements Listener<TunerEvent>
         {
             mDebugHarnessService.close();
             mDebugHarnessService = null;
+        }
+        if(mReceiverIncidentController != null)
+        {
+            mReceiverIncidentController.close();
+            mReceiverIncidentController = null;
         }
         mControllerPanel.dispose();
         mJavaFxWindowManager.shutdown();

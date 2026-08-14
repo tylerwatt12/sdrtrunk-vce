@@ -19,6 +19,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -34,12 +35,17 @@ import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class DebugHarnessServiceTest
 {
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private final HttpClient mClient = HttpClient.newHttpClient();
     private DebugHarnessService mService;
+    private ReceiverIncidentController mIncidentController;
+
+    @TempDir
+    Path mTemporaryDirectory;
 
     @AfterEach
     void cleanup()
@@ -47,6 +53,11 @@ class DebugHarnessServiceTest
         if(mService != null)
         {
             mService.close();
+        }
+
+        if(mIncidentController != null)
+        {
+            mIncidentController.close();
         }
     }
 
@@ -77,6 +88,8 @@ class DebugHarnessServiceTest
         assertFalse(statusJson.path("controls_allowed").asBoolean());
 
         assertEquals(200, get("/debug/v1/snapshot").statusCode());
+        assertEquals("{\"incidents\":[]}", get("/debug/v1/incidents").body());
+        assertEquals("{\"incident\":null}", get("/debug/v1/incidents/latest").body());
         assertEquals(200, get("/debug/v1/channels").statusCode());
         assertEquals(403, get("/debug/v1/threads").statusCode());
         HttpRequest threads = HttpRequest.newBuilder(uri("/debug/v1/threads")).GET()
@@ -90,6 +103,76 @@ class DebugHarnessServiceTest
             .POST(HttpRequest.BodyPublishers.ofString("{}"))
             .header("Content-Type", "application/json").build();
         assertEquals(405, mClient.send(wrongMethod, HttpResponse.BodyHandlers.ofString()).statusCode());
+    }
+
+    @Test
+    void disabledHarnessStillRunsTheRecorderSamplerWithoutBinding() throws Exception
+    {
+        CountDownLatch sampled = new CountDownLatch(1);
+        AtomicInteger collections = new AtomicInteger();
+        DebugHarnessTelemetry telemetry = new DebugHarnessTelemetry(() -> {
+            collections.incrementAndGet();
+            sampled.countDown();
+            return List.of();
+        }, null, System::currentTimeMillis, System::nanoTime, null, () -> null);
+        DebugHarnessConfiguration configuration = new DebugHarnessConfiguration(false, false, 8091);
+        mService = new DebugHarnessService(configuration, telemetry, new FakeControls(), 0);
+        mService.start();
+
+        assertTrue(sampled.await(2, TimeUnit.SECONDS));
+        assertTrue(collections.get() >= 1);
+        assertFalse(mService.isRunning());
+        assertEquals(-1, mService.getPort());
+    }
+
+    @Test
+    void incidentEndpointsOnlyCopyAlreadyCachedReports() throws Exception
+    {
+        AtomicInteger indexReads = new AtomicInteger();
+        AtomicInteger latestReads = new AtomicInteger();
+        byte[] index = "{\"incidents\":[{\"id\":\"saved\"}]}".getBytes(StandardCharsets.UTF_8);
+        byte[] latest = "{\"incident\":{\"id\":\"saved\"}}".getBytes(StandardCharsets.UTF_8);
+        DebugHarnessConfiguration configuration = new DebugHarnessConfiguration(true, false, 8091);
+        DebugHarnessTelemetry telemetry = new DebugHarnessTelemetry(List::of, null, System::currentTimeMillis,
+            System::nanoTime, null, () -> null);
+        mService = new DebugHarnessService(configuration, telemetry, new FakeControls(), 0, System::nanoTime,
+            () -> "{}".getBytes(StandardCharsets.UTF_8), () -> {
+                indexReads.incrementAndGet();
+                return index;
+            }, () -> {
+                latestReads.incrementAndGet();
+                return latest;
+            });
+        mService.start();
+
+        assertEquals(new String(index, StandardCharsets.UTF_8), get("/debug/v1/incidents").body());
+        assertEquals(new String(index, StandardCharsets.UTF_8), get("/debug/v1/incidents").body());
+        assertEquals(new String(latest, StandardCharsets.UTF_8), get("/debug/v1/incidents/latest").body());
+        assertEquals(new String(latest, StandardCharsets.UTF_8), get("/debug/v1/incidents/latest").body());
+        assertEquals(2, indexReads.get());
+        assertEquals(2, latestReads.get());
+
+        HttpRequest wrongMethod = HttpRequest.newBuilder(uri("/debug/v1/incidents/latest"))
+            .POST(HttpRequest.BodyPublishers.noBody()).build();
+        assertEquals(405, mClient.send(wrongMethod, HttpResponse.BodyHandlers.ofString()).statusCode());
+    }
+
+    @Test
+    void realControllerLatestEndpointIsValidBeforeFirstIncident() throws Exception
+    {
+        mIncidentController = new ReceiverIncidentController(mTemporaryDirectory, System::currentTimeMillis,
+            System::nanoTime, () -> "{}".getBytes(StandardCharsets.UTF_8));
+        DebugHarnessConfiguration configuration = new DebugHarnessConfiguration(true, false, 8091);
+        DebugHarnessTelemetry telemetry = new DebugHarnessTelemetry(List::of, null, System::currentTimeMillis,
+            System::nanoTime, null, () -> null);
+        mService = new DebugHarnessService(configuration, telemetry, new FakeControls(), 0, System::nanoTime,
+            () -> "{}".getBytes(StandardCharsets.UTF_8), mIncidentController::getIncidentIndexJson,
+            mIncidentController::getLatestIncidentJson);
+        mService.start();
+
+        HttpResponse<String> latest = get("/debug/v1/incidents/latest");
+        assertEquals(200, latest.statusCode());
+        assertTrue(OBJECT_MAPPER.readTree(latest.body()).path("incident").isNull());
     }
 
     @Test
@@ -212,6 +295,8 @@ class DebugHarnessServiceTest
             for(int x = 0; x < 12; x++)
             {
                 assertEquals(200, get("/debug/v1/snapshot").statusCode());
+                assertEquals(200, get("/debug/v1/incidents").statusCode());
+                assertEquals(200, get("/debug/v1/incidents/latest").statusCode());
             }
 
             assertEquals(1, telemetryCollections.get());

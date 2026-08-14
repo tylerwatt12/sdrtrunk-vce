@@ -1,0 +1,93 @@
+name: Receiver Diagnostics Prerelease
+
+on:
+  push:
+    tags:
+      - 'v0.6.2-alpha-9-receiver-diagnostics-dev*'
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java 25 with JavaFX
+        uses: actions/setup-java@v4
+        with:
+          java-version: '25'
+          distribution: 'liberica'
+          java-package: 'jdk+fx'
+
+      - name: Resolve diagnostic version
+        id: version
+        shell: bash
+        run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Gradle caching
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Run tests
+        run: >-
+          ./gradlew
+          --no-configuration-cache
+          test
+          -PprojectVersion=${{ steps.version.outputs.value }}
+          -PupdateTrack=main
+          -PupdateBuild=4
+
+      - name: Build Linux and macOS diagnostic packages
+        run: >-
+          ./gradlew
+          --no-configuration-cache
+          runtimeZipOthers
+          -PprojectVersion=${{ steps.version.outputs.value }}
+          -PupdateTrack=main
+          -PupdateBuild=4
+
+      - name: Build Windows diagnostic packages
+        run: >-
+          ./gradlew
+          --no-configuration-cache
+          runtimeZipWindows
+          -PprojectVersion=${{ steps.version.outputs.value }}
+          -PupdateTrack=main
+          -PupdateBuild=4
+
+      - name: Create build information and checksums
+        shell: bash
+        run: |
+          {
+            echo "purpose: receiver troubleshooting only"
+            echo "version: ${{ steps.version.outputs.value }}"
+            echo "ref: $GITHUB_REF"
+            echo "commit: $GITHUB_SHA"
+            echo "built: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+            echo "update-track: main"
+            echo "update-build: 4"
+          } > build/image/build_info.txt
+          (cd build/image && sha256sum ./*.zip > SHA256SUMS.txt)
+
+      - name: Publish troubleshooting-only prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Receiver Diagnostics — Alpha 9 troubleshooting build
+          draft: true
+          prerelease: true
+          make_latest: false
+          generate_release_notes: false
+          body: |
+            This is a troubleshooting-only build for users experiencing receiver stalls, IQ loss, control-channel loss, or unexplained audio gaps.
+
+            It is not a normal product update and is not published through the in-application update manifest. Normal installations will not be prompted to install it.
+
+            The build adds bounded receiver queue history, automatic incident capture, selective bounded thread dumps for sustained failures, and user-visible diagnostic status. It does not record raw IQ, decoded messages, audio, aliases, credentials, site identities, or full configuration. Tuner identities are replaced with per-run opaque IDs. Reports do include the live center frequency/sample rate, aggregate queue/decode/process metrics, and bounded JVM thread names and stack frames needed for troubleshooting.
+
+            Thread dumps briefly pause JVM threads while their stacks are collected, so they are taken only for sustained incidents or when requested manually. Use a copied portable data directory when possible. Open **View → Receiver Queues** to see the recorder state, request a manual capture, or copy the latest incident before restarting the application.
+          files: |
+            build/image/*.zip
+            build/image/build_info.txt
+            build/image/SHA256SUMS.txt

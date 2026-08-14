@@ -79,6 +79,7 @@ final class DebugHarnessTelemetry
     private final AtomicReference<byte[]> mCachedJson;
     private final AtomicLong mSequence = new AtomicLong();
     private final String mBootId = UUID.randomUUID().toString();
+    private volatile ReceiverIncidentController mIncidentController;
 
     private long mLastSuccessMilliseconds;
     private long mLastFailureMilliseconds;
@@ -119,6 +120,15 @@ final class DebugHarnessTelemetry
     }
 
     /**
+     * Connects the bounded incident recorder to this existing one-Hz sampler.  Replacing or clearing the controller
+     * does not add or remove any receiver listener.
+     */
+    void setIncidentController(ReceiverIncidentController incidentController)
+    {
+        mIncidentController = incidentController;
+    }
+
+    /**
      * Collects and serializes one snapshot. This is called by exactly one low-priority sampler, never by an HTTP
      * request thread. A failed collection publishes a small stale-state payload instead of silently freezing the last
      * successful timestamp.
@@ -146,6 +156,15 @@ final class DebugHarnessTelemetry
             root.put("projection_duration_us", elapsedMicroseconds(startedNanos, mNanoClock.getAsLong()));
             byte[] json = OBJECT_MAPPER.writeValueAsBytes(root);
             mCachedJson.set(json);
+            ReceiverIncidentController incidentController = mIncidentController;
+
+            if(incidentController != null)
+            {
+                //The recorder only projects this already-serialized bounded snapshot.  It owns a separate bounded
+                //worker for thread dumps and files, and contains its own failures so telemetry cannot be disrupted.
+                incidentController.acceptTelemetry(json);
+            }
+
             mLastSuccessMilliseconds = now;
             mConsecutiveFailures = 0;
         }

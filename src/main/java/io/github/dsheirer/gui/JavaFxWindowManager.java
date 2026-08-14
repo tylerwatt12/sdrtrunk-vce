@@ -46,6 +46,8 @@ import io.github.dsheirer.monitor.StatusBox;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultService;
 import io.github.dsheirer.audio.codec.mbe.decrypt.VoiceDecryptionModuleManager;
 import io.github.dsheirer.configuration.ConfigurationManager;
+import io.github.dsheirer.debug.ReceiverIncidentController;
+import io.github.dsheirer.debug.ReceiverIncidentController.ReceiverIncidentStatus;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.stats.StatsWebNavigationState;
@@ -89,6 +91,7 @@ public class JavaFxWindowManager extends Application
     private ConfigurationEditor mConfigurationEditor;
     private ConfigurationManager mConfigurationManager;
     private TunerManager mTunerManager;
+    private Supplier<ReceiverIncidentController> mIncidentControllerSupplier = () -> null;
     private UserPreferences mUserPreferences;
     private EncryptionKeyPreferenceEditor mEncryptionKeyPreferenceEditor;
     private UserPreferencesEditor mUserPreferencesEditor;
@@ -109,9 +112,17 @@ public class JavaFxWindowManager extends Application
      */
     public JavaFxWindowManager(UserPreferences userPreferences, TunerManager tunerManager, ConfigurationManager configurationManager)
     {
+        this(userPreferences, tunerManager, configurationManager, () -> null);
+    }
+
+    public JavaFxWindowManager(UserPreferences userPreferences, TunerManager tunerManager,
+                               ConfigurationManager configurationManager,
+                               Supplier<ReceiverIncidentController> incidentControllerSupplier)
+    {
         mUserPreferences = userPreferences;
         mTunerManager = tunerManager;
         mConfigurationManager = configurationManager;
+        mIncidentControllerSupplier = incidentControllerSupplier != null ? incidentControllerSupplier : () -> null;
 
         setup();
     }
@@ -149,7 +160,8 @@ public class JavaFxWindowManager extends Application
             //JFXPanel has to be populated on the FX event thread
             Platform.runLater(() -> {
                 Scene scene = new Scene(new StatusBox(resourceMonitor, vaultService, moduleManager,
-                    navigationStateSupplier, updateResultSupplier, updateReleasePageConsumer));
+                    navigationStateSupplier, updateResultSupplier, updateReleasePageConsumer,
+                    this::getIncidentStatus, this::showReceiverQueues));
                 ThemeManager.getInstance().register(scene);
                 mStatusPanel.setScene(scene);
             });
@@ -276,10 +288,23 @@ public class JavaFxWindowManager extends Application
     {
         if(mReceiverQueuesView == null)
         {
-            mReceiverQueuesView = new ReceiverQueuesView(mTunerManager);
+            mReceiverQueuesView = new ReceiverQueuesView(mTunerManager, mIncidentControllerSupplier);
         }
 
         return mReceiverQueuesView;
+    }
+
+    private ReceiverIncidentStatus getIncidentStatus()
+    {
+        try
+        {
+            ReceiverIncidentController controller = mIncidentControllerSupplier.get();
+            return controller != null ? controller.getStatus() : null;
+        }
+        catch(RuntimeException e)
+        {
+            return null;
+        }
     }
 
     public Stage getIconManagerStage()
