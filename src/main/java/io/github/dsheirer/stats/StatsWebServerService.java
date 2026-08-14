@@ -1293,6 +1293,10 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         String targetId = request.requiredText("target_id");
         Long viewportStart = request.optionalLong("viewport_start_hz");
         Long viewportEnd = request.optionalLong("viewport_end_hz");
+        Integer fftSize = request.optionalInt("experiment_fft_size");
+        Integer framesPerSecond = request.optionalInt("experiment_fps");
+        Integer maximumDecimation = request.optionalInt("experiment_max_decimation");
+        Long iqQueueMilliseconds = request.optionalLong("experiment_iq_queue_ms");
 
         if((viewportStart == null) != (viewportEnd == null))
         {
@@ -1313,8 +1317,24 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             }
         }
 
+        TunerDiagnosticService.ExperimentSettings defaults = TunerDiagnosticService.ExperimentSettings.defaults();
+        TunerDiagnosticService.ExperimentSettings settings;
+
+        try
+        {
+            settings = new TunerDiagnosticService.ExperimentSettings(
+                fftSize != null ? fftSize : defaults.fftSize(),
+                framesPerSecond != null ? framesPerSecond : defaults.framesPerSecond(),
+                maximumDecimation != null ? maximumDecimation : defaults.maximumDecimation(),
+                iqQueueMilliseconds != null ? iqQueueMilliseconds : defaults.iqQueueDurationMilliseconds());
+        }
+        catch(IllegalArgumentException exception)
+        {
+            throw new StatsApiException(400, exception.getMessage());
+        }
+
         request.requireFullyConsumed();
-        return new TunerDiagnosticRequest(targetId, viewport);
+        return new TunerDiagnosticRequest(targetId, viewport, settings);
     }
 
     private static void writeMultiplexJson(MultiplexOutput output, int topic, String event, Object data)
@@ -2505,7 +2525,6 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         private TunerDiagnosticService.Session mTunerDiagnostics;
         private long mDecodeMessageGeneration = -1;
         private long mChannelStateRevision = -1;
-        private long mTunerStateRevision = -1;
         private long mLastMessagePoll;
         private long mLastTunerStatePoll;
         private long mChannelActivityDrops;
@@ -2629,14 +2648,9 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
                 {
                     mLastTunerStatePoll = now;
                     TunerDiagnosticService.State state = mTunerDiagnostics.state();
-
-                    if(state.revision() != mTunerStateRevision)
-                    {
-                        writeMultiplexDiagnostic(output, TOPIC_TUNER_DIAGNOSTICS,
-                            diagnosticState(state.generation(), state.revision(), state));
-                        mTunerStateRevision = state.revision();
-                        wrote = true;
-                    }
+                    writeMultiplexDiagnostic(output, TOPIC_TUNER_DIAGNOSTICS,
+                        diagnosticState(state.generation(), state.revision(), state));
+                    wrote = true;
                 }
 
                 DiagnosticStreamFrame frame = mTunerDiagnostics.poll(Duration.ZERO);
@@ -2783,10 +2797,10 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
                         TunerDiagnosticRequest request = tunerDiagnosticRequest(
                             multiplexSubscriptionUri(topic, wanted));
                         mTunerDiagnostics.updateViewport(request.viewport());
+                        mTunerDiagnostics.updateExperiment(request.settings());
                         TunerDiagnosticService.State state = mTunerDiagnostics.state();
                         writeMultiplexDiagnostic(output, TOPIC_TUNER_DIAGNOSTICS,
                             diagnosticState(state.generation(), state.revision(), state));
-                        mTunerStateRevision = state.revision();
                         mLastTunerStatePoll = System.nanoTime();
                         mActiveParameters.put(topic, wanted);
                         mTopicRetryPolicy.succeeded(topic);
@@ -2953,8 +2967,8 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
 
             mTunerDiagnosticPermit = true;
             TunerDiagnosticRequest request = tunerDiagnosticRequest(uri);
-            TunerDiagnosticService.OpenResult result =
-                mTunerDiagnosticService.tryOpen(request.targetId(), request.viewport());
+            TunerDiagnosticService.OpenResult result = mTunerDiagnosticService.tryOpen(request.targetId(),
+                request.viewport(), request.settings());
 
             if(result.status() != TunerDiagnosticService.OpenStatus.OPEN)
             {
@@ -2965,7 +2979,6 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             TunerDiagnosticService.State state = mTunerDiagnostics.state();
             writeMultiplexDiagnostic(output, TOPIC_TUNER_DIAGNOSTICS,
                 diagnosticState(state.generation(), state.revision(), state));
-            mTunerStateRevision = state.revision();
             mLastTunerStatePoll = System.nanoTime();
         }
 
@@ -3149,7 +3162,6 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
                 mDiagnosticClients.release();
             }
 
-            mTunerStateRevision = -1;
         }
 
         @Override
@@ -3290,7 +3302,8 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
     {
     }
 
-    private record TunerDiagnosticRequest(String targetId, TunerDiagnosticService.Viewport viewport)
+    private record TunerDiagnosticRequest(String targetId, TunerDiagnosticService.Viewport viewport,
+                                          TunerDiagnosticService.ExperimentSettings settings)
     {
     }
 

@@ -66,6 +66,16 @@ public class PolyphaseChannelSourceManager extends ChannelSourceManager
         return sb.toString();
     }
 
+    public void requestNativeBufferQueueDuration(long durationMilliseconds)
+    {
+        mPolyphaseChannelManager.requestNativeBufferQueueDuration(durationMilliseconds);
+    }
+
+    public PolyphaseChannelManager.NativeBufferQueueStatus getNativeBufferQueueStatus()
+    {
+        return mPolyphaseChannelManager.getNativeBufferQueueStatus();
+    }
+
     @Override
     public void stopAllChannels()
     {

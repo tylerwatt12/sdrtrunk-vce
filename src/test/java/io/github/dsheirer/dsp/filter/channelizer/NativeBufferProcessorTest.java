@@ -227,6 +227,34 @@ public class NativeBufferProcessorTest
     }
 
     @Test
+    public void queueDurationRequestIsNonBlockingAndAppliedByTheReceiver() throws Exception
+    {
+        CountDownLatch processed = new CountDownLatch(1);
+        NativeBufferProcessor processor = new NativeBufferProcessor("queue duration", 1_000_000,
+            MAXIMUM_QUEUE_DURATION_MILLISECONDS, buffer -> processed.countDown());
+
+        try
+        {
+            processor.start();
+            assertEquals(100, processor.status().appliedDurationMilliseconds());
+            processor.requestMaximumQueueDurationMilliseconds(200);
+            assertEquals(100, processor.status().appliedDurationMilliseconds());
+            assertEquals(200, processor.status().requestedDurationMilliseconds());
+            processor.receive(new TestNativeBuffer(1, 1_024));
+            assertTrue(processed.await(2, TimeUnit.SECONDS));
+            assertEquals(200, processor.status().appliedDurationMilliseconds());
+            assertEquals(200_000, processor.getMaximumQueuedSampleCount());
+            assertThrows(IllegalArgumentException.class,
+                () -> processor.requestMaximumQueueDurationMilliseconds(201));
+        }
+        finally
+        {
+            processor.dispose();
+            assertTrue(processor.awaitTermination(5, TimeUnit.SECONDS));
+        }
+    }
+
+    @Test
     public void retainsOneCompleteBufferWhenItExceedsTheTimeLimit() throws Exception
     {
         CountDownLatch firstBufferStarted = new CountDownLatch(1);

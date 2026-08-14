@@ -25,6 +25,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -41,19 +42,20 @@ class NativeBufferProcessor implements Listener<INativeBuffer>
     private static final Logger mLog = LoggerFactory.getLogger(NativeBufferProcessor.class);
 
     private final String mName;
-    private final long mMaximumQueueDurationMilliseconds;
+    private volatile long mMaximumQueueDurationMilliseconds;
+    private final AtomicLong mRequestedMaximumQueueDurationMilliseconds = new AtomicLong();
     private final Listener<INativeBuffer> mListener;
     private final ExecutorService mExecutorService;
     private final Deque<INativeBuffer> mQueue = new ArrayDeque<>();
     private final ReentrantLock mLock = new ReentrantLock();
     private final AtomicBoolean mInvalidBufferWarningLogged = new AtomicBoolean();
     private final AtomicBoolean mUnconfiguredSampleRateWarningLogged = new AtomicBoolean();
-    private double mSampleRate;
-    private long mMaximumQueuedSampleCount;
-    private long mQueuedSampleCount;
-    private long mDroppedBufferCount;
-    private long mDroppedSampleCount;
-    private long mDroppedDurationNanoseconds;
+    private volatile double mSampleRate;
+    private volatile long mMaximumQueuedSampleCount;
+    private volatile long mQueuedSampleCount;
+    private volatile long mDroppedBufferCount;
+    private volatile long mDroppedSampleCount;
+    private volatile long mDroppedDurationNanoseconds;
     private long mLastOverflowWarningTimestamp;
     private boolean mProcessingScheduled;
     private boolean mRunning;
@@ -86,6 +88,7 @@ class NativeBufferProcessor implements Listener<INativeBuffer>
         mName = name;
         mSampleRate = sampleRate;
         mMaximumQueueDurationMilliseconds = maximumQueueDurationMilliseconds;
+        mRequestedMaximumQueueDurationMilliseconds.set(maximumQueueDurationMilliseconds);
         mMaximumQueuedSampleCount = sampleRate > 0 ? calculateMaximumQueuedSampleCount(sampleRate) : 0;
         mListener = listener;
         mExecutorService = Executors.newSingleThreadExecutor(new NamingThreadFactory(name));
@@ -175,6 +178,7 @@ class NativeBufferProcessor implements Listener<INativeBuffer>
         try
         {
             mSampleRate = sampleRate;
+            applyRequestedMaximumQueueDuration();
             mMaximumQueuedSampleCount = calculateMaximumQueuedSampleCount(sampleRate);
             mUnconfiguredSampleRateWarningLogged.set(false);
             overflow = trimQueue();
@@ -229,6 +233,8 @@ class NativeBufferProcessor implements Listener<INativeBuffer>
 
                 return;
             }
+
+            applyRequestedMaximumQueueDuration();
 
             mQueue.addLast(nativeBuffer);
             mQueuedSampleCount += getSampleCount(nativeBuffer);
@@ -353,6 +359,39 @@ class NativeBufferProcessor implements Listener<INativeBuffer>
         }
 
         return null;
+    }
+
+    /**
+     * Non-blocking control-plane request.  The receiver thread applies it while holding its existing queue lock.
+     */
+    void requestMaximumQueueDurationMilliseconds(long durationMilliseconds)
+    {
+        if(durationMilliseconds < 50 || durationMilliseconds > 200)
+        {
+            throw new IllegalArgumentException("Maximum IQ queue duration must be between 50 and 200 milliseconds");
+        }
+
+        mRequestedMaximumQueueDurationMilliseconds.set(durationMilliseconds);
+    }
+
+    private void applyRequestedMaximumQueueDuration()
+    {
+        long requested = mRequestedMaximumQueueDurationMilliseconds.get();
+
+        if(requested != mMaximumQueueDurationMilliseconds)
+        {
+            mMaximumQueueDurationMilliseconds = requested;
+            mMaximumQueuedSampleCount = calculateMaximumQueuedSampleCount(mSampleRate);
+        }
+    }
+
+    QueueStatus status()
+    {
+        double sampleRate = mSampleRate;
+        return new QueueStatus(mMaximumQueueDurationMilliseconds,
+            mRequestedMaximumQueueDurationMilliseconds.get(), mQueuedSampleCount,
+            toMilliseconds(mQueuedSampleCount, sampleRate), mDroppedBufferCount, mDroppedSampleCount,
+            toMilliseconds(mDroppedDurationNanoseconds));
     }
 
     private void logOverflow(Overflow overflow)
@@ -494,6 +533,12 @@ class NativeBufferProcessor implements Listener<INativeBuffer>
 
     private record Overflow(long droppedBuffers, long droppedMilliseconds, long queuedMilliseconds,
                             long totalDroppedBuffers, long totalDroppedMilliseconds)
+    {
+    }
+
+    record QueueStatus(long appliedDurationMilliseconds, long requestedDurationMilliseconds,
+                       long queuedSamples, long queuedMilliseconds, long droppedBuffers,
+                       long droppedSamples, long droppedMilliseconds)
     {
     }
 }

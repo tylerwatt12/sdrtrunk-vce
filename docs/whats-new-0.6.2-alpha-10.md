@@ -54,7 +54,7 @@ and Alpha 9 while leaving the original installation unchanged.
 - **Shared Pause control.** Pause/Resume applies to Events, Messages, and Channel diagnostics. Pausing, collapsing,
   changing pages, hiding a tab, or closing a diagnostic view releases its stream.
 - **Whole-tuner spectrum and waterfall.** The administrator-only browser Tuner Spectrum page shows one already-running
-  tuner without starting, retuning, or reconfiguring it. It supports tuner selection, pause, pan, up to 16× zoom,
+  tuner without starting, retuning, or reconfiguring it. It supports tuner selection, pause, pan, up to 256× zoom,
   refined FFT detail, waterfall frequency/power/time inspection, a configurable lower display limit, waterfall speed,
   optional frequency snapping, and FFT smoothing.
 - **Spectrum channel flags.** Small colored flags mark encrypted voice, voice, data, control, other active carriers,
@@ -95,6 +95,10 @@ and Alpha 9 while leaving the original installation unchanged.
   10 frames per second, with a filtered analysis lens that adapts to each tuner's bandwidth and can decimate through
   32× when its sample rate supports it. The browser keeps four bounded numeric waterfall histories so returning to a
   previous zoom restores its recent rows; zoom beyond 64× is labeled as digital zoom.
+- **Temporary spectrum experiment controls.** Administrators can compare bounded FFT-bin, frame-rate, analysis-lens,
+  and 50–200 ms receiver-IQ queue settings while watching per-control-channel decode health, receiver and diagnostic
+  drops, VCE CPU, heap/GC, delivered FPS, latency, and estimated spectrum traffic. Settings are session-only; closing
+  the viewer restores the normal diagnostic settings and the receiver IQ queue duration it found on open.
 - **The Java receiver window is smaller.** The old Systems workspace and its embedded Details, Events, Messages,
   signal, and symbol panels are removed. Browser Live Systems owns those activity workflows. Java keeps Map when
   enabled and Tuners; selected-channel and tuner-wide FFT/waterfall diagnostics remain in the website.

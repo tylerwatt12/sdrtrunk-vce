@@ -28,6 +28,7 @@ import java.time.Duration;
 import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -133,6 +134,41 @@ class TunerDiagnosticServiceTest
         TunerDiagnosticService.Session reopened = service.tryOpen(targets.get(1).targetId()).session();
         assertNotNull(reopened);
         reopened.close();
+        service.close();
+    }
+
+    @Test
+    void appliesSessionExperimentSettingsAndRestoresTheReceiverQueueOnClose()
+    {
+        FakeController controller = new FakeController(100_000_000L, 10_000_000.0);
+        FakeProcessorFactory processors = new FakeProcessorFactory();
+        FakeReceiverQueue queue = new FakeReceiverQueue(100, 7, 9);
+        TunerDiagnosticService service = service(List.of(
+            target(new Object(), TunerClass.AIRSPY, controller, 1, queue)), processors);
+        TunerDiagnosticService.ExperimentSettings settings =
+            new TunerDiagnosticService.ExperimentSettings(8_192, 15, 16, 200);
+        TunerDiagnosticService.Session session = service.tryOpen(service.targets().getFirst().targetId(), null,
+            settings).session();
+        TunerDiagnosticService.State state = session.state();
+
+        assertEquals(8_192, state.fftSize());
+        assertEquals(15, state.framesPerSecond());
+        assertEquals(16, state.maximumDecimation());
+        assertEquals(200, state.iqQueueDurationMilliseconds());
+        assertEquals(7, state.receiverDroppedBuffers());
+        assertEquals(9, state.receiverDroppedMilliseconds());
+        assertEquals(settings, processors.lastSettings.get());
+        assertEquals(List.of(200L), queue.requests);
+
+        TunerDiagnosticService.ExperimentSettings lighter =
+            new TunerDiagnosticService.ExperimentSettings(1_024, 2, 8, 50);
+        session.updateExperiment(lighter);
+        assertEquals(lighter, processors.lastSettings.get());
+        assertEquals(1_024, session.state().fftSize());
+        assertEquals(List.of(200L, 50L), queue.requests);
+
+        session.close();
+        assertEquals(List.of(200L, 50L, 100L), queue.requests);
         service.close();
     }
 
@@ -390,6 +426,18 @@ class TunerDiagnosticServiceTest
     }
 
     @Test
+    void experimentSettingsBoundTheLensAndSampleBudget()
+    {
+        TunerDiagnosticService.ExperimentSettings settings =
+            new TunerDiagnosticService.ExperimentSettings(16_384, 20, 8, 100);
+        TunerDiagnosticService.AnalysisPlan plan = TunerDiagnosticService.analysisPlan(100_000_000L,
+            10_000_000L, centered(100_000_000L, 100_000L), settings);
+
+        assertEquals(8, plan.decimation());
+        assertEquals(1_250_000L, plan.sampleRateHz());
+    }
+
+    @Test
     void preservesTheGuardAtTheTunerEdgeOrFallsBackToOverview()
     {
         TunerDiagnosticService.AnalysisPlan touchingEdge = TunerDiagnosticService.analysisPlan(100_000_000L,
@@ -599,6 +647,14 @@ class TunerDiagnosticServiceTest
         return new TunerDiagnosticService.AvailableTarget(identity, tunerClass, controller, () -> channelCount);
     }
 
+    private static TunerDiagnosticService.AvailableTarget target(Object identity, TunerClass tunerClass,
+                                                                  TunerController controller, int channelCount,
+                                                                  TunerDiagnosticService.ReceiverQueueControl queue)
+    {
+        return new TunerDiagnosticService.AvailableTarget(identity, tunerClass, controller, () -> channelCount,
+            queue);
+    }
+
     private static final class FakeProcessorFactory implements TunerDiagnosticService.ProcessorFactory
     {
         private final AtomicInteger createCount = new AtomicInteger();
@@ -607,6 +663,8 @@ class TunerDiagnosticServiceTest
         private final AtomicLong lastCenterFrequencyHz = new AtomicLong();
         private final AtomicLong lastSampleRateHz = new AtomicLong();
         private final AtomicReference<TunerDiagnosticService.Viewport> lastViewport = new AtomicReference<>();
+        private final AtomicReference<TunerDiagnosticService.ExperimentSettings> lastSettings =
+            new AtomicReference<>();
         private final AtomicReference<Consumer<TunerDiagnosticService.FftResult>> consumer = new AtomicReference<>();
 
         @Override
@@ -643,6 +701,12 @@ class TunerDiagnosticServiceTest
                 }
 
                 @Override
+                public void updateSettings(TunerDiagnosticService.ExperimentSettings settings)
+                {
+                    lastSettings.set(settings);
+                }
+
+                @Override
                 public void close()
                 {
                     closeCount.incrementAndGet();
@@ -658,6 +722,35 @@ class TunerDiagnosticServiceTest
             {
                 active.accept(frame);
             }
+        }
+    }
+
+    private static final class FakeReceiverQueue implements TunerDiagnosticService.ReceiverQueueControl
+    {
+        private final List<Long> requests = new CopyOnWriteArrayList<>();
+        private final long droppedBuffers;
+        private final long droppedMilliseconds;
+        private volatile long duration;
+
+        private FakeReceiverQueue(long duration, long droppedBuffers, long droppedMilliseconds)
+        {
+            this.duration = duration;
+            this.droppedBuffers = droppedBuffers;
+            this.droppedMilliseconds = droppedMilliseconds;
+        }
+
+        @Override
+        public TunerDiagnosticService.ReceiverQueueSnapshot status()
+        {
+            return new TunerDiagnosticService.ReceiverQueueSnapshot(true, duration, duration, 0,
+                droppedBuffers, droppedMilliseconds);
+        }
+
+        @Override
+        public void request(long durationMilliseconds)
+        {
+            duration = durationMilliseconds;
+            requests.add(durationMilliseconds);
         }
     }
 

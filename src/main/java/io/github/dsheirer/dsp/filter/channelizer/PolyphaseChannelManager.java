@@ -155,6 +155,27 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
         return sb.toString();
     }
 
+    /** Requests a bounded receiver IQ queue duration without acquiring the receiver queue lock. */
+    public void requestNativeBufferQueueDuration(long durationMilliseconds)
+    {
+        mBufferProcessor.requestMaximumQueueDurationMilliseconds(durationMilliseconds);
+    }
+
+    /** Read-only approximate queue counters for administrator diagnostics. */
+    public NativeBufferQueueStatus getNativeBufferQueueStatus()
+    {
+        NativeBufferProcessor.QueueStatus status = mBufferProcessor.status();
+        return new NativeBufferQueueStatus(status.appliedDurationMilliseconds(),
+            status.requestedDurationMilliseconds(), status.queuedSamples(), status.queuedMilliseconds(),
+            status.droppedBuffers(), status.droppedSamples(), status.droppedMilliseconds());
+    }
+
+    public record NativeBufferQueueStatus(long appliedDurationMilliseconds, long requestedDurationMilliseconds,
+                                          long queuedSamples, long queuedMilliseconds, long droppedBuffers,
+                                          long droppedSamples, long droppedMilliseconds)
+    {
+    }
+
     public void stopAllChannels()
     {
         mRunning = false;

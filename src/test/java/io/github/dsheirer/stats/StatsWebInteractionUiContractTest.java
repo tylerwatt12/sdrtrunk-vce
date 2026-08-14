@@ -520,8 +520,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(html.indexOf("localStorage.getItem('sdrtrunk_theme')") <
             html.indexOf("rel=\"stylesheet\""));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=50"));
-        assertTrue(html.contains("/assets/app.js?v=75"));
+        assertTrue(html.contains("/assets/app.css?v=51"));
+        assertTrue(html.contains("/assets/app.js?v=76"));
         assertTrue(source.contains("window.localStorage.setItem(THEME_STORAGE_KEY"));
         assertTrue(source.contains("toggle.setAttribute('aria-pressed'"));
         assertTrue(css.contains(":root[data-theme=\"dark\"]"));
@@ -896,6 +896,21 @@ class StatsWebInteractionUiContractTest
         assertTrue(source.contains("const TUNER_SPECTRUM_VIEWPORT_DEBOUNCE_MS = 160"));
         assertTrue(source.contains("const TUNER_SPECTRUM_MAXIMUM_ANALYTICAL_ZOOM = 64"));
         assertTrue(source.contains("const TUNER_SPECTRUM_MAXIMUM_ZOOM = 256"));
+        assertTrue(tuner.contains("'Temporary spectrum experiment'"));
+        assertTrue(tuner.contains("'FFT bins'"));
+        assertTrue(tuner.contains("'Requested FPS'"));
+        assertTrue(tuner.contains("'Maximum analysis lens'"));
+        assertTrue(tuner.contains("'Receiver IQ queue'"));
+        assertTrue(parameters.contains("experiment_fft_size"));
+        assertTrue(parameters.contains("experiment_fps"));
+        assertTrue(parameters.contains("experiment_max_decimation"));
+        assertTrue(parameters.contains("experiment_iq_queue_ms"));
+        assertTrue(tuner.contains("'Receiver IQ drops'"));
+        assertTrue(tuner.contains("Number(row?.decode_health_pct)"));
+        assertTrue(tuner.contains("'VCE CPU'"));
+        assertTrue(tuner.contains("'GC pause'"));
+        assertTrue(tuner.contains("'Spectrum traffic'"));
+        assertTrue(tuner.contains("resetExperimentMeasurement()"));
         assertTrue(tuner.contains("'Zoom in'"));
         assertTrue(tuner.contains("'Zoom out'"));
         assertTrue(refinement.contains("stream.update(diagnosticParameters())"));
@@ -945,7 +960,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("TUNER_WATERFALL_CHANNELS_STORAGE_KEY, false"));
         assertTrue(tuner.contains("'Highlight channels on waterfall'"));
         assertTrue(tuner.contains("toolbarActions.append(options)"));
-        assertTrue(tuner.contains("optionsPanel.append(floorControl, floorHelp, speedControl, toggleControls)"));
+        assertTrue(tuner.contains("optionsPanel.append(floorControl, floorHelp, speedControl, toggleControls, experiment)"));
         assertTrue(tuner.contains("optionsSummary.setAttribute('aria-expanded', 'false')"));
         assertTrue(tuner.contains("options.addEventListener('toggle'"));
         assertTrue(tuner.contains("displayControls.append(refiningBadge, flagLegend)"));
