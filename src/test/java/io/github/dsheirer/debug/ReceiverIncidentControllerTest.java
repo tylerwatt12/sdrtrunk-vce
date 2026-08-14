@@ -364,6 +364,247 @@ class ReceiverIncidentControllerTest
         }
     }
 
+    @Test
+    void persistentAutomaticConditionRequiresSustainedRecoveryBeforeRearming() throws Exception
+    {
+        AtomicLong now = new AtomicLong(10_000_000L);
+
+        try(ReceiverIncidentController controller = controller(now,
+            () -> "{\"threads\":[]}".getBytes(StandardCharsets.UTF_8)))
+        {
+            long sequence = 1L;
+
+            for(int x = 0; x < 11; x++)
+            {
+                controller.acceptTelemetry(neverDecodedTelemetry(sequence++, now.getAndAdd(1_000L)));
+            }
+
+            assertEquals(IncidentState.RECORDING, controller.getStatus().state());
+            now.addAndGet(121_000L);
+            controller.acceptTelemetry(neverDecodedTelemetry(sequence++, now.getAndAdd(1_000L)));
+            await(() -> controller.getStatus().savedIncidentCount() == 1);
+
+            for(int x = 0; x < 130; x++)
+            {
+                controller.acceptTelemetry(neverDecodedTelemetry(sequence++, now.getAndAdd(1_000L)));
+            }
+
+            assertEquals(IncidentState.ARMED, controller.getStatus().state());
+            assertEquals(1, controller.getStatus().savedIncidentCount(),
+                "one persistent condition must not continuously replace incident history");
+
+            //A one-sample inactive gap occurs during normal multi-frequency rotation and must not rearm the trigger.
+            controller.acceptTelemetry(telemetry(sequence++, now.getAndAdd(1_000L), 0L, 0L, 0L,
+                "enabled", 0L));
+
+            for(int x = 0; x < 11; x++)
+            {
+                controller.acceptTelemetry(neverDecodedTelemetry(sequence++, now.getAndAdd(1_000L)));
+            }
+
+            assertEquals(IncidentState.ARMED, controller.getStatus().state());
+            assertEquals(1, controller.getStatus().savedIncidentCount());
+
+            for(int x = 0; x < 21; x++)
+            {
+                controller.acceptTelemetry(telemetry(sequence++, now.getAndAdd(1_000L), 0L, 0L, 0L,
+                    "enabled", 0L));
+            }
+
+            for(int x = 0; x < 11; x++)
+            {
+                controller.acceptTelemetry(neverDecodedTelemetry(sequence++, now.getAndAdd(1_000L)));
+            }
+
+            assertEquals(IncidentState.ARMED, controller.getStatus().state(),
+                "the returning condition's startup grace must not count toward recovery");
+
+            controller.acceptTelemetry(telemetry(sequence++, now.getAndAdd(1_000L), 0L, 0L, 0L,
+                "enabled", 0L));
+
+            for(int x = 0; x < 31; x++)
+            {
+                controller.acceptTelemetry(sampleFailedTelemetry(sequence++, now.getAndAdd(1_000L)));
+            }
+
+            for(int x = 0; x < 11; x++)
+            {
+                controller.acceptTelemetry(neverDecodedTelemetry(sequence++, now.getAndAdd(1_000L)));
+            }
+
+            assertEquals(IncidentState.ARMED, controller.getStatus().state(),
+                "missing telemetry is not evidence that the condition recovered");
+
+            for(int x = 0; x < 31; x++)
+            {
+                controller.acceptTelemetry(telemetry(sequence++, now.getAndAdd(1_000L), 0L, 0L, 0L,
+                    "enabled", 0L));
+            }
+
+            for(int x = 0; x < 11; x++)
+            {
+                controller.acceptTelemetry(neverDecodedTelemetry(sequence++, now.getAndAdd(1_000L)));
+            }
+
+            assertEquals(IncidentState.RECORDING, controller.getStatus().state(),
+                "the same condition must rearm after thirty seconds of observed recovery");
+        }
+    }
+
+    @Test
+    void repeatedCounterLossEventsRemainIndependentTriggers() throws Exception
+    {
+        AtomicLong now = new AtomicLong(18_000_000L);
+
+        try(ReceiverIncidentController controller = controller(now,
+            () -> "{\"threads\":[]}".getBytes(StandardCharsets.UTF_8)))
+        {
+            controller.acceptTelemetry(telemetry(1L, now.getAndAdd(1_000L), 0L, 0L, 0L,
+                "enabled", 0L));
+            controller.acceptTelemetry(telemetry(2L, now.getAndAdd(1_000L), 1L, 7L, 0L,
+                "enabled", 0L));
+            long firstCompletion = controller.getStatus().activeExpectedCompletionAtMs();
+            now.addAndGet(10_000L);
+            controller.acceptTelemetry(telemetry(3L, now.getAndAdd(1_000L), 2L, 14L, 0L,
+                "enabled", 0L));
+            assertTrue(controller.getStatus().activeExpectedCompletionAtMs() > firstCompletion,
+                "a second real loss event must extend the evidence window even inside the recovery interval");
+        }
+    }
+
+    @Test
+    void persistentStaleControlTriggersOnceAndRearmsAfterRecovery() throws Exception
+    {
+        AtomicLong now = new AtomicLong(20_000_000L);
+
+        try(ReceiverIncidentController controller = controller(now,
+            () -> "{\"threads\":[]}".getBytes(StandardCharsets.UTF_8)))
+        {
+            long sequence = 1L;
+            controller.acceptTelemetry(telemetry(sequence++, now.getAndAdd(1_000L), 0L, 0L, 0L,
+                "enabled", 6_000L));
+            assertEquals(IncidentState.RECORDING, controller.getStatus().state());
+            controller.acceptTelemetry(telemetry(sequence++, now.getAndAdd(1_000L), 0L, 0L, 0L,
+                "enabled", 6_000L));
+            now.addAndGet(121_000L);
+            controller.acceptTelemetry(telemetry(sequence++, now.getAndAdd(1_000L), 0L, 0L, 0L,
+                "enabled", 6_000L));
+            await(() -> controller.getStatus().savedIncidentCount() == 1);
+
+            for(int x = 0; x < 130; x++)
+            {
+                controller.acceptTelemetry(telemetry(sequence++, now.getAndAdd(1_000L), 0L, 0L, 0L,
+                    "enabled", 6_000L));
+            }
+
+            assertEquals(IncidentState.ARMED, controller.getStatus().state());
+            assertEquals(1, controller.getStatus().savedIncidentCount());
+
+            for(int x = 0; x < 31; x++)
+            {
+                controller.acceptTelemetry(telemetry(sequence++, now.getAndAdd(1_000L), 0L, 0L, 0L,
+                    "enabled", 100L));
+            }
+
+            controller.acceptTelemetry(telemetry(sequence, now.getAndAdd(1_000L), 0L, 0L, 0L,
+                "enabled", 6_000L));
+            assertEquals(IncidentState.RECORDING, controller.getStatus().state());
+        }
+    }
+
+    @Test
+    void bootChangeResetsAutomaticQualificationState() throws Exception
+    {
+        AtomicLong now = new AtomicLong(22_000_000L);
+        AtomicInteger dumps = new AtomicInteger();
+
+        try(ReceiverIncidentController controller = controller(now, () -> {
+            dumps.incrementAndGet();
+            return "{\"threads\":[]}".getBytes(StandardCharsets.UTF_8);
+        }))
+        {
+            controller.acceptTelemetry(telemetryForBoot(1L, now.getAndAdd(1_000L), 80L, "error", "boot-a"));
+            controller.acceptTelemetry(telemetryForBoot(2L, now.getAndAdd(1_000L), 80L, "error", "boot-a"));
+            assertEquals(0, dumps.get());
+
+            controller.acceptTelemetry(telemetryForBoot(3L, now.getAndAdd(1_000L), 80L, "error", "boot-b"));
+            controller.acceptTelemetry(telemetryForBoot(4L, now.getAndAdd(1_000L), 80L, "error", "boot-b"));
+            assertEquals(0, dumps.get(), "the new boot must qualify sustained conditions from zero");
+            controller.acceptTelemetry(telemetryForBoot(5L, now.getAndAdd(1_000L), 80L, "error", "boot-b"));
+            await(() -> dumps.get() == 1);
+        }
+    }
+
+    @Test
+    void differentAutomaticConditionAndManualCaptureBypassPersistentLatch() throws Exception
+    {
+        AtomicLong now = new AtomicLong(12_000_000L);
+
+        try(ReceiverIncidentController controller = controller(now,
+            () -> "{\"threads\":[]}".getBytes(StandardCharsets.UTF_8)))
+        {
+            long sequence = 1L;
+
+            for(int x = 0; x < 11; x++)
+            {
+                controller.acceptTelemetry(neverDecodedTelemetry(sequence++, now.getAndAdd(1_000L)));
+            }
+
+            now.addAndGet(121_000L);
+            controller.acceptTelemetry(neverDecodedTelemetry(sequence++, now.getAndAdd(1_000L)));
+            await(() -> controller.getStatus().savedIncidentCount() == 1);
+
+            controller.acceptTelemetry(neverDecodedTelemetry(sequence++, now.getAndAdd(1_000L), 1L, 7L));
+            assertEquals(IncidentState.RECORDING, controller.getStatus().state());
+            assertTrue(controller.getStatus().activeReason().contains("raw IQ loss"));
+            assertFalse(controller.getStatus().activeReason().contains("startup grace"),
+                "the already-covered condition must not be re-added to a new incident");
+            assertEquals(IncidentCaptureResult.COALESCED,
+                controller.captureIncident("Tester also observed a symptom", false));
+            assertTrue(controller.getStatus().activeReason().contains("Tester also observed a symptom"));
+        }
+
+        Path manual = mTemporaryDirectory.resolve("manual-bypass");
+        now.set(14_000_000L);
+
+        try(ReceiverIncidentController controller = new ReceiverIncidentController(manual, now::get,
+            System::nanoTime, () -> "{\"threads\":[]}".getBytes(StandardCharsets.UTF_8)))
+        {
+            long sequence = 1L;
+
+            for(int x = 0; x < 11; x++)
+            {
+                controller.acceptTelemetry(neverDecodedTelemetry(sequence++, now.getAndAdd(1_000L)));
+            }
+
+            now.addAndGet(121_000L);
+            controller.acceptTelemetry(neverDecodedTelemetry(sequence++, now.getAndAdd(1_000L)));
+            await(() -> controller.getStatus().savedIncidentCount() == 1);
+            assertEquals(IncidentCaptureResult.STARTED,
+                controller.captureIncident("Manual capture while automatic condition remains latched", false));
+        }
+    }
+
+    @Test
+    void automaticLatchStillAdmitsSeverityEscalation() throws Exception
+    {
+        AtomicLong now = new AtomicLong(16_000_000L);
+        AtomicInteger dumps = new AtomicInteger();
+
+        try(ReceiverIncidentController controller = controller(now, () -> {
+            dumps.incrementAndGet();
+            return "{\"threads\":[]}".getBytes(StandardCharsets.UTF_8);
+        }))
+        {
+            controller.acceptTelemetry(telemetry(1L, now.getAndAdd(1_000L), 0L, 0L, 0L,
+                "enabled", 6_000L));
+            assertEquals(0, dumps.get());
+            controller.acceptTelemetry(telemetry(2L, now.getAndAdd(1_000L), 0L, 0L, 0L,
+                "enabled", 6_000L));
+            await(() -> dumps.get() == 1);
+        }
+    }
+
     private ReceiverIncidentController controller(AtomicLong now, java.util.function.Supplier<byte[]> dumps)
     {
         return new ReceiverIncidentController(mTemporaryDirectory, now::get, System::nanoTime, dumps);
@@ -393,11 +634,34 @@ class ReceiverIncidentControllerTest
 
     private static byte[] neverDecodedTelemetry(long sequence, long observedAt) throws Exception
     {
+        return neverDecodedTelemetry(sequence, observedAt, 0L, 0L);
+    }
+
+    private static byte[] neverDecodedTelemetry(long sequence, long observedAt, long rawDropped,
+                                                long rawDroppedMs) throws Exception
+    {
         com.fasterxml.jackson.databind.node.ObjectNode root = (com.fasterxml.jackson.databind.node.ObjectNode)
-            OBJECT_MAPPER.readTree(telemetry(sequence, observedAt, 0L, 0L, 0L, "enabled", 0L));
+            OBJECT_MAPPER.readTree(telemetry(sequence, observedAt, rawDropped, rawDroppedMs, 0L, "enabled", 0L));
         com.fasterxml.jackson.databind.node.ArrayNode controls = OBJECT_MAPPER.createArrayNode();
         controls.add(OBJECT_MAPPER.createObjectNode().put("active", true).put("decode_health_percent", 0.0d));
         ((com.fasterxml.jackson.databind.node.ObjectNode)root.path("control_channels")).set("rows", controls);
+        return OBJECT_MAPPER.writeValueAsBytes(root);
+    }
+
+    private static byte[] sampleFailedTelemetry(long sequence, long observedAt) throws Exception
+    {
+        com.fasterxml.jackson.databind.node.ObjectNode root = (com.fasterxml.jackson.databind.node.ObjectNode)
+            OBJECT_MAPPER.readTree(telemetry(sequence, observedAt, 0L, 0L, 0L, "enabled", 0L));
+        ((com.fasterxml.jackson.databind.node.ObjectNode)root.path("telemetry")).put("state", "sample_failed");
+        return OBJECT_MAPPER.writeValueAsBytes(root);
+    }
+
+    private static byte[] telemetryForBoot(long sequence, long observedAt, long rawWaitingMs, String tunerStatus,
+                                           String bootId) throws Exception
+    {
+        com.fasterxml.jackson.databind.node.ObjectNode root = (com.fasterxml.jackson.databind.node.ObjectNode)
+            OBJECT_MAPPER.readTree(telemetry(sequence, observedAt, 0L, 0L, rawWaitingMs, tunerStatus, 0L));
+        ((com.fasterxml.jackson.databind.node.ObjectNode)root.path("telemetry")).put("boot_id", bootId);
         return OBJECT_MAPPER.writeValueAsBytes(root);
     }
 

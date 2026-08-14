@@ -59,6 +59,7 @@ final class ReceiverIncidentRecorder implements AutoCloseable
     static final int MAXIMUM_THREAD_DUMPS = 3;
     static final long THREAD_DUMP_SPACING_MILLISECONDS = 5_000L;
     static final long THREAD_DUMP_COOLDOWN_MILLISECONDS = 5 * 60_000L;
+    static final long AUTOMATIC_TRIGGER_REARM_MILLISECONDS = 30_000L;
     static final int MAXIMUM_REPORT_BYTES = 1_024 * 1_024;
     static final int MAXIMUM_STORED_THREAD_DUMP_BYTES = 256 * 1_024;
     static final long NEVER_DECODED_CONTROL_GRACE_MILLISECONDS = 10_000L;
@@ -85,6 +86,8 @@ final class ReceiverIncidentRecorder implements AutoCloseable
     private boolean mClosed;
     private int mRawHighStreak;
     private final Map<String,Integer> mNoProgressStreaks = new LinkedHashMap<>();
+    private final AutomaticConditionLatch mStaleControlTrigger = new AutomaticConditionLatch();
+    private final AutomaticConditionLatch mNeverDecodedControlTrigger = new AutomaticConditionLatch();
     private int mTunerErrorStreak;
     private long mNeverDecodedControlFirstObservedAtMs;
     private long mNextThreadSeriesAllowedAtMs;
@@ -165,6 +168,16 @@ final class ReceiverIncidentRecorder implements AutoCloseable
             if(alreadyRecording)
             {
                 mActive.addSample(sample);
+            }
+
+            if(mPrevious != null && !Objects.equals(sample.bootId(), mPrevious.bootId()))
+            {
+                mStaleControlTrigger.reset();
+                mNeverDecodedControlTrigger.reset();
+                mNeverDecodedControlFirstObservedAtMs = 0L;
+                mRawHighStreak = 0;
+                mNoProgressStreaks.clear();
+                mTunerErrorStreak = 0;
             }
 
             Trigger trigger = evaluate(sample, mPrevious);
@@ -251,6 +264,7 @@ final class ReceiverIncidentRecorder implements AutoCloseable
         List<String> reasons = new ArrayList<>();
         boolean severe = false;
         CounterChange change = counterChange(current, previous);
+        boolean reliableTelemetry = "ok".equalsIgnoreCase(current.telemetryState());
 
         if(change.rawDroppedBuffers > 0L)
         {
@@ -279,31 +293,43 @@ final class ReceiverIncidentRecorder implements AutoCloseable
             severe = true;
         }
 
-        if(current.staleControlChannels() > 0)
+        boolean staleControlPresent = current.staleControlChannels() > 0;
+        boolean staleControlSevere = change.anyRawIngress;
+
+        if(mStaleControlTrigger.admit(staleControlPresent, staleControlPresent, staleControlSevere,
+            current.observedAtMs(), reliableTelemetry))
         {
             reasons.add(current.staleControlChannels() + " active control channel(s) had no valid decode for at least " +
                 STALE_CONTROL_MILLISECONDS / 1_000L + " seconds");
-            severe |= change.anyRawIngress;
+            severe |= staleControlSevere;
         }
 
-        if(current.activeNeverDecodedControlChannels() > 0)
+        boolean neverDecodedPresent = current.activeNeverDecodedControlChannels() > 0;
+        boolean neverDecodedEligible = false;
+
+        if(reliableTelemetry && neverDecodedPresent)
         {
             if(mNeverDecodedControlFirstObservedAtMs == 0L)
             {
                 mNeverDecodedControlFirstObservedAtMs = current.observedAtMs();
             }
 
-            if(current.observedAtMs() - mNeverDecodedControlFirstObservedAtMs >=
-                NEVER_DECODED_CONTROL_GRACE_MILLISECONDS)
-            {
-                reasons.add(current.activeNeverDecodedControlChannels() +
-                    " active control channel(s) produced no valid decode after the startup grace period");
-                severe |= change.anyRawIngress;
-            }
+            neverDecodedEligible = current.observedAtMs() - mNeverDecodedControlFirstObservedAtMs >=
+                NEVER_DECODED_CONTROL_GRACE_MILLISECONDS;
         }
-        else
+        else if(reliableTelemetry)
         {
             mNeverDecodedControlFirstObservedAtMs = 0L;
+        }
+
+        boolean neverDecodedSevere = change.anyRawIngress;
+
+        if(mNeverDecodedControlTrigger.admit(neverDecodedPresent, neverDecodedEligible, neverDecodedSevere,
+            current.observedAtMs(), reliableTelemetry))
+        {
+            reasons.add(current.activeNeverDecodedControlChannels() +
+                " active control channel(s) produced no valid decode after the startup grace period");
+            severe |= neverDecodedSevere;
         }
 
         mTunerErrorStreak = current.hasTunerError() ? mTunerErrorStreak + 1 : 0;
@@ -1037,6 +1063,58 @@ final class ReceiverIncidentRecorder implements AutoCloseable
 
     private record Trigger(String reason, boolean severe)
     {
+    }
+
+    /** Latches one level-based control-channel condition until reliable telemetry proves sustained recovery. */
+    private static final class AutomaticConditionLatch
+    {
+        private boolean mLatched;
+        private boolean mSevere;
+        private long mAbsentSinceMs;
+
+        private boolean admit(boolean present, boolean eligible, boolean severe, long now,
+                              boolean reliableTelemetry)
+        {
+            if(!reliableTelemetry)
+            {
+                return false;
+            }
+
+            if(!present)
+            {
+                if(mLatched)
+                {
+                    if(mAbsentSinceMs == 0L)
+                    {
+                        mAbsentSinceMs = now;
+                    }
+                    else if(now - mAbsentSinceMs >= AUTOMATIC_TRIGGER_REARM_MILLISECONDS)
+                    {
+                        reset();
+                    }
+                }
+
+                return false;
+            }
+
+            mAbsentSinceMs = 0L;
+
+            if(eligible && (!mLatched || severe && !mSevere))
+            {
+                mLatched = true;
+                mSevere |= severe;
+                return true;
+            }
+
+            return false;
+        }
+
+        private void reset()
+        {
+            mLatched = false;
+            mSevere = false;
+            mAbsentSinceMs = 0L;
+        }
     }
 
     private record CounterChange(long rawDroppedBuffers, long rawDroppedMilliseconds, long downstreamDropped,
