@@ -146,22 +146,23 @@ class TunerDiagnosticServiceTest
         TunerDiagnosticService service = service(List.of(
             target(new Object(), TunerClass.AIRSPY, controller, 1, queue)), processors);
         TunerDiagnosticService.ExperimentSettings settings =
-            new TunerDiagnosticService.ExperimentSettings(8_192, 15, 16, 200);
+            new TunerDiagnosticService.ExperimentSettings(32_768, 15, 16, 200, 8);
         TunerDiagnosticService.Session session = service.tryOpen(service.targets().getFirst().targetId(), null,
             settings).session();
         TunerDiagnosticService.State state = session.state();
 
-        assertEquals(8_192, state.fftSize());
+        assertEquals(32_768, state.fftSize());
         assertEquals(15, state.framesPerSecond());
         assertEquals(16, state.maximumDecimation());
         assertEquals(200, state.iqQueueDurationMilliseconds());
+        assertEquals(8, state.quantizationBits());
         assertEquals(7, state.receiverDroppedBuffers());
         assertEquals(9, state.receiverDroppedMilliseconds());
         assertEquals(settings, processors.lastSettings.get());
         assertEquals(List.of(200L), queue.requests);
 
         TunerDiagnosticService.ExperimentSettings lighter =
-            new TunerDiagnosticService.ExperimentSettings(1_024, 2, 8, 50);
+            new TunerDiagnosticService.ExperimentSettings(1_024, 2, 8, 50, 16);
         session.updateExperiment(lighter);
         assertEquals(lighter, processors.lastSettings.get());
         assertEquals(1_024, session.state().fftSize());
@@ -429,7 +430,7 @@ class TunerDiagnosticServiceTest
     void experimentSettingsBoundTheLensAndSampleBudget()
     {
         TunerDiagnosticService.ExperimentSettings settings =
-            new TunerDiagnosticService.ExperimentSettings(16_384, 20, 8, 100);
+            new TunerDiagnosticService.ExperimentSettings(16_384, 20, 8, 100, 32);
         TunerDiagnosticService.AnalysisPlan plan = TunerDiagnosticService.analysisPlan(100_000_000L,
             10_000_000L, centered(100_000_000L, 100_000L), settings);
 

@@ -6035,10 +6035,19 @@ function diagnosticJsonPayload(frame) {
 }
 
 function diagnosticFloatPayload(frame) {
-  const count = Math.min(frame.valueCount, Math.floor(frame.payload.byteLength / Float32Array.BYTES_PER_ELEMENT));
+  const count = Math.max(0, Number(frame.valueCount || 0));
+  const bytesPerValue = count > 0 ? frame.payload.byteLength / count : 0;
+  if (![1, 2, 4].includes(bytesPerValue)) throw new Error('The diagnostic stream returned unsupported values.');
   const values = new Float32Array(count);
   const data = new DataView(frame.payload.buffer, frame.payload.byteOffset, frame.payload.byteLength);
-  for (let index = 0; index < count; index += 1) values[index] = data.getFloat32(index * 4, true);
+  const maximumCode = bytesPerValue === 1 ? 0xFF : 0xFFFF;
+  for (let index = 0; index < count; index += 1) {
+    if (bytesPerValue === 4) values[index] = data.getFloat32(index * 4, true);
+    else {
+      const code = bytesPerValue === 1 ? data.getUint8(index) : data.getUint16(index * 2, true);
+      values[index] = -196 + code * 216 / maximumCode;
+    }
+  }
   return values;
 }
 
@@ -7524,7 +7533,7 @@ function tunerSpectrumPanel() {
   };
   const experimentFftSize = experimentSelect('FFT bins',
     [[1024, '1,024'], [2048, '2,048'], [4096, '4,096 (default)'], [8192, '8,192 · high load'],
-      [16384, '16,384 · high load']], 4096);
+      [16384, '16,384 · high load'], [32768, '32,768 · very high load']], 4096);
   const experimentFps = experimentSelect('Requested FPS',
     [[1, '1'], [2, '2'], [5, '5'], [10, '10 (default)'], [15, '15 · high load'],
       [20, '20 · high load']], 10);
@@ -7532,6 +7541,8 @@ function tunerSpectrumPanel() {
     [[1, 'D1 · overview only'], [8, 'D8'], [16, 'D16'], [32, 'D32 (default)']], 32);
   const experimentIqQueue = experimentSelect('Receiver IQ queue',
     [[50, '50 ms'], [100, '100 ms (default)'], [150, '150 ms'], [200, '200 ms']], 100);
+  const experimentQuantization = experimentSelect('Spectrum quantization',
+    [[32, '32-bit float (default)'], [16, '16-bit'], [8, '8-bit']], 32);
   const experimentActions = node('div', 'tuner-spectrum-experiment-actions');
   const applyExperiment = node('button', 'button secondary', 'Apply experiment');
   applyExperiment.type = 'button';
@@ -7644,7 +7655,9 @@ function tunerSpectrumPanel() {
   let latencyMs = null;
   const latencyClock = { offsetMs: null };
   let frameTimes = [];
-  let experimentSettings = { fftSize: 4096, fps: 10, maximumDecimation: 32, iqQueueMs: 100 };
+  let experimentSettings = {
+    fftSize: 4096, fps: 10, maximumDecimation: 32, iqQueueMs: 100, quantizationBits: 32
+  };
   let experimentState = null;
   let experimentBaseline = null;
   let experimentDraftDirty = false;
@@ -7744,7 +7757,8 @@ function tunerSpectrumPanel() {
     const syncLoss = quality.reduce((total, entry) => total + entry.syncLoss, 0);
     const actualFps = frameTimes.length > 1 ? (frameTimes.length - 1) * 1000 /
       Math.max(1, frameTimes[frameTimes.length - 1] - frameTimes[0]) : null;
-    const wireMbps = Number.isFinite(actualFps) ? fftValues.length * 4 * actualFps * 8 / 1_000_000 : null;
+    const wireMbps = Number.isFinite(actualFps) && frameMetadata?.payload ?
+      frameMetadata.payload.byteLength * actualFps * 8 / 1_000_000 : null;
     const receiverDropBuffers = Math.max(0, Number(state.receiver_dropped_buffers || 0) -
       experimentBaseline.receiverDroppedBuffers);
     const receiverDropMilliseconds = Math.max(0, Number(state.receiver_dropped_milliseconds || 0) -
@@ -7805,7 +7819,7 @@ function tunerSpectrumPanel() {
     zoomIn.disabled = !shouldRun() || !fullViewport || !viewport || zoom >= TUNER_SPECTRUM_MAXIMUM_ZOOM - 0.0001;
     zoomOut.disabled = !shouldRun() || !fullViewport || !viewport || zoom <= 1.0001;
     resetZoom.disabled = !shouldRun() || !fullViewport || !viewport || zoom <= 1.0001;
-    [experimentFftSize, experimentFps, experimentLens, experimentIqQueue,
+    [experimentFftSize, experimentFps, experimentLens, experimentIqQueue, experimentQuantization,
       applyExperiment, restoreExperiment, resetExperiment].forEach((control) => {
       control.disabled = !shouldRun() || refining;
     });
@@ -8104,7 +8118,8 @@ function tunerSpectrumPanel() {
       experiment_fft_size: experimentSettings.fftSize,
       experiment_fps: experimentSettings.fps,
       experiment_max_decimation: experimentSettings.maximumDecimation,
-      experiment_iq_queue_ms: experimentSettings.iqQueueMs
+      experiment_iq_queue_ms: experimentSettings.iqQueueMs,
+      experiment_quantization_bits: experimentSettings.quantizationBits
     };
     if (fullViewport && viewport && zoomAmount() > 1.0001) {
       parameters.viewport_start_hz = Math.round(viewport.startHz);
@@ -8147,7 +8162,8 @@ function tunerSpectrumPanel() {
     return viewportMatches && Number(state?.fft_size) === experimentSettings.fftSize &&
       Number(state?.frames_per_second) === experimentSettings.fps &&
       Number(state?.maximum_decimation) === experimentSettings.maximumDecimation &&
-      Number(state?.iq_queue_duration_milliseconds) === experimentSettings.iqQueueMs;
+      Number(state?.iq_queue_duration_milliseconds) === experimentSettings.iqQueueMs &&
+      Number(state?.quantization_bits) === experimentSettings.quantizationBits;
   }
 
   function acceptTunerState(frame) {
@@ -8180,13 +8196,15 @@ function tunerSpectrumPanel() {
       fftSize: Number(tunerState?.fft_size || experimentSettings.fftSize),
       fps: Number(tunerState?.frames_per_second || experimentSettings.fps),
       maximumDecimation: Number(tunerState?.maximum_decimation || experimentSettings.maximumDecimation),
-      iqQueueMs: Number(tunerState?.iq_queue_duration_milliseconds || experimentSettings.iqQueueMs)
+      iqQueueMs: Number(tunerState?.iq_queue_duration_milliseconds || experimentSettings.iqQueueMs),
+      quantizationBits: Number(tunerState?.quantization_bits || experimentSettings.quantizationBits)
     };
     if (!experimentDraftDirty) {
       experimentFftSize.value = String(experimentSettings.fftSize);
       experimentFps.value = String(experimentSettings.fps);
       experimentLens.value = String(experimentSettings.maximumDecimation);
       experimentIqQueue.value = String(experimentSettings.iqQueueMs);
+      experimentQuantization.value = String(experimentSettings.quantizationBits);
     }
     if (firstExperimentState) resetExperimentMeasurement();
     analysisViewport = stateViewport(tunerState, 'visible') || requestedViewport() ||
@@ -8899,7 +8917,8 @@ function tunerSpectrumPanel() {
       fftSize: Number(experimentFftSize.value),
       fps: Number(experimentFps.value),
       maximumDecimation: Number(experimentLens.value),
-      iqQueueMs: Number(experimentIqQueue.value)
+      iqQueueMs: Number(experimentIqQueue.value),
+      quantizationBits: Number(experimentQuantization.value)
     };
   }
   function applySelectedExperiment() {
@@ -8909,7 +8928,7 @@ function tunerSpectrumPanel() {
     resetExperimentMeasurement();
     queueViewportUpdate(true);
   }
-  [experimentFftSize, experimentFps, experimentLens, experimentIqQueue].forEach((control) => {
+  [experimentFftSize, experimentFps, experimentLens, experimentIqQueue, experimentQuantization].forEach((control) => {
     control.addEventListener('change', () => { experimentDraftDirty = true; });
   });
   applyExperiment.addEventListener('click', applySelectedExperiment);
@@ -8918,6 +8937,7 @@ function tunerSpectrumPanel() {
     experimentFps.value = '10';
     experimentLens.value = '32';
     experimentIqQueue.value = '100';
+    experimentQuantization.value = '32';
     applySelectedExperiment();
   });
   resetExperiment.addEventListener('click', resetExperimentMeasurement);

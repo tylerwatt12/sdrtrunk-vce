@@ -211,7 +211,7 @@ class StatsWebInteractionUiContractTest
         String talkgroup = function(source, "async function renderTalkgroup()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"69\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"70\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -521,8 +521,8 @@ class StatsWebInteractionUiContractTest
             html.indexOf("rel=\"stylesheet\""));
         assertTrue(html.contains("id=\"theme-toggle\""));
         assertTrue(html.contains("id=\"mobile-theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=54"));
-        assertTrue(html.contains("/assets/app.js?v=79"));
+        assertTrue(html.contains("/assets/app.css?v=55"));
+        assertTrue(html.contains("/assets/app.js?v=80"));
         assertTrue(source.contains("MOBILE_THEME_STORAGE_KEY = 'sdrtrunk_mobile_theme'"));
         assertTrue(source.contains("mode === 'mobile' ? MOBILE_THEME_STORAGE_KEY : THEME_STORAGE_KEY"));
         assertTrue(source.contains("toggle.setAttribute('aria-pressed'"));
@@ -914,13 +914,18 @@ class StatsWebInteractionUiContractTest
         assertTrue(source.contains("const TUNER_SPECTRUM_MAXIMUM_ZOOM = 256"));
         assertTrue(tuner.contains("'Temporary spectrum experiment'"));
         assertTrue(tuner.contains("'FFT bins'"));
+        assertTrue(tuner.contains("[32768, '32,768 · very high load']"));
         assertTrue(tuner.contains("'Requested FPS'"));
         assertTrue(tuner.contains("'Maximum analysis lens'"));
         assertTrue(tuner.contains("'Receiver IQ queue'"));
+        assertTrue(tuner.contains("'Spectrum quantization'"));
         assertTrue(parameters.contains("experiment_fft_size"));
         assertTrue(parameters.contains("experiment_fps"));
         assertTrue(parameters.contains("experiment_max_decimation"));
         assertTrue(parameters.contains("experiment_iq_queue_ms"));
+        assertTrue(parameters.contains("experiment_quantization_bits"));
+        assertTrue(source.contains("bytesPerValue === 1"));
+        assertTrue(source.contains("bytesPerValue === 4"));
         assertTrue(tuner.contains("let experimentDraftDirty = false"));
         assertTrue(acceptState.contains("if (!experimentDraftDirty)"));
         assertTrue(tuner.contains("control.addEventListener('change', () => { experimentDraftDirty = true; })"));
@@ -931,6 +936,10 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("'GC pause'"));
         assertTrue(tuner.contains("'Spectrum traffic'"));
         assertTrue(tuner.contains("resetExperimentMeasurement()"));
+        assertTrue(css.contains(".tuner-spectrum-experiment-readouts {\n  display: grid;\n" +
+            "  grid-template-columns: minmax(0, 1fr);"));
+        assertTrue(css.contains(".tuner-spectrum-experiment-readouts .channel-diagnostic-readout"));
+        assertTrue(css.contains("overflow-x: hidden;"));
         assertTrue(tuner.contains("'Zoom in'"));
         assertTrue(tuner.contains("'Zoom out'"));
         assertTrue(refinement.contains("stream.update(diagnosticParameters())"));

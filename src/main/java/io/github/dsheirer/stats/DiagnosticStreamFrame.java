@@ -99,6 +99,54 @@ record DiagnosticStreamFrame(int type, long generation, long sequence, long obse
             centerFrequencyHz, (int)sampleRateHz, fftSize, firstBin, sourceBinCount, values.length, buffer.array());
     }
 
+    static DiagnosticStreamFrame tunerFft(long generation, long sequence, long observedAtEpochMs,
+                                          long centerFrequencyHz, long sampleRateHz, int fftSize,
+                                          int quantizationBits, float[] values)
+    {
+        if(quantizationBits == 32)
+        {
+            return float32(TYPE_TUNER_FFT, generation, sequence, observedAtEpochMs, centerFrequencyHz,
+                sampleRateHz, fftSize, values);
+        }
+
+        if(quantizationBits != 8 && quantizationBits != 16)
+        {
+            throw new IllegalArgumentException("Diagnostic quantization is not supported");
+        }
+
+        Objects.requireNonNull(values, "Diagnostic values cannot be null");
+
+        if(sampleRateHz < 0 || sampleRateHz > Integer.MAX_VALUE)
+        {
+            throw new IllegalArgumentException("Diagnostic sample rate is invalid");
+        }
+
+        int bytesPerValue = quantizationBits / Byte.SIZE;
+        int maximumCode = quantizationBits == 8 ? 0xFF : 0xFFFF;
+        ByteBuffer buffer = header(TYPE_TUNER_FFT, Math.multiplyExact(values.length, bytesPerValue), values.length,
+            generation, sequence, observedAtEpochMs, 0, centerFrequencyHz, (int)sampleRateHz, fftSize, 0, fftSize);
+
+        for(float raw: values)
+        {
+            float value = Float.isFinite(raw) ? Math.max(-196.0f, Math.min(20.0f, raw)) : -196.0f;
+            int code = Math.round((value + 196.0f) * maximumCode / 216.0f);
+
+            if(quantizationBits == 8)
+            {
+                buffer.put((byte)code);
+            }
+            else
+            {
+                buffer.putShort((short)code);
+            }
+        }
+
+        long encodedAt = System.currentTimeMillis();
+        buffer.putLong(40, encodedAt);
+        return new DiagnosticStreamFrame(TYPE_TUNER_FFT, generation, sequence, observedAtEpochMs, encodedAt,
+            centerFrequencyHz, (int)sampleRateHz, fftSize, 0, fftSize, values.length, buffer.array());
+    }
+
     static DiagnosticStreamFrame jsonState(long generation, long revision, byte[] json)
     {
         Objects.requireNonNull(json, "Diagnostic state JSON cannot be null");

@@ -530,6 +530,22 @@ class DiagnosticTransportTest
     }
 
     @Test
+    void quantizesTunerFftValuesIntoSmallerPayloads()
+    {
+        float[] values = {-196.0f, -88.0f, 20.0f};
+        DiagnosticStreamFrame eightBit = DiagnosticStreamFrame.tunerFft(1, 2, 3, 100_000_000L,
+            10_000_000L, values.length, 8, values);
+        DiagnosticStreamFrame sixteenBit = DiagnosticStreamFrame.tunerFft(1, 2, 3, 100_000_000L,
+            10_000_000L, values.length, 16, values);
+
+        assertEquals(DiagnosticStreamFrame.HEADER_BYTES + values.length, eightBit.encoded().length);
+        assertEquals(DiagnosticStreamFrame.HEADER_BYTES + values.length * 2, sixteenBit.encoded().length);
+        assertEquals(0, Byte.toUnsignedInt(eightBit.encoded()[DiagnosticStreamFrame.HEADER_BYTES]));
+        assertEquals(128, Byte.toUnsignedInt(eightBit.encoded()[DiagnosticStreamFrame.HEADER_BYTES + 1]));
+        assertEquals(255, Byte.toUnsignedInt(eightBit.encoded()[DiagnosticStreamFrame.HEADER_BYTES + 2]));
+    }
+
+    @Test
     void retainsOnlyTheLatestFramePerTypeAndWakesPollersOnClose() throws Exception
     {
         DiagnosticFrameQueue queue = new DiagnosticFrameQueue();

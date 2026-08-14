@@ -2127,7 +2127,26 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 }
 
 .tuner-spectrum-experiment-readouts {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
+  gap: 0;
   margin: 9px -10px -10px;
+  overflow-x: hidden;
+}
+
+.tuner-spectrum-experiment-readouts .channel-diagnostic-readout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 12px;
+  width: 100%;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.tuner-spectrum-experiment-readouts .channel-diagnostic-readout:last-child {
+  border-bottom: 0;
 }
 
 .tuner-spectrum-refining {

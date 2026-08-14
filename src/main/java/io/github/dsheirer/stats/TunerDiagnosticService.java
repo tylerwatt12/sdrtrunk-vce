@@ -431,11 +431,12 @@ public final class TunerDiagnosticService implements AutoCloseable
     }
 
     public record ExperimentSettings(int fftSize, int framesPerSecond, int maximumDecimation,
-                                     long iqQueueDurationMilliseconds)
+                                     long iqQueueDurationMilliseconds, int quantizationBits)
     {
         public ExperimentSettings
         {
-            if(fftSize != 1_024 && fftSize != 2_048 && fftSize != 4_096 && fftSize != 8_192 && fftSize != 16_384)
+            if(fftSize != 1_024 && fftSize != 2_048 && fftSize != 4_096 && fftSize != 8_192 && fftSize != 16_384 &&
+                fftSize != 32_768)
             {
                 throw new IllegalArgumentException("Experimental FFT size is not supported");
             }
@@ -457,12 +458,17 @@ public final class TunerDiagnosticService implements AutoCloseable
             {
                 throw new IllegalArgumentException("Experimental IQ queue duration is not supported");
             }
+
+            if(quantizationBits != 8 && quantizationBits != 16 && quantizationBits != 32)
+            {
+                throw new IllegalArgumentException("Experimental quantization is not supported");
+            }
         }
 
         public static ExperimentSettings defaults()
         {
             return new ExperimentSettings(FFT_SIZE, FRAMES_PER_SECOND, MAXIMUM_DECIMATION,
-                DEFAULT_IQ_QUEUE_DURATION_MILLISECONDS);
+                DEFAULT_IQ_QUEUE_DURATION_MILLISECONDS, 32);
         }
     }
 
@@ -473,6 +479,7 @@ public final class TunerDiagnosticService implements AutoCloseable
     public record State(long revision, long generation, String state, String reason, String targetId, String label,
                         long centerFrequencyHz, long sampleRateHz, int activeChannelCount, int fftSize,
                         int framesPerSecond, int maximumDecimation, int maximumTransmittedBins,
+                        int quantizationBits,
                         long iqQueueDurationMilliseconds, long receiverQueuedMilliseconds,
                         long receiverDroppedBuffers, long receiverDroppedMilliseconds,
                         long diagnosticDroppedBuffers, double processCpuPercent, double processCpuCores,
@@ -831,9 +838,9 @@ public final class TunerDiagnosticService implements AutoCloseable
             }
 
             long sequence = mSequence.incrementAndGet();
-            mFrames.offer(DiagnosticStreamFrame.float32(DiagnosticStreamFrame.TYPE_TUNER_FFT, mGeneration,
+            mFrames.offer(DiagnosticStreamFrame.tunerFft(mGeneration,
                 sequence, result.observedAtEpochMs(), result.centerFrequencyHz(), result.sampleRateHz(),
-                result.fftSize(), 0, result.fftSize(), result.bins()));
+                result.fftSize(), mExperimentSettings.quantizationBits(), result.bins()));
         }
 
         private State state(String state, String reason)
@@ -851,6 +858,7 @@ public final class TunerDiagnosticService implements AutoCloseable
             return new State(revision, mGeneration, state, reason, metadata.targetId(), metadata.label(),
                 metadata.centerFrequencyHz(), metadata.sampleRateHz(), metadata.activeChannelCount(),
                 settings.fftSize(), settings.framesPerSecond(), settings.maximumDecimation(), settings.fftSize(),
+                settings.quantizationBits(),
                 receiver.requestedDurationMilliseconds(), receiver.queuedMilliseconds(), receiver.droppedBuffers(),
                 receiver.droppedMilliseconds(), mDroppedIngressBuffers.get() + mProcessor.droppedBufferCount(),
                 process.cpuPercent(), process.cpuCores(), process.heapUsedBytes(), process.gcCollectionMilliseconds(),

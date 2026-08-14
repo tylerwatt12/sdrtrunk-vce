@@ -1297,6 +1297,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         Integer framesPerSecond = request.optionalInt("experiment_fps");
         Integer maximumDecimation = request.optionalInt("experiment_max_decimation");
         Long iqQueueMilliseconds = request.optionalLong("experiment_iq_queue_ms");
+        Integer quantizationBits = request.optionalInt("experiment_quantization_bits");
 
         if((viewportStart == null) != (viewportEnd == null))
         {
@@ -1326,7 +1327,8 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
                 fftSize != null ? fftSize : defaults.fftSize(),
                 framesPerSecond != null ? framesPerSecond : defaults.framesPerSecond(),
                 maximumDecimation != null ? maximumDecimation : defaults.maximumDecimation(),
-                iqQueueMilliseconds != null ? iqQueueMilliseconds : defaults.iqQueueDurationMilliseconds());
+                iqQueueMilliseconds != null ? iqQueueMilliseconds : defaults.iqQueueDurationMilliseconds(),
+                quantizationBits != null ? quantizationBits : defaults.quantizationBits());
         }
         catch(IllegalArgumentException exception)
         {
