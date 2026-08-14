@@ -211,7 +211,7 @@ class StatsWebInteractionUiContractTest
         String talkgroup = function(source, "async function renderTalkgroup()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"70\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"71\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -522,7 +522,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(html.contains("id=\"theme-toggle\""));
         assertTrue(html.contains("id=\"mobile-theme-toggle\""));
         assertTrue(html.contains("/assets/app.css?v=55"));
-        assertTrue(html.contains("/assets/app.js?v=80"));
+        assertTrue(html.contains("/assets/app.js?v=81"));
         assertTrue(source.contains("MOBILE_THEME_STORAGE_KEY = 'sdrtrunk_mobile_theme'"));
         assertTrue(source.contains("mode === 'mobile' ? MOBILE_THEME_STORAGE_KEY : THEME_STORAGE_KEY"));
         assertTrue(source.contains("toggle.setAttribute('aria-pressed'"));
@@ -961,6 +961,7 @@ class StatsWebInteractionUiContractTest
         assertFalse(pointerMove.contains("closeStreams();"));
         assertTrue(acceptFrame.contains("drag?.moved"));
         assertTrue(tuner.contains("if (moved) queueViewportUpdate();"));
+        assertTrue(refinement.contains("restoreWaterfallHistory();\n        drawWaterfall();"));
         assertTrue(tuner.contains("event.key === 'ArrowLeft'"));
         assertTrue(tuner.contains("event.key === 'r' || event.key === 'R'"));
         assertTrue(tuner.contains("connectActiveChannels()"));
@@ -1050,10 +1051,13 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("const signature = JSON.stringify([viewport.startHz, viewport.endHz"));
         assertTrue(tuner.contains("if (signature === activeFlagSignature) return;"));
         assertTrue(tuner.contains("waterfallObservedAtRows = new Float64Array(waterfallBuffer.height)"));
-        assertTrue(source.contains("const TUNER_WATERFALL_HISTORY_DOMAINS = 4"));
         assertTrue(source.contains("const TUNER_WATERFALL_HISTORY_ROWS = 256"));
-        assertTrue(tuner.contains("const waterfallHistories = new Map()"));
-        assertTrue(tuner.contains("history.rows.push(cached)"));
+        assertTrue(tuner.contains("const waterfallHistoryRows = []"));
+        assertTrue(tuner.contains("waterfallHistoryRows.push(cached)"));
+        assertTrue(tuner.contains("Math.max(domain.startHz, viewport.startHz)"));
+        assertTrue(tuner.contains("Math.min(domain.endHz, viewport.endHz)"));
+        assertTrue(tuner.contains("pixelStartHz"));
+        assertTrue(tuner.contains("pixelEndHz"));
         assertTrue(tuner.contains("restoreWaterfallHistory()"));
         assertTrue(tuner.contains("' (digital)'"));
         assertTrue(tuner.contains("const frameDomain = tunerFrameDomain(frameMetadata, fftValues.length)"));
@@ -1095,7 +1099,6 @@ class StatsWebInteractionUiContractTest
         assertTrue(acceptFrame.contains("domain.endHz < viewport.endHz"));
         assertTrue(acceptFrame.contains("if (generationChanged || analysisChanged)"));
         assertFalse(acceptFrame.contains("resetWaterfallBuffer(1, 1)"));
-        assertTrue(acceptFrame.contains("selectWaterfallHistory(frameMetadata)"));
         assertTrue(acceptFrame.contains("restoreWaterfallHistory()"));
         assertTrue(acceptFrame.contains("if (analysisChanged) renderActiveChannels()"));
         assertTrue(acceptFrame.contains("frameMetadata = frame"));
