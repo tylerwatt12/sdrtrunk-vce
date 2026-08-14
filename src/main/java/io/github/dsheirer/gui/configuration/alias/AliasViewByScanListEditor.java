@@ -144,6 +144,7 @@ public class AliasViewByScanListEditor extends VBox
             table.getColumns().add(column("Alias List", "aliasListName", 150));
         }
         table.getColumns().add(column("Alias", "name", 200));
+        table.getColumns().add(column("Description", "description", 260));
         table.getColumns().add(column("Group", "group", 150));
         table.setPlaceholder(new Label(placeholder));
 

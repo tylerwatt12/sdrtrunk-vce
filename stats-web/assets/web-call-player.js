@@ -270,6 +270,7 @@ class WebCallPlayer {
     this.renderScanLists();
     this.synchronizeSubscription();
     this.render();
+    if (selected && this.paused) void this.togglePlayback();
   }
 
   renderScanLists() {

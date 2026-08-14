@@ -173,6 +173,10 @@ class StatsWebAliasCatalogUiContractTest
         }
         assertTrue(source.contains("['move', 'Move'], ['group', 'Group'], ['scan-lists', 'Scan Lists']"));
         assertTrue(source.contains("['stream', 'Stream'], ['appearance', 'Appearance'], ['delete', 'Delete']"));
+        assertTrue(bulk.contains("let membershipOperation = 'add'"));
+        assertTrue(bulk.contains("['add', '+', 'Add selected aliases']"));
+        assertTrue(bulk.contains("['remove', '−', 'Remove selected aliases']"));
+        assertFalse(bulk.contains("aliasSelect('membershipOperation'"));
         assertTrue(columns.contains("event.shiftKey"));
         assertTrue(source.contains("event.metaKey || event.ctrlKey"));
     }

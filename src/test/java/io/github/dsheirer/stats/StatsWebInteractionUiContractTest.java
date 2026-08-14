@@ -520,8 +520,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(html.indexOf("localStorage.getItem('sdrtrunk_theme')") <
             html.indexOf("rel=\"stylesheet\""));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=51"));
-        assertTrue(html.contains("/assets/app.js?v=76"));
+        assertTrue(html.contains("/assets/app.css?v=52"));
+        assertTrue(html.contains("/assets/app.js?v=77"));
         assertTrue(source.contains("window.localStorage.setItem(THEME_STORAGE_KEY"));
         assertTrue(source.contains("toggle.setAttribute('aria-pressed'"));
         assertTrue(css.contains(":root[data-theme=\"dark\"]"));
@@ -544,7 +544,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(html.contains("id=\"playback-volume\" type=\"range\""));
         assertTrue(html.contains("aria-label=\"Browser playback volume\""));
         assertTrue(html.contains("id=\"playback-volume-value\""));
-        assertTrue(html.contains("/assets/web-call-player.js?v=9"));
+        assertTrue(html.contains("/assets/web-call-player.js?v=10"));
         assertTrue(source.contains("VOLUME_KEY = 'sdrtrunk-vce.web-player.volume'"));
         assertTrue(source.contains("this.volume = this.readVolume()"));
         assertTrue(changeVolume.contains("this.gainNode.gain.value = this.volume"));
@@ -654,6 +654,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(synchronize.contains("this.events.update(this.subscriptionParameters())"));
         assertTrue(source.contains("maximum_selected_scan_lists"));
         assertTrue(source.contains("maximum_browser_queue_calls"));
+        assertTrue(function(source, "  setScanListSelected(id, selected)")
+            .contains("if (selected && this.paused) void this.togglePlayback()"));
         assertTrue(normalize.contains("value.logical_call_id ?? value.call_id"));
         assertTrue(normalize.contains("value.matched_scan_list_ids ?? value.scan_list_ids"));
         assertTrue(enqueue.contains("this.seenCallIds.has(normalized._logicalCallId)"));

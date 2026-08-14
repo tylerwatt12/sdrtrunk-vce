@@ -3385,16 +3385,30 @@ function openAliasBulkModal(kind) {
         value: row.id ?? row.scan_list_id,
         label: `${row.name}${row.published === false ? ' · not published' : ''}`
       }))], '');
-    const operation = aliasSelect('membershipOperation', [
-      { value: '', label: 'Choose an operation' }, { value: 'add', label: 'Add selected aliases' },
-      { value: 'remove', label: 'Remove selected aliases' }
-    ], '');
+    const operation = node('div', 'alias-membership-operation');
+    operation.setAttribute('role', 'group');
+    operation.setAttribute('aria-label', 'Membership change');
+    let membershipOperation = 'add';
+    [['add', '+', 'Add selected aliases'], ['remove', '−', 'Remove selected aliases']]
+      .forEach(([value, label, description]) => {
+        const button = node('button', '', label);
+        button.type = 'button';
+        button.title = description;
+        button.setAttribute('aria-label', description);
+        button.setAttribute('aria-pressed', String(value === membershipOperation));
+        button.addEventListener('click', () => {
+          membershipOperation = value;
+          operation.querySelectorAll('button').forEach((candidate) =>
+            candidate.setAttribute('aria-pressed', String(candidate === button)));
+          operation.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+        operation.append(button);
+      });
     form.append(aliasFormField('Scan list', scanList), aliasFormField('Membership change', operation));
     readChange = () => {
       const scanListId = Number(scanList.value);
       if (!Number.isInteger(scanListId) || scanListId <= 0) throw new Error('Choose a scan list');
-      if (!operation.value) throw new Error('Choose how membership should change');
-      return { scan_list_id: scanListId, operation: operation.value };
+      return { scan_list_id: scanListId, operation: membershipOperation };
     };
   } else if (kind === 'record') {
     const operation = aliasSelect('recordOperation', [

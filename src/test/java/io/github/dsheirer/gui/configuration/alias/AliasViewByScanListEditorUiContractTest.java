@@ -28,6 +28,7 @@ class AliasViewByScanListEditorUiContractTest
         assertTrue(editor.contains("new Button(\"Add All >>\")"));
         assertTrue(editor.contains("new Button(\"< Remove\")"));
         assertTrue(editor.contains("new Button(\"<< Remove All\")"));
+        assertTrue(editor.contains("column(\"Description\", \"description\""));
         assertTrue(editor.contains("updateScanListMemberships(scanList.getId()"));
     }
 }

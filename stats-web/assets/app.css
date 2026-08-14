@@ -3975,6 +3975,35 @@ th.numeric {
   accent-color: var(--accent);
 }
 
+.alias-membership-operation {
+  width: max-content;
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid var(--line-dark);
+  border-radius: 3px;
+}
+
+.alias-membership-operation button {
+  width: 48px;
+  min-height: 34px;
+  padding: 4px 12px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 0;
+  border-radius: 0;
+  font-size: 20px;
+  line-height: 1;
+}
+
+.alias-membership-operation button + button {
+  border-left: 1px solid var(--line-dark);
+}
+
+.alias-membership-operation button[aria-pressed="true"] {
+  color: #fff;
+  background: var(--accent);
+}
+
 .alias-modal-tabs {
   margin-bottom: 0;
 }
