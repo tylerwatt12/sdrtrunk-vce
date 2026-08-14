@@ -9,7 +9,7 @@ Public/User/Admin access tiers, user and Alias management, Live Events/Messages/
 whole-tuner spectrum and waterfall. It also hardens P25 control-channel and error-correction behavior, fixes
 RadioReference and SQLite Alias problems, and modernizes browser call playback.
 
-This release changes Alias storage from schema v4 to v5 and P25 activity storage directly from v24 to v26.
+This release changes Alias storage from schema v4 to v6 and P25 activity storage directly from v24 to v26.
 **Migrate Existing** copies and upgrades the exact Alias v4/P25 v24 predecessor layout shipped unchanged by Alpha 8
 and Alpha 9 while leaving the original installation unchanged.
 
@@ -32,11 +32,14 @@ and Alpha 9 while leaving the original installation unchanged.
   certificate with its matching RSA/EC private key. Changes to the network mode, port, password, or certificate
   restart the web listener automatically.
 - **Web Alias administration.** The Aliases page can create and delete lists; create, clone, edit, move, and delete
-  Aliases; edit identifiers, appearance, listening, recording, and streaming settings; inspect usage; and apply
+  Aliases; edit identifiers, appearance, scan-list, recording, and streaming settings; inspect usage; and apply
   bounded bulk changes.
-- **Unmatched talkgroup policies and Discover.** Each P25, DMR, or NXDN Alias list can define listening priority,
-  recording, and streaming destinations for unmatched talkgroups. Discover shows observed talkgroups and patches with
-  retained activity evidence and can prefill an ordinary Alias for a safe positive local ID. Fully-qualified P25
+- **Scan-list browser listening.** Administrators can create and publish scan lists, assign Aliases from different
+  Alias Lists, and configure the default list. A browser can subscribe to several lists; overlapping memberships
+  deliver one completed call to its bounded, conversation-aware queue.
+- **Unmatched talkgroup policies and Discover.** Each P25, DMR, NXDN, or conventional analog Alias List can route
+  unmatched talkgroups to scan lists, recording, and streaming destinations. Discover shows retained P25, DMR, and
+  NXDN activity evidence and can prefill an ordinary Alias for a safe positive local ID. Fully-qualified P25
   observations with local ID zero remain review-only.
 - **Authoritative affiliated-site visibility.** P25 radio pages and tables show a radio's current talkgroup affiliation
   separately from the last site that explicitly accepted its registration or affiliation. Regular talkgroup Radio
@@ -45,10 +48,9 @@ and Alpha 9 while leaving the original installation unchanged.
 - **RadioReference Import All.** The JavaFX RadioReference talkgroup page can import all loaded system talkgroups,
   independent of the current search or category filter, with an add/update/unchanged preview.
 - **Live Events, Messages, and Channel diagnostics.** A collapsible area beneath Live receiver tables shows up to 200
-  selected-channel events, up to 200 decoded messages, and Signal plus Symbols together. Events update in place while
-  calls are active and can be filtered by category. The Channel view supports FFT or waterfall signal display, and
-  Phase 2 now supplies compatible diagnostic soft symbols. The symbol sweep fills left to right, then clears and
-  starts over.
+  selected-channel events, up to 200 decoded messages, and bounded Signal and Symbols views. Events update in place
+  while calls are active and can be filtered by category. Signal supports FFT or waterfall display; the Symbols view
+  appears when the selected decoder supplies compatible demodulated symbols.
 - **Shared Pause control.** Pause/Resume applies to Events, Messages, and Channel diagnostics. Pausing, collapsing,
   changing pages, hiding a tab, or closing a diagnostic view releases its stream.
 - **Whole-tuner spectrum and waterfall.** The Tuner Spectrum dialog shows already-running tuners without starting,
@@ -75,9 +77,9 @@ and Alpha 9 while leaving the original installation unchanged.
 - **First-launch choices are shorter and explained.** Setup now uses **Migrate Existing**, **Choose Install…**,
   **Use Found XML** or **Choose XML…**, **Start Fresh**, and **Quit**. The prompt explains that migration copies and
   upgrades a portable profile without changing the original, while XML import creates a new profile from configuration.
-- **Browser playback uses real transport controls.** Play/Pause replaces Mute, Pause keeps the current call and
-  position, Replay restarts it, and a progress indicator joins Skip, Hold, Avoid, Clear, saved volume, and the bounded
-  queue controls.
+- **Browser playback follows completed calls.** Scan-list subscriptions select the calls delivered to each listener.
+  Calls remain ordered within a conversation, while bounded grouping favors coherent exchanges without promising a
+  perfect global timeline.
 - **Receiver context is consistent across protocols.** Trunked P25/DMR/NXDN and conventional NBFM/P25/DMR/NXDN now use
   shared receiver metadata, including configured Alias list, channel name, decoder, and frequency.
 - **Site labels carry both useful fields.** Summary views show configured Name and Site together where useful, while
@@ -88,12 +90,18 @@ and Alpha 9 while leaving the original installation unchanged.
   updates do not force the view back.
 - **Diagnostics are demand-driven and shared.** Viewers of the same channel or tuner share a bounded producer and
   latest-only binary frames. When nobody is viewing, no diagnostic sample listener, scheduled FFT work, or worker is
-  active. Channel diagnostics support up to 32 sessions and four distinct channel producers; tuner diagnostics support
-  up to 32 sessions and two tuner producers, targeting 20 frames per second.
+  active. Selected-channel diagnostics support up to 32 sessions sharing one 512-bin producer at 5 frames per second;
+  tuner diagnostics support up to 32 sessions and two tuner producers at 10 frames per second.
+- **The Java receiver window is smaller.** The old Systems workspace and its embedded Details, Events, Messages,
+  signal, and symbol panels are removed. Browser Live Systems owns those activity workflows. Java keeps Map when
+  enabled, Tuners, and the separate on-demand whole-tuner Spectrum view.
+- **Receiver-local playback is retired.** Java speaker output, output-device selection, and local Hold, Avoid,
+  priority, and backlog controls are removed. Recording, broadcast streaming, and browser call playback remain.
 - **Frequency snapping uses fixed rasters.** Supported ranges use 2.5 kHz spacing in VHF, 6.25 kHz in the configured
   UHF and 700/800 MHz ranges, and 12.5 kHz in the 900 MHz ranges. Outside them, the pointer remains unsnapped.
-- **Alias schema v5 stores unmatched behavior on the list.** A single plain, unambiguous full-domain catch-all can be
-  converted to the list policy. Styled, multiple, or Stream As catch-alls remain as Aliases for manual review.
+- **Alias schema v6 stores scan-list routing.** Normalized definitions and Alias and unmatched-talkgroup memberships
+  replace the receiver-local playback-priority columns. Migration creates a published Default list and preserves the
+  previously enabled Alias and unmatched-talkgroup populations as its initial membership.
 - **P25 activity schema v26 separates qualifier-safe identity evidence from authoritative radio state.** A bounded
   summary retains zero-local fully-qualified talkgroup observations for review without turning talkgroup zero into an
   Alias. Current system-wide P25 affiliation is stored independently from the last site that authoritatively accepted

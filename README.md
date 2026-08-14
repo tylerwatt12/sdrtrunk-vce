@@ -2,8 +2,8 @@
 
 `sdrtrunk-vce` is an independent, enhanced version of
 [SDRTrunk](https://github.com/DSheirer/sdrtrunk). It keeps the familiar receiver, decoder, recording, streaming, and
-Java desktop features while adding a better activity screen, a built-in website, portable storage, more playback
-controls, long-term statistics, and performance improvements.
+Java configuration tools while adding a browser activity screen, a built-in website, portable storage, browser
+scan-list listening, long-term statistics, and performance improvements.
 
 This project is currently an **alpha release**. Back up your receiver data before installing or upgrading.
 
@@ -19,15 +19,19 @@ This project is currently an **alpha release**. Back up your receiver data befor
 
 ## Highlights
 
-- **Stable activity screen:** Systems replaces Now Playing with one Conventional tab and stable tabs for each trunked
-  site. Frequencies stay in place instead of constantly moving around.
+- **Stable browser activity screen:** Live Systems has one Conventional tab and stable tabs for each trunked site.
+  Frequencies stay in place instead of constantly moving around.
 - **Built-in webserver and scanner:** View live systems, sites, channels, talkgroups, radios, activity, and statistics
-  from a browser. Browser audio has Play/Pause, Skip, Replay, Hold, Avoid, Clear, volume, and queue controls.
+  from a browser. Subscribe to one or more administrator-defined scan lists; assign normal Aliases or an Alias List's
+  global unmatched-talkgroup policy to them. Overlapping routes are deduplicated before completed calls enter the
+  conversation-aware browser queue.
 - **Portable setup:** Each VCE installation keeps its own database, settings, tuners, JMBE library, logs, recordings,
   statistics, and web files. It does not rely on the sdrtrunk in the userprofile, so you can rest assured it will not overwrite files from previous versions of sdrtrunk
 - **Safe importing and upgrades:** VCE allows you to import an existing SDRTrunk XML playlist, or migrate to a new version from a previous VCE database with the built-in Application Migrator.
-- **Clear channel types:** Conventional P25, DMR, and NXDN are kept separate from trunked systems.
-- **Improved listening:** Desktop audio adds Hold, Avoid, Clear, saved mute state, a queue counter, and a queue limit.
+- **Clear channel types:** Conventional P25, DMR, and NXDN are kept separate from trunked systems, while one
+  conventional analog Alias-list family serves both AM and NBFM channels.
+- **Desktop and mobile listening:** The full desktop website and a separate touch-friendly mobile listener share the
+  same completed-call audio service, scan-list subscriptions, queue limits, and playback state.
 
 ## What’s New in Alpha 10
 
@@ -37,8 +41,10 @@ Alpha 10 expands the built-in website and strengthens P25 decoding.
   certificate import without manually stopping the server.
 - **Alias management moves into the website**, including bulk editing, per-list unmatched-talkgroup behavior, observed
   talkgroup discovery, and a RadioReference **Import All** action in JavaFX.
-- **Live diagnostics add Events, Messages, Signal, and Symbols**, plus a demand-driven whole-tuner FFT and waterfall
-  with zoom, smoothing, frequency snapping, and channel flags.
+- **Live diagnostics add Events, Messages, and bounded Signal and Symbols views**, plus a demand-driven whole-tuner
+  FFT and waterfall with zoom, smoothing, frequency snapping, and channel flags.
+- **The Java receiver window is deliberately smaller:** Map (when enabled) and Tuners remain, while the old Systems
+  workspace and its embedded diagnostics are removed. The separate on-demand tuner Spectrum view remains available.
 - **P25 NAC, CRC, and error-correction handling is stricter**, while bounded weak-voice recovery preserves usable
   Phase 1 audio and late encryption details remain attached to the correct call.
 - **The exact Alpha 8/Alpha 9 database layout uses the built-in migrator.** Alpha 8 and Alpha 9 shipped the same
@@ -188,8 +194,9 @@ For more detail, see [Portable Startup And Storage](docs/portable-startup-and-st
 
 These older or experimental features are not included:
 
+- Receiver-local speaker playback, output-device selection, and the desktop Hold, Avoid, priority, and backlog controls
 - Local alias actions and the Actions editor
-- AM, LTR Standard, LTR-Net, Passport, and MPT-1327 decoders
+- LTR Standard, LTR-Net, Passport, and MPT-1327 decoders
 - Funcube Dongle Pro/Pro+ tuners
 - Legacy named Channel Maps formerly used by MPT-1327; decoder-embedded DMR and NXDN channel maps remain supported
 - Heterodyne channelization

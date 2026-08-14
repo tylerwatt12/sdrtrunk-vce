@@ -46,6 +46,7 @@ and double-encoded or separator-smuggling resource names are rejected.
 | `GET /api/v1/alias-lists/{id}/observed-talkgroups` | Paged unmatched or observed talkgroup discovery for one alias list. |
 | `GET /api/v1/aliases` | Paged alias catalog and bounded evidence metrics. |
 | `GET /api/v1/aliases/{id}` | One alias and its bounded evidence breakdown. |
+| `GET /api/v1/scan-lists` | Published scan lists available to the signed-in browser listener. |
 | `GET /api/v1/systems` | Paged protocol-neutral system scopes. Sites are not embedded. |
 | `GET /api/v1/systems/{scope}` | One system scope and its summary. The scope token is opaque. |
 | `GET /api/v1/systems/{scope}/sites` | Paged sites owned by the scope. |
@@ -170,7 +171,10 @@ an `identifiers` list of `{group, label, value}` fields learned from the active 
 available callsign, source and target forms/IDs/aliases, talker alias, LCN, timeslot, signal level, decoder, and call
 role without requiring a consumer to infer those fields from protocol-specific text.
 Channel diagnostic state keeps the normalized `protocol` separate from the human-readable `decoder_profile`, which
-may include the currently selected demodulator profile for an automatic decoder.
+may include the currently selected demodulator profile for an automatic decoder. Selected-channel diagnostics carry
+a shared 512-bin signal FFT at five frames per second and bounded batches of demodulated symbols when the decoder
+supports them. At most one selected-channel diagnostic producer runs globally; additional viewers of that channel
+share it, while a different channel waits for capacity.
 
 The stream uses a small fixed binary envelope around JSON event payloads and existing binary diagnostic frames.
 Initial channel snapshots are capped at 128 tables, 256 rows per table, 2,048 rows total, and 1 MiB after encoding.
@@ -181,15 +185,45 @@ accumulating data or applying receiver backpressure. A detected gap sends an aut
 channel activity, decoder events, or decoder messages; activity sends `activity_reset`, after which the browser
 reloads the current bounded REST page before applying newer live rows.
 
+The `calls` logical subscription accepts `scan_list_id` as an array of positive IDs. Duplicate IDs are folded
+together. Omitting the field selects the published default scan list; an unknown or unpublished ID is rejected. Each
+completed call is published once with all matching `scan_list_ids`, so overlapping selections never duplicate it.
+Call events also include `started_at_ms`, `order_sequence`, and `conversation_key`. If one listener's bounded server
+queue overflows, that subscription receives a `missed` event with the exact `missed_calls` count and
+`reason: "server_queue_overflow"`.
+
+The browser orders calls inside each conversation by `started_at_ms`. It may play up to four calls from one
+conversation before choosing the oldest waiting call from another conversation, favoring coherent exchanges without
+allowing one busy talkgroup to monopolize playback. This grouping deliberately does not promise a perfect global
+timeline.
+
 Completed call audio is fetched from `/api/v1/calls/{id}/audio`. A call is rejected before encoding if its WAV would
-exceed 16 MiB. Pending WAV work is limited to 16 MiB total, the completed-call cache is limited to 512 calls and
-128 MiB, and the call ID must be one strict path segment. The server does not accept encoded separator smuggling.
+exceed 16 MiB. Pending WAV work is limited to 16 MiB total. The operator can bound active audio listeners, selected
+scan lists per listener, browser queue calls, cached calls, and cached audio MiB. The call ID must be one strict path
+segment; encoded separator smuggling is rejected. Audio is retained only for completed calls that match at least one
+published scan list while a listener is connected. The listener limit also bounds concurrent WAV responses; excess
+audio fetches receive `429 too_many_audio_responses` and are counted on Listener Status.
 
 ## Authentication and administration
 
-Authentication remains under `/api/v1/auth/*`. User, access-policy, alias-list, and alias administration remain under
-`/api/v1/admin/*`. They use the same success/error envelopes and `snake_case` contract. Mutations require the session's
-CSRF token and the capability enforced for that resource.
+Authentication remains under `/api/v1/auth/*`. User, access-policy, alias-list, alias, scan-list, and web-audio
+administration remain under `/api/v1/admin/*`. They use the same success/error envelopes and `snake_case` contract.
+Mutations require the session's CSRF token and the capability enforced for that resource.
+
+Scan-list administration uses:
+
+- `GET, POST /api/v1/admin/scan-lists`
+- `GET, PUT, DELETE /api/v1/admin/scan-lists/{id}`
+- `PUT /api/v1/admin/scan-lists/{id}/members`
+- `GET, PUT /api/v1/admin/web-audio`
+
+A scan-list definition contains `sort_order`, `name`, optional `description`, `published`, and `default`. Exactly one
+list is the published default. Up to 100 definitions are supported. A membership update uses `operation` (`add`,
+`remove`, or `replace`), `alias_ids`, and `unmatched_alias_list_ids`; each owner collection accepts at most 500 unique
+IDs. The latter assigns a whole Alias List's unmatched talkgroups to the scan list. Detail responses report separate
+totals and explicit truncation when either member set is larger than 500. Scan-list summaries likewise report
+`alias_count` and `unmatched_alias_list_count`. Either owner collection may be omitted to leave that class of owners
+unchanged, including during `replace`; an explicitly empty collection clears that class during `replace`.
 
 Session `capabilities` is an object whose values are booleans. The administrator access-policy resource returns one
 `capabilities` array; each entry has `id`, `display_name`, `required_tier`, `default_tier`, and `configurable`.
@@ -206,8 +240,12 @@ Wire enum values are explicit and case-sensitive; Java enum names and alternate 
   `tone_sequence`, `dcs`, and `esn`.
 - Alias matcher protocols are `am`, `p25`, `dmr`, `nxdn`, `nbfm`, `fleetsync`, and `mdc1200`. A P25 matcher also requires
   `variant` set to `phase_1` or `phase_2`; internal names such as `APCO25_PHASE2` are never accepted or returned.
-- `unmatched_talkgroup_policy` uses the same fields in reads and writes: `listen_enabled`, `priority`, `recordable`,
-  and `broadcast_channels`.
+- Alias reads, creates, and updates include `scan_list_ids`. Creation assigns the durable Alias ID and saves its
+  initial memberships in one configuration transaction. The scan-list member endpoint remains available for later
+  bounded bulk changes.
+- `unmatched_talkgroup_policy` includes `recordable`, `broadcast_channels`, and `scan_list_ids`. Its update replaces
+  all three atomically. The scan-list IDs route calls only when the received talkgroup has no exact Alias or covering
+  range in that Alias List; an exact or range Alias uses its own scan-list membership instead.
 - Bulk alias `group_operation` values are `set` and `clear`; `stream_operation` values are `add`, `remove`, `replace`,
   and `clear`. DCS and tone option values are lowercase.
 

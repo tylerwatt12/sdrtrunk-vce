@@ -7,16 +7,18 @@ patch groups that have been observed for a selected alias list. Exact aliases ar
 covering range is reported without hiding the received identity. Administrators can use an observation to prefill a
 normal alias without changing the identity that was received over the air.
 
-Each P25, DMR, or NXDN list also owns an Unmatched Talkgroups policy. The policy supplies playback priority,
-recording, and stream destinations when no alias matches. It contains no matcher, display identity, or Stream As
-value, so it does not create a false catch-all alias.
+Each P25, DMR, NXDN, or NBFM list also owns an Unmatched Talkgroups policy. The policy supplies recording, stream, and
+scan-list destinations when a destination talkgroup has no exact or range alias in that Alias List. For the NBFM
+family, this classification applies to the configured logical AM or NBFM destination talkgroup; FleetSync and
+MDC-1200 signaling identities remain normal Alias evidence and do not replace that destination. The policy contains no
+matcher, display identity, or Stream As value, so it does not create a false catch-all alias. It routes the completed
+call under its received identity; creating a normal Alias for a newly identified talkgroup remains an explicit
+administrator action. The Discover tab remains limited to the persisted P25, DMR, and NXDN observation catalog.
 
 ## Administrator-owned configuration
 
-Alias schema v5 adds two compact integers to each existing `alias_list` row:
-
-- `unmatched_talkgroup_priority`, using `-1` for do not monitor or `1` through `100`; and
-- `unmatched_talkgroup_record_enabled`, using `0` or `1`.
+Alias schema v6 removes receiver-local playback priority from `alias` and `alias_list`. The remaining
+`unmatched_talkgroup_record_enabled` field is a compact `0` or `1` value on each `alias_list` row.
 
 `alias_list_unmatched_talkgroup_stream` stores one row per selected stream destination. Its unique
 `(alias_list_id, channel_name)` constraint prevents duplicates and supplies the list-prefix access path used when
@@ -24,6 +26,30 @@ loading configuration. No name-only query exists, so no separate `channel_name` 
 zero to four routes; the web request is capped at 64. These rows are created only by an administrator, remain until
 the policy is changed, and are deleted by cascade with their alias list. They do not grow with calls or receiver
 uptime.
+
+`scan_list` stores administrator-owned definitions with a durable integer ID, display order, case-insensitive unique
+name, optional bounded description, published flag, and default flag. A fresh database contains one published
+`Default` definition. The immutable runtime model requires exactly one default, while
+`idx_scan_list_one_default` prevents more than one default in storage. The administration boundary caps the catalog
+at 100 definitions.
+
+`alias_scan_list_membership` stores one row for each selected Alias and scan-list pair. It is `WITHOUT ROWID` with an
+Alias-first composite primary key, which supports loading the scan-list IDs for a completed call's durable owner. The
+reverse index `idx_alias_scan_list_by_list` supports bounded administrator catalog and membership queries by scan
+list. Foreign-key cascades remove memberships when an Alias or scan list is deleted.
+
+`alias_list_unmatched_talkgroup_scan_list_membership` stores one row for each Alias List global unmatched-talkgroup
+route and scan-list pair. It is `WITHOUT ROWID` with an Alias-List-first composite primary key, which supports one
+lookup when a completed call's frozen destination status is unmatched. The reverse index
+`idx_alias_list_unmatched_talkgroup_scan_list_by_list` supports scan-list administration and member counts. Foreign-key
+cascades remove routes when either owning definition is deleted. A matched exact or covering range Alias suppresses
+the global fallback; source-radio matches alone do not. Duplicate routes from matched Aliases, unmatched policies, or
+multiple receiver contexts are folded into one scan-list ID before delivery.
+
+These are configuration rows, not call history. Their row count is bounded by the administrator-owned Alias catalog
+multiplied by the capped scan-list catalog; calls never insert or update them. Runtime routing loads the membership
+map into one immutable snapshot, so completed-call matching does not query SQLite. Rows remain until an administrator
+changes membership or deletes an owning configuration object.
 
 ## Qualifier-safe P25 identity summaries
 
@@ -70,7 +96,7 @@ days. Hourly call-identity buckets use the same cutoff. Zero-local tuple cleanup
 statement through `idx_p25_zero_local_fq_retention(last_seen_ms, scope_id, home_wacn, home_system_id,
 home_talkgroup_id)` and repeats bounded batches until current. Site clear removes the tuple rows when the last context
 for their scope is cleared, via the scope foreign-key cascade; full statistics reset removes them explicitly. Alias
-policies are configuration and remain until an administrator changes or deletes them.
+policies and scan-list memberships are configuration and remain until an administrator changes or deletes them.
 
 ## Query access path
 
@@ -112,3 +138,17 @@ which site last accepted a radio or when it deregistered. Supported administrato
 configuration remain intact. Stored P25 fully-qualified talkgroup and radio Alias rows and their dependent routes are
 removed; their home values are not converted into ordinary local aliases. Intermediate development schemas are not
 accepted.
+
+## Development migration boundary
+
+Alias v6 and P25 activity v26 are the clean current schemas during unreleased development. Normal startup validates
+them and does not upgrade an Alias v5 database. Existing Alias v5 development profiles require the narrowly scoped
+external staged-copy candidate before they can use this branch. The candidate creates `Default`, maps every Alias
+whose effective priority is not `-1` into it, maps every Alias List whose unmatched-talkgroup priority is not `-1` to
+the same list, and then removes both receiver-local playback-priority columns. This preserves the prior per-Alias and
+global unmatched listen-enabled populations as browser scan-list memberships. Development candidates remain outside
+the repository and are not deployed product support.
+
+During numbered-release preparation, the exact preceding public schema must be compared with the final release
+schema and the required transition consolidated into the backed-up Application Migrator. Intermediate
+development-only paths are discarded rather than accumulated in normal startup.
