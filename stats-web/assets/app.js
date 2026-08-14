@@ -14,7 +14,9 @@ const DECODE_DEGRADED_MINIMUM_PERCENT = 75;
 const VOICE_QUALITY_WARMUP_FRAMES = 50;
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
 const THEME_STORAGE_KEY = 'sdrtrunk_theme';
+const MOBILE_THEME_STORAGE_KEY = 'sdrtrunk_mobile_theme';
 const LISTENER_MODE_STORAGE_KEY = 'sdrtrunk-vce.listener-mode';
+const themePreferences = { desktop: null, mobile: null };
 const COMPACT_LISTENER_MEDIA = '(max-width: 760px), (pointer: coarse) and (max-width: 1024px)';
 const ALIAS_LIST_FAMILY_LABELS = Object.freeze({
   P25: 'P25', DMR: 'DMR', NXDN: 'NXDN', NBFM: 'Conventional Analog (AM/NBFM)'
@@ -352,38 +354,62 @@ function writeTableWidthPreferences() {
   document.cookie = `${TABLE_WIDTH_COOKIE}=${encoded}; Max-Age=31536000; Path=/; SameSite=Lax`;
 }
 
-function currentTheme() {
-  return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
+function themeMode() {
+  return document.body.dataset.listenerShell === 'mobile' ? 'mobile' : 'desktop';
 }
 
-function updateThemeToggle() {
-  const toggle = document.getElementById('theme-toggle');
+function storedTheme(mode) {
+  if (themePreferences[mode]) return themePreferences[mode];
+  try {
+    const value = window.localStorage.getItem(mode === 'mobile' ? MOBILE_THEME_STORAGE_KEY : THEME_STORAGE_KEY);
+    themePreferences[mode] = value === 'dark' ? 'dark' : 'light';
+  } catch (_) {
+    themePreferences[mode] = 'light';
+  }
+  return themePreferences[mode];
+}
+
+function updateThemeButton(toggle, theme, label) {
   if (!toggle) return;
-  const dark = currentTheme() === 'dark';
+  const dark = theme === 'dark';
   toggle.textContent = dark ? 'Light' : 'Dark';
   toggle.setAttribute('aria-pressed', String(dark));
-  toggle.setAttribute('aria-label', dark ? 'Use light theme' : 'Use dark theme');
-  toggle.title = dark ? 'Use light theme' : 'Use dark theme';
+  toggle.setAttribute('aria-label', `Use ${dark ? 'light' : 'dark'} ${label} theme`);
+  toggle.title = `Use ${dark ? 'light' : 'dark'} ${label} theme`;
 }
 
-function setTheme(theme, persist = true) {
+function updateThemeToggles() {
+  updateThemeButton(document.getElementById('theme-toggle'), storedTheme('desktop'), 'desktop');
+  updateThemeButton(document.getElementById('mobile-theme-toggle'), storedTheme('mobile'), 'mobile');
+}
+
+function applyTheme(mode) {
+  const theme = storedTheme(mode);
   if (theme === 'dark') document.documentElement.dataset.theme = 'dark';
   else document.documentElement.removeAttribute('data-theme');
-  if (persist) {
-    try {
-      window.localStorage.setItem(THEME_STORAGE_KEY, theme === 'dark' ? 'dark' : 'light');
-    } catch (error) {
-      // Browser storage can be disabled; the active page theme still changes.
-    }
+  const shell = document.getElementById('mobile-listener-shell');
+  if (shell) shell.dataset.theme = mode === 'mobile' ? theme : storedTheme('mobile');
+  updateThemeToggles();
+}
+
+function setTheme(theme, mode = themeMode()) {
+  const selected = theme === 'dark' ? 'dark' : 'light';
+  themePreferences[mode] = selected;
+  try {
+    window.localStorage.setItem(mode === 'mobile' ? MOBILE_THEME_STORAGE_KEY : THEME_STORAGE_KEY,
+      selected);
+  } catch (error) {
+    // Browser storage can be disabled; the active page theme still changes.
   }
-  updateThemeToggle();
+  applyTheme(mode);
 }
 
 function initializeThemeToggle() {
-  const toggle = document.getElementById('theme-toggle');
-  if (!toggle) return;
-  updateThemeToggle();
-  toggle.addEventListener('click', () => setTheme(currentTheme() === 'dark' ? 'light' : 'dark'));
+  updateThemeToggles();
+  document.getElementById('theme-toggle')?.addEventListener('click', () =>
+    setTheme(storedTheme('desktop') === 'dark' ? 'light' : 'dark', 'desktop'));
+  document.getElementById('mobile-theme-toggle')?.addEventListener('click', () =>
+    setTheme(storedTheme('mobile') === 'dark' ? 'light' : 'dark', 'mobile'));
 }
 
 function accessTierFromWire(value) {
@@ -6048,6 +6074,7 @@ function applyListenerShellMode() {
   const mobile = preference === 'mobile' || (preference !== 'desktop' && compactListenerMedia.matches);
   document.body.classList.toggle('mobile-listener-active', mobile);
   document.body.dataset.listenerShell = mobile ? 'mobile' : 'desktop';
+  applyTheme(mobile ? 'mobile' : 'desktop');
   if (mobile) {
     mobileSlot.append(bar);
     app.hidden = true;

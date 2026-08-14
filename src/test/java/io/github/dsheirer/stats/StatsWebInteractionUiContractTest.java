@@ -211,7 +211,7 @@ class StatsWebInteractionUiContractTest
         String talkgroup = function(source, "async function renderTalkgroup()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"67\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"68\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -517,14 +517,20 @@ class StatsWebInteractionUiContractTest
         String source = source();
         String html = readText(INDEX_HTML);
         String css = readText(APP_CSS);
-        assertTrue(html.indexOf("localStorage.getItem('sdrtrunk_theme')") <
+        assertTrue(html.indexOf("const themeKey = mobile ? 'sdrtrunk_mobile_theme' : 'sdrtrunk_theme'") <
             html.indexOf("rel=\"stylesheet\""));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=52"));
-        assertTrue(html.contains("/assets/app.js?v=77"));
-        assertTrue(source.contains("window.localStorage.setItem(THEME_STORAGE_KEY"));
+        assertTrue(html.contains("id=\"mobile-theme-toggle\""));
+        assertTrue(html.contains("/assets/app.css?v=53"));
+        assertTrue(html.contains("/assets/app.js?v=78"));
+        assertTrue(source.contains("MOBILE_THEME_STORAGE_KEY = 'sdrtrunk_mobile_theme'"));
+        assertTrue(source.contains("mode === 'mobile' ? MOBILE_THEME_STORAGE_KEY : THEME_STORAGE_KEY"));
         assertTrue(source.contains("toggle.setAttribute('aria-pressed'"));
+        assertTrue(function(source, "function applyListenerShellMode()")
+            .contains("applyTheme(mobile ? 'mobile' : 'desktop')"));
         assertTrue(css.contains(":root[data-theme=\"dark\"]"));
+        assertTrue(css.contains(".mobile-listener-shell[data-theme=\"dark\"]"));
+        assertTrue(css.contains("color-scheme: light"));
         assertTrue(css.contains("--chart-call:"));
         assertTrue(css.contains(":not(.auth-action):not(.table-sort-control):not(.systems-live-tab)"));
         assertFalse(css.contains("filter: invert("));
@@ -682,6 +688,7 @@ class StatsWebInteractionUiContractTest
 
         assertTrue(html.contains("id=\"mobile-listener-shell\""));
         assertTrue(html.contains("id=\"mobile-listener-desktop\""));
+        assertTrue(html.contains("id=\"mobile-theme-toggle\""));
         assertTrue(html.contains("data-listener-view=\"scan-lists\""));
         assertTrue(html.contains("data-listener-view=\"queue\""));
         assertTrue(shell.contains("mobileSlot.append(bar)"));

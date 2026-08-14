@@ -3,12 +3,17 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="sdrtrunk-web-revision" content="67">
+  <meta name="sdrtrunk-web-revision" content="68">
   <title>sdrtrunk-vce</title>
   <script>
     (() => {
       try {
-        if (window.localStorage.getItem('sdrtrunk_theme') === 'dark') {
+        const listenerMode = window.localStorage.getItem('sdrtrunk-vce.listener-mode');
+        const compact = window.matchMedia?.(
+          '(max-width: 760px), (pointer: coarse) and (max-width: 1024px)')?.matches === true;
+        const mobile = listenerMode === 'mobile' || (listenerMode !== 'desktop' && compact);
+        const themeKey = mobile ? 'sdrtrunk_mobile_theme' : 'sdrtrunk_theme';
+        if (window.localStorage.getItem(themeKey) === 'dark') {
           document.documentElement.dataset.theme = 'dark';
         }
       } catch (error) {
@@ -16,7 +21,7 @@
       }
     })();
   </script>
-  <link rel="stylesheet" href="/assets/app.css?v=52">
+  <link rel="stylesheet" href="/assets/app.css?v=53">
 </head>
 <body>
   <div class="app-shell">
@@ -107,7 +112,11 @@
         <div class="mobile-listener-brand">sdrtrunk-vce</div>
         <h1 id="mobile-listener-title">Listen</h1>
       </div>
-      <button type="button" id="mobile-listener-desktop" class="mobile-listener-desktop">Desktop site</button>
+      <div class="mobile-listener-actions">
+        <button type="button" id="mobile-theme-toggle" class="mobile-listener-theme" aria-pressed="false"
+          aria-label="Use dark mobile theme">Dark</button>
+        <button type="button" id="mobile-listener-desktop" class="mobile-listener-desktop">Desktop site</button>
+      </div>
     </header>
     <main class="mobile-listener-main">
       <div id="mobile-playback-slot"></div>
@@ -123,6 +132,6 @@
     </nav>
   </section>
   <script src="/assets/web-call-player.js?v=10"></script>
-  <script src="/assets/app.js?v=77"></script>
+  <script src="/assets/app.js?v=78"></script>
 </body>
 </html>
