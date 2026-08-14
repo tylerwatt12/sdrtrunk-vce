@@ -58,15 +58,15 @@ import org.slf4j.LoggerFactory;
  *
  * <p>The worker uses a fixed high-resolution full-band FFT for the overview.  A narrow viewport switches that same
  * worker to a zoom lens: it mixes the requested center to baseband, anti-alias filters and decimates by two, four,
- * or eight, then runs the same FFT.  Only one analysis path is active at a time.</p>
+ * eight, sixteen, or thirty-two, then runs the same FFT.  Only one analysis path is active at a time.</p>
  */
 public final class TunerDiagnosticService implements AutoCloseable
 {
     private static final Logger mLog = LoggerFactory.getLogger(TunerDiagnosticService.class);
-    public static final int FFT_SIZE = 16_384;
+    public static final int FFT_SIZE = 4_096;
     public static final int MAXIMUM_TRANSMITTED_BINS = FFT_SIZE;
     public static final int FRAMES_PER_SECOND = 10;
-    private static final int MAXIMUM_DECIMATION = 8;
+    private static final int MAXIMUM_DECIMATION = 32;
     /** Keeps the requested view out of the anti-alias filter transition band. */
     private static final double USABLE_LENS_FRACTION = 0.80;
 
@@ -1127,7 +1127,9 @@ public final class TunerDiagnosticService implements AutoCloseable
 
         double requestedCenter = ((double)viewport.startFrequencyHz() + viewport.endFrequencyHz()) / 2.0;
 
-        for(int candidate = MAXIMUM_DECIMATION; candidate >= 2; candidate /= 2)
+        int maximumDecimation = maximumDecimation(tunerSampleRateHz);
+
+        for(int candidate = maximumDecimation; candidate >= 2; candidate /= 2)
         {
             long analysisSampleRateHz = Math.max(1, Math.round(tunerSampleRateHz / (double)candidate));
             double halfAnalysis = analysisSampleRateHz / 2.0;
@@ -1146,6 +1148,20 @@ public final class TunerDiagnosticService implements AutoCloseable
         }
 
         return new AnalysisPlan(tunerCenterFrequencyHz, tunerSampleRateHz, 1);
+    }
+
+    private static int maximumDecimation(long tunerSampleRateHz)
+    {
+        long samplesPerFrame = Math.max(1, tunerSampleRateHz / FRAMES_PER_SECOND);
+        long supported = samplesPerFrame / (FFT_SIZE + TunerFftProcessor.FILTER_SETTLING_SAMPLES);
+        int decimation = 1;
+
+        while(decimation * 2 <= MAXIMUM_DECIMATION && decimation * 2 <= supported)
+        {
+            decimation *= 2;
+        }
+
+        return decimation;
     }
 
     @FunctionalInterface

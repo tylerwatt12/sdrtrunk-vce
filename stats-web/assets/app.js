@@ -7205,10 +7205,13 @@ function tunerWaterfallPalette() {
 const TUNER_SPECTRUM_DEFAULT_FLOOR_DB = -140;
 const TUNER_SPECTRUM_MINIMUM_FLOOR_DB = -200;
 const TUNER_SPECTRUM_MAXIMUM_FLOOR_DB = -40;
-const TUNER_SPECTRUM_MAXIMUM_ZOOM = 16;
+const TUNER_SPECTRUM_MAXIMUM_ANALYTICAL_ZOOM = 64;
+const TUNER_SPECTRUM_MAXIMUM_ZOOM = 256;
 const TUNER_SPECTRUM_ZOOM_FACTOR = 1.5;
 const TUNER_SPECTRUM_VIEWPORT_DEBOUNCE_MS = 160;
 const TUNER_SPECTRUM_SMOOTHING_ALPHA = 0.25;
+const TUNER_WATERFALL_HISTORY_DOMAINS = 4;
+const TUNER_WATERFALL_HISTORY_ROWS = 256;
 const TUNER_SPECTRUM_FLOOR_STORAGE_KEY = 'sdrtrunk.wideband.lowerDisplayLimitDb';
 const TUNER_WATERFALL_SPEED_STORAGE_KEY = 'sdrtrunk.wideband.waterfallScrollSpeed';
 const TUNER_WATERFALL_CHANNELS_STORAGE_KEY = 'sdrtrunk.wideband.highlightWaterfallChannels';
@@ -7544,6 +7547,8 @@ function tunerSpectrumPanel() {
   let nextWaterfallRow = -1;
   let waterfallRowImage = null;
   let waterfallObservedAtRows = new Float64Array(0);
+  const waterfallHistories = new Map();
+  let activeWaterfallHistoryKey = '';
 
   const controller = {
     element: layout,
@@ -7600,7 +7605,7 @@ function tunerSpectrumPanel() {
       ['Full span', sampleRate ? formatTunerSpan(sampleRate) : '—'],
       ['Visible span', visibleSpan ? formatTunerSpan(visibleSpan) : '—'],
       ['Analysis span', analysisSpan ? formatTunerSpan(analysisSpan) : '—'],
-      ['Zoom', `${zoom.toFixed(2)}×`],
+      ['Zoom', `${zoom.toFixed(2)}×${zoom > TUNER_SPECTRUM_MAXIMUM_ANALYTICAL_ZOOM ? ' (digital)' : ''}`],
       ['Sent bins', fftValues.length ? number(fftValues.length) : '—'],
       ['FFT detail', fftSize ? number(fftSize) : '—'],
       ['Displayed resolution', Number.isFinite(resolution) ? `${number(Math.round(resolution))} Hz` : '—'],
@@ -7695,29 +7700,63 @@ function tunerSpectrumPanel() {
     nextWaterfallRow = waterfallBuffer.height - 1;
   };
 
-  const ensureWaterfallBuffer = () => {
-    const bounds = waterfall.canvas.getBoundingClientRect();
-    const width = Math.max(1, Math.round(bounds.width));
-    const height = Math.max(1, Math.round(bounds.height));
-    if (waterfallBuffer.width !== width || waterfallBuffer.height !== height) {
-      resetWaterfallBuffer(width, height);
-    }
-    return { width, height };
-  };
+  function visibleValuesFor(values, metadata) {
+    if (!values.length || !metadata || !viewport) return values;
+    const domain = tunerFrameDomain(metadata, values.length);
+    const span = domain.endHz - domain.startHz;
+    if (!(span > 0)) return values;
+    const visibleStart = Math.max(domain.startHz, viewport.startHz);
+    const visibleEnd = Math.min(domain.endHz, viewport.endHz);
+    if (visibleEnd <= visibleStart) return values.subarray(0, 0);
+    const first = Math.max(0, Math.min(values.length - 1,
+      Math.floor((visibleStart - domain.startHz) / span * values.length)));
+    const end = Math.max(first + 1, Math.min(values.length,
+      Math.ceil((visibleEnd - domain.startHz) / span * values.length)));
+    return values.subarray(first, end);
+  }
 
-  const addWaterfallFrame = () => {
-    const visibleValues = visibleSpectrumValues(false);
-    if (!visibleValues.length) return;
-    const size = ensureWaterfallBuffer();
-    waterfallScrollAccumulator += waterfallSpeed;
-    const rowCount = Math.min(size.height, Math.floor(waterfallScrollAccumulator));
-    if (rowCount < 1) return;
-    waterfallScrollAccumulator -= rowCount;
+  function waterfallHistoryKey(metadata) {
+    return metadata ? [selectedTargetId(), metadata.centerFrequencyHz, metadata.sampleRateHz,
+      metadata.fftSize, metadata.firstBin, metadata.sourceBinCount].join(':') : '';
+  }
+
+  function waterfallMetadata(metadata) {
+    return {
+      centerFrequencyHz: metadata.centerFrequencyHz,
+      sampleRateHz: metadata.sampleRateHz,
+      fftSize: metadata.fftSize,
+      firstBin: metadata.firstBin,
+      sourceBinCount: metadata.sourceBinCount
+    };
+  }
+
+  function selectWaterfallHistory(metadata) {
+    const key = waterfallHistoryKey(metadata);
+    if (!key) return null;
+    let history = waterfallHistories.get(key);
+    if (!history) {
+      history = { key, rows: [] };
+      waterfallHistories.set(key, history);
+      while (waterfallHistories.size > TUNER_WATERFALL_HISTORY_DOMAINS) {
+        waterfallHistories.delete(waterfallHistories.keys().next().value);
+      }
+    } else {
+      waterfallHistories.delete(key);
+      waterfallHistories.set(key, history);
+    }
+    activeWaterfallHistoryKey = key;
+    return history;
+  }
+
+  const renderWaterfallRow = (values, metadata, observedAtEpochMs, rowCount = 1) => {
+    const visibleValues = visibleValuesFor(values, metadata);
+    if (!visibleValues.length || !waterfallRowImage) return;
     const row = waterfallRowImage;
-    for (let x = 0; x < size.width; x += 1) {
-      const firstBin = Math.min(visibleValues.length - 1, Math.floor(x * visibleValues.length / size.width));
+    for (let x = 0; x < waterfallBuffer.width; x += 1) {
+      const firstBin = Math.min(visibleValues.length - 1,
+        Math.floor(x * visibleValues.length / waterfallBuffer.width));
       const lastBin = Math.min(visibleValues.length,
-        Math.max(firstBin + 1, Math.ceil((x + 1) * visibleValues.length / size.width)));
+        Math.max(firstBin + 1, Math.ceil((x + 1) * visibleValues.length / waterfallBuffer.width)));
       let raw = -Infinity;
       for (let bin = firstBin; bin < lastBin; bin += 1) {
         if (Number.isFinite(visibleValues[bin])) raw = Math.max(raw, visibleValues[bin]);
@@ -7729,13 +7768,49 @@ function tunerSpectrumPanel() {
       row.data[x * 4 + 2] = palette[color * 4 + 2];
       row.data[x * 4 + 3] = 255;
     }
-    const observedAtEpochMs = Number(frameMetadata?.observedAtEpochMs || 0);
     for (let count = 0; count < rowCount; count += 1) {
       waterfallContext.putImageData(row, 0, nextWaterfallRow);
       waterfallObservedAtRows[nextWaterfallRow] = observedAtEpochMs;
       newestWaterfallRow = nextWaterfallRow;
-      nextWaterfallRow = (nextWaterfallRow - 1 + size.height) % size.height;
+      nextWaterfallRow = (nextWaterfallRow - 1 + waterfallBuffer.height) % waterfallBuffer.height;
     }
+  };
+
+  const restoreWaterfallHistory = () => {
+    const bounds = waterfall.canvas.getBoundingClientRect();
+    const width = Math.max(1, Math.round(bounds.width));
+    const height = Math.max(1, Math.round(bounds.height));
+    resetWaterfallBuffer(width, height);
+    const history = waterfallHistories.get(activeWaterfallHistoryKey);
+    if (history) history.rows.forEach((row) =>
+      renderWaterfallRow(row.values, row.metadata, row.observedAtEpochMs, row.repeat));
+  };
+
+  const ensureWaterfallBuffer = () => {
+    const bounds = waterfall.canvas.getBoundingClientRect();
+    const width = Math.max(1, Math.round(bounds.width));
+    const height = Math.max(1, Math.round(bounds.height));
+    if (waterfallBuffer.width !== width || waterfallBuffer.height !== height) restoreWaterfallHistory();
+    return { width, height };
+  };
+
+  const addWaterfallFrame = () => {
+    if (!fftValues.length || !frameMetadata) return;
+    const size = ensureWaterfallBuffer();
+    waterfallScrollAccumulator += waterfallSpeed;
+    const rowCount = Math.min(size.height, Math.floor(waterfallScrollAccumulator));
+    if (rowCount < 1) return;
+    waterfallScrollAccumulator -= rowCount;
+    const observedAtEpochMs = Number(frameMetadata?.observedAtEpochMs || 0);
+    const history = selectWaterfallHistory(frameMetadata);
+    const cached = { values: fftValues.slice(), metadata: waterfallMetadata(frameMetadata),
+      observedAtEpochMs, repeat: rowCount };
+    history.rows.push(cached);
+    let retainedRows = history.rows.reduce((total, row) => total + row.repeat, 0);
+    while (retainedRows > TUNER_WATERFALL_HISTORY_ROWS && history.rows.length) {
+      retainedRows -= history.rows.shift().repeat;
+    }
+    renderWaterfallRow(cached.values, cached.metadata, observedAtEpochMs, rowCount);
   };
 
   const drawWaterfall = () => {
@@ -7791,6 +7866,8 @@ function tunerSpectrumPanel() {
     frameTimes = [];
     waterfallScrollAccumulator = 0;
     hoverFlag = null;
+    waterfallHistories.clear();
+    activeWaterfallHistoryKey = '';
     resetWaterfallBuffer(1, 1);
     setRefining(false);
     setOverlay(message);
@@ -7885,6 +7962,8 @@ function tunerSpectrumPanel() {
       if (!viewport || changed) viewport = { ...nextFull };
       if (changed) {
         analysisViewport = null;
+        waterfallHistories.clear();
+        activeWaterfallHistoryKey = '';
         resetWaterfallBuffer(1, 1);
         clearSpectrumSmoothing();
         if (shouldRun()) queueViewportUpdate(true);
@@ -7912,18 +7991,7 @@ function tunerSpectrumPanel() {
 
   function visibleSpectrumValues(useSmoothing = true) {
     const values = useSmoothing ? displayedSpectrumValues() : fftValues;
-    if (!values.length || !frameMetadata || !viewport) return values;
-    const domain = tunerFrameDomain(frameMetadata, values.length);
-    const span = domain.endHz - domain.startHz;
-    if (!(span > 0)) return values;
-    const visibleStart = Math.max(domain.startHz, viewport.startHz);
-    const visibleEnd = Math.min(domain.endHz, viewport.endHz);
-    if (visibleEnd <= visibleStart) return values.subarray(0, 0);
-    const first = Math.max(0, Math.min(values.length - 1,
-      Math.floor((visibleStart - domain.startHz) / span * values.length)));
-    const end = Math.max(first + 1, Math.min(values.length,
-      Math.ceil((visibleEnd - domain.startHz) / span * values.length)));
-    return values.subarray(first, end);
+    return visibleValuesFor(values, frameMetadata);
   }
 
   function updateSpectrumPeak() {
@@ -7973,8 +8041,6 @@ function tunerSpectrumPanel() {
     const generationChanged = generation >= 0 && generation !== frame.generation;
     if (generationChanged || analysisChanged) {
       droppedFrames = 0;
-      //Rows from another analysis lens cannot gain the new lens's frequency detail.
-      resetWaterfallBuffer(1, 1);
       hoverFlag = null;
       clearSpectrumSmoothing();
     } else if (sequence !== null && frame.sequence > sequence + 1) {
@@ -7985,6 +8051,10 @@ function tunerSpectrumPanel() {
     fftValues = values;
     updateSpectrumSmoothing(values, frame, domain);
     frameMetadata = frame;
+    if (analysisChanged) {
+      selectWaterfallHistory(frameMetadata);
+      restoreWaterfallHistory();
+    }
     analysisViewport = nextAnalysis;
     updateSpectrumPeak();
     const now = performance.now();
@@ -8627,7 +8697,8 @@ function tunerSpectrumPanel() {
       Math.min(TUNER_SPECTRUM_MAXIMUM_FLOOR_DB, candidate));
     floorValue.textContent = `${dbFloor} dB`;
     storeTunerNumber(TUNER_SPECTRUM_FLOOR_STORAGE_KEY, dbFloor);
-    if (!refining) scheduleDraw('spectrum');
+    restoreWaterfallHistory();
+    if (!refining) scheduleDraw();
   });
   speedInput.addEventListener('input', () => {
     const candidate = Number(speedInput.value);

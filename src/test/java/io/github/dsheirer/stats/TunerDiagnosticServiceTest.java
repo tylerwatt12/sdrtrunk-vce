@@ -120,8 +120,8 @@ class TunerDiagnosticServiceTest
             service.tryOpen(targets.get(1).targetId()).status());
         assertEquals(1, service.activeProducerCount());
         assertEquals(1, service.activeSessionCount());
-        assertEquals(TunerDiagnosticService.FFT_SIZE, first.session().state().fftSize());
-        assertEquals(TunerDiagnosticService.FRAMES_PER_SECOND, first.session().state().framesPerSecond());
+        assertEquals(4_096, first.session().state().fftSize());
+        assertEquals(10, first.session().state().framesPerSecond());
 
         first.session().close();
         assertEquals(1, firstController.addCount.get() + secondController.addCount.get());
@@ -332,7 +332,7 @@ class TunerDiagnosticServiceTest
     }
 
     @Test
-    void selectsGuardedD1D2D4AndD8AnalysisPlans()
+    void selectsGuardedD1ThroughD32AnalysisPlans()
     {
         long center = 100_000_000L;
         long sampleRate = 10_000_000L;
@@ -345,6 +345,14 @@ class TunerDiagnosticServiceTest
             centered(center, 1_100_000L));
         TunerDiagnosticService.AnalysisPlan d8 = TunerDiagnosticService.analysisPlan(center, sampleRate,
             centered(center, 900_000L));
+        TunerDiagnosticService.AnalysisPlan guardedFromD16 = TunerDiagnosticService.analysisPlan(center, sampleRate,
+            centered(center, 550_000L));
+        TunerDiagnosticService.AnalysisPlan d16 = TunerDiagnosticService.analysisPlan(center, sampleRate,
+            centered(center, 450_000L));
+        TunerDiagnosticService.AnalysisPlan guardedFromD32 = TunerDiagnosticService.analysisPlan(center, sampleRate,
+            centered(center, 275_000L));
+        TunerDiagnosticService.AnalysisPlan d32 = TunerDiagnosticService.analysisPlan(center, sampleRate,
+            centered(center, 225_000L));
         TunerDiagnosticService.AnalysisPlan maximumDetail = TunerDiagnosticService.analysisPlan(center, sampleRate,
             centered(center, 100_000L));
 
@@ -358,11 +366,27 @@ class TunerDiagnosticServiceTest
             "a viewport wider than the central 80% must stay out of the D8 transition band");
         assertEquals(8, d8.decimation());
         assertEquals(1_250_000L, d8.sampleRateHz());
-        assertEquals(8, maximumDetail.decimation());
-        assertEquals(d8.sampleRateHz(), maximumDetail.sampleRateHz(),
-            "views below tunerSpan/8 reuse the bounded max-detail lens");
+        assertEquals(8, guardedFromD16.decimation());
+        assertEquals(16, d16.decimation());
+        assertEquals(625_000L, d16.sampleRateHz());
+        assertEquals(16, guardedFromD32.decimation());
+        assertEquals(32, d32.decimation());
+        assertEquals(312_500L, d32.sampleRateHz());
+        assertEquals(32, maximumDetail.decimation());
+        assertEquals(d32.sampleRateHz(), maximumDetail.sampleRateHz(),
+            "views below tunerSpan/32 reuse the bounded max-detail lens");
         assertEquals(76.2939453125, maximumDetail.sampleRateHz() / (double)TunerDiagnosticService.FFT_SIZE,
             0.0001);
+    }
+
+    @Test
+    void limitsLensDecimationToTheTunerSampleBudget()
+    {
+        TunerDiagnosticService.AnalysisPlan slowerTuner = TunerDiagnosticService.analysisPlan(10_000_000L,
+            768_000L, centered(10_000_000L, 10_000L));
+
+        assertEquals(16, slowerTuner.decimation());
+        assertEquals(48_000L, slowerTuner.sampleRateHz());
     }
 
     @Test
@@ -375,10 +399,10 @@ class TunerDiagnosticServiceTest
 
         assertEquals(1, touchingEdge.decimation(),
             "a zoom lens must not trade anti-alias guard for resolution at the sampled band edge");
-        assertEquals(8, guardedEdge.decimation());
-        assertEquals(104_375_000L, guardedEdge.centerFrequencyHz());
-        assertEquals(103_750_000.0, guardedEdge.startFrequencyHz());
-        assertEquals(105_000_000.0, guardedEdge.endFrequencyHz());
+        assertEquals(16, guardedEdge.decimation());
+        assertEquals(104_450_000L, guardedEdge.centerFrequencyHz());
+        assertEquals(104_137_500.0, guardedEdge.startFrequencyHz());
+        assertEquals(104_762_500.0, guardedEdge.endFrequencyHz());
     }
 
     @Test
