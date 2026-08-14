@@ -149,12 +149,12 @@ class DiagnosticTransportTest
             {
                 long configuration = processor.configuration();
 
-                for(int x = 0; x < 100; x++)
+                for(int x = 0; x < 256; x++)
                 {
                     processor.receive(buffer, x + 1, configuration);
                 }
             });
-            assertEquals(92, processor.droppedBufferCount());
+            assertEquals(128, processor.droppedBufferCount());
             assertTimeoutPreemptively(Duration.ofMillis(250), processor::close,
                 "closing a diagnostic lease must not wait for worker-owned FFT or queue state");
         }

@@ -844,7 +844,8 @@ public final class TunerDiagnosticService implements AutoCloseable
      */
     static final class TunerFftProcessor implements FrameProcessor
     {
-        private static final int INGRESS_CAPACITY = 8;
+        /** Retains one maximum-detail analysis window from tuners that publish small native buffers. */
+        private static final int INGRESS_CAPACITY = 128;
         private static final int FILTER_SETTLING_SAMPLES = 64;
 
         private final BoundedSpscReferenceQueue<INativeBuffer> mIngress =
