@@ -29,9 +29,11 @@ import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.util.ThreadPool;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.IdentityHashMap;
 import java.util.List;
-import java.util.concurrent.LinkedTransferQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.TimeUnit;
+import java.util.function.ToIntFunction;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.usb4java.Context;
@@ -55,17 +57,22 @@ public abstract class USBTunerController extends TunerController
     private static final int USB_BULK_TRANSFER_BUFFER_POOL_SIZE = 8;
     protected static final byte USB_BULK_TRANSFER_ENDPOINT = (byte) 0x81;
     private static final long USB_BULK_TRANSFER_TIMEOUT_MS = 2000l;
+    private static final long USB_EVENT_STOP_TIMEOUT_MS = 500;
+    private static final long USB_TRANSFER_DRAIN_TIMEOUT_MS = 500;
+    private static final long USB_DEVICE_SHUTDOWN_TIMEOUT_MS = 1500;
+    private static final long USB_FINAL_RELEASE_LOCK_TIMEOUT_MS = 500;
 
     protected int mBus;
     protected String mPortAddress;
-    private Context mDeviceContext = new Context();
+    private volatile Context mDeviceContext = new Context();
     private Device mDevice;
     private DeviceHandle mDeviceHandle;
     private DeviceDescriptor mDeviceDescriptor;
     private TransferManager mTransferManager = new TransferManager();
     private UsbEventProcessor mEventProcessor = new UsbEventProcessor();
     private AtomicBoolean mStreaming = new AtomicBoolean();
-    private boolean mRunning = false;
+    private AtomicBoolean mStopping = new AtomicBoolean();
+    private volatile boolean mRunning = false;
 
     /**
      * USB tuner controller class. Provides auto-start and auto-stop function when complex buffer listeners are added
@@ -262,25 +269,36 @@ public abstract class USBTunerController extends TunerController
      */
     public final void stop()
     {
+        if(mDeviceContext == null || !mStopping.compareAndSet(false, true))
+        {
+            return;
+        }
+
         mRunning = false;
+
+        AtomicBoolean safeToRelease = new AtomicBoolean();
 
         //Spin the shutdown onto a new thread so that we can set a max wait threshold.
         Thread t = new Thread(() -> {
-            stopStreaming();
-            mNativeBufferBroadcaster.clear();
-            deviceStop();
-        });
+            if(stopStreaming())
+            {
+                mNativeBufferBroadcaster.clear();
+                deviceStop();
+                safeToRelease.set(true);
+            }
+        }, "sdrtrunk USB tuner shutdown - bus [" + mBus + "] port [" + mPortAddress + "]");
 
+        t.setDaemon(true);
+        t.setPriority(Thread.NORM_PRIORITY);
         t.start();
 
         try
         {
-            //Wait up to 500 milliseconds for the shutdown to complete ... otherwise interrupt it and finish shutdown
-            t.join(500);
+            t.join(USB_DEVICE_SHUTDOWN_TIMEOUT_MS);
 
             if(t.isAlive())
             {
-                mLog.info("Tuner shutdown exceeded 500ms - forcing shutdown");
+                mLog.error("USB tuner shutdown timed out - native resources will remain allocated until application restart");
                 t.interrupt();
             }
         }
@@ -289,20 +307,62 @@ public abstract class USBTunerController extends TunerController
             Thread.currentThread().interrupt();
         }
 
-        //Release transfers
-        mTransferManager.freeTransfers();
-
-        if(mDeviceHandle != null)
+        if(!safeToRelease.get())
         {
-            LibUsb.releaseInterface(mDeviceHandle, USB_INTERFACE);
-            LibUsb.close(mDeviceHandle);
-            mDeviceHandle = null;
-            mDevice = null;
-            mDeviceDescriptor = null;
+            mLog.error("USB tuner did not reach a safe stopped state - skipping native USB resource release");
+
+            if(!t.isAlive())
+            {
+                mStopping.set(false);
+            }
+
+            return;
         }
 
-        LibUsb.exit(mDeviceContext);
-        mDeviceContext = null;
+        //Serialize final release against listener registration/startup without allowing a stuck caller to hang shutdown.
+        boolean releaseLocked = false;
+
+        try
+        {
+            releaseLocked = getLock().tryLock(USB_FINAL_RELEASE_LOCK_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+
+            if(!releaseLocked)
+            {
+                mLog.error("Timed out waiting for USB tuner lifecycle lock - native resources will remain allocated");
+                return;
+            }
+
+            if(!mTransferManager.freeTransfers())
+            {
+                mLog.error("USB tuner still has native-owned transfers - skipping native USB resource release");
+                mStopping.set(false);
+                return;
+            }
+
+            if(mDeviceHandle != null)
+            {
+                LibUsb.releaseInterface(mDeviceHandle, USB_INTERFACE);
+                LibUsb.close(mDeviceHandle);
+                mDeviceHandle = null;
+                mDevice = null;
+                mDeviceDescriptor = null;
+            }
+
+            LibUsb.exit(mDeviceContext);
+            mDeviceContext = null;
+        }
+        catch(InterruptedException ie)
+        {
+            Thread.currentThread().interrupt();
+            mLog.error("Interrupted while waiting to release USB tuner native resources", ie);
+        }
+        finally
+        {
+            if(releaseLocked)
+            {
+                getLock().unlock();
+            }
+        }
     }
 
     /**
@@ -310,20 +370,46 @@ public abstract class USBTunerController extends TunerController
      */
     private void startStreaming()
     {
-        if(mStreaming.compareAndSet(false, true))
+        String errorMessage = null;
+
+        synchronized(this)
         {
-            try
+            if(mStreaming.compareAndSet(false, true))
             {
-                prepareStreaming();
-                List<Transfer> transfers = mTransferManager.getTransfers();
-                mEventProcessor.start();
-                mTransferManager.setAutoResubmitTransfers(true);
-                mTransferManager.submitTransfers(transfers);
+                try
+                {
+                    prepareStreaming();
+                    List<Transfer> transfers = mTransferManager.getTransfers();
+                    mTransferManager.setAutoResubmitTransfers(true);
+                    mTransferManager.submitTransfers(transfers);
+                    mEventProcessor.start();
+                }
+                catch(Exception e)
+                {
+                    mLog.error("Error starting streaming on USB tuner", e);
+                    boolean safeToFree = stopStreaming();
+
+                    if(safeToFree)
+                    {
+                        mTransferManager.freeTransfers();
+                    }
+                    else
+                    {
+                        mLog.error("Streaming startup rollback did not quiesce native transfers - resources will remain " +
+                                "allocated until application restart");
+                        streamingCleanup();
+                    }
+
+                    errorMessage = "Unable to start USB sample streaming" +
+                            (e.getMessage() == null ? "" : " - " + e.getMessage());
+                }
             }
-            catch(SourceException se)
-            {
-                mLog.error("Error starting streaming on USB tuner", se);
-            }
+        }
+
+        if(errorMessage != null)
+        {
+            String message = errorMessage;
+            ThreadPool.CACHED.submit(() -> setErrorMessage(message));
         }
     }
 
@@ -331,31 +417,43 @@ public abstract class USBTunerController extends TunerController
      * Prepares to start streaming.  This method can be overridden by sub-class to implement additional actions
      * need to prepare before start streaming.
      */
-    protected void prepareStreaming()
+    protected void prepareStreaming() throws SourceException
     {
     }
 
     /**
      * Stop streaming data from the tuner
      */
-    private void stopStreaming()
+    private synchronized boolean stopStreaming()
     {
-        if(mStreaming.compareAndSet(true, false))
+        boolean wasStreaming = mStreaming.getAndSet(false);
+
+        if(wasStreaming || mEventProcessor.isRunning() || mTransferManager.hasActiveTransfers())
         {
             //Turn off auto-resubmit of USB transfer buffers
             mTransferManager.setAutoResubmitTransfers(false);
 
             //Stop event processing thread to put all submitted tranfers in a stable state - blocks until stopped
-            mEventProcessor.stop();
+            if(!mEventProcessor.stop())
+            {
+                mLog.error("LibUsb event processing thread did not stop - leaving native resources allocated");
+                return false;
+            }
 
             //Cancel all currently submitted transfers
             mTransferManager.cancelTransfers();
 
             //Perform final event processing iteration so LibUsb returns all of our cancelled tranfers
-            mEventProcessor.handleFinalEvents();
+            if(!mEventProcessor.drainEvents(mTransferManager, USB_TRANSFER_DRAIN_TIMEOUT_MS))
+            {
+                mLog.error("Timed out waiting for LibUsb to return cancelled transfers - leaving native resources allocated");
+                return false;
+            }
 
             streamingCleanup();
         }
+
+        return !mTransferManager.hasActiveTransfers();
     }
 
     /**
@@ -473,12 +571,17 @@ public abstract class USBTunerController extends TunerController
     @Override
     public void addBufferListener(Listener<INativeBuffer> listener)
     {
-        if(isRunning())
+        if(isRunning() && !mStopping.get())
         {
             getLock().lock();
 
             try
             {
+                if(!isRunning() || mStopping.get())
+                {
+                    return;
+                }
+
                 boolean hasExistingListeners = hasBufferListeners();
 
                 super.addBufferListener(listener);
@@ -501,12 +604,46 @@ public abstract class USBTunerController extends TunerController
     @Override
     public void removeBufferListener(Listener<INativeBuffer> listener)
     {
+        boolean stopOnWorker = false;
         getLock().lock();
 
         try
         {
             super.removeBufferListener(listener);
 
+            if(!hasBufferListeners())
+            {
+                if(mEventProcessor.isCurrentThread())
+                {
+                    stopOnWorker = true;
+                }
+                else
+                {
+                    stopStreaming();
+                }
+            }
+        }
+        finally
+        {
+            getLock().unlock();
+        }
+
+        if(stopOnWorker)
+        {
+            Thread stopThread = new Thread(this::stopStreamingIfNoListeners,
+                    "sdrtrunk USB stream stop - bus [" + mBus + "] port [" + mPortAddress + "]");
+            stopThread.setDaemon(true);
+            stopThread.setPriority(Thread.NORM_PRIORITY);
+            stopThread.start();
+        }
+    }
+
+    void stopStreamingIfNoListeners()
+    {
+        getLock().lock();
+
+        try
+        {
             if(!hasBufferListeners())
             {
                 stopStreaming();
@@ -521,13 +658,125 @@ public abstract class USBTunerController extends TunerController
     /**
      * Manages USB transfer (ie zero-copy) buffer processing
      */
+    static class TransferLedger<T>
+    {
+        record SubmissionResult<T>(int status, T retryTransfer, int retryStatus, boolean exhausted) {}
+
+        private final IdentityHashMap<T, Boolean> mActiveTransfers = new IdentityHashMap<>();
+        private final List<T> mRetryTransfers = new ArrayList<>();
+        private int mTransferErrorCount;
+        private boolean mExhaustionReported;
+
+        SubmissionResult<T> submit(T transfer, ToIntFunction<T> submitter)
+        {
+            int status = submitter.applyAsInt(transfer);
+            boolean exhausted = recordSubmission(transfer, status);
+            T retryTransfer = null;
+            int retryStatus = LibUsb.SUCCESS;
+
+            if(status == LibUsb.SUCCESS)
+            {
+                retryTransfer = pollRetryTransfer();
+
+                if(retryTransfer != null)
+                {
+                    retryStatus = submitter.applyAsInt(retryTransfer);
+                    exhausted |= recordSubmission(retryTransfer, retryStatus);
+                }
+            }
+
+            return new SubmissionResult<>(status, retryTransfer, retryStatus, exhausted);
+        }
+
+        boolean recordSubmission(T transfer, int status)
+        {
+            int retryIndex = getRetryIndex(transfer);
+
+            if(status == LibUsb.SUCCESS || status == LibUsb.ERROR_BUSY)
+            {
+                if(retryIndex >= 0)
+                {
+                    mRetryTransfers.remove(retryIndex);
+                }
+
+                mActiveTransfers.put(transfer, Boolean.TRUE);
+                return false;
+            }
+
+            mActiveTransfers.remove(transfer);
+
+            if(retryIndex < 0)
+            {
+                mRetryTransfers.add(transfer);
+            }
+
+            mTransferErrorCount++;
+
+            if(!mExhaustionReported && mRetryTransfers.size() >= USB_BULK_TRANSFER_BUFFER_POOL_SIZE)
+            {
+                mExhaustionReported = true;
+                return true;
+            }
+
+            return false;
+        }
+
+        T pollRetryTransfer()
+        {
+            if(mRetryTransfers.isEmpty())
+            {
+                return null;
+            }
+
+            return mRetryTransfers.remove(0);
+        }
+
+        void transferReturned(T transfer)
+        {
+            mActiveTransfers.remove(transfer);
+            int retryIndex = getRetryIndex(transfer);
+
+            if(retryIndex >= 0)
+            {
+                mRetryTransfers.remove(retryIndex);
+            }
+        }
+
+        List<T> getActiveTransfers() { return new ArrayList<>(mActiveTransfers.keySet()); }
+
+        boolean hasActiveTransfers() { return !mActiveTransfers.isEmpty(); }
+
+        int getRetryTransferCount() { return mRetryTransfers.size(); }
+
+        int getTransferErrorCount() { return mTransferErrorCount; }
+
+        void resetExhaustionNotification() { mExhaustionReported = false; }
+
+        void clear()
+        {
+            mActiveTransfers.clear();
+            mRetryTransfers.clear();
+        }
+
+        private int getRetryIndex(T transfer)
+        {
+            for(int x = 0; x < mRetryTransfers.size(); x++)
+            {
+                if(mRetryTransfers.get(x) == transfer)
+                {
+                    return x;
+                }
+            }
+
+            return -1;
+        }
+    }
+
     class TransferManager implements TransferCallback
     {
         private List<Transfer> mAvailableTransfers;
-        private LinkedTransferQueue<Transfer> mInProgressTransfers = new LinkedTransferQueue<>();
-        private boolean mAutoResubmitTransfers = false;
-        private int mTransferErrorCount = 0;
-        private List<Transfer> mErrorTransfers = new ArrayList<>();
+        private final TransferLedger<Transfer> mLedger = new TransferLedger<>();
+        private volatile boolean mAutoResubmitTransfers;
 
         /**
          * Creates USB Transfers to carry the streaming sample data.  Transfer buffers are backed by native memory
@@ -551,12 +800,21 @@ public abstract class USBTunerController extends TunerController
                         throw new SourceException("Couldn't allocate USB transfer buffer - out of memory");
                     }
 
-                    final ByteBuffer buffer = ByteBuffer.allocateDirect(getTransferBufferSize());
+                    //Record native allocation immediately so startup rollback can free it if buffer setup fails.
+                    mAvailableTransfers.add(transfer);
+                    final ByteBuffer buffer;
+
+                    try
+                    {
+                        buffer = ByteBuffer.allocateDirect(getTransferBufferSize());
+                    }
+                    catch(OutOfMemoryError oome)
+                    {
+                        throw new SourceException("Couldn't allocate direct USB transfer buffer - out of memory", oome);
+                    }
 
                     LibUsb.fillBulkTransfer(transfer, mDeviceHandle, USB_BULK_TRANSFER_ENDPOINT, buffer,
                             TransferManager.this, "Transfer Buffer " + x, USB_BULK_TRANSFER_TIMEOUT_MS);
-
-                    mAvailableTransfers.add(transfer);
                 }
             }
 
@@ -569,6 +827,11 @@ public abstract class USBTunerController extends TunerController
         private void setAutoResubmitTransfers(boolean resubmit)
         {
             mAutoResubmitTransfers = resubmit;
+
+            if(resubmit)
+            {
+                mLedger.resetExhaustionNotification();
+            }
         }
 
         /**
@@ -584,71 +847,45 @@ public abstract class USBTunerController extends TunerController
         }
 
         /**
-         * (Re)Submits the transfer for stream processing
-         *
-         * Note: synchronized used here because there can be multiple threads can invoke LibUsb.handleTimeoutEvents
-         * (scheduled thread pool and a dedicated shutdown thread) during tuner shutdown and this has caused transfer
-         * tracking issues.
-         *
-         * @param transfer to (re)submit
+         * (Re)Submits the transfer for stream processing.  Ledger mutation is confined to the event thread during
+         * streaming and to the shutdown thread only after the event thread has positively stopped.
          */
-        private synchronized void submitTransfer(Transfer transfer)
+        private void submitTransfer(Transfer transfer)
         {
-            int status = LibUsb.submitTransfer(transfer);
+            TransferLedger.SubmissionResult<Transfer> result = mLedger.submit(transfer, LibUsb::submitTransfer);
+            int status = result.status();
 
-            if(status == LibUsb.SUCCESS)
+            if(result.retryTransfer() != null)
             {
-                mInProgressTransfers.add(transfer);
+                int resubmitStatus = result.retryStatus();
 
-                //Attempt to resubmit any previous transfers that failed on submit
-                if(!mErrorTransfers.isEmpty())
+                if(resubmitStatus == LibUsb.SUCCESS || resubmitStatus == LibUsb.ERROR_BUSY)
                 {
-                    Transfer toResubmit = mErrorTransfers.remove(0);
-                    int resubmitStatus = LibUsb.submitTransfer(toResubmit);
-
-                    if(resubmitStatus == LibUsb.SUCCESS)
+                    if(mLedger.getRetryTransferCount() >= (mAvailableTransfers.size() / 2))
                     {
-                        mInProgressTransfers.add(transfer);
-
-                        //Only log this if more than half of the total transfer buffers are in error-holding
-                        if(mErrorTransfers.size() >= (mAvailableTransfers.size() / 2))
-                        {
-                            mLog.info("Successfully resubmitted previous error USB transfer buffer.  Current transfer buffer" +
-                                    " status (error queue/total available) [" + mErrorTransfers.size() + "/" +
-                                    mAvailableTransfers.size() + "]");
-                        }
-                    }
-                    else if(resubmitStatus == LibUsb.ERROR_BUSY)
-                    {
-                        //Ignore - this indicates the transfer was previously submitted and libusb is still working it.
-                    }
-                    else
-                    {
-                        //Add it back to the queue to try again later.
-                        mErrorTransfers.add(transfer);
-                        mTransferErrorCount++;
+                        mLog.info("Successfully resubmitted previous error USB transfer buffer.  Current transfer buffer" +
+                                " status (error queue/total available) [" + mLedger.getRetryTransferCount() + "/" +
+                                mAvailableTransfers.size() + "]");
                     }
                 }
             }
-            else if(status == LibUsb.ERROR_BUSY)
+
+            if(status == LibUsb.ERROR_BUSY)
             {
                 //Ignore - this indicates the transfer was previously submitted and libusb is still working it.  I'm not
                 //sure how this happens because we give libusb a transfer and it hands it back when it's full.  If
                 //libusb is still working it, then why did it indicate the transfer was completed?  So, we simply
                 //ignore this error code.  Other libraries simply ignore the submit status code altogether.
             }
-            else
+            else if(status != LibUsb.SUCCESS)
             {
                 mLog.error("USB transfer [" + transfer + "] submit attempt failed with error [" + LibUsb.errorName(status) +
                         "] - adding to error queue to resubmit later - this may be a temporary USB issue and has happened [" +
-                        mTransferErrorCount + "] time(s) so far.  Current transfer error queue (error/total) [" +
-                        mErrorTransfers.size() + "/" + mAvailableTransfers.size() + "]");
-
-                mErrorTransfers.add(transfer);
-                mTransferErrorCount++;
+                        mLedger.getTransferErrorCount() + "] time(s) so far.  Current transfer error queue (error/total) [" +
+                        mLedger.getRetryTransferCount() + "/" + mAvailableTransfers.size() + "]");
             }
 
-            if(mErrorTransfers.size() >= mAvailableTransfers.size())
+            if(result.exhausted())
             {
                 mLog.error("Maximum USB transfer buffer errors reached - transfer buffers exhausted - shutting down USB tuner");
                 ThreadPool.CACHED.submit(() -> setErrorMessage("USB Error - Transfer Buffers Exhausted"));
@@ -664,21 +901,24 @@ public abstract class USBTunerController extends TunerController
          */
         private void cancelTransfers()
         {
-            for(Transfer transfer: mInProgressTransfers)
-            {
-                LibUsb.cancelTransfer(transfer);
-            }
-            for(Transfer transfer: mErrorTransfers)
+            for(Transfer transfer: mLedger.getActiveTransfers())
             {
                 LibUsb.cancelTransfer(transfer);
             }
         }
 
+        private boolean hasActiveTransfers() { return mLedger.hasActiveTransfers(); }
+
         /**
          * Frees/disposes allocated USB transfer buffers.
          */
-        private void freeTransfers()
+        private boolean freeTransfers()
         {
+            if(mLedger.hasActiveTransfers())
+            {
+                return false;
+            }
+
             if(mAvailableTransfers != null)
             {
                 for(Transfer transfer: mAvailableTransfers)
@@ -697,22 +937,18 @@ public abstract class USBTunerController extends TunerController
                 mAvailableTransfers.clear();
                 mAvailableTransfers = null;
             }
+
+            mLedger.clear();
+            return true;
         }
 
         @Override
         public void processTransfer(Transfer transfer)
         {
-            mInProgressTransfers.remove(transfer);
+            mLedger.transferReturned(transfer);
+            int transferStatus = transfer.status();
 
-            if(mErrorTransfers.contains(transfer))
-            {
-                mLog.warn("USB transfer [" + transfer + "] that was being tracked as an error transfer, has just been " +
-                        "delivered as completed with transfer status [" + LibUsb.errorName(transfer.status()) +
-                        "] - removing it from the transfer error queue");
-                mErrorTransfers.remove(transfer);
-            }
-
-            switch(transfer.status())
+            switch(transferStatus)
             {
                 case LibUsb.TRANSFER_COMPLETED:
                 case LibUsb.TRANSFER_STALL:
@@ -723,7 +959,8 @@ public abstract class USBTunerController extends TunerController
                 case LibUsb.TRANSFER_CANCELLED:
                     int transferLength = transfer.actualLength();
 
-                    if(transferLength > 0)
+                    //Do not dispatch stale sample data while draining cancellation callbacks during shutdown.
+                    if(transferLength > 0 && mAutoResubmitTransfers)
                     {
                         dispatchTransfer(transfer);
                     }
@@ -742,9 +979,10 @@ public abstract class USBTunerController extends TunerController
                     //Only set an error if we're not shutting down
                     if(mAutoResubmitTransfers)
                     {
+                        String errorMessage = "LibUsb Transfer Error - stopping device - status [" + transferStatus +
+                                "] - " + LibUsb.errorName(transferStatus);
                         //spin this off onto the thread pool, so it doesn't impact the usb processor thread.
-                        ThreadPool.CACHED.submit(() -> setErrorMessage("LibUsb Transfer Error - stopping device - " +
-                                "status [" + transfer.status() + "] - " + LibUsb.errorName(transfer.status())));
+                        ThreadPool.CACHED.submit(() -> setErrorMessage(errorMessage));
                     }
                     break;
             }
@@ -770,19 +1008,20 @@ public abstract class USBTunerController extends TunerController
      */
     class UsbEventProcessor implements Runnable
     {
-        private Thread mThread;
-        private boolean mProcessing = false;
+        private volatile Thread mThread;
+        private volatile boolean mProcessing;
 
         /**
          * Start the event processing thread
          */
-        public void start()
+        public synchronized void start()
         {
             if(mThread == null)
             {
                 mProcessing = true;
-                mThread = new Thread(this);
+                mThread = createUsbEventThread(this);
                 mThread.setName("sdrtrunk USB tuner - bus [" + mBus + "] port [" + mPortAddress + "]");
+                mThread.setDaemon(true);
                 mThread.setPriority(Thread.MAX_PRIORITY);
                 mThread.start();
             }
@@ -791,42 +1030,72 @@ public abstract class USBTunerController extends TunerController
         /**
          * Set the stop processing flag and block until the thread stops, blocking up to 1000 ms.
          */
-        public void stop()
+        public synchronized boolean stop()
         {
             mProcessing = false;
+            Thread thread = mThread;
+
+            if(thread == null)
+            {
+                return true;
+            }
+
+            if(Thread.currentThread() == thread)
+            {
+                return false;
+            }
+
+            interruptUsbEventHandler();
 
             try
             {
-                //Give the thread a second to stop - it should happen quickly because it's only checking transfers
-                //for completed status and returning them to us to dispatch.
-                mThread.join(1000);
+                thread.join(USB_EVENT_STOP_TIMEOUT_MS);
             }
             catch(InterruptedException ie)
             {
                 Thread.currentThread().interrupt();
                 mLog.error("Interrupted while stopping LibUsb event processing thread", ie);
+                return false;
+            }
+
+            if(thread.isAlive())
+            {
+                return false;
             }
 
             mThread = null;
+            return true;
         }
 
         /**
-         * This performs a final handle-events invocation after the event processing thread has been shutdown and
-         * transfers have been flagged as cancelled.  This should cause LibUsb to return all in-progress and now
-         * canceled transfers back to us via the TransferManager.processTransfer() method.
+         * Processes cancellation callbacks until libusb has returned every transfer or the bounded deadline expires.
          */
-        public void handleFinalEvents()
+        public boolean drainEvents(TransferManager transferManager, long timeoutMs)
         {
-            try
+            long deadline = System.nanoTime() + (timeoutMs * 1_000_000L);
+
+            while(transferManager.hasActiveTransfers() && System.nanoTime() < deadline &&
+                    !Thread.currentThread().isInterrupted())
             {
-                //Use a short timeout since this is a shutdown operation
-                LibUsb.handleEventsTimeout(mDeviceContext, 50);
+                try
+                {
+                    handleUsbEvents(25);
+                }
+                catch(Throwable throwable)
+                {
+                    mLog.error("Error while processing stop-streaming LibUsb timeout events", throwable);
+                    return false;
+                }
             }
-            catch(Throwable throwable)
-            {
-                mLog.error("Error while processing stop-streaming LibUsb timeout events", throwable);
-            }
+
+            return !transferManager.hasActiveTransfers();
         }
+
+        public boolean isRunning() { Thread thread = mThread; return thread != null && thread.isAlive(); }
+
+        boolean isCurrentThread() { return Thread.currentThread() == mThread; }
+
+        boolean isProcessing() { return mProcessing; }
 
         /**
          * LibUsb event/timeout processing loop
@@ -834,13 +1103,11 @@ public abstract class USBTunerController extends TunerController
         @Override
         public void run()
         {
-            mProcessing = true;
-
             while(mProcessing)
             {
                 try
                 {
-                    LibUsb.handleEventsTimeout(mDeviceContext, 250);
+                    handleUsbEvents(250);
                 }
                 catch(Throwable throwable)
                 {
@@ -848,5 +1115,20 @@ public abstract class USBTunerController extends TunerController
                 }
             }
         }
+    }
+
+    protected Thread createUsbEventThread(Runnable runnable)
+    {
+        return new Thread(runnable);
+    }
+
+    protected void handleUsbEvents(long timeoutMilliseconds)
+    {
+        LibUsb.handleEventsTimeout(mDeviceContext, timeoutMilliseconds);
+    }
+
+    protected void interruptUsbEventHandler()
+    {
+        LibUsb.interruptEventHandler(mDeviceContext);
     }
 }
