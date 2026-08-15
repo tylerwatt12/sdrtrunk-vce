@@ -19,6 +19,7 @@
 
 package io.github.dsheirer.source.tuner.manager;
 
+import io.github.dsheirer.controller.NamingThreadFactory;
 import io.github.dsheirer.gui.preference.tuner.RspDuoSelectionMode;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.source.Source;
@@ -42,6 +43,8 @@ import io.github.dsheirer.source.tuner.sdrplay.api.SDRplay;
 import io.github.dsheirer.source.tuner.sdrplay.api.device.DeviceInfo;
 import io.github.dsheirer.source.tuner.sdrplay.rspDuo.DiscoveredRspDuoTuner1;
 import io.github.dsheirer.source.tuner.ui.DiscoveredTunerModel;
+import java.awt.EventQueue;
+import java.lang.reflect.InvocationTargetException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -52,7 +55,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.SortedSet;
 import java.util.TreeSet;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import javax.swing.SwingUtilities;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.usb4java.Context;
@@ -71,12 +81,21 @@ import org.usb4java.LibUsb;
 public class TunerManager implements IDiscoveredTunerStatusListener
 {
     private static final Logger mLog = LoggerFactory.getLogger(TunerManager.class);
+    public static final int USB_RESCAN_UNAVAILABLE = -1;
+    public static final int USB_RESCAN_FAILED = -2;
     private final UserPreferences mUserPreferences;
     private final DiscoveredTunerModel mDiscoveredTunerModel;
     private final TunerConfigurationManager mTunerConfigurationManager;
     private final HotplugEventSupport mHotplugEventSupport = new HotplugEventSupport();
     private final Context mLibUsbApplicationContext = new Context();
-    private boolean mLibUsbInitialized = false;
+    private final Object mUsbAttachLock = new Object();
+    private final Object mUsbModelLock = new Object();
+    private final Object mUsbRescanLock = new Object();
+    private final ExecutorService mUsbRescanExecutor = createUsbRescanExecutor();
+    private CompletableFuture<Integer> mUsbRescan;
+    private boolean mUsbRescanClosed;
+    private volatile boolean mLibUsbInitialized = false;
+    private volatile boolean mStopping;
     private SDRplay mSDRplay;
 
     /**
@@ -111,6 +130,7 @@ public class TunerManager implements IDiscoveredTunerStatusListener
      */
     public void start()
     {
+        mStopping = false;
         mLog.info("Discovering tuners ...");
 
         boolean libUsbAvailable = false;
@@ -178,13 +198,20 @@ public class TunerManager implements IDiscoveredTunerStatusListener
      */
     public void stop()
     {
+        mStopping = true;
+        boolean rescanStopped = stopUsbRescanWorker(1, TimeUnit.SECONDS);
+        boolean hotplugStopped = true;
+
         if(mLibUsbInitialized)
         {
-            mHotplugEventSupport.stop();
+            hotplugStopped = mHotplugEventSupport.stop();
         }
 
-        //Stop all tuners
-        mDiscoveredTunerModel.releaseDiscoveredTuners();
+        //Stop all tuners and prevent a pending USB tuner from entering the model after this point.
+        synchronized(mUsbModelLock)
+        {
+            mDiscoveredTunerModel.releaseDiscoveredTuners();
+        }
 
         //Shutdown SDRplay API instance
         if(mSDRplay != null)
@@ -193,13 +220,60 @@ public class TunerManager implements IDiscoveredTunerStatusListener
             mSDRplay = null;
         }
 
-        //Shutdown LibUsb
+        //Do not release the native context if either USB worker may still be using it.
         if(mLibUsbInitialized)
         {
-            LibUsb.exit(mLibUsbApplicationContext);
-            mLibUsbInitialized = false;
+            if(rescanStopped && hotplugStopped)
+            {
+                LibUsb.exit(mLibUsbApplicationContext);
+                mLibUsbInitialized = false;
+            }
+            else
+            {
+                mLog.warn("Leaving the LibUsb context allocated because USB tuner work did not stop in time");
+            }
         }
+    }
 
+    /**
+     * Requests one add-only USB tuner scan. Requests made while a scan is running share the same result.
+     */
+    public CompletableFuture<Integer> requestUsbTunerRescan()
+    {
+        synchronized(mUsbRescanLock)
+        {
+            if(mStopping || mUsbRescanClosed)
+            {
+                return CompletableFuture.completedFuture(USB_RESCAN_UNAVAILABLE);
+            }
+
+            if(mUsbRescan != null)
+            {
+                return mUsbRescan;
+            }
+
+            try
+            {
+                CompletableFuture<Integer> requested = CompletableFuture.supplyAsync(this::discoverUSBTuners,
+                        mUsbRescanExecutor);
+                mUsbRescan = requested;
+                requested.whenComplete((result, error) ->
+                {
+                    synchronized(mUsbRescanLock)
+                    {
+                        if(mUsbRescan == requested)
+                        {
+                            mUsbRescan = null;
+                        }
+                    }
+                });
+                return requested;
+            }
+            catch(RejectedExecutionException ree)
+            {
+                return CompletableFuture.completedFuture(USB_RESCAN_UNAVAILABLE);
+            }
+        }
     }
 
     /**
@@ -242,100 +316,129 @@ public class TunerManager implements IDiscoveredTunerStatusListener
     /**
      * Discover or rediscovers USB tuners
      */
-    private void discoverUSBTuners()
+    int discoverUSBTuners()
     {
-        if(mLibUsbInitialized)
+        if(!mLibUsbInitialized || mStopping)
         {
-            List<DiscoveredUSBTuner> discoveredUSBTuners = new ArrayList<>();
+            return USB_RESCAN_UNAVAILABLE;
+        }
 
-            try
+        List<DiscoveredUSBTuner> discoveredUSBTuners = new ArrayList<>();
+        boolean successful = true;
+
+        try
+        {
+            DeviceList deviceList = new DeviceList();
+            int deviceCount = LibUsb.getDeviceList(mLibUsbApplicationContext, deviceList);
+
+            if(deviceCount >= 0)
             {
-                DeviceList deviceList = new DeviceList();
-                int deviceCount = LibUsb.getDeviceList(mLibUsbApplicationContext, deviceList);
+                mLog.info("LibUsb - discovered [" + deviceCount + "] potential usb devices");
 
-                if(deviceCount >= 0)
+                for(Device device: deviceList)
                 {
-                    mLog.info("LibUsb - discovered [" + deviceCount + "] potential usb devices");
+                    int bus = LibUsb.getBusNumber(device);
+                    int port = LibUsb.getPortNumber(device);
 
-                    for(Device device: deviceList)
+                    if(port > 0)
                     {
-                        int bus = LibUsb.getBusNumber(device);
-                        int port = LibUsb.getPortNumber(device);
+                        DeviceDescriptor deviceDescriptor = new DeviceDescriptor();
+                        int status = LibUsb.getDeviceDescriptor(device, deviceDescriptor);
 
-                        if(port > 0)
+                        if(status == LibUsb.SUCCESS)
                         {
-                            DeviceDescriptor deviceDescriptor = new DeviceDescriptor();
-                            int status = LibUsb.getDeviceDescriptor(device, deviceDescriptor);
+                            TunerClass tunerClass = TunerClass.lookup(deviceDescriptor.idVendor(),
+                                    deviceDescriptor.idProduct());
 
-                            if(status == LibUsb.SUCCESS)
+                            String portAddress = getPortAddress(device);
+
+                            if(tunerClass.isSupportedUsbTuner())
                             {
-                                TunerClass tunerClass = TunerClass.lookup(deviceDescriptor.idVendor(),
-                                        deviceDescriptor.idProduct());
-
-                                String portAddress = getPortAddress(device);
-
-                                if(tunerClass.isSupportedUsbTuner())
-                                {
-                                    mLog.info("Discovered tuner at USB Bus [" + bus + "] Port [" + portAddress +
-                                            "] Tuner Class [" + tunerClass + "]");
-                                    DiscoveredUSBTuner discoveredUSBTuner = new DiscoveredUSBTuner(tunerClass, bus,
-                                            portAddress);
-                                    discoveredUSBTuners.add(discoveredUSBTuner);
-                                }
-                            }
-                            else
-                            {
-                                mLog.error("LibUsb - unable to get device descriptor for device on bus [" + bus +
-                                        "] port [" + port + "] - status [" + status + "] - " + LibUsb.errorName(status));
+                                mLog.info("Discovered tuner at USB Bus [" + bus + "] Port [" + portAddress +
+                                        "] Tuner Class [" + tunerClass + "]");
+                                DiscoveredUSBTuner discoveredUSBTuner = new DiscoveredUSBTuner(tunerClass, bus,
+                                        portAddress);
+                                discoveredUSBTuners.add(discoveredUSBTuner);
                             }
                         }
-
-                        //Unref the device - it will be rediscovered under the device context when it is started
-                        LibUsb.unrefDevice(device);
+                        else
+                        {
+                            mLog.error("LibUsb - unable to get device descriptor for device on bus [" + bus +
+                                    "] port [" + port + "] - status [" + status + "] - " + LibUsb.errorName(status));
+                        }
                     }
 
-                    LibUsb.freeDeviceList(deviceList, false);
+                    //Unref the device - it will be rediscovered under the device context when it is started
+                    LibUsb.unrefDevice(device);
                 }
-                //If the get device list operation generated error -99, turn on warning logging and try device list
-                // again to see what's causing it.
-                else if(deviceCount == LibUsb.ERROR_OTHER)
-                {
-                    retryGetDeviceList(deviceList);
-                }
-                else
-                {
-                    mLog.error("LibUsb - error [" + deviceCount + "/" + LibUsb.errorName(deviceCount) + "] during get device list");
-                }
-            }
-            catch(Exception e)
-            {
-                mLog.error("LibUsb - error during USB device discovery", e);
-            }
 
-            for(DiscoveredUSBTuner discoveredUSBTuner: discoveredUSBTuners)
+                LibUsb.freeDeviceList(deviceList, false);
+            }
+            //If the get device list operation generated error -99, turn on warning logging and try device list
+            // again to see what's causing it.
+            else if(deviceCount == LibUsb.ERROR_OTHER)
             {
-                addUsbTuner(discoveredUSBTuner);
+                retryGetDeviceList(deviceList);
+                successful = false;
+            }
+            else
+            {
+                mLog.error("LibUsb - error [" + deviceCount + "/" + LibUsb.errorName(deviceCount) + "] during get device list");
+                successful = false;
             }
         }
+        catch(Exception e)
+        {
+            mLog.error("LibUsb - error during USB device discovery", e);
+            successful = false;
+        }
+
+        if(mStopping)
+        {
+            return USB_RESCAN_UNAVAILABLE;
+        }
+
+        int added = 0;
+
+        for(DiscoveredUSBTuner discoveredUSBTuner: discoveredUSBTuners)
+        {
+            if(addUsbTuner(discoveredUSBTuner))
+            {
+                added++;
+            }
+        }
+
+        if(!successful)
+        {
+            return USB_RESCAN_FAILED;
+        }
+
+        return added;
     }
 
     /**
      * Determines if the USB device is a supported tuner and add if it has not already been added/discovered.
      * @param discoveredUSBTuner to add
      */
-    private void addUsbTuner(DiscoveredUSBTuner discoveredUSBTuner)
+    private boolean addUsbTuner(DiscoveredUSBTuner discoveredUSBTuner)
     {
-        if(!mDiscoveredTunerModel.hasUsbTuner(discoveredUSBTuner.getBus(), discoveredUSBTuner.getPortAddress()))
+        synchronized(mUsbAttachLock)
         {
-            startAndConfigureTuner(discoveredUSBTuner);
+            if(!mStopping && mLibUsbInitialized &&
+                    !mDiscoveredTunerModel.hasUsbTuner(discoveredUSBTuner.getBus(), discoveredUSBTuner.getPortAddress()))
+            {
+                return startAndConfigureTuner(discoveredUSBTuner);
+            }
         }
+
+        return false;
     }
 
     /**
      * Starts, configures and adds the tuner to the tuner model.
      * @param discoveredTuner to add and configure
      */
-    private void startAndConfigureTuner(DiscoveredTuner discoveredTuner)
+    private boolean startAndConfigureTuner(DiscoveredTuner discoveredTuner)
     {
         discoveredTuner.addTunerStatusListener(this);
 
@@ -352,7 +455,52 @@ public class TunerManager implements IDiscoveredTunerStatusListener
             tunerStatusUpdated(discoveredTuner, TunerStatus.DISABLED, TunerStatus.ENABLED);
         }
 
+        if(discoveredTuner instanceof DiscoveredUSBTuner)
+        {
+            AtomicBoolean added = new AtomicBoolean();
+            Runnable add = () ->
+            {
+                synchronized(mUsbModelLock)
+                {
+                    if(!mStopping)
+                    {
+                        mDiscoveredTunerModel.addDiscoveredTuner(discoveredTuner);
+                        added.set(true);
+                    }
+                }
+            };
+
+            try
+            {
+                if(EventQueue.isDispatchThread())
+                {
+                    add.run();
+                }
+                else
+                {
+                    SwingUtilities.invokeAndWait(add);
+                }
+            }
+            catch(InterruptedException ie)
+            {
+                Thread.currentThread().interrupt();
+            }
+            catch(InvocationTargetException ite)
+            {
+                mLog.error("Unable to add discovered USB tuner", ite);
+            }
+
+            if(!added.get())
+            {
+                discoveredTuner.removeTunerStatusListener(this);
+                discoveredTuner.stop();
+            }
+
+            return added.get();
+        }
+
         mDiscoveredTunerModel.addDiscoveredTuner(discoveredTuner);
+        return true;
     }
 
     /**
@@ -793,6 +941,44 @@ public class TunerManager implements IDiscoveredTunerStatusListener
         return sb.toString();
     }
 
+    private static ExecutorService createUsbRescanExecutor()
+    {
+        NamingThreadFactory threadFactory = new NamingThreadFactory("usb tuner rescan");
+        return Executors.newSingleThreadExecutor(runnable ->
+        {
+            Thread thread = threadFactory.newThread(runnable);
+            thread.setDaemon(true);
+            thread.setPriority(Thread.MIN_PRIORITY);
+            return thread;
+        });
+    }
+
+    boolean stopUsbRescanWorker(long timeout, TimeUnit timeUnit)
+    {
+        synchronized(mUsbRescanLock)
+        {
+            mUsbRescanClosed = true;
+
+            if(mUsbRescan != null)
+            {
+                mUsbRescan.complete(USB_RESCAN_UNAVAILABLE);
+                mUsbRescan = null;
+            }
+
+            mUsbRescanExecutor.shutdownNow();
+        }
+
+        try
+        {
+            return mUsbRescanExecutor.awaitTermination(timeout, timeUnit);
+        }
+        catch(InterruptedException ie)
+        {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+    }
+
     /**
      * USB hotplug event listener to register, unregister and detect when USB devices are added or removed.
      *
@@ -801,9 +987,22 @@ public class TunerManager implements IDiscoveredTunerStatusListener
     public class HotplugEventSupport implements HotplugCallback
     {
         private static final int HOTPLUG_CONTINUE_EVENT_SUPPORT = 0;
+        private static final long STOP_TIMEOUT_MS = 1000;
+        private final Runnable mInterruptEventHandler;
         private HotplugCallbackHandle mHotplugCallbackHandle;
         private Thread mEventProcessorThread;
         private volatile boolean mProcessing;
+
+        HotplugEventSupport()
+        {
+            this(() -> LibUsb.interruptEventHandler(mLibUsbApplicationContext), null);
+        }
+
+        HotplugEventSupport(Runnable interruptEventHandler, Thread eventProcessorThread)
+        {
+            mInterruptEventHandler = interruptEventHandler;
+            mEventProcessorThread = eventProcessorThread;
+        }
 
         /**
          * LibUsb hotplug event notification
@@ -816,6 +1015,11 @@ public class TunerManager implements IDiscoveredTunerStatusListener
         @Override
         public int processEvent(Context context, Device device, int event, Object userData)
         {
+            if(mStopping)
+            {
+                return HOTPLUG_CONTINUE_EVENT_SUPPORT;
+            }
+
             int bus = LibUsb.getBusNumber(device);
             int port = LibUsb.getPortNumber(device);
 
@@ -864,7 +1068,10 @@ public class TunerManager implements IDiscoveredTunerStatusListener
          */
         private DiscoveredTuner removeUsbTuner(int bus, String portAddress)
         {
-            return mDiscoveredTunerModel.removeUsbTuner(bus, portAddress);
+            synchronized(mUsbAttachLock)
+            {
+                return mDiscoveredTunerModel.removeUsbTuner(bus, portAddress);
+            }
         }
 
         /**
@@ -923,9 +1130,27 @@ public class TunerManager implements IDiscoveredTunerStatusListener
         /**
          * Unregisters from hotplug event notifications and stops the event processing timer
          */
-        public void stop()
+        public boolean stop()
+        {
+            return stop(STOP_TIMEOUT_MS);
+        }
+
+        boolean stop(long timeoutMs)
         {
             mProcessing = false;
+            Thread thread = mEventProcessorThread;
+
+            if(thread != null)
+            {
+                try
+                {
+                    mInterruptEventHandler.run();
+                }
+                catch(Throwable t)
+                {
+                    mLog.warn("Unable to interrupt LibUsb hotplug event processor", t);
+                }
+            }
 
             if(mHotplugCallbackHandle != null)
             {
@@ -933,20 +1158,33 @@ public class TunerManager implements IDiscoveredTunerStatusListener
                 mHotplugCallbackHandle = null;
             }
 
-            if(mEventProcessorThread != null)
+            if(thread == null)
             {
-                try
-                {
-                    mEventProcessorThread.join(1000);
-                }
-                catch(InterruptedException ie)
-                {
-                    Thread.currentThread().interrupt();
-                    mLog.error("Interrupted while stopping LibUsb hotplug event processor thread", ie);
-                }
+                return true;
+            }
 
+            try
+            {
+                thread.join(timeoutMs);
+            }
+            catch(InterruptedException ie)
+            {
+                Thread.currentThread().interrupt();
+                mLog.error("Interrupted while stopping LibUsb hotplug event processor thread", ie);
+                return false;
+            }
+
+            if(thread.isAlive())
+            {
+                return false;
+            }
+
+            if(mEventProcessorThread == thread)
+            {
                 mEventProcessorThread = null;
             }
+
+            return true;
         }
     }
 }
