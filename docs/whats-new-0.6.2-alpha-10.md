@@ -56,7 +56,8 @@ and Alpha 9 while leaving the original installation unchanged.
 - **Whole-tuner spectrum and waterfall.** The administrator-only browser Tuner Spectrum page shows one already-running
   tuner without starting, retuning, or reconfiguring it. It supports tuner selection, pause, pan, up to 256× zoom,
   refined FFT detail, waterfall frequency/power/time inspection, a configurable lower display limit, waterfall speed,
-  optional frequency snapping, and FFT smoothing.
+  optional frequency snapping, and FFT smoothing. The selected tuner and display controls are remembered by that
+  browser between visits; pause and frequency viewport remain session-only.
 - **Spectrum channel flags.** Small colored flags mark encrypted voice, voice, data, control, other active carriers,
   and the currently decoded control channel. Idle channels and alternate control frequencies are removed from the
   overlay. Hovering a flag shows the available channel, system, talkgroup, source, timeslot, LCN, decoder, and

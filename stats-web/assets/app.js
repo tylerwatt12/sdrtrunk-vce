@@ -7297,8 +7297,11 @@ const TUNER_SPECTRUM_SMOOTHING_ALPHA = 0.25;
 const TUNER_WATERFALL_HISTORY_ROWS = 256;
 const TUNER_SPECTRUM_FLOOR_STORAGE_KEY = 'sdrtrunk.wideband.lowerDisplayLimitDb';
 const TUNER_WATERFALL_SPEED_STORAGE_KEY = 'sdrtrunk.wideband.waterfallScrollSpeed';
+const TUNER_SPECTRUM_SNAP_STORAGE_KEY = 'sdrtrunk.wideband.snapFrequency';
+const TUNER_SPECTRUM_SMOOTH_STORAGE_KEY = 'sdrtrunk.wideband.smoothFft';
 const TUNER_WATERFALL_CHANNELS_STORAGE_KEY = 'sdrtrunk.wideband.highlightWaterfallChannels';
 const TUNER_SPECTRUM_PROFILE_STORAGE_KEY = 'sdrtrunk.wideband.profile';
+const TUNER_SPECTRUM_TARGET_STORAGE_KEY = 'sdrtrunk.wideband.targetId';
 const TUNER_SPECTRUM_PROFILES = Object.freeze({
   efficient: Object.freeze({ fftSize: 2048, fps: 5 }),
   balanced: Object.freeze({ fftSize: 8192, fps: 10 }),
@@ -7521,13 +7524,13 @@ function tunerSpectrumPanel() {
   const snapControl = node('label', 'tuner-spectrum-toggle-control');
   const snapInput = node('input');
   snapInput.type = 'checkbox';
-  snapInput.checked = true;
+  snapInput.checked = tunerStoredBoolean(TUNER_SPECTRUM_SNAP_STORAGE_KEY, true);
   snapControl.title = 'Snap the cursor to the nearest preset frequency in supported bands.';
   snapControl.append(snapInput, node('span', '', 'Snap frequency'));
   const smoothControl = node('label', 'tuner-spectrum-toggle-control');
   const smoothInput = node('input');
   smoothInput.type = 'checkbox';
-  smoothInput.checked = true;
+  smoothInput.checked = tunerStoredBoolean(TUNER_SPECTRUM_SMOOTH_STORAGE_KEY, true);
   smoothControl.title = 'Average successive frames to make the FFT trace steadier.';
   smoothControl.append(smoothInput, node('span', '', 'Smooth FFT'));
   const waterfallChannelsControl = node('label', 'tuner-spectrum-toggle-control');
@@ -8806,6 +8809,7 @@ function tunerSpectrumPanel() {
   }
 
   targetSelect.addEventListener('change', () => {
+    storeTunerChoice(TUNER_SPECTRUM_TARGET_STORAGE_KEY, targetSelect.value);
     closeStreams();
     closeActiveChannels();
     resetViewportForTarget();
@@ -8851,9 +8855,11 @@ function tunerSpectrumPanel() {
     storeTunerNumber(TUNER_WATERFALL_SPEED_STORAGE_KEY, waterfallSpeed);
   });
   snapInput.addEventListener('change', () => {
+    storeTunerBoolean(TUNER_SPECTRUM_SNAP_STORAGE_KEY, snapInput.checked);
     if (hoverRatio !== null) updateCursor(hoverRatio);
   });
   smoothInput.addEventListener('change', () => {
+    storeTunerBoolean(TUNER_SPECTRUM_SMOOTH_STORAGE_KEY, smoothInput.checked);
     clearSpectrumSmoothing();
     if (smoothInput.checked && fftValues.length && frameMetadata) {
       updateSpectrumSmoothing(fftValues, frameMetadata, tunerFrameDomain(frameMetadata, fftValues.length));
@@ -8899,6 +8905,8 @@ function tunerSpectrumPanel() {
       option.value = target.id;
       targetSelect.append(option);
     });
+    targetSelect.value = tunerStoredChoice(TUNER_SPECTRUM_TARGET_STORAGE_KEY, targets[0].id,
+      targets.map((target) => target.id));
     targetSelect.disabled = false;
     pause.disabled = false;
     resetViewportForTarget();
