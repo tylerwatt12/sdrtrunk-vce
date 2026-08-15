@@ -41,6 +41,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.swing.JButton;
+import javax.swing.JLabel;
 import javax.swing.JMenuItem;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
@@ -64,12 +65,15 @@ public class TunerViewPanel extends JPanel
     private static final String TABLE_PREFERENCE_KEY = "tuner.view.panel";
 
     private UserPreferences mUserPreferences;
+    private TunerManager mTunerManager;
     private DiscoveredTunerModel mDiscoveredTunerModel;
     private DiscoveredTunerEditor mDiscoveredTunerEditor;
     private TunerConfigurationManager mTunerConfigurationManager;
     private JTable mTunerTable;
     private JButton mAddRecordingButton;
     private JButton mRemoveRecordingButton;
+    private JButton mRescanUsbTunersButton;
+    private JLabel mUsbRescanStatusLabel;
 
     /**
      * Constructs an instance
@@ -78,6 +82,7 @@ public class TunerViewPanel extends JPanel
      */
     public TunerViewPanel(TunerManager tunerManager, UserPreferences userPreferences)
     {
+        mTunerManager = tunerManager;
         mDiscoveredTunerModel = tunerManager.getDiscoveredTunerModel();
         mDiscoveredTunerEditor = new DiscoveredTunerEditor(userPreferences, tunerManager);
         mTunerConfigurationManager = tunerManager.getTunerConfigurationManager();
@@ -188,6 +193,8 @@ public class TunerViewPanel extends JPanel
         buttonPanel.setLayout(new MigLayout("insets 0 1 3 0", "", ""));
         buttonPanel.add(getAddRecordingButton());
         buttonPanel.add(getRemoveRecordingButton());
+        buttonPanel.add(getRescanUsbTunersButton());
+        buttonPanel.add(getUsbRescanStatusLabel(), "gapleft 10");
         tunerTablePanel.add(buttonPanel);
 
         tunerTablePanel.setPreferredSize(new Dimension(200,200));
@@ -247,6 +254,57 @@ public class TunerViewPanel extends JPanel
         }
 
         return mRemoveRecordingButton;
+    }
+
+    private JButton getRescanUsbTunersButton()
+    {
+        if(mRescanUsbTunersButton == null)
+        {
+            mRescanUsbTunersButton = new JButton("Rescan USB Tuners");
+            mRescanUsbTunersButton.addActionListener(event ->
+            {
+                mRescanUsbTunersButton.setEnabled(false);
+                getUsbRescanStatusLabel().setText("Scanning for USB tuners...");
+                mTunerManager.requestUsbTunerRescan().whenComplete((result, throwable) -> EventQueue.invokeLater(() ->
+                {
+                    if(throwable != null || result == null)
+                    {
+                        getUsbRescanStatusLabel().setText("USB tuner scan failed");
+                        mRescanUsbTunersButton.setEnabled(true);
+                        return;
+                    }
+
+                    if(result == TunerManager.USB_RESCAN_UNAVAILABLE)
+                    {
+                        getUsbRescanStatusLabel().setText("USB tuner scanning is unavailable");
+                        mRescanUsbTunersButton.setEnabled(false);
+                    }
+                    else if(result == TunerManager.USB_RESCAN_FAILED)
+                    {
+                        getUsbRescanStatusLabel().setText("USB tuner scan failed");
+                        mRescanUsbTunersButton.setEnabled(true);
+                    }
+                    else
+                    {
+                        getUsbRescanStatusLabel().setText(result == 0 ? "No new USB tuners found" : result == 1 ?
+                                "Added 1 USB tuner" : "Added " + result + " USB tuners");
+                        mRescanUsbTunersButton.setEnabled(true);
+                    }
+                }));
+            });
+        }
+
+        return mRescanUsbTunersButton;
+    }
+
+    private JLabel getUsbRescanStatusLabel()
+    {
+        if(mUsbRescanStatusLabel == null)
+        {
+            mUsbRescanStatusLabel = new JLabel(" ");
+        }
+
+        return mUsbRescanStatusLabel;
     }
 
     /**
