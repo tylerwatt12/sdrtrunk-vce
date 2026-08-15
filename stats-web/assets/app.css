@@ -2063,6 +2063,91 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   text-align: right;
 }
 
+.tuner-spectrum-range-control {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+}
+
+.tuner-spectrum-range-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.tuner-spectrum-range-heading output {
+  min-width: 108px;
+}
+
+.tuner-spectrum-dual-range {
+  --range-lower: 30%;
+  --range-upper: 100%;
+  position: relative;
+  height: 28px;
+}
+
+.tuner-spectrum-dual-range-track {
+  position: absolute;
+  inset: 12px 0 auto;
+  height: 4px;
+  border-radius: 999px;
+  background: linear-gradient(to right,
+    var(--line-dark) 0 var(--range-lower),
+    var(--accent) var(--range-lower) var(--range-upper),
+    var(--line-dark) var(--range-upper) 100%);
+}
+
+.tuner-spectrum-dual-range input[type="range"] {
+  appearance: none;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 28px;
+  margin: 0;
+  background: transparent;
+  pointer-events: none;
+}
+
+.tuner-spectrum-dual-range input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px;
+  background: transparent;
+}
+
+.tuner-spectrum-dual-range input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  margin-top: -7px;
+  border: 2px solid var(--accent);
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: 0 1px 4px rgb(0 0 0 / 35%);
+  cursor: grab;
+  pointer-events: auto;
+}
+
+.tuner-spectrum-dual-range input[type="range"]::-moz-range-track {
+  height: 4px;
+  background: transparent;
+}
+
+.tuner-spectrum-dual-range input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--accent);
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: 0 1px 4px rgb(0 0 0 / 35%);
+  cursor: grab;
+  pointer-events: auto;
+}
+
+.tuner-spectrum-dual-range input[type="range"]:focus-visible::-webkit-slider-thumb,
+.tuner-spectrum-dual-range input[type="range"]:focus-visible::-moz-range-thumb {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .tuner-spectrum-control-help {
   max-width: 390px;
   color: var(--muted);

@@ -521,8 +521,8 @@ class StatsWebInteractionUiContractTest
             html.indexOf("rel=\"stylesheet\""));
         assertTrue(html.contains("id=\"theme-toggle\""));
         assertTrue(html.contains("id=\"mobile-theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=56"));
-        assertTrue(html.contains("/assets/app.js?v=85"));
+        assertTrue(html.contains("/assets/app.css?v=57"));
+        assertTrue(html.contains("/assets/app.js?v=86"));
         assertTrue(source.contains("MOBILE_THEME_STORAGE_KEY = 'sdrtrunk_mobile_theme'"));
         assertTrue(source.contains("mode === 'mobile' ? MOBILE_THEME_STORAGE_KEY : THEME_STORAGE_KEY"));
         assertTrue(source.contains("toggle.setAttribute('aria-pressed'"));
@@ -969,7 +969,16 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("add('Channel', activityValues(rows, (row) => row.channel_name || row.tableChannelName))"));
         assertFalse(tuner.contains("`${row.tableChannelName} · Control`"));
         assertTrue(tuner.contains("snapInput.type = 'checkbox'"));
+        assertTrue(tuner.contains("'tuner-spectrum-floor'"));
+        assertTrue(tuner.contains("'tuner-spectrum-ceiling'"));
+        assertTrue(tuner.contains("'Lower display limit'"));
+        assertTrue(tuner.contains("'Upper display limit'"));
+        assertTrue(tuner.contains("function updateDisplayRange(changedHandle = '')"));
         assertTrue(tuner.contains("TUNER_SPECTRUM_FLOOR_STORAGE_KEY, dbFloor"));
+        assertTrue(tuner.contains("TUNER_SPECTRUM_CEILING_STORAGE_KEY, dbCeiling"));
+        assertTrue(tuner.contains("Math.min(dbCeiling, raw)"));
+        assertTrue(tuner.contains("(dbCeiling - value) / (dbCeiling - dbFloor)"));
+        assertTrue(tuner.contains("(value - dbFloor) / (dbCeiling - dbFloor)"));
         assertTrue(tuner.contains("TUNER_WATERFALL_SPEED_STORAGE_KEY, waterfallSpeed"));
         assertTrue(tuner.contains("TUNER_SPECTRUM_SNAP_STORAGE_KEY, true"));
         assertTrue(tuner.contains("storeTunerBoolean(TUNER_SPECTRUM_SNAP_STORAGE_KEY, snapInput.checked)"));
@@ -984,7 +993,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("storeTunerChoice(TUNER_SPECTRUM_TARGET_STORAGE_KEY, targetSelect.value)"));
         assertTrue(tuner.contains("tunerStoredChoice(TUNER_SPECTRUM_TARGET_STORAGE_KEY, targets[0].id"));
         assertTrue(tuner.contains("toolbarActions.append(options)"));
-        assertTrue(tuner.contains("optionsPanel.append(floorControl, floorHelp, speedControl, toggleControls, profilePanel)"));
+        assertTrue(tuner.contains("optionsPanel.append(rangeControl, rangeHelp, speedControl, toggleControls, profilePanel)"));
         assertTrue(tuner.contains("optionsSummary.setAttribute('aria-expanded', 'false')"));
         assertTrue(tuner.contains("options.addEventListener('toggle'"));
         assertTrue(tuner.contains("displayControls.append(refiningBadge, flagLegend)"));
@@ -1132,6 +1141,9 @@ class StatsWebInteractionUiContractTest
         assertTrue(css.contains(".tuner-spectrum-cursor-field-label"));
         assertTrue(css.contains(".tuner-spectrum-cursor-field-value"));
         assertTrue(css.contains(".tuner-spectrum-display-controls"));
+        assertTrue(css.contains(".tuner-spectrum-dual-range"));
+        assertTrue(css.contains("--range-lower"));
+        assertTrue(css.contains("--range-upper"));
         assertTrue(binary.contains("liveMultiplexer.subscribe(topic, parameters"));
         assertTrue(binary.contains("return close();"));
         assertTrue(css.contains(".tuner-spectrum-waterfall .tuner-spectrum-active-flag {"));

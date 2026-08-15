@@ -7287,8 +7287,10 @@ function tunerWaterfallPalette() {
 }
 
 const TUNER_SPECTRUM_DEFAULT_FLOOR_DB = -140;
-const TUNER_SPECTRUM_MINIMUM_FLOOR_DB = -200;
-const TUNER_SPECTRUM_MAXIMUM_FLOOR_DB = -40;
+const TUNER_SPECTRUM_DEFAULT_CEILING_DB = 0;
+const TUNER_SPECTRUM_MINIMUM_DISPLAY_DB = -200;
+const TUNER_SPECTRUM_MAXIMUM_DISPLAY_DB = 0;
+const TUNER_SPECTRUM_MINIMUM_DISPLAY_SPAN_DB = 5;
 const TUNER_SPECTRUM_MAXIMUM_ANALYTICAL_ZOOM = 64;
 const TUNER_SPECTRUM_MAXIMUM_ZOOM = 256;
 const TUNER_SPECTRUM_ZOOM_FACTOR = 1.5;
@@ -7296,6 +7298,7 @@ const TUNER_SPECTRUM_VIEWPORT_DEBOUNCE_MS = 160;
 const TUNER_SPECTRUM_SMOOTHING_ALPHA = 0.25;
 const TUNER_WATERFALL_HISTORY_ROWS = 256;
 const TUNER_SPECTRUM_FLOOR_STORAGE_KEY = 'sdrtrunk.wideband.lowerDisplayLimitDb';
+const TUNER_SPECTRUM_CEILING_STORAGE_KEY = 'sdrtrunk.wideband.upperDisplayLimitDb';
 const TUNER_WATERFALL_SPEED_STORAGE_KEY = 'sdrtrunk.wideband.waterfallScrollSpeed';
 const TUNER_SPECTRUM_SNAP_STORAGE_KEY = 'sdrtrunk.wideband.snapFrequency';
 const TUNER_SPECTRUM_SMOOTH_STORAGE_KEY = 'sdrtrunk.wideband.smoothFft';
@@ -7495,21 +7498,43 @@ function tunerSpectrumPanel() {
   const optionsPanel = node('div', 'tuner-spectrum-options-panel');
   optionsPanel.setAttribute('role', 'group');
   optionsPanel.setAttribute('aria-label', 'Tuner spectrum options');
-  const floorControl = node('label', 'tuner-spectrum-display-control');
+  let initialFloor = tunerStoredNumber(TUNER_SPECTRUM_FLOOR_STORAGE_KEY,
+    TUNER_SPECTRUM_DEFAULT_FLOOR_DB, TUNER_SPECTRUM_MINIMUM_DISPLAY_DB,
+    TUNER_SPECTRUM_MAXIMUM_DISPLAY_DB - TUNER_SPECTRUM_MINIMUM_DISPLAY_SPAN_DB);
+  let initialCeiling = tunerStoredNumber(TUNER_SPECTRUM_CEILING_STORAGE_KEY,
+    TUNER_SPECTRUM_DEFAULT_CEILING_DB,
+    TUNER_SPECTRUM_MINIMUM_DISPLAY_DB + TUNER_SPECTRUM_MINIMUM_DISPLAY_SPAN_DB,
+    TUNER_SPECTRUM_MAXIMUM_DISPLAY_DB);
+  if (initialCeiling - initialFloor < TUNER_SPECTRUM_MINIMUM_DISPLAY_SPAN_DB) {
+    initialFloor = TUNER_SPECTRUM_DEFAULT_FLOOR_DB;
+    initialCeiling = TUNER_SPECTRUM_DEFAULT_CEILING_DB;
+  }
+  const rangeControl = node('div', 'tuner-spectrum-display-control tuner-spectrum-range-control');
+  const rangeHeading = node('div', 'tuner-spectrum-range-heading');
+  const rangeValue = node('output', '', `${initialFloor} to ${initialCeiling} dB`);
+  rangeHeading.append(node('span', '', 'Display range'), rangeValue);
+  const rangeSlider = node('div', 'tuner-spectrum-dual-range');
+  rangeSlider.append(node('span', 'tuner-spectrum-dual-range-track'));
   const floorInput = node('input');
   floorInput.type = 'range';
-  floorInput.min = String(TUNER_SPECTRUM_MINIMUM_FLOOR_DB);
-  floorInput.max = String(TUNER_SPECTRUM_MAXIMUM_FLOOR_DB);
+  floorInput.min = String(TUNER_SPECTRUM_MINIMUM_DISPLAY_DB);
+  floorInput.max = String(TUNER_SPECTRUM_MAXIMUM_DISPLAY_DB);
   floorInput.step = '5';
-  floorInput.value = String(tunerStoredNumber(TUNER_SPECTRUM_FLOOR_STORAGE_KEY,
-    TUNER_SPECTRUM_DEFAULT_FLOOR_DB, TUNER_SPECTRUM_MINIMUM_FLOOR_DB,
-    TUNER_SPECTRUM_MAXIMUM_FLOOR_DB));
+  floorInput.value = String(initialFloor);
   floorInput.id = 'tuner-spectrum-floor';
-  const floorValue = node('output', '', `${floorInput.value} dB`);
-  floorValue.htmlFor = floorInput.id;
-  floorControl.append(node('span', '', 'Lower display limit'), floorInput, floorValue);
-  const floorHelp = node('span', 'tuner-spectrum-control-help',
-    'Display contrast only; receiver gain and decoder thresholds do not change.');
+  floorInput.setAttribute('aria-label', 'Lower display limit');
+  const ceilingInput = node('input');
+  ceilingInput.type = 'range';
+  ceilingInput.min = String(TUNER_SPECTRUM_MINIMUM_DISPLAY_DB);
+  ceilingInput.max = String(TUNER_SPECTRUM_MAXIMUM_DISPLAY_DB);
+  ceilingInput.step = '5';
+  ceilingInput.value = String(initialCeiling);
+  ceilingInput.id = 'tuner-spectrum-ceiling';
+  ceilingInput.setAttribute('aria-label', 'Upper display limit');
+  rangeSlider.append(floorInput, ceilingInput);
+  rangeControl.append(rangeHeading, rangeSlider);
+  const rangeHelp = node('span', 'tuner-spectrum-control-help',
+    'Move either handle to set display contrast. Receiver gain and decoder thresholds do not change.');
   const speedControl = node('label', 'tuner-spectrum-display-control');
   const speedInput = node('input');
   speedInput.type = 'range';
@@ -7564,7 +7589,7 @@ function tunerSpectrumPanel() {
   const profileWarning = node('p', 'tuner-spectrum-control-help',
     'Higher-detail profiles use more CPU and may affect decoding on lower-end systems. All profiles use 8-bit spectrum data.');
   profilePanel.append(profileControl, profileWarning);
-  optionsPanel.append(floorControl, floorHelp, speedControl, toggleControls, profilePanel);
+  optionsPanel.append(rangeControl, rangeHelp, speedControl, toggleControls, profilePanel);
   options.append(optionsSummary, optionsPanel);
   options.addEventListener('toggle', () => {
     optionsSummary.setAttribute('aria-expanded', String(options.open));
@@ -7649,7 +7674,8 @@ function tunerSpectrumPanel() {
   let hoverYRatio = null;
   let hoverFlag = null;
   let drag = null;
-  let dbFloor = Number(floorInput.value);
+  let dbFloor = initialFloor;
+  let dbCeiling = initialCeiling;
   let waterfallSpeed = Number(speedInput.value);
   let waterfallScrollAccumulator = 0;
   let activeChannelSource = null;
@@ -7778,7 +7804,7 @@ function tunerSpectrumPanel() {
     context.strokeStyle = 'rgba(150, 177, 199, 0.18)';
     context.lineWidth = 1;
     for (let line = 1; line < 6; line += 1) {
-      const power = dbFloor + (-dbFloor) * (1 - line / 6);
+      const power = dbFloor + (dbCeiling - dbFloor) * (1 - line / 6);
       const y = cssHeight * line / 6;
       context.beginPath();
       context.moveTo(0, y);
@@ -7811,9 +7837,9 @@ function tunerSpectrumPanel() {
       for (let bin = first; bin < last; bin += 1) {
         if (Number.isFinite(spectrumValues[bin])) raw = Math.max(raw, spectrumValues[bin]);
       }
-      const value = Number.isFinite(raw) ? Math.max(dbFloor, Math.min(0, raw)) : dbFloor;
+      const value = Number.isFinite(raw) ? Math.max(dbFloor, Math.min(dbCeiling, raw)) : dbFloor;
       const drawX = x * cssWidth / (points - 1);
-      const y = (0 - value) / (0 - dbFloor) * cssHeight;
+      const y = (dbCeiling - value) / (dbCeiling - dbFloor) * cssHeight;
       if (x === 0) context.moveTo(drawX, y);
       else context.lineTo(drawX, y);
     }
@@ -7887,8 +7913,9 @@ function tunerSpectrumPanel() {
         for (let bin = firstBin; bin < lastBin; bin += 1) {
           if (Number.isFinite(values[bin])) raw = Math.max(raw, values[bin]);
         }
-        const value = Number.isFinite(raw) ? Math.max(dbFloor, Math.min(0, raw)) : dbFloor;
-        const color = Math.max(0, Math.min(255, Math.round((value - dbFloor) / (0 - dbFloor) * 255)));
+        const value = Number.isFinite(raw) ? Math.max(dbFloor, Math.min(dbCeiling, raw)) : dbFloor;
+        const color = Math.max(0, Math.min(255,
+          Math.round((value - dbFloor) / (dbCeiling - dbFloor) * 255)));
         row.data[x * 4] = palette[color * 4];
         row.data[x * 4 + 1] = palette[color * 4 + 1];
         row.data[x * 4 + 2] = palette[color * 4 + 2];
@@ -8837,16 +8864,32 @@ function tunerSpectrumPanel() {
     sync();
     setReadouts();
   });
-  floorInput.addEventListener('input', () => {
-    const candidate = Number(floorInput.value);
-    if (!Number.isFinite(candidate)) return;
-    dbFloor = Math.max(TUNER_SPECTRUM_MINIMUM_FLOOR_DB,
-      Math.min(TUNER_SPECTRUM_MAXIMUM_FLOOR_DB, candidate));
-    floorValue.textContent = `${dbFloor} dB`;
+  function updateDisplayRange(changedHandle = '') {
+    let floor = Number(floorInput.value);
+    let ceiling = Number(ceilingInput.value);
+    if (!Number.isFinite(floor) || !Number.isFinite(ceiling)) return;
+    if (ceiling - floor < TUNER_SPECTRUM_MINIMUM_DISPLAY_SPAN_DB) {
+      if (changedHandle === 'floor') floor = ceiling - TUNER_SPECTRUM_MINIMUM_DISPLAY_SPAN_DB;
+      else ceiling = floor + TUNER_SPECTRUM_MINIMUM_DISPLAY_SPAN_DB;
+    }
+    dbFloor = Math.max(TUNER_SPECTRUM_MINIMUM_DISPLAY_DB, floor);
+    dbCeiling = Math.min(TUNER_SPECTRUM_MAXIMUM_DISPLAY_DB, ceiling);
+    floorInput.value = String(dbFloor);
+    ceilingInput.value = String(dbCeiling);
+    rangeValue.textContent = `${dbFloor} to ${dbCeiling} dB`;
+    const fullSpan = TUNER_SPECTRUM_MAXIMUM_DISPLAY_DB - TUNER_SPECTRUM_MINIMUM_DISPLAY_DB;
+    rangeSlider.style.setProperty('--range-lower',
+      `${(dbFloor - TUNER_SPECTRUM_MINIMUM_DISPLAY_DB) / fullSpan * 100}%`);
+    rangeSlider.style.setProperty('--range-upper',
+      `${(dbCeiling - TUNER_SPECTRUM_MINIMUM_DISPLAY_DB) / fullSpan * 100}%`);
     storeTunerNumber(TUNER_SPECTRUM_FLOOR_STORAGE_KEY, dbFloor);
+    storeTunerNumber(TUNER_SPECTRUM_CEILING_STORAGE_KEY, dbCeiling);
     restoreWaterfallHistory();
     if (!refining) scheduleDraw();
-  });
+  }
+  floorInput.addEventListener('input', () => updateDisplayRange('floor'));
+  ceilingInput.addEventListener('input', () => updateDisplayRange('ceiling'));
+  updateDisplayRange();
   speedInput.addEventListener('input', () => {
     const candidate = Number(speedInput.value);
     if (!Number.isFinite(candidate)) return;
