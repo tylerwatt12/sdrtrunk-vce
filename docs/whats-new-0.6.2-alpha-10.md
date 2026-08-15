@@ -91,14 +91,16 @@ and Alpha 9 while leaving the original installation unchanged.
 - **Diagnostics are demand-driven and bounded.** Viewers of the same selected channel share one bounded producer and
   latest-only binary frames. When nobody is viewing, no diagnostic sample listener, scheduled FFT work, or worker is
   active. Selected-channel diagnostics support up to 32 sessions sharing one 512-bin producer at 5 frames per second.
-  Whole-tuner diagnostics permit one administrator session and one tuner at a time. They use one 4,096-bin worker at
-  10 frames per second, with a filtered analysis lens that adapts to each tuner's bandwidth and can decimate through
-  32× when its sample rate supports it. The browser keeps four bounded numeric waterfall histories so returning to a
+  Whole-tuner diagnostics permit one administrator session and one tuner at a time. Four named performance profiles
+  range from 2,048 bins at 5 frames per second through 32,768 bins at 20 frames per second, with clear load warnings.
+  All profiles use compact 8-bit spectrum data and a filtered analysis lens that adapts to each tuner's bandwidth
+  and can decimate through 32× when its sample rate supports it. The selector lists every enabled tuner by preferred
+  name and serial number, including idle tuners; selecting an idle tuner starts samples only for that viewer. The
+  browser keeps four bounded numeric waterfall histories so returning to a
   previous zoom restores its recent rows; zoom beyond 64× is labeled as digital zoom.
-- **Temporary spectrum experiment controls.** Administrators can compare bounded FFT-bin, frame-rate, analysis-lens,
-  and 50–200 ms receiver-IQ queue settings while watching per-control-channel decode health, receiver and diagnostic
-  drops, VCE CPU, heap/GC, delivered FPS, latency, and estimated spectrum traffic. Settings are session-only; closing
-  the viewer restores the normal diagnostic settings and the receiver IQ queue duration it found on open.
+- **Receiver IQ buffering has a larger margin.** Each physical tuner's bounded, oldest-first IQ queue now defaults to
+  200 ms. It remains non-blocking and discards stale IQ rather than delaying the tuner callback when that limit is
+  exceeded.
 - **The Java receiver window is smaller.** The old Systems workspace and its embedded Details, Events, Messages,
   signal, and symbol panels are removed. Browser Live Systems owns those activity workflows. Java keeps Map when
   enabled and Tuners; selected-channel and tuner-wide FFT/waterfall diagnostics remain in the website.

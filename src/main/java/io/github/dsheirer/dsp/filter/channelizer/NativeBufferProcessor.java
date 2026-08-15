@@ -37,7 +37,7 @@ import org.slf4j.LoggerFactory;
  */
 class NativeBufferProcessor implements Listener<INativeBuffer>
 {
-    static final long DEFAULT_MAXIMUM_QUEUE_DURATION_MILLISECONDS = 100;
+    static final long DEFAULT_MAXIMUM_QUEUE_DURATION_MILLISECONDS = 200;
     private static final long OVERFLOW_WARNING_INTERVAL_NANOSECONDS = TimeUnit.SECONDS.toNanos(5);
     private static final Logger mLog = LoggerFactory.getLogger(NativeBufferProcessor.class);
 

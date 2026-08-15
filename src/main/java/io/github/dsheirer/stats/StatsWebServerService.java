@@ -1293,11 +1293,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         String targetId = request.requiredText("target_id");
         Long viewportStart = request.optionalLong("viewport_start_hz");
         Long viewportEnd = request.optionalLong("viewport_end_hz");
-        Integer fftSize = request.optionalInt("experiment_fft_size");
-        Integer framesPerSecond = request.optionalInt("experiment_fps");
-        Integer maximumDecimation = request.optionalInt("experiment_max_decimation");
-        Long iqQueueMilliseconds = request.optionalLong("experiment_iq_queue_ms");
-        Integer quantizationBits = request.optionalInt("experiment_quantization_bits");
+        String profileId = request.text("profile");
 
         if((viewportStart == null) != (viewportEnd == null))
         {
@@ -1318,17 +1314,11 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             }
         }
 
-        TunerDiagnosticService.ExperimentSettings defaults = TunerDiagnosticService.ExperimentSettings.defaults();
-        TunerDiagnosticService.ExperimentSettings settings;
+        TunerDiagnosticService.SpectrumProfile profile;
 
         try
         {
-            settings = new TunerDiagnosticService.ExperimentSettings(
-                fftSize != null ? fftSize : defaults.fftSize(),
-                framesPerSecond != null ? framesPerSecond : defaults.framesPerSecond(),
-                maximumDecimation != null ? maximumDecimation : defaults.maximumDecimation(),
-                iqQueueMilliseconds != null ? iqQueueMilliseconds : defaults.iqQueueDurationMilliseconds(),
-                quantizationBits != null ? quantizationBits : defaults.quantizationBits());
+            profile = TunerDiagnosticService.SpectrumProfile.fromId(profileId);
         }
         catch(IllegalArgumentException exception)
         {
@@ -1336,7 +1326,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         }
 
         request.requireFullyConsumed();
-        return new TunerDiagnosticRequest(targetId, viewport, settings);
+        return new TunerDiagnosticRequest(targetId, viewport, profile);
     }
 
     private static void writeMultiplexJson(MultiplexOutput output, int topic, String event, Object data)
@@ -2799,7 +2789,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
                         TunerDiagnosticRequest request = tunerDiagnosticRequest(
                             multiplexSubscriptionUri(topic, wanted));
                         mTunerDiagnostics.updateViewport(request.viewport());
-                        mTunerDiagnostics.updateExperiment(request.settings());
+                        mTunerDiagnostics.updateProfile(request.profile());
                         TunerDiagnosticService.State state = mTunerDiagnostics.state();
                         writeMultiplexDiagnostic(output, TOPIC_TUNER_DIAGNOSTICS,
                             diagnosticState(state.generation(), state.revision(), state));
@@ -2970,7 +2960,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             mTunerDiagnosticPermit = true;
             TunerDiagnosticRequest request = tunerDiagnosticRequest(uri);
             TunerDiagnosticService.OpenResult result = mTunerDiagnosticService.tryOpen(request.targetId(),
-                request.viewport(), request.settings());
+                request.viewport(), request.profile());
 
             if(result.status() != TunerDiagnosticService.OpenStatus.OPEN)
             {
@@ -3305,7 +3295,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
     }
 
     private record TunerDiagnosticRequest(String targetId, TunerDiagnosticService.Viewport viewport,
-                                          TunerDiagnosticService.ExperimentSettings settings)
+                                          TunerDiagnosticService.SpectrumProfile profile)
     {
     }
 

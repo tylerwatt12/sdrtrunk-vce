@@ -43,7 +43,7 @@ import org.junit.jupiter.api.Test;
 class TunerDiagnosticServiceTest
 {
     @Test
-    void remainsInertUntilAViewerOpensAndDoesNotExposeHardwareIdentity()
+    void remainsInertUntilAViewerOpensAndShowsTunerNameAndSerial()
     {
         FakeController controller = new FakeController(851_000_000L, 10_000_000.0);
         Object hardwareIdentity = new Object()
@@ -55,7 +55,7 @@ class TunerDiagnosticServiceTest
             }
         };
         AtomicReference<List<TunerDiagnosticService.AvailableTarget>> available = new AtomicReference<>(List.of(
-            target(hardwareIdentity, TunerClass.AIRSPY, controller, 4)));
+            target(hardwareIdentity, TunerClass.AIRSPY, "Airspy R2", "A1B2C3D4", controller, 4)));
         AtomicInteger enumerations = new AtomicInteger();
         FakeProcessorFactory processors = new FakeProcessorFactory();
         TunerDiagnosticService service = new TunerDiagnosticService(() ->
@@ -71,9 +71,10 @@ class TunerDiagnosticServiceTest
         TunerDiagnosticService.Target first = service.targets().getFirst();
         TunerDiagnosticService.Target again = service.targets().getFirst();
         assertEquals(first.targetId(), again.targetId());
-        assertEquals("Airspy 1", first.label());
+        assertEquals("Airspy R2 · A1B2C3D4", first.label());
+        assertEquals("Airspy R2", first.name());
+        assertEquals("A1B2C3D4", first.serial());
         assertFalse(first.targetId().contains("SECRET"));
-        assertFalse(first.label().contains("SECRET"));
         assertEquals(851_000_000L, first.centerFrequencyHz());
         assertEquals(10_000_000L, first.sampleRateHz());
         assertEquals(4, first.activeChannelCount());
@@ -86,7 +87,7 @@ class TunerDiagnosticServiceTest
     }
 
     @Test
-    void excludesTunersThatCouldRequireDiagnosticsToStartSampleTransfer()
+    void listsEnabledIdleTunersAndStartsSamplesOnlyWhenSelected()
     {
         FakeController noChannels = new FakeController(100_000_000L, 2_500_000.0);
         FakeController noExistingListener = new FakeController(200_000_000L, 2_500_000.0, false);
@@ -95,10 +96,19 @@ class TunerDiagnosticServiceTest
             target(new Object(), TunerClass.AIRSPY, noChannels, 0),
             target(new Object(), TunerClass.RTL2832, noExistingListener, 1)), processors);
 
-        assertTrue(service.targets().isEmpty());
+        List<TunerDiagnosticService.Target> targets = service.targets();
+        assertEquals(2, targets.size());
+        assertEquals(0, targets.getFirst().activeChannelCount());
         assertEquals(0, noChannels.addCount.get());
         assertEquals(0, noExistingListener.addCount.get());
         assertEquals(0, processors.createCount.get());
+
+        TunerDiagnosticService.Session session = service.tryOpen(targets.getFirst().targetId()).session();
+        assertNotNull(session);
+        assertEquals(1, noChannels.addCount.get());
+        assertEquals(1, processors.createCount.get());
+        session.close();
+        assertEquals(1, noChannels.removeCount.get());
         service.close();
     }
 
@@ -121,8 +131,10 @@ class TunerDiagnosticServiceTest
             service.tryOpen(targets.get(1).targetId()).status());
         assertEquals(1, service.activeProducerCount());
         assertEquals(1, service.activeSessionCount());
-        assertEquals(4_096, first.session().state().fftSize());
+        assertEquals("balanced", first.session().state().profile());
+        assertEquals(8_192, first.session().state().fftSize());
         assertEquals(10, first.session().state().framesPerSecond());
+        assertEquals(8, first.session().state().quantizationBits());
 
         first.session().close();
         assertEquals(1, firstController.addCount.get() + secondController.addCount.get());
@@ -138,38 +150,35 @@ class TunerDiagnosticServiceTest
     }
 
     @Test
-    void appliesSessionExperimentSettingsAndRestoresTheReceiverQueueOnClose()
+    void appliesSpectrumProfilesAndRestoresTheReceiverQueueOnClose()
     {
         FakeController controller = new FakeController(100_000_000L, 10_000_000.0);
         FakeProcessorFactory processors = new FakeProcessorFactory();
         FakeReceiverQueue queue = new FakeReceiverQueue(100, 7, 9);
         TunerDiagnosticService service = service(List.of(
             target(new Object(), TunerClass.AIRSPY, controller, 1, queue)), processors);
-        TunerDiagnosticService.ExperimentSettings settings =
-            new TunerDiagnosticService.ExperimentSettings(65_536, 15, 64, 200, 2);
         TunerDiagnosticService.Session session = service.tryOpen(service.targets().getFirst().targetId(), null,
-            settings).session();
+            TunerDiagnosticService.SpectrumProfile.MAXIMUM_DETAIL).session();
         TunerDiagnosticService.State state = session.state();
 
-        assertEquals(65_536, state.fftSize());
-        assertEquals(15, state.framesPerSecond());
-        assertEquals(64, state.maximumDecimation());
+        assertEquals("maximum-detail", state.profile());
+        assertEquals(32_768, state.fftSize());
+        assertEquals(20, state.framesPerSecond());
+        assertEquals(32, state.maximumDecimation());
         assertEquals(200, state.iqQueueDurationMilliseconds());
-        assertEquals(2, state.quantizationBits());
+        assertEquals(8, state.quantizationBits());
         assertEquals(7, state.receiverDroppedBuffers());
         assertEquals(9, state.receiverDroppedMilliseconds());
-        assertEquals(settings, processors.lastSettings.get());
+        assertEquals(TunerDiagnosticService.SpectrumProfile.MAXIMUM_DETAIL, processors.lastProfile.get());
         assertEquals(List.of(200L), queue.requests);
 
-        TunerDiagnosticService.ExperimentSettings lighter =
-            new TunerDiagnosticService.ExperimentSettings(256, 2, 8, 50, 4);
-        session.updateExperiment(lighter);
-        assertEquals(lighter, processors.lastSettings.get());
-        assertEquals(256, session.state().fftSize());
-        assertEquals(List.of(200L, 50L), queue.requests);
+        session.updateProfile(TunerDiagnosticService.SpectrumProfile.EFFICIENT);
+        assertEquals(TunerDiagnosticService.SpectrumProfile.EFFICIENT, processors.lastProfile.get());
+        assertEquals(2_048, session.state().fftSize());
+        assertEquals(List.of(200L), queue.requests);
 
         session.close();
-        assertEquals(List.of(200L, 50L, 100L), queue.requests);
+        assertEquals(List.of(200L, 100L), queue.requests);
         service.close();
     }
 
@@ -412,7 +421,7 @@ class TunerDiagnosticServiceTest
         assertEquals(32, maximumDetail.decimation());
         assertEquals(d32.sampleRateHz(), maximumDetail.sampleRateHz(),
             "views below tunerSpan/32 reuse the bounded max-detail lens");
-        assertEquals(76.2939453125, maximumDetail.sampleRateHz() / (double)TunerDiagnosticService.FFT_SIZE,
+        assertEquals(38.14697265625, maximumDetail.sampleRateHz() / (double)TunerDiagnosticService.FFT_SIZE,
             0.0001);
     }
 
@@ -422,17 +431,16 @@ class TunerDiagnosticServiceTest
         TunerDiagnosticService.AnalysisPlan slowerTuner = TunerDiagnosticService.analysisPlan(10_000_000L,
             768_000L, centered(10_000_000L, 10_000L));
 
-        assertEquals(16, slowerTuner.decimation());
-        assertEquals(48_000L, slowerTuner.sampleRateHz());
+        assertEquals(8, slowerTuner.decimation());
+        assertEquals(96_000L, slowerTuner.sampleRateHz());
     }
 
     @Test
-    void experimentSettingsBoundTheLensAndSampleBudget()
+    void spectrumProfilesBoundTheLensAndSampleBudget()
     {
-        TunerDiagnosticService.ExperimentSettings settings =
-            new TunerDiagnosticService.ExperimentSettings(16_384, 20, 8, 100, 32);
         TunerDiagnosticService.AnalysisPlan plan = TunerDiagnosticService.analysisPlan(100_000_000L,
-            10_000_000L, centered(100_000_000L, 100_000L), settings);
+            10_000_000L, centered(100_000_000L, 100_000L),
+            TunerDiagnosticService.SpectrumProfile.MAXIMUM_DETAIL);
 
         assertEquals(8, plan.decimation());
         assertEquals(1_250_000L, plan.sampleRateHz());
@@ -649,6 +657,14 @@ class TunerDiagnosticServiceTest
     }
 
     private static TunerDiagnosticService.AvailableTarget target(Object identity, TunerClass tunerClass,
+                                                                  String name, String serial,
+                                                                  TunerController controller, int channelCount)
+    {
+        return new TunerDiagnosticService.AvailableTarget(identity, tunerClass, name, serial, controller,
+            () -> channelCount, TunerDiagnosticService.ReceiverQueueControl.UNSUPPORTED);
+    }
+
+    private static TunerDiagnosticService.AvailableTarget target(Object identity, TunerClass tunerClass,
                                                                   TunerController controller, int channelCount,
                                                                   TunerDiagnosticService.ReceiverQueueControl queue)
     {
@@ -664,7 +680,7 @@ class TunerDiagnosticServiceTest
         private final AtomicLong lastCenterFrequencyHz = new AtomicLong();
         private final AtomicLong lastSampleRateHz = new AtomicLong();
         private final AtomicReference<TunerDiagnosticService.Viewport> lastViewport = new AtomicReference<>();
-        private final AtomicReference<TunerDiagnosticService.ExperimentSettings> lastSettings =
+        private final AtomicReference<TunerDiagnosticService.SpectrumProfile> lastProfile =
             new AtomicReference<>();
         private final AtomicReference<Consumer<TunerDiagnosticService.FftResult>> consumer = new AtomicReference<>();
 
@@ -702,9 +718,9 @@ class TunerDiagnosticServiceTest
                 }
 
                 @Override
-                public void updateSettings(TunerDiagnosticService.ExperimentSettings settings)
+                public void updateProfile(TunerDiagnosticService.SpectrumProfile profile)
                 {
-                    lastSettings.set(settings);
+                    lastProfile.set(profile);
                 }
 
                 @Override

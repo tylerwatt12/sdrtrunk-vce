@@ -227,6 +227,24 @@ public class NativeBufferProcessorTest
     }
 
     @Test
+    public void defaultQueueDurationIsTwoHundredMilliseconds()
+    {
+        NativeBufferProcessor processor = new NativeBufferProcessor("default queue duration", 1_000_000,
+            buffer -> {});
+
+        try
+        {
+            assertEquals(200, processor.status().appliedDurationMilliseconds());
+            assertEquals(200, processor.status().requestedDurationMilliseconds());
+            assertEquals(200_000, processor.getMaximumQueuedSampleCount());
+        }
+        finally
+        {
+            processor.dispose();
+        }
+    }
+
+    @Test
     public void queueDurationRequestIsNonBlockingAndAppliedByTheReceiver() throws Exception
     {
         CountDownLatch processed = new CountDownLatch(1);
