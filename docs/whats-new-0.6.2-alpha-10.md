@@ -58,8 +58,9 @@ and Alpha 9 while leaving the original installation unchanged.
   refined FFT detail, waterfall frequency/power/time inspection, a configurable lower display limit, waterfall speed,
   optional frequency snapping, and FFT smoothing.
 - **Spectrum channel flags.** Small colored flags mark encrypted voice, voice, data, control, other active carriers,
-  and idle conventional channels. Hovering a flag shows the available channel, system, talkgroup, source, timeslot,
-  LCN, decoder, and encryption details. Idle conventional flags change to active as activity arrives.
+  and the currently decoded control channel. Idle channels and alternate control frequencies are removed from the
+  overlay. Hovering a flag shows the available channel, system, talkgroup, source, timeslot, LCN, decoder, and
+  encryption details. FFT smoothing is enabled by default.
 - **Optional decoded-tone muting.** With JMBE 1.0.15 or newer, a new preference can silence recognized AMBE tone
   frames while retaining voice and tone metadata. It is off by default; older JMBE versions ignore it.
 

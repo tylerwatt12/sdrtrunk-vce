@@ -522,7 +522,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(html.contains("id=\"theme-toggle\""));
         assertTrue(html.contains("id=\"mobile-theme-toggle\""));
         assertTrue(html.contains("/assets/app.css?v=56"));
-        assertTrue(html.contains("/assets/app.js?v=83"));
+        assertTrue(html.contains("/assets/app.js?v=84"));
         assertTrue(source.contains("MOBILE_THEME_STORAGE_KEY = 'sdrtrunk_mobile_theme'"));
         assertTrue(source.contains("mode === 'mobile' ? MOBILE_THEME_STORAGE_KEY : THEME_STORAGE_KEY"));
         assertTrue(source.contains("toggle.setAttribute('aria-pressed'"));
@@ -972,7 +972,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("snapInput.checked = true"));
         assertTrue(tuner.contains("'Snap frequency'"));
         assertTrue(tuner.contains("smoothInput.type = 'checkbox'"));
-        assertTrue(tuner.contains("smoothInput.checked = false"));
+        assertTrue(tuner.contains("smoothInput.checked = true"));
         assertTrue(tuner.contains("'Smooth FFT'"));
         assertTrue(tuner.contains("waterfallChannelsInput.type = 'checkbox'"));
         assertTrue(tuner.contains("TUNER_WATERFALL_CHANNELS_STORAGE_KEY, false"));
@@ -1031,11 +1031,14 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("showActiveFlag(carrier, flag)"));
         assertTrue(tuner.contains("TUNER_ACTIVITY_LABELS[carrier.status]"));
         assertTrue(tuner.contains("function tunerActivityStatus(row)"));
-        assertTrue(tuner.contains("'CURRENT_CONTROL', 'ALTERNATE_CONTROL', 'CONFIGURED'"));
-        assertTrue(tuner.contains("['DATA', 'DATA_ANNOUNCED']"));
+        assertTrue(tuner.contains("if (tags.has('CURRENT_CONTROL')) return 'CONTROL'"));
+        assertTrue(tuner.contains("tags.has('ALTERNATE_CONTROL') || status === 'IDLE'"));
+        assertTrue(tuner.contains("function updateSpectrumActivityTable(table)"));
+        assertTrue(tuner.contains(".filter(tunerActivityStatus)"));
+        assertTrue(tuner.contains("else activeChannelTables.delete(id)"));
         assertTrue(tuner.contains("row.channel_name || row.tableChannelName"));
         assertTrue(tuner.contains("decoderLabel(row.decoder)"));
-        assertTrue(source.contains("IDLE: 'Known / idle channel'"));
+        assertFalse(source.contains("IDLE: 'Known / idle channel'"));
         assertTrue(tuner.contains("const signature = JSON.stringify([viewport.startHz, viewport.endHz"));
         assertTrue(tuner.contains("if (signature === activeFlagSignature) return;"));
         assertTrue(tuner.contains("waterfallObservedAtRows = new Float64Array(waterfallBuffer.height)"));

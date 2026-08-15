@@ -7329,15 +7329,14 @@ const TUNER_FREQUENCY_RASTERS = Object.freeze([
     originHz: 935_012_500, stepHz: 12_500, label: '900 MHz base' })
 ]);
 const TUNER_ACTIVITY_PRIORITY = Object.freeze({
-  ENCRYPTED: 6, CALL: 5, DATA: 4, CONTROL: 3, ACTIVE: 2, IDLE: 1
+  ENCRYPTED: 6, CALL: 5, DATA: 4, CONTROL: 3, ACTIVE: 2
 });
 const TUNER_ACTIVITY_LABELS = Object.freeze({
   ENCRYPTED: 'Encrypted voice',
   CALL: 'Voice call',
   DATA: 'Data activity',
   CONTROL: 'Control channel',
-  ACTIVE: 'Other activity',
-  IDLE: 'Known / idle channel'
+  ACTIVE: 'Other activity'
 });
 
 function tunerStoredNumber(key, fallback, minimum, maximum) {
@@ -7528,7 +7527,7 @@ function tunerSpectrumPanel() {
   const smoothControl = node('label', 'tuner-spectrum-toggle-control');
   const smoothInput = node('input');
   smoothInput.type = 'checkbox';
-  smoothInput.checked = false;
+  smoothInput.checked = true;
   smoothControl.title = 'Average successive frames to make the FFT trace steadier.';
   smoothControl.append(smoothInput, node('span', '', 'Smooth FFT'));
   const waterfallChannelsControl = node('label', 'tuner-spectrum-toggle-control');
@@ -7573,7 +7572,7 @@ function tunerSpectrumPanel() {
   refiningBadge.setAttribute('role', 'status');
   const flagLegend = node('div', 'tuner-spectrum-flag-legend');
   flagLegend.setAttribute('aria-label', 'Activity flag colors');
-  ['CONTROL', 'CALL', 'ENCRYPTED', 'DATA', 'ACTIVE', 'IDLE'].forEach((flagStatus) => {
+  ['CONTROL', 'CALL', 'ENCRYPTED', 'DATA', 'ACTIVE'].forEach((flagStatus) => {
     const item = node('span', 'tuner-spectrum-flag-legend-item');
     item.append(node('span', `tuner-spectrum-flag-swatch status-${flagStatus.toLowerCase()}`),
       node('span', '', TUNER_ACTIVITY_LABELS[flagStatus]));
@@ -8568,7 +8567,7 @@ function tunerSpectrumPanel() {
       snapshot: (snapshot) => {
         activeChannelTables.clear();
         (Array.isArray(snapshot?.tables) ? snapshot.tables : []).forEach((table) => {
-          if (table?.table_id) activeChannelTables.set(String(table.table_id), table);
+          updateSpectrumActivityTable(table);
         });
         renderActiveChannels();
       },
@@ -8576,7 +8575,7 @@ function tunerSpectrumPanel() {
         const id = String(update?.table_id || update?.table?.table_id || '');
         if (!id) return;
         if (update.operation === 'remove') activeChannelTables.delete(id);
-        else if (update.table) activeChannelTables.set(id, update.table);
+        else if (update.table) updateSpectrumActivityTable(update.table);
         renderActiveChannels();
       }
     });
@@ -8595,14 +8594,18 @@ function tunerSpectrumPanel() {
 
   function tunerActivityStatus(row) {
     const status = String(row?.status || '').toUpperCase();
-    if (status !== 'IDLE') return TUNER_ACTIVITY_PRIORITY[status] ? status : null;
     const tags = channelTagSet(row?.tags);
-    if (['CONTROL', 'CURRENT_CONTROL', 'ALTERNATE_CONTROL', 'CONFIGURED'].some((tag) => tags.has(tag))) {
-      return 'CONTROL';
-    }
-    if (['DATA', 'DATA_ANNOUNCED'].some((tag) => tags.has(tag))) return 'DATA';
-    if (tags.has('CONVENTIONAL') || tags.has('VOICE')) return 'IDLE';
-    return null;
+    if (tags.has('CURRENT_CONTROL')) return 'CONTROL';
+    if (tags.has('ALTERNATE_CONTROL') || status === 'IDLE') return null;
+    return TUNER_ACTIVITY_PRIORITY[status] ? status : null;
+  }
+
+  function updateSpectrumActivityTable(table) {
+    const id = String(table?.table_id || '');
+    if (!id) return;
+    const rows = (Array.isArray(table?.rows) ? table.rows : []).filter(tunerActivityStatus);
+    if (rows.length) activeChannelTables.set(id, { ...table, rows });
+    else activeChannelTables.delete(id);
   }
 
   function activeCarriers() {
