@@ -345,17 +345,15 @@ public class AirspyHfTunerController extends USBTunerController
      * Preparation operations for starting sample stream.
      */
     @Override
-    protected void prepareStreaming()
+    protected void prepareStreaming() throws SourceException
     {
         try
         {
             setReceiverMode(false);
         }
-        catch(SourceException ioe)
+        catch(SourceException se)
         {
-            mLog.error("Error setting Airspy HF tuner receiver mode to false to reset before we start streaming.");
-            setErrorMessage("Unable to set receiver mode off");
-            return;
+            throw new SourceException("Unable to set receiver mode off before starting sample streaming", se);
         }
 
         LibUsb.clearHalt(getDeviceHandle(), USB_BULK_TRANSFER_ENDPOINT);
@@ -364,10 +362,9 @@ public class AirspyHfTunerController extends USBTunerController
         {
             setReceiverMode(true);
         }
-        catch(SourceException ioe)
+        catch(SourceException se)
         {
-            mLog.error("Error setting Airspy HF tuner receiver mode to true to start streaming.");
-            setErrorMessage("Unable to set receiver mode on");
+            throw new SourceException("Unable to set receiver mode on for sample streaming", se);
         }
     }
 
