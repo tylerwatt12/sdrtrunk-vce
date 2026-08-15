@@ -101,27 +101,25 @@ class P25P1AutoSelectorTest
     }
 
     @Test
-    void hysteresisKeepsTheIncumbentWhenTheAlternateCannotDecodeAfterSustainedLoss()
+    void lockedSelectionSurvivesSustainedSyncLoss()
     {
         P25P1AutoSelector selector = lockedC4fmSelector();
 
-        assertEquals(Modulation.CQPSK, selector.receiveSamples(10_000));
-        assertFalse(selector.isLocked());
-        assertEquals(Modulation.C4FM, selector.receiveSamples(500));
+        selector.receiveSyncLoss(Modulation.C4FM, 96_000);
+        assertNull(selector.receiveSamples(60_000));
         assertTrue(selector.isLocked());
         assertEquals(Modulation.C4FM, selector.getActive());
     }
 
     @Test
-    void hysteresisSwitchesWhenTheAlternateDecodesAfterSustainedLoss()
+    void resetDoesNotReopenAcquisitionAfterSelection()
     {
         P25P1AutoSelector selector = lockedC4fmSelector();
 
-        assertEquals(Modulation.CQPSK, selector.receiveSamples(10_000));
-        for(int count = 0; count < 4; count++) selector.receiveFrame(Modulation.CQPSK, true);
-        assertNull(selector.receiveSamples(500));
+        selector.reset(Modulation.CQPSK);
+        assertNull(selector.receiveSamples(60_000));
         assertTrue(selector.isLocked());
-        assertEquals(Modulation.CQPSK, selector.getActive());
+        assertEquals(Modulation.C4FM, selector.getActive());
     }
 
     @Test

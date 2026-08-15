@@ -30,8 +30,9 @@ import java.util.Objects;
 
 /**
  * P25 Phase 1 automatic waveform decoder. Both fixed decoders are constructed with the processing chain, but only one
- * receives samples at a time. Selection and hysteresis use sample counts and decoded-message validity, so this wrapper
- * adds no timers, locks, queues, decoder construction or observer work to the receiver callback.
+ * receives samples at a time. Initial selection uses sample counts and decoded-message validity, then retains the
+ * selected modulation for this decoder's lifetime. This wrapper adds no timers, locks, queues, decoder construction
+ * or observer work to the receiver callback.
  */
 public class P25P1DecoderAuto extends FeedbackDecoder implements IByteBufferProvider, IComplexSamplesListener,
     ISourceEventListener, Listener<ComplexSamples>, IDecoderStateEventProvider

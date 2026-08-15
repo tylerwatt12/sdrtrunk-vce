@@ -12,27 +12,21 @@
 package io.github.dsheirer.module.decode.p25.phase1;
 
 /**
- * Deterministic sample-count selector for the P25 Phase 1 C4FM and LSM decoders. Every acquisition evaluates both
- * decoders for the same fixed duration. This class has no timers, locks, queues or allocation in its callback methods.
+ * Deterministic sample-count selector for the P25 Phase 1 C4FM and LSM decoders. Initial acquisition evaluates both
+ * decoders for the same fixed duration and then retains the selected modulation for this decoder's lifetime. This
+ * class has no timers, locks, queues or allocation in its callback methods.
  */
 class P25P1AutoSelector
 {
     private static final double TRIAL_SECONDS = 0.5;
-    private static final double SIGNAL_LOSS_SECONDS = 3.0;
-    private static final double MINIMUM_HOLD_SECONDS = 10.0;
     private static final int ASSUMED_FRAME_BITS = 196;
     private static final int SCORE_SMOOTHING_FRAMES = 4;
 
     private Phase mPhase;
     private Modulation mPreferred;
     private Modulation mActive;
-    private Modulation mPreviousLocked;
     private long mTrialSamples;
-    private long mSignalLossSamples;
-    private long mMinimumHoldSamples;
     private long mPhaseSamples;
-    private long mLockedSamples;
-    private long mSamplesSinceValidFrame;
     private int mFirstValidFrames;
     private int mFirstFailures;
     private int mActiveValidFrames;
@@ -52,20 +46,21 @@ class P25P1AutoSelector
         }
 
         mTrialSamples = Math.max(1, Math.round(sampleRate * TRIAL_SECONDS));
-        mSignalLossSamples = Math.max(1, Math.round(sampleRate * SIGNAL_LOSS_SECONDS));
-        mMinimumHoldSamples = Math.max(1, Math.round(sampleRate * MINIMUM_HOLD_SECONDS));
     }
 
     void reset(Modulation preferred)
     {
+        if(isLocked())
+        {
+            return;
+        }
+
         mPreferred = fixed(preferred);
         mActive = mPreferred;
-        mPreviousLocked = null;
         mPhase = Phase.ACQUIRE_FIRST;
         mFirstValidFrames = 0;
         mFirstFailures = 0;
         clearTrial();
-        clearLock();
     }
 
     Modulation getActive()
@@ -85,20 +80,16 @@ class P25P1AutoSelector
             return false;
         }
 
-        if(mPhase == Phase.LOCKED)
+        if(mPhase != Phase.LOCKED)
         {
             if(valid)
             {
-                mSamplesSinceValidFrame = 0;
+                mActiveValidFrames++;
             }
-        }
-        else if(valid)
-        {
-            mActiveValidFrames++;
-        }
-        else
-        {
-            mActiveFailures++;
+            else
+            {
+                mActiveFailures++;
+            }
         }
 
         return mPhase == Phase.LOCKED;
@@ -136,15 +127,6 @@ class P25P1AutoSelector
 
         if(mPhase == Phase.LOCKED)
         {
-            mLockedSamples += sampleCount;
-            mSamplesSinceValidFrame += sampleCount;
-
-            if(mLockedSamples >= mMinimumHoldSamples && mSamplesSinceValidFrame >= mSignalLossSamples)
-            {
-                mPreviousLocked = mActive;
-                return beginTrial(alternate(mActive), Phase.VERIFY_ALTERNATE);
-            }
-
             return null;
         }
 
@@ -157,7 +139,6 @@ class P25P1AutoSelector
         {
             case ACQUIRE_FIRST -> beginSecondTrial();
             case ACQUIRE_SECOND -> finishAcquisition();
-            case VERIFY_ALTERNATE -> finishVerification();
             case LOCKED -> null;
         };
     }
@@ -181,12 +162,6 @@ class P25P1AutoSelector
         return lock(winner);
     }
 
-    private Modulation finishVerification()
-    {
-        Modulation winner = mActiveValidFrames > 0 ? mActive : mPreviousLocked;
-        return lock(winner);
-    }
-
     private static int score(int validFrames, int failures)
     {
         return validFrames * 1_000 / Math.max(1, validFrames + failures + SCORE_SMOOTHING_FRAMES);
@@ -206,9 +181,7 @@ class P25P1AutoSelector
         Modulation previous = mActive;
         mActive = fixed(modulation);
         mPhase = Phase.LOCKED;
-        mPreviousLocked = null;
         clearTrial();
-        clearLock();
         return mActive != previous ? mActive : null;
     }
 
@@ -217,12 +190,6 @@ class P25P1AutoSelector
         mPhaseSamples = 0;
         mActiveValidFrames = 0;
         mActiveFailures = 0;
-    }
-
-    private void clearLock()
-    {
-        mLockedSamples = 0;
-        mSamplesSinceValidFrame = 0;
     }
 
     private static Modulation alternate(Modulation modulation)
@@ -239,7 +206,6 @@ class P25P1AutoSelector
     {
         ACQUIRE_FIRST,
         ACQUIRE_SECOND,
-        LOCKED,
-        VERIFY_ALTERNATE
+        LOCKED
     }
 }
