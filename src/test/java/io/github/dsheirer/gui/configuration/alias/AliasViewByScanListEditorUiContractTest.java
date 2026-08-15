@@ -24,10 +24,20 @@ class AliasViewByScanListEditorUiContractTest
         assertTrue(tabs.contains("new Tab(\"Scan Lists\")"));
         assertTrue(editor.contains("createListPane(\"Alias List\""));
         assertTrue(editor.contains("createListPane(\"Scan List\""));
-        assertTrue(editor.contains("new Button(\"Add >\")"));
-        assertTrue(editor.contains("new Button(\"Add All >>\")"));
-        assertTrue(editor.contains("new Button(\"< Remove\")"));
-        assertTrue(editor.contains("new Button(\"<< Remove All\")"));
+        assertTrue(editor.contains("FontAwesome.ANGLE_RIGHT"));
+        assertTrue(editor.contains("FontAwesome.ANGLE_DOUBLE_RIGHT"));
+        assertTrue(editor.contains("FontAwesome.ANGLE_LEFT"));
+        assertTrue(editor.contains("FontAwesome.ANGLE_DOUBLE_LEFT"));
+        assertTrue(editor.contains("button.setGraphic(new IconNode(icon))"));
+        assertTrue(editor.contains("FontAwesome.PLUS"));
+        assertTrue(editor.contains("FontAwesome.PENCIL"));
+        assertTrue(editor.contains("FontAwesome.TRASH"));
+        assertTrue(editor.contains("service.createScanList("));
+        assertTrue(editor.contains("service.updateScanList("));
+        assertTrue(editor.contains("service.deleteScanList("));
+        assertTrue(editor.contains("entry.aliasIds().size()"));
+        assertTrue(editor.contains("entry.unmatchedAliasListIds().size()"));
+        assertTrue(editor.contains("selected.isDefault()"));
         assertTrue(editor.contains("column(\"Description\", \"description\""));
         assertTrue(editor.contains("updateScanListMemberships(scanList.getId()"));
     }

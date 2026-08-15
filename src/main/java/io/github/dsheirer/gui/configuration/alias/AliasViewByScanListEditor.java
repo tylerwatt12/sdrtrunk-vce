@@ -14,6 +14,7 @@ package io.github.dsheirer.gui.configuration.alias;
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasAdministrationService;
 import io.github.dsheirer.configuration.ConfigurationManager;
+import io.github.dsheirer.gui.control.MaxLengthUnaryOperator;
 import io.github.dsheirer.scanlist.ScanList;
 import io.github.dsheirer.scanlist.ScanListConfiguration;
 import java.util.Collection;
@@ -28,16 +29,24 @@ import javafx.collections.transformation.SortedList;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
+import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
+import javafx.scene.control.ButtonBar;
+import javafx.scene.control.ButtonType;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.SelectionMode;
 import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableView;
+import javafx.scene.control.TextFormatter;
+import javafx.scene.control.TextInputDialog;
+import javafx.scene.control.Tooltip;
 import javafx.scene.control.cell.PropertyValueFactory;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
+import jiconfont.icons.font_awesome.FontAwesome;
+import jiconfont.javafx.IconNode;
 
 /**
  * Assigns aliases from one Alias List to one Scan List.
@@ -51,10 +60,13 @@ public class AliasViewByScanListEditor extends VBox
     private final FilteredList<Alias> mScanListAliases;
     private final TableView<Alias> mAvailableAliasTable;
     private final TableView<Alias> mScanListAliasTable;
-    private final Button mAddButton = new Button("Add >");
-    private final Button mAddAllButton = new Button("Add All >>");
-    private final Button mRemoveButton = new Button("< Remove");
-    private final Button mRemoveAllButton = new Button("<< Remove All");
+    private final Button mAddButton = new Button();
+    private final Button mAddAllButton = new Button();
+    private final Button mRemoveButton = new Button();
+    private final Button mRemoveAllButton = new Button();
+    private final Button mCreateScanListButton = new Button();
+    private final Button mRenameScanListButton = new Button();
+    private final Button mDeleteScanListButton = new Button();
 
     public AliasViewByScanListEditor(ConfigurationManager configurationManager)
     {
@@ -77,23 +89,27 @@ public class AliasViewByScanListEditor extends VBox
         mAvailableAliases.addListener((ListChangeListener<Alias>)change -> updateButtons());
         mScanListAliases.addListener((ListChangeListener<Alias>)change -> updateButtons());
 
-        configureButton(mAddAllButton, () -> updateMemberships(mAvailableAliases,
+        configureButton(mAddAllButton, FontAwesome.ANGLE_DOUBLE_RIGHT, () -> updateMemberships(mAvailableAliases,
             AliasAdministrationService.MembershipOperation.ADD, mAddAllButton));
-        configureButton(mAddButton, () -> updateMemberships(
+        configureButton(mAddButton, FontAwesome.ANGLE_RIGHT, () -> updateMemberships(
             mAvailableAliasTable.getSelectionModel().getSelectedItems(),
             AliasAdministrationService.MembershipOperation.ADD, mAddButton));
-        configureButton(mRemoveButton, () -> updateMemberships(
+        configureButton(mRemoveButton, FontAwesome.ANGLE_LEFT, () -> updateMemberships(
             mScanListAliasTable.getSelectionModel().getSelectedItems(),
             AliasAdministrationService.MembershipOperation.REMOVE, mRemoveButton));
-        configureButton(mRemoveAllButton, () -> updateMemberships(mScanListAliases,
+        configureButton(mRemoveAllButton, FontAwesome.ANGLE_DOUBLE_LEFT, () -> updateMemberships(mScanListAliases,
             AliasAdministrationService.MembershipOperation.REMOVE, mRemoveAllButton));
+        configureManagementButton(mCreateScanListButton, FontAwesome.PLUS, "Create Scan List", this::createScanList);
+        configureManagementButton(mRenameScanListButton, FontAwesome.PENCIL, "Rename Scan List", this::renameScanList);
+        configureManagementButton(mDeleteScanListButton, FontAwesome.TRASH, "Delete Scan List", this::deleteScanList);
 
         VBox buttons = new VBox(5, mAddAllButton, mAddButton, mRemoveButton, mRemoveAllButton);
         buttons.setAlignment(Pos.CENTER);
         buttons.getChildren().forEach(node -> ((Button)node).setMaxWidth(Double.MAX_VALUE));
 
         VBox available = createListPane("Alias List", mAliasListComboBox, "Available Aliases", mAvailableAliasTable);
-        VBox assigned = createListPane("Scan List", mScanListComboBox, "Scan List Aliases", mScanListAliasTable);
+        VBox assigned = createListPane("Scan List", mScanListComboBox, "Scan List Aliases", mScanListAliasTable,
+            mCreateScanListButton, mRenameScanListButton, mDeleteScanListButton);
         HBox lists = new HBox(10, available, buttons, assigned);
         lists.setPadding(new Insets(10));
         HBox.setHgrow(available, Priority.ALWAYS);
@@ -120,10 +136,12 @@ public class AliasViewByScanListEditor extends VBox
         updateFilters();
     }
 
-    private VBox createListPane(String selectorLabel, ComboBox<?> selector, String listLabel, TableView<Alias> table)
+    private VBox createListPane(String selectorLabel, ComboBox<?> selector, String listLabel, TableView<Alias> table,
+                                Node... selectorActions)
     {
         Label label = new Label(selectorLabel);
         HBox selectorBox = new HBox(5, label, selector);
+        selectorBox.getChildren().addAll(selectorActions);
         selectorBox.setAlignment(Pos.CENTER_LEFT);
         HBox.setHgrow(selector, Priority.ALWAYS);
         selector.setMaxWidth(Double.MAX_VALUE);
@@ -162,10 +180,107 @@ public class AliasViewByScanListEditor extends VBox
         return column;
     }
 
-    private static void configureButton(Button button, Runnable action)
+    private static void configureButton(Button button, FontAwesome icon, Runnable action)
     {
         button.setDisable(true);
+        button.setGraphic(new IconNode(icon));
         button.setOnAction(event -> action.run());
+    }
+
+    private static void configureManagementButton(Button button, FontAwesome icon, String label, Runnable action)
+    {
+        button.setGraphic(new IconNode(icon));
+        button.setTooltip(new Tooltip(label));
+        button.setAccessibleText(label);
+        button.setOnAction(event -> action.run());
+    }
+
+    private void createScanList()
+    {
+        TextInputDialog dialog = scanListNameDialog("Create Scan List", "Enter a name for the new Scan List.", "");
+        dialog.showAndWait().ifPresent(name ->
+        {
+            int sortOrder = mConfigurationManager.getScanListModel().scanLists().stream()
+                .mapToInt(ScanList::getSortOrder).max().orElse(-1) + 1;
+            AliasAdministrationService service = mConfigurationManager.getAliasAdministrationService();
+            AliasMutationUi.execute(mCreateScanListButton, "Create Scan List", () -> service.createScanList(
+                new ScanList(ScanList.UNASSIGNED_ID, sortOrder, name, null, true, false),
+                service.currentRevision())).ifPresent(result -> refreshAndSelect(result.scanListId()));
+        });
+    }
+
+    private void renameScanList()
+    {
+        ScanList selected = mScanListComboBox.getSelectionModel().getSelectedItem();
+        if(selected == null)
+        {
+            return;
+        }
+
+        TextInputDialog dialog = scanListNameDialog("Rename Scan List",
+            "Enter a new name for " + selected.getName() + ".", selected.getName());
+        dialog.showAndWait().ifPresent(name ->
+        {
+            if(selected.getName().equals(name.strip()))
+            {
+                return;
+            }
+
+            AliasAdministrationService service = mConfigurationManager.getAliasAdministrationService();
+            AliasMutationUi.execute(mRenameScanListButton, "Rename Scan List", () -> service.updateScanList(
+                selected.getId(), selected.withDefinition(selected.getSortOrder(), name, selected.getDescription(),
+                    selected.isPublished(), selected.isDefault()), service.currentRevision()))
+                .ifPresent(result -> refreshAndSelect(result.scanListId()));
+        });
+    }
+
+    private void deleteScanList()
+    {
+        ScanList selected = mScanListComboBox.getSelectionModel().getSelectedItem();
+        if(selected == null || selected.isDefault())
+        {
+            return;
+        }
+
+        AliasAdministrationService service = mConfigurationManager.getAliasAdministrationService();
+        AliasAdministrationService.ScanListEntry entry = service.getScanList(selected.getId());
+        ButtonType delete = new ButtonType("Delete Scan List", ButtonBar.ButtonData.OK_DONE);
+        Alert alert = new Alert(Alert.AlertType.CONFIRMATION, "", ButtonType.CANCEL, delete);
+        alert.setTitle("Delete Scan List");
+        alert.setHeaderText("Delete " + selected.getName() + "?");
+        alert.setContentText(entry.aliasIds().size() + " alias membership(s) and " +
+            entry.unmatchedAliasListIds().size() + " unmatched-talkgroup route(s) will be removed.\n\n" +
+            "The Aliases and Alias Lists themselves will not be deleted.");
+        if(mDeleteScanListButton.getScene() != null)
+        {
+            alert.initOwner(mDeleteScanListButton.getScene().getWindow());
+        }
+
+        alert.showAndWait().filter(delete::equals).ifPresent(button ->
+            AliasMutationUi.execute(mDeleteScanListButton, "Delete Scan List", () ->
+                service.deleteScanList(selected.getId(), entry.revision())).ifPresent(result -> refresh()));
+    }
+
+    private TextInputDialog scanListNameDialog(String title, String header, String initialValue)
+    {
+        TextInputDialog dialog = new TextInputDialog(initialValue);
+        dialog.setTitle(title);
+        dialog.setHeaderText(header);
+        dialog.setContentText("Name:");
+        dialog.getEditor().setTextFormatter(
+            new TextFormatter<String>(new MaxLengthUnaryOperator(ScanList.MAXIMUM_NAME_LENGTH)));
+        if(mScanListComboBox.getScene() != null)
+        {
+            dialog.initOwner(mScanListComboBox.getScene().getWindow());
+        }
+        return dialog;
+    }
+
+    private void refreshAndSelect(long scanListId)
+    {
+        refresh();
+        mScanListComboBox.getItems().stream().filter(scanList -> scanList.getId() == scanListId).findFirst()
+            .ifPresent(scanList -> mScanListComboBox.getSelectionModel().select(scanList));
     }
 
     private void selectionChanged(TableView<Alias> selectedTable, TableView<Alias> otherTable)
@@ -194,11 +309,19 @@ public class AliasViewByScanListEditor extends VBox
 
     private void updateButtons()
     {
-        boolean noScanList = mScanListComboBox.getSelectionModel().getSelectedItem() == null;
+        ScanList selected = mScanListComboBox.getSelectionModel().getSelectedItem();
+        boolean noScanList = selected == null;
         mAddButton.setDisable(noScanList || mAvailableAliasTable.getSelectionModel().getSelectedItems().isEmpty());
         mAddAllButton.setDisable(noScanList || mAvailableAliases.isEmpty());
         mRemoveButton.setDisable(noScanList || mScanListAliasTable.getSelectionModel().getSelectedItems().isEmpty());
         mRemoveAllButton.setDisable(noScanList || mScanListAliases.isEmpty());
+        mCreateScanListButton.setDisable(mScanListComboBox.getItems().size() >=
+            AliasAdministrationService.MAX_SCAN_LISTS);
+        mRenameScanListButton.setDisable(noScanList);
+        mDeleteScanListButton.setDisable(noScanList || selected.isDefault());
+        mDeleteScanListButton.getTooltip().setText(selected != null && selected.isDefault() ?
+            "Select another default Scan List in the web admin interface before deleting this one" :
+            "Delete Scan List");
     }
 
     private void updateMemberships(Collection<Alias> aliases,
