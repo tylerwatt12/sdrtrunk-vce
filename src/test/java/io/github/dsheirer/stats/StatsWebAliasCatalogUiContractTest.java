@@ -200,6 +200,40 @@ class StatsWebAliasCatalogUiContractTest
     }
 
     @Test
+    void opensAllScanListMembersAndRemovesOnlySelectedMemberships() throws Exception
+    {
+        String source = source();
+        String actions = function(source, "function adminScanListActions(scanList, revision)");
+        String count = function(source, "function adminScanListMemberCount(scanList)");
+        String renderer = function(source, "async function renderAliases()");
+        String members = function(source,
+            "async function renderScanListMembers(main, listResponse, scanListCatalog, scanList)");
+        String columns = function(source, "function scanListMemberColumns(rows, onSelectionChange)");
+        String bulk = function(source, "function scanListMemberBulkBar(scanList, onClear)");
+        String remove = function(source, "function openScanListMemberRemoveModal(scanList)");
+
+        assertTrue(actions.contains("'View Aliases'"));
+        assertTrue(actions.contains("scanListId: scanList.id"));
+        assertTrue(count.contains("scanListId: scanList.id"));
+        assertTrue(renderer.contains("requestJson('/api/v1/admin/scan-lists'"));
+        assertTrue(renderer.contains("await renderScanListMembers"));
+        assertTrue(members.contains("api('/api/v1/aliases'"));
+        assertTrue(members.contains("scan_list_id: scanList.id"));
+        assertTrue(members.contains("scanListMemberColumns(rows, updateSelection)"));
+        assertTrue(members.contains("'No aliases belong to this scan list'"));
+        assertTrue(members.contains("scanListMemberBulkBar(scanList"));
+        assertTrue(members.contains("scan_list_id: scanList.id"));
+        assertTrue(columns.contains("id: 'alias-list'"));
+        assertTrue(columns.contains("id: 'family'"));
+        assertTrue(bulk.contains("`Remove from ${scanList.name}`"));
+        assertTrue(remove.contains("slice(0, 500)"));
+        assertTrue(remove.contains("/api/v1/admin/scan-lists/${scanList.id}/members"));
+        assertTrue(remove.contains("operation: 'remove'"));
+        assertTrue(remove.contains("alias_ids: ids"));
+        assertTrue(remove.contains("aliases and their other scan-list memberships will be preserved"));
+    }
+
+    @Test
     void retainsExactServerFiltersAndEvidenceSemantics() throws Exception
     {
         String source = source();

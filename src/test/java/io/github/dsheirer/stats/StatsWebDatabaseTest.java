@@ -1458,6 +1458,38 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void filtersScanListMembersAcrossAllAliasLists() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO alias_list(id, name, family) VALUES(900, 'Regional', 'P25')
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias(id, alias_list_id, name, matcher_type, protocol, value)
+                VALUES(900, 900, 'Regional Dispatch', 'TALKGROUP', 'APCO25', 61000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias_scan_list_membership(alias_id, scan_list_id)
+                VALUES(1, 1), (900, 1)
+                """);
+        }
+
+        List<Map<String,Object>> members = rows(mDatabase.aliases(request(
+            "/api/v1/aliases?scan_list_id=1&sort=list&limit=100")));
+        assertEquals(List.of("Dispatch", "Regional Dispatch"),
+            members.stream().map(row -> row.get("name")).toList());
+        assertEquals(List.of("County", "Regional"),
+            members.stream().map(row -> row.get("alias_list_name")).toList());
+        assertTrue(members.stream().allMatch(row -> row.get("scan_list_ids").equals(List.of(1L))));
+
+        List<Map<String,Object>> countyMembers = rows(mDatabase.aliases(request(
+            "/api/v1/aliases?list=1&scan_list_id=1&sort=list&limit=100")));
+        assertEquals(List.of("Dispatch"), countyMembers.stream().map(row -> row.get("name")).toList());
+    }
+
+    @Test
     void sortsEveryMatcherByItsDisplayValue() throws Exception
     {
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);

@@ -1901,9 +1901,19 @@ function aliasDetailLink(row) {
   const id = Number(row.alias_id);
   const label = String(row.name || '').trim() || `Alias ${identifierNumber(id)}`;
   if (!Number.isInteger(id) || id <= 0) return label;
-  const link = anchor(label, currentHref({ alias: id }), 'alias-detail-link');
+  const link = anchor(label, aliasEditorRowHref(row), 'alias-detail-link');
   link.dataset.aliasId = String(id);
   return link;
+}
+
+function aliasEditorRowHref(row) {
+  const id = Number(row?.alias_id);
+  if (aliasEditorContext?.scanListScope) {
+    return href('aliases', {
+      list: Number(row?.alias_list_id), aliasTab: 'configure', alias: id
+    });
+  }
+  return currentHref({ alias: id });
 }
 
 function aliasListCatalogLink(row) {
@@ -2522,6 +2532,7 @@ function aliasLocalDateTimeValue(epoch) {
 }
 
 function aliasEditorFilterToolbar(listResponse, options = null) {
+  const scanListScope = options?.scan_list_scope === true;
   const form = node('form', 'toolbar alias-catalog-toolbar alias-editor-filter-toolbar');
   form.method = 'get';
   [['view', 'aliases'], ['list', route.get('list')], ['aliasTab', route.get('aliasTab') || 'configure'],
@@ -2581,7 +2592,8 @@ function aliasEditorFilterToolbar(listResponse, options = null) {
     selectFilter('Matcher', 'matcher', [['', 'All matchers'],
       ...matcherOptions.map((entry) => [entry.value, entry.label])]),
     groupFilterWrapper, groupList,
-    selectFilter('Scan list', 'scanListId', [['', 'Any scan list'],
+    selectFilter('Scan list', 'scanListId', [
+      ...(scanListScope ? [] : [['', 'Any scan list']]),
       ...(options?.scan_lists || []).map((row) => [String(row.id ?? row.scan_list_id),
         `${row.name}${row.published === false ? ' · not published' : ''}`])]),
     selectFilter('Record', 'record', [['', 'Any'], ['enabled', 'Enabled'], ['disabled', 'Disabled']]),
@@ -2602,11 +2614,12 @@ function aliasEditorFilterToolbar(listResponse, options = null) {
       return wrapper;
     })(),
     node('button', '', 'Apply'));
-  const activeFilters = ['q', 'type', 'matcher', 'group', 'scanListId', 'record', 'stream', 'evidence', 'use',
-    'lastActivityAfter', 'lastActivityBefore'];
+  const activeFilters = ['q', 'type', 'matcher', 'group', ...(scanListScope ? [] : ['scanListId']),
+    'record', 'stream', 'evidence', 'use', 'lastActivityAfter', 'lastActivityBefore'];
   if (activeFilters.some((key) => route.get(key))) {
     form.append(anchor('Clear', href('aliases', {
-      list: route.get('list'), aliasTab: route.get('aliasTab') || 'configure'
+      list: route.get('list'), aliasTab: route.get('aliasTab') || 'configure',
+      scanListId: scanListScope ? route.get('scanListId') : null
     }), 'button secondary'));
   }
   form.addEventListener('submit', () => {
@@ -2693,6 +2706,20 @@ function aliasEditorColumns(view, admin, rows, onSelectionChange, selectedCustom
     { id: 'behavior', label: 'Behavior', group: 'Call Handling', render: aliasBehavior },
     { id: 'overlap', label: 'Overlap', group: 'Validation', render: (row) => row.overlap ?
       badge('Conflict', 'state-stale', 'This identifier overlaps another alias') : '—' }];
+}
+
+function scanListMemberColumns(rows, onSelectionChange) {
+  const columns = aliasEditorBaseColumns(true, rows, onSelectionChange);
+  const aliasIndex = columns.findIndex((column) => column.id === 'alias');
+  columns.splice(aliasIndex + 1, 0,
+    { id: 'alias-list', label: 'Alias List', group: 'Configuration', render: aliasListCatalogLink,
+      className: 'alias-cell', sort: 'list', sortValue: (row) => row.alias_list_name || '' },
+    { id: 'family', label: 'Family', group: 'Configuration', key: 'family', sort: 'family' });
+  columns.push(
+    { id: 'behavior', label: 'Behavior', group: 'Call Handling', render: aliasBehavior },
+    { id: 'overlap', label: 'Overlap', group: 'Validation', render: (row) => row.overlap ?
+      badge('Conflict', 'state-stale', 'This identifier overlaps another alias') : '—' });
+  return columns;
 }
 
 function aliasEditorEmptyState(lists, admin) {
@@ -3607,6 +3634,67 @@ function openAliasBulkModal(kind) {
   });
 }
 
+function scanListMemberBulkBar(scanList, onClear) {
+  const bar = node('div', 'alias-bulk-bar scan-list-member-bulk-bar');
+  bar.hidden = !aliasEditorSelection.size;
+  const count = node('strong', 'alias-bulk-count', `${number(aliasEditorSelection.size)} selected`);
+  const remove = node('button', 'button secondary danger-outline scan-list-member-remove',
+    `Remove from ${scanList.name}`);
+  remove.type = 'button';
+  remove.addEventListener('click', () => openScanListMemberRemoveModal(scanList));
+  const clear = node('button', 'button secondary alias-bulk-clear', 'Clear selection');
+  clear.type = 'button';
+  clear.addEventListener('click', onClear);
+  bar.append(count, remove, clear);
+  bar.update = () => {
+    count.textContent = `${number(aliasEditorSelection.size)} selected`;
+    bar.hidden = !aliasEditorSelection.size;
+  };
+  return bar;
+}
+
+function openScanListMemberRemoveModal(scanList) {
+  const ids = [...aliasEditorSelection].filter((id) => Number.isInteger(id) && id > 0).slice(0, 500);
+  if (!ids.length) return;
+  const body = node('div', 'admin-confirmation');
+  body.append(node('p', '', `Remove ${number(ids.length)} selected aliases from ${scanList.name}?`),
+    node('p', 'muted', 'The aliases and their other scan-list memberships will be preserved.'));
+  const message = node('div', 'alias-form-message');
+  message.setAttribute('role', 'alert');
+  const cancel = node('button', 'button secondary', 'Cancel');
+  cancel.type = 'button';
+  const remove = node('button', 'danger', `Remove ${number(ids.length)} Aliases`);
+  remove.type = 'button';
+  body.append(message, aliasModalFooter(cancel, remove));
+  const modal = openReadOnlyModal(`Remove aliases · ${scanList.name}`, body, {
+    id: `remove-scan-list-members-${scanList.id}`, className: 'alias-editor-modal',
+    returnFocusSelector: '.scan-list-member-remove'
+  });
+  if (!modal) return;
+  cancel.addEventListener('click', modal.close);
+  remove.addEventListener('click', async () => {
+    if (remove.disabled) return;
+    remove.disabled = true;
+    message.textContent = 'Removing aliases…';
+    try {
+      const result = await requestJson(`/api/v1/admin/scan-lists/${scanList.id}/members`, {
+        method: 'PUT', body: {
+          revision: Number(aliasEditorContext?.revision ?? 0), operation: 'remove', alias_ids: ids
+        }
+      });
+      await finishAliasMutation(modal, result);
+    } catch (error) {
+      aliasMutationError(message, error, () => {
+        modal.setDirty(false);
+        closeReadOnlyModal(false, true);
+        render();
+      });
+      remove.disabled = false;
+    }
+  });
+  remove.focus();
+}
+
 function observedTalkgroupDiscoverySupported(selectedList) {
   return ['P25', 'DMR', 'NXDN'].includes(aliasListFamily(selectedList));
 }
@@ -3989,25 +4077,159 @@ function renderObservedTalkgroups(main, page, selectedList) {
   main.append(block);
 }
 
+async function renderScanListMembers(main, listResponse, scanListCatalog, scanList) {
+  const filters = {
+    type: route.get('type'), matcher: route.get('matcher'), group: route.get('group'),
+    scan_list_id: scanList.id, record: route.get('record'), stream: route.get('stream'),
+    evidence: route.get('evidence'), use: route.get('use'),
+    last_activity_before: route.get('lastActivityBefore'), last_activity_after: route.get('lastActivityAfter')
+  };
+  const page = await api('/api/v1/aliases', pageParameters(filters));
+  const options = {
+    scan_lists: scanListCatalog.scan_lists || [], scan_list_scope: true
+  };
+  aliasEditorContext.page = page;
+  aliasEditorContext.options = options;
+  aliasEditorContext.revision = Number(scanListCatalog.revision ?? 0);
+  const rows = page.rows || [];
+  const visibleIds = new Set(rows.map((row) => Number(row.alias_id)));
+  aliasEditorSelection = new Set([...aliasEditorSelection].filter((id) => visibleIds.has(id)));
+  aliasEditorLastSelectionIndex = null;
+
+  const summary = node('section', 'alias-list-summary scan-list-member-summary');
+  const summaryCopy = node('div', 'alias-list-summary-copy');
+  summaryCopy.append(...[
+    node('h2', '', scanList.name), badge('Scan List', 'state-current'),
+    scanList.default === true ? badge('Default', 'state-current') : null,
+    scanList.published === false ? badge('Not published', 'state-stale') : null,
+    node('span', 'muted', `${number(scanList.alias_count || 0)} alias members · ` +
+      `${number(scanList.unmatched_alias_list_count || 0)} unknown-talkgroup routes`)
+  ].filter(Boolean));
+  const summaryActions = node('div', 'alias-list-summary-actions');
+  summaryActions.append(anchor('Back to Scan Lists', href('admin', { tab: 'scan-lists' }), 'button secondary'));
+  summary.append(summaryCopy, summaryActions);
+  main.append(summary, aliasEditorFilterToolbar(listResponse, options));
+
+  const tableHost = node('div', 'alias-catalog-table-host alias-editor-table-host');
+  let bulkBar = null;
+  const updateSelection = () => {
+    tableHost.querySelectorAll('.alias-row-select').forEach((checkbox) => {
+      const tableRow = checkbox.closest('tr');
+      const id = Number(tableRow?.dataset.id);
+      checkbox.checked = aliasEditorSelection.has(id);
+      tableRow?.classList.toggle('selected', checkbox.checked);
+    });
+    bulkBar?.update();
+  };
+  const aliasTable = table(rows, scanListMemberColumns(rows, updateSelection),
+    'No aliases belong to this scan list', {
+      type: 'alias-scan-list-members', serverSort: true, sortable: false,
+      defaultSort: 'name', defaultDirection: 'asc', rowKey: (row) => row.alias_id
+    });
+  tableHost.append(aliasTable);
+  aliasTable.querySelectorAll('tbody tr[data-id]').forEach((tableRow) => {
+    tableRow.addEventListener('click', (event) => {
+      if (event.target.closest('a, button, input, select, label')) return;
+      const id = Number(tableRow.dataset.id);
+      const row = rows.find((candidate) => Number(candidate.alias_id) === id);
+      if (!row) return;
+      if (event.shiftKey || event.metaKey || event.ctrlKey) {
+        const index = rows.indexOf(row);
+        if (event.shiftKey && aliasEditorLastSelectionIndex !== null) {
+          const start = Math.min(index, aliasEditorLastSelectionIndex);
+          const end = Math.max(index, aliasEditorLastSelectionIndex);
+          rows.slice(start, end + 1).forEach((candidate) =>
+            aliasEditorSelection.add(Number(candidate.alias_id)));
+        } else if (aliasEditorSelection.has(id)) aliasEditorSelection.delete(id);
+        else aliasEditorSelection.add(id);
+        aliasEditorLastSelectionIndex = index;
+        updateSelection();
+        return;
+      }
+      window.location.assign(aliasEditorRowHref(row));
+    });
+  });
+
+  const actions = node('div', 'section-title-actions');
+  const selectPage = node('button', 'button secondary', 'Select This Page');
+  selectPage.type = 'button';
+  selectPage.addEventListener('click', () => {
+    rows.forEach((row) => {
+      if (aliasEditorSelection.size < 500) aliasEditorSelection.add(Number(row.alias_id));
+    });
+    updateSelection();
+  });
+  actions.append(selectPage);
+  const exportContext = { scan_list_id: scanList.id };
+  new Map([
+    ['type', 'type'], ['matcher', 'matcher'], ['group', 'group'], ['record', 'record'],
+    ['stream', 'stream'], ['evidence', 'evidence'], ['use', 'use'],
+    ['lastActivityBefore', 'last_activity_before'], ['lastActivityAfter', 'last_activity_after']
+  ]).forEach((queryKey, routeKey) => {
+    if (route.get(routeKey)) exportContext[queryKey] = route.get(routeKey);
+  });
+  actions.append(exportCsvLink('aliases', exportContext));
+  const block = section(`Aliases in ${scanList.name}`, tableHost, actions);
+  block.classList.add('alias-catalog-section', 'alias-editor-table-section', 'scan-list-member-table-section');
+  bulkBar = scanListMemberBulkBar(scanList, () => {
+    aliasEditorSelection.clear();
+    aliasEditorLastSelectionIndex = null;
+    updateSelection();
+  });
+  block.append(bulkBar);
+  updateSelection();
+  block.append(node('p', 'metric-meaning-note alias-catalog-guide',
+    'This view includes members from every alias list. Removing membership preserves each alias and its other ' +
+      'scan-list memberships.'), pager(page));
+  main.append(block);
+}
+
 async function renderAliases() {
   const admin = aliasAdminAllowed();
+  const requestedScanListId = !route.get('list') && /^[1-9][0-9]*$/.test(route.get('scanListId') || '') ?
+    Number(route.get('scanListId')) : null;
   const publicListsPromise = api('/api/v1/alias-lists');
   const adminListsPromise = admin ? requestJson('/api/v1/admin/alias-lists', { csrf: false }) :
     Promise.resolve({ revision: null, alias_lists: [] });
-  const [listResponse, adminCatalog] = await Promise.all([publicListsPromise, adminListsPromise]);
+  const scanListCatalogPromise = admin && requestedScanListId ?
+    requestJson('/api/v1/admin/scan-lists', { csrf: false }) :
+    Promise.resolve({ revision: null, scan_lists: [] });
+  const [listResponse, adminCatalog, scanListCatalog] = await Promise.all([
+    publicListsPromise, adminListsPromise, scanListCatalogPromise
+  ]);
   const lists = mergedAliasLists(listResponse.rows || [], adminCatalog.alias_lists || []);
   let selectedList = lists.find((row) => aliasListId(row) === Number(route.get('list')));
+  const scanListScope = admin && requestedScanListId ?
+    (scanListCatalog.scan_lists || []).find((row) => Number(row.id ?? row.scan_list_id) === requestedScanListId) :
+    null;
   aliasEditorContext = {
-    admin, revision: Number(adminCatalog.revision ?? 0), lists, selectedList, options: null, page: null
+    admin, revision: Number(scanListScope ? scanListCatalog.revision : adminCatalog.revision ?? 0),
+    lists, selectedList, scanListScope, options: null, page: null
   };
 
-  const subtitle = `${number(lists.length)} alias lists · ${admin ? 'administrator editing enabled' : 'read-only'}`;
+  const subtitle = scanListScope ?
+    `${number(scanListScope.alias_count || 0)} members across all alias lists · administrator editing enabled` :
+    `${number(lists.length)} alias lists · ${admin ? 'administrator editing enabled' : 'read-only'}`;
   content.append(pageHeader(admin ? 'Alias Editor' : 'Alias Catalog', subtitle));
   const workspace = node('div', 'alias-editor-workspace');
   workspace.append(aliasListRail(lists, selectedList, admin));
   const main = node('div', 'alias-editor-main');
   workspace.append(main);
   content.append(workspace);
+
+  if (scanListScope) {
+    await renderScanListMembers(main, listResponse, scanListCatalog, scanListScope);
+    return;
+  }
+
+  if (admin && requestedScanListId) {
+    const missing = node('section', 'alias-editor-welcome');
+    missing.append(node('h2', '', 'Scan list not found'),
+      node('p', '', 'This scan list may have been deleted or changed.'),
+      anchor('Back to Scan Lists', href('admin', { tab: 'scan-lists' }), 'button secondary'));
+    main.append(missing);
+    return;
+  }
 
   if (!selectedList) {
     main.append(aliasEditorEmptyState(lists, admin));
@@ -11209,6 +11431,9 @@ function adminScanListIdentity(scanList) {
 
 function adminScanListActions(scanList, revision) {
   const actions = node('div', 'admin-row-actions');
+  const members = anchor('View Aliases', href('aliases', {
+    scanListId: scanList.id, aliasTab: 'configure'
+  }), 'button secondary admin-scan-list-members');
   const edit = node('button', 'secondary admin-scan-list-edit', 'Edit');
   edit.type = 'button';
   edit.dataset.scanListId = String(scanList.id);
@@ -11219,8 +11444,14 @@ function adminScanListActions(scanList, revision) {
   remove.disabled = scanList.default === true;
   if (remove.disabled) remove.title = 'Choose another default scan list before deleting this one.';
   remove.addEventListener('click', () => openDeleteScanListAdminModal(scanList, revision));
-  actions.append(edit, remove);
+  actions.append(members, edit, remove);
   return actions;
+}
+
+function adminScanListMemberCount(scanList) {
+  return anchor(number(scanList.alias_count || 0), href('aliases', {
+    scanListId: scanList.id, aliasTab: 'configure'
+  }), 'admin-scan-list-member-count');
 }
 
 async function renderAdminScanLists() {
@@ -11234,18 +11465,18 @@ async function renderAdminScanLists() {
   const body = node('div', 'admin-section-body');
   body.append(node('p', 'admin-section-intro',
     'Scan lists group aliases from any alias list, and overlapping listener subscriptions are deduplicated. ' +
-    'Manage membership from the paginated Alias Editor by searching, selecting up to 500 aliases, and using the ' +
-    'Scan Lists bulk action. Route unknown talkgroups from an Alias List\'s Global Settings.'),
+    'Open a scan list to search all of its alias members and remove selected memberships in bounded batches. ' +
+    'Route unknown talkgroups from an Alias List\'s Global Settings.'),
     table(scanLists, [
       { id: 'scan-list', label: 'Scan list', width: 240, render: adminScanListIdentity,
         sortValue: (row) => Number(row.sort_order || 0) },
       { id: 'description', label: 'Description', render: (row) => availableValue(row.description) },
       { id: 'aliases', label: 'Aliases', width: 100, className: 'numeric',
-        render: (row) => number(row.alias_count || 0), sortValue: (row) => Number(row.alias_count || 0) },
+        render: adminScanListMemberCount, sortValue: (row) => Number(row.alias_count || 0) },
       { id: 'unmatched-alias-lists', label: 'Unknown routes', width: 130, className: 'numeric',
         render: (row) => number(row.unmatched_alias_list_count || 0),
         sortValue: (row) => Number(row.unmatched_alias_list_count || 0) },
-      { id: 'actions', label: 'Actions', width: 180, sortable: false,
+      { id: 'actions', label: 'Actions', width: 300, sortable: false,
         render: (row) => adminScanListActions(row, revision) }
     ], 'No scan lists are configured', { type: 'admin-scan-lists', sortable: false }));
   const actions = node('div', 'section-title-actions');
