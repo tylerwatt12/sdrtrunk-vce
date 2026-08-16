@@ -88,6 +88,14 @@ public class DiscoveredTunerModel extends AbstractTableModel implements Listener
     }
 
     /**
+     * Immutable snapshot of every discovered tuner, including disabled and error-state devices.
+     */
+    public List<DiscoveredTuner> getTunersSnapshot()
+    {
+        return List.copyOf(mDiscoveredTuners);
+    }
+
+    /**
      * Find the discovered tuner that matches the instantiated tuner
      * @param tuner to match
      * @return matching discovered tuner

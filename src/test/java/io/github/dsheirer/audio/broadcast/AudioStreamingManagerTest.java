@@ -282,6 +282,37 @@ public class AudioStreamingManagerTest
     }
 
     @Test
+    void onlyInvalidCallsEligibleForStreamingAreCountedAsDropped()
+    {
+        UserPreferences preferences = new UserPreferences();
+        ManualStreamingScheduler scheduler = new ManualStreamingScheduler();
+        AudioStreamingManager manager = new AudioStreamingManager(recording -> {}, BroadcastFormat.MP3,
+            preferences, null, scheduler, (call, path, userPreferences, identifiers) -> {});
+        CompletedAudioCall template = getCompletedAudioCall();
+        AudioCallSnapshot snapshot = template.snapshot();
+        AudioCallSnapshot noBroadcastRoute = new AudioCallSnapshot(snapshot.callId(), snapshot.linkedCallId(),
+            snapshot.aliasList(), snapshot.identifierCollection(), Set.of(), snapshot.startTimestamp(),
+            snapshot.lastActivityTimestamp(), snapshot.burstCount(), snapshot.burstGeneration(),
+            snapshot.lastBurstStartTimestamp(), snapshot.lastBurstEndTimestamp(), snapshot.burstActive(),
+            snapshot.complete(), snapshot.encrypted(), snapshot.recordAudio(), snapshot.duplicate(),
+            snapshot.recordingMetadata(), snapshot.voiceCallQuality());
+
+        try
+        {
+            manager.receive(new CompletedAudioCall(noBroadcastRoute, List.of()));
+            assertEquals(0, manager.getQueueStatus().droppedCalls());
+
+            manager.receive(withAudioBuffers(List.of()));
+            assertEquals(1, manager.getQueueStatus().droppedCalls());
+        }
+        finally
+        {
+            manager.stop();
+            scheduler.shutdownNow();
+        }
+    }
+
+    @Test
     void completedCallHandoffIsBoundedByRetainedSourceBytes()
     {
         UserPreferences preferences = new UserPreferences();

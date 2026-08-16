@@ -257,7 +257,7 @@ class StatsLiveServiceTest
     {
         ChannelActivitySnapshot.Row row = new ChannelActivitySnapshot.Row("channel-17:155730000:0",
             "Dispatch", "configuration-17", status, List.of("CONVENTIONAL"), null, 155_730_000L, null,
-            null, null, 0L, 0L, 0L, 0L, 0L, 0L, null, null, null, null, null, null, null, null,
+            null, null, 0L, 0L, 0L, 0L, 0L, 0L, 0L, null, null, null, null, null, null, null, null,
             null, null, "NBFM", null);
         ChannelActivitySnapshot snapshot = new ChannelActivitySnapshot("conventional", "Conventional",
             "", "", "Conventional", null, null, false, List.of(), List.of(row));

@@ -76,6 +76,11 @@ public class PolyphaseChannelSourceManager extends ChannelSourceManager
         return mPolyphaseChannelManager.getNativeBufferQueueStatus();
     }
 
+    public PolyphaseChannelManager.PipelineStatus getPipelineStatus()
+    {
+        return mPolyphaseChannelManager.getPipelineStatus();
+    }
+
     @Override
     public void stopAllChannels()
     {

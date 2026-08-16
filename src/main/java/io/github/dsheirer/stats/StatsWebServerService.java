@@ -23,6 +23,8 @@ import com.sun.net.httpserver.HttpServer;
 import com.sun.net.httpserver.HttpsConfigurator;
 import com.sun.net.httpserver.HttpsServer;
 import io.github.dsheirer.alias.AliasAdministrationService;
+import io.github.dsheirer.audio.broadcast.AudioStreamingManager;
+import io.github.dsheirer.audio.call.AudioCallCoordinator;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.controller.NamingThreadFactory;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
@@ -35,6 +37,7 @@ import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.nowplaying.NowPlayingPreference;
 import io.github.dsheirer.preference.application.ApplicationPreference;
 import io.github.dsheirer.preference.application.WebCertificateMode;
+import io.github.dsheirer.record.AudioRecordingManager;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.scanlist.ScanList;
 import io.github.dsheirer.scanlist.ScanListModel;
@@ -43,6 +46,7 @@ import io.github.dsheirer.stats.activity.P25ActivityCommitListener;
 import io.github.dsheirer.stats.activity.P25ActivityLogPath;
 import io.github.dsheirer.stats.activity.P25ActivityLogService;
 import io.github.dsheirer.stats.activity.P25ActivityLogStatus;
+import io.github.dsheirer.stats.health.ReceiverHealthService;
 import io.github.dsheirer.web.tls.TlsMaterial;
 import io.github.dsheirer.web.tls.TlsMaterialException;
 import io.github.dsheirer.web.tls.WebTlsMaterialService;
@@ -145,6 +149,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
     private final DiagnosticFftScheduler mDiagnosticFftScheduler;
     private final ChannelDiagnosticService mChannelDiagnosticService;
     private final TunerDiagnosticService mTunerDiagnosticService;
+    private final ReceiverHealthService mReceiverHealthService;
     private final StatsLiveEventHub mDecodeEventHub = new StatsLiveEventHub(32, 256);
     private final Object mDecodeEventSubscriptionLock = new Object();
     private final Listener<DecodeEventViewService.EventView> mDecodeEventViewListener =
@@ -245,11 +250,15 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             thread.setDaemon(true);
             return thread;
         });
+        mReceiverHealthService = new ReceiverHealthService(userPreferences, tunerManager,
+            channelProcessingManager, activityLogService);
+        mReceiverHealthService.setWebStatusSupplier(this::receiverHealthObserverStatus);
         MyEventBus.getGlobalEventBus().register(this);
         updateServerState();
         mTlsMaintenanceExecutor.scheduleWithFixedDelay(this::maintainAutomaticCertificate,
             AUTOMATIC_CERTIFICATE_INITIAL_CHECK_MINUTES, AUTOMATIC_CERTIFICATE_MAINTENANCE_MINUTES,
             TimeUnit.MINUTES);
+        mReceiverHealthService.start();
     }
 
     @Subscribe
@@ -663,7 +672,8 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         server.createContext(WebCallConfigurationHttpController.PATH, mWebAccessHttpController.protectApi(
             WebCapability.ADMIN_AUDIO, webCallConfigurationController::handle));
 
-        new StatsApiV1Controller(mDatabase, this::status, mWebAccessHttpController, mTunerDiagnosticService)
+        new StatsApiV1Controller(mDatabase, this::status, mWebAccessHttpController, mTunerDiagnosticService,
+            mReceiverHealthService::snapshot)
             .register(server);
         server.createContext(StatsApiV1.LIVE_MULTIPLEX,
             mWebAccessHttpController.protectAny(MULTIPLEX_CAPABILITIES, this::handleLiveMultiplex));
@@ -866,6 +876,27 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             "mode", nowPlaying.getDecodeQualityDisplayMode().name().toLowerCase()
         ));
         return status;
+    }
+
+    /**
+     * Internal-only observer measurements for the administrator health sampler.  These are intentionally not added to
+     * the public status endpoint.
+     */
+    private Map<String,Object> receiverHealthObserverStatus()
+    {
+        Map<String,Object> transport = Map.of(
+            "activeClients", mMultiplexClients.size(),
+            "rejectedClients", mMultiplexRejectedClients.get(),
+            "slowDisconnects", mMultiplexSlowDisconnects.get(),
+            "eventDrops", mMultiplexEventDrops.get());
+        return Map.of(
+            "server", Map.of("liveTransport", transport),
+            "webPlayer", mWebCallService.observerStatus(),
+            "diagnostics", Map.of(
+            "channel_sessions", mChannelDiagnosticService != null ? mChannelDiagnosticService.activeSessionCount() : 0,
+            "channel_producers", mChannelDiagnosticService != null ? mChannelDiagnosticService.activeProducerCount() : 0,
+            "tuner_sessions", mTunerDiagnosticService != null ? mTunerDiagnosticService.activeSessionCount() : 0,
+            "tuner_producers", mTunerDiagnosticService != null ? mTunerDiagnosticService.activeProducerCount() : 0));
     }
 
     private Map<String,Object> statsLoggingStatusResponse()
@@ -1784,6 +1815,16 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         mWebCallService.receive(call);
     }
 
+    /**
+     * Adds the application-owned audio/output queue sources after the completed-call coordinator is constructed.
+     */
+    public void setReceiverHealthOutputSources(AudioCallCoordinator coordinator,
+                                               AudioRecordingManager recordingManager,
+                                               AudioStreamingManager streamingManager)
+    {
+        mReceiverHealthService.setOutputSources(coordinator, recordingManager, streamingManager);
+    }
+
     private void handleStatic(HttpExchange exchange, Path root, String webClientRevision) throws IOException
     {
         WebAccessHttpController.prepareSecurityHeaders(exchange);
@@ -1963,6 +2004,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         }
 
         mClosed = true;
+        mReceiverHealthService.close();
         mTlsMaintenanceExecutor.shutdownNow();
         MyEventBus.getGlobalEventBus().unregister(this);
         stopActiveListener();

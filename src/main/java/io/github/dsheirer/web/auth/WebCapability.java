@@ -36,7 +36,8 @@ public enum WebCapability
     ADMIN_USERS("admin-users", "User management", AccessTier.ADMIN, false),
     ADMIN_ACCESS("admin-access", "Access management", AccessTier.ADMIN, false),
     ADMIN_ALIASES("admin-aliases", "Alias and scan-list management", AccessTier.ADMIN, false),
-    ADMIN_AUDIO("admin-audio", "Web audio management", AccessTier.ADMIN, false);
+    ADMIN_AUDIO("admin-audio", "Web audio management", AccessTier.ADMIN, false),
+    RECEIVER_HEALTH("receiver-health", "Receiver Health", AccessTier.ADMIN, false);
 
     private static final Map<String,WebCapability> BY_ID;
     private final String mId;

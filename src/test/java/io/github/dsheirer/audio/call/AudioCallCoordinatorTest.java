@@ -1161,6 +1161,8 @@ class AudioCallCoordinatorTest
             assertEquals(6, saturated.regularIngressCapacity());
             assertEquals(1, saturated.abortedCalls());
             assertTrue(saturated.droppedIngress() >= 2);
+            assertTrue(saturated.droppedOperations() >= saturated.droppedIngress(),
+                "unique dropped operations must include every rejected ingress event without double-counting subtypes");
 
             preferences.release();
             awaitCondition(() -> coordinator.getQueueStatus().ingressDepth() == 0,

@@ -145,7 +145,30 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
      */
     public void stop()
     {
-        mIFFTProcessorDispatcher.flushAndStop();
+        //Queued IFFT batches are stale once this channelizer stops.  Recycle them rather than flushing on the caller,
+        //which could run the same FFT concurrently with an already-active dispatcher callback.
+        mIFFTProcessorDispatcher.stop();
+    }
+
+    /**
+     * Read-only IFFT dispatch measurements for receiver health diagnostics.
+     */
+    public QueueStatus getQueueStatus()
+    {
+        return new QueueStatus(mIFFTProcessorDispatcher.getQueueSize(),
+            mIFFTProcessorDispatcher.getHighWaterQueueSize(),
+            mIFFTProcessorDispatcher.getMaximumQueueSize(),
+            mIFFTProcessorDispatcher.getDroppedElementCount());
+    }
+
+    /** Allocation-free cumulative IFFT queue overflow count for lifecycle accounting. */
+    long getDroppedBatchCount()
+    {
+        return mIFFTProcessorDispatcher.getDroppedElementCount();
+    }
+
+    public record QueueStatus(int queuedBatches, int highWaterBatches, int capacityBatches, long droppedBatches)
+    {
     }
 
     /**

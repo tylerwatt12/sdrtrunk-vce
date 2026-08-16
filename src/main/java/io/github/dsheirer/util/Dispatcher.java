@@ -31,9 +31,10 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -43,8 +44,8 @@ import org.slf4j.LoggerFactory;
  * registered listener on this consumer/dispatcher thread.
  *
  * Instances that use the shared-pool constructor share a fixed-size daemon thread pool rather than allocating one
- * thread per dispatcher.  Per-instance ordering is preserved by the Processor guard (an AtomicBoolean that prevents
- * concurrent re-entry on the same dispatcher).  Shutdown cancels the per-instance ScheduledFuture without touching
+ * thread per dispatcher.  Per-instance ordering is preserved by a non-blocking consumer lock that prevents
+ * concurrent re-entry on the same dispatcher.  Shutdown cancels the per-instance ScheduledFuture without touching
  * the shared pool.
  *
  * Instances that use the private-pool constructor (recorders and other I/O-heavy users) get their own executor so
@@ -70,15 +71,14 @@ public class Dispatcher<E> implements Listener<E>
             }
         });
     private final String mThreadName;
-    private final BlockingQueue<E> mQueue;
     private final List<E> mDrainBuffer = new ArrayList<>();
     private final Consumer<E> mDiscardHandler;
     private final int mMaximumQueueSize;
     private final AtomicLong mDroppedElementCount = new AtomicLong();
+    private final AtomicInteger mHighWaterQueueSize = new AtomicInteger();
     private Listener<E> mListener;
-    private final AtomicBoolean mRunning = new AtomicBoolean();
-    private ScheduledFuture<?> mScheduledFuture;
-    private ScheduledExecutorService mPrivateExecutor;
+    private final ReentrantLock mProcessingLock = new ReentrantLock();
+    private final AtomicReference<LifecycleState> mLifecycleState;
     private final ExecutorType mExecutorType;
     private final long mInterval;
     private HeartbeatManager mHeartbeatManager;
@@ -164,7 +164,7 @@ public class Dispatcher<E> implements Listener<E>
         mExecutorType = executorType;
         mMaximumQueueSize = maximumQueueSize;
         mDiscardHandler = discardHandler;
-        mQueue = maximumQueueSize > 0 ? new ArrayBlockingQueue<>(maximumQueueSize) : new LinkedTransferQueue<>();
+        mLifecycleState = new AtomicReference<>(new LifecycleState(0, LifecyclePhase.STOPPED, createQueue(), null));
     }
 
     /**
@@ -184,17 +184,19 @@ public class Dispatcher<E> implements Listener<E>
      */
     public void receive(E e)
     {
-        if(!mRunning.get())
+        LifecycleState lifecycle = mLifecycleState.get();
+
+        if(lifecycle.phase != LifecyclePhase.RUNNING)
         {
             discard(e, false);
             return;
         }
 
-        boolean accepted = mQueue.offer(e);
+        boolean accepted = offer(lifecycle, e);
 
         if(!accepted)
         {
-            E dropped = mQueue.poll();
+            E dropped = poll(lifecycle);
 
             if(dropped != null)
             {
@@ -202,7 +204,7 @@ public class Dispatcher<E> implements Listener<E>
             }
 
             //Another producer can claim the freed slot.  Never block a real-time producer if that happens.
-            accepted = mQueue.offer(e);
+            accepted = offer(lifecycle, e);
 
             if(!accepted)
             {
@@ -212,7 +214,10 @@ public class Dispatcher<E> implements Listener<E>
 
         //Shutdown can race the initial running-state check.  Remove and clean up this element if stop() already
         //drained the queue before this producer completed its offer.
-        if(accepted && !mRunning.get() && mQueue.remove(e))
+        LifecycleState current = mLifecycleState.get();
+
+        if(accepted && (current.phase != LifecyclePhase.RUNNING || current.generation != lifecycle.generation) &&
+            remove(lifecycle, e))
         {
             discard(e, false);
         }
@@ -223,34 +228,51 @@ public class Dispatcher<E> implements Listener<E>
      */
     public void start()
     {
-        if(mRunning.compareAndSet(false, true))
+        LifecycleState starting;
+
+        while(true)
         {
-            if(mScheduledFuture != null)
+            LifecycleState current = mLifecycleState.get();
+
+            if(current.phase != LifecyclePhase.STOPPED)
             {
-                //Note: this has to be false because downstream implementations may have acquired locks and they must
-                //be able to release those locks or we'll get a deadlock situation.
-                mScheduledFuture.cancel(false);
+                return;
             }
 
-            discardQueuedElements();
-            ScheduledExecutorService executor;
+            starting = new LifecycleState(current.generation + 1, LifecyclePhase.RUNNING, createQueue(), null);
 
-            if(mExecutorType == ExecutorType.SHARED)
+            if(mLifecycleState.compareAndSet(current, starting))
             {
-                executor = SHARED_POOL;
+                break;
             }
-            else
-            {
-                if(mPrivateExecutor != null)
-                {
-                    mPrivateExecutor.shutdown();
-                }
-                mPrivateExecutor = Executors.newSingleThreadScheduledExecutor(new NamingThreadFactory(mThreadName));
-                executor = mPrivateExecutor;
-            }
+        }
 
-            Runnable r = (mHeartbeatManager != null ? new ProcessorWithHeartbeat() : new Processor());
-            mScheduledFuture = executor.scheduleAtFixedRate(r, 0, mInterval, TimeUnit.MILLISECONDS);
+        ScheduledExecutorService privateExecutor = mExecutorType == ExecutorType.PRIVATE ?
+            Executors.newSingleThreadScheduledExecutor(new NamingThreadFactory(mThreadName)) : null;
+        ScheduledExecutorService executor = privateExecutor != null ? privateExecutor : SHARED_POOL;
+        long generation = starting.generation;
+        BlockingQueue<E> queue = starting.queue;
+        Runnable processor = (mHeartbeatManager != null ? new ProcessorWithHeartbeat(generation, queue) :
+            new Processor(generation, queue));
+        Runnable guardedProcessor = () ->
+        {
+            LifecycleState current = mLifecycleState.get();
+
+            if(current.phase == LifecyclePhase.RUNNING && current.generation == generation)
+            {
+                processor.run();
+            }
+        };
+        ScheduledFuture<?> future = executor.scheduleAtFixedRate(guardedProcessor, 0, mInterval,
+            TimeUnit.MILLISECONDS);
+        ScheduledTask task = new ScheduledTask(future, privateExecutor);
+        LifecycleState scheduled = starting.withTask(task);
+
+        //The lifecycle state atomically owns this task.  A stop/restart that overtakes setup changes the state first,
+        //so this stale starter can cancel only its own resources and cannot replace or stop the newer task.
+        if(!mLifecycleState.compareAndSet(starting, scheduled))
+        {
+            task.stop();
         }
     }
 
@@ -259,21 +281,27 @@ public class Dispatcher<E> implements Listener<E>
      */
     public void stop()
     {
-        if(mRunning.compareAndSet(true, false))
+        while(true)
         {
-            if(mScheduledFuture != null)
+            LifecycleState current = mLifecycleState.get();
+
+            if(current.phase == LifecyclePhase.STOPPED || current.phase == LifecyclePhase.FLUSHING)
             {
-                //Note: this has to be false because downstream implementations may have acquired locks and they must
-                //be able to release those locks or we'll get a deadlock situation.
-                mScheduledFuture.cancel(false);
-                mScheduledFuture = null;
-                discardQueuedElements();
+                return;
             }
 
-            if(mPrivateExecutor != null)
+            LifecycleState stopped = new LifecycleState(current.generation + 1, LifecyclePhase.STOPPED,
+                createQueue(), null);
+
+            if(mLifecycleState.compareAndSet(current, stopped))
             {
-                mPrivateExecutor.shutdown();
-                mPrivateExecutor = null;
+                if(current.task != null)
+                {
+                    current.task.stop();
+                }
+
+                discardQueuedElements(current);
+                return;
             }
         }
     }
@@ -283,25 +311,36 @@ public class Dispatcher<E> implements Listener<E>
      */
     public void flushAndStop()
     {
-        if(mRunning.compareAndSet(true, false))
+        LifecycleState flushing;
+
+        while(true)
         {
-            if(mScheduledFuture != null)
+            LifecycleState current = mLifecycleState.get();
+
+            if(current.phase == LifecyclePhase.FLUSHING)
             {
-                //Note: this has to be false because downstream implementations may have acquired locks and they must
-                //be able to release those locks or we'll get a deadlock situation.
-                mScheduledFuture.cancel(false);
-                mScheduledFuture = null;
+                return;
             }
 
-            if(mPrivateExecutor != null)
+            flushing = new LifecycleState(current.generation + 1, LifecyclePhase.FLUSHING, current.queue, null);
+
+            if(mLifecycleState.compareAndSet(current, flushing))
             {
-                mPrivateExecutor.shutdown();
-                mPrivateExecutor = null;
+                if(current.task != null)
+                {
+                    current.task.stop();
+                }
+
+                break;
             }
+        }
 
-            List<E> elements = new ArrayList<>();
+        List<E> elements = new ArrayList<>();
+        mProcessingLock.lock();
 
-            mQueue.drainTo(elements);
+        try
+        {
+            drainTo(flushing, elements);
 
             for(E element: elements)
             {
@@ -323,6 +362,12 @@ public class Dispatcher<E> implements Listener<E>
                 }
             }
         }
+        finally
+        {
+            mProcessingLock.unlock();
+            mLifecycleState.compareAndSet(flushing, new LifecycleState(flushing.generation,
+                LifecyclePhase.STOPPED, createQueue(), null));
+        }
     }
 
     /**
@@ -330,7 +375,7 @@ public class Dispatcher<E> implements Listener<E>
      */
     public boolean isRunning()
     {
-        return mRunning.get();
+        return mLifecycleState.get().phase == LifecyclePhase.RUNNING;
     }
 
     /**
@@ -338,7 +383,8 @@ public class Dispatcher<E> implements Listener<E>
      */
     public int getQueueSize()
     {
-        return mQueue.size();
+        int queued = Math.max(0, mLifecycleState.get().queuedElementCount.get());
+        return mMaximumQueueSize > 0 ? Math.min(queued, mMaximumQueueSize) : queued;
     }
 
     /**
@@ -349,14 +395,97 @@ public class Dispatcher<E> implements Listener<E>
         return mDroppedElementCount.get();
     }
 
-    private void discardQueuedElements()
+    /**
+     * Configured queue capacity, or zero when this dispatcher uses an unbounded queue.
+     */
+    public int getMaximumQueueSize()
     {
-        E element = mQueue.poll();
+        return mMaximumQueueSize;
+    }
+
+    /**
+     * Largest approximate queue depth observed since this dispatcher was created.
+     */
+    public int getHighWaterQueueSize()
+    {
+        return mHighWaterQueueSize.get();
+    }
+
+    private void updateHighWaterQueueSize(int queueSize)
+    {
+        int current = mHighWaterQueueSize.get();
+
+        while(queueSize > current && !mHighWaterQueueSize.compareAndSet(current, queueSize))
+        {
+            current = mHighWaterQueueSize.get();
+        }
+    }
+
+    /**
+     * Tracks approximate queue depth without calling BlockingQueue.size(), which can acquire the bounded queue's
+     * internal lock or traverse an unbounded linked queue.  The count is reserved before offer so a consumer can never
+     * remove an element before it is represented; concurrent producer reservations may briefly overstate depth.
+     */
+    private BlockingQueue<E> createQueue()
+    {
+        return mMaximumQueueSize > 0 ? new ArrayBlockingQueue<>(mMaximumQueueSize) : new LinkedTransferQueue<>();
+    }
+
+    private boolean offer(LifecycleState lifecycle, E element)
+    {
+        int queued = lifecycle.queuedElementCount.incrementAndGet();
+
+        if(lifecycle.queue.offer(element))
+        {
+            updateHighWaterQueueSize(mMaximumQueueSize > 0 ? Math.min(queued, mMaximumQueueSize) : queued);
+            return true;
+        }
+
+        lifecycle.queuedElementCount.decrementAndGet();
+        return false;
+    }
+
+    private E poll(LifecycleState lifecycle)
+    {
+        E element = lifecycle.queue.poll();
+
+        if(element != null)
+        {
+            lifecycle.queuedElementCount.decrementAndGet();
+        }
+
+        return element;
+    }
+
+    private boolean remove(LifecycleState lifecycle, E element)
+    {
+        if(lifecycle.queue.remove(element))
+        {
+            lifecycle.queuedElementCount.decrementAndGet();
+            return true;
+        }
+
+        return false;
+    }
+
+    private void drainTo(LifecycleState lifecycle, List<E> target)
+    {
+        int drained = lifecycle.queue.drainTo(target);
+
+        if(drained > 0)
+        {
+            lifecycle.queuedElementCount.addAndGet(-drained);
+        }
+    }
+
+    private void discardQueuedElements(LifecycleState lifecycle)
+    {
+        E element = poll(lifecycle);
 
         while(element != null)
         {
             discard(element, false);
-            element = mQueue.poll();
+            element = poll(lifecycle);
         }
     }
 
@@ -381,28 +510,34 @@ public class Dispatcher<E> implements Listener<E>
 
         if(queueOverflow)
         {
-            long dropped = mDroppedElementCount.incrementAndGet();
-
-            if(dropped == 1 || dropped % 1000 == 0)
-            {
-                mLog.warn("Dispatcher [{}] dropped stale queued element at queue limit [{}], total dropped [{}]",
-                    mThreadName, mMaximumQueueSize, dropped);
-            }
+            //This method runs on real-time producers for the bounded IFFT and channel-result queues.  Keep overflow
+            //reporting to a primitive counter; the receiver-health observer projects and alerts on it off-thread.
+            mDroppedElementCount.incrementAndGet();
         }
     }
 
     /**
      * Processes elements from the queue.  Note: this should only be invoked on the Processor thread.
      */
-    private void process()
+    private void process(long generation, BlockingQueue<E> queue)
     {
-        mQueue.drainTo(mDrainBuffer);
+        LifecycleState lifecycle = mLifecycleState.get();
+
+        if(lifecycle.generation != generation || lifecycle.queue != queue)
+        {
+            return;
+        }
+
+        drainTo(lifecycle, mDrainBuffer);
 
         try
         {
             for(E element: mDrainBuffer)
             {
-                if(mRunning.get() && mListener != null)
+                LifecycleState current = mLifecycleState.get();
+
+                if(current.phase == LifecyclePhase.RUNNING && current.generation == generation &&
+                    current.queue == queue && mListener != null)
                 {
                     try
                     {
@@ -431,20 +566,27 @@ public class Dispatcher<E> implements Listener<E>
      */
     class Processor implements Runnable
     {
-        private final AtomicBoolean mRunning = new AtomicBoolean();
+        private final long mGeneration;
+        private final BlockingQueue<E> mQueue;
+
+        private Processor(long generation, BlockingQueue<E> queue)
+        {
+            mGeneration = generation;
+            mQueue = queue;
+        }
 
         @Override
         public void run()
         {
-            if(mRunning.compareAndSet(false, true))
+            if(mProcessingLock.tryLock())
             {
                 try
                 {
-                    process();
+                    process(mGeneration, mQueue);
                 }
                 finally
                 {
-                    mRunning.set(false);
+                    mProcessingLock.unlock();
                 }
             }
         }
@@ -456,17 +598,31 @@ public class Dispatcher<E> implements Listener<E>
      */
     class ProcessorWithHeartbeat implements Runnable
     {
-        private final AtomicBoolean mRunning = new AtomicBoolean();
+        private final long mGeneration;
+        private final BlockingQueue<E> mQueue;
+
+        private ProcessorWithHeartbeat(long generation, BlockingQueue<E> queue)
+        {
+            mGeneration = generation;
+            mQueue = queue;
+        }
 
         @Override
         public void run()
         {
-            if(mRunning.compareAndSet(false, true))
+            if(mProcessingLock.tryLock())
             {
                 try
                 {
-                    process();
-                    mHeartbeatManager.broadcast();
+                    process(mGeneration, mQueue);
+
+                    LifecycleState current = mLifecycleState.get();
+
+                    if(current.phase == LifecyclePhase.RUNNING && current.generation == mGeneration &&
+                        current.queue == mQueue)
+                    {
+                        mHeartbeatManager.broadcast();
+                    }
                 }
                 catch(Throwable throwable)
                 {
@@ -474,8 +630,55 @@ public class Dispatcher<E> implements Listener<E>
                 }
                 finally
                 {
-                    mRunning.set(false);
+                    mProcessingLock.unlock();
                 }
+            }
+        }
+    }
+
+    private enum LifecyclePhase { STOPPED, RUNNING, FLUSHING }
+
+    /** Atomically published ownership for one queue and scheduled-task generation. */
+    private final class LifecycleState
+    {
+        private final long generation;
+        private final LifecyclePhase phase;
+        private final BlockingQueue<E> queue;
+        private final AtomicInteger queuedElementCount;
+        private final ScheduledTask task;
+
+        private LifecycleState(long generation, LifecyclePhase phase, BlockingQueue<E> queue, ScheduledTask task)
+        {
+            this(generation, phase, queue, new AtomicInteger(), task);
+        }
+
+        private LifecycleState(long generation, LifecyclePhase phase, BlockingQueue<E> queue,
+                               AtomicInteger queuedElementCount, ScheduledTask task)
+        {
+            this.generation = generation;
+            this.phase = phase;
+            this.queue = queue;
+            this.queuedElementCount = queuedElementCount;
+            this.task = task;
+        }
+
+        private LifecycleState withTask(ScheduledTask scheduledTask)
+        {
+            return new LifecycleState(generation, phase, queue, queuedElementCount, scheduledTask);
+        }
+    }
+
+    /** Resources for one scheduled lifecycle generation. */
+    private record ScheduledTask(ScheduledFuture<?> future, ScheduledExecutorService privateExecutor)
+    {
+        private void stop()
+        {
+            //False is required because downstream code may hold locks that must be released normally.
+            future.cancel(false);
+
+            if(privateExecutor != null)
+            {
+                privateExecutor.shutdown();
             }
         }
     }

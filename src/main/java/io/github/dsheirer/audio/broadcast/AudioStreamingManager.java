@@ -417,10 +417,7 @@ public class AudioStreamingManager
 
                         try
                         {
-                            if(!(completedAudioCall.snapshot().duplicate() && mUserPreferences
-                                .getCallManagementPreference().isDuplicateStreamingSuppressionEnabled()) &&
-                                mAudioRecordingListener != null &&
-                                completedAudioCall.snapshot().hasBroadcastChannels())
+                            if(isEligibleForStreaming(completedAudioCall))
                             {
                                 attemptedStreaming = true;
                                 IdentifierCollection identifiers = new IdentifierCollection(
@@ -497,6 +494,11 @@ public class AudioStreamingManager
             return;
         }
 
+        if(!isEligibleForStreaming(completedAudioCall))
+        {
+            return;
+        }
+
         long sourceBytes = sourceBytes(completedAudioCall);
 
         if(sourceBytes <= 0 || sourceBytes > MAXIMUM_SOURCE_BYTES_PER_CALL)
@@ -567,11 +569,18 @@ public class AudioStreamingManager
         }
     }
 
+    private boolean isEligibleForStreaming(CompletedAudioCall completedAudioCall)
+    {
+        return mAudioRecordingListener != null && completedAudioCall.snapshot().hasBroadcastChannels() &&
+            !(completedAudioCall.snapshot().duplicate() && mUserPreferences.getCallManagementPreference()
+                .isDuplicateStreamingSuppressionEnabled());
+    }
+
     public StreamingQueueStatus getQueueStatus()
     {
         return new StreamingQueueStatus(mRetainedCallCount.get(), mRetainedSourceBytes.get(),
-            mDroppedCalls.get(), mFailedCalls.get(), mAcceptingCalls, mProcessingLock.isLocked(),
-            mProcessingLock.getQueueLength());
+            MAXIMUM_QUEUED_CALLS, MAXIMUM_QUEUED_SOURCE_BYTES, mDroppedCalls.get(), mFailedCalls.get(),
+            mAcceptingCalls, mProcessingLock.isLocked(), mProcessingLock.getQueueLength());
     }
 
     private boolean reserveCall()
@@ -685,9 +694,9 @@ public class AudioStreamingManager
         }
     }
 
-    public record StreamingQueueStatus(int retainedCalls, long retainedSourceBytes, long droppedCalls,
-                                       long failedCalls, boolean acceptingCalls, boolean writerActive,
-                                       int waitingDrains)
+    public record StreamingQueueStatus(int retainedCalls, long retainedSourceBytes, int maximumRetainedCalls,
+                                       long maximumRetainedSourceBytes, long droppedCalls, long failedCalls,
+                                       boolean acceptingCalls, boolean writerActive, int waitingDrains)
     {
     }
 

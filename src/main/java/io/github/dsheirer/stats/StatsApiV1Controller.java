@@ -42,15 +42,24 @@ final class StatsApiV1Controller
     private final Supplier<Map<String,Object>> mStatusSupplier;
     private final WebAccessHttpController mAccessController;
     private final TunerDiagnosticService mTunerDiagnosticService;
+    private final Supplier<Map<String,Object>> mReceiverHealthSupplier;
     private final Semaphore mCsvExportPermit = new Semaphore(1);
 
     StatsApiV1Controller(StatsWebDatabase database, Supplier<Map<String,Object>> statusSupplier,
                          WebAccessHttpController accessController, TunerDiagnosticService tunerDiagnosticService)
     {
+        this(database, statusSupplier, accessController, tunerDiagnosticService, Map::of);
+    }
+
+    StatsApiV1Controller(StatsWebDatabase database, Supplier<Map<String,Object>> statusSupplier,
+                         WebAccessHttpController accessController, TunerDiagnosticService tunerDiagnosticService,
+                         Supplier<Map<String,Object>> receiverHealthSupplier)
+    {
         mDatabase = database;
         mStatusSupplier = statusSupplier;
         mAccessController = accessController;
         mTunerDiagnosticService = tunerDiagnosticService;
+        mReceiverHealthSupplier = receiverHealthSupplier;
     }
 
     void register(HttpServer server)
@@ -91,6 +100,12 @@ final class StatsApiV1Controller
         create(server, StatsApiV1.CONVENTIONAL_CONTEXTS, WebCapability.CONVENTIONAL_VIEW,
             exchange -> handleJson(exchange, StatsApiV1.CONVENTIONAL_CONTEXTS, this::conventionalContexts));
         create(server, StatsApiV1.EXPORTS, WebCapability.CSV_EXPORT, this::handleCsvExport);
+        create(server, StatsApiV1.RECEIVER_HEALTH, WebCapability.RECEIVER_HEALTH,
+            exchange -> handleJson(exchange, StatsApiV1.RECEIVER_HEALTH, (request, segments) -> {
+                requireNoSegments(segments);
+                request.requireOnly();
+                return mReceiverHealthSupplier.get();
+            }));
 
         if(mTunerDiagnosticService != null)
         {

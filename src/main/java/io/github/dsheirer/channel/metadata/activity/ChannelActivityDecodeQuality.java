@@ -13,11 +13,12 @@ import io.github.dsheirer.audio.call.VoiceCallQuality;
 public record ChannelActivityDecodeQuality(Double controlPercent, long controlValidFrames,
                                            long controlInvalidFrames, long controlCorrectedBits,
                                            long controlSyncLossBits, long controlDroppedBits,
+                                           long controlLastValidDecodeMs,
                                            VoiceCallQuality voice)
 {
     public boolean hasControl()
     {
-        return controlPercent != null && Double.isFinite(controlPercent);
+        return controlLastValidDecodeMs > 0 || controlPercent != null && Double.isFinite(controlPercent);
     }
 
     public boolean hasVoice()

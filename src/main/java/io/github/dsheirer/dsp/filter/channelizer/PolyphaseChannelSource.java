@@ -18,6 +18,7 @@
  */
 package io.github.dsheirer.dsp.filter.channelizer;
 
+import io.github.dsheirer.dsp.filter.channelizer.output.ChannelOutputProcessor;
 import io.github.dsheirer.dsp.filter.channelizer.output.IPolyphaseChannelOutputProcessor;
 import io.github.dsheirer.dsp.filter.channelizer.output.OneChannelOutputProcessor;
 import io.github.dsheirer.dsp.filter.channelizer.output.TwoChannelOutputProcessor;
@@ -30,6 +31,7 @@ import io.github.dsheirer.source.tuner.channel.TunerChannelSource;
 import io.github.dsheirer.source.tuner.frequency.TunerFrequencyErrorManager;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicLong;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -41,7 +43,13 @@ import org.slf4j.LoggerFactory;
 public class PolyphaseChannelSource extends TunerChannelSource implements Listener<ComplexSamples>
 {
     private Logger mLog = LoggerFactory.getLogger(PolyphaseChannelSource.class);
-    private IPolyphaseChannelOutputProcessor mPolyphaseChannelOutputProcessor;
+    private volatile IPolyphaseChannelOutputProcessor mPolyphaseChannelOutputProcessor;
+    private volatile long mRetiredOutputProcessorDrops;
+    private volatile long mOutputProcessorLifecycleVersion;
+    private final AtomicLong mLastStableOutputProcessorDrops = new AtomicLong();
+    private volatile boolean mOutputProcessorStopping;
+    private volatile ChannelOutputProcessor.QueueStatus mLastStableOutputQueueStatus =
+        new ChannelOutputProcessor.QueueStatus(0, 0, 0, 0);
     private Listener<ComplexSamples> mSamplesListener;
     private double mChannelSampleRate;
     private long mIndexCenterFrequency;
@@ -80,6 +88,72 @@ public class PolyphaseChannelSource extends TunerChannelSource implements Listen
     }
 
     /**
+     * Read-only output-dispatch measurements for this channel.
+     */
+    public ChannelOutputProcessor.QueueStatus getOutputQueueStatus()
+    {
+        for(int attempt = 0; attempt < 4; attempt++)
+        {
+            long before = mOutputProcessorLifecycleVersion;
+
+            if((before & 1L) != 0)
+            {
+                Thread.onSpinWait();
+                continue;
+            }
+
+            IPolyphaseChannelOutputProcessor processor = mPolyphaseChannelOutputProcessor;
+            long retiredDrops = mRetiredOutputProcessorDrops;
+            ChannelOutputProcessor.QueueStatus current = processor != null ? processor.getQueueStatus() :
+                new ChannelOutputProcessor.QueueStatus(0, 0, 0, 0);
+            long after = mOutputProcessorLifecycleVersion;
+
+            if(before == after && (after & 1L) == 0)
+            {
+                long cumulativeDrops = mLastStableOutputProcessorDrops.accumulateAndGet(
+                    retiredDrops + current.droppedBatches(), Math::max);
+                ChannelOutputProcessor.QueueStatus stable = new ChannelOutputProcessor.QueueStatus(
+                    current.queuedBatches(), current.highWaterBatches(), current.capacityBatches(),
+                    cumulativeDrops);
+                mLastStableOutputQueueStatus = stable;
+                return stable;
+            }
+        }
+
+        ChannelOutputProcessor.QueueStatus cached = mLastStableOutputQueueStatus;
+        long drops = mLastStableOutputProcessorDrops.get();
+        return cached.droppedBatches() >= drops ? cached : new ChannelOutputProcessor.QueueStatus(
+            cached.queuedBatches(), cached.highWaterBatches(), cached.capacityBatches(), drops);
+    }
+
+    /** Allocation-free cumulative overflow count used while retiring this channel source. */
+    long getDroppedBatchCount()
+    {
+        for(int attempt = 0; attempt < 4; attempt++)
+        {
+            long before = mOutputProcessorLifecycleVersion;
+
+            if((before & 1L) != 0)
+            {
+                Thread.onSpinWait();
+                continue;
+            }
+
+            IPolyphaseChannelOutputProcessor processor = mPolyphaseChannelOutputProcessor;
+            long total = mRetiredOutputProcessorDrops +
+                (processor != null ? processor.getDroppedBatchCount() : 0);
+            long after = mOutputProcessorLifecycleVersion;
+
+            if(before == after && (after & 1L) == 0)
+            {
+                return mLastStableOutputProcessorDrops.accumulateAndGet(total, Math::max);
+            }
+        }
+
+        return mLastStableOutputProcessorDrops.get();
+    }
+
+    /**
      * Current output processor indexes.
      * @return indexes
      */
@@ -109,22 +183,67 @@ public class PolyphaseChannelSource extends TunerChannelSource implements Listen
     @Override
     public void start()
     {
+        if(mOutputProcessorStopping)
+        {
+            return;
+        }
+
         super.start();
+
+        //A terminal stop can race the synchronous producer start request.  Compensate after the request returns so a
+        //late start cannot leave this one-shot source registered after it has been removed.
+        if(mOutputProcessorStopping)
+        {
+            super.stop();
+            return;
+        }
 
         if(mPolyphaseChannelOutputProcessor != null)
         {
-            mPolyphaseChannelOutputProcessor.start();
+            startOutputProcessor(mPolyphaseChannelOutputProcessor);
         }
     }
 
     @Override
     public void stop()
     {
+        //Freeze and drain this source's output dispatcher before the synchronous stop request removes it from the
+        //manager.  This also makes its final overflow count stable for the manager's retired-drop accounting.
+        stopOutputProcessorForRemoval();
         super.stop();
+    }
 
-        if(mPolyphaseChannelOutputProcessor != null)
+    /** Stops new output work before this source is removed and its cumulative drop count is retired. */
+    void stopOutputProcessorForRemoval()
+    {
+        mOutputProcessorStopping = true;
+        IPolyphaseChannelOutputProcessor processor = mPolyphaseChannelOutputProcessor;
+
+        if(processor != null)
         {
-            mPolyphaseChannelOutputProcessor.stop();
+            processor.stop();
+        }
+    }
+
+    /** Indicates that this one-shot source has entered terminal removal. */
+    boolean isOutputProcessorStopping()
+    {
+        return mOutputProcessorStopping;
+    }
+
+    /** Starts a processor while closing the stop-vs-start race without locking the channel-results thread. */
+    private void startOutputProcessor(IPolyphaseChannelOutputProcessor processor)
+    {
+        if(!mOutputProcessorStopping)
+        {
+            processor.start();
+        }
+
+        //A concurrent source stop can occur after the pre-start check.  Recheck so the processor cannot remain
+        //running after this source has been removed.
+        if(mOutputProcessorStopping)
+        {
+            processor.stop();
         }
     }
 
@@ -162,7 +281,10 @@ public class PolyphaseChannelSource extends TunerChannelSource implements Listen
     public void updateOutputProcessor(ChannelCalculator channelCalculator, SynthesisFilterManager filterManager)
             throws IllegalArgumentException
     {
-        mPendingOutputProcessorUpdate = new PendingOutputProcessorUpdate(channelCalculator, filterManager);
+        if(!mOutputProcessorStopping)
+        {
+            mPendingOutputProcessorUpdate = new PendingOutputProcessorUpdate(channelCalculator, filterManager);
+        }
     }
 
     /**
@@ -175,6 +297,11 @@ public class PolyphaseChannelSource extends TunerChannelSource implements Listen
     public void doUpdateOutputProcessor(ChannelCalculator channelCalculator, SynthesisFilterManager filterManager)
             throws IllegalArgumentException
     {
+        if(mOutputProcessorStopping)
+        {
+            return;
+        }
+
         String errorMessage = null;
 
         //If a change in sample rate or center frequency makes this channel no longer viable, then the channel
@@ -215,46 +342,77 @@ public class PolyphaseChannelSource extends TunerChannelSource implements Listen
         }
         else //Create a new output processor.
         {
-            if(mPolyphaseChannelOutputProcessor != null)
+            IPolyphaseChannelOutputProcessor previous = mPolyphaseChannelOutputProcessor;
+            long stableDrops = mRetiredOutputProcessorDrops;
+
+            if(previous != null)
             {
-                mPolyphaseChannelOutputProcessor.setListener(null);
-                mPolyphaseChannelOutputProcessor.stop();
+                previous.setListener(null);
+                previous.stop();
+                stableDrops += previous.getDroppedBatchCount();
             }
 
-            mPolyphaseChannelOutputProcessor = null;
+            mLastStableOutputProcessorDrops.accumulateAndGet(stableDrops, Math::max);
+            mOutputProcessorLifecycleVersion++;
 
-            switch(indexes.size())
+            try
             {
-                case 1:
-                    mPolyphaseChannelOutputProcessor = new OneChannelOutputProcessor(channelCalculator.getChannelSampleRate(),
-                            indexes, channelCalculator.getChannelCount(), getHeartbeatManager(), mThreadName);
-                    mPolyphaseChannelOutputProcessor.setListener(this);
-                    mPolyphaseChannelOutputProcessor.setFrequencyOffset(getFrequencyOffset());
-                    mPolyphaseChannelOutputProcessor.start();
-                    break;
-                case 2:
-                    try
+                mRetiredOutputProcessorDrops = stableDrops;
+                mPolyphaseChannelOutputProcessor = null;
+
+                if(!mOutputProcessorStopping)
+                {
+                    switch(indexes.size())
                     {
-                        float[] filter = filterManager.getFilter(channelCalculator.getChannelSampleRate(),
-                                channelCalculator.getChannelBandwidth(), 2);
-                        mPolyphaseChannelOutputProcessor = new TwoChannelOutputProcessor(channelCalculator.getChannelSampleRate(),
-                                indexes, filter, channelCalculator.getChannelCount(), getHeartbeatManager(), mThreadName);
+                    case 1:
+                        mPolyphaseChannelOutputProcessor = new OneChannelOutputProcessor(
+                            channelCalculator.getChannelSampleRate(),
+                            indexes, channelCalculator.getChannelCount(), getHeartbeatManager(), mThreadName);
                         mPolyphaseChannelOutputProcessor.setListener(this);
                         mPolyphaseChannelOutputProcessor.setFrequencyOffset(getFrequencyOffset());
-                        mPolyphaseChannelOutputProcessor.start();
-                    }
-                    catch(FilterDesignException fde)
-                    {
-                        errorMessage = "Cannot create new output processor - unable to design synthesis filter for [" +
+                        startOutputProcessor(mPolyphaseChannelOutputProcessor);
+                        break;
+                    case 2:
+                        try
+                        {
+                            float[] filter = filterManager.getFilter(channelCalculator.getChannelSampleRate(),
+                                channelCalculator.getChannelBandwidth(), 2);
+                            mPolyphaseChannelOutputProcessor = new TwoChannelOutputProcessor(
+                                channelCalculator.getChannelSampleRate(),
+                                indexes, filter, channelCalculator.getChannelCount(), getHeartbeatManager(), mThreadName);
+                            mPolyphaseChannelOutputProcessor.setListener(this);
+                            mPolyphaseChannelOutputProcessor.setFrequencyOffset(getFrequencyOffset());
+                            startOutputProcessor(mPolyphaseChannelOutputProcessor);
+                        }
+                        catch(FilterDesignException fde)
+                        {
+                            errorMessage = "Cannot create new output processor - unable to design synthesis filter for [" +
                                 indexes.size() + "] channel indices";
-                        mLog.error("Error creating a synthesis filter for a new channel output processor");
-                    }
-                    break;
-                default:
-                    mLog.error("Request to create an output processor for unexpected channel index size:" + indexes.size());
-                    mLog.info(channelCalculator.toString());
-                    errorMessage = "Unable to create new channel output processor - unexpected channel index size: " +
+                            mLog.error("Error creating a synthesis filter for a new channel output processor");
+                        }
+                        break;
+                    default:
+                        mLog.error("Request to create an output processor for unexpected channel index size:" +
+                            indexes.size());
+                        mLog.info(channelCalculator.toString());
+                        errorMessage = "Unable to create new channel output processor - unexpected channel index size: " +
                             indexes.size();
+                    }
+                }
+            }
+            finally
+            {
+                mOutputProcessorLifecycleVersion++;
+
+                if(mOutputProcessorStopping)
+                {
+                    IPolyphaseChannelOutputProcessor processor = mPolyphaseChannelOutputProcessor;
+
+                    if(processor != null)
+                    {
+                        processor.stop();
+                    }
+                }
             }
         }
 
@@ -284,9 +442,11 @@ public class PolyphaseChannelSource extends TunerChannelSource implements Listen
 
         try
         {
-            if(mPolyphaseChannelOutputProcessor != null)
+            IPolyphaseChannelOutputProcessor processor = mPolyphaseChannelOutputProcessor;
+
+            if(!mOutputProcessorStopping && processor != null)
             {
-                mPolyphaseChannelOutputProcessor.receiveChannelResults(channelResultsBuffer);
+                processor.receiveChannelResults(channelResultsBuffer);
             }
             else
             {
@@ -324,10 +484,13 @@ public class PolyphaseChannelSource extends TunerChannelSource implements Listen
     @Override
     public void dispose()
     {
-        if(mPolyphaseChannelOutputProcessor != null)
+        stopOutputProcessorForRemoval();
+        IPolyphaseChannelOutputProcessor processor = mPolyphaseChannelOutputProcessor;
+
+        if(processor != null)
         {
-            mPolyphaseChannelOutputProcessor.setListener(null);
-            mPolyphaseChannelOutputProcessor.dispose();
+            processor.setListener(null);
+            processor.dispose();
         }
     }
 

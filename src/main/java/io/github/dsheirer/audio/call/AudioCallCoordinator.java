@@ -85,6 +85,7 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
     private final AtomicLong mAcceptedIngressCount = new AtomicLong();
     private final AtomicLong mDroppedIngressCount = new AtomicLong();
     private final AtomicLong mDroppedLifecycleCount = new AtomicLong();
+    private final AtomicLong mDroppedOperationCount = new AtomicLong();
     private final AtomicLong mAbortedCallCount = new AtomicLong();
     private final AtomicInteger mActiveReceives = new AtomicInteger();
     private final ICallManagementProvider mCallManagementProvider;
@@ -227,12 +228,14 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
             if(mAbortAllPending.get())
             {
                 mDroppedIngressCount.incrementAndGet();
+                mDroppedOperationCount.incrementAndGet();
                 return;
             }
 
             if(mOverflowedCallIds.contains(callId))
             {
                 mDroppedIngressCount.incrementAndGet();
+                mDroppedOperationCount.incrementAndGet();
 
                 if(event.eventType() == AudioCallEventType.CALL_COMPLETED)
                 {
@@ -255,11 +258,13 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
             {
                 mDroppedIngressCount.incrementAndGet();
                 mDroppedLifecycleCount.incrementAndGet();
+                mDroppedOperationCount.incrementAndGet();
                 requestAbortAll();
             }
             else
             {
                 mDroppedIngressCount.incrementAndGet();
+                mDroppedOperationCount.incrementAndGet();
 
                 if(markOverflowed(callId))
                 {
@@ -326,6 +331,7 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
             else
             {
                 mDroppedLifecycleCount.incrementAndGet();
+                mDroppedOperationCount.incrementAndGet();
                 requestAbortAll();
             }
         }
@@ -1001,6 +1007,7 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
                     else
                     {
                         mDroppedLifecycleCount.incrementAndGet();
+                        mDroppedOperationCount.incrementAndGet();
                         requestAbortAll();
                     }
                 }
@@ -1499,7 +1506,7 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
     {
         return new CoordinatorQueueStatus(mIngress.size(), mIngress.regularCapacity(), mIngress.capacity(),
             mAcceptedIngressCount.get(), mDroppedIngressCount.get(), mDroppedLifecycleCount.get(),
-            mAbortedCallCount.get());
+            mDroppedOperationCount.get(), mAbortedCallCount.get());
     }
 
     private boolean hasText(String value)
@@ -1642,7 +1649,7 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
 
     public record CoordinatorQueueStatus(int ingressDepth, int regularIngressCapacity, int totalIngressCapacity,
                                          long acceptedIngress, long droppedIngress, long droppedLifecycle,
-                                         long abortedCalls)
+                                         long droppedOperations, long abortedCalls)
     {
     }
 }

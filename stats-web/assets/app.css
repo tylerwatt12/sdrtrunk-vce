@@ -308,6 +308,55 @@ body[data-view="live"] .channel-diagnostic-readouts {
   gap: 9px;
 }
 
+.receiver-health-indicator {
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  color: #e8eef3;
+  background: #2c3944;
+  border: 1px solid #5b6873;
+  border-radius: 3px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.receiver-health-indicator:hover {
+  color: #fff;
+  text-decoration: none;
+  border-color: #81909d;
+}
+
+.receiver-health-indicator strong {
+  font-size: 12px;
+}
+
+.receiver-health-indicator.receiver-health-healthy {
+  color: #b7f0d0;
+  background: #153a2d;
+  border-color: #347858;
+}
+
+.receiver-health-indicator.receiver-health-warning {
+  color: #ffe0a0;
+  background: #493714;
+  border-color: #9d752c;
+}
+
+.receiver-health-indicator.receiver-health-critical {
+  color: #ffc0c8;
+  background: #4a2028;
+  border-color: #a75a66;
+}
+
+.receiver-health-indicator.receiver-health-stale,
+.receiver-health-indicator.receiver-health-loading {
+  color: #d3dce4;
+  background: #303a43;
+  border-color: #66737e;
+}
+
 .auth-controls {
   min-width: 0;
   display: inline-flex;
@@ -2968,6 +3017,292 @@ body.modal-open {
   border-bottom: 1px solid var(--line);
 }
 
+.receiver-health-page {
+  min-width: 0;
+}
+
+.receiver-health-overview {
+  display: grid;
+  grid-template-columns: minmax(190px, 0.7fr) minmax(360px, 1.5fr) minmax(240px, 0.8fr);
+  align-items: stretch;
+  background: var(--surface);
+}
+
+.receiver-health-overview > .summary-band {
+  border-width: 0 1px;
+}
+
+.receiver-health-overview-state {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  padding: 12px 14px;
+  border-left: 5px solid var(--line-dark);
+}
+
+.receiver-health-overview-state span {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.receiver-health-overview-state strong {
+  font-size: 24px;
+}
+
+.receiver-health-overview-state.receiver-health-healthy {
+  color: #075c3a;
+  background: #e2f5eb;
+  border-left-color: #26845b;
+}
+
+.receiver-health-overview-state.receiver-health-warning {
+  color: #725000;
+  background: #fff1c7;
+  border-left-color: #c18113;
+}
+
+.receiver-health-overview-state.receiver-health-critical {
+  color: #8b1d2c;
+  background: #fff1f2;
+  border-left-color: #b4233b;
+}
+
+.receiver-health-overview-state.receiver-health-stale {
+  color: #4d5962;
+  background: #eef3f6;
+  border-left-color: #71818d;
+}
+
+.receiver-health-timing {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-content: center;
+  gap: 7px 10px;
+  margin: 0;
+  padding: 10px 12px;
+  font-size: 12px;
+}
+
+.receiver-health-timing dt {
+  color: var(--muted);
+}
+
+.receiver-health-timing dd {
+  min-width: 0;
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.receiver-health-stale-notice {
+  grid-column: 1 / -1;
+  margin: 0;
+  border-width: 1px 0 0;
+}
+
+.receiver-health-loading-message,
+.receiver-health-empty {
+  padding: 16px 14px;
+  color: var(--muted);
+}
+
+.receiver-health-empty-healthy {
+  color: #075c3a;
+  background: #f1faf5;
+}
+
+.receiver-health-incident-list {
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  background: var(--surface-2);
+}
+
+.receiver-health-incident {
+  min-width: 0;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 5px solid var(--line-dark);
+  border-radius: 3px;
+}
+
+.receiver-health-incident.receiver-health-warning {
+  border-left-color: #c18113;
+}
+
+.receiver-health-incident.receiver-health-critical {
+  border-left-color: #b4233b;
+}
+
+.receiver-health-incident-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.receiver-health-incident-identity {
+  min-width: 0;
+}
+
+.receiver-health-incident-identity h3 {
+  margin: 0;
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+
+.receiver-health-incident-scope {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.receiver-health-severity {
+  flex: 0 0 auto;
+  font-weight: 700;
+}
+
+.receiver-health-severity.receiver-health-healthy {
+  color: #075c3a;
+  background: #e2f5eb;
+  border-color: #9acdb3;
+}
+
+.receiver-health-severity.receiver-health-warning {
+  color: #725000;
+  background: #fff1c7;
+  border-color: #d9bd68;
+}
+
+.receiver-health-severity.receiver-health-critical {
+  color: #8b1d2c;
+  background: #fff1f2;
+  border-color: #dbaab1;
+}
+
+.receiver-health-incident-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 5px 10px;
+  margin: 0;
+  padding: 10px 12px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.receiver-health-incident-facts dt {
+  color: var(--muted);
+}
+
+.receiver-health-incident-facts dd {
+  min-width: 0;
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.receiver-health-incident-guidance {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.receiver-health-guidance-item {
+  min-width: 0;
+  padding: 10px 12px;
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.receiver-health-guidance-item:nth-child(2n) {
+  border-right: 0;
+}
+
+.receiver-health-guidance-item:nth-last-child(-n + 2) {
+  border-bottom: 0;
+}
+
+.receiver-health-guidance-item h4 {
+  margin: 0 0 4px;
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.receiver-health-guidance-item p {
+  margin: 0;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.receiver-health-measurement-list {
+  min-width: 0;
+}
+
+.receiver-health-measurement-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(120px, 0.7fr) minmax(180px, 1fr) minmax(110px, 0.6fr) max-content minmax(220px, 1.5fr);
+  align-items: center;
+  gap: 10px;
+  padding: 9px 11px;
+  border-bottom: 1px solid var(--table-rule);
+  border-left: 4px solid transparent;
+}
+
+.receiver-health-measurement-row:last-child {
+  border-bottom: 0;
+}
+
+.receiver-health-measurement-row.receiver-health-warning {
+  background: #fffaf0;
+  border-left-color: #c18113;
+}
+
+.receiver-health-measurement-row.receiver-health-critical {
+  background: #fff6f7;
+  border-left-color: #b4233b;
+}
+
+.receiver-health-measurement-scope,
+.receiver-health-measurement-label,
+.receiver-health-measurement-detail {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.receiver-health-measurement-scope,
+.receiver-health-measurement-detail {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.receiver-health-measurement-label {
+  font-weight: 650;
+}
+
+.receiver-health-measurement-value {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.receiver-health-measurement-value strong {
+  font-size: 15px;
+}
+
+.receiver-health-measurement-value span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .admin-operation-status:not(:empty) {
   padding: 9px 10px;
   color: var(--muted);
@@ -3644,6 +3979,44 @@ th.numeric {
   color: #ffabb6;
   background: #412028;
   border-color: #86505a;
+}
+
+:root[data-theme="dark"] .receiver-health-overview-state.receiver-health-healthy,
+:root[data-theme="dark"] .receiver-health-severity.receiver-health-healthy,
+:root[data-theme="dark"] .receiver-health-empty-healthy {
+  color: #8ce1b4;
+  background: #153a2d;
+  border-color: #347858;
+}
+
+:root[data-theme="dark"] .receiver-health-overview-state.receiver-health-warning,
+:root[data-theme="dark"] .receiver-health-severity.receiver-health-warning {
+  color: #f1cb74;
+  background: #453612;
+  border-color: #8b6c2c;
+}
+
+:root[data-theme="dark"] .receiver-health-overview-state.receiver-health-critical,
+:root[data-theme="dark"] .receiver-health-severity.receiver-health-critical {
+  color: #ff9aa7;
+  background: #4a2028;
+  border-color: #98515d;
+}
+
+:root[data-theme="dark"] .receiver-health-overview-state.receiver-health-stale {
+  color: #bdc8d1;
+  background: #29343d;
+  border-color: #52616e;
+}
+
+:root[data-theme="dark"] .receiver-health-measurement-row.receiver-health-warning {
+  background: #2c281b;
+  border-left-color: #b98832;
+}
+
+:root[data-theme="dark"] .receiver-health-measurement-row.receiver-health-critical {
+  background: #2f2026;
+  border-left-color: #b85d6b;
 }
 
 :root[data-theme="dark"] .admin-operation-status.has-error {
@@ -4952,6 +5325,27 @@ body.mobile-listener-active {
   .admin-listener-status-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .receiver-health-overview {
+    grid-template-columns: minmax(180px, 0.7fr) minmax(360px, 1.3fr);
+  }
+
+  .receiver-health-overview > .summary-band {
+    border-right: 0;
+  }
+
+  .receiver-health-timing {
+    grid-column: 1 / -1;
+    border-top: 1px solid var(--line);
+  }
+
+  .receiver-health-measurement-row {
+    grid-template-columns: minmax(110px, 0.7fr) minmax(160px, 1fr) minmax(90px, 0.6fr) max-content;
+  }
+
+  .receiver-health-measurement-detail {
+    grid-column: 2 / -1;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -5124,6 +5518,41 @@ body.mobile-listener-active {
 
   .admin-listener-status-grid {
     grid-template-columns: 1fr;
+  }
+
+  .receiver-health-overview,
+  .receiver-health-incident-guidance {
+    grid-template-columns: 1fr;
+  }
+
+  .receiver-health-overview > .summary-band {
+    border-width: 1px 0 0;
+  }
+
+  .receiver-health-timing,
+  .receiver-health-stale-notice {
+    grid-column: 1;
+  }
+
+  .receiver-health-guidance-item,
+  .receiver-health-guidance-item:nth-child(2n),
+  .receiver-health-guidance-item:nth-last-child(-n + 2) {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .receiver-health-guidance-item:last-child {
+    border-bottom: 0;
+  }
+
+  .receiver-health-measurement-row {
+    grid-template-columns: minmax(0, 1fr) max-content;
+  }
+
+  .receiver-health-measurement-label,
+  .receiver-health-measurement-value,
+  .receiver-health-measurement-detail {
+    grid-column: 1 / -1;
   }
 
   .access-denied-card {

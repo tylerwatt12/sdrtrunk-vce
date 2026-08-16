@@ -441,6 +441,9 @@ class ChannelActivityModelTest
         assertEquals(100, row.getDecodeQuality().controlValidFrames());
         assertEquals(1, row.getDecodeQuality().controlInvalidFrames());
         assertEquals(3, row.getDecodeQuality().controlCorrectedBits());
+        assertEquals(999L, row.getDecodeQuality().controlLastValidDecodeMs());
+        assertEquals(999L, model.getSnapshotSet().tables().get(1).rows().getFirst()
+            .controlLastValidDecodeMs());
 
         run(model, () -> model.receiveControlChannelQuality(new ControlChannelQualitySnapshot(
             channel, channel.getRadresGuid(), 856_137_500L, 2_000L, false, -20.5, -21.0, -25.0, -18.0,
@@ -448,6 +451,8 @@ class ChannelActivityModelTest
         assertNull(row.getSignalDbfs());
         assertNull(row.getDecodeHealthPercent());
         assertEquals(0, row.getQualityObservedAt());
+        assertEquals(0, model.getSnapshotSet().tables().get(1).rows().getFirst()
+            .controlLastValidDecodeMs());
     }
 
     @Test
@@ -518,7 +523,7 @@ class ChannelActivityModelTest
         });
 
         ChannelActivityRow row = model.getConventionalTable().getRows().getFirst();
-        row.setControlQuality(-40.0d, 95.0d, 100, 1, 2, 0, 0, 2_000L);
+        row.setControlQuality(-40.0d, 95.0d, 100, 1, 2, 0, 0, 1_999L, 2_000L);
         assertEquals(currentCallId, row.getVoiceCallId());
         assertNotNull(row.getVoiceCallQuality());
 

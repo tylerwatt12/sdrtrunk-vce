@@ -22,6 +22,7 @@ import io.github.dsheirer.buffer.INativeBuffer;
 import io.github.dsheirer.buffer.INativeBufferProvider;
 import io.github.dsheirer.controller.channel.event.ChannelStopProcessingRequest;
 import io.github.dsheirer.dsp.filter.design.FilterDesignException;
+import io.github.dsheirer.dsp.filter.channelizer.output.ChannelOutputProcessor;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.log.LoggingSuppressor;
 import io.github.dsheirer.sample.Broadcaster;
@@ -42,6 +43,7 @@ import java.util.Map;
 import java.util.SortedSet;
 import java.util.TreeSet;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicLong;
 import org.apache.commons.math3.util.FastMath;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -76,14 +78,22 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
     private List<PolyphaseChannelSource> mChannelSources = new CopyOnWriteArrayList<>();
     private ChannelCalculator mChannelCalculator;
     private SynthesisFilterManager mFilterManager = new SynthesisFilterManager();
-    private ComplexPolyphaseChannelizerM2 mPolyphaseChannelizer;
+    private volatile ComplexPolyphaseChannelizerM2 mPolyphaseChannelizer;
     private ChannelSourceEventListener mChannelSourceEventListener = new ChannelSourceEventListener();
     private NativeBufferReceiver mNativeBufferReceiver = new NativeBufferReceiver();
     private NativeBufferProcessor mBufferProcessor;
     private final Object mChannelizerLock = new Object();
     private Map<Integer,float[]> mOutputProcessorFilters = new HashMap<>();
     private TunerController mTunerController;
-    private boolean mRunning = true;
+    private volatile boolean mRunning = true;
+    private final AtomicLong mRetiredChannelOutputDrops = new AtomicLong();
+    private final AtomicLong mChannelLifecycleVersion = new AtomicLong();
+    private final AtomicLong mLastStableChannelOutputDrops = new AtomicLong();
+    private final AtomicLong mRetiredIfftDrops = new AtomicLong();
+    private final AtomicLong mIfftLifecycleVersion = new AtomicLong();
+    private final AtomicLong mLastStableIfftDrops = new AtomicLong();
+    private volatile ComplexPolyphaseChannelizerM2.QueueStatus mLastStableIfftQueueStatus =
+        new ComplexPolyphaseChannelizerM2.QueueStatus(0, 0, 0, 0);
 
     /**
      * Creates a polyphase channel manager instance.
@@ -124,6 +134,20 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
     {
         this(tunerController, tunerController.getFrequency(), tunerController.getSampleRate());
         mTunerController = tunerController;
+    }
+
+    /** Creates a channelizer replacement.  Package visibility supports deterministic lifecycle regression tests. */
+    ComplexPolyphaseChannelizerM2 createChannelizer(double sampleRate) throws FilterDesignException
+    {
+        return new ComplexPolyphaseChannelizerM2(sampleRate, POLYPHASE_CHANNELIZER_TAPS_PER_CHANNEL);
+    }
+
+    /** Creates a tentative channel source before its shutdown-safe admission check. */
+    PolyphaseChannelSource createChannelSource(TunerChannel tunerChannel, String threadName)
+    {
+        return new PolyphaseChannelSource(tunerChannel, mChannelCalculator, mFilterManager,
+            mChannelSourceEventListener, threadName,
+            mTunerController != null ? mTunerController.getTunerFrequencyErrorManager() : null);
     }
 
     /**
@@ -167,20 +191,116 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
         NativeBufferProcessor.QueueStatus status = mBufferProcessor.status();
         return new NativeBufferQueueStatus(status.appliedDurationMilliseconds(),
             status.requestedDurationMilliseconds(), status.queuedSamples(), status.queuedMilliseconds(),
-            status.droppedBuffers(), status.droppedSamples(), status.droppedMilliseconds());
+            status.highWaterSamples(), status.highWaterMilliseconds(), status.droppedBuffers(),
+            status.droppedSamples(), status.droppedMilliseconds());
     }
 
     public record NativeBufferQueueStatus(long appliedDurationMilliseconds, long requestedDurationMilliseconds,
-                                          long queuedSamples, long queuedMilliseconds, long droppedBuffers,
+                                          long queuedSamples, long queuedMilliseconds, long highWaterSamples,
+                                          long highWaterMilliseconds, long droppedBuffers,
                                           long droppedSamples, long droppedMilliseconds)
+    {
+    }
+
+    /**
+     * Immutable, off-thread receiver pipeline snapshot.  The channel source list is copy-on-write and each queue
+     * exposes only atomic or volatile counters, so this never acquires a receiver-path lock.
+     */
+    public PipelineStatus getPipelineStatus()
+    {
+        ComplexPolyphaseChannelizerM2.QueueStatus ifft = getIfftQueueStatus();
+        List<ChannelQueueStatus> channels = List.of();
+        long channelDroppedBatches = mLastStableChannelOutputDrops.get();
+
+        for(int attempt = 0; attempt < 4; attempt++)
+        {
+            long before = mChannelLifecycleVersion.get();
+
+            if((before & 1L) != 0)
+            {
+                Thread.onSpinWait();
+                continue;
+            }
+
+            List<ChannelQueueStatus> candidate = mChannelSources.stream().map(source ->
+            {
+                ChannelOutputProcessor.QueueStatus queue = source.getOutputQueueStatus();
+                return new ChannelQueueStatus(source.getFrequency(), queue.queuedBatches(), queue.highWaterBatches(),
+                    queue.capacityBatches(), queue.droppedBatches());
+            }).toList();
+            long retired = mRetiredChannelOutputDrops.get();
+            long after = mChannelLifecycleVersion.get();
+
+            if(before == after && (after & 1L) == 0)
+            {
+                channels = candidate;
+                long stableTotal = retired + candidate.stream().mapToLong(ChannelQueueStatus::droppedBatches).sum();
+                channelDroppedBatches = mLastStableChannelOutputDrops.accumulateAndGet(stableTotal, Math::max);
+                break;
+            }
+        }
+
+        return new PipelineStatus(ifft.queuedBatches(), ifft.highWaterBatches(), ifft.capacityBatches(),
+            ifft.droppedBatches(), channelDroppedBatches, channels);
+    }
+
+    /** Returns a monotonic IFFT overflow total without locking the receiver or channelizer lifecycle. */
+    private ComplexPolyphaseChannelizerM2.QueueStatus getIfftQueueStatus()
+    {
+        for(int attempt = 0; attempt < 4; attempt++)
+        {
+            long before = mIfftLifecycleVersion.get();
+
+            if((before & 1L) != 0)
+            {
+                Thread.onSpinWait();
+                continue;
+            }
+
+            ComplexPolyphaseChannelizerM2 channelizer = mPolyphaseChannelizer;
+            long retired = mRetiredIfftDrops.get();
+            ComplexPolyphaseChannelizerM2.QueueStatus current = channelizer != null ? channelizer.getQueueStatus() :
+                new ComplexPolyphaseChannelizerM2.QueueStatus(0, 0, 0, 0);
+            long after = mIfftLifecycleVersion.get();
+
+            if(before == after && (after & 1L) == 0)
+            {
+                long drops = mLastStableIfftDrops.accumulateAndGet(retired + current.droppedBatches(), Math::max);
+                ComplexPolyphaseChannelizerM2.QueueStatus stable = new ComplexPolyphaseChannelizerM2.QueueStatus(
+                    current.queuedBatches(), current.highWaterBatches(), current.capacityBatches(), drops);
+                mLastStableIfftQueueStatus = stable;
+                return stable;
+            }
+        }
+
+        ComplexPolyphaseChannelizerM2.QueueStatus cached = mLastStableIfftQueueStatus;
+        long drops = mLastStableIfftDrops.get();
+        return cached.droppedBatches() >= drops ? cached : new ComplexPolyphaseChannelizerM2.QueueStatus(
+            cached.queuedBatches(), cached.highWaterBatches(), cached.capacityBatches(), drops);
+    }
+
+    public record PipelineStatus(int ifftQueuedBatches, int ifftHighWaterBatches, int ifftCapacityBatches,
+                                 long ifftDroppedBatches, long channelDroppedBatches,
+                                 List<ChannelQueueStatus> channels)
+    {
+    }
+
+    public record ChannelQueueStatus(long frequencyHz, int queuedBatches, int highWaterBatches,
+                                     int capacityBatches, long droppedBatches)
     {
     }
 
     public void stopAllChannels()
     {
-        mRunning = false;
+        List<TunerChannelSource> toStop;
 
-        List<TunerChannelSource> toStop = new ArrayList<>(mChannelSources);
+        synchronized(mChannelizerLock)
+        {
+            //Close channel admission before taking the stop snapshot.  getChannel() performs its final admission
+            //check under this same lock, so a source is either included here or rejected and disposed there.
+            mRunning = false;
+            toStop = new ArrayList<>(mChannelSources);
+        }
 
         for(TunerChannelSource tunerChannelSource: toStop)
         {
@@ -239,11 +359,20 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
         {
             try
             {
-                channelSource = new PolyphaseChannelSource(tunerChannel, mChannelCalculator, mFilterManager,
-                        mChannelSourceEventListener, threadName,
-                        mTunerController != null ? mTunerController.getTunerFrequencyErrorManager() : null);
+                channelSource = createChannelSource(tunerChannel, threadName);
 
-                mChannelSources.add(channelSource);
+                synchronized(mChannelizerLock)
+                {
+                    if(mRunning)
+                    {
+                        mChannelSources.add(channelSource);
+                    }
+                    else
+                    {
+                        channelSource.dispose();
+                        channelSource = null;
+                    }
+                }
             }
             catch(IllegalArgumentException iae)
             {
@@ -263,25 +392,44 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
      */
     private void stopChannelSource(PolyphaseChannelSource channelSource)
     {
+        channelSource.stopOutputProcessorForRemoval();
+        int channelCount;
+
         synchronized(mChannelizerLock)
         {
-            mChannelSources.remove(channelSource);
+            mChannelLifecycleVersion.incrementAndGet();
 
-            if(mPolyphaseChannelizer != null)
+            try
             {
-                mPolyphaseChannelizer.removeChannel(channelSource);
+                if(mChannelSources.remove(channelSource))
+                {
+                    mRetiredChannelOutputDrops.addAndGet(channelSource.getDroppedBatchCount());
+                }
+
+                if(mPolyphaseChannelizer != null)
+                {
+                    mPolyphaseChannelizer.removeChannel(channelSource);
+                }
+
+                channelCount = getTunerChannelCount();
+
+                //If this is the last/only channel, deregister to stop the sample buffers
+                if(mPolyphaseChannelizer != null && mPolyphaseChannelizer.getRegisteredChannelCount() == 0)
+                {
+                    mNativeBufferProvider.removeBufferListener(mBufferProcessor);
+                    mBufferProcessor.stop();
+                    mPolyphaseChannelizer.stop();
+                }
             }
-
-            mSourceEventBroadcaster.broadcast(SourceEvent.channelCountChange(getTunerChannelCount()));
-
-            //If this is the last/only channel, deregister to stop the sample buffers
-            if(mPolyphaseChannelizer != null && mPolyphaseChannelizer.getRegisteredChannelCount() == 0)
+            finally
             {
-                mNativeBufferProvider.removeBufferListener(mBufferProcessor);
-                mBufferProcessor.stop();
-                mPolyphaseChannelizer.stop();
+                mChannelLifecycleVersion.incrementAndGet();
             }
         }
+
+        //Listener callbacks can acquire the tuner controller lock.  Broadcast only after releasing the channelizer
+        //lock so channel allocation (tuner -> channelizer) and removal can never deadlock in opposite lock order.
+        mSourceEventBroadcaster.broadcast(SourceEvent.channelCountChange(channelCount));
 
         try
         {
@@ -387,7 +535,7 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
          * Sample rate source events will normally arrive via the incoming complex buffer stream from the mBufferProcessor
          * and will be handled as they arrive.
          */
-        private void checkChannelizerConfiguration()
+        private boolean checkChannelizerConfiguration()
         {
             //Channel calculator is always in sync with the tuner's current sample rate
             double tunerSampleRate = mChannelCalculator.getSampleRate();
@@ -403,23 +551,44 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
                         mPolyphaseChannelizer.getRegisteredChannelCount());
                 }
 
+                mIfftLifecycleVersion.incrementAndGet();
+
                 try
                 {
-                    mPolyphaseChannelizer = new ComplexPolyphaseChannelizerM2(tunerSampleRate,
-                        POLYPHASE_CHANNELIZER_TAPS_PER_CHANNEL);
+                    ComplexPolyphaseChannelizerM2 previous = mPolyphaseChannelizer;
+                    ComplexPolyphaseChannelizerM2 replacement =
+                        PolyphaseChannelManager.this.createChannelizer(tunerSampleRate);
+
+                    if(previous != null)
+                    {
+                        previous.stop();
+                        mRetiredIfftDrops.addAndGet(previous.getDroppedBatchCount());
+                    }
+
+                    //Publish the complete replacement once so an in-flight native buffer can never observe null or
+                    //switch channelizers midway through its iterator.
+                    mPolyphaseChannelizer = replacement;
+                    //Clear previous channel synthesis filters only after a replacement was successfully published.
+                    mOutputProcessorFilters.clear();
                 }
                 catch(IllegalArgumentException iae)
                 {
                     mLog.error("Could not create polyphase channelizer for sample rate [" + tunerSampleRate + "]", iae);
+                    return false;
                 }
                 catch(FilterDesignException fde)
                 {
                     mLog.error("Could not create filter for polyphase channelizer for sample rate [" + tunerSampleRate + "]", fde);
+                    return false;
                 }
-
-                //Clear any previous channel synthesis filters so they can be recreated for the new channel sample rate
-                mOutputProcessorFilters.clear();
+                finally
+                {
+                    mIfftLifecycleVersion.incrementAndGet();
+                }
             }
+
+            return mPolyphaseChannelizer != null &&
+                FastMath.abs(mPolyphaseChannelizer.getSampleRate() - tunerSampleRate) <= 0.5;
         }
 
         /**
@@ -430,13 +599,29 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
          */
         private void startChannelSource(PolyphaseChannelSource channelSource)
         {
+            int channelCount;
+
             synchronized(mChannelizerLock)
             {
+                //Start and stop requests can cross while a one-shot source is being removed.  Never register a stale
+                //source that has already been retired from this manager or has entered terminal shutdown.
+                if(!mRunning || !mChannelSources.contains(channelSource) || channelSource.isOutputProcessorStopping())
+                {
+                    return;
+                }
+
                 //Note: the polyphase channel source has already been added to the mChannelSources in getChannel() method
-                checkChannelizerConfiguration();
+                if(!checkChannelizerConfiguration())
+                {
+                    //Mark this one-shot source terminal before returning to PolyphaseChannelSource.start().  Its
+                    //post-start check then issues the normal stop request, which removes/disposes the source and also
+                    //stops its per-channel frequency-error manager without ever starting the output processor.
+                    channelSource.stopOutputProcessorForRemoval();
+                    return;
+                }
 
                 mPolyphaseChannelizer.addChannel(channelSource);
-                mSourceEventBroadcaster.broadcast(SourceEvent.channelCountChange(getTunerChannelCount()));
+                channelCount = getTunerChannelCount();
 
                 //If this is the first channel, register to start the sample buffers flowing
                 if(mPolyphaseChannelizer.getRegisteredChannelCount() == 1)
@@ -446,6 +631,10 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
                     mNativeBufferProvider.addBufferListener(mBufferProcessor);
                 }
             }
+
+            //Keep external listener work outside mChannelizerLock.  Source allocation callers can already hold the
+            //tuner controller lock, so invoking a listener here while locked would recreate the reverse lock order.
+            mSourceEventBroadcaster.broadcast(SourceEvent.channelCountChange(channelCount));
         }
 
         @Override
@@ -554,15 +743,25 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
                 mOutputProcessorUpdateRequired = false;
             }
 
-            if(mPolyphaseChannelizer != null)
+            ComplexPolyphaseChannelizerM2 channelizer = mPolyphaseChannelizer;
+            long generation = mIfftLifecycleVersion.get();
+
+            if(channelizer != null && (generation & 1L) == 0)
             {
                 Iterator<InterleavedComplexSamples> iterator = nativeBuffer.iteratorInterleaved();
 
                 while(iterator.hasNext())
                 {
+                    if(mIfftLifecycleVersion.get() != generation || mPolyphaseChannelizer != channelizer)
+                    {
+                        //A sample-rate replacement occurred during this native buffer.  Do not feed its tail into a
+                        //different channelizer generation; the old stopped dispatcher safely recycles any late batch.
+                        break;
+                    }
+
                     try
                     {
-                        mPolyphaseChannelizer.receive(iterator.next());
+                        channelizer.receive(iterator.next());
                     }
                     catch(Exception exception)
                     {

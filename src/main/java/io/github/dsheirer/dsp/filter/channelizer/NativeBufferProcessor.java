@@ -53,6 +53,7 @@ class NativeBufferProcessor implements Listener<INativeBuffer>
     private volatile double mSampleRate;
     private volatile long mMaximumQueuedSampleCount;
     private volatile long mQueuedSampleCount;
+    private volatile long mHighWaterQueuedSampleCount;
     private volatile long mDroppedBufferCount;
     private volatile long mDroppedSampleCount;
     private volatile long mDroppedDurationNanoseconds;
@@ -182,6 +183,9 @@ class NativeBufferProcessor implements Listener<INativeBuffer>
             mMaximumQueuedSampleCount = calculateMaximumQueuedSampleCount(sampleRate);
             mUnconfiguredSampleRateWarningLogged.set(false);
             overflow = trimQueue();
+            //A sample count has a different duration after a rate change, so begin a new high-water epoch instead of
+            //reinterpreting the historical sample-count peak using the new rate.
+            mHighWaterQueuedSampleCount = mQueuedSampleCount;
         }
         finally
         {
@@ -238,6 +242,12 @@ class NativeBufferProcessor implements Listener<INativeBuffer>
 
             mQueue.addLast(nativeBuffer);
             mQueuedSampleCount += getSampleCount(nativeBuffer);
+
+            if(mQueuedSampleCount > mHighWaterQueuedSampleCount)
+            {
+                mHighWaterQueuedSampleCount = mQueuedSampleCount;
+            }
+
             overflow = trimQueue();
 
             if(!mProcessingScheduled)
@@ -390,7 +400,8 @@ class NativeBufferProcessor implements Listener<INativeBuffer>
         double sampleRate = mSampleRate;
         return new QueueStatus(mMaximumQueueDurationMilliseconds,
             mRequestedMaximumQueueDurationMilliseconds.get(), mQueuedSampleCount,
-            toMilliseconds(mQueuedSampleCount, sampleRate), mDroppedBufferCount, mDroppedSampleCount,
+            toMilliseconds(mQueuedSampleCount, sampleRate), mHighWaterQueuedSampleCount,
+            toMilliseconds(mHighWaterQueuedSampleCount, sampleRate), mDroppedBufferCount, mDroppedSampleCount,
             toMilliseconds(mDroppedDurationNanoseconds));
     }
 
@@ -537,7 +548,8 @@ class NativeBufferProcessor implements Listener<INativeBuffer>
     }
 
     record QueueStatus(long appliedDurationMilliseconds, long requestedDurationMilliseconds,
-                       long queuedSamples, long queuedMilliseconds, long droppedBuffers,
+                       long queuedSamples, long queuedMilliseconds, long highWaterSamples,
+                       long highWaterMilliseconds, long droppedBuffers,
                        long droppedSamples, long droppedMilliseconds)
     {
     }

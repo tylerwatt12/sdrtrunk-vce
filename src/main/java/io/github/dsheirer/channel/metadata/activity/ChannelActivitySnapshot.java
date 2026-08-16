@@ -63,7 +63,8 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
                       String lcn, long frequencyHz, String callsign,
                       Double signalDbfs, Double decodeHealthPercent, long qualityObservedAtMs,
                       long controlValidFrames, long controlInvalidFrames, long controlCorrectedBits,
-                      long controlSyncLossBits, long controlDroppedBits, VoiceCallQuality voiceQuality,
+                      long controlSyncLossBits, long controlDroppedBits, long controlLastValidDecodeMs,
+                      VoiceCallQuality voiceQuality,
                       Integer timeslot, String sourceId, String sourceForm, String sourceAlias, String talkerAlias,
                       String sourceAliasDisplay, String targetId, String targetForm, String targetAlias, String decoder,
                       String encryptionDetails)
@@ -82,6 +83,7 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
                 quality != null ? quality.controlCorrectedBits() : 0,
                 quality != null ? quality.controlSyncLossBits() : 0,
                 quality != null ? quality.controlDroppedBits() : 0,
+                quality != null ? quality.controlLastValidDecodeMs() : 0,
                 row.getVoiceCallQuality(), row.getTimeslot(),
                 value(row.getSource()), form(row.getSource()), aliases(row.getSourceAliases()),
                 value(row.getTalkerAlias()), row.getSourceAliasDisplay(), value(row.getTarget()),

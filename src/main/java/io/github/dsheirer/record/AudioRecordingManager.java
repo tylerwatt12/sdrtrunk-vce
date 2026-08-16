@@ -271,8 +271,8 @@ public class AudioRecordingManager
     public RecordingQueueStatus getQueueStatus()
     {
         return new RecordingQueueStatus(mCompletedAudioCallQueue.size(), mQueuedSourceBytes.get(),
-            mDroppedRecordings.get(), mAcceptingCalls, mProcessingLock.isLocked(),
-            mProcessingLock.getQueueLength());
+            MAXIMUM_QUEUED_CALLS, MAXIMUM_QUEUED_SOURCE_BYTES, mDroppedRecordings.get(), mAcceptingCalls,
+            mProcessingLock.isLocked(), mProcessingLock.getQueueLength());
     }
 
     private void dropRecording(String reason)
@@ -527,7 +527,8 @@ public class AudioRecordingManager
         }
     }
 
-    public record RecordingQueueStatus(int queuedCalls, long queuedSourceBytes, long droppedRecordings,
+    public record RecordingQueueStatus(int queuedCalls, long queuedSourceBytes, int maximumQueuedCalls,
+                                       long maximumQueuedSourceBytes, long droppedRecordings,
                                        boolean acceptingCalls, boolean writerActive, int waitingDrains)
     {
     }

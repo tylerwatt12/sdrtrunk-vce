@@ -264,6 +264,7 @@ class StatsApiV1HttpContractTest
             Map.entry("CONVENTIONAL_CONTEXTS", "/api/v1/conventional-contexts"),
             Map.entry("EXPORTS", "/api/v1/exports"),
             Map.entry("TUNER_DIAGNOSTICS", "/api/v1/diagnostics/tuners"),
+            Map.entry("RECEIVER_HEALTH", "/api/v1/receiver-health"),
             Map.entry("LIVE_MULTIPLEX", "/api/v1/live/multiplex"),
             Map.entry("LIVE_MULTIPLEX_CONTROL", "/api/v1/live/multiplex/control"),
             Map.entry("CALLS", "/api/v1/calls")

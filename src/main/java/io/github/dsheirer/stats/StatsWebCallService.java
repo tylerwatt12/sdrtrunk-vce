@@ -347,6 +347,25 @@ final class StatsWebCallService implements AutoCloseable
         return Map.copyOf(status);
     }
 
+    /**
+     * Lightweight observer counters for the receiver-health sampler.  This deliberately avoids cache eviction and
+     * cache-map inspection performed by the full public status projection.
+     */
+    Map<String,Object> observerStatus()
+    {
+        return Map.ofEntries(
+            Map.entry("active_listeners", mEventHub.subscriberCount()),
+            Map.entry("active_audio_responses", mActiveAudioResponses.get()),
+            Map.entry("rejected_audio_responses", mRejectedAudioResponses.get()),
+            Map.entry("pending_audio_bytes", mPendingAudioBytes.get()),
+            Map.entry("encoder_queue_depth", mEncoderExecutor.getQueue().size()),
+            Map.entry("published_calls", mPublishedCalls.get()),
+            Map.entry("dropped_pending_capacity", mDroppedPendingCapacity.get()),
+            Map.entry("dropped_encoder_capacity", mDroppedEncoderCapacity.get()),
+            Map.entry("dropped_sse_events", mEventHub.droppedEvents()),
+            Map.entry("rejected_listeners", mEventHub.rejectedSubscriptions()));
+    }
+
     private boolean reservePendingAudio(int waveLength)
     {
         long current;

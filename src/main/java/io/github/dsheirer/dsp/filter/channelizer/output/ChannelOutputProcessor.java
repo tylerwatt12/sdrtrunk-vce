@@ -96,6 +96,21 @@ public abstract class ChannelOutputProcessor implements IPolyphaseChannelOutputP
         return mInputChannelCount;
     }
 
+    @Override
+    public QueueStatus getQueueStatus()
+    {
+        return new QueueStatus(mChannelResultsDispatcher.getQueueSize(),
+            mChannelResultsDispatcher.getHighWaterQueueSize(),
+            mChannelResultsDispatcher.getMaximumQueueSize(),
+            mChannelResultsDispatcher.getDroppedElementCount());
+    }
+
+    @Override
+    public long getDroppedBatchCount()
+    {
+        return mChannelResultsDispatcher.getDroppedElementCount();
+    }
+
     public void dispose()
     {
     }
@@ -123,5 +138,9 @@ public abstract class ChannelOutputProcessor implements IPolyphaseChannelOutputP
     public int getInputChannelCount()
     {
         return getPolyphaseChannelIndexCount();
+    }
+
+    public record QueueStatus(int queuedBatches, int highWaterBatches, int capacityBatches, long droppedBatches)
+    {
     }
 }

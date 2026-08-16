@@ -249,6 +249,8 @@ public class SDRTrunk
         mControlChannelQualityRegistry = new ControlChannelQualityRegistry();
         mAudioCallCoordinator = new AudioCallCoordinator(mUserPreferences, mAudioRecordingManager,
             mAudioStreamingManager, mStatsWebServerService::receive, DuplicateCallPriorityProvider.NONE);
+        mStatsWebServerService.setReceiverHealthOutputSources(mAudioCallCoordinator, mAudioRecordingManager,
+            mAudioStreamingManager);
 
         mConfigurationManager.getChannelProcessingManager().addAudioCallListener(mAudioCallCoordinator);
         mConfigurationManager.getChannelProcessingManager().addChannelDecodeEventListener(

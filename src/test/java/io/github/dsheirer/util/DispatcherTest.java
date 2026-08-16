@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -65,6 +66,8 @@ public class DispatcherTest
 
             assertEquals(List.of(1), discarded);
             assertEquals(2, dispatcher.getQueueSize());
+            assertEquals(2, dispatcher.getHighWaterQueueSize());
+            assertEquals(2, dispatcher.getMaximumQueueSize());
             assertEquals(1, dispatcher.getDroppedElementCount());
 
             releaseFirst.countDown();
@@ -134,5 +137,121 @@ public class DispatcherTest
 
         assertEquals(List.of(1), discarded);
         assertEquals(0, dispatcher.getQueueSize());
+    }
+
+    @Test
+    public void restartNeverRunsTwoConsumerGenerationsConcurrently() throws Exception
+    {
+        Dispatcher<Integer> dispatcher = new Dispatcher<>("dispatcher restart isolation test", 1,
+            Dispatcher.ExecutorType.PRIVATE, 4, ignored -> {});
+        CountDownLatch firstEntered = new CountDownLatch(1);
+        CountDownLatch releaseFirst = new CountDownLatch(1);
+        CountDownLatch secondProcessed = new CountDownLatch(1);
+        AtomicInteger active = new AtomicInteger();
+        AtomicInteger maximumActive = new AtomicInteger();
+        dispatcher.setListener(value -> {
+            int concurrent = active.incrementAndGet();
+            maximumActive.accumulateAndGet(concurrent, Math::max);
+
+            try
+            {
+                if(value == 1)
+                {
+                    firstEntered.countDown();
+                    releaseFirst.await(5, TimeUnit.SECONDS);
+                }
+                else
+                {
+                    secondProcessed.countDown();
+                }
+            }
+            catch(InterruptedException exception)
+            {
+                Thread.currentThread().interrupt();
+            }
+            finally
+            {
+                active.decrementAndGet();
+            }
+        });
+
+        try
+        {
+            dispatcher.start();
+            dispatcher.receive(1);
+            assertTrue(firstEntered.await(5, TimeUnit.SECONDS));
+            dispatcher.stop();
+            dispatcher.start();
+            dispatcher.receive(2);
+            Thread.sleep(50);
+            assertEquals(1, maximumActive.get(), "a restarted generation must not overlap the prior callback");
+            releaseFirst.countDown();
+            assertTrue(secondProcessed.await(5, TimeUnit.SECONDS));
+            assertEquals(1, maximumActive.get());
+        }
+        finally
+        {
+            releaseFirst.countDown();
+            dispatcher.stop();
+        }
+    }
+
+    @Test
+    public void flushWaitsForTheActiveConsumerBeforeDeliveringQueuedElements() throws Exception
+    {
+        Dispatcher<Integer> dispatcher = new Dispatcher<>("dispatcher serialized flush test", 1,
+            Dispatcher.ExecutorType.PRIVATE, 4, ignored -> {});
+        CountDownLatch firstEntered = new CountDownLatch(1);
+        CountDownLatch releaseFirst = new CountDownLatch(1);
+        CountDownLatch secondProcessed = new CountDownLatch(1);
+        AtomicInteger active = new AtomicInteger();
+        AtomicInteger maximumActive = new AtomicInteger();
+        dispatcher.setListener(value -> {
+            maximumActive.accumulateAndGet(active.incrementAndGet(), Math::max);
+
+            try
+            {
+                if(value == 1)
+                {
+                    firstEntered.countDown();
+                    releaseFirst.await(5, TimeUnit.SECONDS);
+                }
+                else
+                {
+                    secondProcessed.countDown();
+                }
+            }
+            catch(InterruptedException exception)
+            {
+                Thread.currentThread().interrupt();
+            }
+            finally
+            {
+                active.decrementAndGet();
+            }
+        });
+        Thread flusher = new Thread(dispatcher::flushAndStop, "dispatcher flush race");
+
+        try
+        {
+            dispatcher.start();
+            dispatcher.receive(1);
+            assertTrue(firstEntered.await(5, TimeUnit.SECONDS));
+            dispatcher.receive(2);
+            flusher.start();
+            Thread.sleep(50);
+            assertEquals(1, maximumActive.get());
+            assertEquals(1, secondProcessed.getCount(), "flush must wait instead of invoking the listener concurrently");
+            releaseFirst.countDown();
+            flusher.join(TimeUnit.SECONDS.toMillis(5));
+            assertTrue(secondProcessed.await(5, TimeUnit.SECONDS));
+            assertEquals(1, maximumActive.get());
+        }
+        finally
+        {
+            releaseFirst.countDown();
+            flusher.join(TimeUnit.SECONDS.toMillis(5));
+            dispatcher.stop();
+        }
     }
 }

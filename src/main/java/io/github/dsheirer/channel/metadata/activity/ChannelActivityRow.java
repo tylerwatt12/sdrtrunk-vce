@@ -80,6 +80,7 @@ public class ChannelActivityRow
     private long mControlCorrectedBits;
     private long mControlSyncLossBits;
     private long mControlDroppedBits;
+    private long mControlLastValidDecodeMs;
     private AudioCallId mVoiceCallId;
     private VoiceCallQuality mVoiceCallQuality;
     private long mQualityObservedAt;
@@ -391,7 +392,7 @@ public class ChannelActivityRow
     {
         ChannelActivityDecodeQuality quality = new ChannelActivityDecodeQuality(mDecodeHealthPercent,
             mControlValidFrames, mControlInvalidFrames, mControlCorrectedBits, mControlSyncLossBits,
-            mControlDroppedBits, mVoiceCallQuality);
+            mControlDroppedBits, mControlLastValidDecodeMs, mVoiceCallQuality);
         return quality.hasControl() || quality.hasVoice() ? quality : null;
     }
 
@@ -407,7 +408,7 @@ public class ChannelActivityRow
 
     public void setControlQuality(Double signalDbfs, Double decodeHealthPercent, long validFrames,
                                   long invalidFrames, long correctedBits, long syncLossBits, long droppedBits,
-                                  long observedAt)
+                                  long lastValidDecodeMs, long observedAt)
     {
         mSignalDbfs = signalDbfs;
         mDecodeHealthPercent = decodeHealthPercent;
@@ -416,6 +417,7 @@ public class ChannelActivityRow
         mControlCorrectedBits = Math.max(0, correctedBits);
         mControlSyncLossBits = Math.max(0, syncLossBits);
         mControlDroppedBits = Math.max(0, droppedBits);
+        mControlLastValidDecodeMs = Math.max(0, lastValidDecodeMs);
         mQualityObservedAt = observedAt;
     }
 
@@ -428,6 +430,7 @@ public class ChannelActivityRow
         mControlCorrectedBits = 0;
         mControlSyncLossBits = 0;
         mControlDroppedBits = 0;
+        mControlLastValidDecodeMs = 0;
         mQualityObservedAt = 0;
     }
 
@@ -495,6 +498,7 @@ public class ChannelActivityRow
         copy.mControlCorrectedBits = mControlCorrectedBits;
         copy.mControlSyncLossBits = mControlSyncLossBits;
         copy.mControlDroppedBits = mControlDroppedBits;
+        copy.mControlLastValidDecodeMs = mControlLastValidDecodeMs;
         copy.mVoiceCallId = mVoiceCallId;
         copy.mVoiceCallQuality = mVoiceCallQuality;
         copy.mQualityObservedAt = mQualityObservedAt;

@@ -58,7 +58,7 @@ class StatsLiveServiceBoundsTest
         StatsLiveService service = new StatsLiveService(null, null);
         ChannelActivitySnapshot.Row row = new ChannelActivitySnapshot.Row("row", "Dispatch", null, "CALL",
             List.of("VOICE"), "0-101", 851_012_500L, "WPFF205", -22.5, null, 0L, 0L, 0L, 0L, 0L,
-            0L, null, 2, "1201", "RADIO", "Engine 1", "Portable 12", "Engine 1 · TA: Portable 12",
+            0L, 0L, null, 2, "1201", "RADIO", "Engine 1", "Portable 12", "Engine 1 · TA: Portable 12",
             "4400", "TALKGROUP", "Fire Dispatch", "P25_PHASE1", null);
         ChannelActivitySnapshot snapshot = new ChannelActivitySnapshot("site", "Live", "County", "Downtown",
             "Primary", null, null, true,
@@ -178,7 +178,7 @@ class StatsLiveServiceBoundsTest
     private static ChannelActivitySnapshot.Row activityRow(String key)
     {
         return new ChannelActivitySnapshot.Row(key, "Control", null, "ACTIVE", List.of("CONTROL"), "1",
-            451_000_000L, null, -25.5, 98.0, 1_000L, 1L, 0L, 0L, 0L, 0L, null, null, null,
+            451_000_000L, null, -25.5, 98.0, 1_000L, 1L, 0L, 0L, 0L, 0L, 1_000L, null, null, null,
             null, null, null, null, null, null, null, "DMR", null);
     }
 

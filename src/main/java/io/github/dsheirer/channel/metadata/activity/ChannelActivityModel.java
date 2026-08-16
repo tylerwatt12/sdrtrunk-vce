@@ -484,7 +484,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
             {
                 row.setControlQuality(snapshot.signalDbfs(), snapshot.decodeHealthPercent(), snapshot.validFrames(),
                     snapshot.invalidFrames(), snapshot.correctedBits(), snapshot.syncLossBits(), snapshot.droppedBits(),
-                    snapshot.observedAtMs());
+                    snapshot.lastValidDecodeMs(), snapshot.observedAtMs());
             }
             else
             {

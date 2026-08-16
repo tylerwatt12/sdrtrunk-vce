@@ -97,6 +97,8 @@ public class NativeBufferProcessorTest
             assertTrue(processor.getQueuedSampleCount() <= processor.getMaximumQueuedSampleCount(), profile.name());
             assertEquals(3, processor.getDroppedBufferCount(), profile.name());
             assertEquals(3L * profile.bufferSamples(), processor.getDroppedSampleCount(), profile.name());
+            assertTrue(processor.status().highWaterSamples() >= processor.status().queuedSamples(), profile.name());
+            assertTrue(processor.status().highWaterMilliseconds() > 0, profile.name());
 
             releaseFirstBuffer.countDown();
             assertTrue(retainedBuffersProcessed.await(5, TimeUnit.SECONDS), profile.name());
@@ -319,6 +321,55 @@ public class NativeBufferProcessorTest
             releaseFirstBuffer.countDown();
             assertTrue(oversizedBufferProcessed.await(2, TimeUnit.SECONDS));
             assertEquals(List.of(-1, 2), received);
+        }
+        finally
+        {
+            releaseFirstBuffer.countDown();
+            processor.dispose();
+            assertTrue(processor.awaitTermination(5, TimeUnit.SECONDS));
+        }
+    }
+
+    @Test
+    public void startsANewLatencyHighWaterEpochWhenSampleRateChanges() throws Exception
+    {
+        CountDownLatch firstBufferStarted = new CountDownLatch(1);
+        CountDownLatch releaseFirstBuffer = new CountDownLatch(1);
+        CountDownLatch queuedBufferProcessed = new CountDownLatch(1);
+        NativeBufferProcessor processor = new NativeBufferProcessor("sample-rate high water", 10_000_000,
+            MAXIMUM_QUEUE_DURATION_MILLISECONDS, buffer ->
+            {
+                if(((TestNativeBuffer)buffer).id() == -1)
+                {
+                    firstBufferStarted.countDown();
+
+                    try
+                    {
+                        releaseFirstBuffer.await(5, TimeUnit.SECONDS);
+                    }
+                    catch(InterruptedException interruptedException)
+                    {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+                else
+                {
+                    queuedBufferProcessed.countDown();
+                }
+            });
+
+        try
+        {
+            processor.start();
+            processor.receive(new TestNativeBuffer(-1, 1));
+            assertTrue(firstBufferStarted.await(2, TimeUnit.SECONDS));
+            processor.receive(new TestNativeBuffer(1, 500_000));
+            assertEquals(50, processor.status().highWaterMilliseconds());
+            releaseFirstBuffer.countDown();
+            assertTrue(queuedBufferProcessed.await(2, TimeUnit.SECONDS));
+            processor.setSampleRate(2_400_000);
+            assertEquals(0, processor.status().highWaterSamples());
+            assertEquals(0, processor.status().highWaterMilliseconds());
         }
         finally
         {

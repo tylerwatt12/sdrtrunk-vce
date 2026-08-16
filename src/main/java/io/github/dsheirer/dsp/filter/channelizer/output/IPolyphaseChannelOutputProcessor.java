@@ -75,6 +75,14 @@ public interface IPolyphaseChannelOutputProcessor
     int getPolyphaseChannelIndexCount();
 
     /**
+     * Read-only bounded-dispatch measurements for receiver health diagnostics.
+     */
+    ChannelOutputProcessor.QueueStatus getQueueStatus();
+
+    /** Cumulative queue-overflow count without allocating a diagnostic snapshot. */
+    long getDroppedBatchCount();
+
+    /**
      * Updates the synthesis filter taps for this output processor
      * @param filter for the output processor
      */

@@ -55,6 +55,7 @@ public abstract class USBTunerController extends TunerController
     private static final int USB_INTERFACE = 0x0;  //Common value for all currently supported devices
     private static final int USB_CONFIGURATION = 0x1;  //Common value for all currently supported devices
     private static final int USB_BULK_TRANSFER_BUFFER_POOL_SIZE = 8;
+    private static final long USB_TRANSFER_LONG_GAP_MILLISECONDS = 200L;
     protected static final byte USB_BULK_TRANSFER_ENDPOINT = (byte) 0x81;
     private static final long USB_BULK_TRANSFER_TIMEOUT_MS = 2000l;
     private static final long USB_EVENT_STOP_TIMEOUT_MS = 500;
@@ -70,6 +71,7 @@ public abstract class USBTunerController extends TunerController
     private DeviceDescriptor mDeviceDescriptor;
     private TransferManager mTransferManager = new TransferManager();
     private UsbEventProcessor mEventProcessor = new UsbEventProcessor();
+    private final UsbTransferHealth mUsbTransferHealth = new UsbTransferHealth();
     private AtomicBoolean mStreaming = new AtomicBoolean();
     private AtomicBoolean mStopping = new AtomicBoolean();
     private volatile boolean mRunning = false;
@@ -127,6 +129,15 @@ public abstract class USBTunerController extends TunerController
     protected abstract int getTransferBufferSize();
 
     /**
+     * Immutable snapshot of USB sample-transfer measurements for this tuner.  The cumulative byte and transfer
+     * counters give an off-thread sampler enough information to calculate delivered throughput between snapshots.
+     */
+    public UsbTransferHealthSnapshot getUsbTransferHealthSnapshot()
+    {
+        return mUsbTransferHealth.snapshot();
+    }
+
+    /**
      * Sub-class method to perform additional device setup steps after the USB interface has been claimed and before any
      * transfer operations start.
      * @throws SourceException if there is an issue in configuring the device
@@ -166,6 +177,17 @@ public abstract class USBTunerController extends TunerController
         if(mDevice == null)
         {
             throw new SourceException("Couldn't find USB device at bus [" + mBus + "] port [" + mPortAddress + "]");
+        }
+
+        //Capture negotiated link speed during startup.  Querying libusb here keeps native calls off the transfer path,
+        //and speed discovery is optional so that observability cannot prevent a tuner from starting.
+        try
+        {
+            mUsbTransferHealth.setNegotiatedDeviceSpeed(LibUsb.getDeviceSpeed(mDevice));
+        }
+        catch(RuntimeException | LinkageError ignored)
+        {
+            mUsbTransferHealth.setNegotiatedDeviceSpeed(LibUsb.SPEED_UNKNOWN);
         }
 
         mDeviceDescriptor = new DeviceDescriptor();
@@ -748,6 +770,8 @@ public abstract class USBTunerController extends TunerController
 
         int getRetryTransferCount() { return mRetryTransfers.size(); }
 
+        int getActiveTransferCount() { return mActiveTransfers.size(); }
+
         int getTransferErrorCount() { return mTransferErrorCount; }
 
         void resetExhaustionNotification() { mExhaustionReported = false; }
@@ -772,11 +796,251 @@ public abstract class USBTunerController extends TunerController
         }
     }
 
+    /**
+     * Immutable USB transfer measurements.  Counts and the worst gap are cumulative for the life of this controller.
+     * The first/last timestamps and last gap apply to the latest streaming session and exclude time while stopped.
+     */
+    public record UsbTransferHealthSnapshot(boolean streaming, long streamSequence,
+                                            int expectedTransferLengthBytes, int sampleFrameSizeBytes,
+                                            int negotiatedDeviceSpeedCode, String negotiatedDeviceSpeed,
+                                            int transferPoolSize, int activeTransferCount, int retryTransferCount,
+                                            long submissionFailureCount,
+                                            long transferCount, long completedTransferCount,
+                                            long stalledTransferCount, long timedOutTransferCount,
+                                            long errorTransferCount, long cancelledTransferCount,
+                                            long unexpectedStatusTransferCount, long expectedBytes,
+                                            long actualBytes, long usableBytes, long estimatedMissingBytes,
+                                            long unusableBytes, long shortTransferCount, long zeroLengthTransferCount,
+                                            long malformedTransferCount, long malformedRemainderBytes,
+                                            long streamStartedTimestampMilliseconds,
+                                            long firstTransferTimestampMilliseconds,
+                                            long lastTransferTimestampMilliseconds,
+                                            long lastInterTransferGapMilliseconds,
+                                            long worstInterTransferGapMilliseconds, long longTransferGapCount)
+    {
+    }
+
+    /**
+     * Single-producer USB callback accounting.  Callback updates use primitive reads, arithmetic and volatile writes
+     * only.  Snapshot allocation is deliberately confined to the off-thread snapshot caller.
+     */
+    static class UsbTransferHealth
+    {
+        private volatile boolean mStreaming;
+        private volatile long mStreamSequence;
+        private volatile int mExpectedTransferLengthBytes;
+        private volatile int mSampleFrameSizeBytes = 1;
+        private volatile int mNegotiatedDeviceSpeedCode = LibUsb.SPEED_UNKNOWN;
+        private volatile String mNegotiatedDeviceSpeed = usbDeviceSpeedLabel(LibUsb.SPEED_UNKNOWN);
+        private volatile int mTransferPoolSize;
+        private volatile int mActiveTransferCount;
+        private volatile int mRetryTransferCount;
+        private volatile long mSubmissionFailureCount;
+        private volatile long mTransferCount;
+        private volatile long mCompletedTransferCount;
+        private volatile long mStalledTransferCount;
+        private volatile long mTimedOutTransferCount;
+        private volatile long mErrorTransferCount;
+        private volatile long mCancelledTransferCount;
+        private volatile long mUnexpectedStatusTransferCount;
+        private volatile long mExpectedBytes;
+        private volatile long mActualBytes;
+        private volatile long mUsableBytes;
+        private volatile long mEstimatedMissingBytes;
+        private volatile long mUnusableBytes;
+        private volatile long mShortTransferCount;
+        private volatile long mZeroLengthTransferCount;
+        private volatile long mMalformedTransferCount;
+        private volatile long mMalformedRemainderBytes;
+        private volatile long mStreamStartedTimestampMilliseconds;
+        private volatile long mFirstTransferTimestampMilliseconds;
+        private volatile long mLastTransferTimestampMilliseconds;
+        private volatile long mPreviousTransferTimestampMilliseconds;
+        private volatile long mLastInterTransferGapMilliseconds;
+        private volatile long mWorstInterTransferGapMilliseconds;
+        private volatile long mLongTransferGapCount;
+
+        void beginStreaming(int expectedTransferLengthBytes, int sampleFrameSizeBytes)
+        {
+            mExpectedTransferLengthBytes = Math.max(0, expectedTransferLengthBytes);
+            mSampleFrameSizeBytes = Math.max(1, sampleFrameSizeBytes);
+            mFirstTransferTimestampMilliseconds = 0;
+            mLastTransferTimestampMilliseconds = 0;
+            mPreviousTransferTimestampMilliseconds = 0;
+            mLastInterTransferGapMilliseconds = 0;
+            mStreamStartedTimestampMilliseconds = System.currentTimeMillis();
+            mStreamSequence++;
+            mStreaming = true;
+        }
+
+        void endStreaming()
+        {
+            mStreaming = false;
+            mPreviousTransferTimestampMilliseconds = 0;
+            mLastInterTransferGapMilliseconds = 0;
+        }
+
+        void setNegotiatedDeviceSpeed(int speedCode)
+        {
+            mNegotiatedDeviceSpeedCode = speedCode;
+            mNegotiatedDeviceSpeed = usbDeviceSpeedLabel(speedCode);
+        }
+
+        void recordSubmissionState(int poolSize, int activeTransfers, int retryTransfers, long submissionFailures)
+        {
+            mTransferPoolSize = Math.max(0, poolSize);
+            mActiveTransferCount = Math.max(0, activeTransfers);
+            mRetryTransferCount = Math.max(0, retryTransfers);
+            mSubmissionFailureCount = Math.max(0, submissionFailures);
+        }
+
+        /**
+         * Records one active-stream callback.  This method must remain allocation-free and non-blocking.
+         */
+        void recordTransfer(int status, int actualLength, long timestampMilliseconds)
+        {
+            int expectedLength = mExpectedTransferLengthBytes;
+            int frameSize = mSampleFrameSizeBytes;
+            int actualBytes = Math.max(0, actualLength);
+            boolean recognizedStatus = true;
+
+            switch(status)
+            {
+                case LibUsb.TRANSFER_COMPLETED -> mCompletedTransferCount++;
+                case LibUsb.TRANSFER_STALL -> mStalledTransferCount++;
+                case LibUsb.TRANSFER_TIMED_OUT -> mTimedOutTransferCount++;
+                case LibUsb.TRANSFER_ERROR -> mErrorTransferCount++;
+                case LibUsb.TRANSFER_CANCELLED -> mCancelledTransferCount++;
+                default ->
+                {
+                    mUnexpectedStatusTransferCount++;
+                    recognizedStatus = false;
+                }
+            }
+
+            mTransferCount++;
+            mExpectedBytes += expectedLength;
+            mActualBytes += actualBytes;
+
+            if(actualBytes < expectedLength)
+            {
+                mShortTransferCount++;
+                mEstimatedMissingBytes += expectedLength - actualBytes;
+            }
+
+            if(actualBytes == 0)
+            {
+                mZeroLengthTransferCount++;
+            }
+
+            int remainderBytes = frameSize > 1 ? actualBytes % frameSize : 0;
+
+            if(remainderBytes > 0)
+            {
+                mMalformedTransferCount++;
+                mMalformedRemainderBytes += remainderBytes;
+            }
+
+            if(recognizedStatus && isCompleteTransfer(expectedLength, actualBytes))
+            {
+                mUsableBytes += expectedLength;
+            }
+            else
+            {
+                mUnusableBytes += actualBytes;
+            }
+
+            long previousTimestamp = mPreviousTransferTimestampMilliseconds;
+
+            if(mFirstTransferTimestampMilliseconds == 0)
+            {
+                mFirstTransferTimestampMilliseconds = timestampMilliseconds;
+            }
+
+            if(previousTimestamp > 0 && timestampMilliseconds >= previousTimestamp)
+            {
+                long gap = timestampMilliseconds - previousTimestamp;
+                mLastInterTransferGapMilliseconds = gap;
+
+                if(gap > mWorstInterTransferGapMilliseconds)
+                {
+                    mWorstInterTransferGapMilliseconds = gap;
+                }
+
+                if(gap >= USB_TRANSFER_LONG_GAP_MILLISECONDS)
+                {
+                    mLongTransferGapCount++;
+                }
+            }
+            else
+            {
+                mLastInterTransferGapMilliseconds = 0;
+            }
+
+            mLastTransferTimestampMilliseconds = timestampMilliseconds;
+            mPreviousTransferTimestampMilliseconds = timestampMilliseconds;
+        }
+
+        UsbTransferHealthSnapshot snapshot()
+        {
+            return new UsbTransferHealthSnapshot(mStreaming, mStreamSequence, mExpectedTransferLengthBytes,
+                    mSampleFrameSizeBytes, mNegotiatedDeviceSpeedCode, mNegotiatedDeviceSpeed, mTransferPoolSize,
+                    mActiveTransferCount, mRetryTransferCount, mSubmissionFailureCount, mTransferCount,
+                    mCompletedTransferCount, mStalledTransferCount,
+                    mTimedOutTransferCount, mErrorTransferCount, mCancelledTransferCount,
+                    mUnexpectedStatusTransferCount, mExpectedBytes, mActualBytes, mUsableBytes,
+                    mEstimatedMissingBytes, mUnusableBytes, mShortTransferCount, mZeroLengthTransferCount,
+                    mMalformedTransferCount, mMalformedRemainderBytes, mStreamStartedTimestampMilliseconds,
+                    mFirstTransferTimestampMilliseconds,
+                    mLastTransferTimestampMilliseconds, mLastInterTransferGapMilliseconds,
+                    mWorstInterTransferGapMilliseconds, mLongTransferGapCount);
+        }
+    }
+
+    /**
+     * Only complete transfer buffers are safe for the existing native-buffer factories.  They copy the buffer's
+     * capacity and several downstream iterators require tuner-specific fixed fragment multiples, so forwarding a
+     * short buffer would either consume stale tail data or violate sample alignment.
+     */
+    static boolean isCompleteTransfer(int expectedLength, int actualLength)
+    {
+        return expectedLength > 0 && actualLength == expectedLength;
+    }
+
+    /**
+     * Preserves the existing live decode behavior: any positive-length callback is forwarded while streaming.  Health
+     * accounting independently flags short or malformed payloads; changing their decode treatment requires separate,
+     * tuner-specific prefix buffering/alignment work.
+     */
+    static boolean shouldDispatchTransfer(boolean streaming, int actualLength)
+    {
+        return streaming && actualLength > 0;
+    }
+
+    /**
+     * Human-readable libusb negotiated device speed.  This describes the device link, not the capacity or generation
+     * of every upstream hub and host controller in the physical USB path.
+     */
+    public static String usbDeviceSpeedLabel(int speedCode)
+    {
+        return switch(speedCode)
+        {
+            case LibUsb.SPEED_LOW -> "low (1.5 Mb/s)";
+            case LibUsb.SPEED_FULL -> "full (12 Mb/s)";
+            case LibUsb.SPEED_HIGH -> "high (480 Mb/s)";
+            case LibUsb.SPEED_SUPER -> "super (5 Gb/s)";
+            case LibUsb.SPEED_SUPER_PLUS -> "super-plus (10 Gb/s)";
+            default -> "unknown";
+        };
+    }
+
     class TransferManager implements TransferCallback
     {
         private List<Transfer> mAvailableTransfers;
         private final TransferLedger<Transfer> mLedger = new TransferLedger<>();
         private volatile boolean mAutoResubmitTransfers;
+        private int mExpectedTransferLengthBytes;
+        private int mSampleFrameSizeBytes = 1;
 
         /**
          * Creates USB Transfers to carry the streaming sample data.  Transfer buffers are backed by native memory
@@ -790,6 +1054,17 @@ public abstract class USBTunerController extends TunerController
             if(mAvailableTransfers == null)
             {
                 mAvailableTransfers = new ArrayList<>();
+                mExpectedTransferLengthBytes = getTransferBufferSize();
+                int bufferSampleCount = getBufferSampleCount();
+
+                if(bufferSampleCount > 0 && mExpectedTransferLengthBytes % bufferSampleCount == 0)
+                {
+                    mSampleFrameSizeBytes = mExpectedTransferLengthBytes / bufferSampleCount;
+                }
+                else
+                {
+                    mSampleFrameSizeBytes = 1;
+                }
 
                 for(int x = 0; x < USB_BULK_TRANSFER_BUFFER_POOL_SIZE; x++)
                 {
@@ -806,7 +1081,7 @@ public abstract class USBTunerController extends TunerController
 
                     try
                     {
-                        buffer = ByteBuffer.allocateDirect(getTransferBufferSize());
+                        buffer = ByteBuffer.allocateDirect(mExpectedTransferLengthBytes);
                     }
                     catch(OutOfMemoryError oome)
                     {
@@ -831,6 +1106,12 @@ public abstract class USBTunerController extends TunerController
             if(resubmit)
             {
                 mLedger.resetExhaustionNotification();
+                mUsbTransferHealth.beginStreaming(mExpectedTransferLengthBytes, mSampleFrameSizeBytes);
+                updateTransferLedgerHealth();
+            }
+            else
+            {
+                mUsbTransferHealth.endStreaming();
             }
         }
 
@@ -890,6 +1171,14 @@ public abstract class USBTunerController extends TunerController
                 mLog.error("Maximum USB transfer buffer errors reached - transfer buffers exhausted - shutting down USB tuner");
                 ThreadPool.CACHED.submit(() -> setErrorMessage("USB Error - Transfer Buffers Exhausted"));
             }
+
+            updateTransferLedgerHealth();
+        }
+
+        private void updateTransferLedgerHealth()
+        {
+            mUsbTransferHealth.recordSubmissionState(mAvailableTransfers != null ? mAvailableTransfers.size() : 0,
+                mLedger.getActiveTransferCount(), mLedger.getRetryTransferCount(), mLedger.getTransferErrorCount());
         }
 
         /**
@@ -939,6 +1228,7 @@ public abstract class USBTunerController extends TunerController
             }
 
             mLedger.clear();
+            updateTransferLedgerHealth();
             return true;
         }
 
@@ -947,6 +1237,15 @@ public abstract class USBTunerController extends TunerController
         {
             mLedger.transferReturned(transfer);
             int transferStatus = transfer.status();
+            int transferLength = transfer.actualLength();
+            boolean streaming = mAutoResubmitTransfers;
+            long timestamp = 0;
+
+            if(streaming)
+            {
+                timestamp = System.currentTimeMillis();
+                mUsbTransferHealth.recordTransfer(transferStatus, transferLength, timestamp);
+            }
 
             switch(transferStatus)
             {
@@ -957,12 +1256,10 @@ public abstract class USBTunerController extends TunerController
                 //Note: cancel flag can be set by libusb, independent of commanded cancel of transfers - we simply
                 //resubmit the transfer for continued use.
                 case LibUsb.TRANSFER_CANCELLED:
-                    int transferLength = transfer.actualLength();
-
                     //Do not dispatch stale sample data while draining cancellation callbacks during shutdown.
-                    if(transferLength > 0 && mAutoResubmitTransfers)
+                    if(shouldDispatchTransfer(mAutoResubmitTransfers, transferLength))
                     {
-                        dispatchTransfer(transfer);
+                        dispatchTransfer(transfer, timestamp);
                     }
 
                     transfer.buffer().rewind();
@@ -986,6 +1283,8 @@ public abstract class USBTunerController extends TunerController
                     }
                     break;
             }
+
+            updateTransferLedgerHealth();
         }
 
         /**
@@ -993,11 +1292,11 @@ public abstract class USBTunerController extends TunerController
          * Dispatches the native buffer to registered listeners.
          * @param transfer to copy and dispatch
          */
-        private void dispatchTransfer(Transfer transfer)
+        private void dispatchTransfer(Transfer transfer, long timestamp)
         {
             //Pass the transfer's byte buffer so the native buffer factory can make a copy of the byte array contents
             //and package it as a native buffer.
-            INativeBuffer nativeBuffer = getNativeBufferFactory().getBuffer(transfer.buffer(), System.currentTimeMillis());
+            INativeBuffer nativeBuffer = getNativeBufferFactory().getBuffer(transfer.buffer(), timestamp);
             mNativeBufferBroadcaster.broadcast(nativeBuffer);
         }
     }

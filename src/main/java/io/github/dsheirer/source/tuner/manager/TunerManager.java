@@ -62,6 +62,7 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import javax.swing.SwingUtilities;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -96,6 +97,9 @@ public class TunerManager implements IDiscoveredTunerStatusListener
     private boolean mUsbRescanClosed;
     private volatile boolean mLibUsbInitialized = false;
     private volatile boolean mStopping;
+    private final AtomicLong mChannelAllocationRequests = new AtomicLong();
+    private final AtomicLong mChannelAllocationSuccesses = new AtomicLong();
+    private final AtomicLong mChannelAllocationFailures = new AtomicLong();
     private SDRplay mSDRplay;
 
     /**
@@ -777,9 +781,11 @@ public class TunerManager implements IDiscoveredTunerStatusListener
                             String threadName, SortedSet<TunerChannel> tunerChannels)
     {
         TunerChannelSource source = null;
+        boolean validRequest = tunerChannel != null && channelSpecification != null;
 
-        if(tunerChannel != null && channelSpecification != null)
+        if(validRequest)
         {
+            mChannelAllocationRequests.incrementAndGet();
             DiscoveredTuner discoveredTuner;
 
             if(preferredTuner != null)
@@ -795,6 +801,7 @@ public class TunerManager implements IDiscoveredTunerStatusListener
 
                         if(source != null)
                         {
+                            mChannelAllocationSuccesses.incrementAndGet();
                             return source;
                         }
                     }
@@ -829,7 +836,34 @@ public class TunerManager implements IDiscoveredTunerStatusListener
             }
         }
 
+        if(validRequest)
+        {
+            if(source != null)
+            {
+                mChannelAllocationSuccesses.incrementAndGet();
+            }
+            else
+            {
+                mChannelAllocationFailures.incrementAndGet();
+            }
+        }
+
         return source;
+    }
+
+    /**
+     * Process-lifetime source-allocation measurements.  Updates are primitive atomics because allocation can be
+     * requested from a decoder callback.
+     */
+    public TunerAllocationStatus getTunerAllocationStatus()
+    {
+        long successes = mChannelAllocationSuccesses.get();
+        long failures = mChannelAllocationFailures.get();
+        return new TunerAllocationStatus(mChannelAllocationRequests.get(), successes, failures);
+    }
+
+    public record TunerAllocationStatus(long requests, long successes, long failures)
+    {
     }
 
     /**

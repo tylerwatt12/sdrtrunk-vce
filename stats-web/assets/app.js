@@ -9,6 +9,7 @@ const TABLE_WIDTH_MAXIMUM = 1200;
 const SYSTEM_DIRECTORY_SITE_LIMIT = 100;
 const SYSTEM_DIRECTORY_SITE_CONCURRENCY = 4;
 const SIGNAL_OFFLINE_MILLISECONDS = 45_000;
+const RECEIVER_HEALTH_STALE_MILLISECONDS = 15_000;
 const DECODE_HEALTHY_MINIMUM_PERCENT = 90;
 const DECODE_DEGRADED_MINIMUM_PERCENT = 75;
 const VOICE_QUALITY_WARMUP_FRAMES = 50;
@@ -31,6 +32,7 @@ const ACCESS_CAPABILITIES = Object.freeze({
   CREDITS: 'credits',
   CSV_EXPORT: 'csv-export',
   CALL_AUDIO: 'call-audio',
+  RECEIVER_HEALTH: 'receiver-health',
   ADMIN_ALIASES: 'admin-aliases',
   ADMIN_AUDIO: 'admin-audio',
   ADMIN_USERS: 'admin-users',
@@ -472,7 +474,8 @@ function viewAccessCapability(view) {
 function viewAllowed(view) {
   if (view === 'admin') {
     return accessSession.tier === 'ADMIN' &&
-      (capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_ALIASES) ||
+      (capabilityAllowed(ACCESS_CAPABILITIES.RECEIVER_HEALTH) ||
+        capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_ALIASES) ||
         capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_AUDIO) ||
         capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_USERS) ||
         capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_ACCESS));
@@ -526,6 +529,7 @@ function updateAccessControls() {
     action.disabled = false;
   }
   updateNavigationAccess();
+  receiverHealthController.synchronizeAccess();
 }
 
 function formField(labelText, control, detail = '') {
@@ -599,6 +603,7 @@ function showLoginModal(returnFocusSelector = '#auth-action') {
       liveMultiplexer.ensureConnected();
       if (!accessSession.authenticated) throw new Error('The receiver did not create a session.');
       modal.close();
+      void receiverHealthController.refresh();
       await render();
     } catch (error) {
       liveMultiplexer.ensureConnected();
@@ -5606,6 +5611,198 @@ async function api(path, parameters = {}, options = {}) {
   return requestJson(`${path}${query.size ? `?${query}` : ''}`, { csrf: false, ...options });
 }
 
+function mobileListenerModeActive() {
+  return !tableOnly && (document.body.dataset.listenerShell === 'mobile' ||
+    document.body.classList.contains('mobile-listener-active'));
+}
+
+function receiverHealthSeverity(value) {
+  const severity = String(value || '').trim().toLowerCase();
+  if (severity === 'critical') return 'critical';
+  if (severity === 'warning' || severity === 'warn') return 'warning';
+  return 'healthy';
+}
+
+function receiverHealthCount(value, fallback = 0) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric >= 0 ? Math.trunc(numeric) : Math.max(0, fallback);
+}
+
+function normalizeReceiverHealthSnapshot(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('The receiver returned invalid health status.');
+  }
+  const active = Array.isArray(value.active) ? value.active.filter((incident) =>
+    incident && typeof incident === 'object' && !Array.isArray(incident)) : [];
+  const resolved = Array.isArray(value.resolved) ? value.resolved.filter((incident) =>
+    incident && typeof incident === 'object' && !Array.isArray(incident)) : [];
+  const measurements = Array.isArray(value.measurements) ? value.measurements.filter((group) =>
+    group && typeof group === 'object' && !Array.isArray(group)).map((group) => ({
+      ...group,
+      rows: Array.isArray(group.rows) ? group.rows.filter((row) =>
+        row && typeof row === 'object' && !Array.isArray(row)) : []
+    })) : [];
+  const reported = value.summary && typeof value.summary === 'object' && !Array.isArray(value.summary) ?
+    value.summary : {};
+  const activeCount = receiverHealthCount(reported.active_count, active.length);
+  const warningCount = receiverHealthCount(reported.warning_count,
+    active.filter((incident) => receiverHealthSeverity(incident.severity) === 'warning').length);
+  const criticalCount = receiverHealthCount(reported.critical_count,
+    active.filter((incident) => receiverHealthSeverity(incident.severity) === 'critical').length);
+  const diagnosticCount = receiverHealthCount(reported.diagnostic_count,
+    Math.max(0, active.length - activeCount));
+  let severity = receiverHealthSeverity(reported.severity);
+  if (criticalCount > 0) severity = 'critical';
+  else if (warningCount > 0 || activeCount > 0) severity = 'warning';
+  return {
+    started_at_ms: Number(value.started_at_ms) || 0,
+    generated_at_ms: Number(value.generated_at_ms) || 0,
+    summary: { severity, active_count: activeCount, warning_count: warningCount,
+      critical_count: criticalCount, diagnostic_count: diagnosticCount },
+    active,
+    resolved,
+    measurements
+  };
+}
+
+class ReceiverHealthController {
+  constructor() {
+    this.snapshot = null;
+    this.stale = false;
+    this.lastError = '';
+    this.requestController = null;
+    this.pageHost = null;
+  }
+
+  authorized() {
+    return capabilityAllowed(ACCESS_CAPABILITIES.RECEIVER_HEALTH);
+  }
+
+  desktopEnabled() {
+    return !tableOnly && this.authorized() && !mobileListenerModeActive();
+  }
+
+  abortRequest() {
+    const controller = this.requestController;
+    this.requestController = null;
+    controller?.abort();
+  }
+
+  synchronizeAccess() {
+    if (!this.authorized()) {
+      this.abortRequest();
+      this.snapshot = null;
+      this.stale = false;
+      this.lastError = '';
+    } else if (!this.desktopEnabled()) {
+      this.abortRequest();
+    }
+    this.updateIndicator();
+  }
+
+  synchronizeMode() {
+    if (!this.desktopEnabled()) {
+      this.abortRequest();
+      this.updateIndicator();
+      return;
+    }
+    this.updateIndicator();
+    void this.refresh();
+  }
+
+  async refresh() {
+    if (!this.desktopEnabled() || document.hidden || this.requestController) return;
+    const controller = new AbortController();
+    this.requestController = controller;
+    try {
+      const response = await api('/api/v1/receiver-health', {}, {
+        page: false, signal: controller.signal, timeoutMs: 10_000
+      });
+      if (this.requestController !== controller || !this.desktopEnabled()) return;
+      this.snapshot = normalizeReceiverHealthSnapshot(response);
+      this.stale = this.snapshot.generated_at_ms <= 0 ||
+        Date.now() - this.snapshot.generated_at_ms > RECEIVER_HEALTH_STALE_MILLISECONDS;
+      this.lastError = this.stale ? 'The receiver health sampler has not produced a recent snapshot.' : '';
+    } catch (error) {
+      if (controller.signal.aborted || this.requestController !== controller) return;
+      this.stale = true;
+      this.lastError = error?.message || 'Receiver health status is unavailable.';
+    } finally {
+      if (this.requestController === controller) this.requestController = null;
+      if (this.desktopEnabled()) {
+        this.updateIndicator();
+        this.updatePage();
+      }
+    }
+  }
+
+  bindPage(host) {
+    this.pageHost = host;
+    this.updatePage();
+  }
+
+  updatePage() {
+    if (!this.desktopEnabled() || !this.pageHost?.isConnected) return;
+    renderReceiverHealthPage(this.pageHost, this.snapshot, this.stale, this.lastError);
+  }
+
+  updateIndicator() {
+    const indicator = document.getElementById('receiver-health-indicator');
+    const state = document.getElementById('receiver-health-indicator-state');
+    if (!indicator || !state) return;
+    const visible = this.desktopEnabled();
+    indicator.hidden = !visible;
+    if (!visible) return;
+
+    const summary = this.snapshot?.summary;
+    let className = 'loading';
+    let label = 'Loading';
+    let detail = 'Receiver health status is loading.';
+    if (this.stale) {
+      className = 'stale';
+      if (summary?.severity === 'critical') {
+        const count = summary.critical_count || summary.active_count;
+        label = `Stale · Critical ${number(count)}`;
+      } else if (summary?.severity === 'warning') {
+        const count = summary.warning_count || summary.active_count;
+        label = `Stale · Warning ${number(count)}`;
+      } else {
+        label = 'Stale';
+      }
+      detail = this.lastError || 'Receiver health status is stale.';
+    } else if (summary?.severity === 'critical') {
+      className = 'critical';
+      const count = summary.critical_count || summary.active_count;
+      label = `Critical ${number(count)}`;
+      detail = `${number(summary.active_count)} active incident${summary.active_count === 1 ? '' : 's'}, ` +
+        `${number(summary.critical_count)} critical.`;
+    } else if (summary?.severity === 'warning') {
+      className = 'warning';
+      const count = summary.warning_count || summary.active_count;
+      label = `Warning ${number(count)}`;
+      detail = `${number(summary.active_count)} active incident${summary.active_count === 1 ? '' : 's'}, ` +
+        `${number(summary.warning_count)} warning.`;
+    } else if (summary) {
+      className = 'healthy';
+      label = 'Healthy';
+      detail = 'No active service-impact alerts.';
+      if (summary.diagnostic_count > 0) {
+        detail += ` ${number(summary.diagnostic_count)} troubleshooting condition` +
+          `${summary.diagnostic_count === 1 ? '' : 's'} recorded.`;
+      }
+    }
+    if (this.snapshot?.generated_at_ms) {
+      detail += ` Last update: ${exactDateTime(this.snapshot.generated_at_ms)}.`;
+    }
+    state.textContent = label;
+    indicator.className = `receiver-health-indicator receiver-health-${className}`;
+    indicator.title = detail;
+    indicator.setAttribute('aria-label', `Health: ${label}. ${detail}`);
+  }
+}
+
+const receiverHealthController = new ReceiverHealthController();
+
 const liveConnections = new Set();
 const pageConnections = new Set();
 const pageObservers = new Map();
@@ -6348,6 +6545,7 @@ function applyListenerShellMode() {
   const desktopSlot = document.getElementById('desktop-playback-slot');
   const mobileSlot = document.getElementById('mobile-playback-slot');
   if (!shell || !app || !bar || !desktopSlot || !mobileSlot || !compactListenerMedia) return;
+  const previousMode = document.body.dataset.listenerShell;
   const mobile = compactListenerMedia.matches;
   document.body.classList.toggle('mobile-listener-active', mobile);
   document.body.dataset.listenerShell = mobile ? 'mobile' : 'desktop';
@@ -6367,6 +6565,11 @@ function applyListenerShellMode() {
     const queue = bar.querySelector('.playback-queue');
     if (subscriptions) subscriptions.open = false;
     if (queue) queue.open = false;
+  }
+  receiverHealthController.synchronizeMode();
+  if (!mobile && previousMode === 'mobile' && accessSessionAvailable &&
+      route.get('view') === 'admin' && route.get('tab') === 'health') {
+    void render();
   }
 }
 
@@ -11626,8 +11829,167 @@ async function renderAdminWebAudio() {
   content.append(section('Listener status & capacity', body, refresh));
 }
 
+function receiverHealthText(value, fallback = '—') {
+  if (value === null || value === undefined) return fallback;
+  const text = String(value).trim();
+  return text || fallback;
+}
+
+function receiverHealthTime(value) {
+  return dateTime(value) || node('span', 'muted', '—');
+}
+
+function receiverHealthSeverityBadge(value) {
+  const severity = receiverHealthSeverity(value);
+  const label = severity === 'critical' ? 'Critical' : severity === 'warning' ? 'Warning' : 'Healthy';
+  return badge(label, `receiver-health-severity receiver-health-${severity}`);
+}
+
+function receiverHealthIncident(incident, resolved = false) {
+  const severity = receiverHealthSeverity(incident.severity);
+  const card = node('article', `receiver-health-incident receiver-health-${severity}`);
+  const heading = node('div', 'receiver-health-incident-heading');
+  const identity = node('div', 'receiver-health-incident-identity');
+  identity.append(node('h3', '', receiverHealthText(incident.title, receiverHealthText(incident.code,
+    'Receiver health incident'))), node('div', 'receiver-health-incident-scope',
+    receiverHealthText(incident.scope, 'Receiver')));
+  heading.append(identity, receiverHealthSeverityBadge(incident.severity));
+
+  const facts = node('dl', 'receiver-health-incident-facts');
+  const entries = [
+    ['Code', receiverHealthText(incident.code)],
+    ['Occurrence ID', receiverHealthText(incident.occurrence_id)],
+    ['Observations', number(receiverHealthCount(incident.count, 1))],
+    ['Opened', receiverHealthTime(incident.opened_at_ms)],
+    ['Last seen', receiverHealthTime(incident.last_seen_ms)]
+  ];
+  if (resolved) entries.push(['Resolved', receiverHealthTime(incident.resolved_at_ms)]);
+  entries.forEach(([label, value]) => {
+    facts.append(node('dt', '', label));
+    const detail = node('dd');
+    detail.append(valueNode(value));
+    facts.append(detail);
+  });
+
+  const guidance = node('div', 'receiver-health-incident-guidance');
+  [
+    ['Observed', incident.observed],
+    ['Likely cause', incident.likely_cause],
+    ['Impact', incident.impact],
+    ['Check next', incident.check_next]
+  ].forEach(([label, value]) => {
+    const item = node('div', 'receiver-health-guidance-item');
+    item.append(node('h4', '', label), node('p', '', receiverHealthText(value)));
+    guidance.append(item);
+  });
+  card.append(heading, facts, guidance);
+  return card;
+}
+
+function receiverHealthIncidentList(incidents, resolved = false) {
+  if (!incidents.length) {
+    return node('div', resolved ? 'receiver-health-empty' : 'receiver-health-empty receiver-health-empty-healthy',
+      resolved ? 'No recently resolved incidents.' : 'No active receiver health incidents.');
+  }
+  const list = node('div', 'receiver-health-incident-list');
+  list.append(...incidents.map((incident) => receiverHealthIncident(incident, resolved)));
+  return list;
+}
+
+function receiverHealthMeasurementRow(row) {
+  const severity = receiverHealthSeverity(row.severity);
+  const item = node('div', `receiver-health-measurement-row receiver-health-${severity}`);
+  item.setAttribute('role', 'listitem');
+  const scope = node('div', 'receiver-health-measurement-scope', receiverHealthText(row.scope, 'Receiver'));
+  const label = node('div', 'receiver-health-measurement-label', receiverHealthText(row.label));
+  const reading = node('div', 'receiver-health-measurement-value');
+  reading.append(node('strong', '', receiverHealthText(row.value)));
+  const unit = receiverHealthText(row.unit, '');
+  if (unit) reading.append(node('span', '', unit));
+  item.append(scope, label, reading, receiverHealthSeverityBadge(row.severity),
+    node('div', 'receiver-health-measurement-detail', receiverHealthText(row.detail)));
+  return item;
+}
+
+function receiverHealthMeasurementGroup(group) {
+  const body = node('div', 'receiver-health-measurement-list');
+  body.setAttribute('role', 'list');
+  if (group.rows.length) body.append(...group.rows.map(receiverHealthMeasurementRow));
+  else body.append(node('div', 'receiver-health-empty', 'No measurements were reported.'));
+  return section(receiverHealthText(group.title, receiverHealthText(group.id, 'Measurements')), body);
+}
+
+function receiverHealthRefreshButton() {
+  const refresh = node('button', 'secondary', 'Refresh now');
+  refresh.type = 'button';
+  refresh.addEventListener('click', async () => {
+    refresh.disabled = true;
+    await receiverHealthController.refresh();
+    if (refresh.isConnected) refresh.disabled = false;
+  });
+  return refresh;
+}
+
+function renderReceiverHealthPage(host, snapshot, stale, lastError) {
+  if (mobileListenerModeActive()) return;
+  host.replaceChildren();
+  if (!snapshot) {
+    const message = stale ? (lastError || 'Receiver health status is unavailable.') :
+      'Loading receiver health status…';
+    const body = node('div', 'admin-section-body');
+    body.append(node('div', stale ? 'logging-notice warning' : 'receiver-health-loading-message', message));
+    host.append(section('Current status', body, receiverHealthRefreshButton()));
+    return;
+  }
+
+  const summary = snapshot.summary;
+  const stateLabel = stale ? 'Stale' : summary.severity === 'critical' ? 'Critical' :
+    summary.severity === 'warning' ? 'Warning' : 'Healthy';
+  const overview = node('div', 'receiver-health-overview');
+  const status = node('div', `receiver-health-overview-state receiver-health-${stale ? 'stale' : summary.severity}`);
+  status.append(node('span', '', 'Receiver health'), node('strong', '', stateLabel));
+  overview.append(status, metrics([
+    ['Service-impact alerts', summary.active_count],
+    ['Diagnostics', summary.diagnostic_count],
+    ['Critical', summary.critical_count],
+    ['Warnings', summary.warning_count]
+  ], true));
+  const timing = node('dl', 'receiver-health-timing');
+  [
+    ['Monitoring since', receiverHealthTime(snapshot.started_at_ms)],
+    ['Last update', receiverHealthTime(snapshot.generated_at_ms)]
+  ].forEach(([label, value]) => {
+    timing.append(node('dt', '', label));
+    const detail = node('dd');
+    detail.append(valueNode(value));
+    timing.append(detail);
+  });
+  overview.append(timing);
+  if (stale) overview.append(node('div', 'logging-notice warning receiver-health-stale-notice',
+    `Showing the last receiver health snapshot. ${lastError || 'The latest refresh failed.'}`));
+
+  host.append(section('Current status', overview, receiverHealthRefreshButton()),
+    section('Active alerts and diagnostics', receiverHealthIncidentList(snapshot.active)),
+    section('Recently resolved', receiverHealthIncidentList(snapshot.resolved, true)));
+  if (snapshot.measurements.length) {
+    host.append(...snapshot.measurements.map(receiverHealthMeasurementGroup));
+  } else {
+    host.append(section('Measurements', node('div', 'receiver-health-empty',
+      'No receiver health measurements were reported.')));
+  }
+}
+
+async function renderAdminHealth() {
+  if (mobileListenerModeActive()) return;
+  const host = node('div', 'receiver-health-page');
+  content.append(host);
+  receiverHealthController.bindPage(host);
+  void receiverHealthController.refresh();
+}
+
 async function renderAdmin() {
   const availableTabs = [
+    { id: 'health', label: 'Health', capability: ACCESS_CAPABILITIES.RECEIVER_HEALTH },
     { id: 'scan-lists', label: 'Scan Lists', capability: ACCESS_CAPABILITIES.ADMIN_ALIASES },
     { id: 'web-audio', label: 'Listener Status', capability: ACCESS_CAPABILITIES.ADMIN_AUDIO },
     { id: 'users', label: 'Users', capability: ACCESS_CAPABILITIES.ADMIN_USERS },
@@ -11640,10 +12002,12 @@ async function renderAdmin() {
     route.set('tab', active);
     window.history.replaceState({}, '', currentHref());
   }
+  if (active === 'health' && mobileListenerModeActive()) return;
   content.append(pageHeader('Administration',
-    'Manage scan lists, browser audio, web users, and access tiers'),
+    'Monitor receiver health and manage scan lists, browser audio, web users, and access tiers'),
     tabs(availableTabs.map((item) => ({ ...item, href: href('admin', { tab: item.id }) })), active));
-  if (active === 'scan-lists') await renderAdminScanLists();
+  if (active === 'health') await renderAdminHealth();
+  else if (active === 'scan-lists') await renderAdminScanLists();
   else if (active === 'web-audio') await renderAdminWebAudio();
   else if (active === 'access') await renderAdminAccess();
   else await renderAdminUsers();
@@ -11903,12 +12267,12 @@ initializeAccessControls();
 initializeListenerShell();
 initializePlaybackHeader();
 refreshAccessSession(false)
-  .then(() => loadStatus(false))
+  .then(() => Promise.all([loadStatus(false), receiverHealthController.refresh()]))
   .finally(render);
 let refreshCycle = null;
 window.setInterval(() => {
   if (document.hidden || refreshCycle) return;
   refreshCycle = refreshAccessSession(true)
-    .then(() => loadStatus(true))
+    .then(() => Promise.all([loadStatus(true), receiverHealthController.refresh()]))
     .finally(() => { refreshCycle = null; });
 }, 10_000);
