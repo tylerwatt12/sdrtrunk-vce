@@ -7718,8 +7718,7 @@ const TUNER_SPECTRUM_DEFAULT_CEILING_DB = 0;
 const TUNER_SPECTRUM_MINIMUM_DISPLAY_DB = -200;
 const TUNER_SPECTRUM_MAXIMUM_DISPLAY_DB = 0;
 const TUNER_SPECTRUM_MINIMUM_DISPLAY_SPAN_DB = 5;
-const TUNER_SPECTRUM_MAXIMUM_ANALYTICAL_ZOOM = 64;
-const TUNER_SPECTRUM_MAXIMUM_ZOOM = 256;
+const TUNER_SPECTRUM_MAXIMUM_ZOOM = 64;
 const TUNER_SPECTRUM_ZOOM_FACTOR = 1.5;
 const TUNER_SPECTRUM_VIEWPORT_DEBOUNCE_MS = 160;
 const TUNER_SPECTRUM_SMOOTHING_ALPHA = 0.25;
@@ -7771,38 +7770,33 @@ const TUNER_ACTIVITY_LABELS = Object.freeze({
   CONTROL: 'Control channel',
   ACTIVE: 'Other activity'
 });
-const RADIO_REFERENCE_FREQUENCY_QUERY_URL = 'https://www.radioreference.com/db/query/';
-
-function openRadioReferenceFrequencyQuery(frequencyHz) {
-  const numericFrequency = Number(frequencyHz);
-  if (!Number.isFinite(numericFrequency) || numericFrequency <= 0) return false;
-  const target = `sdrtrunk_rr_lookup_${Date.now()}`;
-  const popup = window.open('', target);
-  if (!popup) return false;
-  try { popup.opener = null; } catch (error) { /* The new tab can still navigate safely. */ }
-
-  const form = node('form');
-  form.method = 'POST';
-  form.action = RADIO_REFERENCE_FREQUENCY_QUERY_URL;
-  form.target = target;
-  form.hidden = true;
-  [
-    ['qFreq', (numericFrequency / 1_000_000).toFixed(5)],
-    ['qTone', '0'],
-    ['stids[]', 'dbWide'],
-    ['a', 'queryFreqState'],
-    ['coid', '1']
-  ].forEach(([name, value]) => {
-    const input = node('input');
-    input.type = 'hidden';
-    input.name = name;
-    input.value = value;
-    form.append(input);
+function radioReferenceResultTable(matches) {
+  const rows = Array.isArray(matches) ? matches : [];
+  const link = (label, row) => row.radio_reference_url ?
+    externalAnchor(label, row.radio_reference_url) : label;
+  const resultLink = (row) => {
+    const label = row.description || row.category || `${Number(row.output_mhz).toFixed(5)} MHz`;
+    return link(label, row);
+  };
+  const category = (row) => row.category || (Array.isArray(row.tags) ? row.tags.join(', ') : '');
+  const area = (row) => row.county_name || row.agency_name || '';
+  return table(rows, [
+    { id: 'frequency-out', label: 'Freq Out', width: 110, className: 'numeric',
+      render: (row) => link(Number(row.output_mhz).toFixed(5), row),
+      sortValue: (row) => Number(row.output_mhz) },
+    { id: 'frequency-in', label: 'Freq In', width: 110, className: 'numeric',
+      render: (row) => Number(row.input_mhz) > 0 ? Number(row.input_mhz).toFixed(5) : '—',
+      sortValue: (row) => Number(row.input_mhz || 0) },
+    { id: 'tone', label: 'Tone', width: 90, render: (row) => availableValue(row.tone) },
+    { id: 'callsign', label: 'Callsign', width: 110, render: (row) => callsignLink(row.callsign) },
+    { id: 'description', label: 'Description / System', width: 260, render: resultLink },
+    { id: 'category', label: 'Category / Site', width: 210, render: (row) => availableValue(category(row)) },
+    { id: 'area', label: 'Agency / County', width: 150, render: (row) => availableValue(area(row)) },
+    { id: 'mode', label: 'Mode', width: 80, render: (row) => availableValue(row.mode) },
+    { id: 'state', label: 'State', width: 110, render: (row) => availableValue(row.state_name) }
+  ], 'No RadioReference records match this frequency in the selected state.', {
+    type: 'radioreference-frequency-results'
   });
-  document.body.append(form);
-  form.submit();
-  window.setTimeout(() => form.remove(), 0);
-  return true;
 }
 
 function tunerFrequencyAction(label, detail, disabled = false) {
@@ -7830,23 +7824,51 @@ function openTunerFrequencyActions(selection) {
 
   const actions = node('div', 'tuner-frequency-action-list');
   const radioReference = tunerFrequencyAction('RadioReference Lookup',
-    'Open RadioReference’s exact-frequency query in a new tab. Sign-in or Premium access may be required.');
+    'Search conventional and trunked-site records in the configured RadioReference state.');
   const listen = tunerFrequencyAction('Listen',
     'Live arbitrary-frequency browser listening is planned for a later phase.', true);
   const addSystem = tunerFrequencyAction('Add System',
     'Guided system, site, channel, alias-list, and scan-list creation is planned for a later phase.', true);
   const message = node('div', 'tuner-frequency-action-message');
   message.setAttribute('role', 'status');
-  radioReference.addEventListener('click', () => {
-    if (openRadioReferenceFrequencyQuery(selectedHz)) {
-      message.textContent = 'Opened RadioReference in a new tab.';
-    } else {
-      message.textContent = 'The new tab was blocked. Allow pop-ups for this receiver and try again.';
+  const results = node('div', 'tuner-frequency-results');
+  radioReference.addEventListener('click', async () => {
+    if (radioReference.disabled) return;
+    radioReference.disabled = true;
+    results.replaceChildren();
+    message.textContent = 'Checking RadioReference account and lookup region…';
+    try {
+      const configuration = await requestJson('/api/v1/admin/radioreference', { csrf: false, page: false });
+      if (configuration?.account?.state !== 'VALID_PREMIUM') {
+        throw new Error('Connect a current RadioReference Premium account in Settings before searching.');
+      }
+      const stateId = Number(configuration?.state_id);
+      if (!Number.isInteger(stateId) || stateId <= 0) {
+        throw new Error('Choose a RadioReference country and state in Settings before searching.');
+      }
+      message.textContent = 'Searching RadioReference…';
+      const query = new URLSearchParams({
+        state_id: String(stateId), frequency_hz: String(Math.round(selectedHz)), limit: '100'
+      });
+      const response = await requestJson(`/api/v1/admin/radioreference/frequencies?${query}`, {
+        csrf: false, page: false, timeoutMs: 15_000
+      });
+      const matches = Array.isArray(response?.items) ? response.items : [];
+      results.replaceChildren(radioReferenceResultTable(matches));
+      const total = Number(response?.total_items || matches.length);
+      message.textContent = total > matches.length ?
+        `Showing the first ${number(matches.length)} of ${number(total)} matches.` :
+        `${number(total)} RadioReference ${total === 1 ? 'match' : 'matches'} found.`;
+    } catch (error) {
+      message.textContent = error.message;
+      results.append(anchor('Open RadioReference settings', href('admin', { tab: 'settings' }), 'button secondary'));
+    } finally {
+      radioReference.disabled = false;
     }
   });
   actions.append(radioReference, listen, addSystem);
   body.append(node('p', 'tuner-frequency-action-intro',
-    'Choose what to do with this selected frequency.'), summary, actions, message);
+    'Choose what to do with this selected frequency.'), summary, actions, message, results);
   return openReadOnlyModal('Frequency actions', body, {
     id: 'tuner-frequency-actions', className: 'frequency-action-modal'
   });
@@ -8269,7 +8291,7 @@ function tunerSpectrumPanel() {
       ['Full span', sampleRate ? formatTunerSpan(sampleRate) : '—'],
       ['Visible span', visibleSpan ? formatTunerSpan(visibleSpan) : '—'],
       ['Analysis span', analysisSpan ? formatTunerSpan(analysisSpan) : '—'],
-      ['Zoom', `${zoom.toFixed(2)}×${zoom > TUNER_SPECTRUM_MAXIMUM_ANALYTICAL_ZOOM ? ' (digital)' : ''}`],
+      ['Zoom', `${zoom.toFixed(2)}×`],
       ['Sent bins', fftValues.length ? number(fftValues.length) : '—'],
       ['FFT detail', fftSize ? number(fftSize) : '—'],
       ['Displayed resolution', Number.isFinite(resolution) ? `${number(Math.round(resolution))} Hz` : '—'],
@@ -9244,6 +9266,13 @@ function tunerSpectrumPanel() {
     }
   }
 
+  function activityAliasLabel(row, prefix) {
+    const name = String(row?.[`${prefix}_alias`] || '').trim();
+    const description = String(row?.[`${prefix}_alias_description`] || '').trim();
+    if (description && name && description !== name) return `${description} (${name})`;
+    return description || name;
+  }
+
   function activeCarrierFields(carrier, fftPower = null) {
     const rows = carrier?.rows || [];
     const fields = [];
@@ -9275,10 +9304,10 @@ function tunerSpectrumPanel() {
     (targetForms.length ? targetForms : ['']).forEach((form) => add(targetIdentifierLabel(form),
       activityValues(rows.filter((row) => String(row.target_form || '').toUpperCase() === form ||
         (!form && !row.target_form)), (row) => row.target_id)));
-    add('Target alias', activityValues(rows, (row) => row.target_alias));
+    add('Target alias', activityValues(rows, (row) => activityAliasLabel(row, 'target')));
     add('Source type', activityValues(rows, (row) => activityTokenLabel(row.source_form)));
     add('Source', activityValues(rows, (row) => row.source_id));
-    add('Source alias', activityValues(rows, (row) => row.source_alias));
+    add('Source alias', activityValues(rows, (row) => activityAliasLabel(row, 'source')));
     add('Talker alias', activityValues(rows, (row) => row.talker_alias));
     const measuredSignal = activityValues(rows, (row) => Number.isFinite(Number(row.signal_dbfs)) ?
       `${Number(row.signal_dbfs).toFixed(1)} dBFS` : '');
@@ -11937,6 +11966,215 @@ async function renderAdminSettings() {
     'The coordinates are saved with the receiver’s portable settings and are available to future location-aware ' +
     'RadioReference lookup and import features.'), form);
   content.append(section('Receiver location', body));
+  await renderAdminRadioReferenceSettings();
+}
+
+function radioReferenceAccountMessage(account) {
+  const state = String(account?.state || 'SIGNED_OUT');
+  const userName = String(account?.user_name || '').trim();
+  const expiration = String(account?.account_expires || '').trim();
+  switch (state) {
+    case 'VALID_PREMIUM':
+      return `Connected${userName ? ` as ${userName}` : ''}${expiration ? ` · Premium ${expiration}` : ''}.`;
+    case 'EXPIRED_PREMIUM':
+      return `Connected${userName ? ` as ${userName}` : ''}, but the Premium subscription is expired.`;
+    case 'INVALID_CREDENTIALS': return 'RadioReference rejected the username or password.';
+    case 'SECURE_TRANSPORT_REQUIRED': return 'Secure RadioReference transport is unavailable.';
+    case 'UNAVAILABLE': return 'RadioReference is currently unavailable.';
+    case 'CHECKING': return 'Checking the RadioReference account…';
+    default: return 'RadioReference is not connected.';
+  }
+}
+
+function replaceRadioReferenceOptions(select, options, selectedId, placeholder) {
+  select.replaceChildren();
+  const rows = Array.isArray(options) ? options : [];
+  if (!rows.length) {
+    const empty = node('option', '', placeholder);
+    empty.value = '';
+    select.append(empty);
+    select.value = '';
+    return false;
+  }
+  rows.forEach((item) => {
+    const suffix = item.abbreviation ? ` (${item.abbreviation})` : '';
+    const option = node('option', '', `${item.name}${suffix}`);
+    option.value = String(item.id);
+    select.append(option);
+  });
+  const requested = String(selectedId || '');
+  select.value = rows.some((item) => String(item.id) === requested) ? requested :
+    String(rows.find((item) => String(item.abbreviation).toUpperCase() === 'US')?.id || rows[0].id);
+  return true;
+}
+
+async function renderAdminRadioReferenceSettings() {
+  const body = node('div', 'admin-section-body radioreference-settings');
+  const accountForm = node('form', 'admin-form radioreference-account-form');
+  const userName = node('input');
+  userName.name = 'radioreference-username';
+  userName.autocomplete = 'username';
+  userName.maxLength = 256;
+  userName.required = true;
+  const password = node('input');
+  password.type = 'password';
+  password.name = 'radioreference-password';
+  password.autocomplete = 'current-password';
+  password.maxLength = 1024;
+  password.required = true;
+  const rememberLabel = node('label', 'radioreference-remember');
+  const remember = node('input');
+  remember.type = 'checkbox';
+  remember.checked = true;
+  rememberLabel.append(remember, node('span', '', 'Remember credentials in this receiver’s portable settings'));
+  const accountMessage = node('div', 'admin-form-message');
+  accountMessage.setAttribute('role', 'status');
+  const connect = node('button', '', 'Connect RadioReference');
+  connect.type = 'submit';
+  const signOut = node('button', 'secondary danger-outline', 'Sign Out');
+  signOut.type = 'button';
+  signOut.disabled = true;
+  const accountActions = node('div', 'admin-form-actions');
+  accountActions.append(signOut, connect);
+  accountForm.append(formField('Username', userName), formField('Password', password,
+    'A current Premium subscription is required. The password is never returned to the browser.'),
+    rememberLabel, accountMessage, accountActions);
+
+  const regionForm = node('form', 'admin-form radioreference-region-form');
+  const country = node('select');
+  const state = node('select');
+  country.disabled = true;
+  state.disabled = true;
+  replaceRadioReferenceOptions(country, [], null, 'Connect an account first');
+  replaceRadioReferenceOptions(state, [], null, 'Choose a country first');
+  const regionMessage = node('div', 'admin-form-message');
+  regionMessage.setAttribute('role', 'status');
+  regionMessage.textContent = 'Choose the state used for exact-frequency searches.';
+  const saveRegion = node('button', '', 'Save Lookup Region');
+  saveRegion.type = 'submit';
+  saveRegion.disabled = true;
+  const regionActions = node('div', 'admin-form-actions');
+  regionActions.append(saveRegion);
+  regionForm.append(formField('Country', country), formField('State or region', state), regionMessage, regionActions);
+
+  body.append(node('p', 'admin-section-intro',
+    'Connect the receiver to RadioReference’s database API, then choose the state searched when a frequency is ' +
+    'clicked in Tuner Spectrum. Use your own current Premium account.'), accountForm, regionForm);
+  content.append(section('RadioReference lookup', body));
+
+  let configuration = null;
+
+  const updateAccount = (next, initializeUserName = false) => {
+    configuration = next || configuration || {};
+    const account = configuration?.account || {};
+    const connected = account.state === 'VALID_PREMIUM';
+    accountMessage.textContent = radioReferenceAccountMessage(account);
+    if (initializeUserName || !userName.value) {
+      userName.value = account.user_name || configuration?.stored_user_name || '';
+    }
+    remember.checked = configuration?.credentials_stored === true;
+    signOut.disabled = account.state === 'SIGNED_OUT';
+    country.disabled = !connected;
+    state.disabled = !connected || !country.value;
+    saveRegion.disabled = !connected || !state.value;
+    return connected;
+  };
+
+  const loadStates = async (countryId, selectedStateId = null) => {
+    state.disabled = true;
+    saveRegion.disabled = true;
+    replaceRadioReferenceOptions(state, [], null, 'Loading states…');
+    const response = await requestJson(`/api/v1/admin/radioreference/states?country_id=${
+      encodeURIComponent(countryId)}`, { csrf: false });
+    const available = replaceRadioReferenceOptions(state, response?.items, selectedStateId, 'No states available');
+    state.disabled = !available;
+    saveRegion.disabled = !available;
+  };
+
+  const loadRegions = async () => {
+    const response = await requestJson('/api/v1/admin/radioreference/countries', { csrf: false });
+    const available = replaceRadioReferenceOptions(country, response?.items, configuration?.country_id,
+      'No countries available');
+    country.disabled = !available;
+    if (available) await loadStates(country.value, configuration?.state_id);
+  };
+
+  accountForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!accountForm.reportValidity() || connect.disabled) return;
+    connect.disabled = true;
+    signOut.disabled = true;
+    accountMessage.textContent = 'Connecting to RadioReference…';
+    try {
+      const next = await requestJson('/api/v1/admin/radioreference/session', {
+        method: 'PUT', body: { userName: userName.value, password: password.value, remember: remember.checked },
+        timeoutMs: 15_000
+      });
+      password.value = '';
+      if (updateAccount(next)) await loadRegions();
+    } catch (error) {
+      password.value = '';
+      accountMessage.textContent = error.message;
+    } finally {
+      connect.disabled = false;
+      signOut.disabled = configuration?.account?.state === 'SIGNED_OUT';
+    }
+  });
+
+  signOut.addEventListener('click', async () => {
+    if (signOut.disabled) return;
+    signOut.disabled = true;
+    connect.disabled = true;
+    accountMessage.textContent = 'Signing out of RadioReference…';
+    try {
+      const next = await requestJson('/api/v1/admin/radioreference/session', { method: 'DELETE' });
+      password.value = '';
+      userName.value = '';
+      updateAccount(next);
+      replaceRadioReferenceOptions(country, [], null, 'Connect an account first');
+      replaceRadioReferenceOptions(state, [], null, 'Choose a country first');
+      regionMessage.textContent = 'Choose the state used for exact-frequency searches.';
+    } catch (error) {
+      accountMessage.textContent = error.message;
+    } finally {
+      connect.disabled = false;
+    }
+  });
+
+  country.addEventListener('change', async () => {
+    regionMessage.textContent = 'Loading states…';
+    try {
+      await loadStates(country.value);
+      regionMessage.textContent = 'Save this state to use it for spectrum frequency searches.';
+    } catch (error) {
+      regionMessage.textContent = error.message;
+    }
+  });
+
+  regionForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!regionForm.reportValidity() || saveRegion.disabled) return;
+    saveRegion.disabled = true;
+    regionMessage.textContent = 'Saving RadioReference lookup region…';
+    try {
+      configuration = await requestJson('/api/v1/admin/radioreference/location', {
+        method: 'PUT', body: { countryId: Number(country.value), stateId: Number(state.value) }
+      });
+      regionMessage.textContent = 'RadioReference lookup region saved.';
+    } catch (error) {
+      regionMessage.textContent = error.message;
+    } finally {
+      saveRegion.disabled = configuration?.account?.state !== 'VALID_PREMIUM' || !state.value;
+    }
+  });
+
+  try {
+    const initial = await requestJson('/api/v1/admin/radioreference', { csrf: false });
+    if (updateAccount(initial, true)) await loadRegions();
+  } catch (error) {
+    accountMessage.textContent = error.message;
+    connect.disabled = false;
+  }
 }
 
 function adminAudioNumberField(configuration, limits, key, label, help) {

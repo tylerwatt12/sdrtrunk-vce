@@ -15,9 +15,9 @@ import java.util.List;
 /**
  * JavaFX-independent boundary around the RadioReference client library.
  *
- * <p>The snapshots intentionally contain only directory fields.  {@link DetailReference} carries the native object
- * identity that a later importer slice can use to load system sites, frequencies and talkgroups without changing the
- * directory contract.</p>
+ * <p>The snapshots are compact, immutable projections of directory and exact-frequency search data.
+ * {@link DetailReference} carries the native object identity that a later importer slice can use to load system sites,
+ * frequencies and talkgroups without changing the directory contract.</p>
  */
 public interface RadioReferenceGateway extends AutoCloseable
 {
@@ -30,6 +30,9 @@ public interface RadioReferenceGateway extends AutoCloseable
     StateDirectory state(int stateId) throws RadioReferenceGatewayException;
 
     CountyDirectory county(int countyId) throws RadioReferenceGatewayException;
+
+    List<FrequencyResult> searchStateFrequencies(int stateId, double frequencyMHz)
+        throws RadioReferenceGatewayException;
 
     @Override
     void close();
@@ -56,6 +59,17 @@ public interface RadioReferenceGateway extends AutoCloseable
 
     record TrunkedSystem(int id, String name, String city, int typeId, int flavorId, int voiceId)
     {
+    }
+
+    record FrequencyResult(double downlinkMHz, double uplinkMHz, String callsign, String description,
+                           String alpha, String tone, String colorCode, String talkgroup, String slot,
+                           String mode, String classification, List<String> tags, int subCategoryId,
+                           int stateId, int agencyId, int countyId)
+    {
+        public FrequencyResult
+        {
+            tags = immutable(tags);
+        }
     }
 
     record CountryDirectory(Country country, List<State> states, List<Agency> agencies)

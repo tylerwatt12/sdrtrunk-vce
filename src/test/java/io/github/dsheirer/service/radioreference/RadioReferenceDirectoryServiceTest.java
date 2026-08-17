@@ -25,6 +25,7 @@ import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryService.
 import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryService.EntryGroup;
 import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryService.EntryScope;
 import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryService.EntryType;
+import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryService.FrequencyMatch;
 import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryService.LocationSelection;
 import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryService.ScopeFilter;
 import io.github.dsheirer.service.radioreference.RadioReferenceGateway.Account;
@@ -34,6 +35,7 @@ import io.github.dsheirer.service.radioreference.RadioReferenceGateway.CountryDi
 import io.github.dsheirer.service.radioreference.RadioReferenceGateway.County;
 import io.github.dsheirer.service.radioreference.RadioReferenceGateway.CountyDirectory;
 import io.github.dsheirer.service.radioreference.RadioReferenceGateway.DetailKind;
+import io.github.dsheirer.service.radioreference.RadioReferenceGateway.FrequencyResult;
 import io.github.dsheirer.service.radioreference.RadioReferenceGateway.State;
 import io.github.dsheirer.service.radioreference.RadioReferenceGateway.StateDirectory;
 import io.github.dsheirer.service.radioreference.RadioReferenceGateway.TrunkedSystem;
@@ -185,6 +187,33 @@ class RadioReferenceDirectoryServiceTest
                 assertThrows(RadioReferenceDirectoryException.class,
                     () -> service.countries("x".repeat(
                         RadioReferenceDirectoryService.MAXIMUM_QUERY_LENGTH + 1), 10)).code());
+        }
+    }
+
+    @Test
+    void returnsBoundedConventionalAndTrunkedFrequencyMatchesWithStableLinks() throws Exception
+    {
+        FakeGateway gateway = populatedGateway();
+
+        try(RadioReferenceDirectoryService service = service(new FakeFactory(gateway)))
+        {
+            service.login("user", "secret".toCharArray());
+            BoundedPage<FrequencyMatch> page = service.searchStateFrequencies(10, 853_162_500L, 1);
+
+            assertEquals(2, page.totalItems());
+            assertEquals(1, page.items().size());
+            assertEquals(1, page.nextOffset());
+            FrequencyMatch trunked = page.items().getFirst();
+            assertEquals("State P25", trunked.description());
+            assertEquals(2001, trunked.systemId());
+            assertEquals("Franklin", trunked.countyName());
+            assertEquals("https://www.radioreference.com/db/sid/2001", trunked.radioReferenceUrl());
+
+            FrequencyMatch conventional = service.searchStateFrequencies(10, 853_162_500L, 1, 1)
+                .items().getFirst();
+            assertEquals("County Dispatch", conventional.description());
+            assertEquals("https://www.radioreference.com/db/subcat/444", conventional.radioReferenceUrl());
+            assertEquals("State Police", conventional.agencyName());
         }
     }
 
@@ -435,6 +464,11 @@ class RadioReferenceDirectoryServiceTest
             new County(100, "Franklin", "Franklin County"),
             List.of(new TrunkedSystem(2002, "County P25", "Franklin", 1, 2, 3)),
             List.of(new Agency(1002, "County Fire", 3)));
+        gateway.frequencyResults = List.of(
+            new FrequencyResult(853.1625, 808.1625, "", "State P25", "Franklin Simulcast", "34C", "", "",
+                "", "P25", "", List.of("Law Dispatch"), 0, 10, 0, 100),
+            new FrequencyResult(853.1625, 0, "WQAB123", "County Dispatch", "Dispatch", "123.0 PL", "", "",
+                "", "FMN", "RM", List.of("Law Dispatch"), 444, 10, 1001, 100));
         return gateway;
     }
 
@@ -490,6 +524,7 @@ class RadioReferenceDirectoryServiceTest
             new StateDirectory(new State(1, "", ""), List.of(), List.of(), List.of());
         private CountyDirectory county =
             new CountyDirectory(new County(1, "", ""), List.of(), List.of());
+        private List<FrequencyResult> frequencyResults = List.of();
         private volatile boolean closed;
         private volatile boolean blockCountries;
         private volatile boolean ignoreCountryInterrupt;
@@ -563,6 +598,12 @@ class RadioReferenceDirectoryServiceTest
         {
             countyCalls.incrementAndGet();
             return county;
+        }
+
+        @Override
+        public List<FrequencyResult> searchStateFrequencies(int stateId, double frequencyMHz)
+        {
+            return frequencyResults;
         }
 
         @Override

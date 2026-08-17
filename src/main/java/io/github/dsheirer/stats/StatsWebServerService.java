@@ -41,6 +41,7 @@ import io.github.dsheirer.record.AudioRecordingManager;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.scanlist.ScanList;
 import io.github.dsheirer.scanlist.ScanListModel;
+import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryService;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.stats.activity.P25ActivityCommitListener;
 import io.github.dsheirer.stats.activity.P25ActivityLogPath;
@@ -60,6 +61,7 @@ import io.github.dsheirer.web.http.ApiRequestDecoder;
 import io.github.dsheirer.web.http.EmbeddedHttpServerPolicy;
 import io.github.dsheirer.web.http.EmbeddedHttpServerShutdown;
 import io.github.dsheirer.web.http.ReceiverLocationHttpController;
+import io.github.dsheirer.web.http.RadioReferenceHttpController;
 import io.github.dsheirer.web.http.WebAccessHttpController;
 import io.github.dsheirer.web.http.WebCallConfigurationHttpController;
 import io.github.dsheirer.web.network.WebCertificateIdentity;
@@ -167,6 +169,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
     private final P25ActivityLogService mActivityLogService;
     private final AliasAdministrationService mAliasAdministrationService;
     private final ScanListModel mScanListModel;
+    private final RadioReferenceDirectoryService mRadioReferenceDirectoryService;
     private final Path mWebAccessDatabasePath;
     private final WebTlsMaterialService mTlsMaterialService;
     private final ScheduledExecutorService mTlsMaintenanceExecutor;
@@ -228,6 +231,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         EmbeddedHttpServerPolicy.configureBeforeServerInitialization();
         mUserPreferences = userPreferences;
         mScanListModel = scanListModel;
+        mRadioReferenceDirectoryService = new RadioReferenceDirectoryService();
         mWebCallService = new StatsWebCallService(mScanListModel,
             mUserPreferences.getApplicationPreference().getWebCallConfiguration());
         mChannelProcessingManager = channelProcessingManager;
@@ -686,6 +690,11 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             });
         server.createContext(ReceiverLocationHttpController.PATH, mWebAccessHttpController.protectApi(
             WebCapability.ADMIN_SETTINGS, receiverLocationController::handle));
+
+        RadioReferenceHttpController radioReferenceController = new RadioReferenceHttpController(
+            mRadioReferenceDirectoryService, mUserPreferences.getRadioReferencePreference());
+        server.createContext(RadioReferenceHttpController.PATH, mWebAccessHttpController.protectApi(
+            WebCapability.ADMIN_SETTINGS, radioReferenceController::handle));
 
         new StatsApiV1Controller(mDatabase, this::status, mWebAccessHttpController, mTunerDiagnosticService,
             mReceiverHealthService::snapshot)
@@ -2049,6 +2058,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         }
         mDiagnosticFftScheduler.close();
         mWebCallService.close();
+        mRadioReferenceDirectoryService.close();
     }
 
     /**

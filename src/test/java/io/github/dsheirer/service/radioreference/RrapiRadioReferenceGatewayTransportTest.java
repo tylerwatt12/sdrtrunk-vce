@@ -35,6 +35,7 @@ import io.github.dsheirer.rrapi.response.GetTalkgroupsResponse;
 import io.github.dsheirer.rrapi.response.GetUserDataResponse;
 import io.github.dsheirer.rrapi.response.ResponseBody;
 import io.github.dsheirer.rrapi.response.ResponseEnvelope;
+import io.github.dsheirer.rrapi.response.SearchFrequencyResponse;
 import io.github.dsheirer.rrapi.type.Agency;
 import io.github.dsheirer.rrapi.type.Country;
 import io.github.dsheirer.rrapi.type.CountryInfo;
@@ -43,6 +44,7 @@ import io.github.dsheirer.rrapi.type.CountyInfo;
 import io.github.dsheirer.rrapi.type.State;
 import io.github.dsheirer.rrapi.type.StateInfo;
 import io.github.dsheirer.rrapi.type.Site;
+import io.github.dsheirer.rrapi.type.SearchFrequencyResult;
 import io.github.dsheirer.rrapi.type.SystemInformation;
 import io.github.dsheirer.rrapi.type.Talkgroup;
 import io.github.dsheirer.rrapi.type.TalkgroupCategory;
@@ -159,8 +161,18 @@ class RrapiRadioReferenceGatewayTransportTest
         GetCountyInfoResponse countyResponse = new GetCountyInfoResponse();
         countyResponse.setCountyInfo(countyInfo);
 
+        SearchFrequencyResult frequency = new SearchFrequencyResult();
+        frequency.setDownlink(853.1625);
+        frequency.setDescription("Test P25");
+        frequency.setAlpha("Test Simulcast");
+        frequency.setTone("34C");
+        frequency.setCountyId(20);
+        SearchFrequencyResponse frequencyResponse = new SearchFrequencyResponse();
+        frequencyResponse.setResults(List.of(frequency));
+
         List<String> responses = List.of(response(userResponse), response(countriesResponse),
-            response(countryResponse), response(stateResponse), response(countyResponse));
+            response(countryResponse), response(stateResponse), response(countyResponse),
+            response(frequencyResponse));
         AtomicInteger requestIndex = new AtomicInteger();
         List<String> requests = new ArrayList<>();
 
@@ -182,11 +194,16 @@ class RrapiRadioReferenceGatewayTransportTest
             assertEquals("Test State", gateway.country(1).states().getFirst().name());
             assertEquals("Test County", gateway.state(10).counties().getFirst().name());
             assertEquals("Test County", gateway.county(20).county().name());
+            RadioReferenceGateway.FrequencyResult match = gateway.searchStateFrequencies(10, 853.1625).getFirst();
+            assertEquals("Test P25", match.description());
+            assertEquals("Test Simulcast", match.alpha());
+            assertEquals(20, match.countyId());
         }
 
-        assertEquals(5, requestIndex.get());
+        assertEquals(6, requestIndex.get());
         assertTrue(requests.stream().allMatch(request -> request.contains("dummy-password")));
         assertTrue(requests.stream().allMatch(request -> request.contains("test-user")));
+        assertTrue(requests.getLast().contains("853.1625"));
     }
 
     @Test

@@ -211,7 +211,7 @@ class StatsWebInteractionUiContractTest
         String talkgroup = function(source, "async function renderTalkgroup()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"76\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"77\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -521,8 +521,8 @@ class StatsWebInteractionUiContractTest
             html.indexOf("rel=\"stylesheet\""));
         assertTrue(html.contains("id=\"theme-toggle\""));
         assertTrue(html.contains("id=\"mobile-theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=59"));
-        assertTrue(html.contains("/assets/app.js?v=90"));
+        assertTrue(html.contains("/assets/app.css?v=60"));
+        assertTrue(html.contains("/assets/app.js?v=91"));
         assertTrue(source.contains("MOBILE_THEME_STORAGE_KEY = 'sdrtrunk_mobile_theme'"));
         assertTrue(source.contains("mode === 'mobile' ? MOBILE_THEME_STORAGE_KEY : THEME_STORAGE_KEY"));
         assertTrue(source.contains("toggle.setAttribute('aria-pressed'"));
@@ -910,8 +910,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(parameters.contains("parameters.viewport_start_hz"));
         assertTrue(parameters.contains("parameters.viewport_end_hz"));
         assertTrue(source.contains("const TUNER_SPECTRUM_VIEWPORT_DEBOUNCE_MS = 160"));
-        assertTrue(source.contains("const TUNER_SPECTRUM_MAXIMUM_ANALYTICAL_ZOOM = 64"));
-        assertTrue(source.contains("const TUNER_SPECTRUM_MAXIMUM_ZOOM = 256"));
+        assertTrue(source.contains("const TUNER_SPECTRUM_MAXIMUM_ZOOM = 64"));
+        assertFalse(source.contains("TUNER_SPECTRUM_MAXIMUM_ANALYTICAL_ZOOM"));
         assertTrue(tuner.contains("'Spectrum performance'"));
         assertTrue(tuner.contains("'Efficient · 2,048 bins / 5 FPS'"));
         assertTrue(tuner.contains("'Balanced · 8,192 bins / 10 FPS'"));
@@ -1019,6 +1019,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("waterfallObservedAtRows[nextWaterfallRow] = observedAtEpochMs"));
         assertTrue(tuner.contains("function activeCarrierDescription(carrier)"));
         assertTrue(tuner.contains("function activeCarrierFields(carrier, fftPower = null)"));
+        assertTrue(tuner.contains("function activityAliasLabel(row, prefix)"));
+        assertTrue(tuner.contains("`${prefix}_alias_description`"));
         assertTrue(tuner.contains("function renderActiveCarrierFields(carrier, power)"));
         assertTrue(tuner.contains("targetIdentifierLabel(form)"));
         assertTrue(tuner.contains("row.tableIdentifiers || []"));
@@ -1065,7 +1067,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("pixelStartHz"));
         assertTrue(tuner.contains("pixelEndHz"));
         assertTrue(tuner.contains("restoreWaterfallHistory()"));
-        assertTrue(tuner.contains("' (digital)'"));
+        assertFalse(tuner.contains("' (digital)'"));
         assertTrue(tuner.contains("const frameDomain = tunerFrameDomain(frameMetadata, fftValues.length)"));
         assertTrue(tuner.contains("const resolution = frameDomain.sentBinWidthHz"));
         assertTrue(tuner.contains("['Analysis span'"));

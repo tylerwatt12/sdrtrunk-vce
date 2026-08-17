@@ -41,15 +41,17 @@ class StatsWebReceiverLocationAndFrequencyActionsUiContractTest
         assertTrue(settings.contains("receiverLocationField('longitude', 'Longitude', -180, 180"));
         assertTrue(settings.contains("enableHighAccuracy: false"));
         assertTrue(settings.contains("maximumAge: 300_000"));
+        assertTrue(settings.contains("await renderAdminRadioReferenceSettings()"));
     }
 
     @Test
-    void opensOneFutureProofFrequencyActionModalWithoutTurningClicksIntoNetworkPolling() throws Exception
+    void searchesRadioReferenceServerSideFromOneFutureProofFrequencyActionModal() throws Exception
     {
         String source = Files.readString(APP_JAVASCRIPT);
         String tuner = block(source, "function tunerSpectrumPanel()");
         String actions = block(source, "function openTunerFrequencyActions(selection)");
-        String handoff = block(source, "function openRadioReferenceFrequencyQuery(frequencyHz)");
+        String results = block(source, "function radioReferenceResultTable(matches)");
+        String settings = block(source, "async function renderAdminRadioReferenceSettings()");
         String pointerUp = block(tuner, "function onPlotPointerUp(event)");
         String pointerCancel = block(tuner, "function onPlotPointerCancel(event)");
 
@@ -58,12 +60,18 @@ class StatsWebReceiverLocationAndFrequencyActionsUiContractTest
         assertTrue(actions.contains("'Add System'"));
         assertTrue(actions.contains("true);"));
         assertTrue(actions.contains("openReadOnlyModal('Frequency actions'"));
-        assertTrue(source.contains(
-            "RADIO_REFERENCE_FREQUENCY_QUERY_URL = 'https://www.radioreference.com/db/query/'"));
-        assertTrue(handoff.contains("['qFreq'"));
-        assertTrue(handoff.contains("['stids[]', 'dbWide']"));
-        assertTrue(handoff.contains("['a', 'queryFreqState']"));
-        assertTrue(handoff.contains("popup.opener = null"));
+        assertTrue(actions.contains("requestJson('/api/v1/admin/radioreference'"));
+        assertTrue(actions.contains("/api/v1/admin/radioreference/frequencies?"));
+        assertTrue(actions.contains("configuration?.account?.state !== 'VALID_PREMIUM'"));
+        assertTrue(results.contains("'Freq Out'"));
+        assertTrue(results.contains("'Description / System'"));
+        assertTrue(results.contains("row.radio_reference_url"));
+        assertTrue(results.contains("link(Number(row.output_mhz).toFixed(5), row)"));
+        assertTrue(settings.contains("'/api/v1/admin/radioreference/session'"));
+        assertTrue(settings.contains("'/api/v1/admin/radioreference/countries'"));
+        assertTrue(settings.contains("'/api/v1/admin/radioreference/location'"));
+        assertFalse(source.contains("RADIO_REFERENCE_FREQUENCY_QUERY_URL"));
+        assertFalse(source.contains("openRadioReferenceFrequencyQuery"));
         assertTrue(tuner.contains("function frequencySelectionAtPointer(event)"));
         assertTrue(source.contains("Click a frequency to choose an action."));
         assertTrue(tuner.contains("rawFrequencyHz"));
@@ -86,6 +94,9 @@ class StatsWebReceiverLocationAndFrequencyActionsUiContractTest
         assertTrue(css.contains(".read-only-modal.frequency-action-modal"));
         assertTrue(css.contains(".tuner-frequency-action-list"));
         assertTrue(css.contains(".tuner-frequency-action.disabled-action"));
+        assertTrue(css.contains(":root[data-theme=\"dark\"] .tuner-frequency-action.disabled-action"));
+        assertTrue(css.contains(".radioreference-account-form"));
+        assertTrue(css.contains(".radioreference-region-form"));
         assertTrue(css.contains("color: var(--muted);"));
     }
 

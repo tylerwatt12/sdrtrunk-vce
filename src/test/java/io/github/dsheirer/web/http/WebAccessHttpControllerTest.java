@@ -150,7 +150,9 @@ class WebAccessHttpControllerTest
             assertEquals(401, json(anonymousProtected).at("/error/status").intValue());
             assertTrue(anonymousProtected.headers().firstValue("Content-Security-Policy").isPresent());
             assertTrue(anonymousProtected.headers().firstValue("Content-Security-Policy").orElseThrow()
-                .contains("form-action 'self' https://www.radioreference.com"));
+                .contains("form-action 'self'"));
+            assertFalse(anonymousProtected.headers().firstValue("Content-Security-Policy").orElseThrow()
+                .contains("radioreference.com"));
             assertEquals("camera=(), microphone=(), geolocation=(self)",
                 anonymousProtected.headers().firstValue("Permissions-Policy").orElseThrow());
             assertEquals(401, send(client, request(origin, "/admin-api")

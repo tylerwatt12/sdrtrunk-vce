@@ -2852,7 +2852,7 @@ body.modal-open {
 }
 
 .read-only-modal.frequency-action-modal {
-  width: min(560px, 96vw);
+  width: min(1040px, 96vw);
 }
 
 .modal-header {
@@ -2991,6 +2991,34 @@ body.modal-open {
   grid-column: 1 / -1;
 }
 
+.radioreference-account-form,
+.radioreference-region-form {
+  max-width: 720px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding: 14px;
+}
+
+.radioreference-remember,
+.radioreference-account-form .admin-form-message,
+.radioreference-account-form .admin-form-actions,
+.radioreference-region-form .admin-form-message,
+.radioreference-region-form .admin-form-actions {
+  grid-column: 1 / -1;
+}
+
+.radioreference-remember {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.radioreference-remember input {
+  width: 20px;
+  min-height: 20px;
+  flex: 0 0 auto;
+  accent-color: var(--accent);
+}
+
 .tuner-frequency-action-body {
   display: grid;
   gap: 12px;
@@ -3057,6 +3085,10 @@ body.modal-open {
 .tuner-frequency-action-message {
   min-height: 18px;
   color: var(--muted);
+}
+
+.tuner-frequency-results {
+  min-width: 0;
 }
 
 .admin-audio-form .admin-form-message,
@@ -3901,9 +3933,16 @@ th.numeric {
 :root[data-theme="dark"] .dashboard-filter-button.active,
 :root[data-theme="dark"] .signal-range-button.active,
 :root[data-theme="dark"] .button:not(.secondary):not(.disabled),
-:root[data-theme="dark"] button:not(.secondary):not(.playback-command):not(.theme-toggle):not(.auth-action):not(.table-sort-control):not(.systems-live-tab):not(.live-details-tab):not(.channel-diagnostic-view-button):not(.mobile-listener-theme):not([data-listener-view]) {
+:root[data-theme="dark"] button:not(:disabled):not(.secondary):not(.playback-command):not(.theme-toggle):not(.auth-action):not(.table-sort-control):not(.systems-live-tab):not(.live-details-tab):not(.channel-diagnostic-view-button):not(.mobile-listener-theme):not([data-listener-view]) {
   color: #071a18;
   border-color: #69cec2;
+}
+
+:root[data-theme="dark"] .tuner-frequency-action.disabled-action {
+  color: var(--muted);
+  background: var(--surface-2);
+  border-color: var(--line-dark);
+  opacity: 1;
 }
 
 :root[data-theme="dark"] .channel-diagnostic-view-button[aria-pressed="true"] {
@@ -5596,7 +5635,9 @@ body.mobile-listener-active {
   }
 
   .admin-audio-form,
-  .receiver-location-form {
+  .receiver-location-form,
+  .radioreference-account-form,
+  .radioreference-region-form {
     grid-template-columns: 1fr;
   }
 

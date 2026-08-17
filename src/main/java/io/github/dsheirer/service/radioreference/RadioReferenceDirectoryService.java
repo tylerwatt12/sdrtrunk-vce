@@ -414,6 +414,75 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
         return page(entries, offset, limit);
     }
 
+    /**
+     * Searches one RadioReference state for an exact frequency.  RadioReference combines conventional records and
+     * trunked-site frequency matches in this response.  One state-directory lookup enriches the compact upstream
+     * rows with stable county, agency and unambiguous trunked-system links.
+     */
+    public BoundedPage<FrequencyMatch> searchStateFrequencies(int stateId, long frequencyHz, int limit)
+        throws RadioReferenceDirectoryException
+    {
+        return searchStateFrequencies(stateId, frequencyHz, 0, limit);
+    }
+
+    public BoundedPage<FrequencyMatch> searchStateFrequencies(int stateId, long frequencyHz, int offset, int limit)
+        throws RadioReferenceDirectoryException
+    {
+        validateId(stateId);
+        validatePage(offset, limit);
+
+        if(frequencyHz <= 0 || frequencyHz > 100_000_000_000L)
+        {
+            throw new RadioReferenceDirectoryException(RadioReferenceDirectoryException.Code.INVALID_REQUEST);
+        }
+
+        FrequencySnapshot snapshot = invokePremium(gateway -> new FrequencySnapshot(
+            verifiedState(gateway.state(stateId), stateId),
+            gateway.searchStateFrequencies(stateId, frequencyHz / 1_000_000.0)));
+        List<RadioReferenceGateway.FrequencyResult> source = snapshot.results() != null ? snapshot.results() : List.of();
+        long enrichmentItems = (long)snapshot.state().counties().size() + snapshot.state().agencies().size() +
+            snapshot.state().systems().size();
+
+        if(source.size() > MAXIMUM_REMOTE_ITEMS_SCANNED || enrichmentItems > MAXIMUM_REMOTE_ITEMS_SCANNED)
+        {
+            throw tooLarge();
+        }
+
+        Map<Integer,String> counties = new LinkedHashMap<>();
+        snapshot.state().counties().stream().filter(Objects::nonNull)
+            .forEach(county -> counties.putIfAbsent(county.id(), text(county.name())));
+        Map<Integer,String> agencies = new LinkedHashMap<>();
+        snapshot.state().agencies().stream().filter(Objects::nonNull)
+            .forEach(agency -> agencies.putIfAbsent(agency.id(), text(agency.name())));
+        Map<String,List<RadioReferenceGateway.TrunkedSystem>> systems = new LinkedHashMap<>();
+        snapshot.state().systems().stream().filter(Objects::nonNull)
+            .forEach(system -> systems.computeIfAbsent(text(system.name()).toLowerCase(Locale.ROOT),
+                ignored -> new ArrayList<>()).add(system));
+
+        List<FrequencyMatch> matches = new ArrayList<>(source.size());
+
+        for(RadioReferenceGateway.FrequencyResult result: source)
+        {
+            if(result == null || !Double.isFinite(result.downlinkMHz()) || result.downlinkMHz() <= 0)
+            {
+                continue;
+            }
+
+            List<RadioReferenceGateway.TrunkedSystem> namedSystems =
+                systems.getOrDefault(text(result.description()).toLowerCase(Locale.ROOT), List.of());
+            Integer systemId = namedSystems.size() == 1 ? namedSystems.getFirst().id() : null;
+            String url = radioReferenceUrl(systemId, result.subCategoryId(), result.agencyId(), result.countyId());
+            matches.add(new FrequencyMatch(result.downlinkMHz(), positive(result.uplinkMHz()),
+                text(result.tone()), text(result.callsign()), text(result.description()), text(result.alpha()),
+                text(result.mode()), text(result.classification()), text(result.colorCode()), text(result.talkgroup()),
+                text(result.slot()), result.tags(), stateId, text(snapshot.state().state().name()), result.countyId(),
+                counties.getOrDefault(result.countyId(), ""), result.agencyId(),
+                agencies.getOrDefault(result.agencyId(), ""), result.subCategoryId(), systemId, url));
+        }
+
+        return page(matches, offset, limit);
+    }
+
     private void setFailedLoginStatus(long generation, AccountStatus status)
     {
         synchronized(mSessionLock)
@@ -851,6 +920,33 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
         return value == null ? "" : value.strip();
     }
 
+    private static Double positive(double value)
+    {
+        return Double.isFinite(value) && value > 0 ? value : null;
+    }
+
+    private static String radioReferenceUrl(Integer systemId, int subCategoryId, int agencyId, int countyId)
+    {
+        if(systemId != null && systemId > 0)
+        {
+            return "https://www.radioreference.com/db/sid/" + systemId;
+        }
+        else if(subCategoryId > 0)
+        {
+            return "https://www.radioreference.com/db/subcat/" + subCategoryId;
+        }
+        else if(agencyId > 0)
+        {
+            return "https://www.radioreference.com/db/aid/" + agencyId;
+        }
+        else if(countyId > 0)
+        {
+            return "https://www.radioreference.com/db/browse/ctid/" + countyId;
+        }
+
+        return "https://www.radioreference.com/db/";
+    }
+
     private void ensureOpen() throws RadioReferenceDirectoryException
     {
         if(mClosed)
@@ -940,6 +1036,11 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
     private record LocationSnapshot(RadioReferenceGateway.CountryDirectory country,
                                     RadioReferenceGateway.StateDirectory state,
                                     RadioReferenceGateway.CountyDirectory county)
+    {
+    }
+
+    private record FrequencySnapshot(RadioReferenceGateway.StateDirectory state,
+                                     List<RadioReferenceGateway.FrequencyResult> results)
     {
     }
 
@@ -1227,6 +1328,31 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
 
     public record LocationSelection(int countryId, Integer stateId, Integer countyId)
     {
+    }
+
+    public record FrequencyMatch(double outputMHz, Double inputMHz, String tone, String callsign,
+                                 String description, String category, String mode, String classification,
+                                 String colorCode, String talkgroup, String slot, List<String> tags, int stateId,
+                                 String stateName, int countyId, String countyName, int agencyId, String agencyName,
+                                 int subCategoryId, Integer systemId, String radioReferenceUrl)
+    {
+        public FrequencyMatch
+        {
+            tone = text(tone);
+            callsign = text(callsign);
+            description = text(description);
+            category = text(category);
+            mode = text(mode);
+            classification = text(classification);
+            colorCode = text(colorCode);
+            talkgroup = text(talkgroup);
+            slot = text(slot);
+            tags = tags == null ? List.of() : List.copyOf(tags);
+            stateName = text(stateName);
+            countyName = text(countyName);
+            agencyName = text(agencyName);
+            radioReferenceUrl = text(radioReferenceUrl);
+        }
     }
 
     public record DirectoryEntry(String name, String secondary, EntryType type, EntryScope scope,

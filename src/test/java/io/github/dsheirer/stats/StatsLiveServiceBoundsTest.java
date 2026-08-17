@@ -58,8 +58,9 @@ class StatsLiveServiceBoundsTest
         StatsLiveService service = new StatsLiveService(null, null);
         ChannelActivitySnapshot.Row row = new ChannelActivitySnapshot.Row("row", "Dispatch", null, "CALL",
             List.of("VOICE"), "0-101", 851_012_500L, "WPFF205", -22.5, null, 0L, 0L, 0L, 0L, 0L,
-            0L, 0L, null, 2, "1201", "RADIO", "Engine 1", "Portable 12", "Engine 1 · TA: Portable 12",
-            "4400", "TALKGROUP", "Fire Dispatch", "P25_PHASE1", null);
+            0L, 0L, null, 2, "1201", "RADIO", "Engine 1", "Engine company one", "Portable 12",
+            "Engine 1 · TA: Portable 12", "4400", "TALKGROUP", "Fire Dispatch", "Primary dispatch",
+            "P25_PHASE1", null);
         ChannelActivitySnapshot snapshot = new ChannelActivitySnapshot("site", "Live", "County", "Downtown",
             "Primary", null, null, true,
             List.of(new ChannelActivitySnapshot.IdentifierField("System", "WACN", "BEE00"),
@@ -75,6 +76,8 @@ class StatsLiveServiceBoundsTest
             assertEquals("RADIO", projected.get("source_form"));
             assertEquals("TALKGROUP", projected.get("target_form"));
             assertEquals("WPFF205", projected.get("callsign"));
+            assertEquals("Engine company one", projected.get("source_alias_description"));
+            assertEquals("Primary dispatch", projected.get("target_alias_description"));
         }
         finally
         {

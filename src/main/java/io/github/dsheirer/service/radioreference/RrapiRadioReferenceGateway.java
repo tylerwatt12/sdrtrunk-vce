@@ -15,11 +15,13 @@ import io.github.dsheirer.rrapi.request.GetCountryList;
 import io.github.dsheirer.rrapi.request.GetCountyInfo;
 import io.github.dsheirer.rrapi.request.GetStateInfo;
 import io.github.dsheirer.rrapi.request.GetUserData;
+import io.github.dsheirer.rrapi.request.SearchStateFrequency;
 import io.github.dsheirer.rrapi.response.GetCountryInfoResponse;
 import io.github.dsheirer.rrapi.response.GetCountryListResponse;
 import io.github.dsheirer.rrapi.response.GetCountyInfoResponse;
 import io.github.dsheirer.rrapi.response.GetStateInfoResponse;
 import io.github.dsheirer.rrapi.response.GetUserDataResponse;
+import io.github.dsheirer.rrapi.response.SearchFrequencyResponse;
 import io.github.dsheirer.rrapi.type.CountryInfo;
 import io.github.dsheirer.rrapi.type.CountyInfo;
 import io.github.dsheirer.rrapi.type.StateInfo;
@@ -170,6 +172,45 @@ final class RrapiRadioReferenceGateway implements RadioReferenceGateway
 
             return new CountyDirectory(new County(info.getCountyId(), info.getName(), info.getHeader()),
                 systems(info.getSystems()), agencies(info.getAgencies()));
+        }
+        catch(RuntimeException exception)
+        {
+            throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.UNAVAILABLE);
+        }
+    }
+
+    @Override
+    public List<FrequencyResult> searchStateFrequencies(int stateId, double frequencyMHz)
+        throws RadioReferenceGatewayException
+    {
+        try
+        {
+            SearchFrequencyResponse response = client().execute(
+                authorization -> SearchStateFrequency.create(authorization, stateId, frequencyMHz),
+                SearchFrequencyResponse.class);
+            List<FrequencyResult> results = new ArrayList<>();
+
+            if(response.getResults() != null)
+            {
+                for(io.github.dsheirer.rrapi.type.SearchFrequencyResult result: response.getResults())
+                {
+                    List<String> tags = new ArrayList<>();
+
+                    if(result.getTags() != null)
+                    {
+                        result.getTags().stream().filter(java.util.Objects::nonNull)
+                            .map(io.github.dsheirer.rrapi.type.Tag::getDescription)
+                            .filter(java.util.Objects::nonNull).forEach(tags::add);
+                    }
+
+                    results.add(new FrequencyResult(result.getDownlink(), result.getUplink(), result.getCallsign(),
+                        result.getDescription(), result.getAlpha(), result.getTone(), result.getColorCode(),
+                        result.getTalkgroup(), result.getSlot(), result.getMode(), result.getClassification(), tags,
+                        result.getSubCategoryId(), result.getStateId(), result.getAgencyId(), result.getCountyId()));
+                }
+            }
+
+            return results;
         }
         catch(RuntimeException exception)
         {

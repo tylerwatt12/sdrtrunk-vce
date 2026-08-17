@@ -65,10 +65,29 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
                       long controlValidFrames, long controlInvalidFrames, long controlCorrectedBits,
                       long controlSyncLossBits, long controlDroppedBits, long controlLastValidDecodeMs,
                       VoiceCallQuality voiceQuality,
-                      Integer timeslot, String sourceId, String sourceForm, String sourceAlias, String talkerAlias,
-                      String sourceAliasDisplay, String targetId, String targetForm, String targetAlias, String decoder,
+                      Integer timeslot, String sourceId, String sourceForm, String sourceAlias,
+                      String sourceAliasDescription, String talkerAlias, String sourceAliasDisplay, String targetId,
+                      String targetForm, String targetAlias, String targetAliasDescription, String decoder,
                       String encryptionDetails)
     {
+        /**
+         * Compatibility constructor for snapshots that do not supply alias descriptions.
+         */
+        public Row(String key, String channelName, String configurationId, String status, List<String> tags,
+                   String lcn, long frequencyHz, String callsign, Double signalDbfs, Double decodeHealthPercent,
+                   long qualityObservedAtMs, long controlValidFrames, long controlInvalidFrames,
+                   long controlCorrectedBits, long controlSyncLossBits, long controlDroppedBits,
+                   long controlLastValidDecodeMs, VoiceCallQuality voiceQuality, Integer timeslot, String sourceId,
+                   String sourceForm, String sourceAlias, String talkerAlias, String sourceAliasDisplay,
+                   String targetId, String targetForm, String targetAlias, String decoder, String encryptionDetails)
+        {
+            this(key, channelName, configurationId, status, tags, lcn, frequencyHz, callsign, signalDbfs,
+                decodeHealthPercent, qualityObservedAtMs, controlValidFrames, controlInvalidFrames,
+                controlCorrectedBits, controlSyncLossBits, controlDroppedBits, controlLastValidDecodeMs, voiceQuality,
+                timeslot, sourceId, sourceForm, sourceAlias, null, talkerAlias, sourceAliasDisplay, targetId,
+                targetForm, targetAlias, null, decoder, encryptionDetails);
+        }
+
         private static Row from(ChannelActivityRow row)
         {
             String channelName = row.getRole() == ChannelActivityRow.Role.CONVENTIONAL ? row.getChannelName() : null;
@@ -86,8 +105,9 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
                 quality != null ? quality.controlLastValidDecodeMs() : 0,
                 row.getVoiceCallQuality(), row.getTimeslot(),
                 value(row.getSource()), form(row.getSource()), aliases(row.getSourceAliases()),
-                value(row.getTalkerAlias()), row.getSourceAliasDisplay(), value(row.getTarget()),
-                form(row.getTarget()), aliases(row.getTargetAliases()),
+                aliasDescriptions(row.getSourceAliases()), value(row.getTalkerAlias()), row.getSourceAliasDisplay(),
+                value(row.getTarget()), form(row.getTarget()), aliases(row.getTargetAliases()),
+                aliasDescriptions(row.getTargetAliases()),
                 row.getDecoder(), row.getEncryptionDetails());
         }
 
@@ -111,6 +131,19 @@ public record ChannelActivitySnapshot(String tableId, String title, String syste
 
             return aliases.stream().filter(Objects::nonNull).map(Alias::getName).filter(Objects::nonNull)
                 .collect(Collectors.joining(", "));
+        }
+
+        private static String aliasDescriptions(List<Alias> aliases)
+        {
+            if(aliases == null || aliases.isEmpty())
+            {
+                return null;
+            }
+
+            String descriptions = aliases.stream().filter(Objects::nonNull).map(Alias::getDescription)
+                .filter(description -> description != null && !description.isBlank()).map(String::strip).distinct()
+                .collect(Collectors.joining(", "));
+            return descriptions.isEmpty() ? null : descriptions;
         }
     }
 }
