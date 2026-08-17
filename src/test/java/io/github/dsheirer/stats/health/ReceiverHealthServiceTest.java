@@ -198,7 +198,7 @@ class ReceiverHealthServiceTest
     }
 
     @Test
-    void keepsRawDecoderDropEvidenceOutOfTheServiceImpactIndicator()
+    void keepsRawDecoderDropEvidenceAsAnInformationalMeasurement()
     {
         AtomicLong clock = new AtomicLong(1_000L);
 
@@ -206,11 +206,14 @@ class ReceiverHealthServiceTest
         {
             service.setChannelActivitySnapshotSupplier(() -> activity(773_831_250L, clock.get(), 0, 0, 48));
             service.sampleNow();
-            assertEquals("decoder-input-drop", rows(service.snapshot().get("active")).getFirst().get("code"));
+            assertTrue(rows(service.snapshot().get("active")).isEmpty());
+            assertTrue(rows(service.snapshot().get("resolved")).isEmpty());
             Map<String,Object> summary = map(service.snapshot().get("summary"));
             assertEquals("healthy", summary.get("severity"));
             assertEquals(0, summary.get("active_count"));
-            assertEquals(1, summary.get("diagnostic_count"));
+            assertEquals(0, summary.get("diagnostic_count"));
+            assertTrue(String.valueOf(measurement(service.snapshot(), "decoders", "site-table").get("detail"))
+                .contains("dropped_bits=48"));
         }
     }
 

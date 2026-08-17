@@ -594,14 +594,6 @@ public final class ReceiverHealthService implements AutoCloseable
                         "; sync_loss_bits=" + channel.controlSyncLossBits() + "; dropped_bits=" +
                         channel.controlDroppedBits() + "; last_valid_decode_ms=" + lastValidDecodeMs +
                         "; decoder=" + channel.decoder()));
-                if(channel.controlDroppedBits() > 0)
-                {
-                    mIncidents.observe("decoder-input-drop", "critical", "Decoder input bits were dropped", label,
-                        now, channel.controlDroppedBits(), channel.controlDroppedBits() +
-                            " dropped bits in the current control-quality window",
-                        "Missing upstream samples or a saturated channel processing path",
-                        "Control messages and grants can be lost", "Check USB, receiver, channelizer, and channel queue incidents first");
-                }
             }
 
             ControlContinuity continuity = mControlContinuityByTable.get(table.tableId());
