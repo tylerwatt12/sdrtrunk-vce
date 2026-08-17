@@ -35,6 +35,7 @@ const ACCESS_CAPABILITIES = Object.freeze({
   RECEIVER_HEALTH: 'receiver-health',
   ADMIN_ALIASES: 'admin-aliases',
   ADMIN_AUDIO: 'admin-audio',
+  ADMIN_SETTINGS: 'admin-settings',
   ADMIN_USERS: 'admin-users',
   ADMIN_ACCESS: 'admin-access'
 });
@@ -475,6 +476,7 @@ function viewAllowed(view) {
   if (view === 'admin') {
     return accessSession.tier === 'ADMIN' &&
       (capabilityAllowed(ACCESS_CAPABILITIES.RECEIVER_HEALTH) ||
+        capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_SETTINGS) ||
         capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_ALIASES) ||
         capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_AUDIO) ||
         capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_USERS) ||
@@ -7769,6 +7771,86 @@ const TUNER_ACTIVITY_LABELS = Object.freeze({
   CONTROL: 'Control channel',
   ACTIVE: 'Other activity'
 });
+const RADIO_REFERENCE_FREQUENCY_QUERY_URL = 'https://www.radioreference.com/db/query/';
+
+function openRadioReferenceFrequencyQuery(frequencyHz) {
+  const numericFrequency = Number(frequencyHz);
+  if (!Number.isFinite(numericFrequency) || numericFrequency <= 0) return false;
+  const target = `sdrtrunk_rr_lookup_${Date.now()}`;
+  const popup = window.open('', target);
+  if (!popup) return false;
+  try { popup.opener = null; } catch (error) { /* The new tab can still navigate safely. */ }
+
+  const form = node('form');
+  form.method = 'POST';
+  form.action = RADIO_REFERENCE_FREQUENCY_QUERY_URL;
+  form.target = target;
+  form.hidden = true;
+  [
+    ['qFreq', (numericFrequency / 1_000_000).toFixed(5)],
+    ['qTone', '0'],
+    ['stids[]', 'dbWide'],
+    ['a', 'queryFreqState'],
+    ['coid', '1']
+  ].forEach(([name, value]) => {
+    const input = node('input');
+    input.type = 'hidden';
+    input.name = name;
+    input.value = value;
+    form.append(input);
+  });
+  document.body.append(form);
+  form.submit();
+  window.setTimeout(() => form.remove(), 0);
+  return true;
+}
+
+function tunerFrequencyAction(label, detail, disabled = false) {
+  const button = node('button', `tuner-frequency-action${disabled ? ' disabled-action' : ''}`);
+  button.type = 'button';
+  button.disabled = disabled;
+  button.append(node('strong', '', label), node('small', '', detail));
+  if (disabled) button.setAttribute('aria-disabled', 'true');
+  return button;
+}
+
+function openTunerFrequencyActions(selection) {
+  const selectedHz = Number(selection?.frequencyHz);
+  const rawHz = Number(selection?.rawFrequencyHz);
+  if (!Number.isFinite(selectedHz) || selectedHz <= 0) return null;
+  const body = node('div', 'tuner-frequency-action-body');
+  const summary = node('dl', 'tuner-frequency-action-summary');
+  const facts = [['Frequency', `${(selectedHz / 1_000_000).toFixed(6)} MHz`]];
+  if (Number.isFinite(rawHz) && Math.abs(rawHz - selectedHz) >= 0.5) {
+    facts.push(['Pointer', `${(rawHz / 1_000_000).toFixed(6)} MHz`]);
+    if (selection.snap?.label) facts.push(['Snap raster', selection.snap.label]);
+  }
+  if (selection.targetLabel) facts.push(['Tuner', selection.targetLabel]);
+  facts.forEach(([label, value]) => summary.append(node('dt', '', label), node('dd', '', value)));
+
+  const actions = node('div', 'tuner-frequency-action-list');
+  const radioReference = tunerFrequencyAction('RadioReference Lookup',
+    'Open RadioReference’s exact-frequency query in a new tab. Sign-in or Premium access may be required.');
+  const listen = tunerFrequencyAction('Listen',
+    'Live arbitrary-frequency browser listening is planned for a later phase.', true);
+  const addSystem = tunerFrequencyAction('Add System',
+    'Guided system, site, channel, alias-list, and scan-list creation is planned for a later phase.', true);
+  const message = node('div', 'tuner-frequency-action-message');
+  message.setAttribute('role', 'status');
+  radioReference.addEventListener('click', () => {
+    if (openRadioReferenceFrequencyQuery(selectedHz)) {
+      message.textContent = 'Opened RadioReference in a new tab.';
+    } else {
+      message.textContent = 'The new tab was blocked. Allow pop-ups for this receiver and try again.';
+    }
+  });
+  actions.append(radioReference, listen, addSystem);
+  body.append(node('p', 'tuner-frequency-action-intro',
+    'Choose what to do with this selected frequency.'), summary, actions, message);
+  return openReadOnlyModal('Frequency actions', body, {
+    id: 'tuner-frequency-actions', className: 'frequency-action-modal'
+  });
+}
 
 function tunerStoredNumber(key, fallback, minimum, maximum) {
   try {
@@ -8039,7 +8121,8 @@ function tunerSpectrumPanel() {
   displayControls.append(refiningBadge, flagLegend);
 
   const instructions = node('p', 'visually-hidden',
-    'Use the mouse wheel or plus and minus keys to zoom. Drag or use the arrow keys to pan. Press R to reset zoom.');
+    'Click a frequency for actions. Use the mouse wheel or plus and minus keys to zoom. ' +
+    'Drag or use the arrow keys to pan. Press R to reset zoom.');
   instructions.id = 'tuner-spectrum-instructions';
 
   const plot = (title, ariaLabel, extraClass = '') => {
@@ -8819,6 +8902,42 @@ function tunerSpectrumPanel() {
     return shouldRun() && !!fullViewport && !!viewport && !spectrum.overlay.textContent;
   }
 
+  function frequencySelectionAtPointer(event) {
+    if (!viewport) return null;
+    const rect = event.currentTarget.getBoundingClientRect();
+    if (!(rect.width > 0)) return null;
+    const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+    const rawFrequencyHz = viewport.startHz + ratio * (viewport.endHz - viewport.startHz);
+    const snap = snapInput.checked ? tunerSnapFrequency(rawFrequencyHz) : null;
+    const target = targetsById.get(selectedTargetId());
+    return Object.freeze({
+      targetId: selectedTargetId(),
+      targetLabel: String(target?.label || ''),
+      rawFrequencyHz,
+      frequencyHz: snap?.frequencyHz ?? rawFrequencyHz,
+      snap,
+      canvas: event.currentTarget === waterfall.canvas ? 'waterfall' : 'spectrum'
+    });
+  }
+
+  function frequencySelectionForCarrier(carrier) {
+    const target = targetsById.get(selectedTargetId());
+    return Object.freeze({
+      targetId: selectedTargetId(),
+      targetLabel: String(target?.label || ''),
+      rawFrequencyHz: carrier.frequencyHz,
+      frequencyHz: carrier.frequencyHz,
+      snap: null,
+      canvas: 'active-carrier',
+      activeCarrier: carrier
+    });
+  }
+
+  function openFrequencyActionsAtPointer(event) {
+    const selection = frequencySelectionAtPointer(event);
+    if (selection) openTunerFrequencyActions(selection);
+  }
+
   function waterfallObservedAt(yRatio) {
     if (newestWaterfallRow < 0 || !waterfallObservedAtRows.length) return 0;
     const displayRow = Math.max(0, Math.min(waterfallObservedAtRows.length - 1,
@@ -8978,6 +9097,19 @@ function tunerSpectrumPanel() {
     const moved = drag.moved;
     cancelDrag();
     if (moved) queueViewportUpdate();
+    else openFrequencyActionsAtPointer(event);
+  }
+
+  function onPlotPointerCancel(event) {
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const moved = drag.moved;
+    cancelDrag();
+    if (moved) queueViewportUpdate();
+  }
+
+  function onPlotClick(event) {
+    if (!canInteract() || zoomAmount() > 1.0001) return;
+    openFrequencyActionsAtPointer(event);
   }
 
   function onPlotPointerLeave(event) {
@@ -8999,9 +9131,10 @@ function tunerSpectrumPanel() {
     canvas.addEventListener('pointermove', onPlotPointerMove);
     canvas.addEventListener('pointerdown', onPlotPointerDown);
     canvas.addEventListener('pointerup', onPlotPointerUp);
-    canvas.addEventListener('pointercancel', onPlotPointerUp);
+    canvas.addEventListener('pointercancel', onPlotPointerCancel);
     canvas.addEventListener('pointerleave', onPlotPointerLeave);
     canvas.addEventListener('lostpointercapture', onPlotLostCapture);
+    canvas.addEventListener('click', onPlotClick);
   }
 
   function removePlotInteractions(canvas) {
@@ -9011,9 +9144,10 @@ function tunerSpectrumPanel() {
     canvas.removeEventListener('pointermove', onPlotPointerMove);
     canvas.removeEventListener('pointerdown', onPlotPointerDown);
     canvas.removeEventListener('pointerup', onPlotPointerUp);
-    canvas.removeEventListener('pointercancel', onPlotPointerUp);
+    canvas.removeEventListener('pointercancel', onPlotPointerCancel);
     canvas.removeEventListener('pointerleave', onPlotPointerLeave);
     canvas.removeEventListener('lostpointercapture', onPlotLostCapture);
+    canvas.removeEventListener('click', onPlotClick);
   }
 
   function connectActiveChannels() {
@@ -9237,6 +9371,7 @@ function tunerSpectrumPanel() {
         flag.addEventListener('pointerleave', () => hideActiveFlag(flag));
         flag.addEventListener('focus', () => showActiveFlag(carrier, flag));
         flag.addEventListener('blur', () => hideActiveFlag(flag));
+        flag.addEventListener('click', () => openTunerFrequencyActions(frequencySelectionForCarrier(carrier)));
       }
       return flag;
     });
@@ -10010,7 +10145,7 @@ async function renderTunerSpectrum() {
   const spectrum = tunerSpectrumPanel();
   pageConnections.add(spectrum);
   content.append(pageHeader('Tuner Spectrum',
-    'Inspect the full bandwidth of each active tuner'), spectrum.element);
+    'Inspect the full bandwidth of each active tuner. Click a frequency to choose an action.'), spectrum.element);
 }
 
 async function renderSystems() {
@@ -11688,6 +11823,122 @@ async function renderAdminScanLists() {
   content.append(section('Scan-list management', body, actions));
 }
 
+function receiverLocationField(name, label, minimum, maximum, value) {
+  const input = node('input');
+  input.type = 'number';
+  input.name = name;
+  input.required = true;
+  input.step = 'any';
+  input.min = String(minimum);
+  input.max = String(maximum);
+  input.inputMode = 'decimal';
+  input.autocomplete = 'off';
+  input.value = Number.isFinite(Number(value)) ? String(value) : '';
+  return formField(label, input, `${minimum} to ${maximum} decimal degrees.`);
+}
+
+function browserLocationError(error) {
+  if (error?.code === 1) return 'Browser location permission was denied. You can enter coordinates manually.';
+  if (error?.code === 2) return 'This browser could not determine its location. You can enter coordinates manually.';
+  if (error?.code === 3) return 'Browser location timed out. Try again or enter coordinates manually.';
+  return 'Browser location is unavailable. You can enter coordinates manually.';
+}
+
+async function renderAdminSettings() {
+  const response = await requestJson('/api/v1/admin/receiver-location', { csrf: false });
+  let configured = response?.configured === true;
+  const form = node('form', 'admin-form receiver-location-form');
+  const latitudeField = receiverLocationField('latitude', 'Latitude', -90, 90, response?.latitude);
+  const longitudeField = receiverLocationField('longitude', 'Longitude', -180, 180, response?.longitude);
+  const latitude = latitudeField.querySelector('input');
+  const longitude = longitudeField.querySelector('input');
+  const message = node('div', 'admin-form-message');
+  message.setAttribute('role', 'status');
+  message.textContent = configured ? 'Receiver location is configured.' : 'Receiver location is not configured.';
+  const useBrowser = node('button', 'secondary', 'Use Browser Location');
+  useBrowser.type = 'button';
+  const clear = node('button', 'secondary danger-outline', 'Clear Location');
+  clear.type = 'button';
+  clear.disabled = !configured;
+  const save = node('button', '', 'Save Receiver Location');
+  save.type = 'submit';
+  const actions = node('div', 'admin-form-actions');
+  actions.append(useBrowser, clear, save);
+  form.append(latitudeField, longitudeField, message, actions);
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!form.reportValidity() || save.disabled) return;
+    save.disabled = true;
+    message.textContent = 'Saving receiver location…';
+    try {
+      const updated = await requestJson('/api/v1/admin/receiver-location', {
+        method: 'PUT', body: { latitude: Number(latitude.value), longitude: Number(longitude.value) }
+      });
+      configured = updated?.configured === true;
+      clear.disabled = !configured;
+      message.textContent = 'Receiver location saved.';
+    } catch (error) {
+      message.textContent = error.message;
+    } finally {
+      save.disabled = false;
+    }
+  });
+
+  clear.addEventListener('click', async () => {
+    if (clear.disabled) return;
+    clear.disabled = true;
+    save.disabled = true;
+    useBrowser.disabled = true;
+    message.textContent = 'Clearing receiver location…';
+    try {
+      await requestJson('/api/v1/admin/receiver-location', { method: 'DELETE' });
+      configured = false;
+      latitude.value = '';
+      longitude.value = '';
+      message.textContent = 'Receiver location cleared.';
+    } catch (error) {
+      clear.disabled = false;
+      message.textContent = error.message;
+    } finally {
+      save.disabled = false;
+      useBrowser.disabled = false;
+    }
+  });
+
+  useBrowser.addEventListener('click', () => {
+    if (!navigator.geolocation) {
+      message.textContent = 'This browser does not provide geolocation. Enter coordinates manually.';
+      return;
+    }
+    if (!window.isSecureContext) {
+      message.textContent = 'Browser location requires HTTPS or a localhost connection.';
+      return;
+    }
+    useBrowser.disabled = true;
+    message.textContent = 'Requesting this browser’s location…';
+    navigator.geolocation.getCurrentPosition((position) => {
+      latitude.value = Number(position.coords.latitude).toFixed(6);
+      longitude.value = Number(position.coords.longitude).toFixed(6);
+      const accuracy = Number(position.coords.accuracy);
+      message.textContent = Number.isFinite(accuracy) ?
+        `Browser location filled (approximately ${number(Math.round(accuracy))} m accuracy). Save to apply it.` :
+        'Browser location filled. Save to apply it.';
+      useBrowser.disabled = false;
+    }, (error) => {
+      message.textContent = browserLocationError(error);
+      useBrowser.disabled = false;
+    }, { enableHighAccuracy: false, timeout: 10_000, maximumAge: 300_000 });
+  });
+
+  const body = node('div', 'admin-section-body receiver-location-settings');
+  body.append(node('p', 'admin-section-intro',
+    'Set the physical receiver location. Use this browser’s location or enter decimal latitude and longitude. ' +
+    'The coordinates are saved with the receiver’s portable settings and are available to future location-aware ' +
+    'RadioReference lookup and import features.'), form);
+  content.append(section('Receiver location', body));
+}
+
 function adminAudioNumberField(configuration, limits, key, label, help) {
   const input = node('input');
   input.type = 'number';
@@ -11990,6 +12241,7 @@ async function renderAdminHealth() {
 async function renderAdmin() {
   const availableTabs = [
     { id: 'health', label: 'Health', capability: ACCESS_CAPABILITIES.RECEIVER_HEALTH },
+    { id: 'settings', label: 'Web Settings', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS },
     { id: 'scan-lists', label: 'Scan Lists', capability: ACCESS_CAPABILITIES.ADMIN_ALIASES },
     { id: 'web-audio', label: 'Listener Status', capability: ACCESS_CAPABILITIES.ADMIN_AUDIO },
     { id: 'users', label: 'Users', capability: ACCESS_CAPABILITIES.ADMIN_USERS },
@@ -12004,9 +12256,10 @@ async function renderAdmin() {
   }
   if (active === 'health' && mobileListenerModeActive()) return;
   content.append(pageHeader('Administration',
-    'Monitor receiver health and manage scan lists, browser audio, web users, and access tiers'),
+    'Monitor receiver health and manage receiver, scan-list, browser-audio, user, and access settings'),
     tabs(availableTabs.map((item) => ({ ...item, href: href('admin', { tab: item.id }) })), active));
   if (active === 'health') await renderAdminHealth();
+  else if (active === 'settings') await renderAdminSettings();
   else if (active === 'scan-lists') await renderAdminScanLists();
   else if (active === 'web-audio') await renderAdminWebAudio();
   else if (active === 'access') await renderAdminAccess();

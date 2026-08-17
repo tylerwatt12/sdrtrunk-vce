@@ -30,6 +30,7 @@ import io.github.dsheirer.preference.encryption.EncryptionKeyPreference;
 import io.github.dsheirer.preference.event.DecodeEventPreference;
 import io.github.dsheirer.preference.identifier.TalkgroupFormatPreference;
 import io.github.dsheirer.preference.javafx.JavaFxPreferences;
+import io.github.dsheirer.preference.location.ReceiverLocationPreference;
 import io.github.dsheirer.preference.mp3.MP3Preference;
 import io.github.dsheirer.preference.nowplaying.NowPlayingPreference;
 import io.github.dsheirer.preference.radioreference.RadioReferencePreference;
@@ -66,6 +67,7 @@ public class UserPreferences implements Listener<PreferenceType>
     private MP3Preference mMP3Preference;
     private NowPlayingPreference mNowPlayingPreference;
     private RadioReferencePreference mRadioReferencePreference;
+    private ReceiverLocationPreference mReceiverLocationPreference;
     private RecordPreference mRecordPreference;
     private TalkgroupFormatPreference mTalkgroupFormatPreference;
     private TunerPreference mTunerPreference;
@@ -157,6 +159,14 @@ public class UserPreferences implements Listener<PreferenceType>
     }
 
     /**
+     * Receiver coordinates shared by location-aware web and directory features.
+     */
+    public ReceiverLocationPreference getReceiverLocationPreference()
+    {
+        return mReceiverLocationPreference;
+    }
+
+    /**
      * Recording preferences
      */
     public RecordPreference getRecordPreference()
@@ -227,6 +237,7 @@ public class UserPreferences implements Listener<PreferenceType>
         mMP3Preference = new MP3Preference(this::receive);
         mNowPlayingPreference = new NowPlayingPreference(this::receive);
         mRadioReferencePreference = new RadioReferencePreference(this::receive);
+        mReceiverLocationPreference = new ReceiverLocationPreference(this::receive);
         mRecordPreference = new RecordPreference(this::receive);
         mTalkgroupFormatPreference = new TalkgroupFormatPreference(this::receive);
         mTunerPreference = new TunerPreference(this::receive);

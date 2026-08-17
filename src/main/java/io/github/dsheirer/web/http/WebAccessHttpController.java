@@ -66,7 +66,7 @@ public final class WebAccessHttpController implements AutoCloseable
     private static final String SECURITY_POLICY =
         "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; " +
             "img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; object-src 'none'; " +
-            "base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
+            "base-uri 'none'; frame-ancestors 'none'; form-action 'self' https://www.radioreference.com";
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper(JsonFactory.builder()
         .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
         .build());
@@ -220,7 +220,7 @@ public final class WebAccessHttpController implements AutoCloseable
         headers.set("X-Content-Type-Options", "nosniff");
         headers.set("X-Frame-Options", "DENY");
         headers.set("Referrer-Policy", "no-referrer");
-        headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+        headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=(self)");
     }
 
     private boolean authorize(HttpExchange exchange, WebCapability capability) throws IOException
