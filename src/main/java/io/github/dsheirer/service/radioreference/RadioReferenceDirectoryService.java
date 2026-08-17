@@ -50,6 +50,7 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
     public static final int MAXIMUM_RESULT_LIMIT = 500;
     public static final int MAXIMUM_QUERY_LENGTH = 128;
     private static final int MAXIMUM_REMOTE_ITEMS_SCANNED = 10_000;
+    private static final int MAXIMUM_FREQUENCY_DETAIL_REQUESTS = 24;
     private static final int DEFAULT_REMOTE_CONCURRENCY = 1;
     private static final int DEFAULT_WAITING_REQUESTS = 8;
     private static final Duration DEFAULT_REQUEST_DEADLINE = Duration.ofSeconds(10);
@@ -436,12 +437,28 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
             throw new RadioReferenceDirectoryException(RadioReferenceDirectoryException.Code.INVALID_REQUEST);
         }
 
-        FrequencySnapshot snapshot = invokePremium(gateway -> new FrequencySnapshot(
-            verifiedState(gateway.state(stateId), stateId),
-            gateway.searchStateFrequencies(stateId, frequencyHz / 1_000_000.0)));
+        FrequencySnapshot snapshot = invokePremium(gateway -> frequencySnapshot(gateway, stateId, frequencyHz));
         List<RadioReferenceGateway.FrequencyResult> source = snapshot.results() != null ? snapshot.results() : List.of();
         long enrichmentItems = (long)snapshot.state().counties().size() + snapshot.state().agencies().size() +
-            snapshot.state().systems().size();
+            snapshot.state().systems().size() + snapshot.modes().size() + snapshot.categories().size();
+
+        for(List<RadioReferenceGateway.Site> systemSites: snapshot.sites().values())
+        {
+            enrichmentItems += systemSites.size();
+
+            for(RadioReferenceGateway.Site site: systemSites)
+            {
+                if(site != null)
+                {
+                    enrichmentItems += site.channels().size();
+                }
+            }
+
+            if(enrichmentItems > MAXIMUM_REMOTE_ITEMS_SCANNED)
+            {
+                break;
+            }
+        }
 
         if(source.size() > MAXIMUM_REMOTE_ITEMS_SCANNED || enrichmentItems > MAXIMUM_REMOTE_ITEMS_SCANNED)
         {
@@ -454,10 +471,15 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
         Map<Integer,String> agencies = new LinkedHashMap<>();
         snapshot.state().agencies().stream().filter(Objects::nonNull)
             .forEach(agency -> agencies.putIfAbsent(agency.id(), text(agency.name())));
-        Map<String,List<RadioReferenceGateway.TrunkedSystem>> systems = new LinkedHashMap<>();
+        Map<Integer,RadioReferenceGateway.TrunkedSystem> systems = new LinkedHashMap<>();
         snapshot.state().systems().stream().filter(Objects::nonNull)
-            .forEach(system -> systems.computeIfAbsent(text(system.name()).toLowerCase(Locale.ROOT),
-                ignored -> new ArrayList<>()).add(system));
+            .forEach(system -> systems.putIfAbsent(system.id(), system));
+        Map<Integer,String> modes = new LinkedHashMap<>();
+        snapshot.modes().stream().filter(Objects::nonNull)
+            .forEach(mode -> modes.putIfAbsent(mode.id(), text(mode.name())));
+        Map<Integer,RadioReferenceGateway.FrequencyCategory> categories = new LinkedHashMap<>();
+        snapshot.categories().stream().filter(Objects::nonNull)
+            .forEach(category -> categories.putIfAbsent(category.subCategoryId(), category));
 
         List<FrequencyMatch> matches = new ArrayList<>(source.size());
 
@@ -468,19 +490,209 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
                 continue;
             }
 
-            List<RadioReferenceGateway.TrunkedSystem> namedSystems =
-                systems.getOrDefault(text(result.description()).toLowerCase(Locale.ROOT), List.of());
-            Integer systemId = namedSystems.size() == 1 ? namedSystems.getFirst().id() : null;
+            Integer systemId = result.systemId() > 0 ? result.systemId() : null;
+            RadioReferenceGateway.TrunkedSystem system = systemId == null ? null : systems.get(systemId);
+            MatchType matchType = systemId == null ? MatchType.CONVENTIONAL : MatchType.TRUNKED;
             String url = radioReferenceUrl(systemId, result.subCategoryId(), result.agencyId(), result.countyId());
-            matches.add(new FrequencyMatch(result.downlinkMHz(), positive(result.uplinkMHz()),
-                text(result.tone()), text(result.callsign()), text(result.description()), text(result.alpha()),
-                text(result.mode()), text(result.classification()), text(result.colorCode()), text(result.talkgroup()),
-                text(result.slot()), result.tags(), stateId, text(snapshot.state().state().name()), result.countyId(),
-                counties.getOrDefault(result.countyId(), ""), result.agencyId(),
-                agencies.getOrDefault(result.agencyId(), ""), result.subCategoryId(), systemId, url));
+            RadioReferenceGateway.FrequencyCategory category = categories.get(result.subCategoryId());
+            List<SiteMatch> siteMatches = matchingSites(
+                systemId == null ? null : snapshot.sites().get(systemId), frequencyHz);
+
+            if(siteMatches.isEmpty())
+            {
+                siteMatches = List.of(SiteMatch.NONE);
+            }
+
+            for(SiteMatch siteMatch: siteMatches)
+            {
+                if(matches.size() >= MAXIMUM_REMOTE_ITEMS_SCANNED)
+                {
+                    throw tooLarge();
+                }
+
+                String alphaTag = matchType == MatchType.CONVENTIONAL ? text(result.alpha()) : "";
+                String siteName = !siteMatch.siteName().isBlank() ? siteMatch.siteName() :
+                    matchType == MatchType.TRUNKED ? text(result.alpha()) : "";
+                matches.add(new FrequencyMatch(result.downlinkMHz(), positive(result.uplinkMHz()),
+                    text(result.tone()), text(result.callsign()), text(result.description()), alphaTag,
+                    category == null ? "" : text(category.categoryName()),
+                    category == null ? "" : text(category.subCategoryName()), resolveMode(result.mode(), modes),
+                    text(result.classification()), text(result.colorCode()), text(result.talkgroup()),
+                    text(result.slot()), result.tags(), matchType, channelUse(matchType, siteMatch.channel()), stateId,
+                    text(snapshot.state().state().name()), result.countyId(),
+                    counties.getOrDefault(result.countyId(), ""), result.agencyId(),
+                    agencies.getOrDefault(result.agencyId(), ""), result.subCategoryId(), systemId,
+                    system == null ? "" : text(system.name()), siteMatch.siteId(), siteMatch.siteNumber(),
+                    siteName, url));
+            }
         }
 
         return page(matches, offset, limit);
+    }
+
+    private FrequencySnapshot frequencySnapshot(RadioReferenceGateway gateway, int stateId, long frequencyHz)
+        throws RadioReferenceGatewayException
+    {
+        RadioReferenceGateway.StateDirectory state = verifiedState(gateway.state(stateId), stateId);
+        List<RadioReferenceGateway.FrequencyResult> results =
+            gateway.searchStateFrequencies(stateId, frequencyHz / 1_000_000.0);
+        List<RadioReferenceGateway.Mode> modes = optionalModes(gateway);
+        Map<Integer,List<RadioReferenceGateway.Site>> sites = new LinkedHashMap<>();
+        List<RadioReferenceGateway.FrequencyCategory> categories = new ArrayList<>();
+        Set<Integer> loadedAgencies = new java.util.HashSet<>();
+        Set<Integer> loadedCounties = new java.util.HashSet<>();
+        int detailRequests = 0;
+
+        if(results != null)
+        {
+            for(RadioReferenceGateway.FrequencyResult result: results)
+            {
+                if(result == null)
+                {
+                    continue;
+                }
+
+                if(result.systemId() > 0 && !sites.containsKey(result.systemId()) &&
+                    detailRequests < MAXIMUM_FREQUENCY_DETAIL_REQUESTS)
+                {
+                    sites.put(result.systemId(), optionalSites(gateway, result.systemId()));
+                    detailRequests++;
+                }
+                else if(result.systemId() <= 0 && result.subCategoryId() > 0 &&
+                    detailRequests < MAXIMUM_FREQUENCY_DETAIL_REQUESTS)
+                {
+                    if(result.agencyId() > 0 && loadedAgencies.add(result.agencyId()))
+                    {
+                        categories.addAll(optionalAgencyCategories(gateway, result.agencyId()));
+                        detailRequests++;
+                    }
+                    else if(result.agencyId() <= 0 && result.countyId() > 0 &&
+                        loadedCounties.add(result.countyId()))
+                    {
+                        categories.addAll(optionalCountyCategories(gateway, result.countyId()));
+                        detailRequests++;
+                    }
+                }
+            }
+        }
+
+        return new FrequencySnapshot(state, results, modes, sites, categories);
+    }
+
+    private static List<RadioReferenceGateway.Mode> optionalModes(RadioReferenceGateway gateway)
+    {
+        try
+        {
+            List<RadioReferenceGateway.Mode> modes = gateway.modes();
+            return modes == null ? List.of() : modes;
+        }
+        catch(RadioReferenceGatewayException exception)
+        {
+            return List.of();
+        }
+    }
+
+    private static List<RadioReferenceGateway.Site> optionalSites(RadioReferenceGateway gateway, int systemId)
+    {
+        try
+        {
+            List<RadioReferenceGateway.Site> sites = gateway.sites(systemId);
+            return sites == null ? List.of() : sites;
+        }
+        catch(RadioReferenceGatewayException exception)
+        {
+            return List.of();
+        }
+    }
+
+    private static List<RadioReferenceGateway.FrequencyCategory> optionalAgencyCategories(
+        RadioReferenceGateway gateway, int agencyId)
+    {
+        try
+        {
+            List<RadioReferenceGateway.FrequencyCategory> categories =
+                gateway.agencyFrequencyCategories(agencyId);
+            return categories == null ? List.of() : categories;
+        }
+        catch(RadioReferenceGatewayException exception)
+        {
+            return List.of();
+        }
+    }
+
+    private static List<RadioReferenceGateway.FrequencyCategory> optionalCountyCategories(
+        RadioReferenceGateway gateway, int countyId)
+    {
+        try
+        {
+            List<RadioReferenceGateway.FrequencyCategory> categories = countyId > 0 ?
+                gateway.countyFrequencyCategories(countyId) : List.of();
+            return categories == null ? List.of() : categories;
+        }
+        catch(RadioReferenceGatewayException exception)
+        {
+            return List.of();
+        }
+    }
+
+    private static List<SiteMatch> matchingSites(List<RadioReferenceGateway.Site> sites, long frequencyHz)
+    {
+        List<SiteMatch> matches = new ArrayList<>();
+
+        if(sites != null)
+        {
+            for(RadioReferenceGateway.Site site: sites)
+            {
+                if(site != null)
+                {
+                    for(RadioReferenceGateway.SiteChannel channel: site.channels())
+                    {
+                        if(channel != null && Math.round(channel.frequencyMHz() * 1_000_000.0) == frequencyHz)
+                        {
+                            matches.add(new SiteMatch(site.id(), site.number(), text(site.name()), channel));
+                        }
+                    }
+                }
+            }
+        }
+
+        return matches;
+    }
+
+    private static String resolveMode(String rawMode, Map<Integer,String> modes)
+    {
+        String value = text(rawMode);
+
+        try
+        {
+            return modes.getOrDefault(Integer.parseInt(value), "Mode " + value);
+        }
+        catch(NumberFormatException exception)
+        {
+            return value;
+        }
+    }
+
+    private static String channelUse(MatchType matchType, RadioReferenceGateway.SiteChannel channel)
+    {
+        if(matchType == MatchType.CONVENTIONAL)
+        {
+            return "Conventional";
+        }
+        else if(channel == null)
+        {
+            return "Trunked";
+        }
+        else if(channel.primaryControl())
+        {
+            return "Primary control";
+        }
+        else if(channel.alternateControl())
+        {
+            return "Alternate control";
+        }
+
+        return "Voice / data";
     }
 
     private void setFailedLoginStatus(long generation, AccountStatus status)
@@ -1040,8 +1252,23 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
     }
 
     private record FrequencySnapshot(RadioReferenceGateway.StateDirectory state,
-                                     List<RadioReferenceGateway.FrequencyResult> results)
+                                     List<RadioReferenceGateway.FrequencyResult> results,
+                                     List<RadioReferenceGateway.Mode> modes,
+                                     Map<Integer,List<RadioReferenceGateway.Site>> sites,
+                                     List<RadioReferenceGateway.FrequencyCategory> categories)
     {
+        private FrequencySnapshot
+        {
+            modes = modes == null ? List.of() : List.copyOf(modes);
+            sites = sites == null ? Map.of() : Map.copyOf(sites);
+            categories = categories == null ? List.of() : List.copyOf(categories);
+        }
+    }
+
+    private record SiteMatch(Integer siteId, Integer siteNumber, String siteName,
+                             RadioReferenceGateway.SiteChannel channel)
+    {
+        private static final SiteMatch NONE = new SiteMatch(null, null, "", null);
     }
 
     private record EntryKey(EntryScope scope, EntryType type, RadioReferenceGateway.DetailKind kind, int id)
@@ -1330,19 +1557,23 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
     {
     }
 
-    public record FrequencyMatch(double outputMHz, Double inputMHz, String tone, String callsign,
-                                 String description, String category, String mode, String classification,
-                                 String colorCode, String talkgroup, String slot, List<String> tags, int stateId,
+    public record FrequencyMatch(double outputMhz, Double inputMhz, String tone, String callsign,
+                                 String description, String alphaTag, String category, String subCategory,
+                                 String modeName, String classification, String colorCode, String talkgroup,
+                                 String slot, List<String> tags, MatchType matchType, String channelUse, int stateId,
                                  String stateName, int countyId, String countyName, int agencyId, String agencyName,
-                                 int subCategoryId, Integer systemId, String radioReferenceUrl)
+                                 int subCategoryId, Integer systemId, String systemName, Integer siteId,
+                                 Integer siteNumber, String siteName, String radioReferenceUrl)
     {
         public FrequencyMatch
         {
             tone = text(tone);
             callsign = text(callsign);
             description = text(description);
+            alphaTag = text(alphaTag);
             category = text(category);
-            mode = text(mode);
+            subCategory = text(subCategory);
+            modeName = text(modeName);
             classification = text(classification);
             colorCode = text(colorCode);
             talkgroup = text(talkgroup);
@@ -1351,8 +1582,16 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
             stateName = text(stateName);
             countyName = text(countyName);
             agencyName = text(agencyName);
+            systemName = text(systemName);
+            siteName = text(siteName);
             radioReferenceUrl = text(radioReferenceUrl);
         }
+    }
+
+    public enum MatchType
+    {
+        CONVENTIONAL,
+        TRUNKED
     }
 
     public record DirectoryEntry(String name, String secondary, EntryType type, EntryScope scope,

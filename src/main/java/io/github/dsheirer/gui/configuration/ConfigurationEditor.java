@@ -35,7 +35,6 @@ import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.stats.StatsWebServerService;
 import io.github.dsheirer.util.ThreadPool;
 import io.github.dsheirer.util.TimeStamp;
-import javafx.application.Platform;
 import javafx.embed.swing.SwingFXUtils;
 import javafx.scene.control.Menu;
 import javafx.scene.control.MenuBar;
@@ -105,12 +104,10 @@ public class ConfigurationEditor extends BorderPane
         mUserPreferences = userPreferences;
         mStatsWebServerService = statsWebServerService;
 
-        //Throw a new runnable back onto the FX thread to lazy load the editor content after the editor has been
-        //constructed and shown.
-        Platform.runLater(() -> {
-            setTop(getMenuBar());
-            setCenter(getTabPane());
-        });
+        //Build the initial themed surface before the stage is shown.  Deferring this work until the next JavaFX pulse
+        //briefly exposed the Scene's default white background when opening the editor in dark mode.
+        setTop(getMenuBar());
+        setCenter(getTabPane());
     }
 
     /**

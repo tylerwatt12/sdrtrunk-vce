@@ -13,11 +13,17 @@ package io.github.dsheirer.service.radioreference;
 import io.github.dsheirer.rrapi.request.GetCountryInfo;
 import io.github.dsheirer.rrapi.request.GetCountryList;
 import io.github.dsheirer.rrapi.request.GetCountyInfo;
+import io.github.dsheirer.rrapi.request.GetAgencyInfo;
+import io.github.dsheirer.rrapi.request.GetModes;
+import io.github.dsheirer.rrapi.request.GetSites;
 import io.github.dsheirer.rrapi.request.GetStateInfo;
 import io.github.dsheirer.rrapi.request.GetUserData;
 import io.github.dsheirer.rrapi.response.GetCountryInfoResponse;
 import io.github.dsheirer.rrapi.response.GetCountryListResponse;
 import io.github.dsheirer.rrapi.response.GetCountyInfoResponse;
+import io.github.dsheirer.rrapi.response.GetAgencyInfoResponse;
+import io.github.dsheirer.rrapi.response.GetModesResponse;
+import io.github.dsheirer.rrapi.response.GetSitesResponse;
 import io.github.dsheirer.rrapi.response.GetStateInfoResponse;
 import io.github.dsheirer.rrapi.response.GetUserDataResponse;
 import io.github.dsheirer.rrapi.response.SearchFrequencyResponse;
@@ -200,6 +206,8 @@ final class RrapiRadioReferenceGateway implements RadioReferenceGateway
                             .filter(java.util.Objects::nonNull).forEach(tags::add);
                     }
 
+                    //The dependency exposes the SOAP search result's "sid" field as getStateId(), but the API
+                    //contract defines sid as the trunked system ID.  Preserve that structural identity here.
                     results.add(new FrequencyResult(result.getDownlink(), result.getUplink(), result.getCallsign(),
                         result.getDescription(), result.getAlpha(), result.getTone(), result.getColorCode(),
                         result.getTalkgroup(), result.getSlot(), result.getMode(), result.getClassification(), tags,
@@ -208,6 +216,97 @@ final class RrapiRadioReferenceGateway implements RadioReferenceGateway
             }
 
             return results;
+        }
+        catch(RuntimeException exception)
+        {
+            throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.UNAVAILABLE);
+        }
+    }
+
+    @Override
+    public List<Mode> modes() throws RadioReferenceGatewayException
+    {
+        try
+        {
+            GetModesResponse response = client().execute(GetModes::create, GetModesResponse.class);
+            List<Mode> modes = new ArrayList<>();
+
+            if(response.getModes() != null)
+            {
+                for(io.github.dsheirer.rrapi.type.Mode mode: response.getModes())
+                {
+                    modes.add(new Mode(mode.getModeId(), mode.getName()));
+                }
+            }
+
+            return modes;
+        }
+        catch(RuntimeException exception)
+        {
+            throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.UNAVAILABLE);
+        }
+    }
+
+    @Override
+    public List<Site> sites(int systemId) throws RadioReferenceGatewayException
+    {
+        try
+        {
+            GetSitesResponse response = client().execute(authorization -> GetSites.create(authorization, systemId),
+                GetSitesResponse.class);
+            List<Site> sites = new ArrayList<>();
+
+            if(response.getSites() != null)
+            {
+                for(io.github.dsheirer.rrapi.type.Site site: response.getSites())
+                {
+                    List<SiteChannel> channels = new ArrayList<>();
+
+                    if(site.getSiteFrequencies() != null)
+                    {
+                        for(io.github.dsheirer.rrapi.type.SiteFrequency frequency: site.getSiteFrequencies())
+                        {
+                            channels.add(new SiteChannel(frequency.getFrequency(), frequency.getUse(),
+                                frequency.isPrimaryControlChannel(), frequency.isAlternateControlChannel()));
+                        }
+                    }
+
+                    sites.add(new Site(site.getSiteId(), site.getSystemId(), site.getSiteNumber(),
+                        site.getDescription(), site.getCountyId(), channels));
+                }
+            }
+
+            return sites;
+        }
+        catch(RuntimeException exception)
+        {
+            throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.UNAVAILABLE);
+        }
+    }
+
+    @Override
+    public List<FrequencyCategory> agencyFrequencyCategories(int agencyId) throws RadioReferenceGatewayException
+    {
+        try
+        {
+            GetAgencyInfoResponse response = client().execute(
+                authorization -> GetAgencyInfo.create(authorization, agencyId), GetAgencyInfoResponse.class);
+            return categories(response.getAgencyInfo() == null ? null : response.getAgencyInfo().getCategories());
+        }
+        catch(RuntimeException exception)
+        {
+            throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.UNAVAILABLE);
+        }
+    }
+
+    @Override
+    public List<FrequencyCategory> countyFrequencyCategories(int countyId) throws RadioReferenceGatewayException
+    {
+        try
+        {
+            GetCountyInfoResponse response = client().execute(
+                authorization -> GetCountyInfo.create(authorization, countyId), GetCountyInfoResponse.class);
+            return categories(response.getCountyInfo() == null ? null : response.getCountyInfo().getCategories());
         }
         catch(RuntimeException exception)
         {
@@ -240,6 +339,31 @@ final class RrapiRadioReferenceGateway implements RadioReferenceGateway
         }
 
         return agencies;
+    }
+
+    private static List<FrequencyCategory> categories(List<io.github.dsheirer.rrapi.type.Category> source)
+    {
+        List<FrequencyCategory> categories = new ArrayList<>();
+
+        if(source != null)
+        {
+            for(io.github.dsheirer.rrapi.type.Category category: source)
+            {
+                if(category != null && category.getSubCategories() != null)
+                {
+                    for(io.github.dsheirer.rrapi.type.SubCategory subCategory: category.getSubCategories())
+                    {
+                        if(subCategory != null)
+                        {
+                            categories.add(new FrequencyCategory(subCategory.getSubCategoryId(), category.getName(),
+                                subCategory.getName()));
+                        }
+                    }
+                }
+            }
+        }
+
+        return categories;
     }
 
     private static List<TrunkedSystem> systems(List<io.github.dsheirer.rrapi.type.System> source)

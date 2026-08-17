@@ -7775,28 +7775,52 @@ function radioReferenceResultTable(matches) {
   const link = (label, row) => row.radio_reference_url ?
     externalAnchor(label, row.radio_reference_url) : label;
   const resultLink = (row) => {
-    const label = row.description || row.category || `${Number(row.output_mhz).toFixed(5)} MHz`;
+    const label = row.description || row.alpha_tag || row.system_name || 'View record';
     return link(label, row);
   };
-  const category = (row) => row.category || (Array.isArray(row.tags) ? row.tags.join(', ') : '');
-  const area = (row) => row.county_name || row.agency_name || '';
-  return table(rows, [
-    { id: 'frequency-out', label: 'Freq Out', width: 110, className: 'numeric',
-      render: (row) => link(Number(row.output_mhz).toFixed(5), row),
-      sortValue: (row) => Number(row.output_mhz) },
-    { id: 'frequency-in', label: 'Freq In', width: 110, className: 'numeric',
-      render: (row) => Number(row.input_mhz) > 0 ? Number(row.input_mhz).toFixed(5) : '—',
-      sortValue: (row) => Number(row.input_mhz || 0) },
+  const category = (row) => [row.category, row.sub_category].filter(Boolean).join(' — ') ||
+    (Array.isArray(row.tags) ? row.tags.join(', ') : '');
+  const site = (row) => [row.site_name,
+    Number(row.site_number) > 0 ? `Site ${row.site_number}` : ''].filter(Boolean).join(' — ');
+  const columns = (trunked) => [
+    { id: 'use', label: 'Use', width: 125, render: (row) => availableValue(row.channel_use) },
     { id: 'tone', label: 'Tone', width: 90, render: (row) => availableValue(row.tone) },
     { id: 'callsign', label: 'Callsign', width: 110, render: (row) => callsignLink(row.callsign) },
-    { id: 'description', label: 'Description / System', width: 260, render: resultLink },
-    { id: 'category', label: 'Category / Site', width: 210, render: (row) => availableValue(category(row)) },
-    { id: 'area', label: 'Agency / County', width: 150, render: (row) => availableValue(area(row)) },
-    { id: 'mode', label: 'Mode', width: 80, render: (row) => availableValue(row.mode) },
-    { id: 'state', label: 'State', width: 110, render: (row) => availableValue(row.state_name) }
-  ], 'No RadioReference records match this frequency in the selected state.', {
-    type: 'radioreference-frequency-results'
-  });
+    { id: 'name', label: 'Name', width: 150, render: (row) => availableValue(row.alpha_tag) },
+    { id: 'description', label: 'Description', width: 240, render: resultLink },
+    ...(trunked ? [
+      { id: 'system', label: 'System', width: 240,
+        render: (row) => link(availableValue(row.system_name), row) },
+      { id: 'site', label: 'Site', width: 190, render: (row) => availableValue(site(row)) }
+    ] : [
+      { id: 'category', label: 'Category', width: 210,
+        render: (row) => availableValue(category(row)) }
+    ]),
+    { id: 'agency', label: 'Agency', width: 170, render: (row) => availableValue(row.agency_name) },
+    { id: 'county', label: 'County', width: 140, render: (row) => availableValue(row.county_name) },
+    { id: 'mode', label: 'Mode', width: 140, render: (row) => availableValue(row.mode_name) }
+  ];
+  const conventional = rows.filter((row) => row.match_type !== 'TRUNKED');
+  const trunked = rows.filter((row) => row.match_type === 'TRUNKED');
+
+  if (!rows.length) {
+    return table([], columns(false),
+      'No RadioReference records match this frequency in the selected state.', {
+        type: 'radioreference-frequency-results'
+      });
+  }
+
+  const grouped = node('div', 'radioreference-frequency-groups');
+  const section = (label, items, isTrunked) => {
+    if (!items.length) return;
+    const group = node('section', 'radioreference-frequency-group');
+    group.append(node('h3', '', `${label} (${items.length})`),
+      table(items, columns(isTrunked), '', { type: 'radioreference-frequency-results' }));
+    grouped.append(group);
+  };
+  section('Conventional', conventional, false);
+  section('Trunked systems and sites', trunked, true);
+  return grouped;
 }
 
 function tunerFrequencyAction(label, detail, disabled = false) {

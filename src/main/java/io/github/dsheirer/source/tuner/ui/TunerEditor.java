@@ -23,6 +23,7 @@ import io.github.dsheirer.gui.control.JFrequencyControl;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.record.wave.IRecordingStatusListener;
 import io.github.dsheirer.sample.Listener;
+import io.github.dsheirer.source.InvalidFrequencyException;
 import io.github.dsheirer.source.ISourceEventProcessor;
 import io.github.dsheirer.source.SourceEvent;
 import io.github.dsheirer.source.SourceException;
@@ -278,17 +279,25 @@ public abstract class TunerEditor<T extends Tuner,C extends TunerConfiguration> 
                 "the current usable passband will be assigned.");
             mCenterFrequencyLockCheckBox.addActionListener(event ->
             {
-                if(!isLoading() && hasTuner())
+                if(!isLoading())
                 {
                     boolean locked = getCenterFrequencyLockCheckBox().isSelected();
-                    getTuner().getTunerController().setCenterFrequencyLocked(locked);
 
-                    if(hasConfiguration())
+                    if(isEditingDisabledConfiguration())
                     {
                         getConfiguration().setCenterFrequencyLocked(locked);
+                        saveConfiguration();
                     }
+                    else if(hasTuner())
+                    {
+                        getTuner().getTunerController().setCenterFrequencyLocked(locked);
 
-                    save();
+                        if(hasConfiguration())
+                        {
+                            getConfiguration().setCenterFrequencyLocked(locked);
+                            saveConfiguration();
+                        }
+                    }
                 }
             });
         }
@@ -732,6 +741,16 @@ public abstract class TunerEditor<T extends Tuner,C extends TunerConfiguration> 
     }
 
     /**
+     * Indicates that the disabled editor is changing the saved configuration, even if the retiring hardware object
+     * is still present during the asynchronous disable transition.
+     */
+    private boolean isEditingDisabledConfiguration()
+    {
+        return hasConfiguration() && getDiscoveredTuner() != null &&
+            getDiscoveredTuner().getTunerStatus() == TunerStatus.DISABLED;
+    }
+
+    /**
      * Discovered tuner for this editor
      */
     protected DiscoveredTuner getDiscoveredTuner()
@@ -923,18 +942,22 @@ public abstract class TunerEditor<T extends Tuner,C extends TunerConfiguration> 
         {
             getFrequencyControl().clearListeners();
             getFrequencyControl().addListener(mFrequencyAndCorrectionChangeListener);
-            boolean hasTunerUnlocked = hasTuner() && !getTuner().getTunerController().isLockedSampleRate();
-            boolean canEditExtents = hasTunerUnlocked || (!hasTuner() && hasConfiguration());
-            getFrequencyControl().setEnabled(hasTunerUnlocked);
-            getMinimumFrequencyTextField().setEnabled(canEditExtents);
-            getMaximumFrequencyTextField().setEnabled(canEditExtents);
-            getResetFrequenciesButton().setEnabled(canEditExtents);
-            getTunerLockedStatusLabel().setVisible(hasTuner() && getTuner().getTunerController().isLockedSampleRate());
-            getFrequencyCorrectionSpinner().setEnabled(hasTuner());
-            getAutoPPMCheckBox().setEnabled(hasTuner());
-            getCenterFrequencyLockCheckBox().setEnabled(hasTuner());
+            boolean editingDisabledConfiguration = isEditingDisabledConfiguration();
+            boolean hasLiveTuner = !editingDisabledConfiguration && hasTuner();
+            boolean hasTunerUnlocked = hasLiveTuner && !getTuner().getTunerController().isLockedSampleRate();
+            boolean canEditSavedExtents = editingDisabledConfiguration || (!hasTuner() && hasConfiguration());
+            boolean canEditFrequency = hasTunerUnlocked || editingDisabledConfiguration;
+            getFrequencyControl().setEnabled(canEditFrequency);
+            getMinimumFrequencyTextField().setEnabled(hasTunerUnlocked || canEditSavedExtents);
+            getMaximumFrequencyTextField().setEnabled(hasTunerUnlocked || canEditSavedExtents);
+            getResetFrequenciesButton().setEnabled(hasTunerUnlocked || canEditSavedExtents);
+            getTunerLockedStatusLabel().setVisible(hasLiveTuner &&
+                getTuner().getTunerController().isLockedSampleRate());
+            getFrequencyCorrectionSpinner().setEnabled(hasLiveTuner);
+            getAutoPPMCheckBox().setEnabled(hasLiveTuner);
+            getCenterFrequencyLockCheckBox().setEnabled(hasLiveTuner || editingDisabledConfiguration);
 
-            Tuner tuner = getTuner();
+            Tuner tuner = hasLiveTuner ? getTuner() : null;
 
             if(tuner != null)
             {
@@ -1073,9 +1096,32 @@ public abstract class TunerEditor<T extends Tuner,C extends TunerConfiguration> 
         @Override
         public void process(SourceEvent event) throws SourceException
         {
-            if(hasTuner() && !isLoading())
+            if(!isLoading())
             {
-                save();
+                if(isEditingDisabledConfiguration())
+                {
+                    long frequency = getFrequencyControl().getFrequency();
+                    long minimum = getMinimumFrequencyTextField().getFrequency();
+                    long maximum = getMaximumFrequencyTextField().getFrequency();
+
+                    if(frequency < minimum)
+                    {
+                        throw new InvalidFrequencyException("Frequency [" + frequency + "] is below the minimum [" +
+                            minimum + "]", frequency, minimum);
+                    }
+                    else if(frequency > maximum)
+                    {
+                        throw new InvalidFrequencyException("Frequency [" + frequency + "] is above the maximum [" +
+                            maximum + "]", frequency, maximum);
+                    }
+
+                    getConfiguration().setFrequency(frequency);
+                    saveConfiguration();
+                }
+                else if(hasTuner())
+                {
+                    save();
+                }
             }
         }
     }

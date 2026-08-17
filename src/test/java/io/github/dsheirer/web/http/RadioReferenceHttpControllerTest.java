@@ -21,6 +21,9 @@ import io.github.dsheirer.service.radioreference.RadioReferenceGateway.CountryDi
 import io.github.dsheirer.service.radioreference.RadioReferenceGateway.County;
 import io.github.dsheirer.service.radioreference.RadioReferenceGateway.CountyDirectory;
 import io.github.dsheirer.service.radioreference.RadioReferenceGateway.FrequencyResult;
+import io.github.dsheirer.service.radioreference.RadioReferenceGateway.Mode;
+import io.github.dsheirer.service.radioreference.RadioReferenceGateway.Site;
+import io.github.dsheirer.service.radioreference.RadioReferenceGateway.SiteChannel;
 import io.github.dsheirer.service.radioreference.RadioReferenceGateway.State;
 import io.github.dsheirer.service.radioreference.RadioReferenceGateway.StateDirectory;
 import io.github.dsheirer.service.radioreference.RadioReferenceGateway.TrunkedSystem;
@@ -87,7 +90,11 @@ class RadioReferenceHttpControllerTest
                     request(origin, "/frequencies?state_id=10&frequency_hz=853162500").GET()));
                 assertEquals(1, matches.at("/total_items").intValue());
                 assertEquals("State P25", matches.at("/items/0/description").textValue());
+                assertEquals(853.1625, matches.at("/items/0/output_mhz").doubleValue());
                 assertEquals(2001, matches.at("/items/0/system_id").intValue());
+                assertEquals("Project 25 Phase I", matches.at("/items/0/mode_name").textValue());
+                assertEquals("Primary control", matches.at("/items/0/channel_use").textValue());
+                assertEquals("Franklin Simulcast", matches.at("/items/0/site_name").textValue());
                 assertEquals("Franklin", matches.at("/items/0/county_name").textValue());
                 assertEquals("https://www.radioreference.com/db/sid/2001",
                     matches.at("/items/0/radio_reference_url").textValue());
@@ -228,7 +235,20 @@ class RadioReferenceHttpControllerTest
         public List<FrequencyResult> searchStateFrequencies(int stateId, double frequencyMHz)
         {
             return List.of(new FrequencyResult(853.1625, 808.1625, "", "State P25", "Franklin Simulcast",
-                "34C", "", "", "", "P25", "", List.of("Law Dispatch"), 0, 10, 0, 100));
+                "34C", "", "", "", "4", "", List.of("Law Dispatch"), 0, 2001, 0, 100));
+        }
+
+        @Override
+        public List<Mode> modes()
+        {
+            return List.of(new Mode(4, "Project 25 Phase I"));
+        }
+
+        @Override
+        public List<Site> sites(int systemId)
+        {
+            return List.of(new Site(3001, systemId, 12, "Franklin Simulcast", 100,
+                List.of(new SiteChannel(853.1625, "c", true, false))));
         }
 
         @Override

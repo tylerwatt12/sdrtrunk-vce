@@ -36,6 +36,10 @@ import io.github.dsheirer.service.radioreference.RadioReferenceGateway.County;
 import io.github.dsheirer.service.radioreference.RadioReferenceGateway.CountyDirectory;
 import io.github.dsheirer.service.radioreference.RadioReferenceGateway.DetailKind;
 import io.github.dsheirer.service.radioreference.RadioReferenceGateway.FrequencyResult;
+import io.github.dsheirer.service.radioreference.RadioReferenceGateway.FrequencyCategory;
+import io.github.dsheirer.service.radioreference.RadioReferenceGateway.Mode;
+import io.github.dsheirer.service.radioreference.RadioReferenceGateway.Site;
+import io.github.dsheirer.service.radioreference.RadioReferenceGateway.SiteChannel;
 import io.github.dsheirer.service.radioreference.RadioReferenceGateway.State;
 import io.github.dsheirer.service.radioreference.RadioReferenceGateway.StateDirectory;
 import io.github.dsheirer.service.radioreference.RadioReferenceGateway.TrunkedSystem;
@@ -206,12 +210,19 @@ class RadioReferenceDirectoryServiceTest
             FrequencyMatch trunked = page.items().getFirst();
             assertEquals("State P25", trunked.description());
             assertEquals(2001, trunked.systemId());
+            assertEquals("State P25", trunked.systemName());
+            assertEquals("Franklin Simulcast", trunked.siteName());
+            assertEquals("Primary control", trunked.channelUse());
+            assertEquals("Project 25 Phase I", trunked.modeName());
             assertEquals("Franklin", trunked.countyName());
             assertEquals("https://www.radioreference.com/db/sid/2001", trunked.radioReferenceUrl());
 
             FrequencyMatch conventional = service.searchStateFrequencies(10, 853_162_500L, 1, 1)
                 .items().getFirst();
             assertEquals("County Dispatch", conventional.description());
+            assertEquals("Public Safety", conventional.category());
+            assertEquals("County Dispatch", conventional.subCategory());
+            assertEquals("Conventional", conventional.channelUse());
             assertEquals("https://www.radioreference.com/db/subcat/444", conventional.radioReferenceUrl());
             assertEquals("State Police", conventional.agencyName());
         }
@@ -466,9 +477,9 @@ class RadioReferenceDirectoryServiceTest
             List.of(new Agency(1002, "County Fire", 3)));
         gateway.frequencyResults = List.of(
             new FrequencyResult(853.1625, 808.1625, "", "State P25", "Franklin Simulcast", "34C", "", "",
-                "", "P25", "", List.of("Law Dispatch"), 0, 10, 0, 100),
+                "", "4", "", List.of("Law Dispatch"), 0, 2001, 0, 100),
             new FrequencyResult(853.1625, 0, "WQAB123", "County Dispatch", "Dispatch", "123.0 PL", "", "",
-                "", "FMN", "RM", List.of("Law Dispatch"), 444, 10, 1001, 100));
+                "", "FMN", "RM", List.of("Law Dispatch"), 444, 0, 1001, 100));
         return gateway;
     }
 
@@ -525,6 +536,7 @@ class RadioReferenceDirectoryServiceTest
         private CountyDirectory county =
             new CountyDirectory(new County(1, "", ""), List.of(), List.of());
         private List<FrequencyResult> frequencyResults = List.of();
+        private List<Mode> modes = List.of(new Mode(4, "Project 25 Phase I"));
         private volatile boolean closed;
         private volatile boolean blockCountries;
         private volatile boolean ignoreCountryInterrupt;
@@ -604,6 +616,25 @@ class RadioReferenceDirectoryServiceTest
         public List<FrequencyResult> searchStateFrequencies(int stateId, double frequencyMHz)
         {
             return frequencyResults;
+        }
+
+        @Override
+        public List<Mode> modes()
+        {
+            return modes;
+        }
+
+        @Override
+        public List<Site> sites(int systemId)
+        {
+            return List.of(new Site(3001, systemId, 12, "Franklin Simulcast", 100,
+                List.of(new SiteChannel(853.1625, "c", true, false))));
+        }
+
+        @Override
+        public List<FrequencyCategory> agencyFrequencyCategories(int agencyId)
+        {
+            return List.of(new FrequencyCategory(444, "Public Safety", "County Dispatch"));
         }
 
         @Override

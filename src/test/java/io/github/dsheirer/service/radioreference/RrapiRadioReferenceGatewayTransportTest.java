@@ -190,6 +190,7 @@ class RrapiRadioReferenceGatewayTransportTest
             RadioReferenceGateway.FrequencyResult match = gateway.searchStateFrequencies(10, 853.1625).getFirst();
             assertEquals("Test P25", match.description());
             assertEquals("Test Simulcast", match.alpha());
+            assertEquals(10, match.systemId());
             assertEquals(20, match.countyId());
             assertEquals(List.of("Law Dispatch"), match.tags());
         }

@@ -3108,6 +3108,20 @@ body.modal-open {
   min-width: 0;
 }
 
+.radioreference-frequency-groups {
+  display: grid;
+  gap: 14px;
+}
+
+.radioreference-frequency-group {
+  min-width: 0;
+}
+
+.radioreference-frequency-group h3 {
+  margin: 0 0 7px;
+  font-size: 14px;
+}
+
 .admin-audio-form .admin-form-message,
 .admin-audio-form .admin-form-actions {
   grid-column: 1 / -1;

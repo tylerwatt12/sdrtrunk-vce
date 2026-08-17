@@ -46,6 +46,7 @@ class DiscoveredTunerEnableTest
         assertTrue(discoveredTuner.isAvailable());
         assertTrue(listenerObservedAppliedConfiguration.get());
         assertEquals(configuration.getFrequency(), controller.getFrequency());
+        assertTrue(controller.isCenterFrequencyLocked());
         assertEquals(1, controller.mApplyCount);
         discoveredTuner.stop();
     }
@@ -70,6 +71,7 @@ class DiscoveredTunerEnableTest
         configuration.setFrequency(855_000_000L);
         configuration.setMinimumFrequency(850_000_000L);
         configuration.setMaximumFrequency(860_000_000L);
+        configuration.setCenterFrequencyLocked(true);
         return configuration;
     }
 
@@ -97,6 +99,7 @@ class DiscoveredTunerEnableTest
             setMinimumFrequency(configuration.getMinimumFrequency());
             setMaximumFrequency(configuration.getMaximumFrequency());
             setFrequency(configuration.getFrequency());
+            setCenterFrequencyLocked(configuration.isCenterFrequencyLocked());
             mConfigurationApplied = true;
         }
 

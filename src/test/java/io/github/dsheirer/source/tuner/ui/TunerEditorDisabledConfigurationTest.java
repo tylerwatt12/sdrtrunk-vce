@@ -18,6 +18,7 @@ import java.awt.event.FocusEvent;
 import java.awt.event.FocusListener;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.swing.JButton;
+import javax.swing.JCheckBox;
 import javax.swing.SwingUtilities;
 import org.junit.jupiter.api.Test;
 
@@ -41,7 +42,8 @@ class TunerEditorDisabledConfigurationTest
             assertTrue(editor.minimum().isEnabled());
             assertTrue(editor.maximum().isEnabled());
             assertTrue(editor.reset().isEnabled());
-            assertFalse(editor.frequency().isEnabled());
+            assertTrue(editor.frequency().isEnabled());
+            assertTrue(editor.centerFrequencyLock().isEnabled());
             assertEquals(2_500_000, editor.getCurrentSampleRate());
             assertEquals(100_000_000L, editor.minimum().getFrequency());
             assertEquals(103_000_000L, editor.maximum().getFrequency());
@@ -61,6 +63,63 @@ class TunerEditorDisabledConfigurationTest
         assertEquals(TestEditor.MINIMUM, configuration.getMinimumFrequency());
         assertEquals(TestEditor.MAXIMUM, configuration.getMaximumFrequency());
         assertEquals(2, editor.mSaveCount);
+        SwingUtilities.invokeAndWait(editor::dispose);
+    }
+
+    @Test
+    void disabledEditorPersistsCenterFrequencyAndLockWithoutHardware() throws Exception
+    {
+        AirspyTunerConfiguration configuration = new AirspyTunerConfiguration("disabled-editor");
+        configuration.setSampleRate(2_500_000);
+        configuration.setFrequency(101_000_000L);
+        configuration.setMinimumFrequency(100_000_000L);
+        configuration.setMaximumFrequency(105_000_000L);
+        TestDiscoveredTuner discoveredTuner = new TestDiscoveredTuner(configuration);
+        AtomicReference<TestEditor> reference = new AtomicReference<>();
+
+        SwingUtilities.invokeAndWait(() -> reference.set(new TestEditor(discoveredTuner)));
+        TestEditor editor = reference.get();
+
+        SwingUtilities.invokeAndWait(() -> {
+            assertTrue(editor.frequency().isEnabled());
+            assertTrue(editor.centerFrequencyLock().isEnabled());
+            editor.setCenterFrequency(102_500_000L);
+            editor.centerFrequencyLock().doClick();
+        });
+
+        assertEquals(102_500_000L, configuration.getFrequency());
+        assertTrue(configuration.isCenterFrequencyLocked());
+        assertTrue(editor.mSaveCount > 0);
+        assertEquals(0, editor.mHardwareSaveCount,
+            "disabled frequency controls must not invoke a hardware-specific editor save");
+        SwingUtilities.invokeAndWait(editor::dispose);
+    }
+
+    @Test
+    void disabledEditorNeverUsesRetiringHardwareObject() throws Exception
+    {
+        AirspyTunerConfiguration configuration = new AirspyTunerConfiguration("disabled-editor");
+        configuration.setSampleRate(2_500_000);
+        configuration.setFrequency(101_000_000L);
+        configuration.setMinimumFrequency(100_000_000L);
+        configuration.setMaximumFrequency(105_000_000L);
+        TestDiscoveredTuner discoveredTuner = new TestDiscoveredTuner(configuration);
+        AtomicReference<TestEditor> reference = new AtomicReference<>();
+
+        SwingUtilities.invokeAndWait(() -> reference.set(new TestEditor(discoveredTuner)));
+        TestEditor editor = reference.get();
+
+        SwingUtilities.invokeAndWait(() -> {
+            discoveredTuner.simulateRetiringHardware(true);
+            editor.refreshFrequencyControls();
+            editor.setCenterFrequency(103_000_000L);
+            editor.centerFrequencyLock().doClick();
+        });
+
+        assertEquals(103_000_000L, configuration.getFrequency());
+        assertTrue(configuration.isCenterFrequencyLocked());
+        assertEquals(0, editor.mHardwareSaveCount);
+        discoveredTuner.simulateRetiringHardware(false);
         SwingUtilities.invokeAndWait(editor::dispose);
     }
 
@@ -84,6 +143,8 @@ class TunerEditorDisabledConfigurationTest
 
     private static class TestDiscoveredTuner extends DiscoveredTuner
     {
+        private boolean mSimulateRetiringHardware;
+
         private TestDiscoveredTuner(AirspyTunerConfiguration configuration)
         {
             setEnabled(false);
@@ -107,6 +168,28 @@ class TunerEditorDisabledConfigurationTest
         {
             //No hardware is available in this test.
         }
+
+        @Override
+        public boolean hasTuner()
+        {
+            return mSimulateRetiringHardware || super.hasTuner();
+        }
+
+        @Override
+        public Tuner getTuner()
+        {
+            if(mSimulateRetiringHardware)
+            {
+                throw new AssertionError("disabled editor accessed retiring tuner hardware");
+            }
+
+            return super.getTuner();
+        }
+
+        private void simulateRetiringHardware(boolean simulate)
+        {
+            mSimulateRetiringHardware = simulate;
+        }
     }
 
     private static class TestEditor extends TunerEditor<Tuner, AirspyTunerConfiguration>
@@ -114,6 +197,7 @@ class TunerEditorDisabledConfigurationTest
         private static final long MINIMUM = 1L;
         private static final long MAXIMUM = 1_000_000_000L;
         private int mSaveCount;
+        private int mHardwareSaveCount;
 
         private TestEditor(DiscoveredTuner discoveredTuner)
         {
@@ -138,7 +222,7 @@ class TunerEditorDisabledConfigurationTest
         @Override
         protected void save()
         {
-            //Frequency extents deliberately use the base class's configuration-only save path.
+            mHardwareSaveCount++;
         }
 
         @Override
@@ -182,6 +266,21 @@ class TunerEditorDisabledConfigurationTest
         private javax.swing.JComponent frequency()
         {
             return getFrequencyControl();
+        }
+
+        private void setCenterFrequency(long frequency)
+        {
+            getFrequencyControl().setFrequency(frequency, true);
+        }
+
+        private JCheckBox centerFrequencyLock()
+        {
+            return getCenterFrequencyLockCheckBox();
+        }
+
+        private void refreshFrequencyControls()
+        {
+            getFrequencyPanel().updateControls();
         }
     }
 }

@@ -34,6 +34,26 @@ public interface RadioReferenceGateway extends AutoCloseable
     List<FrequencyResult> searchStateFrequencies(int stateId, double frequencyMHz)
         throws RadioReferenceGatewayException;
 
+    default List<Mode> modes() throws RadioReferenceGatewayException
+    {
+        return List.of();
+    }
+
+    default List<Site> sites(int systemId) throws RadioReferenceGatewayException
+    {
+        return List.of();
+    }
+
+    default List<FrequencyCategory> agencyFrequencyCategories(int agencyId) throws RadioReferenceGatewayException
+    {
+        return List.of();
+    }
+
+    default List<FrequencyCategory> countyFrequencyCategories(int countyId) throws RadioReferenceGatewayException
+    {
+        return List.of();
+    }
+
     @Override
     void close();
 
@@ -64,12 +84,32 @@ public interface RadioReferenceGateway extends AutoCloseable
     record FrequencyResult(double downlinkMHz, double uplinkMHz, String callsign, String description,
                            String alpha, String tone, String colorCode, String talkgroup, String slot,
                            String mode, String classification, List<String> tags, int subCategoryId,
-                           int stateId, int agencyId, int countyId)
+                           int systemId, int agencyId, int countyId)
     {
         public FrequencyResult
         {
             tags = immutable(tags);
         }
+    }
+
+    record Mode(int id, String name)
+    {
+    }
+
+    record Site(int id, int systemId, int number, String name, int countyId, List<SiteChannel> channels)
+    {
+        public Site
+        {
+            channels = immutable(channels);
+        }
+    }
+
+    record SiteChannel(double frequencyMHz, String use, boolean primaryControl, boolean alternateControl)
+    {
+    }
+
+    record FrequencyCategory(int subCategoryId, String categoryName, String subCategoryName)
+    {
     }
 
     record CountryDirectory(Country country, List<State> states, List<Agency> agencies)
