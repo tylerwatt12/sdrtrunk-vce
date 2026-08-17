@@ -10,13 +10,17 @@
  */
 package io.github.dsheirer.service.radioreference;
 
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.dataformat.xml.XmlMapper;
 import io.github.dsheirer.rrapi.request.RequestEnvelope;
 import io.github.dsheirer.rrapi.response.Fault;
 import io.github.dsheirer.rrapi.response.ResponseBody;
 import io.github.dsheirer.rrapi.response.ResponseEnvelope;
+import io.github.dsheirer.rrapi.response.SearchFrequencyResponse;
 import io.github.dsheirer.rrapi.type.AuthorizationInformation;
 import java.io.IOException;
+import java.io.StringWriter;
+import java.math.BigDecimal;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -37,6 +41,9 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 import javax.net.ssl.SSLContext;
+import javax.xml.stream.XMLOutputFactory;
+import javax.xml.stream.XMLStreamException;
+import javax.xml.stream.XMLStreamWriter;
 
 /**
  * Minimal HTTPS transport for the RadioReference request and response models.
@@ -53,6 +60,16 @@ final class SecureRadioReferenceSoapClient implements AutoCloseable
     private static final int PRODUCTION_MAXIMUM_RESPONSE_BYTES = 8 * 1024 * 1024;
     private static final String CONTENT_TYPE = "text/xml;charset=UTF-8";
     private static final String USER_AGENT = "io.github.dsheirer.rrapi";
+    private static final String SOAP_ENV_PREFIX = "SOAP-ENV";
+    private static final String SOAP_ENV_NAMESPACE = "http://schemas.xmlsoap.org/soap/envelope/";
+    private static final String XML_SCHEMA_PREFIX = "xsd";
+    private static final String XML_SCHEMA_NAMESPACE = "http://www.w3.org/2001/XMLSchema";
+    private static final String XML_SCHEMA_INSTANCE_PREFIX = "xsi";
+    private static final String XML_SCHEMA_INSTANCE_NAMESPACE = "http://www.w3.org/2001/XMLSchema-instance";
+    private static final String RADIO_REFERENCE_PREFIX = "ns1";
+    private static final String RADIO_REFERENCE_NAMESPACE = "http://api.radioreference.com/soap2";
+    private static final String SEARCH_STATE_FREQUENCY_ACTION =
+        RADIO_REFERENCE_NAMESPACE + "#searchStateFreq";
 
     private final Object mCredentialLock = new Object();
     private final URI mEndpoint;
@@ -60,7 +77,8 @@ final class SecureRadioReferenceSoapClient implements AutoCloseable
     private final Duration mRequestTimeout;
     private final int mMaximumResponseBytes;
     private final String mUserName;
-    private final XmlMapper mXmlMapper = new XmlMapper();
+    private final XmlMapper mXmlMapper = XmlMapper.builder()
+        .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES).build();
     private char[] mPassword;
     private boolean mClosed;
 
@@ -119,6 +137,22 @@ final class SecureRadioReferenceSoapClient implements AutoCloseable
         throws RadioReferenceGatewayException
     {
         Objects.requireNonNull(requestFactory);
+        return executeEncoded(authorization -> new EncodedRequest(
+            requestFactory.apply(authorization).toXmlString(), null), responseType, requestTimeout);
+    }
+
+    SearchFrequencyResponse searchStateFrequencies(int stateId, double frequencyMHz)
+        throws RadioReferenceGatewayException
+    {
+        return executeEncoded(authorization -> stateFrequencyRequest(authorization, stateId, frequencyMHz),
+            SearchFrequencyResponse.class, mRequestTimeout);
+    }
+
+    private <T extends ResponseBody> T executeEncoded(RequestEncoder requestEncoder, Class<T> responseType,
+                                                       Duration requestTimeout)
+        throws RadioReferenceGatewayException
+    {
+        Objects.requireNonNull(requestEncoder);
         Objects.requireNonNull(responseType);
         Duration timeout = positive(requestTimeout);
         AuthorizationInformation authorization = authorization();
@@ -126,15 +160,20 @@ final class SecureRadioReferenceSoapClient implements AutoCloseable
 
         try
         {
-            RequestEnvelope envelope = requestFactory.apply(authorization);
-            String requestXml = envelope.toXmlString();
-            HttpRequest request = HttpRequest.newBuilder(mEndpoint)
+            EncodedRequest encodedRequest = requestEncoder.encode(authorization);
+            HttpRequest.Builder requestBuilder = HttpRequest.newBuilder(mEndpoint)
                 .timeout(timeout)
                 .header("Content-Type", CONTENT_TYPE)
                 .header("Accept", "text/xml")
                 .header("User-Agent", USER_AGENT)
-                .POST(HttpRequest.BodyPublishers.ofString(requestXml, StandardCharsets.UTF_8))
-                .build();
+                .POST(HttpRequest.BodyPublishers.ofString(encodedRequest.xml(), StandardCharsets.UTF_8));
+
+            if(encodedRequest.soapAction() != null)
+            {
+                requestBuilder.header("SOAPAction", encodedRequest.soapAction());
+            }
+
+            HttpRequest request = requestBuilder.build();
             HttpResponse<byte[]> response = send(request, responseTooLarge, timeout);
 
             if(responseTooLarge.get())
@@ -204,6 +243,82 @@ final class SecureRadioReferenceSoapClient implements AutoCloseable
         {
             authorization.setPassword("");
         }
+    }
+
+    /**
+     * The dependency's document-style serializer emits an unbound operation prefix.  RadioReference accepts that
+     * legacy request but returns an empty frequency array.  Frequency search therefore uses the service's documented
+     * RPC encoding explicitly, including bound namespaces and parameter types.
+     */
+    private static EncodedRequest stateFrequencyRequest(AuthorizationInformation authorization, int stateId,
+                                                         double frequencyMHz) throws IOException
+    {
+        if(stateId <= 0 || !Double.isFinite(frequencyMHz) || frequencyMHz <= 0)
+        {
+            throw new IOException("Invalid state-frequency search parameters");
+        }
+
+        StringWriter output = new StringWriter();
+        XMLStreamWriter xml = null;
+
+        try
+        {
+            xml = XMLOutputFactory.newFactory().createXMLStreamWriter(output);
+            xml.writeStartDocument(StandardCharsets.UTF_8.name(), "1.0");
+            xml.writeStartElement(SOAP_ENV_PREFIX, "Envelope", SOAP_ENV_NAMESPACE);
+            xml.writeNamespace(SOAP_ENV_PREFIX, SOAP_ENV_NAMESPACE);
+            xml.writeNamespace(RADIO_REFERENCE_PREFIX, RADIO_REFERENCE_NAMESPACE);
+            xml.writeNamespace(XML_SCHEMA_PREFIX, XML_SCHEMA_NAMESPACE);
+            xml.writeNamespace(XML_SCHEMA_INSTANCE_PREFIX, XML_SCHEMA_INSTANCE_NAMESPACE);
+            xml.writeStartElement(SOAP_ENV_PREFIX, "Body", SOAP_ENV_NAMESPACE);
+            xml.writeStartElement(RADIO_REFERENCE_PREFIX, "searchStateFreq", RADIO_REFERENCE_NAMESPACE);
+            writeTypedElement(xml, "stid", XML_SCHEMA_PREFIX + ":int", Integer.toString(stateId));
+            writeTypedElement(xml, "freq", XML_SCHEMA_PREFIX + ":decimal",
+                BigDecimal.valueOf(frequencyMHz).stripTrailingZeros().toPlainString());
+            writeTypedElement(xml, "tone", XML_SCHEMA_PREFIX + ":string", "");
+            xml.writeStartElement("authInfo");
+            xml.writeAttribute(XML_SCHEMA_INSTANCE_PREFIX, XML_SCHEMA_INSTANCE_NAMESPACE, "type",
+                RADIO_REFERENCE_PREFIX + ":authInfo");
+            writeTypedElement(xml, "username", XML_SCHEMA_PREFIX + ":string", authorization.getUserName());
+            writeTypedElement(xml, "password", XML_SCHEMA_PREFIX + ":string", authorization.getPassword());
+            writeTypedElement(xml, "appKey", XML_SCHEMA_PREFIX + ":string", authorization.getApplicationKey());
+            writeTypedElement(xml, "version", XML_SCHEMA_PREFIX + ":string", authorization.getVersion());
+            writeTypedElement(xml, "style", XML_SCHEMA_PREFIX + ":string", "rpc");
+            xml.writeEndElement();
+            xml.writeEndElement();
+            xml.writeEndElement();
+            xml.writeEndElement();
+            xml.writeEndDocument();
+            xml.flush();
+            return new EncodedRequest(output.toString(), SEARCH_STATE_FREQUENCY_ACTION);
+        }
+        catch(XMLStreamException exception)
+        {
+            throw new IOException("Unable to encode RadioReference frequency search", exception);
+        }
+        finally
+        {
+            if(xml != null)
+            {
+                try
+                {
+                    xml.close();
+                }
+                catch(XMLStreamException ignored)
+                {
+                    //The request content was already produced or the original encoding failure is being reported.
+                }
+            }
+        }
+    }
+
+    private static void writeTypedElement(XMLStreamWriter xml, String name, String type, String value)
+        throws XMLStreamException
+    {
+        xml.writeStartElement(name);
+        xml.writeAttribute(XML_SCHEMA_INSTANCE_PREFIX, XML_SCHEMA_INSTANCE_NAMESPACE, "type", type);
+        xml.writeCharacters(Objects.requireNonNullElse(value, ""));
+        xml.writeEndElement();
     }
 
     private AuthorizationInformation authorization() throws RadioReferenceGatewayException
@@ -408,5 +523,19 @@ final class SecureRadioReferenceSoapClient implements AutoCloseable
         }
 
         mHttpClient.shutdownNow();
+    }
+
+    @FunctionalInterface
+    private interface RequestEncoder
+    {
+        EncodedRequest encode(AuthorizationInformation authorization) throws IOException;
+    }
+
+    private record EncodedRequest(String xml, String soapAction)
+    {
+        private EncodedRequest
+        {
+            Objects.requireNonNull(xml);
+        }
     }
 }

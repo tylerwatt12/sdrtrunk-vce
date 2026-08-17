@@ -161,24 +161,17 @@ class RrapiRadioReferenceGatewayTransportTest
         GetCountyInfoResponse countyResponse = new GetCountyInfoResponse();
         countyResponse.setCountyInfo(countyInfo);
 
-        SearchFrequencyResult frequency = new SearchFrequencyResult();
-        frequency.setDownlink(853.1625);
-        frequency.setDescription("Test P25");
-        frequency.setAlpha("Test Simulcast");
-        frequency.setTone("34C");
-        frequency.setCountyId(20);
-        SearchFrequencyResponse frequencyResponse = new SearchFrequencyResponse();
-        frequencyResponse.setResults(List.of(frequency));
-
         List<String> responses = List.of(response(userResponse), response(countriesResponse),
             response(countryResponse), response(stateResponse), response(countyResponse),
-            response(frequencyResponse));
+            rpcFrequencyResponse());
         AtomicInteger requestIndex = new AtomicInteger();
         List<String> requests = new ArrayList<>();
+        List<String> soapActions = new ArrayList<>();
 
         try(TestHttpsServer server = new TestHttpsServer(exchange -> {
             String request = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
             requests.add(request);
+            soapActions.add(exchange.getRequestHeaders().getFirst("SOAPAction"));
             byte[] response = responses.get(requestIndex.getAndIncrement()).getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().set("Content-Type", "text/xml;charset=UTF-8");
             exchange.sendResponseHeaders(200, response.length);
@@ -198,12 +191,18 @@ class RrapiRadioReferenceGatewayTransportTest
             assertEquals("Test P25", match.description());
             assertEquals("Test Simulcast", match.alpha());
             assertEquals(20, match.countyId());
+            assertEquals(List.of("Law Dispatch"), match.tags());
         }
 
         assertEquals(6, requestIndex.get());
         assertTrue(requests.stream().allMatch(request -> request.contains("dummy-password")));
         assertTrue(requests.stream().allMatch(request -> request.contains("test-user")));
         assertTrue(requests.getLast().contains("853.1625"));
+        assertTrue(requests.getLast().contains("xmlns:SOAP-ENV=\"http://schemas.xmlsoap.org/soap/envelope/\""));
+        assertTrue(requests.getLast().contains("xmlns:ns1=\"http://api.radioreference.com/soap2\""));
+        assertTrue(requests.getLast().contains("xsi:type=\"xsd:decimal\""));
+        assertTrue(requests.getLast().contains(">rpc</style>"));
+        assertEquals("http://api.radioreference.com/soap2#searchStateFreq", soapActions.getLast());
     }
 
     @Test
@@ -551,6 +550,50 @@ class RrapiRadioReferenceGatewayTransportTest
         ResponseEnvelope envelope = new ResponseEnvelope();
         envelope.setResponseBody(body);
         return envelope.toXmlString();
+    }
+
+    /** Production-shaped RPC/encoded response, including SOAP metadata attributes ignored by the data model. */
+    private static String rpcFrequencyResponse()
+    {
+        return """
+            <?xml version="1.0" encoding="utf-8"?>
+            <SOAP-ENV:Envelope SOAP-ENV:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"
+                xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/"
+                xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+                xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                xmlns:SOAP-ENC="http://schemas.xmlsoap.org/soap/encoding/"
+                xmlns:tns="http://api.radioreference.com/soap2">
+              <SOAP-ENV:Body>
+                <ns1:searchStateFreqResponse xmlns:ns1="http://api.radioreference.com/soap2">
+                  <return xsi:type="SOAP-ENC:Array" SOAP-ENC:arrayType="tns:searchFreqResult[1]">
+                    <item xsi:type="tns:searchFreqResult">
+                      <out xsi:type="xsd:decimal">853.1625</out>
+                      <in xsi:type="xsd:decimal">808.1625</in>
+                      <callsign xsi:type="xsd:string">WTEST1</callsign>
+                      <descr xsi:type="xsd:string">Test P25</descr>
+                      <alpha xsi:type="xsd:string">Test Simulcast</alpha>
+                      <tone xsi:type="xsd:string">34C</tone>
+                      <colorCode xsi:type="xsd:string"></colorCode>
+                      <tg xsi:type="xsd:string"></tg>
+                      <slot xsi:type="xsd:string"></slot>
+                      <mode xsi:type="xsd:string">P25</mode>
+                      <class xsi:type="xsd:string">T</class>
+                      <tags xsi:type="SOAP-ENC:Array" SOAP-ENC:arrayType="tns:tag[1]">
+                        <item xsi:type="tns:tag">
+                          <tagId xsi:type="xsd:int">1</tagId>
+                          <tagDescr xsi:type="xsd:string">Law Dispatch</tagDescr>
+                        </item>
+                      </tags>
+                      <scid xsi:type="xsd:int">100</scid>
+                      <sid xsi:type="xsd:int">10</sid>
+                      <aid xsi:type="xsd:int">0</aid>
+                      <ctid xsi:type="xsd:int">20</ctid>
+                    </item>
+                  </return>
+                </ns1:searchStateFreqResponse>
+              </SOAP-ENV:Body>
+            </SOAP-ENV:Envelope>
+            """;
     }
 
     private static SSLContext testSslContext() throws Exception

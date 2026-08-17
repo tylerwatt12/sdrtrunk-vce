@@ -15,7 +15,6 @@ import io.github.dsheirer.rrapi.request.GetCountryList;
 import io.github.dsheirer.rrapi.request.GetCountyInfo;
 import io.github.dsheirer.rrapi.request.GetStateInfo;
 import io.github.dsheirer.rrapi.request.GetUserData;
-import io.github.dsheirer.rrapi.request.SearchStateFrequency;
 import io.github.dsheirer.rrapi.response.GetCountryInfoResponse;
 import io.github.dsheirer.rrapi.response.GetCountryListResponse;
 import io.github.dsheirer.rrapi.response.GetCountyInfoResponse;
@@ -185,9 +184,7 @@ final class RrapiRadioReferenceGateway implements RadioReferenceGateway
     {
         try
         {
-            SearchFrequencyResponse response = client().execute(
-                authorization -> SearchStateFrequency.create(authorization, stateId, frequencyMHz),
-                SearchFrequencyResponse.class);
+            SearchFrequencyResponse response = client().searchStateFrequencies(stateId, frequencyMHz);
             List<FrequencyResult> results = new ArrayList<>();
 
             if(response.getResults() != null)

@@ -90,13 +90,13 @@ class StatsWebReceiverLocationAndFrequencyActionsUiContractTest
     void stylesResponsiveLocationAndDisabledFutureActions() throws Exception
     {
         String css = Files.readString(APP_CSS);
-        assertTrue(css.contains(".receiver-location-form"));
+        assertTrue(css.contains(".admin-settings-form"));
+        assertTrue(css.contains(".admin-settings-form-stack"));
+        assertTrue(css.contains("height: 36px;"));
         assertTrue(css.contains(".read-only-modal.frequency-action-modal"));
         assertTrue(css.contains(".tuner-frequency-action-list"));
         assertTrue(css.contains(".tuner-frequency-action.disabled-action"));
         assertTrue(css.contains(":root[data-theme=\"dark\"] .tuner-frequency-action.disabled-action"));
-        assertTrue(css.contains(".radioreference-account-form"));
-        assertTrue(css.contains(".radioreference-region-form"));
         assertTrue(css.contains("color: var(--muted);"));
     }
 

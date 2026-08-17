@@ -2909,7 +2909,16 @@ body.modal-open {
 .admin-form input,
 .admin-form select,
 .admin-form textarea {
+  min-width: 0;
   width: 100%;
+}
+
+.admin-form input:not([type="checkbox"]):not([type="radio"]),
+.admin-form select,
+.admin-tier-select {
+  height: 36px;
+  min-height: 36px;
+  line-height: 1.25;
 }
 
 .admin-form input:focus,
@@ -2980,30 +2989,38 @@ body.modal-open {
   padding: 14px;
 }
 
-.receiver-location-form {
+.admin-settings-form {
+  width: 100%;
   max-width: 720px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
   padding: 14px;
 }
 
-.receiver-location-form .admin-form-message,
-.receiver-location-form .admin-form-actions {
-  grid-column: 1 / -1;
-}
-
-.radioreference-account-form,
-.radioreference-region-form {
+.admin-settings-form-stack {
+  width: 100%;
   max-width: 720px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  padding: 14px;
 }
 
-.radioreference-remember,
-.radioreference-account-form .admin-form-message,
-.radioreference-account-form .admin-form-actions,
-.radioreference-region-form .admin-form-message,
-.radioreference-region-form .admin-form-actions {
+.admin-settings-form-stack .admin-settings-form {
+  width: 100%;
+  max-width: none;
+}
+
+.admin-settings-form-stack .admin-settings-form + .admin-settings-form {
+  border-top: 1px solid var(--line);
+}
+
+.admin-settings-form-title,
+.admin-settings-form .admin-form-message,
+.admin-settings-form .admin-form-actions,
+.radioreference-remember {
   grid-column: 1 / -1;
+}
+
+.admin-settings-form-title {
+  margin: 0;
+  font-size: 13px;
 }
 
 .radioreference-remember {
@@ -5635,9 +5652,7 @@ body.mobile-listener-active {
   }
 
   .admin-audio-form,
-  .receiver-location-form,
-  .radioreference-account-form,
-  .radioreference-region-form {
+  .admin-settings-form {
     grid-template-columns: 1fr;
   }
 

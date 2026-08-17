@@ -11876,7 +11876,7 @@ function browserLocationError(error) {
 async function renderAdminSettings() {
   const response = await requestJson('/api/v1/admin/receiver-location', { csrf: false });
   let configured = response?.configured === true;
-  const form = node('form', 'admin-form receiver-location-form');
+  const form = node('form', 'admin-form admin-settings-form receiver-location-form');
   const latitudeField = receiverLocationField('latitude', 'Latitude', -90, 90, response?.latitude);
   const longitudeField = receiverLocationField('longitude', 'Longitude', -180, 180, response?.longitude);
   const latitude = latitudeField.querySelector('input');
@@ -11893,7 +11893,8 @@ async function renderAdminSettings() {
   save.type = 'submit';
   const actions = node('div', 'admin-form-actions');
   actions.append(useBrowser, clear, save);
-  form.append(latitudeField, longitudeField, message, actions);
+  form.append(node('h3', 'admin-settings-form-title', 'Coordinates'),
+    latitudeField, longitudeField, message, actions);
 
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -12010,7 +12011,7 @@ function replaceRadioReferenceOptions(select, options, selectedId, placeholder) 
 
 async function renderAdminRadioReferenceSettings() {
   const body = node('div', 'admin-section-body radioreference-settings');
-  const accountForm = node('form', 'admin-form radioreference-account-form');
+  const accountForm = node('form', 'admin-form admin-settings-form radioreference-account-form');
   const userName = node('input');
   userName.name = 'radioreference-username';
   userName.autocomplete = 'username';
@@ -12036,11 +12037,12 @@ async function renderAdminRadioReferenceSettings() {
   signOut.disabled = true;
   const accountActions = node('div', 'admin-form-actions');
   accountActions.append(signOut, connect);
-  accountForm.append(formField('Username', userName), formField('Password', password,
+  accountForm.append(node('h3', 'admin-settings-form-title', 'Account'),
+    formField('Username', userName), formField('Password', password,
     'A current Premium subscription is required. The password is never returned to the browser.'),
     rememberLabel, accountMessage, accountActions);
 
-  const regionForm = node('form', 'admin-form radioreference-region-form');
+  const regionForm = node('form', 'admin-form admin-settings-form radioreference-region-form');
   const country = node('select');
   const state = node('select');
   country.disabled = true;
@@ -12055,11 +12057,14 @@ async function renderAdminRadioReferenceSettings() {
   saveRegion.disabled = true;
   const regionActions = node('div', 'admin-form-actions');
   regionActions.append(saveRegion);
-  regionForm.append(formField('Country', country), formField('State or region', state), regionMessage, regionActions);
+  regionForm.append(node('h3', 'admin-settings-form-title', 'Lookup region'),
+    formField('Country', country), formField('State or region', state), regionMessage, regionActions);
 
+  const settingsForms = node('div', 'admin-settings-form-stack');
+  settingsForms.append(accountForm, regionForm);
   body.append(node('p', 'admin-section-intro',
     'Connect the receiver to RadioReference’s database API, then choose the state searched when a frequency is ' +
-    'clicked in Tuner Spectrum. Use your own current Premium account.'), accountForm, regionForm);
+    'clicked in Tuner Spectrum. Use your own current Premium account.'), settingsForms);
   content.append(section('RadioReference lookup', body));
 
   let configuration = null;
