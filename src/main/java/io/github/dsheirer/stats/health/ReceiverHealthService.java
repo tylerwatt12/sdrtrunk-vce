@@ -72,6 +72,7 @@ public final class ReceiverHealthService implements AutoCloseable
     private final LongSupplier mClock;
     private final long mStartedAtMs;
     private final ScheduledExecutorService mExecutor;
+    private final ReceiverHealthSnapshotWriter mSnapshotWriter;
     private final ReceiverHealthIncidentTracker mIncidents = new ReceiverHealthIncidentTracker();
     private final Map<String,CounterBaseline> mCounterBaselines = new HashMap<>();
     private final Map<String,Long> mConditionStartTimes = new HashMap<>();
@@ -90,18 +91,27 @@ public final class ReceiverHealthService implements AutoCloseable
     private StorageSnapshot mStorageSnapshot = StorageSnapshot.unavailable();
     private long mLastGcCollectionTimeMs = -1;
     private long mLastFailureLogMs;
+    private long mLastSnapshotWriteFailureLogMs;
 
     public ReceiverHealthService(UserPreferences userPreferences, TunerManager tunerManager,
                                  ChannelProcessingManager channelProcessingManager,
                                  P25ActivityLogService activityLogService)
     {
         this(userPreferences, tunerManager, channelProcessingManager, activityLogService,
-            System::currentTimeMillis);
+            System::currentTimeMillis, snapshotWriter(userPreferences));
     }
 
     ReceiverHealthService(UserPreferences userPreferences, TunerManager tunerManager,
                           ChannelProcessingManager channelProcessingManager,
                           P25ActivityLogService activityLogService, LongSupplier clock)
+    {
+        this(userPreferences, tunerManager, channelProcessingManager, activityLogService, clock, null);
+    }
+
+    ReceiverHealthService(UserPreferences userPreferences, TunerManager tunerManager,
+                          ChannelProcessingManager channelProcessingManager,
+                          P25ActivityLogService activityLogService, LongSupplier clock,
+                          ReceiverHealthSnapshotWriter snapshotWriter)
     {
         mUserPreferences = userPreferences;
         mTunerManager = tunerManager;
@@ -111,6 +121,7 @@ public final class ReceiverHealthService implements AutoCloseable
             mChannelActivityModel.getSnapshotSet() : new ChannelActivityModel.SnapshotSet(0, List.of());
         mActivityLogService = activityLogService;
         mClock = clock != null ? clock : System::currentTimeMillis;
+        mSnapshotWriter = snapshotWriter;
         mStartedAtMs = mClock.getAsLong();
         mSnapshot = emptySnapshot(mStartedAtMs);
         mExecutor = Executors.newSingleThreadScheduledExecutor(runnable ->
@@ -226,6 +237,29 @@ public final class ReceiverHealthService implements AutoCloseable
         response.put("resolved", mIncidents.resolved());
         response.put("measurements", List.copyOf(measurements));
         mSnapshot = Map.copyOf(response);
+        publishSnapshot(response, now);
+    }
+
+    private void publishSnapshot(Map<String,Object> snapshot, long now)
+    {
+        if(mSnapshotWriter == null)
+        {
+            return;
+        }
+
+        try
+        {
+            mSnapshotWriter.publish(snapshot);
+        }
+        catch(Exception exception)
+        {
+            if(mLastSnapshotWriteFailureLogMs == 0 ||
+                now - mLastSnapshotWriteFailureLogMs >= FAILURE_LOG_INTERVAL_MILLISECONDS)
+            {
+                mLastSnapshotWriteFailureLogMs = now;
+                LOGGER.warn("Receiver health incident report could not be updated", exception);
+            }
+        }
     }
 
     private void collectTuners(long now, List<Map<String,Object>> measurements)
@@ -972,6 +1006,26 @@ public final class ReceiverHealthService implements AutoCloseable
             "summary", Map.of("severity", "healthy", "active_count", 0, "warning_count", 0,
                 "critical_count", 0, "diagnostic_count", 0), "active", List.of(), "resolved", List.of(),
             "measurements", List.of());
+    }
+
+    private static ReceiverHealthSnapshotWriter snapshotWriter(UserPreferences userPreferences)
+    {
+        if(userPreferences == null)
+        {
+            return null;
+        }
+
+        try
+        {
+            Path path = userPreferences.getDirectoryPreference().getDirectoryApplicationLog()
+                .resolve(ReceiverHealthSnapshotWriter.FILE_NAME);
+            return new ReceiverHealthSnapshotWriter(path);
+        }
+        catch(Exception exception)
+        {
+            LOGGER.warn("Receiver health incident report path is unavailable", exception);
+            return null;
+        }
     }
 
     @Override

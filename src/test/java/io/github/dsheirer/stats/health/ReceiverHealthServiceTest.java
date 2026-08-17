@@ -6,10 +6,13 @@
 package io.github.dsheirer.stats.health;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.channel.metadata.activity.ChannelActivityModel;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivitySnapshot;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
@@ -18,9 +21,33 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class ReceiverHealthServiceTest
 {
+    @TempDir
+    Path mTemporaryDirectory;
+
+    @Test
+    void publishesTheLocalIncidentSnapshotFromTheObserverSample() throws Exception
+    {
+        AtomicLong clock = new AtomicLong(1_000);
+        Path target = mTemporaryDirectory.resolve(ReceiverHealthSnapshotWriter.FILE_NAME);
+
+        try(ReceiverHealthService service = new ReceiverHealthService(null, null, null, null, clock::get,
+            new ReceiverHealthSnapshotWriter(target)))
+        {
+            service.sampleNow();
+            assertTrue(Files.isRegularFile(target));
+            String first = Files.readString(target);
+            assertFalse(first.contains("\"measurements\""));
+
+            clock.set(2_000);
+            service.sampleNow();
+            assertEquals(first, Files.readString(target));
+        }
+    }
+
     @Test
     void keepsObserverLossInformationalAndOutOfTheServiceImpactSummary()
     {
