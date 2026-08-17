@@ -56,6 +56,7 @@ import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.nio.file.Path;
+import javafx.application.Platform;
 
 /**
  * JavaFX channels, aliases, streaming, and radioreference.com import editor.
@@ -104,10 +105,11 @@ public class ConfigurationEditor extends BorderPane
         mUserPreferences = userPreferences;
         mStatsWebServerService = statsWebServerService;
 
-        //Build the initial themed surface before the stage is shown.  Deferring this work until the next JavaFX pulse
-        //briefly exposed the Scene's default white background when opening the editor in dark mode.
-        setTop(getMenuBar());
-        setCenter(getTabPane());
+        //Defer the expensive editor construction until the empty window has completed its first themed pulse.
+        Platform.runLater(() -> {
+            setTop(getMenuBar());
+            setCenter(getTabPane());
+        });
     }
 
     /**

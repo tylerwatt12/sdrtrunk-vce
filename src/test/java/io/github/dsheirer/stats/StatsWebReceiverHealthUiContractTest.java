@@ -116,8 +116,8 @@ class StatsWebReceiverHealthUiContractTest
         assertTrue(css.contains(":root[data-theme=\"dark\"] .receiver-health-overview-state.receiver-health-healthy"));
         assertTrue(css.contains(":root[data-theme=\"dark\"] .receiver-health-measurement-row.receiver-health-critical"));
         assertTrue(html.contains("<meta name=\"sdrtrunk-web-revision\" content=\"77\">"));
-        assertTrue(html.contains("/assets/app.css?v=61"));
-        assertTrue(html.contains("/assets/app.js?v=92"));
+        assertTrue(html.contains("/assets/app.css?v=62"));
+        assertTrue(html.contains("/assets/app.js?v=93"));
     }
 
     private static String readText(Path path) throws Exception

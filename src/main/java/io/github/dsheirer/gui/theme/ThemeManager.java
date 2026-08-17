@@ -405,6 +405,10 @@ public class ThemeManager
                               String nextAccentUrl)
     {
         Runnable r = () -> {
+            //A newly shown native window can expose the Scene fill before its root receives a CSS pulse.  Keep that
+            //uncovered surface aligned with the active palette so secondary windows never flash Modena white.
+            scene.setFill(sceneBaseFill(darkMode));
+
             if(mDarkStylesheetUrl != null)
             {
                 scene.getStylesheets().remove(mDarkStylesheetUrl);
@@ -433,6 +437,11 @@ public class ThemeManager
         {
             Platform.runLater(r);
         }
+    }
+
+    static javafx.scene.paint.Paint sceneBaseFill(boolean darkMode)
+    {
+        return darkMode ? javafx.scene.paint.Color.web("#2b2b2b") : javafx.scene.paint.Color.web("#f2f2f2");
     }
 
     /**

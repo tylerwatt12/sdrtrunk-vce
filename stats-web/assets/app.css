@@ -3122,12 +3122,86 @@ body.modal-open {
   font-size: 14px;
 }
 
+.radioreference-result-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr));
+  gap: 10px;
+}
+
+.radioreference-result-card {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+
+.radioreference-result-card-header {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.radioreference-result-card h4,
+.radioreference-result-card h5 {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.radioreference-result-card h4 {
+  font-size: 15px;
+}
+
+.radioreference-result-card h5 {
+  font-size: 13px;
+}
+
+.radioreference-result-type {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  color: var(--muted);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.radioreference-result-facts {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px 10px;
+  margin: 0;
+}
+
+.radioreference-result-facts dt {
+  color: var(--muted);
+}
+
+.radioreference-result-facts dd {
+  min-width: 0;
+  margin: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
 .radioreference-result-actions {
-  flex-wrap: nowrap;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .radioreference-result-actions .button,
 .radioreference-result-actions button {
+  flex: 1 1 150px;
+  min-width: 0;
   white-space: nowrap;
 }
 
@@ -3147,7 +3221,8 @@ body.modal-open {
   margin-bottom: 9px;
 }
 
-.radioreference-frequency-detail h4 {
+.radioreference-frequency-detail h4,
+.radioreference-frequency-detail h5 {
   margin: 0;
 }
 

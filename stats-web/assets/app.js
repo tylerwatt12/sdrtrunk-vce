@@ -7826,96 +7826,102 @@ function radioReferenceDetailContent(row, details) {
   return content;
 }
 
-function radioReferenceResultTable(matches, frequencyHz, signal = null) {
+function radioReferenceResultView(matches, frequencyHz, signal = null) {
   const rows = Array.isArray(matches) ? matches : [];
-  const resultLink = (row) => {
-    const label = row.description || row.alpha_tag || row.system_name || 'View record';
-    return label;
-  };
   const category = (row) => [row.category, row.sub_category].filter(Boolean).join(' — ') ||
     (Array.isArray(row.tags) ? row.tags.join(', ') : '');
   const site = (row) => [row.site_name,
     Number(row.site_number) > 0 ? `Site ${row.site_number}` : ''].filter(Boolean).join(' — ');
-  const columns = (trunked, showDetails) => [
-    { id: 'use', label: 'Use', width: 125, render: (row) => availableValue(row.channel_use) },
-    { id: 'tone', label: 'Tone', width: 90, render: (row) => availableValue(row.tone) },
-    { id: 'callsign', label: 'Callsign', width: 110, render: (row) => callsignLink(row.callsign) },
-    { id: 'name', label: 'Name', width: 150, render: (row) => availableValue(row.alpha_tag) },
-    { id: 'description', label: 'Description', width: 240, render: resultLink },
-    ...(trunked ? [
-      { id: 'system', label: 'System', width: 240,
-        render: (row) => availableValue(row.system_name) },
-      { id: 'site', label: 'Site', width: 190, render: (row) => availableValue(site(row)) }
-    ] : [
-      { id: 'category', label: 'Category', width: 210,
-        render: (row) => availableValue(category(row)) }
-    ]),
-    { id: 'agency', label: 'Agency', width: 170, render: (row) => availableValue(row.agency_name) },
-    { id: 'county', label: 'County', width: 140, render: (row) => availableValue(row.county_name) },
-    { id: 'mode', label: 'Mode', width: 140, render: (row) => availableValue(row.mode_name) },
-    { id: 'actions', label: 'Actions', width: 245, render: (row) => {
-      const actions = node('div', 'table-actions radioreference-result-actions');
-      if (row.radio_reference_url) {
-        const open = externalAnchor('Open RadioReference', row.radio_reference_url);
-        open.classList.add('button', 'secondary');
-        actions.append(open);
-      }
-      const details = node('button', 'secondary', 'Load details');
-      details.type = 'button';
-      details.addEventListener('click', () => showDetails(row, details));
-      actions.append(details);
-      return actions;
-    } }
-  ];
   const conventional = rows.filter((row) => row.match_type !== 'TRUNKED');
   const trunked = rows.filter((row) => row.match_type === 'TRUNKED');
 
   if (!rows.length) {
-    return table([], columns(false, () => {}),
-      'No RadioReference records match this frequency in the selected state.', {
-        type: 'radioreference-frequency-results'
-      });
+    return node('p', 'empty radioreference-frequency-empty',
+      'No RadioReference records match this frequency in the selected state.');
   }
 
   const grouped = node('div', 'radioreference-frequency-groups');
   const section = (label, items, isTrunked) => {
     if (!items.length) return;
     const group = node('section', 'radioreference-frequency-group');
-    const detail = node('section', 'radioreference-frequency-detail');
-    let detailRequest = 0;
-    detail.hidden = true;
-    detail.setAttribute('aria-live', 'polite');
-    const showDetails = async (row, button) => {
-      const request = ++detailRequest;
-      detail.hidden = false;
-      detail.replaceChildren(node('h4', '', row.system_name || row.description || row.alpha_tag || 'Details'),
-        node('p', 'tuner-frequency-action-message', 'Loading RadioReference details…'));
-      button.disabled = true;
-      try {
-        const loaded = await loadRadioReferenceDetails(row, frequencyHz, signal);
-        if (request !== detailRequest) return;
-        const header = node('div', 'radioreference-frequency-detail-header');
-        const hide = node('button', 'secondary', 'Hide details');
-        hide.type = 'button';
-        hide.addEventListener('click', () => {
-          detail.hidden = true;
-          button.focus();
-        });
-        header.append(node('h4', '', row.system_name || row.description || row.alpha_tag || 'Details'), hide);
-        detail.replaceChildren(header, radioReferenceDetailContent(row, loaded));
-      } catch (error) {
-        if (request !== detailRequest) return;
-        const retry = node('button', 'secondary', 'Retry');
-        retry.type = 'button';
-        retry.addEventListener('click', () => showDetails(row, retry));
-        detail.replaceChildren(node('h4', '', row.system_name || row.description || 'Details'),
-          node('p', 'error', error.message), retry);
-      } finally {
-        button.disabled = false;
+    const grid = node('div', 'radioreference-result-grid');
+    items.forEach((row) => {
+      const card = node('article', 'radioreference-result-card');
+      const title = row.description || row.alpha_tag || row.system_name || 'RadioReference result';
+      const header = node('div', 'radioreference-result-card-header');
+      header.append(node('h4', '', title), node('span', 'radioreference-result-type',
+        isTrunked ? 'Trunked' : 'Conventional'));
+
+      const facts = isTrunked ? [
+        ['System', availableValue(row.system_name)],
+        ['Site', availableValue(site(row))]
+      ] : [
+        ['Name', availableValue(row.alpha_tag)],
+        ['Category', availableValue(category(row))]
+      ];
+      facts.push(
+        ['Use', availableValue(row.channel_use)],
+        ['Mode', availableValue(row.mode_name)],
+        ['Callsign', callsignLink(row.callsign) || '—'],
+        ['Tone', availableValue(row.tone)],
+        ['Agency', availableValue(row.agency_name)],
+        ['County', availableValue(row.county_name)]
+      );
+      const values = node('dl', 'radioreference-result-facts');
+      facts.forEach(([factLabel, value]) => {
+        const factValue = node('dd');
+        factValue.append(valueNode(value));
+        values.append(node('dt', '', factLabel), factValue);
+      });
+
+      const actions = node('div', 'radioreference-result-actions');
+      if (row.radio_reference_url) {
+        const open = externalAnchor('Open RadioReference', row.radio_reference_url);
+        open.classList.add('button', 'secondary');
+        actions.append(open);
       }
-    };
-    group.append(node('h3', '', `${label} (${items.length})`),
-      table(items, columns(isTrunked, showDetails), '', { type: 'radioreference-frequency-results' }), detail);
+      const detailsButton = node('button', 'secondary', 'Load details');
+      detailsButton.type = 'button';
+      actions.append(detailsButton);
+
+      const detail = node('section', 'radioreference-frequency-detail');
+      let detailRequest = 0;
+      detail.hidden = true;
+      detail.setAttribute('aria-live', 'polite');
+      const showDetails = async (button) => {
+        const request = ++detailRequest;
+        detail.hidden = false;
+        detail.replaceChildren(node('h5', '', 'Additional RadioReference details'),
+          node('p', 'tuner-frequency-action-message', 'Loading RadioReference details…'));
+        button.disabled = true;
+        try {
+          const loaded = await loadRadioReferenceDetails(row, frequencyHz, signal);
+          if (request !== detailRequest) return;
+          const detailHeader = node('div', 'radioreference-frequency-detail-header');
+          const hide = node('button', 'secondary', 'Hide details');
+          hide.type = 'button';
+          hide.addEventListener('click', () => {
+            detail.hidden = true;
+            detailsButton.focus();
+          });
+          detailHeader.append(node('h5', '', 'Additional RadioReference details'), hide);
+          detail.replaceChildren(detailHeader, radioReferenceDetailContent(row, loaded));
+        } catch (error) {
+          if (request !== detailRequest) return;
+          const retry = node('button', 'secondary', 'Retry');
+          retry.type = 'button';
+          retry.addEventListener('click', () => showDetails(retry));
+          detail.replaceChildren(node('h5', '', 'Additional RadioReference details'),
+            node('p', 'error', error.message), retry);
+        } finally {
+          button.disabled = false;
+        }
+      };
+      detailsButton.addEventListener('click', () => showDetails(detailsButton));
+      card.append(header, values, actions, detail);
+      grid.append(card);
+    });
+    group.append(node('h3', '', `${label} (${items.length})`), grid);
     grouped.append(group);
   };
   section('Conventional', conventional, false);
@@ -7979,7 +7985,7 @@ function openTunerFrequencyActions(selection) {
         csrf: false, page: false, timeoutMs: 15_000
       });
       const matches = Array.isArray(response?.items) ? response.items : [];
-      results.replaceChildren(radioReferenceResultTable(matches, selectedHz, detailController.signal));
+      results.replaceChildren(radioReferenceResultView(matches, selectedHz, detailController.signal));
       const total = Number(response?.total_items || matches.length);
       message.textContent = total > matches.length ?
         `Showing the first ${number(matches.length)} of ${number(total)} matches.` :

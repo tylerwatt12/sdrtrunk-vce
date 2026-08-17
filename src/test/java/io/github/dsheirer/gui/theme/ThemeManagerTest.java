@@ -46,6 +46,13 @@ class ThemeManagerTest
     }
 
     @Test
+    void sceneFillMatchesThePaletteBeforeCssIsApplied()
+    {
+        assertEquals(javafx.scene.paint.Color.web("#2b2b2b"), ThemeManager.sceneBaseFill(true));
+        assertEquals(javafx.scene.paint.Color.web("#f2f2f2"), ThemeManager.sceneBaseFill(false));
+    }
+
+    @Test
     void everyConfiguredLookAndFeelIsAvailable() throws Exception
     {
         for(Theme theme: Theme.values())

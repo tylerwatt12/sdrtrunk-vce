@@ -5,7 +5,6 @@
  */
 package io.github.dsheirer.gui.configuration;
 
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
@@ -17,7 +16,7 @@ class ConfigurationEditorStartupUiContractTest
     private static final Path EDITOR = Path.of("src/main/java/io/github/dsheirer/gui/configuration/ConfigurationEditor.java");
 
     @Test
-    void attachesThemedContentBeforeThePlaylistStageCanBeShown() throws Exception
+    void defersExpensivePlaylistContentUntilAfterTheInitialWindowPulse() throws Exception
     {
         String source = Files.readString(EDITOR);
         int constructor = source.indexOf("public ConfigurationEditor(ConfigurationManager configurationManager,");
@@ -26,6 +25,6 @@ class ConfigurationEditorStartupUiContractTest
 
         assertTrue(initialization.contains("setTop(getMenuBar());"));
         assertTrue(initialization.contains("setCenter(getTabPane());"));
-        assertFalse(initialization.contains("Platform.runLater"));
+        assertTrue(initialization.contains("Platform.runLater"));
     }
 }

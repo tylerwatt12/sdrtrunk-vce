@@ -50,7 +50,7 @@ class StatsWebReceiverLocationAndFrequencyActionsUiContractTest
         String source = Files.readString(APP_JAVASCRIPT);
         String tuner = block(source, "function tunerSpectrumPanel()");
         String actions = block(source, "function openTunerFrequencyActions(selection)");
-        String results = block(source, "function radioReferenceResultTable(");
+        String results = block(source, "function radioReferenceResultView(");
         String settings = block(source, "async function renderAdminRadioReferenceSettings()");
         String pointerUp = block(tuner, "function onPlotPointerUp(event)");
         String pointerCancel = block(tuner, "function onPlotPointerCancel(event)");
@@ -65,7 +65,7 @@ class StatsWebReceiverLocationAndFrequencyActionsUiContractTest
         assertTrue(actions.contains("configuration?.account?.state !== 'VALID_PREMIUM'"));
         assertFalse(results.contains("'Freq Out'"));
         assertFalse(results.contains("'Freq In'"));
-        assertTrue(results.contains("'Description'"));
+        assertTrue(results.contains("row.description"));
         assertTrue(results.contains("'System'"));
         assertTrue(results.contains("'Site'"));
         assertTrue(results.contains("'Use'"));
@@ -76,6 +76,9 @@ class StatsWebReceiverLocationAndFrequencyActionsUiContractTest
         assertTrue(results.contains("'Open RadioReference'"));
         assertTrue(results.contains("'Load details'"));
         assertTrue(results.contains("loadRadioReferenceDetails(row, frequencyHz"));
+        assertTrue(results.contains("'radioreference-result-grid'"));
+        assertTrue(results.contains("'radioreference-result-card'"));
+        assertFalse(results.contains("table(items"));
         assertTrue(source.contains("/api/v1/admin/radioreference/frequencies/details?"));
         assertTrue(source.contains("timeoutMs: 65_000"));
         assertTrue(source.contains("radioReferenceDetailCache.clear()"));
@@ -111,6 +114,9 @@ class StatsWebReceiverLocationAndFrequencyActionsUiContractTest
         assertTrue(css.contains(".tuner-frequency-action.disabled-action"));
         assertTrue(css.contains(":root[data-theme=\"dark\"] .tuner-frequency-action.disabled-action"));
         assertTrue(css.contains("color: var(--muted);"));
+        assertTrue(css.contains(".radioreference-result-grid"));
+        assertTrue(css.contains("minmax(min(100%, 360px), 1fr)"));
+        assertTrue(css.contains(".radioreference-result-actions"));
     }
 
     private static String block(String source, String marker)
