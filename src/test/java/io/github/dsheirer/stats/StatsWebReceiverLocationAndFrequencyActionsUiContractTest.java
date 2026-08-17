@@ -50,7 +50,7 @@ class StatsWebReceiverLocationAndFrequencyActionsUiContractTest
         String source = Files.readString(APP_JAVASCRIPT);
         String tuner = block(source, "function tunerSpectrumPanel()");
         String actions = block(source, "function openTunerFrequencyActions(selection)");
-        String results = block(source, "function radioReferenceResultTable(matches)");
+        String results = block(source, "function radioReferenceResultTable(");
         String settings = block(source, "async function renderAdminRadioReferenceSettings()");
         String pointerUp = block(tuner, "function onPlotPointerUp(event)");
         String pointerCancel = block(tuner, "function onPlotPointerCancel(event)");
@@ -73,6 +73,12 @@ class StatsWebReceiverLocationAndFrequencyActionsUiContractTest
         assertTrue(results.contains("'Trunked systems and sites'"));
         assertTrue(results.contains("row.mode_name"));
         assertTrue(results.contains("row.radio_reference_url"));
+        assertTrue(results.contains("'Open RadioReference'"));
+        assertTrue(results.contains("'Load details'"));
+        assertTrue(results.contains("loadRadioReferenceDetails(row, frequencyHz"));
+        assertTrue(source.contains("/api/v1/admin/radioreference/frequencies/details?"));
+        assertTrue(source.contains("timeoutMs: 65_000"));
+        assertTrue(source.contains("radioReferenceDetailCache.clear()"));
         assertFalse(results.contains("Number(row.output_mhz)"));
         assertTrue(settings.contains("'/api/v1/admin/radioreference/session'"));
         assertTrue(settings.contains("'/api/v1/admin/radioreference/countries'"));

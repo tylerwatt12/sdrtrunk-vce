@@ -92,12 +92,19 @@ class RadioReferenceHttpControllerTest
                 assertEquals("State P25", matches.at("/items/0/description").textValue());
                 assertEquals(853.1625, matches.at("/items/0/output_mhz").doubleValue());
                 assertEquals(2001, matches.at("/items/0/system_id").intValue());
-                assertEquals("Project 25 Phase I", matches.at("/items/0/mode_name").textValue());
-                assertEquals("Primary control", matches.at("/items/0/channel_use").textValue());
+                assertEquals("Mode 4", matches.at("/items/0/mode_name").textValue());
+                assertEquals("Trunked", matches.at("/items/0/channel_use").textValue());
                 assertEquals("Franklin Simulcast", matches.at("/items/0/site_name").textValue());
                 assertEquals("Franklin", matches.at("/items/0/county_name").textValue());
                 assertEquals("https://www.radioreference.com/db/sid/2001",
                     matches.at("/items/0/radio_reference_url").textValue());
+
+                JsonNode details = data(send(client, request(origin,
+                    "/frequencies/details?frequency_hz=853162500&system_id=2001&sub_category_id=0" +
+                        "&agency_id=0&county_id=100&mode=4").GET()));
+                assertEquals("Project 25 Phase I", details.at("/mode_name").textValue());
+                assertEquals("Primary control", details.at("/sites/0/channel_use").textValue());
+                assertEquals("Franklin Simulcast", details.at("/sites/0/site_name").textValue());
 
                 HttpResponse<String> logout = send(client, request(origin, "/session").DELETE());
                 assertEquals("SIGNED_OUT", data(logout).at("/account/state").textValue());

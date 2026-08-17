@@ -253,7 +253,7 @@ final class RrapiRadioReferenceGateway implements RadioReferenceGateway
         try
         {
             GetSitesResponse response = client().execute(authorization -> GetSites.create(authorization, systemId),
-                GetSitesResponse.class);
+                GetSitesResponse.class, SecureRadioReferenceService.SITES_REQUEST_TIMEOUT);
             List<Site> sites = new ArrayList<>();
 
             if(response.getSites() != null)

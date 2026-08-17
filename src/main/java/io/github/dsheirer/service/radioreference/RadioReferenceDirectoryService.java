@@ -50,10 +50,10 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
     public static final int MAXIMUM_RESULT_LIMIT = 500;
     public static final int MAXIMUM_QUERY_LENGTH = 128;
     private static final int MAXIMUM_REMOTE_ITEMS_SCANNED = 10_000;
-    private static final int MAXIMUM_FREQUENCY_DETAIL_REQUESTS = 24;
     private static final int DEFAULT_REMOTE_CONCURRENCY = 1;
     private static final int DEFAULT_WAITING_REQUESTS = 8;
     private static final Duration DEFAULT_REQUEST_DEADLINE = Duration.ofSeconds(10);
+    private static final Duration DEFAULT_DETAIL_REQUEST_DEADLINE = Duration.ofSeconds(60);
     private static final Duration DEFAULT_SHUTDOWN_WAIT = Duration.ofSeconds(1);
     private static final DateTimeFormatter EXPIRATION_FORMAT =
         DateTimeFormatter.ofPattern("MM-dd-uuuu", Locale.US).withResolverStyle(ResolverStyle.STRICT);
@@ -437,28 +437,12 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
             throw new RadioReferenceDirectoryException(RadioReferenceDirectoryException.Code.INVALID_REQUEST);
         }
 
-        FrequencySnapshot snapshot = invokePremium(gateway -> frequencySnapshot(gateway, stateId, frequencyHz));
+        FrequencySnapshot snapshot = invokePremium(gateway -> new FrequencySnapshot(
+            verifiedState(gateway.state(stateId), stateId),
+            gateway.searchStateFrequencies(stateId, frequencyHz / 1_000_000.0)));
         List<RadioReferenceGateway.FrequencyResult> source = snapshot.results() != null ? snapshot.results() : List.of();
         long enrichmentItems = (long)snapshot.state().counties().size() + snapshot.state().agencies().size() +
-            snapshot.state().systems().size() + snapshot.modes().size() + snapshot.categories().size();
-
-        for(List<RadioReferenceGateway.Site> systemSites: snapshot.sites().values())
-        {
-            enrichmentItems += systemSites.size();
-
-            for(RadioReferenceGateway.Site site: systemSites)
-            {
-                if(site != null)
-                {
-                    enrichmentItems += site.channels().size();
-                }
-            }
-
-            if(enrichmentItems > MAXIMUM_REMOTE_ITEMS_SCANNED)
-            {
-                break;
-            }
-        }
+            snapshot.state().systems().size();
 
         if(source.size() > MAXIMUM_REMOTE_ITEMS_SCANNED || enrichmentItems > MAXIMUM_REMOTE_ITEMS_SCANNED)
         {
@@ -474,12 +458,7 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
         Map<Integer,RadioReferenceGateway.TrunkedSystem> systems = new LinkedHashMap<>();
         snapshot.state().systems().stream().filter(Objects::nonNull)
             .forEach(system -> systems.putIfAbsent(system.id(), system));
-        Map<Integer,String> modes = new LinkedHashMap<>();
-        snapshot.modes().stream().filter(Objects::nonNull)
-            .forEach(mode -> modes.putIfAbsent(mode.id(), text(mode.name())));
-        Map<Integer,RadioReferenceGateway.FrequencyCategory> categories = new LinkedHashMap<>();
-        snapshot.categories().stream().filter(Objects::nonNull)
-            .forEach(category -> categories.putIfAbsent(category.subCategoryId(), category));
+        Map<Integer,String> modes = Map.of();
 
         List<FrequencyMatch> matches = new ArrayList<>(source.size());
 
@@ -494,89 +473,76 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
             RadioReferenceGateway.TrunkedSystem system = systemId == null ? null : systems.get(systemId);
             MatchType matchType = systemId == null ? MatchType.CONVENTIONAL : MatchType.TRUNKED;
             String url = radioReferenceUrl(systemId, result.subCategoryId(), result.agencyId(), result.countyId());
-            RadioReferenceGateway.FrequencyCategory category = categories.get(result.subCategoryId());
-            List<SiteMatch> siteMatches = matchingSites(
-                systemId == null ? null : snapshot.sites().get(systemId), frequencyHz);
-
-            if(siteMatches.isEmpty())
+            if(matches.size() >= MAXIMUM_REMOTE_ITEMS_SCANNED)
             {
-                siteMatches = List.of(SiteMatch.NONE);
+                throw tooLarge();
             }
 
-            for(SiteMatch siteMatch: siteMatches)
-            {
-                if(matches.size() >= MAXIMUM_REMOTE_ITEMS_SCANNED)
-                {
-                    throw tooLarge();
-                }
-
-                String alphaTag = matchType == MatchType.CONVENTIONAL ? text(result.alpha()) : "";
-                String siteName = !siteMatch.siteName().isBlank() ? siteMatch.siteName() :
-                    matchType == MatchType.TRUNKED ? text(result.alpha()) : "";
-                matches.add(new FrequencyMatch(result.downlinkMHz(), positive(result.uplinkMHz()),
-                    text(result.tone()), text(result.callsign()), text(result.description()), alphaTag,
-                    category == null ? "" : text(category.categoryName()),
-                    category == null ? "" : text(category.subCategoryName()), resolveMode(result.mode(), modes),
-                    text(result.classification()), text(result.colorCode()), text(result.talkgroup()),
-                    text(result.slot()), result.tags(), matchType, channelUse(matchType, siteMatch.channel()), stateId,
-                    text(snapshot.state().state().name()), result.countyId(),
-                    counties.getOrDefault(result.countyId(), ""), result.agencyId(),
-                    agencies.getOrDefault(result.agencyId(), ""), result.subCategoryId(), systemId,
-                    system == null ? "" : text(system.name()), siteMatch.siteId(), siteMatch.siteNumber(),
-                    siteName, url));
-            }
+            String alphaTag = matchType == MatchType.CONVENTIONAL ? text(result.alpha()) : "";
+            String siteName = matchType == MatchType.TRUNKED ? text(result.alpha()) : "";
+            matches.add(new FrequencyMatch(result.downlinkMHz(), positive(result.uplinkMHz()),
+                text(result.tone()), text(result.callsign()), text(result.description()), alphaTag, "", "",
+                text(result.mode()), resolveMode(result.mode(), modes), text(result.classification()),
+                text(result.colorCode()), text(result.talkgroup()), text(result.slot()), result.tags(), matchType,
+                channelUse(matchType, null), stateId, text(snapshot.state().state().name()), result.countyId(),
+                counties.getOrDefault(result.countyId(), ""), result.agencyId(),
+                agencies.getOrDefault(result.agencyId(), ""), result.subCategoryId(), systemId,
+                system == null ? "" : text(system.name()), null, null, siteName, url));
         }
 
         return page(matches, offset, limit);
     }
 
-    private FrequencySnapshot frequencySnapshot(RadioReferenceGateway gateway, int stateId, long frequencyHz)
-        throws RadioReferenceGatewayException
+    /**
+     * Loads optional detail for one explicitly selected frequency result.  The base exact-frequency search never
+     * calls this method; site and category requests occur only after a user requests the drilldown.
+     */
+    public FrequencyDetails frequencyDetails(long frequencyHz, Integer systemId, int subCategoryId, int agencyId,
+                                             int countyId, String rawMode)
+        throws RadioReferenceDirectoryException
     {
-        RadioReferenceGateway.StateDirectory state = verifiedState(gateway.state(stateId), stateId);
-        List<RadioReferenceGateway.FrequencyResult> results =
-            gateway.searchStateFrequencies(stateId, frequencyHz / 1_000_000.0);
-        List<RadioReferenceGateway.Mode> modes = optionalModes(gateway);
-        Map<Integer,List<RadioReferenceGateway.Site>> sites = new LinkedHashMap<>();
-        List<RadioReferenceGateway.FrequencyCategory> categories = new ArrayList<>();
-        Set<Integer> loadedAgencies = new java.util.HashSet<>();
-        Set<Integer> loadedCounties = new java.util.HashSet<>();
-        int detailRequests = 0;
-
-        if(results != null)
+        if(frequencyHz <= 0 || frequencyHz > 100_000_000_000L || (systemId != null && systemId <= 0) ||
+            subCategoryId < 0 || agencyId < 0 || countyId < 0 || (rawMode != null && rawMode.length() > 32))
         {
-            for(RadioReferenceGateway.FrequencyResult result: results)
-            {
-                if(result == null)
-                {
-                    continue;
-                }
-
-                if(result.systemId() > 0 && !sites.containsKey(result.systemId()) &&
-                    detailRequests < MAXIMUM_FREQUENCY_DETAIL_REQUESTS)
-                {
-                    sites.put(result.systemId(), optionalSites(gateway, result.systemId()));
-                    detailRequests++;
-                }
-                else if(result.systemId() <= 0 && result.subCategoryId() > 0 &&
-                    detailRequests < MAXIMUM_FREQUENCY_DETAIL_REQUESTS)
-                {
-                    if(result.agencyId() > 0 && loadedAgencies.add(result.agencyId()))
-                    {
-                        categories.addAll(optionalAgencyCategories(gateway, result.agencyId()));
-                        detailRequests++;
-                    }
-                    else if(result.agencyId() <= 0 && result.countyId() > 0 &&
-                        loadedCounties.add(result.countyId()))
-                    {
-                        categories.addAll(optionalCountyCategories(gateway, result.countyId()));
-                        detailRequests++;
-                    }
-                }
-            }
+            throw new RadioReferenceDirectoryException(RadioReferenceDirectoryException.Code.INVALID_REQUEST);
         }
 
-        return new FrequencySnapshot(state, results, modes, sites, categories);
+        FrequencyDetailSnapshot snapshot = invokePremium(gateway -> frequencyDetailSnapshot(gateway, systemId,
+            subCategoryId, agencyId, countyId), DEFAULT_DETAIL_REQUEST_DEADLINE.toNanos());
+        Map<Integer,String> modes = new LinkedHashMap<>();
+        snapshot.modes().stream().filter(Objects::nonNull)
+            .forEach(mode -> modes.putIfAbsent(mode.id(), text(mode.name())));
+        RadioReferenceGateway.FrequencyCategory selectedCategory = snapshot.categories().stream()
+            .filter(Objects::nonNull)
+            .filter(category -> category.subCategoryId() == subCategoryId)
+            .findFirst().orElse(null);
+        List<FrequencySiteDetail> siteDetails = new ArrayList<>();
+
+        for(SiteMatch match: matchingSites(snapshot.sites(), frequencyHz))
+        {
+            siteDetails.add(new FrequencySiteDetail(match.siteId(), match.siteNumber(), match.siteName(),
+                channelUse(MatchType.TRUNKED, match.channel())));
+        }
+
+        return new FrequencyDetails(resolveMode(rawMode, modes),
+            selectedCategory == null ? "" : selectedCategory.categoryName(),
+            selectedCategory == null ? "" : selectedCategory.subCategoryName(), siteDetails);
+    }
+
+    private FrequencyDetailSnapshot frequencyDetailSnapshot(RadioReferenceGateway gateway, Integer systemId,
+                                                             int subCategoryId, int agencyId, int countyId)
+    {
+        List<RadioReferenceGateway.Mode> modes = optionalModes(gateway);
+        List<RadioReferenceGateway.Site> sites = systemId == null ? List.of() : optionalSites(gateway, systemId);
+        List<RadioReferenceGateway.FrequencyCategory> categories = List.of();
+
+        if(systemId == null && subCategoryId > 0)
+        {
+            categories = agencyId > 0 ? optionalAgencyCategories(gateway, agencyId) :
+                optionalCountyCategories(gateway, countyId);
+        }
+
+        return new FrequencyDetailSnapshot(modes, sites, categories);
     }
 
     private static List<RadioReferenceGateway.Mode> optionalModes(RadioReferenceGateway gateway)
@@ -733,6 +699,12 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
 
     private <T> T invokePremium(GatewayRequest<T> request) throws RadioReferenceDirectoryException
     {
+        return invokePremium(request, mRequestDeadlineNanos);
+    }
+
+    private <T> T invokePremium(GatewayRequest<T> request, long requestDeadlineNanos)
+        throws RadioReferenceDirectoryException
+    {
         Session session;
 
         synchronized(mSessionLock)
@@ -755,7 +727,7 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
 
         try
         {
-            T result = invoke(() -> request.execute(session.gateway()));
+            T result = invoke(() -> request.execute(session.gateway()), requestDeadlineNanos);
 
             synchronized(mSessionLock)
             {
@@ -807,6 +779,12 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
 
     private <T> T invoke(RemoteRequest<T> request) throws RadioReferenceDirectoryException
     {
+        return invoke(request, mRequestDeadlineNanos);
+    }
+
+    private <T> T invoke(RemoteRequest<T> request, long requestDeadlineNanos)
+        throws RadioReferenceDirectoryException
+    {
         if(mClosed)
         {
             throw new RadioReferenceDirectoryException(RadioReferenceDirectoryException.Code.CLOSED);
@@ -833,7 +811,7 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
 
         try
         {
-            return future.get(mRequestDeadlineNanos, TimeUnit.NANOSECONDS);
+            return future.get(requestDeadlineNanos, TimeUnit.NANOSECONDS);
         }
         catch(TimeoutException exception)
         {
@@ -1252,15 +1230,18 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
     }
 
     private record FrequencySnapshot(RadioReferenceGateway.StateDirectory state,
-                                     List<RadioReferenceGateway.FrequencyResult> results,
-                                     List<RadioReferenceGateway.Mode> modes,
-                                     Map<Integer,List<RadioReferenceGateway.Site>> sites,
-                                     List<RadioReferenceGateway.FrequencyCategory> categories)
+                                     List<RadioReferenceGateway.FrequencyResult> results)
     {
-        private FrequencySnapshot
+    }
+
+    private record FrequencyDetailSnapshot(List<RadioReferenceGateway.Mode> modes,
+                                           List<RadioReferenceGateway.Site> sites,
+                                           List<RadioReferenceGateway.FrequencyCategory> categories)
+    {
+        private FrequencyDetailSnapshot
         {
             modes = modes == null ? List.of() : List.copyOf(modes);
-            sites = sites == null ? Map.of() : Map.copyOf(sites);
+            sites = sites == null ? List.of() : List.copyOf(sites);
             categories = categories == null ? List.of() : List.copyOf(categories);
         }
     }
@@ -1268,7 +1249,6 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
     private record SiteMatch(Integer siteId, Integer siteNumber, String siteName,
                              RadioReferenceGateway.SiteChannel channel)
     {
-        private static final SiteMatch NONE = new SiteMatch(null, null, "", null);
     }
 
     private record EntryKey(EntryScope scope, EntryType type, RadioReferenceGateway.DetailKind kind, int id)
@@ -1559,8 +1539,9 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
 
     public record FrequencyMatch(double outputMhz, Double inputMhz, String tone, String callsign,
                                  String description, String alphaTag, String category, String subCategory,
-                                 String modeName, String classification, String colorCode, String talkgroup,
-                                 String slot, List<String> tags, MatchType matchType, String channelUse, int stateId,
+                                 String modeCode, String modeName, String classification, String colorCode,
+                                 String talkgroup, String slot, List<String> tags, MatchType matchType,
+                                 String channelUse, int stateId,
                                  String stateName, int countyId, String countyName, int agencyId, String agencyName,
                                  int subCategoryId, Integer systemId, String systemName, Integer siteId,
                                  Integer siteNumber, String siteName, String radioReferenceUrl)
@@ -1573,6 +1554,7 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
             alphaTag = text(alphaTag);
             category = text(category);
             subCategory = text(subCategory);
+            modeCode = text(modeCode);
             modeName = text(modeName);
             classification = text(classification);
             colorCode = text(colorCode);
@@ -1585,6 +1567,27 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
             systemName = text(systemName);
             siteName = text(siteName);
             radioReferenceUrl = text(radioReferenceUrl);
+        }
+    }
+
+    public record FrequencyDetails(String modeName, String category, String subCategory,
+                                   List<FrequencySiteDetail> sites)
+    {
+        public FrequencyDetails
+        {
+            modeName = text(modeName);
+            category = text(category);
+            subCategory = text(subCategory);
+            sites = sites == null ? List.of() : List.copyOf(sites);
+        }
+    }
+
+    public record FrequencySiteDetail(Integer siteId, Integer siteNumber, String siteName, String channelUse)
+    {
+        public FrequencySiteDetail
+        {
+            siteName = text(siteName);
+            channelUse = text(channelUse);
         }
     }
 

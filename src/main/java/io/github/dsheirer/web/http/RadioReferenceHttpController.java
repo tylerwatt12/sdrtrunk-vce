@@ -112,6 +112,22 @@ public final class RadioReferenceHttpController
                 ApiHttpResponse.sendData(exchange, 200,
                     mService.searchStateFrequencies(stateId, frequencyHz, offset, limit));
             }
+            else if((PATH + "/frequencies/details").equals(path))
+            {
+                requireMethod(exchange, "GET");
+                requireEmptyBody(exchange, "GET");
+                Map<String,String> query = query(exchange, "frequency_hz", "system_id", "sub_category_id",
+                    "agency_id", "county_id", "mode");
+                ensureStoredSession();
+                long frequencyHz = positiveLong(query.get("frequency_hz"), "frequency_hz");
+                int systemId = optionalNonNegativeInt(query.get("system_id"), "system_id");
+                int subCategoryId = optionalNonNegativeInt(query.get("sub_category_id"), "sub_category_id");
+                int agencyId = optionalNonNegativeInt(query.get("agency_id"), "agency_id");
+                int countyId = optionalNonNegativeInt(query.get("county_id"), "county_id");
+                String mode = query.getOrDefault("mode", "");
+                ApiHttpResponse.sendData(exchange, 200, mService.frequencyDetails(frequencyHz,
+                    systemId > 0 ? systemId : null, subCategoryId, agencyId, countyId, mode));
+            }
             else
             {
                 ApiHttpResponse.sendError(exchange, 404, "not_found", "Not found");
@@ -411,6 +427,30 @@ public final class RadioReferenceHttpController
         catch(NumberFormatException exception)
         {
             throw new RequestException(400, "invalid_request", "Pagination values must be integers");
+        }
+    }
+
+    private static int optionalNonNegativeInt(String value, String field) throws RequestException
+    {
+        if(value == null || value.isBlank())
+        {
+            return 0;
+        }
+
+        try
+        {
+            int parsed = Integer.parseInt(value);
+
+            if(parsed < 0)
+            {
+                throw new NumberFormatException();
+            }
+
+            return parsed;
+        }
+        catch(NumberFormatException exception)
+        {
+            throw new RequestException(400, "invalid_request", field + " must be a non-negative integer");
         }
     }
 

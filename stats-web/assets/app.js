@@ -7770,19 +7770,73 @@ const TUNER_ACTIVITY_LABELS = Object.freeze({
   CONTROL: 'Control channel',
   ACTIVE: 'Other activity'
 });
-function radioReferenceResultTable(matches) {
+const RADIO_REFERENCE_DETAIL_CACHE_LIMIT = 100;
+const radioReferenceDetailCache = new Map();
+
+function radioReferenceDetailKey(row, frequencyHz) {
+  return [Math.round(Number(frequencyHz)), Number(row.system_id || 0), Number(row.sub_category_id || 0),
+    Number(row.agency_id || 0), Number(row.county_id || 0), String(row.mode_code || '')].join(':');
+}
+
+async function loadRadioReferenceDetails(row, frequencyHz, signal = null) {
+  const key = radioReferenceDetailKey(row, frequencyHz);
+  if (radioReferenceDetailCache.has(key)) return radioReferenceDetailCache.get(key);
+  const query = new URLSearchParams({
+    frequency_hz: String(Math.round(Number(frequencyHz))),
+    system_id: String(Number(row.system_id || 0)),
+    sub_category_id: String(Number(row.sub_category_id || 0)),
+    agency_id: String(Number(row.agency_id || 0)),
+    county_id: String(Number(row.county_id || 0)),
+    mode: String(row.mode_code || '')
+  });
+  const details = await requestJson(`/api/v1/admin/radioreference/frequencies/details?${query}`, {
+    csrf: false, page: false, timeoutMs: 65_000, signal
+  });
+  if (radioReferenceDetailCache.size >= RADIO_REFERENCE_DETAIL_CACHE_LIMIT) {
+    radioReferenceDetailCache.delete(radioReferenceDetailCache.keys().next().value);
+  }
+  radioReferenceDetailCache.set(key, details);
+  return details;
+}
+
+function radioReferenceDetailContent(row, details) {
+  const content = node('div', 'radioreference-frequency-detail-content');
+  const facts = [];
+  if (details?.mode_name) facts.push(['Mode', details.mode_name]);
+  if (row.match_type === 'TRUNKED') {
+    const sites = Array.isArray(details?.sites) ? details.sites : [];
+    if (sites.length) {
+      sites.forEach((site, index) => {
+        const label = sites.length > 1 ? `Matching site ${index + 1}` : 'Matching site';
+        const name = [site.site_name, Number(site.site_number) > 0 ? `Site ${site.site_number}` : '']
+          .filter(Boolean).join(' — ');
+        facts.push([label, name || 'Unknown']);
+        facts.push(['Channel use', availableValue(site.channel_use)]);
+      });
+    } else {
+      facts.push(['Site details', 'No matching site detail was returned.']);
+    }
+  } else {
+    const category = [details?.category, details?.sub_category].filter(Boolean).join(' — ');
+    facts.push(['Category', category || 'No category detail was returned.']);
+  }
+  const values = node('dl', 'tuner-frequency-action-summary');
+  facts.forEach(([label, value]) => values.append(node('dt', '', label), node('dd', '', value)));
+  content.append(values);
+  return content;
+}
+
+function radioReferenceResultTable(matches, frequencyHz, signal = null) {
   const rows = Array.isArray(matches) ? matches : [];
-  const link = (label, row) => row.radio_reference_url ?
-    externalAnchor(label, row.radio_reference_url) : label;
   const resultLink = (row) => {
     const label = row.description || row.alpha_tag || row.system_name || 'View record';
-    return link(label, row);
+    return label;
   };
   const category = (row) => [row.category, row.sub_category].filter(Boolean).join(' — ') ||
     (Array.isArray(row.tags) ? row.tags.join(', ') : '');
   const site = (row) => [row.site_name,
     Number(row.site_number) > 0 ? `Site ${row.site_number}` : ''].filter(Boolean).join(' — ');
-  const columns = (trunked) => [
+  const columns = (trunked, showDetails) => [
     { id: 'use', label: 'Use', width: 125, render: (row) => availableValue(row.channel_use) },
     { id: 'tone', label: 'Tone', width: 90, render: (row) => availableValue(row.tone) },
     { id: 'callsign', label: 'Callsign', width: 110, render: (row) => callsignLink(row.callsign) },
@@ -7790,7 +7844,7 @@ function radioReferenceResultTable(matches) {
     { id: 'description', label: 'Description', width: 240, render: resultLink },
     ...(trunked ? [
       { id: 'system', label: 'System', width: 240,
-        render: (row) => link(availableValue(row.system_name), row) },
+        render: (row) => availableValue(row.system_name) },
       { id: 'site', label: 'Site', width: 190, render: (row) => availableValue(site(row)) }
     ] : [
       { id: 'category', label: 'Category', width: 210,
@@ -7798,13 +7852,26 @@ function radioReferenceResultTable(matches) {
     ]),
     { id: 'agency', label: 'Agency', width: 170, render: (row) => availableValue(row.agency_name) },
     { id: 'county', label: 'County', width: 140, render: (row) => availableValue(row.county_name) },
-    { id: 'mode', label: 'Mode', width: 140, render: (row) => availableValue(row.mode_name) }
+    { id: 'mode', label: 'Mode', width: 140, render: (row) => availableValue(row.mode_name) },
+    { id: 'actions', label: 'Actions', width: 245, render: (row) => {
+      const actions = node('div', 'table-actions radioreference-result-actions');
+      if (row.radio_reference_url) {
+        const open = externalAnchor('Open RadioReference', row.radio_reference_url);
+        open.classList.add('button', 'secondary');
+        actions.append(open);
+      }
+      const details = node('button', 'secondary', 'Load details');
+      details.type = 'button';
+      details.addEventListener('click', () => showDetails(row, details));
+      actions.append(details);
+      return actions;
+    } }
   ];
   const conventional = rows.filter((row) => row.match_type !== 'TRUNKED');
   const trunked = rows.filter((row) => row.match_type === 'TRUNKED');
 
   if (!rows.length) {
-    return table([], columns(false),
+    return table([], columns(false, () => {}),
       'No RadioReference records match this frequency in the selected state.', {
         type: 'radioreference-frequency-results'
       });
@@ -7814,8 +7881,41 @@ function radioReferenceResultTable(matches) {
   const section = (label, items, isTrunked) => {
     if (!items.length) return;
     const group = node('section', 'radioreference-frequency-group');
+    const detail = node('section', 'radioreference-frequency-detail');
+    let detailRequest = 0;
+    detail.hidden = true;
+    detail.setAttribute('aria-live', 'polite');
+    const showDetails = async (row, button) => {
+      const request = ++detailRequest;
+      detail.hidden = false;
+      detail.replaceChildren(node('h4', '', row.system_name || row.description || row.alpha_tag || 'Details'),
+        node('p', 'tuner-frequency-action-message', 'Loading RadioReference details…'));
+      button.disabled = true;
+      try {
+        const loaded = await loadRadioReferenceDetails(row, frequencyHz, signal);
+        if (request !== detailRequest) return;
+        const header = node('div', 'radioreference-frequency-detail-header');
+        const hide = node('button', 'secondary', 'Hide details');
+        hide.type = 'button';
+        hide.addEventListener('click', () => {
+          detail.hidden = true;
+          button.focus();
+        });
+        header.append(node('h4', '', row.system_name || row.description || row.alpha_tag || 'Details'), hide);
+        detail.replaceChildren(header, radioReferenceDetailContent(row, loaded));
+      } catch (error) {
+        if (request !== detailRequest) return;
+        const retry = node('button', 'secondary', 'Retry');
+        retry.type = 'button';
+        retry.addEventListener('click', () => showDetails(row, retry));
+        detail.replaceChildren(node('h4', '', row.system_name || row.description || 'Details'),
+          node('p', 'error', error.message), retry);
+      } finally {
+        button.disabled = false;
+      }
+    };
     group.append(node('h3', '', `${label} (${items.length})`),
-      table(items, columns(isTrunked), '', { type: 'radioreference-frequency-results' }));
+      table(items, columns(isTrunked, showDetails), '', { type: 'radioreference-frequency-results' }), detail);
     grouped.append(group);
   };
   section('Conventional', conventional, false);
@@ -7836,6 +7936,7 @@ function openTunerFrequencyActions(selection) {
   const selectedHz = Number(selection?.frequencyHz);
   const rawHz = Number(selection?.rawFrequencyHz);
   if (!Number.isFinite(selectedHz) || selectedHz <= 0) return null;
+  const detailController = new AbortController();
   const body = node('div', 'tuner-frequency-action-body');
   const summary = node('dl', 'tuner-frequency-action-summary');
   const facts = [['Frequency', `${(selectedHz / 1_000_000).toFixed(6)} MHz`]];
@@ -7878,7 +7979,7 @@ function openTunerFrequencyActions(selection) {
         csrf: false, page: false, timeoutMs: 15_000
       });
       const matches = Array.isArray(response?.items) ? response.items : [];
-      results.replaceChildren(radioReferenceResultTable(matches));
+      results.replaceChildren(radioReferenceResultTable(matches, selectedHz, detailController.signal));
       const total = Number(response?.total_items || matches.length);
       message.textContent = total > matches.length ?
         `Showing the first ${number(matches.length)} of ${number(total)} matches.` :
@@ -7894,7 +7995,8 @@ function openTunerFrequencyActions(selection) {
   body.append(node('p', 'tuner-frequency-action-intro',
     'Choose what to do with this selected frequency.'), summary, actions, message, results);
   return openReadOnlyModal('Frequency actions', body, {
-    id: 'tuner-frequency-actions', className: 'frequency-action-modal'
+    id: 'tuner-frequency-actions', className: 'frequency-action-modal',
+    cleanup: () => detailController.abort()
   });
 }
 
@@ -12139,6 +12241,7 @@ async function renderAdminRadioReferenceSettings() {
         method: 'PUT', body: { userName: userName.value, password: password.value, remember: remember.checked },
         timeoutMs: 15_000
       });
+      radioReferenceDetailCache.clear();
       password.value = '';
       if (updateAccount(next)) await loadRegions();
     } catch (error) {
@@ -12157,6 +12260,7 @@ async function renderAdminRadioReferenceSettings() {
     accountMessage.textContent = 'Signing out of RadioReference…';
     try {
       const next = await requestJson('/api/v1/admin/radioreference/session', { method: 'DELETE' });
+      radioReferenceDetailCache.clear();
       password.value = '';
       userName.value = '';
       updateAccount(next);

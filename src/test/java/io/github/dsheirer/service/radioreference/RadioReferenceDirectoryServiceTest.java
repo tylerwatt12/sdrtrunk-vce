@@ -26,6 +26,7 @@ import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryService.
 import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryService.EntryScope;
 import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryService.EntryType;
 import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryService.FrequencyMatch;
+import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryService.FrequencyDetails;
 import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryService.LocationSelection;
 import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryService.ScopeFilter;
 import io.github.dsheirer.service.radioreference.RadioReferenceGateway.Account;
@@ -212,19 +213,33 @@ class RadioReferenceDirectoryServiceTest
             assertEquals(2001, trunked.systemId());
             assertEquals("State P25", trunked.systemName());
             assertEquals("Franklin Simulcast", trunked.siteName());
-            assertEquals("Primary control", trunked.channelUse());
-            assertEquals("Project 25 Phase I", trunked.modeName());
+            assertEquals("Trunked", trunked.channelUse());
+            assertEquals("Mode 4", trunked.modeName());
             assertEquals("Franklin", trunked.countyName());
             assertEquals("https://www.radioreference.com/db/sid/2001", trunked.radioReferenceUrl());
+            assertEquals(0, gateway.modeCalls.get());
+            assertEquals(0, gateway.siteCalls.get());
+            assertEquals(0, gateway.categoryCalls.get());
+
+            FrequencyDetails trunkedDetails = service.frequencyDetails(853_162_500L, 2001, 0, 0, 100, "4");
+            assertEquals("Project 25 Phase I", trunkedDetails.modeName());
+            assertEquals("Franklin Simulcast", trunkedDetails.sites().getFirst().siteName());
+            assertEquals("Primary control", trunkedDetails.sites().getFirst().channelUse());
 
             FrequencyMatch conventional = service.searchStateFrequencies(10, 853_162_500L, 1, 1)
                 .items().getFirst();
             assertEquals("County Dispatch", conventional.description());
-            assertEquals("Public Safety", conventional.category());
-            assertEquals("County Dispatch", conventional.subCategory());
+            assertEquals("", conventional.category());
+            assertEquals("", conventional.subCategory());
             assertEquals("Conventional", conventional.channelUse());
             assertEquals("https://www.radioreference.com/db/subcat/444", conventional.radioReferenceUrl());
             assertEquals("State Police", conventional.agencyName());
+
+            FrequencyDetails conventionalDetails = service.frequencyDetails(853_162_500L, null, 444, 1001, 100,
+                "FMN");
+            assertEquals("Public Safety", conventionalDetails.category());
+            assertEquals("County Dispatch", conventionalDetails.subCategory());
+            assertEquals("FMN", conventionalDetails.modeName());
         }
     }
 
@@ -542,6 +557,9 @@ class RadioReferenceDirectoryServiceTest
         private volatile boolean ignoreCountryInterrupt;
         private final AtomicInteger stateCalls = new AtomicInteger();
         private final AtomicInteger countyCalls = new AtomicInteger();
+        private final AtomicInteger modeCalls = new AtomicInteger();
+        private final AtomicInteger siteCalls = new AtomicInteger();
+        private final AtomicInteger categoryCalls = new AtomicInteger();
         private CountDownLatch countriesEntered = new CountDownLatch(1);
         private CountDownLatch releaseCountries = new CountDownLatch(0);
 
@@ -621,12 +639,14 @@ class RadioReferenceDirectoryServiceTest
         @Override
         public List<Mode> modes()
         {
+            modeCalls.incrementAndGet();
             return modes;
         }
 
         @Override
         public List<Site> sites(int systemId)
         {
+            siteCalls.incrementAndGet();
             return List.of(new Site(3001, systemId, 12, "Franklin Simulcast", 100,
                 List.of(new SiteChannel(853.1625, "c", true, false))));
         }
@@ -634,6 +654,7 @@ class RadioReferenceDirectoryServiceTest
         @Override
         public List<FrequencyCategory> agencyFrequencyCategories(int agencyId)
         {
+            categoryCalls.incrementAndGet();
             return List.of(new FrequencyCategory(444, "Public Safety", "County Dispatch"));
         }
 

@@ -3122,6 +3122,35 @@ body.modal-open {
   font-size: 14px;
 }
 
+.radioreference-result-actions {
+  flex-wrap: nowrap;
+}
+
+.radioreference-result-actions .button,
+.radioreference-result-actions button {
+  white-space: nowrap;
+}
+
+.radioreference-frequency-detail {
+  margin-top: 9px;
+  padding: 11px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+
+.radioreference-frequency-detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 9px;
+}
+
+.radioreference-frequency-detail h4 {
+  margin: 0;
+}
+
 .admin-audio-form .admin-form-message,
 .admin-audio-form .admin-form-actions {
   grid-column: 1 / -1;
