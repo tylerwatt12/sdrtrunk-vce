@@ -36,6 +36,8 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Bounded session and directory service for RadioReference.
@@ -57,6 +59,8 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
     private static final Duration DEFAULT_SHUTDOWN_WAIT = Duration.ofSeconds(1);
     private static final DateTimeFormatter EXPIRATION_FORMAT =
         DateTimeFormatter.ofPattern("MM-dd-uuuu", Locale.US).withResolverStyle(ResolverStyle.STRICT);
+    private static final Pattern TRUNKED_SITE_DESCRIPTION =
+        Pattern.compile("\\bSite\\s+(\\d+)\\s+(.+)$", Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
     private static final Comparator<DirectoryEntry> ENTRY_ORDER =
         Comparator.comparing(DirectoryEntry::scope)
             .thenComparing(DirectoryEntry::type)
@@ -479,7 +483,8 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
             }
 
             String alphaTag = matchType == MatchType.CONVENTIONAL ? text(result.alpha()) : "";
-            String siteName = matchType == MatchType.TRUNKED ? text(result.alpha()) : "";
+            SiteHint siteHint = matchType == MatchType.TRUNKED ?
+                trunkedSiteHint(result.description(), system == null ? "" : system.name()) : SiteHint.NONE;
             matches.add(new FrequencyMatch(result.downlinkMHz(), positive(result.uplinkMHz()),
                 text(result.tone()), text(result.callsign()), text(result.description()), alphaTag, "", "",
                 text(result.mode()), resolveMode(result.mode(), modes), text(result.classification()),
@@ -487,7 +492,7 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
                 channelUse(matchType, null), stateId, text(snapshot.state().state().name()), result.countyId(),
                 counties.getOrDefault(result.countyId(), ""), result.agencyId(),
                 agencies.getOrDefault(result.agencyId(), ""), result.subCategoryId(), systemId,
-                system == null ? "" : text(system.name()), null, null, siteName, url));
+                system == null ? "" : text(system.name()), null, siteHint.siteNumber(), siteHint.siteName(), url));
         }
 
         return page(matches, offset, limit);
@@ -497,12 +502,13 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
      * Loads optional detail for one explicitly selected frequency result.  The base exact-frequency search never
      * calls this method; site and category requests occur only after a user requests the drilldown.
      */
-    public FrequencyDetails frequencyDetails(long frequencyHz, Integer systemId, int subCategoryId, int agencyId,
-                                             int countyId, String rawMode)
+    public FrequencyDetails frequencyDetails(long frequencyHz, Integer systemId, int siteNumber, int subCategoryId,
+                                             int agencyId, int countyId, String rawMode)
         throws RadioReferenceDirectoryException
     {
         if(frequencyHz <= 0 || frequencyHz > 100_000_000_000L || (systemId != null && systemId <= 0) ||
-            subCategoryId < 0 || agencyId < 0 || countyId < 0 || (rawMode != null && rawMode.length() > 32))
+            siteNumber < 0 || subCategoryId < 0 || agencyId < 0 || countyId < 0 ||
+            (rawMode != null && rawMode.length() > 32))
         {
             throw new RadioReferenceDirectoryException(RadioReferenceDirectoryException.Code.INVALID_REQUEST);
         }
@@ -516,23 +522,20 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
             .filter(Objects::nonNull)
             .filter(category -> category.subCategoryId() == subCategoryId)
             .findFirst().orElse(null);
-        List<FrequencySiteDetail> siteDetails = new ArrayList<>();
-
-        for(SiteMatch match: matchingSites(snapshot.sites(), frequencyHz))
-        {
-            siteDetails.add(new FrequencySiteDetail(match.siteId(), match.siteNumber(), match.siteName(),
-                channelUse(MatchType.TRUNKED, match.channel())));
-        }
+        SiteMatch siteMatch = selectSiteMatch(matchingSites(snapshot.sites(), frequencyHz), siteNumber, countyId);
+        FrequencySiteDetail siteDetail = siteMatch == null ? null : new FrequencySiteDetail(siteMatch.siteId(),
+            siteMatch.siteNumber(), siteMatch.siteName(), channelUse(MatchType.TRUNKED, siteMatch.channel()),
+            radioReferenceSiteUrl(siteMatch.siteId()));
 
         return new FrequencyDetails(resolveMode(rawMode, modes),
             selectedCategory == null ? "" : selectedCategory.categoryName(),
-            selectedCategory == null ? "" : selectedCategory.subCategoryName(), siteDetails);
+            selectedCategory == null ? "" : selectedCategory.subCategoryName(), siteDetail);
     }
 
     private FrequencyDetailSnapshot frequencyDetailSnapshot(RadioReferenceGateway gateway, Integer systemId,
                                                              int subCategoryId, int agencyId, int countyId)
     {
-        List<RadioReferenceGateway.Mode> modes = optionalModes(gateway);
+        List<RadioReferenceGateway.Mode> modes = systemId == null ? optionalModes(gateway) : List.of();
         List<RadioReferenceGateway.Site> sites = systemId == null ? List.of() : optionalSites(gateway, systemId);
         List<RadioReferenceGateway.FrequencyCategory> categories = List.of();
 
@@ -615,7 +618,8 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
                     {
                         if(channel != null && Math.round(channel.frequencyMHz() * 1_000_000.0) == frequencyHz)
                         {
-                            matches.add(new SiteMatch(site.id(), site.number(), text(site.name()), channel));
+                            matches.add(new SiteMatch(site.id(), site.number(), text(site.name()), site.countyId(),
+                                channel));
                         }
                     }
                 }
@@ -623,6 +627,73 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
         }
 
         return matches;
+    }
+
+    private static SiteMatch selectSiteMatch(List<SiteMatch> matches, int siteNumber, int countyId)
+    {
+        List<SiteMatch> candidates = matches == null ? List.of() : matches;
+
+        if(siteNumber > 0)
+        {
+            List<SiteMatch> numbered = candidates.stream()
+                .filter(match -> match.siteNumber() != null && match.siteNumber().intValue() == siteNumber).toList();
+
+            if(numbered.isEmpty())
+            {
+                return null;
+            }
+
+            candidates = numbered;
+        }
+
+        if(countyId > 0)
+        {
+            List<SiteMatch> countyMatches = candidates.stream()
+                .filter(match -> match.countyId() == countyId).toList();
+
+            if(countyMatches.isEmpty())
+            {
+                return null;
+            }
+
+            candidates = countyMatches;
+        }
+
+        return candidates.size() == 1 ? candidates.getFirst() : null;
+    }
+
+    private static SiteHint trunkedSiteHint(String rawDescription, String rawSystemName)
+    {
+        String description = text(rawDescription);
+        String systemName = text(rawSystemName);
+        String candidate = description;
+
+        if(!systemName.isBlank() && description.regionMatches(true, 0, systemName, 0, systemName.length()))
+        {
+            candidate = description.substring(systemName.length()).strip();
+        }
+
+        Matcher matcher = TRUNKED_SITE_DESCRIPTION.matcher(candidate);
+
+        if(matcher.find())
+        {
+            try
+            {
+                int siteNumber = Integer.parseInt(matcher.group(1));
+                return new SiteHint(siteNumber, text(matcher.group(2)));
+            }
+            catch(NumberFormatException exception)
+            {
+                //Leave the result unmatched rather than guessing at a site identity.
+            }
+        }
+
+        return SiteHint.NONE;
+    }
+
+    private static String radioReferenceSiteUrl(int siteId)
+    {
+        return siteId > 0 ? "https://www.radioreference.com/db/site/" + siteId : "";
     }
 
     private static String resolveMode(String rawMode, Map<Integer,String> modes)
@@ -651,7 +722,7 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
         }
         else if(channel.primaryControl())
         {
-            return "Primary control";
+            return "Control";
         }
         else if(channel.alternateControl())
         {
@@ -1246,9 +1317,14 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
         }
     }
 
-    private record SiteMatch(Integer siteId, Integer siteNumber, String siteName,
+    private record SiteMatch(Integer siteId, Integer siteNumber, String siteName, int countyId,
                              RadioReferenceGateway.SiteChannel channel)
     {
+    }
+
+    private record SiteHint(Integer siteNumber, String siteName)
+    {
+        private static final SiteHint NONE = new SiteHint(null, "");
     }
 
     private record EntryKey(EntryScope scope, EntryType type, RadioReferenceGateway.DetailKind kind, int id)
@@ -1571,23 +1647,24 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
     }
 
     public record FrequencyDetails(String modeName, String category, String subCategory,
-                                   List<FrequencySiteDetail> sites)
+                                   FrequencySiteDetail site)
     {
         public FrequencyDetails
         {
             modeName = text(modeName);
             category = text(category);
             subCategory = text(subCategory);
-            sites = sites == null ? List.of() : List.copyOf(sites);
         }
     }
 
-    public record FrequencySiteDetail(Integer siteId, Integer siteNumber, String siteName, String channelUse)
+    public record FrequencySiteDetail(Integer siteId, Integer siteNumber, String siteName, String channelUse,
+                                      String radioReferenceUrl)
     {
         public FrequencySiteDetail
         {
             siteName = text(siteName);
             channelUse = text(channelUse);
+            radioReferenceUrl = text(radioReferenceUrl);
         }
     }
 

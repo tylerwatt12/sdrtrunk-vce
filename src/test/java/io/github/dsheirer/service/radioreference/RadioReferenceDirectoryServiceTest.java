@@ -209,9 +209,10 @@ class RadioReferenceDirectoryServiceTest
             assertEquals(1, page.items().size());
             assertEquals(1, page.nextOffset());
             FrequencyMatch trunked = page.items().getFirst();
-            assertEquals("State P25", trunked.description());
+            assertEquals("State P25 Site 012 Franklin Simulcast", trunked.description());
             assertEquals(2001, trunked.systemId());
             assertEquals("State P25", trunked.systemName());
+            assertEquals(12, trunked.siteNumber());
             assertEquals("Franklin Simulcast", trunked.siteName());
             assertEquals("Trunked", trunked.channelUse());
             assertEquals("Mode 4", trunked.modeName());
@@ -221,10 +222,11 @@ class RadioReferenceDirectoryServiceTest
             assertEquals(0, gateway.siteCalls.get());
             assertEquals(0, gateway.categoryCalls.get());
 
-            FrequencyDetails trunkedDetails = service.frequencyDetails(853_162_500L, 2001, 0, 0, 100, "4");
-            assertEquals("Project 25 Phase I", trunkedDetails.modeName());
-            assertEquals("Franklin Simulcast", trunkedDetails.sites().getFirst().siteName());
-            assertEquals("Primary control", trunkedDetails.sites().getFirst().channelUse());
+            FrequencyDetails trunkedDetails = service.frequencyDetails(853_162_500L, 2001, 12, 0, 0, 100, "4");
+            assertEquals("Franklin Simulcast", trunkedDetails.site().siteName());
+            assertEquals("Control", trunkedDetails.site().channelUse());
+            assertEquals("https://www.radioreference.com/db/site/3001",
+                trunkedDetails.site().radioReferenceUrl());
 
             FrequencyMatch conventional = service.searchStateFrequencies(10, 853_162_500L, 1, 1)
                 .items().getFirst();
@@ -235,11 +237,109 @@ class RadioReferenceDirectoryServiceTest
             assertEquals("https://www.radioreference.com/db/subcat/444", conventional.radioReferenceUrl());
             assertEquals("State Police", conventional.agencyName());
 
-            FrequencyDetails conventionalDetails = service.frequencyDetails(853_162_500L, null, 444, 1001, 100,
+            FrequencyDetails conventionalDetails = service.frequencyDetails(853_162_500L, null, 0, 444, 1001, 100,
                 "FMN");
             assertEquals("Public Safety", conventionalDetails.category());
             assertEquals("County Dispatch", conventionalDetails.subCategory());
             assertEquals("FMN", conventionalDetails.modeName());
+        }
+    }
+
+    @Test
+    void correlatesRealShapedMarcsResultsToOneExactSiteEach() throws Exception
+    {
+        FakeGateway gateway = populatedGateway();
+        gateway.state = new StateDirectory(new State(39, "Ohio", "OH"),
+            List.of(new County(2057, "Cuyahoga", ""), new County(2062, "Fairfield", ""),
+                new County(2081, "Knox", ""), new County(2126, "Wood", "")),
+            List.of(new TrunkedSystem(6643, "Ohio MARCS-IP: Multi-Agency Radio Communications", "", 0, 0, 0)),
+            List.of());
+        gateway.frequencyResults = List.of(
+            new FrequencyResult(773.83125, 0, "", "Ohio MARCS-IP: Multi-Agency Radio Communications " +
+                "Site 001 Cuyahoga Co Simulcast", "", "", "", "", "", "", "", List.of(), 0, 6643, 0,
+                2057),
+            new FrequencyResult(773.83125, 0, "", "Ohio MARCS-IP: Multi-Agency Radio Communications " +
+                "Site 011 SCI (Lancaster)", "", "", "", "", "", "", "", List.of(), 0, 6643, 0, 2062),
+            new FrequencyResult(773.83125, 0, "", "Ohio MARCS-IP: Multi-Agency Radio Communications " +
+                "Site 014 Bradner", "", "", "", "", "", "", "", List.of(), 0, 6643, 0, 2126));
+        gateway.sites = List.of(
+            new Site(16773, 6643, 1, "Cuyahoga Co Simulcast", 2057,
+                List.of(new SiteChannel(773.83125, "c", true, false))),
+            new Site(24539, 6643, 11, "SCI (Lancaster)", 2062,
+                List.of(new SiteChannel(773.83125, "c", true, false))),
+            new Site(21482, 6643, 14, "Bradner", 2126,
+                List.of(new SiteChannel(773.83125, "c", true, false))));
+
+        try(RadioReferenceDirectoryService service = service(new FakeFactory(gateway)))
+        {
+            service.login("user", "secret".toCharArray());
+            BoundedPage<FrequencyMatch> page = service.searchStateFrequencies(39, 773_831_250L, 10);
+            assertEquals(List.of(1, 11, 14), page.items().stream().map(FrequencyMatch::siteNumber).toList());
+
+            FrequencyDetails center = service.frequencyDetails(773_831_250L, 6643, 11, 0, 0, 2062, "");
+            assertEquals(24539, center.site().siteId());
+            assertEquals("SCI (Lancaster)", center.site().siteName());
+            assertEquals("Control", center.site().channelUse());
+            assertEquals("https://www.radioreference.com/db/site/24539", center.site().radioReferenceUrl());
+
+            gateway.frequencyResults = List.of(new FrequencyResult(772.98125, 0, "",
+                "Ohio MARCS-IP: Multi-Agency Radio Communications Site 003 Centerburg", "", "", "", "", "",
+                "", "", List.of(), 0, 6643, 0, 2081));
+            gateway.sites = List.of(new Site(21338, 6643, 3, "Centerburg", 2081,
+                List.of(new SiteChannel(772.98125, "a", false, true))));
+            FrequencyMatch centerburgMatch = service.searchStateFrequencies(39, 772_981_250L, 10)
+                .items().getFirst();
+            assertEquals(3, centerburgMatch.siteNumber());
+            assertEquals("Centerburg", centerburgMatch.siteName());
+            FrequencyDetails centerburg = service.frequencyDetails(772_981_250L, 6643, 3, 0, 0, 2081, "");
+            assertEquals("Alternate control", centerburg.site().channelUse());
+            assertEquals("https://www.radioreference.com/db/site/21338",
+                centerburg.site().radioReferenceUrl());
+        }
+    }
+
+    @Test
+    void projectsUsefulFieldsFromRealShapedOhioConventionalResults() throws Exception
+    {
+        FakeGateway gateway = populatedGateway();
+        gateway.state = new StateDirectory(new State(39, "Ohio", "OH"), List.of(), List.of(),
+            List.of(new Agency(3283, "Ohio MARCS Conventional Systems", 0),
+                new Agency(620, "Ohio Department of Transportation (ODOT)", 0)));
+
+        try(RadioReferenceDirectoryService service = service(new FakeFactory(gateway)))
+        {
+            service.login("user", "secret".toCharArray());
+            gateway.frequencyResults = List.of(new FrequencyResult(853.1625, 0, "WPOG967",
+                "Bucyrus (Crawford)", "MDN Bucyrus", "", "", "", "", "1", "BM", List.of(), 31716, 0,
+                3283, 0));
+            gateway.categories = List.of(new FrequencyCategory(31716, "Ohio MARCS DataNet",
+                "MARCS Data Net Zone 2"));
+
+            FrequencyMatch marcsData = service.searchStateFrequencies(39, 853_162_500L, 10).items().getFirst();
+            assertEquals("MDN Bucyrus", marcsData.alphaTag());
+            assertEquals("Bucyrus (Crawford)", marcsData.description());
+            assertEquals("WPOG967", marcsData.callsign());
+            assertEquals("BM", marcsData.classification());
+            assertEquals("Ohio MARCS Conventional Systems", marcsData.agencyName());
+            assertEquals("https://www.radioreference.com/db/subcat/31716", marcsData.radioReferenceUrl());
+            FrequencyDetails marcsDetails = service.frequencyDetails(853_162_500L, null, 0, 31716, 3283, 0,
+                "1");
+            assertEquals("Ohio MARCS DataNet", marcsDetails.category());
+            assertEquals("MARCS Data Net Zone 2", marcsDetails.subCategory());
+
+            gateway.frequencyResults = List.of(new FrequencyResult(453.4, 0, "", "", "ODOT 1", "107.2 PL",
+                "", "", "", "4", "BM", List.of(), 9505, 0, 620, 0));
+            gateway.categories = List.of(new FrequencyCategory(9505, "Government and Safety Services",
+                "Public Works"));
+
+            FrequencyMatch odot = service.searchStateFrequencies(39, 453_400_000L, 10).items().getFirst();
+            assertEquals("ODOT 1", odot.alphaTag());
+            assertEquals("107.2 PL", odot.tone());
+            assertEquals("Ohio Department of Transportation (ODOT)", odot.agencyName());
+            assertEquals("https://www.radioreference.com/db/subcat/9505", odot.radioReferenceUrl());
+            FrequencyDetails odotDetails = service.frequencyDetails(453_400_000L, null, 0, 9505, 620, 0, "4");
+            assertEquals("Government and Safety Services", odotDetails.category());
+            assertEquals("Public Works", odotDetails.subCategory());
         }
     }
 
@@ -491,7 +591,7 @@ class RadioReferenceDirectoryServiceTest
             List.of(new TrunkedSystem(2002, "County P25", "Franklin", 1, 2, 3)),
             List.of(new Agency(1002, "County Fire", 3)));
         gateway.frequencyResults = List.of(
-            new FrequencyResult(853.1625, 808.1625, "", "State P25", "Franklin Simulcast", "34C", "", "",
+            new FrequencyResult(853.1625, 808.1625, "", "State P25 Site 012 Franklin Simulcast", "", "34C", "", "",
                 "", "4", "", List.of("Law Dispatch"), 0, 2001, 0, 100),
             new FrequencyResult(853.1625, 0, "WQAB123", "County Dispatch", "Dispatch", "123.0 PL", "", "",
                 "", "FMN", "RM", List.of("Law Dispatch"), 444, 0, 1001, 100));
@@ -552,6 +652,10 @@ class RadioReferenceDirectoryServiceTest
             new CountyDirectory(new County(1, "", ""), List.of(), List.of());
         private List<FrequencyResult> frequencyResults = List.of();
         private List<Mode> modes = List.of(new Mode(4, "Project 25 Phase I"));
+        private List<Site> sites = List.of(new Site(3001, 2001, 12, "Franklin Simulcast", 100,
+            List.of(new SiteChannel(853.1625, "c", true, false))));
+        private List<FrequencyCategory> categories =
+            List.of(new FrequencyCategory(444, "Public Safety", "County Dispatch"));
         private volatile boolean closed;
         private volatile boolean blockCountries;
         private volatile boolean ignoreCountryInterrupt;
@@ -647,15 +751,14 @@ class RadioReferenceDirectoryServiceTest
         public List<Site> sites(int systemId)
         {
             siteCalls.incrementAndGet();
-            return List.of(new Site(3001, systemId, 12, "Franklin Simulcast", 100,
-                List.of(new SiteChannel(853.1625, "c", true, false))));
+            return sites.stream().filter(site -> site.systemId() == systemId).toList();
         }
 
         @Override
         public List<FrequencyCategory> agencyFrequencyCategories(int agencyId)
         {
             categoryCalls.incrementAndGet();
-            return List.of(new FrequencyCategory(444, "Public Safety", "County Dispatch"));
+            return categories;
         }
 
         @Override

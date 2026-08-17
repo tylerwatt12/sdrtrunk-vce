@@ -7774,7 +7774,8 @@ const RADIO_REFERENCE_DETAIL_CACHE_LIMIT = 100;
 const radioReferenceDetailCache = new Map();
 
 function radioReferenceDetailKey(row, frequencyHz) {
-  return [Math.round(Number(frequencyHz)), Number(row.system_id || 0), Number(row.sub_category_id || 0),
+  return [Math.round(Number(frequencyHz)), Number(row.system_id || 0), Number(row.site_number || 0),
+    Number(row.sub_category_id || 0),
     Number(row.agency_id || 0), Number(row.county_id || 0), String(row.mode_code || '')].join(':');
 }
 
@@ -7784,6 +7785,7 @@ async function loadRadioReferenceDetails(row, frequencyHz, signal = null) {
   const query = new URLSearchParams({
     frequency_hz: String(Math.round(Number(frequencyHz))),
     system_id: String(Number(row.system_id || 0)),
+    site_number: String(Number(row.site_number || 0)),
     sub_category_id: String(Number(row.sub_category_id || 0)),
     agency_id: String(Number(row.agency_id || 0)),
     county_id: String(Number(row.county_id || 0)),
@@ -7799,39 +7801,13 @@ async function loadRadioReferenceDetails(row, frequencyHz, signal = null) {
   return details;
 }
 
-function radioReferenceDetailContent(row, details) {
-  const content = node('div', 'radioreference-frequency-detail-content');
-  const facts = [];
-  if (details?.mode_name) facts.push(['Mode', details.mode_name]);
-  if (row.match_type === 'TRUNKED') {
-    const sites = Array.isArray(details?.sites) ? details.sites : [];
-    if (sites.length) {
-      sites.forEach((site, index) => {
-        const label = sites.length > 1 ? `Matching site ${index + 1}` : 'Matching site';
-        const name = [site.site_name, Number(site.site_number) > 0 ? `Site ${site.site_number}` : '']
-          .filter(Boolean).join(' — ');
-        facts.push([label, name || 'Unknown']);
-        facts.push(['Channel use', availableValue(site.channel_use)]);
-      });
-    } else {
-      facts.push(['Site details', 'No matching site detail was returned.']);
-    }
-  } else {
-    const category = [details?.category, details?.sub_category].filter(Boolean).join(' — ');
-    facts.push(['Category', category || 'No category detail was returned.']);
-  }
-  const values = node('dl', 'tuner-frequency-action-summary');
-  facts.forEach(([label, value]) => values.append(node('dt', '', label), node('dd', '', value)));
-  content.append(values);
-  return content;
-}
-
 function radioReferenceResultView(matches, frequencyHz, signal = null) {
   const rows = Array.isArray(matches) ? matches : [];
-  const category = (row) => [row.category, row.sub_category].filter(Boolean).join(' — ') ||
-    (Array.isArray(row.tags) ? row.tags.join(', ') : '');
-  const site = (row) => [row.site_name,
-    Number(row.site_number) > 0 ? `Site ${row.site_number}` : ''].filter(Boolean).join(' — ');
+  const siteLabel = (value) => {
+    const number = Number(value?.site_number);
+    const numbered = Number.isInteger(number) && number > 0 ? `Site ${String(number).padStart(3, '0')}` : '';
+    return [numbered, String(value?.site_name || '').trim()].filter(Boolean).join(' ');
+  };
   const conventional = rows.filter((row) => row.match_type !== 'TRUNKED');
   const trunked = rows.filter((row) => row.match_type === 'TRUNKED');
 
@@ -7847,35 +7823,47 @@ function radioReferenceResultView(matches, frequencyHz, signal = null) {
     const grid = node('div', 'radioreference-result-grid');
     items.forEach((row) => {
       const card = node('article', 'radioreference-result-card');
-      const title = row.description || row.alpha_tag || row.system_name || 'RadioReference result';
+      const title = isTrunked ? siteLabel(row) || row.description || row.system_name :
+        row.alpha_tag || row.description || 'Conventional frequency';
       const header = node('div', 'radioreference-result-card-header');
       header.append(node('h4', '', title), node('span', 'radioreference-result-type',
         isTrunked ? 'Trunked' : 'Conventional'));
 
-      const facts = isTrunked ? [
-        ['System', availableValue(row.system_name)],
-        ['Site', availableValue(site(row))]
-      ] : [
-        ['Name', availableValue(row.alpha_tag)],
-        ['Category', availableValue(category(row))]
-      ];
-      facts.push(
-        ['Use', availableValue(row.channel_use)],
-        ['Mode', availableValue(row.mode_name)],
-        ['Callsign', callsignLink(row.callsign) || '—'],
-        ['Tone', availableValue(row.tone)],
-        ['Agency', availableValue(row.agency_name)],
-        ['County', availableValue(row.county_name)]
-      );
       const values = node('dl', 'radioreference-result-facts');
-      facts.forEach(([factLabel, value]) => {
+      const factValues = new Map();
+      const addFact = (key, factLabel, value, required = false) => {
+        const present = value instanceof Node || String(value ?? '').trim();
+        if (!required && !present) return;
         const factValue = node('dd');
-        factValue.append(valueNode(value));
+        factValue.append(valueNode(present ? value : '—'));
         values.append(node('dt', '', factLabel), factValue);
-      });
+        factValues.set(key, factValue);
+      };
+      const replaceFact = (key, value) => {
+        const target = factValues.get(key);
+        if (target) target.replaceChildren(valueNode(value));
+      };
+
+      if (isTrunked) {
+        const system = row.radio_reference_url ?
+          externalAnchor(availableValue(row.system_name), row.radio_reference_url) : availableValue(row.system_name);
+        addFact('system', 'System', system, true);
+        addFact('site', 'Site', siteLabel(row), true);
+        addFact('channel-use', 'Channel use', 'Load details to identify', true);
+      } else {
+        addFact('name', 'Name', row.alpha_tag);
+        addFact('description', 'Description', row.description);
+        addFact('agency', 'Agency', row.agency_name);
+        addFact('county', 'County', row.county_name);
+        addFact('category', 'Category', 'Load details to identify', true);
+        addFact('mode', 'Mode', row.mode_name, true);
+        addFact('type', 'Radio type', row.classification);
+        addFact('tone', 'Tone', row.tone);
+        addFact('callsign', 'Callsign', callsignLink(row.callsign));
+      }
 
       const actions = node('div', 'radioreference-result-actions');
-      if (row.radio_reference_url) {
+      if (!isTrunked && row.radio_reference_url) {
         const open = externalAnchor('Open RadioReference', row.radio_reference_url);
         open.classList.add('button', 'secondary');
         actions.append(open);
@@ -7884,41 +7872,47 @@ function radioReferenceResultView(matches, frequencyHz, signal = null) {
       detailsButton.type = 'button';
       actions.append(detailsButton);
 
-      const detail = node('section', 'radioreference-frequency-detail');
+      const status = node('p', 'radioreference-result-status');
       let detailRequest = 0;
-      detail.hidden = true;
-      detail.setAttribute('aria-live', 'polite');
+      status.setAttribute('aria-live', 'polite');
       const showDetails = async (button) => {
         const request = ++detailRequest;
-        detail.hidden = false;
-        detail.replaceChildren(node('h5', '', 'Additional RadioReference details'),
-          node('p', 'tuner-frequency-action-message', 'Loading RadioReference details…'));
+        status.classList.remove('error');
+        status.textContent = 'Loading RadioReference details…';
         button.disabled = true;
         try {
           const loaded = await loadRadioReferenceDetails(row, frequencyHz, signal);
           if (request !== detailRequest) return;
-          const detailHeader = node('div', 'radioreference-frequency-detail-header');
-          const hide = node('button', 'secondary', 'Hide details');
-          hide.type = 'button';
-          hide.addEventListener('click', () => {
-            detail.hidden = true;
-            detailsButton.focus();
-          });
-          detailHeader.append(node('h5', '', 'Additional RadioReference details'), hide);
-          detail.replaceChildren(detailHeader, radioReferenceDetailContent(row, loaded));
+          if (isTrunked) {
+            if (loaded?.site) {
+              const loadedSite = siteLabel(loaded.site) || 'Unknown site';
+              replaceFact('site', loaded.site.radio_reference_url ?
+                externalAnchor(loadedSite, loaded.site.radio_reference_url) : loadedSite);
+              replaceFact('channel-use', availableValue(loaded.site.channel_use));
+              status.textContent = 'Site details loaded.';
+            } else {
+              replaceFact('channel-use', 'Site details unavailable');
+              status.textContent = 'RadioReference did not return an exact site match.';
+            }
+          } else {
+            replaceFact('mode', availableValue(loaded?.mode_name || row.mode_name));
+            const category = [loaded?.category, loaded?.sub_category].filter(Boolean).join(' — ');
+            replaceFact('category', category || 'Category details unavailable');
+            status.textContent = 'Frequency details loaded.';
+          }
+          detailsButton.textContent = 'Details loaded';
         } catch (error) {
           if (request !== detailRequest) return;
-          const retry = node('button', 'secondary', 'Retry');
-          retry.type = 'button';
-          retry.addEventListener('click', () => showDetails(retry));
-          detail.replaceChildren(node('h5', '', 'Additional RadioReference details'),
-            node('p', 'error', error.message), retry);
-        } finally {
+          status.classList.add('error');
+          status.textContent = error.message;
+          detailsButton.textContent = 'Retry details';
           button.disabled = false;
+        } finally {
+          if (request === detailRequest && detailsButton.textContent !== 'Details loaded') button.disabled = false;
         }
       };
       detailsButton.addEventListener('click', () => showDetails(detailsButton));
-      card.append(header, values, actions, detail);
+      card.append(header, values, actions, status);
       grid.append(card);
     });
     group.append(node('h3', '', `${label} (${items.length})`), grid);

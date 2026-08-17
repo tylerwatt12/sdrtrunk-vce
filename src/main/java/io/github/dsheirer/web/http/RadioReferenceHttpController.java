@@ -116,17 +116,18 @@ public final class RadioReferenceHttpController
             {
                 requireMethod(exchange, "GET");
                 requireEmptyBody(exchange, "GET");
-                Map<String,String> query = query(exchange, "frequency_hz", "system_id", "sub_category_id",
-                    "agency_id", "county_id", "mode");
+                Map<String,String> query = query(exchange, "frequency_hz", "system_id", "site_number",
+                    "sub_category_id", "agency_id", "county_id", "mode");
                 ensureStoredSession();
                 long frequencyHz = positiveLong(query.get("frequency_hz"), "frequency_hz");
                 int systemId = optionalNonNegativeInt(query.get("system_id"), "system_id");
+                int siteNumber = optionalNonNegativeInt(query.get("site_number"), "site_number");
                 int subCategoryId = optionalNonNegativeInt(query.get("sub_category_id"), "sub_category_id");
                 int agencyId = optionalNonNegativeInt(query.get("agency_id"), "agency_id");
                 int countyId = optionalNonNegativeInt(query.get("county_id"), "county_id");
                 String mode = query.getOrDefault("mode", "");
                 ApiHttpResponse.sendData(exchange, 200, mService.frequencyDetails(frequencyHz,
-                    systemId > 0 ? systemId : null, subCategoryId, agencyId, countyId, mode));
+                    systemId > 0 ? systemId : null, siteNumber, subCategoryId, agencyId, countyId, mode));
             }
             else
             {

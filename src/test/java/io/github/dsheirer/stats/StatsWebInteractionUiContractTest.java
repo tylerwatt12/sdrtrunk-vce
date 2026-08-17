@@ -521,8 +521,8 @@ class StatsWebInteractionUiContractTest
             html.indexOf("rel=\"stylesheet\""));
         assertTrue(html.contains("id=\"theme-toggle\""));
         assertTrue(html.contains("id=\"mobile-theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=62"));
-        assertTrue(html.contains("/assets/app.js?v=93"));
+        assertTrue(html.contains("/assets/app.css?v=63"));
+        assertTrue(html.contains("/assets/app.js?v=94"));
         assertTrue(source.contains("MOBILE_THEME_STORAGE_KEY = 'sdrtrunk_mobile_theme'"));
         assertTrue(source.contains("mode === 'mobile' ? MOBILE_THEME_STORAGE_KEY : THEME_STORAGE_KEY"));
         assertTrue(source.contains("toggle.setAttribute('aria-pressed'"));

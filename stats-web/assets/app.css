@@ -3205,25 +3205,18 @@ body.modal-open {
   white-space: nowrap;
 }
 
-.radioreference-frequency-detail {
-  margin-top: 9px;
-  padding: 11px;
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: 4px;
-}
-
-.radioreference-frequency-detail-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 9px;
-}
-
-.radioreference-frequency-detail h4,
-.radioreference-frequency-detail h5 {
+.radioreference-result-status {
   margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.radioreference-result-status:empty {
+  display: none;
+}
+
+.radioreference-result-status.error {
+  color: var(--danger);
 }
 
 .admin-audio-form .admin-form-message,
