@@ -35,6 +35,7 @@ import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.stats.StatsWebServerService;
 import io.github.dsheirer.util.ThreadPool;
 import io.github.dsheirer.util.TimeStamp;
+import javafx.application.Platform;
 import javafx.embed.swing.SwingFXUtils;
 import javafx.scene.control.Menu;
 import javafx.scene.control.MenuBar;
@@ -56,7 +57,6 @@ import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.nio.file.Path;
-import javafx.application.Platform;
 
 /**
  * JavaFX channels, aliases, streaming, and radioreference.com import editor.
@@ -105,7 +105,8 @@ public class ConfigurationEditor extends BorderPane
         mUserPreferences = userPreferences;
         mStatsWebServerService = statsWebServerService;
 
-        //Defer the expensive editor construction until the empty window has completed its first themed pulse.
+        //Throw a new runnable back onto the FX thread to lazy load the editor content after the editor has been
+        //constructed and shown.
         Platform.runLater(() -> {
             setTop(getMenuBar());
             setCenter(getTabPane());

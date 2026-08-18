@@ -20,8 +20,6 @@ import java.awt.Color;
 import java.awt.EventQueue;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import javax.swing.JMenuItem;
 import javax.swing.LookAndFeel;
@@ -45,46 +43,6 @@ class ThemeManagerTest
         assertTrue(uri.contains("%20"));
         assertTrue(uri.contains("%2B"));
         assertFalse(uri.substring("data:text/css,".length()).contains("+"));
-    }
-
-    @Test
-    void sceneFillMatchesThePaletteBeforeCssIsApplied()
-    {
-        assertEquals(javafx.scene.paint.Color.web("#2b2b2b"), ThemeManager.sceneBaseFill(true));
-        assertEquals(javafx.scene.paint.Color.web("#f2f2f2"), ThemeManager.sceneBaseFill(false));
-    }
-
-    @Test
-    void repeatedSceneRegistrationDoesNotReorderOrDuplicateLiveStylesheets()
-    {
-        List<String> stylesheets = new ArrayList<>(List.of("base.css"));
-
-        ThemeManager.synchronizeStylesheets(stylesheets, true, "dark.css", null, "accent.css");
-        List<String> firstApplication = List.copyOf(stylesheets);
-        ThemeManager.synchronizeStylesheets(stylesheets, true, "dark.css", null, "accent.css");
-
-        assertEquals(List.of("base.css", "dark.css", "accent.css"), firstApplication);
-        assertEquals(firstApplication, stylesheets);
-    }
-
-    @Test
-    void accentReplacementRemovesOnlyTheObsoleteStylesheet()
-    {
-        List<String> stylesheets = new ArrayList<>(List.of("dark.css", "old-accent.css"));
-
-        ThemeManager.synchronizeStylesheets(stylesheets, true, "dark.css", "old-accent.css", "new-accent.css");
-
-        assertEquals(List.of("dark.css", "new-accent.css"), stylesheets);
-    }
-
-    @Test
-    void lightThemeTransitionRemovesTheDarkAndPreviousAccentStylesheets()
-    {
-        List<String> stylesheets = new ArrayList<>(List.of("base.css", "dark.css", "old-accent.css"));
-
-        ThemeManager.synchronizeStylesheets(stylesheets, false, "dark.css", "old-accent.css", "light-accent.css");
-
-        assertEquals(List.of("base.css", "light-accent.css"), stylesheets);
     }
 
     @Test

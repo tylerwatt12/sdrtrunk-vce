@@ -32,7 +32,6 @@ import java.awt.Window;
 import java.lang.ref.WeakReference;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
-import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import javafx.application.Platform;
@@ -399,19 +398,31 @@ public class ThemeManager
 
     /**
      * Update a Scene's stylesheets to match the current theme: ensures the dark-mode CSS is
-     * present iff {@code darkMode} and swaps accent stylesheets without briefly removing every
-     * colour definition from a live Scene.
+     * present iff {@code darkMode}, removes {@code previousAccentUrl} if present, and ensures
+     * {@code nextAccentUrl} is present so theme-specific accent colours are applied.
      */
     private void applyToScene(Scene scene, boolean darkMode, String previousAccentUrl,
                               String nextAccentUrl)
     {
         Runnable r = () -> {
-            //A newly shown native window can expose the Scene fill before its root receives a CSS pulse.  Keep that
-            //uncovered surface aligned with the active palette so secondary windows never flash Modena white.
-            scene.setFill(sceneBaseFill(darkMode));
+            if(mDarkStylesheetUrl != null)
+            {
+                scene.getStylesheets().remove(mDarkStylesheetUrl);
+                if(darkMode)
+                {
+                    scene.getStylesheets().add(mDarkStylesheetUrl);
+                }
+            }
 
-            synchronizeStylesheets(scene.getStylesheets(), darkMode, mDarkStylesheetUrl, previousAccentUrl,
-                nextAccentUrl);
+            if(previousAccentUrl != null && !previousAccentUrl.equals(nextAccentUrl))
+            {
+                scene.getStylesheets().remove(previousAccentUrl);
+            }
+
+            if(nextAccentUrl != null && !scene.getStylesheets().contains(nextAccentUrl))
+            {
+                scene.getStylesheets().add(nextAccentUrl);
+            }
         };
 
         if(Platform.isFxApplicationThread())
@@ -422,40 +433,6 @@ public class ThemeManager
         {
             Platform.runLater(r);
         }
-    }
-
-    /**
-     * Keeps repeated Scene registration harmless.  JavaFX can run CSS while a new window is becoming visible;
-     * removing and immediately re-adding a looked-up colour stylesheet during that pulse can leave Modena holding
-     * the unresolved string token instead of a Paint.  Add the replacement first, then remove only an obsolete URL.
-     */
-    static void synchronizeStylesheets(List<String> stylesheets, boolean darkMode, String darkUrl,
-                                       String previousAccentUrl, String nextAccentUrl)
-    {
-        if(darkMode && darkUrl != null && !stylesheets.contains(darkUrl))
-        {
-            stylesheets.add(darkUrl);
-        }
-
-        if(nextAccentUrl != null && !stylesheets.contains(nextAccentUrl))
-        {
-            stylesheets.add(nextAccentUrl);
-        }
-
-        if(previousAccentUrl != null && !previousAccentUrl.equals(nextAccentUrl))
-        {
-            stylesheets.remove(previousAccentUrl);
-        }
-
-        if(!darkMode && darkUrl != null)
-        {
-            stylesheets.remove(darkUrl);
-        }
-    }
-
-    static javafx.scene.paint.Paint sceneBaseFill(boolean darkMode)
-    {
-        return darkMode ? javafx.scene.paint.Color.web("#2b2b2b") : javafx.scene.paint.Color.web("#f2f2f2");
     }
 
     /**
