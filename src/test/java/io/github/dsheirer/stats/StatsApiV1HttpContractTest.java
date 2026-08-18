@@ -131,6 +131,16 @@ class StatsApiV1HttpContractTest
         assertTrue(dashboard.has("source_activity_24h"), dashboardResponse.body());
         assertFalse(dashboard.has("source_activity24h"), dashboardResponse.body());
 
+        HttpResponse<String> analyticsResponse = get(StatsApiV1.ACTIVITY_ANALYTICS +
+            "?range=24h&group_by=action");
+        assertEquals(200, analyticsResponse.statusCode(), analyticsResponse.body());
+        JsonNode analytics = OBJECT_MAPPER.readTree(analyticsResponse.body()).get("data");
+        assertEquals("24h", analytics.path("range").textValue(), analyticsResponse.body());
+        assertEquals("action", analytics.path("group_by").textValue(), analyticsResponse.body());
+        assertTrue(analytics.path("rows").isArray(), analyticsResponse.body());
+        assertTrue(analytics.path("rows").get(0).path("detail_supported").isBoolean(),
+            analyticsResponse.body());
+
         HttpResponse<String> systemsResponse = get(StatsApiV1.SYSTEMS + "?limit=1");
         assertEquals(200, systemsResponse.statusCode(), systemsResponse.body());
         JsonNode systems = OBJECT_MAPPER.readTree(systemsResponse.body());
@@ -183,6 +193,18 @@ class StatsApiV1HttpContractTest
         HttpResponse<String> removedPatchSpelling = get(StatsApiV1.ACTIVITY +
             "?talkgroup_id=1&kind=patch");
         assertStructuredError(removedPatchSpelling, 400, "invalid_parameter", "kind");
+
+        HttpResponse<String> missingAnalyticsAction = get(StatsApiV1.ACTIVITY_ANALYTICS +
+            "?group_by=radio");
+        assertStructuredError(missingAnalyticsAction, 400, "invalid_parameter", "action");
+
+        HttpResponse<String> invalidAnalyticsAction = get(StatsApiV1.ACTIVITY_ANALYTICS +
+            "?group_by=event&action=not-real");
+        assertStructuredError(invalidAnalyticsAction, 400, "invalid_parameter", "action");
+
+        HttpResponse<String> unknownAnalyticsParameter = get(StatsApiV1.ACTIVITY_ANALYTICS +
+            "?group_by=action&surprise=true");
+        assertStructuredError(unknownAnalyticsParameter, 400, "unknown_parameter", "surprise");
 
         HttpResponse<String> doubleEncodedPath = get(StatsApiV1.SYSTEMS + "/p25%253Atest");
         assertStructuredError(doubleEncodedPath, 400, "invalid_path", null);
@@ -261,6 +283,7 @@ class StatsApiV1HttpContractTest
             Map.entry("SYSTEMS", "/api/v1/systems"),
             Map.entry("SITES", "/api/v1/sites"),
             Map.entry("ACTIVITY", "/api/v1/activity"),
+            Map.entry("ACTIVITY_ANALYTICS", "/api/v1/activity-analytics"),
             Map.entry("CONVENTIONAL_CONTEXTS", "/api/v1/conventional-contexts"),
             Map.entry("EXPORTS", "/api/v1/exports"),
             Map.entry("TUNER_DIAGNOSTICS", "/api/v1/diagnostics/tuners"),

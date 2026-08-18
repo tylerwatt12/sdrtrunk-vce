@@ -26,12 +26,17 @@ class StatsWebDashboardUiContractTest
     {
         String dashboard = function(Files.readString(APP_JAVASCRIPT), "async function renderDashboard()");
         assertTrue(dashboard.contains("route.get('tab') || 'health'"));
-        assertTrue(dashboard.contains("requestedTab === 'calls' ? 'calls' : 'health'"));
+        assertTrue(dashboard.contains("['health', 'calls', 'activity'].includes(requestedTab)"));
         assertTrue(dashboard.contains("{ id: 'calls', label: 'Calls'"));
         assertTrue(dashboard.contains("{ id: 'health', label: 'Health'"));
+        assertTrue(dashboard.contains("{ id: 'activity', label: 'Activity'"));
         assertTrue(dashboard.indexOf("{ id: 'health', label: 'Health'") <
             dashboard.indexOf("{ id: 'calls', label: 'Calls'"));
+        assertTrue(dashboard.indexOf("{ id: 'calls', label: 'Calls'") <
+            dashboard.indexOf("{ id: 'activity', label: 'Activity'"));
         assertTrue(dashboard.contains("if (tab === 'health')"));
+        assertTrue(dashboard.contains("if (tab === 'activity')"));
+        assertTrue(dashboard.contains("await renderDashboardActivity()"));
         assertTrue(dashboard.indexOf("if (tab === 'health')") <
             dashboard.indexOf("await signalHealthSection()"));
         assertTrue(dashboard.contains("'Monitored Coverage'"));
@@ -56,6 +61,40 @@ class StatsWebDashboardUiContractTest
         assertFalse(dashboard.contains("counts.talkgroups"));
         assertFalse(dashboard.contains("counts.radios"));
         assertFalse(dashboard.contains("counts.frequencies"));
+    }
+
+    @Test
+    void rendersBoundedAccessibleActivityAnalytics() throws Exception
+    {
+        String source = Files.readString(APP_JAVASCRIPT);
+        String mix = function(source, "function dashboardActivityMix(response, selectedAction, onSelect)");
+        String activity = function(source, "async function renderDashboardActivity()");
+        String columns = function(source, "function dashboardActivityBreakdownColumns(groupBy)");
+
+        assertTrue(source.contains("['6h', '6 hours'], ['24h', '24 hours'], ['7d', '7 days']"));
+        assertTrue(source.contains("['radio', 'Radios']"));
+        assertTrue(source.contains("['destination', 'Destinations']"));
+        assertTrue(source.contains("['site', 'Sites / channels']"));
+        assertTrue(source.contains("['event', 'Recent events']"));
+        assertTrue(mix.contains("class: 'dashboard-activity-donut'"));
+        assertTrue(mix.contains("role: 'button', tabindex: 0"));
+        assertTrue(mix.contains("setAttribute('aria-pressed'"));
+        assertTrue(mix.contains("event.key !== 'Enter' && event.key !== ' '"));
+        assertTrue(mix.contains("detail_supported"));
+        assertTrue(activity.contains("api('/api/v1/activity-analytics'"));
+        assertTrue(activity.contains("group_by: 'action', limit: 100"));
+        assertTrue(activity.contains("group_by: selectedGroup, action: selectedAction, limit: 100"));
+        assertTrue(activity.contains("detail_truncated"));
+        assertTrue(activity.contains("rows_truncated"));
+        assertTrue(activity.contains("unidentified_radio_events"));
+        assertTrue(activity.contains("Detailed History is unavailable"));
+        assertTrue(activity.contains("aria-live"));
+        assertTrue(activity.contains("type: `dashboard-activity-${selectedGroup}`"));
+        assertTrue(columns.contains("if (groupBy === 'event') return activityColumns()"));
+        assertTrue(columns.contains("source_count"));
+        assertTrue(columns.contains("target_count"));
+        assertFalse(activity.contains("openReadOnlyModal"));
+        assertFalse(activity.contains("pageInterval"));
     }
 
     @Test
@@ -200,6 +239,11 @@ class StatsWebDashboardUiContractTest
         assertTrue(css.contains(".dashboard-mode"));
         assertTrue(css.contains(".site-name-summary"));
         assertTrue(css.contains(".site-name-summary-context"));
+        assertTrue(css.contains(".dashboard-activity-layout"));
+        assertTrue(css.contains(".dashboard-activity-donut"));
+        assertTrue(css.contains(".dashboard-activity-segment:focus-visible"));
+        assertTrue(css.contains(".dashboard-activity-breakdown-toolbar"));
+        assertTrue(css.contains(".dashboard-activity-summary .summary-band"));
         assertFalse(css.contains(".site-activity-pie"));
     }
 

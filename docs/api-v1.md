@@ -65,6 +65,7 @@ and double-encoded or separator-smuggling resource names are rejected.
 | `GET /api/v1/sites/{guid}/neighbors` | Paged neighbors. |
 | `GET /api/v1/sites/{guid}/patch-groups` | Paged P25 patch groups with bounded members. |
 | `GET /api/v1/activity` | Cursor-paged detailed activity. |
+| `GET /api/v1/activity-analytics` | Hourly action totals and bounded, action-selected radio, destination, site, or retained-event breakdowns. |
 | `GET /api/v1/conventional-contexts` | Paged conventional receiver contexts. |
 | `GET /api/v1/conventional-contexts/{context}` | One context and a paged RF summary. |
 | `GET /api/v1/conventional-contexts/{context}/talkgroups` | Paged DMR conventional talkgroups. |
@@ -74,6 +75,12 @@ and double-encoded or separator-smuggling resource names are rejected.
 Common collection parameters are `limit`, `offset`, `q`, `sort`, and `direction`. `limit` defaults to 100 and must be
 between 1 and 500; `offset` must be between 0 and 100,000. Detailed activity uses the positive `before_id` cursor.
 Endpoint-specific filters are documented by the returned resource and reject unknown names.
+
+Activity analytics accepts `range=1h|6h|24h|7d|30d` and an allowlisted `group_by`. The `action` grouping reads only
+compact hourly summaries. The `radio`, `destination`, `site`, and `event` groupings require an `action` and inspect at
+most the newest 50,000 retained records, hydrating no more than 5,000 matching events. Responses report when either
+bound or the requested row limit truncates the result. Detailed history is optional, and `CONTINUE` is summary-only
+by design.
 
 Every database row materializer also has a 20,000-row emergency ceiling. This is a final guard against a future SQL
 regression; normal endpoint, enrichment, member, history, and export limits are substantially smaller.

@@ -29,6 +29,7 @@ public final class StatsApiV1
     public static final String SYSTEMS = ROOT + "/systems";
     public static final String SITES = ROOT + "/sites";
     public static final String ACTIVITY = ROOT + "/activity";
+    public static final String ACTIVITY_ANALYTICS = ROOT + "/activity-analytics";
     public static final String CONVENTIONAL_CONTEXTS = ROOT + "/conventional-contexts";
     public static final String EXPORTS = ROOT + "/exports";
     public static final String TUNER_DIAGNOSTICS = ROOT + "/diagnostics/tuners";

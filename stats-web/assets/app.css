@@ -1097,6 +1097,146 @@ body[data-view="live"] .channel-diagnostic-readouts {
   font-size: 11px;
 }
 
+.dashboard-activity-page-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 8px 10px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+}
+
+.dashboard-activity-summary .summary-band {
+  grid-template-columns: repeat(4, minmax(105px, 1fr));
+}
+
+.dashboard-activity-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 320px) minmax(0, 1fr);
+  align-items: center;
+  gap: 18px;
+  padding: 14px;
+}
+
+.dashboard-activity-chart {
+  display: grid;
+  place-items: center;
+  min-width: 0;
+}
+
+.dashboard-activity-donut {
+  display: block;
+  width: min(100%, 280px);
+  height: auto;
+  overflow: visible;
+}
+
+.dashboard-activity-donut-background,
+.dashboard-activity-segment {
+  fill: none;
+  stroke-width: 34;
+}
+
+.dashboard-activity-donut-background {
+  stroke: var(--surface-2);
+}
+
+.dashboard-activity-segment {
+  cursor: pointer;
+  pointer-events: stroke;
+  transition: stroke-width 120ms ease, opacity 120ms ease;
+}
+
+.dashboard-activity-segment:not(.active) {
+  opacity: .7;
+}
+
+.dashboard-activity-segment.active {
+  stroke-width: 42;
+  opacity: 1;
+}
+
+.dashboard-activity-segment:focus-visible {
+  stroke-width: 42;
+  filter: drop-shadow(0 0 3px var(--ink));
+  outline: none;
+}
+
+.dashboard-activity-center-count,
+.dashboard-activity-center-label {
+  fill: var(--ink);
+  pointer-events: none;
+}
+
+.dashboard-activity-center-count {
+  font-size: 25px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.dashboard-activity-center-label {
+  fill: var(--muted);
+  font-size: 12px;
+}
+
+.dashboard-activity-legend {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: center;
+  padding: 0;
+}
+
+.dashboard-activity-legend-button {
+  width: 100%;
+  min-width: 0;
+  justify-content: flex-start;
+  text-align: left;
+}
+
+.dashboard-activity-legend-button .activity-series-total {
+  margin-left: auto;
+}
+
+.dashboard-activity-mix-body > .metric-meaning-note {
+  margin: 0 14px 10px;
+}
+
+.dashboard-activity-mix-body > .metric-guide {
+  margin: 0 14px 12px;
+}
+
+.dashboard-activity-breakdown-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.dashboard-activity-group-select {
+  min-height: 32px;
+  padding: 5px 8px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line-dark);
+  border-radius: 3px;
+  font: inherit;
+}
+
+.dashboard-activity-breakdown-status {
+  min-width: 0;
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 11px;
+  text-align: right;
+}
+
+.dashboard-activity-breakdown-result > .logging-notice,
+.dashboard-activity-breakdown-result > .metric-meaning-note {
+  margin: 10px;
+}
+
 .entity-info-layout {
   display: grid;
   grid-template-columns: minmax(280px, 1fr) minmax(0, 2fr);
@@ -4963,6 +5103,14 @@ th.numeric {
 }
 
 @media (max-width: 900px) {
+  .dashboard-activity-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .dashboard-activity-summary .summary-band {
+    grid-template-columns: repeat(2, minmax(105px, 1fr));
+  }
+
   .channel-diagnostic-grid {
     grid-template-columns: minmax(0, 1fr);
     grid-auto-rows: minmax(190px, 1fr);
@@ -5657,6 +5805,10 @@ body.mobile-listener-active {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .dashboard-activity-segment {
+    transition: none;
+  }
+
   .playback-progress {
     transition: none;
   }
@@ -5678,6 +5830,27 @@ body.mobile-listener-active {
   .section-title-actions {
     width: 100%;
     justify-content: flex-start;
+  }
+
+  .dashboard-activity-page-controls,
+  .dashboard-activity-breakdown-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .dashboard-activity-summary .summary-band,
+  .dashboard-activity-legend {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .dashboard-activity-group-select {
+    width: 100%;
+  }
+
+  .dashboard-activity-breakdown-status {
+    width: 100%;
+    margin-left: 0;
+    text-align: left;
   }
 
   .channel-diagnostic-readouts {

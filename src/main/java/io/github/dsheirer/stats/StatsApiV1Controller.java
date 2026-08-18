@@ -97,6 +97,12 @@ final class StatsApiV1Controller
                     "hide_grants", "kind", "limit");
                 return page(mDatabase.activity(request));
             }));
+        create(server, StatsApiV1.ACTIVITY_ANALYTICS, WebCapability.DASHBOARD_VIEW,
+            exchange -> handleJson(exchange, StatsApiV1.ACTIVITY_ANALYTICS, (request, segments) -> {
+                requireNoSegments(segments);
+                request.requireOnly("range", "group_by", "action", "limit");
+                return mDatabase.activityAnalytics(request);
+            }));
         create(server, StatsApiV1.CONVENTIONAL_CONTEXTS, WebCapability.CONVENTIONAL_VIEW,
             exchange -> handleJson(exchange, StatsApiV1.CONVENTIONAL_CONTEXTS, this::conventionalContexts));
         create(server, StatsApiV1.EXPORTS, WebCapability.CSV_EXPORT, this::handleCsvExport);

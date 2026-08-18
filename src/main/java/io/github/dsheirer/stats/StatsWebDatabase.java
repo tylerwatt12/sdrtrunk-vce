@@ -61,6 +61,9 @@ class StatsWebDatabase
     static final int MAXIMUM_ACTIVITY_EVENT_BATCH = 500;
     static final int MAXIMUM_ACTIVITY_EVENT_MEMBERS = 64;
     static final int MAXIMUM_SYSTEM_ACTIVITY_CONTEXTS = 200;
+    private static final int ACTIVITY_ANALYTICS_SOURCE_SCAN_LIMIT = 50_000;
+    private static final int ACTIVITY_ANALYTICS_SCAN_LIMIT = 5_000;
+    private static final int ACTIVITY_ANALYTICS_ROW_LIMIT = 200;
     private static final int IDENTITY_ROLE_DESTINATION = P25ActivityLogSchema.IDENTITY_ROLE_DESTINATION;
     private static final int IDENTITY_ROLE_SOURCE = P25ActivityLogSchema.IDENTITY_ROLE_SOURCE;
     private static final int IDENTITY_KIND_CHANNEL_OR_UNKNOWN =
@@ -285,7 +288,37 @@ class StatsWebDatabase
             bucket.identity_kind_code, bucket.identity_id
         LIMIT ?
         """;
-    static final String ACTIVITY_SELECT_SQL = """
+    private static final List<ActivityAction> ACTIVITY_ACTIONS = List.of(
+        new ActivityAction("ACKNOWLEDGE", 1, "acknowledge_count", true),
+        new ActivityAction("ACTIVE", 2, "active_count", true),
+        new ActivityAction("BUSY", 3, "busy_count", true),
+        new ActivityAction("CALL", 4, "call_count", true),
+        new ActivityAction("CHECK", 5, "check_count", true),
+        new ActivityAction("CHECK_ACK", 6, "check_ack_count", true),
+        new ActivityAction("CONTINUE", 7, "continue_count", false),
+        new ActivityAction("DATA", 8, "data_count", true),
+        new ActivityAction("DENIAL", 9, "denial_count", true),
+        new ActivityAction("EMERGENCY", 10, "emergency_count", true),
+        new ActivityAction("GPS", 11, "gps_count", true),
+        new ActivityAction("GRANT", 12, "grant_count", true),
+        new ActivityAction("JOIN", 13, "join_count", true),
+        new ActivityAction("LOGOUT", 14, "logout_count", true),
+        new ActivityAction("PAGE", 15, "page_count", true),
+        new ActivityAction("PATCH", 16, "patch_count", true),
+        new ActivityAction("PATCH_CANCEL", 17, "patch_cancel_count", true),
+        new ActivityAction("PATCH_CREATE", 18, "patch_create_count", true),
+        new ActivityAction("QUEUED", 19, "queued_count", true),
+        new ActivityAction("REGISTER", 20, "register_count", true),
+        new ActivityAction("REQUEST", 21, "request_count", true),
+        new ActivityAction("STATUS", 22, "status_count", true),
+        new ActivityAction("UNKNOWN", 23, "unknown_count", true)
+    );
+    private static final Map<String,ActivityAction> ACTIVITY_ACTION_BY_NAME = activityActionMap();
+    private static final String TRUNKED_ACTIVITY_ACTION_SQL = activityActionAggregateSql(
+        "p25_site_activity_bucket", "idx_p25_site_activity_bucket_time");
+    private static final String CONVENTIONAL_ACTIVITY_ACTION_SQL = activityActionAggregateSql(
+        "conventional_activity_bucket", "idx_conventional_bucket_dashboard_time");
+    private static final String ACTIVITY_PROJECTION_SQL = """
         SELECT activity.id, activity.context_id, activity.context_key, activity.guid,
             activity.observed_at_ms, activity.channel_kind,
             activity.channel_kind_code,
@@ -300,10 +333,15 @@ class StatsWebDatabase
             activity.resolved_system_key AS system_key, activity.resolved_wacn AS wacn,
             activity.resolved_system_id AS system_id, activity.resolved_nac, activity.resolved_rfss,
             activity.resolved_site
-        FROM p25_activity_event_resolved activity
+        """;
+    private static final String ACTIVITY_RELATED_JOINS_SQL = """
         LEFT JOIN trunked_site_snapshot trunked ON trunked.guid = activity.guid
         LEFT JOIN trunked_identity_scope_context ownership ON ownership.context_id = activity.context_id
         LEFT JOIN trunked_identity_scope scope ON scope.scope_id = ownership.scope_id
+        """;
+    static final String ACTIVITY_SELECT_SQL = ACTIVITY_PROJECTION_SQL + """
+        FROM p25_activity_event_resolved activity
+        """ + ACTIVITY_RELATED_JOINS_SQL + """
         WHERE 1 = 1
         """;
     static final String ACTIVITY_ORDER_SQL =
@@ -3043,6 +3081,429 @@ class StatsWebDatabase
         return count;
     }
 
+    /**
+     * Provides a small, allowlisted activity explorer.  Broad totals always come from the compact hourly buckets;
+     * an explicit action drilldown reads only a bounded, index-selected page of optional detailed events.
+     */
+    Map<String,Object> activityAnalytics(StatsRequest request)
+    {
+        ActivityRange requestedRange = activityRange(request);
+        String groupBy = request.text("group_by");
+        groupBy = groupBy != null ? groupBy.toLowerCase() : "action";
+
+        if(!Set.of("action", "radio", "destination", "site", "event").contains(groupBy))
+        {
+            throw new StatsApiException(400, "invalid_parameter",
+                "group_by must be action, radio, destination, site, or event", "group_by");
+        }
+
+        String requestedAction = request.text("action");
+        ActivityAction action = requestedAction != null ?
+            ACTIVITY_ACTION_BY_NAME.get(requestedAction.toUpperCase()) : null;
+
+        if(requestedAction != null && action == null)
+        {
+            throw new StatsApiException(400, "invalid_parameter", "action is not supported", "action");
+        }
+        else if(!"action".equals(groupBy) && action == null)
+        {
+            throw new StatsApiException(400, "invalid_parameter",
+                "action is required for this breakdown", "action");
+        }
+
+        int limit = request.limit(ACTIVITY_ANALYTICS_ROW_LIMIT);
+        long now = System.currentTimeMillis();
+        long bucketCount = Math.max(1,
+            (requestedRange.milliseconds() + HOUR_MILLISECONDS - 1) / HOUR_MILLISECONDS);
+        long currentHour = Math.floorDiv(now, HOUR_MILLISECONDS) * HOUR_MILLISECONDS;
+        long fromMilliseconds = currentHour - (bucketCount - 1) * HOUR_MILLISECONDS;
+        long untilMilliseconds = currentHour + HOUR_MILLISECONDS;
+        String selectedGroup = groupBy;
+
+        return read(connection -> {
+            Map<String,Object> summary = activityActionSummary(connection, fromMilliseconds, untilMilliseconds);
+            Map<String,Object> response = new LinkedHashMap<>();
+            response.put("range", requestedRange.label());
+            response.put("from_ms", fromMilliseconds);
+            response.put("to_ms", now);
+            response.put("group_by", selectedGroup);
+            response.put("summary_logging_configured",
+                mUserPreferences.getApplicationPreference().isStatsLoggingEnabled());
+            response.put("detailed_history_configured",
+                mUserPreferences.getApplicationPreference().isStatsDetailedHistoryEnabled());
+
+            if("action".equals(selectedGroup))
+            {
+                response.putAll(summary);
+                return response;
+            }
+
+            response.put("action", action.name());
+            response.put("summary_count", activityActionCount(summary, action.name()));
+            response.put("detail_supported", action.detailSupported());
+
+            if(!action.detailSupported())
+            {
+                response.put("scanned_events", 0);
+                response.put("scanned_records", 0);
+                response.put("detail_truncated", false);
+                response.put("rows_truncated", false);
+                response.put("unidentified_radio_events", 0);
+                response.put("rows", List.of());
+                return response;
+            }
+
+            ActivityAnalyticsEventPage eventPage = activityAnalyticsEvents(connection, action.code(),
+                fromMilliseconds, untilMilliseconds);
+            List<Map<String,Object>> events = eventPage.rows();
+            boolean detailTruncated = eventPage.sourceTruncated() ||
+                events.size() > ACTIVITY_ANALYTICS_SCAN_LIMIT;
+
+            if(detailTruncated)
+            {
+                events = new ArrayList<>(events.subList(0, ACTIVITY_ANALYTICS_SCAN_LIMIT));
+            }
+
+            response.put("scanned_events", events.size());
+            response.put("scanned_records", eventPage.sourceScanned());
+            response.put("detail_truncated", detailTruncated);
+            response.put("unidentified_radio_events", events.stream()
+                .filter(event -> !activityHasRadio(event)).count());
+
+            List<Map<String,Object>> rows = switch(selectedGroup)
+            {
+                case "radio" -> activityRadioBreakdown(events);
+                case "destination" -> activityDestinationBreakdown(events);
+                case "site" -> activitySiteBreakdown(events);
+                case "event" -> new ArrayList<>(events);
+                default -> throw new IllegalStateException("Unsupported activity breakdown");
+            };
+            boolean rowsTruncated = rows.size() > limit;
+
+            if(rowsTruncated)
+            {
+                rows = new ArrayList<>(rows.subList(0, limit));
+            }
+
+            enrichActivityAnalyticsRows(connection, selectedGroup, rows);
+            response.put("rows_truncated", rowsTruncated);
+            response.put("rows", rows);
+            return response;
+        });
+    }
+
+    private static Map<String,Object> activityActionSummary(Connection connection, long fromMilliseconds,
+                                                             long untilMilliseconds) throws SQLException
+    {
+        List<Map<String,Object>> trunked = queryRows(connection, TRUNKED_ACTIVITY_ACTION_SQL,
+            fromMilliseconds, untilMilliseconds);
+        List<Map<String,Object>> conventional = queryRows(connection, CONVENTIONAL_ACTIVITY_ACTION_SQL,
+            fromMilliseconds, untilMilliseconds);
+        Map<String,Object> trunkedCounts = trunked.isEmpty() ? Map.of() : trunked.getFirst();
+        Map<String,Object> conventionalCounts = conventional.isEmpty() ? Map.of() : conventional.getFirst();
+        List<Map<String,Object>> rows = new ArrayList<>(ACTIVITY_ACTIONS.size());
+        long total = 0;
+
+        for(ActivityAction action: ACTIVITY_ACTIONS)
+        {
+            long count = number(trunkedCounts.get(action.column())) +
+                number(conventionalCounts.get(action.column()));
+            Map<String,Object> row = new LinkedHashMap<>();
+            row.put("action", action.name());
+            row.put("count", count);
+            row.put("detail_supported", action.detailSupported());
+            rows.add(row);
+            total += count;
+        }
+
+        rows.sort((left, right) -> {
+            int countOrder = Long.compare(number(right.get("count")), number(left.get("count")));
+            return countOrder != 0 ? countOrder :
+                String.valueOf(left.get("action")).compareTo(String.valueOf(right.get("action")));
+        });
+        Map<String,Object> result = new LinkedHashMap<>();
+        result.put("total", total);
+        result.put("rows", rows);
+        return result;
+    }
+
+    private static long activityActionCount(Map<String,Object> summary, String action)
+    {
+        Object value = summary.get("rows");
+
+        if(value instanceof List<?> rows)
+        {
+            for(Object rowValue: rows)
+            {
+                if(rowValue instanceof Map<?,?> row && action.equals(row.get("action")))
+                {
+                    return number(row.get("count"));
+                }
+            }
+        }
+
+        return 0;
+    }
+
+    private static ActivityAnalyticsEventPage activityAnalyticsEvents(Connection connection, int actionCode,
+                                                                       long fromMilliseconds,
+                                                                       long untilMilliseconds) throws SQLException
+    {
+        long maximumId = scalarLong(connection, "SELECT COALESCE(MAX(id), 0) FROM p25_activity_event");
+
+        if(maximumId <= 0)
+        {
+            return new ActivityAnalyticsEventPage(List.of(), 0, false);
+        }
+
+        long sourceCount = scalarLong(connection, """
+            SELECT COUNT(*)
+            FROM (
+                SELECT id
+                FROM p25_activity_event
+                WHERE id <= ?
+                ORDER BY id DESC
+                LIMIT ?
+            )
+            """, maximumId, ACTIVITY_ANALYTICS_SOURCE_SCAN_LIMIT + 1);
+        boolean sourceTruncated = sourceCount > ACTIVITY_ANALYTICS_SOURCE_SCAN_LIMIT;
+        String sql = """
+            WITH recent AS MATERIALIZED (
+                SELECT id, observed_at_ms, action_code
+                FROM p25_activity_event
+                WHERE id <= ?
+                ORDER BY id DESC
+                LIMIT ?
+            ), candidates AS MATERIALIZED (
+                SELECT id
+                FROM recent
+                WHERE action_code = ? AND observed_at_ms >= ? AND observed_at_ms < ?
+                ORDER BY id DESC
+                LIMIT ?
+            )
+            """ + ACTIVITY_PROJECTION_SQL + """
+            FROM candidates
+            JOIN p25_activity_event_resolved activity ON activity.id = candidates.id
+            """ + ACTIVITY_RELATED_JOINS_SQL + """
+            ORDER BY activity.observed_at_ms DESC, activity.id DESC
+            """;
+        List<Map<String,Object>> rows = queryRows(connection, sql, maximumId,
+            ACTIVITY_ANALYTICS_SOURCE_SCAN_LIMIT, actionCode, fromMilliseconds, untilMilliseconds,
+            ACTIVITY_ANALYTICS_SCAN_LIMIT + 1);
+        return new ActivityAnalyticsEventPage(rows,
+            Math.min(sourceCount, ACTIVITY_ANALYTICS_SOURCE_SCAN_LIMIT), sourceTruncated);
+    }
+
+    private static boolean activityHasRadio(Map<String,Object> event)
+    {
+        return positiveNumber(event.get("source_radio_id")) ||
+            number(event.get("target_kind_code")) == IDENTITY_KIND_RADIO && positiveNumber(event.get("target_id"));
+    }
+
+    private static List<Map<String,Object>> activityRadioBreakdown(List<Map<String,Object>> events)
+    {
+        Map<String,Map<String,Object>> grouped = new LinkedHashMap<>();
+
+        for(Map<String,Object> event: events)
+        {
+            long source = number(event.get("source_radio_id"));
+            long target = number(event.get("target_kind_code")) == IDENTITY_KIND_RADIO ?
+                number(event.get("target_id")) : 0;
+
+            if(source > 0)
+            {
+                addActivityRadio(grouped, event, source, true, target == source);
+            }
+
+            if(target > 0 && target != source)
+            {
+                addActivityRadio(grouped, event, target, false, true);
+            }
+        }
+
+        List<Map<String,Object>> rows = new ArrayList<>(grouped.values());
+        sortActivityBreakdown(rows, "radio_id");
+        return rows;
+    }
+
+    private static void addActivityRadio(Map<String,Map<String,Object>> grouped, Map<String,Object> event,
+                                         long radio, boolean source, boolean target)
+    {
+        String key = activityIdentityScope(event) + ':' + radio;
+        Map<String,Object> row = grouped.computeIfAbsent(key, ignored -> {
+            Map<String,Object> created = activityBreakdownBase(event);
+            created.put("radio_id", radio);
+            created.put("event_count", 0L);
+            created.put("source_count", 0L);
+            created.put("target_count", 0L);
+            created.put("last_seen_ms", 0L);
+            return created;
+        });
+        row.put("event_count", number(row.get("event_count")) + 1);
+        row.put("last_seen_ms", Math.max(number(row.get("last_seen_ms")),
+            number(event.get("observed_at_ms"))));
+
+        if(source)
+        {
+            row.put("source_count", number(row.get("source_count")) + 1);
+        }
+
+        if(target)
+        {
+            row.put("target_count", number(row.get("target_count")) + 1);
+        }
+    }
+
+    private static List<Map<String,Object>> activityDestinationBreakdown(List<Map<String,Object>> events)
+    {
+        Map<String,Map<String,Object>> grouped = new LinkedHashMap<>();
+
+        for(Map<String,Object> event: events)
+        {
+            long target = number(event.get("target_id"));
+            long kind = number(event.get("target_kind_code"));
+
+            if(target <= 0 || kind <= 0)
+            {
+                continue;
+            }
+
+            String key = activityIdentityScope(event) + ':' + kind + ':' + target;
+            Map<String,Object> row = grouped.computeIfAbsent(key, ignored -> {
+                Map<String,Object> created = activityBreakdownBase(event);
+                created.put("target_id", target);
+                created.put("target_kind_code", kind);
+                created.put("event_count", 0L);
+                created.put("last_seen_ms", 0L);
+                return created;
+            });
+            row.put("event_count", number(row.get("event_count")) + 1);
+            row.put("last_seen_ms", Math.max(number(row.get("last_seen_ms")),
+                number(event.get("observed_at_ms"))));
+        }
+
+        List<Map<String,Object>> rows = new ArrayList<>(grouped.values());
+        sortActivityBreakdown(rows, "target_id");
+        return rows;
+    }
+
+    private static List<Map<String,Object>> activitySiteBreakdown(List<Map<String,Object>> events)
+    {
+        Map<Long,Map<String,Object>> grouped = new LinkedHashMap<>();
+
+        for(Map<String,Object> event: events)
+        {
+            long contextId = number(event.get("context_id"));
+            Map<String,Object> row = grouped.computeIfAbsent(contextId, ignored -> {
+                Map<String,Object> created = activityBreakdownBase(event);
+                created.put("event_count", 0L);
+                created.put("last_seen_ms", 0L);
+                return created;
+            });
+            row.put("event_count", number(row.get("event_count")) + 1);
+            row.put("last_seen_ms", Math.max(number(row.get("last_seen_ms")),
+                number(event.get("observed_at_ms"))));
+        }
+
+        List<Map<String,Object>> rows = new ArrayList<>(grouped.values());
+        sortActivityBreakdown(rows, "context_id");
+        return rows;
+    }
+
+    private static Map<String,Object> activityBreakdownBase(Map<String,Object> event)
+    {
+        Map<String,Object> row = new LinkedHashMap<>();
+
+        for(String field: List.of("context_id", "context_key", "guid", "channel_kind",
+            "channel_kind_code", "protocol", "protocol_code", "resolved_channel_name",
+            "resolved_alias_list_name", "alias_list_name", "scope_token", "identity_domain_code",
+            "system_key", "wacn", "system_id", "resolved_nac", "resolved_rfss", "resolved_site"))
+        {
+            if(event.containsKey(field))
+            {
+                row.put(field, event.get(field));
+            }
+        }
+
+        return row;
+    }
+
+    private void enrichActivityAnalyticsRows(Connection connection, String groupBy,
+                                              List<Map<String,Object>> rows) throws SQLException
+    {
+        if(rows.isEmpty() || "site".equals(groupBy))
+        {
+            return;
+        }
+
+        if("radio".equals(groupBy))
+        {
+            rows.forEach(row -> row.put("source_radio_id", row.get("radio_id")));
+        }
+
+        mAliasResolver.enrichActivity(connection, rows);
+
+        if("radio".equals(groupBy))
+        {
+            for(Map<String,Object> row: rows)
+            {
+                copyActivityAlias(row, "source_alias_", row, "alias_");
+                row.remove("source_radio_id");
+
+                for(String suffix: List.of("name", "description", "group", "color", "list_name"))
+                {
+                    row.remove("source_alias_" + suffix);
+                }
+            }
+        }
+        else if("event".equals(groupBy))
+        {
+            enrichActivityEncryption(rows);
+        }
+    }
+
+    private static void copyActivityAlias(Map<String,Object> source, String sourcePrefix,
+                                          Map<String,Object> target, String targetPrefix)
+    {
+        for(String suffix: List.of("name", "description", "group", "color", "list_name"))
+        {
+            Object value = source.get(sourcePrefix + suffix);
+
+            if(value != null && !String.valueOf(value).isBlank() && target.get(targetPrefix + suffix) == null)
+            {
+                target.put(targetPrefix + suffix, value);
+            }
+        }
+    }
+
+    private static String activityIdentityScope(Map<String,Object> event)
+    {
+        Object scope = event.get("scope_token");
+        return scope instanceof String value && !value.isBlank() ? "scope:" + value :
+            "context:" + number(event.get("context_id"));
+    }
+
+    private static void sortActivityBreakdown(List<Map<String,Object>> rows, String identifierField)
+    {
+        rows.sort((left, right) -> {
+            int countOrder = Long.compare(number(right.get("event_count")), number(left.get("event_count")));
+
+            if(countOrder != 0)
+            {
+                return countOrder;
+            }
+
+            int timeOrder = Long.compare(number(right.get("last_seen_ms")), number(left.get("last_seen_ms")));
+            return timeOrder != 0 ? timeOrder :
+                Long.compare(number(left.get(identifierField)), number(right.get(identifierField)));
+        });
+    }
+
+    private static boolean positiveNumber(Object value)
+    {
+        return number(value) > 0;
+    }
+
     Map<String,Object> activity(StatsRequest request)
     {
         long beforeId = request.beforeId();
@@ -4898,6 +5359,36 @@ class StatsWebDatabase
                 return resultSet.next() ? resultSet.getLong(1) : 0;
             }
         }
+    }
+
+    private static Map<String,ActivityAction> activityActionMap()
+    {
+        Map<String,ActivityAction> actions = new LinkedHashMap<>();
+
+        for(ActivityAction action: ACTIVITY_ACTIONS)
+        {
+            actions.put(action.name(), action);
+        }
+
+        return Map.copyOf(actions);
+    }
+
+    private static String activityActionAggregateSql(String table, String index)
+    {
+        String sums = ACTIVITY_ACTIONS.stream()
+            .map(action -> "COALESCE(SUM(bucket." + action.column() + "), 0) AS " + action.column())
+            .collect(java.util.stream.Collectors.joining(",\n                "));
+        return "SELECT " + sums + "\nFROM " + table + " AS bucket INDEXED BY " + index +
+            "\nWHERE bucket.bucket_start_ms >= ? AND bucket.bucket_start_ms < ?";
+    }
+
+    private record ActivityAction(String name, int code, String column, boolean detailSupported)
+    {
+    }
+
+    private record ActivityAnalyticsEventPage(List<Map<String,Object>> rows, long sourceScanned,
+                                               boolean sourceTruncated)
+    {
     }
 
     private record CallActivityGroup(int protocolCode, String protocol, String channelKind, boolean collected)

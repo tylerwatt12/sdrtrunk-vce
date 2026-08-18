@@ -3009,6 +3009,176 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void activityAnalyticsCombinesBoundedSummariesAndDrillsIntoRetainedEvents() throws Exception
+    {
+        long now = System.currentTimeMillis();
+        long currentHour = Math.floorDiv(now, 3_600_000L) * 3_600_000L;
+        long outsideTwentyFourHours = currentHour - 24L * 3_600_000L;
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO p25_site_activity_bucket (
+                    context_id, bucket_start_ms, call_count, emergency_count, continue_count
+                ) VALUES (1, %1$d, 2, 3, 4),
+                         (1, %2$d, 100, 100, 100)
+                """.formatted(currentHour, outsideTwentyFourHours));
+            statement.executeUpdate("""
+                INSERT INTO conventional_activity_bucket (
+                    context_id, frequency_hz, timeslot, bucket_start_ms, call_count, emergency_count
+                ) VALUES (2, 154310000, -1, %1$d, 7, 5),
+                         (2, 154310000, -1, %2$d, 100, 100)
+                """.formatted(currentHour, outsideTwentyFourHours));
+            statement.executeUpdate("""
+                INSERT INTO p25_activity_event (
+                    context_id, observed_at_ms, action_code, event_type_code,
+                    source_radio_id, target_id, target_kind_code, frequency_hz
+                ) VALUES
+                    (1, %1$d, 10, 1, 1811332, 1811332, 2, 856137500),
+                    (1, %2$d, 10, 1, 1811332, 1811333, 2, 856137500),
+                    (1, %3$d, 10, 1, NULL, 56132, 1, 856137500),
+                    (2, %4$d, 10, 1, 1811332, 77, 1, 154310000),
+                    (1, %5$d, 7, 1, 1811332, 56132, 1, 856137500)
+                """.formatted(now - 5_000, now - 4_000, now - 3_000, now - 2_000, now - 1_000));
+        }
+
+        Map<String,Object> summary = mDatabase.activityAnalytics(request(
+            "/api/v1/activity-analytics?range=24h&group_by=action"));
+        assertEquals(21, number(summary.get("total")));
+        assertEquals(9, actionCount(summary, "CALL"));
+        assertEquals(8, actionCount(summary, "EMERGENCY"));
+        assertEquals(4, actionCount(summary, "CONTINUE"));
+        assertEquals(23, rows(summary).size());
+        Map<String,Object> continueSummary = rows(summary).stream()
+            .filter(row -> "CONTINUE".equals(row.get("action"))).findFirst().orElseThrow();
+        assertFalse((Boolean)continueSummary.get("detail_supported"));
+
+        Map<String,Object> radios = mDatabase.activityAnalytics(request(
+            "/api/v1/activity-analytics?range=24h&group_by=radio&action=emergency"));
+        assertEquals(8, number(radios.get("summary_count")));
+        assertEquals(4, number(radios.get("scanned_events")));
+        assertEquals(1, number(radios.get("unidentified_radio_events")));
+        assertFalse((Boolean)radios.get("detail_truncated"));
+        assertEquals(3, rows(radios).size());
+        Map<String,Object> trunkedSource = rows(radios).stream()
+            .filter(row -> number(row.get("radio_id")) == 1811332 && GUID.equals(row.get("guid")))
+            .findFirst().orElseThrow();
+        assertEquals(2, number(trunkedSource.get("event_count")));
+        assertEquals(2, number(trunkedSource.get("source_count")));
+        assertEquals(1, number(trunkedSource.get("target_count")),
+            "One event carrying the same source and target radio must count once");
+        assertEquals("Engine 1", trunkedSource.get("alias_name"));
+        assertTrue(rows(radios).stream().anyMatch(row ->
+            number(row.get("radio_id")) == 1811332 && "conventional-fire".equals(row.get("context_key"))),
+            "The same numeric radio in another identity scope must remain separate");
+
+        Map<String,Object> destinations = mDatabase.activityAnalytics(request(
+            "/api/v1/activity-analytics?range=24h&group_by=destination&action=EMERGENCY"));
+        assertEquals(4, rows(destinations).size());
+        assertTrue(rows(destinations).stream().anyMatch(row ->
+            number(row.get("target_id")) == 56132 && "Dispatch".equals(row.get("target_alias_name"))));
+
+        Map<String,Object> sites = mDatabase.activityAnalytics(request(
+            "/api/v1/activity-analytics?range=24h&group_by=site&action=EMERGENCY"));
+        assertEquals(List.of(3L, 1L), rows(sites).stream()
+            .map(row -> number(row.get("event_count"))).toList());
+
+        Map<String,Object> events = mDatabase.activityAnalytics(request(
+            "/api/v1/activity-analytics?range=24h&group_by=event&action=EMERGENCY&limit=2"));
+        assertEquals(2, rows(events).size());
+        assertTrue((Boolean)events.get("rows_truncated"));
+        assertTrue(number(rows(events).getFirst().get("observed_at_ms")) >
+            number(rows(events).getLast().get("observed_at_ms")));
+
+        Map<String,Object> continueDetails = mDatabase.activityAnalytics(request(
+            "/api/v1/activity-analytics?range=24h&group_by=radio&action=CONTINUE"));
+        assertEquals(4, number(continueDetails.get("summary_count")));
+        assertFalse((Boolean)continueDetails.get("detail_supported"));
+        assertEquals(0, number(continueDetails.get("scanned_events")));
+        assertTrue(rows(continueDetails).isEmpty());
+    }
+
+    @Test
+    void activityAnalyticsRejectsUnsupportedQueriesAndUsesABoundedRowIdSourceScan() throws Exception
+    {
+        StatsApiException invalidGroup = assertThrows(StatsApiException.class, () ->
+            mDatabase.activityAnalytics(request(
+                "/api/v1/activity-analytics?group_by=protocol&action=CALL")));
+        assertEquals(400, invalidGroup.status());
+        assertEquals("group_by", invalidGroup.field());
+
+        StatsApiException invalidAction = assertThrows(StatsApiException.class, () ->
+            mDatabase.activityAnalytics(request(
+                "/api/v1/activity-analytics?group_by=event&action=NOT_REAL")));
+        assertEquals(400, invalidAction.status());
+        assertEquals("action", invalidAction.field());
+
+        StatsApiException missingAction = assertThrows(StatsApiException.class, () ->
+            mDatabase.activityAnalytics(request("/api/v1/activity-analytics?group_by=radio")));
+        assertEquals(400, missingAction.status());
+        assertEquals("action", missingAction.field());
+
+        StatsApiException excessiveLimit = assertThrows(StatsApiException.class, () ->
+            mDatabase.activityAnalytics(request(
+                "/api/v1/activity-analytics?group_by=event&action=CALL&limit=201")));
+        assertEquals(400, excessiveLimit.status());
+        assertEquals("limit", excessiveLimit.field());
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
+        {
+            List<String> plan = explain(connection, """
+                SELECT id
+                FROM p25_activity_event
+                WHERE id <= ?
+                ORDER BY id DESC
+                LIMIT ?
+                """, Long.MAX_VALUE, 50_001);
+            assertTrue(plan.stream().anyMatch(
+                    detail -> detail.contains("INTEGER PRIMARY KEY") || detail.contains("rowid<?")),
+                () -> "Expected a row-id-indexed analytics source window, plan was: " + plan);
+            assertTrue(plan.stream().noneMatch(detail -> detail.contains("USE TEMP B-TREE")),
+                () -> "Expected index-ordered analytics candidates, plan was: " + plan);
+        }
+    }
+
+    @Test
+    void activityAnalyticsCapsTheDetailedCandidateSet() throws Exception
+    {
+        long now = System.currentTimeMillis();
+        long currentHour = Math.floorDiv(now, 3_600_000L) * 3_600_000L;
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO p25_site_activity_bucket (context_id, bucket_start_ms, denial_count)
+                VALUES (1, %d, 5001)
+                """.formatted(currentHour));
+            statement.executeUpdate("""
+                WITH RECURSIVE sequence(value) AS (
+                    SELECT 1
+                    UNION ALL
+                    SELECT value + 1 FROM sequence WHERE value < 5001
+                )
+                INSERT INTO p25_activity_event (
+                    context_id, observed_at_ms, action_code, event_type_code, source_radio_id
+                )
+                SELECT 1, %d - value, 9, 1, 2000000 + value FROM sequence
+                """.formatted(now));
+        }
+
+        Map<String,Object> events = mDatabase.activityAnalytics(request(
+            "/api/v1/activity-analytics?range=24h&group_by=event&action=DENIAL&limit=200"));
+        assertEquals(5001, number(events.get("summary_count")));
+        assertEquals(5003, number(events.get("scanned_records")));
+        assertEquals(5000, number(events.get("scanned_events")));
+        assertTrue((Boolean)events.get("detail_truncated"));
+        assertTrue((Boolean)events.get("rows_truncated"));
+        assertEquals(200, rows(events).size());
+    }
+
+    @Test
     void scopesAliasesToEachSystemsAssignedAliasList() throws Exception
     {
         seedSecondSystem(mDatabasePath);
@@ -4856,6 +5026,14 @@ class StatsWebDatabaseTest
     private static long number(Object value)
     {
         return ((Number)value).longValue();
+    }
+
+    private static long actionCount(Map<String,Object> response, String action)
+    {
+        return rows(response).stream()
+            .filter(row -> action.equals(row.get("action")))
+            .map(row -> number(row.get("count")))
+            .findFirst().orElseThrow();
     }
 
     private static List<String> explain(Connection connection, String sql, Object... parameters) throws Exception

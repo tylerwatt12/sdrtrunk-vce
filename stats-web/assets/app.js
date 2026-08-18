@@ -116,6 +116,22 @@ const TALKGROUP_SIGNALING_SERIES = Object.freeze([
   { field: 'status_count', label: 'Status', color: 'var(--chart-status)' },
   { field: 'unknown_count', label: 'Unknown', color: 'var(--chart-unknown)' }
 ]);
+const DASHBOARD_ACTIVITY_SERIES = Object.freeze([
+  { action: 'CALL', label: 'Call', color: 'var(--chart-call)' },
+  { action: 'GRANT', label: 'Grant', color: 'var(--chart-active)' },
+  ...TALKGROUP_SIGNALING_SERIES.map((series) => ({
+    action: series.field.replace(/_count$/, '').toUpperCase(),
+    label: series.label,
+    color: series.color
+  }))
+]);
+const DASHBOARD_ACTIVITY_RANGES = Object.freeze([
+  ['6h', '6 hours'], ['24h', '24 hours'], ['7d', '7 days']
+]);
+const DASHBOARD_ACTIVITY_GROUPS = Object.freeze([
+  ['radio', 'Radios'], ['destination', 'Destinations'], ['site', 'Sites / channels'],
+  ['event', 'Recent events']
+]);
 const CALL_METRIC_GUIDE = Object.freeze([
   ['Tracked Calls', 'Traffic calls accepted by the channel manager. A tracked call can have no usable audio.'],
   ['Recorded', 'Completed calls written to a nonempty recording file. Recording rules and duplicate suppression apply.'],
@@ -6984,6 +7000,370 @@ function dashboardSummarySection(title, values) {
   return block;
 }
 
+function dashboardActivityActionConfiguration(action, index = 0) {
+  const normalized = String(action || '').trim().toUpperCase();
+  const configured = DASHBOARD_ACTIVITY_SERIES.find((series) => series.action === normalized);
+  return configured || {
+    action: normalized,
+    label: semanticLabel(normalized) || 'Unknown',
+    color: `hsl(${Math.round(index * 137.508) % 360} 58% var(--chart-dynamic-lightness))`
+  };
+}
+
+function dashboardActivityActionRows(response) {
+  return (response?.rows || []).map((row, index) => {
+    const configuration = dashboardActivityActionConfiguration(row.action, index);
+    return {
+      ...row,
+      ...configuration,
+      count: Math.max(0, Number(row.count || 0)),
+      detail_supported: row.detail_supported !== false && Number(row.detail_supported) !== 0
+    };
+  }).filter((row) => row.action && row.count > 0)
+    .sort((left, right) => right.count - left.count || left.label.localeCompare(right.label));
+}
+
+function dashboardActivityActionCount(response, action) {
+  const row = dashboardActivityActionRows(response).find((candidate) => candidate.action === action);
+  return Number(row?.count || 0);
+}
+
+function dashboardActivityMix(response, selectedAction, onSelect) {
+  const actions = dashboardActivityActionRows(response);
+  if (!actions.length) return node('div', 'empty', 'No activity was recorded for this range.');
+  const summedTotal = actions.reduce((sum, row) => sum + row.count, 0);
+  const total = Math.max(summedTotal, Number(response?.total || 0));
+  const circumference = 2 * Math.PI * 78;
+  const wrapper = node('div', 'dashboard-activity-layout');
+  const chart = node('div', 'dashboard-activity-chart');
+  const svg = svgNode('svg', {
+    class: 'dashboard-activity-donut', viewBox: '0 0 220 220', role: 'group',
+    'aria-label': `Activity mix, ${number(total)} events`
+  });
+  svg.append(svgNode('circle', {
+    class: 'dashboard-activity-donut-background', cx: 110, cy: 110, r: 78
+  }));
+  const centerCount = svgNode('text', {
+    class: 'dashboard-activity-center-count', x: 110, y: 106, 'text-anchor': 'middle'
+  });
+  const centerLabel = svgNode('text', {
+    class: 'dashboard-activity-center-label', x: 110, y: 127, 'text-anchor': 'middle'
+  });
+  const legend = node('div', 'activity-series-legend dashboard-activity-legend');
+  legend.setAttribute('role', 'group');
+  legend.setAttribute('aria-label', 'Activity types');
+  let offset = 0;
+
+  const updateSelection = (action, notify = true) => {
+    const selected = actions.find((row) => row.action === action) || actions[0];
+    wrapper.querySelectorAll('[data-action]').forEach((element) => {
+      const active = element.dataset.action === selected.action;
+      element.classList.toggle('active', active);
+      element.setAttribute('aria-pressed', String(active));
+    });
+    centerCount.textContent = number(selected.count);
+    centerLabel.textContent = selected.label;
+    if (notify) onSelect(selected);
+  };
+
+  actions.forEach((row) => {
+    const percentage = total ? row.count / total * 100 : 0;
+    const length = circumference * percentage / 100;
+    const segment = svgNode('circle', {
+      class: 'dashboard-activity-segment', cx: 110, cy: 110, r: 78,
+      'stroke-dasharray': `${length} ${Math.max(0, circumference - length)}`,
+      'stroke-dashoffset': -offset, transform: 'rotate(-90 110 110)',
+      role: 'button', tabindex: 0, focusable: 'true',
+      'aria-label': `${row.label}: ${number(row.count)} events, ${percentage.toFixed(1)} percent`
+    });
+    segment.dataset.action = row.action;
+    segment.style.stroke = row.color;
+    segment.append(svgNode('title', {},
+      `${row.label}: ${number(row.count)} events (${percentage.toFixed(1)}%)`));
+    segment.addEventListener('click', () => updateSelection(row.action));
+    segment.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      updateSelection(row.action);
+    });
+    svg.append(segment);
+    offset += length;
+
+    const button = node('button', 'activity-series-button secondary dashboard-activity-legend-button');
+    button.type = 'button';
+    button.dataset.action = row.action;
+    const swatch = node('span', 'activity-series-swatch');
+    swatch.style.backgroundColor = row.color;
+    button.append(swatch, node('span', '', row.label),
+      node('span', 'activity-series-total', `${number(row.count)} · ${percentage.toFixed(1)}%`));
+    if (!row.detail_supported) button.append(node('span', 'activity-series-status', 'Summary only'));
+    button.addEventListener('click', () => updateSelection(row.action));
+    legend.append(button);
+  });
+
+  svg.append(centerCount, centerLabel);
+  chart.append(svg);
+  wrapper.append(chart, legend);
+  const initial = actions.some((row) => row.action === selectedAction) ? selectedAction :
+    (actions.some((row) => row.action === 'CALL') ? 'CALL' : actions[0].action);
+  updateSelection(initial, false);
+  return wrapper;
+}
+
+function dashboardActivityContextLabel(row) {
+  const system = row.resolved_system_name || row.configured_system || systemLabel(row);
+  const channel = row.resolved_channel_name || row.channel_name || row.context_key;
+  return [...new Set([system, channel].filter(Boolean))].join(' · ') || row.scope_token || '—';
+}
+
+function dashboardActivityRadio(row) {
+  const identifier = identityNumber(row, row.radio_id) || '—';
+  const alias = String(row.alias_name || '').trim();
+  const summary = node('span', 'dashboard-identity');
+  const primary = node('span', 'dashboard-identity-primary');
+  primary.append(radioLink(row, row.radio_id, alias || `Radio ${identifier}`));
+  summary.append(primary);
+  if (alias) summary.append(node('small', 'dashboard-identity-context', `Radio ${identifier}`));
+  return summary;
+}
+
+function dashboardActivityDestination(row) {
+  const alias = String(row.target_alias_name || '').trim();
+  const identifier = activityTargetIdentifier(row);
+  const summary = node('span', 'dashboard-identity');
+  const primary = node('span', 'dashboard-identity-primary');
+  primary.append(valueNode(alias ? activityTargetAlias(row) : identifier));
+  summary.append(primary);
+  if (alias) {
+    const text = identifier instanceof Node ? identifier.textContent : String(identifier || '');
+    if (text) summary.append(node('small', 'dashboard-identity-context', text));
+  }
+  return summary;
+}
+
+function dashboardActivitySite(row) {
+  const label = row.resolved_channel_name || row.channel_name || row.context_key || 'Unknown site / channel';
+  const identifiers = [];
+  if (row.resolved_rfss !== null && row.resolved_rfss !== undefined) {
+    identifiers.push(isP25(row) ? `RFSS ${hex(row.resolved_rfss, 2)}` : `RFSS ${row.resolved_rfss}`);
+  }
+  if (row.resolved_site !== null && row.resolved_site !== undefined) {
+    identifiers.push(isP25(row) ? `Site ${hex(row.resolved_site, 2)}` : `Site ${row.resolved_site}`);
+  }
+  const target = row.guid && capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS) ?
+    href('site', { guid: row.guid, tab: 'info' }) : '';
+  return siteNameSummaryValue(label, identifiers.join(' · '), target);
+}
+
+function dashboardActivityBreakdownColumns(groupBy) {
+  if (groupBy === 'event') return activityColumns();
+  const common = [
+    { id: 'context', label: 'Context', render: dashboardActivityContextLabel, className: 'alias-cell',
+      sortValue: dashboardActivityContextLabel },
+    { id: 'events', label: 'Events', render: (row) => number(row.event_count), className: 'numeric',
+      sortValue: (row) => Number(row.event_count || 0) },
+    { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms),
+      sortValue: (row) => Number(row.last_seen_ms || 0) }
+  ];
+  if (groupBy === 'radio') {
+    return [
+      { id: 'radio', label: 'Radio', render: dashboardActivityRadio, className: 'alias-cell',
+        sortValue: (row) => row.alias_name || Number(row.radio_id || 0) },
+      { id: 'description', label: 'Description', key: 'alias_description', className: 'alias-cell' },
+      ...common,
+      { id: 'source-count', label: 'Source', render: (row) => number(row.source_count), className: 'numeric',
+        sortValue: (row) => Number(row.source_count || 0) },
+      { id: 'target-count', label: 'Target', render: (row) => number(row.target_count), className: 'numeric',
+        sortValue: (row) => Number(row.target_count || 0) }
+    ];
+  }
+  if (groupBy === 'destination') {
+    return [
+      { id: 'destination', label: 'Destination', render: dashboardActivityDestination,
+        className: 'alias-cell', sortValue: (row) => row.target_alias_name || Number(row.target_id || 0) },
+      { id: 'kind', label: 'Kind', render: (row) => semanticLabel(row.target_kind),
+        sortValue: (row) => row.target_kind || '' },
+      ...common
+    ];
+  }
+  return [
+    { id: 'site-channel', label: 'Site / Channel', render: dashboardActivitySite, className: 'alias-cell',
+      sortValue: (row) => row.resolved_channel_name || row.context_key || '' },
+    { id: 'mode', label: 'Mode', fullLabel: 'Protocol and Topology', render: dashboardMode,
+      sortValue: dashboardModeLabel },
+    { id: 'system', label: 'System', render: (row) => systemLabel(row) || row.scope_token || '—',
+      sortValue: (row) => systemLabel(row) || row.scope_token || '' },
+    ...common.slice(1)
+  ];
+}
+
+function dashboardActivityGroupLabel(groupBy) {
+  return DASHBOARD_ACTIVITY_GROUPS.find(([value]) => value === groupBy)?.[1] || 'Activity';
+}
+
+function dashboardActivityRangeLabel(range) {
+  return DASHBOARD_ACTIVITY_RANGES.find(([value]) => value === range)?.[1] || range;
+}
+
+async function renderDashboardActivity() {
+  let selectedRange = '24h';
+  let selectedGroup = 'radio';
+  let selectedAction = '';
+  let summaryResponse = null;
+  let summarySequence = 0;
+  let detailSequence = 0;
+  let detailHost = null;
+  let detailStatus = null;
+  let detailTitle = null;
+  const toolbar = node('div', 'dashboard-activity-page-controls');
+  toolbar.setAttribute('aria-label', 'Activity analytics controls');
+  toolbar.append(node('span', 'dashboard-control-label', 'Time range'));
+  const host = node('div', 'dashboard-activity-view');
+  const rangeControl = rangeControls(DASHBOARD_ACTIVITY_RANGES, selectedRange, async (value, buttons) => {
+    selectedRange = value;
+    await loadSummary(buttons);
+  });
+  toolbar.append(rangeControl.controls);
+  content.append(toolbar, host);
+
+  const loadDetail = async () => {
+    const sequence = ++detailSequence;
+    if (!detailHost || !detailStatus || !detailTitle || !summaryResponse || !selectedAction) return;
+    const actionRow = dashboardActivityActionRows(summaryResponse)
+      .find((row) => row.action === selectedAction);
+    const actionLabel = actionRow?.label || semanticLabel(selectedAction);
+    const groupLabel = dashboardActivityGroupLabel(selectedGroup);
+    detailTitle.textContent = `${actionLabel} · ${groupLabel}`;
+    detailStatus.textContent = `${actionLabel} selected. Loading ${groupLabel.toLowerCase()}.`;
+    detailHost.replaceChildren(node('div', 'loading', `Loading ${groupLabel.toLowerCase()}`));
+
+    if (!actionRow?.detail_supported) {
+      detailStatus.textContent = `${actionLabel} totals are available, but individual records are not retained.`;
+      detailHost.replaceChildren(node('div', 'empty',
+        `A ${actionLabel.toLowerCase()} breakdown is unavailable because these individual events are not retained.`));
+      return;
+    }
+    if (!detailedHistoryAvailable()) {
+      detailStatus.textContent = `${actionLabel} totals are available without a detailed breakdown.`;
+      detailHost.replaceChildren(node('div', 'empty',
+        'Detailed History is unavailable. Activity totals remain available, but breakdowns require retained events.'));
+      return;
+    }
+
+    try {
+      const response = await api('/api/v1/activity-analytics', {
+        range: selectedRange, group_by: selectedGroup, action: selectedAction, limit: 100
+      });
+      if (sequence !== detailSequence) return;
+      const rows = response.rows || [];
+      detailStatus.textContent = `${number(rows.length)} ${groupLabel.toLowerCase()} shown for ${actionLabel}.`;
+      const result = node('div', 'dashboard-activity-breakdown-result');
+      if (response.detailed_history_configured === false) {
+        result.append(node('div', 'logging-notice warning',
+          'Detailed History is off. This breakdown only uses previously retained events and is not updating.'));
+      }
+      if (response.detail_truncated) {
+        result.append(node('div', 'logging-notice warning',
+          `This breakdown used a bounded scan of ${number(response.scanned_records)} recent retained records and ` +
+          `${number(response.scanned_events)} matching events; the summary contains ` +
+          `${number(response.summary_count)} ${actionLabel.toLowerCase()} events.`));
+      }
+      if (response.rows_truncated) {
+        result.append(node('div', 'logging-notice warning',
+          `Only the first ${number(rows.length)} ${groupLabel.toLowerCase()} are shown.`));
+      }
+      if (selectedGroup === 'radio' && Number(response.unidentified_radio_events) > 0) {
+        result.append(node('div', 'metric-meaning-note',
+          `${number(response.unidentified_radio_events)} events did not contain a radio ID.`));
+      }
+      const empty = selectedGroup === 'radio' ? 'No involved radios were identified' :
+        selectedGroup === 'destination' ? 'No destinations were identified' :
+          selectedGroup === 'site' ? 'No sites or channels were identified' : 'No retained events were found';
+      result.append(table(rows, dashboardActivityBreakdownColumns(selectedGroup), empty,
+        { type: `dashboard-activity-${selectedGroup}` }));
+      detailHost.replaceChildren(result);
+    } catch (error) {
+      if (sequence !== detailSequence) return;
+      detailStatus.textContent = `${actionLabel} details could not be loaded.`;
+      detailHost.replaceChildren(node('div', 'error', error.message));
+    }
+  };
+
+  const renderSummary = (response) => {
+    const actions = dashboardActivityActionRows(response);
+    if (!actions.some((row) => row.action === selectedAction)) {
+      selectedAction = actions.some((row) => row.action === 'CALL') ? 'CALL' : (actions[0]?.action || '');
+    }
+    const overview = dashboardSummarySection(`Activity Totals · ${dashboardActivityRangeLabel(selectedRange)}`, [
+      ['Events', response.total],
+      ['Calls', dashboardActivityActionCount(response, 'CALL')],
+      ['Emergencies', dashboardActivityActionCount(response, 'EMERGENCY')],
+      ['Denials', dashboardActivityActionCount(response, 'DENIAL')]
+    ]);
+    overview.classList.add('dashboard-activity-summary');
+    const mixBody = node('div', 'dashboard-activity-mix-body');
+    mixBody.append(dashboardActivityMix(response, selectedAction, (row) => {
+      selectedAction = row.action;
+      void loadDetail();
+    }), node('p', 'metric-meaning-note',
+      'Percentages are shares of observed activity events, not call success rates. Repeated signaling can produce ' +
+      'more than one event for the same call or radio.'), activityMetricGuide(false));
+    const mix = section('Activity Mix', mixBody);
+
+    const breakdownBody = node('div', 'dashboard-activity-breakdown');
+    const breakdownToolbar = node('div', 'dashboard-activity-breakdown-toolbar');
+    const groupLabel = node('label', 'dashboard-control-label', 'Break down by');
+    const groupSelect = node('select', 'dashboard-activity-group-select');
+    groupSelect.id = 'dashboard-activity-group';
+    groupSelect.setAttribute('aria-label', 'Break activity down by');
+    DASHBOARD_ACTIVITY_GROUPS.forEach(([value, label]) => {
+      const option = node('option', '', label);
+      option.value = value;
+      option.selected = value === selectedGroup;
+      groupSelect.append(option);
+    });
+    groupLabel.htmlFor = groupSelect.id;
+    groupSelect.addEventListener('change', () => {
+      selectedGroup = groupSelect.value;
+      void loadDetail();
+    });
+    detailStatus = node('div', 'dashboard-activity-breakdown-status');
+    detailStatus.setAttribute('aria-live', 'polite');
+    breakdownToolbar.append(groupLabel, groupSelect, detailStatus);
+    detailHost = node('div', 'dashboard-activity-breakdown-host');
+    breakdownBody.append(breakdownToolbar, detailHost);
+    const breakdown = section('Selected Activity', breakdownBody);
+    detailTitle = breakdown.querySelector('.section-title');
+    host.replaceChildren(overview, mix, breakdown);
+    if (selectedAction) void loadDetail();
+    else {
+      detailStatus.textContent = 'No activity type is available for this range.';
+      detailHost.append(node('div', 'empty', 'No activity was recorded for this range.'));
+    }
+  };
+
+  const loadSummary = async (buttons = rangeControl.buttons) => {
+    const sequence = ++summarySequence;
+    detailSequence += 1;
+    buttons.forEach((button) => { button.disabled = true; });
+    host.replaceChildren(node('div', 'loading', 'Loading activity analytics'));
+    try {
+      const response = await api('/api/v1/activity-analytics', {
+        range: selectedRange, group_by: 'action', limit: 100
+      });
+      if (sequence !== summarySequence) return;
+      summaryResponse = response;
+      renderSummary(response);
+    } catch (error) {
+      if (sequence === summarySequence) host.replaceChildren(node('div', 'error', error.message));
+    } finally {
+      if (sequence === summarySequence) buttons.forEach((button) => { button.disabled = false; });
+    }
+  };
+
+  await loadSummary();
+}
+
 const talkgroupColumns = [
   { id: 'talkgroup-id', label: 'TGID', render: (row) => talkgroupLink(row), className: 'numeric', sort: 'talkgroup', sortValue: (row) => Number(row.talkgroup_id) },
   { id: 'talkgroup-kind', label: 'Kind', render: (row) => groupIdentityLabel(row) },
@@ -7037,12 +7417,13 @@ async function renderDashboard() {
   const callActivity = dashboard.call_activity || {};
   const callTotals = callActivity.totals || {};
   const requestedTab = route.get('tab') || 'health';
-  const tab = requestedTab === 'calls' ? 'calls' : 'health';
+  const tab = ['health', 'calls', 'activity'].includes(requestedTab) ? requestedTab : 'health';
   content.append(pageHeader('Dashboard', dashboard.last_seen_ms ?
     fragment('Last activity ', dateTime(dashboard.last_seen_ms)) : 'Last activity not recorded'),
   tabs([
     { id: 'health', label: 'Health', href: href('dashboard', { tab: 'health' }) },
-    { id: 'calls', label: 'Calls', href: href('dashboard', { tab: 'calls' }) }
+    { id: 'calls', label: 'Calls', href: href('dashboard', { tab: 'calls' }) },
+    { id: 'activity', label: 'Activity', href: href('dashboard', { tab: 'activity' }) }
   ], tab));
 
   if (tab === 'health') {
@@ -7054,6 +7435,11 @@ async function renderDashboard() {
     ]));
     content.append(section('Recent Sites / Channels', table(dashboard.recent_receivers || [],
       dashboardHealthColumns, 'No sites or channels recorded', { type: 'dashboard-receivers' })));
+    return;
+  }
+
+  if (tab === 'activity') {
+    await renderDashboardActivity();
     return;
   }
 
