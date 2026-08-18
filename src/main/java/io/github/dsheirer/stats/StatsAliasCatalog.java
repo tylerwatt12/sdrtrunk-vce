@@ -44,6 +44,8 @@ final class StatsAliasCatalog
     static final int MAX_METRIC_QUERY_ALIASES = StatsCsvExport.MAX_ROWS;
     static final int MAX_TARGET_ALIAS_LISTS = 256;
     static final int MAX_TARGET_RANGES = 500;
+    private static final int MAX_METRIC_ENRICH_BATCH_ALIASES =
+        Math.min(MAX_ENRICH_ALIASES, Math.min(MAX_TARGET_ALIAS_LISTS, MAX_TARGET_RANGES));
     static final int MAX_SCOPED_TARGET_RANGES = 10_000;
     static final int MAX_BROADCAST_CHANNELS_PER_ALIAS = AliasAdministrationService.MAX_BROADCAST_CHANNELS;
     static final int MAX_BROADCAST_CHANNEL_NAME_CHARACTERS =
@@ -841,10 +843,10 @@ final class StatsAliasCatalog
         }
 
         ENRICHMENT_ADMISSION.execute(() -> {
-            for(int start = 0; start < aliases.size(); start += MAX_ENRICH_ALIASES)
+            for(int start = 0; start < aliases.size(); start += MAX_METRIC_ENRICH_BATCH_ALIASES)
             {
                 List<Map<String,Object>> batch = aliases.subList(start,
-                    Math.min(start + MAX_ENRICH_ALIASES, aliases.size()));
+                    Math.min(start + MAX_METRIC_ENRICH_BATCH_ALIASES, aliases.size()));
                 enrichAdmitted(connection, batch, false);
             }
 

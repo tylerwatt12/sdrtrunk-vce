@@ -385,7 +385,8 @@ class StatsWebDatabaseTest
     {
         int aliasCount = 6_627;
         int firstAliasId = 10_000;
-        int busiestTalkgroup = firstAliasId + aliasCount - 1;
+        int firstTalkgroup = 20_000;
+        int busiestTalkgroup = firstTalkgroup + ((aliasCount - 1) * 2);
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
             PreparedStatement aliases = connection.prepareStatement("""
@@ -397,8 +398,8 @@ class StatsWebDatabaseTest
 
             for(int offset = 0; offset < aliasCount; offset++)
             {
-                int identity = firstAliasId + offset;
-                aliases.setInt(1, identity);
+                int identity = firstTalkgroup + (offset * 2);
+                aliases.setInt(1, firstAliasId + offset);
                 aliases.setString(2, "Bulk Alias %04d".formatted(offset));
                 aliases.setInt(3, identity);
                 aliases.addBatch();
