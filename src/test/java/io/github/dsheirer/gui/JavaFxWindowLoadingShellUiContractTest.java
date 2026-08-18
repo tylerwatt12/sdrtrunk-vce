@@ -37,6 +37,7 @@ class JavaFxWindowLoadingShellUiContractTest
         assertTrue(loading.contains("stage.setOpacity(1.0d)"));
         assertTrue(loading.contains("if(++mFrames >= 2)"));
         assertTrue(loading.indexOf("stage.setOpacity(1.0d)") < loading.indexOf("loader.run()"));
+        assertTrue(manager.contains("loadingShell.root().setPadding(Insets.EMPTY)"));
         assertTrue(manager.contains("loadingShell.root().getChildren().setAll(content)"));
         assertTrue(configuration.contains("setTop(getMenuBar());"));
         assertTrue(configuration.contains("setCenter(getTabPane());"));

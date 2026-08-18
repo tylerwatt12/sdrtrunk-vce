@@ -629,6 +629,8 @@ public class JavaFxWindowManager extends Application
             return;
         }
 
+        //Padding belongs to the centered loading message, not to the full-size editor that replaces it.
+        loadingShell.root().setPadding(Insets.EMPTY);
         loadingShell.root().getChildren().setAll(content);
         content.applyCss();
         content.layout();
