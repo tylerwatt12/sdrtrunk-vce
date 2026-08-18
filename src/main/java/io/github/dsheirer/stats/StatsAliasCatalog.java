@@ -41,7 +41,7 @@ final class StatsAliasCatalog
     static final int MAX_COVERAGE_ROWS = 500;
     static final int MAX_COVERAGE_PAIRS = 10_000;
     static final int MAX_EVIDENCE_ROWS = 10_000;
-    static final int MAX_METRIC_SORT_ALIASES = 1_000;
+    static final int MAX_METRIC_QUERY_ALIASES = StatsCsvExport.MAX_ROWS;
     static final int MAX_TARGET_ALIAS_LISTS = 256;
     static final int MAX_TARGET_RANGES = 500;
     static final int MAX_SCOPED_TARGET_RANGES = 10_000;
@@ -166,21 +166,22 @@ final class StatsAliasCatalog
         if(metricSortField(request) != null || hasMetricFilters(request))
         {
             List<Map<String,Object>> allRows = queryAliasRows(connection, request,
-                MAX_METRIC_SORT_ALIASES + 1, 0, null);
+                MAX_METRIC_QUERY_ALIASES + 1, 0, null, false);
 
-            if(allRows.size() > MAX_METRIC_SORT_ALIASES)
+            if(allRows.size() > MAX_METRIC_QUERY_ALIASES)
             {
                 throw new StatsApiException(413, "Metric-sorted or filtered alias query exceeds the " +
-                    MAX_METRIC_SORT_ALIASES + " row limit");
+                    MAX_METRIC_QUERY_ALIASES + " row limit");
             }
 
-            enrich(connection, allRows, false);
+            enrichBatches(connection, allRows);
             applyMetricFilters(allRows, request);
             sortMetricRows(allRows, request);
             int from = Math.min(request.offset(), allRows.size());
             int to = Math.min(from + request.limit(), allRows.size());
             boolean hasMore = to < allRows.size();
             List<Map<String,Object>> rows = new ArrayList<>(allRows.subList(from, to));
+            attachConfigurationCollections(connection, rows);
             applyConfigurationDiagnostics(connection, rows);
             Map<String,Object> response = new LinkedHashMap<>();
             response.put("rows", rows);
@@ -192,7 +193,7 @@ final class StatsAliasCatalog
         }
 
         List<Map<String,Object>> queried = queryAliasRows(connection, request, request.limit() + 1,
-            request.offset(), null);
+            request.offset(), null, true);
         boolean hasMore = queried.size() > request.limit();
         List<Map<String,Object>> rows = hasMore ?
             new ArrayList<>(queried.subList(0, request.limit())) : queried;
@@ -214,7 +215,8 @@ final class StatsAliasCatalog
             throw new StatsApiException(400, "id is invalid");
         }
 
-        List<Map<String,Object>> rows = queryAliasRows(connection, new StatsRequest(Map.of()), 1, 0, aliasId);
+        List<Map<String,Object>> rows = queryAliasRows(connection, new StatsRequest(Map.of()), 1, 0, aliasId,
+            true);
 
         if(rows.isEmpty())
         {
@@ -233,18 +235,18 @@ final class StatsAliasCatalog
         throws SQLException
     {
         boolean metricProcessing = metricSortField(request) != null || hasMetricFilters(request);
-        int queryLimit = metricProcessing ? Math.min(maximumRows, MAX_METRIC_SORT_ALIASES) + 1 : maximumRows + 1;
-        List<Map<String,Object>> rows = queryAliasRows(connection, request, queryLimit, 0, null);
+        int queryLimit = metricProcessing ? Math.min(maximumRows, MAX_METRIC_QUERY_ALIASES) + 1 : maximumRows + 1;
+        List<Map<String,Object>> rows = queryAliasRows(connection, request, queryLimit, 0, null, true);
 
-        if(metricProcessing && rows.size() > MAX_METRIC_SORT_ALIASES)
+        if(metricProcessing && rows.size() > MAX_METRIC_QUERY_ALIASES)
         {
             throw new StatsApiException(413, "Metric-filtered alias query exceeds the " +
-                MAX_METRIC_SORT_ALIASES + " row limit");
+                MAX_METRIC_QUERY_ALIASES + " row limit");
         }
 
         if(rows.size() <= maximumRows)
         {
-            enrich(connection, rows, false);
+            enrichBatches(connection, rows);
             applyMetricFilters(rows, request);
 
             if(metricSortField(request) != null)
@@ -361,7 +363,9 @@ final class StatsAliasCatalog
     }
 
     private static List<Map<String,Object>> queryAliasRows(Connection connection, StatsRequest request, int limit,
-                                                            int offset, Long aliasId) throws SQLException
+                                                            int offset, Long aliasId,
+                                                            boolean includeConfigurationCollections)
+        throws SQLException
     {
         StringBuilder sql = new StringBuilder("""
             SELECT alias.id AS alias_id, alias.alias_list_id, alias_list.name AS alias_list_name,
@@ -412,8 +416,11 @@ final class StatsAliasCatalog
         parameters.add(limit);
         parameters.add(offset);
         List<Map<String,Object>> rows = queryRows(connection, sql.toString(), parameters.toArray());
-        attachBroadcastChannels(connection, rows);
-        attachScanLists(connection, rows);
+
+        if(includeConfigurationCollections)
+        {
+            attachConfigurationCollections(connection, rows);
+        }
 
         for(Map<String,Object> row: rows)
         {
@@ -421,6 +428,13 @@ final class StatsAliasCatalog
         }
 
         return rows;
+    }
+
+    private static void attachConfigurationCollections(Connection connection, List<Map<String,Object>> aliases)
+        throws SQLException
+    {
+        attachBroadcastChannels(connection, aliases);
+        attachScanLists(connection, aliases);
     }
 
     private static void attachBroadcastChannels(Connection connection, List<Map<String,Object>> aliases)
@@ -812,6 +826,30 @@ final class StatsAliasCatalog
         }
 
         return ENRICHMENT_ADMISSION.execute(() -> enrichAdmitted(connection, aliases, includeBreakdown));
+    }
+
+    /**
+     * Metric sorting, filtering, and export must examine every matching alias before applying response pagination or
+     * CSV limits. Keep each enrichment working set bounded while allowing a normal large Alias List to be processed
+     * sequentially.
+     */
+    private void enrichBatches(Connection connection, List<Map<String,Object>> aliases) throws SQLException
+    {
+        if(aliases.isEmpty())
+        {
+            return;
+        }
+
+        ENRICHMENT_ADMISSION.execute(() -> {
+            for(int start = 0; start < aliases.size(); start += MAX_ENRICH_ALIASES)
+            {
+                List<Map<String,Object>> batch = aliases.subList(start,
+                    Math.min(start + MAX_ENRICH_ALIASES, aliases.size()));
+                enrichAdmitted(connection, batch, false);
+            }
+
+            return null;
+        });
     }
 
     private Map<Long,List<Map<String,Object>>> enrichAdmitted(Connection connection,

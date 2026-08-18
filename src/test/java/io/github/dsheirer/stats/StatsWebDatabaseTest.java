@@ -381,6 +381,58 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void sortsAndFiltersMetricsAcrossMoreThanOneBoundedAliasBatch() throws Exception
+    {
+        int aliasCount = 6_627;
+        int firstAliasId = 10_000;
+        int busiestTalkgroup = firstAliasId + aliasCount - 1;
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            PreparedStatement aliases = connection.prepareStatement("""
+                INSERT INTO alias(id, alias_list_id, name, matcher_type, protocol, value)
+                VALUES (?, 1, ?, 'TALKGROUP', 'APCO25', ?)
+                """))
+        {
+            connection.setAutoCommit(false);
+
+            for(int offset = 0; offset < aliasCount; offset++)
+            {
+                int identity = firstAliasId + offset;
+                aliases.setInt(1, identity);
+                aliases.setString(2, "Bulk Alias %04d".formatted(offset));
+                aliases.setInt(3, identity);
+                aliases.addBatch();
+            }
+
+            aliases.executeBatch();
+
+            try(PreparedStatement evidence = connection.prepareStatement("""
+                INSERT INTO trunked_identity_summary (
+                    scope_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms, call_count
+                ) VALUES (1, 1, ?, 3000, 4000, 99)
+                """))
+            {
+                evidence.setInt(1, busiestTalkgroup);
+                evidence.executeUpdate();
+            }
+
+            connection.commit();
+        }
+
+        Map<String,Object> sorted = mDatabase.aliases(request(
+            "/api/v1/aliases?list=1&type=talkgroup&q=Bulk&sort=call_count&direction=desc&limit=25"));
+        assertEquals("Bulk Alias 6626", rows(sorted).getFirst().get("name"));
+        assertEquals(99L, number(rows(sorted).getFirst().get("call_count")));
+        assertTrue((Boolean)sorted.get("hasMore"));
+
+        Map<String,Object> filtered = mDatabase.aliases(request(
+            "/api/v1/aliases?list=1&type=talkgroup&q=Bulk&use=used&sort=call_count&direction=desc"));
+        assertEquals(List.of("Bulk Alias 6626"),
+            rows(filtered).stream().map(row -> row.get("name")).toList());
+        assertFalse((Boolean)filtered.get("hasMore"));
+    }
+
+    @Test
     void sortsAliasCallCountsWithoutMaterializingHighFanoutRelationshipsAndAffiliations() throws Exception
     {
         int fanout = StatsAliasCatalog.MAX_EVIDENCE_ROWS + 1;
