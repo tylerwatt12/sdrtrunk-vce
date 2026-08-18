@@ -12,36 +12,21 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 
-class StatsWebReceiverLocationAndFrequencyActionsUiContractTest
+class StatsWebFrequencyActionsUiContractTest
 {
     private static final Path APP_JAVASCRIPT = Path.of("stats-web", "assets", "app.js");
     private static final Path APP_CSS = Path.of("stats-web", "assets", "app.css");
 
     @Test
-    void configuresOneReceiverLocationFromBrowserOrManualCoordinates() throws Exception
+    void webSettingsRenderTheRadioReferenceLookupRegionDirectly() throws Exception
     {
         String source = Files.readString(APP_JAVASCRIPT);
-        String settings = block(source, "async function renderAdminSettings()");
         String admin = block(source, "async function renderAdmin()");
-        String viewAllowed = block(source, "function viewAllowed(view)");
+        String settings = block(source, "async function renderAdminRadioReferenceSettings()");
 
-        assertTrue(source.contains("ADMIN_SETTINGS: 'admin-settings'"));
-        assertTrue(viewAllowed.contains("capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_SETTINGS)"));
         assertTrue(admin.contains("id: 'settings', label: 'Web Settings'"));
-        assertTrue(admin.contains("ACCESS_CAPABILITIES.ADMIN_SETTINGS"));
-        assertTrue(admin.contains("await renderAdminSettings()"));
-        assertTrue(settings.contains("requestJson('/api/v1/admin/receiver-location', { csrf: false })"));
-        assertTrue(settings.contains("method: 'PUT'"));
-        assertTrue(settings.contains("method: 'DELETE'"));
-        assertTrue(settings.contains("navigator.geolocation.getCurrentPosition"));
-        assertTrue(settings.contains("window.isSecureContext"));
-        assertTrue(settings.contains("Use Browser Location"));
-        assertTrue(settings.contains("Save Receiver Location"));
-        assertTrue(settings.contains("receiverLocationField('latitude', 'Latitude', -90, 90"));
-        assertTrue(settings.contains("receiverLocationField('longitude', 'Longitude', -180, 180"));
-        assertTrue(settings.contains("enableHighAccuracy: false"));
-        assertTrue(settings.contains("maximumAge: 300_000"));
-        assertTrue(settings.contains("await renderAdminRadioReferenceSettings()"));
+        assertTrue(admin.contains("await renderAdminRadioReferenceSettings()"));
+        assertTrue(settings.contains("Choose the state used for exact-frequency searches."));
     }
 
     @Test
@@ -108,7 +93,7 @@ class StatsWebReceiverLocationAndFrequencyActionsUiContractTest
     }
 
     @Test
-    void stylesResponsiveLocationAndDisabledFutureActions() throws Exception
+    void stylesResponsiveRadioReferenceResultsAndDisabledFutureActions() throws Exception
     {
         String css = Files.readString(APP_CSS);
         assertTrue(css.contains(".admin-settings-form"));

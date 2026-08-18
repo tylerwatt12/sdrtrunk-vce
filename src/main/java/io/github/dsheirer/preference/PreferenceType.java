@@ -34,7 +34,6 @@ public enum PreferenceType
     MP3,
     NOW_PLAYING,
     RADIO_REFERENCE,
-    RECEIVER_LOCATION,
     RECORD,
     TALKGROUP_FORMAT,
     TUNER,

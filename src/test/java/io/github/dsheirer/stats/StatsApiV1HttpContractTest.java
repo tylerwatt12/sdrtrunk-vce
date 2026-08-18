@@ -268,7 +268,6 @@ class StatsApiV1HttpContractTest
             Map.entry("LIVE_MULTIPLEX", "/api/v1/live/multiplex"),
             Map.entry("LIVE_MULTIPLEX_CONTROL", "/api/v1/live/multiplex/control"),
             Map.entry("CALLS", "/api/v1/calls"),
-            Map.entry("RECEIVER_LOCATION", "/api/v1/admin/receiver-location"),
             Map.entry("RADIO_REFERENCE", "/api/v1/admin/radioreference")
         );
         Map<String,String> actual = new LinkedHashMap<>();

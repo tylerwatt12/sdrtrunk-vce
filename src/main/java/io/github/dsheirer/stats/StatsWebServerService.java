@@ -60,7 +60,6 @@ import io.github.dsheirer.web.http.ApiHttpResponse;
 import io.github.dsheirer.web.http.ApiRequestDecoder;
 import io.github.dsheirer.web.http.EmbeddedHttpServerPolicy;
 import io.github.dsheirer.web.http.EmbeddedHttpServerShutdown;
-import io.github.dsheirer.web.http.ReceiverLocationHttpController;
 import io.github.dsheirer.web.http.RadioReferenceHttpController;
 import io.github.dsheirer.web.http.WebAccessHttpController;
 import io.github.dsheirer.web.http.WebCallConfigurationHttpController;
@@ -676,20 +675,6 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
                 mWebCallService::status);
         server.createContext(WebCallConfigurationHttpController.PATH, mWebAccessHttpController.protectApi(
             WebCapability.ADMIN_AUDIO, webCallConfigurationController::handle));
-
-        ReceiverLocationHttpController receiverLocationController = new ReceiverLocationHttpController(
-            () -> mUserPreferences.getReceiverLocationPreference().getReceiverLocation(), location -> {
-                if(location.isPresent())
-                {
-                    mUserPreferences.getReceiverLocationPreference().setReceiverLocation(location.get());
-                }
-                else
-                {
-                    mUserPreferences.getReceiverLocationPreference().clearReceiverLocation();
-                }
-            });
-        server.createContext(ReceiverLocationHttpController.PATH, mWebAccessHttpController.protectApi(
-            WebCapability.ADMIN_SETTINGS, receiverLocationController::handle));
 
         RadioReferenceHttpController radioReferenceController = new RadioReferenceHttpController(
             mRadioReferenceDirectoryService, mUserPreferences.getRadioReferencePreference());

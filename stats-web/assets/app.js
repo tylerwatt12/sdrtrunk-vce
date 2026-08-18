@@ -11978,124 +11978,6 @@ async function renderAdminScanLists() {
   content.append(section('Scan-list management', body, actions));
 }
 
-function receiverLocationField(name, label, minimum, maximum, value) {
-  const input = node('input');
-  input.type = 'number';
-  input.name = name;
-  input.required = true;
-  input.step = 'any';
-  input.min = String(minimum);
-  input.max = String(maximum);
-  input.inputMode = 'decimal';
-  input.autocomplete = 'off';
-  input.value = Number.isFinite(Number(value)) ? String(value) : '';
-  return formField(label, input, `${minimum} to ${maximum} decimal degrees.`);
-}
-
-function browserLocationError(error) {
-  if (error?.code === 1) return 'Browser location permission was denied. You can enter coordinates manually.';
-  if (error?.code === 2) return 'This browser could not determine its location. You can enter coordinates manually.';
-  if (error?.code === 3) return 'Browser location timed out. Try again or enter coordinates manually.';
-  return 'Browser location is unavailable. You can enter coordinates manually.';
-}
-
-async function renderAdminSettings() {
-  const response = await requestJson('/api/v1/admin/receiver-location', { csrf: false });
-  let configured = response?.configured === true;
-  const form = node('form', 'admin-form admin-settings-form receiver-location-form');
-  const latitudeField = receiverLocationField('latitude', 'Latitude', -90, 90, response?.latitude);
-  const longitudeField = receiverLocationField('longitude', 'Longitude', -180, 180, response?.longitude);
-  const latitude = latitudeField.querySelector('input');
-  const longitude = longitudeField.querySelector('input');
-  const message = node('div', 'admin-form-message');
-  message.setAttribute('role', 'status');
-  message.textContent = configured ? 'Receiver location is configured.' : 'Receiver location is not configured.';
-  const useBrowser = node('button', 'secondary', 'Use Browser Location');
-  useBrowser.type = 'button';
-  const clear = node('button', 'secondary danger-outline', 'Clear Location');
-  clear.type = 'button';
-  clear.disabled = !configured;
-  const save = node('button', '', 'Save Receiver Location');
-  save.type = 'submit';
-  const actions = node('div', 'admin-form-actions');
-  actions.append(useBrowser, clear, save);
-  form.append(node('h3', 'admin-settings-form-title', 'Coordinates'),
-    latitudeField, longitudeField, message, actions);
-
-  form.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    if (!form.reportValidity() || save.disabled) return;
-    save.disabled = true;
-    message.textContent = 'Saving receiver location…';
-    try {
-      const updated = await requestJson('/api/v1/admin/receiver-location', {
-        method: 'PUT', body: { latitude: Number(latitude.value), longitude: Number(longitude.value) }
-      });
-      configured = updated?.configured === true;
-      clear.disabled = !configured;
-      message.textContent = 'Receiver location saved.';
-    } catch (error) {
-      message.textContent = error.message;
-    } finally {
-      save.disabled = false;
-    }
-  });
-
-  clear.addEventListener('click', async () => {
-    if (clear.disabled) return;
-    clear.disabled = true;
-    save.disabled = true;
-    useBrowser.disabled = true;
-    message.textContent = 'Clearing receiver location…';
-    try {
-      await requestJson('/api/v1/admin/receiver-location', { method: 'DELETE' });
-      configured = false;
-      latitude.value = '';
-      longitude.value = '';
-      message.textContent = 'Receiver location cleared.';
-    } catch (error) {
-      clear.disabled = false;
-      message.textContent = error.message;
-    } finally {
-      save.disabled = false;
-      useBrowser.disabled = false;
-    }
-  });
-
-  useBrowser.addEventListener('click', () => {
-    if (!navigator.geolocation) {
-      message.textContent = 'This browser does not provide geolocation. Enter coordinates manually.';
-      return;
-    }
-    if (!window.isSecureContext) {
-      message.textContent = 'Browser location requires HTTPS or a localhost connection.';
-      return;
-    }
-    useBrowser.disabled = true;
-    message.textContent = 'Requesting this browser’s location…';
-    navigator.geolocation.getCurrentPosition((position) => {
-      latitude.value = Number(position.coords.latitude).toFixed(6);
-      longitude.value = Number(position.coords.longitude).toFixed(6);
-      const accuracy = Number(position.coords.accuracy);
-      message.textContent = Number.isFinite(accuracy) ?
-        `Browser location filled (approximately ${number(Math.round(accuracy))} m accuracy). Save to apply it.` :
-        'Browser location filled. Save to apply it.';
-      useBrowser.disabled = false;
-    }, (error) => {
-      message.textContent = browserLocationError(error);
-      useBrowser.disabled = false;
-    }, { enableHighAccuracy: false, timeout: 10_000, maximumAge: 300_000 });
-  });
-
-  const body = node('div', 'admin-section-body receiver-location-settings');
-  body.append(node('p', 'admin-section-intro',
-    'Set the physical receiver location. Use this browser’s location or enter decimal latitude and longitude. ' +
-    'The coordinates are saved with the receiver’s portable settings and are available to future location-aware ' +
-    'RadioReference lookup and import features.'), form);
-  content.append(section('Receiver location', body));
-  await renderAdminRadioReferenceSettings();
-}
-
 function radioReferenceAccountMessage(account) {
   const state = String(account?.state || 'SIGNED_OUT');
   const userName = String(account?.user_name || '').trim();
@@ -12630,7 +12512,7 @@ async function renderAdmin() {
     'Monitor receiver health and manage receiver, scan-list, browser-audio, user, and access settings'),
     tabs(availableTabs.map((item) => ({ ...item, href: href('admin', { tab: item.id }) })), active));
   if (active === 'health') await renderAdminHealth();
-  else if (active === 'settings') await renderAdminSettings();
+  else if (active === 'settings') await renderAdminRadioReferenceSettings();
   else if (active === 'scan-lists') await renderAdminScanLists();
   else if (active === 'web-audio') await renderAdminWebAudio();
   else if (active === 'access') await renderAdminAccess();
