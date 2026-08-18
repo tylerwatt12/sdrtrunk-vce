@@ -177,7 +177,7 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
             return;
         }
 
-        if(!getBroadcastConfiguration().isCallsAndMetadata())
+        if(!getBroadcastConfiguration().isCallUploadEnabled())
         {
             audioRecording.removePendingReplay();
             return;
@@ -194,7 +194,7 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
     @Override
     public void receiveSiteMetadata(SiteMetadataEvent event)
     {
-        if(event == null || !event.isUseful())
+        if(!getBroadcastConfiguration().isSiteMetadataEnabled() || event == null || !event.isUseful())
         {
             return;
         }
@@ -247,6 +247,11 @@ public class RadioResolveBroadcaster extends AbstractAudioBroadcaster<RadioResol
     {
         try
         {
+            if(!getBroadcastConfiguration().isSiteMetadataEnabled())
+            {
+                return;
+            }
+
             JsonObject payload = createSiteMetadataPayload(event, hash, getBroadcastConfiguration(), observedAt);
             HttpRequest request = HttpRequest.newBuilder()
                 .uri(createUri(getBroadcastConfiguration().getHost(), RF_STATE_PATH))

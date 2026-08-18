@@ -11,6 +11,7 @@
 
 package io.github.dsheirer.audio.broadcast.radioresolve;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.audio.broadcast.BroadcastFormat;
 import io.github.dsheirer.audio.broadcast.BroadcastServerType;
@@ -44,11 +45,12 @@ public class RadioResolveConfiguration extends BroadcastConfiguration
     private IntegerProperty mConcurrentUploads = new SimpleIntegerProperty(DEFAULT_CONCURRENT_UPLOADS);
 
     /**
-     * RadioResolve publish mode.  Metadata is always required.
+     * RadioResolve call and site-metadata publishing mode.
      */
     public enum Mode
     {
         CALLS_AND_METADATA("Calls + Metadata"),
+        CALLS_ONLY("Calls Only"),
         METADATA_ONLY("Metadata Only");
 
         private final String mLabel;
@@ -180,9 +182,18 @@ public class RadioResolveConfiguration extends BroadcastConfiguration
         mMode.set(mode != null ? mode : Mode.CALLS_AND_METADATA);
     }
 
-    public boolean isCallsAndMetadata()
+    @JsonIgnore
+    public boolean isCallUploadEnabled()
     {
-        return getMode() == Mode.CALLS_AND_METADATA;
+        Mode mode = getMode();
+        return mode == Mode.CALLS_AND_METADATA || mode == Mode.CALLS_ONLY;
+    }
+
+    @JsonIgnore
+    public boolean isSiteMetadataEnabled()
+    {
+        Mode mode = getMode();
+        return mode == Mode.CALLS_AND_METADATA || mode == Mode.METADATA_ONLY;
     }
 
     public int getConcurrentUploads()

@@ -78,6 +78,7 @@ class ConfigurationDatabaseStoreTest
         stream.setHost("https://example.invalid/upload");
         stream.setApiKey("test-api-key");
         stream.setNodeName("TEST-NODE");
+        stream.setMode(RadioResolveConfiguration.Mode.CALLS_ONLY);
         stream.setEnabled(true);
 
         ConfigurationState state = new ConfigurationState();
@@ -118,6 +119,7 @@ class ConfigurationDatabaseStoreTest
         assertEquals("https://example.invalid/upload", loadedRadioResolve.getHost());
         assertEquals("test-api-key", loadedRadioResolve.getApiKey());
         assertEquals("TEST-NODE", loadedRadioResolve.getNodeName());
+        assertEquals(RadioResolveConfiguration.Mode.CALLS_ONLY, loadedRadioResolve.getMode());
         assertTrue(loadedRadioResolve.isEnabled());
 
         try(Connection connection = SdrTrunkDatabase.open(database);
@@ -143,7 +145,9 @@ class ConfigurationDatabaseStoreTest
             }
 
             try(ResultSet resultSet = statement.executeQuery("""
-                SELECT server_type, enabled, host, port
+                SELECT server_type, enabled, host, port, json_extract(config_json, '$.mode') AS mode,
+                       json_type(config_json, '$.callUploadEnabled') AS call_upload_enabled,
+                       json_type(config_json, '$.siteMetadataEnabled') AS site_metadata_enabled
                 FROM configuration_broadcast_stream
                 """))
             {
@@ -152,6 +156,9 @@ class ConfigurationDatabaseStoreTest
                 assertEquals(1, resultSet.getInt("enabled"));
                 assertEquals("https://example.invalid/upload", resultSet.getString("host"));
                 assertEquals(80, resultSet.getInt("port"));
+                assertEquals("CALLS_ONLY", resultSet.getString("mode"));
+                assertNull(resultSet.getString("call_upload_enabled"));
+                assertNull(resultSet.getString("site_metadata_enabled"));
             }
         }
     }
