@@ -36,6 +36,9 @@ import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.Statement;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -68,6 +71,7 @@ class StatsApiV1HttpContractTest
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
         Files.createDirectories(database.getParent());
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        seedSystemDirectory(database);
         Path assets = mTemporaryDirectory.resolve("assets");
         Files.createDirectories(assets);
         Files.writeString(assets.resolve("index.html"), "<!doctype html>" +
@@ -149,6 +153,26 @@ class StatsApiV1HttpContractTest
         assertEquals(0, systems.at("/meta/offset").intValue(), systemsResponse.body());
         assertTrue(systems.at("/meta/has_more").isBoolean(), systemsResponse.body());
         assertFalse(systems.at("/meta").has("hasMore"), systemsResponse.body());
+        assertFalse(systems.at("/data/0").has("site_preview"), systemsResponse.body());
+
+        HttpResponse<String> systemPreviewResponse = get(StatsApiV1.SYSTEMS +
+            "?include_site_preview=true&limit=25");
+        assertEquals(200, systemPreviewResponse.statusCode(), systemPreviewResponse.body());
+        JsonNode systemPreview = OBJECT_MAPPER.readTree(systemPreviewResponse.body());
+        assertTrue(systemPreview.get("data").isArray(), systemPreviewResponse.body());
+        assertEquals(StatsWebDatabase.MAXIMUM_SYSTEM_DIRECTORY_SITE_PREVIEW,
+            systemPreview.at("/meta/site_preview_limit_per_system").intValue(),
+            systemPreviewResponse.body());
+        assertTrue(systemPreview.at("/data/0/site_preview").isArray(), systemPreviewResponse.body());
+        assertEquals(1, systemPreview.at("/data/0/site_preview").size(), systemPreviewResponse.body());
+        assertFalse(systemPreview.at("/data/0/site_preview_truncated").booleanValue(),
+            systemPreviewResponse.body());
+        JsonNode previewSite = systemPreview.at("/data/0/site_preview/0");
+        assertEquals("p25", previewSite.path("protocol").textValue(), systemPreviewResponse.body());
+        assertEquals("trunked", previewSite.path("site_kind").textValue(), systemPreviewResponse.body());
+        assertEquals(2, previewSite.path("site_id").intValue(), systemPreviewResponse.body());
+        assertFalse(previewSite.has("scope_id"), systemPreviewResponse.body());
+        assertFalse(previewSite.has("protocol_code"), systemPreviewResponse.body());
 
         HttpResponse<String> aliasesResponse = get(StatsApiV1.ALIAS_LISTS + "?limit=1");
         assertEquals(200, aliasesResponse.statusCode(), aliasesResponse.body());
@@ -181,6 +205,13 @@ class StatsApiV1HttpContractTest
 
         HttpResponse<String> unbounded = get(StatsApiV1.SYSTEMS + "?limit=501");
         assertStructuredError(unbounded, 400, "invalid_parameter", "limit");
+
+        HttpResponse<String> invalidPreview = get(StatsApiV1.SYSTEMS + "?include_site_preview=maybe");
+        assertStructuredError(invalidPreview, 400, "invalid_parameter", "include_site_preview");
+
+        HttpResponse<String> oversizedPreviewPage = get(StatsApiV1.SYSTEMS +
+            "?include_site_preview=true&limit=26");
+        assertStructuredError(oversizedPreviewPage, 400, "invalid_parameter", "limit");
 
         HttpResponse<String> invalidAffiliated = get(StatsApiV1.SYSTEMS +
             "/p25%3A00001%3A047/radios?affiliated=maybe");
@@ -412,6 +443,32 @@ class StatsApiV1HttpContractTest
 
     private record MultiplexFrame(int kind, int topic, JsonNode json)
     {
+    }
+
+    private static void seedSystemDirectory(Path database) throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("INSERT INTO p25_system VALUES (1, 1, 71, 1000, 2000)");
+            statement.executeUpdate("""
+                INSERT INTO receiver_context (
+                    id, context_key, guid, kind_code, protocol_code, channel_name, decoder,
+                    first_seen_ms, last_seen_ms, system_key, rfss, site, current_control_hz
+                ) VALUES (1, 'http-site', 'http-site-guid', 1, 1, 'HTTP Site', 'P25-1',
+                    1000, 2000, 1, 1, 2, 851012500)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO trunked_identity_scope (
+                    scope_id, scope_token, protocol_code, scope_kind_code, identity_domain_code,
+                    p25_system_key, first_seen_ms, last_seen_ms
+                ) VALUES (1, 'p25:00001:047', 1, 1, 0, 1, 1000, 2000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO trunked_identity_scope_context (scope_id, context_id, first_seen_ms, last_seen_ms)
+                VALUES (1, 1, 1000, 2000)
+                """);
+        }
     }
 
     private HttpResponse<String> get(String path) throws Exception

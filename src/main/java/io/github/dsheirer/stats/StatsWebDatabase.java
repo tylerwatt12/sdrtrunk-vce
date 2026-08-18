@@ -61,6 +61,8 @@ class StatsWebDatabase
     static final int MAXIMUM_ACTIVITY_EVENT_BATCH = 500;
     static final int MAXIMUM_ACTIVITY_EVENT_MEMBERS = 64;
     static final int MAXIMUM_SYSTEM_ACTIVITY_CONTEXTS = 200;
+    static final int MAXIMUM_SYSTEM_DIRECTORY_WITH_SITE_PREVIEW = 25;
+    static final int MAXIMUM_SYSTEM_DIRECTORY_SITE_PREVIEW = 25;
     private static final int ACTIVITY_ANALYTICS_SLICE_LIMIT = 5_000;
     private static final int ACTIVITY_ANALYTICS_SCAN_LIMIT = 5_000;
     private static final int ACTIVITY_ANALYTICS_ROW_LIMIT = 200;
@@ -85,6 +87,15 @@ class StatsWebDatabase
                 WHERE radres_guid IS NOT NULL
             ) ranked_configuration
             WHERE configuration_rank = 1
+        )
+        """;
+    private static final String MATCHING_CONFIGURATION_GUID_CTE = """
+        matching_configuration_guid AS MATERIALIZED (
+            SELECT DISTINCT radres_guid
+            FROM configuration_channel
+            WHERE radres_guid IS NOT NULL
+              AND lower(coalesce(system_name, '') || ' ' || coalesce(site_name, '') || ' ' ||
+                  coalesce(name, '')) LIKE ?
         )
         """;
     static final String DASHBOARD_CALL_ACTIVITY_SQL = """
@@ -1602,12 +1613,24 @@ class StatsWebDatabase
 
     Map<String,Object> systemDirectory(StatsRequest request)
     {
-        return read(connection -> {
-            StringBuilder sql = new StringBuilder("WITH scoped AS (")
-                .append(scopeSummarySelect()).append(") SELECT * FROM scoped WHERE 1=1");
-            List<Object> parameters = new ArrayList<>();
+        boolean includeSitePreview = request.booleanValue("include_site_preview", false);
+        int limit = includeSitePreview ? request.limit(MAXIMUM_SYSTEM_DIRECTORY_WITH_SITE_PREVIEW) : request.limit();
+        int offset = request.offset();
+        String search = request.search();
 
-            if(request.search() != null)
+        return readSnapshot(connection -> {
+            List<Object> parameters = new ArrayList<>();
+            StringBuilder sql = new StringBuilder("WITH ");
+
+            if(search != null)
+            {
+                sql.append(MATCHING_CONFIGURATION_GUID_CTE).append(",\n");
+                parameters.add(like(search));
+            }
+
+            sql.append("scoped AS (").append(scopeSummarySelect()).append(") SELECT * FROM scoped WHERE 1=1");
+
+            if(search != null)
             {
                 sql.append("""
                      AND (lower(protocol || ' ' || scope_token || ' ' ||
@@ -1621,40 +1644,51 @@ class StatsWebDatabase
                            SELECT 1
                            FROM trunked_identity_scope_context ownership
                            JOIN receiver_context context ON context.id = ownership.context_id
-                           LEFT JOIN p25_site_snapshot p25 ON p25.guid = context.guid
-                           LEFT JOIN trunked_site_snapshot trunked ON trunked.guid = context.guid
-                           LEFT JOIN configuration_channel config ON config.radres_guid = context.guid
+                           LEFT JOIN p25_site_snapshot p25
+                             ON scoped.protocol_code = 1 AND p25.guid = context.guid
+                           LEFT JOIN trunked_site_snapshot trunked
+                             ON scoped.protocol_code IN (3, 4) AND trunked.guid = context.guid
+                           LEFT JOIN matching_configuration_guid matching_config
+                             ON matching_config.radres_guid = context.guid
                            WHERE ownership.scope_id = scoped.scope_id
-                             AND lower(coalesce(context.guid, '') || ' ' ||
+                             AND (lower(coalesce(context.guid, '') || ' ' ||
                                  coalesce(context.channel_name, '') || ' ' ||
                                  coalesce(p25.channel_name, '') || ' ' ||
                                  coalesce(trunked.channel_name, '') || ' ' ||
                                  coalesce(trunked.configured_system, '') || ' ' ||
-                                 coalesce(config.system_name, '') || ' ' ||
-                                 coalesce(config.site_name, '') || ' ' ||
-                                 coalesce(config.name, '') || ' ' ||
                                  coalesce(CAST(trunked.network_id AS TEXT), '') || ' ' ||
                                  coalesce(CAST(trunked.system_id AS TEXT), '') || ' ' ||
                                  coalesce(CAST(trunked.site_id AS TEXT), '') || ' ' ||
                                  coalesce(CAST(trunked.ran AS TEXT), '') || ' ' ||
                                  coalesce(CAST(p25.rfss AS TEXT), '') || ' ' ||
-                                 coalesce(CAST(p25.site AS TEXT), '')) LIKE ?))
+                                 coalesce(CAST(p25.site AS TEXT), '')) LIKE ?
+                                 OR matching_config.radres_guid IS NOT NULL)))
                     """);
-                String like = like(request.search());
+                String like = like(search);
                 parameters.add(like);
                 parameters.add(like);
             }
 
             sql.append(" ORDER BY ").append(order(request, SYSTEM_SORT_COLUMNS, "last_seen"))
                 .append(", scope_token LIMIT ? OFFSET ?");
-            addPageParameters(parameters, request);
+            addLimitOffset(parameters, limit + 1, offset);
             List<Map<String,Object>> parentRows = queryRows(connection, sql.toString(), parameters.toArray());
-            for(Map<String,Object> system: parentRows)
+            Map<String,Object> response = page(parentRows, limit, offset);
+            @SuppressWarnings("unchecked")
+            List<Map<String,Object>> pageRows = (List<Map<String,Object>>)response.get("rows");
+
+            for(Map<String,Object> system: pageRows)
             {
                 system.put("capabilities", systemCapabilities((int)number(system.get("protocol_code"))));
             }
 
-            return page(parentRows, request);
+            if(includeSitePreview)
+            {
+                attachSystemDirectorySitePreviews(connection, pageRows, search);
+                response.put("sitePreviewLimitPerSystem", MAXIMUM_SYSTEM_DIRECTORY_SITE_PREVIEW);
+            }
+
+            return response;
         });
     }
 
@@ -3998,10 +4032,20 @@ class StatsWebDatabase
             ") SELECT * FROM scoped WHERE scope_token = ?", scopeToken), "System not found");
     }
 
-    private static List<Map<String,Object>> queryScopeSites(Connection connection, long scopeId, StatsRequest request)
-        throws SQLException
+    private static String selectedScopesCte(int scopeCount)
     {
-        StringBuilder sql = new StringBuilder("WITH " + FIRST_CONFIGURATION_CHANNEL_CTE + """
+        if(scopeCount < 1 || scopeCount > StatsRequest.MAX_LIMIT)
+        {
+            throw new IllegalArgumentException("Scope count is invalid");
+        }
+
+        String requestedScopes = String.join(", ", java.util.Collections.nCopies(scopeCount, "(?)"));
+        return "WITH requested_scopes(scope_id) AS (VALUES " + requestedScopes + ")";
+    }
+
+    private static String scopedSitesCte(int scopeCount)
+    {
+        return selectedScopesCte(scopeCount) + ",\n" + FIRST_CONFIGURATION_CHANNEL_CTE + """
             , scoped_sites AS (
                 SELECT scope.scope_id, scope.scope_token, 1 AS protocol_code, 'P25' AS protocol,
                     'trunked' AS site_kind, context.guid, scope.p25_system_key AS system_key,
@@ -4029,11 +4073,12 @@ class StatsWebDatabase
                     (SELECT COUNT(*) FROM p25_site_patch_group patch
                      WHERE patch.guid = context.guid) AS patches
                 FROM trunked_identity_scope_context ownership
+                JOIN requested_scopes requested ON requested.scope_id = ownership.scope_id
                 JOIN trunked_identity_scope scope ON scope.scope_id = ownership.scope_id
                 JOIN receiver_context context ON context.id = ownership.context_id
                 LEFT JOIN p25_site_snapshot site ON site.guid = context.guid
                 LEFT JOIN p25_system system ON system.system_key = scope.p25_system_key
-                WHERE ownership.scope_id = ? AND scope.protocol_code = 1
+                WHERE scope.protocol_code = 1
 
                 UNION ALL
 
@@ -4061,17 +4106,25 @@ class StatsWebDatabase
                      WHERE neighbor.guid = context.guid) AS neighbors,
                     0 AS bands, 0 AS patches
                 FROM trunked_identity_scope_context ownership
+                JOIN requested_scopes requested ON requested.scope_id = ownership.scope_id
                 JOIN trunked_identity_scope scope ON scope.scope_id = ownership.scope_id
                 JOIN receiver_context context ON context.id = ownership.context_id
                 LEFT JOIN trunked_site_snapshot site ON site.guid = context.guid
-                WHERE ownership.scope_id = ? AND scope.protocol_code IN (3, 4)
+                WHERE scope.protocol_code IN (3, 4)
             )
+            """;
+    }
+
+    private static List<Map<String,Object>> queryScopeSites(Connection connection, long scopeId, StatsRequest request)
+        throws SQLException
+    {
+        StringBuilder sql = new StringBuilder(scopedSitesCte(1)).append("""
             SELECT scoped_sites.*, config.configured_site, config.configured_name
             FROM scoped_sites
             LEFT JOIN first_configuration_channel config ON config.radres_guid = scoped_sites.guid
             WHERE 1=1
             """);
-        List<Object> parameters = new ArrayList<>(List.of(scopeId, scopeId));
+        List<Object> parameters = new ArrayList<>(List.of(scopeId));
 
         if(request.search() != null)
         {
@@ -4088,6 +4141,142 @@ class StatsWebDatabase
         parameters.add(request.limit() + 1);
         parameters.add(request.offset());
         return queryRows(connection, sql.toString(), parameters.toArray());
+    }
+
+    private static void attachSystemDirectorySitePreviews(Connection connection,
+                                                           List<Map<String,Object>> systems,
+                                                           String search) throws SQLException
+    {
+        if(systems.isEmpty())
+        {
+            return;
+        }
+
+        List<Object> parameters = new ArrayList<>(systems.size() + (search != null ? 4 : 2));
+        systems.forEach(system -> parameters.add(number(system.get("scope_id"))));
+        StringBuilder sql = new StringBuilder(selectedScopesCte(systems.size()))
+            .append(",\n").append(FIRST_CONFIGURATION_CHANNEL_CTE);
+
+        if(search != null)
+        {
+            sql.append(",\n").append(MATCHING_CONFIGURATION_GUID_CTE);
+        }
+
+        sql.append("""
+            , site_preview_candidate AS (
+                SELECT ownership.scope_id, scope.protocol_code,
+                    CASE scope.protocol_code WHEN 1 THEN 'P25' WHEN 3 THEN 'DMR'
+                        WHEN 4 THEN 'NXDN' ELSE 'Unknown' END AS protocol,
+                    context.guid,
+                    CASE WHEN scope.protocol_code = 1 THEN system.wacn END AS wacn,
+                    CASE WHEN scope.protocol_code = 1 THEN system.system_id ELSE trunked.system_id END AS system_id,
+                    trunked.configured_system,
+                    coalesce(p25.channel_name, trunked.channel_name, context.channel_name) AS channel_name,
+                    CASE WHEN scope.protocol_code = 1 THEN coalesce(p25.rfss, context.rfss) END AS rfss,
+                    CASE WHEN scope.protocol_code = 1 THEN coalesce(p25.site, context.site)
+                        ELSE trunked.site_id END AS site_id,
+                    CASE WHEN scope.protocol_code IN (3, 4) THEN trunked.ran END AS ran,
+                    coalesce(p25.current_control_hz, trunked.current_control_hz,
+                        context.current_control_hz) AS current_control_hz,
+                    coalesce(p25.last_seen_ms, trunked.last_seen_ms, context.last_seen_ms) AS last_seen_ms,
+            """);
+
+        if(search != null)
+        {
+            sql.append("""
+                    CASE WHEN lower(coalesce(context.guid, '') || ' ' ||
+                        coalesce(context.channel_name, '') || ' ' ||
+                        coalesce(p25.channel_name, '') || ' ' ||
+                        coalesce(trunked.channel_name, '') || ' ' ||
+                        coalesce(trunked.configured_system, '') || ' ' ||
+                        coalesce(CAST(trunked.network_id AS TEXT), '') || ' ' ||
+                        coalesce(CAST(trunked.system_id AS TEXT), '') || ' ' ||
+                        coalesce(CAST(trunked.site_id AS TEXT), '') || ' ' ||
+                        coalesce(CAST(trunked.ran AS TEXT), '') || ' ' ||
+                        coalesce(CAST(p25.rfss AS TEXT), '') || ' ' ||
+                        coalesce(CAST(p25.site AS TEXT), '')) LIKE ?
+                        OR matching_config.radres_guid IS NOT NULL
+                        THEN 1 ELSE 0 END AS site_search_match
+                """);
+            String like = like(search);
+            parameters.add(like);
+            parameters.add(like);
+        }
+        else
+        {
+            sql.append("1 AS site_search_match\n");
+        }
+
+        sql.append("""
+                FROM trunked_identity_scope_context ownership
+                JOIN requested_scopes requested ON requested.scope_id = ownership.scope_id
+                JOIN trunked_identity_scope scope ON scope.scope_id = ownership.scope_id
+                JOIN receiver_context context ON context.id = ownership.context_id
+                LEFT JOIN p25_site_snapshot p25
+                    ON scope.protocol_code = 1 AND p25.guid = context.guid
+                LEFT JOIN trunked_site_snapshot trunked
+                    ON scope.protocol_code IN (3, 4) AND trunked.guid = context.guid
+                LEFT JOIN p25_system system ON system.system_key = scope.p25_system_key
+            """);
+
+        if(search != null)
+        {
+            sql.append("""
+                LEFT JOIN matching_configuration_guid matching_config
+                    ON matching_config.radres_guid = context.guid
+                """);
+        }
+
+        sql.append("""
+                WHERE scope.protocol_code IN (1, 3, 4)
+            ),
+            ranked_site_preview AS (
+                SELECT candidate.*,
+                    row_number() OVER (
+                        PARTITION BY candidate.scope_id
+                        ORDER BY candidate.site_search_match DESC, candidate.last_seen_ms DESC,
+                            candidate.guid
+                    ) AS site_preview_rank
+                FROM site_preview_candidate candidate
+            )
+            SELECT preview.scope_id, preview.protocol_code, preview.protocol, 'trunked' AS site_kind, preview.guid,
+                preview.wacn, preview.system_id,
+                coalesce(preview.configured_system, config.configured_system) AS configured_system,
+                config.configured_site, config.configured_name, preview.channel_name,
+                preview.rfss, preview.site_id, preview.ran, preview.current_control_hz,
+                CASE WHEN preview.protocol_code = 1 THEN
+                    (SELECT COUNT(DISTINCT CASE WHEN channel.downlink_hz > 0
+                        THEN 'f:' || channel.downlink_hz ELSE 'k:' || channel.channel_key END)
+                     FROM p25_site_channel_summary channel WHERE channel.guid = preview.guid)
+                ELSE
+                    (SELECT COUNT(*) FROM trunked_site_channel_summary channel
+                     WHERE channel.guid = preview.guid)
+                END AS channels,
+                preview.last_seen_ms
+            FROM ranked_site_preview preview
+            LEFT JOIN first_configuration_channel config ON config.radres_guid = preview.guid
+            WHERE preview.site_preview_rank <= ?
+            ORDER BY preview.scope_id, preview.site_preview_rank
+            LIMIT ?
+            """);
+        parameters.add(MAXIMUM_SYSTEM_DIRECTORY_SITE_PREVIEW);
+        parameters.add(Math.multiplyExact(systems.size(), MAXIMUM_SYSTEM_DIRECTORY_SITE_PREVIEW));
+        List<Map<String,Object>> previewRows = queryRows(connection, sql.toString(), parameters.toArray());
+        Map<Long,List<Map<String,Object>>> previewsByScope = new LinkedHashMap<>();
+
+        for(Map<String,Object> preview: previewRows)
+        {
+            long scopeId = number(preview.get("scope_id"));
+            previewsByScope.computeIfAbsent(scopeId, ignored -> new ArrayList<>()).add(preview);
+        }
+
+        for(Map<String,Object> system: systems)
+        {
+            List<Map<String,Object>> preview = List.copyOf(
+                previewsByScope.getOrDefault(number(system.get("scope_id")), List.of()));
+            system.put("site_preview", preview);
+            system.put("site_preview_truncated", number(system.get("sites")) > preview.size());
+        }
     }
 
     private static String siteSelect()
@@ -5346,15 +5535,19 @@ class StatsWebDatabase
 
     private static Map<String,Object> page(List<Map<String,Object>> queriedRows, StatsRequest request)
     {
-        int limit = request.limit();
+        return page(queriedRows, request.limit(), request.offset());
+    }
+
+    private static Map<String,Object> page(List<Map<String,Object>> queriedRows, int limit, int offset)
+    {
         boolean hasMore = queriedRows.size() > limit;
         List<Map<String,Object>> rows = hasMore ? new ArrayList<>(queriedRows.subList(0, limit)) : queriedRows;
         Map<String,Object> page = new LinkedHashMap<>();
         page.put("rows", rows);
         page.put("limit", limit);
-        page.put("offset", request.offset());
+        page.put("offset", offset);
         page.put("hasMore", hasMore);
-        page.put("nextOffset", hasMore ? request.offset() + limit : null);
+        page.put("nextOffset", hasMore ? offset + limit : null);
         return page;
     }
 

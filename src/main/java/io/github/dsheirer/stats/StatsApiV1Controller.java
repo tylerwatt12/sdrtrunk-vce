@@ -173,7 +173,7 @@ final class StatsApiV1Controller
     {
         if(segments.isEmpty())
         {
-            request.requireOnly("q", "sort", "direction", "limit", "offset");
+            request.requireOnly("q", "sort", "direction", "include_site_preview", "limit", "offset");
             return page(mDatabase.systemDirectory(request));
         }
 

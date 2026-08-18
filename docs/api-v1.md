@@ -47,7 +47,7 @@ and double-encoded or separator-smuggling resource names are rejected.
 | `GET /api/v1/aliases` | Paged alias catalog and bounded evidence metrics. |
 | `GET /api/v1/aliases/{id}` | One alias and its bounded evidence breakdown. |
 | `GET /api/v1/scan-lists` | Published scan lists available to the signed-in browser listener. |
-| `GET /api/v1/systems` | Paged protocol-neutral system scopes. Sites are not embedded. |
+| `GET /api/v1/systems` | Paged protocol-neutral system scopes with an optional bounded site preview. |
 | `GET /api/v1/systems/{scope}` | One system scope and its summary. The scope token is opaque. |
 | `GET /api/v1/systems/{scope}/sites` | Paged sites owned by the scope. |
 | `GET /api/v1/systems/{scope}/group-identities` | Paged talkgroup and patch-group identities. |
@@ -75,6 +75,12 @@ and double-encoded or separator-smuggling resource names are rejected.
 Common collection parameters are `limit`, `offset`, `q`, `sort`, and `direction`. `limit` defaults to 100 and must be
 between 1 and 500; `offset` must be between 0 and 100,000. Detailed activity uses the positive `before_id` cursor.
 Endpoint-specific filters are documented by the returned resource and reject unknown names.
+
+The systems directory accepts `include_site_preview=true`. Preview requests are limited to 25 parent systems and add
+`site_preview` and `site_preview_truncated` to each system row. The page metadata reports the
+fixed `site_preview_limit_per_system`. The preview is normally ordered by most recently observed site and then GUID.
+When `q` matches a site, matching sites are placed first so that the bounded preview includes the result. Use the
+independently paged `/api/v1/systems/{scope}/sites` resource for the complete collection.
 
 Activity analytics accepts `range=1h|6h|24h|7d|30d` and an allowlisted `group_by`. The `action` grouping reads only
 compact hourly summaries. The `radio`, `destination`, `site`, and `event` groupings require an `action` and inspect at

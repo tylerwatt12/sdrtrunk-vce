@@ -110,6 +110,70 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void embedsOnlyTheBoundedSitePreviewForRequestedSystemPages() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
+        {
+            for(int index = 0; index < StatsWebDatabase.MAXIMUM_SYSTEM_DIRECTORY_SITE_PREVIEW; index++)
+            {
+                seedP25Context(connection, 200 + index, "preview-site-" + String.format("%02d", index), 1);
+            }
+        }
+
+        Map<String,Object> defaultDirectory = mDatabase.systemDirectory(request(
+            "/api/v1/systems?limit=1"));
+        assertFalse(rows(defaultDirectory).getFirst().containsKey("site_preview"));
+
+        Map<String,Object> directory = mDatabase.systemDirectory(request(
+            "/api/v1/systems?include_site_preview=true&limit=1"));
+        assertEquals(1, rows(directory).size());
+        assertEquals(1L, number(directory.get("limit")));
+        assertEquals(0L, number(directory.get("offset")));
+        assertEquals(StatsWebDatabase.MAXIMUM_SYSTEM_DIRECTORY_SITE_PREVIEW,
+            number(directory.get("sitePreviewLimitPerSystem")));
+
+        Map<String,Object> system = rows(directory).getFirst();
+        List<Map<String,Object>> preview = rowsFrom(system, "site_preview");
+        assertEquals(StatsWebDatabase.MAXIMUM_SYSTEM_DIRECTORY_SITE_PREVIEW, preview.size());
+        assertEquals(Boolean.TRUE, system.get("site_preview_truncated"));
+        assertEquals("preview-site-00", preview.getFirst().get("guid"));
+        assertEquals("preview-site-24", preview.getLast().get("guid"));
+        assertTrue(preview.stream().allMatch(site ->
+            number(site.get("scope_id")) == number(system.get("scope_id"))));
+
+        Map<String,Object> searched = mDatabase.systemDirectory(request(
+            "/api/v1/systems?include_site_preview=true&limit=1&q=preview-site-24"));
+        assertEquals("preview-site-24", rowsFrom(rows(searched).getFirst(), "site_preview").getFirst().get("guid"));
+
+        Map<String,Object> searchedTruncatedSite = mDatabase.systemDirectory(request(
+            "/api/v1/systems?include_site_preview=true&limit=1&q=" + GUID));
+        List<Map<String,Object>> searchedPreview = rowsFrom(rows(searchedTruncatedSite).getFirst(), "site_preview");
+        assertEquals(StatsWebDatabase.MAXIMUM_SYSTEM_DIRECTORY_SITE_PREVIEW, searchedPreview.size());
+        assertEquals(GUID, searchedPreview.getFirst().get("guid"));
+        assertEquals(Boolean.TRUE, rows(searchedTruncatedSite).getFirst().get("site_preview_truncated"));
+
+        seedSecondSystem(mDatabasePath);
+        Map<String,Object> smallDirectory = mDatabase.systemDirectory(request(
+            "/api/v1/systems?include_site_preview=true&limit=1&q=Second%20Simulcast"));
+        Map<String,Object> smallSystem = rows(smallDirectory).getFirst();
+        assertEquals(1, rowsFrom(smallSystem, "site_preview").size());
+        assertEquals(Boolean.FALSE, smallSystem.get("site_preview_truncated"));
+
+        Map<String,Object> parentPage = mDatabase.systemDirectory(request(
+            "/api/v1/systems?include_site_preview=true&limit=1"));
+        assertEquals(1, rows(parentPage).size());
+        assertEquals(Boolean.TRUE, parentPage.get("hasMore"));
+        assertTrue(rowsFrom(rows(parentPage).getFirst(), "site_preview").stream().allMatch(site ->
+            number(site.get("scope_id")) == number(rows(parentPage).getFirst().get("scope_id"))));
+
+        StatsApiException oversized = assertThrows(StatsApiException.class, () ->
+            mDatabase.systemDirectory(request(
+                "/api/v1/systems?include_site_preview=true&limit=26")));
+        assertEquals(400, oversized.status());
+        assertEquals("limit", oversized.field());
+    }
+
+    @Test
     void exposesAuthoritativePresenceAndAppliesBoundedAffiliationAndSiteFilters() throws Exception
     {
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
@@ -4473,6 +4537,15 @@ class StatsWebDatabaseTest
             .filter(child -> GUID.equals(child.get("guid"))).toList();
         assertEquals(1, directoryChildren.size());
         assertEquals("DMR", directoryChildren.getFirst().get("protocol"));
+        Map<String,Object> transitionedDmrPreview = rows(mDatabase.systemDirectory(request(
+            "/api/system-directory?include_site_preview=true"))).stream()
+            .filter(parent -> "DMR".equals(parent.get("protocol")))
+            .flatMap(parent -> rowsFrom(parent, "site_preview").stream())
+            .filter(child -> GUID.equals(child.get("guid"))).findFirst().orElseThrow();
+        assertEquals("Transitioned DMR", transitionedDmrPreview.get("configured_system"));
+        assertEquals("DMR Receiver", transitionedDmrPreview.get("channel_name"));
+        assertEquals(451_000_000L, number(transitionedDmrPreview.get("current_control_hz")));
+        assertEquals(trunkedLastSeen, number(transitionedDmrPreview.get("last_seen_ms")));
         Map<String,Object> retainedP25Parent = directory.stream()
             .filter(parent -> "P25".equals(parent.get("protocol"))).findFirst().orElseThrow();
         assertEquals(0, number(retainedP25Parent.get("sites")));
@@ -4523,6 +4596,14 @@ class StatsWebDatabaseTest
             .filter(child -> GUID.equals(child.get("guid"))).toList();
         assertEquals(1, directoryChildren.size());
         assertEquals("P25", directoryChildren.getFirst().get("protocol"));
+        Map<String,Object> transitionedP25Preview = rows(mDatabase.systemDirectory(request(
+            "/api/system-directory?include_site_preview=true"))).stream()
+            .filter(parent -> "P25".equals(parent.get("protocol")))
+            .flatMap(parent -> rowsFrom(parent, "site_preview").stream())
+            .filter(child -> GUID.equals(child.get("guid"))).findFirst().orElseThrow();
+        assertEquals("Cleveland Simulcast", transitionedP25Preview.get("channel_name"));
+        assertEquals(856_137_500L, number(transitionedP25Preview.get("current_control_hz")));
+        assertEquals(trunkedLastSeen, number(transitionedP25Preview.get("last_seen_ms")));
         retainedP25Parent = directory.stream()
             .filter(parent -> "P25".equals(parent.get("protocol"))).findFirst().orElseThrow();
         assertEquals(1, number(retainedP25Parent.get("sites")));
@@ -4759,6 +4840,22 @@ class StatsWebDatabaseTest
         Map<String,Object> directory = mDatabase.systemDirectory(request("/api/system-directory"));
         List<Map<String,Object>> systems = rows(directory);
         assertEquals(5, systems.size());
+        List<Map<String,Object>> previewSystems = rows(mDatabase.systemDirectory(request(
+            "/api/v1/systems?include_site_preview=true&limit=25")));
+        Map<String,Object> dmrPreviewSystem = previewSystems.stream()
+            .filter(row -> "dmr:guid:dmr-a".equals(row.get("scope_token"))).findFirst().orElseThrow();
+        Map<String,Object> dmrPreview = rowsFrom(dmrPreviewSystem, "site_preview").getFirst();
+        assertEquals("dmr-a", dmrPreview.get("guid"));
+        assertEquals(1L, number(dmrPreview.get("site_id")));
+        assertEquals(2L, number(dmrPreview.get("channels")));
+        assertEquals(Boolean.FALSE, dmrPreviewSystem.get("site_preview_truncated"));
+        Map<String,Object> nxdnPreviewSystem = previewSystems.stream()
+            .filter(row -> "nxdn:guid:nxdn-a".equals(row.get("scope_token"))).findFirst().orElseThrow();
+        Map<String,Object> nxdnPreview = rowsFrom(nxdnPreviewSystem, "site_preview").getFirst();
+        assertEquals("nxdn-a", nxdnPreview.get("guid"));
+        assertEquals(9L, number(nxdnPreview.get("site_id")));
+        assertEquals(5L, number(nxdnPreview.get("ran")));
+        assertEquals(Boolean.FALSE, nxdnPreviewSystem.get("site_preview_truncated"));
         List<Map<String,Object>> dmr = systems.stream().filter(row -> "DMR".equals(row.get("protocol"))).toList();
         assertEquals(2, dmr.size());
         assertEquals(List.of("dmr:guid:dmr-a", "dmr:guid:dmr-b"),

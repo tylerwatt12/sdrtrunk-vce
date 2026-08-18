@@ -207,6 +207,30 @@ class StatsApiV1PayloadTest
     }
 
     @Test
+    void presentsNestedSystemSitePreviewsWithoutDatabaseIdentityFields()
+    {
+        JsonNode system = StatsApiV1Payload.present(Map.ofEntries(
+            Map.entry("scope_id", 1),
+            Map.entry("scope_token", "p25:BEE00:348"),
+            Map.entry("protocol_code", 1),
+            Map.entry("sites", 26),
+            Map.entry("site_preview_truncated", true),
+            Map.entry("site_preview", List.of(Map.of(
+                "scope_id", 1,
+                "protocol_code", 1,
+                "guid", "site-guid",
+                "rfss", 2,
+                "site_id", 7)))));
+
+        assertEquals("p25", system.path("protocol").textValue());
+        assertTrue(system.path("site_preview").isArray());
+        assertEquals("p25", system.at("/site_preview/0/protocol").textValue());
+        assertEquals(7, system.at("/site_preview/0/site_id").intValue());
+        assertTrue(system.path("site_preview_truncated").booleanValue());
+        assertNoInternalFields(system);
+    }
+
+    @Test
     void presentsAliasCatalogEnumsWithTheStableWireVocabulary()
     {
         JsonNode phaseTwo = StatsApiV1Payload.present(Map.of(

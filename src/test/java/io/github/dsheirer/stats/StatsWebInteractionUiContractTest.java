@@ -211,7 +211,7 @@ class StatsWebInteractionUiContractTest
         String talkgroup = function(source, "async function renderTalkgroup()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"81\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"82\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -240,18 +240,16 @@ class StatsWebInteractionUiContractTest
     {
         String source = source();
         String systems = function(source, "async function renderSystems()");
-        assertTrue(source.contains("const SYSTEM_DIRECTORY_SITE_LIMIT = 100;"));
-        assertTrue(source.contains("const SYSTEM_DIRECTORY_SITE_CONCURRENCY = 4;"));
         assertTrue(systems.contains("row.configured_system || `${protocolFamily(row)} System`"));
         assertTrue(systems.contains("heading.append(systemLink(row, label))"));
         assertTrue(systems.contains("siteNameSummary(row)"));
-        assertTrue(systems.contains("systemApiPath(system.scope_token, 'sites')"));
-        assertTrue(systems.contains("SYSTEM_DIRECTORY_SITE_LIMIT"));
-        assertTrue(systems.contains("SYSTEM_DIRECTORY_SITE_CONCURRENCY"));
-        assertTrue(systems.contains("directory_type: 'system'"));
-        assertTrue(systems.contains("directory_type: 'site'"));
+        assertTrue(systems.contains("window.sdrtrunkSystemsDirectory.load(api"));
+        assertTrue(systems.contains("tableRows: rows"));
         assertTrue(systems.contains("`directory-${row.directory_type}-row`"));
-        assertTrue(systems.contains("sitePage?.has_more"));
+        assertTrue(systems.contains("truncatedParentCount"));
+        assertTrue(systems.contains("previewLimit"));
+        assertFalse(systems.contains("systemApiPath(system.scope_token, 'sites')"));
+        assertFalse(source.contains("SYSTEM_DIRECTORY_SITE_CONCURRENCY"));
         assertFalse(systems.contains("directory-secondary"));
         assertFalse(systems.contains("row.site_names && row.site_names"));
         assertFalse(systems.contains("isP25(row) ? 'P25 System'"));
@@ -373,13 +371,13 @@ class StatsWebInteractionUiContractTest
     void showsSystemIdentityTotalsWithNavigationAboveAndBelowEachTable() throws Exception
     {
         String source = source();
-        String pager = function(source, "function pager(page, position = 'bottom')");
+        String pager = function(source, "function pager(page, position = 'bottom', itemLabel = 'Rows')");
         String pagedSection = function(source,
             "function pagedSection(title, page, columns, searchPlaceholder, tableType, action = null, options = {})");
         String system = function(source, "async function renderSystem()");
         String css = readText(APP_CSS);
 
-        assertTrue(pager.contains("Number(page.totalCount)"));
+        assertTrue(pager.contains("Number(page.total_count)"));
         assertTrue(pager.contains("of ${number(totalCount)}"));
         assertTrue(pager.contains("aria-label"));
         assertTrue(pagedSection.contains("if (options.topPager) block.append(pager(page, 'top'))"));
@@ -522,7 +520,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(html.contains("id=\"theme-toggle\""));
         assertTrue(html.contains("id=\"mobile-theme-toggle\""));
         assertTrue(html.contains("/assets/app.css?v=65"));
-        assertTrue(html.contains("/assets/app.js?v=99"));
+        assertTrue(html.contains("/assets/features/systems-directory.js?v=1"));
+        assertTrue(html.contains("/assets/app.js?v=100"));
         assertTrue(source.contains("MOBILE_THEME_STORAGE_KEY = 'sdrtrunk_mobile_theme'"));
         assertTrue(source.contains("mode === 'mobile' ? MOBILE_THEME_STORAGE_KEY : THEME_STORAGE_KEY"));
         assertTrue(source.contains("toggle.setAttribute('aria-pressed'"));

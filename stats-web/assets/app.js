@@ -6,8 +6,6 @@ const TABLE_WIDTH_COOKIE = 'sdrtrunk_table_widths_v4';
 const ALIAS_CATALOG_COLUMNS_STORAGE_KEY = 'sdrtrunk_alias_catalog_columns_v2';
 const TABLE_WIDTH_MINIMUM = 48;
 const TABLE_WIDTH_MAXIMUM = 1200;
-const SYSTEM_DIRECTORY_SITE_LIMIT = 100;
-const SYSTEM_DIRECTORY_SITE_CONCURRENCY = 4;
 const SIGNAL_OFFLINE_MILLISECONDS = 45_000;
 const RECEIVER_HEALTH_STALE_MILLISECONDS = 15_000;
 const DECODE_HEALTHY_MINIMUM_PERCENT = 90;
@@ -1841,17 +1839,17 @@ function searchBar(placeholder = 'Search') {
   return form;
 }
 
-function pager(page, position = 'bottom') {
+function pager(page, position = 'bottom', itemLabel = 'Rows') {
   const bar = node('nav', `pager pager-${position}`);
   bar.setAttribute('aria-label', `${position === 'top' ? 'Top' : 'Bottom'} table pagination`);
   const offset = Number(page.offset || 0);
   const limit = Number(page.limit || 100);
   const firstRow = offset + (page.rows.length ? 1 : 0);
   const lastRow = offset + page.rows.length;
-  const totalCount = Number(page.totalCount);
+  const totalCount = Number(page.total_count);
   const range = Number.isFinite(totalCount) && totalCount >= 0 ?
-    `Rows ${number(firstRow)}-${number(lastRow)} of ${number(totalCount)}` :
-    `Rows ${number(firstRow)}-${number(lastRow)}`;
+    `${itemLabel} ${number(firstRow)}-${number(lastRow)} of ${number(totalCount)}` :
+    `${itemLabel} ${number(firstRow)}-${number(lastRow)}`;
   bar.append(node('span', 'muted', range));
   bar.append(offset > 0 ? anchor('Previous', currentHref({ offset: Math.max(0, offset - limit) }), 'button secondary') :
     node('span', 'button disabled', 'Previous'));
@@ -10716,30 +10714,29 @@ async function renderTunerSpectrum() {
 }
 
 async function renderSystems() {
-  const page = await api('/api/v1/systems', pageParameters({ limit: 25 }));
   content.append(pageHeader('Systems & Sites',
     'P25, DMR, and NXDN systems with their observed sites'));
-  const systems = page.rows || [];
-  const sitePages = new Array(systems.length);
-  let nextSystemIndex = 0;
-  const loadSites = async () => {
-    while (nextSystemIndex < systems.length) {
-      const index = nextSystemIndex;
-      nextSystemIndex += 1;
-      const system = systems[index];
-      sitePages[index] = Number(system.sites || 0) > 0 && systemCapability(system, 'sites') ?
-        await api(systemApiPath(system.scope_token, 'sites'), { limit: SYSTEM_DIRECTORY_SITE_LIMIT }) :
-        { rows: [], has_more: false };
-    }
-  };
-  await Promise.all(Array.from({
-    length: Math.min(SYSTEM_DIRECTORY_SITE_CONCURRENCY, systems.length)
-  }, loadSites));
-  const rows = [];
-  systems.forEach((system, index) => {
-    rows.push({ ...system, directory_type: 'system' });
-    (sitePages[index]?.rows || []).forEach((site) => rows.push({ ...site, directory_type: 'site' }));
-  });
+  const directoryBody = node('div', 'system-directory-content');
+  directoryBody.append(node('div', 'loading', 'Loading systems and sites…'));
+  const directory = section('System Directory', directoryBody);
+  content.append(searchBar('Search protocol, system, site, name, or GUID'), directory);
+
+  let data;
+  try {
+    data = await window.sdrtrunkSystemsDirectory.load(api, pageParameters());
+  } catch (error) {
+    if (error?.name === 'AbortError' || error?.status === 401 || error?.status === 403) throw error;
+    const failure = node('div', 'error');
+    failure.append(node('div', '', error?.message || 'The systems directory could not be loaded.'));
+    const retry = node('button', 'secondary', 'Retry');
+    retry.type = 'button';
+    retry.addEventListener('click', () => render());
+    failure.append(retry);
+    directoryBody.replaceChildren(failure);
+    return;
+  }
+
+  const { page, tableRows: rows, truncatedParentCount, previewLimit } = data;
   const columns = [
     { id: 'directory-name', label: 'System / Site', width: 230, className: 'directory-name', render: (row) => {
       const wrapper = node('div', 'directory-entity');
@@ -10782,18 +10779,17 @@ async function renderSystems() {
       row.directory_type === 'system' ? number(row.radios) : '' },
     { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms) }
   ];
-  content.append(searchBar('Search protocol, system, site, name, or GUID'));
-  const directory = section('System Directory', table(rows, columns, 'No systems or sites recorded', {
+  const directoryTable = table(rows, columns, 'No systems or sites recorded', {
     type: 'system-directory',
     sortable: false,
     rowClass: (row) => `directory-${row.directory_type}-row`
-  }));
-  const truncated = sitePages.filter((sitePage) => sitePage?.has_more).length;
-  if (truncated) directory.append(node('div', 'directory-warning',
-    `${number(truncated)} system group${truncated === 1 ? '' : 's'} exceeded the ` +
-    `${number(SYSTEM_DIRECTORY_SITE_LIMIT)}-site display limit. Open the system for its complete paged site list.`));
-  directory.append(pager(page));
-  content.append(directory);
+  });
+  const rendered = [directoryTable];
+  if (truncatedParentCount) rendered.push(node('div', 'directory-warning',
+    `${number(truncatedParentCount)} system group${truncatedParentCount === 1 ? '' : 's'} exceeded the ` +
+    `${number(previewLimit)}-site preview limit. Open the system for its complete paged site list.`));
+  rendered.push(pager(page, 'bottom', 'Systems'));
+  directoryBody.replaceChildren(...rendered);
 }
 
 async function renderSystem() {
@@ -13107,8 +13103,8 @@ function renderCredits() {
 }
 
 function activateNavigation(view) {
-  const parent = ['system', 'talkgroup', 'radio'].includes(view) ? 'systems' :
-    (view === 'site' ? 'sites' : (view === 'conventional-detail' ? 'conventional' : view));
+  const parent = ['system', 'talkgroup', 'radio', 'site'].includes(view) ? 'systems' :
+    (view === 'conventional-detail' ? 'conventional' : view);
   document.querySelectorAll('.primary-nav a').forEach((link) =>
     link.classList.toggle('active', link.dataset.view === parent));
 }
@@ -13187,9 +13183,7 @@ async function render() {
   activeRenderController = renderController;
   const view = route.get('view') || 'dashboard';
   if (!closeReadOnlyModal(false)) return;
-  document.body.dataset.view = view;
   closePageConnections();
-  activateNavigation(view);
   content.replaceChildren(node('div', 'loading', 'Loading'));
 
   try {
@@ -13210,6 +13204,8 @@ async function render() {
       credits: renderCredits
     };
     const effectiveView = handlers[view] ? view : 'dashboard';
+    document.body.dataset.view = effectiveView;
+    activateNavigation(effectiveView);
     if (!viewAllowed(effectiveView)) {
       document.body.dataset.view = 'access-denied';
       renderAccessDenied(effectiveView);
