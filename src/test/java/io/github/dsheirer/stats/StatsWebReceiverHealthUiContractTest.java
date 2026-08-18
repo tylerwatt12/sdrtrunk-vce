@@ -71,13 +71,16 @@ class StatsWebReceiverHealthUiContractTest
     {
         String source = readText(APP_JAVASCRIPT);
         String page = block(source, "function renderReceiverHealthPage(host, snapshot, stale, lastError)");
-        String incident = block(source, "function receiverHealthIncident(incident, resolved = false)");
+        String incident = block(source, "function receiverHealthIncident(incident, resolved = false");
+        String resolvedList = block(source, "function receiverHealthIncidentList(incidents, resolved = false)");
+        String resolvedSort = block(source, "function receiverHealthSortedResolvedIncidents(incidents, sort)");
+        String resolvedSection = block(source, "function receiverHealthResolvedSection(incidents)");
         String measurement = block(source, "function receiverHealthMeasurementRow(row)");
 
         assertTrue(page.contains("'Active alerts and diagnostics'"));
         assertTrue(page.contains("'Service-impact alerts'"));
         assertTrue(page.contains("summary.diagnostic_count"));
-        assertTrue(page.contains("'Recently resolved'"));
+        assertTrue(page.contains("receiverHealthResolvedSection(snapshot.resolved)"));
         assertTrue(page.contains("'Measurements'"));
         assertTrue(page.contains("Showing the last receiver health snapshot."));
         assertTrue(incident.contains("incident.occurrence_id"));
@@ -89,11 +92,24 @@ class StatsWebReceiverHealthUiContractTest
         assertTrue(incident.contains("incident.last_seen_ms"));
         assertTrue(incident.contains("incident.resolved_at_ms"));
         assertTrue(incident.contains("incident.count"));
+        assertTrue(incident.contains("receiver-health-incident-resolved-summary"));
         assertTrue(incident.contains("incident.observed"));
         assertTrue(incident.contains("incident.likely_cause"));
         assertTrue(incident.contains("incident.impact"));
         assertTrue(incident.contains("incident.check_next"));
+        assertTrue(incident.contains("resolved ? 'details' : 'article'"));
+        assertTrue(incident.contains("card.open = expanded"));
+        assertTrue(incident.contains("card.addEventListener('toggle'"));
         assertFalse(incident.contains("node('button'"));
+        assertTrue(resolvedList.contains("expandedResolvedIncidents.has(key)"));
+        assertTrue(resolvedList.contains("expandedResolvedIncidents.add(key)"));
+        assertTrue(resolvedList.contains("expandedResolvedIncidents.delete(key)"));
+        assertTrue(resolvedSort.contains("sort === 'type'"));
+        assertTrue(resolvedSort.contains("left.title || left.code"));
+        assertTrue(resolvedSort.contains("resolved_at_ms"));
+        assertTrue(resolvedSection.contains("'Newest resolved'"));
+        assertTrue(resolvedSection.contains("'Alert type (A–Z)'"));
+        assertTrue(resolvedSection.contains("'Sort resolved alerts'"));
         assertFalse(page.toLowerCase().contains("dismiss"));
         assertTrue(measurement.contains("row.scope"));
         assertTrue(measurement.contains("row.label"));
@@ -115,9 +131,11 @@ class StatsWebReceiverHealthUiContractTest
         assertTrue(css.contains(".receiver-health-indicator.receiver-health-stale"));
         assertTrue(css.contains(":root[data-theme=\"dark\"] .receiver-health-overview-state.receiver-health-healthy"));
         assertTrue(css.contains(":root[data-theme=\"dark\"] .receiver-health-measurement-row.receiver-health-critical"));
-        assertTrue(html.contains("<meta name=\"sdrtrunk-web-revision\" content=\"77\">"));
-        assertTrue(html.contains("/assets/app.css?v=63"));
-        assertTrue(html.contains("/assets/app.js?v=95"));
+        assertTrue(css.contains("details.receiver-health-incident:not([open])"));
+        assertTrue(css.contains(".receiver-health-resolved-sort select"));
+        assertTrue(html.contains("<meta name=\"sdrtrunk-web-revision\" content=\"78\">"));
+        assertTrue(html.contains("/assets/app.css?v=64"));
+        assertTrue(html.contains("/assets/app.js?v=96"));
     }
 
     private static String readText(Path path) throws Exception

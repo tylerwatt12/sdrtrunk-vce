@@ -5674,6 +5674,8 @@ class ReceiverHealthController {
     this.lastError = '';
     this.requestController = null;
     this.pageHost = null;
+    this.resolvedSort = 'recent';
+    this.expandedResolvedIncidents = new Set();
   }
 
   authorized() {
@@ -5696,6 +5698,7 @@ class ReceiverHealthController {
       this.snapshot = null;
       this.stale = false;
       this.lastError = '';
+      this.expandedResolvedIncidents.clear();
     } else if (!this.desktopEnabled()) {
       this.abortRequest();
     }
@@ -12349,14 +12352,21 @@ function receiverHealthSeverityBadge(value) {
   return badge(label, `receiver-health-severity receiver-health-${severity}`);
 }
 
-function receiverHealthIncident(incident, resolved = false) {
+function receiverHealthIncident(incident, resolved = false, expanded = false, onToggle = null) {
   const severity = receiverHealthSeverity(incident.severity);
-  const card = node('article', `receiver-health-incident receiver-health-${severity}`);
-  const heading = node('div', 'receiver-health-incident-heading');
+  const card = node(resolved ? 'details' : 'article', `receiver-health-incident receiver-health-${severity}`);
+  const heading = node(resolved ? 'summary' : 'div', 'receiver-health-incident-heading');
   const identity = node('div', 'receiver-health-incident-identity');
   identity.append(node('h3', '', receiverHealthText(incident.title, receiverHealthText(incident.code,
     'Receiver health incident'))), node('div', 'receiver-health-incident-scope',
     receiverHealthText(incident.scope, 'Receiver')));
+  if (resolved) {
+    const observations = receiverHealthCount(incident.count, 1);
+    const resolvedSummary = node('div', 'receiver-health-incident-resolved-summary');
+    resolvedSummary.append('Resolved ', receiverHealthTime(incident.resolved_at_ms),
+      ` · ${number(observations)} observation${observations === 1 ? '' : 's'}`);
+    identity.append(resolvedSummary);
+  }
   heading.append(identity, receiverHealthSeverityBadge(incident.severity));
 
   const facts = node('dl', 'receiver-health-incident-facts');
@@ -12387,7 +12397,38 @@ function receiverHealthIncident(incident, resolved = false) {
     guidance.append(item);
   });
   card.append(heading, facts, guidance);
+  if (resolved) {
+    card.open = expanded;
+    card.addEventListener('toggle', () => onToggle?.(card.open));
+  }
   return card;
+}
+
+function receiverHealthResolvedIncidentKey(incident) {
+  const occurrence = String(incident?.occurrence_id ?? '').trim();
+  if (occurrence) return `occurrence:${occurrence}`;
+  return ['fallback', incident?.code, incident?.scope, incident?.opened_at_ms, incident?.resolved_at_ms]
+    .map((value) => String(value ?? '')).join('\u0000');
+}
+
+function receiverHealthSortedResolvedIncidents(incidents, sort) {
+  const sorted = [...incidents];
+  const compareText = (left, right) => String(left || '').localeCompare(String(right || ''), undefined,
+    { sensitivity: 'base', numeric: true });
+  sorted.sort((left, right) => {
+    if (sort === 'type') {
+      const title = compareText(left.title || left.code, right.title || right.code);
+      if (title) return title;
+      const code = compareText(left.code, right.code);
+      if (code) return code;
+      const scope = compareText(left.scope, right.scope);
+      if (scope) return scope;
+    }
+    const resolved = Number(right.resolved_at_ms || 0) - Number(left.resolved_at_ms || 0);
+    if (resolved) return resolved;
+    return compareText(right.occurrence_id, left.occurrence_id);
+  });
+  return sorted;
 }
 
 function receiverHealthIncidentList(incidents, resolved = false) {
@@ -12396,8 +12437,48 @@ function receiverHealthIncidentList(incidents, resolved = false) {
       resolved ? 'No recently resolved incidents.' : 'No active receiver health incidents.');
   }
   const list = node('div', 'receiver-health-incident-list');
-  list.append(...incidents.map((incident) => receiverHealthIncident(incident, resolved)));
+  const rows = resolved ? receiverHealthSortedResolvedIncidents(incidents, receiverHealthController.resolvedSort) :
+    incidents;
+  if (resolved) {
+    const current = new Set(rows.map(receiverHealthResolvedIncidentKey));
+    receiverHealthController.expandedResolvedIncidents.forEach((key) => {
+      if (!current.has(key)) receiverHealthController.expandedResolvedIncidents.delete(key);
+    });
+  }
+  list.append(...rows.map((incident) => {
+    if (!resolved) return receiverHealthIncident(incident);
+    const key = receiverHealthResolvedIncidentKey(incident);
+    return receiverHealthIncident(incident, true,
+      receiverHealthController.expandedResolvedIncidents.has(key), (open) => {
+        if (open) receiverHealthController.expandedResolvedIncidents.add(key);
+        else receiverHealthController.expandedResolvedIncidents.delete(key);
+      });
+  }));
   return list;
+}
+
+function receiverHealthResolvedSection(incidents) {
+  if (!incidents.length) {
+    return section('Recently resolved', receiverHealthIncidentList(incidents, true));
+  }
+  const body = node('div');
+  const sort = node('select');
+  sort.setAttribute('aria-label', 'Sort resolved alerts');
+  [['recent', 'Newest resolved'], ['type', 'Alert type (A–Z)']].forEach(([value, label]) => {
+    const option = node('option', '', label);
+    option.value = value;
+    option.selected = receiverHealthController.resolvedSort === value;
+    sort.append(option);
+  });
+  const control = node('label', 'receiver-health-resolved-sort');
+  control.append(node('span', '', 'Sort'), sort);
+  const draw = () => body.replaceChildren(receiverHealthIncidentList(incidents, true));
+  sort.addEventListener('change', () => {
+    receiverHealthController.resolvedSort = sort.value === 'type' ? 'type' : 'recent';
+    draw();
+  });
+  draw();
+  return section('Recently resolved', body, control);
 }
 
 function receiverHealthMeasurementRow(row) {
@@ -12474,7 +12555,7 @@ function renderReceiverHealthPage(host, snapshot, stale, lastError) {
 
   host.append(section('Current status', overview, receiverHealthRefreshButton()),
     section('Active alerts and diagnostics', receiverHealthIncidentList(snapshot.active)),
-    section('Recently resolved', receiverHealthIncidentList(snapshot.resolved, true)));
+    receiverHealthResolvedSection(snapshot.resolved));
   if (snapshot.measurements.length) {
     host.append(...snapshot.measurements.map(receiverHealthMeasurementGroup));
   } else {

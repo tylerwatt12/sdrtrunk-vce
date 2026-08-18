@@ -3388,8 +3388,38 @@ body.modal-open {
   border-bottom: 1px solid var(--line);
 }
 
+summary.receiver-health-incident-heading {
+  list-style: none;
+  cursor: pointer;
+}
+
+summary.receiver-health-incident-heading::-webkit-details-marker {
+  display: none;
+}
+
+summary.receiver-health-incident-heading::before {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--muted);
+  content: '\25B8';
+}
+
+details.receiver-health-incident[open] > summary.receiver-health-incident-heading::before {
+  content: '\25BE';
+}
+
+details.receiver-health-incident:not([open]) > summary.receiver-health-incident-heading {
+  border-bottom: 0;
+}
+
+summary.receiver-health-incident-heading:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
 .receiver-health-incident-identity {
   min-width: 0;
+  flex: 1 1 auto;
 }
 
 .receiver-health-incident-identity h3 {
@@ -3398,7 +3428,8 @@ body.modal-open {
   overflow-wrap: anywhere;
 }
 
-.receiver-health-incident-scope {
+.receiver-health-incident-scope,
+.receiver-health-incident-resolved-summary {
   margin-top: 3px;
   color: var(--muted);
   font-size: 12px;
@@ -3480,6 +3511,33 @@ body.modal-open {
   margin: 0;
   line-height: 1.45;
   overflow-wrap: anywhere;
+}
+
+.receiver-health-resolved-sort {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.receiver-health-resolved-sort select {
+  height: 30px;
+  min-height: 30px;
+  padding: 4px 7px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line-dark);
+  border-radius: 3px;
+  font: inherit;
+}
+
+.receiver-health-resolved-sort select:focus {
+  border-color: var(--accent);
+  outline: 2px solid color-mix(in srgb, var(--accent) 24%, transparent);
+  outline-offset: 1px;
 }
 
 .receiver-health-measurement-list {
