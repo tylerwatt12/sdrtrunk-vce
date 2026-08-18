@@ -7205,6 +7205,31 @@ function dashboardActivityRangeLabel(range) {
   return DASHBOARD_ACTIVITY_RANGES.find(([value]) => value === range)?.[1] || range;
 }
 
+function dashboardActivityDetailNotice(response, actionLabel, groupLabel, rowCount) {
+  const summaryCount = Math.max(0, Number(response.summary_count || 0));
+  const matchedCount = Math.max(0, Number(response.scanned_events || 0));
+  const coverage = String(response.detail_coverage || 'unknown').trim().toLowerCase();
+  const mismatch = matchedCount !== summaryCount;
+  const incompleteCoverage = coverage !== 'complete';
+  const slicesExamined = Math.max(0, Number(response.slices_examined || 0));
+  const warnings = mismatch || incompleteCoverage || response.detail_truncated || response.rows_truncated ||
+    response.detailed_history_configured === false;
+  const messages = [`Retained-detail sample: ${number(matchedCount)} matching ${actionLabel.toLowerCase()} events ` +
+    `from ${number(slicesExamined)} relevant receiver-hours.`];
+  if (mismatch) messages.push(`The hourly summary contains ${number(summaryCount)}.`);
+  if (coverage === 'partial') messages.push('Detail coverage is partial.');
+  else if (coverage !== 'complete') messages.push('Detail coverage is unknown.');
+  if (response.detailed_history_configured === false) {
+    messages.push('Detailed History is off, so this sample is not updating.');
+  }
+  if (response.slices_truncated) messages.push('The relevant receiver-hour limit was reached.');
+  else if (response.detail_truncated) messages.push('The retained matching-event limit was reached.');
+  if (response.rows_truncated) {
+    messages.push(`Only the first ${number(rowCount)} ${groupLabel.toLowerCase()} are shown.`);
+  }
+  return node('div', warnings ? 'logging-notice warning' : 'metric-meaning-note', messages.join(' '));
+}
+
 async function renderDashboardActivity() {
   let selectedRange = '24h';
   let selectedGroup = 'radio';
@@ -7233,9 +7258,17 @@ async function renderDashboardActivity() {
       .find((row) => row.action === selectedAction);
     const actionLabel = actionRow?.label || semanticLabel(selectedAction);
     const groupLabel = dashboardActivityGroupLabel(selectedGroup);
-    detailTitle.textContent = `${actionLabel} · ${groupLabel}`;
-    detailStatus.textContent = `${actionLabel} selected. Loading ${groupLabel.toLowerCase()}.`;
-    detailHost.replaceChildren(node('div', 'loading', `Loading ${groupLabel.toLowerCase()}`));
+    detailTitle.textContent = `${actionLabel} · ${groupLabel} · Retained detail`;
+
+    if (!capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS)) {
+      detailStatus.textContent = 'Systems & Sites access is required for retained-detail samples.';
+      detailHost.replaceChildren(node('div', 'empty',
+        'The activity summary is available, but retained details require Systems & Sites access.'));
+      return;
+    }
+
+    detailStatus.textContent = `${actionLabel} selected. Loading retained-detail sample.`;
+    detailHost.replaceChildren(node('div', 'loading', 'Loading retained-detail sample'));
 
     if (!actionRow?.detail_supported) {
       detailStatus.textContent = `${actionLabel} totals are available, but individual records are not retained.`;
@@ -7256,29 +7289,18 @@ async function renderDashboardActivity() {
       });
       if (sequence !== detailSequence) return;
       const rows = response.rows || [];
-      detailStatus.textContent = `${number(rows.length)} ${groupLabel.toLowerCase()} shown for ${actionLabel}.`;
+      detailStatus.textContent = `Retained-detail sample: ${number(rows.length)} ` +
+        `${groupLabel.toLowerCase()} shown for ${actionLabel}.`;
       const result = node('div', 'dashboard-activity-breakdown-result');
-      if (response.detailed_history_configured === false) {
-        result.append(node('div', 'logging-notice warning',
-          'Detailed History is off. This breakdown only uses previously retained events and is not updating.'));
-      }
-      if (response.detail_truncated) {
-        result.append(node('div', 'logging-notice warning',
-          `This breakdown used a bounded scan of ${number(response.scanned_records)} recent retained records and ` +
-          `${number(response.scanned_events)} matching events; the summary contains ` +
-          `${number(response.summary_count)} ${actionLabel.toLowerCase()} events.`));
-      }
-      if (response.rows_truncated) {
-        result.append(node('div', 'logging-notice warning',
-          `Only the first ${number(rows.length)} ${groupLabel.toLowerCase()} are shown.`));
-      }
+      result.append(dashboardActivityDetailNotice(response, actionLabel, groupLabel, rows.length));
       if (selectedGroup === 'radio' && Number(response.unidentified_radio_events) > 0) {
         result.append(node('div', 'metric-meaning-note',
-          `${number(response.unidentified_radio_events)} events did not contain a radio ID.`));
+          `${number(response.unidentified_radio_events)} retained matching events did not contain a radio ID.`));
       }
-      const empty = selectedGroup === 'radio' ? 'No involved radios were identified' :
-        selectedGroup === 'destination' ? 'No destinations were identified' :
-          selectedGroup === 'site' ? 'No sites or channels were identified' : 'No retained events were found';
+      const empty = selectedGroup === 'radio' ? 'No involved radios were identified in this retained-detail sample' :
+        selectedGroup === 'destination' ? 'No destinations were identified in this retained-detail sample' :
+          selectedGroup === 'site' ? 'No sites or channels were identified in this retained-detail sample' :
+            'No events were found in this retained-detail sample';
       result.append(table(rows, dashboardActivityBreakdownColumns(selectedGroup), empty,
         { type: `dashboard-activity-${selectedGroup}` }));
       detailHost.replaceChildren(result);
@@ -7312,10 +7334,11 @@ async function renderDashboardActivity() {
 
     const breakdownBody = node('div', 'dashboard-activity-breakdown');
     const breakdownToolbar = node('div', 'dashboard-activity-breakdown-toolbar');
-    const groupLabel = node('label', 'dashboard-control-label', 'Break down by');
+    const groupLabel = node('label', 'dashboard-control-label', 'Break down retained detail by');
     const groupSelect = node('select', 'dashboard-activity-group-select');
     groupSelect.id = 'dashboard-activity-group';
-    groupSelect.setAttribute('aria-label', 'Break activity down by');
+    groupSelect.setAttribute('aria-label', 'Break retained activity detail down by');
+    groupSelect.disabled = !capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS);
     DASHBOARD_ACTIVITY_GROUPS.forEach(([value, label]) => {
       const option = node('option', '', label);
       option.value = value;

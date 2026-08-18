@@ -78,9 +78,10 @@ Endpoint-specific filters are documented by the returned resource and reject unk
 
 Activity analytics accepts `range=1h|6h|24h|7d|30d` and an allowlisted `group_by`. The `action` grouping reads only
 compact hourly summaries. The `radio`, `destination`, `site`, and `event` groupings require an `action` and inspect at
-most the newest 50,000 retained records, hydrating no more than 5,000 matching events. Responses report when either
-bound or the requested row limit truncates the result. Detailed history is optional, and `CONTINUE` is summary-only
-by design.
+most 5,000 context-hour slices whose compact summaries contain that action, hydrating no more than 5,000 matching
+retained events. Responses report when either bound or the requested row limit truncates the result. Detailed history
+is optional, retained-detail coverage is not assumed complete, and `CONTINUE` is summary-only by design. The action
+summary follows Dashboard access; retained-detail groupings require Systems & Sites access.
 
 Every database row materializer also has a 20,000-row emergency ceiling. This is a final guard against a future SQL
 regression; normal endpoint, enrichment, member, history, and export limits are substantially smaller.

@@ -70,6 +70,8 @@ class StatsWebDashboardUiContractTest
         String mix = function(source, "function dashboardActivityMix(response, selectedAction, onSelect)");
         String activity = function(source, "async function renderDashboardActivity()");
         String columns = function(source, "function dashboardActivityBreakdownColumns(groupBy)");
+        String detailNotice = function(source,
+            "function dashboardActivityDetailNotice(response, actionLabel, groupLabel, rowCount)");
 
         assertTrue(source.contains("['6h', '6 hours'], ['24h', '24 hours'], ['7d', '7 days']"));
         assertTrue(source.contains("['radio', 'Radios']"));
@@ -84,12 +86,28 @@ class StatsWebDashboardUiContractTest
         assertTrue(activity.contains("api('/api/v1/activity-analytics'"));
         assertTrue(activity.contains("group_by: 'action', limit: 100"));
         assertTrue(activity.contains("group_by: selectedGroup, action: selectedAction, limit: 100"));
-        assertTrue(activity.contains("detail_truncated"));
-        assertTrue(activity.contains("rows_truncated"));
         assertTrue(activity.contains("unidentified_radio_events"));
         assertTrue(activity.contains("Detailed History is unavailable"));
+        assertTrue(activity.contains("capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS)"));
+        assertTrue(activity.contains("Systems & Sites access is required for retained-detail samples"));
+        assertTrue(activity.contains("groupSelect.disabled"));
+        assertTrue(activity.contains("Retained-detail sample"));
+        assertTrue(activity.contains("Break down retained detail by"));
+        assertTrue(activity.contains("Break retained activity detail down by"));
         assertTrue(activity.contains("aria-live"));
         assertTrue(activity.contains("type: `dashboard-activity-${selectedGroup}`"));
+        assertTrue(detailNotice.contains("response.scanned_events"));
+        assertTrue(detailNotice.contains("response.summary_count"));
+        assertTrue(detailNotice.contains("response.slices_examined"));
+        assertTrue(detailNotice.contains("response.slices_truncated"));
+        assertTrue(detailNotice.contains("response.detail_truncated"));
+        assertTrue(detailNotice.contains("response.rows_truncated"));
+        assertTrue(detailNotice.contains("matchedCount !== summaryCount"));
+        assertTrue(detailNotice.contains("response.detail_coverage || 'unknown'"));
+        assertTrue(detailNotice.contains("coverage === 'partial'"));
+        assertTrue(detailNotice.contains("Detail coverage is unknown"));
+        assertTrue(detailNotice.contains("Retained-detail sample:"));
+        assertTrue(detailNotice.contains("relevant receiver-hours"));
         assertTrue(columns.contains("if (groupBy === 'event') return activityColumns()"));
         assertTrue(columns.contains("source_count"));
         assertTrue(columns.contains("target_count"));

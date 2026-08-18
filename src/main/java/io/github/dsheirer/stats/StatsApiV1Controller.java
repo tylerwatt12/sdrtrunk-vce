@@ -25,6 +25,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.Semaphore;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
@@ -97,12 +98,22 @@ final class StatsApiV1Controller
                     "hide_grants", "kind", "limit");
                 return page(mDatabase.activity(request));
             }));
-        create(server, StatsApiV1.ACTIVITY_ANALYTICS, WebCapability.DASHBOARD_VIEW,
+        server.createContext(StatsApiV1.ACTIVITY_ANALYTICS, mAccessController.protectAny(
+            Set.of(WebCapability.DASHBOARD_VIEW, WebCapability.SYSTEMS_VIEW),
             exchange -> handleJson(exchange, StatsApiV1.ACTIVITY_ANALYTICS, (request, segments) -> {
                 requireNoSegments(segments);
                 request.requireOnly("range", "group_by", "action", "limit");
+                String groupBy = request.text("group_by");
+                WebCapability required = groupBy == null || "action".equalsIgnoreCase(groupBy) ?
+                    WebCapability.DASHBOARD_VIEW : WebCapability.SYSTEMS_VIEW;
+
+                if(!mAccessController.isRequestStillAuthorized(exchange, required))
+                {
+                    throw new StatsApiException(403, "access_denied", "Access is denied");
+                }
+
                 return mDatabase.activityAnalytics(request);
-            }));
+            })));
         create(server, StatsApiV1.CONVENTIONAL_CONTEXTS, WebCapability.CONVENTIONAL_VIEW,
             exchange -> handleJson(exchange, StatsApiV1.CONVENTIONAL_CONTEXTS, this::conventionalContexts));
         create(server, StatsApiV1.EXPORTS, WebCapability.CSV_EXPORT, this::handleCsvExport);

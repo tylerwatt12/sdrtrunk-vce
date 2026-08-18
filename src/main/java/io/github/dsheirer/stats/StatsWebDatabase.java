@@ -61,7 +61,7 @@ class StatsWebDatabase
     static final int MAXIMUM_ACTIVITY_EVENT_BATCH = 500;
     static final int MAXIMUM_ACTIVITY_EVENT_MEMBERS = 64;
     static final int MAXIMUM_SYSTEM_ACTIVITY_CONTEXTS = 200;
-    private static final int ACTIVITY_ANALYTICS_SOURCE_SCAN_LIMIT = 50_000;
+    private static final int ACTIVITY_ANALYTICS_SLICE_LIMIT = 5_000;
     private static final int ACTIVITY_ANALYTICS_SCAN_LIMIT = 5_000;
     private static final int ACTIVITY_ANALYTICS_ROW_LIMIT = 200;
     private static final int IDENTITY_ROLE_DESTINATION = P25ActivityLogSchema.IDENTITY_ROLE_DESTINATION;
@@ -3120,7 +3120,7 @@ class StatsWebDatabase
         long untilMilliseconds = currentHour + HOUR_MILLISECONDS;
         String selectedGroup = groupBy;
 
-        return read(connection -> {
+        return readSnapshot(connection -> {
             Map<String,Object> summary = activityActionSummary(connection, fromMilliseconds, untilMilliseconds);
             Map<String,Object> response = new LinkedHashMap<>();
             response.put("range", requestedRange.label());
@@ -3138,14 +3138,18 @@ class StatsWebDatabase
                 return response;
             }
 
+            long summaryCount = activityActionCount(summary, action.name());
             response.put("action", action.name());
-            response.put("summary_count", activityActionCount(summary, action.name()));
+            response.put("summary_count", summaryCount);
             response.put("detail_supported", action.detailSupported());
 
             if(!action.detailSupported())
             {
+                response.put("detail_coverage", "UNAVAILABLE");
+                response.put("retained_detail_count", 0);
                 response.put("scanned_events", 0);
-                response.put("scanned_records", 0);
+                response.put("slices_examined", 0);
+                response.put("slices_truncated", false);
                 response.put("detail_truncated", false);
                 response.put("rows_truncated", false);
                 response.put("unidentified_radio_events", 0);
@@ -3153,19 +3157,26 @@ class StatsWebDatabase
                 return response;
             }
 
-            ActivityAnalyticsEventPage eventPage = activityAnalyticsEvents(connection, action.code(),
+            ActivityAnalyticsEventPage eventPage = activityAnalyticsEvents(connection, action,
                 fromMilliseconds, untilMilliseconds);
             List<Map<String,Object>> events = eventPage.rows();
-            boolean detailTruncated = eventPage.sourceTruncated() ||
-                events.size() > ACTIVITY_ANALYTICS_SCAN_LIMIT;
+            boolean eventsTruncated = events.size() > ACTIVITY_ANALYTICS_SCAN_LIMIT;
+            boolean detailTruncated = eventPage.slicesTruncated() || eventsTruncated;
 
-            if(detailTruncated)
+            if(eventsTruncated)
             {
                 events = new ArrayList<>(events.subList(0, ACTIVITY_ANALYTICS_SCAN_LIMIT));
             }
 
+            long retainedDetailCount = events.size();
+            boolean countMismatchProvesPartial = !"CALL".equals(action.name()) &&
+                retainedDetailCount != summaryCount;
+            response.put("detail_coverage",
+                detailTruncated || countMismatchProvesPartial ? "PARTIAL" : "UNKNOWN");
+            response.put("retained_detail_count", retainedDetailCount);
             response.put("scanned_events", events.size());
-            response.put("scanned_records", eventPage.sourceScanned());
+            response.put("slices_examined", eventPage.slicesExamined());
+            response.put("slices_truncated", eventPage.slicesTruncated());
             response.put("detail_truncated", detailTruncated);
             response.put("unidentified_radio_events", events.stream()
                 .filter(event -> !activityHasRadio(event)).count());
@@ -3245,40 +3256,31 @@ class StatsWebDatabase
         return 0;
     }
 
-    private static ActivityAnalyticsEventPage activityAnalyticsEvents(Connection connection, int actionCode,
+    private static ActivityAnalyticsEventPage activityAnalyticsEvents(Connection connection, ActivityAction action,
                                                                        long fromMilliseconds,
                                                                        long untilMilliseconds) throws SQLException
     {
-        long maximumId = scalarLong(connection, "SELECT COALESCE(MAX(id), 0) FROM p25_activity_event");
+        String slices = activityAnalyticsSlicesSql(action.column());
+        long sliceCount = scalarLong(connection, "SELECT COUNT(*) FROM (" + slices + ")",
+            fromMilliseconds, untilMilliseconds, fromMilliseconds, untilMilliseconds,
+            ACTIVITY_ANALYTICS_SLICE_LIMIT + 1);
 
-        if(maximumId <= 0)
+        if(sliceCount <= 0)
         {
             return new ActivityAnalyticsEventPage(List.of(), 0, false);
         }
 
-        long sourceCount = scalarLong(connection, """
-            SELECT COUNT(*)
-            FROM (
-                SELECT id
-                FROM p25_activity_event
-                WHERE id <= ?
-                ORDER BY id DESC
-                LIMIT ?
-            )
-            """, maximumId, ACTIVITY_ANALYTICS_SOURCE_SCAN_LIMIT + 1);
-        boolean sourceTruncated = sourceCount > ACTIVITY_ANALYTICS_SOURCE_SCAN_LIMIT;
-        String sql = """
-            WITH recent AS MATERIALIZED (
-                SELECT id, observed_at_ms, action_code
-                FROM p25_activity_event
-                WHERE id <= ?
-                ORDER BY id DESC
-                LIMIT ?
+        boolean slicesTruncated = sliceCount > ACTIVITY_ANALYTICS_SLICE_LIMIT;
+        String sql = "WITH action_slices AS MATERIALIZED (" + slices + """
             ), candidates AS MATERIALIZED (
-                SELECT id
-                FROM recent
-                WHERE action_code = ? AND observed_at_ms >= ? AND observed_at_ms < ?
-                ORDER BY id DESC
+                SELECT event.id
+                FROM action_slices AS slice
+                CROSS JOIN p25_activity_event AS event INDEXED BY idx_p25_activity_event_context_time
+                WHERE event.context_id = slice.context_id
+                  AND event.observed_at_ms >= slice.bucket_start_ms
+                  AND event.observed_at_ms < slice.bucket_start_ms + ?
+                  AND event.action_code = ?
+                ORDER BY event.observed_at_ms DESC, event.id DESC
                 LIMIT ?
             )
             """ + ACTIVITY_PROJECTION_SQL + """
@@ -3287,11 +3289,38 @@ class StatsWebDatabase
             """ + ACTIVITY_RELATED_JOINS_SQL + """
             ORDER BY activity.observed_at_ms DESC, activity.id DESC
             """;
-        List<Map<String,Object>> rows = queryRows(connection, sql, maximumId,
-            ACTIVITY_ANALYTICS_SOURCE_SCAN_LIMIT, actionCode, fromMilliseconds, untilMilliseconds,
+        List<Map<String,Object>> rows = queryRows(connection, sql,
+            fromMilliseconds, untilMilliseconds, fromMilliseconds, untilMilliseconds,
+            ACTIVITY_ANALYTICS_SLICE_LIMIT, HOUR_MILLISECONDS, action.code(),
             ACTIVITY_ANALYTICS_SCAN_LIMIT + 1);
         return new ActivityAnalyticsEventPage(rows,
-            Math.min(sourceCount, ACTIVITY_ANALYTICS_SOURCE_SCAN_LIMIT), sourceTruncated);
+            Math.min(sliceCount, ACTIVITY_ANALYTICS_SLICE_LIMIT), slicesTruncated);
+    }
+
+    /**
+     * Narrows retained-detail work to context-hours whose compact summary records the selected action.  The action
+     * column is taken only from the code-owned allowlist above.  Conventional frequency/timeslot rows are collapsed
+     * by UNION before the existing context/time event index is consulted.
+     */
+    private static String activityAnalyticsSlicesSql(String actionColumn)
+    {
+        return """
+            SELECT context_id, bucket_start_ms
+            FROM (
+                SELECT bucket.context_id, bucket.bucket_start_ms
+                FROM p25_site_activity_bucket AS bucket INDEXED BY idx_p25_site_activity_bucket_time
+                WHERE bucket.bucket_start_ms >= ? AND bucket.bucket_start_ms < ?
+                  AND bucket.%1$s > 0
+                UNION
+                SELECT bucket.context_id, bucket.bucket_start_ms
+                FROM conventional_activity_bucket AS bucket
+                    INDEXED BY idx_conventional_bucket_dashboard_time
+                WHERE bucket.bucket_start_ms >= ? AND bucket.bucket_start_ms < ?
+                  AND bucket.%1$s > 0
+            )
+            ORDER BY bucket_start_ms DESC, context_id
+            LIMIT ?
+            """.formatted(actionColumn);
     }
 
     private static boolean activityHasRadio(Map<String,Object> event)
@@ -3373,6 +3402,13 @@ class StatsWebDatabase
                 Map<String,Object> created = activityBreakdownBase(event);
                 created.put("target_id", target);
                 created.put("target_kind_code", kind);
+                created.put("target_kind", switch((int)kind)
+                {
+                    case IDENTITY_KIND_TALKGROUP -> "TALKGROUP";
+                    case IDENTITY_KIND_RADIO -> "RADIO";
+                    case IDENTITY_KIND_PATCH_GROUP -> "PATCH_GROUP";
+                    default -> "UNKNOWN";
+                });
                 created.put("event_count", 0L);
                 created.put("last_seen_ms", 0L);
                 return created;
@@ -5386,8 +5422,8 @@ class StatsWebDatabase
     {
     }
 
-    private record ActivityAnalyticsEventPage(List<Map<String,Object>> rows, long sourceScanned,
-                                               boolean sourceTruncated)
+    private record ActivityAnalyticsEventPage(List<Map<String,Object>> rows, long slicesExamined,
+                                               boolean slicesTruncated)
     {
     }
 
