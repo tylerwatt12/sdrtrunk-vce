@@ -483,8 +483,9 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
             }
 
             String alphaTag = matchType == MatchType.CONVENTIONAL ? text(result.alpha()) : "";
-            SiteHint siteHint = matchType == MatchType.TRUNKED ?
-                trunkedSiteHint(result.description(), system == null ? "" : system.name()) : SiteHint.NONE;
+            TrunkedResultHint trunkedHint = matchType == MatchType.TRUNKED ?
+                trunkedResultHint(result.description(), result.alpha(), system == null ? "" : system.name()) :
+                TrunkedResultHint.NONE;
             matches.add(new FrequencyMatch(result.downlinkMHz(), positive(result.uplinkMHz()),
                 text(result.tone()), text(result.callsign()), text(result.description()), alphaTag, "", "",
                 text(result.mode()), resolveMode(result.mode(), modes), text(result.classification()),
@@ -492,7 +493,7 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
                 channelUse(matchType, null), stateId, text(snapshot.state().state().name()), result.countyId(),
                 counties.getOrDefault(result.countyId(), ""), result.agencyId(),
                 agencies.getOrDefault(result.agencyId(), ""), result.subCategoryId(), systemId,
-                system == null ? "" : text(system.name()), null, siteHint.siteNumber(), siteHint.siteName(), url));
+                trunkedHint.systemName(), null, trunkedHint.siteNumber(), trunkedHint.siteName(), url));
         }
 
         return page(matches, offset, limit);
@@ -689,6 +690,46 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
         }
 
         return SiteHint.NONE;
+    }
+
+    /**
+     * State frequency results carry their own system description and site alpha tag.  Some valid trunked systems are
+     * absent from the compact state directory, so retain those result fields as a no-network fallback instead of
+     * leaving the system blank or forcing an automatic detail request.
+     */
+    private static TrunkedResultHint trunkedResultHint(String rawDescription, String rawAlpha,
+                                                        String rawDirectorySystemName)
+    {
+        String description = text(rawDescription);
+        String alpha = text(rawAlpha);
+        String systemName = text(rawDirectorySystemName);
+        SiteHint siteHint = trunkedSiteHint(description, systemName);
+
+        if(systemName.isBlank())
+        {
+            Matcher matcher = TRUNKED_SITE_DESCRIPTION.matcher(description);
+
+            if(matcher.find())
+            {
+                systemName = description.substring(0, matcher.start()).strip();
+            }
+            else
+            {
+                systemName = description;
+            }
+        }
+
+        if(siteHint == SiteHint.NONE)
+        {
+            siteHint = trunkedSiteHint(alpha, "");
+        }
+
+        if(siteHint == SiteHint.NONE && !alpha.isBlank() && !alpha.equalsIgnoreCase(systemName))
+        {
+            siteHint = new SiteHint(null, alpha);
+        }
+
+        return new TrunkedResultHint(systemName, siteHint.siteNumber(), siteHint.siteName());
     }
 
     private static String radioReferenceSiteUrl(int siteId)
@@ -1325,6 +1366,11 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
     private record SiteHint(Integer siteNumber, String siteName)
     {
         private static final SiteHint NONE = new SiteHint(null, "");
+    }
+
+    private record TrunkedResultHint(String systemName, Integer siteNumber, String siteName)
+    {
+        private static final TrunkedResultHint NONE = new TrunkedResultHint("", null, "");
     }
 
     private record EntryKey(EntryScope scope, EntryType type, RadioReferenceGateway.DetailKind kind, int id)

@@ -299,6 +299,30 @@ class RadioReferenceDirectoryServiceTest
     }
 
     @Test
+    void usesFrequencyResultNamesWhenTrunkedSystemIsMissingFromStateDirectory() throws Exception
+    {
+        FakeGateway gateway = populatedGateway();
+        gateway.state = new StateDirectory(new State(39, "Ohio", "OH"),
+            List.of(new County(2091, "Medina", "")), List.of(), List.of());
+        gateway.frequencyResults = List.of(new FrequencyResult(771.50625, 0, "",
+            "Parma / Medina County / Ottawa County", "Site 020 Medina County", "", "", "", "", "",
+            "", List.of(), 0, 5133, 0, 2091));
+
+        try(RadioReferenceDirectoryService service = service(new FakeFactory(gateway)))
+        {
+            service.login("user", "secret".toCharArray());
+            FrequencyMatch match = service.searchStateFrequencies(39, 771_506_250L, 10).items().getFirst();
+
+            assertEquals("Parma / Medina County / Ottawa County", match.systemName());
+            assertEquals(20, match.siteNumber());
+            assertEquals("Medina County", match.siteName());
+            assertEquals("https://www.radioreference.com/db/sid/5133", match.radioReferenceUrl());
+            assertEquals(0, gateway.siteCalls.get());
+            assertEquals(0, gateway.categoryCalls.get());
+        }
+    }
+
+    @Test
     void projectsUsefulFieldsFromRealShapedOhioConventionalResults() throws Exception
     {
         FakeGateway gateway = populatedGateway();
