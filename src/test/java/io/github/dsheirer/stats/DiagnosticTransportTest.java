@@ -25,6 +25,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
 import org.junit.jupiter.api.Test;
 
 class DiagnosticTransportTest
@@ -239,6 +240,44 @@ class DiagnosticTransportTest
             processor.close();
             releaseWorker.countDown();
             blocker.close();
+            scheduler.close();
+        }
+    }
+
+    @Test
+    void rapidZoomCyclingRetainsOneNativeConversionWorkspacePerAnalysisSize()
+    {
+        DiagnosticFftScheduler scheduler = new DiagnosticFftScheduler();
+        TunerDiagnosticService.TunerFftProcessor processor = new TunerDiagnosticService.TunerFftProcessor(scheduler,
+            100_000_000L, 10_000_000L, null, TunerDiagnosticService.SpectrumProfile.BALANCED, ignored -> {},
+            size -> samples -> {});
+
+        try
+        {
+            awaitInitialization(processor);
+            TunerDiagnosticService.Viewport d2 = viewport(100_000_000L, 3_500_000L);
+            TunerDiagnosticService.Viewport d4 = viewport(100_000_000L, 1_800_000L);
+            TunerDiagnosticService.Viewport d8 = viewport(100_000_000L, 900_000L);
+            TunerDiagnosticService.Viewport d16 = viewport(100_000_000L, 450_000L);
+            TunerDiagnosticService.Viewport d32 = viewport(100_000_000L, 225_000L);
+            TunerDiagnosticService.Viewport[] cycle = {d2, d4, d8, d16, d32, null, d32, d16, d8, d4, d2, null};
+
+            for(TunerDiagnosticService.Viewport viewport: cycle)
+            {
+                processor.updateConfiguration(viewport, TunerDiagnosticService.SpectrumProfile.BALANCED);
+                long revision = processor.configuration();
+                awaitCondition(() -> processor.appliedConfiguration() == revision,
+                    "diagnostic worker did not apply a zoom configuration");
+            }
+
+            assertEquals(6, processor.sourceWorkspaceCount(),
+                "D1-D32 cycling should allocate each bounded conversion size exactly once");
+            assertTrue(processor.sourceWorkspaceCount() <= processor.maximumSourceWorkspaceCount(),
+                "retained native-conversion workspaces must stay within the 24-size profile/decimation bound");
+        }
+        finally
+        {
+            processor.close();
             scheduler.close();
         }
     }
@@ -653,6 +692,23 @@ class DiagnosticTransportTest
     {
         return DiagnosticStreamFrame.float32(DiagnosticStreamFrame.TYPE_CHANNEL_SIGNAL, 1, sequence,
             System.currentTimeMillis(), 851_012_500L, 25_000L, 512, new float[]{-50.0f});
+    }
+
+    private static TunerDiagnosticService.Viewport viewport(long center, long span)
+    {
+        return new TunerDiagnosticService.Viewport(center - span / 2, center + span / 2);
+    }
+
+    private static void awaitCondition(BooleanSupplier condition, String failure)
+    {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+
+        while(!condition.getAsBoolean() && System.nanoTime() < deadline)
+        {
+            Thread.onSpinWait();
+        }
+
+        assertTrue(condition.getAsBoolean(), failure);
     }
 
     private static void awaitInitialization(TunerDiagnosticService.TunerFftProcessor processor)
