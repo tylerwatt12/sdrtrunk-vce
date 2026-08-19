@@ -9200,9 +9200,15 @@ function tunerSpectrumPanel() {
     }
     analysisViewport = stateViewport(tunerState, 'visible') || requestedViewport() ||
       (fullViewport ? { ...fullViewport } : null);
+    const diagnosticThrottled = tunerState?.diagnostic_throttled === true;
+    const effectiveFps = stateNumber(tunerState, 'effective_frames_per_second');
+    const throttleReason = String(tunerState?.diagnostic_throttle_reason || '').trim();
     setOverlay(live ? '' : (tunerState?.reason || tunerState?.message || 'Waiting for tuner samples…'));
-    setStatus(live ? (refining ? 'Refining' : 'Live') : (unavailable ? 'Unavailable' : 'Waiting'),
-      live && !refining ? 'state-current' : 'state-stale');
+    setStatus(live ? (diagnosticThrottled ?
+      `Receiver protected${effectiveFps ? ` · ${effectiveFps} FPS` : ''}` :
+      (refining ? 'Refining' : 'Live')) : (unavailable ? 'Unavailable' : 'Waiting'),
+      live && !refining && !diagnosticThrottled ? 'state-current' : 'state-stale');
+    status.title = diagnosticThrottled ? throttleReason : '';
     setReadouts();
   }
 
