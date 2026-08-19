@@ -16,6 +16,8 @@ import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 
 import io.github.dsheirer.buffer.FloatNativeBuffer;
 import io.github.dsheirer.spectrum.DFTSize;
+import io.github.dsheirer.util.concurrent.ThreadQoS;
+import io.github.dsheirer.util.concurrent.ThreadQoS.QoSClass;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.time.Duration;
@@ -37,6 +39,7 @@ class DiagnosticTransportTest
         Thread producerThread = Thread.currentThread();
         AtomicReference<Thread> creationThread = new AtomicReference<>();
         AtomicReference<Thread> transformThread = new AtomicReference<>();
+        AtomicReference<QoSClass> transformQoS = new AtomicReference<>();
         CountDownLatch transformed = new CountDownLatch(1);
         DiagnosticComplexFft.Factory fftFactory = size ->
         {
@@ -45,6 +48,7 @@ class DiagnosticTransportTest
             return samples ->
             {
                 transformThread.set(Thread.currentThread());
+                transformQoS.set(ThreadQoS.currentClass());
                 delegate.forward(samples);
                 transformed.countDown();
             };
@@ -63,6 +67,7 @@ class DiagnosticTransportTest
             assertNotSame(producerThread, transformThread.get());
             assertTrue(transformThread.get().getName().contains("diagnostic FFT"));
             assertTrue(transformThread.get().getPriority() < Thread.NORM_PRIORITY);
+            assertEquals(QoSClass.UTILITY, transformQoS.get());
         }
         finally
         {
@@ -123,6 +128,7 @@ class DiagnosticTransportTest
         Thread producerThread = Thread.currentThread();
         AtomicReference<Thread> creationThread = new AtomicReference<>();
         AtomicReference<Thread> transformThread = new AtomicReference<>();
+        AtomicReference<QoSClass> transformQoS = new AtomicReference<>();
         CountDownLatch transformed = new CountDownLatch(1);
         DiagnosticComplexFft.Factory fftFactory = size ->
         {
@@ -131,6 +137,7 @@ class DiagnosticTransportTest
             return samples ->
             {
                 transformThread.set(Thread.currentThread());
+                transformQoS.set(ThreadQoS.currentClass());
                 delegate.forward(samples);
                 transformed.countDown();
             };
@@ -152,6 +159,7 @@ class DiagnosticTransportTest
             assertNotSame(producerThread, transformThread.get());
             assertTrue(transformThread.get().getName().contains("diagnostic FFT"));
             assertTrue(transformThread.get().getPriority() < Thread.NORM_PRIORITY);
+            assertEquals(QoSClass.UTILITY, transformQoS.get());
         }
         finally
         {
@@ -292,6 +300,7 @@ class DiagnosticTransportTest
         CountDownLatch diagnosticProgress = new CountDownLatch(3);
         ChannelDiagnosticBindingScheduler.Task blocker = bindingScheduler.scheduleWithFixedDelay(() ->
         {
+            assertEquals(QoSClass.UTILITY, ThreadQoS.currentClass());
             blocked.countDown();
 
             try

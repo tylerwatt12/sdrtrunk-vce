@@ -18,6 +18,7 @@ package io.github.dsheirer.dsp.filter.channelizer;
 import io.github.dsheirer.buffer.INativeBuffer;
 import io.github.dsheirer.controller.NamingThreadFactory;
 import io.github.dsheirer.sample.Listener;
+import io.github.dsheirer.util.concurrent.ThreadQoS.QoSClass;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.concurrent.ExecutorService;
@@ -92,7 +93,7 @@ class NativeBufferProcessor implements Listener<INativeBuffer>
         mRequestedMaximumQueueDurationMilliseconds.set(maximumQueueDurationMilliseconds);
         mMaximumQueuedSampleCount = sampleRate > 0 ? calculateMaximumQueuedSampleCount(sampleRate) : 0;
         mListener = listener;
-        mExecutorService = Executors.newSingleThreadExecutor(new NamingThreadFactory(name));
+        mExecutorService = Executors.newSingleThreadExecutor(new NamingThreadFactory(name, QoSClass.USER_INITIATED));
     }
 
     /**

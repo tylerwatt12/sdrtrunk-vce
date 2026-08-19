@@ -11,18 +11,86 @@
 
 package io.github.dsheirer.util;
 
+import io.github.dsheirer.util.concurrent.ThreadQoS;
+import io.github.dsheirer.util.concurrent.ThreadQoS.QoSClass;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class DispatcherTest
 {
+    @Test
+    public void sharedChannelWorkerUsesReceiverQoS() throws Exception
+    {
+        Dispatcher<Integer> dispatcher = new Dispatcher<>("shared receiver qos", 1);
+        CountDownLatch processed = new CountDownLatch(1);
+        AtomicReference<QoSClass> observed = new AtomicReference<>();
+        dispatcher.setListener(value ->
+        {
+            observed.set(ThreadQoS.currentClass());
+            processed.countDown();
+        });
+
+        try
+        {
+            dispatcher.start();
+            dispatcher.receive(1);
+            assertTrue(processed.await(2, TimeUnit.SECONDS));
+            assertEquals(QoSClass.USER_INITIATED, observed.get());
+        }
+        finally
+        {
+            dispatcher.stop();
+        }
+    }
+
+    @Test
+    public void privateReceiverWorkerRequiresExplicitQoS() throws Exception
+    {
+        assertEquals(QoSClass.USER_INITIATED, observePrivateWorker(QoSClass.USER_INITIATED));
+        assertEquals(null, observePrivateWorker(null));
+    }
+
+    @Test
+    public void explicitQoSIsRejectedForTheAlreadyClassifiedSharedPool()
+    {
+        assertThrows(IllegalArgumentException.class, () -> new Dispatcher<Integer>("shared explicit qos", 1,
+            Dispatcher.ExecutorType.SHARED, 2, ignored -> {}, QoSClass.UTILITY));
+    }
+
+    private QoSClass observePrivateWorker(QoSClass qosClass) throws Exception
+    {
+        Dispatcher<Integer> dispatcher = new Dispatcher<>("private receiver qos", 1,
+            Dispatcher.ExecutorType.PRIVATE, 2, ignored -> {}, qosClass);
+        CountDownLatch processed = new CountDownLatch(1);
+        AtomicReference<QoSClass> observed = new AtomicReference<>();
+        dispatcher.setListener(value ->
+        {
+            observed.set(ThreadQoS.currentClass());
+            processed.countDown();
+        });
+
+        try
+        {
+            dispatcher.start();
+            dispatcher.receive(1);
+            assertTrue(processed.await(2, TimeUnit.SECONDS));
+            return observed.get();
+        }
+        finally
+        {
+            dispatcher.stop();
+        }
+    }
+
     @Test
     public void boundedQueueDropsAndCleansUpTheOldestElement() throws Exception
     {

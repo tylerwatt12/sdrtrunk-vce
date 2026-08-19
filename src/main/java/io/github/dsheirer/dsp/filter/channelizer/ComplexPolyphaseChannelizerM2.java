@@ -22,6 +22,7 @@ import io.github.dsheirer.dsp.filter.FilterFactory;
 import io.github.dsheirer.dsp.filter.design.FilterDesignException;
 import io.github.dsheirer.sample.complex.InterleavedComplexSamples;
 import io.github.dsheirer.util.Dispatcher;
+import io.github.dsheirer.util.concurrent.ThreadQoS.QoSClass;
 import java.text.DecimalFormat;
 import java.util.Arrays;
 import java.util.concurrent.ArrayBlockingQueue;
@@ -668,7 +669,7 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
             //Keep IFFT work independent from channel consumers.  Recycle stale batches during overload so their
             //large float arrays cannot accumulate indefinitely in the heap.
             super("sdrtrunk polyphase ifft processor", interval, ExecutorType.PRIVATE, IFFT_QUEUE_CAPACITY,
-                ChannelResultsBuffer::recycleNow);
+                ChannelResultsBuffer::recycleNow, QoSClass.USER_INITIATED);
 
             //We create a listener interface to receive the batched channel results arrays from the scheduled thread pool
             //dispatcher thread that is part of this continuous buffer processor.  We perform an IFFT on each

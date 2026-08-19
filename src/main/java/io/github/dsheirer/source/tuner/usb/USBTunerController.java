@@ -27,6 +27,8 @@ import io.github.dsheirer.source.tuner.TunerController;
 import io.github.dsheirer.source.tuner.TunerType;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.util.ThreadPool;
+import io.github.dsheirer.util.concurrent.ThreadQoS;
+import io.github.dsheirer.util.concurrent.ThreadQoS.QoSClass;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.IdentityHashMap;
@@ -1318,7 +1320,7 @@ public abstract class USBTunerController extends TunerController
             if(mThread == null)
             {
                 mProcessing = true;
-                mThread = createUsbEventThread(this);
+                mThread = createUsbEventThread(ThreadQoS.wrap(QoSClass.USER_INITIATED, this));
                 mThread.setName("sdrtrunk USB tuner - bus [" + mBus + "] port [" + mPortAddress + "]");
                 mThread.setDaemon(true);
                 mThread.setPriority(Thread.MAX_PRIORITY);

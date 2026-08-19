@@ -11,6 +11,8 @@
 
 package io.github.dsheirer.stats;
 
+import io.github.dsheirer.util.concurrent.ObserverThreadFactory;
+import io.github.dsheirer.util.concurrent.ThreadQoS.QoSClass;
 import java.util.Objects;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
@@ -34,13 +36,8 @@ final class DiagnosticFftScheduler implements AutoCloseable
 
     DiagnosticFftScheduler()
     {
-        mExecutor = new ScheduledThreadPoolExecutor(1, runnableTask ->
-        {
-            Thread thread = new Thread(runnableTask, "sdrtrunk web diagnostic FFT");
-            thread.setDaemon(true);
-            thread.setPriority(Math.max(Thread.MIN_PRIORITY, Thread.NORM_PRIORITY - 1));
-            return thread;
-        });
+        mExecutor = new ScheduledThreadPoolExecutor(1,
+            new ObserverThreadFactory("sdrtrunk web diagnostic FFT", QoSClass.UTILITY));
         mExecutor.setRemoveOnCancelPolicy(true);
         mExecutor.setExecuteExistingDelayedTasksAfterShutdownPolicy(false);
         mExecutor.setContinueExistingPeriodicTasksAfterShutdownPolicy(false);
