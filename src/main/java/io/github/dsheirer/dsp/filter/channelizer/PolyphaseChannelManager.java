@@ -43,6 +43,7 @@ import java.util.Map;
 import java.util.SortedSet;
 import java.util.TreeSet;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import org.apache.commons.math3.util.FastMath;
 import org.slf4j.Logger;
@@ -90,10 +91,16 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
     private final AtomicLong mChannelLifecycleVersion = new AtomicLong();
     private final AtomicLong mLastStableChannelOutputDrops = new AtomicLong();
     private final AtomicLong mRetiredIfftDrops = new AtomicLong();
+    private final AtomicLong mRetiredIfftResultPoolMisses = new AtomicLong();
+    private final AtomicLong mRetiredIfftResultArrayAllocations = new AtomicLong();
+    private final AtomicInteger mRetiredIfftOwnedBatchHighWater = new AtomicInteger();
     private final AtomicLong mIfftLifecycleVersion = new AtomicLong();
     private final AtomicLong mLastStableIfftDrops = new AtomicLong();
+    private final AtomicLong mLastStableIfftResultPoolMisses = new AtomicLong();
+    private final AtomicLong mLastStableIfftResultArrayAllocations = new AtomicLong();
+    private final AtomicInteger mLastStableIfftOwnedBatchHighWater = new AtomicInteger();
     private volatile ComplexPolyphaseChannelizerM2.QueueStatus mLastStableIfftQueueStatus =
-        new ComplexPolyphaseChannelizerM2.QueueStatus(0, 0, 0, 0);
+        emptyIfftQueueStatus();
 
     /**
      * Creates a polyphase channel manager instance.
@@ -241,7 +248,9 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
         }
 
         return new PipelineStatus(ifft.queuedBatches(), ifft.highWaterBatches(), ifft.capacityBatches(),
-            ifft.droppedBatches(), channelDroppedBatches, channels);
+            ifft.droppedBatches(), ifft.resultPoolSize(), ifft.resultPoolCapacity(), ifft.resultPoolMisses(),
+            ifft.resultArrayAllocations(), ifft.ownedBatches(), ifft.highWaterOwnedBatches(),
+            channelDroppedBatches, channels);
     }
 
     /** Returns a monotonic IFFT overflow total without locking the receiver or channelizer lifecycle. */
@@ -260,14 +269,22 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
             ComplexPolyphaseChannelizerM2 channelizer = mPolyphaseChannelizer;
             long retired = mRetiredIfftDrops.get();
             ComplexPolyphaseChannelizerM2.QueueStatus current = channelizer != null ? channelizer.getQueueStatus() :
-                new ComplexPolyphaseChannelizerM2.QueueStatus(0, 0, 0, 0);
+                emptyIfftQueueStatus();
             long after = mIfftLifecycleVersion.get();
 
             if(before == after && (after & 1L) == 0)
             {
                 long drops = mLastStableIfftDrops.accumulateAndGet(retired + current.droppedBatches(), Math::max);
+                long poolMisses = mLastStableIfftResultPoolMisses.accumulateAndGet(
+                    mRetiredIfftResultPoolMisses.get() + current.resultPoolMisses(), Math::max);
+                long allocations = mLastStableIfftResultArrayAllocations.accumulateAndGet(
+                    mRetiredIfftResultArrayAllocations.get() + current.resultArrayAllocations(), Math::max);
+                int ownedHighWater = mLastStableIfftOwnedBatchHighWater.accumulateAndGet(
+                    Math.max(mRetiredIfftOwnedBatchHighWater.get(), current.highWaterOwnedBatches()), Math::max);
                 ComplexPolyphaseChannelizerM2.QueueStatus stable = new ComplexPolyphaseChannelizerM2.QueueStatus(
-                    current.queuedBatches(), current.highWaterBatches(), current.capacityBatches(), drops);
+                    current.queuedBatches(), current.highWaterBatches(), current.capacityBatches(), drops,
+                    current.resultPoolSize(), current.resultPoolCapacity(), poolMisses, allocations,
+                    current.ownedBatches(), ownedHighWater);
                 mLastStableIfftQueueStatus = stable;
                 return stable;
             }
@@ -275,12 +292,32 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
 
         ComplexPolyphaseChannelizerM2.QueueStatus cached = mLastStableIfftQueueStatus;
         long drops = mLastStableIfftDrops.get();
-        return cached.droppedBatches() >= drops ? cached : new ComplexPolyphaseChannelizerM2.QueueStatus(
-            cached.queuedBatches(), cached.highWaterBatches(), cached.capacityBatches(), drops);
+        long poolMisses = mLastStableIfftResultPoolMisses.get();
+        long allocations = mLastStableIfftResultArrayAllocations.get();
+        int ownedHighWater = mLastStableIfftOwnedBatchHighWater.get();
+
+        if(cached.droppedBatches() >= drops && cached.resultPoolMisses() >= poolMisses &&
+            cached.resultArrayAllocations() >= allocations && cached.highWaterOwnedBatches() >= ownedHighWater)
+        {
+            return cached;
+        }
+
+        return new ComplexPolyphaseChannelizerM2.QueueStatus(cached.queuedBatches(), cached.highWaterBatches(),
+            cached.capacityBatches(), Math.max(cached.droppedBatches(), drops), cached.resultPoolSize(),
+            cached.resultPoolCapacity(), Math.max(cached.resultPoolMisses(), poolMisses),
+            Math.max(cached.resultArrayAllocations(), allocations), cached.ownedBatches(),
+            Math.max(cached.highWaterOwnedBatches(), ownedHighWater));
+    }
+
+    private static ComplexPolyphaseChannelizerM2.QueueStatus emptyIfftQueueStatus()
+    {
+        return new ComplexPolyphaseChannelizerM2.QueueStatus(0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
     }
 
     public record PipelineStatus(int ifftQueuedBatches, int ifftHighWaterBatches, int ifftCapacityBatches,
-                                 long ifftDroppedBatches, long channelDroppedBatches,
+                                 long ifftDroppedBatches, int ifftResultPoolSize, int ifftResultPoolCapacity,
+                                 long ifftResultPoolMisses, long ifftResultArrayAllocations,
+                                 int ifftOwnedBatches, int ifftHighWaterOwnedBatches, long channelDroppedBatches,
                                  List<ChannelQueueStatus> channels)
     {
     }
@@ -563,6 +600,10 @@ public class PolyphaseChannelManager implements ISourceEventProcessor
                     {
                         previous.stop();
                         mRetiredIfftDrops.addAndGet(previous.getDroppedBatchCount());
+                        mRetiredIfftResultPoolMisses.addAndGet(previous.getResultPoolMissCount());
+                        mRetiredIfftResultArrayAllocations.addAndGet(previous.getResultArrayAllocationCount());
+                        mRetiredIfftOwnedBatchHighWater.accumulateAndGet(previous.getHighWaterOwnedBatchCount(),
+                            Math::max);
                     }
 
                     //Publish the complete replacement once so an in-flight native buffer can never observe null or

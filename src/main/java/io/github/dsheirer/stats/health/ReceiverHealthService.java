@@ -352,8 +352,7 @@ public final class ReceiverHealthService implements AutoCloseable
                 PolyphaseChannelManager.PipelineStatus pipeline = polyphase.getPipelineStatus();
                 channelizerRows.add(row(scope, display + " IFFT queue", pipeline.ifftQueuedBatches(), "batches",
                     queueSeverity(pipeline.ifftQueuedBatches(), pipeline.ifftCapacityBatches()),
-                    "high_water=" + pipeline.ifftHighWaterBatches() + "; capacity=" +
-                        pipeline.ifftCapacityBatches() + "; dropped=" + pipeline.ifftDroppedBatches()));
+                    channelizerDetail(pipeline)));
                 long ifftDropDelta = delta(scope + ":ifft-drops", pipeline.ifftDroppedBatches(), now);
 
                 if(ifftDropDelta > 0)
@@ -946,6 +945,17 @@ public final class ReceiverHealthService implements AutoCloseable
 
         double ratio = (double)depth / capacity;
         return ratio >= 1.0 ? "critical" : ratio >= 0.75 ? "warning" : "healthy";
+    }
+
+    /** Formats primitive channelizer measurements on the health observer, never on a receiver processing thread. */
+    static String channelizerDetail(PolyphaseChannelManager.PipelineStatus pipeline)
+    {
+        return "high_water=" + pipeline.ifftHighWaterBatches() + "; capacity=" +
+            pipeline.ifftCapacityBatches() + "; dropped=" + pipeline.ifftDroppedBatches() +
+            "; result_pool=" + pipeline.ifftResultPoolSize() + "/" + pipeline.ifftResultPoolCapacity() +
+            " arrays; pool_misses=" + pipeline.ifftResultPoolMisses() + "; new_arrays=" +
+            pipeline.ifftResultArrayAllocations() + "; owned_batches=" + pipeline.ifftOwnedBatches() +
+            "; owned_high_water=" + pipeline.ifftHighWaterOwnedBatches();
     }
 
     private static Map<String,Object> section(String id, String title, List<Map<String,Object>> rows)

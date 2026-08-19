@@ -11,6 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.channel.metadata.activity.ChannelActivityModel;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivitySnapshot;
+import io.github.dsheirer.dsp.filter.channelizer.PolyphaseChannelManager;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -27,6 +28,19 @@ class ReceiverHealthServiceTest
 {
     @TempDir
     Path mTemporaryDirectory;
+
+    @Test
+    void channelizerMeasurementIncludesAllocationAndRetentionEvidence()
+    {
+        PolyphaseChannelManager.PipelineStatus pipeline = new PolyphaseChannelManager.PipelineStatus(
+            2, 7, 8, 3, 4096, 8192, 11, 13, 5, 9, 0, List.of());
+        String detail = ReceiverHealthService.channelizerDetail(pipeline);
+        assertTrue(detail.contains("result_pool=4096/8192 arrays"));
+        assertTrue(detail.contains("pool_misses=11"));
+        assertTrue(detail.contains("new_arrays=13"));
+        assertTrue(detail.contains("owned_batches=5"));
+        assertTrue(detail.contains("owned_high_water=9"));
+    }
 
     @Test
     void publishesTheLocalIncidentSnapshotFromTheObserverSample() throws Exception

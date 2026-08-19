@@ -27,6 +27,7 @@ import java.util.Arrays;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import org.apache.commons.math3.util.FastMath;
 import org.jtransforms.fft.FloatFFT_1D;
 import org.slf4j.Logger;
@@ -83,8 +84,12 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
     private int mTapsPerChannel;
     private final ConcurrentLinkedQueue<float[]> mChannelResultsPool = new ConcurrentLinkedQueue<>();
     private final AtomicInteger mChannelResultsPoolSize = new AtomicInteger();
+    private final AtomicLong mChannelResultsPoolMisses = new AtomicLong();
+    private final AtomicLong mChannelResultsArrayAllocations = new AtomicLong();
     private final ArrayBlockingQueue<ChannelResultsBuffer> mChannelResultsBufferPool =
         new ArrayBlockingQueue<>(IFFT_QUEUE_CAPACITY);
+    private final AtomicInteger mOwnedChannelResultsBatches = new AtomicInteger();
+    private final AtomicInteger mHighWaterOwnedChannelResultsBatches = new AtomicInteger();
     private ChannelResultsBuffer mProcessedChannelResultsBuffer = acquireChannelResultsBuffer();
     private float[] mFilterAccumulator;
 
@@ -158,7 +163,10 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
         return new QueueStatus(mIFFTProcessorDispatcher.getQueueSize(),
             mIFFTProcessorDispatcher.getHighWaterQueueSize(),
             mIFFTProcessorDispatcher.getMaximumQueueSize(),
-            mIFFTProcessorDispatcher.getDroppedElementCount());
+            mIFFTProcessorDispatcher.getDroppedElementCount(), mChannelResultsPoolSize.get(),
+            CHANNEL_RESULTS_POOL_CAPACITY, mChannelResultsPoolMisses.get(),
+            mChannelResultsArrayAllocations.get(), mOwnedChannelResultsBatches.get(),
+            mHighWaterOwnedChannelResultsBatches.get());
     }
 
     /** Allocation-free cumulative IFFT queue overflow count for lifecycle accounting. */
@@ -167,7 +175,27 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
         return mIFFTProcessorDispatcher.getDroppedElementCount();
     }
 
-    public record QueueStatus(int queuedBatches, int highWaterBatches, int capacityBatches, long droppedBatches)
+    /** Allocation-free cumulative result-pool miss count for lifecycle accounting. */
+    long getResultPoolMissCount()
+    {
+        return mChannelResultsPoolMisses.get();
+    }
+
+    /** Allocation-free cumulative result-array allocation count for lifecycle accounting. */
+    long getResultArrayAllocationCount()
+    {
+        return mChannelResultsArrayAllocations.get();
+    }
+
+    /** Allocation-free owned-batch high-water count for lifecycle accounting. */
+    int getHighWaterOwnedBatchCount()
+    {
+        return mHighWaterOwnedChannelResultsBatches.get();
+    }
+
+    public record QueueStatus(int queuedBatches, int highWaterBatches, int capacityBatches, long droppedBatches,
+                              int resultPoolSize, int resultPoolCapacity, long resultPoolMisses,
+                              long resultArrayAllocations, int ownedBatches, int highWaterOwnedBatches)
     {
     }
 
@@ -444,9 +472,14 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
         {
             mChannelResultsPoolSize.decrementAndGet();
         }
+        else
+        {
+            mChannelResultsPoolMisses.incrementAndGet();
+        }
 
         if(channelResults == null || channelResults.length != getSubChannelCount())
         {
+            mChannelResultsArrayAllocations.incrementAndGet();
             return new float[getSubChannelCount()];
         }
 
@@ -456,7 +489,7 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
     /**
      * Acquires a reusable batch container for processed channel results.
      */
-    private ChannelResultsBuffer acquireChannelResultsBuffer()
+    ChannelResultsBuffer acquireChannelResultsBuffer()
     {
         ChannelResultsBuffer buffer = mChannelResultsBufferPool.poll();
 
@@ -466,13 +499,27 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
         }
 
         buffer.reset();
+        int ownedBatches = mOwnedChannelResultsBatches.incrementAndGet();
+        updateHighWaterOwnedBatchCount(ownedBatches);
         return buffer;
+    }
+
+    /** Maintains the checked-out batch high-water mark without allocating or locking the receiver producer. */
+    private void updateHighWaterOwnedBatchCount(int ownedBatches)
+    {
+        int highWater = mHighWaterOwnedChannelResultsBatches.get();
+
+        while(ownedBatches > highWater &&
+            !mHighWaterOwnedChannelResultsBatches.compareAndSet(highWater, ownedBatches))
+        {
+            highWater = mHighWaterOwnedChannelResultsBatches.get();
+        }
     }
 
     /**
      * Recycles a fully consumed channel results batch and its backing arrays into local pools.
      */
-    private void recycleChannelResultsBuffer(ChannelResultsBuffer buffer)
+    void recycleChannelResultsBuffer(ChannelResultsBuffer buffer)
     {
         for(int index = 0; index < buffer.size(); index++)
         {
@@ -480,6 +527,7 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
         }
 
         buffer.clear();
+        mOwnedChannelResultsBatches.decrementAndGet();
         mChannelResultsBufferPool.offer(buffer);
     }
 
