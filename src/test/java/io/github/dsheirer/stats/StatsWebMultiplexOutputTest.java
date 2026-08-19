@@ -361,13 +361,14 @@ class StatsWebMultiplexOutputTest
         String source = Files.readString(Path.of("src", "main", "java", "io", "github", "dsheirer", "stats",
             "StatsWebServerService.java"));
         int sameTarget = source.indexOf("\"tuner_diagnostics\".equals(topic) && wanted != null && active != null");
-        int update = source.indexOf(
-            "mTunerDiagnostics.updateConfiguration(request.viewport(), request.profile())", sameTarget);
+        int update = source.indexOf("mTunerDiagnostics.updateViewport(request.viewport())", sameTarget);
+        int updateProfile = source.indexOf("mTunerDiagnostics.updateProfile(request.profile())", update);
         int close = source.indexOf("closeTopic(topic);", sameTarget);
 
         assertTrue(sameTarget >= 0);
         assertTrue(update > sameTarget);
-        assertTrue(close > update,
+        assertTrue(updateProfile > update);
+        assertTrue(close > updateProfile,
             "Same-target viewport and profile updates must not tear down the producer/session");
         assertTrue(source.contains("writeMultiplexRecoveryJson(output, TOPIC_CHANNEL_ACTIVITY, \"snapshot\""));
         assertTrue(source.contains("metadataGap(output, TOPIC_CHANNEL_ACTIVITY"));

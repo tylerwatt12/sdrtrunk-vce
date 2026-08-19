@@ -66,7 +66,7 @@ class StatsWebSystemsDirectoryUiContractTest
         String render = function(app, "async function render()");
 
         assertTrue(html.indexOf("/assets/features/systems-directory.js?v=1") <
-            html.indexOf("/assets/app.js?v=101"));
+            html.indexOf("/assets/app.js?v=100"));
         assertTrue(navigation.contains("['system', 'talkgroup', 'radio', 'site']"));
         assertFalse(navigation.contains("view === 'site' ? 'sites'"));
         assertTrue(render.indexOf("const effectiveView = handlers[view] ? view : 'dashboard'") <

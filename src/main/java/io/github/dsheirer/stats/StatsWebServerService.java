@@ -2840,7 +2840,8 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
                     {
                         TunerDiagnosticRequest request = tunerDiagnosticRequest(
                             multiplexSubscriptionUri(topic, wanted));
-                        mTunerDiagnostics.updateConfiguration(request.viewport(), request.profile());
+                        mTunerDiagnostics.updateViewport(request.viewport());
+                        mTunerDiagnostics.updateProfile(request.profile());
                         TunerDiagnosticService.State state = mTunerDiagnostics.state();
                         writeMultiplexDiagnostic(output, TOPIC_TUNER_DIAGNOSTICS,
                             diagnosticState(state.generation(), state.revision(), state));

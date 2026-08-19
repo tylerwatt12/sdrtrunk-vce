@@ -12,9 +12,14 @@
 package io.github.dsheirer.stats;
 
 import io.github.dsheirer.buffer.INativeBuffer;
+import io.github.dsheirer.dsp.filter.decimate.DecimationFilterFactory;
+import io.github.dsheirer.dsp.filter.decimate.IRealDecimationFilter;
+import io.github.dsheirer.dsp.mixer.ComplexMixer;
+import io.github.dsheirer.dsp.mixer.ComplexMixerFactory;
 import io.github.dsheirer.dsp.window.WindowFactory;
 import io.github.dsheirer.dsp.window.WindowType;
 import io.github.dsheirer.sample.Listener;
+import io.github.dsheirer.sample.complex.ComplexSamples;
 import io.github.dsheirer.source.ISourceEventProcessor;
 import io.github.dsheirer.source.SourceEvent;
 import io.github.dsheirer.source.tuner.Tuner;
@@ -25,12 +30,12 @@ import io.github.dsheirer.source.tuner.manager.DiscoveredTuner;
 import io.github.dsheirer.source.tuner.manager.PolyphaseChannelSourceManager;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.spectrum.NativeBufferManager;
+import io.github.dsheirer.spectrum.converter.ComplexDecibelConverter;
 import io.github.dsheirer.util.concurrent.BoundedSpscReferenceQueue;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
@@ -41,7 +46,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
-import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -83,8 +87,7 @@ public final class TunerDiagnosticService implements AutoCloseable
         Objects.requireNonNull(scheduler, "Diagnostic FFT scheduler cannot be null");
         mTargetSource = () -> availableTargets(tunerManager);
         mProcessorFactory = (target, viewport, profile, consumer) -> new TunerFftProcessor(scheduler,
-            target.target().centerFrequencyHz(), target.target().sampleRateHz(), viewport, profile, consumer,
-            SerialDiagnosticFft.FACTORY, target.receiverQueueControl()::status);
+            target.target().centerFrequencyHz(), target.target().sampleRateHz(), viewport, profile, consumer);
     }
 
     /** Test seam that keeps lifecycle behavior independent from tuner hardware and FFT implementation. */
@@ -489,9 +492,7 @@ public final class TunerDiagnosticService implements AutoCloseable
                         long receiverDroppedBuffers, long receiverDroppedMilliseconds,
                         long diagnosticDroppedBuffers, Long requestedStartFrequencyHz,
                         Long requestedEndFrequencyHz, double visibleStartFrequencyHz,
-                        double visibleEndFrequencyHz, int firstBin, int sourceBinCount, int transmittedBinCount,
-                        boolean diagnosticThrottled, int effectiveFramesPerSecond,
-                        String diagnosticThrottleReason, long diagnosticSkippedFrames, long diagnosticThrottleEvents)
+                        double visibleEndFrequencyHz, int firstBin, int sourceBinCount, int transmittedBinCount)
     {
     }
 
@@ -510,7 +511,8 @@ public final class TunerDiagnosticService implements AutoCloseable
         private final FrameProcessor mProcessor;
         private final long mOriginalIqQueueDurationMilliseconds;
         private volatile Target mMetadata;
-        private final AtomicReference<AnalysisSelection> mAnalysis;
+        private volatile Viewport mViewport;
+        private volatile SpectrumProfile mProfile;
         private volatile long mMetadataStateRevision;
         private volatile long mViewportStateRevision;
         private volatile String mTerminalState;
@@ -524,7 +526,8 @@ public final class TunerDiagnosticService implements AutoCloseable
             mTarget = target;
             mGeneration = generation;
             mMetadata = target.target();
-            mAnalysis = new AtomicReference<>(new AnalysisSelection(viewport, profile));
+            mViewport = viewport;
+            mProfile = profile;
             ReceiverQueueSnapshot originalQueue = target.receiverQueueControl().status();
             mOriginalIqQueueDurationMilliseconds = originalQueue.requestedDurationMilliseconds();
             mMetadataStateRevision = nextStateRevision();
@@ -537,7 +540,8 @@ public final class TunerDiagnosticService implements AutoCloseable
             try
             {
                 mProcessor.updateMetadata(target.target().centerFrequencyHz(), target.target().sampleRateHz());
-                mProcessor.updateConfiguration(viewport, profile);
+                mProcessor.updateViewport(viewport);
+                mProcessor.updateProfile(profile);
                 target.receiverQueueControl().request(DEFAULT_IQ_QUEUE_DURATION_MILLISECONDS);
 
                 if(!target.controller().getLock().tryLock())
@@ -594,50 +598,39 @@ public final class TunerDiagnosticService implements AutoCloseable
         /** Reconfigures the one worker between overview and zoom without touching the tuner listener. */
         public void updateViewport(Viewport viewport)
         {
-            updateSelection(viewport, null, true);
+            if(mSessionClosed.get())
+            {
+                throw new IllegalStateException("Tuner diagnostic session is closed");
+            }
+
+            if(Objects.equals(mViewport, viewport))
+            {
+                return;
+            }
+
+            mViewport = viewport;
+            mViewportStateRevision = nextStateRevision();
+            mProcessor.updateViewport(viewport);
         }
 
         /** Applies a spectrum profile to the existing worker; no tuner hardware is reconfigured. */
         public void updateProfile(SpectrumProfile profile)
         {
             Objects.requireNonNull(profile, "Tuner spectrum profile cannot be null");
-            updateSelection(null, profile, false);
-        }
 
-        /** Applies a viewport/profile request as one worker epoch, avoiding a transient intermediate zoom plan. */
-        public void updateConfiguration(Viewport viewport, SpectrumProfile profile)
-        {
-            Objects.requireNonNull(profile, "Tuner spectrum profile cannot be null");
-            updateSelection(viewport, profile, true);
-        }
-
-        private synchronized void updateSelection(Viewport viewport, SpectrumProfile profile,
-                                                  boolean replaceViewport)
-        {
             if(mSessionClosed.get())
             {
                 throw new IllegalStateException("Tuner diagnostic session is closed");
             }
 
-            while(true)
+            if(profile == mProfile)
             {
-                AnalysisSelection current = mAnalysis.get();
-                Viewport nextViewport = replaceViewport ? viewport : current.viewport();
-                SpectrumProfile nextProfile = profile != null ? profile : current.profile();
-                AnalysisSelection next = new AnalysisSelection(nextViewport, nextProfile);
-
-                if(current.equals(next))
-                {
-                    return;
-                }
-
-                if(mAnalysis.compareAndSet(current, next))
-                {
-                    mViewportStateRevision = nextStateRevision();
-                    mProcessor.updateConfiguration(nextViewport, nextProfile);
-                    return;
-                }
+                return;
             }
+
+            mProfile = profile;
+            mViewportStateRevision = nextStateRevision();
+            mProcessor.updateProfile(profile);
         }
 
         public DiagnosticStreamFrame poll(Duration timeout) throws InterruptedException
@@ -700,10 +693,9 @@ public final class TunerDiagnosticService implements AutoCloseable
                 return true;
             }
 
-            AnalysisSelection selection = mAnalysis.get();
-            SpectrumProfile profile = selection.profile();
+            SpectrumProfile profile = mProfile;
             AnalysisPlan expected = analysisPlan(mObservedCenterFrequencyHz.get(), mObservedSampleRateHz.get(),
-                selection.viewport(), profile);
+                mViewport, profile);
             return frame.centerFrequencyHz() == expected.centerFrequencyHz() &&
                 frame.sampleRateHz() == expected.sampleRateHz() && frame.fftSize() == profile.fftSize() &&
                 frame.firstBin() == 0 && frame.sourceBinCount() == profile.fftSize() &&
@@ -840,7 +832,7 @@ public final class TunerDiagnosticService implements AutoCloseable
         private void publish(FftResult result)
         {
             if(mSessionClosed.get() || result == null || result.bins() == null ||
-                result.bins().length != result.fftSize() || result.fftSize() != mAnalysis.get().profile().fftSize() ||
+                result.bins().length != result.fftSize() || result.fftSize() != mProfile.fftSize() ||
                 result.centerFrequencyHz() <= 0 || result.sampleRateHz() <= 0)
             {
                 return;
@@ -855,16 +847,14 @@ public final class TunerDiagnosticService implements AutoCloseable
         private State state(String state, String reason)
         {
             Target metadata = mMetadata;
-            AnalysisSelection selection = mAnalysis.get();
-            Viewport viewport = selection.viewport();
-            SpectrumProfile profile = selection.profile();
+            Viewport viewport = mViewport;
+            SpectrumProfile profile = mProfile;
             AnalysisPlan plan = analysisPlan(metadata.centerFrequencyHz(), metadata.sampleRateHz(), viewport,
                 profile);
             ReceiverQueueSnapshot receiver = mTarget.receiverQueueControl().status();
             Long requestedStart = viewport != null ? viewport.startFrequencyHz() : null;
             Long requestedEnd = viewport != null ? viewport.endFrequencyHz() : null;
             long revision = Math.max(mViewportStateRevision, mMetadataStateRevision);
-            DiagnosticResourceGovernor.Status governor = mProcessor.governorStatus(profile.framesPerSecond());
             return new State(revision, mGeneration, state, reason, metadata.targetId(), metadata.label(),
                 metadata.centerFrequencyHz(), metadata.sampleRateHz(), metadata.activeChannelCount(),
                 profile.id(), profile.fftSize(), profile.framesPerSecond(), MAXIMUM_DECIMATION, profile.fftSize(),
@@ -872,8 +862,7 @@ public final class TunerDiagnosticService implements AutoCloseable
                 receiver.requestedDurationMilliseconds(), receiver.queuedMilliseconds(), receiver.droppedBuffers(),
                 receiver.droppedMilliseconds(), mDroppedIngressBuffers.get() + mProcessor.droppedBufferCount(),
                 requestedStart, requestedEnd, plan.startFrequencyHz(), plan.endFrequencyHz(), 0,
-                profile.fftSize(), profile.fftSize(), governor.throttled(), governor.effectiveFramesPerSecond(),
-                governor.reason(), governor.skippedFrames(), governor.throttleEvents());
+                profile.fftSize(), profile.fftSize());
         }
 
         private void detach()
@@ -974,35 +963,29 @@ public final class TunerDiagnosticService implements AutoCloseable
         /** Retains one maximum-detail analysis window from tuners that publish small native buffers. */
         private static final int INGRESS_CAPACITY = 128;
         private static final int FILTER_SETTLING_SAMPLES = 64;
-        private static final int MAXIMUM_SOURCE_WORKSPACES = SpectrumProfile.values().length *
-            (Integer.numberOfTrailingZeros(MAXIMUM_DECIMATION) + 1);
 
         private final BoundedSpscReferenceQueue<INativeBuffer> mIngress =
             new BoundedSpscReferenceQueue<>(INGRESS_CAPACITY);
         private final Consumer<FftResult> mConsumer;
         private final DiagnosticComplexFft.Factory mFftFactory;
-        private final Supplier<ReceiverQueueSnapshot> mReceiverQueueStatus;
         private final DiagnosticFftScheduler.Task mTask;
         private final AtomicReference<ProcessorConfiguration> mRequested;
         private final AtomicBoolean mClosed = new AtomicBoolean();
         private final AtomicLong mDroppedBuffers = new AtomicLong();
-        private final DiagnosticResourceGovernor mGovernor = new DiagnosticResourceGovernor();
         /* Remaining fields are initialized and used only on the low-priority diagnostic worker. */
         private ProcessorConfiguration mApplied;
         private NativeBufferManager<INativeBuffer> mBufferManager;
         private DiagnosticComplexFft mFft;
         private float[] mWindow;
         private float[] mSourceSamples;
-        private final Map<Integer,float[]> mSourceWorkspaces = new HashMap<>();
+        private float[] mSourceI;
+        private float[] mSourceQ;
         private float[] mFftSamples;
-        private float[] mDecibelBins;
-        private DiagnosticZoomDsp mZoomDsp;
+        private ComplexMixer mMixer;
+        private IRealDecimationFilter mIDecimator;
+        private IRealDecimationFilter mQDecimator;
         private long mPendingTimestamp;
         private long mNextCalculationNanos;
-        private volatile long mProtectionClearCount;
-        private boolean mProtectionSamplesCleared;
-        private volatile long mAppliedRevision;
-        private volatile int mPublishedSourceWorkspaceCount;
         private volatile Thread mInitializationThread;
 
         TunerFftProcessor(DiagnosticFftScheduler scheduler, long centerFrequencyHz, long sampleRateHz,
@@ -1015,27 +998,17 @@ public final class TunerDiagnosticService implements AutoCloseable
                           Viewport viewport, SpectrumProfile profile, Consumer<FftResult> consumer)
         {
             this(scheduler, centerFrequencyHz, sampleRateHz, viewport, profile, consumer,
-                SerialDiagnosticFft.FACTORY, () -> ReceiverQueueSnapshot.UNSUPPORTED);
+                SerialDiagnosticFft.FACTORY);
         }
 
         TunerFftProcessor(DiagnosticFftScheduler scheduler, long centerFrequencyHz, long sampleRateHz,
                           Viewport viewport, SpectrumProfile profile, Consumer<FftResult> consumer,
                           DiagnosticComplexFft.Factory fftFactory)
         {
-            this(scheduler, centerFrequencyHz, sampleRateHz, viewport, profile, consumer, fftFactory,
-                () -> ReceiverQueueSnapshot.UNSUPPORTED);
-        }
-
-        TunerFftProcessor(DiagnosticFftScheduler scheduler, long centerFrequencyHz, long sampleRateHz,
-                          Viewport viewport, SpectrumProfile profile, Consumer<FftResult> consumer,
-                          DiagnosticComplexFft.Factory fftFactory, Supplier<ReceiverQueueSnapshot> receiverQueueStatus)
-        {
             mConsumer = Objects.requireNonNull(consumer, "Diagnostic FFT consumer cannot be null");
             Objects.requireNonNull(scheduler, "Diagnostic FFT scheduler cannot be null");
             profile = Objects.requireNonNull(profile, "Tuner spectrum profile cannot be null");
             mFftFactory = Objects.requireNonNull(fftFactory, "Diagnostic FFT factory cannot be null");
-            mReceiverQueueStatus = Objects.requireNonNull(receiverQueueStatus,
-                "Receiver queue status supplier cannot be null");
             AnalysisPlan plan = analysisPlan(centerFrequencyHz, sampleRateHz, viewport, profile);
             mRequested = new AtomicReference<>(new ProcessorConfiguration(1, centerFrequencyHz, sampleRateHz,
                 viewport, profile, plan));
@@ -1068,14 +1041,6 @@ public final class TunerDiagnosticService implements AutoCloseable
         public long droppedBufferCount()
         {
             return mDroppedBuffers.get();
-        }
-
-        @Override
-        public DiagnosticResourceGovernor.Status governorStatus(int requestedFramesPerSecond)
-        {
-            DiagnosticResourceGovernor.Status status = mGovernor.status();
-            return status.requestedFramesPerSecond() > 0 ? status :
-                FrameProcessor.super.governorStatus(requestedFramesPerSecond);
         }
 
         Thread initializationThread()
@@ -1119,34 +1084,6 @@ public final class TunerDiagnosticService implements AutoCloseable
                 ProcessorConfiguration next = new ProcessorConfiguration(current.revision() + 1,
                     current.tunerCenterFrequencyHz(), current.tunerSampleRateHz(), current.viewport(), profile,
                     nextPlan);
-
-                if(mRequested.compareAndSet(current, next))
-                {
-                    return;
-                }
-            }
-        }
-
-        @Override
-        public void updateConfiguration(Viewport viewport, SpectrumProfile profile)
-        {
-            Objects.requireNonNull(profile, "Tuner spectrum profile cannot be null");
-
-            while(!mClosed.get())
-            {
-                ProcessorConfiguration current = mRequested.get();
-                AnalysisPlan nextPlan = analysisPlan(current.tunerCenterFrequencyHz(),
-                    current.tunerSampleRateHz(), viewport, profile);
-                boolean sameAnalysis = current.profile() == profile && current.plan().equals(nextPlan);
-
-                if(sameAnalysis && Objects.equals(current.viewport(), viewport))
-                {
-                    return;
-                }
-
-                long nextRevision = sameAnalysis ? current.revision() : current.revision() + 1;
-                ProcessorConfiguration next = new ProcessorConfiguration(nextRevision,
-                    current.tunerCenterFrequencyHz(), current.tunerSampleRateHz(), viewport, profile, nextPlan);
 
                 if(mRequested.compareAndSet(current, next))
                 {
@@ -1204,73 +1141,34 @@ public final class TunerDiagnosticService implements AutoCloseable
                     return;
                 }
 
+                //Do not retain native tuner buffers in the ingress queue merely because this profile publishes below
+                //the scheduler rate.  Move them into the bounded worker-owned accumulator every scheduler pass, while
+                //FFT and transport stay profile-throttled.
+                drainIngress(requested.revision());
+
                 long now = System.nanoTime();
-                ReceiverQueueSnapshot receiver = safeReceiverQueueStatus();
-                DiagnosticResourceGovernor.Decision decision = mGovernor.evaluate(now,
-                    requested.profile().framesPerSecond(), receiver.queuedMilliseconds(),
-                    receiver.appliedDurationMilliseconds(), receiver.droppedBuffers());
 
-                if(decision.status().mode() != DiagnosticResourceGovernor.Mode.PROTECTING)
+                if(now < mNextCalculationNanos)
                 {
-                    mProtectionSamplesCleared = false;
-                }
-
-                if(!decision.renderFrame() || now < mNextCalculationNanos)
-                {
-                    if(decision.status().mode() == DiagnosticResourceGovernor.Mode.PROTECTING)
-                    {
-                        //Discard expendable producer references throughout protection so a recovering waterfall
-                        //cannot publish IQ retained from the beginning of a long receiver-pressure incident.
-                        mIngress.clear();
-
-                        if(!mProtectionSamplesCleared)
-                        {
-                            //NativeBufferManager.clear() preserves its producer quota count. Replacing this optional,
-                            //worker-owned accumulator once per incident guarantees a clean recovery boundary.
-                            mBufferManager = new NativeBufferManager<>(mSourceSamples.length / 2);
-                            mPendingTimestamp = 0;
-                            mProtectionClearCount++;
-                            mProtectionSamplesCleared = true;
-                        }
-                    }
-                    else
-                    {
-                        //Profiles below the scheduler rate still move bounded references off ingress every pass.
-                        drainIngress(requested.revision());
-                    }
-
                     return;
                 }
-
-                //A protection-mode frame consumes only IQ received since the latest non-rendering scheduler pass.
-                drainIngress(requested.revision());
 
                 mNextCalculationNanos = now +
                     TimeUnit.SECONDS.toNanos(1) / requested.profile().framesPerSecond();
 
-                long frameStarted = System.nanoTime();
-                try
-                {
-                    mBufferManager.get(mSourceSamples.length / 2, mSourceSamples);
-                    prepareFftSamples(requested.plan());
-                    WindowFactory.apply(mWindow, mFftSamples);
-                    mFft.forward(mFftSamples);
-                    DiagnosticZoomDsp.decibels(mFftSamples, mDecibelBins);
+                mBufferManager.get(mSourceSamples.length / 2, mSourceSamples);
+                prepareFftSamples(requested.plan());
+                WindowFactory.apply(mWindow, mFftSamples);
+                mFft.forward(mFftSamples);
+                float[] bins = ComplexDecibelConverter.convert(mFftSamples);
 
-                    if(requested.revision() == mRequested.get().revision() && !mClosed.get())
-                    {
-                        long observedAt = mPendingTimestamp;
-                        mPendingTimestamp = 0;
-                        AnalysisPlan plan = requested.plan();
-                        mConsumer.accept(new FftResult(observedAt > 0 ? observedAt : System.currentTimeMillis(),
-                            plan.centerFrequencyHz(), plan.sampleRateHz(), requested.profile().fftSize(),
-                            mDecibelBins));
-                    }
-                }
-                finally
+                if(requested.revision() == mRequested.get().revision() && !mClosed.get())
                 {
-                    mGovernor.recordFrameDuration(System.nanoTime() - frameStarted,
-                        requested.profile().framesPerSecond());
+                    long observedAt = mPendingTimestamp;
+                    mPendingTimestamp = 0;
+                    AnalysisPlan plan = requested.plan();
+                    mConsumer.accept(new FftResult(observedAt > 0 ? observedAt : System.currentTimeMillis(),
+                        plan.centerFrequencyHz(), plan.sampleRateHz(), requested.profile().fftSize(), bins));
                 }
             }
             catch(IOException exception)
@@ -1295,7 +1193,6 @@ public final class TunerDiagnosticService implements AutoCloseable
                 mFft = mFftFactory.create(fftSize);
                 mWindow = WindowFactory.getWindow(WindowType.BLACKMAN_HARRIS_7, fftSize * 2);
                 mFftSamples = new float[fftSize * 2];
-                mDecibelBins = new float[fftSize];
                 mInitializationThread = Thread.currentThread();
             }
 
@@ -1304,24 +1201,26 @@ public final class TunerDiagnosticService implements AutoCloseable
             int outputSamples = fftSize + (plan.decimation() > 1 ? FILTER_SETTLING_SAMPLES : 0);
             int sourceSampleCount = outputSamples * plan.decimation();
             mBufferManager = new NativeBufferManager<>(sourceSampleCount);
-            int requiredLength = sourceSampleCount * 2;
-            //There are only 24 possible profile/decimation lengths. Retain each size once so rapid D1-D32 zoom
-            //cycling cannot continually allocate multi-megabyte native-conversion arrays.
-            mSourceSamples = sourceWorkspace(requiredLength);
+            mSourceSamples = new float[sourceSampleCount * 2];
+            mSourceI = null;
+            mSourceQ = null;
+            mMixer = null;
+            mIDecimator = null;
+            mQDecimator = null;
 
             if(plan.decimation() > 1)
             {
+                mSourceI = new float[sourceSampleCount];
+                mSourceQ = new float[sourceSampleCount];
                 double mixerFrequency = configuration.tunerCenterFrequencyHz() - plan.centerFrequencyHz();
-                mZoomDsp = mZoomDsp != null ? mZoomDsp : new DiagnosticZoomDsp();
-                mZoomDsp.configure(sourceSampleCount, plan.decimation(), mixerFrequency,
-                    configuration.tunerSampleRateHz());
+                mMixer = ComplexMixerFactory.getMixer(mixerFrequency, configuration.tunerSampleRateHz());
+                mIDecimator = DecimationFilterFactory.getRealDecimationFilter(plan.decimation());
+                mQDecimator = DecimationFilterFactory.getRealDecimationFilter(plan.decimation());
             }
 
             mPendingTimestamp = 0;
             mNextCalculationNanos = 0;
-            mProtectionSamplesCleared = mGovernor.status().mode() == DiagnosticResourceGovernor.Mode.PROTECTING;
             mApplied = configuration;
-            mAppliedRevision = configuration.revision();
         }
 
         private void drainIngress(long revision)
@@ -1352,61 +1251,27 @@ public final class TunerDiagnosticService implements AutoCloseable
                 return;
             }
 
-            mZoomDsp.process(mSourceSamples, mSourceSamples.length / 2, mFftSamples);
-        }
-
-        private ReceiverQueueSnapshot safeReceiverQueueStatus()
-        {
-            try
+            for(int source = 0, output = 0; source < mSourceSamples.length; source += 2, output++)
             {
-                ReceiverQueueSnapshot status = mReceiverQueueStatus.get();
-                return status != null ? status : ReceiverQueueSnapshot.UNSUPPORTED;
-            }
-            catch(RuntimeException exception)
-            {
-                return ReceiverQueueSnapshot.UNSUPPORTED;
-            }
-        }
-
-        long protectionClearCount()
-        {
-            return mProtectionClearCount;
-        }
-
-        int sourceWorkspaceCount()
-        {
-            return mPublishedSourceWorkspaceCount;
-        }
-
-        int maximumSourceWorkspaceCount()
-        {
-            return MAXIMUM_SOURCE_WORKSPACES;
-        }
-
-        long appliedConfiguration()
-        {
-            return mAppliedRevision;
-        }
-
-        private float[] sourceWorkspace(int requiredLength)
-        {
-            float[] workspace = mSourceWorkspaces.get(requiredLength);
-
-            if(workspace != null)
-            {
-                return workspace;
+                mSourceI[output] = mSourceSamples[source];
+                mSourceQ[output] = mSourceSamples[source + 1];
             }
 
-            if(mSourceWorkspaces.size() >= MAXIMUM_SOURCE_WORKSPACES)
+            ComplexSamples mixed = mMixer.mix(mSourceI, mSourceQ, mPendingTimestamp);
+            float[] decimatedI = mIDecimator.decimateReal(mixed.i());
+            float[] decimatedQ = mQDecimator.decimateReal(mixed.q());
+            int start = decimatedI.length - mFftSamples.length / 2;
+
+            if(start < 0 || decimatedQ.length != decimatedI.length)
             {
-                Integer oldestLength = mSourceWorkspaces.keySet().iterator().next();
-                mSourceWorkspaces.remove(oldestLength);
+                throw new IllegalStateException("Tuner diagnostic decimator returned an invalid sample count");
             }
 
-            workspace = new float[requiredLength];
-            mSourceWorkspaces.put(requiredLength, workspace);
-            mPublishedSourceWorkspaceCount = mSourceWorkspaces.size();
-            return workspace;
+            for(int input = start, output = 0; output < mFftSamples.length; input++, output += 2)
+            {
+                mFftSamples[output] = decimatedI[input];
+                mFftSamples[output + 1] = decimatedQ[input];
+            }
         }
 
         @Override
@@ -1509,12 +1374,6 @@ public final class TunerDiagnosticService implements AutoCloseable
             return 0;
         }
 
-        default DiagnosticResourceGovernor.Status governorStatus(int requestedFramesPerSecond)
-        {
-            return new DiagnosticResourceGovernor.Status(DiagnosticResourceGovernor.Mode.FULL, false,
-                requestedFramesPerSecond, requestedFramesPerSecond, "", 0, 0);
-        }
-
         void updateMetadata(long centerFrequencyHz, long sampleRateHz);
 
         default void updateViewport(Viewport viewport)
@@ -1523,12 +1382,6 @@ public final class TunerDiagnosticService implements AutoCloseable
 
         default void updateProfile(SpectrumProfile profile)
         {
-        }
-
-        default void updateConfiguration(Viewport viewport, SpectrumProfile profile)
-        {
-            updateViewport(viewport);
-            updateProfile(profile);
         }
 
         @Override
@@ -1549,14 +1402,6 @@ public final class TunerDiagnosticService implements AutoCloseable
         double endFrequencyHz()
         {
             return startFrequencyHz() + sampleRateHz;
-        }
-    }
-
-    private record AnalysisSelection(Viewport viewport, SpectrumProfile profile)
-    {
-        private AnalysisSelection
-        {
-            Objects.requireNonNull(profile, "Tuner spectrum profile cannot be null");
         }
     }
 
