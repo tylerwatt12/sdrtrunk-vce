@@ -159,7 +159,7 @@ tasks.register('verifyApprovedReleaseNotes') {
 
 def publicPackagingTasks = [
     'distTar', 'distZip', 'runtimeZip', 'runtimeZipCurrent',
-    'runtimeZipWindows', 'runtimeZipOthers', 'image', 'macAppZip'
+    'runtimeZipWindows', 'runtimeZipOthers'
 ] as Set
 tasks.configureEach { candidate ->
     if(publicPackagingTasks.contains(candidate.name)) {
@@ -264,59 +264,7 @@ configurations.runtimeClasspath {
     exclude group: 'org.openjfx'
 }
 
-def usb4javaRuntimeJar = configurations.detachedConfiguration(dependencies.create('io.github.dsheirer:usb4java:1.3.5'))
-usb4javaRuntimeJar.transitive = false
-
-def usb4javaNativeLibrariesJar = configurations.detachedConfiguration(
-        dependencies.create('io.github.dsheirer:usb4java-native-libraries:1.3.3'))
-usb4javaNativeLibrariesJar.transitive = false
-
-def javaLameRuntimeJar = configurations.detachedConfiguration(dependencies.create('com.github.nwaldispuehl:java-lame:v3.98.4'))
-javaLameRuntimeJar.transitive = false
-
-// JPMS bridge: the forked usb4java jar must see the native resources through its own module class loader.
-tasks.register('mergeUsb4javaNatives', Jar) {
-    archiveFileName = 'usb4java-1.3.5-merged.jar'
-    destinationDirectory = layout.buildDirectory.dir('jpms-libs')
-    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-
-    from({ zipTree(usb4javaRuntimeJar.singleFile) })
-    from({ zipTree(usb4javaNativeLibrariesJar.singleFile) }) {
-        include 'org/usb4java/darwin-aarch64/**'
-        include 'org/usb4java/darwin-legacy-aarch64/**'
-        include 'org/usb4java/win32-aarch64/**'
-    }
-}
-
-// JPMS bridge: the upstream java-lame jar name derives to the invalid automatic module name "java.lame.v3.98.4".
-tasks.register('jpmsJavaLame', Jar) {
-    archiveFileName = 'lame.jar'
-    destinationDirectory = layout.buildDirectory.dir('jpms-libs')
-    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-
-    from({ zipTree(javaLameRuntimeJar.singleFile) })
-}
-
 def os = org.gradle.nativeplatform.platform.internal.DefaultNativePlatform.currentOperatingSystem
-def jpmsLibDir = layout.buildDirectory.dir('install/sdrtrunk-vce/lib')
-def jpmsGeneratedLibDir = layout.buildDirectory.dir('jpms-libs')
-def jpmsModuleInfoSource = layout.projectDirectory.file('src/jpms/java/module-info.java')
-def jpmsModuleInfoOutputDir = layout.buildDirectory.dir('jpms-module-info')
-def jpmsModuleDir = layout.buildDirectory.dir('jpms-module')
-def jpmsModsDir = layout.buildDirectory.dir('jpms-mods')
-def jpmsClassesDir = layout.buildDirectory.dir('classes/java/main')
-def jpmsAppJar = layout.buildDirectory.file('jpms-module/sdrtrunk-vce-jpms.jar')
-def jpmsMainModule = 'sdr.trunk/io.github.dsheirer.gui.SDRTrunk'
-def jpmsExcludedJarPattern = ~/(sdrtrunk-vce-.*|javafx-.*|java-lame-.*|usb4java-native-libraries-.*|usb4java-1\.3\.[05]\.jar|libusb4java-1\.3\.0-.*)/
-def jpmsRuntimeJars = fileTree(jpmsLibDir) {
-    include '*.jar'
-    exclude { details ->
-        details.file.name ==~ jpmsExcludedJarPattern
-    }
-}
-def jpmsGeneratedJars = fileTree(jpmsGeneratedLibDir) {
-    include '*.jar'
-}
 
 def compileModules = ['jdk.incubator.vector', 'jdk.httpserver']
 def runtimeModules = [
@@ -386,15 +334,6 @@ def jvmArgsMac = jvmArgsLinux
  * of the host build OS so cross-built Windows distributions include the Windows/JIDE exports.
  */
 def applicationJvmArgs = javafxPlatform == "win" ? jvmArgsWindows : (javafxPlatform == "mac" ? jvmArgsMac : jvmArgsLinux)
-
-/**
- * JVM Arguments for running the JPMS application on macOS.
- */
-def jpmsJvmArgsMac =
-        ['--add-exports=javafx.base/com.sun.javafx.event=org.controlsfx.controls', //Needed for controls-fx.jar
-         '-Dsdrtrunk.stats.web.root=$APPDIR/stats-web',
-         '--enable-native-access=com.sun.jna,javafx.graphics,usb4java,sdr.trunk,org.xerial.sqlitejdbc'] +
-        commonPerformanceJvmArgs
 
 application {
     mainClass = "io.github.dsheirer.gui.SDRTrunk"
@@ -529,10 +468,6 @@ String targetOsxAarch64 = 'osx-aarch64-v' + version
 String targetOsxX86_64 = 'osx-x86_64-v' + version
 String targetWindowsX86_64 = 'windows-x86_64-v' + version
 String targetWindowsAarch64 = 'windows-aarch64-v' + version
-String macAppIcon = file('src/main/packaging/macos/sdr-trunk.icns').absolutePath
-List<String> macAppVersionParts = version.toString().tokenize('-')[0].tokenize('.')
-String macAppVersion = macAppVersionParts[0] == '0' ?
-        '1.' + macAppVersionParts.drop(1).join('.') : macAppVersionParts.join('.')
 
 /**
  * Optional pre-downloaded Java Development Kit (JDK) for each target OS and CPU. Set SDRTRUNK_JDK_BASE to override the
@@ -558,73 +493,10 @@ def jdk_download_osx_x86_64 = jdk_download_base + "macos-amd64" + jdk_download_s
 def jdk_download_osx_aarch64 = jdk_download_base + "macos-aarch64" + jdk_download_suffix
 def jdk_download_windows_x86_64 = jdk_download_base + "windows-amd64-full.zip"
 def jdk_download_windows_aarch64 = jdk_download_base + "windows-aarch64-full.zip"
-def unixScriptTemplateFile = layout.projectDirectory.file('src/main/packaging/scripts/unixScriptTemplate.txt').asFile
 def java25Home = javaToolchains.launcherFor {
     languageVersion = JavaLanguageVersion.of(25)
 }.map {
     it.metadata.installationPath.asFile.absolutePath
-}
-tasks.register('jpmsRun', Exec) {
-    dependsOn('syncJpmsMods')
-
-    inputs.dir(jpmsModsDir)
-
-    doFirst {
-        executable = "${java25Home.get()}/bin/java"
-        args = [
-                '--module-path', jpmsModsDir.get().asFile.absolutePath
-        ] + jpmsJvmArgsMac + ['-m', jpmsMainModule]
-    }
-}
-
-tasks.register('syncJpmsMods', Sync) {
-    dependsOn('jpmsJar')
-
-    into(jpmsModsDir)
-    from(jpmsRuntimeJars)
-    from(jpmsGeneratedJars)
-    from(jpmsAppJar)
-}
-
-tasks.register('compileJpmsModuleInfo', Exec) {
-    dependsOn('installDist', 'mergeUsb4javaNatives', 'jpmsJavaLame')
-
-    inputs.file(jpmsModuleInfoSource)
-    inputs.dir(jpmsClassesDir)
-    inputs.files(jpmsRuntimeJars)
-    inputs.files(jpmsGeneratedJars)
-    outputs.dir(jpmsModuleInfoOutputDir)
-
-    doFirst {
-        jpmsModuleInfoOutputDir.get().asFile.deleteDir()
-        jpmsModuleInfoOutputDir.get().asFile.mkdirs()
-
-        List<File> modulePathFiles = jpmsRuntimeJars.files.sort { it.name }
-        modulePathFiles.addAll(jpmsGeneratedJars.files.sort { it.name })
-
-        executable = "${java25Home.get()}/bin/javac"
-        args = [
-                '--module-path', modulePathFiles.collect { it.absolutePath }.join(File.pathSeparator),
-                '--patch-module', "sdr.trunk=${jpmsClassesDir.get().asFile.absolutePath}",
-                '-d', jpmsModuleInfoOutputDir.get().asFile.absolutePath,
-                jpmsModuleInfoSource.asFile.absolutePath
-        ]
-    }
-}
-
-tasks.register('jpmsJar', Jar) {
-    dependsOn('compileJpmsModuleInfo')
-
-    archiveFileName = jpmsAppJar.get().asFile.name
-    destinationDirectory = jpmsModuleDir
-    manifest {
-        from(tasks.named('jar', Jar).get().manifest)
-    }
-    from(jpmsClassesDir)
-    from(layout.buildDirectory.dir('resources/main'))
-    from(jpmsModuleInfoOutputDir) {
-        include 'module-info.class'
-    }
 }
 
 /**
@@ -636,7 +508,6 @@ tasks.register('jpmsJar', Jar) {
 def configureRuntime = { def task, List<String> jvmArgs ->
     //Use the correct set of JVM arguments
     task.extension.launcherData.get().jvmArgs = jvmArgs
-    task.extension.launcherData.get().unixScriptTemplate = unixScriptTemplateFile
 
     task.extension.addModules(*runtimeModules)
 
@@ -660,7 +531,6 @@ runtime {
 
     launcher {
         jvmArgs = applicationJvmArgs
-        unixScriptTemplate = unixScriptTemplateFile
     }
 
     addModules(*runtimeModules)
@@ -676,146 +546,38 @@ runtime {
  * Usage: gradlew runtimeZipCurrent   (windows - using gradlew)
  * Usage: ./gradlew runtimeZipCurrent   (linux/macos - using gradlew)
  */
-if(os.isMacOsX())
-{
-    def macImageOutputDir = layout.buildDirectory.dir('image')
-    def macAppBundle = layout.buildDirectory.dir('image/sdrtrunk-vce.app')
-    def macRuntimeImageDir = layout.buildDirectory.dir('jre-current')
-    def macInstallDistDir = layout.buildDirectory.dir('install/sdrtrunk-vce')
-    def macRuntimeZipRootDir = layout.buildDirectory.dir('runtime-current/sdrtrunk-vce')
-    def macJpackageInputDir = layout.buildDirectory.dir('jpackage-input')
-    def macIconFile = layout.projectDirectory.file('src/main/packaging/macos/sdr-trunk.icns')
-    def macInfoPlist = macAppBundle.map {it.file('Contents/Info.plist')}
-    def macJpackageScript = layout.projectDirectory.file('src/main/packaging/macos/create-app-image.sh')
+tasks.register('runtimeZipCurrent', org.beryx.runtime.RuntimeZipTask) {rt ->
+    def arch = System.properties.getProperty("os.arch")
+    def javaHome = org.gradle.internal.jvm.Jvm.current().getJavaHome().toString()
 
-    tasks.register('jreCurrent', Exec) {
-        inputs.property('runtimeModules', runtimeModules)
-        outputs.dir(macRuntimeImageDir)
-
-        doFirst {
-            macRuntimeImageDir.get().asFile.deleteDir()
-
-            executable = "${java25Home.get()}/bin/jlink"
-            args = [
-                    '--module-path', "${java25Home.get()}/jmods",
-                    '--add-modules', runtimeModules.join(','),
-                    '--output', macRuntimeImageDir.get().asFile.absolutePath,
-                    '--strip-debug',
-                    '--compress', 'zip-6',
-                    '--no-header-files',
-                    '--no-man-pages'
-            ]
+    if(os.isWindows()) {
+        if(arch.equals("amd64")) {
+            rt.extension.targetPlatform(targetWindowsX86_64, javaHome)
         }
+        else if(arch.equals("aarch64")) {
+            rt.extension.targetPlatform(targetWindowsAarch64, javaHome)
+        }
+        configure(rt, jvmArgsWindows)
     }
-
-    tasks.register('runtimeImageCurrent', Sync) {
-        dependsOn('jreCurrent', 'installDist')
-
-        doFirst {
-            macRuntimeZipRootDir.get().asFile.deleteDir()
+    else if(os.isLinux())
+    {
+        if(arch.equals("amd64")) {
+            rt.extension.targetPlatform(targetLinuxX86_64, javaHome)
         }
-
-        into(macRuntimeZipRootDir)
-        from(macInstallDistDir)
-        from(macRuntimeImageDir) {
-            into 'runtime'
+        else if(arch.equals("aarch64")) {
+            rt.extension.targetPlatform(targetLinuxAarch64, javaHome)
         }
+        configure(rt, jvmArgsLinux)
     }
-
-    tasks.register('runtimeZipCurrent', Zip) {
-        dependsOn('runtimeImageCurrent')
-
-        archiveFileName = 'sdrtrunk-vce.zip'
-        destinationDirectory = layout.buildDirectory.dir('image')
-        from(layout.buildDirectory.dir('runtime-current')) {
-            include 'sdrtrunk-vce/**'
+    else if(os.isMacOsX())
+    {
+        if(arch.equals("amd64")) {
+            rt.extension.targetPlatform(targetOsxX86_64, javaHome)
         }
-    }
-
-    tasks.register('stageMacWebAssets', Sync) {
-        into(macJpackageInputDir)
-        from('stats-web') {
-            into 'stats-web'
+        else if(arch.equals("aarch64")) {
+            rt.extension.targetPlatform(targetOsxAarch64, javaHome)
         }
-        from('LICENSE')
-        from('NOTICE')
-    }
-
-    tasks.register('image', Exec) {
-        dependsOn('jreCurrent', 'syncJpmsMods', 'stageMacWebAssets')
-
-        inputs.dir(jpmsModsDir)
-        inputs.file(macIconFile)
-        inputs.file(macJpackageScript)
-        inputs.dir(macRuntimeImageDir)
-        inputs.dir(macJpackageInputDir)
-        outputs.dir(macAppBundle)
-
-        doFirst {
-            macAppBundle.get().asFile.deleteDir()
-
-            def jpackageArgs = [
-                    '--type', 'app-image',
-                    '--dest', macImageOutputDir.get().asFile.absolutePath,
-                    '--name', 'sdrtrunk-vce',
-                    '--input', macJpackageInputDir.get().asFile.absolutePath,
-                    '--module-path', jpmsModsDir.get().asFile.absolutePath,
-                    '--module', jpmsMainModule,
-                    '--runtime-image', macRuntimeImageDir.get().asFile.absolutePath,
-                    '--app-version', macAppVersion,
-                    '--icon', macAppIcon
-            ]
-
-            jpmsJvmArgsMac.each { jvmArg ->
-                jpackageArgs.add('--java-options')
-                jpackageArgs.add(jvmArg)
-            }
-
-            executable = '/bin/sh'
-            args = [macJpackageScript.asFile.absolutePath, "${java25Home.get()}/bin/jpackage",
-                    macInfoPlist.get().asFile.absolutePath] + jpackageArgs
-        }
-    }
-
-    tasks.register('macAppZip', Exec) {
-        dependsOn('image')
-        def archive = layout.buildDirectory.file("image/sdrtrunk-vce-macos-app-aarch64-v${version}.zip")
-        inputs.dir(macAppBundle)
-        outputs.file(archive)
-
-        doFirst {
-            archive.get().asFile.delete()
-            executable = '/usr/bin/ditto'
-            args = ['-c', '-k', '--sequesterRsrc', '--keepParent', macAppBundle.get().asFile.absolutePath,
-                    archive.get().asFile.absolutePath]
-        }
-    }
-}
-else
-{
-    tasks.register('runtimeZipCurrent', org.beryx.runtime.RuntimeZipTask) {rt ->
-        def arch = System.properties.getProperty("os.arch")
-        def javaHome = org.gradle.internal.jvm.Jvm.current().getJavaHome().toString()
-
-        if(os.isWindows()) {
-            if(arch.equals("amd64")) {
-                rt.extension.targetPlatform(targetWindowsX86_64, javaHome)
-            }
-            else if(arch.equals("aarch64")) {
-                rt.extension.targetPlatform(targetWindowsAarch64, javaHome)
-            }
-            configure(rt, jvmArgsWindows)
-        }
-        else if(os.isLinux())
-        {
-            if(arch.equals("amd64")) {
-                rt.extension.targetPlatform(targetLinuxX86_64, javaHome)
-            }
-            else if(arch.equals("aarch64")) {
-                rt.extension.targetPlatform(targetLinuxAarch64, javaHome)
-            }
-            configure(rt, jvmArgsLinux)
-        }
+        configure(rt, jvmArgsMac)
     }
 }
 

@@ -11,7 +11,6 @@
 
 package io.github.dsheirer.database.upgrade;
 
-import io.github.dsheirer.portable.PortableApplicationPaths;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -152,39 +151,19 @@ public final class ApplicationMigratorLauncher
             throw new IOException("The packaged Java executable was not found: " + java);
         }
 
-        Module module = ApplicationDatabaseMigrator.class.getModule();
+        String classPath = System.getProperty("java.class.path");
+
+        if(classPath == null || classPath.isBlank())
+        {
+            throw new IOException("The Java class path is unavailable for the Application Migrator.");
+        }
+
         List<String> command = new ArrayList<>();
         command.add(java.toString());
-
-        if(module.isNamed())
-        {
-            String modulePath = System.getProperty("jdk.module.path");
-
-            if(modulePath == null || modulePath.isBlank())
-            {
-                modulePath = PortableApplicationPaths.getInstallRoot().resolve("Contents/app/mods").toString();
-            }
-
-            command.add("--enable-native-access=" + module.getName() + ",org.xerial.sqlitejdbc");
-            command.add("--module-path");
-            command.add(modulePath);
-            command.add("-m");
-            command.add(module.getName() + "/" + APPLICATION_MIGRATOR_CLASS);
-        }
-        else
-        {
-            String classPath = System.getProperty("java.class.path");
-
-            if(classPath == null || classPath.isBlank())
-            {
-                throw new IOException("The Java class path is unavailable for the Application Migrator.");
-            }
-
-            command.add("--enable-native-access=ALL-UNNAMED");
-            command.add("-cp");
-            command.add(classPath);
-            command.add(APPLICATION_MIGRATOR_CLASS);
-        }
+        command.add("--enable-native-access=ALL-UNNAMED");
+        command.add("-cp");
+        command.add(classPath);
+        command.add(APPLICATION_MIGRATOR_CLASS);
 
         command.add(stagedDatabase.toAbsolutePath().normalize().toString());
 

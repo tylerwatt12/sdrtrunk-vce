@@ -30,7 +30,6 @@ class PortableApplicationPathsTest
     void cleanup()
     {
         System.clearProperty(PortableApplicationPaths.DATA_ROOT_PROPERTY);
-        System.clearProperty("jpackage.app-path");
         PortableApplicationPaths.resetForTest();
     }
 
@@ -65,25 +64,11 @@ class PortableApplicationPathsTest
     }
 
     @Test
-    void macApplicationKeepsDataBesideBundle() throws Exception
+    void defaultDataRootIsInsideInstall()
     {
-        String originalOs = System.getProperty("os.name");
+        PortableApplicationPaths.resetForTest();
 
-        try
-        {
-            Path app = mTemporaryFolder.resolve("Receiver Copy.app");
-            Path executable = app.resolve("Contents/MacOS/sdrtrunk-vce");
-            Files.createDirectories(executable.getParent());
-            Files.createFile(executable);
-            System.setProperty("os.name", "Mac OS X");
-            System.setProperty("jpackage.app-path", executable.toString());
-            PortableApplicationPaths.resetForTest();
-
-            assertEquals(mTemporaryFolder.resolve("Receiver Copy-data"), PortableApplicationPaths.getDataRoot());
-        }
-        finally
-        {
-            System.setProperty("os.name", originalOs);
-        }
+        assertEquals(PortableApplicationPaths.getInstallRoot().resolve("data"),
+            PortableApplicationPaths.getDataRoot());
     }
 }

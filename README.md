@@ -180,8 +180,7 @@ version.
 
 ## Where VCE Stores Data
 
-- Windows and Linux: `<install>/data`
-- macOS: `<app-name>-data` beside the `.app`
+- Windows, Linux, and macOS packages: `<install>/data`
 - Development builds: `<working-directory>/data`
 
 This data folder contains the active database, settings, tuner setup, vault, JMBE library, optional modules, logs,
@@ -210,7 +209,7 @@ These older or experimental features are not included:
 
 1. Download a package from [GitHub Releases](https://github.com/tylerwatt12/sdrtrunk-vce/releases).
 2. Extract it into a new writable folder.
-3. Start `sdrtrunk-vce.app` on macOS, `bin/sdrtrunk-vce` on Linux, or `bin\sdrtrunk-vce.bat` on Windows.
+3. Start `bin/sdrtrunk-vce` on macOS or Linux, or `bin\sdrtrunk-vce.bat` on Windows.
 4. Import XML, migrate a previous VCE setup, or start fresh.
 5. Review the imported channels and file locations before enabling auto-start.
 
@@ -223,17 +222,15 @@ Development builds require Java 25.
 ```bash
 ./gradlew test
 ./gradlew clean build -PprojectVersion=local-dev
-./gradlew runtimeZipCurrent -PprojectVersion=local-dev
 ```
 
 Use an explicit non-public version such as `local-dev` for development packages. Numbered package tasks stop while
 their version-matched release notes are still marked as a draft.
 
-Other package tasks:
+Package tasks:
 
 ```bash
-./gradlew image -PprojectVersion=local-dev
-./gradlew macAppZip -PprojectVersion=local-dev
+./gradlew runtimeZipCurrent -PprojectVersion=local-dev
 ./gradlew --no-configuration-cache runtimeZipWindows -PprojectVersion=local-dev
 ./gradlew --no-configuration-cache runtimeZipOthers -PprojectVersion=local-dev
 ```

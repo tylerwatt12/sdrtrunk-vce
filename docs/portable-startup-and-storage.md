@@ -4,8 +4,7 @@ SDRTrunk-VCE keeps each extracted distribution independent from stock SDRTrunk a
 
 ## Data Location
 
-- Windows and Linux distributions: `<install>/data`
-- macOS application: `<app-name>-data` beside the `.app` bundle
+- Windows, Linux, and macOS distributions: `<install>/data`
 - Development launches: `<working-directory>/data`, unless `sdrtrunk.vce.data.root` is set
 
 The data directory owns the SQLite database, vault, preferences, logs, recordings, event logs, screenshots, streaming
@@ -14,11 +13,12 @@ files, temporary bug-report bundles, JMBE libraries, and optional modules. Java 
 
 ## First Launch And Application Migration
 
-When `data/database/sdrtrunk.sqlite` is absent, a graphical launch first looks beside the current app or install
-folder for portable data from an earlier sdrtrunk-vce build. The setup window offers these paths:
+When `data/database/sdrtrunk.sqlite` is absent, a graphical launch first looks beside the current install folder for
+portable data from an earlier sdrtrunk-vce build. The setup window offers these paths:
 
 - **Migrate Existing** using a discovered previous data folder.
-- **Choose Install…** to select a previous `.app`, install folder, data folder, or `database/sdrtrunk.sqlite` file.
+- **Choose Install…** to select a previous install folder, data folder, `database/sdrtrunk.sqlite` file, or a legacy
+  macOS `.app` bundle.
 - **Use Found XML** or **Choose XML…** to import an older XML playlist.
 - **Start Fresh** with an empty profile.
 
@@ -30,6 +30,10 @@ streaming output remain in the previous data folder instead of being duplicated.
 
 Saved output and library paths that point inside the previous data folder are changed to the matching location inside
 the new data folder. Deliberately shared paths outside the previous data folder are left alone.
+
+Older macOS `.app` releases remain supported migration sources. The setup workflow can find or open the old bundle
+and use its sibling `<app-name>-data` folder without changing that old installation. Current macOS console packages
+store their active data only under `<install>/data`, unless an explicit `sdrtrunk.vce.data.root` override is supplied.
 
 Alpha 10 accepts its own exact current schema or one exact predecessor layout: Alias v4/P25 v24 as shipped unchanged
 by Alpha 8 and Alpha 9. Those releases have the same schema fingerprint and store no release provenance, so an exact
@@ -82,7 +86,7 @@ Headless launches require one explicit option when the database is absent:
 ```text
 --fresh
 --import-xml <path>
---upgrade-data <previous-app-or-data-folder>
+--upgrade-data <previous-install-or-data-folder>
 ```
 
 Every new installation must also configure the fixed `admin` web account before the application can start. The

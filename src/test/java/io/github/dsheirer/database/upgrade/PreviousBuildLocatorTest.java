@@ -64,15 +64,15 @@ class PreviousBuildLocatorTest
     }
 
     @Test
-    void discoversMacDataOnceThroughApplicationAndDataSiblings() throws Exception
+    void consoleInstallDiscoversLegacyMacDataOnceThroughApplicationAndDataSiblings() throws Exception
     {
         Path applications = Files.createDirectories(mTemporaryFolder.resolve("Applications"));
-        Path currentApplication = Files.createDirectories(applications.resolve("sdrtrunk-vce.app"));
-        Path currentData = createPortableDataRoot(applications.resolve("sdrtrunk-vce-data"));
+        Path currentInstall = Files.createDirectories(applications.resolve("sdrtrunk-vce"));
+        Path currentData = createPortableDataRoot(currentInstall.resolve("data"));
         Files.createDirectories(applications.resolve("sdrtrunk-vce Alpha 5.app"));
         Path previousData = createPortableDataRoot(applications.resolve("sdrtrunk-vce Alpha 5-data"));
 
-        assertEquals(List.of(previousData), PreviousBuildLocator.discover(currentApplication, currentData));
+        assertEquals(List.of(previousData), PreviousBuildLocator.discover(currentInstall, currentData));
     }
 
     @Test

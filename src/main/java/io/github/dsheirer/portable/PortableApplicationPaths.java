@@ -15,7 +15,6 @@ import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
-import java.util.Locale;
 
 /**
  * Resolves installation and writable data paths for a portable sdrtrunk-vce distribution.
@@ -23,7 +22,6 @@ import java.util.Locale;
 public final class PortableApplicationPaths
 {
     public static final String DATA_ROOT_PROPERTY = "sdrtrunk.vce.data.root";
-    private static final String JPACKAGE_APP_PATH_PROPERTY = "jpackage.app-path";
     private static final String DATA_DIRECTORY = "data";
     private static Path sInstallRoot;
     private static Path sDataRoot;
@@ -102,55 +100,11 @@ public final class PortableApplicationPaths
 
     private static Path resolveDefaultDataRoot()
     {
-        String appPathValue = System.getProperty(JPACKAGE_APP_PATH_PROPERTY);
-
-        if(appPathValue != null && !appPathValue.isBlank() && isMac())
-        {
-            Path appBundle = findAppBundle(Path.of(appPathValue).toAbsolutePath().normalize());
-
-            if(appBundle != null && appBundle.getParent() != null)
-            {
-                String fileName = appBundle.getFileName().toString();
-                String baseName = fileName.toLowerCase(Locale.ROOT).endsWith(".app") ?
-                    fileName.substring(0, fileName.length() - 4) : fileName;
-                return appBundle.resolveSibling(baseName + "-data").toAbsolutePath().normalize();
-            }
-        }
-
         return getInstallRoot().resolve(DATA_DIRECTORY).toAbsolutePath().normalize();
     }
 
     private static Path resolveInstallRoot()
     {
-        String appPathValue = System.getProperty(JPACKAGE_APP_PATH_PROPERTY);
-
-        if(appPathValue != null && !appPathValue.isBlank())
-        {
-            Path appPath = Path.of(appPathValue).toAbsolutePath().normalize();
-
-            if(isMac())
-            {
-                Path appBundle = findAppBundle(appPath);
-
-                if(appBundle != null)
-                {
-                    return appBundle;
-                }
-            }
-
-            Path parent = appPath.getParent();
-
-            if(parent != null && parent.getFileName() != null && "bin".equalsIgnoreCase(parent.getFileName().toString()))
-            {
-                return parent.getParent();
-            }
-
-            if(parent != null)
-            {
-                return parent;
-            }
-        }
-
         try
         {
             URI location = PortableApplicationPaths.class.getProtectionDomain().getCodeSource().getLocation().toURI();
@@ -169,27 +123,5 @@ public final class PortableApplicationPaths
         }
 
         return Path.of(System.getProperty("user.dir", ".")).toAbsolutePath().normalize();
-    }
-
-    private static Path findAppBundle(Path path)
-    {
-        Path current = Files.isDirectory(path) ? path : path.getParent();
-
-        while(current != null)
-        {
-            if(current.getFileName() != null && current.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".app"))
-            {
-                return current;
-            }
-
-            current = current.getParent();
-        }
-
-        return null;
-    }
-
-    private static boolean isMac()
-    {
-        return System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("mac");
     }
 }
