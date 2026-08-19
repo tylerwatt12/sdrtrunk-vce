@@ -19,8 +19,6 @@
 
 package io.github.dsheirer.controller;
 
-import io.github.dsheirer.util.concurrent.ThreadQoS;
-import io.github.dsheirer.util.concurrent.ThreadQoS.QoSClass;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -37,26 +35,15 @@ public class NamingThreadFactory implements ThreadFactory
     private final AtomicInteger mThreadNumber = new AtomicInteger(1);
     
     private final String mNamePrefix;
-    private final QoSClass mQoSClass;
 
     public NamingThreadFactory( String prefix ) 
     {
-        this(prefix, null);
-    }
-
-    /**
-     * Creates named threads that apply the requested OS scheduling class once when each worker starts.
-     */
-    public NamingThreadFactory(String prefix, QoSClass qosClass)
-    {
         mNamePrefix = prefix + " thread ";
-        mQoSClass = qosClass;
     }
 
     public Thread newThread( Runnable runnable ) 
     {
-        Runnable worker = mQoSClass != null ? ThreadQoS.wrap(mQoSClass, runnable) : runnable;
-        Thread thread = new Thread(worker, mNamePrefix + mThreadNumber.getAndIncrement());
+        Thread thread = new Thread(runnable, mNamePrefix + mThreadNumber.getAndIncrement());
         
         if( thread.isDaemon() )
         {

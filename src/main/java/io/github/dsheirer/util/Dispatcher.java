@@ -21,8 +21,6 @@ package io.github.dsheirer.util;
 import io.github.dsheirer.controller.NamingThreadFactory;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.source.heartbeat.HeartbeatManager;
-import io.github.dsheirer.util.concurrent.ThreadQoS;
-import io.github.dsheirer.util.concurrent.ThreadQoS.QoSClass;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ArrayBlockingQueue;
@@ -66,8 +64,7 @@ public class Dispatcher<E> implements Listener<E>
             @Override
             public Thread newThread(Runnable r)
             {
-                Thread t = new Thread(ThreadQoS.wrap(QoSClass.USER_INITIATED, r),
-                    "sdrtrunk dispatcher thread " + mCount.getAndIncrement());
+                Thread t = new Thread(r, "sdrtrunk dispatcher thread " + mCount.getAndIncrement());
                 t.setDaemon(true);
                 t.setPriority(Thread.NORM_PRIORITY);
                 return t;
@@ -83,7 +80,6 @@ public class Dispatcher<E> implements Listener<E>
     private final ReentrantLock mProcessingLock = new ReentrantLock();
     private final AtomicReference<LifecycleState> mLifecycleState;
     private final ExecutorType mExecutorType;
-    private final QoSClass mQoSClass;
     private final long mInterval;
     private HeartbeatManager mHeartbeatManager;
 
@@ -153,16 +149,6 @@ public class Dispatcher<E> implements Listener<E>
     public Dispatcher(String threadName, long interval, ExecutorType executorType, int maximumQueueSize,
                       Consumer<E> discardHandler)
     {
-        this(threadName, interval, executorType, maximumQueueSize, discardHandler, null);
-    }
-
-    /**
-     * Constructs an optionally bounded dispatcher with an explicit scheduling class for a private worker.  Shared
-     * channel-dispatch workers are always receiver-critical and already use user-initiated QoS.
-     */
-    public Dispatcher(String threadName, long interval, ExecutorType executorType, int maximumQueueSize,
-                      Consumer<E> discardHandler, QoSClass qosClass)
-    {
         if(interval <= 0)
         {
             throw new IllegalArgumentException("Dispatcher interval must be greater than zero");
@@ -173,15 +159,9 @@ public class Dispatcher<E> implements Listener<E>
             throw new IllegalArgumentException("Dispatcher queue limit cannot be negative");
         }
 
-        if(qosClass != null && executorType != ExecutorType.PRIVATE)
-        {
-            throw new IllegalArgumentException("Explicit dispatcher QoS is supported only for private workers");
-        }
-
         mThreadName = threadName != null && !threadName.isBlank() ? threadName : "sdrtrunk dispatcher";
         mInterval = interval;
         mExecutorType = executorType;
-        mQoSClass = qosClass;
         mMaximumQueueSize = maximumQueueSize;
         mDiscardHandler = discardHandler;
         mLifecycleState = new AtomicReference<>(new LifecycleState(0, LifecyclePhase.STOPPED, createQueue(), null));
@@ -267,14 +247,8 @@ public class Dispatcher<E> implements Listener<E>
             }
         }
 
-        ScheduledExecutorService privateExecutor = null;
-
-        if(mExecutorType == ExecutorType.PRIVATE)
-        {
-            ThreadFactory threadFactory = mQoSClass != null ? new NamingThreadFactory(mThreadName, mQoSClass) :
-                new NamingThreadFactory(mThreadName);
-            privateExecutor = Executors.newSingleThreadScheduledExecutor(threadFactory);
-        }
+        ScheduledExecutorService privateExecutor = mExecutorType == ExecutorType.PRIVATE ?
+            Executors.newSingleThreadScheduledExecutor(new NamingThreadFactory(mThreadName)) : null;
         ScheduledExecutorService executor = privateExecutor != null ? privateExecutor : SHARED_POOL;
         long generation = starting.generation;
         BlockingQueue<E> queue = starting.queue;

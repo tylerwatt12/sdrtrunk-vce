@@ -21,11 +21,7 @@ import io.github.dsheirer.source.SourceException;
 import io.github.dsheirer.source.tuner.ITunerErrorListener;
 import io.github.dsheirer.source.tuner.LoggingTunerErrorListener;
 import io.github.dsheirer.source.tuner.TunerType;
-import io.github.dsheirer.util.concurrent.ThreadQoS;
-import io.github.dsheirer.util.concurrent.ThreadQoS.QoSClass;
 import java.lang.reflect.Field;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -36,49 +32,6 @@ import org.junit.jupiter.api.Test;
 
 class USBTunerControllerLifecycleTest
 {
-    @Test
-    void initializesReceiverQoSBeforePreparingOrSubmittingUsbTransfers() throws Exception
-    {
-        TestController controller = new TestController();
-        controller.mFailPrepare = true;
-        setRunning(controller, true);
-
-        controller.addBufferListener(buffer -> {});
-
-        assertEquals(List.of("qos", "prepare"), controller.mStreamingStartupOrder);
-        assertEquals(0, controller.mTransferBufferSizeRequests.get(),
-            "the deterministic prepare failure proves no transfer allocation or submission occurred first");
-    }
-
-    @Test
-    void eventProcessorAppliesReceiverQoSBeforeHandlingUsbEvents() throws Exception
-    {
-        TestController controller = new TestController();
-        USBTunerController.UsbEventProcessor processor = controller.new UsbEventProcessor();
-        controller.mProcessor.set(processor);
-        processor.start();
-
-        try
-        {
-            assertTrue(controller.mEventThreadReady.await(1, TimeUnit.SECONDS));
-            controller.mAllowEventLoop.countDown();
-            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
-
-            while(controller.mEventCalls.get() == 0 && System.nanoTime() < deadline)
-            {
-                Thread.onSpinWait();
-            }
-
-            assertEquals(1, controller.mEventCalls.get());
-            assertEquals(QoSClass.USER_INITIATED, controller.mObservedEventQoS.get());
-        }
-        finally
-        {
-            controller.mAllowEventLoop.countDown();
-            assertTrue(processor.stop());
-        }
-    }
-
     @Test
     void prepareFailureRollsBackBeforeAsynchronousErrorNotification() throws Exception
     {
@@ -278,10 +231,8 @@ class USBTunerControllerLifecycleTest
         private final AtomicInteger mEventCalls = new AtomicInteger();
         private final AtomicReference<UsbEventProcessor> mProcessor = new AtomicReference<>();
         private final AtomicReference<Thread> mCreatedEventThread = new AtomicReference<>();
-        private final AtomicReference<QoSClass> mObservedEventQoS = new AtomicReference<>();
         private final AtomicInteger mTransferBufferSizeRequests = new AtomicInteger();
         private final AtomicInteger mStreamingCleanupCalls = new AtomicInteger();
-        private final List<String> mStreamingStartupOrder = new ArrayList<>();
         private volatile boolean mFailPrepare;
 
         private TestController()
@@ -316,18 +267,10 @@ class USBTunerControllerLifecycleTest
         @Override
         protected void prepareStreaming() throws SourceException
         {
-            mStreamingStartupOrder.add("prepare");
-
             if(mFailPrepare)
             {
                 throw new SourceException("test prepare failure");
             }
-        }
-
-        @Override
-        void initializeUsbEventThreadQoS()
-        {
-            mStreamingStartupOrder.add("qos");
         }
 
         @Override
@@ -394,17 +337,13 @@ class USBTunerControllerLifecycleTest
         @Override
         protected void handleUsbEvents(long timeoutMilliseconds)
         {
-            mObservedEventQoS.set(ThreadQoS.currentClass());
+            mEventCalls.incrementAndGet();
             UsbEventProcessor processor = mProcessor.get();
 
             if(processor != null)
             {
                 processor.stop();
             }
-
-            //Publish completion only after the event thread has stopped itself.  Otherwise the test thread can
-            //observe the call count and enter stop() while this thread is still trying to acquire the same monitor.
-            mEventCalls.incrementAndGet();
         }
 
         @Override

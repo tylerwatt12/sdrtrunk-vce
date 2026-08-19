@@ -13,8 +13,6 @@ package io.github.dsheirer.dsp.filter.channelizer;
 import io.github.dsheirer.buffer.INativeBuffer;
 import io.github.dsheirer.sample.complex.ComplexSamples;
 import io.github.dsheirer.sample.complex.InterleavedComplexSamples;
-import io.github.dsheirer.util.concurrent.ThreadQoS;
-import io.github.dsheirer.util.concurrent.ThreadQoS.QoSClass;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Iterator;
@@ -22,7 +20,6 @@ import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -35,31 +32,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 public class NativeBufferProcessorTest
 {
     private static final long MAXIMUM_QUEUE_DURATION_MILLISECONDS = 100;
-
-    @Test
-    public void receiverWorkerRequestsUserInitiatedQoSBeforeProcessing() throws Exception
-    {
-        CountDownLatch processed = new CountDownLatch(1);
-        AtomicReference<QoSClass> observed = new AtomicReference<>();
-        NativeBufferProcessor processor = new NativeBufferProcessor("receiver qos", 1_000_000, buffer ->
-        {
-            observed.set(ThreadQoS.currentClass());
-            processed.countDown();
-        });
-
-        try
-        {
-            processor.start();
-            processor.receive(new TestNativeBuffer(1, 2_048));
-            assertTrue(processed.await(2, TimeUnit.SECONDS));
-            assertEquals(QoSClass.USER_INITIATED, observed.get());
-        }
-        finally
-        {
-            processor.dispose();
-            assertTrue(processor.awaitTermination(5, TimeUnit.SECONDS));
-        }
-    }
 
     @Test
     public void receiverBufferSizesRetainTheSameTimeWindow() throws Exception
