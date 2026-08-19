@@ -48,6 +48,18 @@ public final class ThreadQoS
     }
 
     /**
+     * Resolves the native QoS bridge on the calling thread. USB tuner startup invokes this before submitting any
+     * transfers so one-time FFM linkage cannot delay the event worker while native sample buffers are already live.
+     *
+     * @return true when the macOS native bridge is available, or false when this platform uses the safe Java-only
+     * fallback
+     */
+    public static boolean initialize()
+    {
+        return NATIVE_ACCESS.supported();
+    }
+
+    /**
      * macOS scheduling classes used by SDRTrunk.  Receiver work must meet live sample deadlines, while observer work
      * is intentionally loss-tolerant and must yield before receiver processing.
      */

@@ -402,6 +402,7 @@ public abstract class USBTunerController extends TunerController
             {
                 try
                 {
+                    initializeUsbEventThreadQoS();
                     prepareStreaming();
                     List<Transfer> transfers = mTransferManager.getTransfers();
                     mTransferManager.setAutoResubmitTransfers(true);
@@ -443,6 +444,15 @@ public abstract class USBTunerController extends TunerController
      */
     protected void prepareStreaming() throws SourceException
     {
+    }
+
+    /**
+     * Resolves the macOS worker-QoS bridge before USB transfers are submitted. Keeping one-time native linkage out
+     * of the event-thread startup window prevents incoming transfer completions from waiting behind initialization.
+     */
+    void initializeUsbEventThreadQoS()
+    {
+        ThreadQoS.initialize();
     }
 
     /**

@@ -300,7 +300,7 @@ class DiagnosticTransportTest
         CountDownLatch diagnosticProgress = new CountDownLatch(3);
         ChannelDiagnosticBindingScheduler.Task blocker = bindingScheduler.scheduleWithFixedDelay(() ->
         {
-            assertEquals(QoSClass.UTILITY, ThreadQoS.currentClass());
+            assertNull(ThreadQoS.currentClass());
             blocked.countDown();
 
             try
