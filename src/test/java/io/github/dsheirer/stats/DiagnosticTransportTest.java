@@ -24,6 +24,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 class DiagnosticTransportTest
@@ -33,20 +34,34 @@ class DiagnosticTransportTest
     {
         DiagnosticFftScheduler scheduler = new DiagnosticFftScheduler();
         Thread producerThread = Thread.currentThread();
+        AtomicReference<Thread> creationThread = new AtomicReference<>();
+        AtomicReference<Thread> transformThread = new AtomicReference<>();
+        CountDownLatch transformed = new CountDownLatch(1);
+        DiagnosticComplexFft.Factory fftFactory = size ->
+        {
+            creationThread.set(Thread.currentThread());
+            DiagnosticComplexFft delegate = new SerialDiagnosticFft(size);
+            return samples ->
+            {
+                transformThread.set(Thread.currentThread());
+                delegate.forward(samples);
+                transformed.countDown();
+            };
+        };
         DemandDftProcessor processor = new DemandDftProcessor(scheduler, DFTSize.FFT00512, 20,
-            (timestamp, values) -> {});
+            (timestamp, values, configuration) -> {}, fftFactory);
 
         try
         {
-            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
-
-            while(processor.initializationThread() == null && System.nanoTime() < deadline)
-            {
-                Thread.onSpinWait();
-            }
-
-            assertNotSame(producerThread, processor.initializationThread());
-            assertTrue(processor.initializationThread().getName().contains("diagnostic FFT"));
+            FloatNativeBuffer buffer = new FloatNativeBuffer(new float[1_024], 1, 1);
+            processor.receive(buffer, 1);
+            processor.receive(buffer, 2);
+            assertTrue(transformed.await(2, TimeUnit.SECONDS));
+            assertSame(processor.initializationThread(), creationThread.get());
+            assertSame(creationThread.get(), transformThread.get());
+            assertNotSame(producerThread, transformThread.get());
+            assertTrue(transformThread.get().getName().contains("diagnostic FFT"));
+            assertTrue(transformThread.get().getPriority() < Thread.NORM_PRIORITY);
         }
         finally
         {
@@ -105,24 +120,85 @@ class DiagnosticTransportTest
     {
         DiagnosticFftScheduler scheduler = new DiagnosticFftScheduler();
         Thread producerThread = Thread.currentThread();
+        AtomicReference<Thread> creationThread = new AtomicReference<>();
+        AtomicReference<Thread> transformThread = new AtomicReference<>();
+        CountDownLatch transformed = new CountDownLatch(1);
+        DiagnosticComplexFft.Factory fftFactory = size ->
+        {
+            creationThread.set(Thread.currentThread());
+            DiagnosticComplexFft delegate = new SerialDiagnosticFft(size);
+            return samples ->
+            {
+                transformThread.set(Thread.currentThread());
+                delegate.forward(samples);
+                transformed.countDown();
+            };
+        };
         TunerDiagnosticService.TunerFftProcessor processor = new TunerDiagnosticService.TunerFftProcessor(scheduler,
-            100_000_000L, 10_000_000L, ignored -> {});
+            100_000_000L, 10_000_000L, null, TunerDiagnosticService.SpectrumProfile.BALANCED, ignored -> {},
+            fftFactory);
 
         try
         {
-            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
-
-            while(processor.initializationThread() == null && System.nanoTime() < deadline)
-            {
-                Thread.onSpinWait();
-            }
-
-            assertNotSame(producerThread, processor.initializationThread());
-            assertTrue(processor.initializationThread().getName().contains("diagnostic FFT"));
+            awaitInitialization(processor);
+            FloatNativeBuffer buffer = new FloatNativeBuffer(new float[16_384], 1, 1);
+            long configuration = processor.configuration();
+            processor.receive(buffer, 1, configuration);
+            processor.receive(buffer, 2, configuration);
+            assertTrue(transformed.await(2, TimeUnit.SECONDS));
+            assertSame(processor.initializationThread(), creationThread.get());
+            assertSame(creationThread.get(), transformThread.get());
+            assertNotSame(producerThread, transformThread.get());
+            assertTrue(transformThread.get().getName().contains("diagnostic FFT"));
+            assertTrue(transformThread.get().getPriority() < Thread.NORM_PRIORITY);
         }
         finally
         {
             processor.close();
+            scheduler.close();
+        }
+    }
+
+    @Test
+    void aBlockedSerialTunerTransformCannotBackpressureItsProducerOrClose() throws Exception
+    {
+        DiagnosticFftScheduler scheduler = new DiagnosticFftScheduler();
+        CountDownLatch transformStarted = new CountDownLatch(1);
+        CountDownLatch releaseTransform = new CountDownLatch(1);
+        DiagnosticComplexFft.Factory blockingFactory = size -> samples ->
+        {
+            transformStarted.countDown();
+            awaitUninterruptibly(releaseTransform);
+        };
+        TunerDiagnosticService.TunerFftProcessor processor = new TunerDiagnosticService.TunerFftProcessor(scheduler,
+            100_000_000L, 10_000_000L, null, TunerDiagnosticService.SpectrumProfile.MAXIMUM_DETAIL, ignored -> {},
+            blockingFactory);
+
+        try
+        {
+            awaitInitialization(processor);
+            FloatNativeBuffer window = new FloatNativeBuffer(new float[65_536], 1, 1);
+            long configuration = processor.configuration();
+            processor.receive(window, 1, configuration);
+            processor.receive(window, 2, configuration);
+            assertTrue(transformStarted.await(2, TimeUnit.SECONDS));
+            FloatNativeBuffer ingress = new FloatNativeBuffer(new float[4_096], 3, 3);
+
+            assertTimeoutPreemptively(Duration.ofMillis(250), () ->
+            {
+                for(int x = 0; x < 256; x++)
+                {
+                    processor.receive(ingress, x + 3, configuration);
+                }
+            });
+            assertEquals(128, processor.droppedBufferCount());
+            assertTimeoutPreemptively(Duration.ofMillis(250), processor::close,
+                "closing a diagnostic lease must not wait for a running serial transform");
+        }
+        finally
+        {
+            processor.close();
+            releaseTransform.countDown();
             scheduler.close();
         }
     }
@@ -577,5 +653,17 @@ class DiagnosticTransportTest
     {
         return DiagnosticStreamFrame.float32(DiagnosticStreamFrame.TYPE_CHANNEL_SIGNAL, 1, sequence,
             System.currentTimeMillis(), 851_012_500L, 25_000L, 512, new float[]{-50.0f});
+    }
+
+    private static void awaitInitialization(TunerDiagnosticService.TunerFftProcessor processor)
+    {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+
+        while(processor.initializationThread() == null && System.nanoTime() < deadline)
+        {
+            Thread.onSpinWait();
+        }
+
+        assertTrue(processor.initializationThread() != null, "tuner diagnostic FFT did not initialize");
     }
 }

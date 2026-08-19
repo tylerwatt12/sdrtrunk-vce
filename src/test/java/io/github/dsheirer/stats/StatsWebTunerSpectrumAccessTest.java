@@ -53,7 +53,8 @@ class StatsWebTunerSpectrumAccessTest
         }
 
         WebAccessHttpController accessController = new WebAccessHttpController(accessService);
-        TunerDiagnosticService tunerDiagnostics = new TunerDiagnosticService(List::of, (target, consumer) -> null);
+        TunerDiagnosticService tunerDiagnostics = new TunerDiagnosticService(List::of,
+            (target, viewport, profile, consumer) -> null);
         HttpServer server = HttpServer.create(
             new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0);
         ExecutorService executor = Executors.newCachedThreadPool();

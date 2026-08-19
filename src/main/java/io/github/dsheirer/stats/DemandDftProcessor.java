@@ -26,7 +26,6 @@ import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BiConsumer;
-import org.jtransforms.fft.FloatFFT_1D;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -45,13 +44,14 @@ final class DemandDftProcessor implements Listener<INativeBuffer>, AutoCloseable
         new BoundedSpscReferenceQueue<>(INGRESS_CAPACITY);
     private final ResultConsumer mConsumer;
     private final DFTSize mDftSize;
+    private final DiagnosticComplexFft.Factory mFftFactory;
     private final DiagnosticFftScheduler.Task mTask;
     private final AtomicLong mConfiguration = new AtomicLong(1);
     private final AtomicLong mDroppedBuffers = new AtomicLong();
     private final AtomicBoolean mClosed = new AtomicBoolean();
     /* The following fields are created and used only by the diagnostic scheduler worker. */
     private NativeBufferManager<INativeBuffer> mBufferManager;
-    private FloatFFT_1D mFft;
+    private DiagnosticComplexFft mFft;
     private float[] mSamples;
     private float[] mWindow;
     private DFTSize mAppliedDftSize;
@@ -69,9 +69,16 @@ final class DemandDftProcessor implements Listener<INativeBuffer>, AutoCloseable
     DemandDftProcessor(DiagnosticFftScheduler scheduler, DFTSize dftSize, int framesPerSecond,
                        ResultConsumer consumer)
     {
+        this(scheduler, dftSize, framesPerSecond, consumer, SerialDiagnosticFft.FACTORY);
+    }
+
+    DemandDftProcessor(DiagnosticFftScheduler scheduler, DFTSize dftSize, int framesPerSecond,
+                       ResultConsumer consumer, DiagnosticComplexFft.Factory fftFactory)
+    {
         Objects.requireNonNull(scheduler, "Diagnostic FFT scheduler cannot be null");
         mDftSize = Objects.requireNonNull(dftSize, "Diagnostic FFT size cannot be null");
         mConsumer = Objects.requireNonNull(consumer, "Diagnostic FFT consumer cannot be null");
+        mFftFactory = Objects.requireNonNull(fftFactory, "Diagnostic FFT factory cannot be null");
         mTask = scheduler.scheduleWithFixedDelay(this::calculate, framesPerSecond);
     }
 
@@ -183,7 +190,7 @@ final class DemandDftProcessor implements Listener<INativeBuffer>, AutoCloseable
             drainIngress(configuration);
             mBufferManager.get(mSamples.length / 2, mSamples);
             WindowFactory.apply(mWindow, mSamples);
-            mFft.complexForward(mSamples);
+            mFft.forward(mSamples);
             float[] converted = ComplexDecibelConverter.convert(mSamples);
 
             if(configuration == mConfiguration.get() && !mClosed.get())
@@ -211,7 +218,7 @@ final class DemandDftProcessor implements Listener<INativeBuffer>, AutoCloseable
     {
         int size = dftSize.getSize();
         mBufferManager = new NativeBufferManager<>(size);
-        mFft = new FloatFFT_1D(size);
+        mFft = mFftFactory.create(size);
         mSamples = new float[size * 2];
         mWindow = WindowFactory.getWindow(WindowType.BLACKMAN_HARRIS_7, size * 2);
         mAppliedDftSize = dftSize;

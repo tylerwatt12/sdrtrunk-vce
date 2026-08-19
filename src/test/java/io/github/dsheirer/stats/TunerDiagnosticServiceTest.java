@@ -169,6 +169,7 @@ class TunerDiagnosticServiceTest
         assertEquals(8, state.quantizationBits());
         assertEquals(7, state.receiverDroppedBuffers());
         assertEquals(9, state.receiverDroppedMilliseconds());
+        assertEquals(TunerDiagnosticService.SpectrumProfile.MAXIMUM_DETAIL, processors.initialProfile.get());
         assertEquals(TunerDiagnosticService.SpectrumProfile.MAXIMUM_DETAIL, processors.lastProfile.get());
         assertEquals(List.of(200L), queue.requests);
 
@@ -479,6 +480,8 @@ class TunerDiagnosticServiceTest
         assertEquals(10_000_000L, state.sampleRateHz());
         assertEquals(viewport.startFrequencyHz(), state.requestedStartFrequencyHz().longValue());
         assertEquals(viewport.endFrequencyHz(), state.requestedEndFrequencyHz().longValue());
+        assertEquals(viewport, processors.initialViewport.get());
+        assertEquals(TunerDiagnosticService.SpectrumProfile.BALANCED, processors.initialProfile.get());
         assertEquals(99_375_000.0, state.visibleStartFrequencyHz());
         assertEquals(100_625_000.0, state.visibleEndFrequencyHz());
         assertEquals(0, state.firstBin());
@@ -569,7 +572,7 @@ class TunerDiagnosticServiceTest
         CountDownLatch configurationCaptured = new CountDownLatch(1);
         CountDownLatch releaseCallback = new CountDownLatch(1);
         CountDownLatch received = new CountDownLatch(1);
-        TunerDiagnosticService.ProcessorFactory factory = (target, consumer) ->
+        TunerDiagnosticService.ProcessorFactory factory = (target, viewport, profile, consumer) ->
             new TunerDiagnosticService.FrameProcessor()
             {
                 @Override
@@ -680,15 +683,22 @@ class TunerDiagnosticServiceTest
         private final AtomicLong lastCenterFrequencyHz = new AtomicLong();
         private final AtomicLong lastSampleRateHz = new AtomicLong();
         private final AtomicReference<TunerDiagnosticService.Viewport> lastViewport = new AtomicReference<>();
+        private final AtomicReference<TunerDiagnosticService.Viewport> initialViewport = new AtomicReference<>();
+        private final AtomicReference<TunerDiagnosticService.SpectrumProfile> initialProfile =
+            new AtomicReference<>();
         private final AtomicReference<TunerDiagnosticService.SpectrumProfile> lastProfile =
             new AtomicReference<>();
         private final AtomicReference<Consumer<TunerDiagnosticService.FftResult>> consumer = new AtomicReference<>();
 
         @Override
         public TunerDiagnosticService.FrameProcessor create(TunerDiagnosticService.TargetSnapshot target,
+                                                             TunerDiagnosticService.Viewport viewport,
+                                                             TunerDiagnosticService.SpectrumProfile profile,
                                                              Consumer<TunerDiagnosticService.FftResult> consumer)
         {
             createCount.incrementAndGet();
+            initialViewport.set(viewport);
+            initialProfile.set(profile);
             this.consumer.set(consumer);
             return new TunerDiagnosticService.FrameProcessor()
             {

@@ -46,7 +46,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
-import org.jtransforms.fft.FloatFFT_1D;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -87,8 +86,8 @@ public final class TunerDiagnosticService implements AutoCloseable
         Objects.requireNonNull(tunerManager, "Tuner manager cannot be null");
         Objects.requireNonNull(scheduler, "Diagnostic FFT scheduler cannot be null");
         mTargetSource = () -> availableTargets(tunerManager);
-        mProcessorFactory = (target, consumer) -> new TunerFftProcessor(scheduler,
-            target.target().centerFrequencyHz(), target.target().sampleRateHz(), consumer);
+        mProcessorFactory = (target, viewport, profile, consumer) -> new TunerFftProcessor(scheduler,
+            target.target().centerFrequencyHz(), target.target().sampleRateHz(), viewport, profile, consumer);
     }
 
     /** Test seam that keeps lifecycle behavior independent from tuner hardware and FFT implementation. */
@@ -535,7 +534,7 @@ public final class TunerDiagnosticService implements AutoCloseable
             mViewportStateRevision = nextStateRevision();
             mObservedCenterFrequencyHz.set(target.target().centerFrequencyHz());
             mObservedSampleRateHz.set(target.target().sampleRateHz());
-            FrameProcessor processor = mProcessorFactory.create(target, this::publish);
+            FrameProcessor processor = mProcessorFactory.create(target, viewport, profile, this::publish);
             mProcessor = Objects.requireNonNull(processor, "Diagnostic processor factory returned null");
 
             try
@@ -968,6 +967,7 @@ public final class TunerDiagnosticService implements AutoCloseable
         private final BoundedSpscReferenceQueue<INativeBuffer> mIngress =
             new BoundedSpscReferenceQueue<>(INGRESS_CAPACITY);
         private final Consumer<FftResult> mConsumer;
+        private final DiagnosticComplexFft.Factory mFftFactory;
         private final DiagnosticFftScheduler.Task mTask;
         private final AtomicReference<ProcessorConfiguration> mRequested;
         private final AtomicBoolean mClosed = new AtomicBoolean();
@@ -975,7 +975,7 @@ public final class TunerDiagnosticService implements AutoCloseable
         /* Remaining fields are initialized and used only on the low-priority diagnostic worker. */
         private ProcessorConfiguration mApplied;
         private NativeBufferManager<INativeBuffer> mBufferManager;
-        private FloatFFT_1D mFft;
+        private DiagnosticComplexFft mFft;
         private float[] mWindow;
         private float[] mSourceSamples;
         private float[] mSourceI;
@@ -991,11 +991,27 @@ public final class TunerDiagnosticService implements AutoCloseable
         TunerFftProcessor(DiagnosticFftScheduler scheduler, long centerFrequencyHz, long sampleRateHz,
                           Consumer<FftResult> consumer)
         {
+            this(scheduler, centerFrequencyHz, sampleRateHz, null, SpectrumProfile.BALANCED, consumer);
+        }
+
+        TunerFftProcessor(DiagnosticFftScheduler scheduler, long centerFrequencyHz, long sampleRateHz,
+                          Viewport viewport, SpectrumProfile profile, Consumer<FftResult> consumer)
+        {
+            this(scheduler, centerFrequencyHz, sampleRateHz, viewport, profile, consumer,
+                SerialDiagnosticFft.FACTORY);
+        }
+
+        TunerFftProcessor(DiagnosticFftScheduler scheduler, long centerFrequencyHz, long sampleRateHz,
+                          Viewport viewport, SpectrumProfile profile, Consumer<FftResult> consumer,
+                          DiagnosticComplexFft.Factory fftFactory)
+        {
             mConsumer = Objects.requireNonNull(consumer, "Diagnostic FFT consumer cannot be null");
-            SpectrumProfile profile = SpectrumProfile.BALANCED;
-            AnalysisPlan plan = analysisPlan(centerFrequencyHz, sampleRateHz, null, profile);
+            Objects.requireNonNull(scheduler, "Diagnostic FFT scheduler cannot be null");
+            profile = Objects.requireNonNull(profile, "Tuner spectrum profile cannot be null");
+            mFftFactory = Objects.requireNonNull(fftFactory, "Diagnostic FFT factory cannot be null");
+            AnalysisPlan plan = analysisPlan(centerFrequencyHz, sampleRateHz, viewport, profile);
             mRequested = new AtomicReference<>(new ProcessorConfiguration(1, centerFrequencyHz, sampleRateHz,
-                null, profile, plan));
+                viewport, profile, plan));
             mTask = scheduler.scheduleWithFixedDelay(this::calculate, MAXIMUM_PROFILE_FRAMES_PER_SECOND);
         }
 
@@ -1125,6 +1141,11 @@ public final class TunerDiagnosticService implements AutoCloseable
                     return;
                 }
 
+                //Do not retain native tuner buffers in the ingress queue merely because this profile publishes below
+                //the scheduler rate.  Move them into the bounded worker-owned accumulator every scheduler pass, while
+                //FFT and transport stay profile-throttled.
+                drainIngress(requested.revision());
+
                 long now = System.nanoTime();
 
                 if(now < mNextCalculationNanos)
@@ -1135,11 +1156,10 @@ public final class TunerDiagnosticService implements AutoCloseable
                 mNextCalculationNanos = now +
                     TimeUnit.SECONDS.toNanos(1) / requested.profile().framesPerSecond();
 
-                drainIngress(requested.revision());
                 mBufferManager.get(mSourceSamples.length / 2, mSourceSamples);
                 prepareFftSamples(requested.plan());
                 WindowFactory.apply(mWindow, mFftSamples);
-                mFft.complexForward(mFftSamples);
+                mFft.forward(mFftSamples);
                 float[] bins = ComplexDecibelConverter.convert(mFftSamples);
 
                 if(requested.revision() == mRequested.get().revision() && !mClosed.get())
@@ -1170,7 +1190,7 @@ public final class TunerDiagnosticService implements AutoCloseable
 
             if(mFft == null || mFftSamples == null || mFftSamples.length != fftSize * 2)
             {
-                mFft = new FloatFFT_1D(fftSize);
+                mFft = mFftFactory.create(fftSize);
                 mWindow = WindowFactory.getWindow(WindowType.BLACKMAN_HARRIS_7, fftSize * 2);
                 mFftSamples = new float[fftSize * 2];
                 mInitializationThread = Thread.currentThread();
@@ -1339,7 +1359,8 @@ public final class TunerDiagnosticService implements AutoCloseable
     @FunctionalInterface
     interface ProcessorFactory
     {
-        FrameProcessor create(TargetSnapshot target, Consumer<FftResult> consumer);
+        FrameProcessor create(TargetSnapshot target, Viewport viewport, SpectrumProfile profile,
+                              Consumer<FftResult> consumer);
     }
 
     interface FrameProcessor extends AutoCloseable
