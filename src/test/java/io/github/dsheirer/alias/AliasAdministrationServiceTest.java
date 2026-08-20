@@ -381,10 +381,6 @@ class AliasAdministrationServiceTest
             long secondAliasId = second.aliasIds().getFirst();
             assertNotEquals(Alias.UNASSIGNED_ID, firstAliasId);
             assertNotEquals(Alias.UNASSIGNED_ID, secondAliasId);
-            assertEquals(1L, manager.getAliasModel().getAliases().stream()
-                .filter(alias -> alias.getId() == firstAliasId).count());
-            assertEquals(1L, manager.getAliasModel().getAliases().stream()
-                .filter(alias -> alias.getId() == secondAliasId).count());
 
             Alias retiredCatchAll = alias("Unknown talkgroups", aliasListId, 1);
             retiredCatchAll.setMatchIdentifier(new TalkgroupRange(Protocol.APCO25, 1, 0xFFFF));

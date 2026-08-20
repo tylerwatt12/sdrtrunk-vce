@@ -262,7 +262,7 @@ public class AliasItemEditor extends Editor<Alias>
         }
 
         refreshMatcherChoices(alias);
-        modifiedProperty().set(alias != null && alias.getId() == Alias.UNASSIGNED_ID);
+        modifiedProperty().set(false);
     }
 
     /**
@@ -407,12 +407,9 @@ public class AliasItemEditor extends Editor<Alias>
         replacement.setDescription(getDescriptionField().getText());
         replacement.setGroup(getGroupField().getText());
 
-        boolean create = alias.getId() == Alias.UNASSIGNED_ID;
         Optional<AliasAdministrationService.MutationResult> saved = AliasMutationUi.execute(getSaveButton(),
-            "Save Alias", () -> create ?
-                mConfigurationManager.getAliasAdministrationService().createAlias(replacement, mLoadedRevision) :
-                mConfigurationManager.getAliasAdministrationService()
-                    .replaceAlias(alias.getId(), replacement, mLoadedRevision));
+            "Save Alias", () -> mConfigurationManager.getAliasAdministrationService()
+                .replaceAlias(alias.getId(), replacement, mLoadedRevision));
         if(saved.isEmpty())
         {
             return false;
@@ -997,40 +994,9 @@ public class AliasItemEditor extends Editor<Alias>
     void reloadCurrentAlias()
     {
         Alias edited = getItem();
-        if(edited != null && edited.getId() == Alias.UNASSIGNED_ID)
-        {
-            setItem(edited);
-        }
-        else
-        {
-            Alias current = edited != null ? mConfigurationManager.getAliasModel().getAlias(edited.getId()) : null;
-            setItem(current);
-        }
-    }
-
-    /**
-     * Discards the current form changes. A new Alias draft has no durable row to reload, so discarding clears it.
-     */
-    void discardChanges()
-    {
-        Alias edited = getItem();
-        if(edited != null && edited.getId() == Alias.UNASSIGNED_ID)
-        {
-            setItem(null);
-        }
-        else
-        {
-            reloadCurrentAlias();
-        }
-    }
-
-    void focusAliasName()
-    {
-        Platform.runLater(() ->
-        {
-            getNameField().requestFocus();
-            getNameField().selectAll();
-        });
+        Alias current = edited != null && edited.getId() > Alias.UNASSIGNED_ID ?
+            mConfigurationManager.getAliasModel().getAlias(edited.getId()) : edited;
+        setItem(current);
     }
 
     /**

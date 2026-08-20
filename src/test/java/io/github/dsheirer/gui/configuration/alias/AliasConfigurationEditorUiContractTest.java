@@ -30,29 +30,9 @@ class AliasConfigurationEditorUiContractTest
         assertTrue(listener.contains("scheduleAliasSelectionRefresh()"));
         assertTrue(selectionRefresh.contains("getAliasItemEditor().setItem(null)"));
         assertTrue(update.contains("setPredicate(new AliasPredicate("));
-        assertTrue(update.contains("mAliasTableView.refresh()"));
         assertFalse(source.contains("mAliasPredicate"));
         assertFalse(source.contains("setAliasListName("));
         assertFalse(source.contains("setSearchText("));
-    }
-
-    @Test
-    void newAliasRemainsADraftUntilTheItemEditorSavesIt() throws Exception
-    {
-        String source = Files.readString(EDITOR);
-        String newAction = section(source, "private Button getNewAliasButton()",
-            "private Button getDeleteAliasButton()");
-        String draftPresentation = section(source, "private void showNewAliasDraft(Alias draft)",
-            "private void aliasSaved(long aliasId)");
-        String durableSelection = section(source, "private void selectAliasesById(List<Long> aliasIds)",
-            "private List<Alias> findAliases");
-
-        assertTrue(newAction.contains("if(isNewAliasDraft(getAliasItemEditor().getItem()))"));
-        assertTrue(newAction.contains("showNewAliasDraft(alias)"));
-        assertFalse(newAction.contains("createAlias("));
-        assertTrue(draftPresentation.contains("getAliasTableView().getSelectionModel().clearSelection()"));
-        assertTrue(draftPresentation.contains("getAliasItemEditor().setItem(draft)"));
-        assertTrue(durableSelection.contains("getAliasTableView().refresh()"));
     }
 
     private static String section(String source, String start, String end)
