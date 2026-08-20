@@ -119,10 +119,11 @@ public class SiteControlChannelLearner implements SiteMetadataListener
         {
             mMatchingIdentityObservedSince.remove(channelKey);
             mLastObservedSourceFrequency.remove(channelKey);
+            boolean preferredFrequencyChanged = updatePreferredFrequency(sourceConfig, sourceFrequency);
 
-            if(identityChanged)
+            if(identityChanged || preferredFrequencyChanged)
             {
-                saveChanges(channel, null, false);
+                saveChanges(channel, sourceConfig, false);
             }
 
             return;
@@ -158,10 +159,36 @@ public class SiteControlChannelLearner implements SiteMetadataListener
             frequenciesChanged = true;
         }
 
-        if(identityChanged || frequenciesChanged)
+        boolean preferredFrequencyChanged = updatePreferredFrequency(sourceConfig, sourceFrequency);
+
+        if(identityChanged || frequenciesChanged || preferredFrequencyChanged)
         {
             saveChanges(channel, sourceConfig, frequenciesChanged);
         }
+    }
+
+    /**
+     * Remembers a strongly confirmed control channel only when it is already a member of this channel's rotation
+     * list.  The caller has already verified the complete site identity and that the site advertises the decoded
+     * source as a current or secondary control channel.
+     */
+    private boolean updatePreferredFrequency(SourceConfigTunerMultipleFrequency sourceConfig, long sourceFrequency)
+    {
+        if(sourceConfig == null || !sourceConfig.getFrequencies().contains(sourceFrequency) ||
+            sourceConfig.getPreferredFrequency() == sourceFrequency)
+        {
+            return false;
+        }
+
+        sourceConfig.setPreferredFrequency(sourceFrequency);
+
+        if(sourceConfig.getPreferredFrequency() == sourceFrequency)
+        {
+            LOGGER.info("Remembered confirmed P25 control channel {} Hz", sourceFrequency);
+            return true;
+        }
+
+        return false;
     }
 
     private Set<Long> getControlChannelFrequencies(P25NetworkConfigurationSnapshot snapshot)
@@ -248,7 +275,7 @@ public class SiteControlChannelLearner implements SiteMetadataListener
     {
         if(frequenciesChanged)
         {
-            //Refresh observable frequencies and cached tuner-channel projections after mutating live rotation state.
+            //Refresh observable frequencies and cached tuner-channel projections after mutating the rotation list.
             channel.setSourceConfiguration(sourceConfig);
         }
 

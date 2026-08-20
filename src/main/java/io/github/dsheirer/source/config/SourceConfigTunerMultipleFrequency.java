@@ -20,6 +20,8 @@
 package io.github.dsheirer.source.config;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import io.github.dsheirer.source.SourceType;
@@ -39,6 +41,7 @@ public class SourceConfigTunerMultipleFrequency extends SourceConfiguration
     private List<Long> mFrequencies = new CopyOnWriteArrayList<>();
     private String mPreferredTuner;
     private Long mPreferredFrequency;
+    private boolean mFrequenciesInitialized;
     private Long mMinimumFrequency;
     private Long mMaximumFrequency;
     private int mFrequencyRotationDelay = ChannelRotationMonitor.CHANNEL_ROTATION_DELAY_DEFAULT;
@@ -63,6 +66,7 @@ public class SourceConfigTunerMultipleFrequency extends SourceConfiguration
     public void setFrequencies(List<Long> frequencies)
     {
         mFrequencies = frequencies != null ? new CopyOnWriteArrayList<>(frequencies) : new CopyOnWriteArrayList<>();
+        mFrequenciesInitialized = true;
 
         if(mPreferredFrequency != null && !mFrequencies.contains(mPreferredFrequency))
         {
@@ -85,7 +89,7 @@ public class SourceConfigTunerMultipleFrequency extends SourceConfiguration
     @JsonIgnore
     public long getPreferredFrequency()
     {
-        if(mPreferredFrequency != null)
+        if(mPreferredFrequency != null && mFrequencies.contains(mPreferredFrequency))
         {
             return mPreferredFrequency;
         }
@@ -101,10 +105,40 @@ public class SourceConfigTunerMultipleFrequency extends SourceConfiguration
      * Sets which is the preferred frequency to use for this config when it's started
      * @param frequency to use first
      */
+    @JsonIgnore
     public void setPreferredFrequency(long frequency)
     {
         //Only set the frequency if it is one of the frequencies in the list
         if(mFrequencies.contains(frequency))
+        {
+            mPreferredFrequency = frequency;
+        }
+    }
+
+    /**
+     * Preferred frequency persisted with the source configuration.  This separate JSON property keeps the runtime
+     * convenience getter free to fall back to the first configured frequency.
+     */
+    @JsonProperty("preferredFrequency")
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public Long getPersistedPreferredFrequency()
+    {
+        return mPreferredFrequency != null && mFrequencies.contains(mPreferredFrequency) ? mPreferredFrequency : null;
+    }
+
+    /**
+     * Restores the persisted preferred frequency.  Jackson can encounter this property before or after the frequency
+     * list, so a value received first is provisionally retained and validated when the list is assigned.
+     */
+    @JsonProperty("preferredFrequency")
+    public void setPersistedPreferredFrequency(Long frequency)
+    {
+        if(frequency == null || frequency <= 0 ||
+            (mFrequenciesInitialized && !mFrequencies.contains(frequency)))
+        {
+            mPreferredFrequency = null;
+        }
+        else
         {
             mPreferredFrequency = frequency;
         }

@@ -32,6 +32,7 @@ import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.module.decode.p25.phase1.Modulation;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.source.config.SourceConfigTuner;
+import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -158,6 +159,42 @@ class ConfigurationDatabaseStoreTest
                 assertNull(resultSet.getString("call_upload_enabled"));
                 assertNull(resultSet.getString("site_metadata_enabled"));
             }
+        }
+    }
+
+    @Test
+    void roundTripsRememberedControlFrequencyAsTheRestartPreference() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("remembered-control.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        ConfigurationDatabaseStore store = new ConfigurationDatabaseStore(database);
+        long firstFrequency = 851_012_500L;
+        long rememberedFrequency = 852_012_500L;
+
+        Channel channel = new Channel("Control");
+        channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
+        SourceConfigTunerMultipleFrequency source = new SourceConfigTunerMultipleFrequency();
+        source.setFrequencies(List.of(firstFrequency, rememberedFrequency));
+        source.setPreferredFrequency(rememberedFrequency);
+        channel.setSourceConfiguration(source);
+
+        ConfigurationState state = new ConfigurationState();
+        state.setChannels(List.of(channel));
+        replace(database, state);
+
+        Channel restoredChannel = store.loadConfigurationState().getChannels().getFirst();
+        SourceConfigTunerMultipleFrequency restored = assertInstanceOf(SourceConfigTunerMultipleFrequency.class,
+            restoredChannel.getSourceConfiguration());
+        assertEquals(List.of(firstFrequency, rememberedFrequency), restored.getFrequencies());
+        assertEquals(rememberedFrequency, restored.getPreferredFrequency());
+
+        try(Connection connection = SdrTrunkDatabase.open(database);
+            Statement statement = connection.createStatement();
+            ResultSet resultSet = statement.executeQuery(
+                "SELECT primary_frequency_hz FROM configuration_channel"))
+        {
+            assertTrue(resultSet.next());
+            assertEquals(rememberedFrequency, resultSet.getLong("primary_frequency_hz"));
         }
     }
 

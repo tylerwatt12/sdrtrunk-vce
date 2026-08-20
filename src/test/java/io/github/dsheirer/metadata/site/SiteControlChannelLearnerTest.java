@@ -72,6 +72,70 @@ class SiteControlChannelLearnerTest
     }
 
     @Test
+    void remembersMatchingConfirmedControlWithoutFrequencyLearningAndSavesOnlyOnChange()
+    {
+        AtomicInteger saves = new AtomicInteger();
+        SiteControlChannelLearner learner = new SiteControlChannelLearner(saves::incrementAndGet);
+        Channel channel = channel(List.of(PRIMARY, ALTERNATE), false);
+        channel.setP25SiteIdentity(new P25SiteIdentity(WACN, SYSTEM, RFSS, SITE));
+
+        SiteMetadataEvent confirmedAlternate = event(channel, ALTERNATE, 1_000, WACN, SYSTEM, RFSS, SITE,
+            List.of(ALTERNATE, PRIMARY));
+        learner.receiveSiteMetadata(confirmedAlternate);
+
+        assertEquals(ALTERNATE, preferredFrequency(channel));
+        assertEquals(1, saves.get());
+
+        learner.receiveSiteMetadata(confirmedAlternate);
+        assertEquals(1, saves.get());
+    }
+
+    @Test
+    void doesNotRememberControlFromDifferentBoundSite()
+    {
+        AtomicInteger saves = new AtomicInteger();
+        SiteControlChannelLearner learner = new SiteControlChannelLearner(saves::incrementAndGet);
+        Channel channel = channel(List.of(PRIMARY, ALTERNATE), false);
+        channel.setP25SiteIdentity(new P25SiteIdentity(WACN, SYSTEM, RFSS, SITE));
+
+        learner.receiveSiteMetadata(event(channel, ALTERNATE, 1_000, 0xA0001, 0x777, 4, 5,
+            List.of(ALTERNATE)));
+
+        assertEquals(PRIMARY, preferredFrequency(channel));
+        assertEquals(0, saves.get());
+    }
+
+    @Test
+    void doesNotRememberAdvertisedFrequencyOutsideConfiguredRotationList()
+    {
+        AtomicInteger saves = new AtomicInteger();
+        SiteControlChannelLearner learner = new SiteControlChannelLearner(saves::incrementAndGet);
+        Channel channel = channel(List.of(PRIMARY, ALTERNATE), false);
+        channel.setP25SiteIdentity(new P25SiteIdentity(WACN, SYSTEM, RFSS, SITE));
+
+        learner.receiveSiteMetadata(event(channel, MANUAL, 1_000, WACN, SYSTEM, RFSS, SITE,
+            List.of(MANUAL, PRIMARY)));
+
+        assertEquals(PRIMARY, preferredFrequency(channel));
+        assertEquals(0, saves.get());
+    }
+
+    @Test
+    void doesNotRememberSourceThatSiteDoesNotAdvertiseAsControl()
+    {
+        AtomicInteger saves = new AtomicInteger();
+        SiteControlChannelLearner learner = new SiteControlChannelLearner(saves::incrementAndGet);
+        Channel channel = channel(List.of(PRIMARY, ALTERNATE), false);
+        channel.setP25SiteIdentity(new P25SiteIdentity(WACN, SYSTEM, RFSS, SITE));
+
+        learner.receiveSiteMetadata(event(channel, ALTERNATE, 1_000, WACN, SYSTEM, RFSS, SITE,
+            List.of(PRIMARY)));
+
+        assertEquals(PRIMARY, preferredFrequency(channel));
+        assertEquals(0, saves.get());
+    }
+
+    @Test
     void bindsIdentityForSingleFrequencyTunerSource()
     {
         AtomicInteger saves = new AtomicInteger();
@@ -215,6 +279,11 @@ class SiteControlChannelLearnerTest
     private static List<Long> frequencies(Channel channel)
     {
         return ((SourceConfigTunerMultipleFrequency)channel.getSourceConfiguration()).getFrequencies();
+    }
+
+    private static long preferredFrequency(Channel channel)
+    {
+        return ((SourceConfigTunerMultipleFrequency)channel.getSourceConfiguration()).getPreferredFrequency();
     }
 
     private static SiteMetadataEvent event(Channel channel, long sourceFrequency, long timestamp, int wacn,

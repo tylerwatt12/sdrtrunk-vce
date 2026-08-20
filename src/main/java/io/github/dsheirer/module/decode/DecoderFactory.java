@@ -71,6 +71,7 @@ import io.github.dsheirer.module.decode.nxdn.NXDNDecoderState;
 import io.github.dsheirer.module.decode.nxdn.NXDNTrafficChannelManager;
 import io.github.dsheirer.module.decode.nxdn.audio.NXDNAudioModule;
 import io.github.dsheirer.module.decode.nxdn.layer3.filter.NXDNMessageFilterSet;
+import io.github.dsheirer.module.decode.p25.P25ControlChannelRotationPolicy;
 import io.github.dsheirer.module.decode.p25.P25TrafficChannelManager;
 import io.github.dsheirer.module.decode.p25.audio.P25P1AudioModule;
 import io.github.dsheirer.module.decode.p25.audio.P25P2AudioModule;
@@ -269,8 +270,9 @@ public class DecoderFactory
         {
             List<State> activeStates = new ArrayList<>();
             activeStates.add(State.CONTROL);
-            modules.add(new ChannelRotationMonitor(activeStates, sctmf.getFrequencyRotationDelay(),
-                ChannelRotationMonitor.ACTIVE_STATE_LOSS_DELAY_DEFAULT));
+            modules.add(new ChannelRotationMonitor(activeStates,
+                P25ControlChannelRotationPolicy.getSearchDwellMilliseconds(sctmf.getFrequencyRotationDelay()),
+                P25ControlChannelRotationPolicy.ACTIVE_STATE_LOSS_GRACE_MILLISECONDS));
         }
     }
 
@@ -334,8 +336,9 @@ public class DecoderFactory
         {
             List<State> activeStates = new ArrayList<>();
             activeStates.add(State.CONTROL);
-            modules.add(new ChannelRotationMonitor(activeStates, sctmf.getFrequencyRotationDelay(),
-                ChannelRotationMonitor.ACTIVE_STATE_LOSS_DELAY_DEFAULT));
+            modules.add(new ChannelRotationMonitor(activeStates,
+                P25ControlChannelRotationPolicy.getSearchDwellMilliseconds(sctmf.getFrequencyRotationDelay()),
+                P25ControlChannelRotationPolicy.ACTIVE_STATE_LOSS_GRACE_MILLISECONDS));
         }
     }
 

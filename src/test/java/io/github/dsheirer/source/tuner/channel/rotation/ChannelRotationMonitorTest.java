@@ -14,6 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import io.github.dsheirer.channel.state.DecoderStateEvent;
 import io.github.dsheirer.channel.state.State;
+import io.github.dsheirer.module.decode.p25.P25ControlChannelRotationPolicy;
 import io.github.dsheirer.source.SourceEvent;
 import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import java.util.List;
@@ -61,6 +62,30 @@ class ChannelRotationMonitorTest
         assertEquals(1, rotations.get());
 
         monitor.checkState(activeAt + 3100);
+        assertEquals(2, rotations.get());
+    }
+
+    @Test
+    void p25PolicyToleratesFourSecondLossThenReturnsToFastSearch()
+    {
+        AtomicInteger rotations = new AtomicInteger();
+        ChannelRotationMonitor monitor = new ChannelRotationMonitor(List.of(State.CONTROL),
+            P25ControlChannelRotationPolicy.SEARCH_DWELL_MILLISECONDS,
+            P25ControlChannelRotationPolicy.ACTIVE_STATE_LOSS_GRACE_MILLISECONDS);
+        monitor.setSourceEventListener(event -> {
+            assertEquals(SourceEvent.Event.REQUEST_FREQUENCY_ROTATION, event.getEvent());
+            rotations.incrementAndGet();
+        });
+        long activeAt = System.currentTimeMillis();
+
+        monitor.receive(DecoderStateEvent.stateNotification(State.CONTROL, 0));
+        monitor.checkState(activeAt + 3_999);
+        assertEquals(0, rotations.get());
+
+        monitor.checkState(activeAt + 4_200);
+        assertEquals(1, rotations.get());
+
+        monitor.checkState(activeAt + 4_800);
         assertEquals(2, rotations.get());
     }
 
