@@ -69,7 +69,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.LockSupport;
 import java.util.function.Supplier;
@@ -118,12 +117,13 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
     private final AtomicLong mDroppedLifecycleCount = new AtomicLong();
     private final AtomicLong mAcceptedIngressCount = new AtomicLong();
     private final AtomicLong mProcessedIngressCount = new AtomicLong();
-    private final AtomicBoolean mLifecycleReconcileNeeded = new AtomicBoolean();
+    private final AtomicLong mRequestedLifecycleReconcileRevision = new AtomicLong();
     private volatile List<ChannelActivityTableState> mTables;
     private volatile SnapshotSet mSnapshotSet = new SnapshotSet(0, List.of());
     private boolean mActivitySweeperRunning;
     private volatile boolean mWorkerRunning = true;
     private volatile boolean mClosed;
+    private volatile long mAppliedLifecycleReconcileRevision;
     private volatile Thread mWorker;
     private volatile Supplier<List<ActiveChannel>> mActiveChannelSupplier;
 
@@ -203,8 +203,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
     public void setActiveChannelSupplier(Supplier<List<ActiveChannel>> activeChannelSupplier)
     {
         mActiveChannelSupplier = activeChannelSupplier;
-        mLifecycleReconcileNeeded.set(true);
-        signalWorker();
+        requestLifecycleReconcile();
     }
 
     private boolean offer(int operation, Object first, Object second, Object third, Object fourth, Object fifth,
@@ -230,8 +229,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
             if(isLifecycleOperation(operation))
             {
                 mDroppedLifecycleCount.incrementAndGet();
-                mLifecycleReconcileNeeded.set(true);
-                signalWorker();
+                requestLifecycleReconcile();
             }
         }
 
@@ -241,6 +239,12 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
     private static boolean isLifecycleOperation(int operation)
     {
         return operation == CHANNEL_STARTED || operation == CHANNEL_STOPPED;
+    }
+
+    private void requestLifecycleReconcile()
+    {
+        mRequestedLifecycleReconcileRevision.incrementAndGet();
+        signalWorker();
     }
 
     private void signalWorker()
@@ -2039,9 +2043,14 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
                         drained++;
                     }
 
-                    if(mLifecycleReconcileNeeded.compareAndSet(true, false))
+                    long lifecycleReconcileRevision = mRequestedLifecycleReconcileRevision.get();
+
+                    if(mAppliedLifecycleReconcileRevision < lifecycleReconcileRevision)
                     {
-                        reconcileLifecycle();
+                        if(reconcileLifecycle())
+                        {
+                            mAppliedLifecycleReconcileRevision = lifecycleReconcileRevision;
+                        }
                     }
 
                     long now = System.nanoTime();
@@ -2091,13 +2100,13 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
         }
     }
 
-    private void reconcileLifecycle()
+    private boolean reconcileLifecycle()
     {
         Supplier<List<ActiveChannel>> supplier = mActiveChannelSupplier;
 
         if(supplier == null)
         {
-            return;
+            return true;
         }
 
         try
@@ -2128,11 +2137,13 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
                     processChannelStarted(active.channel(), active.metadata(), active.incarnation());
                 }
             }
+
+            return true;
         }
         catch(RuntimeException runtimeException)
         {
-            mLifecycleReconcileNeeded.set(true);
             mLog.error("Error reconciling channel activity lifecycle", runtimeException);
+            return false;
         }
     }
 
@@ -2194,11 +2205,12 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
     {
         long deadline = System.nanoTime() + timeUnit.toNanos(timeout);
         long accepted = mAcceptedIngressCount.get();
+        long lifecycleReconcileRevision = mRequestedLifecycleReconcileRevision.get();
 
         while(System.nanoTime() < deadline)
         {
             if(mProcessedIngressCount.get() >= accepted &&
-                !mLifecycleReconcileNeeded.get() && mIngress.size() == 0)
+                mAppliedLifecycleReconcileRevision >= lifecycleReconcileRevision && mIngress.size() == 0)
             {
                 return true;
             }
@@ -2208,7 +2220,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
         }
 
         return mProcessedIngressCount.get() >= accepted &&
-            !mLifecycleReconcileNeeded.get() && mIngress.size() == 0;
+            mAppliedLifecycleReconcileRevision >= lifecycleReconcileRevision && mIngress.size() == 0;
     }
 
     @Override

@@ -24,6 +24,7 @@ import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
@@ -250,6 +251,67 @@ class ChannelActivityIsolationTest
         assertEquals(1, model.getTables().size());
         assertFalse(model.getSnapshotSet().tables().stream()
             .anyMatch(snapshot -> trunkedTableId.equals(snapshot.tableId())));
+        model.close();
+    }
+
+    @Test
+    void awaitIdleWaitsForLifecycleReconciliationToFinish() throws Exception
+    {
+        AliasModel aliasModel = new AliasModel();
+        ChannelActivityModel model = model(aliasModel);
+        CountDownLatch reconciliationStarted = new CountDownLatch(1);
+        CountDownLatch releaseReconciliation = new CountDownLatch(1);
+        model.setActiveChannelSupplier(() -> List.of());
+        assertTrue(model.awaitIdle(2, TimeUnit.SECONDS));
+        model.setActiveChannelSupplier(() ->
+        {
+            reconciliationStarted.countDown();
+
+            try
+            {
+                releaseReconciliation.await(5, TimeUnit.SECONDS);
+            }
+            catch(InterruptedException interruptedException)
+            {
+                Thread.currentThread().interrupt();
+            }
+
+            return List.of();
+        });
+        assertTrue(reconciliationStarted.await(2, TimeUnit.SECONDS));
+
+        try
+        {
+            assertFalse(model.awaitIdle(100, TimeUnit.MILLISECONDS),
+                "model reported idle while lifecycle reconciliation was still running");
+        }
+        finally
+        {
+            releaseReconciliation.countDown();
+        }
+
+        assertTrue(model.awaitIdle(2, TimeUnit.SECONDS));
+        model.close();
+    }
+
+    @Test
+    void lifecycleReconciliationRetriesAfterSupplierFailure()
+    {
+        AliasModel aliasModel = new AliasModel();
+        ChannelActivityModel model = model(aliasModel);
+        AtomicInteger attempts = new AtomicInteger();
+        model.setActiveChannelSupplier(() ->
+        {
+            if(attempts.incrementAndGet() == 1)
+            {
+                throw new IllegalStateException("simulated supplier failure");
+            }
+
+            return List.of();
+        });
+
+        assertTrue(model.awaitIdle(2, TimeUnit.SECONDS));
+        assertEquals(2, attempts.get());
         model.close();
     }
 
