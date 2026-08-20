@@ -25,6 +25,7 @@ import io.github.dsheirer.alias.id.talkgroup.TalkgroupRange;
 import io.github.dsheirer.audio.broadcast.BroadcastFormat;
 import io.github.dsheirer.audio.broadcast.broadcastify.BroadcastifyCallConfiguration;
 import io.github.dsheirer.configuration.ConfigurationManager;
+import io.github.dsheirer.configuration.ConfigurationState;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
@@ -82,23 +83,23 @@ class AliasAdministrationServiceTest
             Alias replacement = service.getAlias(dispatchId).alias();
             replacement.setName("Dispatch Updated");
             Alias created = alias("Tactical", aliasListId, 103);
-            int flushesBeforeMixedSave = manager.flushCount();
+            int commitsBeforeMixedSave = manager.commitCount();
 
             Alias duplicateReplacement = service.getAlias(dispatchId).alias();
             assertThrows(IllegalArgumentException.class,
                 () -> service.saveAliases(List.of(replacement, duplicateReplacement)));
-            assertEquals(flushesBeforeMixedSave, manager.flushCount());
+            assertEquals(commitsBeforeMixedSave, manager.commitCount());
             assertEquals("Dispatch", service.getAlias(dispatchId).alias().getName());
 
             Alias invalidCreate = alias("Invalid", aliasListId + 1000, 104);
             assertThrows(AliasAdministrationService.NotFoundException.class,
                 () -> service.saveAliases(List.of(replacement, invalidCreate)));
-            assertEquals(flushesBeforeMixedSave, manager.flushCount());
+            assertEquals(commitsBeforeMixedSave, manager.commitCount());
             assertEquals("Dispatch", service.getAlias(dispatchId).alias().getName());
 
             AliasAdministrationService.MutationResult mixed = service.saveAliases(List.of(replacement, created));
 
-            assertEquals(flushesBeforeMixedSave + 1, manager.flushCount());
+            assertEquals(commitsBeforeMixedSave + 1, manager.commitCount());
             assertEquals(2, mixed.affected());
             assertEquals(2, mixed.aliasIds().size());
             assertEquals(dispatchId, mixed.aliasIds().getFirst());
@@ -151,7 +152,7 @@ class AliasAdministrationServiceTest
             bounded.setBroadcastChannels(routes.subList(0, AliasAdministrationService.MAX_BROADCAST_CHANNELS)
                 .stream().map(BroadcastChannel::new).toList());
             AliasAdministrationService.MutationResult configured = service.replaceAlias(aliasId, bounded);
-            int flushesBeforeOverflow = manager.flushCount();
+            int commitsBeforeOverflow = manager.commitCount();
 
             IllegalArgumentException overflow = assertThrows(IllegalArgumentException.class,
                 () -> service.bulkEdit(new AliasAdministrationService.BulkEdit(List.of(aliasId), null, null,
@@ -159,7 +160,7 @@ class AliasAdministrationServiceTest
                     List.of(routes.getLast()), false), configured.revision()));
             assertTrue(overflow.getMessage().contains("more than " +
                 AliasAdministrationService.MAX_BROADCAST_CHANNELS));
-            assertEquals(flushesBeforeOverflow, manager.flushCount());
+            assertEquals(commitsBeforeOverflow, manager.commitCount());
             assertEquals(AliasAdministrationService.MAX_BROADCAST_CHANNELS,
                 service.getAlias(aliasId).alias().getBroadcastChannels().size());
 
@@ -167,7 +168,7 @@ class AliasAdministrationServiceTest
             longName.setBroadcastChannels(List.of(new BroadcastChannel(
                 "x".repeat(AliasAdministrationService.MAX_BROADCAST_CHANNEL_NAME_LENGTH + 1))));
             assertThrows(IllegalArgumentException.class, () -> service.replaceAlias(aliasId, longName));
-            assertEquals(flushesBeforeOverflow, manager.flushCount());
+            assertEquals(commitsBeforeOverflow, manager.commitCount());
         }
         finally
         {
@@ -304,7 +305,7 @@ class AliasAdministrationServiceTest
     }
 
     @Test
-    void createsAliasAndInitialScanListMembershipsInOneFlush() throws Exception
+    void createsAliasAndInitialScanListMembershipsInOneCommit() throws Exception
     {
         Path dataRoot = mTemporaryFolder.resolve("atomic-alias-membership-data");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
@@ -324,14 +325,14 @@ class AliasAdministrationServiceTest
             long retiredAliasId = retired.aliasIds().getFirst();
             AliasAdministrationService.MutationResult retiredDeleted = service.deleteAlias(retiredAliasId,
                 retired.revision());
-            int flushesBeforeCreate = manager.flushCount();
+            int commitsBeforeCreate = manager.commitCount();
 
             AliasAdministrationService.MutationResult created = service.createAlias(
                 alias("Dispatch", list.aliasListId(), "County P25", 101), List.of(defaultScanListId),
                 retiredDeleted.revision());
             long aliasId = created.aliasIds().getFirst();
 
-            assertEquals(flushesBeforeCreate + 1, manager.flushCount());
+            assertEquals(commitsBeforeCreate + 1, manager.commitCount());
             assertTrue(aliasId > retiredAliasId);
             assertEquals(Set.of(defaultScanListId), service.getAlias(aliasId).scanListIds());
             assertEquals(Set.of(defaultScanListId),
@@ -437,34 +438,27 @@ class AliasAdministrationServiceTest
             assertNull(service.getAlias(firstAliasId).alias().getGroup());
             assertTrue(service.getAlias(firstAliasId).alias().getBroadcastChannels().isEmpty());
 
-            Alias staleReference = findAlias(manager, firstAliasId);
-            staleReference.setIconName("Deleted icon");
-            staleReference.addBroadcastChannel("Deleted stream");
             Alias unrelatedEdit = service.getAlias(firstAliasId).alias();
             unrelatedEdit.setDescription("Unrelated edit");
             AliasAdministrationService.MutationResult preserved = service.replaceAlias(firstAliasId, unrelatedEdit,
                 service.catalog().revision());
-            assertEquals("Deleted icon", service.getAlias(firstAliasId).alias().getIconName());
-            assertTrue(service.getAlias(firstAliasId).alias().hasBroadcastChannel("Deleted stream"));
+            assertEquals("Unrelated edit", service.getAlias(firstAliasId).alias().getDescription());
 
             Alias invalidReference = service.getAlias(firstAliasId).alias();
             invalidReference.addBroadcastChannel("Never configured");
             assertThrows(IllegalArgumentException.class, () ->
                 service.replaceAlias(firstAliasId, invalidReference, preserved.revision()));
 
-            Alias repaired = service.getAlias(firstAliasId).alias();
-            repaired.setIconName(null);
-            repaired.setBroadcastChannels(List.of());
-            service.replaceAlias(firstAliasId, repaired, preserved.revision());
-
-            Alias desktopEdited = findAlias(manager, firstAliasId);
             long beforeDesktopEdit = service.catalog().revision();
+            Alias desktopEdited = service.getAlias(firstAliasId).alias();
             desktopEdited.setDescription("Edited on desktop");
-            assertNotEquals(beforeDesktopEdit, service.catalog().revision());
+            AliasAdministrationService.MutationResult desktopSaved = service.replaceAlias(firstAliasId,
+                desktopEdited, beforeDesktopEdit);
+            assertNotEquals(beforeDesktopEdit, desktopSaved.revision());
             assertThrows(AliasAdministrationService.StaleRevisionException.class,
                 () -> service.replaceAlias(firstAliasId, alias("Stale overwrite", aliasListId, 101),
                     beforeDesktopEdit));
-            assertEquals("Edited on desktop", desktopEdited.getDescription());
+            assertEquals("Edited on desktop", service.getAlias(firstAliasId).alias().getDescription());
 
             AliasList liveList = manager.getAliasModel().getAliasList("County P25");
             assertEquals(firstAliasId,
@@ -486,6 +480,7 @@ class AliasAdministrationServiceTest
             long beforeChannelAssignment = service.catalog().revision();
             manager.getChannelModel().addChannel(channel);
             assertNotEquals(beforeChannelAssignment, service.catalog().revision());
+            manager.flushConfiguration();
 
             long beforeBulk = service.catalog().revision();
             AliasAdministrationService.MutationResult bulk = service.bulkEdit(
@@ -553,12 +548,6 @@ class AliasAdministrationServiceTest
         return alias;
     }
 
-    private static Alias findAlias(ConfigurationManager manager, long aliasId)
-    {
-        return manager.getAliasModel().getAliases().stream().filter(alias -> alias.getId() == aliasId).findFirst()
-            .orElseThrow();
-    }
-
     private static class TestUserPreferences extends UserPreferences
     {
         private final DirectoryPreference mDirectoryPreference;
@@ -584,7 +573,7 @@ class AliasAdministrationServiceTest
 
     private static final class CountingConfigurationManager extends ConfigurationManager
     {
-        private final AtomicInteger mFlushCount = new AtomicInteger();
+        private final AtomicInteger mCommitCount = new AtomicInteger();
 
         private CountingConfigurationManager(UserPreferences preferences)
         {
@@ -592,15 +581,16 @@ class AliasAdministrationServiceTest
         }
 
         @Override
-        public void flushConfiguration()
+        protected AliasConfigurationSnapshot commitAliasConfiguration(AliasConfigurationSnapshot proposed,
+            AliasConfigurationPublication publication, BroadcastConfigurationRename broadcastRename)
         {
-            mFlushCount.incrementAndGet();
-            super.flushConfiguration();
+            mCommitCount.incrementAndGet();
+            return super.commitAliasConfiguration(proposed, publication, broadcastRename);
         }
 
-        private int flushCount()
+        private int commitCount()
         {
-            return mFlushCount.get();
+            return mCommitCount.get();
         }
     }
 }

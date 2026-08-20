@@ -35,6 +35,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Types;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 
 /**
@@ -69,6 +70,33 @@ public class ConfigurationDatabaseStore
         }
     }
 
+    /** Replaces only active channels and broadcast streams in one owned transaction. */
+    public void replaceConfigurationState(ConfigurationState state) throws IOException, SQLException
+    {
+        try(Connection connection = SdrTrunkDatabase.open(mDatabasePath))
+        {
+            connection.setAutoCommit(false);
+
+            try
+            {
+                replaceConfigurationState(connection, state);
+                connection.commit();
+            }
+            catch(IOException | SQLException | RuntimeException | Error exception)
+            {
+                try
+                {
+                    connection.rollback();
+                }
+                catch(SQLException rollbackException)
+                {
+                    exception.addSuppressed(rollbackException);
+                }
+                throw exception;
+            }
+        }
+    }
+
     /**
      * Saves channels and streams using a caller-owned transaction. Import workflows use this overload together with
      * {@link io.github.dsheirer.database.alias.AliasDatabaseStore#replaceAliases(Connection, List, List)} so every
@@ -89,6 +117,94 @@ public class ConfigurationDatabaseStore
         restoreRetainedChannelRows(connection, retainedChannels);
         insertChannels(connection, state.getChannels());
         insertBroadcastConfigurations(connection, state.getBroadcastConfigurations());
+    }
+
+    /**
+     * Clears channel references to deleted Alias Lists without rewriting unrelated channel or stream rows. The scalar
+     * column is authoritative when loading, and the matching JSON display field is removed in the same statement.
+     */
+    public void clearAliasListAssignments(Connection connection, Collection<String> aliasListNames)
+        throws SQLException
+    {
+        if(connection == null || connection.getAutoCommit())
+        {
+            throw new IllegalArgumentException("Alias-list assignment updates require a caller-owned transaction");
+        }
+        if(aliasListNames == null || aliasListNames.isEmpty())
+        {
+            return;
+        }
+
+        try(PreparedStatement statement = connection.prepareStatement("""
+            UPDATE configuration_channel
+            SET alias_list_name = NULL,
+                config_json = json_remove(config_json, '$.aliasListName')
+            WHERE alias_list_name = ? COLLATE NOCASE
+            """))
+        {
+            for(String name: aliasListNames)
+            {
+                if(name == null || name.isBlank())
+                {
+                    throw new IllegalArgumentException("Deleted Alias-list names must be nonblank");
+                }
+                statement.setString(1, name.strip());
+                statement.addBatch();
+            }
+            statement.executeBatch();
+        }
+    }
+
+    /** Replaces only broadcast streams as one part of a caller-owned transaction. */
+    public void replaceBroadcastConfigurations(Connection connection,
+                                               List<BroadcastConfiguration> configurations)
+        throws IOException, SQLException
+    {
+        if(connection == null || connection.getAutoCommit())
+        {
+            throw new IllegalArgumentException("Broadcast configuration writes require a caller-owned transaction");
+        }
+        if(configurations == null)
+        {
+            throw new IllegalArgumentException("Broadcast configurations cannot be null");
+        }
+
+        try(Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("DELETE FROM configuration_broadcast_stream");
+        }
+        insertBroadcastConfigurations(connection, configurations);
+    }
+
+    /**
+     * Persists a stream rename without changing the live configuration before the surrounding Alias transaction
+     * commits. Stream names are unique in the active broadcast model, so exactly one persisted row must match.
+     */
+    public void replaceBroadcastConfigurationsWithRename(Connection connection,
+                                                          List<BroadcastConfiguration> configurations,
+                                                          String previousName, String updatedName)
+        throws IOException, SQLException
+    {
+        if(previousName == null || previousName.isBlank() || updatedName == null || updatedName.isBlank())
+        {
+            throw new IllegalArgumentException("Broadcast rename names must be nonblank");
+        }
+
+        replaceBroadcastConfigurations(connection, configurations);
+        try(PreparedStatement statement = connection.prepareStatement("""
+            UPDATE configuration_broadcast_stream
+            SET name = ?, config_json = json_set(config_json, '$.name', ?)
+            WHERE name = ?
+            """))
+        {
+            statement.setString(1, updatedName);
+            statement.setString(2, updatedName);
+            statement.setString(3, previousName);
+            if(statement.executeUpdate() != 1)
+            {
+                throw new SQLException("Expected exactly one broadcast stream named [" + previousName + "]");
+            }
+        }
     }
 
     private List<Channel> loadChannels(Connection connection) throws SQLException, IOException

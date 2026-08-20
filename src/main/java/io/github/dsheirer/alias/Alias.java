@@ -98,6 +98,10 @@ public class Alias
         {
             throw new IllegalArgumentException("Alias ID cannot be negative");
         }
+        if(mId != UNASSIGNED_ID && mId != id)
+        {
+            throw new IllegalStateException("Persisted Alias ID cannot be changed");
+        }
 
         mId = id;
     }
@@ -408,6 +412,7 @@ public class Alias
         }
     }
 
+    /** Observable properties used only by presentation and runtime lookup lists, never as a persistence trigger. */
     public static Callback<Alias,Observable[]> extractor()
     {
         return alias -> new Observable[] {alias.recordableProperty(), alias.streamableProperty(),

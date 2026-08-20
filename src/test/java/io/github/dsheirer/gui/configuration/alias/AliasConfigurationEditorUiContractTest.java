@@ -5,40 +5,88 @@
  */
 package io.github.dsheirer.gui.configuration.alias;
 
-import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.nio.file.Files;
-import java.nio.file.Path;
+import io.github.dsheirer.alias.Alias;
+import io.github.dsheirer.alias.AliasListDefinition;
+import io.github.dsheirer.alias.AliasListFamily;
+import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
+import io.github.dsheirer.protocol.Protocol;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
-/** Guards the selection-clearing portion of the desktop Alias editor lifecycle. */
+/** Exercises the draft and deferred-selection contracts without launching a JavaFX window. */
 class AliasConfigurationEditorUiContractTest
 {
-    private static final Path EDITOR =
-        Path.of("src/main/java/io/github/dsheirer/gui/configuration/alias/AliasConfigurationEditor.java");
-
     @Test
-    void listSwitchInstallsFreshFilterAndClearsTheSelectedEditor() throws Exception
+    void newAndCloneProduceDetachedUnsavedDrafts()
     {
-        String source = Files.readString(EDITOR);
-        String listener = section(source, "selectedItemProperty()", "private Button getNewAliasListButton()");
-        String update = section(source, "private void update()", "private AliasListDefinition getAliasListDefinition");
-        String selectionRefresh = section(source, "private void setAliases()", "private boolean resolveModifiedAliasDraft()");
+        AliasListDefinition definition = new AliasListDefinition("County", AliasListFamily.P25);
+        definition.setId(11L);
 
-        assertTrue(listener.contains("getAliasTableView().getSelectionModel().clearSelection()"));
-        assertTrue(listener.contains("scheduleAliasSelectionRefresh()"));
-        assertTrue(selectionRefresh.contains("getAliasItemEditor().setItem(null)"));
-        assertTrue(update.contains("setPredicate(new AliasPredicate("));
-        assertFalse(source.contains("mAliasPredicate"));
-        assertFalse(source.contains("setAliasListName("));
-        assertFalse(source.contains("setSearchText("));
+        Alias created = AliasDrafts.create(definition);
+        assertTrue(AliasDrafts.isNew(created));
+        assertEquals(11L, created.getAliasListId());
+
+        Alias original = new Alias("Dispatch");
+        original.setId(101L);
+        original.setAliasListDefinition(definition);
+        original.setMatchIdentifier(new Talkgroup(Protocol.APCO25, 1001));
+
+        Alias cloned = AliasDrafts.cloneOf(original);
+        assertTrue(AliasDrafts.isNew(cloned));
+        assertEquals(original.getAliasListId(), cloned.getAliasListId());
+        assertNotSame(original, cloned);
+        assertNotSame(original.getMatchIdentifier(), cloned.getMatchIdentifier());
+        cloned.setName("Changed clone");
+        assertEquals("Dispatch", original.getName());
+
+        assertNull(AliasDrafts.create(null));
     }
 
-    private static String section(String source, String start, String end)
+    @Test
+    void selectionRefreshDrainsChangesThatArriveWhilePending()
     {
-        int startIndex = source.indexOf(start);
-        int endIndex = source.indexOf(end, startIndex);
-        return source.substring(startIndex, endIndex);
+        List<Runnable> deferred = new ArrayList<>();
+        AtomicInteger refreshCount = new AtomicInteger();
+        AliasSelectionRefreshScheduler[] scheduler = new AliasSelectionRefreshScheduler[1];
+        scheduler[0] = new AliasSelectionRefreshScheduler(deferred::add, () ->
+        {
+            if(refreshCount.incrementAndGet() == 1)
+            {
+                scheduler[0].request();
+            }
+        });
+
+        scheduler[0].request();
+        scheduler[0].request();
+        assertEquals(1, deferred.size());
+
+        deferred.removeFirst().run();
+        assertEquals(2, refreshCount.get());
+        assertTrue(deferred.isEmpty());
+
+        scheduler[0].request();
+        assertEquals(1, deferred.size());
+    }
+
+    @Test
+    void explicitDraftPresentationCanCancelAnOlderSelectionRefresh()
+    {
+        List<Runnable> deferred = new ArrayList<>();
+        AtomicInteger refreshCount = new AtomicInteger();
+        AliasSelectionRefreshScheduler scheduler =
+            new AliasSelectionRefreshScheduler(deferred::add, refreshCount::incrementAndGet);
+
+        scheduler.request();
+        scheduler.cancelPending();
+        deferred.removeFirst().run();
+
+        assertEquals(0, refreshCount.get());
     }
 }

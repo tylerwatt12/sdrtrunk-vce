@@ -7,13 +7,13 @@ package io.github.dsheirer.configuration;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasAdministrationService;
 import io.github.dsheirer.alias.AliasAdministrationServiceTestSupport;
+import io.github.dsheirer.alias.AliasConfigurationSnapshot;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasListFamily;
@@ -23,9 +23,12 @@ import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.audio.broadcast.BroadcastFormat;
 import io.github.dsheirer.audio.broadcast.broadcastify.BroadcastifyCallConfiguration;
+import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.database.alias.AliasDatabaseStore;
+import io.github.dsheirer.database.configuration.ConfigurationDatabaseStore;
 import io.github.dsheirer.database.scanlist.ScanListDatabaseStore;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
@@ -36,13 +39,14 @@ import io.github.dsheirer.scanlist.ScanList;
 import io.github.dsheirer.scanlist.ScanListConfiguration;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Duration;
+import java.sql.Connection;
+import java.sql.Statement;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import javafx.collections.ListChangeListener;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -52,14 +56,262 @@ class AliasAdministrationPersistenceTest
     Path mTemporaryFolder;
 
     @Test
-    void delayedSaveCannotPersistARejectedMultiAliasMutation() throws Exception
+    void createCommitsCanonicalIdentityBeforePublishingTheAlias() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("publish-after-commit-data");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        Files.createDirectories(database.getParent());
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
+            new AliasModel(), null, null);
+
+        try
+        {
+            manager.init();
+            AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
+            AliasAdministrationService.MutationResult list = service.createAliasList(
+                "County P25", AliasListFamily.P25, service.currentRevision());
+            AliasDatabaseStore store = new AliasDatabaseStore(database);
+            AtomicInteger additions = new AtomicInteger();
+            AtomicReference<Alias> published = new AtomicReference<>();
+            AtomicReference<Boolean> rowWasCommitted = new AtomicReference<>(false);
+            AtomicReference<Throwable> listenerFailure = new AtomicReference<>();
+
+            manager.getAliasModel().aliasList().addListener((ListChangeListener<Alias>)change ->
+            {
+                while(change.next())
+                {
+                    for(Alias added: change.getAddedSubList())
+                    {
+                        additions.incrementAndGet();
+                        published.set(added);
+
+                        try
+                        {
+                            List<AliasListDefinition> definitions = store.loadAliasListDefinitions();
+                            rowWasCommitted.set(added.getId() > Alias.UNASSIGNED_ID &&
+                                store.loadAliases(definitions).stream()
+                                    .anyMatch(alias -> alias.getId() == added.getId()));
+                        }
+                        catch(Throwable throwable)
+                        {
+                            listenerFailure.set(throwable);
+                        }
+                    }
+                }
+            });
+
+            AliasAdministrationService.MutationResult created = service.createAlias(
+                alias("Dispatch", list.aliasListId(), 101), list.revision());
+            long aliasId = created.aliasIds().getFirst();
+
+            assertEquals(1, additions.get());
+            assertEquals(null, listenerFailure.get());
+            assertTrue(rowWasCommitted.get(), "Alias was observable before its SQLite row and identity existed");
+            assertTrue(aliasId > Alias.UNASSIGNED_ID);
+            assertEquals(aliasId, published.get().getId());
+            assertEquals(1, manager.getAliasModel().getAliases().stream()
+                .filter(alias -> alias.getId() == aliasId).count());
+        }
+        finally
+        {
+            MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
+        }
+    }
+
+    @Test
+    void aliasWithMembershipPublishesRoutingBeforeTheAlias() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("membership-before-alias-data");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        Files.createDirectories(database.getParent());
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
+            new AliasModel(), null, null);
+
+        try
+        {
+            manager.init();
+            AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
+            AliasAdministrationService.MutationResult list = service.createAliasList(
+                "County P25", AliasListFamily.P25, service.currentRevision());
+            AliasAdministrationService.ScanListMutationResult scanList = service.createScanList(
+                new ScanList(ScanList.UNASSIGNED_ID, 1, "Dispatch", null, true, false), list.revision());
+            AtomicBoolean membershipVisible = new AtomicBoolean();
+
+            manager.getAliasModel().aliasList().addListener((ListChangeListener<Alias>)change ->
+            {
+                while(change.next())
+                {
+                    for(Alias added: change.getAddedSubList())
+                    {
+                        membershipVisible.set(manager.getScanListModel().scanListIdsForAlias(added.getId())
+                            .contains(scanList.scanListId()));
+                    }
+                }
+            });
+
+            service.createAlias(alias("Dispatch", list.aliasListId(), 101), List.of(scanList.scanListId()),
+                scanList.revision());
+
+            assertTrue(membershipVisible.get(), "Alias became visible before its committed scan-list routing");
+        }
+        finally
+        {
+            MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
+        }
+    }
+
+    @Test
+    void delayedChannelEditAfterCandidateCaptureIsNotDiscarded() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("late-channel-data");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        Files.createDirectories(database.getParent());
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        LateChannelConfigurationManager manager =
+            new LateChannelConfigurationManager(new TestUserPreferences(dataRoot));
+
+        try
+        {
+            manager.init();
+            AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
+            manager.addChannelDuringNextCommit();
+            service.createAliasList("County P25", AliasListFamily.P25, service.currentRevision());
+
+            try(Connection connection = SdrTrunkDatabase.open(database);
+                Statement statement = connection.createStatement())
+            {
+                statement.executeUpdate("""
+                    CREATE TRIGGER reject_delayed_alias_rewrite
+                    BEFORE DELETE ON alias_list
+                    BEGIN
+                        SELECT RAISE(ABORT, 'channel save must not rewrite Alias rows');
+                    END
+                    """);
+            }
+
+            manager.flushConfiguration();
+
+            assertEquals(List.of("Late Channel"), new ConfigurationDatabaseStore(database).loadConfigurationState()
+                .getChannels().stream().map(Channel::getName).toList());
+        }
+        finally
+        {
+            MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
+        }
+    }
+
+    @Test
+    void channelEditObservedDuringAliasPublicationIsStillSaved() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("publication-channel-data");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        Files.createDirectories(database.getParent());
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
+            new AliasModel(), null, null);
+
+        try
+        {
+            manager.init();
+            AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
+            AliasAdministrationService.MutationResult list = service.createAliasList(
+                "County P25", AliasListFamily.P25, service.currentRevision());
+            manager.getAliasModel().aliasList().addListener((ListChangeListener<Alias>)change ->
+            {
+                while(change.next())
+                {
+                    if(change.wasAdded())
+                    {
+                        manager.getChannelModel().addChannel(new Channel("Publication Channel"));
+                    }
+                }
+            });
+
+            service.createAlias(alias("Dispatch", list.aliasListId(), 101), list.revision());
+            manager.flushConfiguration();
+
+            assertEquals(List.of("Publication Channel"),
+                new ConfigurationDatabaseStore(database).loadConfigurationState().getChannels().stream()
+                    .map(Channel::getName).toList());
+        }
+        finally
+        {
+            MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
+        }
+    }
+
+    @Test
+    void publicationFailureReloadsTheCommittedCanonicalState() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("publication-recovery-data");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        Files.createDirectories(database.getParent());
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        RecoveringPublicationManager manager = new RecoveringPublicationManager(new TestUserPreferences(dataRoot));
+
+        try
+        {
+            manager.init();
+            AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
+            AliasAdministrationService.MutationResult list = service.createAliasList(
+                "County P25", AliasListFamily.P25, service.currentRevision());
+            manager.failNextPublication();
+
+            long aliasId = service.createAlias(alias("Dispatch", list.aliasListId(), 101), list.revision())
+                .aliasIds().getFirst();
+
+            assertEquals(aliasId, manager.getAliasModel().getAliases().getFirst().getId());
+            List<AliasListDefinition> definitions = new AliasDatabaseStore(database).loadAliasListDefinitions();
+            assertEquals(aliasId, new AliasDatabaseStore(database).loadAliases(definitions).getFirst().getId());
+        }
+        finally
+        {
+            MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
+        }
+    }
+
+    @Test
+    void unrecoverablePublicationFailureRejectsLaterCommandsWithRestartError() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("fatal-publication-data");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        Files.createDirectories(database.getParent());
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        UnrecoverablePublicationManager manager =
+            new UnrecoverablePublicationManager(new TestUserPreferences(dataRoot));
+
+        try
+        {
+            manager.init();
+            AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
+            ConfigurationManager.ConfigurationPublicationException initial = assertThrows(
+                ConfigurationManager.ConfigurationPublicationException.class,
+                () -> service.createAliasList("County P25", AliasListFamily.P25, service.currentRevision()));
+            assertTrue(initial.getMessage().contains("restart"));
+            assertEquals(1, new AliasDatabaseStore(database).loadAliasListDefinitions().size());
+
+            ConfigurationManager.ConfigurationPublicationException later = assertThrows(
+                ConfigurationManager.ConfigurationPublicationException.class,
+                () -> service.createAliasList("Other P25", AliasListFamily.P25, service.currentRevision()));
+            assertTrue(later.getMessage().contains("restart"));
+            assertEquals(1, new AliasDatabaseStore(database).loadAliasListDefinitions().size());
+        }
+        finally
+        {
+            MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
+        }
+    }
+
+    @Test
+    void failedCommitNeverPublishesTheCandidateOrChangesStoredRows() throws Exception
     {
         Path dataRoot = mTemporaryFolder.resolve("data");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
         Files.createDirectories(database.getParent());
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
-        BlockingConfigurationManager manager = new BlockingConfigurationManager(
-            new TestUserPreferences(dataRoot));
+        FailingConfigurationManager manager = new FailingConfigurationManager(new TestUserPreferences(dataRoot));
 
         try
         {
@@ -72,43 +324,24 @@ class AliasAdministrationPersistenceTest
             AliasAdministrationService.MutationResult second = service.createAlias(
                 alias("Operations", list.aliasListId(), 102), first.revision());
             List<Long> aliasIds = List.of(first.aliasIds().getFirst(), second.aliasIds().getFirst());
-            manager.blockAndFailNextFlush();
-            AtomicReference<Throwable> mutationFailure = new AtomicReference<>();
-            Thread mutation = Thread.ofPlatform().name("failed-alias-mutation").unstarted(() ->
+            AtomicInteger publications = new AtomicInteger();
+            manager.getAliasModel().aliasList().addListener((ListChangeListener<Alias>)change ->
             {
-                try
+                while(change.next())
                 {
-                    service.bulkEdit(new AliasAdministrationService.BulkEdit(aliasIds, null, 0x123456, null,
-                        true, null, null, null, null, false), second.revision());
-                }
-                catch(Throwable throwable)
-                {
-                    mutationFailure.set(throwable);
+                    if(change.wasAdded() || change.wasRemoved() || change.wasUpdated())
+                    {
+                        publications.incrementAndGet();
+                    }
                 }
             });
-            mutation.start();
-            manager.awaitBlockedFlush();
 
-            Thread delayedSave = Thread.ofPlatform().name("competing-delayed-save")
-                .unstarted(manager.new ConfigurationSaveTask());
-            delayedSave.start();
+            manager.failNextSave();
+            assertThrows(AliasAdministrationService.PersistenceException.class, () ->
+                service.bulkEdit(new AliasAdministrationService.BulkEdit(aliasIds, null, 0x123456, null,
+                    true, null, null, null, null, false), second.revision()));
 
-            try
-            {
-                awaitState(delayedSave, Thread.State.BLOCKED, Duration.ofSeconds(5));
-                assertStoredDefaults(database, aliasIds);
-            }
-            finally
-            {
-                manager.releaseBlockedFlush();
-            }
-
-            mutation.join(10_000);
-            delayedSave.join(10_000);
-            assertFalse(mutation.isAlive(), "Alias mutation did not finish");
-            assertFalse(delayedSave.isAlive(), "Delayed configuration save did not finish");
-            assertInstanceOf(AliasAdministrationService.PersistenceException.class, mutationFailure.get());
-
+            assertEquals(0, publications.get());
             for(long aliasId: aliasIds)
             {
                 Alias live = service.getAlias(aliasId).alias();
@@ -119,15 +352,14 @@ class AliasAdministrationPersistenceTest
         }
         finally
         {
-            manager.releaseBlockedFlush();
             MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
         }
     }
 
     @Test
-    void mixedSaveAndBroadcastReferenceRenameRollbackAndPersist() throws Exception
+    void failedMixedCommandsNeverPublishAndSuccessfulRenamePersists() throws Exception
     {
-        Path dataRoot = mTemporaryFolder.resolve("mixed-rollback-data");
+        Path dataRoot = mTemporaryFolder.resolve("mixed-failure-data");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
         Files.createDirectories(database.getParent());
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
@@ -140,9 +372,6 @@ class AliasAdministrationPersistenceTest
             BroadcastifyCallConfiguration oldStream = new BroadcastifyCallConfiguration(BroadcastFormat.MP3);
             oldStream.setName("Old Stream");
             manager.getBroadcastModel().addBroadcastConfiguration(oldStream);
-            BroadcastifyCallConfiguration newStream = new BroadcastifyCallConfiguration(BroadcastFormat.MP3);
-            newStream.setName("New Stream");
-            manager.getBroadcastModel().addBroadcastConfiguration(newStream);
             long aliasListId = service.createAliasList("County P25", AliasListFamily.P25).aliasListId();
             Alias original = alias("Dispatch", aliasListId, 101);
             original.addBroadcastChannel("Old Stream");
@@ -178,6 +407,7 @@ class AliasAdministrationPersistenceTest
             assertThrows(AliasAdministrationService.PersistenceException.class,
                 () -> service.renameBroadcastChannelReferences("Old Stream", "New Stream"));
 
+            assertEquals("Old Stream", oldStream.getName());
             Alias restored = service.getAlias(aliasId).alias();
             assertTrue(restored.hasBroadcastChannel("Old Stream"));
             assertFalse(restored.hasBroadcastChannel("New Stream"));
@@ -193,6 +423,7 @@ class AliasAdministrationPersistenceTest
                 .getStreamDestinationNames());
 
             service.renameBroadcastChannelReferences("Old Stream", "New Stream");
+            assertEquals("New Stream", oldStream.getName());
             Alias renamed = service.getAlias(aliasId).alias();
             assertFalse(renamed.hasBroadcastChannel("Old Stream"));
             assertTrue(renamed.hasBroadcastChannel("New Stream"));
@@ -213,9 +444,55 @@ class AliasAdministrationPersistenceTest
     }
 
     @Test
-    void failedScanListFlushRestoresDefinitionsAndMemberships() throws Exception
+    void broadcastRenameCommitsTheStreamAndAliasReferencesTogether() throws Exception
     {
-        Path dataRoot = mTemporaryFolder.resolve("scan-list-rollback-data");
+        Path dataRoot = mTemporaryFolder.resolve("broadcast-rename-data");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        Files.createDirectories(database.getParent());
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
+            new AliasModel(), null, null);
+
+        try
+        {
+            manager.init();
+            AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
+            BroadcastifyCallConfiguration stream = new BroadcastifyCallConfiguration(BroadcastFormat.MP3);
+            stream.setName("Old Stream");
+            manager.getBroadcastModel().addBroadcastConfiguration(stream);
+            manager.flushConfiguration();
+
+            long aliasListId = service.createAliasList("County P25", AliasListFamily.P25).aliasListId();
+            Alias proposed = alias("Dispatch", aliasListId, 101);
+            proposed.addBroadcastChannel("Old Stream");
+            long aliasId = service.createAlias(proposed).aliasIds().getFirst();
+            service.updateUnmatchedTalkgroupPolicy(aliasListId,
+                new UnmatchedTalkgroupPolicy(false, List.of("Old Stream")), service.currentRevision());
+
+            assertEquals("Old Stream", stream.getName());
+            service.renameBroadcastChannelReferences("Old Stream", "New Stream");
+
+            assertEquals("New Stream", stream.getName());
+            assertEquals(List.of("New Stream"), new ConfigurationDatabaseStore(database).loadConfigurationState()
+                .getBroadcastConfigurations().stream().map(configuration -> configuration.getName()).toList());
+            List<AliasListDefinition> definitions = new AliasDatabaseStore(database).loadAliasListDefinitions();
+            Alias stored = new AliasDatabaseStore(database).loadAliases(definitions).stream()
+                .filter(alias -> alias.getId() == aliasId).findFirst().orElseThrow();
+            assertEquals(List.of("New Stream"), stored.getBroadcastChannels().stream()
+                .map(BroadcastChannel::getChannelName).toList());
+            assertEquals(List.of("New Stream"), definitions.getFirst().getUnmatchedTalkgroupPolicy()
+                .getStreamDestinationNames());
+        }
+        finally
+        {
+            MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
+        }
+    }
+
+    @Test
+    void failedScanListCommitNeverPublishesDefinitionsOrMemberships() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("scan-list-failure-data");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
         Files.createDirectories(database.getParent());
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
@@ -300,18 +577,6 @@ class AliasAdministrationPersistenceTest
         assertEquals(expected.unmatchedAliasListMemberships(), actual.unmatchedAliasListMemberships());
     }
 
-    private static void awaitState(Thread thread, Thread.State expected, Duration timeout) throws Exception
-    {
-        long deadline = System.nanoTime() + timeout.toNanos();
-
-        while(thread.getState() != expected && System.nanoTime() < deadline)
-        {
-            Thread.sleep(5);
-        }
-
-        assertEquals(expected, thread.getState(), "Configuration saver did not wait for the mutation gate");
-    }
-
     private static Alias alias(String name, long aliasListId, int talkgroup)
     {
         Alias alias = new Alias(name);
@@ -319,76 +584,6 @@ class AliasAdministrationPersistenceTest
         alias.setAliasListName("County P25");
         alias.setMatchIdentifier(new Talkgroup(Protocol.APCO25, talkgroup));
         return alias;
-    }
-
-    private static final class BlockingConfigurationManager extends ConfigurationManager
-    {
-        private final CountDownLatch mFlushBlocked = new CountDownLatch(1);
-        private final CountDownLatch mReleaseFlush = new CountDownLatch(1);
-        private final AtomicBoolean mFailExplicitSave = new AtomicBoolean();
-        private volatile boolean mBlockFlush;
-        private volatile Thread mExplicitSaveThread;
-
-        private BlockingConfigurationManager(UserPreferences preferences)
-        {
-            super(preferences, null, new AliasModel(), null, null);
-        }
-
-        private void blockAndFailNextFlush()
-        {
-            mBlockFlush = true;
-            mFailExplicitSave.set(true);
-        }
-
-        private void awaitBlockedFlush() throws Exception
-        {
-            if(!mFlushBlocked.await(5, TimeUnit.SECONDS))
-            {
-                throw new AssertionError("Alias mutation did not reach its persistence boundary");
-            }
-        }
-
-        private void releaseBlockedFlush()
-        {
-            mReleaseFlush.countDown();
-        }
-
-        @Override
-        public void flushConfiguration()
-        {
-            if(mBlockFlush)
-            {
-                mBlockFlush = false;
-                mExplicitSaveThread = Thread.currentThread();
-                mFlushBlocked.countDown();
-
-                try
-                {
-                    if(!mReleaseFlush.await(5, TimeUnit.SECONDS))
-                    {
-                        throw new IllegalStateException("Timed out waiting to release the test persistence boundary");
-                    }
-                }
-                catch(InterruptedException exception)
-                {
-                    Thread.currentThread().interrupt();
-                    throw new IllegalStateException("Interrupted at the test persistence boundary", exception);
-                }
-            }
-
-            super.flushConfiguration();
-        }
-
-        @Override
-        boolean saveConfigurationSnapshotToDatabase()
-        {
-            if(Thread.currentThread() == mExplicitSaveThread && mFailExplicitSave.compareAndSet(true, false))
-            {
-                return false;
-            }
-
-            return super.saveConfigurationSnapshotToDatabase();
-        }
     }
 
     private static final class FailingConfigurationManager extends ConfigurationManager
@@ -406,9 +601,82 @@ class AliasAdministrationPersistenceTest
         }
 
         @Override
-        boolean saveConfigurationSnapshotToDatabase()
+        public AliasConfigurationSnapshot commitAliasConfiguration(AliasConfigurationSnapshot proposed,
+            AliasConfigurationPublication publication, BroadcastConfigurationRename broadcastRename)
         {
-            return !mFailNextSave.compareAndSet(true, false) && super.saveConfigurationSnapshotToDatabase();
+            if(mFailNextSave.compareAndSet(true, false))
+            {
+                throw new ConfigurationCommitException("Injected test failure", new IllegalStateException());
+            }
+
+            return super.commitAliasConfiguration(proposed, publication, broadcastRename);
+        }
+    }
+
+    private static final class LateChannelConfigurationManager extends ConfigurationManager
+    {
+        private final AtomicBoolean mAddChannelDuringNextCommit = new AtomicBoolean();
+
+        private LateChannelConfigurationManager(UserPreferences preferences)
+        {
+            super(preferences, null, new AliasModel(), null, null);
+        }
+
+        private void addChannelDuringNextCommit()
+        {
+            mAddChannelDuringNextCommit.set(true);
+        }
+
+        @Override
+        protected AliasConfigurationSnapshot commitAliasConfiguration(AliasConfigurationSnapshot proposed,
+            AliasConfigurationPublication publication, BroadcastConfigurationRename broadcastRename)
+        {
+            if(mAddChannelDuringNextCommit.compareAndSet(true, false))
+            {
+                getChannelModel().addChannel(new Channel("Late Channel"));
+            }
+            return super.commitAliasConfiguration(proposed, publication, broadcastRename);
+        }
+    }
+
+    private static final class RecoveringPublicationManager extends ConfigurationManager
+    {
+        private final AtomicBoolean mFailNextPublication = new AtomicBoolean();
+
+        private RecoveringPublicationManager(UserPreferences preferences)
+        {
+            super(preferences, null, new AliasModel(), null, null);
+        }
+
+        private void failNextPublication()
+        {
+            mFailNextPublication.set(true);
+        }
+
+        @Override
+        protected void publishCommittedAliasConfiguration(AliasConfigurationSnapshot committed,
+            AliasConfigurationPublication publication)
+        {
+            if(mFailNextPublication.compareAndSet(true, false))
+            {
+                throw new IllegalStateException("Injected publication failure");
+            }
+            super.publishCommittedAliasConfiguration(committed, publication);
+        }
+    }
+
+    private static final class UnrecoverablePublicationManager extends ConfigurationManager
+    {
+        private UnrecoverablePublicationManager(UserPreferences preferences)
+        {
+            super(preferences, null, new AliasModel(), null, null);
+        }
+
+        @Override
+        protected void publishCommittedAliasConfiguration(AliasConfigurationSnapshot committed,
+            AliasConfigurationPublication publication)
+        {
+            throw new IllegalStateException("Injected unrecoverable publication failure");
         }
     }
 

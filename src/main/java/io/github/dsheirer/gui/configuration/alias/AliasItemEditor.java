@@ -262,7 +262,7 @@ public class AliasItemEditor extends Editor<Alias>
         }
 
         refreshMatcherChoices(alias);
-        modifiedProperty().set(false);
+        modifiedProperty().set(alias != null && alias.getId() == Alias.UNASSIGNED_ID);
     }
 
     /**
@@ -407,9 +407,12 @@ public class AliasItemEditor extends Editor<Alias>
         replacement.setDescription(getDescriptionField().getText());
         replacement.setGroup(getGroupField().getText());
 
+        boolean create = alias.getId() == Alias.UNASSIGNED_ID;
         Optional<AliasAdministrationService.MutationResult> saved = AliasMutationUi.execute(getSaveButton(),
-            "Save Alias", () -> mConfigurationManager.getAliasAdministrationService()
-                .replaceAlias(alias.getId(), replacement, mLoadedRevision));
+            "Save Alias", () -> create ?
+                mConfigurationManager.getAliasAdministrationService().createAlias(replacement, mLoadedRevision) :
+                mConfigurationManager.getAliasAdministrationService()
+                    .replaceAlias(alias.getId(), replacement, mLoadedRevision));
         if(saved.isEmpty())
         {
             return false;
@@ -921,6 +924,7 @@ public class AliasItemEditor extends Editor<Alias>
         if(mNameField == null)
         {
             mNameField = new TextField();
+            mNameField.setId("alias-name-field");
             mNameField.setDisable(true);
             mNameField.setMaxWidth(Double.MAX_VALUE);
             mNameField.textProperty().addListener(mEditorModificationListener);
@@ -963,6 +967,7 @@ public class AliasItemEditor extends Editor<Alias>
         if(mSaveButton == null)
         {
             mSaveButton = new Button(" Save ");
+            mSaveButton.setId("alias-save-button");
             mSaveButton.setTextAlignment(TextAlignment.CENTER);
             mSaveButton.setMaxWidth(Double.MAX_VALUE);
             mSaveButton.disableProperty().bind(modifiedProperty().not().or(mMatcherMissing));
@@ -994,9 +999,40 @@ public class AliasItemEditor extends Editor<Alias>
     void reloadCurrentAlias()
     {
         Alias edited = getItem();
-        Alias current = edited != null && edited.getId() > Alias.UNASSIGNED_ID ?
-            mConfigurationManager.getAliasModel().getAlias(edited.getId()) : edited;
-        setItem(current);
+        if(AliasDrafts.isNew(edited))
+        {
+            setItem(edited);
+        }
+        else
+        {
+            Alias current = edited != null ? mConfigurationManager.getAliasModel().getAlias(edited.getId()) : null;
+            setItem(current);
+        }
+    }
+
+    /**
+     * Discards form changes. A new Alias draft has no durable row to reload, so discarding clears it.
+     */
+    void discardChanges()
+    {
+        Alias edited = getItem();
+        if(AliasDrafts.isNew(edited))
+        {
+            setItem(null);
+        }
+        else
+        {
+            reloadCurrentAlias();
+        }
+    }
+
+    void focusAliasName()
+    {
+        Platform.runLater(() ->
+        {
+            getNameField().requestFocus();
+            getNameField().selectAll();
+        });
     }
 
     /**

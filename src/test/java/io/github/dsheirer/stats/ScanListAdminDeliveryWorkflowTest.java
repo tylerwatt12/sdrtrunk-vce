@@ -150,7 +150,7 @@ class ScanListAdminDeliveryWorkflowTest
             assertEquals(city.id(), persistedAliases.get(clevelandDispatch.id()).getAliasListId());
             assertEquals(city.id(), persistedAliases.get(mutualAid.id()).getAliasListId());
 
-            ScanListModel reloadedModel = new ScanListModel(null);
+            ScanListModel reloadedModel = new ScanListModel();
             reloadedModel.replaceConfiguration(reloaded);
             verifyCompletedCallDelivery(reloadedModel, southwest, cleveland,
                 manager.getAliasModel().getAliasList(county.name()), manager.getAliasModel().getAliasList(city.name()));

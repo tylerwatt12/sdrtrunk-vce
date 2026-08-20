@@ -75,7 +75,7 @@ public class AliasList
     private volatile LookupIndex mLookupIndex = new LookupIndex();
     private boolean mRebuilding;
     private final String mName;
-    private final AliasListDefinition mDefinition;
+    private volatile AliasListDefinition mDefinition;
     private final ObservableList<Alias> mAliases = FXCollections.observableArrayList(Alias.extractor());
 
     /**
@@ -123,6 +123,21 @@ public class AliasList
     {
         mDefinition = definition;
         mName = definition != null ? definition.getName() : null;
+    }
+
+    /**
+     * Installs the committed replacement for this list's durable definition. Cached AliasList instances are retained
+     * by running channels, so a configuration publication updates the definition in place before rebuilding aliases.
+     */
+    void replaceDefinition(AliasListDefinition definition)
+    {
+        if(definition == null || mDefinition == null || definition.getId() != mDefinition.getId() ||
+            !Objects.equals(definition.getName(), mDefinition.getName()))
+        {
+            throw new IllegalArgumentException("Alias-list replacement must retain its durable identity and name");
+        }
+
+        mDefinition = definition;
     }
 
     /**

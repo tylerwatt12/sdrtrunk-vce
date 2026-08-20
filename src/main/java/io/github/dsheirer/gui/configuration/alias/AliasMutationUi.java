@@ -12,6 +12,7 @@
 package io.github.dsheirer.gui.configuration.alias;
 
 import io.github.dsheirer.alias.AliasAdministrationService;
+import io.github.dsheirer.configuration.ConfigurationManager;
 import java.util.Optional;
 import java.util.function.Supplier;
 import javafx.scene.Node;
@@ -50,6 +51,13 @@ public final class AliasMutationUi
             mLog.error("Unable to persist Alias configuration", exception);
             show(owner, title, "Alias changes were not saved",
                 "The previous Alias configuration has been restored.");
+        }
+        catch(ConfigurationManager.ConfigurationPublicationException exception)
+        {
+            mLog.error("Alias configuration committed but could not be loaded into the running application",
+                exception);
+            show(owner, title, "Alias changes were saved, but SDRTrunk must restart",
+                "Restart SDRTrunk before making more configuration changes.");
         }
         catch(AliasAdministrationService.NotInitializedException |
               AliasAdministrationService.ConfigurationBusyException exception)

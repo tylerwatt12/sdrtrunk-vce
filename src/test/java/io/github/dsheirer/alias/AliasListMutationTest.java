@@ -210,29 +210,36 @@ class AliasListMutationTest
     }
 
     @Test
-    void movingAliasBetweenCachedModelListsUpdatesBothSnapshots()
+    void committedReplacementMovesAliasBetweenCachedModelLists()
     {
         AliasModel model = new AliasModel();
         AliasListDefinition firstDefinition =
             new AliasListDefinition("first", AliasListFamily.P25);
         AliasListDefinition secondDefinition =
             new AliasListDefinition("second", AliasListFamily.P25);
+        firstDefinition.setId(1L);
+        secondDefinition.setId(2L);
         model.setAliasListDefinitions(List.of(firstDefinition, secondDefinition));
         AliasList firstList = model.getAliasList("first");
         AliasList secondList = model.getAliasList("second");
         Talkgroup talkgroup = new Talkgroup(Protocol.APCO25, 100);
         Alias alias = alias("moving", talkgroup);
+        alias.setId(10L);
         alias.setAliasListDefinition(firstDefinition);
         model.addAlias(alias);
 
         assertSame(alias, only(firstList.getAliases(APCO25Talkgroup.create(100))));
         assertTrue(secondList.getAliases(APCO25Talkgroup.create(100)).isEmpty());
 
-        alias.setAliasListDefinition(secondDefinition);
+        Alias replacement = AliasFactory.copyOf(alias);
+        replacement.setId(alias.getId());
+        replacement.setAliasListDefinition(secondDefinition);
+        model.publishCommittedConfiguration(List.of(firstDefinition, secondDefinition), List.of(replacement),
+            List.of(replacement.getId()), false);
         assertTrue(firstList.getAliases(APCO25Talkgroup.create(100)).isEmpty());
-        assertSame(alias, only(secondList.getAliases(APCO25Talkgroup.create(100))));
+        assertSame(replacement, only(secondList.getAliases(APCO25Talkgroup.create(100))));
 
-        model.removeAlias(alias);
+        model.removeAlias(replacement);
         assertTrue(secondList.getAliases(APCO25Talkgroup.create(100)).isEmpty());
     }
 

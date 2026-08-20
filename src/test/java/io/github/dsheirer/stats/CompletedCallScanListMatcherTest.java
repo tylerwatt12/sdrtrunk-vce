@@ -194,7 +194,7 @@ class CompletedCallScanListMatcherTest
     private static CompletedCallScanListMatcher matcher(Map<Long,Set<Long>> aliases,
                                                         Map<Long,Set<Long>> unmatchedAliasLists)
     {
-        ScanListModel model = new ScanListModel(null);
+        ScanListModel model = new ScanListModel();
         model.replaceConfiguration(new ScanListConfiguration(
             List.of(DEFAULT, EXACT, RANGE, PATCH, HIDDEN, UNKNOWN), aliases, unmatchedAliasLists));
         return new CompletedCallScanListMatcher(model);

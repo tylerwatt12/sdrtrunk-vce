@@ -15,16 +15,11 @@ import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.controller.channel.Channel;
-import io.github.dsheirer.database.SdrTrunkDatabase;
+import io.github.dsheirer.database.configuration.ConfigurationIdentityAllocator;
 import io.github.dsheirer.scanlist.ScanList;
 import io.github.dsheirer.scanlist.ScanListConfiguration;
 import io.github.dsheirer.scanlist.ScanListModel;
 import java.awt.GraphicsEnvironment;
-import java.io.IOException;
-import java.sql.Connection;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
@@ -44,8 +39,8 @@ import java.util.function.Supplier;
 import javafx.application.Platform;
 
 /**
- * Small command boundary shared by authenticated alias-management clients. Runtime aliases remain in the fast
- * {@link AliasModel}; successful commands synchronously flush the existing complete configuration transaction.
+ * Command boundary shared by desktop and web Alias administration. Each command mutates a detached candidate,
+ * commits one complete SQLite transaction, and then publishes only the committed rows to the runtime models.
  */
 public final class AliasAdministrationService
 {
@@ -59,6 +54,7 @@ public final class AliasAdministrationService
 
     private final ConfigurationManager mConfigurationManager;
     private final boolean mUseDesktopThread;
+    private MutationWorkspace mMutationWorkspace;
 
     public AliasAdministrationService(ConfigurationManager configurationManager)
     {
@@ -164,8 +160,11 @@ public final class AliasAdministrationService
             {
                 throw new IllegalArgumentException("Scan lists cannot exceed " + MAX_SCAN_LISTS + " items");
             }
-            scanListModel().addScanList(scanList);
-            return new ScanListMutation(scanList, 1);
+            ScanList prepared = new ScanList(scanList.getId(), scanList.getSortOrder(), scanList.getName(),
+                scanList.getDescription(), scanList.isPublished(), scanList.isDefault());
+            prepared.assignId(nextScanListId());
+            scanListModel().addScanList(prepared);
+            return new ScanListMutation(prepared, 1);
         });
     }
 
@@ -275,9 +274,9 @@ public final class AliasAdministrationService
             }
 
             AliasListDefinition definition = new AliasListDefinition(preparedName, family);
+            definition.setId(nextAliasListId());
             aliasModel().addAliasListDefinition(definition);
-            return new MutationTarget(definition, List.of(), 1,
-                () -> removeAliasListDefinition(definition), null);
+            return new MutationTarget(definition, List.of(), 1, PublicationMode.ALIAS_LISTS);
         });
     }
 
@@ -314,7 +313,6 @@ public final class AliasAdministrationService
                     "NXDN, and NBFM alias lists");
             }
             UnmatchedTalkgroupPolicy previous = definition.getUnmatchedTalkgroupPolicy();
-            ScanListConfiguration previousScanLists = scanListModel().configuration();
             validatePolicyStreams(policy, previous);
             Set<Long> memberships = replaceScanListMemberships ? validatedScanListIds(scanListIds) : Set.of();
             definition.setUnmatchedTalkgroupPolicy(policy);
@@ -322,17 +320,8 @@ public final class AliasAdministrationService
             {
                 scanListModel().replaceUnmatchedTalkgroupMemberships(aliasListId, memberships);
             }
-            mConfigurationManager.aliasListDefinitionChanged();
-
-            return new MutationTarget(definition, List.of(), 1, () ->
-            {
-                definition.setUnmatchedTalkgroupPolicy(previous);
-                if(replaceScanListMemberships)
-                {
-                    scanListModel().replaceConfiguration(previousScanLists);
-                }
-                mConfigurationManager.aliasListDefinitionChanged();
-            }, null);
+            return new MutationTarget(definition, List.of(), 1, replaceScanListMemberships ?
+                PublicationMode.SCAN_LISTS_THEN_ALIAS_LISTS : PublicationMode.ALIAS_LISTS);
         });
     }
 
@@ -382,27 +371,13 @@ public final class AliasAdministrationService
 
             List<Alias> deletedAliases = aliasesForList(definition);
             List<Long> deletedAliasIds = deletedAliases.stream().map(Alias::getId).toList();
-            List<Alias> previousAliases = List.copyOf(aliasModel().getAliases());
-            List<AliasListDefinition> previousDefinitions = List.copyOf(aliasModel().aliasListDefinitions());
-            ScanListConfiguration previousScanLists = scanListModel().configuration();
-            List<ChannelAssignment> channels = mConfigurationManager.getChannelModel().getChannels().stream()
-                .filter(channel -> matchesList(channel, definition))
-                .map(channel -> new ChannelAssignment(channel, channel.getAliasListName())).toList();
-
-            mConfigurationManager.prepareForAliasListRefresh();
             aliasModel().removeAliases(deletedAliases);
             deletedAliasIds.forEach(scanListModel()::removeAlias);
             scanListModel().removeAliasList(definition.getId());
             removeAliasListDefinition(definition);
-            mConfigurationManager.getChannelModel().deleteAliasList(definition.getName());
 
-            return new MutationTarget(definition, deletedAliasIds, impact.aliasCount(), () ->
-            {
-                aliasModel().setAliasListDefinitions(previousDefinitions);
-                aliasModel().restoreAliases(previousAliases);
-                scanListModel().replaceConfiguration(previousScanLists);
-                channels.forEach(assignment -> assignment.channel().setAliasListName(assignment.aliasListName()));
-            }, () -> aliasModel().discardAliasListCache(definition.getName()));
+            return new MutationTarget(definition, deletedAliasIds, impact.aliasCount(), List.of(),
+                PublicationMode.ALIAS_LIST_DELETE, mConfigurationManager::prepareForAliasListRefresh);
         });
     }
 
@@ -443,17 +418,9 @@ public final class AliasAdministrationService
         Set<Long> memberships = validatedScanListIds(scanListIds);
         return mutate(Long.valueOf(expectedRevision), () ->
         {
-            ScanListConfiguration previousScanLists = scanListModel().configuration();
             MutationTarget target = saveAliasesTarget(List.of(prepared));
             scanListModel().replaceAliasMemberships(aliasId, memberships);
-            return target.withRollback(() ->
-            {
-                if(target.rollback() != null)
-                {
-                    target.rollback().run();
-                }
-                scanListModel().replaceConfiguration(previousScanLists);
-            });
+            return target.withPublication(PublicationMode.SCAN_LISTS_THEN_ALIASES);
         });
     }
 
@@ -618,25 +585,28 @@ public final class AliasAdministrationService
                 {
                     requireRevision(expectedRevision);
                 }
-                MutationTarget target = operation.get();
+
+                MutationWorkspace workspace = beginMutationWorkspace();
+                MutationTarget target;
 
                 try
                 {
-                    mConfigurationManager.flushConfiguration();
+                    target = operation.get();
+                    mConfigurationManager.commitAndPublishAliasConfiguration(workspace.snapshot(), target.publication(),
+                        target.beforePublication(), target.broadcastConfigurationRename());
                 }
-                catch(RuntimeException exception)
+                catch(ConfigurationManager.ConfigurationCommitException |
+                      ConfigurationIdentityAllocator.AllocationException exception)
                 {
-                    rollback(target, exception);
                     throw new PersistenceException("Unable to save alias configuration", exception);
                 }
-
-                if(target.afterCommit() != null)
+                finally
                 {
-                    target.afterCommit().run();
+                    mMutationWorkspace = null;
                 }
 
-                List<Long> ids = target.savedAliases().isEmpty() ? target.aliases() :
-                    target.savedAliases().stream().map(Alias::getId).toList();
+                List<Long> ids = target.savedAliases().isEmpty() ? target.aliases() : target.savedAliases().stream()
+                    .map(Alias::getId).toList();
                 Long aliasListId = target.aliasList() != null ? target.aliasList().getId() : null;
                 return new MutationResult(revision(), aliasListId, ids, target.affected());
             }));
@@ -647,17 +617,24 @@ public final class AliasAdministrationService
         return onConfigurationThread(() -> mConfigurationManager.applyConfigurationMutation(() ->
         {
             requireRevision(expectedRevision);
-            ScanListConfiguration previous = scanListModel().configuration();
-            ScanListMutation mutation = operation.get();
+            MutationWorkspace workspace = beginMutationWorkspace();
+            ScanListMutation mutation;
 
             try
             {
-                mConfigurationManager.flushConfiguration();
+                mutation = operation.get();
+                mConfigurationManager.commitAndPublishAliasConfiguration(workspace.snapshot(),
+                    new ConfigurationManager.AliasConfigurationPublication(Set.of(), false, true, true, Set.of()),
+                    null, null);
             }
-            catch(RuntimeException exception)
+            catch(ConfigurationManager.ConfigurationCommitException |
+                  ConfigurationIdentityAllocator.AllocationException exception)
             {
-                scanListModel().replaceConfiguration(previous);
                 throw new PersistenceException("Unable to save scan-list configuration", exception);
+            }
+            finally
+            {
+                mMutationWorkspace = null;
             }
 
             return new ScanListMutationResult(revision(), mutation.scanList().getId(), mutation.affected());
@@ -669,82 +646,70 @@ public final class AliasAdministrationService
         return mutate(expectedRevision, () -> saveAliasesTarget(prepared));
     }
 
-    /**
-     * Assigns a never-reused durable ID before publishing the live snapshot so the new Alias and membership row can
-     * participate in the same complete SQLite transaction.
-     */
+    /** Creates one detached Alias and its initial memberships in the same candidate snapshot. */
     private MutationTarget saveNewAliasWithMembershipsTarget(Alias prepared, Set<Long> scanListIds)
     {
-        List<Alias> previousAliases = List.copyOf(aliasModel().getAliases());
-        ScanListConfiguration previousScanLists = scanListModel().configuration();
         AliasListDefinition definition = resolveAliasList(prepared);
         validateAlias(prepared, definition, null);
         prepared.setAliasListDefinition(definition);
-        prepared.setId(nextAvailableAliasId());
+        prepared.setId(nextAliasId());
         scanListModel().replaceAliasMemberships(prepared.getId(), scanListIds);
-        try
-        {
-            //Publish membership first: readers continue using the global unmatched route until the exact Alias is
-            //visible, and then observe its already-installed membership immediately.
-            aliasModel().addAliases(List.of(prepared));
-        }
-        catch(RuntimeException exception)
-        {
-            scanListModel().replaceConfiguration(previousScanLists);
-            throw exception;
-        }
-
-        return new MutationTarget(null, List.of(), 1, List.of(prepared), () ->
-        {
-            aliasModel().restoreAliases(previousAliases);
-            scanListModel().replaceConfiguration(previousScanLists);
-        }, null);
+        aliasModel().addAliases(List.of(prepared));
+        return new MutationTarget(null, List.of(), 1, List.of(prepared),
+            PublicationMode.SCAN_LISTS_THEN_ALIASES, null);
     }
 
-    private long nextAvailableAliasId()
+    private long nextAliasId()
     {
-        long highest = aliasModel().getAliases().stream().mapToLong(Alias::getId).max().orElse(0L);
-
-        try(Connection connection = SdrTrunkDatabase.open(mConfigurationManager.getDatabasePath());
-            Statement statement = connection.createStatement();
-            ResultSet resultSet = statement.executeQuery("""
-                SELECT COALESCE((SELECT MAX(id) FROM alias), 0) AS maximum_id,
-                       COALESCE((SELECT seq FROM sqlite_sequence WHERE name = 'alias'), 0) AS sequence_id
-                """))
-        {
-            if(resultSet.next())
-            {
-                highest = Math.max(highest, Math.max(resultSet.getLong("maximum_id"),
-                    resultSet.getLong("sequence_id")));
-            }
-        }
-        catch(IOException | SQLException exception)
-        {
-            throw new PersistenceException("Unable to allocate a durable Alias ID", exception);
-        }
-
-        long pending = aliasModel().getAliases().stream()
-            .filter(alias -> alias.getId() == Alias.UNASSIGNED_ID).count();
-        if(highest >= JSON_SAFE_INTEGER_MASK - pending)
-        {
-            throw new IllegalStateException("Alias IDs have reached the supported JSON-safe range");
-        }
-        return highest + pending + 1L;
+        return identityAllocator().nextAliasIds(aliasModel().getAliases().stream().map(Alias::getId).toList(), 1)
+            .getFirst();
     }
 
-    /**
-     * Validates the complete batch before changing the live model, then installs each Alias by durable identity.
-     */
+    private long nextAliasListId()
+    {
+        return identityAllocator().nextAliasListIds(aliasModel().aliasListDefinitions().stream()
+            .map(AliasListDefinition::getId).toList(), 1).getFirst();
+    }
+
+    private long nextScanListId()
+    {
+        return identityAllocator().nextScanListIds(scanListModel().scanLists().stream().map(ScanList::getId).toList(),
+            1).getFirst();
+    }
+
+    private ConfigurationIdentityAllocator identityAllocator()
+    {
+        return new ConfigurationIdentityAllocator(mConfigurationManager.getDatabasePath());
+    }
+
+    /** Validates and installs a batch in the detached candidate by durable identity. */
     private MutationTarget saveAliasesTarget(List<Alias> prepared)
+    {
+        return saveAliasesTarget(prepared, Set.of());
+    }
+
+    private MutationTarget saveAliasesTarget(List<Alias> prepared, Set<String> additionalConfiguredStreams)
     {
         if(prepared == null || prepared.isEmpty())
         {
             throw new IllegalArgumentException("Select at least one Alias to save");
         }
 
-        Set<Long> persistedIds = new HashSet<>();
-        List<Alias> previousAliases = List.copyOf(aliasModel().getAliases());
+        Set<Alias> creates = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        prepared.stream().filter(alias -> alias != null && alias.getId() == Alias.UNASSIGNED_ID)
+            .forEach(creates::add);
+        List<Long> allocatedIds = identityAllocator().nextAliasIds(aliasModel().getAliases().stream()
+            .map(Alias::getId).toList(), creates.size());
+        int allocatedIndex = 0;
+        for(Alias alias: prepared)
+        {
+            if(creates.contains(alias))
+            {
+                alias.setId(allocatedIds.get(allocatedIndex++));
+            }
+        }
 
+        Set<Long> persistedIds = new HashSet<>();
         for(Alias alias: prepared)
         {
             if(alias == null)
@@ -753,7 +718,7 @@ public final class AliasAdministrationService
             }
 
             Alias current = null;
-            if(alias.getId() > Alias.UNASSIGNED_ID)
+            if(!creates.contains(alias))
             {
                 if(!persistedIds.add(alias.getId()))
                 {
@@ -764,13 +729,12 @@ public final class AliasAdministrationService
             }
 
             AliasListDefinition definition = resolveAliasList(alias);
-            validateAlias(alias, definition, current);
+            validateAlias(alias, definition, current, additionalConfiguredStreams);
             alias.setAliasListDefinition(definition);
         }
 
         aliasModel().addAliases(prepared);
-        return new MutationTarget(null, List.of(), prepared.size(), prepared,
-            () -> aliasModel().restoreAliases(previousAliases), null);
+        return new MutationTarget(null, List.of(), prepared.size(), prepared, PublicationMode.ALIASES, null);
     }
 
     private MutationResult deleteAliases(List<Long> aliasIds, Long expectedRevision)
@@ -783,22 +747,24 @@ public final class AliasAdministrationService
 
     private MutationTarget deleteAliasesTarget(List<Long> aliasIds, List<Alias> aliases)
     {
-        List<Alias> previousAliases = List.copyOf(aliasModel().getAliases());
-        ScanListConfiguration previousScanLists = scanListModel().configuration();
         aliasModel().removeAliases(aliases);
         aliasIds.forEach(scanListModel()::removeAlias);
-        return new MutationTarget(null, aliasIds, aliases.size(),
-            () -> {
-                aliasModel().restoreAliases(previousAliases);
-                scanListModel().replaceConfiguration(previousScanLists);
-            }, null);
+        return new MutationTarget(null, aliasIds, aliases.size(), PublicationMode.ALIASES_THEN_SCAN_LISTS);
     }
 
     private MutationTarget renameBroadcastChannelReferencesTarget(String previousName, String updatedName)
     {
         if(previousName.equals(updatedName))
         {
-            return new MutationTarget(null, List.of(), 0, null, null);
+            return new MutationTarget(null, List.of(), 0, PublicationMode.ALIASES);
+        }
+        if(!isConfiguredStream(previousName))
+        {
+            throw new IllegalArgumentException("Broadcast channel [" + previousName + "] does not exist");
+        }
+        if(isConfiguredStream(updatedName))
+        {
+            throw new IllegalArgumentException("Broadcast channel [" + updatedName + "] already exists");
         }
 
         List<Alias> replacements = aliasModel().getAliases().stream()
@@ -830,35 +796,25 @@ public final class AliasAdministrationService
 
                 UnmatchedTalkgroupPolicy updated = new UnmatchedTalkgroupPolicy(previous.isRecordEnabled(),
                     destinations);
-                validatePolicyStreams(updated, previous);
-                policyStates.add(new AliasListPolicyState(definition, previous, updated));
+                validatePolicyStreams(updated, previous, Set.of(updatedName));
+                policyStates.add(new AliasListPolicyState(definition, updated));
             }
         }
 
         MutationTarget aliasesTarget = replacements.isEmpty() ?
-            new MutationTarget(null, List.of(), 0, null, null) : saveAliasesTarget(replacements);
+            new MutationTarget(null, List.of(), 0, PublicationMode.ALIASES) :
+            saveAliasesTarget(replacements, Set.of(updatedName));
 
         if(!policyStates.isEmpty())
         {
             policyStates.forEach(state -> state.definition().setUnmatchedTalkgroupPolicy(state.updated()));
-            mConfigurationManager.aliasListDefinitionChanged();
         }
 
-        Runnable rollback = () ->
-        {
-            if(aliasesTarget.rollback() != null)
-            {
-                aliasesTarget.rollback().run();
-            }
-            if(!policyStates.isEmpty())
-            {
-                policyStates.forEach(state -> state.definition().setUnmatchedTalkgroupPolicy(state.previous()));
-                mConfigurationManager.aliasListDefinitionChanged();
-            }
-        };
-
+        PublicationMode publicationMode = policyStates.isEmpty() ? PublicationMode.ALIASES :
+            PublicationMode.ALIAS_LISTS;
         return new MutationTarget(null, List.of(), replacements.size() + policyStates.size(),
-            aliasesTarget.savedAliases(), rollback, null);
+            aliasesTarget.savedAliases(), publicationMode, null,
+            new ConfigurationManager.BroadcastConfigurationRename(previousName, updatedName));
     }
 
     private Catalog catalogOnConfigurationThread()
@@ -966,6 +922,12 @@ public final class AliasAdministrationService
 
     private void validateAlias(Alias alias, AliasListDefinition definition, Alias previous)
     {
+        validateAlias(alias, definition, previous, Set.of());
+    }
+
+    private void validateAlias(Alias alias, AliasListDefinition definition, Alias previous,
+                               Set<String> additionalConfiguredStreams)
+    {
         requireName(alias.getName(), "Alias name");
         AliasID matcher = alias.getMatchIdentifier();
         if(!AliasMatchRegistry.isOperational(definition, matcher))
@@ -1002,6 +964,7 @@ public final class AliasAdministrationService
             }
 
             if(!isConfiguredStream(channel.getChannelName()) &&
+                !additionalConfiguredStreams.contains(channel.getChannelName()) &&
                 (previous == null || !previous.hasBroadcastChannel(channel.getChannelName())))
             {
                 throw new IllegalArgumentException("Broadcast channel [" + channel.getChannelName() +
@@ -1036,6 +999,12 @@ public final class AliasAdministrationService
 
     private void validatePolicyStreams(UnmatchedTalkgroupPolicy policy, UnmatchedTalkgroupPolicy previous)
     {
+        validatePolicyStreams(policy, previous, Set.of());
+    }
+
+    private void validatePolicyStreams(UnmatchedTalkgroupPolicy policy, UnmatchedTalkgroupPolicy previous,
+                                       Set<String> additionalConfiguredStreams)
+    {
         if(policy.getStreamDestinationNames().size() > MAX_BROADCAST_CHANNELS)
         {
             throw new IllegalArgumentException("Unmatched Talkgroups cannot have more than " +
@@ -1054,7 +1023,8 @@ public final class AliasAdministrationService
                     MAX_BROADCAST_CHANNEL_NAME_LENGTH + " characters");
             }
 
-            if(!isConfiguredStream(channelName) && !previousNames.contains(channelName))
+            if(!isConfiguredStream(channelName) && !additionalConfiguredStreams.contains(channelName) &&
+                !previousNames.contains(channelName))
             {
                 throw new IllegalArgumentException("Broadcast channel [" + channelName + "] does not exist");
             }
@@ -1349,14 +1319,38 @@ public final class AliasAdministrationService
         return definition;
     }
 
+    private MutationWorkspace createMutationWorkspace()
+    {
+        AliasConfigurationSnapshot snapshot = mConfigurationManager.createDetachedAliasConfigurationSnapshot();
+        AliasModel aliases = new AliasModel();
+        aliases.setAliasListDefinitions(snapshot.definitions());
+        aliases.addAliases(snapshot.aliases());
+        ScanListModel scanLists = new ScanListModel();
+        scanLists.replaceConfiguration(snapshot.scanLists());
+        return new MutationWorkspace(aliases, scanLists);
+    }
+
+    private MutationWorkspace beginMutationWorkspace()
+    {
+        if(mMutationWorkspace != null)
+        {
+            throw new IllegalStateException("Nested Alias configuration mutations are not supported");
+        }
+
+        mMutationWorkspace = createMutationWorkspace();
+        return mMutationWorkspace;
+    }
+
     private AliasModel aliasModel()
     {
-        return mConfigurationManager.getAliasModel();
+        return mMutationWorkspace != null ? mMutationWorkspace.aliasModel() :
+            mConfigurationManager.getAliasModel();
     }
 
     private ScanListModel scanListModel()
     {
-        return mConfigurationManager.getScanListModel();
+        return mMutationWorkspace != null ? mMutationWorkspace.scanListModel() :
+            mConfigurationManager.getScanListModel();
     }
 
     private <T> T onConfigurationThread(Supplier<T> operation)
@@ -1470,23 +1464,6 @@ public final class AliasAdministrationService
         if(!mConfigurationManager.isInitialized())
         {
             throw new NotInitializedException();
-        }
-    }
-
-    private static void rollback(MutationTarget target, RuntimeException failure)
-    {
-        if(target.rollback() == null)
-        {
-            return;
-        }
-
-        try
-        {
-            target.rollback().run();
-        }
-        catch(RuntimeException restoreFailure)
-        {
-            failure.addSuppressed(restoreFailure);
         }
     }
 
@@ -1646,7 +1623,9 @@ public final class AliasAdministrationService
     }
 
     private record MutationTarget(AliasListDefinition aliasList, List<Long> aliases, int affected,
-                                  List<Alias> savedAliases, Runnable rollback, Runnable afterCommit)
+                                  List<Alias> savedAliases, PublicationMode publicationMode,
+                                  Runnable beforePublication,
+                                  ConfigurationManager.BroadcastConfigurationRename broadcastConfigurationRename)
     {
         private MutationTarget
         {
@@ -1655,33 +1634,102 @@ public final class AliasAdministrationService
         }
 
         private MutationTarget(AliasListDefinition aliasList, List<Long> aliases, int affected,
-                               Runnable rollback, Runnable afterCommit)
+                               PublicationMode publicationMode)
         {
-            this(aliasList, aliases, affected, List.of(), rollback, afterCommit);
+            this(aliasList, aliases, affected, List.of(), publicationMode, null, null);
+        }
+
+        private MutationTarget(AliasListDefinition aliasList, List<Long> aliases, int affected,
+                               List<Alias> savedAliases, PublicationMode publicationMode,
+                               Runnable beforePublication)
+        {
+            this(aliasList, aliases, affected, savedAliases, publicationMode, beforePublication, null);
         }
 
         private MutationTarget withAliasList(AliasListDefinition definition)
         {
-            return new MutationTarget(definition, aliases, affected, savedAliases, rollback, afterCommit);
+            return new MutationTarget(definition, aliases, affected, savedAliases, publicationMode,
+                beforePublication, broadcastConfigurationRename);
         }
 
-        private MutationTarget withRollback(Runnable updatedRollback)
+        private MutationTarget withPublication(PublicationMode mode)
         {
-            return new MutationTarget(aliasList, aliases, affected, savedAliases, updatedRollback, afterCommit);
+            return new MutationTarget(aliasList, aliases, affected, savedAliases, mode, beforePublication,
+                broadcastConfigurationRename);
+        }
+
+        private ConfigurationManager.AliasConfigurationPublication publication()
+        {
+            Set<Long> changedAliasIds = new HashSet<>(aliases);
+            savedAliases.stream().map(Alias::getId).forEach(changedAliasIds::add);
+            Set<String> clearedChannelAliasListNames = publicationMode.clearsChannelAssignments() && aliasList != null ?
+                Set.of(aliasList.getName()) : Set.of();
+            return new ConfigurationManager.AliasConfigurationPublication(changedAliasIds,
+                publicationMode.definitionsChanged(), publicationMode.scanListsChanged(),
+                publicationMode.scanListsFirst(), clearedChannelAliasListNames);
         }
     }
 
-    private record ChannelAssignment(Channel channel, String aliasListName)
+    private enum PublicationMode
     {
+        ALIASES(false, false, false, false),
+        ALIAS_LISTS(true, false, false, false),
+        SCAN_LISTS_THEN_ALIASES(false, true, true, false),
+        SCAN_LISTS_THEN_ALIAS_LISTS(true, true, true, false),
+        ALIASES_THEN_SCAN_LISTS(false, true, false, false),
+        ALIAS_LIST_DELETE(true, true, false, true);
+
+        private final boolean mDefinitionsChanged;
+        private final boolean mScanListsChanged;
+        private final boolean mScanListsFirst;
+        private final boolean mClearsChannelAssignments;
+
+        PublicationMode(boolean definitionsChanged, boolean scanListsChanged, boolean scanListsFirst,
+                        boolean clearsChannelAssignments)
+        {
+            mDefinitionsChanged = definitionsChanged;
+            mScanListsChanged = scanListsChanged;
+            mScanListsFirst = scanListsFirst;
+            mClearsChannelAssignments = clearsChannelAssignments;
+        }
+
+        private boolean definitionsChanged()
+        {
+            return mDefinitionsChanged;
+        }
+
+        private boolean scanListsChanged()
+        {
+            return mScanListsChanged;
+        }
+
+        private boolean scanListsFirst()
+        {
+            return mScanListsFirst;
+        }
+
+        private boolean clearsChannelAssignments()
+        {
+            return mClearsChannelAssignments;
+        }
+
     }
 
-    private record AliasListPolicyState(AliasListDefinition definition, UnmatchedTalkgroupPolicy previous,
-                                        UnmatchedTalkgroupPolicy updated)
+    private record AliasListPolicyState(AliasListDefinition definition, UnmatchedTalkgroupPolicy updated)
     {
     }
 
     private record ScanListMutation(ScanList scanList, int affected)
     {
+    }
+
+    private record MutationWorkspace(AliasModel aliasModel, ScanListModel scanListModel)
+    {
+        private AliasConfigurationSnapshot snapshot()
+        {
+            return new AliasConfigurationSnapshot(aliasModel.aliasListDefinitions(), aliasModel.getAliases(),
+                scanListModel.configuration());
+        }
     }
 
     private enum DispatchState

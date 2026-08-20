@@ -20,9 +20,11 @@ package io.github.dsheirer.configuration;
 
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasAdministrationService;
+import io.github.dsheirer.alias.AliasConfigurationSnapshot;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasMatchRegistry;
 import io.github.dsheirer.alias.AliasModel;
+import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.audio.broadcast.BroadcastModel;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.Channel.ChannelType;
@@ -30,9 +32,9 @@ import io.github.dsheirer.controller.channel.ChannelEvent;
 import io.github.dsheirer.controller.channel.ChannelModel;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
+import io.github.dsheirer.database.alias.AliasConfigurationDatabaseStore;
 import io.github.dsheirer.database.alias.AliasDatabaseStore;
 import io.github.dsheirer.database.configuration.ConfigurationDatabaseStore;
-import io.github.dsheirer.database.configuration.ConfigurationSnapshotDatabaseStore;
 import io.github.dsheirer.database.scanlist.ScanListDatabaseStore;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.gui.configuration.IAliasListRefreshListener;
@@ -60,7 +62,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
-import javafx.collections.ListChangeListener;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -115,7 +116,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         mAliasDatabaseStore = new AliasDatabaseStore(SdrTrunkDatabasePath.getDatabasePath(userPreferences));
         mConfigurationDatabaseStore = new ConfigurationDatabaseStore(SdrTrunkDatabasePath.getDatabasePath(userPreferences));
         mScanListDatabaseStore = new ScanListDatabaseStore(SdrTrunkDatabasePath.getDatabasePath(userPreferences));
-        mScanListModel = new ScanListModel(this::scanListConfigurationChanged);
+        mScanListModel = new ScanListModel();
         mAliasAdministrationService = new AliasAdministrationService(this);
 
         mBroadcastModel = new BroadcastModel(mAliasModel, mIconModel, userPreferences);
@@ -132,13 +133,9 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         mChannelModel.addListener(mChannelProcessingManager);
         mChannelProcessingManager.addChannelEventListener(mChannelModel);
 
-        //Register for alias and channel events so that we can save configuration changes.
+        //Channel and broadcast editors retain their delayed saver. Alias administration commits detached candidates
+        //through its own transaction boundary before publishing them.
         mChannelModel.addListener(this);
-
-        mAliasModel.aliasList().addListener(
-            (ListChangeListener.Change<? extends Alias> c) -> aliasModelConfigurationChanged());
-        mAliasModel.aliasListDefinitions().addListener(
-            (ListChangeListener.Change<? extends AliasListDefinition> c) -> aliasModelConfigurationChanged());
 
         mBroadcastModel.addListener(broadcastEvent -> {
             switch(broadcastEvent.getEvent())
@@ -290,25 +287,6 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     }
 
     /**
-     * Marks a mutable alias-list definition setting as changed. Alias rows and list membership are observable, but
-     * list-owned policy values are intentionally plain immutable snapshots and therefore require an explicit change
-     * notification from their editor.
-     */
-    public void aliasListDefinitionChanged()
-    {
-        aliasConfigurationChanged();
-    }
-
-    /**
-     * Marks a scan-list definition or membership as changed. Scan-list administration shares the Alias configuration
-     * revision so edits through either surface use one optimistic-concurrency boundary.
-     */
-    public void scanListConfigurationChanged()
-    {
-        aliasConfigurationChanged();
-    }
-
-    /**
      * Completes any pending save before an external configuration operation accesses the SQLite database.
      * This method should be invoked on the JavaFX application thread.
      */
@@ -316,7 +294,8 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     {
         if(mExternalConfigurationOperation)
         {
-            throw new IllegalStateException("Configuration saves are suspended until SDRTrunk restarts");
+            throw new ConfigurationPublicationException(
+                "Configuration saves are suspended until SDRTrunk restarts");
         }
 
         saveNow();
@@ -327,10 +306,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         }
     }
 
-    /**
-     * Runs one live-model configuration mutation, its synchronous save, and any failure rollback while excluding the
-     * delayed saver. The caller remains responsible for performing the save and rollback inside the supplied task.
-     */
+    /** Serializes one detached Alias command against delayed channel and broadcast saves. */
     public synchronized <T> T applyConfigurationMutation(Supplier<T> task)
     {
         return Objects.requireNonNull(task, "Configuration mutation cannot be null").get();
@@ -425,6 +401,211 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         return mConfigurationDatabaseStore.getDatabasePath();
     }
 
+    /** Creates an isolated Alias-only candidate; channel and broadcast state is deliberately out of scope. */
+    public synchronized AliasConfigurationSnapshot createDetachedAliasConfigurationSnapshot()
+    {
+        return AliasConfigurationSnapshot.detachedCopyOf(mAliasModel.aliasListDefinitions(),
+            mAliasModel.getAliases(), mScanListModel.configuration());
+    }
+
+    /** Database hook kept protected so failure-path tests can inject a failed commit. */
+    protected synchronized AliasConfigurationSnapshot commitAliasConfiguration(AliasConfigurationSnapshot proposed,
+        AliasConfigurationPublication publication, BroadcastConfigurationRename broadcastRename)
+    {
+        if(mExternalConfigurationOperation)
+        {
+            throw new ConfigurationPublicationException(
+                "Configuration saves are suspended until SDRTrunk restarts");
+        }
+
+        Objects.requireNonNull(proposed, "Proposed Alias configuration cannot be null");
+        Objects.requireNonNull(publication, "Alias publication cannot be null");
+
+        try
+        {
+            List<BroadcastConfiguration> broadcastConfigurations = broadcastRename != null ?
+                new ArrayList<>(mBroadcastModel.getBroadcastConfigurations()) : null;
+            AliasConfigurationDatabaseStore store =
+                new AliasConfigurationDatabaseStore(mConfigurationDatabaseStore.getDatabasePath());
+            return broadcastConfigurations != null ? store.commitWithBroadcastConfigurationRename(proposed,
+                publication.clearedChannelAliasListNames(), broadcastConfigurations,
+                broadcastRename.previousName(), broadcastRename.updatedName()) :
+                store.commit(proposed, publication.clearedChannelAliasListNames());
+        }
+        catch(Exception exception)
+        {
+            throw new ConfigurationCommitException("Unable to commit alias configuration", exception);
+        }
+    }
+
+    /**
+     * Owns the complete persist-then-publish boundary. A failed database commit leaves active models untouched. If an
+     * observer fails after commit, the committed Alias state is reloaded before this command returns.
+     */
+    public synchronized AliasConfigurationSnapshot commitAndPublishAliasConfiguration(AliasConfigurationSnapshot proposed,
+        AliasConfigurationPublication publication, Runnable beforePublication,
+        BroadcastConfigurationRename broadcastRename)
+    {
+        AliasConfigurationPublication requested = Objects.requireNonNull(publication,
+            "Alias publication cannot be null");
+        AliasConfigurationSnapshot committed = commitAliasConfiguration(proposed, requested, broadcastRename);
+
+        try
+        {
+            publishBroadcastConfigurationRename(broadcastRename);
+            if(beforePublication != null)
+            {
+                beforePublication.run();
+            }
+            publishCommittedAliasConfiguration(committed, requested);
+            return committed;
+        }
+        catch(RuntimeException | Error publicationFailure)
+        {
+            try
+            {
+                AliasConfigurationSnapshot reloaded = loadCommittedAliasConfiguration();
+                publishBroadcastConfigurationRename(broadcastRename);
+                Set<Long> allAliasIds = new HashSet<>(requested.changedAliasIds());
+                mAliasModel.getAliases().stream().map(Alias::getId).forEach(allAliasIds::add);
+                reloaded.aliases().stream().map(Alias::getId).forEach(allAliasIds::add);
+                publishCommittedAliasConfiguration(reloaded,
+                    new AliasConfigurationPublication(allAliasIds, true, true, true,
+                        requested.clearedChannelAliasListNames()));
+                mLog.error("Alias configuration committed, but initial publication failed; reloaded committed state",
+                    publicationFailure);
+                return reloaded;
+            }
+            catch(RuntimeException | Error recoveryFailure)
+            {
+                publicationFailure.addSuppressed(recoveryFailure);
+                mExternalConfigurationOperation = true;
+                throw new ConfigurationPublicationException(
+                    "Alias configuration committed but could not be published; restart SDRTrunk", publicationFailure);
+            }
+        }
+    }
+
+    protected void publishCommittedAliasConfiguration(AliasConfigurationSnapshot committed,
+                                                       AliasConfigurationPublication publication)
+    {
+        Objects.requireNonNull(committed, "Committed Alias configuration cannot be null");
+
+        if(publication.scanListsChanged() && publication.scanListsFirst())
+        {
+            mScanListModel.replaceConfiguration(committed.scanLists());
+        }
+
+        if(publication.definitionsChanged() || !publication.changedAliasIds().isEmpty())
+        {
+            mAliasModel.publishCommittedConfiguration(committed.definitions(), committed.aliases(),
+                publication.changedAliasIds(), publication.definitionsChanged());
+        }
+
+        if(publication.scanListsChanged() && !publication.scanListsFirst())
+        {
+            mScanListModel.replaceConfiguration(committed.scanLists());
+        }
+
+        if(!publication.clearedChannelAliasListNames().isEmpty())
+        {
+            for(Channel channel: mChannelModel.getChannels())
+            {
+                if(channel.getAliasListName() != null && publication.clearedChannelAliasListNames().stream()
+                    .anyMatch(name -> name.equalsIgnoreCase(channel.getAliasListName())))
+                {
+                    channel.setAliasListName(null);
+                }
+            }
+        }
+
+        mAliasConfigurationRevision.incrementAndGet();
+    }
+
+    private void publishBroadcastConfigurationRename(BroadcastConfigurationRename rename)
+    {
+        if(rename == null)
+        {
+            return;
+        }
+
+        List<BroadcastConfiguration> previousMatches = mBroadcastModel.getBroadcastConfigurations().stream()
+            .filter(configuration -> rename.previousName().equals(configuration.getName())).toList();
+        if(previousMatches.size() == 1)
+        {
+            previousMatches.getFirst().setName(rename.updatedName());
+            return;
+        }
+
+        long updatedMatches = mBroadcastModel.getBroadcastConfigurations().stream()
+            .filter(configuration -> rename.updatedName().equals(configuration.getName())).count();
+        if(previousMatches.isEmpty() && updatedMatches == 1)
+        {
+            return;
+        }
+
+        throw new IllegalStateException("Unable to publish committed broadcast stream rename");
+    }
+
+    private AliasConfigurationSnapshot loadCommittedAliasConfiguration()
+    {
+        try
+        {
+            return new AliasConfigurationDatabaseStore(mConfigurationDatabaseStore.getDatabasePath()).load();
+        }
+        catch(Exception exception)
+        {
+            throw new ConfigurationLoadException("Unable to reload committed Alias configuration", exception);
+        }
+    }
+
+    public record AliasConfigurationPublication(Set<Long> changedAliasIds, boolean definitionsChanged,
+                                                boolean scanListsChanged, boolean scanListsFirst,
+                                                Set<String> clearedChannelAliasListNames)
+    {
+        public AliasConfigurationPublication
+        {
+            changedAliasIds = changedAliasIds != null ? Set.copyOf(changedAliasIds) : Set.of();
+            clearedChannelAliasListNames = clearedChannelAliasListNames != null ?
+                Set.copyOf(clearedChannelAliasListNames) : Set.of();
+        }
+    }
+
+    /** One stream-name change that must commit and publish with its Alias references. */
+    public record BroadcastConfigurationRename(String previousName, String updatedName)
+    {
+        public BroadcastConfigurationRename
+        {
+            if(previousName == null || previousName.isBlank() || updatedName == null || updatedName.isBlank())
+            {
+                throw new IllegalArgumentException("Broadcast rename names must be nonblank");
+            }
+            previousName = previousName.strip();
+            updatedName = updatedName.strip();
+        }
+    }
+
+    public static final class ConfigurationCommitException extends RuntimeException
+    {
+        public ConfigurationCommitException(String message, Throwable cause)
+        {
+            super(message, cause);
+        }
+    }
+
+    public static final class ConfigurationPublicationException extends RuntimeException
+    {
+        public ConfigurationPublicationException(String message)
+        {
+            super(message);
+        }
+
+        public ConfigurationPublicationException(String message, Throwable cause)
+        {
+            super(message, cause);
+        }
+    }
+
     private void clearModels()
     {
         mConfigurationLoading = true;
@@ -489,8 +670,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         try
         {
             mScanListModel.replaceConfiguration(scanListConfiguration);
-            mAliasModel.setAliasListDefinitions(aliasSnapshot.definitions());
-            mAliasModel.addAliases(aliasSnapshot.aliases());
+            mAliasModel.replaceCommittedConfiguration(aliasSnapshot.definitions(), aliasSnapshot.aliases());
             mBroadcastModel.addBroadcastConfigurations(configurationState.getBroadcastConfigurations());
 
             //Channel model has to be loaded last since it will auto-start channels that are enabled
@@ -555,6 +735,11 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     @Override
     public void receive(ChannelEvent event)
     {
+        if(mConfigurationLoading)
+        {
+            return;
+        }
+
         //Only save configuration changes for standard channels (not traffic channels).
         if(event.getChannel().getChannelType() == ChannelType.STANDARD)
         {
@@ -570,9 +755,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         }
     }
 
-    /**
-     * Saves the current runtime configuration state to the global SDRTrunk database.
-     */
+    /** Saves delayed channel and broadcast edits without rewriting Alias-owned rows. */
     private synchronized void save()
     {
         save(false);
@@ -590,7 +773,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
             return;
         }
 
-        if(!saveConfigurationSnapshotToDatabase())
+        if(!saveChannelAndBroadcastConfigurationToDatabase())
         {
             mConfigurationDirty.set(true);
         }
@@ -711,24 +894,20 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         }
     }
 
-    boolean saveConfigurationSnapshotToDatabase()
+    boolean saveChannelAndBroadcastConfigurationToDatabase()
     {
         try
         {
             ConfigurationState databaseState = new ConfigurationState();
-            databaseState.setAliases(new ArrayList<>(mAliasModel.getAliases()));
-            databaseState.setAliasListDefinitions(new ArrayList<>(mAliasModel.aliasListDefinitions()));
-            databaseState.setScanListConfiguration(mScanListModel.configuration());
             databaseState.setBroadcastConfigurations(new ArrayList<>(mBroadcastModel.getBroadcastConfigurations()));
             databaseState.setChannels(new ArrayList<>(mChannelModel.getChannels()));
-            validateAliasListAssignments(databaseState, databaseState.getAliasListDefinitions());
-            new ConfigurationSnapshotDatabaseStore(mConfigurationDatabaseStore.getDatabasePath())
-                .replace(databaseState);
+            validateAliasListAssignments(databaseState, mAliasModel.aliasListDefinitions());
+            mConfigurationDatabaseStore.replaceConfigurationState(databaseState);
             return true;
         }
         catch(Exception e)
         {
-            mLog.error("Error saving complete configuration snapshot to SQLite database [" +
+            mLog.error("Error saving channel and broadcast configuration to SQLite database [" +
                 mConfigurationDatabaseStore.getDatabasePath() + "]", e);
             return false;
         }
@@ -744,42 +923,6 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         {
             super(message, cause);
         }
-    }
-
-    /**
-     * Schedules an alias save task. Subsequent calls to this method are batched until the save event occurs.
-     */
-    public void scheduleAliasSave()
-    {
-        scheduleSave();
-    }
-
-    private void aliasConfigurationChanged()
-    {
-        mAliasConfigurationRevision.incrementAndGet();
-        scheduleAliasSave();
-    }
-
-    /**
-     * Keeps normalized scan-list joins aligned when desktop, import, or external configuration paths remove Alias
-     * owners without going through the web administration service. Loading deliberately skips reconciliation because
-     * the Alias model is populated incrementally after the complete scan-list snapshot is loaded.
-     */
-    private void aliasModelConfigurationChanged()
-    {
-        if(!mConfigurationLoading)
-        {
-            boolean scanListsChanged = mScanListModel.retainMembershipOwners(
-                mAliasModel.getAliases().stream().map(Alias::getId).toList(),
-                mAliasModel.aliasListDefinitions().stream().map(AliasListDefinition::getId).toList());
-            if(scanListsChanged)
-            {
-                //The scan-list model callback already advanced the shared revision and scheduled the snapshot save.
-                return;
-            }
-        }
-
-        aliasConfigurationChanged();
     }
 
     /**

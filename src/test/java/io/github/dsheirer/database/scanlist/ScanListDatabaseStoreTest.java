@@ -17,13 +17,13 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.alias.Alias;
+import io.github.dsheirer.alias.AliasConfigurationSnapshot;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
-import io.github.dsheirer.configuration.ConfigurationState;
 import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
-import io.github.dsheirer.database.configuration.ConfigurationSnapshotDatabaseStore;
+import io.github.dsheirer.database.alias.AliasConfigurationDatabaseStore;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.scanlist.ScanList;
 import io.github.dsheirer.scanlist.ScanListConfiguration;
@@ -58,33 +58,34 @@ class ScanListDatabaseStoreTest
     }
 
     @Test
-    void roundTripsMembershipAndPartialAliasSnapshotPreservesIt() throws Exception
+    void roundTripsMembershipAndAliasOnlyEditPreservesIt() throws Exception
     {
         Path database = database("round-trip.sqlite");
-        ConfigurationSnapshotDatabaseStore snapshotStore = new ConfigurationSnapshotDatabaseStore(database);
+        AliasConfigurationDatabaseStore snapshotStore = new AliasConfigurationDatabaseStore(database);
         AliasListDefinition definition = new AliasListDefinition("County", AliasListFamily.P25);
         Alias alias = new Alias("Dispatch");
         alias.setAliasListDefinition(definition);
         alias.setMatchIdentifier(new Talkgroup(Protocol.APCO25, 1001));
-        ConfigurationState initial = aliasState(definition, alias);
-        snapshotStore.replace(initial);
+        AliasConfigurationSnapshot initial = aliasState(definition, alias, snapshotStore.load().scanLists());
+        AliasConfigurationSnapshot committedInitial = snapshotStore.commit(initial, List.of());
+        definition = committedInitial.definitions().getFirst();
+        alias = committedInitial.aliases().getFirst();
 
         ScanListDatabaseStore store = new ScanListDatabaseStore(database);
         ScanListConfiguration seeded = store.loadConfiguration();
         ScanList southwest = new ScanList(0, 1, "SouthWest", "Southwest calls", true, false);
-        ConfigurationState definitionsOnly = aliasState(definition, alias);
-        definitionsOnly.setScanListConfiguration(new ScanListConfiguration(
+        AliasConfigurationSnapshot definitionsOnly = aliasState(definition, alias, new ScanListConfiguration(
             List.of(seeded.defaultScanList(), southwest), Map.of(), Map.of()));
-        snapshotStore.replace(definitionsOnly);
+        AliasConfigurationSnapshot committedDefinitions = snapshotStore.commit(definitionsOnly, List.of());
+        southwest = committedDefinitions.scanLists().scanList("SouthWest");
         assertNotEquals(ScanList.UNASSIGNED_ID, southwest.getId());
 
         ScanListConfiguration memberships = new ScanListConfiguration(
             List.of(seeded.defaultScanList(), southwest),
             Map.of(alias.getId(), Set.of(seeded.defaultScanList().getId(), southwest.getId())),
             Map.of(definition.getId(), Set.of(southwest.getId())));
-        ConfigurationState configured = aliasState(definition, alias);
-        configured.setScanListConfiguration(memberships);
-        snapshotStore.replace(configured);
+        AliasConfigurationSnapshot configured = aliasState(definition, alias, memberships);
+        snapshotStore.commit(configured, List.of());
 
         ScanListConfiguration loaded = store.loadConfiguration();
         assertEquals(Set.of(seeded.defaultScanList().getId(), southwest.getId()),
@@ -92,9 +93,9 @@ class ScanListDatabaseStoreTest
         assertEquals(Set.of(southwest.getId()),
             loaded.scanListIdsForUnmatchedTalkgroups(definition.getId()));
 
-        //A desktop or legacy caller that owns Alias fields but not scan-list state must retain the normalized joins.
+        //An Alias-only edit carries forward the current scan-list snapshot and retains the normalized joins.
         alias.setDescription("Unrelated Alias edit");
-        snapshotStore.replace(aliasState(definition, alias));
+        snapshotStore.commit(aliasState(definition, alias, loaded), List.of());
         ScanListConfiguration afterAliasEdit = store.loadConfiguration();
         assertEquals(loaded.aliasMemberships(), afterAliasEdit.aliasMemberships());
         assertEquals(loaded.unmatchedAliasListMemberships(), afterAliasEdit.unmatchedAliasListMemberships());
@@ -105,13 +106,14 @@ class ScanListDatabaseStoreTest
     void rejectsMembershipForUnknownAliasAndRollsBackSnapshot() throws Exception
     {
         Path database = database("orphan.sqlite");
-        ScanListConfiguration seeded = new ScanListDatabaseStore(database).loadConfiguration();
-        ConfigurationState state = new ConfigurationState();
-        state.setScanListConfiguration(new ScanListConfiguration(seeded.scanLists(),
-            Map.of(999L, Set.of(seeded.defaultScanList().getId())), Map.of()));
+        AliasConfigurationDatabaseStore store = new AliasConfigurationDatabaseStore(database);
+        AliasConfigurationSnapshot seeded = store.load();
+        AliasConfigurationSnapshot state = new AliasConfigurationSnapshot(seeded.definitions(), seeded.aliases(),
+            new ScanListConfiguration(seeded.scanLists().scanLists(),
+                Map.of(999L, Set.of(seeded.scanLists().defaultScanList().getId())), Map.of()));
 
         assertThrows(java.sql.SQLException.class,
-            () -> new ConfigurationSnapshotDatabaseStore(database).replace(state));
+            () -> store.commit(state, List.of()));
 
         try(Connection connection = SdrTrunkDatabase.open(database);
             Statement statement = connection.createStatement();
@@ -126,13 +128,14 @@ class ScanListDatabaseStoreTest
     void rejectsUnmatchedTalkgroupMembershipForUnknownAliasListAndRollsBackSnapshot() throws Exception
     {
         Path database = database("orphan-alias-list.sqlite");
-        ScanListConfiguration seeded = new ScanListDatabaseStore(database).loadConfiguration();
-        ConfigurationState state = new ConfigurationState();
-        state.setScanListConfiguration(new ScanListConfiguration(seeded.scanLists(), Map.of(),
-            Map.of(999L, Set.of(seeded.defaultScanList().getId()))));
+        AliasConfigurationDatabaseStore store = new AliasConfigurationDatabaseStore(database);
+        AliasConfigurationSnapshot seeded = store.load();
+        AliasConfigurationSnapshot state = new AliasConfigurationSnapshot(seeded.definitions(), seeded.aliases(),
+            new ScanListConfiguration(seeded.scanLists().scanLists(), Map.of(),
+                Map.of(999L, Set.of(seeded.scanLists().defaultScanList().getId()))));
 
         assertThrows(java.sql.SQLException.class,
-            () -> new ConfigurationSnapshotDatabaseStore(database).replace(state));
+            () -> store.commit(state, List.of()));
 
         try(Connection connection = SdrTrunkDatabase.open(database);
             Statement statement = connection.createStatement();
@@ -150,11 +153,9 @@ class ScanListDatabaseStoreTest
         return database;
     }
 
-    private static ConfigurationState aliasState(AliasListDefinition definition, Alias alias)
+    private static AliasConfigurationSnapshot aliasState(AliasListDefinition definition, Alias alias,
+                                                          ScanListConfiguration scanLists)
     {
-        ConfigurationState state = new ConfigurationState();
-        state.setAliasListDefinitions(List.of(definition));
-        state.setAliases(List.of(alias));
-        return state;
+        return new AliasConfigurationSnapshot(List.of(definition), List.of(alias), scanLists);
     }
 }

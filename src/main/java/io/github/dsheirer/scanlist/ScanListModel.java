@@ -26,13 +26,7 @@ import java.util.Set;
  */
 public final class ScanListModel
 {
-    private final Runnable mChangeListener;
     private volatile ScanListConfiguration mConfiguration = ScanListConfiguration.defaultConfiguration();
-
-    public ScanListModel(Runnable changeListener)
-    {
-        mChangeListener = changeListener != null ? changeListener : () -> {};
-    }
 
     public ScanListConfiguration configuration()
     {
@@ -72,13 +66,16 @@ public final class ScanListModel
     public synchronized void replaceConfiguration(ScanListConfiguration configuration)
     {
         mConfiguration = Objects.requireNonNull(configuration, "Scan-list configuration cannot be null");
-        mChangeListener.run();
     }
 
     public synchronized void addScanList(ScanList scanList)
     {
         Objects.requireNonNull(scanList, "Scan list cannot be null");
-        if(scanList.getId() != ScanList.UNASSIGNED_ID && mConfiguration.scanList(scanList.getId()) != null)
+        if(scanList.getId() <= ScanList.UNASSIGNED_ID)
+        {
+            throw new IllegalArgumentException("Active scan lists require a durable ID");
+        }
+        if(mConfiguration.scanList(scanList.getId()) != null)
         {
             throw new IllegalArgumentException("Scan-list ID already exists [" + scanList.getId() + "]");
         }
@@ -145,20 +142,6 @@ public final class ScanListModel
         publishAliasMembership(aliasId, scanListIds);
     }
 
-    public synchronized void addAliasMembership(long aliasId, long scanListId)
-    {
-        Set<Long> memberships = new LinkedHashSet<>(scanListIdsForAlias(aliasId));
-        memberships.add(scanListId);
-        publishAliasMembership(aliasId, memberships);
-    }
-
-    public synchronized void removeAliasMembership(long aliasId, long scanListId)
-    {
-        Set<Long> memberships = new LinkedHashSet<>(scanListIdsForAlias(aliasId));
-        memberships.remove(scanListId);
-        publishAliasMembership(aliasId, memberships);
-    }
-
     public synchronized void removeAlias(long aliasId)
     {
         replaceAliasMemberships(aliasId, Set.of());
@@ -170,67 +153,9 @@ public final class ScanListModel
         publishUnmatchedTalkgroupMembership(aliasListId, scanListIds);
     }
 
-    public synchronized void addUnmatchedTalkgroupMembership(long aliasListId, long scanListId)
-    {
-        Set<Long> memberships = new LinkedHashSet<>(scanListIdsForUnmatchedTalkgroups(aliasListId));
-        memberships.add(scanListId);
-        publishUnmatchedTalkgroupMembership(aliasListId, memberships);
-    }
-
-    public synchronized void removeUnmatchedTalkgroupMembership(long aliasListId, long scanListId)
-    {
-        Set<Long> memberships = new LinkedHashSet<>(scanListIdsForUnmatchedTalkgroups(aliasListId));
-        memberships.remove(scanListId);
-        publishUnmatchedTalkgroupMembership(aliasListId, memberships);
-    }
-
     public synchronized void removeAliasList(long aliasListId)
     {
         replaceUnmatchedTalkgroupMemberships(aliasListId, Set.of());
-    }
-
-    /**
-     * Removes membership rows whose owning Alias no longer exists. This is used by configuration replacement paths
-     * that can bypass the web administration service. Unassigned runtime objects are deliberately ignored because
-     * scan-list membership is defined only for durable IDs.
-     *
-     * @return true when a replacement snapshot was published
-     */
-    public synchronized boolean retainMembershipOwners(Collection<Long> aliasIds)
-    {
-        return retainMembershipOwners(aliasIds, mConfiguration.unmatchedAliasListMemberships().keySet());
-    }
-
-    /**
-     * Removes membership rows whose owning Alias or Alias List no longer exists.
-     *
-     * @return true when a replacement snapshot was published
-     */
-    public synchronized boolean retainMembershipOwners(Collection<Long> aliasIds, Collection<Long> aliasListIds)
-    {
-        Set<Long> retainedAliasIds = positiveIds(aliasIds, "Alias IDs");
-        Set<Long> retainedAliasListIds = positiveIds(aliasListIds, "Alias List IDs");
-        Map<Long,Set<Long>> aliasMemberships = mutable(mConfiguration.aliasMemberships());
-        Map<Long,Set<Long>> unmatchedMemberships = mutable(mConfiguration.unmatchedAliasListMemberships());
-        boolean aliasesChanged = aliasMemberships.keySet().removeIf(id -> !retainedAliasIds.contains(id));
-        boolean aliasListsChanged = unmatchedMemberships.keySet().removeIf(id -> !retainedAliasListIds.contains(id));
-
-        if(aliasesChanged || aliasListsChanged)
-        {
-            publish(mConfiguration.scanLists(), aliasMemberships, unmatchedMemberships);
-        }
-
-        return aliasesChanged || aliasListsChanged;
-    }
-
-    /**
-     * Removes unmatched-talkgroup membership rows whose owning Alias List no longer exists.
-     *
-     * @return true when a replacement snapshot was published
-     */
-    public synchronized boolean retainUnmatchedTalkgroupMembershipOwners(Collection<Long> aliasListIds)
-    {
-        return retainMembershipOwners(mConfiguration.aliasMemberships().keySet(), aliasListIds);
     }
 
     private void publishAliasMembership(long ownerId, Collection<Long> scanListIds)
@@ -256,7 +181,6 @@ public final class ScanListModel
                          Map<Long,? extends Collection<Long>> unmatchedAliasListMemberships)
     {
         mConfiguration = new ScanListConfiguration(definitions, aliasMemberships, unmatchedAliasListMemberships);
-        mChangeListener.run();
     }
 
     private ScanList requireScanList(long scanListId)
@@ -308,20 +232,6 @@ public final class ScanListModel
             updated.put(ownerId, prepared);
         }
         return updated;
-    }
-
-    private static Set<Long> positiveIds(Collection<Long> ids, String label)
-    {
-        Objects.requireNonNull(ids, label + " cannot be null");
-        Set<Long> prepared = new LinkedHashSet<>();
-        for(Long id: ids)
-        {
-            if(id != null && id > 0)
-            {
-                prepared.add(id);
-            }
-        }
-        return prepared;
     }
 
     private static Map<Long,Set<Long>> removeScanListId(Map<Long,Set<Long>> source, long scanListId)

@@ -81,7 +81,7 @@ class StatsApiV1HttpContractTest
         TestApplicationPreference applicationPreference = new TestApplicationPreference();
         TestUserPreferences preferences = new TestUserPreferences(applicationPreference,
             new TestDirectoryPreference(dataRoot));
-        ScanListModel scanListModel = new ScanListModel(null);
+        ScanListModel scanListModel = new ScanListModel();
         scanListModel.replaceConfiguration(new ScanListConfiguration(List.of(
             new ScanList(1, 0, "Default", null, true, true)), Map.of(), Map.of()));
         mService = new StatsWebServerService(preferences, null, null, null, null, null, scanListModel);

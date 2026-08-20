@@ -10,7 +10,7 @@ import java.util.Locale;
 import java.util.function.Predicate;
 
 /** Immutable filter installed for each Alias list or search change. */
-record AliasPredicate(String aliasListName, String searchText) implements Predicate<Alias>
+record AliasPredicate(long aliasListId, String searchText) implements Predicate<Alias>
 {
     AliasPredicate
     {
@@ -20,7 +20,8 @@ record AliasPredicate(String aliasListName, String searchText) implements Predic
     @Override
     public boolean test(Alias alias)
     {
-        return aliasListName != null && aliasListName.equals(alias.getAliasListName()) &&
+        return aliasListId > Alias.UNASSIGNED_ALIAS_LIST_ID && alias != null &&
+            aliasListId == alias.getAliasListId() &&
             (contains(alias.getName()) || contains(alias.getDescription()) || contains(alias.getGroup()));
     }
 

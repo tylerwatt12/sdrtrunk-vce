@@ -145,7 +145,7 @@ class StatsWebServerServiceBindAddressTest
     @Test
     void selectsPublishedScanListsFromRepeatedStrictParameters()
     {
-        ScanListModel model = new ScanListModel(null);
+        ScanListModel model = new ScanListModel();
         model.replaceConfiguration(new ScanListConfiguration(List.of(
             new ScanList(1, 0, "Default", null, true, true),
             new ScanList(2, 1, "SouthWest", null, true, false),

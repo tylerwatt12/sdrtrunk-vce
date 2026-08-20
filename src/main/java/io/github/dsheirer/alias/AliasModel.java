@@ -31,6 +31,7 @@ import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import javafx.collections.FXCollections;
 import javafx.collections.ListChangeListener;
@@ -46,9 +47,11 @@ import org.slf4j.LoggerFactory;
 public class AliasModel
 {
     private static final Logger mLog = LoggerFactory.getLogger(AliasModel.class);
-    private final ObservableList<Alias> mAliases = FXCollections.observableArrayList(Alias.extractor());
+    private final ObservableList<Alias> mAliases = FXCollections.observableArrayList();
     private final ObservableList<Alias> mReadOnlyAliases = FXCollections.unmodifiableObservableList(mAliases);
     private final ObservableList<String> mAliasListNames = FXCollections.observableArrayList();
+    private final ObservableList<String> mReadOnlyAliasListNames =
+        FXCollections.unmodifiableObservableList(mAliasListNames);
     private final ObservableList<AliasListDefinition> mAliasListDefinitions = FXCollections.observableArrayList();
     private final ObservableList<AliasListDefinition> mReadOnlyAliasListDefinitions =
         FXCollections.unmodifiableObservableList(mAliasListDefinitions);
@@ -57,7 +60,7 @@ public class AliasModel
 
     public AliasModel()
     {
-        //Register a listener to detect alias changes and broadcast change events to cause configuration save requests
+        //Keep cached decoder lookup lists synchronized with explicit model publications.
         mAliases.addListener(new AliasListChangeListener());
     }
 
@@ -68,7 +71,7 @@ public class AliasModel
 
     public ObservableList<String> aliasListNames()
     {
-        return mAliasListNames;
+        return mReadOnlyAliasListNames;
     }
 
     /**
@@ -79,17 +82,214 @@ public class AliasModel
         return mReadOnlyAliasListDefinitions;
     }
 
-    public void setAliasListDefinitions(Collection<AliasListDefinition> definitions)
+    void setAliasListDefinitions(Collection<AliasListDefinition> definitions)
     {
-        mAliasListDefinitions.setAll(definitions != null ? definitions : List.of());
+        List<AliasListDefinition> prepared = definitions != null ? List.copyOf(definitions) : List.of();
+        validateCommittedDefinitions(prepared);
+        mAliasListDefinitions.setAll(prepared);
         refreshAliasListNames();
     }
 
-    public void addAliasListDefinition(AliasListDefinition definition)
+    /**
+     * Publishes one fully committed Alias configuration. Every object must already have its durable SQLite identity;
+     * drafts and import candidates are never valid members of the active runtime model.
+     */
+    public void replaceCommittedConfiguration(Collection<AliasListDefinition> definitions,
+                                               Collection<Alias> aliases)
+    {
+        Set<Long> allAliasIds = new HashSet<>();
+        if(aliases != null)
+        {
+            aliases.stream().filter(Objects::nonNull).map(Alias::getId).forEach(allAliasIds::add);
+        }
+        mAliases.stream().map(Alias::getId).forEach(allAliasIds::add);
+        publishCommittedConfiguration(definitions, aliases, allAliasIds, true);
+    }
+
+    /**
+     * Publishes the changed portion of an already committed configuration while retaining unchanged live Alias
+     * instances and alias-list names. This keeps decoder lookups and JavaFX selection stable across unrelated edits.
+     */
+    public void publishCommittedConfiguration(Collection<AliasListDefinition> definitions,
+                                               Collection<Alias> aliases, Collection<Long> changedAliasIds,
+                                               boolean definitionsChanged)
+    {
+        List<AliasListDefinition> committedDefinitions =
+            definitions != null ? List.copyOf(definitions) : List.of();
+        List<Alias> committedAliases = aliases != null ? List.copyOf(aliases) : List.of();
+        Map<Long,AliasListDefinition> committedDefinitionsById = validateCommittedDefinitions(committedDefinitions);
+        Set<Long> changedIds = changedAliasIds != null ? Set.copyOf(changedAliasIds) : Set.of();
+
+        if(!definitionsChanged && !sameDefinitions(mAliasListDefinitions, committedDefinitions))
+        {
+            throw new IllegalArgumentException("Committed Alias List changes must be declared before publication");
+        }
+
+        List<AliasListDefinition> publishedDefinitions = definitionsChanged ? committedDefinitions :
+            List.copyOf(mAliasListDefinitions);
+        Map<Long,AliasListDefinition> publishedDefinitionsById = definitionsChanged ? committedDefinitionsById :
+            validateCommittedDefinitions(publishedDefinitions);
+
+        Set<Long> aliasIds = new HashSet<>();
+        for(Alias alias: committedAliases)
+        {
+            AliasListDefinition definition = alias != null ? publishedDefinitionsById.get(alias.getAliasListId()) : null;
+            if(alias == null || alias.getId() <= Alias.UNASSIGNED_ID || !aliasIds.add(alias.getId()) ||
+                definition == null || !AliasMatchRegistry.isOperational(definition, alias.getMatchIdentifier()))
+            {
+                throw new IllegalArgumentException(
+                    "Committed aliases require unique positive identities and a valid durable alias-list reference");
+            }
+
+            alias.setAliasListDefinition(definition);
+        }
+
+        Map<Long,Alias> liveAliasesById = new HashMap<>();
+        for(Alias alias: mAliases)
+        {
+            liveAliasesById.put(alias.getId(), alias);
+        }
+
+        Set<Long> removedIds = new HashSet<>(liveAliasesById.keySet());
+        removedIds.removeAll(aliasIds);
+        if(!changedIds.containsAll(removedIds))
+        {
+            throw new IllegalArgumentException("Committed Alias removals must be declared before publication");
+        }
+
+        if(definitionsChanged)
+        {
+            for(Map.Entry<String,AliasList> entry: List.copyOf(mAliasListMap.entrySet()))
+            {
+                AliasListDefinition replacement = committedDefinitions.stream()
+                    .filter(definition -> definition.getName().equals(entry.getKey())).findFirst().orElse(null);
+                if(replacement != null)
+                {
+                    entry.getValue().replaceDefinition(replacement);
+                }
+            }
+
+            mAliasListDefinitions.setAll(committedDefinitions);
+            refreshAliasListNames();
+        }
+
+        List<Alias> publishedAliases = new ArrayList<>(committedAliases.size());
+        for(Alias committedAlias: committedAliases)
+        {
+            Alias liveAlias = liveAliasesById.get(committedAlias.getId());
+            Alias published = liveAlias == null || changedIds.contains(committedAlias.getId()) ? committedAlias :
+                liveAlias;
+            if(definitionsChanged && published == liveAlias)
+            {
+                published.setAliasListDefinition(publishedDefinitionsById.get(published.getAliasListId()));
+            }
+            publishedAliases.add(published);
+        }
+
+        reconcilePublishedAliases(publishedAliases);
+        mAliasListMap.keySet().removeIf(name -> getAliasListDefinition(name) == null);
+    }
+
+    private void reconcilePublishedAliases(List<Alias> desired)
+    {
+        Set<Long> desiredIds = desired.stream().map(Alias::getId).collect(java.util.stream.Collectors.toSet());
+        mAliases.removeIf(alias -> !desiredIds.contains(alias.getId()));
+
+        for(int index = 0; index < desired.size(); index++)
+        {
+            Alias replacement = desired.get(index);
+            if(index >= mAliases.size())
+            {
+                mAliases.add(replacement);
+            }
+            else if(mAliases.get(index).getId() == replacement.getId())
+            {
+                if(mAliases.get(index) != replacement)
+                {
+                    mAliases.set(index, replacement);
+                }
+            }
+            else
+            {
+                int existingIndex = indexOfAliasId(mAliases, replacement.getId(), index + 1);
+                if(existingIndex >= 0)
+                {
+                    mAliases.remove(existingIndex);
+                }
+                mAliases.add(index, replacement);
+            }
+        }
+
+        while(mAliases.size() > desired.size())
+        {
+            mAliases.removeLast();
+        }
+    }
+
+    private static int indexOfAliasId(List<Alias> aliases, long aliasId, int start)
+    {
+        for(int index = start; index < aliases.size(); index++)
+        {
+            if(aliases.get(index).getId() == aliasId)
+            {
+                return index;
+            }
+        }
+        return -1;
+    }
+
+    private static boolean sameDefinitions(List<AliasListDefinition> current,
+                                           List<AliasListDefinition> committed)
+    {
+        if(current.size() != committed.size())
+        {
+            return false;
+        }
+
+        for(int index = 0; index < current.size(); index++)
+        {
+            AliasListDefinition first = current.get(index);
+            AliasListDefinition second = committed.get(index);
+            if(first.getId() != second.getId() || !Objects.equals(first.getName(), second.getName()) ||
+                first.getFamily() != second.getFamily() ||
+                !Objects.equals(first.getUnmatchedTalkgroupPolicy(), second.getUnmatchedTalkgroupPolicy()))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static Map<Long,AliasListDefinition> validateCommittedDefinitions(
+        Collection<AliasListDefinition> definitions)
+    {
+        Map<Long,AliasListDefinition> definitionsById = new HashMap<>();
+        Set<String> definitionNames = new HashSet<>();
+
+        for(AliasListDefinition definition: definitions)
+        {
+            if(definition == null || definition.getId() <= AliasListDefinition.UNASSIGNED_ID ||
+                definition.getName() == null || definition.getName().isBlank() ||
+                definition.getFamily() == null || definitionsById.putIfAbsent(definition.getId(), definition) != null ||
+                !definitionNames.add(definition.getName().toLowerCase(java.util.Locale.ROOT)))
+            {
+                throw new IllegalArgumentException(
+                    "Committed alias-list definitions require unique positive identities, names, and families");
+            }
+        }
+
+        return definitionsById;
+    }
+
+    void addAliasListDefinition(AliasListDefinition definition)
     {
         if(definition == null)
         {
             return;
+        }
+        if(definition.getId() <= AliasListDefinition.UNASSIGNED_ID)
+        {
+            throw new IllegalArgumentException("Active alias-list definitions require a durable ID");
         }
 
         AliasListDefinition existing = definition.getId() > AliasListDefinition.UNASSIGNED_ID ?
@@ -111,7 +311,7 @@ public class AliasModel
      * Removes the persisted alias-list definition from this model. Alias rows and channel assignments are managed by
      * the caller so that the complete operation can be persisted or rolled back atomically.
      */
-    public void removeAliasListDefinition(AliasListDefinition definition)
+    void removeAliasListDefinition(AliasListDefinition definition)
     {
         if(definition != null && mAliasListDefinitions.remove(definition))
         {
@@ -157,28 +357,19 @@ public class AliasModel
      */
     public void refreshAliasListNames()
     {
-        mAliasListNames.clear();
-
+        List<String> names = new ArrayList<>();
         for(AliasListDefinition definition: mAliasListDefinitions)
         {
             if(definition.getName() != null && !definition.getName().isEmpty() &&
-                !mAliasListNames.contains(definition.getName()))
+                !names.contains(definition.getName()))
             {
-                mAliasListNames.add(definition.getName());
+                names.add(definition.getName());
             }
         }
 
-    }
-
-    /**
-     * Discards an empty deleted list after its configuration transaction commits. Package-private so alias
-     * administration can retain the live lookup instance until a failed save can no longer require rollback.
-     */
-    void discardAliasListCache(String aliasListName)
-    {
-        if(aliasListName != null)
+        if(!mAliasListNames.equals(names))
         {
-            mAliasListMap.remove(aliasListName);
+            mAliasListNames.setAll(names);
         }
     }
 
@@ -358,7 +549,7 @@ public class AliasModel
     /**
      * Bulk loading of aliases
      */
-    public void addAliases(List<Alias> aliases)
+    void addAliases(List<Alias> aliases)
     {
         if(aliases == null || aliases.isEmpty())
         {
@@ -399,7 +590,7 @@ public class AliasModel
         for(Alias existing: mAliases)
         {
             long id = existing.getId();
-            if(id <= Alias.UNASSIGNED_ID || !replacementIds.contains(id) || retainedIds.add(id))
+            if(!replacementIds.contains(id) || retainedIds.add(id))
             {
                 rebuilt.add(existing);
             }
@@ -424,7 +615,7 @@ public class AliasModel
     /**
      * Adds the alias to the model
      */
-    public void addAlias(Alias alias)
+    void addAlias(Alias alias)
     {
         if(alias == null)
         {
@@ -437,7 +628,7 @@ public class AliasModel
     /**
      * Removes the alias from this model and an alias list (if one exists)
      */
-    public void removeAlias(Alias alias)
+    void removeAlias(Alias alias)
     {
         if(alias != null)
         {
@@ -449,7 +640,7 @@ public class AliasModel
      * Removes the list of aliases from this model and any alias lists that might contain each alias.
      * @param aliases
      */
-    public void removeAliases(List<Alias> aliases)
+    void removeAliases(List<Alias> aliases)
     {
         if(aliases != null && !aliases.isEmpty())
         {
@@ -474,14 +665,11 @@ public class AliasModel
         }
     }
 
-    /**
-     * A persisted Alias has one stable SQLite identity even when an editor or API supplies a detached replacement
-     * object. New, unsaved aliases remain identity-based so independently created rows can coexist before saving.
-     */
+    /** A committed Alias has one stable SQLite identity even when an editor supplies a detached replacement. */
     private static boolean sameIdentity(Alias first, Alias second)
     {
-        return first == second || first != null && second != null &&
-            first.getId() > Alias.UNASSIGNED_ID && first.getId() == second.getId();
+        return first != null && second != null && first.getId() > Alias.UNASSIGNED_ID &&
+            first.getId() == second.getId();
     }
 
     private int countSameIdentities(Alias alias)
@@ -510,29 +698,6 @@ public class AliasModel
         return -1;
     }
 
-    /**
-     * Restores the pre-mutation order after a failed durable transaction, retaining the first original row for any
-     * transient duplicate positive ID while preserving independent unsaved rows.
-     */
-    void restoreAliases(List<Alias> aliases)
-    {
-        Set<Long> persistedIds = new HashSet<>();
-        Set<Alias> instances = Collections.newSetFromMap(new IdentityHashMap<>());
-        List<Alias> restored = new ArrayList<>(aliases.size());
-
-        for(Alias alias: aliases)
-        {
-            Alias validated = validateAndBind(alias);
-            if(instances.add(validated) && (validated.getId() <= Alias.UNASSIGNED_ID ||
-                persistedIds.add(validated.getId())))
-            {
-                restored.add(validated);
-            }
-        }
-
-        mAliases.setAll(restored);
-    }
-
     private static void validateDistinctAliases(List<Alias> aliases)
     {
         Set<Alias> instances = Collections.newSetFromMap(new IdentityHashMap<>());
@@ -540,9 +705,9 @@ public class AliasModel
 
         for(Alias alias: aliases)
         {
-            if(!instances.add(alias) || alias.getId() > Alias.UNASSIGNED_ID && !persistedIds.add(alias.getId()))
+            if(alias.getId() <= Alias.UNASSIGNED_ID || !instances.add(alias) || !persistedIds.add(alias.getId()))
             {
-                throw new IllegalArgumentException("Aliases to add must have unique identities");
+                throw new IllegalArgumentException("Active aliases require unique durable identities");
             }
         }
     }
@@ -580,13 +745,12 @@ public class AliasModel
     }
 
     /**
-     * Indicates that one or more of the aliases managed by this model are configured to stream to the specified
-     * broadcast channel argument.
+     * Indicates that an Alias or an Alias List unmatched-talkgroup policy references the specified broadcast stream.
      * @param broadcastChannel to check
      * @return true if the broadcast channel is non-null, non-empty and at least one alias is configured to stream to
      * the specified stream name.
      */
-    public boolean hasAliasesWithBroadcastChannel(String broadcastChannel)
+    public boolean hasBroadcastChannelReferences(String broadcastChannel)
     {
         if(broadcastChannel == null || broadcastChannel.isEmpty())
         {
@@ -622,13 +786,12 @@ public class AliasModel
             throw new IllegalArgumentException("Alias cannot be null");
         }
 
-        AliasListDefinition definition = getAliasListDefinition(alias.getAliasListId());
-
-        if(definition == null && alias.getId() == Alias.UNASSIGNED_ID &&
-            alias.getAliasListId() == Alias.UNASSIGNED_ALIAS_LIST_ID)
+        if(alias.getId() <= Alias.UNASSIGNED_ID || alias.getAliasListId() <= Alias.UNASSIGNED_ALIAS_LIST_ID)
         {
-            definition = getAliasListDefinition(alias.getAliasListName());
+            throw new IllegalArgumentException("Active aliases require durable Alias and Alias List identities");
         }
+
+        AliasListDefinition definition = getAliasListDefinition(alias.getAliasListId());
 
         if(definition == null)
         {

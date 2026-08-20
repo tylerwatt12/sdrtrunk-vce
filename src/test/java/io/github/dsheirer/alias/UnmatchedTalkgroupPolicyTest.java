@@ -205,11 +205,12 @@ class UnmatchedTalkgroupPolicyTest
     {
         AliasListDefinition definition = new AliasListDefinition("County", AliasListFamily.P25,
             new UnmatchedTalkgroupPolicy(false, List.of("Old Stream", "Keep")));
+        definition.setId(1L);
         AliasModel model = new AliasModel();
         model.setAliasListDefinitions(List.of(definition));
 
-        assertTrue(model.hasAliasesWithBroadcastChannel("Old Stream"));
-        assertFalse(model.hasAliasesWithBroadcastChannel("New Stream"));
+        assertTrue(model.hasBroadcastChannelReferences("Old Stream"));
+        assertFalse(model.hasBroadcastChannelReferences("New Stream"));
     }
 
     private static Alias alias(String name, io.github.dsheirer.alias.id.AliasID matcher, boolean record,

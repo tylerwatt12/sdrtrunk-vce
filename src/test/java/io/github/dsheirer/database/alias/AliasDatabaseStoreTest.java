@@ -19,16 +19,15 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.alias.Alias;
+import io.github.dsheirer.alias.AliasConfigurationSnapshot;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.alias.UnmatchedTalkgroupPolicy;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.alias.id.talkgroup.StreamAsTalkgroup;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
-import io.github.dsheirer.configuration.ConfigurationState;
 import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
-import io.github.dsheirer.database.configuration.ConfigurationSnapshotDatabaseStore;
 import io.github.dsheirer.protocol.Protocol;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -64,11 +63,13 @@ class AliasDatabaseStoreTest
         alias.setRecordable(true);
         alias.addBroadcastChannel(new BroadcastChannel("RadioResolve"));
 
-        replace(store, List.of(alias), List.of(definition));
+        AliasConfigurationSnapshot committed = replace(store, List.of(alias), List.of(definition));
+        Alias committedAlias = committed.aliases().getFirst();
+        AliasListDefinition committedDefinition = committed.definitions().getFirst();
 
-        assertNotEquals(Alias.UNASSIGNED_ID, alias.getId());
-        assertNotEquals(AliasListDefinition.UNASSIGNED_ID, definition.getId());
-        assertEquals(definition.getId(), alias.getAliasListId());
+        assertNotEquals(Alias.UNASSIGNED_ID, committedAlias.getId());
+        assertNotEquals(AliasListDefinition.UNASSIGNED_ID, committedDefinition.getId());
+        assertEquals(committedDefinition.getId(), committedAlias.getAliasListId());
 
         List<AliasListDefinition> definitions = store.loadAliasListDefinitions();
         Alias loaded = store.loadAliases(definitions).getFirst();
@@ -77,7 +78,7 @@ class AliasDatabaseStoreTest
         assertTrue(definitions.getFirst().getUnmatchedTalkgroupPolicy().isRecordEnabled());
         assertEquals(List.of("Unknown Calls", "Archive"),
             definitions.getFirst().getUnmatchedTalkgroupPolicy().getStreamDestinationNames());
-        assertEquals(alias.getId(), loaded.getId());
+        assertEquals(committedAlias.getId(), loaded.getId());
         assertEquals(definitions.getFirst().getId(), loaded.getAliasListId());
         assertEquals("Countywide fire dispatch", loaded.getDescription());
         assertEquals("Fire", loaded.getGroup());
@@ -163,7 +164,12 @@ class AliasDatabaseStoreTest
         AliasListDefinition definition = definition("County", AliasListFamily.P25);
         Alias first = alias("Dispatch", definition, 100);
         Alias second = alias("Operations", definition, 200);
-        replace(store, List.of(first, second), List.of(definition));
+        AliasConfigurationSnapshot committed = replace(store, List.of(first, second), List.of(definition));
+        definition = committed.definitions().getFirst();
+        first = committed.aliases().stream().filter(saved -> saved.getName().equals("Dispatch")).findFirst()
+            .orElseThrow();
+        second = committed.aliases().stream().filter(saved -> saved.getName().equals("Operations")).findFirst()
+            .orElseThrow();
         long listId = definition.getId();
         long firstId = first.getId();
         long secondId = second.getId();
@@ -186,9 +192,10 @@ class AliasDatabaseStoreTest
         AliasDatabaseStore store = new AliasDatabaseStore(database("empty-list.sqlite"));
         AliasListDefinition definition = definition("Empty P25", AliasListFamily.P25);
 
-        replace(store, List.of(), List.of(definition));
+        AliasConfigurationSnapshot committed = replace(store, List.of(), List.of(definition));
 
-        assertEquals(definition.getId(), store.loadAliasListDefinitions().getFirst().getId());
+        assertEquals(committed.definitions().getFirst().getId(),
+            store.loadAliasListDefinitions().getFirst().getId());
         assertTrue(store.loadAliases(store.loadAliasListDefinitions()).isEmpty());
     }
 
@@ -325,13 +332,14 @@ class AliasDatabaseStoreTest
         return store;
     }
 
-    private static void replace(AliasDatabaseStore store, List<Alias> aliases,
-                                List<AliasListDefinition> definitions) throws Exception
+    private static AliasConfigurationSnapshot replace(AliasDatabaseStore store, List<Alias> aliases,
+                                                      List<AliasListDefinition> definitions) throws Exception
     {
-        ConfigurationState state = new ConfigurationState();
-        state.setAliases(aliases);
-        state.setAliasListDefinitions(definitions);
-        new ConfigurationSnapshotDatabaseStore(store.getDatabasePath()).replace(state);
+        AliasConfigurationDatabaseStore configurationStore =
+            new AliasConfigurationDatabaseStore(store.getDatabasePath());
+        AliasConfigurationSnapshot current = configurationStore.load();
+        return configurationStore.commit(new AliasConfigurationSnapshot(definitions, aliases, current.scanLists()),
+            List.of());
     }
 
     private static List<Alias> loadAliases(AliasDatabaseStore store) throws Exception

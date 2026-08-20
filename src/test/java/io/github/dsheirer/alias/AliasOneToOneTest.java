@@ -34,6 +34,8 @@ import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.protocol.Protocol;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Set;
+import javafx.collections.ListChangeListener;
 import javafx.collections.transformation.FilteredList;
 import javafx.collections.transformation.SortedList;
 import org.junit.jupiter.api.Test;
@@ -86,7 +88,9 @@ class AliasOneToOneTest
     void activeModelRejectsMissingMatcher()
     {
         AliasListDefinition definition = new AliasListDefinition("Metro", AliasListFamily.P25);
+        definition.setId(12);
         Alias alias = new Alias("Missing");
+        alias.setId(41);
         alias.setAliasListDefinition(definition);
         AliasModel model = new AliasModel();
         model.setAliasListDefinitions(List.of(definition));
@@ -100,25 +104,29 @@ class AliasOneToOneTest
     }
 
     @Test
-    void selectorReplacementUpdatesPublishedLookup()
+    void committedReplacementUpdatesPublishedLookup()
     {
-        Alias alias = new Alias("Dispatch");
+        AliasListDefinition definition = definition(12);
+        Alias alias = alias(41, definition, "Dispatch", 100);
         Talkgroup original = new Talkgroup(Protocol.APCO25, 100);
         alias.setMatchIdentifier(original);
-        AliasList aliasList = new AliasList(
-            new AliasListDefinition("Metro", AliasListFamily.P25));
-        aliasList.addAlias(alias);
+        AliasModel model = new AliasModel();
+        model.setAliasListDefinitions(List.of(definition));
+        model.addAlias(alias);
+        AliasList aliasList = model.getAliasList(definition);
 
         assertSame(alias, aliasList.getAliases(APCO25Talkgroup.create(100)).getFirst());
 
-        Radio replacement = new Radio(Protocol.APCO25, 200);
-        alias.setMatchIdentifier(replacement);
+        Alias replacement = alias(41, definition, "Dispatch", 100);
+        Radio radioMatcher = new Radio(Protocol.APCO25, 200);
+        replacement.setMatchIdentifier(radioMatcher);
+        model.addAlias(replacement);
         assertTrue(aliasList.getAliases(APCO25Talkgroup.create(100)).isEmpty());
-        assertSame(alias, aliasList.getAliases(APCO25RadioIdentifier.createFrom(200)).getFirst());
+        assertSame(replacement, aliasList.getAliases(APCO25RadioIdentifier.createFrom(200)).getFirst());
 
         original.setValue(101);
         assertTrue(aliasList.getAliases(APCO25Talkgroup.create(101)).isEmpty(),
-            "The old matcher listener must be detached");
+            "Detached obsolete objects must not affect the published lookup");
     }
 
     @Test
@@ -159,6 +167,7 @@ class AliasOneToOneTest
         AliasListDefinition definition = new AliasListDefinition("Current Name", AliasListFamily.P25);
         definition.setId(12);
         Alias alias = new Alias("Dispatch");
+        alias.setId(41);
         alias.setAliasListDefinition(definition);
         alias.setMatchIdentifier(new Talkgroup(Protocol.APCO25, 100));
         AliasModel model = new AliasModel();
@@ -219,37 +228,40 @@ class AliasOneToOneTest
     }
 
     @Test
-    void unsavedAliasesRemainSeparateAndDuplicatePersistedBatchIsRejectedBeforeMutation()
+    void activeModelRejectsUnassignedAndDuplicateIdentitiesBeforeMutation()
     {
         AliasListDefinition definition = definition(12);
-        Alias first = alias(Alias.UNASSIGNED_ID, definition, "First", 100);
-        Alias second = alias(Alias.UNASSIGNED_ID, definition, "Second", 101);
         AliasModel model = new AliasModel();
         model.setAliasListDefinitions(List.of(definition));
-        model.addAliases(List.of(first, second));
-        assertEquals(List.of(first, second), model.getAliases());
+        Alias persisted = alias(40, definition, "Persisted", 100);
+        model.addAlias(persisted);
+
+        Alias unassigned = alias(Alias.UNASSIGNED_ID, definition, "Draft", 101);
+        assertThrows(IllegalArgumentException.class, () -> model.addAlias(unassigned));
+        assertEquals(List.of(persisted), model.getAliases());
 
         Alias replacementOne = alias(41, definition, "Replacement One", 102);
         Alias replacementTwo = alias(41, definition, "Replacement Two", 103);
         assertThrows(IllegalArgumentException.class,
             () -> model.addAliases(List.of(replacementOne, replacementTwo)));
-        assertEquals(List.of(first, second), model.getAliases());
+        assertEquals(List.of(persisted), model.getAliases());
     }
 
     @Test
-    void rollbackSnapshotKeepsFirstPersistedIdentityAndAllUnsavedRows()
+    void durableIdentitiesCanOnlyBeAssignedOnce()
     {
-        AliasListDefinition definition = definition(12);
-        Alias firstUnsaved = alias(Alias.UNASSIGNED_ID, definition, "First Unsaved", 100);
-        Alias persisted = alias(41, definition, "Persisted", 101);
-        Alias duplicate = alias(41, definition, "Duplicate", 102);
-        Alias secondUnsaved = alias(Alias.UNASSIGNED_ID, definition, "Second Unsaved", 103);
-        AliasModel model = new AliasModel();
-        model.setAliasListDefinitions(List.of(definition));
+        Alias alias = new Alias("Draft");
+        alias.setId(41);
+        alias.setId(41);
+        assertThrows(IllegalStateException.class, () -> alias.setId(42));
+        assertThrows(IllegalStateException.class, () -> alias.setId(Alias.UNASSIGNED_ID));
 
-        model.restoreAliases(List.of(firstUnsaved, persisted, duplicate, secondUnsaved));
-
-        assertEquals(List.of(firstUnsaved, persisted, secondUnsaved), model.getAliases());
+        AliasListDefinition definition = new AliasListDefinition("Metro", AliasListFamily.P25);
+        definition.setId(12);
+        definition.setId(12);
+        assertThrows(IllegalStateException.class, () -> definition.setId(13));
+        assertThrows(IllegalStateException.class,
+            () -> definition.setId(AliasListDefinition.UNASSIGNED_ID));
     }
 
     @Test
@@ -262,9 +274,47 @@ class AliasOneToOneTest
         model.addAlias(alias);
 
         assertThrows(UnsupportedOperationException.class, () -> model.aliasList().clear());
+        assertThrows(UnsupportedOperationException.class, () -> model.aliasListNames().clear());
         assertThrows(UnsupportedOperationException.class, () -> model.aliasListDefinitions().clear());
         assertEquals(List.of(alias), model.getAliases());
         assertEquals(List.of(definition), model.aliasListDefinitions());
+    }
+
+    @Test
+    void committedCreatePublishesOnlyTheNewRowWithoutRebuildingListNames()
+    {
+        AliasListDefinition definition = definition(12);
+        Alias existing = alias(41, definition, "Existing", 100);
+        AliasModel model = new AliasModel();
+        model.replaceCommittedConfiguration(List.of(definition), List.of(existing));
+        FilteredList<Alias> visible = new FilteredList<>(model.aliasList(),
+            candidate -> candidate.getAliasListId() == definition.getId());
+        int[] added = {0};
+        int[] removed = {0};
+        int[] listNameChanges = {0};
+        model.aliasList().addListener((ListChangeListener<Alias>)change ->
+        {
+            while(change.next())
+            {
+                added[0] += change.getAddedSize();
+                removed[0] += change.getRemovedSize();
+            }
+        });
+        model.aliasListNames().addListener((ListChangeListener<String>)change -> listNameChanges[0]++);
+
+        AliasListDefinition committedDefinition = definition(12);
+        Alias unchangedDatabaseCopy = alias(41, committedDefinition, "Existing", 100);
+        Alias created = alias(42, committedDefinition, "Created", 101);
+        model.publishCommittedConfiguration(List.of(committedDefinition),
+            List.of(unchangedDatabaseCopy, created), Set.of(created.getId()), false);
+
+        assertEquals(1, added[0]);
+        assertEquals(0, removed[0]);
+        assertEquals(0, listNameChanges[0]);
+        assertEquals(List.of(existing, created), model.getAliases());
+        assertEquals(List.of(existing, created), visible);
+        assertSame(existing, model.getAlias(existing.getId()));
+        assertSame(created, model.getAlias(created.getId()));
     }
 
     @Test
@@ -286,7 +336,9 @@ class AliasOneToOneTest
     void runtimeChannelLookupAcceptsSameFamilyListAcrossSystems()
     {
         AliasListDefinition definition = new AliasListDefinition("County", AliasListFamily.P25);
+        definition.setId(12);
         Alias alias = new Alias("Dispatch");
+        alias.setId(41);
         alias.setAliasListDefinition(definition);
         alias.setMatchIdentifier(new Talkgroup(Protocol.APCO25, 100));
         AliasModel model = new AliasModel();

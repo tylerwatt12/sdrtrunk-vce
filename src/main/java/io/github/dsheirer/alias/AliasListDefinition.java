@@ -48,6 +48,10 @@ public final class AliasListDefinition
         {
             throw new IllegalArgumentException("Alias list ID cannot be negative");
         }
+        if(mId != UNASSIGNED_ID && mId != id)
+        {
+            throw new IllegalStateException("Persisted Alias-list ID cannot be changed");
+        }
 
         mId = id;
     }

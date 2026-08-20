@@ -6,7 +6,9 @@
 package io.github.dsheirer.gui.configuration.alias;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasListDefinition;
@@ -32,33 +34,49 @@ class AliasConfigurationEditorFilterTest
         Alias countyFire = alias(102, county, "County Fire", 1002);
         Alias cityDispatch = alias(201, city, "City Dispatch", 2001);
         AliasModel model = new AliasModel();
-        model.setAliasListDefinitions(List.of(county, city, empty));
-        model.addAliases(List.of(countyDispatch, countyFire, cityDispatch));
+        model.replaceCommittedConfiguration(List.of(county, city, empty),
+            List.of(countyDispatch, countyFire, cityDispatch));
         FilteredList<Alias> visible = new FilteredList<>(model.aliasList());
 
-        Predicate<Alias> countyFilter = new AliasPredicate("County", "");
+        Predicate<Alias> countyFilter = new AliasPredicate(county.getId(), "");
         visible.setPredicate(countyFilter);
         assertEquals(List.of(101L, 102L), ids(visible));
 
-        Predicate<Alias> cityFilter = new AliasPredicate("City", "dispatch");
+        Predicate<Alias> cityFilter = new AliasPredicate(city.getId(), "dispatch");
         assertNotSame(countyFilter, cityFilter);
         visible.setPredicate(cityFilter);
         assertEquals(List.of(201L), ids(visible));
 
-        visible.setPredicate(new AliasPredicate("Empty", ""));
+        visible.setPredicate(new AliasPredicate(empty.getId(), ""));
         assertEquals(List.of(), ids(visible));
 
-        visible.setPredicate(new AliasPredicate("County", "fire"));
+        visible.setPredicate(new AliasPredicate(county.getId(), "fire"));
         assertEquals(List.of(102L), ids(visible));
 
         Alias countyFireTwo = alias(103, county, "County Fireground", 1003);
-        model.addAlias(countyFireTwo);
+        model.publishCommittedConfiguration(List.of(county, city, empty),
+            List.of(countyDispatch, countyFire, cityDispatch, countyFireTwo), List.of(countyFireTwo.getId()), false);
         assertEquals(List.of(102L, 103L), ids(visible));
 
-        visible.setPredicate(new AliasPredicate("City", ""));
+        visible.setPredicate(new AliasPredicate(city.getId(), ""));
         assertEquals(List.of(201L), ids(visible));
-        visible.setPredicate(new AliasPredicate("County", "dispatch"));
+        visible.setPredicate(new AliasPredicate(county.getId(), "dispatch"));
         assertEquals(List.of(101L), ids(visible));
+    }
+
+    @Test
+    void listIdentityDoesNotDependOnTheAliasNameSnapshot()
+    {
+        AliasListDefinition county = definition(11, "County");
+        Alias countyDispatch = alias(101, county, "County Dispatch", 1001);
+        countyDispatch.setAliasListName("Stale imported name");
+
+        Alias other = alias(201, definition(12, "Other"), "Other Dispatch", 2001);
+        other.setAliasListName("County");
+
+        AliasPredicate countyFilter = new AliasPredicate(county.getId(), "");
+        assertTrue(countyFilter.test(countyDispatch));
+        assertFalse(countyFilter.test(other));
     }
 
     @Test

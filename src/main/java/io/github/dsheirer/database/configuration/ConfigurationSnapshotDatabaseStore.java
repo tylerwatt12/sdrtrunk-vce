@@ -42,7 +42,6 @@ public class ConfigurationSnapshotDatabaseStore
 
         try(Connection connection = SdrTrunkDatabase.open(mDatabasePath))
         {
-            boolean previousAutoCommit = connection.getAutoCommit();
             connection.setAutoCommit(false);
 
             try
@@ -56,7 +55,7 @@ public class ConfigurationSnapshotDatabaseStore
                 new ConfigurationDatabaseStore(mDatabasePath).replaceConfigurationState(connection, state);
                 connection.commit();
             }
-            catch(IOException | SQLException | RuntimeException e)
+            catch(IOException | SQLException | RuntimeException | Error e)
             {
                 try
                 {
@@ -66,12 +65,7 @@ public class ConfigurationSnapshotDatabaseStore
                 {
                     e.addSuppressed(rollbackException);
                 }
-
                 throw e;
-            }
-            finally
-            {
-                connection.setAutoCommit(previousAutoCommit);
             }
         }
     }

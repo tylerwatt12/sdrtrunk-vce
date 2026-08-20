@@ -121,10 +121,9 @@ public abstract class AbstractBroadcastEditor<T extends BroadcastConfiguration> 
             //Detect stream name change so that we can update any aliases that might be using the previous name
             String previousName = configuration.getName();
             String updatedName = getNameTextField().getText();
-            configuration.setName(getNameTextField().getText());
 
             if(previousName != null && !previousName.isEmpty() && !updatedName.contentEquals(previousName)
-                && getConfigurationManager().getAliasModel().hasAliasesWithBroadcastChannel(previousName))
+                && getConfigurationManager().getAliasModel().hasBroadcastChannelReferences(previousName))
             {
                 Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
                 alert.getButtonTypes().clear();
@@ -144,14 +143,15 @@ public abstract class AbstractBroadcastEditor<T extends BroadcastConfiguration> 
                         getConfigurationManager().getAliasAdministrationService()
                             .renameBroadcastChannelReferences(previousName, updatedName)).isEmpty())
                 {
-                    //Keep the broadcast and Alias references consistent when the combined snapshot cannot save.
-                    configuration.setName(previousName);
+                    //The live name remains unchanged until the combined broadcast and Alias transaction succeeds.
                     getConfigurationManager().getBroadcastModel().process(new BroadcastEvent(configuration,
                         BroadcastEvent.Event.CONFIGURATION_CHANGE));
                     setItem(configuration);
                     return;
                 }
             }
+
+            configuration.setName(updatedName);
 
             //TODO: remove this after we get rid of Swing tables so that we don't have to announce these changes.
             mConfigurationManager.getBroadcastModel().process(new BroadcastEvent(configuration,
