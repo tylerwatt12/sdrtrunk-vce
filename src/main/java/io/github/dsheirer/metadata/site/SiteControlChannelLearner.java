@@ -27,7 +27,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Maintains the verified, over-the-air announced P25 control channels for one immutable site identity.
+ * Binds a P25 trunked channel to its verified site identity and optionally maintains announced control frequencies.
  */
 public class SiteControlChannelLearner implements SiteMetadataListener
 {
@@ -61,9 +61,7 @@ public class SiteControlChannelLearner implements SiteMetadataListener
         Channel channel = event.channel();
 
         if(channel == null || !channel.isStandardChannel() ||
-            !(channel.getDecodeConfiguration() instanceof DecodeConfigP25 decodeConfig) ||
-            !decodeConfig.getLearnAnnouncedControlChannels() ||
-            !(channel.getSourceConfiguration() instanceof SourceConfigTunerMultipleFrequency sourceConfig))
+            !(channel.getDecodeConfiguration() instanceof DecodeConfigP25 decodeConfig))
         {
             return;
         }
@@ -82,32 +80,56 @@ public class SiteControlChannelLearner implements SiteMetadataListener
         }
 
         P25SiteIdentity boundIdentity = channel.getP25SiteIdentity();
+        SourceConfigTunerMultipleFrequency sourceConfig =
+            channel.getSourceConfiguration() instanceof SourceConfigTunerMultipleFrequency multiple ? multiple : null;
+        boolean frequencyLearningEnabled = decodeConfig.getLearnAnnouncedControlChannels() && sourceConfig != null;
 
         if(boundIdentity != null && !boundIdentity.equals(observedIdentity))
         {
             mMatchingIdentityObservedSince.remove(channelKey);
-            mLastObservedSourceFrequency.put(channelKey, sourceFrequency);
+            mLastObservedSourceFrequency.remove(channelKey);
 
-            if(removeRejectedLearnedSource(channel, decodeConfig, sourceConfig, sourceFrequency))
+            if(frequencyLearningEnabled &&
+                removeRejectedLearnedSource(channel, decodeConfig, sourceConfig, sourceFrequency))
             {
                 LOGGER.warn("Removed learned P25 control channel {} Hz for channel {}; decoded identity {} does not " +
                     "match bound identity {}", sourceFrequency, channel.getName(), observedIdentity.display(),
                     boundIdentity.display());
-                configurationChanged(channel, sourceConfig);
+                saveChanges(channel, sourceConfig, true);
             }
 
             return;
         }
 
-        boolean changed = false;
+        boolean identityChanged = false;
 
         if(boundIdentity == null)
         {
-            channel.bindP25SiteIdentity(observedIdentity);
-            boundIdentity = observedIdentity;
-            changed = true;
+            if(!channel.bindP25SiteIdentity(observedIdentity))
+            {
+                return;
+            }
+
+            boundIdentity = channel.getP25SiteIdentity();
+            identityChanged = true;
             LOGGER.info("Bound P25 channel {} to site identity {}", channel.getName(), boundIdentity.display());
         }
+
+        if(!frequencyLearningEnabled)
+        {
+            mMatchingIdentityObservedSince.remove(channelKey);
+            mLastObservedSourceFrequency.remove(channelKey);
+            boolean preferredFrequencyChanged = updatePreferredFrequency(sourceConfig, sourceFrequency);
+
+            if(identityChanged || preferredFrequencyChanged)
+            {
+                saveChanges(channel, sourceConfig, false);
+            }
+
+            return;
+        }
+
+        boolean frequenciesChanged = false;
 
         for(Long frequency: advertisedFrequencies)
         {
@@ -115,7 +137,7 @@ public class SiteControlChannelLearner implements SiteMetadataListener
             {
                 sourceConfig.addFrequency(frequency);
                 decodeConfig.addLearnedControlFrequency(frequency);
-                changed = true;
+                frequenciesChanged = true;
                 LOGGER.info("Learned announced P25 control channel {} Hz for channel {} ({})", frequency,
                     channel.getName(), boundIdentity.display());
             }
@@ -134,13 +156,39 @@ public class SiteControlChannelLearner implements SiteMetadataListener
         else if(observedAt - matchingSince >= ABSENT_FREQUENCY_RECONCILIATION_DELAY_MILLISECONDS &&
             reconcileAbsentLearnedFrequencies(decodeConfig, sourceConfig, advertisedFrequencies))
         {
-            changed = true;
+            frequenciesChanged = true;
         }
 
-        if(changed)
+        boolean preferredFrequencyChanged = updatePreferredFrequency(sourceConfig, sourceFrequency);
+
+        if(identityChanged || frequenciesChanged || preferredFrequencyChanged)
         {
-            configurationChanged(channel, sourceConfig);
+            saveChanges(channel, sourceConfig, frequenciesChanged);
         }
+    }
+
+    /**
+     * Remembers a strongly confirmed control channel only when it is already a member of this channel's rotation
+     * list.  The caller has already verified the complete site identity and that the site advertises the decoded
+     * source as a current or secondary control channel.
+     */
+    private boolean updatePreferredFrequency(SourceConfigTunerMultipleFrequency sourceConfig, long sourceFrequency)
+    {
+        if(sourceConfig == null || !sourceConfig.getFrequencies().contains(sourceFrequency) ||
+            sourceConfig.getPreferredFrequency() == sourceFrequency)
+        {
+            return false;
+        }
+
+        sourceConfig.setPreferredFrequency(sourceFrequency);
+
+        if(sourceConfig.getPreferredFrequency() == sourceFrequency)
+        {
+            LOGGER.info("Remembered confirmed P25 control channel {} Hz", sourceFrequency);
+            return true;
+        }
+
+        return false;
     }
 
     private Set<Long> getControlChannelFrequencies(P25NetworkConfigurationSnapshot snapshot)
@@ -222,11 +270,15 @@ public class SiteControlChannelLearner implements SiteMetadataListener
         return true;
     }
 
-    private void configurationChanged(Channel channel, SourceConfigTunerMultipleFrequency sourceConfig)
+    private void saveChanges(Channel channel, SourceConfigTunerMultipleFrequency sourceConfig,
+                             boolean frequenciesChanged)
     {
-        //Refresh the channel's observable frequency list and cached tuner-channel projections after mutating the live
-        //rotation configuration.
-        channel.setSourceConfiguration(sourceConfig);
+        if(frequenciesChanged)
+        {
+            //Refresh observable frequencies and cached tuner-channel projections after mutating the rotation list.
+            channel.setSourceConfiguration(sourceConfig);
+        }
+
         mConfigurationSaveScheduler.run();
     }
 }

@@ -69,6 +69,14 @@ public class MultiFrequencyTunerChannelSource extends TunerChannelSource
         mTunerChannelSource = tunerChannelSource;
         mTunerChannelSource.setSourceEventListener(mConsumerSourceEventAdapter);
         mFrequencies = frequencies;
+
+        int initialFrequencyIndex = mFrequencies.indexOf(tunerChannelSource.getFrequency());
+
+        if(initialFrequencyIndex >= 0)
+        {
+            mFrequencyListPointer = initialFrequencyIndex;
+        }
+
         mChannelSpecification = channelSpecification;
         mPreferredTuner = preferredTuner;
         mMinimumFrequency = minimumFrequency;
