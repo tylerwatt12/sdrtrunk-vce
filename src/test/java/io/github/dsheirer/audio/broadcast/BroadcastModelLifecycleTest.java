@@ -78,6 +78,7 @@ public class BroadcastModelLifecycleTest
             assertTrue(startEntered.await(2, TimeUnit.SECONDS));
             model.removeBroadcastConfiguration(configuration);
             assertNull(model.getBroadcaster(configuration.getName()));
+            assertTrue(broadcaster.awaitStartInterrupted(2, TimeUnit.SECONDS));
         }
         finally
         {
@@ -346,6 +347,7 @@ public class BroadcastModelLifecycleTest
         private final AtomicInteger mDisposeCount = new AtomicInteger();
         private final AtomicBoolean mActive = new AtomicBoolean();
         private final AtomicBoolean mStartInterrupted = new AtomicBoolean();
+        private final CountDownLatch mStartInterruptedLatch = new CountDownLatch(1);
 
         private TestAudioBroadcaster(TestBroadcastConfiguration configuration, CountDownLatch startEntered,
                                      CountDownLatch releaseStart)
@@ -374,6 +376,7 @@ public class BroadcastModelLifecycleTest
                     catch(InterruptedException e)
                     {
                         mStartInterrupted.set(true);
+                        mStartInterruptedLatch.countDown();
                     }
                 }
             }
@@ -430,6 +433,11 @@ public class BroadcastModelLifecycleTest
         private boolean wasStartInterrupted()
         {
             return mStartInterrupted.get();
+        }
+
+        private boolean awaitStartInterrupted(long timeout, TimeUnit timeUnit) throws InterruptedException
+        {
+            return mStartInterruptedLatch.await(timeout, timeUnit);
         }
     }
 }
