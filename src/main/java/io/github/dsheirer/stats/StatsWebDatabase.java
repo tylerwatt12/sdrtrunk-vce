@@ -4291,15 +4291,14 @@ class StatsWebDatabase
                  FROM configuration_channel config
                  WHERE config.radres_guid = site.guid
                  ORDER BY config.sort_order, config.id LIMIT 1) AS configured_name,
-                (SELECT upper(json_extract(config.config_json, '$.decodeConfiguration.modulation'))
+                (SELECT CASE upper(json_extract(config.config_json, '$.decodeConfiguration.modulation'))
+                    WHEN 'CQPSK' THEN 'CQPSK'
+                    WHEN 'C4FM' THEN 'C4FM'
+                    WHEN 'AUTO' THEN 'C4FM'
+                    ELSE NULL END
                  FROM configuration_channel config
                  WHERE config.radres_guid = site.guid
                  ORDER BY config.sort_order, config.id LIMIT 1) AS p25_decoder_mode,
-                (SELECT upper(json_extract(config.config_json,
-                    '$.decodeConfiguration.autoPreferredModulation'))
-                 FROM configuration_channel config
-                 WHERE config.radres_guid = site.guid
-                 ORDER BY config.sort_order, config.id LIMIT 1) AS p25_auto_preferred_decoder_mode,
                 site.alias_list_name,
                 (SELECT list.id FROM alias_list list
                  WHERE list.name = site.alias_list_name COLLATE NOCASE LIMIT 1) AS alias_list_id,

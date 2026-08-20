@@ -74,7 +74,6 @@ public class P25P1ConfigurationEditor extends ChannelConfigurationEditor
     private CheckBox mLearnAnnouncedControlChannelsCheckBox;
     private Spinner<Integer> mTrafficChannelPoolSizeSpinner;
     private SegmentedButton mModulationSegmentedButton;
-    private ToggleButton mAutoToggleButton;
     private ToggleButton mC4FMToggleButton;
     private ToggleButton mLSMToggleButton;
     private P25SiteIdentityView mP25SiteIdentityView;
@@ -169,7 +168,7 @@ public class P25P1ConfigurationEditor extends ChannelConfigurationEditor
             GridPane.setConstraints(getP25SiteIdentityView(), 0, 2, 6, 1);
             gridPane.getChildren().add(getP25SiteIdentityView());
 
-            Label modulationHelpLabel = new Label("Auto: detects the received waveform.  C4FM: non-simulcast.  LSM: simulcast.");
+            Label modulationHelpLabel = new Label("C4FM: non-simulcast.  LSM: simulcast.");
             GridPane.setConstraints(modulationHelpLabel, 0, 3, 6, 1);
             gridPane.getChildren().add(modulationHelpLabel);
 
@@ -261,8 +260,7 @@ public class P25P1ConfigurationEditor extends ChannelConfigurationEditor
         {
             mModulationSegmentedButton = new SegmentedButton();
             mModulationSegmentedButton.getStyleClass().add(SegmentedButton.STYLE_CLASS_DARK);
-            mModulationSegmentedButton.getButtons().addAll(getAutoToggleButton(), getC4FMToggleButton(),
-                getLSMToggleButton());
+            mModulationSegmentedButton.getButtons().addAll(getC4FMToggleButton(), getLSMToggleButton());
             mModulationSegmentedButton.getToggleGroup().selectedToggleProperty().addListener(new ChangeListener<Toggle>()
             {
                 @Override
@@ -283,16 +281,6 @@ public class P25P1ConfigurationEditor extends ChannelConfigurationEditor
         }
 
         return mModulationSegmentedButton;
-    }
-
-    private ToggleButton getAutoToggleButton()
-    {
-        if(mAutoToggleButton == null)
-        {
-            mAutoToggleButton = new ToggleButton("Auto");
-        }
-
-        return mAutoToggleButton;
     }
 
     private ToggleButton getC4FMToggleButton()
@@ -394,11 +382,7 @@ public class P25P1ConfigurationEditor extends ChannelConfigurationEditor
             getIgnoreDataCallsButton().setSelected(decodeConfig.getIgnoreDataCalls());
             getLearnAnnouncedControlChannelsCheckBox().setSelected(decodeConfig.getLearnAnnouncedControlChannels());
             getTrafficChannelPoolSizeSpinner().getValueFactory().setValue(decodeConfig.getTrafficChannelPoolSize());
-            if(decodeConfig.getModulation() == Modulation.AUTO)
-            {
-                getAutoToggleButton().setSelected(true);
-            }
-            else if(decodeConfig.getModulation() == Modulation.C4FM)
+            if(decodeConfig.getModulation() == Modulation.C4FM)
             {
                 getC4FMToggleButton().setSelected(true);
             }
@@ -432,8 +416,7 @@ public class P25P1ConfigurationEditor extends ChannelConfigurationEditor
         config.setIgnoreDataCalls(getIgnoreDataCallsButton().isSelected());
         config.setLearnAnnouncedControlChannels(getLearnAnnouncedControlChannelsCheckBox().isSelected());
         config.setTrafficChannelPoolSize(getTrafficChannelPoolSizeSpinner().getValue());
-        config.setModulation(getAutoToggleButton().isSelected() ? Modulation.AUTO :
-            getC4FMToggleButton().isSelected() ? Modulation.C4FM : Modulation.CQPSK);
+        config.setModulation(getC4FMToggleButton().isSelected() ? Modulation.C4FM : Modulation.CQPSK);
         getItem().setDecodeConfiguration(config);
     }
 

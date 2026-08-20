@@ -34,8 +34,6 @@ import io.github.dsheirer.module.decode.nxdn.DecodeConfigNXDN;
 import io.github.dsheirer.module.decode.nxdn.NXDNChannelMode;
 import io.github.dsheirer.module.decode.nxdn.channel.ChannelFrequency;
 import io.github.dsheirer.module.decode.nxdn.layer3.type.TransmissionMode;
-import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
-import io.github.dsheirer.module.decode.p25.phase1.Modulation;
 import io.github.dsheirer.module.decode.p25.phase2.DecodeConfigP25Phase2;
 import io.github.dsheirer.module.decode.p25.phase2.enumeration.ScrambleParameters;
 import io.github.dsheirer.configuration.ConfigurationManager;
@@ -247,15 +245,7 @@ public class SiteEditor extends GridPane
                 return createNXDNDecodeConfiguration(mRadioReferenceDecoder.getFlavor(systemInformation),
                     mRadioReferenceDecoder.getChannelMap(systemInformation, site));
             case P25_PHASE1:
-                DecodeConfiguration p1config = DecoderFactory.getDecodeConfiguration(decoderType);
-
-                if(p1config instanceof DecodeConfigP25Phase1 p1)
-                {
-                    p1.setModulation(Modulation.AUTO);
-                    p1.setAutoPreferredModulation(mRadioReferenceDecoder.isLSM(site) ? Modulation.CQPSK :
-                        Modulation.C4FM);
-                }
-                return p1config;
+                return DecoderFactory.getDecodeConfiguration(decoderType);
             case P25_PHASE2:
                 DecodeConfigP25Phase2 config = new DecodeConfigP25Phase2();
 

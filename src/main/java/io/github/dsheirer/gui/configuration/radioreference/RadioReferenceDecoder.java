@@ -261,17 +261,6 @@ public class RadioReferenceDecoder
     }
 
     /**
-     * Indicates if the site is a simulcast site.
-     * @param site to inspect
-     * @return true if the site employs LSM modulation
-     */
-    public boolean isLSM(Site site)
-    {
-        return site != null && ((site.getModulation() != null && site.getModulation().contentEquals("LSM")) ||
-                (site.getDescription() != null && site.getDescription().contains("Simulcast")));
-    }
-
-    /**
      * Indicates if the specified site is a DMR Connect Plus site that has site frequencies that can be converted
      * to timeslot frequencies
      * @param systemInformation to determine the system type

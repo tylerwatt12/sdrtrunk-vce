@@ -23,10 +23,10 @@ class StatsApiV1PayloadTest
     {
         JsonNode diagnostic = StatsApiV1Payload.present(Map.of(
             "protocol", "P25 Phase 1",
-            "decoder_profile", "P25 Phase 1 Auto (LSM)"));
+            "decoder_profile", "P25 Phase 1 LSM"));
 
         assertEquals("p25", diagnostic.path("protocol").textValue());
-        assertEquals("P25 Phase 1 Auto (LSM)", diagnostic.path("decoder_profile").textValue());
+        assertEquals("P25 Phase 1 LSM", diagnostic.path("decoder_profile").textValue());
     }
 
     @Test

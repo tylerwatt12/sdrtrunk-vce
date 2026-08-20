@@ -19,12 +19,13 @@
 
 package io.github.dsheirer.module.decode.p25.phase1;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+
 /**
  * P25 Phase 1 Modulations enumeration.
  */
 public enum Modulation
 {
-    AUTO("Auto"),
     CQPSK("Simulcast (LSM)"),
     C4FM("Normal (C4FM)");
 
@@ -43,6 +44,18 @@ public enum Modulation
     {
         return mLabel;
     }
+
+    /**
+     * Parses the persisted modulation value.  Development builds briefly stored AUTO; fixed C4FM is the safe,
+     * mainline-compatible fallback for that retired value and for missing or unrecognized values.
+     */
+    @JsonCreator
+    public static Modulation fromStoredValue(String value)
+    {
+        return value != null && (value.equalsIgnoreCase("CQPSK") || value.equalsIgnoreCase("LSM")) ?
+            CQPSK : C4FM;
+    }
+
     @Override
     public String toString()
     {

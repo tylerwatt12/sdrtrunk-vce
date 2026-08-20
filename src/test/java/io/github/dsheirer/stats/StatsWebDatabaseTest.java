@@ -4231,8 +4231,8 @@ class StatsWebDatabaseTest
         assertEquals("Cuyahoga County", site.get("configured_site"));
         assertEquals("MARCS Cleveland Simulcast", site.get("configured_name"));
         assertEquals("Cleveland Simulcast", site.get("channel_name"));
-        assertEquals("AUTO", site.get("p25_decoder_mode"));
-        assertEquals("CQPSK", site.get("p25_auto_preferred_decoder_mode"));
+        assertEquals("C4FM", site.get("p25_decoder_mode"));
+        assertFalse(site.containsKey("p25_auto_preferred_decoder_mode"));
 
         Map<String,Object> quality = rowsFrom(mDatabase.qualityHistory(request(
             "/api/quality?guid=" + GUID + "&include_history=false")), "sites").getFirst();

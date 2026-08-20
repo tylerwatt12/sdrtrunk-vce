@@ -11072,7 +11072,7 @@ function siteIdentity(site) {
 }
 
 function p25DecoderMode(value) {
-  return ({ AUTO: 'Automatic', C4FM: 'Normal (C4FM)', CQPSK: 'Simulcast (LSM / CQPSK)' })[
+  return ({ C4FM: 'Normal (C4FM)', CQPSK: 'Simulcast (LSM / CQPSK)' })[
     String(value || '').trim().toUpperCase()] || availableValue(value);
 }
 
@@ -11084,8 +11084,6 @@ function p25SiteDetailRows(site) {
     ['Local Registration Area', hexDecimalPair(site.lra, 2)],
     ['Manufacturer', site.mfid_display],
     ['Configured Decoder Mode', p25DecoderMode(site.p25_decoder_mode)],
-    ['Auto Starting Preference', String(site.p25_decoder_mode || '').toUpperCase() === 'AUTO' ?
-      p25DecoderMode(site.p25_auto_preferred_decoder_mode) : ''],
     ['Broadcast Clock', dateTime(site.broadcast_clock_ms)],
     ['Data', yesNoKnown(site.data_service)], ['Data Access', site.data_access],
     ['Working Unit ID Lease Time', site.wuid_lease_minutes == null ? '' :

@@ -69,7 +69,7 @@ class ConfigurationDatabaseStoreTest
         sourceConfig.setPreferredTuner("Airspy");
         channel.setSourceConfiguration(sourceConfig);
         DecodeConfigP25Phase1 decodeConfig = new DecodeConfigP25Phase1();
-        decodeConfig.setAutoPreferredModulation(Modulation.CQPSK);
+        decodeConfig.setModulation(Modulation.CQPSK);
         decodeConfig.setLearnedControlFrequencies(List.of(852_012_500L));
         channel.setDecodeConfiguration(decodeConfig);
 
@@ -104,9 +104,7 @@ class ConfigurationDatabaseStoreTest
         assertInstanceOf(SourceConfigTuner.class, loadedChannel.getSourceConfiguration());
         assertInstanceOf(DecodeConfigP25Phase1.class, loadedChannel.getDecodeConfiguration());
         DecodeConfigP25Phase1 loadedDecodeConfig = (DecodeConfigP25Phase1)loadedChannel.getDecodeConfiguration();
-        assertEquals(Modulation.AUTO, loadedDecodeConfig.getModulation());
-        assertEquals(Modulation.CQPSK, loadedDecodeConfig.getAutoPreferredModulation());
-        assertEquals(Modulation.CQPSK, loadedDecodeConfig.getEffectiveModulation());
+        assertEquals(Modulation.CQPSK, loadedDecodeConfig.getModulation());
         assertEquals(List.of(852_012_500L), loadedDecodeConfig.getLearnedControlFrequencies());
         SourceConfigTuner loadedSource = (SourceConfigTuner)loadedChannel.getSourceConfiguration();
         assertEquals(853_762_500L, loadedSource.getFrequency());

@@ -79,7 +79,6 @@ import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.module.decode.p25.phase1.Modulation;
 import io.github.dsheirer.module.decode.p25.phase1.P25P1DecoderC4FM;
-import io.github.dsheirer.module.decode.p25.phase1.P25P1DecoderAuto;
 import io.github.dsheirer.module.decode.p25.phase1.P25P1DecoderLSM;
 import io.github.dsheirer.module.decode.p25.phase1.P25P1DecoderState;
 import io.github.dsheirer.module.decode.p25.phase1.message.filter.P25P1MessageFilterSet;
@@ -270,7 +269,7 @@ public class DecoderFactory
         {
             List<State> activeStates = new ArrayList<>();
             activeStates.add(State.CONTROL);
-            modules.add(new ChannelRotationMonitor(activeStates, p25RotationDelay(sctmf),
+            modules.add(new ChannelRotationMonitor(activeStates, sctmf.getFrequencyRotationDelay(),
                 ChannelRotationMonitor.ACTIVE_STATE_LOSS_DELAY_DEFAULT));
         }
     }
@@ -305,15 +304,7 @@ public class DecoderFactory
         if(channel.getDecodeConfiguration() instanceof DecodeConfigP25Phase1 p1)
         {
             boolean standard = channel.getChannelType() == ChannelType.STANDARD;
-
-            if(standard && p1.getModulation() == Modulation.AUTO)
-            {
-                modules.add(new P25P1DecoderAuto(p1, initialSourceSampleRate, true));
-            }
-            else
-            {
-                addP25Phase1Decoder(modules, p1.getEffectiveModulation(), initialSourceSampleRate, standard);
-            }
+            addP25Phase1Decoder(modules, p1.getModulation(), initialSourceSampleRate, standard);
         }
 
         if(channel.getChannelType() == ChannelType.STANDARD)
@@ -343,7 +334,7 @@ public class DecoderFactory
         {
             List<State> activeStates = new ArrayList<>();
             activeStates.add(State.CONTROL);
-            modules.add(new ChannelRotationMonitor(activeStates, p25RotationDelay(sctmf),
+            modules.add(new ChannelRotationMonitor(activeStates, sctmf.getFrequencyRotationDelay(),
                 ChannelRotationMonitor.ACTIVE_STATE_LOSS_DELAY_DEFAULT));
         }
     }
@@ -370,16 +361,6 @@ public class DecoderFactory
         return sourceConfig.hasMultipleFrequencies() ||
             (channel.getDecodeConfiguration() instanceof DecodeConfigP25 decodeConfig &&
                 decodeConfig.getLearnAnnouncedControlChannels());
-    }
-
-    /**
-     * Older saved P25 configurations can contain a dwell that predates automatic waveform selection.  Apply the
-     * safe acquisition floor at runtime without changing rotation behavior for any other protocol.
-     */
-    static int p25RotationDelay(SourceConfigTunerMultipleFrequency sourceConfig)
-    {
-        return Math.max(DecodeConfigP25Phase1.CHANNEL_ROTATION_DELAY_MINIMUM_MS,
-            sourceConfig.getFrequencyRotationDelay());
     }
 
     /**
@@ -748,7 +729,6 @@ public class DecoderFactory
                     DecodeConfigP25Phase1 copyP25 = new DecodeConfigP25Phase1();
                     copyP25.setIgnoreDataCalls(originalP25.getIgnoreDataCalls());
                     copyP25.setLearnAnnouncedControlChannels(originalP25.getLearnAnnouncedControlChannels());
-                    copyP25.setAutoPreferredModulation(originalP25.getAutoPreferredModulation());
                     copyP25.setModulation(originalP25.getModulation());
                     copyP25.setTrafficChannelPoolSize(originalP25.getTrafficChannelPoolSize());
                     return copyP25;

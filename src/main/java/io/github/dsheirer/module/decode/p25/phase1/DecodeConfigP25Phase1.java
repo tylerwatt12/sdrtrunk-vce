@@ -28,17 +28,12 @@ import io.github.dsheirer.source.tuner.channel.ChannelSpecification;
  */
 public class DecodeConfigP25Phase1 extends DecodeConfigP25
 {
-    /**
-     * P25 control acquisition needs enough dwell to synchronize and, in Auto mode, evaluate both 500 ms waveform
-     * trials before a frequency change resets the selector.
-     */
-    public static final int CHANNEL_ROTATION_DELAY_MINIMUM_MS = 2000;
-    public static final int CHANNEL_ROTATION_DELAY_DEFAULT_MS = 2000;
-    public static final int CHANNEL_ROTATION_DELAY_MAXIMUM_MS = 10000;
+    /** P25 control acquisition dwell bounds. */
+    public static final int CHANNEL_ROTATION_DELAY_MINIMUM_MS = 400;
+    public static final int CHANNEL_ROTATION_DELAY_DEFAULT_MS = 500;
+    public static final int CHANNEL_ROTATION_DELAY_MAXIMUM_MS = 2000;
 
-    private Modulation mModulation = Modulation.AUTO;
-    private Modulation mAutoPreferredModulation = Modulation.C4FM;
-    private volatile Modulation mEffectiveModulation = Modulation.C4FM;
+    private Modulation mModulation = Modulation.C4FM;
 
     public DecoderType getDecoderType()
     {
@@ -52,44 +47,7 @@ public class DecodeConfigP25Phase1 extends DecodeConfigP25
 
     public void setModulation(Modulation modulation)
     {
-        mModulation = modulation != null ? modulation : Modulation.AUTO;
-        mEffectiveModulation = mModulation == Modulation.AUTO ? mAutoPreferredModulation : mModulation;
-    }
-
-    /**
-     * Preferred first decoder for automatic selection. RadioReference imports use known simulcast metadata as a
-     * starting hint; the automatic selector still verifies the received waveform.
-     */
-    public Modulation getAutoPreferredModulation()
-    {
-        return mAutoPreferredModulation;
-    }
-
-    public void setAutoPreferredModulation(Modulation modulation)
-    {
-        mAutoPreferredModulation = modulation == Modulation.CQPSK ? Modulation.CQPSK : Modulation.C4FM;
-
-        if(mModulation == Modulation.AUTO)
-        {
-            mEffectiveModulation = mAutoPreferredModulation;
-        }
-    }
-
-    /**
-     * Current fixed or automatically selected decoder profile. This is runtime state and is not persisted.
-     */
-    @JsonIgnore
-    public Modulation getEffectiveModulation()
-    {
-        return mEffectiveModulation;
-    }
-
-    void setEffectiveModulation(Modulation modulation)
-    {
-        if(mModulation == Modulation.AUTO && (modulation == Modulation.C4FM || modulation == Modulation.CQPSK))
-        {
-            mEffectiveModulation = modulation;
-        }
+        mModulation = modulation == Modulation.CQPSK ? Modulation.CQPSK : Modulation.C4FM;
     }
 
     /**

@@ -65,7 +65,7 @@ class StatsWebSiteUiContractTest
         String source = source();
         assertTrue(source.contains("['Manufacturer', site.mfid_display]"));
         assertTrue(source.contains("['Configured Decoder Mode', p25DecoderMode(site.p25_decoder_mode)]"));
-        assertTrue(source.contains("['Auto Starting Preference'"));
+        assertFalse(source.contains("Auto Starting Preference"));
         assertTrue(function(source, "function p25DecoderMode(value)")
             .contains("CQPSK: 'Simulcast (LSM / CQPSK)'"));
         assertFalse(source.contains("['MFID'"));

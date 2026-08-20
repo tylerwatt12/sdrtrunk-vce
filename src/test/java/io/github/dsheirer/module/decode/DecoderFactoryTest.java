@@ -22,7 +22,6 @@ import io.github.dsheirer.module.decode.nxdn.NXDNChannelMode;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.module.decode.p25.phase1.Modulation;
-import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -89,28 +88,15 @@ class DecoderFactoryTest
     }
 
     @Test
-    void copiesP25PhaseOneAutoSelectionHint()
+    void copiesP25PhaseOneModulation()
     {
         DecodeConfigP25Phase1 original = new DecodeConfigP25Phase1();
-        original.setAutoPreferredModulation(Modulation.CQPSK);
+        original.setModulation(Modulation.CQPSK);
 
         DecodeConfigP25Phase1 copy = (DecodeConfigP25Phase1)DecoderFactory.copy(original);
 
         assertNotSame(original, copy);
-        assertEquals(Modulation.AUTO, copy.getModulation());
-        assertEquals(Modulation.CQPSK, copy.getAutoPreferredModulation());
-        assertEquals(Modulation.CQPSK, copy.getEffectiveModulation());
-    }
-
-    @Test
-    void givesP25ControlAcquisitionAtLeastTwoSeconds()
-    {
-        SourceConfigTunerMultipleFrequency source = new SourceConfigTunerMultipleFrequency();
-        source.setFrequencyRotationDelay(400);
-        assertEquals(2_000, DecoderFactory.p25RotationDelay(source));
-
-        source.setFrequencyRotationDelay(4_000);
-        assertEquals(4_000, DecoderFactory.p25RotationDelay(source));
+        assertEquals(Modulation.CQPSK, copy.getModulation());
     }
 
     @Test

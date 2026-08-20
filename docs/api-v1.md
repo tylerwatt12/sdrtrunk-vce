@@ -57,7 +57,7 @@ and double-encoded or separator-smuggling resource names are rejected.
 | `GET /api/v1/systems/{scope}/radios/{id}` | One radio identity. |
 | `GET /api/v1/systems/{scope}/talker-aliases` | Paged latest talker aliases. |
 | `GET /api/v1/systems/{scope}/relationships` | Paged radio-to-group or group-to-radio relationships. |
-| `GET /api/v1/sites/{guid}` | One protocol-neutral trunked site. P25 rows include nullable configured `p25_decoder_mode` and `p25_auto_preferred_decoder_mode` fields. |
+| `GET /api/v1/sites/{guid}` | One protocol-neutral trunked site. P25 rows include the nullable configured `p25_decoder_mode` field (`C4FM` or `CQPSK`). |
 | `GET /api/v1/sites/{guid}/channels` | Paged observed channels. |
 | `GET /api/v1/sites/{guid}/group-identities` | Bounded leading group identities for a time range. |
 | `GET /api/v1/sites/{guid}/quality` | Bounded current and historical site quality. |
