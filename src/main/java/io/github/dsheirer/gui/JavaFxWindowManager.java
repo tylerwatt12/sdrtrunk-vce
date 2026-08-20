@@ -62,9 +62,6 @@ import javafx.geometry.Pos;
 import javafx.scene.Parent;
 import javafx.scene.Scene;
 import javafx.scene.control.Label;
-import javafx.scene.layout.Background;
-import javafx.scene.layout.BackgroundFill;
-import javafx.scene.layout.CornerRadii;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import javafx.scene.paint.Color;
@@ -567,7 +564,6 @@ public class JavaFxWindowManager extends Application
     private static LoadingShell createLoadingShell(String title, String message)
     {
         boolean dark = ThemeManager.getInstance().isDarkMode();
-        Color backgroundColor = dark ? Color.web("#2b2b2b") : Color.web("#f2f2f2");
         Color titleColor = dark ? Color.web("#ececec") : Color.web("#202124");
         Color messageColor = dark ? Color.web("#b8bcc2") : Color.web("#5f6368");
         Label titleLabel = new Label(title);
@@ -581,7 +577,9 @@ public class JavaFxWindowManager extends Application
         StackPane root = new StackPane(content);
         root.setId("javafx-loading-shell");
         root.setPadding(new Insets(24));
-        root.setBackground(new Background(new BackgroundFill(backgroundColor, CornerRadii.EMPTY, Insets.EMPTY)));
+        //This wrapper remains the Scene root after the editor replaces the loading content.  Resolve its background
+        //through the theme lookup so transparent editor regions follow later light/dark theme changes.
+        root.setStyle("-fx-background-color: -fx-background;");
         return new LoadingShell(root, statusLabel, message, messageColor);
     }
 

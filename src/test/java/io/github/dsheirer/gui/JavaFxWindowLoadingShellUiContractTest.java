@@ -20,7 +20,7 @@ class JavaFxWindowLoadingShellUiContractTest
         Path.of("src/main/java/io/github/dsheirer/gui/configuration/ConfigurationEditor.java");
 
     @Test
-    void playlistAndSettingsRevealAProgrammaticLoadingShellBeforeBuildingTheirEditors() throws Exception
+    void playlistAndSettingsRevealAThemeAwareLoadingShellBeforeBuildingTheirEditors() throws Exception
     {
         String manager = Files.readString(WINDOW_MANAGER);
         String configuration = Files.readString(CONFIGURATION_EDITOR);
@@ -29,7 +29,8 @@ class JavaFxWindowLoadingShellUiContractTest
 
         assertTrue(manager.contains("createLoadingShell(\"Playlist\", \"Loading configuration editor…\")"));
         assertTrue(manager.contains("createLoadingShell(\"Settings\", \"Loading user preferences…\")"));
-        assertTrue(manager.contains("new Background(new BackgroundFill(backgroundColor"));
+        assertTrue(manager.contains("root.setStyle(\"-fx-background-color: -fx-background;\")"));
+        assertFalse(manager.contains("root.setBackground(new Background"));
         assertTrue(manager.contains("root.setId(\"javafx-loading-shell\")"));
         assertFalse(manager.contains("new ProgressIndicator"));
         assertTrue(loading.contains("stage.setOpacity(0.0d)"));
