@@ -46,6 +46,7 @@ final class StatsLiveService implements AutoCloseable
     private static final int MAXIMUM_LIVE_IDENTIFIERS = 16;
     private static final int MAXIMUM_LIVE_TAGS = 16;
     private static final int MAXIMUM_LIVE_TAG_LENGTH = 64;
+    private static final int MAXIMUM_LIVE_ALIAS_REFERENCES = 8;
     private final StatsWebDatabase mDatabase;
     private final ChannelActivityModel mActivityModel;
     private final StatsLiveEventHub mSystemsHub =
@@ -371,6 +372,7 @@ final class StatsLiveService implements AutoCloseable
         putText(table, "configuration_id", snapshot.configurationId(), MAXIMUM_LIVE_TEXT_LENGTH);
         putText(table, "guid", snapshot.guid(), MAXIMUM_LIVE_TEXT_LENGTH);
         table.put("control_active", snapshot.controlActive());
+        table.put("channel_running", snapshot.channelRunning());
         table.put("identifiers", snapshot.identifiers().stream().limit(MAXIMUM_LIVE_IDENTIFIERS)
             .map(StatsLiveService::activityIdentifier).toList());
         int rowCount = snapshot.rows().size();
@@ -448,7 +450,47 @@ final class StatsLiveService implements AutoCloseable
         putText(row, "callsign", snapshot.callsign(), MAXIMUM_LIVE_TEXT_LENGTH);
         putText(row, "decoder", snapshot.decoder(), MAXIMUM_LIVE_TEXT_LENGTH);
         putText(row, "encryption_details", snapshot.encryptionDetails(), MAXIMUM_LIVE_TEXT_LENGTH);
+
+        ChannelActivitySnapshot.Navigation navigation = snapshot.navigation();
+
+        if(navigation != null)
+        {
+            putText(row, "context_key", navigation.contextKey(), MAXIMUM_LIVE_TEXT_LENGTH);
+            putText(row, "alias_list_name", navigation.aliasListName(), MAXIMUM_LIVE_TEXT_LENGTH);
+            putText(row, "protocol", navigation.protocol(), MAXIMUM_LIVE_TEXT_LENGTH);
+            row.put("source_aliases", navigation.sourceAliases().stream().limit(MAXIMUM_LIVE_ALIAS_REFERENCES)
+                .map(StatsLiveService::activityAliasReference).toList());
+            row.put("target_aliases", navigation.targetAliases().stream().limit(MAXIMUM_LIVE_ALIAS_REFERENCES)
+                .map(StatsLiveService::activityAliasReference).toList());
+            put(row, "source_matcher", activityMatcherReference(navigation.sourceMatcher()));
+            put(row, "target_matcher", activityMatcherReference(navigation.targetMatcher()));
+        }
+
         return Map.copyOf(row);
+    }
+
+    private static Map<String,Object> activityAliasReference(ChannelActivitySnapshot.AliasReference reference)
+    {
+        Map<String,Object> value = new LinkedHashMap<>();
+        value.put("alias_id", reference.aliasId());
+        value.put("alias_list_id", reference.aliasListId());
+        value.put("name", boundedText(reference.name(), MAXIMUM_LIVE_TEXT_LENGTH));
+        return Map.copyOf(value);
+    }
+
+    private static Map<String,Object> activityMatcherReference(ChannelActivitySnapshot.MatcherReference reference)
+    {
+        if(reference == null)
+        {
+            return null;
+        }
+
+        Map<String,Object> value = new LinkedHashMap<>();
+        value.put("type", boundedText(reference.type(), MAXIMUM_LIVE_TEXT_LENGTH));
+        value.put("protocol", boundedText(reference.protocol(), MAXIMUM_LIVE_TEXT_LENGTH));
+        putText(value, "variant", reference.variant(), MAXIMUM_LIVE_TEXT_LENGTH);
+        value.put("value", reference.value());
+        return Map.copyOf(value);
     }
 
     private static void putText(Map<String,Object> values, String key, Object value, int maximumLength)

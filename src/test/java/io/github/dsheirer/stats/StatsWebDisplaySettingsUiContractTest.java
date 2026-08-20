@@ -5,6 +5,7 @@
  */
 package io.github.dsheirer.stats;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
@@ -59,6 +60,9 @@ class StatsWebDisplaySettingsUiContractTest
         assertTrue(css.contains(".admin-toggle-control"));
         assertTrue(css.contains(".admin-toggle-copy"));
         assertTrue(css.contains(".admin-toggle-control:has(input:disabled)"));
+        assertTrue(css.contains("padding: 14px 12px"));
+        assertTrue(css.contains("border-bottom: 1px solid var(--line)"));
+        assertFalse(css.contains(".web-display-settings {\n  max-width:"));
     }
 
     private static String function(String source, String marker)

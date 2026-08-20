@@ -11,6 +11,8 @@
 
 package io.github.dsheirer.stats.activity;
 
+import io.github.dsheirer.controller.channel.ChannelContextKey;
+
 /**
  * Creates stable receiver-context keys without coupling protocol mappers to the persistence format.
  */
@@ -22,15 +24,7 @@ final class ReceiverContextKey
 
     static String configured(String guid, String configurationId)
     {
-        String usableGuid = nonBlank(guid);
-
-        if(usableGuid != null)
-        {
-            return "GUID:" + usableGuid;
-        }
-
-        String usableConfigurationId = nonBlank(configurationId);
-        return usableConfigurationId != null ? "CONFIGURATION:" + usableConfigurationId : null;
+        return ChannelContextKey.configured(guid, configurationId);
     }
 
     static String guid(String guid)

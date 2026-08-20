@@ -6,6 +6,7 @@
 package io.github.dsheirer.channel.metadata.activity;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -414,6 +415,33 @@ class ChannelActivityModelTest
         assertEquals(2, tables.size());
         assertSame(model.getConventionalTable(), tables.getFirst());
         assertSame(channel, tables.get(1).getOwnerChannel());
+    }
+
+    @Test
+    void publishesStoppedLifecycleSeparatelyFromTemporaryControlLoss() throws Exception
+    {
+        ChannelActivityModel model = new ChannelActivityModel(new AliasModel(), new NowPlayingPreference(type -> {}));
+        Channel channel = trunkedChannel("Test Site", "County", "Downtown", new DecodeConfigP25Phase1(),
+            856_137_500L);
+
+        run(model, () -> {
+            model.channelStarted(channel, List.of());
+            model.receiveControlChannelQuality(quality(channel, 856_137_500L, 1_000L, true));
+        });
+        ChannelActivitySnapshot running = model.getSnapshotSet().tables().get(1);
+        assertTrue(running.channelRunning());
+        assertTrue(running.controlActive());
+
+        run(model, () -> model.channelStopped(channel));
+        ChannelActivitySnapshot stopped = model.getSnapshotSet().tables().get(1);
+        assertFalse(stopped.channelRunning());
+        assertFalse(stopped.controlActive());
+
+        run(model, () -> model.channelStarted(channel, List.of()));
+        ChannelActivitySnapshot restartedWithoutControl = model.getSnapshotSet().tables().get(1);
+        assertTrue(restartedWithoutControl.channelRunning());
+        assertFalse(restartedWithoutControl.controlActive());
+        model.close();
     }
 
     @Test

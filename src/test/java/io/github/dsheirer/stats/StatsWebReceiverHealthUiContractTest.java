@@ -134,8 +134,8 @@ class StatsWebReceiverHealthUiContractTest
         assertTrue(css.contains("details.receiver-health-incident:not([open])"));
         assertTrue(css.contains(".receiver-health-resolved-sort select"));
         assertTrue(html.contains("<meta name=\"sdrtrunk-web-revision\" content=\"83\">"));
-        assertTrue(html.contains("/assets/app.css?v=65"));
-        assertTrue(html.contains("/assets/app.js?v=101"));
+        assertTrue(html.contains("/assets/app.css?v=66"));
+        assertTrue(html.contains("/assets/app.js?v=102"));
     }
 
     private static String readText(Path path) throws Exception

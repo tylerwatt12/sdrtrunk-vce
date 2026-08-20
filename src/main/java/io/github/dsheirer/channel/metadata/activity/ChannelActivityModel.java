@@ -373,6 +373,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
 
         if(isConfiguredTrunkedControlParent(channel))
         {
+            getOrCreateTrunkedTable(channel).setChannelRunning(true);
             ensureConfiguredControlRow(channel, "channel-started-control");
         }
         else if(metadataList != null)
@@ -443,6 +444,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
             if(trunked != null)
             {
                 setControlActive(trunked, false);
+                trunked.setChannelRunning(false);
             }
         }
     }
@@ -1672,6 +1674,11 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
             table = new ChannelActivityTableState(getTrunkedTitle(channel), channel, this::tableSnapshotUpdated);
             mTrunkedTables.put(channel, table);
             updateTablesSnapshot();
+        }
+
+        if(mActiveIncarnations.containsKey(channel))
+        {
+            table.setChannelRunning(true);
         }
 
         return table;

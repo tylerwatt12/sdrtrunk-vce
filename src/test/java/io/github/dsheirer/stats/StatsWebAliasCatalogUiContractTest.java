@@ -266,6 +266,7 @@ class StatsWebAliasCatalogUiContractTest
         String discoverySupport = function(source, "function observedTalkgroupDiscoverySupported(selectedList)");
         String unmatchedSupport = function(source, "function unmatchedTalkgroupsSupported(selectedList)");
         String policy = function(source, "function openUnmatchedTalkgroupPolicyModal(selectedList)");
+        String checkbox = function(source, "function aliasCheckOption(labelText, control)");
         String observed = function(source, "function renderObservedTalkgroups(main, page, selectedList)");
         String prefill = function(source, "function observedTalkgroupPrefill(row, selectedList)");
         String identity = function(source, "function observedTalkgroupIdentity(row)");
@@ -290,6 +291,10 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(discoverySupport.contains("['P25', 'DMR', 'NXDN']"));
         assertFalse(discoverySupport.contains("'NBFM'"));
         assertTrue(unmatchedSupport.contains("['P25', 'DMR', 'NXDN', 'NBFM']"));
+        assertTrue(checkbox.contains("'alias-check-option'"));
+        assertTrue(policy.contains("aliasCheckOption('Record calls', record)"));
+        assertTrue(editor.contains("aliasCheckOption('Record calls', record)"));
+        assertFalse(policy.contains("aliasFormField('Record calls', record)"));
         assertTrue(observed.contains("observedTalkgroupMatchKind(row) !== 'exact'"));
         assertTrue(observed.contains("defaultSort: 'last_seen'"));
         assertTrue(observed.contains("pager({ ...page, rows })"));

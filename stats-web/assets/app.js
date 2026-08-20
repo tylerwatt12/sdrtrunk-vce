@@ -4,6 +4,9 @@ const tableOnly = route.get('layout') === 'table';
 const WEB_CLIENT_REVISION = document.querySelector('meta[name="sdrtrunk-web-revision"]')?.content?.trim() || '';
 const TABLE_WIDTH_COOKIE = 'sdrtrunk_table_widths_v4';
 const ALIAS_CATALOG_COLUMNS_STORAGE_KEY = 'sdrtrunk_alias_catalog_columns_v2';
+const ALIAS_CREATE_ROUTE_KEYS = Object.freeze([
+  'createAlias', 'createListName', 'createType', 'createProtocol', 'createVariant', 'createValue', 'createName'
+]);
 const TABLE_WIDTH_MINIMUM = 48;
 const TABLE_WIDTH_MAXIMUM = 1200;
 const SIGNAL_OFFLINE_MILLISECONDS = 45_000;
@@ -1337,9 +1340,19 @@ function closeReadOnlyModal(updateRoute = false, force = false) {
   active.cleanup?.();
   active.backdrop.remove();
   document.body.classList.remove('modal-open');
-  if (updateRoute && route.has('alias')) {
-    route.delete('alias');
-    window.history.replaceState({}, '', currentHref());
+  if (updateRoute) {
+    let changed = false;
+    if (route.has('alias')) {
+      route.delete('alias');
+      changed = true;
+    }
+    ALIAS_CREATE_ROUTE_KEYS.forEach((key) => {
+      if (route.has(key)) {
+        route.delete(key);
+        changed = true;
+      }
+    });
+    if (changed) window.history.replaceState({}, '', currentHref());
   }
   const returnFocus = active.returnFocusSelector ? document.querySelector(active.returnFocusSelector) : null;
   if (returnFocus instanceof HTMLElement) returnFocus.focus();
@@ -2765,6 +2778,12 @@ function aliasFormField(label, control, help = '') {
   return wrapper;
 }
 
+function aliasCheckOption(labelText, control) {
+  const label = node('label', 'alias-check-option');
+  label.append(control, node('span', '', labelText));
+  return label;
+}
+
 function aliasScanListChoices(options, selectedValues = []) {
   const fieldset = node('fieldset', 'alias-stream-options alias-scan-list-options');
   fieldset.append(node('legend', '', 'Scan list membership'));
@@ -2858,6 +2877,7 @@ async function finishAliasMutation(modal, result, routeChanges = {}) {
     else route.set(key, String(value));
   });
   route.delete('alias');
+  ALIAS_CREATE_ROUTE_KEYS.forEach((key) => route.delete(key));
   route.delete('offset');
   window.history.replaceState({}, '', currentHref());
   if (result?.revision !== undefined && aliasEditorContext) aliasEditorContext.revision = result.revision;
@@ -3301,7 +3321,7 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null) 
     record.name = 'recordable';
     record.checked = Boolean(source.recordable);
     const audioGrid = node('div', 'alias-editor-grid');
-    audioGrid.append(aliasFormField('Record calls', record));
+    audioGrid.append(aliasCheckOption('Record calls', record));
     const streams = node('fieldset', 'alias-stream-options');
     streams.append(node('legend', '', 'Streaming destinations'));
     const selectedStreams = new Set(source.broadcast_channels || []);
@@ -3738,7 +3758,7 @@ function openUnmatchedTalkgroupPolicyModal(selectedList) {
   record.name = 'recordable';
   record.checked = Boolean(policy.recordable);
   const behavior = node('div', 'alias-editor-grid');
-  behavior.append(aliasFormField('Record calls', record));
+  behavior.append(aliasCheckOption('Record calls', record));
 
   const scanLists = aliasScanListChoices(options, policy.scan_list_ids || []);
   const scanListLegend = scanLists.querySelector('legend');
@@ -3942,6 +3962,40 @@ function observedTalkgroupPrefill(row, selectedList) {
     copy_actions_from_alias_id: observedTalkgroupMatchKind(row) === 'range' && Number.isInteger(matchedAliasId) &&
       matchedAliasId > 0 ? matchedAliasId : null,
     returnFocusSelector: `.observed-talkgroup-create[data-observed-key="${observedTalkgroupFocusKey(row)}"]`
+  };
+}
+
+function routedAliasPrefill(selectedList, options) {
+  if (!aliasAdminAllowed() || route.get('createAlias') !== '1' || !selectedList) return null;
+  const type = String(route.get('createType') || '').trim().toLowerCase();
+  const protocol = String(route.get('createProtocol') || '').trim().toLowerCase();
+  const variant = String(route.get('createVariant') || '').trim().toLowerCase();
+  const valueText = String(route.get('createValue') || '').trim();
+  if (!['talkgroup', 'radio'].includes(type) ||
+      !['am', 'p25', 'dmr', 'nxdn', 'nbfm', 'fleetsync', 'mdc1200'].includes(protocol) ||
+      !/^[0-9]+$/.test(valueText)) return null;
+  if ((protocol === 'p25' && !['phase_1', 'phase_2'].includes(variant)) ||
+      (protocol !== 'p25' && variant)) return null;
+  const value = Number(valueText);
+  if (!Number.isSafeInteger(value) || value < 0) return null;
+  const descriptor = aliasMatcherDescriptor(options, type, protocol, variant);
+  if (!descriptor || String(descriptor.type) !== type || String(descriptor.protocol || '') !== protocol ||
+      (protocol !== 'p25' && String(descriptor.variant || '') !== variant) ||
+      (descriptor.minimum !== undefined && value < Number(descriptor.minimum)) ||
+      (descriptor.maximum !== undefined && value > Number(descriptor.maximum))) return null;
+  const policy = type === 'talkgroup' ? selectedList.unmatched_talkgroup_policy || {} : {};
+  return {
+    alias_list_id: aliasListId(selectedList),
+    name: String(route.get('createName') || '').trim().slice(0, 256),
+    description: '',
+    group: '',
+    color: 0,
+    icon_name: null,
+    recordable: Boolean(policy.recordable),
+    broadcast_channels: [...(policy.broadcast_channels || [])],
+    scan_list_ids: [...(policy.scan_list_ids || [])],
+    stream_as_talkgroup: null,
+    matcher: { type, protocol, ...(variant ? { variant } : {}), value }
   };
 }
 
@@ -4220,6 +4274,17 @@ async function renderAliases() {
   ]);
   const lists = mergedAliasLists(listResponse.rows || [], adminCatalog.alias_lists || []);
   let selectedList = lists.find((row) => aliasListId(row) === Number(route.get('list')));
+  if (route.get('createAlias') === '1' && route.has('createListName')) {
+    const requestedListName = String(route.get('createListName') || '').trim();
+    const requestedList = lists.find((row) => requestedListName &&
+      String(row.name || '').toLowerCase() === requestedListName.toLowerCase());
+    if (requestedList) {
+      selectedList = requestedList;
+      route.set('list', String(aliasListId(selectedList)));
+      route.delete('createListName');
+      window.history.replaceState({}, '', currentHref());
+    } else selectedList = null;
+  }
   const scanListScope = admin && requestedScanListId ?
     (scanListCatalog.scan_lists || []).find((row) => Number(row.id ?? row.scan_list_id) === requestedScanListId) :
     null;
@@ -4410,7 +4475,10 @@ async function renderAliases() {
       '0 means coverage was collected and the count was zero.'), pager(page));
   main.append(block);
 
-  if (route.has('alias')) {
+  if (route.get('createAlias') === '1' && admin) {
+    const prefill = routedAliasPrefill(selectedList, options);
+    if (prefill) await openAliasEditorModal('create', null, prefill);
+  } else if (route.has('alias')) {
     const id = Number(route.get('alias'));
     if (Number.isInteger(id) && id > 0) {
       if (admin) await openAliasEditorModal('edit', id);
@@ -10344,10 +10412,79 @@ function liveEventsPanel(onCollapse) {
   };
 }
 
+function liveAliasReferences(row, kind) {
+  const values = Array.isArray(row?.[`${kind}_aliases`]) ? row[`${kind}_aliases`] : [];
+  return values.filter((value) => Number.isInteger(Number(value?.alias_id)) && Number(value.alias_id) > 0 &&
+    Number.isInteger(Number(value?.alias_list_id)) && Number(value.alias_list_id) > 0);
+}
+
+function liveExistingAliasHref(reference) {
+  return reference && capabilityAllowed(ACCESS_CAPABILITIES.ALIASES) ? href('aliases', {
+    list: Number(reference.alias_list_id), aliasTab: 'configure', alias: Number(reference.alias_id)
+  }) : '';
+}
+
+function liveAliasDraftHref(row, kind) {
+  const matcher = row?.[`${kind}_matcher`];
+  const aliasListName = String(row?.alias_list_name || '').trim();
+  const type = String(matcher?.type || '').trim().toLowerCase();
+  const protocol = String(matcher?.protocol || '').trim().toLowerCase();
+  const variant = String(matcher?.variant || '').trim().toLowerCase();
+  const value = Number(matcher?.value);
+  if (!aliasAdminAllowed() || !aliasListName || !['talkgroup', 'radio'].includes(type) ||
+      !['am', 'p25', 'dmr', 'nxdn', 'nbfm', 'fleetsync', 'mdc1200'].includes(protocol) ||
+      !Number.isSafeInteger(value) || value < 0 ||
+      specialIdentifierLabel(row, value, type)) return '';
+  const suggestedName = kind === 'source' && String(row?.talker_alias || '').trim() ?
+    String(row.talker_alias).trim() : `${type === 'radio' ? 'Radio' : 'Talkgroup'} ${value}`;
+  return href('aliases', {
+    aliasTab: 'configure', createAlias: 1, createListName: aliasListName, createType: type,
+    createProtocol: protocol, createVariant: variant, createValue: value, createName: suggestedName
+  });
+}
+
+function liveIdentifierAliasValue(row, kind) {
+  const value = row?.[`${kind}_id`];
+  const text = value === null || value === undefined ? '' : String(value);
+  if (!text) return '';
+  const reference = liveAliasReferences(row, kind)[0];
+  const target = liveExistingAliasHref(reference) || liveAliasDraftHref(row, kind);
+  return target ? anchor(text, target, 'live-alias-link') : text;
+}
+
+function liveAliasValue(row, kind) {
+  const references = liveAliasReferences(row, kind);
+  const fallback = kind === 'source' ?
+    (row?.source_alias_display || row?.source_alias || (row?.talker_alias ? `TA: ${row.talker_alias}` : '')) :
+    (row?.target_alias || '');
+  if (!references.length) return fallback;
+  const result = node('span', 'live-alias-values');
+  references.forEach((reference, index) => {
+    if (index) result.append(document.createTextNode(', '));
+    const label = String(reference.name || '').trim() || `Alias ${Number(reference.alias_id)}`;
+    const target = liveExistingAliasHref(reference);
+    result.append(target ? anchor(label, target, 'live-alias-link') : document.createTextNode(label));
+  });
+  if (kind === 'source' && row?.talker_alias) {
+    const talker = String(row.talker_alias).trim();
+    const configured = new Set(references.map((reference) => String(reference.name || '').trim().toLowerCase()));
+    if (talker && !configured.has(talker.toLowerCase())) result.append(document.createTextNode(` · TA: ${talker}`));
+  }
+  return result;
+}
+
+function liveConventionalChannelValue(row) {
+  const label = String(row?.channel_name || '');
+  return label && row?.context_key && capabilityAllowed(ACCESS_CAPABILITIES.CONVENTIONAL) ?
+    anchor(label, href('conventional-detail', { context: row.context_key, tab: 'info' }),
+      'live-channel-link') : label;
+}
+
 function liveSystemsSection(onSelectionChange) {
   const tables = new Map();
   const tabNodes = new Map();
   const rowNodes = new Map();
+  const dismissedStoppedTables = new Set();
   const decodeDisplay = serviceStatus?.decode_display || { show_control: true, show_voice: true, mode: 'percentage' };
   const showEncryptionDetails = serviceStatus?.web_display?.show_encryption_details !== false;
   const compactQualityCount = (value) => {
@@ -10491,6 +10628,14 @@ function liveSystemsSection(onSelectionChange) {
     if (cell.textContent !== text) cell.textContent = text;
   };
 
+  const cellValue = (cell, value, signature) => {
+    const nextSignature = String(signature || '');
+    if (cell.dataset.liveValue === nextSignature) return;
+    cell.dataset.liveValue = nextSignature;
+    cell.replaceChildren();
+    cell.append(valueNode(value));
+  };
+
   const updateRow = (element, row) => {
     const cells = element.children;
     const conventional = channelTagSet(row.tags).has('CONVENTIONAL');
@@ -10498,15 +10643,18 @@ function liveSystemsSection(onSelectionChange) {
       row.encryption_details : row.status;
     cellText(cells[0], statusText);
     cellText(cells[1], channelTagText(row));
-    cellText(cells[2], conventional ? row.channel_name : row.lcn);
+    cellValue(cells[2], conventional ? liveConventionalChannelValue(row) : row.lcn,
+      conventional ? `channel:${row.context_key || ''}:${row.channel_name || ''}` : `lcn:${row.lcn || ''}`);
     cellText(cells[3], frequency(row.frequency_hz));
     cellText(cells[4], row.signal_dbfs == null ? '' : `${Number(row.signal_dbfs).toFixed(1)} dBFS`);
     cellText(cells[5], decodeQualityText(row));
-    cellText(cells[6], row.source_alias_display || row.source_alias ||
-      (row.talker_alias ? `TA: ${row.talker_alias}` : ''));
-    cellText(cells[7], row.source_id);
-    cellText(cells[8], row.target_alias);
-    cellText(cells[9], row.target_id);
+    cellValue(cells[6], liveAliasValue(row, 'source'),
+      JSON.stringify([row.source_aliases, row.source_alias_display, row.source_alias, row.talker_alias]));
+    cellValue(cells[7], liveIdentifierAliasValue(row, 'source'),
+      JSON.stringify([row.source_id, row.source_aliases, row.source_matcher, row.alias_list_name]));
+    cellValue(cells[8], liveAliasValue(row, 'target'), JSON.stringify([row.target_aliases, row.target_alias]));
+    cellValue(cells[9], liveIdentifierAliasValue(row, 'target'),
+      JSON.stringify([row.target_id, row.target_aliases, row.target_matcher, row.alias_list_name]));
     cellText(cells[10], decoderLabel(row.decoder, true));
     cells[1].title = channelTagTitle(row);
     cells[2].title = conventional ? (row.channel_name || '') : '';
@@ -10518,6 +10666,8 @@ function liveSystemsSection(onSelectionChange) {
     cells[3].className = cells[2].className;
     cells[4].className = cells[2].className;
     cells[5].title = decodeQualityTitle(row);
+    cells[6].title = row.source_alias_description || '';
+    cells[8].title = row.target_alias_description || '';
     cells[10].title = decoderLabel(row.decoder);
     const decodeValues = decodeQualityValues(row);
     const decodePercent = decodeValues.length ? Math.min(...decodeValues) : null;
@@ -10532,7 +10682,8 @@ function liveSystemsSection(onSelectionChange) {
     const element = node('tr');
     element.dataset.key = row.key;
     for (let index = 0; index < 11; index += 1) element.append(node('td'));
-    element.addEventListener('click', () => {
+    element.addEventListener('click', (event) => {
+      if (event.target.closest('a, button')) return;
       const value = tables.get(activeTableId);
       const currentRow = (value?.rows || []).find((candidate) => candidate.key === element.dataset.key);
       if (!currentRow) return;
@@ -10617,20 +10768,52 @@ function liveSystemsSection(onSelectionChange) {
 
   const upsertTable = (value) => {
     if (!value?.table_id) return;
+    if (dismissedStoppedTables.has(value.table_id)) {
+      if (value.channel_running !== true) return;
+      dismissedStoppedTables.delete(value.table_id);
+    }
     tables.set(value.table_id, value);
     let tab = tabNodes.get(value.table_id);
     if (!tab) {
-      tab = node('button', 'systems-live-tab');
-      tab.type = 'button';
+      tab = node('div', 'systems-live-tab');
+      const select = node('button', 'systems-tab-select');
+      select.type = 'button';
       const quality = node('span', 'systems-tab-quality');
       for (let index = 0; index < 4; index += 1) quality.append(node('span'));
-      tab.append(quality, node('span', 'systems-tab-label'));
-      tab.addEventListener('click', () => showTable(value.table_id));
+      select.append(quality);
+      select.addEventListener('click', () => showTable(value.table_id));
+      const title = node('span', 'systems-tab-title');
+      const close = node('button', 'systems-tab-close', '×');
+      close.type = 'button';
+      close.hidden = true;
+      close.addEventListener('click', (event) => {
+        event.stopPropagation();
+        const current = tables.get(value.table_id);
+        if (!current || current.channel_running !== false) return;
+        dismissedStoppedTables.add(value.table_id);
+        removeTable(value.table_id);
+      });
+      tab.append(select, title, close);
       tabNodes.set(value.table_id, tab);
       tabBar.append(tab);
     }
     const label = value.title || value.channel_name || value.table_id;
-    tab.querySelector('.systems-tab-label').textContent = label;
+    const select = tab.querySelector('.systems-tab-select');
+    const title = tab.querySelector('.systems-tab-title');
+    const titleSignature = `${label}|${value.guid || ''}|${value.table_id}`;
+    if (title.dataset.liveValue !== titleSignature) {
+      title.dataset.liveValue = titleSignature;
+      if (value.table_id !== 'conventional' && value.guid && capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS)) {
+        const link = anchor(label, href('site', { guid: value.guid, tab: 'info' }), 'systems-tab-label');
+        link.setAttribute('aria-label', `Open ${label} site details`);
+        title.replaceChildren(link);
+      } else {
+        const button = node('button', 'systems-tab-title-button', label);
+        button.type = 'button';
+        button.addEventListener('click', () => showTable(value.table_id));
+        title.replaceChildren(button);
+      }
+    }
     const quality = tab.querySelector('.systems-tab-quality');
     const currentControl = currentControlRow(value);
     const qualityObservedAt = Number(currentControl?.quality_observed_at_ms || 0);
@@ -10644,11 +10827,11 @@ function liveSystemsSection(onSelectionChange) {
     if (value.table_id === 'conventional') {
       quality.className = 'systems-tab-quality quality-neutral';
       tab.title = label;
-      tab.setAttribute('aria-label', label);
+      select.setAttribute('aria-label', `Show live channels for ${label}`);
     } else if (signalStrength === null && decodeQuality === null) {
       quality.className = 'systems-tab-quality quality-unavailable';
       tab.title = `${label} · Signal strength and decode quality unavailable`;
-      tab.setAttribute('aria-label', `${label}, signal strength and decode quality unavailable`);
+      select.setAttribute('aria-label', `Show live channels for ${label}, signal strength and decode quality unavailable`);
     } else {
       const level = signalBarLevel(signalStrength);
       const state = decodeQuality === null ? 'unavailable' :
@@ -10660,8 +10843,14 @@ function liveSystemsSection(onSelectionChange) {
       const qualityLabel = decodeQuality === null ? 'Decode quality unavailable' :
         `${decodeQuality.toFixed(1)}% decode quality`;
       tab.title = `${label} · ${signalLabel} · ${qualityLabel}`;
-      tab.setAttribute('aria-label', `${label}, ${signalLabel}, ${qualityLabel}`);
+      select.setAttribute('aria-label', `Show live channels for ${label}, ${signalLabel}, ${qualityLabel}`);
     }
+    const stopped = value.table_id !== 'conventional' && value.channel_running === false;
+    tab.classList.toggle('stopped', stopped);
+    const close = tab.querySelector('.systems-tab-close');
+    close.hidden = !stopped;
+    close.title = stopped ? `Close stopped channel ${label}` : '';
+    close.setAttribute('aria-label', `Close stopped channel ${label}`);
     if (!activeTableId) showTable(tables.has('conventional') ? 'conventional' : value.table_id);
     else updateVisibleRows(value);
   };

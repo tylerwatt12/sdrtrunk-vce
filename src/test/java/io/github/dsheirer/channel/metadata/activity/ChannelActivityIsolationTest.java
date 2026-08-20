@@ -243,6 +243,9 @@ class ChannelActivityIsolationTest
 
         assertTrue(model.awaitIdle(5, TimeUnit.SECONDS));
         assertEquals(0, model.getTrackedActiveChannelCount());
+        assertFalse(model.getSnapshotSet().tables().stream()
+            .filter(snapshot -> trunkedTableId.equals(snapshot.tableId())).findFirst().orElseThrow()
+            .channelRunning(), "the reserved stop must publish the stopped lifecycle state");
 
         DecodeConfigDMR configuration = (DecodeConfigDMR)parent.getDecodeConfiguration();
         configuration.setChannelMode(DMRChannelMode.CONVENTIONAL);

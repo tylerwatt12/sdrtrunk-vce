@@ -30,6 +30,7 @@ public final class ChannelActivityTableState
     private String mTitle;
     private final Channel mOwnerChannel;
     private boolean mControlActive;
+    private boolean mChannelRunning;
     private List<ChannelActivitySnapshot.IdentifierField> mIdentifiers = List.of();
     private final List<ChannelActivityRow> mRows = new ArrayList<>();
     private final Map<String,ChannelActivityRow> mRowsByKey = new HashMap<>();
@@ -41,6 +42,7 @@ public final class ChannelActivityTableState
     {
         mTitle = title;
         mOwnerChannel = ownerChannel;
+        mChannelRunning = true;
         mSnapshotListener = snapshotListener;
         publish();
     }
@@ -75,6 +77,24 @@ public final class ChannelActivityTableState
     {
         boolean changed = mControlActive != controlActive;
         mControlActive = controlActive;
+
+        if(changed)
+        {
+            publish();
+        }
+
+        return changed;
+    }
+
+    public boolean isChannelRunning()
+    {
+        return mChannelRunning;
+    }
+
+    public boolean setChannelRunning(boolean channelRunning)
+    {
+        boolean changed = mChannelRunning != channelRunning;
+        mChannelRunning = channelRunning;
 
         if(changed)
         {

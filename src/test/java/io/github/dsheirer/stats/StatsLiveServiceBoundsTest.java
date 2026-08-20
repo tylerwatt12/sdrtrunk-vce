@@ -60,9 +60,13 @@ class StatsLiveServiceBoundsTest
             List.of("VOICE"), "0-101", 851_012_500L, "WPFF205", -22.5, null, 0L, 0L, 0L, 0L, 0L,
             0L, 0L, null, 2, "1201", "RADIO", "Engine 1", "Engine company one", "Portable 12",
             "Engine 1 · TA: Portable 12", "4400", "TALKGROUP", "Fire Dispatch", "Primary dispatch",
-            "P25_PHASE1", null);
+            "P25_PHASE1", null, new ChannelActivitySnapshot.Navigation("GUID:site-guid", "County",
+            "p25", List.of(new ChannelActivitySnapshot.AliasReference(301L, 41L, "Engine 1")),
+            new ChannelActivitySnapshot.MatcherReference("radio", "p25", "phase_1", 1201),
+            List.of(new ChannelActivitySnapshot.AliasReference(302L, 41L, "Fire Dispatch")),
+            new ChannelActivitySnapshot.MatcherReference("talkgroup", "p25", "phase_1", 4400)));
         ChannelActivitySnapshot snapshot = new ChannelActivitySnapshot("site", "Live", "County", "Downtown",
-            "Primary", null, null, true,
+            "Primary", null, null, true, true,
             List.of(new ChannelActivitySnapshot.IdentifierField("System", "WACN", "BEE00"),
                 new ChannelActivitySnapshot.IdentifierField("Site", "NAC", "343")), List.of(row));
 
@@ -78,6 +82,17 @@ class StatsLiveServiceBoundsTest
             assertEquals("WPFF205", projected.get("callsign"));
             assertEquals("Engine company one", projected.get("source_alias_description"));
             assertEquals("Primary dispatch", projected.get("target_alias_description"));
+            assertEquals(true, table.get("channel_running"));
+            assertEquals("GUID:site-guid", projected.get("context_key"));
+            assertEquals("County", projected.get("alias_list_name"));
+            assertEquals("p25", projected.get("protocol"));
+            List<Map<String,Object>> sourceAliases =
+                (List<Map<String,Object>>)projected.get("source_aliases");
+            assertEquals(301L, sourceAliases.getFirst().get("alias_id"));
+            assertEquals(41L, sourceAliases.getFirst().get("alias_list_id"));
+            Map<String,Object> targetMatcher = (Map<String,Object>)projected.get("target_matcher");
+            assertEquals("talkgroup", targetMatcher.get("type"));
+            assertEquals(4400, targetMatcher.get("value"));
         }
         finally
         {
@@ -136,6 +151,30 @@ class StatsLiveServiceBoundsTest
     }
 
     @Test
+    void capsAliasReferencesForEachLiveIdentifier()
+    {
+        StatsLiveService service = new StatsLiveService(null, null);
+        List<ChannelActivitySnapshot.AliasReference> aliases = IntStream.range(0, 20)
+            .mapToObj(index -> new ChannelActivitySnapshot.AliasReference(index + 1L, 41L,
+                "Alias " + index)).toList();
+        ChannelActivitySnapshot.Navigation navigation = new ChannelActivitySnapshot.Navigation(null, "County",
+            "dmr", aliases, new ChannelActivitySnapshot.MatcherReference("radio", "dmr", null, 1201),
+            aliases, new ChannelActivitySnapshot.MatcherReference("talkgroup", "dmr", null, 4400));
+
+        try
+        {
+            service.process(activity("aliases", List.of(activityRow("row", navigation))));
+            Map<String,Object> row = rows(tables(service).getFirst()).getFirst();
+            assertEquals(8, ((List<?>)row.get("source_aliases")).size());
+            assertEquals(8, ((List<?>)row.get("target_aliases")).size());
+        }
+        finally
+        {
+            service.close();
+        }
+    }
+
+    @Test
     void enforcesOneGlobalRowAndEncodedByteBudgetAndReusesTheEncodedSnapshot() throws Exception
     {
         StatsLiveService service = new StatsLiveService(null, null);
@@ -180,9 +219,15 @@ class StatsLiveServiceBoundsTest
 
     private static ChannelActivitySnapshot.Row activityRow(String key)
     {
+        return activityRow(key, null);
+    }
+
+    private static ChannelActivitySnapshot.Row activityRow(String key,
+                                                            ChannelActivitySnapshot.Navigation navigation)
+    {
         return new ChannelActivitySnapshot.Row(key, "Control", null, "ACTIVE", List.of("CONTROL"), "1",
             451_000_000L, null, -25.5, 98.0, 1_000L, 1L, 0L, 0L, 0L, 0L, 1_000L, null, null, null,
-            null, null, null, null, null, null, null, "DMR", null);
+            null, null, null, null, null, null, null, null, null, "DMR", null, navigation);
     }
 
     @SuppressWarnings("unchecked")

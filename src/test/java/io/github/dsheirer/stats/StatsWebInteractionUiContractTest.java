@@ -519,9 +519,9 @@ class StatsWebInteractionUiContractTest
             html.indexOf("rel=\"stylesheet\""));
         assertTrue(html.contains("id=\"theme-toggle\""));
         assertTrue(html.contains("id=\"mobile-theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=65"));
+        assertTrue(html.contains("/assets/app.css?v=66"));
         assertTrue(html.contains("/assets/features/systems-directory.js?v=1"));
-        assertTrue(html.contains("/assets/app.js?v=101"));
+        assertTrue(html.contains("/assets/app.js?v=102"));
         assertTrue(source.contains("MOBILE_THEME_STORAGE_KEY = 'sdrtrunk_mobile_theme'"));
         assertTrue(source.contains("mode === 'mobile' ? MOBILE_THEME_STORAGE_KEY : THEME_STORAGE_KEY"));
         assertTrue(source.contains("toggle.setAttribute('aria-pressed'"));
@@ -752,6 +752,38 @@ class StatsWebInteractionUiContractTest
         assertTrue(live.contains("dBFS signal strength"));
         assertTrue(live.contains("% decode quality"));
         assertFalse(live.contains("Math.ceil(decodeQuality / 25)"));
+    }
+
+    @Test
+    void liveRowsLinkToAliasAndReceiverEditorsAndDismissOnlyStoppedChannels() throws Exception
+    {
+        String source = source();
+        String css = readText(APP_CSS);
+        String existingAlias = function(source, "function liveExistingAliasHref(reference)");
+        String draftAlias = function(source, "function liveAliasDraftHref(row, kind)");
+        String routedPrefill = function(source, "function routedAliasPrefill(selectedList, options)");
+        String conventional = function(source, "function liveConventionalChannelValue(row)");
+        String systems = function(source, "function liveSystemsSection(onSelectionChange)");
+        String upsert = function(systems, "const upsertTable = (value) =>");
+        String createRow = function(systems, "const createRow = (row) =>");
+
+        assertTrue(existingAlias.contains("list: Number(reference.alias_list_id)"));
+        assertTrue(existingAlias.contains("alias: Number(reference.alias_id)"));
+        assertTrue(draftAlias.contains("createAlias: 1"));
+        assertTrue(draftAlias.contains("createListName: aliasListName"));
+        assertTrue(draftAlias.contains("createType: type"));
+        assertTrue(draftAlias.contains("createProtocol: protocol"));
+        assertTrue(draftAlias.contains("createValue: value"));
+        assertTrue(routedPrefill.contains("aliasMatcherDescriptor(options, type, protocol, variant)"));
+        assertTrue(routedPrefill.contains("selectedList.unmatched_talkgroup_policy"));
+        assertTrue(conventional.contains("href('conventional-detail', { context: row.context_key, tab: 'info' })"));
+        assertTrue(upsert.contains("href('site', { guid: value.guid, tab: 'info' })"));
+        assertTrue(upsert.contains("dismissedStoppedTables.has(value.table_id)"));
+        assertTrue(upsert.contains("value.channel_running !== true"));
+        assertTrue(upsert.contains("current.channel_running !== false"));
+        assertTrue(createRow.contains("event.target.closest('a, button')"));
+        assertTrue(css.contains(".systems-tab-close"));
+        assertTrue(css.contains(".systems-live-tab.stopped .systems-tab-quality"));
     }
 
     @Test
