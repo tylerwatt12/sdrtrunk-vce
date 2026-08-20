@@ -18,12 +18,17 @@ import io.github.dsheirer.preference.encryption.EncryptionKeyPreference;
 import io.github.dsheirer.preference.encryption.VoiceEncryptionAlgorithm;
 import io.github.dsheirer.preference.encryption.VoiceEncryptionKey;
 import io.github.dsheirer.preference.encryption.VoiceEncryptionProtocol;
+import java.awt.GraphicsEnvironment;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import javafx.application.Platform;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -118,6 +123,30 @@ class EncryptionKeyVaultServiceTest
 
         preference.getVaultService().disableForRun();
         assertTrue(preference.getKeys().isEmpty());
+    }
+
+    @Test
+    void serviceStateIsSynchronousWhileJavaFxPublicationIsDeferred() throws Exception
+    {
+        assumeFalse(GraphicsEnvironment.isHeadless());
+        CountDownLatch toolkitStarted = new CountDownLatch(1);
+
+        try
+        {
+            Platform.startup(toolkitStarted::countDown);
+        }
+        catch(IllegalStateException alreadyStarted)
+        {
+            toolkitStarted.countDown();
+        }
+
+        assertTrue(toolkitStarted.await(30, TimeUnit.SECONDS));
+        EncryptionKeyVaultService service = service("javafx.sqlite");
+        service.createVault(password("secret"));
+
+        assertEquals(EncryptionKeyVaultState.UNLOCKED, service.getState());
+        service.replaceKeys(List.of(key()));
+        assertEquals(1, service.getKeys().size());
     }
 
     private EncryptionKeyVaultService service(String filename) throws Exception

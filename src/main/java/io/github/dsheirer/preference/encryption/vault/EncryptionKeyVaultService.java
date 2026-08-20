@@ -81,6 +81,7 @@ public class EncryptionKeyVaultService
     private final BooleanProperty mPromptOnLaunch = new SimpleBooleanProperty(false);
     private List<VoiceEncryptionKey> mKeys = List.of();
     private byte[] mVaultKey;
+    private EncryptionKeyVaultState mCurrentState = EncryptionKeyVaultState.MISSING;
 
     /**
      * Constructs an instance.
@@ -122,7 +123,7 @@ public class EncryptionKeyVaultService
 
     public synchronized EncryptionKeyVaultState getState()
     {
-        return mState.get();
+        return mCurrentState;
     }
 
     public synchronized boolean isUnlocked()
@@ -692,6 +693,8 @@ public class EncryptionKeyVaultService
 
     private void setState(EncryptionKeyVaultState state, String status)
     {
+        mCurrentState = state;
+
         Runnable updater = () -> {
             mState.set(state);
             mStatus.set(status);
