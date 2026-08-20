@@ -316,6 +316,7 @@ class P25ActivityLogServiceLifecycleTest
             staleActiveProducer.join(TimeUnit.SECONDS.toMillis(2));
             staleDisabledProducer.join(TimeUnit.SECONDS.toMillis(2));
             service.dispose();
+            awaitWorkerTermination(service);
         }
     }
 
@@ -410,6 +411,7 @@ class P25ActivityLogServiceLifecycleTest
             releaseOldOutput.countDown();
             staleProducer.join(TimeUnit.SECONDS.toMillis(2));
             service.dispose();
+            awaitWorkerTermination(service);
         }
     }
 
