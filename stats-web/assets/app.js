@@ -10349,6 +10349,7 @@ function liveSystemsSection(onSelectionChange) {
   const tabNodes = new Map();
   const rowNodes = new Map();
   const decodeDisplay = serviceStatus?.decode_display || { show_control: true, show_voice: true, mode: 'percentage' };
+  const showEncryptionDetails = serviceStatus?.web_display?.show_encryption_details !== false;
   const compactQualityCount = (value) => {
     const count = Number(value || 0);
     if (count >= 1000000) return `${(count / 1000000).toFixed(1)}m`;
@@ -10493,7 +10494,8 @@ function liveSystemsSection(onSelectionChange) {
   const updateRow = (element, row) => {
     const cells = element.children;
     const conventional = channelTagSet(row.tags).has('CONVENTIONAL');
-    const statusText = row.status === 'ENCRYPTED' && row.encryption_details ? row.encryption_details : row.status;
+    const statusText = showEncryptionDetails && row.status === 'ENCRYPTED' && row.encryption_details ?
+      row.encryption_details : row.status;
     cellText(cells[0], statusText);
     cellText(cells[1], channelTagText(row));
     cellText(cells[2], conventional ? row.channel_name : row.lcn);
@@ -12423,6 +12425,54 @@ function replaceRadioReferenceOptions(select, options, selectedId, placeholder) 
   return true;
 }
 
+async function renderAdminWebDisplaySettings() {
+  const body = node('div', 'admin-section-body web-display-settings');
+  const toggle = node('input');
+  toggle.type = 'checkbox';
+  toggle.disabled = true;
+  const copy = node('span', 'admin-toggle-copy');
+  copy.append(node('strong', '', 'Show encryption algorithm and key'),
+    node('span', '', 'Replace the generic ENCRYPTED Live status with protocol-aware algorithm and key details ' +
+      'when the receiver has them.'));
+  const control = node('label', 'admin-toggle-control');
+  control.append(toggle, copy);
+  const message = node('div', 'admin-form-message');
+  message.setAttribute('role', 'status');
+  message.textContent = 'Loading Live display settings…';
+  body.append(node('p', 'admin-section-intro',
+    'Receiver-wide defaults for the browser Live view. Changes apply without restarting the receiver.'),
+    control, message);
+  content.append(section('Live display', body));
+
+  try {
+    let configuration = await requestJson('/api/v1/admin/web-display', { csrf: false });
+    toggle.checked = configuration?.show_encryption_details !== false;
+    toggle.disabled = false;
+    message.textContent = '';
+    toggle.addEventListener('change', async () => {
+      const previous = !toggle.checked;
+      const requested = toggle.checked;
+      toggle.disabled = true;
+      message.textContent = 'Saving Live display settings…';
+      try {
+        configuration = await requestJson('/api/v1/admin/web-display', {
+          method: 'PUT', body: { show_encryption_details: requested }
+        });
+        toggle.checked = configuration?.show_encryption_details !== false;
+        if (serviceStatus) serviceStatus.web_display = configuration;
+        message.textContent = 'Live display settings saved.';
+      } catch (error) {
+        toggle.checked = previous;
+        message.textContent = error.message;
+      } finally {
+        toggle.disabled = false;
+      }
+    });
+  } catch (error) {
+    message.textContent = error.message;
+  }
+}
+
 async function renderAdminRadioReferenceSettings() {
   const body = node('div', 'admin-section-body radioreference-settings');
   const accountForm = node('form', 'admin-form admin-settings-form radioreference-account-form');
@@ -12596,6 +12646,11 @@ async function renderAdminRadioReferenceSettings() {
     accountMessage.textContent = error.message;
     connect.disabled = false;
   }
+}
+
+async function renderAdminWebSettings() {
+  await renderAdminWebDisplaySettings();
+  await renderAdminRadioReferenceSettings();
 }
 
 function adminAudioNumberField(configuration, limits, key, label, help) {
@@ -12996,7 +13051,7 @@ async function renderAdmin() {
     'Monitor receiver health and manage receiver, scan-list, browser-audio, user, and access settings'),
     tabs(availableTabs.map((item) => ({ ...item, href: href('admin', { tab: item.id }) })), active));
   if (active === 'health') await renderAdminHealth();
-  else if (active === 'settings') await renderAdminRadioReferenceSettings();
+  else if (active === 'settings') await renderAdminWebSettings();
   else if (active === 'scan-lists') await renderAdminScanLists();
   else if (active === 'web-audio') await renderAdminWebAudio();
   else if (active === 'access') await renderAdminAccess();

@@ -63,6 +63,8 @@ import io.github.dsheirer.web.http.EmbeddedHttpServerShutdown;
 import io.github.dsheirer.web.http.RadioReferenceHttpController;
 import io.github.dsheirer.web.http.WebAccessHttpController;
 import io.github.dsheirer.web.http.WebCallConfigurationHttpController;
+import io.github.dsheirer.web.http.WebDisplaySettingsHttpController;
+import io.github.dsheirer.web.settings.WebDisplaySettingsService;
 import io.github.dsheirer.web.network.WebCertificateIdentity;
 import java.io.IOException;
 import java.io.InputStream;
@@ -170,6 +172,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
     private final ScanListModel mScanListModel;
     private final RadioReferenceDirectoryService mRadioReferenceDirectoryService;
     private final Path mWebAccessDatabasePath;
+    private final WebDisplaySettingsService mWebDisplaySettingsService;
     private final WebTlsMaterialService mTlsMaterialService;
     private final ScheduledExecutorService mTlsMaintenanceExecutor;
     private volatile ListenerRuntime mListener;
@@ -247,6 +250,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         mDatabase = new StatsWebDatabase(userPreferences);
         mLiveService = new StatsLiveService(mDatabase, channelProcessingManager);
         mWebAccessDatabasePath = SdrTrunkDatabasePath.getDatabasePath(mUserPreferences);
+        mWebDisplaySettingsService = new WebDisplaySettingsService(mWebAccessDatabasePath);
         mTlsMaterialService = new WebTlsMaterialService(
             mUserPreferences.getDirectoryPreference().getDirectoryApplicationRoot());
         mTlsMaintenanceExecutor = Executors.newSingleThreadScheduledExecutor(runnable -> {
@@ -681,6 +685,11 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         server.createContext(RadioReferenceHttpController.PATH, mWebAccessHttpController.protectApi(
             WebCapability.ADMIN_SETTINGS, radioReferenceController::handle));
 
+        WebDisplaySettingsHttpController webDisplaySettingsController =
+            new WebDisplaySettingsHttpController(mWebDisplaySettingsService);
+        server.createContext(WebDisplaySettingsHttpController.PATH, mWebAccessHttpController.protectApi(
+            WebCapability.ADMIN_SETTINGS, webDisplaySettingsController::handle));
+
         new StatsApiV1Controller(mDatabase, this::status, mWebAccessHttpController, mTunerDiagnosticService,
             mReceiverHealthService::snapshot)
             .register(server);
@@ -884,6 +893,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             "clearVoiceOnCallEnd", nowPlaying.isClearVoiceDecodeQualityOnCallEnd(),
             "mode", nowPlaying.getDecodeQualityDisplayMode().name().toLowerCase()
         ));
+        status.put("webDisplay", mWebDisplaySettingsService.configuration());
         return status;
     }
 

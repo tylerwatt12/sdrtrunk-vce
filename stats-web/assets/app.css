@@ -3176,6 +3176,43 @@ body.modal-open {
   accent-color: var(--accent);
 }
 
+.web-display-settings {
+  max-width: 720px;
+}
+
+.admin-toggle-control {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.admin-toggle-control input {
+  width: 20px;
+  min-height: 20px;
+  margin: 1px 0 0;
+  flex: 0 0 auto;
+  accent-color: var(--accent);
+}
+
+.admin-toggle-control:has(input:disabled) {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.admin-toggle-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.admin-toggle-copy span {
+  color: var(--muted);
+}
+
 .tuner-frequency-action-body {
   display: grid;
   gap: 12px;

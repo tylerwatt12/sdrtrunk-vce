@@ -22,10 +22,12 @@ class StatsWebFrequencyActionsUiContractTest
     {
         String source = Files.readString(APP_JAVASCRIPT);
         String admin = block(source, "async function renderAdmin()");
+        String webSettings = block(source, "async function renderAdminWebSettings()");
         String settings = block(source, "async function renderAdminRadioReferenceSettings()");
 
         assertTrue(admin.contains("id: 'settings', label: 'Web Settings'"));
-        assertTrue(admin.contains("await renderAdminRadioReferenceSettings()"));
+        assertTrue(admin.contains("await renderAdminWebSettings()"));
+        assertTrue(webSettings.contains("await renderAdminRadioReferenceSettings()"));
         assertTrue(settings.contains("Choose the state used for exact-frequency searches."));
     }
 
