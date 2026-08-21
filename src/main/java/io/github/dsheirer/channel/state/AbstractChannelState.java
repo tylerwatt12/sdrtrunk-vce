@@ -36,6 +36,9 @@ import io.github.dsheirer.source.SourceEvent;
 import io.github.dsheirer.source.heartbeat.Heartbeat;
 import io.github.dsheirer.source.heartbeat.IHeartbeatListener;
 import java.util.List;
+import java.util.Objects;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 public abstract class AbstractChannelState extends Module implements IChannelEventProvider, IDecodeEventProvider,
     IDecoderStateEventProvider, ISourceEventProvider, IHeartbeatListener, ISquelchStateProvider,
@@ -45,11 +48,17 @@ public abstract class AbstractChannelState extends Module implements IChannelEve
     protected Listener<IDecodeEvent> mDecodeEventListener;
     protected Listener<DecoderStateEvent> mDecoderStateListener;
     protected Listener<SourceEvent> mExternalSourceEventListener;
-    private Channel mChannel;
+    /*
+     * Decoder and heartbeat callbacks read the channel while lifecycle work can replace the configuration.  A volatile
+     * owner gives those callbacks one visible channel incarnation without making the real-time path acquire a lock.
+     */
+    private volatile Channel mChannel;
+    private final AtomicReference<ChannelConfigurationTransition> mChannelConfigurationTransition =
+        new AtomicReference<>();
     protected boolean mSourceOverflow = false;
     private HeartbeatReceiver mHeartbeatReceiver = new HeartbeatReceiver();
-    protected boolean mTeardownSequenceStarted = false;
-    protected boolean mTeardownSequenceCompleted = false;
+    protected volatile boolean mTeardownSequenceStarted = false;
+    protected volatile boolean mTeardownSequenceCompleted = false;
 
     //TODO: remove the IOverflowListener code from this class
 
@@ -83,7 +92,7 @@ public abstract class AbstractChannelState extends Module implements IChannelEve
      */
     protected void updateChannelConfiguration(Channel channel)
     {
-        mChannel = channel;
+        mChannel = Objects.requireNonNull(channel, "channel cannot be null");
     }
 
     /**
@@ -92,6 +101,171 @@ public abstract class AbstractChannelState extends Module implements IChannelEve
     protected Channel getChannel()
     {
         return mChannel;
+    }
+
+    /**
+     * Publishes the intent to replace this running channel before the lifecycle owner changes its channel-map key.
+     * Decoder callbacks only inspect this preallocated marker; they never wait for lifecycle work.
+     */
+    public final ChannelConfigurationTransition beginChannelConfigurationTransition(Channel channel)
+    {
+        ChannelConfigurationTransition transition = new ChannelConfigurationTransition(mChannel,
+            Objects.requireNonNull(channel, "channel cannot be null"));
+
+        if(!mChannelConfigurationTransition.compareAndSet(null, transition))
+        {
+            throw new IllegalStateException("A channel configuration transition is already active");
+        }
+
+        return transition;
+    }
+
+    /**
+     * Makes the target channel visible after the lifecycle owner has installed its new map entry.  Presentation and
+     * configuration-identifier projection can then run on the lifecycle thread before completion reconciles state.
+     */
+    public final void publishChannelConfigurationTransition(ChannelConfigurationTransition transition)
+    {
+        requireCurrentTransition(transition);
+        updateChannelConfiguration(transition.getTargetChannel());
+        transition.markPublished();
+        channelConfigurationTransitionPublished(transition);
+    }
+
+    /**
+     * Completes a published transition and reconciles any decoder teardown that overlapped the lifecycle conversion.
+     */
+    public final void completeChannelConfigurationTransition(ChannelConfigurationTransition transition)
+    {
+        requireCurrentTransition(transition);
+
+        if(!transition.isPublished())
+        {
+            throw new IllegalStateException("Channel configuration transition has not been published");
+        }
+
+        /*
+         * Clear before reconciling.  A decoder callback that captured the marker already published its volatile state,
+         * which the hook sees.  A later callback sees no marker and follows normal committed-channel handling.  This
+         * closes the hook-read/marker-clear gap without making either callback wait or retry.
+         */
+        if(!mChannelConfigurationTransition.compareAndSet(transition, null))
+        {
+            throw new IllegalStateException("Channel configuration transition is no longer active");
+        }
+
+        channelConfigurationTransitionCompleted(transition);
+    }
+
+    /**
+     * Cancels a transition before publication and restores normal handling for any state change held by the marker.
+     */
+    public final void rollbackChannelConfigurationTransition(ChannelConfigurationTransition transition)
+    {
+        if(transition != null && mChannelConfigurationTransition.get() == transition)
+        {
+            transition.markRollingBack();
+
+            if(mChannelConfigurationTransition.compareAndSet(transition, null))
+            {
+                if(transition.isPublished())
+                {
+                    updateChannelConfiguration(transition.getPreviousChannel());
+                }
+
+                channelConfigurationTransitionRolledBack(transition);
+            }
+        }
+    }
+
+    /** Current transition marker for nonblocking decoder-side reconciliation. */
+    protected final ChannelConfigurationTransition getChannelConfigurationTransition()
+    {
+        return mChannelConfigurationTransition.get();
+    }
+
+    protected void channelConfigurationTransitionPublished(ChannelConfigurationTransition transition)
+    {
+        // Optional subclass hook.
+    }
+
+    protected void channelConfigurationTransitionCompleted(ChannelConfigurationTransition transition)
+    {
+        // Optional subclass hook.
+    }
+
+    protected void channelConfigurationTransitionRolledBack(ChannelConfigurationTransition transition)
+    {
+        // Optional subclass hook.
+    }
+
+    private void requireCurrentTransition(ChannelConfigurationTransition transition)
+    {
+        if(transition == null || mChannelConfigurationTransition.get() != transition)
+        {
+            throw new IllegalStateException("Channel configuration transition is no longer active");
+        }
+    }
+
+    /**
+     * Identity-scoped marker for one running processing-chain configuration transition.
+     */
+    public static final class ChannelConfigurationTransition
+    {
+        private final Channel mPreviousChannel;
+        private final Channel mTargetChannel;
+        private final AtomicBoolean mPublished = new AtomicBoolean();
+        private final AtomicBoolean mRollingBack = new AtomicBoolean();
+        private final AtomicBoolean mTeardownObserved = new AtomicBoolean();
+
+        private ChannelConfigurationTransition(Channel previousChannel, Channel targetChannel)
+        {
+            mPreviousChannel = previousChannel;
+            mTargetChannel = targetChannel;
+        }
+
+        public Channel getPreviousChannel()
+        {
+            return mPreviousChannel;
+        }
+
+        public Channel getTargetChannel()
+        {
+            return mTargetChannel;
+        }
+
+        public boolean isPublished()
+        {
+            return mPublished.get();
+        }
+
+        private void markPublished()
+        {
+            if(!mPublished.compareAndSet(false, true))
+            {
+                throw new IllegalStateException("Channel configuration transition was already published");
+            }
+        }
+
+        private void markRollingBack()
+        {
+            mRollingBack.set(true);
+        }
+
+        public boolean isRollingBack()
+        {
+            return mRollingBack.get();
+        }
+
+        public void markTeardownObserved()
+        {
+            mTeardownObserved.set(true);
+        }
+
+        public boolean wasTeardownObserved()
+        {
+            return mTeardownObserved.get();
+        }
     }
 
     /**

@@ -24,6 +24,8 @@ import io.github.dsheirer.metadata.site.FactConfirmationPolicy;
 import io.github.dsheirer.metadata.site.StableFactTracker;
 import io.github.dsheirer.module.decode.dmr.channel.DMRAbsoluteChannel;
 import io.github.dsheirer.module.decode.dmr.channel.DMRChannel;
+import io.github.dsheirer.module.decode.dmr.channel.DMRLsn;
+import io.github.dsheirer.module.decode.dmr.channel.DMRTier3Channel;
 import io.github.dsheirer.module.decode.dmr.channel.TimeslotFrequency;
 import io.github.dsheirer.module.decode.dmr.identifier.DMRNetwork;
 import io.github.dsheirer.module.decode.dmr.identifier.DMRSite;
@@ -131,7 +133,7 @@ public class DMRNetworkConfigurationMonitor
             .sorted(Comparator.comparingInt((ObservedChannel observed) -> observed.channel().getChannelNumber())
                 .thenComparingInt(observed -> observed.channel().getTimeslot()))
             .map(observed -> new DMRNetworkConfigurationSnapshot.Channel(
-                observed.channel().getClass().getSimpleName(), observed.channel().getChannelNumber(),
+                observed.descriptor(), observed.channel().getChannelNumber(),
                 observed.channel().getTimeslot(), positive(observed.channel().getDownlinkFrequency()),
                 positive(observed.channel().getUplinkFrequency()), observed.roles(), observed.frequencySource(),
                 observed.observedAtEpochMilliseconds()))
@@ -164,6 +166,133 @@ public class DMRNetworkConfigurationMonitor
         return new DMRNetworkConfigurationSnapshot("DMR", getVariant(), value(mDMRNetwork), value(mDMRSite),
             mBrand, mTier3Model != null ? mTier3Model.name() : null, mMode, mChannelType,
             mColorCodeTS1, mColorCodeTS2, channels, neighbors);
+    }
+
+    /**
+     * Imports immutable state learned by the preceding Capacity Plus rest-channel chain.  This runs once on the
+     * lifecycle worker before the replacement decoder starts, so snapshot creation on the decoder callback retains
+     * its original bounded work and never merges an additional transferred collection.
+     */
+    public synchronized void seed(DMRNetworkConfigurationSnapshot snapshot)
+    {
+        if(snapshot == null)
+        {
+            return;
+        }
+
+        NetworkFamily family = networkFamily(snapshot.variant());
+
+        if(family != null)
+        {
+            mNetworkFamilyTracker.observeAuthoritative(family, latestObservation(snapshot), ignored -> true);
+        }
+
+        mDMRNetwork = snapshot.network() != null ? DMRNetwork.create(snapshot.network()) : null;
+        mDMRSite = snapshot.site() != null ? DMRSite.create(snapshot.site()) : null;
+        mTier3Model = model(snapshot.model());
+        mBrand = snapshot.brand();
+        mMode = snapshot.mode();
+        mChannelType = snapshot.channelType();
+        mColorCodeTS1 = snapshot.colorCodeTimeslot1();
+        mColorCodeTS2 = snapshot.colorCodeTimeslot2();
+
+        for(DMRNetworkConfigurationSnapshot.Channel channel: snapshot.channels())
+        {
+            if(channel != null && channel.logicalChannelNumber() != null && channel.logicalChannelNumber() > 0 &&
+                channel.timeslot() != null && channel.timeslot() >= 1 && channel.timeslot() <= 2)
+            {
+                DMRChannel dmrChannel = seededChannel(channel);
+                ObservedChannel observed = new ObservedChannel(channel.descriptor(), dmrChannel, channel.roles(),
+                    channel.frequencySource(), channel.observedAtEpochMilliseconds());
+                ChannelKey key = new ChannelKey(channel.logicalChannelNumber(), channel.timeslot());
+                mObservedChannelMap.merge(key, observed, ObservedChannel::merge);
+
+                if(channel.frequencySource() == DMRNetworkConfigurationSnapshot.FrequencySource.OVER_THE_AIR &&
+                    (dmrChannel.getDownlinkFrequency() > 0 || dmrChannel.getUplinkFrequency() > 0))
+                {
+                    mOverTheAirFrequencyMap.put(channel.logicalChannelNumber(),
+                        new LearnedFrequency(dmrChannel.getDownlinkFrequency(), dmrChannel.getUplinkFrequency()));
+                }
+            }
+        }
+    }
+
+    private static DMRChannel seededChannel(DMRNetworkConfigurationSnapshot.Channel channel)
+    {
+        long downlink = channel.downlink() != null ? channel.downlink() : 0;
+        long uplink = channel.uplink() != null ? channel.uplink() : 0;
+
+        if(downlink > 0 || uplink > 0)
+        {
+            return new DMRAbsoluteChannel(channel.logicalChannelNumber(), channel.timeslot(), downlink, uplink);
+        }
+
+        int channelNumber = channel.logicalChannelNumber();
+        int timeslot = channel.timeslot();
+
+        if(channel.descriptor() != null && channel.descriptor().toUpperCase().contains("LSN"))
+        {
+            return new DMRLsn(((channelNumber - 1) * 2) + timeslot);
+        }
+
+        return new DMRTier3Channel(channelNumber, timeslot);
+    }
+
+    private static NetworkFamily networkFamily(String variant)
+    {
+        if(variant != null)
+        {
+            try
+            {
+                return NetworkFamily.valueOf(variant);
+            }
+            catch(IllegalArgumentException ignored)
+            {
+                //Ignore an unrecognized presentation value and let new decoded messages establish the family.
+            }
+        }
+
+        return null;
+    }
+
+    private static Model model(String model)
+    {
+        if(model != null)
+        {
+            try
+            {
+                return Model.valueOf(model);
+            }
+            catch(IllegalArgumentException ignored)
+            {
+                //Ignore an unrecognized presentation value and let new decoded messages establish the model.
+            }
+        }
+
+        return null;
+    }
+
+    private static long latestObservation(DMRNetworkConfigurationSnapshot snapshot)
+    {
+        long latest = 0;
+
+        for(DMRNetworkConfigurationSnapshot.Channel channel: snapshot.channels())
+        {
+            if(channel != null)
+            {
+                latest = Math.max(latest, channel.observedAtEpochMilliseconds());
+            }
+        }
+
+        for(DMRNetworkConfigurationSnapshot.NeighborSite neighbor: snapshot.neighborSites())
+        {
+            if(neighbor != null)
+            {
+                latest = Math.max(latest, neighbor.observedAtEpochMilliseconds());
+            }
+        }
+
+        return latest;
     }
 
     private String getVariant()
@@ -645,12 +774,22 @@ public class DMRNetworkConfigurationMonitor
         }
     }
 
-    private record ObservedChannel(DMRChannel channel, Set<DMRNetworkConfigurationSnapshot.ChannelRole> roles,
+    private record ObservedChannel(String descriptor, DMRChannel channel,
+                                   Set<DMRNetworkConfigurationSnapshot.ChannelRole> roles,
                                    DMRNetworkConfigurationSnapshot.FrequencySource frequencySource,
                                    long observedAtEpochMilliseconds)
     {
+        private ObservedChannel(DMRChannel channel, Set<DMRNetworkConfigurationSnapshot.ChannelRole> roles,
+                                DMRNetworkConfigurationSnapshot.FrequencySource frequencySource,
+                                long observedAtEpochMilliseconds)
+        {
+            this(channel.getClass().getSimpleName(), channel, roles, frequencySource,
+                observedAtEpochMilliseconds);
+        }
+
         private ObservedChannel
         {
+            descriptor = descriptor != null ? descriptor : channel.getClass().getSimpleName();
             roles = Set.copyOf(roles);
         }
 
@@ -665,7 +804,8 @@ public class DMRNetworkConfigurationMonitor
             EnumSet<DMRNetworkConfigurationSnapshot.ChannelRole> mergedRoles =
                 EnumSet.copyOf(roles);
             mergedRoles.addAll(candidate.roles());
-            return new ObservedChannel(frequencyWinner.channel(), mergedRoles, frequencyWinner.frequencySource(),
+            return new ObservedChannel(frequencyWinner.descriptor(), frequencyWinner.channel(), mergedRoles,
+                frequencyWinner.frequencySource(),
                 Math.max(observedAtEpochMilliseconds, candidate.observedAtEpochMilliseconds()));
         }
 

@@ -46,6 +46,10 @@ import io.github.dsheirer.module.Module;
 import io.github.dsheirer.module.ProcessingChain;
 import io.github.dsheirer.module.decode.DecoderFactory;
 import io.github.dsheirer.module.decode.DecoderType;
+import io.github.dsheirer.module.decode.dmr.DMRChannelConfigurationTransitionNotification;
+import io.github.dsheirer.module.decode.dmr.DMRRestChannelHandoffRequest;
+import io.github.dsheirer.module.decode.dmr.DMRTrafficChannelManager;
+import io.github.dsheirer.module.decode.dmr.DMRTrafficChannelManager.PreparedRestChannelHandoff;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
 import io.github.dsheirer.module.log.EventLogManager;
 import io.github.dsheirer.preference.UserPreferences;
@@ -58,6 +62,9 @@ import io.github.dsheirer.source.SourceException;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import io.github.dsheirer.source.tuner.channel.TunerChannelSource;
+import io.github.dsheirer.source.tuner.channel.rotation.ChannelRotationMonitorPauseRequest;
+import io.github.dsheirer.source.tuner.channel.rotation.ChannelRotationMonitorResumeRequest;
+import io.github.dsheirer.source.tuner.channel.rotation.DisableChannelRotationMonitorRequest;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.util.ThreadPool;
 import java.awt.GraphicsEnvironment;
@@ -92,6 +99,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     private static final Logger mLog = LoggerFactory.getLogger(ChannelProcessingManager.class);
     private static final String TUNER_UNAVAILABLE_DESCRIPTION = "TUNER UNAVAILABLE";
     private static final String CONFIGURATION_UNAVAILABLE_DESCRIPTION = "CHANNEL CONFIGURATION UNAVAILABLE";
+    private static final long DMR_REST_CHANNEL_RETRY_DELAY_MILLISECONDS = 500;
     private Map<Channel,ProcessingChain> mProcessingChainsMap = new ConcurrentHashMap<>();
     private Lock mLock = new ReentrantLock();
 
@@ -110,8 +118,12 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     private AliasModel mAliasModel;
     private UserPreferences mUserPreferences;
     private List<Long> mLoggedFrequencies = new ArrayList<>();
-    private List<ScheduledFuture<?>> mDelayedChannelStartTasks = new ArrayList<>();
     private final Executor mSiteMetadataExecutor = MoreExecutors.newSequentialExecutor(ThreadPool.CACHED);
+    private final Map<Channel,DMRRestChannelAttempt> mDmrRestChannelAttempts = new HashMap<>();
+    private final DMRRestChannelHandoffCoordinator mDmrRestChannelHandoffCoordinator;
+    private final long mDmrRestChannelRetryDelayMilliseconds;
+    private volatile boolean mShuttingDown;
+    private volatile boolean mClosed;
 
     /**
      * Constructs the channel processing manager
@@ -124,12 +136,29 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     public ChannelProcessingManager(EventLogManager eventLogManager, TunerManager tunerManager, AliasModel aliasModel,
                                     UserPreferences userPreferences)
     {
+        this(eventLogManager, tunerManager, aliasModel, userPreferences,
+            DMR_REST_CHANNEL_RETRY_DELAY_MILLISECONDS);
+    }
+
+    /**
+     * Test seam for deterministic replacement-source retry timing.
+     */
+    ChannelProcessingManager(EventLogManager eventLogManager, TunerManager tunerManager, AliasModel aliasModel,
+                             UserPreferences userPreferences, long dmrRestChannelRetryDelayMilliseconds)
+    {
+        if(dmrRestChannelRetryDelayMilliseconds <= 0)
+        {
+            throw new IllegalArgumentException("DMR rest-channel retry delay must be positive");
+        }
+
         mEventLogManager = eventLogManager;
         mTunerManager = tunerManager;
         mAliasModel = aliasModel;
         mUserPreferences = userPreferences;
         mChannelActivityModel = new ChannelActivityModel(aliasModel, userPreferences.getNowPlayingPreference());
         mChannelActivityModel.setActiveChannelSupplier(this::getActiveChannelActivitySnapshot);
+        mDmrRestChannelRetryDelayMilliseconds = dmrRestChannelRetryDelayMilliseconds;
+        mDmrRestChannelHandoffCoordinator = new DMRRestChannelHandoffCoordinator(this::processDmrRestChannelHandoff);
     }
 
     public ChannelActivityModel getChannelActivityModel()
@@ -318,7 +347,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         switch(event.getEvent())
         {
             case REQUEST_ENABLE:
-                if(!isProcessing(channel))
+                if(!mClosed && !mShuttingDown && !isProcessing(channel))
                 {
                     try
                     {
@@ -395,7 +424,579 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
      */
     public void start(Channel channel) throws ChannelException
     {
+        if(mClosed || mShuttingDown)
+        {
+            throw new ChannelException("Channel processing manager is shutting down or closed");
+        }
+
         startProcessing(new ChannelStartProcessingRequest(channel));
+    }
+
+    /**
+     * Accepts a Capacity Plus rest-channel handoff from a decoder callback.  This subscriber performs only a fixed,
+     * bounded offer; conversion, tuner allocation, logging/recording construction and startup run on the dedicated
+     * lifecycle worker.
+     */
+    @Subscribe
+    public void requestDmrRestChannelHandoff(DMRRestChannelHandoffRequest request)
+    {
+        if(mClosed || mShuttingDown || !mDmrRestChannelHandoffCoordinator.offer(request))
+        {
+            request.owner().completeRestHandoff(request);
+        }
+    }
+
+    private synchronized void processDmrRestChannelHandoff(DMRRestChannelHandoffRequest request)
+    {
+        try
+        {
+            DMRTrafficChannelManager owner = request.owner();
+
+            if(mClosed || mShuttingDown || !owner.isPendingRestHandoff(request))
+            {
+                owner.completeRestHandoff(request);
+                return;
+            }
+
+            DMRRestChannelAttempt existing = mDmrRestChannelAttempts.get(request.parentChannel());
+
+            if(existing != null)
+            {
+                if(existing.matches(request) && existing.isActive())
+                {
+                    attemptDmrRestChannelStart(existing);
+                }
+                else
+                {
+                    owner.completeRestHandoff(request);
+                }
+
+                return;
+            }
+
+            ProcessingChain expectedChain = mProcessingChainsMap.get(request.parentChannel());
+
+            if(!isExpectedDmrRestHandoffChain(request, expectedChain))
+            {
+                owner.completeRestHandoff(request);
+                return;
+            }
+
+            PreparedRestChannelHandoff prepared = owner.prepareRestChannelHandoff(request);
+
+            if(prepared == null)
+            {
+                owner.completeRestHandoff(request);
+                return;
+            }
+
+            DMRRestChannelAttempt attempt = new DMRRestChannelAttempt(prepared, expectedChain,
+                snapshotDmrRestChannelSiblingTrafficChains(request.parentChannel()));
+            mDmrRestChannelAttempts.put(request.parentChannel(), attempt);
+
+            if(!convertDmrRestChannelToTraffic(attempt))
+            {
+                abortDmrRestChannelAttempt(attempt);
+                return;
+            }
+
+            attemptDmrRestChannelStart(attempt);
+        }
+        catch(RuntimeException exception)
+        {
+            mLog.error("Error processing DMR rest-channel handoff", exception);
+            DMRRestChannelAttempt attempt = null;
+
+            try
+            {
+                attempt = mDmrRestChannelAttempts.get(request.parentChannel());
+            }
+            catch(RuntimeException cleanupException)
+            {
+                mLog.error("Error locating DMR rest-channel attempt after handler failure", cleanupException);
+            }
+
+            if(attempt != null && attempt.matches(request))
+            {
+                abortDmrRestChannelAttempt(attempt);
+            }
+            else
+            {
+                completeDmrRestChannelRequest(request);
+            }
+        }
+    }
+
+    private boolean isExpectedDmrRestHandoffChain(DMRRestChannelHandoffRequest request,
+                                                   ProcessingChain processingChain)
+    {
+        if(processingChain == null || !request.parentChannel().isStandardChannel() ||
+            mProcessingChainsMap.get(request.parentChannel()) != processingChain ||
+            processingChain.getModules().stream().noneMatch(module -> module == request.owner()))
+        {
+            return false;
+        }
+
+        Source source = processingChain.getSource();
+        return source != null && source.getFrequency() == request.currentFrequency();
+    }
+
+    private List<ProcessingChainIncarnation> snapshotDmrRestChannelSiblingTrafficChains(Channel parentChannel)
+    {
+        List<ProcessingChainIncarnation> siblings = new ArrayList<>();
+        String configurationId = parentChannel.getConfigurationId();
+
+        for(Map.Entry<Channel,ProcessingChain> entry: mProcessingChainsMap.entrySet())
+        {
+            Channel channel = entry.getKey();
+            ProcessingChain processingChain = entry.getValue();
+
+            if(channel != null && processingChain != null && channel.isTrafficChannel() &&
+                configurationId.equals(channel.getConfigurationId()))
+            {
+                siblings.add(new ProcessingChainIncarnation(channel, processingChain));
+            }
+        }
+
+        return List.copyOf(siblings);
+    }
+
+    private boolean convertDmrRestChannelToTraffic(DMRRestChannelAttempt attempt)
+    {
+        PreparedRestChannelHandoff prepared = attempt.getPrepared();
+        DMRRestChannelHandoffRequest handoff = prepared.handoff();
+        ProcessingChain processingChain = attempt.getExpectedChain();
+        Channel parentChannel = handoff.parentChannel();
+        Channel trafficChannel = prepared.trafficChannel();
+
+        if(!isExpectedDmrRestHandoffChain(handoff, processingChain))
+        {
+            return false;
+        }
+
+        ChannelRotationMonitorPauseRequest pauseRequest = new ChannelRotationMonitorPauseRequest();
+        boolean conversionCommitted = false;
+        boolean parentMappingRemoved = false;
+        boolean trafficMappingInstalled = false;
+        boolean dmrConversionNotificationPosted = false;
+        DMRChannelConfigurationTransitionNotification.Suspend dmrSuspension = null;
+        AbstractChannelState.ChannelConfigurationTransition channelStateTransition = null;
+
+        try
+        {
+            processingChain.getEventBus().post(pauseRequest);
+
+            if(!pauseRequest.isSourceStableAt(handoff.currentFrequency()) ||
+                !isExpectedDmrRestHandoffChain(handoff, processingChain))
+            {
+                return false;
+            }
+
+            //Revoke both decoder states' control-channel allocation authority before changing ownership.  Event-bus
+            //subscriber failures are isolated by Guava, so require an explicit acknowledgment from every DMR timeslot.
+            dmrSuspension = new DMRChannelConfigurationTransitionNotification.Suspend(trafficChannel);
+            processingChain.getEventBus().post(dmrSuspension);
+
+            if(!dmrSuspension.isAcknowledged(getTrafficIdentifierTimeslots(parentChannel).length))
+            {
+                mLog.error("Unable to suspend all DMR decoder allocation authority before rest-channel conversion " +
+                    "[acknowledged={}]", dmrSuspension.getAcknowledgedSubscriberCount());
+                return false;
+            }
+
+            //Only mutate manager accounting after every decoder state has acknowledged that allocation authority is
+            //closed.  This prevents an in-flight grant from observing the prepared traffic allocation before the CPM
+            //map conversion can become authoritative.
+            if(!handoff.owner().commitRestChannelHandoff(prepared))
+            {
+                return false;
+            }
+
+            //Publish conversion intent before changing the map.  Decoder callbacks use this lock-free marker to hold
+            //an overlapping teardown until the traffic key exists; they never wait for this lifecycle worker.
+            channelStateTransition = processingChain.beginChannelConfigurationTransition(trafficChannel);
+
+            if(!mProcessingChainsMap.remove(parentChannel, processingChain))
+            {
+                return false;
+            }
+
+            parentMappingRemoved = true;
+            attachDetachedOwnerChannelEventRoute(attempt);
+            processingChain.removeTrafficChannelManager();
+
+            if(mProcessingChainsMap.putIfAbsent(trafficChannel, processingChain) != null)
+            {
+                return false;
+            }
+
+            trafficMappingInstalled = true;
+            prepared.markConverted();
+            attempt.setConverted();
+            conversionCommitted = true;
+            //Publish converted flags before any observer work.  An abort or overlapping TEARDOWN then lets the normal
+            //traffic stop path own the final false value instead of leaving either channel with stale UI state.
+            setConvertedChannelProcessingFlags(parentChannel, trafficChannel);
+
+            //The traffic key is authoritative now.  Publish functional channel/type and revoke the decoder's parent
+            //allocation role before lower-priority activity and identifier projection.
+            processingChain.publishChannelConfigurationTransition(channelStateTransition);
+            processingChain.channelConfigurationChanged(new ChannelConfigurationChangeNotification(trafficChannel));
+            dmrConversionNotificationPosted = true;
+
+            processingChain.getEventBus().post(new DisableChannelRotationMonitorRequest());
+            mChannelActivityModel.channelStopped(parentChannel);
+            mChannelActivityModel.channelStarted(trafficChannel,
+                processingChain.getChannelState().getChannelMetadata(), processingChain);
+
+            for(int timeslot: getTrafficIdentifierTimeslots(trafficChannel))
+            {
+                IdentifierUpdateNotification notification = new IdentifierUpdateNotification(
+                    TrafficChannelIdentifier.create(), IdentifierUpdateNotification.Operation.ADD, timeslot);
+                processingChain.getChannelState().updateChannelStateIdentifiers(notification);
+            }
+
+            processingChain.completeChannelConfigurationTransition(channelStateTransition);
+            channelStateTransition = null;
+            return true;
+        }
+        finally
+        {
+            if(!conversionCommitted)
+            {
+                rollbackPausedDmrRestChannelConversion(attempt, parentMappingRemoved, trafficMappingInstalled,
+                    channelStateTransition, dmrSuspension);
+            }
+            else
+            {
+                if(!dmrConversionNotificationPosted)
+                {
+                    try
+                    {
+                        processingChain.channelConfigurationChanged(
+                            new ChannelConfigurationChangeNotification(trafficChannel));
+                    }
+                    catch(RuntimeException exception)
+                    {
+                        mLog.error("Error committing DMR decoder mode during handoff cleanup", exception);
+                    }
+                }
+
+                if(channelStateTransition != null)
+                {
+                    //An observer projection failed after the map conversion became irreversible.  Publish/complete the
+                    //functional state before the outer handler aborts and stops the converted chain.
+                    try
+                    {
+                        if(!channelStateTransition.isPublished())
+                        {
+                            processingChain.publishChannelConfigurationTransition(channelStateTransition);
+                        }
+
+                        processingChain.completeChannelConfigurationTransition(channelStateTransition);
+                    }
+                    catch(RuntimeException exception)
+                    {
+                        mLog.error("Error completing DMR channel-state transition during handoff cleanup", exception);
+                    }
+                }
+            }
+        }
+    }
+
+    private void rollbackPausedDmrRestChannelConversion(DMRRestChannelAttempt attempt, boolean parentMappingRemoved,
+                                                        boolean trafficMappingInstalled,
+                                                        AbstractChannelState.ChannelConfigurationTransition transition,
+                                                        DMRChannelConfigurationTransitionNotification.Suspend dmrSuspension)
+    {
+        PreparedRestChannelHandoff prepared = attempt.getPrepared();
+        DMRRestChannelHandoffRequest handoff = prepared.handoff();
+        ProcessingChain processingChain = attempt.getExpectedChain();
+
+        try
+        {
+            if(trafficMappingInstalled)
+            {
+                mProcessingChainsMap.remove(prepared.trafficChannel(), processingChain);
+            }
+        }
+        catch(RuntimeException exception)
+        {
+            mLog.error("Error removing rolled-back DMR traffic-channel mapping", exception);
+        }
+
+        try
+        {
+            if(processingChain.getModules().stream().noneMatch(module -> module == handoff.owner()))
+            {
+                processingChain.addModule(handoff.owner());
+            }
+        }
+        catch(RuntimeException exception)
+        {
+            mLog.error("Error restoring DMR traffic-channel manager after handoff rollback", exception);
+        }
+
+        try
+        {
+            if(parentMappingRemoved &&
+                mProcessingChainsMap.putIfAbsent(handoff.parentChannel(), processingChain) != null)
+            {
+                mLog.error("Unable to restore DMR parent-channel mapping after handoff rollback");
+            }
+        }
+        catch(RuntimeException exception)
+        {
+            mLog.error("Error restoring DMR parent-channel mapping after handoff rollback", exception);
+        }
+
+        try
+        {
+            processingChain.rollbackChannelConfigurationTransition(transition);
+        }
+        catch(RuntimeException exception)
+        {
+            mLog.error("Error rolling back DMR channel-state transition", exception);
+        }
+
+        boolean accountingRestored = false;
+
+        try
+        {
+            //Always return the claimed pooled channel and clear the target-frequency token before reopening decoder
+            //allocation authority.  Both operations are identity-scoped and idempotent when the outer abort repeats
+            //them.  This is safe whether manager commit never ran, returned false, or completed and must be reversed.
+            handoff.owner().releaseRestChannelReservation(prepared);
+            handoff.owner().completeRestHandoff(handoff);
+            accountingRestored = true;
+        }
+        catch(RuntimeException exception)
+        {
+            mLog.error("Error restoring DMR manager accounting before decoder-authority rollback", exception);
+        }
+
+        boolean decoderAuthorityRestored = dmrSuspension == null;
+
+        try
+        {
+            if(accountingRestored && dmrSuspension != null)
+            {
+                processingChain.getEventBus().post(dmrSuspension.rollback());
+                decoderAuthorityRestored = true;
+            }
+        }
+        catch(RuntimeException exception)
+        {
+            mLog.error("Error restoring DMR decoder authority after manager-accounting rollback", exception);
+        }
+
+        try
+        {
+            removeDetachedOwnerChannelEventRoute(attempt);
+        }
+        catch(RuntimeException exception)
+        {
+            mLog.error("Error removing temporary DMR channel-event route after handoff rollback", exception);
+        }
+
+        try
+        {
+            if(accountingRestored && decoderAuthorityRestored)
+            {
+                processingChain.getEventBus().post(new ChannelRotationMonitorResumeRequest());
+            }
+            else
+            {
+                mLog.error("DMR rest-channel rollback left decoder authority and source rotation closed because " +
+                    "manager accounting or decoder authority could not be restored safely");
+            }
+        }
+        catch(RuntimeException exception)
+        {
+            mLog.error("Error resuming DMR channel rotation after handoff rollback", exception);
+        }
+    }
+
+    private void attachDetachedOwnerChannelEventRoute(DMRRestChannelAttempt attempt)
+    {
+        if(attempt.attachDetachedOwnerChannelEventRoute())
+        {
+            mChannelEventBroadcaster.addListener(attempt.getDetachedOwnerChannelEventRoute());
+        }
+    }
+
+    private void removeDetachedOwnerChannelEventRoute(DMRRestChannelAttempt attempt)
+    {
+        if(attempt != null && attempt.detachDetachedOwnerChannelEventRoute())
+        {
+            mChannelEventBroadcaster.removeListener(attempt.getDetachedOwnerChannelEventRoute());
+        }
+    }
+
+    private static void setConvertedChannelProcessingFlags(Channel parentChannel, Channel trafficChannel)
+    {
+        setChannelProcessingFlag(parentChannel, false);
+        setChannelProcessingFlag(trafficChannel, true);
+    }
+
+    private void attemptDmrRestChannelStart(DMRRestChannelAttempt attempt)
+    {
+        DMRRestChannelHandoffRequest handoff = attempt.getPrepared().handoff();
+
+        if(!attempt.isActive() || mClosed || mShuttingDown || !handoff.owner().isPendingRestHandoff(handoff) ||
+            mDmrRestChannelAttempts.get(handoff.parentChannel()) != attempt)
+        {
+            abortDmrRestChannelAttempt(attempt);
+            return;
+        }
+
+        try
+        {
+            startProcessing(attempt.getPrepared().startRequest(), true);
+            ProcessingChain replacement = mProcessingChainsMap.get(handoff.parentChannel());
+
+            if(replacement == null || !replacement.isProcessing() ||
+                replacement.getModules().stream().noneMatch(module -> module == handoff.owner()))
+            {
+                throw new ChannelException("Replacement DMR rest channel did not start");
+            }
+
+            completeDmrRestChannelAttempt(attempt);
+        }
+        catch(TunerUnavailableChannelException exception)
+        {
+            if(isRunnable(handoff.parentChannel()) && !mClosed && !mShuttingDown)
+            {
+                scheduleDmrRestChannelRetry(attempt);
+            }
+            else
+            {
+                abortDmrRestChannelAttempt(attempt);
+            }
+        }
+        catch(ChannelException exception)
+        {
+            mLog.error("Terminal error starting replacement DMR rest channel", exception);
+            abortDmrRestChannelAttempt(attempt);
+        }
+        catch(RuntimeException exception)
+        {
+            mLog.error("Error starting replacement DMR rest channel", exception);
+            abortDmrRestChannelAttempt(attempt);
+        }
+    }
+
+    private void scheduleDmrRestChannelRetry(DMRRestChannelAttempt attempt)
+    {
+        attempt.schedule(() ->
+        {
+            if(attempt.isActive() && !mClosed && !mShuttingDown &&
+                !mDmrRestChannelHandoffCoordinator.offer(attempt.getPrepared().handoff()))
+            {
+                scheduleDmrRestChannelRetry(attempt);
+            }
+        }, mDmrRestChannelRetryDelayMilliseconds);
+    }
+
+    private void completeDmrRestChannelAttempt(DMRRestChannelAttempt attempt)
+    {
+        DMRRestChannelHandoffRequest handoff = attempt.getPrepared().handoff();
+
+        if(attempt.deactivate())
+        {
+            removeDetachedOwnerChannelEventRoute(attempt);
+            mDmrRestChannelAttempts.remove(handoff.parentChannel(), attempt);
+            handoff.owner().completeSuccessfulRestHandoff(handoff);
+        }
+    }
+
+    private void abortDmrRestChannelAttempt(DMRRestChannelAttempt attempt)
+    {
+        if(attempt == null || !attempt.deactivate())
+        {
+            return;
+        }
+
+        PreparedRestChannelHandoff prepared = attempt.getPrepared();
+        DMRRestChannelHandoffRequest handoff = prepared.handoff();
+
+        try
+        {
+            if(attempt.isConverted())
+            {
+                stopDmrRestChannelSiblingTrafficChains(attempt);
+
+                if(mProcessingChainsMap.get(prepared.trafficChannel()) == attempt.getExpectedChain())
+                {
+                    try
+                    {
+                        stopProcessing(prepared.trafficChannel());
+                    }
+                    catch(Exception exception)
+                    {
+                        mLog.error("Error stopping converted DMR traffic channel during handoff abort", exception);
+                    }
+                }
+
+                try
+                {
+                    handoff.owner().removeDecodeEventListener(null);
+                    processDetachedTrafficTeardown(attempt);
+                }
+                catch(RuntimeException exception)
+                {
+                    mLog.error("Error processing converted DMR traffic-channel teardown during handoff abort", exception);
+                }
+            }
+            else
+            {
+                try
+                {
+                    handoff.owner().releaseRestChannelReservation(prepared);
+                }
+                catch(RuntimeException exception)
+                {
+                    mLog.error("Error releasing DMR rest-channel reservation during handoff abort", exception);
+                }
+            }
+        }
+        finally
+        {
+            removeDetachedOwnerChannelEventRoute(attempt);
+            mDmrRestChannelAttempts.remove(handoff.parentChannel(), attempt);
+            completeDmrRestChannelRequest(handoff);
+        }
+    }
+
+    private void stopDmrRestChannelSiblingTrafficChains(DMRRestChannelAttempt attempt)
+    {
+        for(ProcessingChainIncarnation sibling: attempt.getSiblingTrafficChains())
+        {
+            if(mProcessingChainsMap.get(sibling.channel()) == sibling.processingChain())
+            {
+                try
+                {
+                    stopProcessing(sibling.channel());
+                }
+                catch(Exception exception)
+                {
+                    mLog.error("Error stopping sibling DMR traffic channel during rest-channel handoff abort",
+                        exception);
+                }
+            }
+        }
+    }
+
+    private void completeDmrRestChannelRequest(DMRRestChannelHandoffRequest request)
+    {
+        try
+        {
+            request.owner().completeRestHandoff(request);
+        }
+        catch(RuntimeException exception)
+        {
+            mLog.error("Error completing DMR rest-channel handoff request", exception);
+        }
     }
 
     /**
@@ -406,7 +1007,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     @Subscribe
     public void startChannelRequest(ChannelStartProcessingRequest request)
     {
-        if(!isProcessing(request.getChannel()))
+        if(!mClosed && !mShuttingDown && !isProcessing(request.getChannel()))
         {
             try
             {
@@ -414,14 +1015,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
             }
             catch(ChannelException _)
             {
-                if(request.isPersistentAttempt() && isRunnable(request.getChannel()))
-                {
-                    DelayedChannelStartTask delayedChannelStartTask = new DelayedChannelStartTask(request);
-                    ScheduledFuture<?> future = ThreadPool.SCHEDULED
-                        .schedule(delayedChannelStartTask, 500, TimeUnit.MILLISECONDS);
-                    delayedChannelStartTask.setScheduledFuture(future);
-                    mDelayedChannelStartTasks.add(future);
-                }
+                //The requester owns any retry policy. DMR rest-channel retries use the bounded handoff coordinator.
             }
         }
     }
@@ -464,7 +1058,18 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
      */
     private synchronized void startProcessing(ChannelStartProcessingRequest request) throws ChannelException
     {
+        startProcessing(request, false);
+    }
+
+    private synchronized void startProcessing(ChannelStartProcessingRequest request, boolean strictFunctionalStartup)
+        throws ChannelException
+    {
         Channel channel = request.getChannel();
+
+        if(mClosed || mShuttingDown)
+        {
+            throw new ChannelException("Channel processing manager is shutting down or closed");
+        }
 
         if(isProcessing(channel))
         {
@@ -495,178 +1100,261 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
 
         if(source == null)
         {
-            //This has to be done on the FX event thread when the configuration editor is constructed
-            if(!GraphicsEnvironment.isHeadless())
-            {
-                Platform.runLater(() -> channel.setProcessing(false));
-            }
+            setChannelProcessingFlag(channel, false);
 
             mChannelEventBroadcaster.broadcast(new ChannelEvent(channel,
                 ChannelEvent.Event.NOTIFICATION_PROCESSING_START_REJECTED, TUNER_UNAVAILABLE_DESCRIPTION));
 
-            throw new ChannelException("No Tuner Available");
+            throw new TunerUnavailableChannelException();
         }
 
-        ProcessingChain processingChain = new ProcessingChain(channel, mAliasModel);
+        ProcessingChain processingChain = null;
+        boolean sourceAssignedToChain = false;
 
-        //Certain decoders aggregate the decode events in the parent channel that also includes any events produced
-        //by the traffic channels.  Establish listener registration depending on if this channel is a traffic channel
-        //and the request contains the parent event history, or if this is a parent channel and the request contains
-        //the traffic channel event history.
-        if(request.hasParentDecodeEventHistory())
+        try
         {
-            processingChain.getDecodeEventHistory().addListener(request.getParentDecodeEventHistory());
-        }
-        else if(request.hasChildDecodeEventHistory())
-        {
-            request.getChildDecodeEventHistory().addListener(processingChain.getDecodeEventHistory());
-        }
+            processingChain = new ProcessingChain(channel, mAliasModel);
 
-        //Register to receive event bus requests/notifications
-        processingChain.getEventBus().register(ChannelProcessingManager.this);
+            //Register to receive event bus requests/notifications
+            processingChain.getEventBus().register(ChannelProcessingManager.this);
 
-        mChannelEventBroadcaster.addListener(processingChain);
+            mChannelEventBroadcaster.addListener(processingChain);
 
-        /* Register global listeners */
-        processingChain.addAudioCallListener(event -> mChannelActivityModel.receiveAudioCallEvent(channel, event));
+            /* Register global listeners */
+            processingChain.addAudioCallListener(event -> mChannelActivityModel.receiveAudioCallEvent(channel, event));
 
-        for(Listener<AudioCallEvent> listener : mAudioCallListeners)
-        {
-            processingChain.addAudioCallListener(listener);
-        }
-
-        for(Listener<IDecodeEvent> listener : mDecodeEventListeners)
-        {
-            processingChain.addDecodeEventListener(listener);
-        }
-
-        for(BiConsumer<Channel,IDecodeEvent> listener : mChannelDecodeEventListeners)
-        {
-            processingChain.addDecodeEventListener(event -> listener.accept(channel, event));
-        }
-
-        //Add a listener to detect source error state that indicates the channel should be shutdown.
-        //Note: processing chain will only add this once.
-        processingChain.addSourceEventListener(mSourceErrorListener);
-
-        //Register this manager to receive channel events from traffic channel manager modules within
-        //the processing chain
-        processingChain.addChannelEventListener(this);
-
-        /* Processing Modules */
-        List<Module> modules = DecoderFactory.getModules(channel, mAliasModel, mUserPreferences,
-            request.getTrafficChannelManager(), request.getChannelDescriptor(), source.getSampleRate(),
-            mChannelActivityModel);
-
-        if(supportsControlChannelQuality(channel))
-        {
-            modules.add(new ControlChannelQualityMonitor(channel, source.getFrequency(),
-                this::receiveControlChannelQuality));
-        }
-
-        processingChain.addModules(modules);
-
-        //Post preload data from the request to the event bus.  Modules that can handle preload data will annotate
-        //their processor method with @Subscribe to receive each specific preload data content class.
-        for(PreloadDataContent<?> preloadDataContent: request.getPreloadDataContents())
-        {
-            Object preloadEvent = Objects.requireNonNull(preloadDataContent);
-            processingChain.getEventBus().post(preloadEvent);
-        }
-
-        //Setup event logging
-        List<Module> loggers = mEventLogManager.getLoggers(channel);
-
-        if(!loggers.isEmpty())
-        {
-            processingChain.addModules(loggers);
-        }
-
-        //Add recorders
-        processingChain.addModules(RecorderFactory.getRecorders(mUserPreferences, channel));
-
-        //Set the samples source
-        processingChain.setSource(source);
-
-        //Inject the channel identifier for traffic channels and preload user identifiers
-        if(channel.isTrafficChannel())
-        {
-            int[] trafficTimeslots = getTrafficIdentifierTimeslots(channel);
-
-            for(int timeslot: trafficTimeslots)
+            for(Listener<AudioCallEvent> listener : mAudioCallListeners)
             {
-                IdentifierUpdateNotification trafficNotification = new IdentifierUpdateNotification(
-                    TrafficChannelIdentifier.create(), IdentifierUpdateNotification.Operation.ADD, timeslot);
-                processingChain.getChannelState().updateChannelStateIdentifiers(trafficNotification);
+                processingChain.addAudioCallListener(listener);
+            }
 
-                if(request.hasChannelDescriptor())
+            for(Listener<IDecodeEvent> listener : mDecodeEventListeners)
+            {
+                processingChain.addDecodeEventListener(listener);
+            }
+
+            for(BiConsumer<Channel,IDecodeEvent> listener : mChannelDecodeEventListeners)
+            {
+                processingChain.addDecodeEventListener(event -> listener.accept(channel, event));
+            }
+
+            //Add a listener to detect source error state that indicates the channel should be shutdown.
+            //Note: processing chain will only add this once.
+            processingChain.addSourceEventListener(mSourceErrorListener);
+
+            //Register this manager to receive channel events from traffic channel manager modules within
+            //the processing chain
+            processingChain.addChannelEventListener(this);
+
+            /* Processing Modules */
+            List<Module> modules = DecoderFactory.getModules(channel, mAliasModel, mUserPreferences,
+                request.getTrafficChannelManager(), request.getChannelDescriptor(), source.getSampleRate(),
+                mChannelActivityModel);
+
+            if(supportsControlChannelQuality(channel))
+            {
+                modules.add(new ControlChannelQualityMonitor(channel, source.getFrequency(),
+                    this::receiveControlChannelQuality));
+            }
+
+            processingChain.addModules(modules);
+
+            //Post preload data from the request to the event bus.  Modules that can handle preload data will annotate
+            //their processor method with @Subscribe to receive each specific preload data content class.
+            for(PreloadDataContent<?> preloadDataContent: request.getPreloadDataContents())
+            {
+                Object preloadEvent = Objects.requireNonNull(preloadDataContent);
+                processingChain.getEventBus().post(preloadEvent);
+            }
+
+            //Setup event logging
+            List<Module> loggers = mEventLogManager.getLoggers(channel);
+
+            if(!loggers.isEmpty())
+            {
+                processingChain.addModules(loggers);
+            }
+
+            //Add recorders
+            processingChain.addModules(RecorderFactory.getRecorders(mUserPreferences, channel));
+
+            //Set the samples source
+            processingChain.setSource(source);
+            sourceAssignedToChain = true;
+
+            //Inject the channel identifier for traffic channels and preload user identifiers
+            if(channel.isTrafficChannel())
+            {
+                int[] trafficTimeslots = getTrafficIdentifierTimeslots(channel);
+
+                for(int timeslot: trafficTimeslots)
                 {
-                    DecoderLogicalChannelNameIdentifier identifier =
-                        DecoderLogicalChannelNameIdentifier.create(request.getChannelDescriptor().toString(),
-                            request.getChannelDescriptor().getProtocol());
-                    IdentifierUpdateNotification notification = new IdentifierUpdateNotification(identifier,
-                        IdentifierUpdateNotification.Operation.ADD, timeslot);
-                    processingChain.getChannelState().updateChannelStateIdentifiers(notification);
+                    IdentifierUpdateNotification trafficNotification = new IdentifierUpdateNotification(
+                        TrafficChannelIdentifier.create(), IdentifierUpdateNotification.Operation.ADD, timeslot);
+                    processingChain.getChannelState().updateChannelStateIdentifiers(trafficNotification);
+
+                    if(request.hasChannelDescriptor())
+                    {
+                        DecoderLogicalChannelNameIdentifier identifier =
+                            DecoderLogicalChannelNameIdentifier.create(request.getChannelDescriptor().toString(),
+                                request.getChannelDescriptor().getProtocol());
+                        IdentifierUpdateNotification notification = new IdentifierUpdateNotification(identifier,
+                            IdentifierUpdateNotification.Operation.ADD, timeslot);
+                        processingChain.getChannelState().updateChannelStateIdentifiers(notification);
+                    }
+
+                    if(request.hasIdentifierCollection())
+                    {
+                        //Inject scramble parameters
+                        for(Identifier<?> scrambleParameters: request.getIdentifierCollection()
+                            .getIdentifiers(Form.SCRAMBLE_PARAMETERS))
+                        {
+                            //Broadcast scramble parameters to both timeslots
+                            IdentifierUpdateNotification scrambleNotification = new IdentifierUpdateNotification(scrambleParameters,
+                                IdentifierUpdateNotification.Operation.ADD, timeslot);
+                            processingChain.getChannelState().updateChannelStateIdentifiers(scrambleNotification);
+                        }
+                    }
                 }
 
                 if(request.hasIdentifierCollection())
                 {
-                    //Inject scramble parameters
-                    for(Identifier<?> scrambleParameters: request.getIdentifierCollection()
-                        .getIdentifiers(Form.SCRAMBLE_PARAMETERS))
+                    for(Identifier<?> userIdentifier : request.getIdentifierCollection().getIdentifiers(IdentifierClass.USER))
                     {
-                        //Broadcast scramble parameters to both timeslots
-                        IdentifierUpdateNotification scrambleNotification = new IdentifierUpdateNotification(scrambleParameters,
+                        int timeslot = trafficTimeslots.length > 1 ? request.getIdentifierCollection().getTimeslot() : 0;
+                        IdentifierUpdateNotification notification = new IdentifierUpdateNotification(userIdentifier,
                             IdentifierUpdateNotification.Operation.ADD, timeslot);
-                        processingChain.getChannelState().updateChannelStateIdentifiers(scrambleNotification);
+                        processingChain.getChannelState().updateChannelStateIdentifiers(notification);
                     }
                 }
             }
 
-            if(request.hasIdentifierCollection())
+            if(addProcessingChain(channel, processingChain))
             {
-                for(Identifier<?> userIdentifier : request.getIdentifierCollection().getIdentifiers(IdentifierClass.USER))
+                if(strictFunctionalStartup || channel.isTrafficChannel())
                 {
-                    int timeslot = trafficTimeslots.length > 1 ? request.getIdentifierCollection().getTimeslot() : 0;
-                    IdentifierUpdateNotification notification = new IdentifierUpdateNotification(userIdentifier,
-                        IdentifierUpdateNotification.Operation.ADD, timeslot);
-                    processingChain.getChannelState().updateChannelStateIdentifiers(notification);
+                    processingChain.startStrict();
                 }
-            }
-        }
+                else
+                {
+                    processingChain.start();
+                }
 
-        if(addProcessingChain(channel, processingChain))
-        {
-            try
-            {
-                processingChain.start();
-            }
-            catch(Exception e)
-            {
-                mLog.error("Error caught during processing chain startup - continuing", e);
-            }
+                setChannelProcessingFlag(channel, true);
 
-            if(GraphicsEnvironment.isHeadless())
-            {
-                channel.setProcessing(true);
+                mChannelEventBroadcaster.broadcast(new ChannelEvent(channel, ChannelEvent.Event.NOTIFICATION_PROCESSING_START));
             }
             else
             {
-                //This has to be done on the FX event thread when the configuration editor is constructed
-                Platform.runLater(() -> channel.setProcessing(true));
+                mLog.warn("Channel [{}] processing chain not added because it already exists", channel.getName());
+                processingChain.removeEventLoggingModules();
+                processingChain.removeRecordingModules();
+                mChannelEventBroadcaster.broadcast(new ChannelEvent(channel, ChannelEvent.Event.NOTIFICATION_PROCESSING_STOP));
+                mChannelEventBroadcaster.removeListener(processingChain);
+                processingChain.getEventBus().unregister(ChannelProcessingManager.this);
+                processingChain.dispose();
             }
-
-            mChannelEventBroadcaster.broadcast(new ChannelEvent(channel, ChannelEvent.Event.NOTIFICATION_PROCESSING_START));
         }
-        else
+        catch(RuntimeException exception)
         {
-            mLog.warn("Channel [{}] processing chain not added because it already exists", channel.getName());
-            processingChain.removeEventLoggingModules();
-            processingChain.removeRecordingModules();
-            mChannelEventBroadcaster.broadcast(new ChannelEvent(channel, ChannelEvent.Event.NOTIFICATION_PROCESSING_STOP));
+            boolean chainOwnedSource = sourceAssignedToChain ||
+                (processingChain != null && processingChain.getSource() == source);
+            cleanupFailedChannelStart(channel, processingChain, source, chainOwnedSource);
+            throw new ChannelException("Error constructing or starting channel processing chain", exception);
+        }
+    }
+
+    private void cleanupFailedChannelStart(Channel channel, ProcessingChain processingChain, Source source,
+                                           boolean sourceAssignedToChain)
+    {
+        if(processingChain == null)
+        {
+            releaseUnassignedSourceAfterFailedStart(source);
+            notifyChannelStartRejected(channel);
+            return;
+        }
+
+        if(mProcessingChainsMap.remove(channel, processingChain))
+        {
+            mChannelActivityModel.channelStopped(channel);
+
+            for(ChannelMetadata channelMetadata: processingChain.getChannelState().getChannelMetadata())
+            {
+                channelMetadata.removeUpdateEventListener();
+            }
+        }
+
+        try
+        {
             mChannelEventBroadcaster.removeListener(processingChain);
             processingChain.getEventBus().unregister(ChannelProcessingManager.this);
+        }
+        catch(RuntimeException cleanupException)
+        {
+            mLog.warn("Error detaching failed channel processing chain", cleanupException);
+        }
+
+        try
+        {
             processingChain.dispose();
+        }
+        catch(RuntimeException cleanupException)
+        {
+            mLog.warn("Error disposing failed channel processing chain", cleanupException);
+        }
+
+        if(!sourceAssignedToChain)
+        {
+            releaseUnassignedSourceAfterFailedStart(source);
+        }
+
+        notifyChannelStartRejected(channel);
+    }
+
+    private void notifyChannelStartRejected(Channel channel)
+    {
+        setChannelProcessingFlag(channel, false);
+        mChannelEventBroadcaster.broadcast(new ChannelEvent(channel,
+            ChannelEvent.Event.NOTIFICATION_PROCESSING_START_REJECTED, CONFIGURATION_UNAVAILABLE_DESCRIPTION));
+    }
+
+    private void releaseUnassignedSourceAfterFailedStart(Source source)
+    {
+        try
+        {
+            source.stop();
+        }
+        catch(RuntimeException cleanupException)
+        {
+            mLog.warn("Error stopping source after channel startup failure", cleanupException);
+        }
+
+        try
+        {
+            source.dispose();
+        }
+        catch(RuntimeException cleanupException)
+        {
+            mLog.warn("Error disposing source after channel startup failure", cleanupException);
+        }
+    }
+
+    private static void setChannelProcessingFlag(Channel channel, boolean processing)
+    {
+        if(GraphicsEnvironment.isHeadless())
+        {
+            channel.setProcessing(processing);
+            return;
+        }
+
+        try
+        {
+            Platform.runLater(() -> channel.setProcessing(processing));
+        }
+        catch(IllegalStateException exception)
+        {
+            //JavaFX has not been initialized (for example, a headless service or unit test).
+            channel.setProcessing(processing);
         }
     }
 
@@ -767,8 +1455,10 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
      *
      * @param channel to stop
      */
-    private void stopProcessing(Channel channel) throws ChannelException
+    private synchronized void stopProcessing(Channel channel) throws ChannelException
     {
+        DMRRestChannelAttempt detachedTrafficAttempt = findDmrRestChannelAttemptByTrafficChannel(channel);
+        cancelDmrRestChannelHandoff(channel);
         ProcessingChain processingChain = removeProcessingChain(channel);
 
         if(processingChain != null)
@@ -823,19 +1513,88 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
                 mLog.error("Error during shutdown of processing chain for channel [" + channel.getName() + "}", e);
             }
         }
+
+        if(detachedTrafficAttempt != null)
+        {
+            detachedTrafficAttempt.getPrepared().handoff().owner().removeDecodeEventListener(null);
+            processDetachedTrafficTeardown(detachedTrafficAttempt);
+        }
+    }
+
+    private void cancelDmrRestChannelHandoff(Channel channel)
+    {
+        DMRRestChannelAttempt attempt = mDmrRestChannelAttempts.get(channel);
+
+        if(attempt != null)
+        {
+            abortDmrRestChannelAttempt(attempt);
+            return;
+        }
+
+        ProcessingChain processingChain = mProcessingChainsMap.get(channel);
+
+        if(processingChain != null)
+        {
+            for(Module module: processingChain.getModules())
+            {
+                if(module instanceof DMRTrafficChannelManager manager)
+                {
+                    manager.cancelRestHandoff(channel);
+                }
+            }
+        }
+    }
+
+    private DMRRestChannelAttempt findDmrRestChannelAttemptByTrafficChannel(Channel channel)
+    {
+        ProcessingChain processingChain = mProcessingChainsMap.get(channel);
+
+        for(DMRRestChannelAttempt attempt: mDmrRestChannelAttempts.values())
+        {
+            if(attempt.getPrepared().trafficChannel() == channel &&
+                attempt.getExpectedChain() == processingChain)
+            {
+                return attempt;
+            }
+        }
+
+        return null;
+    }
+
+    private void processDetachedTrafficTeardown(DMRRestChannelAttempt attempt)
+    {
+        if(attempt.markTrafficTeardownProcessed())
+        {
+            attempt.getPrepared().handoff().owner()
+                .processTrafficChannelTeardown(attempt.getPrepared().trafficChannel());
+        }
+    }
+
+    synchronized int getPendingDmrRestChannelAttemptCount()
+    {
+        return mDmrRestChannelAttempts.size();
+    }
+
+    int getChannelEventListenerCount()
+    {
+        return mChannelEventBroadcaster.getListenerCount();
+    }
+
+    boolean isDmrRestChannelHandoffCoordinatorClosed()
+    {
+        return mDmrRestChannelHandoffCoordinator.isClosed();
     }
 
     /**
      * Stops all currently processing channels.
      */
-    public void shutdown()
+    public synchronized void shutdown()
     {
-        List<ScheduledFuture<?>> delayedTasks = new ArrayList<>(mDelayedChannelStartTasks);
+        mShuttingDown = true;
 
-        for(ScheduledFuture<?> delayedTask: delayedTasks)
+        for(Channel channel: new ArrayList<>(mDmrRestChannelAttempts.keySet()))
         {
-            delayedTask.cancel(true);
-            mDelayedChannelStartTasks.remove(delayedTask);
+            cancelDmrRestChannelHandoff(channel);
         }
 
         List<Channel> channelsToStop = new ArrayList<>(mProcessingChainsMap.keySet());
@@ -851,6 +1610,11 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
                 mLog.error("Error stopping channel [{}] - {}", channel.getName(), ce.getMessage());
             }
         }
+
+        if(!mClosed)
+        {
+            mShuttingDown = false;
+        }
     }
 
     /**
@@ -858,51 +1622,19 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
      */
     public void close()
     {
-        shutdown();
-        mChannelActivityModel.close();
-    }
-
-    /**
-     * Process a request to convert a currently processing standard channel type to a traffic channel type.
-     * @param request from the currently processing channel's processing chain event bus
-     */
-    @Subscribe
-    public void convertToTrafficChannel(ChannelConversionRequest request)
-    {
-        //Update the channel to processing chain map.
-        ProcessingChain processingChain = mProcessingChainsMap.remove(request.getCurrentChannel());
-
-        if(processingChain != null)
+        synchronized(this)
         {
-            //Remove the traffic channel manager from this processing chain.  Reuse or reinsertion of the traffic
-            //channel manager to another processing chain is handled separately.
-            processingChain.removeTrafficChannelManager();
-
-            //Update processing flag for each configuration.
-            Platform.runLater(() -> {
-                request.getCurrentChannel().setProcessing(false);
-                request.getTrafficChannel().setProcessing(true);
-            });
-
-            mProcessingChainsMap.put(request.getTrafficChannel(), processingChain);
-            mChannelActivityModel.channelStopped(request.getCurrentChannel());
-            mChannelActivityModel.channelStarted(request.getTrafficChannel(),
-                processingChain.getChannelState().getChannelMetadata(), processingChain);
-
-            //Post a change notification so that processing chain modules can reconfigure
-            processingChain.channelConfigurationChanged(new ChannelConfigurationChangeNotification(request.getTrafficChannel()));
-
-            for(int timeslot: getTrafficIdentifierTimeslots(request.getTrafficChannel()))
+            if(mClosed)
             {
-                IdentifierUpdateNotification notification = new IdentifierUpdateNotification(
-                    TrafficChannelIdentifier.create(), IdentifierUpdateNotification.Operation.ADD, timeslot);
-                processingChain.getChannelState().updateChannelStateIdentifiers(notification);
+                return;
             }
+
+            mClosed = true;
         }
-        else
-        {
-            mLog.warn("Request to convert to traffic channel ignored - no processing chain was found");
-        }
+
+        shutdown();
+        mDmrRestChannelHandoffCoordinator.close();
+        mChannelActivityModel.close();
     }
 
     @Subscribe
@@ -1090,37 +1822,155 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         mChannelEventBroadcaster.removeListener(listener);
     }
 
-    /**
-     * Task to scheduling attempt to start a channel after previous attempts failed for lack of tuner channel
-     */
-    public class DelayedChannelStartTask implements Runnable
+    private static class TunerUnavailableChannelException extends ChannelException
     {
-        private ChannelStartProcessingRequest mRequest;
+        private static final long serialVersionUID = 1L;
+
+        private TunerUnavailableChannelException()
+        {
+            super("No Tuner Available");
+        }
+    }
+
+    private static class DMRRestChannelAttempt
+    {
+        private final PreparedRestChannelHandoff mPrepared;
+        private final ProcessingChain mExpectedChain;
+        private final List<ProcessingChainIncarnation> mSiblingTrafficChains;
+        private final Listener<ChannelEvent> mDetachedOwnerChannelEventRoute;
         private ScheduledFuture<?> mScheduledFuture;
+        private boolean mActive = true;
+        private boolean mConverted;
+        private boolean mTrafficTeardownProcessed;
+        private boolean mDetachedOwnerChannelEventRouteAttached;
 
-        public DelayedChannelStartTask(ChannelStartProcessingRequest request)
+        private DMRRestChannelAttempt(PreparedRestChannelHandoff prepared, ProcessingChain expectedChain,
+                                      List<ProcessingChainIncarnation> siblingTrafficChains)
         {
-            mRequest = request;
+            mPrepared = prepared;
+            mExpectedChain = expectedChain;
+            mSiblingTrafficChains = siblingTrafficChains;
+            Listener<ChannelEvent> ownerListener = prepared.handoff().owner().getChannelEventListener();
+            mDetachedOwnerChannelEventRoute = ownerListener::receive;
         }
 
-        public void setScheduledFuture(ScheduledFuture<?> scheduledFuture)
+        private PreparedRestChannelHandoff getPrepared()
         {
-            mScheduledFuture = scheduledFuture;
+            return mPrepared;
         }
 
-        @Override
-        public void run()
+        private ProcessingChain getExpectedChain()
         {
-            try
+            return mExpectedChain;
+        }
+
+        private List<ProcessingChainIncarnation> getSiblingTrafficChains()
+        {
+            return mSiblingTrafficChains;
+        }
+
+        private Listener<ChannelEvent> getDetachedOwnerChannelEventRoute()
+        {
+            return mDetachedOwnerChannelEventRoute;
+        }
+
+        private synchronized boolean attachDetachedOwnerChannelEventRoute()
+        {
+            if(mDetachedOwnerChannelEventRouteAttached)
             {
-                mDelayedChannelStartTasks.remove(mScheduledFuture);
-                startChannelRequest(mRequest);
+                return false;
             }
-            catch(Exception _)
-            {
-                mLog.error("Error executing persistent channel start task");
-            }
+
+            mDetachedOwnerChannelEventRouteAttached = true;
+            return true;
         }
+
+        private synchronized boolean detachDetachedOwnerChannelEventRoute()
+        {
+            if(!mDetachedOwnerChannelEventRouteAttached)
+            {
+                return false;
+            }
+
+            mDetachedOwnerChannelEventRouteAttached = false;
+            return true;
+        }
+
+        private boolean matches(DMRRestChannelHandoffRequest request)
+        {
+            return mPrepared.handoff() == request;
+        }
+
+        private synchronized boolean isActive()
+        {
+            return mActive;
+        }
+
+        private synchronized void setConverted()
+        {
+            mConverted = true;
+        }
+
+        private synchronized boolean isConverted()
+        {
+            return mConverted;
+        }
+
+        private synchronized boolean markTrafficTeardownProcessed()
+        {
+            if(mTrafficTeardownProcessed)
+            {
+                return false;
+            }
+
+            mTrafficTeardownProcessed = true;
+            return true;
+        }
+
+        private synchronized void schedule(Runnable retry, long delayMilliseconds)
+        {
+            if(!mActive || (mScheduledFuture != null && !mScheduledFuture.isDone()))
+            {
+                return;
+            }
+
+            mScheduledFuture = ThreadPool.SCHEDULED.schedule(() ->
+            {
+                synchronized(this)
+                {
+                    mScheduledFuture = null;
+
+                    if(!mActive)
+                    {
+                        return;
+                    }
+                }
+
+                retry.run();
+            }, delayMilliseconds, TimeUnit.MILLISECONDS);
+        }
+
+        private synchronized boolean deactivate()
+        {
+            if(!mActive)
+            {
+                return false;
+            }
+
+            mActive = false;
+
+            if(mScheduledFuture != null)
+            {
+                mScheduledFuture.cancel(false);
+                mScheduledFuture = null;
+            }
+
+            return true;
+        }
+    }
+
+    private record ProcessingChainIncarnation(Channel channel, ProcessingChain processingChain)
+    {
     }
 
     /**

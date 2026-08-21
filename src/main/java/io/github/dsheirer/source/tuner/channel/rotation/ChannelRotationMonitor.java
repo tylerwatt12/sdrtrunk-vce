@@ -31,6 +31,7 @@ import io.github.dsheirer.util.ThreadPool;
 import java.util.Collection;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantLock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -49,13 +50,15 @@ public class ChannelRotationMonitor extends Module implements ISourceEventProvid
 
     private static final Logger mLog = LoggerFactory.getLogger(ChannelRotationMonitor.class);
     private Collection<State> mActiveStates;
+    private final ReentrantLock mRotationLock = new ReentrantLock();
     private ScheduledFuture<?> mScheduledFuture;
-    private Listener<SourceEvent> mSourceEventListener;
+    private volatile Listener<SourceEvent> mSourceEventListener;
     private long mRotationDelay;
     private final long mActiveStateLossDelay;
     private volatile long mLastActiveTimestamp = System.currentTimeMillis();
     private volatile boolean mActiveStateObserved;
     private boolean mEnabled = true;
+    private boolean mPaused;
 
     /**
      * Constructs a channel rotation monitor that uses the specified rotation delay.
@@ -131,8 +134,59 @@ public class ChannelRotationMonitor extends Module implements ISourceEventProvid
     @Subscribe
     public void disable(DisableChannelRotationMonitorRequest request)
     {
-        mEnabled = false;
-        stop();
+        mRotationLock.lock();
+
+        try
+        {
+            mEnabled = false;
+            mPaused = true;
+            cancelScheduledMonitor();
+        }
+        finally
+        {
+            mRotationLock.unlock();
+        }
+    }
+
+    /**
+     * Synchronously fences any in-flight rotation request before acknowledging the pause.
+     */
+    @Subscribe
+    public void pause(ChannelRotationMonitorPauseRequest request)
+    {
+        mRotationLock.lock();
+
+        try
+        {
+            mPaused = true;
+            request.acknowledgeMonitorPaused();
+        }
+        finally
+        {
+            mRotationLock.unlock();
+        }
+    }
+
+    /**
+     * Resumes rotation after an abandoned lifecycle transition.
+     */
+    @Subscribe
+    public void resume(ChannelRotationMonitorResumeRequest request)
+    {
+        mRotationLock.lock();
+
+        try
+        {
+            if(mEnabled)
+            {
+                mLastActiveTimestamp = System.currentTimeMillis();
+                mPaused = false;
+            }
+        }
+        finally
+        {
+            mRotationLock.unlock();
+        }
     }
 
     /**
@@ -162,15 +216,24 @@ public class ChannelRotationMonitor extends Module implements ISourceEventProvid
      */
     void checkState(long currentTimeMillis)
     {
-        long delay = mActiveStateObserved && mActiveStateLossDelay > 0 ?
-            Math.max(mRotationDelay, mActiveStateLossDelay) : mRotationDelay;
+        mRotationLock.lock();
 
-        if(mEnabled && mSourceEventListener != null &&
-            ((mLastActiveTimestamp + delay) < currentTimeMillis))
+        try
         {
-            mSourceEventListener.receive(SourceEvent.frequencyRotationRequest());
-            mLastActiveTimestamp = currentTimeMillis;
-            mActiveStateObserved = false;
+            long delay = mActiveStateObserved && mActiveStateLossDelay > 0 ?
+                Math.max(mRotationDelay, mActiveStateLossDelay) : mRotationDelay;
+
+            if(mEnabled && !mPaused && mSourceEventListener != null &&
+                ((mLastActiveTimestamp + delay) < currentTimeMillis))
+            {
+                mSourceEventListener.receive(SourceEvent.frequencyRotationRequest());
+                mLastActiveTimestamp = currentTimeMillis;
+                mActiveStateObserved = false;
+            }
+        }
+        finally
+        {
+            mRotationLock.unlock();
         }
     }
 
@@ -183,26 +246,49 @@ public class ChannelRotationMonitor extends Module implements ISourceEventProvid
     @Override
     public void start()
     {
-        if(mScheduledFuture == null)
-        {
-            Runnable runnable = () -> {
-                try
-                {
-                    checkState();
-                }
-                catch(Exception e)
-                {
-                    mLog.warn("Error while checking state", e);
-                }
-            };
+        mRotationLock.lock();
 
-            mScheduledFuture = ThreadPool.SCHEDULED.scheduleAtFixedRate(runnable, mRotationDelay * 2,
-                mRotationDelay / 2, TimeUnit.MILLISECONDS);
+        try
+        {
+            if(mEnabled && mScheduledFuture == null)
+            {
+                Runnable runnable = () -> {
+                    try
+                    {
+                        checkState();
+                    }
+                    catch(Exception e)
+                    {
+                        mLog.warn("Error while checking state", e);
+                    }
+                };
+
+                mScheduledFuture = ThreadPool.SCHEDULED.scheduleAtFixedRate(runnable, mRotationDelay * 2,
+                    mRotationDelay / 2, TimeUnit.MILLISECONDS);
+            }
+        }
+        finally
+        {
+            mRotationLock.unlock();
         }
     }
 
     @Override
     public void stop()
+    {
+        mRotationLock.lock();
+
+        try
+        {
+            cancelScheduledMonitor();
+        }
+        finally
+        {
+            mRotationLock.unlock();
+        }
+    }
+
+    private void cancelScheduledMonitor()
     {
         if(mScheduledFuture != null)
         {

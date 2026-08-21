@@ -33,14 +33,14 @@ import java.util.Set;
  */
 public class StateMachine
 {
-    protected State mState = State.IDLE;
-    protected long mFadeTimeout;
-    protected long mFadeTimeoutBufferMilliseconds = 0;
-    protected long mEndTimeout;
-    protected long mEndTimeoutBufferMilliseconds = 0;
+    protected volatile State mState = State.IDLE;
+    protected volatile long mFadeTimeout;
+    protected volatile long mFadeTimeoutBufferMilliseconds = 0;
+    protected volatile long mEndTimeout;
+    protected volatile long mEndTimeoutBufferMilliseconds = 0;
     private int mTimeslot;
     private Set<State> mActiveStates;
-    private Channel.ChannelType mChannelType = Channel.ChannelType.STANDARD;
+    private volatile Channel.ChannelType mChannelType = Channel.ChannelType.STANDARD;
     private List<IStateMachineListener> mStateMachineListeners = new ArrayList<>();
     private Listener<IdentifierUpdateNotification> mIdentifierUpdateListener;
 
@@ -94,11 +94,13 @@ public class StateMachine
      */
     public void checkState()
     {
-        if(mActiveStates.contains(mState) && mFadeTimeout <= System.currentTimeMillis())
+        State state = mState;
+
+        if(mActiveStates.contains(state) && mFadeTimeout <= System.currentTimeMillis())
         {
             setState(State.FADE);
         }
-        else if(mState == State.FADE && mEndTimeout <= System.currentTimeMillis())
+        else if(state == State.FADE && mEndTimeout <= System.currentTimeMillis())
         {
             setState(State.TEARDOWN);
         }
@@ -117,73 +119,46 @@ public class StateMachine
      */
     public void setState(State state)
     {
-        if(state == mState)
+        State current = mState;
+
+        if(state == current)
         {
             if(mActiveStates.contains(state))
             {
                 updateFadeTimeout();
             }
+
+            return;
         }
-        else if(mState.canChangeTo(state))
+
+        if(!current.canChangeTo(state))
         {
-            if(mActiveStates.contains(state))
-            {
-                updateFadeTimeout();
-            }
+            return;
+        }
 
-            switch(state)
-            {
-                case ACTIVE:
-                    mState = state;
-                    broadcast(ChannelStateIdentifier.ACTIVE);
-                    break;
-                case CONTROL:
-                    //Don't allow traffic channels to be control channels, otherwise they can't transition to teardown
-                    if(mChannelType == Channel.ChannelType.STANDARD)
-                    {
-                        mState = state;
-                        broadcast(ChannelStateIdentifier.CONTROL);
-                    }
-                    break;
-                case DATA:
-                    mState = state;
-                    broadcast(ChannelStateIdentifier.DATA);
-                    break;
-                case ENCRYPTED:
-                    mState = state;
-                    broadcast(ChannelStateIdentifier.ENCRYPTED);
-                    break;
-                case CALL:
-                    mState = state;
-                    broadcast(ChannelStateIdentifier.CALL);
-                    break;
-                case FADE:
-                    mState = state;
-                    broadcast(ChannelStateIdentifier.FADE);
-                    break;
-                case IDLE:
-                    mState = state;
-                    broadcast(ChannelStateIdentifier.IDLE);
-                    break;
-                case TEARDOWN:
-                    mState = state;
-                    broadcast(ChannelStateIdentifier.TEARDOWN);
-                    break;
-                case RESET:
-                    mState = State.RESET;
-                    broadcast(ChannelStateIdentifier.RESET);
-                    break;
-                default:
-                    break;
-            }
+        if(mActiveStates.contains(state))
+        {
+            updateFadeTimeout();
+        }
 
-            //If the state successfully changed to the new state, announce it
-            if(mState == state)
+        //Use the channel type at the action point.  A lifecycle conversion can publish TRAFFIC concurrently with this
+        //callback and a traffic chain must never re-enter CONTROL after that publication.  Keep the existing activity
+        //timeout refresh above, while this method remains a bounded single pass with no lock or retry loop.
+        if(state == State.CONTROL && mChannelType != Channel.ChannelType.STANDARD)
+        {
+            return;
+        }
+
+        mState = state;
+        broadcast(ChannelStateIdentifier.get(state));
+
+        //Preserve the existing last-writer check when decoder and heartbeat callbacks overlap.  Handoff-specific
+        //teardown ordering is reconciled by MultiChannelState's explicit configuration transition marker.
+        if(mState == state)
+        {
+            for(IStateMachineListener listener: mStateMachineListeners)
             {
-                for(IStateMachineListener listener: mStateMachineListeners)
-                {
-                    listener.stateChanged(mState, mTimeslot);
-                }
+                listener.stateChanged(state, mTimeslot);
             }
         }
     }

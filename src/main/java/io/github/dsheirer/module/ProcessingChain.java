@@ -73,7 +73,6 @@ import io.github.dsheirer.source.heartbeat.IHeartbeatListener;
 import io.github.dsheirer.source.heartbeat.IHeartbeatProvider;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
@@ -211,27 +210,72 @@ public class ProcessingChain implements Listener<ChannelEvent>
     }
 
     /**
+     * Installs a lock-free channel-state transition marker before the lifecycle owner changes this chain's map key.
+     */
+    public AbstractChannelState.ChannelConfigurationTransition beginChannelConfigurationTransition(Channel channel)
+    {
+        return mChannelState.beginChannelConfigurationTransition(channel);
+    }
+
+    /**
+     * Publishes the functional channel/type after the replacement map key exists.  The general event-bus projection is
+     * deliberately separate so it remains on the lifecycle worker and never runs observer work on a decoder callback.
+     */
+    public void publishChannelConfigurationTransition(
+        AbstractChannelState.ChannelConfigurationTransition transition)
+    {
+        mChannelState.publishChannelConfigurationTransition(transition);
+    }
+
+    /** Completes the transition and reconciles an overlapping decoder-owned teardown. */
+    public void completeChannelConfigurationTransition(
+        AbstractChannelState.ChannelConfigurationTransition transition)
+    {
+        mChannelState.completeChannelConfigurationTransition(transition);
+    }
+
+    /** Restores pre-transition state when conversion fails before it becomes irreversible. */
+    public void rollbackChannelConfigurationTransition(
+        AbstractChannelState.ChannelConfigurationTransition transition)
+    {
+        mChannelState.rollbackChannelConfigurationTransition(transition);
+    }
+
+    /**
      * Removes any module that is an instance of a TrafficChannelManager
      */
     public void removeTrafficChannelManager()
     {
+        TrafficChannelManager trafficChannelManager = null;
         mModuleLock.lock();
 
         try
         {
-            Iterator<Module> it = mModules.iterator();
-
-            while(it.hasNext())
+            for(Module module: mModules)
             {
-                if(it.next() instanceof TrafficChannelManager)
+                if(module instanceof TrafficChannelManager manager)
                 {
-                    it.remove();
+                    trafficChannelManager = manager;
+                    break;
                 }
             }
         }
         finally
         {
             mModuleLock.unlock();
+        }
+
+        if(trafficChannelManager != null)
+        {
+            removeModule(trafficChannelManager);
+
+            //Keep only the manager-owned decode-event route alive while the replacement rest chain is starting.  The
+            //new chain overwrites this listener when it attaches the manager; decoder-owned traffic events use their
+            //originating chain directly and are not forwarded through the manager.
+            if(trafficChannelManager instanceof IDecodeEventProvider provider)
+            {
+                provider.addDecodeEventListener(mDecodeEventBroadcaster);
+            }
         }
     }
 
@@ -689,6 +733,20 @@ public class ProcessingChain implements Listener<ChannelEvent>
      */
     public void start()
     {
+        start(false);
+    }
+
+    /**
+     * Starts a lifecycle-critical replacement chain and propagates failures from functional modules so the caller can
+     * unwind the handoff instead of marking a partial decoder as started.
+     */
+    public void startStrict()
+    {
+        start(true);
+    }
+
+    private void start(boolean strictFunctionalStartup)
+    {
         if(mRunning.compareAndSet(false, true))
         {
             if(mSource != null)
@@ -729,9 +787,14 @@ public class ProcessingChain implements Listener<ChannelEvent>
                         {
                             module.start();
                         }
-                        catch(Exception e)
+                        catch(RuntimeException e)
                         {
-                            mLog.error("Error starting module", e);
+                            if(strictFunctionalStartup && isRequiredStartupModule(module))
+                            {
+                                throw e;
+                            }
+
+                            mLog.error("Error starting optional processing-chain module", e);
                         }
                     }
                 }
@@ -742,9 +805,21 @@ public class ProcessingChain implements Listener<ChannelEvent>
             }
             else
             {
+                if(strictFunctionalStartup)
+                {
+                    mRunning.set(false);
+                    throw new IllegalStateException("Source is null on start()");
+                }
+
                 mLog.error("Source is null on start()");
             }
         }
+    }
+
+    private boolean isRequiredStartupModule(Module module)
+    {
+        return module == mSource || module == mChannelState || module instanceof PrimaryDecoder ||
+            module instanceof DecoderState || module instanceof TrafficChannelManager;
     }
 
     /**
@@ -752,32 +827,36 @@ public class ProcessingChain implements Listener<ChannelEvent>
      */
     public void stop()
     {
-        if(mRunning.compareAndSet(true, false))
+        boolean wasRunning = mRunning.getAndSet(false);
+        Source source = detachSource();
+
+        if(source != null)
         {
-            if(mSource != null)
+            try
             {
-                removeModule(mSource);
-
-                mSource.stop();
-
-                mSource.setOverflowListener(null);
-
-                switch(mSource.getSampleType())
-                {
-                    case COMPLEX:
-                        ((ComplexSource)mSource).setListener(null);
-                        break;
-                    case REAL:
-                        ((RealSource)mSource).setListener(null);
-                        break;
-                    default:
-                        throw new IllegalArgumentException("Unrecognized source sample type - cannot start processing " +
-                            "chain");
-                }
-
-                mSource = null;
+                removeModule(source);
+            }
+            catch(RuntimeException exception)
+            {
+                mLog.error("Error detaching source from processing chain", exception);
             }
 
+            try
+            {
+                source.stop();
+            }
+            catch(RuntimeException exception)
+            {
+                mLog.error("Error stopping processing-chain source", exception);
+            }
+            finally
+            {
+                clearSourceListeners(source);
+            }
+        }
+
+        if(wasRunning)
+        {
             /* Stop each of the remaining modules */
             mModuleLock.lock();
 
@@ -802,6 +881,46 @@ public class ProcessingChain implements Listener<ChannelEvent>
             {
                 mModuleLock.unlock();
             }
+        }
+    }
+
+    private void clearSourceListeners(Source source)
+    {
+        try
+        {
+            source.setOverflowListener(null);
+
+            switch(source.getSampleType())
+            {
+                case COMPLEX:
+                    ((ComplexSource)source).setListener(null);
+                    break;
+                case REAL:
+                    ((RealSource)source).setListener(null);
+                    break;
+                default:
+                    mLog.error("Unrecognized source sample type while stopping processing chain");
+            }
+        }
+        catch(RuntimeException exception)
+        {
+            mLog.error("Error clearing processing-chain source listeners", exception);
+        }
+    }
+
+    private Source detachSource()
+    {
+        mModuleLock.lock();
+
+        try
+        {
+            Source source = mSource;
+            mSource = null;
+            return source;
+        }
+        finally
+        {
+            mModuleLock.unlock();
         }
     }
 

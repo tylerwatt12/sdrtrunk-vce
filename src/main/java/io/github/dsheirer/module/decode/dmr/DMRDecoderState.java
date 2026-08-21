@@ -51,6 +51,7 @@ import io.github.dsheirer.module.decode.dmr.event.DMRDecodeEvent;
 import io.github.dsheirer.module.decode.dmr.message.DMRMessage;
 import io.github.dsheirer.module.decode.dmr.message.data.DataMessage;
 import io.github.dsheirer.module.decode.dmr.message.data.csbk.CSBKMessage;
+import io.github.dsheirer.module.decode.dmr.message.data.csbk.Opcode;
 import io.github.dsheirer.module.decode.dmr.message.data.csbk.UnknownCSBKMessage;
 import io.github.dsheirer.module.decode.dmr.message.data.csbk.hytera.HyteraTrafficChannelTalkerStatus;
 import io.github.dsheirer.module.decode.dmr.message.data.csbk.motorola.CapacityMaxAdvantageModeVoiceChannelUpdate;
@@ -96,6 +97,7 @@ import io.github.dsheirer.module.decode.dmr.message.voice.VoiceMessage;
 import io.github.dsheirer.module.decode.dmr.message.voice.embedded.EmbeddedEncryptionParameters;
 import io.github.dsheirer.module.decode.dmr.message.voice.embedded.EmbeddedParameters;
 import io.github.dsheirer.module.decode.dmr.sync.DMRSyncPattern;
+import io.github.dsheirer.module.decode.dmr.telemetry.DMRNetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.event.DecodeEvent;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
@@ -114,6 +116,8 @@ import io.github.dsheirer.source.tuner.channel.rotation.AddChannelRotationActive
 import io.github.dsheirer.util.PacketUtil;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import org.jdesktop.swingx.mapviewer.GeoPosition;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -130,16 +134,15 @@ public class DMRDecoderState extends TimeslotDecoderState
             "No DMR Traffic Channel Manager available for channel grant-";
     private static final AddChannelRotationActiveStateRequest CAPACITY_PLUS_ACTIVE_STATE_REQUEST =
             new AddChannelRotationActiveStateRequest(State.ACTIVE);
-    private Channel mChannel;
-    private DMRNetworkConfigurationMonitor mNetworkConfigurationMonitor;
-    private ProtocolSiteMetadataPublisher mSiteMetadataPublisher;
-    private DMRTrafficChannelManager mTrafficChannelManager;
+    private final AtomicReference<OperationalMode> mOperationalMode = new AtomicReference<>();
     private final DMRTrafficChannelManager mTrafficChannelEventManager;
     private DecodeEvent mCurrentCallEvent;
     private boolean mCurrentCallEncrypted;
     private boolean mIgnoreCRCChecksums;
-    private boolean mTrunkingEnabled;
+    private final boolean mTrunkingEnabled;
     private DMRDecoderState mSisterDecoderState;
+    private volatile Runnable mBeforeChannelGrantAuthorityCheckForTest;
+    private volatile Runnable mAfterChannelGrantAuthorityAcquiredForTest;
 
     /**
      * Constructs an DMR decoder state with an optional traffic channel manager.
@@ -150,8 +153,6 @@ public class DMRDecoderState extends TimeslotDecoderState
     public DMRDecoderState(Channel channel, int timeslot, DMRTrafficChannelManager trafficChannelManager)
     {
         super(timeslot);
-        mChannel = channel;
-        mTrafficChannelManager = trafficChannelManager;
         mTrafficChannelEventManager = trafficChannelManager;
         DecodeConfigDMR config = channel.getDecodeConfiguration() instanceof DecodeConfigDMR dmrConfig ?
             dmrConfig : null;
@@ -159,18 +160,31 @@ public class DMRDecoderState extends TimeslotDecoderState
 
         //The decoder state passes all messages to the network configuration monitor, so we only construct
         //the monitor for timeslot 1.
+        DMRNetworkConfigurationMonitor networkConfigurationMonitor = null;
+        ProtocolSiteMetadataPublisher siteMetadataPublisher = null;
+
         if(timeslot == 1)
         {
-            mNetworkConfigurationMonitor = new DMRNetworkConfigurationMonitor(
+            networkConfigurationMonitor = new DMRNetworkConfigurationMonitor(
                 config != null ? config.getTimeslotMap() : List.of());
 
             if(mTrunkingEnabled)
             {
-                mSiteMetadataPublisher = new ProtocolSiteMetadataPublisher(mChannel,
-                    () -> mNetworkConfigurationMonitor != null ? mNetworkConfigurationMonitor.getSnapshot() : null,
-                    this::hasInterModuleEventBus, event -> getInterModuleEventBus().post(event));
+                siteMetadataPublisher = new ProtocolSiteMetadataPublisher(channel,
+                    this::snapshotNetworkConfiguration, this::hasInterModuleEventBus, event -> {
+                        var eventBus = getInterModuleEventBus();
+
+                        if(eventBus != null)
+                        {
+                            eventBus.post(event);
+                        }
+                });
             }
         }
+
+        mOperationalMode.set(new OperationalMode(0, channel, trafficChannelManager,
+            trafficChannelManager != null ? new AllocationAuthority() : null, networkConfigurationMonitor, null,
+            siteMetadataPublisher, null, null, null));
 
         //For RAS protected systems, allows user to ignore CRC checksums and still decode the system
         if(config != null)
@@ -232,7 +246,7 @@ public class DMRDecoderState extends TimeslotDecoderState
     {
         super.broadcast(event);
 
-        if(mChannel.isTrafficChannel() && mTrafficChannelEventManager != null)
+        if(mOperationalMode.get().channel().isTrafficChannel() && mTrafficChannelEventManager != null)
         {
             mTrafficChannelEventManager.receiveTrafficChannelEvent(event);
         }
@@ -246,14 +260,6 @@ public class DMRDecoderState extends TimeslotDecoderState
     private boolean isValid(IMessage message)
     {
         return message != null && (mIgnoreCRCChecksums || message.isValid());
-    }
-
-    /**
-     * Indicates if this decoder state has an (optional) traffic channel manager.
-     */
-    private boolean hasTrafficChannelManager()
-    {
-        return mTrafficChannelManager != null;
     }
 
     /**
@@ -279,9 +285,53 @@ public class DMRDecoderState extends TimeslotDecoderState
     {
         if(notification.getChannel().isTrafficChannel())
         {
-            mChannel = notification.getChannel();
-            mTrafficChannelManager = null;
+            mOperationalMode.updateAndGet(mode -> mode.asTraffic(notification.getChannel()));
+            broadcast(new ChangeChannelTimeoutEvent(this, ChannelType.TRAFFIC, 1000, getTimeslot()));
         }
+    }
+
+    /**
+     * Revokes allocation authority before the lifecycle owner changes processing-chain ownership.  This is a single
+     * lock-free publication and does not run lifecycle work on the decoder callback.
+     */
+    @Subscribe
+    public void suspendChannelConfigurationTransition(
+        DMRChannelConfigurationTransitionNotification.Suspend notification)
+    {
+        OperationalMode operationalMode = mOperationalMode.get();
+
+        if(operationalMode.isSuspendedBy(notification))
+        {
+            notification.acknowledge(this);
+        }
+        else if(operationalMode.canSuspendAllocationAuthority(notification))
+        {
+            AllocationAuthority authority = operationalMode.allocationAuthority();
+
+            //A conversion never waits for a decoder callback.  If any manager dispatch is already in flight, this
+            //subscriber withholds its acknowledgment and the lifecycle owner aborts/retries the conversion.
+            if(authority.revokeIfIdle())
+            {
+                OperationalMode suspended = mOperationalMode.updateAndGet(mode ->
+                    mode.hasSameAllocationAuthority(operationalMode) ? mode.asSuspended(notification) : mode);
+
+                if(suspended.isSuspendedBy(notification))
+                {
+                    notification.acknowledge(this);
+                }
+            }
+        }
+    }
+
+    /**
+     * Restores allocation authority only for the exact suspension that is still active.  Restoration always uses a
+     * fresh generation so a callback captured before suspension cannot regain authority through an ABA transition.
+     */
+    @Subscribe
+    public void rollbackChannelConfigurationTransition(
+        DMRChannelConfigurationTransitionNotification.Rollback notification)
+    {
+        mOperationalMode.updateAndGet(mode -> mode.rollbackAllocationAuthority(notification.getSuspension()));
     }
 
     /**
@@ -320,6 +370,8 @@ public class DMRDecoderState extends TimeslotDecoderState
     @Override
     public void receive(IMessage message)
     {
+        OperationalMode operationalMode = mOperationalMode.get();
+
         if(message.getTimeslot() == getTimeslot())
         {
             if(message instanceof VoiceMessage voice)
@@ -328,11 +380,11 @@ public class DMRDecoderState extends TimeslotDecoderState
             }
             else if(message instanceof DataMessage data)
             {
-                processData(data);
+                processData(data, operationalMode);
             }
             else if(isValid(message) && message instanceof LCMessage lcMessage)
             {
-                processLinkControl(lcMessage, false);
+                processLinkControl(lcMessage, false, operationalMode);
             }
             else if(isValid(message) && message instanceof DMRPacketMessage packet)
             {
@@ -354,19 +406,55 @@ public class DMRDecoderState extends TimeslotDecoderState
         //SLCO messages on timeslot 0 to catch capacity plus rest channel events
         else if(isValid(message) && message.getTimeslot() == 0 && message instanceof LCMessage lcMessage)
         {
-            processLinkControl(lcMessage, false);
+            processLinkControl(lcMessage, false, operationalMode);
         }
 
         //Pass the message to the network configuration monitor, if this decoder state has a non-null instance
-        if(mNetworkConfigurationMonitor != null && isValid(message) && message instanceof DMRMessage dmrMessage)
-        {
-            mNetworkConfigurationMonitor.process(dmrMessage);
+        DMRNetworkConfigurationMonitor networkConfigurationMonitor = operationalMode.networkConfigurationMonitor();
 
-            if(mSiteMetadataPublisher != null)
+        if(networkConfigurationMonitor != null && isValid(message) && message instanceof DMRMessage dmrMessage)
+        {
+            networkConfigurationMonitor.process(dmrMessage);
+            ProtocolSiteMetadataPublisher siteMetadataPublisher = operationalMode.siteMetadataPublisher();
+
+            if(siteMetadataPublisher != null)
             {
-                mSiteMetadataPublisher.publish(dmrMessage.getTimestamp());
+                siteMetadataPublisher.publish(dmrMessage.getTimestamp());
             }
         }
+
+        offerRestChannelHandoff(operationalMode);
+    }
+
+    private DMRNetworkConfigurationSnapshot snapshotNetworkConfiguration()
+    {
+        OperationalMode operationalMode = mOperationalMode.get();
+        DMRNetworkConfigurationMonitor monitor = operationalMode.networkConfigurationMonitor();
+        DMRNetworkConfigurationSnapshot snapshot = monitor != null ? monitor.getSnapshot() : null;
+
+        if(snapshot != null)
+        {
+            OperationalMode updated = operationalMode.withNetworkConfigurationSnapshot(snapshot);
+
+            if(mOperationalMode.compareAndSet(operationalMode, updated))
+            {
+                AllocationAuthority authority = acquireCurrentAllocationAuthority(updated);
+
+                if(authority != null)
+                {
+                    try
+                    {
+                        updated.allocationManager().updateNetworkConfigurationSnapshot(snapshot);
+                    }
+                    finally
+                    {
+                        authority.release();
+                    }
+                }
+            }
+        }
+
+        return snapshot;
     }
 
     /**
@@ -379,36 +467,27 @@ public class DMRDecoderState extends TimeslotDecoderState
      *
      * @param restChannel currently indicated
      */
-    private void updateRestChannel(DMRChannel restChannel)
+    private void updateRestChannel(DMRChannel restChannel, OperationalMode operationalMode)
     {
-        //Only respond if this is a standard/control channel (not a traffic channel).
-        if(mChannel.isStandardChannel() && getCurrentFrequency() > 0 &&
-            restChannel.getDownlinkFrequency() > 0 &&
-            restChannel.getDownlinkFrequency() != getCurrentFrequency() && hasTrafficChannelManager())
-        {
-            mTrafficChannelManager.convertToTrafficChannel(mChannel, getCurrentFrequency(), restChannel,
-                mNetworkConfigurationMonitor);
-        }
-    }
+        Channel channel = operationalMode.channel();
+        DMRTrafficChannelManager trafficChannelManager = operationalMode.allocationManager();
+        long currentFrequency = getCurrentFrequency();
 
-    /**
-     * Preloads the DMR network configuration monitor that is optionally delivered as preload data.  This is primarily
-     * used during a Capacity plus REST channel rotation to pass the monitor from the previous REST channel to the
-     * current REST channel to ensure data continuity.
-     *
-     * Note: the monitor is only assigned to the timeslot 1 decoder state since the decoder state passes all received
-     * messages (Timeslots 0, 1, and 2) to the monitor.
-     *
-     * Note: this method is invoked over the Guava event but by the ChannelProcessingManager.
-     *
-     * @param preloadData containing a DMR network configuration monitor.
-     */
-    @Subscribe
-    public void preload(DMRNetworkConfigurationPreloadData preloadData)
-    {
-        if(getTimeslot() == 1 && preloadData.hasData())
+        //Only respond if this is a standard/control channel (not a traffic channel).
+        if(channel.isStandardChannel() && currentFrequency > 0 &&
+            restChannel.getDownlinkFrequency() > 0 &&
+            restChannel.getDownlinkFrequency() != currentFrequency && trafficChannelManager != null &&
+            hasCurrentAllocationAuthority(operationalMode))
         {
-            mNetworkConfigurationMonitor = preloadData.getData();
+            OperationalMode current = mOperationalMode.get();
+
+            if(current.hasSameAllocationAuthority(operationalMode))
+            {
+                RestChannelHandoffCandidate candidate = new RestChannelHandoffCandidate(
+                    operationalMode.authorityGeneration(), channel, trafficChannelManager, currentFrequency,
+                    restChannel);
+                mOperationalMode.compareAndSet(current, current.withRestChannelHandoffCandidate(candidate));
+            }
         }
     }
 
@@ -436,6 +515,201 @@ public class DMRDecoderState extends TimeslotDecoderState
                 }
             }
         }
+    }
+
+    /**
+     * Seeds a replacement rest-channel monitor from immutable learned state.  The old mutable monitor is never linked
+     * to the new chain.
+     */
+    @Subscribe
+    public void preload(DMRRestChannelNetworkConfigurationPreloadData preloadData)
+    {
+        if(getTimeslot() == 1 && preloadData.hasData())
+        {
+            OperationalMode operationalMode = mOperationalMode.get();
+            DMRNetworkConfigurationMonitor monitor = operationalMode.networkConfigurationMonitor();
+
+            if(monitor != null)
+            {
+                monitor.seed(preloadData.getSnapshot());
+                OperationalMode updated = operationalMode.withNetworkConfigurationSnapshot(preloadData.getSnapshot());
+
+                if(mOperationalMode.compareAndSet(operationalMode, updated))
+                {
+                    AllocationAuthority authority = acquireCurrentAllocationAuthority(updated);
+
+                    if(authority != null)
+                    {
+                        try
+                        {
+                            updated.allocationManager().updateNetworkConfigurationSnapshot(preloadData.getSnapshot());
+                        }
+                        finally
+                        {
+                            authority.release();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private void offerRestChannelHandoff(OperationalMode callbackMode)
+    {
+        OperationalMode current = mOperationalMode.get();
+        RestChannelHandoffCandidate candidate = current.restChannelHandoffCandidate();
+
+        if(candidate == null || !current.hasSameAllocationAuthority(callbackMode) ||
+            candidate.authorityGeneration() != current.authorityGeneration())
+        {
+            return;
+        }
+
+        OperationalMode cleared = current.withRestChannelHandoffCandidate(null);
+
+        if(mOperationalMode.compareAndSet(current, cleared))
+        {
+            AllocationAuthority authority = acquireCurrentAllocationAuthority(cleared);
+
+            if(authority != null)
+            {
+                try
+                {
+                    candidate.manager().requestRestChannelHandoff(candidate.channel(), candidate.currentFrequency(),
+                        candidate.restChannel(), cleared.latestNetworkConfigurationSnapshot());
+                }
+                finally
+                {
+                    authority.release();
+                }
+            }
+        }
+    }
+
+    /**
+     * Immutable decoder ownership and network-observation state.  Replacing this single reference is the conversion
+     * publication point, so callbacks never combine a traffic channel with stale control-channel allocation authority.
+     */
+    private record OperationalMode(long authorityGeneration, Channel channel,
+                                   DMRTrafficChannelManager allocationManager,
+                                   AllocationAuthority allocationAuthority,
+                                   DMRNetworkConfigurationMonitor networkConfigurationMonitor,
+                                   DMRNetworkConfigurationSnapshot latestNetworkConfigurationSnapshot,
+                                   ProtocolSiteMetadataPublisher siteMetadataPublisher,
+                                   RestChannelHandoffCandidate restChannelHandoffCandidate,
+                                   DMRChannelConfigurationTransitionNotification.Suspend authoritySuspension,
+                                   OperationalMode rollbackMode)
+    {
+        private boolean hasAllocationAuthority()
+        {
+            return channel != null && channel.isStandardChannel() && allocationManager != null &&
+                allocationAuthority != null;
+        }
+
+        private boolean isSuspendedBy(DMRChannelConfigurationTransitionNotification.Suspend suspension)
+        {
+            return authoritySuspension == suspension && allocationManager == null;
+        }
+
+        private boolean hasSameAllocationAuthority(OperationalMode other)
+        {
+            return other != null && hasAllocationAuthority() && other.hasAllocationAuthority() &&
+                authorityGeneration == other.authorityGeneration && channel == other.channel &&
+                allocationManager == other.allocationManager && allocationAuthority == other.allocationAuthority;
+        }
+
+        private OperationalMode asTraffic(Channel trafficChannel)
+        {
+            return new OperationalMode(authorityGeneration + 1, trafficChannel, null, null, null, null, null, null,
+                null, null);
+        }
+
+        private boolean canSuspendAllocationAuthority(
+            DMRChannelConfigurationTransitionNotification.Suspend suspension)
+        {
+            return authoritySuspension == null && hasAllocationAuthority() &&
+                suspension.getTargetChannel().isTrafficChannel();
+        }
+
+        private OperationalMode asSuspended(DMRChannelConfigurationTransitionNotification.Suspend suspension)
+        {
+            OperationalMode rollback = new OperationalMode(authorityGeneration, channel, allocationManager,
+                allocationAuthority, networkConfigurationMonitor, latestNetworkConfigurationSnapshot,
+                siteMetadataPublisher, null, null, null);
+            return new OperationalMode(authorityGeneration + 1, channel, null, null, networkConfigurationMonitor,
+                latestNetworkConfigurationSnapshot, siteMetadataPublisher, null, suspension, rollback);
+        }
+
+        private OperationalMode rollbackAllocationAuthority(
+            DMRChannelConfigurationTransitionNotification.Suspend suspension)
+        {
+            if(authoritySuspension != suspension || rollbackMode == null)
+            {
+                return this;
+            }
+
+            DMRNetworkConfigurationSnapshot snapshot = latestNetworkConfigurationSnapshot != null ?
+                latestNetworkConfigurationSnapshot : rollbackMode.latestNetworkConfigurationSnapshot();
+            return new OperationalMode(authorityGeneration + 1, rollbackMode.channel(),
+                rollbackMode.allocationManager(), new AllocationAuthority(),
+                rollbackMode.networkConfigurationMonitor(), snapshot, rollbackMode.siteMetadataPublisher(), null,
+                null, null);
+        }
+
+        private OperationalMode withNetworkConfigurationSnapshot(DMRNetworkConfigurationSnapshot snapshot)
+        {
+            return new OperationalMode(authorityGeneration, channel, allocationManager, allocationAuthority,
+                networkConfigurationMonitor, snapshot, siteMetadataPublisher, restChannelHandoffCandidate,
+                authoritySuspension, rollbackMode);
+        }
+
+        private OperationalMode withRestChannelHandoffCandidate(RestChannelHandoffCandidate candidate)
+        {
+            return new OperationalMode(authorityGeneration, channel, allocationManager, allocationAuthority,
+                networkConfigurationMonitor, latestNetworkConfigurationSnapshot, siteMetadataPublisher, candidate,
+                authoritySuspension, rollbackMode);
+        }
+    }
+
+    /**
+     * Nonblocking lease for allocation-manager side effects.  An atomic increment lets concurrent callbacks acquire
+     * without losing functional work to CAS contention.  Suspension succeeds only from the idle value, so an
+     * acknowledged suspension proves no dispatch is in flight.
+     */
+    private static final class AllocationAuthority
+    {
+        private static final long REVOKED = Long.MIN_VALUE;
+        private final AtomicLong mInFlightDispatches = new AtomicLong();
+
+        private boolean tryAcquire()
+        {
+            long previous = mInFlightDispatches.getAndIncrement();
+
+            if(previous >= 0)
+            {
+                return true;
+            }
+
+            mInFlightDispatches.decrementAndGet();
+            return false;
+        }
+
+        private void release()
+        {
+            mInFlightDispatches.decrementAndGet();
+        }
+
+        private boolean revokeIfIdle()
+        {
+            return mInFlightDispatches.compareAndSet(0, REVOKED);
+        }
+
+    }
+
+    private record RestChannelHandoffCandidate(long authorityGeneration, Channel channel,
+                                                DMRTrafficChannelManager manager, long currentFrequency,
+                                                DMRChannel restChannel)
+    {
     }
 
     /**
@@ -651,7 +925,7 @@ public class DMRDecoderState extends TimeslotDecoderState
     /**
      * Processes a voice header message
      */
-    private void processHeader(HeaderMessage header)
+    private void processHeader(HeaderMessage header, OperationalMode operationalMode)
     {
         switch(header.getSlotType().getDataType())
         {
@@ -671,7 +945,7 @@ public class DMRDecoderState extends TimeslotDecoderState
 
         if(isValid(lc))
         {
-            processLinkControl(lc, false);
+            processLinkControl(lc, false, operationalMode);
         }
     }
 
@@ -681,20 +955,20 @@ public class DMRDecoderState extends TimeslotDecoderState
      * Note: invalid messages are allowed to pass to this method.  Messages are selectively checked for isValid()
      * to overcome RAS implementation in certain systems.
      */
-    private void processData(DataMessage message)
+    private void processData(DataMessage message, OperationalMode operationalMode)
     {
         switch(message.getSlotType().getDataType())
         {
             case CSBK:
                 if(isValid(message) && message instanceof CSBKMessage csbk)
                 {
-                    processCSBK(csbk);
+                    processCSBK(csbk, operationalMode);
                 }
                 break;
             case VOICE_HEADER:
                 if(message instanceof HeaderMessage header)
                 {
-                    processVoiceHeader(header);
+                    processVoiceHeader(header, operationalMode);
                 }
                 break;
             case USB_DATA:
@@ -703,22 +977,25 @@ public class DMRDecoderState extends TimeslotDecoderState
                 CHANNEL_CONTROL_ENC_HEADER:
                 if(message instanceof HeaderMessage header)
                 {
-                    processHeader(header);
+                    processHeader(header, operationalMode);
                 }
                 break;
             case SLOT_IDLE:
                 closeCurrentCallEvent(message.getTimestamp());
                 getIdentifierCollection().remove(IdentifierClass.USER);
                 broadcast(new DecoderStateEvent(this, Event.CONTINUATION, State.ACTIVE, getTimeslot()));
-                if(mNetworkConfigurationMonitor != null)
+                DMRNetworkConfigurationMonitor networkConfigurationMonitor =
+                    operationalMode.networkConfigurationMonitor();
+
+                if(networkConfigurationMonitor != null)
                 {
-                    mNetworkConfigurationMonitor.process(message);
+                    networkConfigurationMonitor.process(message);
                 }
                 break;
             case TLC:
                 if(message instanceof Terminator terminator)
                 {
-                    processTerminator(terminator);
+                    processTerminator(terminator, operationalMode);
                 }
                 break;
             case RATE_1_OF_2_DATA, RATE_3_OF_4_DATA, RATE_1_DATA:
@@ -736,11 +1013,16 @@ public class DMRDecoderState extends TimeslotDecoderState
      */
     private void processTerminator(Terminator terminator)
     {
+        processTerminator(terminator, mOperationalMode.get());
+    }
+
+    private void processTerminator(Terminator terminator, OperationalMode operationalMode)
+    {
         LCMessage lcMessage = terminator.getLCMessage();
 
         if(isValid(lcMessage))
         {
-            processLinkControl(lcMessage, true);
+            processLinkControl(lcMessage, true, operationalMode);
         }
 
         closeCurrentCallEvent(terminator.getTimestamp());
@@ -751,17 +1033,22 @@ public class DMRDecoderState extends TimeslotDecoderState
     /**
      * Process a voice header message
      */
-    private void processVoiceHeader(HeaderMessage voiceHeader)
+    private void processVoiceHeader(HeaderMessage voiceHeader, OperationalMode operationalMode)
     {
         LCMessage lcMessage = voiceHeader.getLCMessage();
 
         if(isValid(lcMessage))
         {
-            processLinkControl(lcMessage, false);
+            processLinkControl(lcMessage, false, operationalMode);
         }
     }
 
     private void processCSBK(CSBKMessage csbk)
+    {
+        processCSBK(csbk, mOperationalMode.get());
+    }
+
+    private void processCSBK(CSBKMessage csbk, OperationalMode operationalMode)
     {
         switch(csbk.getOpcode())
         {
@@ -887,7 +1174,7 @@ public class DMRDecoderState extends TimeslotDecoderState
                 if(csbk instanceof CapacityPlusNeighbors capacityplusneighbors)
                 {
                     //Update state and rest channel
-                    updateRestChannel(capacityplusneighbors.getRestChannel());
+                    updateRestChannel(capacityplusneighbors.getRestChannel(), operationalMode);
                 }
                 break;
             case MOTOROLA_CAPPLUS_SITE_STATUS:
@@ -896,15 +1183,17 @@ public class DMRDecoderState extends TimeslotDecoderState
 
                     //Channel rotation monitor normally uses only CONTROL state, so when we detect that we're a
                     //Capacity plus system, add ACTIVE as an active state to the monitor.  This can be requested repeatedly.
-                    if(mTrunkingEnabled && getInterModuleEventBus() != null)
+                    var eventBus = getInterModuleEventBus();
+
+                    if(mTrunkingEnabled && eventBus != null)
                     {
-                        getInterModuleEventBus().post(CAPACITY_PLUS_ACTIVE_STATE_REQUEST);
+                        eventBus.post(CAPACITY_PLUS_ACTIVE_STATE_REQUEST);
                     }
 
                     broadcast(new DecoderStateEvent(this, Event.CONTINUATION, State.ACTIVE, getTimeslot()));
 
                     //Update state and rest channel
-                    updateRestChannel(cpss.getRestChannel());
+                    updateRestChannel(cpss.getRestChannel(), operationalMode);
 
                     //If the sister timeslot hasn't identified the current channel, attempt to identify the channel
                     //from the current call activity map.
@@ -932,10 +1221,10 @@ public class DMRDecoderState extends TimeslotDecoderState
                 {
                     DMRChannel channel = channelGrant.getChannel();
 
-                    if(hasTrafficChannelManager())
+                    if(operationalMode.hasAllocationAuthority())
                     {
                         IdentifierCollection mergedIdentifiers = getMergedIdentifierCollection(csbk.getIdentifiers());
-                        mTrafficChannelManager.processChannelGrant(channel, mergedIdentifiers, csbk.getOpcode(),
+                        processChannelGrant(operationalMode, channel, mergedIdentifiers, csbk.getOpcode(),
                             csbk.getTimestamp(), csbk.isEncrypted());
                     }
                     else
@@ -965,7 +1254,7 @@ public class DMRDecoderState extends TimeslotDecoderState
             case MOTOROLA_CAPMAX_CHANNEL_UPDATE_OPEN_MODE:
                 if(csbk instanceof CapacityMaxOpenModeVoiceChannelUpdate update)
                 {
-                    if(hasTrafficChannelManager())
+                    if(operationalMode.hasAllocationAuthority())
                     {
                         if(update.hasTimeslot1())
                         {
@@ -973,7 +1262,7 @@ public class DMRDecoderState extends TimeslotDecoderState
                             mic.remove(IdentifierClass.USER);
                             mic.update(update.getChannelTS1());
                             mic.update(update.getTalkgroupTS1());
-                            mTrafficChannelManager.processChannelGrant(update.getChannelTS1(), mic, csbk.getOpcode(),
+                            processChannelGrant(operationalMode, update.getChannelTS1(), mic, csbk.getOpcode(),
                                     csbk.getTimestamp(), csbk.isEncrypted());
                         }
                         if(update.hasTimeslot2())
@@ -982,7 +1271,7 @@ public class DMRDecoderState extends TimeslotDecoderState
                             mic.remove(IdentifierClass.USER);
                             mic.update(update.getChannelTS2());
                             mic.update(update.getTalkgroupTS2());
-                            mTrafficChannelManager.processChannelGrant(update.getChannelTS2(), mic, csbk.getOpcode(),
+                            processChannelGrant(operationalMode, update.getChannelTS2(), mic, csbk.getOpcode(),
                                     csbk.getTimestamp(), csbk.isEncrypted());
                         }
                     }
@@ -997,7 +1286,7 @@ public class DMRDecoderState extends TimeslotDecoderState
             case MOTOROLA_CAPMAX_CHANNEL_UPDATE_ADVANTAGE_MODE:
                 if(csbk instanceof CapacityMaxAdvantageModeVoiceChannelUpdate update)
                 {
-                    if(hasTrafficChannelManager())
+                    if(operationalMode.hasAllocationAuthority())
                     {
                         if(update.hasChannel1Timeslot1())
                         {
@@ -1005,7 +1294,7 @@ public class DMRDecoderState extends TimeslotDecoderState
                             mic.remove(IdentifierClass.USER);
                             mic.update(update.getChannel1TS1());
                             mic.update(update.getTalkgroupCH1TS1());
-                            mTrafficChannelManager.processChannelGrant(update.getChannel1TS1(), mic, csbk.getOpcode(),
+                            processChannelGrant(operationalMode, update.getChannel1TS1(), mic, csbk.getOpcode(),
                                     csbk.getTimestamp(), csbk.isEncrypted());
                         }
 
@@ -1015,7 +1304,7 @@ public class DMRDecoderState extends TimeslotDecoderState
                             mic.remove(IdentifierClass.USER);
                             mic.update(update.getChannel1TS2());
                             mic.update(update.getTalkgroupCH1TS2());
-                            mTrafficChannelManager.processChannelGrant(update.getChannel1TS2(), mic, csbk.getOpcode(),
+                            processChannelGrant(operationalMode, update.getChannel1TS2(), mic, csbk.getOpcode(),
                                     csbk.getTimestamp(), csbk.isEncrypted());
                         }
 
@@ -1025,7 +1314,7 @@ public class DMRDecoderState extends TimeslotDecoderState
                             mic.remove(IdentifierClass.USER);
                             mic.update(update.getChannel2TS1());
                             mic.update(update.getTalkgroupCH2TS1());
-                            mTrafficChannelManager.processChannelGrant(update.getChannel2TS1(), mic, csbk.getOpcode(),
+                            processChannelGrant(operationalMode, update.getChannel2TS1(), mic, csbk.getOpcode(),
                                     csbk.getTimestamp(), csbk.isEncrypted());
                         }
 
@@ -1035,7 +1324,7 @@ public class DMRDecoderState extends TimeslotDecoderState
                             mic.remove(IdentifierClass.USER);
                             mic.update(update.getChannel2TS2());
                             mic.update(update.getTalkgroupCH2TS2());
-                            mTrafficChannelManager.processChannelGrant(update.getChannel2TS2(), mic, csbk.getOpcode(),
+                            processChannelGrant(operationalMode, update.getChannel2TS2(), mic, csbk.getOpcode(),
                                     csbk.getTimestamp(), csbk.isEncrypted());
                         }
                     }
@@ -1052,10 +1341,10 @@ public class DMRDecoderState extends TimeslotDecoderState
                 {
                     DMRChannel channel = cpdcg.getChannel();
 
-                    if(hasTrafficChannelManager())
+                    if(operationalMode.hasAllocationAuthority())
                     {
                         IdentifierCollection mergedIdentifiers = getMergedIdentifierCollection(csbk.getIdentifiers());
-                        mTrafficChannelManager.processChannelGrant(channel, mergedIdentifiers, csbk.getOpcode(),
+                        processChannelGrant(operationalMode, channel, mergedIdentifiers, csbk.getOpcode(),
                             csbk.getTimestamp(), csbk.isEncrypted());
                     }
                     else
@@ -1091,10 +1380,10 @@ public class DMRDecoderState extends TimeslotDecoderState
                 {
                     DMRChannel channel = cpvcu.getChannel();
 
-                    if(hasTrafficChannelManager())
+                    if(operationalMode.hasAllocationAuthority())
                     {
                         IdentifierCollection mergedIdentifiers = getMergedIdentifierCollection(csbk.getIdentifiers());
-                        mTrafficChannelManager.processChannelGrant(channel, mergedIdentifiers, csbk.getOpcode(),
+                        processChannelGrant(operationalMode, channel, mergedIdentifiers, csbk.getOpcode(),
                             csbk.getTimestamp(), csbk.isEncrypted());
                     }
                     else
@@ -1119,6 +1408,93 @@ public class DMRDecoderState extends TimeslotDecoderState
                 broadcast(new DecoderStateEvent(this, Event.CONTINUATION, State.ACTIVE, getTimeslot()));
                 break;
         }
+    }
+
+    /**
+     * Dispatches a grant only while the callback's captured control-channel authority is still current.  The identity
+     * check is the lock-free linearization point with a concurrent standard-to-traffic conversion.
+     */
+    private void processChannelGrant(OperationalMode operationalMode, DMRChannel channel,
+                                     IdentifierCollection identifiers, Opcode opcode, long timestamp,
+                                     boolean encrypted)
+    {
+        Runnable interleave = mBeforeChannelGrantAuthorityCheckForTest;
+
+        if(interleave != null)
+        {
+            mBeforeChannelGrantAuthorityCheckForTest = null;
+            interleave.run();
+        }
+
+        AllocationAuthority authority = acquireCurrentAllocationAuthority(operationalMode);
+
+        if(authority != null)
+        {
+            try
+            {
+                Runnable acquiredInterleave = mAfterChannelGrantAuthorityAcquiredForTest;
+
+                if(acquiredInterleave != null)
+                {
+                    mAfterChannelGrantAuthorityAcquiredForTest = null;
+                    acquiredInterleave.run();
+                }
+
+                operationalMode.allocationManager().processChannelGrant(channel, identifiers, opcode, timestamp,
+                    encrypted);
+            }
+            finally
+            {
+                authority.release();
+            }
+        }
+    }
+
+    private AllocationAuthority acquireCurrentAllocationAuthority(OperationalMode operationalMode)
+    {
+        if(operationalMode == null || !operationalMode.hasAllocationAuthority())
+        {
+            return null;
+        }
+
+        AllocationAuthority authority = operationalMode.allocationAuthority();
+
+        if(!authority.tryAcquire())
+        {
+            return null;
+        }
+
+        if(hasCurrentAllocationAuthority(operationalMode))
+        {
+            return authority;
+        }
+
+        authority.release();
+        return null;
+    }
+
+    private boolean hasCurrentAllocationAuthority(OperationalMode operationalMode)
+    {
+        return operationalMode != null && operationalMode.hasAllocationAuthority() &&
+            mOperationalMode.get().hasSameAllocationAuthority(operationalMode);
+    }
+
+    /**
+     * Deterministic package-level race seam.  Production has no interleave action.
+     */
+    void setBeforeChannelGrantAuthorityCheckForTest(Runnable interleave)
+    {
+        mBeforeChannelGrantAuthorityCheckForTest = interleave;
+    }
+
+    void setAfterChannelGrantAuthorityAcquiredForTest(Runnable interleave)
+    {
+        mAfterChannelGrantAuthorityAcquiredForTest = interleave;
+    }
+
+    boolean hasAllocationAuthorityForTest()
+    {
+        return mOperationalMode.get().hasAllocationAuthority();
     }
 
     private DecodeEvent getDecodeEvent(CSBKMessage csbk, DecodeEventType decodeEventType, String details) {
@@ -1161,6 +1537,11 @@ public class DMRDecoderState extends TimeslotDecoderState
      */
     private void processLinkControl(LCMessage message, boolean isTerminator)
     {
+        processLinkControl(message, isTerminator, mOperationalMode.get());
+    }
+
+    private void processLinkControl(LCMessage message, boolean isTerminator, OperationalMode operationalMode)
+    {
         switch(message.getOpcode())
         {
             case FULL_ENCRYPTION_PARAMETERS:
@@ -1178,7 +1559,7 @@ public class DMRDecoderState extends TimeslotDecoderState
             case SHORT_CAPACITY_PLUS_REST_CHANNEL_NOTIFICATION:
                 if(message instanceof CapacityPlusRestChannel capacityplusrestchannel)
                 {
-                    updateRestChannel(capacityplusrestchannel.getRestChannel());
+                    updateRestChannel(capacityplusrestchannel.getRestChannel(), operationalMode);
                 }
                 break;
             case FULL_CAPACITY_PLUS_ENCRYPTED_VOICE_CHANNEL_USER:
@@ -1300,7 +1681,7 @@ public class DMRDecoderState extends TimeslotDecoderState
             case FULL_CAPACITY_PLUS_WIDE_AREA_VOICE_CHANNEL_USER:
                 if(message instanceof CapacityPlusWideAreaVoiceChannelUser cpwavcu)
                 {
-                    updateRestChannel(cpwavcu.getRestChannel());
+                    updateRestChannel(cpwavcu.getRestChannel(), operationalMode);
 
                     if(isTerminator)
                     {
@@ -1582,7 +1963,10 @@ public class DMRDecoderState extends TimeslotDecoderState
      */
     private void publishConventionalCall(DecodeEvent call, long timestamp)
     {
-        if(call == null || mChannel == null || !mChannel.isStandardChannel() || mTrunkingEnabled)
+        OperationalMode operationalMode = mOperationalMode.get();
+        Channel channel = operationalMode.channel();
+
+        if(call == null || channel == null || !channel.isStandardChannel() || mTrunkingEnabled)
         {
             return;
         }
@@ -1615,7 +1999,7 @@ public class DMRDecoderState extends TimeslotDecoderState
         boolean encrypted = mCurrentCallEncrypted ||
             DecodeEventType.VOICE_CALLS_ENCRYPTED.contains(call.getEventType());
         MyEventBus.getGlobalEventBus().post(new DMRConventionalCallEvent(startTimestamp, endTimestamp,
-            mChannel.getConfigurationId(), mChannel.getRadresGuid(), mChannel.getName(), mChannel.getAliasListName(),
+            channel.getConfigurationId(), channel.getRadresGuid(), channel.getName(), channel.getAliasListName(),
             frequency, getTimeslot(), targetKind, talkgroup, sourceRadio, targetRadio, encrypted));
     }
 
@@ -1691,7 +2075,10 @@ public class DMRDecoderState extends TimeslotDecoderState
                 resetState();
                 break;
             case NOTIFICATION_SOURCE_FREQUENCY:
-                if(!mTrunkingEnabled && mChannel.isStandardChannel() &&
+                OperationalMode operationalMode = mOperationalMode.get();
+                Channel channel = operationalMode.channel();
+
+                if(!mTrunkingEnabled && channel.isStandardChannel() &&
                     getCurrentFrequency() != event.getFrequency())
                 {
                     closeCurrentCallEvent(System.currentTimeMillis());
@@ -1701,9 +2088,18 @@ public class DMRDecoderState extends TimeslotDecoderState
                 setCurrentFrequency(event.getFrequency());
 
                 //Only update the traffic channel manager if we're not a traffic channel.
-                if(hasTrafficChannelManager() && mChannel.isStandardChannel())
+                AllocationAuthority authority = acquireCurrentAllocationAuthority(operationalMode);
+
+                if(authority != null)
                 {
-                    mTrafficChannelManager.setCurrentControlFrequency(getCurrentFrequency(), mChannel);
+                    try
+                    {
+                        operationalMode.allocationManager().setCurrentControlFrequency(getCurrentFrequency(), channel);
+                    }
+                    finally
+                    {
+                        authority.release();
+                    }
                 }
                 break;
             default:
@@ -1717,7 +2113,7 @@ public class DMRDecoderState extends TimeslotDecoderState
         super.start();
 
         //Change the default (45-second) traffic channel timeout to 1 second
-        if(mChannel.isTrafficChannel())
+        if(mOperationalMode.get().channel().isTrafficChannel())
         {
             broadcast(new ChangeChannelTimeoutEvent(this, ChannelType.TRAFFIC, 1000, getTimeslot()));
         }

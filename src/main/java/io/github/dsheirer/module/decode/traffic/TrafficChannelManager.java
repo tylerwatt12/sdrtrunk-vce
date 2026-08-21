@@ -27,7 +27,7 @@ import io.github.dsheirer.module.Module;
  */
 public abstract class TrafficChannelManager extends Module
 {
-    private long mCurrentControlFrequency;
+    private volatile long mCurrentControlFrequency;
 
     /**
      * Constructs an instance.

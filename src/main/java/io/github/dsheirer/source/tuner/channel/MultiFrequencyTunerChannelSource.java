@@ -26,15 +26,21 @@ import io.github.dsheirer.source.Source;
 import io.github.dsheirer.source.SourceEvent;
 import io.github.dsheirer.source.SourceException;
 import io.github.dsheirer.source.heartbeat.Heartbeat;
+import io.github.dsheirer.source.tuner.channel.rotation.ChannelRotationMonitorPauseRequest;
+import io.github.dsheirer.source.tuner.channel.rotation.ChannelRotationMonitorResumeRequest;
 import io.github.dsheirer.source.tuner.channel.rotation.FrequencyLockChangeRequest;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.util.ThreadPool;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.SortedSet;
 import java.util.TreeSet;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * Multiple-frequency tuner channel source.  Provides a wrapper around a tuner channel source and listens for external
@@ -47,7 +53,7 @@ public class MultiFrequencyTunerChannelSource extends TunerChannelSource
     private TunerManager mTunerManager;
     private TunerChannelSource mTunerChannelSource;
     private List<Long> mFrequencies;
-    private List<Long> mLockedFrequencies = new ArrayList<>();
+    private Set<Long> mLockedFrequencies = ConcurrentHashMap.newKeySet();
     private int mFrequencyListPointer = 0;
     private ChannelSpecification mChannelSpecification;
     private Long mMinimumFrequency;
@@ -56,7 +62,10 @@ public class MultiFrequencyTunerChannelSource extends TunerChannelSource
     private Listener<Heartbeat> mHeartbeatListener;
     private String mPreferredTuner;
     private AtomicBoolean mChangingChannels = new AtomicBoolean();
-    private boolean mStarted;
+    private final ReentrantLock mRotationLock = new ReentrantLock();
+    private ScheduledFuture<?> mRotationRetryFuture;
+    private boolean mRotationPaused;
+    private volatile boolean mStarted;
     private ConsumerSourceEventAdapter mConsumerSourceEventAdapter = new ConsumerSourceEventAdapter();
 
     public MultiFrequencyTunerChannelSource(TunerManager tunerManager, TunerChannelSource tunerChannelSource,
@@ -89,29 +98,38 @@ public class MultiFrequencyTunerChannelSource extends TunerChannelSource
      */
     private void rotate()
     {
-        if(mChangingChannels.compareAndSet(false, true))
+        mRotationLock.lock();
+
+        try
         {
-            long frequency = getNextFrequency();
-
-            if(frequency == 0)
+            if(!mRotationPaused && mStarted && mChangingChannels.compareAndSet(false, true))
             {
-                mChangingChannels.set(false);
-                return;
-            }
+                long frequency = getNextFrequency();
 
-            if(mTunerChannelSource != null)
-            {
-                //Shutdown the existing tuner channel source
-                mTunerChannelSource.stop();
-                mTunerChannelSource.setListener(null);
-                mTunerChannelSource.removeSourceEventListener();
-                mTunerChannelSource.removeHeartbeatListener(mHeartbeatListener);
-                mTunerChannelSource.dispose();
-                mTunerChannelSource = null;
-            }
+                if(frequency == 0)
+                {
+                    mChangingChannels.set(false);
+                    return;
+                }
 
-            //Request the next tuner channel source
-            getNextSource(getTunerChannel(frequency));
+                if(mTunerChannelSource != null)
+                {
+                    //Shutdown the existing tuner channel source
+                    mTunerChannelSource.stop();
+                    mTunerChannelSource.setListener(null);
+                    mTunerChannelSource.removeSourceEventListener();
+                    mTunerChannelSource.removeHeartbeatListener(mHeartbeatListener);
+                    mTunerChannelSource.dispose();
+                    mTunerChannelSource = null;
+                }
+
+                //Request the next tuner channel source
+                getNextSource(getTunerChannel(frequency));
+            }
+        }
+        finally
+        {
+            mRotationLock.unlock();
         }
     }
 
@@ -147,33 +165,149 @@ public class MultiFrequencyTunerChannelSource extends TunerChannelSource
             if(mTunerChannelSource == null)
             {
                 getSourceEventListener().receive(SourceEvent.frequencyRotationFailureNotification(this, nextChannel.getFrequency()));
-                ThreadPool.SCHEDULED.schedule(() -> getNextSource(getTunerChannel(getNextFrequency())), 500, TimeUnit.MILLISECONDS);
+                scheduleRotationRetry();
             }
+        }
+    }
+
+    private void scheduleRotationRetry()
+    {
+        if(mRotationRetryFuture == null && mStarted && !mRotationPaused && mChangingChannels.get())
+        {
+            mRotationRetryFuture = ThreadPool.SCHEDULED.schedule(this::retryNextSource, 500, TimeUnit.MILLISECONDS);
+        }
+    }
+
+    private void retryNextSource()
+    {
+        mRotationLock.lock();
+
+        try
+        {
+            mRotationRetryFuture = null;
+
+            if(mStarted && !mRotationPaused && mChangingChannels.get())
+            {
+                getNextSource(getTunerChannel(getNextFrequency()));
+            }
+        }
+        finally
+        {
+            mRotationLock.unlock();
+        }
+    }
+
+    private void cancelRotationRetry()
+    {
+        if(mRotationRetryFuture != null)
+        {
+            mRotationRetryFuture.cancel(true);
+            mRotationRetryFuture = null;
         }
     }
 
     @Override
     public void start()
     {
-        //The initial source should not be null
-        if(mTunerChannelSource != null)
+        mRotationLock.lock();
+
+        try
         {
-            mTunerChannelSource.start();
-            mStarted = true;
+            //The initial source should not be null
+            if(mTunerChannelSource != null)
+            {
+                mTunerChannelSource.start();
+                mStarted = true;
+            }
+        }
+        finally
+        {
+            mRotationLock.unlock();
         }
     }
 
     @Override
     public void stop()
     {
-        mStarted = false;
+        mRotationLock.lock();
 
-        if(mTunerChannelSource != null)
+        try
         {
-            mTunerChannelSource.stop();
-            mTunerChannelSource.removeSourceEventListener();
-            mTunerChannelSource = null;
+            mStarted = false;
+            cancelRotationRetry();
+            mChangingChannels.set(false);
+
+            if(mTunerChannelSource != null)
+            {
+                mTunerChannelSource.stop();
+                mTunerChannelSource.removeSourceEventListener();
+                mTunerChannelSource = null;
+            }
         }
+        finally
+        {
+            mRotationLock.unlock();
+        }
+    }
+
+    /**
+     * Fences tuner replacement, cancels any persistent source retry, and reports the stable live source state.
+     */
+    @Subscribe
+    public void pauseRotation(ChannelRotationMonitorPauseRequest request)
+    {
+        mRotationLock.lock();
+
+        try
+        {
+            mRotationPaused = true;
+            cancelRotationRetry();
+            boolean available = mStarted && mTunerChannelSource != null;
+            long frequency = available ? mTunerChannelSource.getFrequency() : 0;
+            request.acknowledgeSourcePaused(available, frequency);
+        }
+        finally
+        {
+            mRotationLock.unlock();
+        }
+    }
+
+    /**
+     * Resumes rotation and, when a previous rotation lost its source, restarts the bounded retry sequence.
+     */
+    @Subscribe
+    public void resumeRotation(ChannelRotationMonitorResumeRequest request)
+    {
+        mRotationLock.lock();
+
+        try
+        {
+            mRotationPaused = false;
+            scheduleRotationRetry();
+        }
+        finally
+        {
+            mRotationLock.unlock();
+        }
+    }
+
+    boolean hasPendingRotationRetry()
+    {
+        mRotationLock.lock();
+
+        try
+        {
+            return mRotationRetryFuture != null;
+        }
+        finally
+        {
+            mRotationLock.unlock();
+        }
+    }
+
+    void runRotationRetryForTest()
+    {
+        retryNextSource();
     }
 
     /**
@@ -185,11 +319,11 @@ public class MultiFrequencyTunerChannelSource extends TunerChannelSource
     @Subscribe
     public void process(FrequencyLockChangeRequest request)
     {
-        if(request.isLockRequest() && !mLockedFrequencies.contains(request.getFrequency()))
+        if(request.isLockRequest())
         {
             mLockedFrequencies.add(request.getFrequency());
         }
-        else if(request.isUnlockRequest() && mLockedFrequencies.contains(request.getFrequency()))
+        else if(request.isUnlockRequest())
         {
             mLockedFrequencies.remove(request.getFrequency());
         }

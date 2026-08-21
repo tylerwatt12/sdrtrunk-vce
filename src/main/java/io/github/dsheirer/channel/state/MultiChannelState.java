@@ -50,6 +50,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -89,6 +90,7 @@ public class MultiChannelState extends AbstractChannelState implements IDecoderS
     private DecoderStateNotificationEventCache mStateNotificationCache = new DecoderStateNotificationEventCache();
     private Listener<IdentifierUpdateNotification> mIdentifierUpdateListener = new IdentifierUpdateListenerProxy();
     private final AliasModel mAliasModel;
+    private final AtomicBoolean mTrafficTeardownRequestDispatched = new AtomicBoolean();
 
     /**
      * Constructs an instance
@@ -156,6 +158,41 @@ public class MultiChannelState extends AbstractChannelState implements IDecoderS
     }
 
     @Override
+    protected void channelConfigurationTransitionPublished(ChannelConfigurationTransition transition)
+    {
+        //Publish the functional type before presentation/configuration identifiers are projected over the event bus.
+        configureChannelType(transition.getTargetChannel());
+    }
+
+    @Override
+    protected void channelConfigurationTransitionCompleted(ChannelConfigurationTransition transition)
+    {
+        if(transition.getTargetChannel().isTrafficChannel() &&
+            (transition.wasTeardownObserved() || isTeardownState()))
+        {
+            checkTeardown();
+        }
+    }
+
+    @Override
+    protected void channelConfigurationTransitionRolledBack(ChannelConfigurationTransition transition)
+    {
+        configureChannelType(transition.getPreviousChannel());
+
+        if(transition.wasTeardownObserved())
+        {
+            //A STANDARD teardown was held while the conversion was pending.  Restore the original reset semantics.
+            for(StateMachine stateMachine: mStateMachineMap.values())
+            {
+                if(stateMachine.getState() == State.TEARDOWN)
+                {
+                    stateMachine.setState(State.RESET);
+                }
+            }
+        }
+    }
+
+    @Override
     public void stateChanged(State state, int timeslot)
     {
         ChannelStateIdentifier stateIdentifier = ChannelStateIdentifier.get(state);
@@ -170,7 +207,22 @@ public class MultiChannelState extends AbstractChannelState implements IDecoderS
                 break;
             case TEARDOWN:
                 mTeardownSequenceStarted = true;
-                if(getChannel().isTrafficChannel())
+                ChannelConfigurationTransition transition = getChannelConfigurationTransition();
+
+                if(transition != null && transition.getTargetChannel().isTrafficChannel())
+                {
+                    //The map change and observer projection are owned by the lifecycle worker.  Record this state and
+                    //let transition completion issue the disable request after the traffic key is installed.
+                    transition.markTeardownObserved();
+
+                    //Rollback can clear the marker after this callback captured it.  Preserve STANDARD reset semantics
+                    //in that case without making the decoder callback wait for lifecycle work.
+                    if(transition.isRollingBack())
+                    {
+                        mStateMachineMap.get(timeslot).setState(State.RESET);
+                    }
+                }
+                else if(getChannel().isTrafficChannel())
                 {
                     checkTeardown();
                 }
@@ -213,13 +265,17 @@ public class MultiChannelState extends AbstractChannelState implements IDecoderS
         {
             if(getChannel().isTrafficChannel())
             {
-                try
+                if(mTrafficTeardownRequestDispatched.compareAndSet(false, true))
                 {
-                    broadcast(new ChannelEvent(getChannel(), ChannelEvent.Event.REQUEST_DISABLE));
-                }
-                catch(Exception e)
-                {
-                    mLog.error("Error broadcasting shutdown channel event", e);
+                    try
+                    {
+                        broadcast(new ChannelEvent(getChannel(), ChannelEvent.Event.REQUEST_DISABLE));
+                        mTeardownSequenceCompleted = true;
+                    }
+                    catch(Exception e)
+                    {
+                        mLog.error("Error broadcasting shutdown channel event", e);
+                    }
                 }
 
                 mTeardownSequenceStarted = true;

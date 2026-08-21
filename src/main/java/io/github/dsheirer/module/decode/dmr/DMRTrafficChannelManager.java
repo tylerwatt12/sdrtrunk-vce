@@ -18,12 +18,10 @@
  */
 package io.github.dsheirer.module.decode.dmr;
 
-import com.google.common.eventbus.Subscribe;
-import io.github.dsheirer.channel.IChannelDescriptor;
+import com.google.common.eventbus.EventBus;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivityModel;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.Channel.ChannelType;
-import io.github.dsheirer.controller.channel.ChannelConversionRequest;
 import io.github.dsheirer.controller.channel.ChannelEvent;
 import io.github.dsheirer.controller.channel.ChannelEvent.Event;
 import io.github.dsheirer.controller.channel.IChannelEventListener;
@@ -35,21 +33,14 @@ import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.alias.TalkerAliasIdentifier;
 import io.github.dsheirer.identifier.alias.TalkerAliasManager;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
-import io.github.dsheirer.message.IMessage;
-import io.github.dsheirer.message.MessageHistoryPreloadData;
-import io.github.dsheirer.message.MessageHistoryRequest;
-import io.github.dsheirer.message.MessageHistoryResponse;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.module.decode.config.DecodeConfiguration;
 import io.github.dsheirer.module.decode.dmr.channel.DMRChannel;
+import io.github.dsheirer.module.decode.dmr.telemetry.DMRNetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.dmr.event.DMRDecodeEvent;
 import io.github.dsheirer.module.decode.dmr.identifier.DMRRadio;
 import io.github.dsheirer.module.decode.dmr.message.data.csbk.Opcode;
 import io.github.dsheirer.module.decode.event.DecodeEvent;
-import io.github.dsheirer.module.decode.event.DecodeEventHistory;
-import io.github.dsheirer.module.decode.event.DecodeEventHistoryPreloadData;
-import io.github.dsheirer.module.decode.event.DecodeEventHistoryRequest;
-import io.github.dsheirer.module.decode.event.DecodeEventHistoryResponse;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
 import io.github.dsheirer.module.decode.event.IDecodeEventProvider;
@@ -63,7 +54,6 @@ import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.source.SourceType;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
-import io.github.dsheirer.source.tuner.channel.rotation.DisableChannelRotationMonitorRequest;
 import io.github.dsheirer.source.tuner.channel.rotation.FrequencyLockChangeRequest;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -73,6 +63,9 @@ import java.util.Objects;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantLock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -103,6 +96,7 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
     public static final String MAX_TRAFFIC_CHANNELS_EXCEEDED = "MAX TRAFFIC CHANNELS EXCEEDED";
     public static final String NO_FREQUENCY = "NO FREQUENCY - CHECK CONFIGURATION CHANNEL CONFIG LSN CHANNEL MAP";
     public static final long EVENT_TIME_STALE_THRESHOLD = 5000; //5 seconds
+    private static final int REST_HANDOFF_CAS_ATTEMPTS = 4;
 
     private Queue<Channel> mAvailableTrafficChannels = new ConcurrentLinkedQueue<>();
     private List<Channel> mAllocatedTrafficChannels;
@@ -112,8 +106,8 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
     private Map<Long,IDecodeEvent> mCallEventsTS2 = new ConcurrentHashMap<>();
     private final TrunkedCallStartTracker mCallStartTracker =
         new TrunkedCallStartTracker(EVENT_TIME_STALE_THRESHOLD);
-    private Listener<ChannelEvent> mChannelEventListener;
-    private Listener<IDecodeEvent> mDecodeEventListener;
+    private volatile Listener<ChannelEvent> mChannelEventListener;
+    private volatile Listener<IDecodeEvent> mDecodeEventListener;
     private TrafficChannelTeardownMonitor mTrafficChannelTeardownMonitor = new TrafficChannelTeardownMonitor();
     private TalkerAliasManager mTalkerAliasManager = new TalkerAliasManager();
     private Channel mParentChannel;
@@ -121,10 +115,12 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
     private final boolean mTrunkingEnabled;
     private ChannelActivityModel mChannelActivityModel;
     private volatile boolean mTrunkedActivityObserved;
-
-    //Used as temporary storage for message and decode event history during Cap+ REST channel rotation
-    private DecodeEventHistory mTransientDecodeEventHistory;
-    private List<IMessage> mTransientMessageHistory;
+    private volatile DMRNetworkConfigurationSnapshot mLatestNetworkConfigurationSnapshot;
+    private final AtomicLong mRestHandoffGeneration = new AtomicLong();
+    private final AtomicReference<RestHandoffSlot> mPendingRestHandoff = new AtomicReference<>();
+    private final AtomicReference<Runnable> mControlFrequencyUpdateInterleaveForTest = new AtomicReference<>();
+    private final Channel mRestChannelReservationToken =
+        new Channel("DMR Capacity Plus rest-channel reservation", ChannelType.STANDARD);
 
     /**
      * Monitors call events and allocates traffic decoder channels in response
@@ -203,32 +199,82 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
             return;
         }
 
-        mLock.lock();
+        Channel existing = mAllocatedChannelFrequencyMap.get(previous);
+        Runnable interleave = mControlFrequencyUpdateInterleaveForTest.getAndSet(null);
 
-        try
+        if(interleave != null)
         {
-            Channel existing = mAllocatedChannelFrequencyMap.get(previous);
-
-            //Only remove the channel if it is non-null and it matches the current control channel.
-            if(channel.equals(existing))
-            {
-                //Unlock the frequency in the channel rotation monitor
-                getInterModuleEventBus().post(FrequencyLockChangeRequest.unlock(previous));
-                mAllocatedChannelFrequencyMap.remove(previous);
-            }
-
-            mAllocatedChannelFrequencyMap.put(current, channel);
-            getInterModuleEventBus().post(FrequencyLockChangeRequest.lock(current));
+            interleave.run();
         }
-        finally
+
+        //Only remove the channel if it matches the current control channel.
+        if(channel.equals(existing) && mAllocatedChannelFrequencyMap.remove(previous, channel))
         {
-            mLock.unlock();
+            EventBus eventBus = getInterModuleEventBus();
+
+            if(eventBus != null)
+            {
+                eventBus.post(FrequencyLockChangeRequest.unlock(previous));
+            }
+        }
+
+        installCurrentControlAllocation(current, channel);
+        EventBus eventBus = getInterModuleEventBus();
+
+        if(eventBus != null)
+        {
+            eventBus.post(FrequencyLockChangeRequest.lock(current));
         }
 
         if(mTrunkedActivityObserved && mChannelActivityModel != null)
         {
             mChannelActivityModel.trunkedCurrentControl(mParentChannel, current);
         }
+
+        RestHandoffSlot pending = mPendingRestHandoff.get();
+
+        if(pending != null &&
+            channel.getSourceConfiguration() instanceof SourceConfigTunerMultipleFrequency sourceConfig)
+        {
+            sourceConfig.setPreferredFrequency(current);
+        }
+    }
+
+    private void installCurrentControlAllocation(long frequency, Channel channel)
+    {
+        for(int attempt = 0; attempt < REST_HANDOFF_CAS_ATTEMPTS; attempt++)
+        {
+            Channel existing = mAllocatedChannelFrequencyMap.putIfAbsent(frequency, channel);
+
+            if(existing == null || existing == channel || existing.isTrafficChannel())
+            {
+                return;
+            }
+
+            if(existing == mRestChannelReservationToken &&
+                mAllocatedChannelFrequencyMap.replace(frequency, mRestChannelReservationToken, channel))
+            {
+                return;
+            }
+        }
+    }
+
+    private void restoreCurrentControlAllocation(long frequency)
+    {
+        if(getCurrentControlFrequency() == frequency)
+        {
+            installCurrentControlAllocation(frequency, mParentChannel);
+
+            if(getCurrentControlFrequency() != frequency)
+            {
+                mAllocatedChannelFrequencyMap.remove(frequency, mParentChannel);
+            }
+        }
+    }
+
+    void setControlFrequencyUpdateInterleaveForTest(Runnable interleave)
+    {
+        mControlFrequencyUpdateInterleaveForTest.set(interleave);
     }
 
     /**
@@ -282,127 +328,476 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
      * @param currentFrequency of the standard channel
      * @param restChannel to identify the new channel frequency to start
      */
-    public void convertToTrafficChannel(Channel channel, long currentFrequency, IChannelDescriptor restChannel,
-                                        DMRNetworkConfigurationMonitor networkConfigurationMonitor)
+    public void requestRestChannelHandoff(Channel channel, long currentFrequency, DMRChannel restChannel)
     {
-        if(!mTrunkingEnabled)
+        requestRestChannelHandoff(channel, currentFrequency, restChannel, null);
+    }
+
+    /**
+     * Offers a rest-channel move with the latest already-built immutable network snapshot.  A newer target may replace
+     * a queued request, but cannot replace one that the lifecycle worker has claimed.
+     */
+    public void requestRestChannelHandoff(Channel channel, long currentFrequency, DMRChannel restChannel,
+                                          DMRNetworkConfigurationSnapshot networkConfigurationSnapshot)
+    {
+        if(!mTrunkingEnabled || channel != mParentChannel || !channel.isStandardChannel() || restChannel == null ||
+            currentFrequency <= 0 || restChannel.getDownlinkFrequency() <= 0)
         {
             return;
         }
 
-        mLock.lock();
+        updateNetworkConfigurationSnapshot(networkConfigurationSnapshot);
+
+        for(int attempt = 0; attempt < REST_HANDOFF_CAS_ATTEMPTS; attempt++)
+        {
+            RestHandoffSlot current = mPendingRestHandoff.get();
+
+            if(current != null && (current.mRequest.matchesRestChannel(restChannel) || current.mClaimed))
+            {
+                return;
+            }
+
+            Channel reservedTrafficChannel = current != null ? current.mTrafficChannel :
+                mAvailableTrafficChannels.poll();
+
+            if(reservedTrafficChannel == null)
+            {
+                return;
+            }
+
+            long restFrequency = restChannel.getDownlinkFrequency();
+
+            //Reserve the advertised rest frequency before publishing the request.  Decoder-side grant allocation sees
+            //this concurrent-map entry and cannot consume the same frequency or pooled channel in the queueing gap.
+            if(mAllocatedChannelFrequencyMap.putIfAbsent(restFrequency, mRestChannelReservationToken) != null)
+            {
+                if(current == null)
+                {
+                    mAvailableTrafficChannels.offer(reservedTrafficChannel);
+                }
+                else
+                {
+                    //The newer valid target supersedes the older queued target even when its RF is currently busy.
+                    //Only the exact unclaimed slot can be invalidated; a concurrent lifecycle claim retains ownership.
+                    invalidateUnclaimedRestHandoff(current);
+                }
+
+                return;
+            }
+
+            DMRNetworkConfigurationSnapshot effectiveSnapshot = networkConfigurationSnapshot != null ?
+                networkConfigurationSnapshot : mLatestNetworkConfigurationSnapshot;
+            DMRRestChannelHandoffRequest request;
+
+            try
+            {
+                request = new DMRRestChannelHandoffRequest(this, channel, currentFrequency,
+                    restChannel, effectiveSnapshot, mRestHandoffGeneration.incrementAndGet());
+            }
+            catch(RuntimeException exception)
+            {
+                mAllocatedChannelFrequencyMap.remove(restFrequency, mRestChannelReservationToken);
+
+                if(current == null)
+                {
+                    mAvailableTrafficChannels.offer(reservedTrafficChannel);
+                }
+
+                mLog.error("Invalid DMR rest-channel handoff request", exception);
+                return;
+            }
+
+            RestHandoffSlot replacement = new RestHandoffSlot(request, false, reservedTrafficChannel);
+
+            if(mPendingRestHandoff.compareAndSet(current, replacement))
+            {
+                if(current != null)
+                {
+                    releaseRestFrequencyReservation(current.mRequest);
+                }
+
+                EventBus eventBus = getInterModuleEventBus();
+
+                if(eventBus != null)
+                {
+                    try
+                    {
+                        eventBus.post(request);
+                    }
+                    catch(RuntimeException exception)
+                    {
+                        completeRestHandoff(request);
+                        mLog.error("Error offering DMR rest-channel handoff", exception);
+                    }
+                }
+                else
+                {
+                    completeRestHandoff(request);
+                }
+
+                return;
+            }
+
+            mAllocatedChannelFrequencyMap.remove(restFrequency, mRestChannelReservationToken);
+
+            if(current == null)
+            {
+                mAvailableTrafficChannels.offer(reservedTrafficChannel);
+            }
+        }
+    }
+
+    private void invalidateUnclaimedRestHandoff(RestHandoffSlot queued)
+    {
+        if(queued != null && !queued.mClaimed && mPendingRestHandoff.compareAndSet(queued, null))
+        {
+            releaseRestFrequencyReservation(queued.mRequest);
+            mAvailableTrafficChannels.offer(queued.mTrafficChannel);
+        }
+    }
+
+    /**
+     * Retains the latest already-built immutable metadata snapshot so either timeslot can nominate the next rest
+     * channel without synchronizing on or sharing the decoder's mutable monitor.
+     */
+    public void updateNetworkConfigurationSnapshot(DMRNetworkConfigurationSnapshot snapshot)
+    {
+        if(snapshot != null)
+        {
+            mLatestNetworkConfigurationSnapshot = snapshot;
+        }
+    }
+
+    /**
+     * Indicates that this request is still the current handoff for this manager.
+     */
+    public boolean isPendingRestHandoff(DMRRestChannelHandoffRequest request)
+    {
+        RestHandoffSlot slot = mPendingRestHandoff.get();
+        return slot != null && slot.mRequest == request;
+    }
+
+    /**
+     * Current allocation for deterministic package-level accounting tests.
+     */
+    Channel getAllocatedChannel(long frequency)
+    {
+        return mAllocatedChannelFrequencyMap.get(frequency);
+    }
+
+    /**
+     * Releases the pending slot after a handoff succeeds, is rejected, or is cancelled.
+     */
+    public void completeRestHandoff(DMRRestChannelHandoffRequest request)
+    {
+        completeRestHandoff(request, false);
+    }
+
+    /**
+     * Completes a successful move and retains the new standard-channel frequency allocation.
+     */
+    public void completeSuccessfulRestHandoff(DMRRestChannelHandoffRequest request)
+    {
+        completeRestHandoff(request, true);
+    }
+
+    private void completeRestHandoff(DMRRestChannelHandoffRequest request, boolean keepRestFrequencyReservation)
+    {
+        for(int attempt = 0; attempt < REST_HANDOFF_CAS_ATTEMPTS; attempt++)
+        {
+            RestHandoffSlot slot = mPendingRestHandoff.get();
+
+            if(slot == null || slot.mRequest != request)
+            {
+                return;
+            }
+
+            if(mPendingRestHandoff.compareAndSet(slot, null))
+            {
+                if(!slot.mClaimed)
+                {
+                    mAvailableTrafficChannels.offer(slot.mTrafficChannel);
+                }
+
+                if(!keepRestFrequencyReservation)
+                {
+                    releaseRestFrequencyReservation(request);
+                }
+                else
+                {
+                    mAllocatedChannelFrequencyMap.replace(request.restDownlinkFrequency(),
+                        mRestChannelReservationToken, mParentChannel);
+                }
+
+                return;
+            }
+        }
+    }
+
+    /**
+     * Cancels a pending handoff for the specified configured parent channel.
+     */
+    public void cancelRestHandoff(Channel channel)
+    {
+        RestHandoffSlot slot = mPendingRestHandoff.get();
+        DMRRestChannelHandoffRequest pending = slot != null ? slot.mRequest : null;
+
+        if(pending != null && pending.parentChannel() == channel)
+        {
+            completeRestHandoff(pending);
+        }
+    }
+
+    /**
+     * Explicitly accounts for a converted traffic channel that stops while the manager is detached during replacement
+     * source retry or cancellation.
+     */
+    public void processTrafficChannelTeardown(Channel trafficChannel)
+    {
+        if(trafficChannel != null)
+        {
+            mTrafficChannelTeardownMonitor.receive(new ChannelEvent(trafficChannel,
+                Event.NOTIFICATION_PROCESSING_STOP));
+        }
+    }
+
+    /**
+     * Performs the Capacity Plus chain conversion on the channel lifecycle worker.  This method reserves and converts
+     * a traffic channel exactly once for the request generation.  Replacement source allocation happens later and is
+     * never performed while the manager lock is held.
+     */
+    public PreparedRestChannelHandoff prepareRestChannelHandoff(DMRRestChannelHandoffRequest handoff)
+    {
+        RestHandoffSlot queued = mPendingRestHandoff.get();
+
+        if(queued == null || queued.mRequest != handoff || queued.mClaimed ||
+            !mPendingRestHandoff.compareAndSet(queued,
+                new RestHandoffSlot(handoff, true, queued.mTrafficChannel)))
+        {
+            return null;
+        }
+
+        Channel trafficChannel = queued.mTrafficChannel;
 
         try
         {
+            Channel channel = handoff.parentChannel();
+            long currentFrequency = handoff.currentFrequency();
+            DMRChannel restChannel = handoff.createRestChannel();
             long rest = restChannel.getDownlinkFrequency();
 
-            //Only do the conversion of the original channel has multiple frequencies defined and the rest channel is
-            //one of those frequencies
-            if(rest > 0 && !mAllocatedChannelFrequencyMap.containsKey(rest) &&
-                    channel.getSourceConfiguration().getSourceType() == SourceType.TUNER_MULTIPLE_FREQUENCIES)
+            if(mAllocatedChannelFrequencyMap.get(rest) != mRestChannelReservationToken ||
+                channel.getSourceConfiguration().getSourceType() != SourceType.TUNER_MULTIPLE_FREQUENCIES)
             {
-                SourceConfigTunerMultipleFrequency originalSourceConfig = (SourceConfigTunerMultipleFrequency)channel.getSourceConfiguration();
+                mAvailableTrafficChannels.offer(trafficChannel);
+                return null;
+            }
 
-                //Add the rest channel to the list of frequencies in the source configuration
-                if(!originalSourceConfig.getFrequencies().contains(restChannel.getDownlinkFrequency()))
+            SourceConfigTunerMultipleFrequency originalSourceConfig =
+                (SourceConfigTunerMultipleFrequency)channel.getSourceConfiguration();
+
+            SourceConfigTuner trafficSourceConfig = new SourceConfigTuner();
+            trafficSourceConfig.setFrequency(currentFrequency);
+            trafficChannel.setSourceConfiguration(trafficSourceConfig);
+            ChannelStartProcessingRequest startRequest = new ChannelStartProcessingRequest(channel, restChannel,
+                null, this);
+
+            if(handoff.networkConfigurationSnapshot() != null)
+            {
+                startRequest.addPreloadDataContent(
+                    new DMRRestChannelNetworkConfigurationPreloadData(handoff.networkConfigurationSnapshot()));
+            }
+
+            return new PreparedRestChannelHandoff(handoff, trafficChannel, startRequest,
+                originalSourceConfig.getPreferredFrequency());
+        }
+        catch(RuntimeException exception)
+        {
+            if(trafficChannel != null)
+            {
+                mAvailableTrafficChannels.offer(trafficChannel);
+            }
+
+            throw exception;
+        }
+    }
+
+    /**
+     * Commits the manager-owned accounting immediately before the lifecycle manager converts the exact live chain.
+     */
+    public boolean commitRestChannelHandoff(PreparedRestChannelHandoff prepared)
+    {
+        if(prepared == null || !isPendingRestHandoff(prepared.handoff()))
+        {
+            return false;
+        }
+
+        DMRRestChannelHandoffRequest handoff = prepared.handoff();
+        SourceConfigTunerMultipleFrequency sourceConfig =
+            (SourceConfigTunerMultipleFrequency)handoff.parentChannel().getSourceConfiguration();
+        long restFrequency = handoff.restDownlinkFrequency();
+
+        if(!mAllocatedChannelFrequencyMap.replace(handoff.currentFrequency(), mParentChannel,
+            prepared.trafficChannel()))
+        {
+            return false;
+        }
+
+        prepared.setPreviousAllocation(mParentChannel);
+
+        if(!sourceConfig.getFrequencies().contains(restFrequency))
+        {
+            sourceConfig.addFrequency(restFrequency);
+        }
+
+        sourceConfig.setPreferredFrequency(restFrequency);
+        return true;
+    }
+
+    /**
+     * Releases a reservation that was never converted into a live traffic chain.
+     */
+    public void releaseRestChannelReservation(PreparedRestChannelHandoff prepared)
+    {
+        releaseRestChannelReservation(prepared, null);
+    }
+
+    void releaseRestChannelReservation(PreparedRestChannelHandoff prepared, Runnable afterCurrentFrequencySnapshot)
+    {
+        if(prepared != null && !prepared.isConverted() && prepared.releaseReservation())
+        {
+            DMRRestChannelHandoffRequest handoff = prepared.handoff();
+            Channel previousAllocation = prepared.previousAllocation();
+            boolean currentFrequencyUnchanged = getCurrentControlFrequency() == handoff.currentFrequency();
+            SourceConfigTunerMultipleFrequency sourceConfig =
+                (SourceConfigTunerMultipleFrequency)handoff.parentChannel().getSourceConfiguration();
+
+            if(afterCurrentFrequencySnapshot != null)
+            {
+                afterCurrentFrequencySnapshot.run();
+            }
+
+            boolean restored = false;
+
+            if(previousAllocation != null && currentFrequencyUnchanged)
+            {
+                restored = mAllocatedChannelFrequencyMap.replace(handoff.currentFrequency(),
+                    prepared.trafficChannel(), previousAllocation);
+
+                if(restored && getCurrentControlFrequency() != handoff.currentFrequency())
                 {
-                    originalSourceConfig.addFrequency(restChannel.getDownlinkFrequency());
-                }
-
-                //Convert current channel to a traffic channel if one is available
-                Channel trafficChannel = mAvailableTrafficChannels.poll();
-
-                if(trafficChannel != null)
-                {
-                    //Disable the channel rotation manager when we have multiple frequencies defined
-                    getInterModuleEventBus().post(new DisableChannelRotationMonitorRequest());
-
-                    //Set the frequency for the traffic channel configuration
-                    SourceConfigTuner trafficSourceConfig = new SourceConfigTuner();
-                    trafficSourceConfig.setFrequency(currentFrequency);
-                    trafficChannel.setSourceConfiguration(trafficSourceConfig);
-
-                    //Post a request for message and decode event history to transfer to the new REST channel.  This has
-                    // to be posted before the channel conversion request
-                    getInterModuleEventBus().post(new DecodeEventHistoryRequest());
-                    getInterModuleEventBus().post(new MessageHistoryRequest());
-
-                    //Dispatch a request to convert this processing chain to the traffic channel.  This will cause the
-                    //processing chain to convert to a traffic channel and notify all of the modules, which will in-turn
-                    //cause the decoder states (2 timeslots) to dereference this manager so that the existing channel can
-                    //no longer allocate traffic channels.
-                    getInterModuleEventBus().post(new ChannelConversionRequest(channel, trafficChannel));
-
-                    mAllocatedChannelFrequencyMap.put(currentFrequency, trafficChannel);
-
-                    //Set the preferred frequency to use when restarting the original channel
-                    originalSourceConfig.setPreferredFrequency(rest);
-
-                    //Dispatch request to persistently start the original channel with the rest channel frequency and reuse
-                    //this traffic channel manager in the new processing chain.
-                    ChannelStartProcessingRequest request = new ChannelStartProcessingRequest(channel, restChannel,
-                            null, this);
-                    request.setPersistentAttempt(true);
-                    request.setChildDecodeEventHistory(mTransientDecodeEventHistory);
-
-                    //If we received an event history response, add it to the request as preload data content
-                    if(mTransientDecodeEventHistory != null)
-                    {
-                        DecodeEventHistoryPreloadData eventHistory =
-                                new DecodeEventHistoryPreloadData(mTransientDecodeEventHistory.getItems());
-                        request.addPreloadDataContent(eventHistory);
-
-                        mTransientDecodeEventHistory = null;
-                    }
-
-                    //If we received a message history response, add it to the request as preload data content
-                    if(mTransientMessageHistory != null)
-                    {
-                        MessageHistoryPreloadData messageHistory = new MessageHistoryPreloadData(mTransientMessageHistory);
-                        request.addPreloadDataContent(messageHistory);
-                        mTransientMessageHistory = null;
-                    }
-
-                    //Add the DMR network configuration monitor as preload data
-                    if(networkConfigurationMonitor != null)
-                    {
-                        request.addPreloadDataContent(new DMRNetworkConfigurationPreloadData(networkConfigurationMonitor));
-                    }
-
-                    getInterModuleEventBus().post(request);
+                    mAllocatedChannelFrequencyMap.remove(handoff.currentFrequency(), previousAllocation);
+                    restored = false;
                 }
             }
+            else
+            {
+                mAllocatedChannelFrequencyMap.remove(handoff.currentFrequency(), prepared.trafficChannel());
+                restoreCurrentControlAllocation(handoff.currentFrequency());
+                restored = previousAllocation != null &&
+                    getCurrentControlFrequency() == handoff.currentFrequency() &&
+                    mAllocatedChannelFrequencyMap.get(handoff.currentFrequency()) == previousAllocation;
+            }
+
+            if(restored)
+            {
+                sourceConfig.setPreferredFrequency(prepared.previousPreferredFrequency());
+
+                if(getCurrentControlFrequency() != handoff.currentFrequency())
+                {
+                    mAllocatedChannelFrequencyMap.remove(handoff.currentFrequency(), previousAllocation);
+                    sourceConfig.setPreferredFrequency(getCurrentControlFrequency());
+                }
+            }
+            else if(getCurrentControlFrequency() != handoff.currentFrequency())
+            {
+                sourceConfig.setPreferredFrequency(getCurrentControlFrequency());
+            }
+
+            mAvailableTrafficChannels.offer(prepared.trafficChannel());
         }
-        finally
+    }
+
+    private void releaseRestFrequencyReservation(DMRRestChannelHandoffRequest request)
+    {
+        if(request != null)
         {
-            mLock.unlock();
+            mAllocatedChannelFrequencyMap.remove(request.restDownlinkFrequency(), mRestChannelReservationToken);
         }
     }
 
-    /**
-     * Processes a decode event history response and temporarily stores the event history.
-     *
-     * Note: this is used for Cap+ REST channel rotation.
-     *
-     * @param response containing the current decode event history.
-     */
-    @Subscribe
-    public void process(DecodeEventHistoryResponse response)
+    private record RestHandoffSlot(DMRRestChannelHandoffRequest mRequest, boolean mClaimed,
+                                   Channel mTrafficChannel)
     {
-        mTransientDecodeEventHistory = response.getDecodeEventHistory();
     }
 
     /**
-     * Processes a message history response and temporarily stores the history.
-     *
-     * Note: this is used for Cap+ REST channel rotation.
-     *
-     * @param response containing the current message history.
+     * Prepared state retained across replacement-source retries so conversion is never repeated.
      */
-    @Subscribe
-    public void process(MessageHistoryResponse response)
+    public static final class PreparedRestChannelHandoff
     {
-        mTransientMessageHistory = response.getMessages();
+        private final DMRRestChannelHandoffRequest mHandoff;
+        private final Channel mTrafficChannel;
+        private final ChannelStartProcessingRequest mStartRequest;
+        private final long mPreviousPreferredFrequency;
+        private final AtomicBoolean mReservationReleased = new AtomicBoolean();
+        private final AtomicBoolean mConverted = new AtomicBoolean();
+        private final AtomicReference<Channel> mPreviousAllocation = new AtomicReference<>();
+
+        private PreparedRestChannelHandoff(DMRRestChannelHandoffRequest handoff, Channel trafficChannel,
+                                           ChannelStartProcessingRequest startRequest,
+                                           long previousPreferredFrequency)
+        {
+            mHandoff = handoff;
+            mTrafficChannel = trafficChannel;
+            mStartRequest = startRequest;
+            mPreviousPreferredFrequency = previousPreferredFrequency;
+        }
+
+        public DMRRestChannelHandoffRequest handoff()
+        {
+            return mHandoff;
+        }
+
+        public Channel trafficChannel()
+        {
+            return mTrafficChannel;
+        }
+
+        public ChannelStartProcessingRequest startRequest()
+        {
+            return mStartRequest;
+        }
+
+        public long previousPreferredFrequency()
+        {
+            return mPreviousPreferredFrequency;
+        }
+
+        private boolean releaseReservation()
+        {
+            return mReservationReleased.compareAndSet(false, true);
+        }
+
+        public void markConverted()
+        {
+            mConverted.set(true);
+        }
+
+        private boolean isConverted()
+        {
+            return mConverted.get();
+        }
+
+        private void setPreviousAllocation(Channel channel)
+        {
+            mPreviousAllocation.compareAndSet(null, channel);
+        }
+
+        private Channel previousAllocation()
+        {
+            return mPreviousAllocation.get();
+        }
     }
 
     /**
@@ -411,10 +806,11 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
     public void broadcast(IDecodeEvent decodeEvent)
     {
         publishChannelActivity(decodeEvent);
+        Listener<IDecodeEvent> listener = mDecodeEventListener;
 
-        if(mDecodeEventListener != null)
+        if(listener != null)
         {
-            mDecodeEventListener.receive(decodeEvent);
+            listener.receive(decodeEvent);
         }
     }
 
@@ -437,10 +833,10 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
     }
 
     /**
-     * Receive decode events/updates from traffic channels to capture in the parent channel's decode event history.  We
-     * do this by rebroadcasting the event to the parent control channel's processing chain so that the event history
-     * can receive the event or update.
-     * @param trafficChannelEvent to receive and rebroadcast.
+     * Receives a side observation of a decoder-owned traffic event.  The originating processing chain remains the
+     * event's only product delivery route; this manager adds call attribution and channel-activity accounting without
+     * rebroadcasting the same event through the replacement parent chain.
+     * @param trafficChannelEvent observed on a managed traffic channel.
      */
     public void receiveTrafficChannelEvent(IDecodeEvent trafficChannelEvent)
     {
@@ -462,7 +858,7 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
             }
         }
 
-        broadcast(trafficChannelEvent);
+        publishChannelActivity(trafficChannelEvent);
     }
 
     /**
@@ -472,12 +868,33 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
     public void processChannelGrant(DMRChannel channel, IdentifierCollection identifierCollection,
                                     Opcode opcode, long timestamp, boolean encrypted)
     {
+        processChannelGrant(channel, identifierCollection, opcode, timestamp, encrypted, null, null);
+    }
+
+    /**
+     * Package-level deterministic race seam.  Production callers use the public overload with no interleave action.
+     */
+    void processChannelGrant(DMRChannel channel, IdentifierCollection identifierCollection,
+                             Opcode opcode, long timestamp, boolean encrypted, Runnable afterInitialAllocationLookup)
+    {
+        processChannelGrant(channel, identifierCollection, opcode, timestamp, encrypted,
+            afterInitialAllocationLookup, null);
+    }
+
+    /**
+     * Package-level deterministic seams around the two lock-free allocation decisions.
+     */
+    void processChannelGrant(DMRChannel channel, IdentifierCollection identifierCollection,
+                             Opcode opcode, long timestamp, boolean encrypted, Runnable afterInitialAllocationLookup,
+                             Runnable afterTrafficAllocationClaim)
+    {
         if(!mTrunkingEnabled)
         {
             return;
         }
 
         mTrunkedActivityObserved = true;
+        ChannelStartProcessingRequest trafficStartRequest = null;
         mLock.lock();
 
         try
@@ -498,14 +915,24 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
                 MyEventBus.getGlobalEventBus().post(callObservation.attribution());
             }
 
-            boolean allocated = mAllocatedChannelFrequencyMap.containsKey(channel.getDownlinkFrequency());
+            long downlinkFrequency = channel.getDownlinkFrequency();
+            boolean currentControlFrequency = downlinkFrequency > 0 &&
+                downlinkFrequency == getCurrentControlFrequency();
+            boolean allocated = currentControlFrequency ||
+                mAllocatedChannelFrequencyMap.containsKey(downlinkFrequency);
+
+            if(!allocated && afterInitialAllocationLookup != null)
+            {
+                afterInitialAllocationLookup.run();
+            }
 
             if(allocated)
             {
                 //Traffic children maintain their own event state.  The parent control frequency is also tracked as
                 //allocated, however, and can carry a call on its other timeslot.  Publish the repeated/current-RF grant
                 //directly so that call remains visible after the parent is promoted out of Conventional activity.
-                if(mAllocatedChannelFrequencyMap.get(channel.getDownlinkFrequency()) == mParentChannel)
+                if((mAllocatedChannelFrequencyMap.get(downlinkFrequency) == mParentChannel ||
+                    currentControlFrequency) && !isPendingRestFrequency(downlinkFrequency))
                 {
                     publishChannelActivity(channel, identifierCollection, decodeEventType);
                 }
@@ -596,15 +1023,39 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
 
                 if(trafficChannel != null)
                 {
-                    SourceConfigTuner sourceConfig = new SourceConfigTuner();
-                    sourceConfig.setFrequency(frequency);
-                    trafficChannel.setSourceConfiguration(sourceConfig);
-                    mAllocatedChannelFrequencyMap.put(frequency, trafficChannel);
-                    //Preload the channel grant event for this traffic-channel start only.
-                    ChannelStartProcessingRequest request = new ChannelStartProcessingRequest(trafficChannel, channel,
-                        identifierCollection, this);
-                    request.addPreloadDataContent(new DMRChannelGrantPreloadData(event));
-                    getInterModuleEventBus().post(request);
+                    if(mAllocatedChannelFrequencyMap.putIfAbsent(frequency, trafficChannel) == null)
+                    {
+                        if(afterTrafficAllocationClaim != null)
+                        {
+                            afterTrafficAllocationClaim.run();
+                        }
+
+                        if(getCurrentControlFrequency() == frequency)
+                        {
+                            if(mAllocatedChannelFrequencyMap.remove(frequency, trafficChannel))
+                            {
+                                restoreCurrentControlAllocation(frequency);
+                                mAvailableTrafficChannels.offer(trafficChannel);
+                            }
+                        }
+                        else if(mAllocatedChannelFrequencyMap.get(frequency) == trafficChannel)
+                        {
+                            SourceConfigTuner sourceConfig = new SourceConfigTuner();
+                            sourceConfig.setFrequency(frequency);
+                            trafficChannel.setSourceConfiguration(sourceConfig);
+                            //Preload the channel grant event for this traffic-channel start only.
+                            ChannelStartProcessingRequest request = new ChannelStartProcessingRequest(trafficChannel,
+                                channel, identifierCollection, this);
+                            request.addPreloadDataContent(new DMRChannelGrantPreloadData(event));
+                            trafficStartRequest = request;
+                        }
+                    }
+                    else
+                    {
+                        //A concurrent rest-channel handoff or grant claimed this frequency after the initial lookup.
+                        //Return the untouched pooled channel instead of overwriting that allocation.
+                        mAvailableTrafficChannels.offer(trafficChannel);
+                    }
                 }
                 else
                 {
@@ -630,6 +1081,40 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
         {
             mLock.unlock();
         }
+
+        if(trafficStartRequest != null)
+        {
+            EventBus eventBus = getInterModuleEventBus();
+
+            if(eventBus != null)
+            {
+                try
+                {
+                    if(trafficStartRequest.getChannel().getSourceConfiguration() instanceof
+                        SourceConfigTuner sourceConfig)
+                    {
+                        eventBus.post(FrequencyLockChangeRequest.lock(sourceConfig.getFrequency()));
+                    }
+
+                    eventBus.post(trafficStartRequest);
+                }
+                catch(RuntimeException exception)
+                {
+                    mLog.error("Error offering DMR traffic-channel start request", exception);
+                    processTrafficChannelTeardown(trafficStartRequest.getChannel());
+                }
+            }
+            else
+            {
+                processTrafficChannelTeardown(trafficStartRequest.getChannel());
+            }
+        }
+    }
+
+    private boolean isPendingRestFrequency(long frequency)
+    {
+        RestHandoffSlot slot = mPendingRestHandoff.get();
+        return slot != null && slot.mRequest.restDownlinkFrequency() == frequency;
     }
 
     private void publishChannelActivity(DMRChannel channel, IdentifierCollection identifiers,
@@ -719,9 +1204,11 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
      */
     private void broadcast(ChannelEvent channelEvent)
     {
-        if(mChannelEventListener != null)
+        Listener<ChannelEvent> listener = mChannelEventListener;
+
+        if(listener != null)
         {
-            mChannelEventListener.receive(channelEvent);
+            listener.receive(channelEvent);
         }
     }
 
@@ -836,43 +1323,38 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
     @Override
     public void start()
     {
-        mLock.lock();
+        EventBus eventBus = getInterModuleEventBus();
 
-        try
+        if(eventBus != null)
         {
             for(Long frequency: mAllocatedChannelFrequencyMap.keySet())
             {
-                getInterModuleEventBus().post(FrequencyLockChangeRequest.lock(frequency));
+                eventBus.post(FrequencyLockChangeRequest.lock(frequency));
             }
-        }
-        finally
-        {
-            mLock.unlock();
         }
     }
 
     @Override
     public void stop()
     {
+        List<Channel> channels;
         mLock.lock();
 
         try
         {
             mAvailableTrafficChannels.clear();
             mCallStartTracker.clear();
-
-            List<Channel> channels = new ArrayList<>(mAllocatedChannelFrequencyMap.values());
-
-            //Issue a disable request for each traffic channel
-            for(Channel channel: channels)
-            {
-                broadcast(new ChannelEvent(channel, Event.REQUEST_DISABLE));
-            }
-
+            channels = new ArrayList<>(mAllocatedChannelFrequencyMap.values());
         }
         finally
         {
             mLock.unlock();
+        }
+
+        //Issue a disable request for each traffic channel
+        for(Channel channel: channels)
+        {
+            broadcast(new ChannelEvent(channel, Event.REQUEST_DISABLE));
         }
     }
 
@@ -996,10 +1478,21 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
 
                             if(frequencyToRemove > 0)
                             {
-                                mAllocatedChannelFrequencyMap.remove(frequencyToRemove);
+                                mAllocatedChannelFrequencyMap.remove(frequencyToRemove, channel);
+                                restoreCurrentControlAllocation(frequencyToRemove);
 
                                 //Unlock the frequency in the channel rotation monitor
-                                getInterModuleEventBus().post(FrequencyLockChangeRequest.unlock(frequencyToRemove));
+                                EventBus eventBus = getInterModuleEventBus();
+
+                                if(eventBus != null && getCurrentControlFrequency() != frequencyToRemove)
+                                {
+                                    eventBus.post(FrequencyLockChangeRequest.unlock(frequencyToRemove));
+
+                                    if(getCurrentControlFrequency() == frequencyToRemove)
+                                    {
+                                        eventBus.post(FrequencyLockChangeRequest.lock(frequencyToRemove));
+                                    }
+                                }
                             }
 
                             //Add the traffic channel back to the queue to be reused
@@ -1031,10 +1524,21 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
 
                             if(frequencyToUpdate > 0)
                             {
-                                mAllocatedChannelFrequencyMap.remove(frequencyToUpdate);
+                                mAllocatedChannelFrequencyMap.remove(frequencyToUpdate, channel);
+                                restoreCurrentControlAllocation(frequencyToUpdate);
 
                                 //Unlock the frequency in the channel rotation monitor
-                                getInterModuleEventBus().post(FrequencyLockChangeRequest.unlock(frequencyToUpdate));
+                                EventBus eventBus = getInterModuleEventBus();
+
+                                if(eventBus != null && getCurrentControlFrequency() != frequencyToUpdate)
+                                {
+                                    eventBus.post(FrequencyLockChangeRequest.unlock(frequencyToUpdate));
+
+                                    if(getCurrentControlFrequency() == frequencyToUpdate)
+                                    {
+                                        eventBus.post(FrequencyLockChangeRequest.lock(frequencyToUpdate));
+                                    }
+                                }
                             }
 
                             //Add the traffic channel back to the queue to be reused

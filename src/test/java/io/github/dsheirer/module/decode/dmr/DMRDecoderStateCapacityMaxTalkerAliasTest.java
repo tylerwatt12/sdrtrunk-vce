@@ -6,7 +6,7 @@
 package io.github.dsheirer.module.decode.dmr;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.controller.channel.Channel;
@@ -19,7 +19,6 @@ import io.github.dsheirer.module.decode.dmr.identifier.DMRRadio;
 import io.github.dsheirer.module.decode.dmr.message.data.lc.full.motorola.CapacityMaxTalkerAlias;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
-import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
@@ -43,7 +42,7 @@ class DMRDecoderStateCapacityMaxTalkerAliasTest
             .build());
         state.receive(capacityMaxAlias("CAR 1", 1_100L));
 
-        assertNull(activeTrafficChannelManager(state));
+        assertFalse(state.hasAllocationAuthorityForTest());
         assertEquals(1, manager.mTrafficEvents);
         assertEquals(List.of("CAR 1"), manager.mAliases);
     }
@@ -85,13 +84,6 @@ class DMRDecoderStateCapacityMaxTalkerAliasTest
         }
 
         return new CapacityMaxTalkerAlias(bits, timestamp, 1);
-    }
-
-    private static Object activeTrafficChannelManager(DMRDecoderState state) throws ReflectiveOperationException
-    {
-        Field field = DMRDecoderState.class.getDeclaredField("mTrafficChannelManager");
-        field.setAccessible(true);
-        return field.get(state);
     }
 
     private static class TestDecoderState extends DMRDecoderState

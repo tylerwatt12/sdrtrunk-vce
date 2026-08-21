@@ -50,7 +50,7 @@ public abstract class Module
 	 * Event bus for inter-module communication of processing chain events.  Note: this is an externally provided
 	 * resource, typically provided by the ProcessingChain parent for each module.
 	 */
-	private EventBus mInterModuleEventBus;
+	private volatile EventBus mInterModuleEventBus;
 
 	/**
 	 * Constructs an instance
@@ -65,18 +65,20 @@ public abstract class Module
 	 */
 	public void setInterModuleEventBus(EventBus interModuleEventBus)
 	{
+		EventBus previous = mInterModuleEventBus;
+
 		//Unregister from the current event bus (if one exists)
-		if(hasInterModuleEventBus())
+		if(previous != null)
 		{
-			getInterModuleEventBus().unregister(this);
+			previous.unregister(this);
 		}
 
 		mInterModuleEventBus = interModuleEventBus;
 
 		//Auto-register with the event bus
-		if(hasInterModuleEventBus())
+		if(interModuleEventBus != null)
 		{
-			getInterModuleEventBus().register(this);
+			interModuleEventBus.register(this);
 		}
 	}
 
@@ -124,9 +126,11 @@ public abstract class Module
 	 */
 	public void dispose()
 	{
-		if(hasInterModuleEventBus())
+		EventBus eventBus = mInterModuleEventBus;
+
+		if(eventBus != null)
 		{
-			getInterModuleEventBus().unregister(this);
+			eventBus.unregister(this);
 		}
 	}
 }

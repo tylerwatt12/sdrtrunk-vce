@@ -24,6 +24,7 @@ import io.github.dsheirer.module.decode.dmr.telemetry.DMRNetworkConfigurationSna
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.module.decode.dmr.sync.DMRSyncPattern;
 import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class DMRNetworkConfigurationMonitorTest
@@ -188,6 +189,50 @@ class DMRNetworkConfigurationMonitorTest
         assertEquals(451_000_000L, snapshot.channels().getFirst().downlink());
         assertTrue(snapshot.channels().getFirst().roles()
             .contains(DMRNetworkConfigurationSnapshot.ChannelRole.CONTROL));
+    }
+
+    @Test
+    void immutableHandoffSeedRetainsLearnedStateAndMergesNewObservations()
+    {
+        DMRNetworkConfigurationSnapshot.Channel previousChannel =
+            new DMRNetworkConfigurationSnapshot.Channel("DmrRestLsn", 2, 1, 450_000_000L, 455_000_000L,
+                Set.of(DMRNetworkConfigurationSnapshot.ChannelRole.CONTROL),
+                DMRNetworkConfigurationSnapshot.FrequencySource.CONFIGURED_MAP, 500L);
+        DMRNetworkConfigurationSnapshot previous = new DMRNetworkConfigurationSnapshot("DMR", "CAPACITY_PLUS",
+            null, 7, "Motorola Capacity+", null, null, "Control", 3, 4, List.of(previousChannel), List.of());
+        DMRNetworkConfigurationMonitor replacement = new DMRNetworkConfigurationMonitor(
+            List.of(mapping(3, 451_000_000L, 456_000_000L)));
+        replacement.seed(previous);
+
+        CorrectedBinaryMessage bits = new CorrectedBinaryMessage(80);
+        bits.load(19, 5, 5);
+        bits.load(25, 4, 7);
+        replacement.process(new CapacityPlusNeighbors(DMRSyncPattern.BASE_STATION_DATA,
+            bits, null, slotType(), 1_000L, 1));
+        DMRNetworkConfigurationSnapshot merged = replacement.getSnapshot();
+
+        assertEquals("CAPACITY_PLUS", merged.variant());
+        assertEquals(7, merged.site());
+        assertEquals(3, merged.colorCodeTimeslot1());
+        assertEquals(4, merged.colorCodeTimeslot2());
+        assertEquals(2, merged.channels().size());
+        assertTrue(merged.channels().contains(previousChannel));
+        DMRNetworkConfigurationSnapshot.Channel retained = merged.channels().stream()
+            .filter(channel -> channel.logicalChannelNumber() == 2)
+            .findFirst().orElseThrow();
+        assertEquals("DmrRestLsn", retained.descriptor());
+        assertEquals(500L, retained.observedAtEpochMilliseconds());
+        assertTrue(merged.channels().stream().anyMatch(channel ->
+            channel.logicalChannelNumber() == 3 && channel.downlink() == 451_000_000L));
+
+        DMRNetworkConfigurationMonitor secondReplacement = new DMRNetworkConfigurationMonitor(
+            List.of(mapping(3, 451_000_000L, 456_000_000L)));
+        secondReplacement.seed(merged);
+        DMRNetworkConfigurationSnapshot repeated = secondReplacement.getSnapshot();
+        assertEquals(merged, repeated);
+        assertEquals(500L, repeated.channels().stream()
+            .filter(channel -> channel.logicalChannelNumber() == 2)
+            .findFirst().orElseThrow().observedAtEpochMilliseconds());
     }
 
     private static TalkgroupVoiceChannelGrant grant(int lcn, int timeslot)
