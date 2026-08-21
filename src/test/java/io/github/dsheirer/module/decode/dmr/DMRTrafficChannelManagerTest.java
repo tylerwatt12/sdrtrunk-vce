@@ -8,12 +8,15 @@ package io.github.dsheirer.module.decode.dmr;
 import com.google.common.eventbus.Subscribe;
 import com.google.common.eventbus.EventBus;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivityModel;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivityRow;
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.controller.channel.event.ChannelStartProcessingRequest;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.alias.DmrTalkerAliasIdentifier;
@@ -37,6 +40,41 @@ import org.junit.jupiter.api.Test;
 
 class DMRTrafficChannelManagerTest
 {
+    @Test
+    void trafficStartsCarryRequestScopedGrantEvents()
+    {
+        Channel parent = new Channel("DMR Site", Channel.ChannelType.STANDARD);
+        DecodeConfigDMR config = new DecodeConfigDMR();
+        config.setChannelMode(DMRChannelMode.TRUNKED);
+        config.setTrafficChannelPoolSize(2);
+        parent.setDecodeConfiguration(config);
+        DMRTrafficChannelManager manager = new DMRTrafficChannelManager(parent);
+        StartRequestSubscriber startSubscriber = new StartRequestSubscriber();
+        EventBus eventBus = new EventBus();
+        eventBus.register(startSubscriber);
+        manager.setInterModuleEventBus(eventBus);
+        List<DecodeEvent> grantEvents = new CopyOnWriteArrayList<>();
+        manager.addDecodeEventListener(event -> grantEvents.add((DecodeEvent)event));
+
+        manager.processChannelGrant(channel(12, 1, 451_012_500L), identifiers(101, 91),
+            Opcode.STANDARD_TALKGROUP_VOICE_CHANNEL_GRANT, 1_000L, false);
+        manager.processChannelGrant(channel(13, 2, 451_025_000L), identifiers(102, 92),
+            Opcode.STANDARD_TALKGROUP_VOICE_CHANNEL_GRANT, 2_000L, false);
+
+        assertEquals(2, startSubscriber.requests.size());
+        assertEquals(2, grantEvents.size());
+        ChannelStartProcessingRequest firstRequest = startSubscriber.requests.get(0);
+        ChannelStartProcessingRequest secondRequest = startSubscriber.requests.get(1);
+        DMRChannelGrantPreloadData firstPreload = grantPreload(firstRequest);
+        DMRChannelGrantPreloadData secondPreload = grantPreload(secondRequest);
+
+        assertSame(grantEvents.get(0), firstPreload.getChannelGrantEvent());
+        assertSame(grantEvents.get(1), secondPreload.getChannelGrantEvent());
+        assertNotSame(firstPreload.getChannelGrantEvent(), secondPreload.getChannelGrantEvent());
+        assertSame(config, firstRequest.getChannel().getDecodeConfiguration());
+        assertSame(config, secondRequest.getChannel().getDecodeConfiguration());
+    }
+
     @Test
     void publishesOneCallStartPerTargetWithoutTrafficTuner()
     {
@@ -265,6 +303,25 @@ class DMRTrafficChannelManagerTest
         return identifiers;
     }
 
+    private static DMRTier3Channel channel(int number, int timeslot, long frequency)
+    {
+        DMRTier3Channel channel = new DMRTier3Channel(number, timeslot);
+        TimeslotFrequency mapping = new TimeslotFrequency();
+        mapping.setNumber(number);
+        mapping.setDownlinkFrequency(frequency);
+        channel.setTimeslotFrequency(mapping);
+        return channel;
+    }
+
+    private static DMRChannelGrantPreloadData grantPreload(ChannelStartProcessingRequest request)
+    {
+        return request.getPreloadDataContents().stream()
+            .filter(DMRChannelGrantPreloadData.class::isInstance)
+            .map(DMRChannelGrantPreloadData.class::cast)
+            .findFirst()
+            .orElseThrow();
+    }
+
     private static class CallStartSubscriber
     {
         private final List<TrunkedCallStartEvent> events = new CopyOnWriteArrayList<>();
@@ -295,6 +352,17 @@ class DMRTrafficChannelManagerTest
         public void receive(TrunkedTalkerAliasEvent event)
         {
             events.add(event);
+        }
+    }
+
+    private static class StartRequestSubscriber
+    {
+        private final List<ChannelStartProcessingRequest> requests = new CopyOnWriteArrayList<>();
+
+        @Subscribe
+        public void receive(ChannelStartProcessingRequest request)
+        {
+            requests.add(request);
         }
     }
 }

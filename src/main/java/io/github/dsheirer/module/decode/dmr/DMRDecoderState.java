@@ -413,6 +413,32 @@ public class DMRDecoderState extends TimeslotDecoderState
     }
 
     /**
+     * Preloads the initial channel grant event for a dynamically allocated traffic channel.  Only the decoder state
+     * for the granted timeslot maintains the event.  The sister state receives the matching alternate-timeslot channel
+     * descriptor so that both states have the same repeater context.
+     *
+     * @param preloadData containing the request-scoped initial grant event
+     */
+    @Subscribe
+    public void preload(DMRChannelGrantPreloadData preloadData)
+    {
+        if(preloadData.hasData())
+        {
+            DecodeEvent event = preloadData.getChannelGrantEvent();
+
+            if(event.getTimeslot() == getTimeslot())
+            {
+                setCurrentCallEvent(event);
+
+                if(mSisterDecoderState != null && event.getChannelDescriptor() instanceof DMRChannel dmrChannel)
+                {
+                    mSisterDecoderState.setCurrentChannel(dmrChannel.getSisterTimeslot());
+                }
+            }
+        }
+    }
+
+    /**
      * Processes a short data message carrying SMS text
      * @param sms
      */

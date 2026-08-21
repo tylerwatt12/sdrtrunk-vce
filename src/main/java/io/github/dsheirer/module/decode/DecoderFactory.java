@@ -43,13 +43,11 @@ import io.github.dsheirer.module.decode.dmr.DMRDecoderState;
 import io.github.dsheirer.module.decode.dmr.DMRTrafficChannelManager;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
 import io.github.dsheirer.module.decode.dmr.audio.DMRAudioModule;
-import io.github.dsheirer.module.decode.dmr.channel.DMRChannel;
 import io.github.dsheirer.module.decode.dmr.channel.DMRLsn;
 import io.github.dsheirer.module.decode.dmr.channel.DmrRestLsn;
 import io.github.dsheirer.module.decode.dmr.channel.TimeslotFrequency;
 import io.github.dsheirer.module.decode.dmr.message.DMRMessage;
 import io.github.dsheirer.module.decode.dmr.message.filter.DmrMessageFilterSet;
-import io.github.dsheirer.module.decode.event.DecodeEvent;
 import io.github.dsheirer.module.decode.fleetsync2.Fleetsync2Decoder;
 import io.github.dsheirer.module.decode.fleetsync2.Fleetsync2DecoderState;
 import io.github.dsheirer.module.decode.fleetsync2.FleetsyncMessageFilter;
@@ -504,30 +502,6 @@ public class DecoderFactory
             {
                 state1.setCurrentChannel(lsn.getSisterTimeslot());
                 state2.setCurrentChannel(lsn);
-            }
-        }
-
-        if(decodeConfig.hasChannelGrantEvent())
-        {
-            DecodeEvent event = decodeConfig.getChannelGrantEvent();
-
-            if(decodeConfig.getChannelGrantEvent().getTimeslot() == DMRMessage.TIMESLOT_1)
-            {
-                state1.setCurrentCallEvent(event);
-
-                if(event.getChannelDescriptor() instanceof DMRChannel dmrChannel)
-                {
-                    state2.setCurrentChannel(dmrChannel.getSisterTimeslot());
-                }
-            }
-            else
-            {
-                state2.setCurrentCallEvent(event);
-
-                if(event.getChannelDescriptor() instanceof DMRChannel dmrChannel)
-                {
-                    state1.setCurrentChannel(dmrChannel.getSisterTimeslot());
-                }
             }
         }
 

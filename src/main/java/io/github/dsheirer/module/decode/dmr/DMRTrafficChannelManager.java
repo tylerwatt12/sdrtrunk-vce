@@ -600,14 +600,11 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
                     sourceConfig.setFrequency(frequency);
                     trafficChannel.setSourceConfiguration(sourceConfig);
                     mAllocatedChannelFrequencyMap.put(frequency, trafficChannel);
-                    //Preload the channel grant event for the traffic channel to use/maintain
-                    if(trafficChannel.getDecodeConfiguration() instanceof DecodeConfigDMR config)
-                    {
-                        config.setChannelGrantEvent(event);
-                    }
-
-                    getInterModuleEventBus().post(new ChannelStartProcessingRequest(trafficChannel, channel,
-                            identifierCollection, this));
+                    //Preload the channel grant event for this traffic-channel start only.
+                    ChannelStartProcessingRequest request = new ChannelStartProcessingRequest(trafficChannel, channel,
+                        identifierCollection, this);
+                    request.addPreloadDataContent(new DMRChannelGrantPreloadData(event));
+                    getInterModuleEventBus().post(request);
                 }
                 else
                 {

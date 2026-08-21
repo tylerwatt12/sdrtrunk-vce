@@ -24,7 +24,6 @@ import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.config.DecodeConfiguration;
 import io.github.dsheirer.module.decode.dmr.channel.TimeslotFrequency;
 import io.github.dsheirer.module.decode.dmr.message.DMRMessage;
-import io.github.dsheirer.module.decode.event.DecodeEvent;
 import io.github.dsheirer.source.tuner.channel.ChannelSpecification;
 import java.util.ArrayList;
 import java.util.List;
@@ -43,9 +42,6 @@ public class DecodeConfigDMR extends DecodeConfiguration
     private boolean mUseCompressedTalkgroups = false;
     private List<TimeslotFrequency> mTimeslotMap = new ArrayList<>();
     private DMRChannelMode mChannelMode;
-
-    @JsonIgnore
-    private DecodeEvent mChannelGrantEvent;
 
     /**
      * Overrides the default value to indicate that DMR has two timeslots
@@ -245,31 +241,4 @@ public class DecodeConfigDMR extends DecodeConfiguration
         }
     }
 
-    @JsonIgnore
-    /**
-     * Original channel grant event.  This is used for trunking systems to pass the original channel grant event to
-     * the decoder state on channel startup.
-     */
-    public DecodeEvent getChannelGrantEvent()
-    {
-        return mChannelGrantEvent;
-    }
-
-    /**
-     * Sets the original channel grant event.
-     * @param channelGrantEvent to set on the decoder state.
-     */
-    public void setChannelGrantEvent(DecodeEvent channelGrantEvent)
-    {
-        mChannelGrantEvent = channelGrantEvent;
-    }
-
-    @JsonIgnore
-    /**
-     * Indicates if this decode config has an original channel grant event to preload.
-     */
-    public boolean hasChannelGrantEvent()
-    {
-        return mChannelGrantEvent != null;
-    }
 }
