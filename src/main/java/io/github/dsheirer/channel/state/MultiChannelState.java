@@ -18,13 +18,11 @@
  */
 package io.github.dsheirer.channel.state;
 
-import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.audio.squelch.SquelchStateEvent;
 import io.github.dsheirer.channel.metadata.ChannelMetadata;
 import io.github.dsheirer.channel.state.DecoderStateEvent.Event;
 import io.github.dsheirer.controller.channel.Channel;
-import io.github.dsheirer.controller.channel.ChannelConfigurationChangeNotification;
 import io.github.dsheirer.controller.channel.ChannelEvent;
 import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.IdentifierUpdateListener;
@@ -141,18 +139,6 @@ public class MultiChannelState extends AbstractChannelState implements IDecoderS
             StateMachine stateMachine = mStateMachineMap.get(timeslot);
             stateMachine.setChannelType(channel.getChannelType());
         }
-    }
-
-    /**
-     * Receive notification that the underlying channel configuration has changed.
-     * @param notification
-     */
-    @Subscribe
-    public void channelConfigurationChanged(ChannelConfigurationChangeNotification notification)
-    {
-        updateChannelConfiguration(notification.getChannel());
-        configureChannelType(notification.getChannel());
-        createConfigurationIdentifiers(notification.getChannel());
     }
 
     @Override
@@ -525,6 +511,9 @@ public class MultiChannelState extends AbstractChannelState implements IDecoderS
         {
             switch(sourceEvent.getEvent())
             {
+                case NOTIFICATION_STOP_SAMPLE_STREAM:
+                    reset();
+                    break;
                 case NOTIFICATION_FREQUENCY_CHANGE:
                     //Rebroadcast source frequency change events for the decoder(s) to process
                     long frequency = sourceEvent.getValue().longValue();

@@ -45,7 +45,7 @@ public abstract class AbstractChannelState extends Module implements IChannelEve
     protected Listener<IDecodeEvent> mDecodeEventListener;
     protected Listener<DecoderStateEvent> mDecoderStateListener;
     protected Listener<SourceEvent> mExternalSourceEventListener;
-    private Channel mChannel;
+    private final Channel mChannel;
     protected boolean mSourceOverflow = false;
     private HeartbeatReceiver mHeartbeatReceiver = new HeartbeatReceiver();
     protected boolean mTeardownSequenceStarted = false;
@@ -76,14 +76,6 @@ public abstract class AbstractChannelState extends Module implements IChannelEve
     public boolean isTeardownSequenceStarted()
     {
         return mTeardownSequenceStarted;
-    }
-
-    /**
-     * Updates/replaces the current channel configuration with the argument.
-     */
-    protected void updateChannelConfiguration(Channel channel)
-    {
-        mChannel = channel;
     }
 
     /**

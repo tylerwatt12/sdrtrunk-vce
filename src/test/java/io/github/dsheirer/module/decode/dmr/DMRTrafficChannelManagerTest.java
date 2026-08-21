@@ -16,6 +16,7 @@ import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivityModel;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivityRow;
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.controller.channel.ChannelEvent;
 import io.github.dsheirer.controller.channel.event.ChannelStartProcessingRequest;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
@@ -73,6 +74,50 @@ class DMRTrafficChannelManagerTest
         assertNotSame(firstPreload.getChannelGrantEvent(), secondPreload.getChannelGrantEvent());
         assertSame(config, firstRequest.getChannel().getDecodeConfiguration());
         assertSame(config, secondRequest.getChannel().getDecodeConfiguration());
+    }
+
+    @Test
+    void newControlFrequencyStopsAndReusesTrafficChildOnThatFrequency()
+    {
+        Channel parent = new Channel("DMR Site", Channel.ChannelType.STANDARD);
+        DecodeConfigDMR config = new DecodeConfigDMR();
+        config.setChannelMode(DMRChannelMode.TRUNKED);
+        config.setTrafficChannelPoolSize(1);
+        parent.setDecodeConfiguration(config);
+        DMRTrafficChannelManager manager = new DMRTrafficChannelManager(parent);
+        StartRequestSubscriber startSubscriber = new StartRequestSubscriber();
+        EventBus eventBus = new EventBus();
+        eventBus.register(startSubscriber);
+        manager.setInterModuleEventBus(eventBus);
+        List<ChannelEvent> lifecycleEvents = new CopyOnWriteArrayList<>();
+        manager.setChannelEventListener(lifecycleEvents::add);
+        long firstControl = 451_000_000L;
+        long nextControl = 452_000_000L;
+        long laterTraffic = 453_000_000L;
+        manager.setCurrentControlFrequency(firstControl, parent);
+
+        manager.processChannelGrant(channel(2, 1, nextControl), identifiers(101, 91),
+            Opcode.STANDARD_TALKGROUP_VOICE_CHANNEL_GRANT, 1_000L, false);
+        assertEquals(1, startSubscriber.requests.size());
+        Channel trafficChild = startSubscriber.requests.getFirst().getChannel();
+
+        manager.setCurrentControlFrequency(nextControl, parent);
+        manager.setCurrentControlFrequency(nextControl, parent);
+
+        assertEquals(1, lifecycleEvents.size());
+        assertSame(trafficChild, lifecycleEvents.getFirst().getChannel());
+        assertEquals(ChannelEvent.Event.REQUEST_DISABLE, lifecycleEvents.getFirst().getEvent());
+
+        //Teardown occurs after the parent has replaced the child's map entry.  The child must still return to the pool.
+        manager.getChannelEventListener().receive(new ChannelEvent(trafficChild,
+            ChannelEvent.Event.NOTIFICATION_PROCESSING_STOP));
+        manager.processChannelGrant(channel(3, 1, laterTraffic), identifiers(102, 92),
+            Opcode.STANDARD_TALKGROUP_VOICE_CHANNEL_GRANT, 2_000L, false);
+        manager.processChannelGrant(channel(2, 1, nextControl), identifiers(103, 93),
+            Opcode.STANDARD_TALKGROUP_VOICE_CHANNEL_GRANT, 3_000L, false);
+
+        assertEquals(2, startSubscriber.requests.size());
+        assertSame(trafficChild, startSubscriber.requests.getLast().getChannel());
     }
 
     @Test

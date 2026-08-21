@@ -36,8 +36,6 @@ public class ChannelStartProcessingRequestViewer extends HBox
     private Label mChannelDescriptorLabel;
     private Label mTrafficChannelManagerLabel;
     private Label mPreloadDataContentLabel;
-    private Label mParentDecodeHistoryLabel;
-    private Label mChildDecodeHistoryLabel;
     private IdentifierCollectionViewer mIdentifierCollectionViewer;
 
     /**
@@ -65,18 +63,10 @@ public class ChannelStartProcessingRequestViewer extends HBox
         GridPane.setHgrow(getPreloadDataContentLabel(), Priority.ALWAYS);
         gridPane.add(getPreloadDataContentLabel(), 1, 3);
 
-        gridPane.add(new Label("Parent History:"), 0, 4);
-        GridPane.setHgrow(getParentDecodeHistoryLabel(), Priority.ALWAYS);
-        gridPane.add(getParentDecodeHistoryLabel(), 1, 4);
-
-        gridPane.add(new Label("Child History:"), 0, 5);
-        GridPane.setHgrow(getChildDecodeHistoryLabel(), Priority.ALWAYS);
-        gridPane.add(getChildDecodeHistoryLabel(), 1, 5);
-
-        gridPane.add(new Label("Identifiers"), 0, 6);
+        gridPane.add(new Label("Identifiers"), 0, 4);
         GridPane.setHgrow(getIdentifierCollectionViewer(), Priority.ALWAYS);
         getIdentifierCollectionViewer().setPrefHeight(120);
-        gridPane.add(getIdentifierCollectionViewer(), 0, 7, 2, 1);
+        gridPane.add(getIdentifierCollectionViewer(), 0, 5, 2, 1);
 
         ColumnConstraints cc0 = new ColumnConstraints();
         cc0.setHalignment(HPos.RIGHT);
@@ -108,24 +98,6 @@ public class ChannelStartProcessingRequestViewer extends HBox
                 getChannelDescriptorLabel().setText("None");
             }
 
-            if(request.getChildDecodeEventHistory() != null)
-            {
-                getChildDecodeHistoryLabel().setText(formatItemCount(request.getChildDecodeEventHistory().getItems().size()));
-            }
-            else
-            {
-                getChildDecodeHistoryLabel().setText("None");
-            }
-
-            if(request.getParentDecodeEventHistory() != null)
-            {
-                getParentDecodeHistoryLabel().setText(formatItemCount(request.getParentDecodeEventHistory().getItems().size()));
-            }
-            else
-            {
-                getParentDecodeHistoryLabel().setText("None");
-            }
-
             if(request.getPreloadDataContents() != null)
             {
                 getPreloadDataContentLabel().setText(formatItemCount(request.getPreloadDataContents().size()));
@@ -152,10 +124,8 @@ public class ChannelStartProcessingRequestViewer extends HBox
         else
         {
             getChannelDescriptorLabel().setText(null);
-            getChildDecodeHistoryLabel().setText(null);
             getChannelConfigLabel().setText(null);
             getIdentifierCollectionViewer().set(null);
-            getParentDecodeHistoryLabel().setText(null);
             getPreloadDataContentLabel().setText(null);
             getTrafficChannelManagerLabel().setText(null);
         }
@@ -205,26 +175,6 @@ public class ChannelStartProcessingRequestViewer extends HBox
         }
 
         return mPreloadDataContentLabel;
-    }
-
-    private Label getParentDecodeHistoryLabel()
-    {
-        if(mParentDecodeHistoryLabel == null)
-        {
-            mParentDecodeHistoryLabel = new Label();
-        }
-
-        return mParentDecodeHistoryLabel;
-    }
-
-    private Label getChildDecodeHistoryLabel()
-    {
-        if(mChildDecodeHistoryLabel == null)
-        {
-            mChildDecodeHistoryLabel = new Label();
-        }
-
-        return mChildDecodeHistoryLabel;
     }
 
     private IdentifierCollectionViewer getIdentifierCollectionViewer()

@@ -28,9 +28,11 @@ import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.source.ISourceEventProvider;
 import io.github.dsheirer.source.SourceEvent;
 import io.github.dsheirer.util.ThreadPool;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -54,8 +56,9 @@ public class ChannelRotationMonitor extends Module implements ISourceEventProvid
     private long mRotationDelay;
     private final long mActiveStateLossDelay;
     private volatile long mLastActiveTimestamp = System.currentTimeMillis();
+    private volatile long mInitialRotationTimestamp;
     private volatile boolean mActiveStateObserved;
-    private boolean mEnabled = true;
+    private final AtomicLong mRequestedFrequency = new AtomicLong();
 
     /**
      * Constructs a channel rotation monitor that uses the specified rotation delay.
@@ -75,7 +78,7 @@ public class ChannelRotationMonitor extends Module implements ISourceEventProvid
      */
     public ChannelRotationMonitor(Collection<State> activeStates, long rotationDelay, long activeStateLossDelay)
     {
-        mActiveStates = activeStates;
+        mActiveStates = new ArrayList<>(activeStates);
         mRotationDelay = rotationDelay;
         mActiveStateLossDelay = activeStateLossDelay;
 
@@ -87,6 +90,8 @@ public class ChannelRotationMonitor extends Module implements ISourceEventProvid
         {
             mRotationDelay = CHANNEL_ROTATION_DELAY_MAXIMUM;
         }
+
+        mInitialRotationTimestamp = System.currentTimeMillis() + (mRotationDelay * 2);
     }
 
     /**
@@ -125,17 +130,6 @@ public class ChannelRotationMonitor extends Module implements ISourceEventProvid
     }
 
     /**
-     * Processes a request to disable this monitor instance.
-     * @param request to disable
-     */
-    @Subscribe
-    public void disable(DisableChannelRotationMonitorRequest request)
-    {
-        mEnabled = false;
-        stop();
-    }
-
-    /**
      * Processes a request to add an active state to the list of monitored active states.
      * @param request to add
      */
@@ -146,6 +140,16 @@ public class ChannelRotationMonitor extends Module implements ISourceEventProvid
         {
             mActiveStates.add(request.getState());
         }
+    }
+
+    /**
+     * Stores only the latest decoder-requested target.  EventBus dispatch is synchronous on the decoder callback, so
+     * tuner selection is deferred to this monitor's existing scheduled worker.
+     */
+    @Subscribe
+    public void selectFrequency(ChannelRotationFrequencySelectionRequest request)
+    {
+        mRequestedFrequency.set(request.frequency());
     }
 
     /**
@@ -162,13 +166,29 @@ public class ChannelRotationMonitor extends Module implements ISourceEventProvid
      */
     void checkState(long currentTimeMillis)
     {
+        Listener<SourceEvent> sourceEventListener = mSourceEventListener;
+
+        if(sourceEventListener != null)
+        {
+            long requestedFrequency = mRequestedFrequency.getAndSet(0);
+
+            if(requestedFrequency > 0)
+            {
+                sourceEventListener.receive(SourceEvent.frequencySelectionRequest(requestedFrequency));
+                mLastActiveTimestamp = currentTimeMillis;
+                mInitialRotationTimestamp = 0;
+                mActiveStateObserved = false;
+                return;
+            }
+        }
+
         long delay = mActiveStateObserved && mActiveStateLossDelay > 0 ?
             Math.max(mRotationDelay, mActiveStateLossDelay) : mRotationDelay;
 
-        if(mEnabled && mSourceEventListener != null &&
+        if(sourceEventListener != null && currentTimeMillis >= mInitialRotationTimestamp &&
             ((mLastActiveTimestamp + delay) < currentTimeMillis))
         {
-            mSourceEventListener.receive(SourceEvent.frequencyRotationRequest());
+            sourceEventListener.receive(SourceEvent.frequencyRotationRequest());
             mLastActiveTimestamp = currentTimeMillis;
             mActiveStateObserved = false;
         }
@@ -185,6 +205,8 @@ public class ChannelRotationMonitor extends Module implements ISourceEventProvid
     {
         if(mScheduledFuture == null)
         {
+            mInitialRotationTimestamp = System.currentTimeMillis() + (mRotationDelay * 2);
+
             Runnable runnable = () -> {
                 try
                 {
@@ -196,7 +218,7 @@ public class ChannelRotationMonitor extends Module implements ISourceEventProvid
                 }
             };
 
-            mScheduledFuture = ThreadPool.SCHEDULED.scheduleAtFixedRate(runnable, mRotationDelay * 2,
+            mScheduledFuture = ThreadPool.SCHEDULED.scheduleAtFixedRate(runnable, 0,
                 mRotationDelay / 2, TimeUnit.MILLISECONDS);
         }
     }
@@ -204,6 +226,8 @@ public class ChannelRotationMonitor extends Module implements ISourceEventProvid
     @Override
     public void stop()
     {
+        mRequestedFrequency.set(0);
+
         if(mScheduledFuture != null)
         {
             mScheduledFuture.cancel(true);
