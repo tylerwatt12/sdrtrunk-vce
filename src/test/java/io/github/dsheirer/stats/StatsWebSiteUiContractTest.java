@@ -78,7 +78,7 @@ class StatsWebSiteUiContractTest
     void keepsSiteMetadataAndCallOutcomesDistinct() throws Exception
     {
         String source = source();
-        String siteInfo = function(source, "async function renderSiteInfo(site)");
+        String siteInfo = function(source, "async function renderSiteInfo(site, renderContext)");
         String configuredSite = function(source, "function configuredSiteValue(row)");
         String siteInfoSite = function(source, "function siteInfoSiteValue(row)");
         String talkgroups = function(source, "async function siteTopTalkgroupsSection(site)");
@@ -121,7 +121,7 @@ class StatsWebSiteUiContractTest
     {
         String source = source();
         String tabItems = function(source, "function siteTabItems(site)");
-        String siteInfo = function(source, "async function renderSiteInfo(site)");
+        String siteInfo = function(source, "async function renderSiteInfo(site, renderContext)");
         String site = function(source, "async function renderSite()");
 
         assertFalse(source.contains("function liveSiteReceiverSection(site)"));
@@ -132,7 +132,8 @@ class StatsWebSiteUiContractTest
         assertTrue(tabItems.contains("siteCapability(site, 'quality')"));
         assertTrue(siteInfo.contains("siteCapability(site, 'group_identities')"));
         assertTrue(siteInfo.contains("siteTopTalkgroupsSection(site)"));
-        assertTrue(site.contains("content.append(await siteSignalHistorySection(site))"));
+        assertTrue(site.contains("const signalHistory = await siteSignalHistorySection(site)"));
+        assertTrue(site.contains("if (!renderIsCurrent(renderContext)) return"));
     }
 
     private static String source() throws Exception

@@ -211,7 +211,7 @@ class StatsWebInteractionUiContractTest
         String talkgroup = function(source, "async function renderTalkgroup()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"83\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"84\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -240,19 +240,20 @@ class StatsWebInteractionUiContractTest
     {
         String source = source();
         String systems = function(source, "async function renderSystems()");
-        assertTrue(systems.contains("row.configured_system || `${protocolFamily(row)} System`"));
-        assertTrue(systems.contains("heading.append(systemLink(row, label))"));
-        assertTrue(systems.contains("siteNameSummary(row)"));
-        assertTrue(systems.contains("window.sdrtrunkSystemsDirectory.load(api"));
-        assertTrue(systems.contains("tableRows: rows"));
-        assertTrue(systems.contains("`directory-${row.directory_type}-row`"));
-        assertTrue(systems.contains("truncatedParentCount"));
-        assertTrue(systems.contains("previewLimit"));
+        String presenter = function(source, "function systemsDirectoryContent(data)");
+        assertTrue(presenter.contains("row.configured_system || `${protocolFamily(row)} System`"));
+        assertTrue(presenter.contains("heading.append(systemLink(row, label))"));
+        assertTrue(presenter.contains("siteNameSummary(row)"));
+        assertTrue(systems.contains("window.sdrtrunkSystemsDirectory.load(apiPage"));
+        assertTrue(presenter.contains("tableRows: rows"));
+        assertTrue(presenter.contains("`directory-${row.directory_type}-row`"));
+        assertTrue(presenter.contains("truncatedParentCount"));
+        assertTrue(presenter.contains("previewLimit"));
         assertFalse(systems.contains("systemApiPath(system.scope_token, 'sites')"));
         assertFalse(source.contains("SYSTEM_DIRECTORY_SITE_CONCURRENCY"));
-        assertFalse(systems.contains("directory-secondary"));
-        assertFalse(systems.contains("row.site_names && row.site_names"));
-        assertFalse(systems.contains("isP25(row) ? 'P25 System'"));
+        assertFalse(presenter.contains("directory-secondary"));
+        assertFalse(presenter.contains("row.site_names && row.site_names"));
+        assertFalse(presenter.contains("isP25(row) ? 'P25 System'"));
         assertFalse(readText(APP_CSS).contains(".directory-secondary"));
     }
 
@@ -348,16 +349,21 @@ class StatsWebInteractionUiContractTest
     void pagesSiteChannelsAndNeighborsWithoutLegacySiteRoutes() throws Exception
     {
         String source = source();
-        String channels = function(source, "async function renderSiteChannels(site)");
-        String neighbors = function(source, "async function renderSiteNeighbors(site)");
+        String channels = function(source, "async function renderSiteChannels(site, renderContext)");
+        String neighbors = function(source, "async function renderSiteNeighbors(site, renderContext)");
+        String site = function(source, "async function renderSite()");
         String render = function(source, "async function render()");
         String system = function(source, "async function renderSystem()");
-        assertTrue(channels.contains("api(siteApiPath(site.guid, 'channels'), pageParameters())"));
-        assertTrue(channels.contains("block.append(pager(data))"));
-        assertTrue(channels.contains("sortable: false"));
-        assertTrue(neighbors.contains("api(siteApiPath(site.guid, 'neighbors'), pageParameters())"));
-        assertTrue(neighbors.contains("block.append(pager(data))"));
-        assertTrue(neighbors.contains("sortable: false"));
+        assertTrue(channels.contains("createAsyncSection('Channels'"));
+        assertTrue(channels.contains("apiPage(siteApiPath(site.guid, 'channels'), pageParameters())"));
+        assertTrue(channels.contains("pagedTableContent(page"));
+        assertTrue(channels.contains("tableOptions: { sortable: false, serverSort: false }"));
+        assertTrue(neighbors.contains("createAsyncSection('Neighbors'"));
+        assertTrue(neighbors.contains("apiPage(siteApiPath(site.guid, 'neighbors'), pageParameters())"));
+        assertTrue(neighbors.contains("pagedTableContent(page"));
+        assertTrue(neighbors.contains("tableOptions: { sortable: false, serverSort: false }"));
+        assertTrue(site.contains("renderSiteChannels(site, renderContext)"));
+        assertTrue(site.contains("renderSiteNeighbors(site, renderContext)"));
         assertTrue(system.contains("const tabItems = systemTabItems(system)"));
         assertTrue(system.contains("tabItems.some((item) => item.id === requestedTab)"));
         assertTrue(system.contains("window.history.replaceState({}, '', currentHref())"));
@@ -372,16 +378,19 @@ class StatsWebInteractionUiContractTest
     {
         String source = source();
         String pager = function(source, "function pager(page, position = 'bottom', itemLabel = 'Rows')");
+        String content = function(source,
+            "function pagedTableContent(page, columns, tableType, options = {})");
         String pagedSection = function(source,
             "function pagedSection(title, page, columns, searchPlaceholder, tableType, action = null, options = {})");
         String system = function(source, "async function renderSystem()");
         String css = readText(APP_CSS);
 
-        assertTrue(pager.contains("Number(page.total_count)"));
+        assertTrue(pager.contains("const totalCount = page.total_count"));
         assertTrue(pager.contains("of ${number(totalCount)}"));
         assertTrue(pager.contains("aria-label"));
-        assertTrue(pagedSection.contains("if (options.topPager) block.append(pager(page, 'top'))"));
-        assertTrue(pagedSection.contains("block.append(pager(page))"));
+        assertTrue(content.contains("if (options.topPager) result.append(pager(page, 'top', itemLabel))"));
+        assertTrue(content.contains("result.append(pager(page, 'bottom', itemLabel))"));
+        assertTrue(pagedSection.contains("section(title, pagedTableContent(page, columns, tableType, options), action)"));
         assertEquals(3, system.split("topPager: true", -1).length - 1);
         assertTrue(css.contains(".pager-top {\n  border-top: 0;\n  border-bottom: 1px solid var(--line);"));
     }
@@ -409,9 +418,9 @@ class StatsWebInteractionUiContractTest
         assertEquals(2, system.split("exportCsvLink\\(", -1).length - 1,
             "Talker Alias Summary must not expose CSV export");
 
-        assertTrue(function(source, "async function renderSiteChannels(site)")
+        assertTrue(function(source, "async function renderSiteChannels(site, renderContext)")
             .contains("exportCsvLink('site-channels', { guid: site.guid })"));
-        assertTrue(function(source, "async function renderSiteNeighbors(site)")
+        assertTrue(function(source, "async function renderSiteNeighbors(site, renderContext)")
             .contains("exportCsvLink('site-neighbors', { guid: site.guid })"));
         assertTrue(function(source, "async function renderConventional()")
             .contains("exportCsvLink('conventional-channels')"));
@@ -515,13 +524,12 @@ class StatsWebInteractionUiContractTest
         String source = source();
         String html = readText(INDEX_HTML);
         String css = readText(APP_CSS);
-        assertTrue(html.indexOf("const themeKey = mobile ? 'sdrtrunk_mobile_theme' : 'sdrtrunk_theme'") <
-            html.indexOf("rel=\"stylesheet\""));
+        int themeKey = html.indexOf("const themeKey = compact ? 'sdrtrunk_mobile_theme' : 'sdrtrunk_theme'");
+        assertTrue(themeKey >= 0);
+        assertTrue(themeKey < html.indexOf("rel=\"stylesheet\""));
         assertTrue(html.contains("id=\"theme-toggle\""));
         assertTrue(html.contains("id=\"mobile-theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=66"));
-        assertTrue(html.contains("/assets/features/systems-directory.js?v=1"));
-        assertTrue(html.contains("/assets/app.js?v=102"));
+        assertTrue(html.contains("/assets/app.css?v=67"));
         assertTrue(source.contains("MOBILE_THEME_STORAGE_KEY = 'sdrtrunk_mobile_theme'"));
         assertTrue(source.contains("mode === 'mobile' ? MOBILE_THEME_STORAGE_KEY : THEME_STORAGE_KEY"));
         assertTrue(source.contains("toggle.setAttribute('aria-pressed'"));

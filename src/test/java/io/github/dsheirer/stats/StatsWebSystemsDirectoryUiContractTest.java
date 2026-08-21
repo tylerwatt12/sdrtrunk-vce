@@ -18,7 +18,6 @@ class StatsWebSystemsDirectoryUiContractTest
     private static final Path APP_JAVASCRIPT = Path.of("stats-web", "assets", "app.js");
     private static final Path FEATURE_JAVASCRIPT = Path.of("stats-web", "assets", "features",
         "systems-directory.js");
-    private static final Path INDEX_HTML = Path.of("stats-web", "index.html");
 
     @Test
     void loadsOneBoundedCompoundDirectoryRequestAndKeepsParentPagingSeparate() throws Exception
@@ -27,16 +26,19 @@ class StatsWebSystemsDirectoryUiContractTest
 
         assertTrue(feature.contains("const API_PATH = '/api/v1/systems'"));
         assertTrue(feature.contains("const DIRECTORY_LIMIT = 25"));
-        assertTrue(feature.contains("const response = await api(API_PATH"));
+        assertTrue(feature.contains("async function load(apiPage"));
+        assertTrue(feature.contains("const page = await apiPage(API_PATH"));
         assertTrue(feature.contains("includeSitePreview: true"));
+        assertTrue(feature.contains("return decode(page)"));
         assertFalse(feature.contains("fetch("));
         assertTrue(feature.contains("!Array.isArray(system.site_preview)"));
-        assertTrue(feature.contains("rows: parentRows"));
+        assertTrue(feature.contains("const parentRows = page.rows"));
         assertTrue(feature.contains("tableRows.push({ ...system, directory_type: 'system' })"));
         assertTrue(feature.contains("tableRows.push({ ...site, directory_type: 'site' })"));
         assertTrue(feature.contains("site_preview_truncated"));
         assertTrue(feature.contains("site_preview_limit_per_system"));
-        assertTrue(feature.contains("nextOffset <= offset"));
+        assertFalse(feature.contains("requiredInteger"));
+        assertFalse(feature.contains("nextOffset <= offset"));
         assertTrue(feature.contains("window.sdrtrunkSystemsDirectory = Object.freeze({ load, decode })"));
     }
 
@@ -45,32 +47,28 @@ class StatsWebSystemsDirectoryUiContractTest
     {
         String app = readText(APP_JAVASCRIPT);
         String systems = function(app, "async function renderSystems()");
+        String presenter = function(app, "function systemsDirectoryContent(data)");
 
-        assertTrue(systems.indexOf("Loading systems and sites…") <
-            systems.indexOf("await window.sdrtrunkSystemsDirectory.load"));
-        assertTrue(systems.contains("directoryBody.replaceChildren(...rendered)"));
-        assertTrue(systems.contains("error?.name === 'AbortError'"));
-        assertTrue(systems.contains("error?.status === 401 || error?.status === 403"));
-        assertTrue(systems.contains("retry.addEventListener('click', () => render())"));
-        assertTrue(systems.contains("pager(page, 'bottom', 'Systems')"));
+        assertTrue(systems.contains("createAsyncSection('System Directory'"));
+        assertTrue(systems.contains("window.sdrtrunkSystemsDirectory.load(apiPage, pageParameters())"));
+        assertTrue(systems.indexOf("beginPage(renderContext") < systems.indexOf("await directory.load("));
+        assertTrue(presenter.contains("pager(page, 'bottom', 'Systems')"));
         assertFalse(systems.contains("Promise.all"));
         assertFalse(systems.contains("systemApiPath(system.scope_token, 'sites')"));
     }
 
     @Test
-    void loadsTheFeatureBeforeTheApplicationAndKeepsSiteDetailsUnderSystemsNavigation() throws Exception
+    void keepsSiteDetailsUnderSystemsNavigation() throws Exception
     {
-        String html = readText(INDEX_HTML);
         String app = readText(APP_JAVASCRIPT);
         String navigation = function(app, "function activateNavigation(view)");
         String render = function(app, "async function render()");
 
-        assertTrue(html.indexOf("/assets/features/systems-directory.js?v=1") <
-            html.indexOf("/assets/app.js?v=102"));
         assertTrue(navigation.contains("['system', 'talkgroup', 'radio', 'site']"));
         assertFalse(navigation.contains("view === 'site' ? 'sites'"));
-        assertTrue(render.indexOf("const effectiveView = handlers[view] ? view : 'dashboard'") <
-            render.indexOf("activateNavigation(effectiveView)"));
+        int effectiveView = render.indexOf("effectiveView = handlers[view] ? view : 'dashboard'");
+        assertTrue(effectiveView >= 0);
+        assertTrue(effectiveView < render.indexOf("activateNavigation(effectiveView)"));
     }
 
     private static String readText(Path path) throws Exception

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="sdrtrunk-web-revision" content="83">
+  <meta name="sdrtrunk-web-revision" content="84">
   <title>sdrtrunk-vce</title>
   <script>
     (() => {
@@ -19,7 +19,7 @@
       }
     })();
   </script>
-  <link rel="stylesheet" href="/assets/app.css?v=66">
+  <link rel="stylesheet" href="/assets/app.css?v=67">
 </head>
 <body>
   <div class="app-shell">
@@ -103,8 +103,8 @@
         </section>
       </div>
     </div>
-    <main id="content" class="content" aria-live="polite">
-      <div class="loading">Loading</div>
+    <main id="content" class="content" aria-live="polite" aria-busy="true">
+      <div class="loading" role="status">Loading</div>
     </main>
   </div>
   <section id="mobile-listener-shell" class="mobile-listener-shell" data-listener-view="listen" hidden
@@ -133,7 +133,8 @@
     </nav>
   </section>
   <script src="/assets/web-call-player.js?v=10"></script>
-  <script src="/assets/features/systems-directory.js?v=1"></script>
-  <script src="/assets/app.js?v=102"></script>
+  <script src="/assets/core/page-lifecycle.js?v=1"></script>
+  <script src="/assets/features/systems-directory.js?v=2"></script>
+  <script src="/assets/app.js?v=103"></script>
 </body>
 </html>

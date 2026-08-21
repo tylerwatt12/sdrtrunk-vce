@@ -1334,7 +1334,7 @@ function pageHeader(title, subtitle) {
 function closeReadOnlyModal(updateRoute = false, force = false) {
   const active = activeReadOnlyModal;
   if (!active) return true;
-  if (!force && active.isDirty?.() && !window.confirm('Discard your unsaved alias changes?')) return false;
+  if (!force && active.isDirty?.() && !window.confirm('Discard your unsaved changes?')) return false;
   activeReadOnlyModal = null;
   document.removeEventListener('keydown', active.keydown);
   active.cleanup?.();
@@ -1855,12 +1855,11 @@ function searchBar(placeholder = 'Search') {
 function pager(page, position = 'bottom', itemLabel = 'Rows') {
   const bar = node('nav', `pager pager-${position}`);
   bar.setAttribute('aria-label', `${position === 'top' ? 'Top' : 'Bottom'} table pagination`);
-  const offset = Number(page.offset || 0);
-  const limit = Number(page.limit || 100);
+  const { offset, limit } = page;
   const firstRow = offset + (page.rows.length ? 1 : 0);
   const lastRow = offset + page.rows.length;
-  const totalCount = Number(page.total_count);
-  const range = Number.isFinite(totalCount) && totalCount >= 0 ?
+  const totalCount = page.total_count;
+  const range = Number.isInteger(totalCount) ?
     `${itemLabel} ${number(firstRow)}-${number(lastRow)} of ${number(totalCount)}` :
     `${itemLabel} ${number(firstRow)}-${number(lastRow)}`;
   bar.append(node('span', 'muted', range));
@@ -1871,20 +1870,24 @@ function pager(page, position = 'bottom', itemLabel = 'Rows') {
   return bar;
 }
 
+function pagedTableContent(page, columns, tableType, options = {}) {
+  const itemLabel = options.itemLabel || 'Rows';
+  const result = fragment();
+  if (options.topPager) result.append(pager(page, 'top', itemLabel));
+  result.append(table(page.rows, columns, options.emptyText || 'No rows', {
+    type: tableType,
+    serverSort: true,
+    defaultSort: SERVER_TABLE_DEFAULT_SORTS[tableType],
+    defaultDirection: 'desc',
+    ...(options.tableOptions || {})
+  }));
+  result.append(pager(page, 'bottom', itemLabel));
+  return result;
+}
+
 function pagedSection(title, page, columns, searchPlaceholder, tableType, action = null, options = {}) {
   return fragment(searchPlaceholder ? searchBar(searchPlaceholder) : null,
-    (() => {
-      const block = section(title, null, action);
-      if (options.topPager) block.append(pager(page, 'top'));
-      block.append(table(page.rows, columns, 'No rows', {
-        type: tableType,
-        serverSort: true,
-        defaultSort: SERVER_TABLE_DEFAULT_SORTS[tableType],
-        defaultDirection: 'desc'
-      }));
-      block.append(pager(page));
-      return block;
-    })());
+    section(title, pagedTableContent(page, columns, tableType, options), action));
 }
 
 function availableValue(value) {
@@ -4152,14 +4155,15 @@ function renderObservedTalkgroups(main, page, selectedList) {
   main.append(block);
 }
 
-async function renderScanListMembers(main, listResponse, scanListCatalog, scanList) {
+async function renderScanListMembers(main, listResponse, scanListCatalog, scanList, renderContext) {
   const filters = {
     type: route.get('type'), matcher: route.get('matcher'), group: route.get('group'),
     scan_list_id: scanList.id, record: route.get('record'), stream: route.get('stream'),
     evidence: route.get('evidence'), use: route.get('use'),
     last_activity_before: route.get('lastActivityBefore'), last_activity_after: route.get('lastActivityAfter')
   };
-  const page = await api('/api/v1/aliases', pageParameters(filters));
+  const page = await apiPage('/api/v1/aliases', pageParameters(filters));
+  if (!renderIsCurrent(renderContext) || !main.isConnected) return;
   const options = {
     scan_lists: scanListCatalog.scan_lists || [], scan_list_scope: true
   };
@@ -4260,10 +4264,11 @@ async function renderScanListMembers(main, listResponse, scanListCatalog, scanLi
 }
 
 async function renderAliases() {
+  const renderContext = captureRenderContext();
   const admin = aliasAdminAllowed();
   const requestedScanListId = !route.get('list') && /^[1-9][0-9]*$/.test(route.get('scanListId') || '') ?
     Number(route.get('scanListId')) : null;
-  const publicListsPromise = api('/api/v1/alias-lists');
+  const publicListsPromise = apiPage('/api/v1/alias-lists');
   const adminListsPromise = admin ? requestJson('/api/v1/admin/alias-lists', { csrf: false }) :
     Promise.resolve({ revision: null, alias_lists: [] });
   const scanListCatalogPromise = admin && requestedScanListId ?
@@ -4272,6 +4277,7 @@ async function renderAliases() {
   const [listResponse, adminCatalog, scanListCatalog] = await Promise.all([
     publicListsPromise, adminListsPromise, scanListCatalogPromise
   ]);
+  if (!renderIsCurrent(renderContext)) return;
   const lists = mergedAliasLists(listResponse.rows || [], adminCatalog.alias_lists || []);
   let selectedList = lists.find((row) => aliasListId(row) === Number(route.get('list')));
   if (route.get('createAlias') === '1' && route.has('createListName')) {
@@ -4296,15 +4302,15 @@ async function renderAliases() {
   const subtitle = scanListScope ?
     `${number(scanListScope.alias_count || 0)} members across all alias lists · administrator editing enabled` :
     `${number(lists.length)} alias lists · ${admin ? 'administrator editing enabled' : 'read-only'}`;
-  content.append(pageHeader(admin ? 'Alias Editor' : 'Alias Catalog', subtitle));
   const workspace = node('div', 'alias-editor-workspace');
   workspace.append(aliasListRail(lists, selectedList, admin));
   const main = node('div', 'alias-editor-main');
   workspace.append(main);
-  content.append(workspace);
+  if (!beginPage(renderContext,
+    pageHeader(admin ? 'Alias Editor' : 'Alias Catalog', subtitle), workspace)) return;
 
   if (scanListScope) {
-    await renderScanListMembers(main, listResponse, scanListCatalog, scanListScope);
+    await renderScanListMembers(main, listResponse, scanListCatalog, scanListScope, renderContext);
     return;
   }
 
@@ -4333,11 +4339,12 @@ async function renderAliases() {
     last_activity_before: route.get('lastActivityBefore'), last_activity_after: route.get('lastActivityAfter')
   };
   const pagePromise = view === 'discover' ?
-    api(`/api/v1/alias-lists/${aliasListId(selectedList)}/observed-talkgroups`,
-      pageParameters({ include_exact: false })) : api('/api/v1/aliases', pageParameters(filters));
+    apiPage(`/api/v1/alias-lists/${aliasListId(selectedList)}/observed-talkgroups`,
+      pageParameters({ include_exact: false })) : apiPage('/api/v1/aliases', pageParameters(filters));
   const optionsPromise = admin ? api('/api/v1/admin/aliases/options', { alias_list_id: aliasListId(selectedList) }) :
     Promise.resolve(null);
   const [page, options] = await Promise.all([pagePromise, optionsPromise]);
+  if (!renderIsCurrent(renderContext) || !main.isConnected) return;
   aliasEditorContext.page = page;
   aliasEditorContext.options = options;
   if (options?.alias_list && options?.revision !== undefined &&
@@ -5230,6 +5237,7 @@ function qualityHistoryChart(site, response, metric, domain) {
 
   draw();
   requestAnimationFrame(() => {
+    if (!wrapper.isConnected) return;
     draw(wrapper.getBoundingClientRect().width || nominalWidth);
     if ('ResizeObserver' in window) {
       const observer = new ResizeObserver((entries) => {
@@ -5334,7 +5342,12 @@ function signalRangeControls(selectedRange, onChange) {
   return rangeControls(SIGNAL_RANGES, selectedRange, onChange);
 }
 
+function rethrowPageHandlingError(error) {
+  if (window.sdrtrunkPageLifecycle.requiresPageHandling(error)) throw error;
+}
+
 async function signalHealthSection() {
+  const renderContext = captureRenderContext();
   const host = node('div', 'signal-health');
   const currentPanel = node('div', 'signal-current-panel');
   const currentToolbar = node('div', 'signal-current-toolbar');
@@ -5391,27 +5404,31 @@ async function signalHealthSection() {
     }
     tiles.append(message);
   } else {
-    const loadCurrent = async (initial = false) => {
+    const loadCurrent = async (initial = false, pageOwned = false) => {
       if (loading) return;
       loading = true;
       if (initial) summary.textContent = 'Loading current signal health…';
       try {
-        currentResponse = await api('/api/v1/quality', { range: '1h', points: 60, include_history: false });
+        currentResponse = await apiPage('/api/v1/quality', {
+          range: '1h', points: 60, include_history: false
+        });
         renderCurrent();
       } catch (error) {
+        if (pageOwned) rethrowPageHandlingError(error);
         summary.textContent = currentResponse ? `Signal health update failed: ${error.message}` : '';
         if (!currentResponse) tiles.replaceChildren(node('div', 'error', error.message));
       } finally {
         loading = false;
       }
     };
-    await loadCurrent(true);
-    pageInterval(loadCurrent, 10_000);
+    await loadCurrent(true, true);
+    if (renderIsCurrent(renderContext)) pageInterval(loadCurrent, 10_000);
   }
   return block;
 }
 
 async function siteSignalHistorySection(site) {
+  const renderContext = captureRenderContext();
   const host = node('div', 'site-signal-history');
   const block = section('Control Channel Quality History', host);
   block.classList.add('site-signal-history-section');
@@ -5427,7 +5444,7 @@ async function siteSignalHistorySection(site) {
   const titleActions = node('div', 'section-title-actions');
   titleActions.append(rangeControl.controls, exportLink);
   block.querySelector('.section-title').append(titleActions);
-  const load = async (buttons = rangeControl.buttons, interactive = false) => {
+  const load = async (buttons = rangeControl.buttons, interactive = false, pageOwned = false) => {
     if (loading && !interactive) return;
     const sequence = ++loadingSequence;
     loading = true;
@@ -5457,6 +5474,7 @@ async function siteSignalHistorySection(site) {
       host.append(signalOverview(qualitySite, false), charts);
       host.removeAttribute('title');
     } catch (error) {
+      if (pageOwned) rethrowPageHandlingError(error);
       if (sequence === loadingSequence) {
         if (interactive) host.replaceChildren(node('div', 'error', error.message));
         else host.title = `Quality history update failed: ${error.message}`;
@@ -5473,13 +5491,14 @@ async function siteSignalHistorySection(site) {
     rangeControl.controls.hidden = true;
     host.append(node('div', 'empty', 'Control channel quality history requires Stats Logging.'));
   } else {
-    await load(rangeControl.buttons, true);
-    pageInterval(load, 30_000);
+    await load(rangeControl.buttons, true, true);
+    if (renderIsCurrent(renderContext)) pageInterval(load, 30_000);
   }
   return block;
 }
 
 async function talkgroupActivityHistorySection(scopeParameters) {
+  const renderContext = captureRenderContext();
   const host = node('div', 'talkgroup-activity-history');
   const block = section('Activity History', host);
   let selectedRange = '24h';
@@ -5491,7 +5510,7 @@ async function talkgroupActivityHistorySection(scopeParameters) {
   });
   block.querySelector('.section-title').append(rangeControl.controls);
 
-  const load = async (buttons = rangeControl.buttons, interactive = false) => {
+  const load = async (buttons = rangeControl.buttons, interactive = false, pageOwned = false) => {
     if (loading && !interactive) return;
     const sequence = ++loadingSequence;
     loading = true;
@@ -5519,6 +5538,7 @@ async function talkgroupActivityHistorySection(scopeParameters) {
         ], 'No signaling observations recorded', { type: 'action-counts' })),
       activityMetricGuide(true));
     } catch (error) {
+      if (pageOwned) rethrowPageHandlingError(error);
       if (sequence === loadingSequence) host.replaceChildren(node('div', 'error', error.message));
     } finally {
       if (sequence === loadingSequence) {
@@ -5533,8 +5553,8 @@ async function talkgroupActivityHistorySection(scopeParameters) {
     rangeControl.controls.hidden = true;
     host.append(node('div', 'empty', 'Talkgroup activity history requires Stats Logging.'));
   } else {
-    await load(rangeControl.buttons, true);
-    pageInterval(load, 30_000);
+    await load(rangeControl.buttons, true, true);
+    if (renderIsCurrent(renderContext)) pageInterval(load, 30_000);
   }
   return block;
 }
@@ -5563,7 +5583,7 @@ async function siteTopTalkgroupsSection(site) {
       sortValue: (row) => Number(row.encrypted_count || 0) }
   ];
 
-  const load = async (buttons = rangeControl.buttons, interactive = false) => {
+  const load = async (buttons = rangeControl.buttons, interactive = false, pageOwned = false) => {
     if (loading && !interactive) return;
     const sequence = ++loadingSequence;
     loading = true;
@@ -5579,6 +5599,7 @@ async function siteTopTalkgroupsSection(site) {
       host.replaceChildren(table(response.rows || [], columns,
         'No talkgroup activity is available for this range', { type: 'site-top-talkgroups' }));
     } catch (error) {
+      if (pageOwned) rethrowPageHandlingError(error);
       if (sequence === loadingSequence) host.replaceChildren(node('div', 'error', error.message));
     } finally {
       if (sequence === loadingSequence) {
@@ -5593,7 +5614,7 @@ async function siteTopTalkgroupsSection(site) {
     rangeControl.controls.hidden = true;
     host.append(node('div', 'empty', 'Talkgroup call activity requires Stats Logging.'));
   } else {
-    await load(rangeControl.buttons, true);
+    await load(rangeControl.buttons, true, true);
   }
   return block;
 }
@@ -5693,6 +5714,11 @@ async function api(path, parameters = {}, options = {}) {
     if (value !== null && value !== undefined && value !== '') query.set(snakeCaseKey(key), String(value));
   });
   return requestJson(`${path}${query.size ? `?${query}` : ''}`, { csrf: false, ...options });
+}
+
+async function apiPage(path, parameters = {}, options = {}) {
+  const response = await api(path, parameters, options);
+  return window.sdrtrunkPageLifecycle.decodeOffsetPage(response, path);
 }
 
 function mobileListenerModeActive() {
@@ -5896,6 +5922,85 @@ const pageObservers = new Map();
 const pageTimers = new Set();
 let activeRenderController = null;
 let activeRenderEpoch = 0;
+
+function captureRenderContext() {
+  return Object.freeze({ epoch: activeRenderEpoch, signal: activeRenderController?.signal || null });
+}
+
+function renderIsCurrent(renderContext) {
+  return Boolean(renderContext) && renderContext.epoch === activeRenderEpoch && !renderContext.signal?.aborted;
+}
+
+function beginPage(renderContext, ...children) {
+  if (!renderIsCurrent(renderContext)) return false;
+  content.replaceChildren(...children);
+  content.setAttribute('aria-busy', 'false');
+  return true;
+}
+
+function replaceAsyncContent(host, rendered) {
+  const children = (Array.isArray(rendered) ? rendered.flat() : [rendered])
+    .filter((child) => child !== null && child !== undefined && child !== false);
+  host.replaceChildren(...children);
+}
+
+function asyncSectionFailure(error, fallbackMessage, retry) {
+  const failure = node('div', 'error async-section-error');
+  failure.setAttribute('role', 'alert');
+  failure.append(node('div', '', error?.message || fallbackMessage || 'This section could not be loaded.'));
+  const action = node('button', 'secondary async-section-retry', 'Retry');
+  action.type = 'button';
+  action.addEventListener('click', () => {
+    action.disabled = true;
+    void retry().catch((retryError) => {
+      if (retryError?.name !== 'AbortError') void render();
+    });
+  });
+  failure.append(action);
+  return failure;
+}
+
+function createAsyncSection(title, options = {}) {
+  const host = node('div', 'async-section-content');
+  host.setAttribute('role', 'region');
+  host.setAttribute('aria-label', title);
+  const element = section(title, host, options.action || null);
+  let loadSequence = 0;
+  let focusAfterAttempt = false;
+
+  const load = (loader, present, renderContext) => {
+    const sequence = ++loadSequence;
+    return window.sdrtrunkPageLifecycle.run({
+      isCurrent: () => sequence === loadSequence && renderIsCurrent(renderContext) && host.isConnected,
+      onLoading: ({ retry }) => {
+        focusAfterAttempt = retry;
+        host.setAttribute('aria-busy', 'true');
+        const loading = node('div', 'loading', options.loadingMessage || 'Loading…');
+        loading.setAttribute('role', 'status');
+        if (retry) loading.tabIndex = -1;
+        host.replaceChildren(loading);
+        if (retry) loading.focus();
+      },
+      load: loader,
+      onReady: (value) => {
+        replaceAsyncContent(host, present(value));
+        host.setAttribute('aria-busy', 'false');
+        if (focusAfterAttempt) {
+          host.tabIndex = -1;
+          host.focus();
+        }
+      },
+      onError: (error, retry) => {
+        const failure = asyncSectionFailure(error, options.errorMessage, retry);
+        host.replaceChildren(failure);
+        host.setAttribute('aria-busy', 'false');
+        if (focusAfterAttempt) failure.querySelector('.async-section-retry')?.focus();
+      }
+    });
+  };
+
+  return Object.freeze({ element, host, load });
+}
 
 function pageInterval(callback, interval) {
   const timer = window.setInterval(() => {
@@ -7501,22 +7606,26 @@ function systemRadioColumns(system) {
 }
 
 async function renderDashboard() {
+  const renderContext = captureRenderContext();
   const dashboard = await api('/api/v1/dashboard');
   const counts = dashboard.counts || {};
   const callActivity = dashboard.call_activity || {};
   const callTotals = callActivity.totals || {};
   const requestedTab = route.get('tab') || 'health';
   const tab = ['health', 'calls', 'activity'].includes(requestedTab) ? requestedTab : 'health';
-  content.append(pageHeader('Dashboard', dashboard.last_seen_ms ?
-    fragment('Last activity ', dateTime(dashboard.last_seen_ms)) : 'Last activity not recorded'),
-  tabs([
-    { id: 'health', label: 'Health', href: href('dashboard', { tab: 'health' }) },
-    { id: 'calls', label: 'Calls', href: href('dashboard', { tab: 'calls' }) },
-    { id: 'activity', label: 'Activity', href: href('dashboard', { tab: 'activity' }) }
-  ], tab));
+  if (!beginPage(renderContext,
+    pageHeader('Dashboard', dashboard.last_seen_ms ?
+      fragment('Last activity ', dateTime(dashboard.last_seen_ms)) : 'Last activity not recorded'),
+    tabs([
+      { id: 'health', label: 'Health', href: href('dashboard', { tab: 'health' }) },
+      { id: 'calls', label: 'Calls', href: href('dashboard', { tab: 'calls' }) },
+      { id: 'activity', label: 'Activity', href: href('dashboard', { tab: 'activity' }) }
+    ], tab))) return;
 
   if (tab === 'health') {
-    content.append(await signalHealthSection());
+    const signalHealth = await signalHealthSection();
+    if (!renderIsCurrent(renderContext)) return;
+    content.append(signalHealth);
     content.append(dashboardSummarySection('Monitored Coverage', [
       ['Trunked Systems', counts.trunked_systems],
       ['Trunked Sites', counts.trunked_sites],
@@ -10889,44 +10998,24 @@ function liveSystemsSection(onSelectionChange) {
 }
 
 async function renderLive() {
+  const renderContext = captureRenderContext();
   const split = node('div', 'live-split');
   const eventsPanel = liveEventsPanel((collapsed) => split.classList.toggle('details-collapsed', collapsed));
   pageConnections.add(eventsPanel);
   const systems = liveSystemsSection(eventsPanel.select);
   split.append(systems, eventsPanel.element);
-  content.append(split);
+  beginPage(renderContext, split);
 }
 
 async function renderTunerSpectrum() {
+  const renderContext = captureRenderContext();
   const spectrum = tunerSpectrumPanel();
   pageConnections.add(spectrum);
-  content.append(pageHeader('Tuner Spectrum',
+  beginPage(renderContext, pageHeader('Tuner Spectrum',
     'Inspect the full bandwidth of each active tuner. Click a frequency to choose an action.'), spectrum.element);
 }
 
-async function renderSystems() {
-  content.append(pageHeader('Systems & Sites',
-    'P25, DMR, and NXDN systems with their observed sites'));
-  const directoryBody = node('div', 'system-directory-content');
-  directoryBody.append(node('div', 'loading', 'Loading systems and sites…'));
-  const directory = section('System Directory', directoryBody);
-  content.append(searchBar('Search protocol, system, site, name, or GUID'), directory);
-
-  let data;
-  try {
-    data = await window.sdrtrunkSystemsDirectory.load(api, pageParameters());
-  } catch (error) {
-    if (error?.name === 'AbortError' || error?.status === 401 || error?.status === 403) throw error;
-    const failure = node('div', 'error');
-    failure.append(node('div', '', error?.message || 'The systems directory could not be loaded.'));
-    const retry = node('button', 'secondary', 'Retry');
-    retry.type = 'button';
-    retry.addEventListener('click', () => render());
-    failure.append(retry);
-    directoryBody.replaceChildren(failure);
-    return;
-  }
-
+function systemsDirectoryContent(data) {
   const { page, tableRows: rows, truncatedParentCount, previewLimit } = data;
   const columns = [
     { id: 'directory-name', label: 'System / Site', width: 230, className: 'directory-name', render: (row) => {
@@ -10980,12 +11069,29 @@ async function renderSystems() {
     `${number(truncatedParentCount)} system group${truncatedParentCount === 1 ? '' : 's'} exceeded the ` +
     `${number(previewLimit)}-site preview limit. Open the system for its complete paged site list.`));
   rendered.push(pager(page, 'bottom', 'Systems'));
-  directoryBody.replaceChildren(...rendered);
+  return fragment(...rendered);
+}
+
+async function renderSystems() {
+  const renderContext = captureRenderContext();
+  const directory = createAsyncSection('System Directory', {
+    loadingMessage: 'Loading systems and sites…',
+    errorMessage: 'The systems directory could not be loaded.'
+  });
+  if (!beginPage(renderContext,
+    pageHeader('Systems & Sites', 'P25, DMR, and NXDN systems with their observed sites'),
+    searchBar('Search protocol, system, site, name, or GUID'), directory.element)) return;
+  await directory.load(
+    () => window.sdrtrunkSystemsDirectory.load(apiPage, pageParameters()),
+    systemsDirectoryContent,
+    renderContext);
 }
 
 async function renderSystem() {
+  const renderContext = captureRenderContext();
   const systemScope = requiredSystemScope();
   const response = await api(systemApiPath(systemScope.scope));
+  if (!renderIsCurrent(renderContext)) return;
   const system = response;
   const requestedTab = route.get('tab') || 'info';
   const tabItems = systemTabItems(system);
@@ -10994,23 +11100,24 @@ async function renderSystem() {
     route.set('tab', tab);
     window.history.replaceState({}, '', currentHref());
   }
-  content.append(pageHeader(systemValue(system), system.site_names || `${protocolFamily(system)} trunked system`),
-    systemTabs(system, tab));
+  if (!beginPage(renderContext,
+    pageHeader(systemValue(system), system.site_names || `${protocolFamily(system)} trunked system`),
+    systemTabs(system, tab))) return;
 
   if (tab === 'talkgroups') {
-    const page = await api(systemApiPath(systemScope.scope, 'group-identities'), pageParameters());
+    const page = await apiPage(systemApiPath(systemScope.scope, 'group-identities'), pageParameters());
     content.append(pagedSection('Talkgroups', page, talkgroupColumns, 'Search talkgroup ID', 'talkgroups',
       exportCsvLink('system-talkgroups', systemScope), { topPager: true }));
   } else if (tab === 'radios') {
     const filters = affiliationRouteFilters();
-    const page = await api(systemApiPath(systemScope.scope, 'radios'), pageParameters(filters));
+    const page = await apiPage(systemApiPath(systemScope.scope, 'radios'), pageParameters(filters));
     const title = filters.site_guid ? (filters.affiliated ? 'Affiliated Radios at Site' : 'Radios at Site') :
       (filters.affiliated ? 'Affiliated Radios' : 'Radios');
     const exportAction = exportCsvLink('system-radios', { ...systemScope, ...filters });
     content.append(pagedSection(title, page, systemRadioColumns(system), 'Search radio ID', 'radios',
       affiliationFilterActions(exportAction), { topPager: true }));
   } else if (tab === 'talker-aliases') {
-    const page = await api(systemApiPath(systemScope.scope, 'talker-aliases'), pageParameters());
+    const page = await apiPage(systemApiPath(systemScope.scope, 'talker-aliases'), pageParameters());
     const columns = [
     { id: 'radio', label: 'Radio', fullLabel: 'Radio ID', render: (row) => radioLink(row), className: 'numeric', sort: 'radio', sortValue: (row) => Number(row.radio_id) },
       { id: 'talker-alias', label: 'OTA Alias', fullLabel: 'Talker Alias', key: 'last_talker_alias', className: 'alias-cell', sort: 'talker_alias' },
@@ -11060,7 +11167,7 @@ async function renderSystem() {
     ], 'No signaling observations recorded', { type: 'action-counts' }), activityMetricGuide())));
     infoColumn.append(...blocks);
 
-    const sitesPage = await api(systemApiPath(systemScope.scope, 'sites'), pageParameters());
+    const sitesPage = await apiPage(systemApiPath(systemScope.scope, 'sites'), pageParameters());
     const sitesColumn = node('div', 'entity-info-column system-sites-column');
     sitesColumn.append(pagedSection('Sites', sitesPage, scopedSiteColumns,
       'Search site, name, or GUID', 'sites'));
@@ -11071,6 +11178,7 @@ async function renderSystem() {
 }
 
 async function renderTalkgroup() {
+  const renderContext = captureRenderContext();
   const systemScope = requiredSystemScope();
   const id = requiredId();
   const kind = route.get('kind') === 'patch_group' ? 'patch_group' : 'talkgroup';
@@ -11080,15 +11188,16 @@ async function renderTalkgroup() {
   const formattedId = identityNumber(talkgroup, id);
   const kindLabel = kind === 'patch_group' ? 'Patch Group' : 'Talkgroup';
   const title = aliasLabel(talkgroup) || `${kindLabel} ${formattedId}`;
-  content.append(pageHeader(title, fragment(systemValue(talkgroup), ` · ${kindLabel} ${formattedId}`)),
-    entityTabs('talkgroup', talkgroup, id, tab, false, kind));
+  if (!beginPage(renderContext,
+    pageHeader(title, fragment(systemValue(talkgroup), ` · ${kindLabel} ${formattedId}`)),
+    entityTabs('talkgroup', talkgroup, id, tab, false, kind))) return;
 
   if (tab === 'radios') {
     const currentAffiliations = kind === 'talkgroup' &&
       systemCapability(talkgroup, 'current_affiliations');
     const sitePresence = currentAffiliations && systemCapability(talkgroup, 'radio_site_presence');
     const affiliatedOnly = currentAffiliations && route.get('affiliated') === 'true';
-    const relationships = await api(systemApiPath(systemScope.scope, 'relationships'),
+    const relationships = await apiPage(systemApiPath(systemScope.scope, 'relationships'),
       pageParameters({ talkgroup_id: id, kind: kind === 'patch_group' ? 'patch_group' : null,
         affiliated: affiliatedOnly ? true : null }));
     const columns = [
@@ -11161,12 +11270,15 @@ async function renderTalkgroup() {
     ], 'No signaling observations recorded', { type: 'action-counts' })));
     infoColumn.append(...blocks);
     const layout = node('div', 'entity-info-layout');
-    layout.append(infoColumn, await talkgroupActivityHistorySection({ ...systemScope, talkgroup_id: id, kind }));
+    const activityHistory = await talkgroupActivityHistorySection({ ...systemScope, talkgroup_id: id, kind });
+    if (!renderIsCurrent(renderContext)) return;
+    layout.append(infoColumn, activityHistory);
     content.append(layout);
   }
 }
 
 async function renderRadio() {
+  const renderContext = captureRenderContext();
   const systemScope = requiredSystemScope();
   const id = requiredId();
   const response = await api(`${systemApiPath(systemScope.scope, 'radios')}/${encodeURIComponent(String(id))}`);
@@ -11174,11 +11286,12 @@ async function renderRadio() {
   const tab = route.get('tab') || 'info';
   const formattedId = identityNumber(radio, id);
   const title = aliasLabel(radio) || radio.last_talker_alias || `Radio ${formattedId}`;
-  content.append(pageHeader(title, fragment(systemValue(radio), ` · Radio ${formattedId}`)),
-    entityTabs('radio', radio, id, tab, true));
+  if (!beginPage(renderContext,
+    pageHeader(title, fragment(systemValue(radio), ` · Radio ${formattedId}`)),
+    entityTabs('radio', radio, id, tab, true))) return;
 
   if (tab === 'talkgroups') {
-    const relationships = await api(systemApiPath(systemScope.scope, 'relationships'),
+    const relationships = await apiPage(systemApiPath(systemScope.scope, 'relationships'),
       pageParameters({ radio_id: id }));
     const columns = [
       { id: 'talkgroup-id', label: 'TGID', render: (row) => talkgroupLink(row), className: 'numeric', sort: 'talkgroup', sortValue: (row) => Number(row.talkgroup_id) },
@@ -11365,18 +11478,26 @@ function trunkedSiteChannelColumns() {
   ];
 }
 
-async function renderSiteChannels(site) {
-  const data = await api(siteApiPath(site.guid, 'channels'), pageParameters());
-  const explanation = protocolFamily(site) === 'DMR' ? node('p', 'muted',
-    'DMR grants usually identify an LCN and timeslot. Frequencies marked LCN Map were resolved from the configured map; OTA Freq means the system broadcast an absolute frequency.') :
-    fragment();
+async function renderSiteChannels(site, renderContext) {
   const p25 = isP25(site);
-  const block = section('Channels', fragment(explanation, table(data.rows || [],
-    p25 ? p25SiteChannelColumns() : trunkedSiteChannelColumns(), 'No channels recorded',
-    { type: p25 ? 'site-channels' : 'trunked-site-channels', sortable: false })),
-    exportCsvLink('site-channels', { guid: site.guid }));
-  block.append(pager(data));
-  content.append(block);
+  const directory = createAsyncSection('Channels', {
+    action: exportCsvLink('site-channels', { guid: site.guid }),
+    loadingMessage: 'Loading site channels…',
+    errorMessage: 'The site channels could not be loaded.'
+  });
+  if (!renderIsCurrent(renderContext)) return;
+  content.append(directory.element);
+  await directory.load(
+    () => apiPage(siteApiPath(site.guid, 'channels'), pageParameters()),
+    (page) => fragment(
+      protocolFamily(site) === 'DMR' ? node('p', 'muted',
+        'DMR grants usually identify an LCN and timeslot. Frequencies marked LCN Map were resolved from the configured map; OTA Freq means the system broadcast an absolute frequency.') : null,
+      pagedTableContent(page, p25 ? p25SiteChannelColumns() : trunkedSiteChannelColumns(),
+        p25 ? 'site-channels' : 'trunked-site-channels', {
+          itemLabel: 'Channels', emptyText: 'No channels recorded',
+          tableOptions: { sortable: false, serverSort: false }
+        })),
+    renderContext);
 }
 
 function p25SiteNeighborColumns() {
@@ -11444,18 +11565,27 @@ function trunkedSiteNeighborColumns(site) {
   ];
 }
 
-async function renderSiteNeighbors(site) {
-  const data = await api(siteApiPath(site.guid, 'neighbors'), pageParameters());
+async function renderSiteNeighbors(site, renderContext) {
   const p25 = isP25(site);
-  const block = section('Neighbors', table(data.rows || [],
-    p25 ? p25SiteNeighborColumns() : trunkedSiteNeighborColumns(site), 'No neighbors recorded',
-    { type: p25 ? 'site-neighbors' : 'trunked-site-neighbors', sortable: false }),
-    exportCsvLink('site-neighbors', { guid: site.guid }));
-  block.append(pager(data));
-  content.append(block);
+  const directory = createAsyncSection('Neighbors', {
+    action: exportCsvLink('site-neighbors', { guid: site.guid }),
+    loadingMessage: 'Loading site neighbors…',
+    errorMessage: 'The site neighbors could not be loaded.'
+  });
+  if (!renderIsCurrent(renderContext)) return;
+  content.append(directory.element);
+  await directory.load(
+    () => apiPage(siteApiPath(site.guid, 'neighbors'), pageParameters()),
+    (page) => pagedTableContent(page,
+      p25 ? p25SiteNeighborColumns() : trunkedSiteNeighborColumns(site),
+      p25 ? 'site-neighbors' : 'trunked-site-neighbors', {
+        itemLabel: 'Neighbors', emptyText: 'No neighbors recorded',
+        tableOptions: { sortable: false, serverSort: false }
+      }),
+    renderContext);
 }
 
-async function renderSiteInfo(site) {
+async function renderSiteInfo(site, renderContext) {
   const summary = [
     ['Metadata Updates', site.observation_count], ['Channels', site.channels], ['Neighbors', site.neighbors]
   ];
@@ -11488,6 +11618,7 @@ async function renderSiteInfo(site) {
   if (siteCapability(site, 'group_identities')) {
     activityColumn.append(await siteTopTalkgroupsSection(site));
   }
+  if (!renderIsCurrent(renderContext)) return;
   const layout = node('div', 'entity-info-layout');
   layout.append(infoColumn);
   if (activityColumn.childNodes.length) layout.append(activityColumn);
@@ -11495,6 +11626,7 @@ async function renderSiteInfo(site) {
 }
 
 async function renderSite() {
+  const renderContext = captureRenderContext();
   const guid = route.get('guid');
   if (!guid) throw new Error('Site GUID is missing from the URL');
   const response = await api(siteApiPath(guid));
@@ -11505,14 +11637,16 @@ async function renderSite() {
   const display = siteDisplayParts(site);
   const subtitle = [display.secondary, protocolFamily(site), trunkedVariant(site), siteIdentity(site)]
     .filter(Boolean).join(' · ');
-  content.append(pageHeader(siteValue(site), subtitle), siteTabs(site, tab));
+  if (!beginPage(renderContext, pageHeader(siteValue(site), subtitle), siteTabs(site, tab))) return;
 
   if (tab === 'quality') {
-    content.append(await siteSignalHistorySection(site));
+    const signalHistory = await siteSignalHistorySection(site);
+    if (!renderIsCurrent(renderContext)) return;
+    content.append(signalHistory);
   } else if (tab === 'channels') {
-    await renderSiteChannels(site);
+    await renderSiteChannels(site, renderContext);
   } else if (tab === 'neighbors') {
-    await renderSiteNeighbors(site);
+    await renderSiteNeighbors(site, renderContext);
   } else if (tab === 'band-plan') {
     const data = await api(siteApiPath(guid, 'frequency-bands'));
     content.append(section('Home System Band Plan', table(data.home_bands || [], [
@@ -11590,7 +11724,7 @@ async function renderSite() {
   } else if (tab === 'activity') {
     await renderActivity({ guid });
   } else {
-    await renderSiteInfo(site);
+    await renderSiteInfo(site, renderContext);
   }
 }
 
@@ -11737,8 +11871,11 @@ function activityColumns() {
 }
 
 async function renderActivity(scopeParameters, title = 'Activity') {
+  const renderContext = captureRenderContext();
   if (!detailedHistoryAvailable()) {
-    content.append(section(title, node('div', 'empty', 'Detailed history logging is not running.')));
+    if (renderIsCurrent(renderContext)) {
+      content.append(section(title, node('div', 'empty', 'Detailed history logging is not running.')));
+    }
     return;
   }
   const data = await api('/api/v1/activity', {
@@ -11747,6 +11884,7 @@ async function renderActivity(scopeParameters, title = 'Activity') {
     hide_grants: true,
     limit: 200
   });
+  if (!renderIsCurrent(renderContext)) return;
   const columns = activityColumns();
   const activityTable = table(withoutGrantActions(data.rows), columns, 'No activity recorded',
     { type: 'activity', rowKey: (row) => row.id });
@@ -11845,10 +11983,8 @@ async function renderActivity(scopeParameters, title = 'Activity') {
   }
 }
 
-async function renderConventional() {
-  const page = await api('/api/v1/conventional-contexts', pageParameters());
-  content.append(pageHeader('Conventional', 'Started conventional analog and digital channel summaries'));
-  const columns = [
+function conventionalColumns() {
+  return [
     { label: 'Name', render: (row) => anchor(row.channel_name || row.context_key,
       href('conventional-detail', { context: row.context_key, tab: 'info' })), className: 'alias-cell', sort: 'name', sortValue: (row) => row.channel_name || row.context_key },
     { id: 'protocol', label: 'Protocol', render: protocolFamily, sort: 'protocol', sortValue: protocolFamily },
@@ -11861,8 +11997,22 @@ async function renderConventional() {
     { id: 'calls', label: 'Calls', render: (row) => number(row.call_count), className: 'numeric', sort: 'calls', sortValue: (row) => Number(row.call_count || 0) },
     { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sort: 'last_seen', sortValue: (row) => Number(row.last_seen_ms || 0) }
   ];
-  content.append(pagedSection('Conventional Channels', page, columns, 'Search name or frequency', 'conventional',
-    exportCsvLink('conventional-channels')));
+}
+
+async function renderConventional() {
+  const renderContext = captureRenderContext();
+  const directory = createAsyncSection('Conventional Channels', {
+    action: exportCsvLink('conventional-channels'),
+    loadingMessage: 'Loading conventional channels…',
+    errorMessage: 'The conventional channel directory could not be loaded.'
+  });
+  if (!beginPage(renderContext,
+    pageHeader('Conventional', 'Started conventional analog and digital channel summaries'),
+    searchBar('Search name or frequency'), directory.element)) return;
+  await directory.load(
+    () => apiPage('/api/v1/conventional-contexts', pageParameters()),
+    (page) => pagedTableContent(page, conventionalColumns(), 'conventional', { itemLabel: 'Channels' }),
+    renderContext);
 }
 
 function conventionalCapability(context, capability) {
@@ -11957,7 +12107,7 @@ function conventionalRadioColumns() {
 }
 
 async function renderConventionalTalkgroups(contextKey) {
-  const page = await api(conventionalApiPath(contextKey, 'talkgroups'), pageParameters({
+  const page = await apiPage(conventionalApiPath(contextKey, 'talkgroups'), pageParameters({
     limit: CONVENTIONAL_IDENTITY_PAGE_LIMIT
   }));
   content.append(pagedSection('Talkgroups', page, conventionalTalkgroupColumns(),
@@ -11966,7 +12116,7 @@ async function renderConventionalTalkgroups(contextKey) {
 }
 
 async function renderConventionalRadios(contextKey) {
-  const page = await api(conventionalApiPath(contextKey, 'radios'), pageParameters({
+  const page = await apiPage(conventionalApiPath(contextKey, 'radios'), pageParameters({
     limit: CONVENTIONAL_IDENTITY_PAGE_LIMIT
   }));
   content.append(pagedSection('Radios', page, conventionalRadioColumns(),
@@ -11975,6 +12125,7 @@ async function renderConventionalRadios(contextKey) {
 }
 
 async function renderConventionalDetail() {
+  const renderContext = captureRenderContext();
   const contextKey = route.get('context');
   if (!contextKey) throw new Error('Conventional context is missing from the URL');
   const data = await api(conventionalApiPath(contextKey));
@@ -11982,8 +12133,9 @@ async function renderConventionalDetail() {
   const tabItems = conventionalTabItems(context);
   const requestedTab = route.get('tab') || 'info';
   const tab = tabItems.some((item) => item.id === requestedTab) ? requestedTab : tabItems[0].id;
-  content.append(pageHeader(context.channel_name || context.context_key, protocolFamily(context)),
-    tabs(tabItems, tab));
+  if (!beginPage(renderContext,
+    pageHeader(context.channel_name || context.context_key, protocolFamily(context)),
+    tabs(tabItems, tab))) return;
 
   if (tab === 'activity') {
     await renderActivity({ context: contextKey });
@@ -13220,6 +13372,8 @@ async function renderAdminHealth() {
 }
 
 async function renderAdmin() {
+  const renderContext = captureRenderContext();
+  const mobileListener = mobileListenerModeActive();
   const availableTabs = [
     { id: 'health', label: 'Health', capability: ACCESS_CAPABILITIES.RECEIVER_HEALTH },
     { id: 'settings', label: 'Web Settings', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS },
@@ -13227,7 +13381,7 @@ async function renderAdmin() {
     { id: 'web-audio', label: 'Listener Status', capability: ACCESS_CAPABILITIES.ADMIN_AUDIO },
     { id: 'users', label: 'Users', capability: ACCESS_CAPABILITIES.ADMIN_USERS },
     { id: 'access', label: 'Access', capability: ACCESS_CAPABILITIES.ADMIN_ACCESS }
-  ].filter((item) => capabilityAllowed(item.capability));
+  ].filter((item) => capabilityAllowed(item.capability) && !(mobileListener && item.id === 'health'));
   if (!availableTabs.length) throw Object.assign(new Error('Administrator access is unavailable.'), { status: 403 });
   const requested = route.get('tab') || 'scan-lists';
   const active = availableTabs.some((item) => item.id === requested) ? requested : availableTabs[0].id;
@@ -13235,10 +13389,9 @@ async function renderAdmin() {
     route.set('tab', active);
     window.history.replaceState({}, '', currentHref());
   }
-  if (active === 'health' && mobileListenerModeActive()) return;
-  content.append(pageHeader('Administration',
+  if (!beginPage(renderContext, pageHeader('Administration',
     'Monitor receiver health and manage receiver, scan-list, browser-audio, user, and access settings'),
-    tabs(availableTabs.map((item) => ({ ...item, href: href('admin', { tab: item.id }) })), active));
+    tabs(availableTabs.map((item) => ({ ...item, href: href('admin', { tab: item.id }) })), active))) return;
   if (active === 'health') await renderAdminHealth();
   else if (active === 'settings') await renderAdminWebSettings();
   else if (active === 'scan-lists') await renderAdminScanLists();
@@ -13257,7 +13410,7 @@ function routeViewLabel(view) {
   })[view] || 'this page';
 }
 
-function renderAccessDenied(view) {
+function renderAccessDenied(view, renderContext = captureRenderContext()) {
   const panel = node('section', 'access-denied-card');
   const heading = node('h2', '', accessSessionAvailable ? 'Access denied' : 'Access information unavailable');
   const detail = !accessSessionAvailable ?
@@ -13286,11 +13439,13 @@ function renderAccessDenied(view) {
   });
   actions.append(action);
   panel.append(actions);
-  content.append(pageHeader('Access', routeViewLabel(view)), panel);
+  beginPage(renderContext, pageHeader('Access', routeViewLabel(view)), panel);
 }
 
 function renderCredits() {
-  content.append(pageHeader('Credits & Licensing', 'Open-source authorship, source lineage, and license terms'));
+  const renderContext = captureRenderContext();
+  if (!beginPage(renderContext,
+    pageHeader('Credits & Licensing', 'Open-source authorship, source lineage, and license terms'))) return;
 
   const project = node('div', 'credits-copy');
   project.append(node('p', '', 'Copyright © 2014-2026 Dennis Sheirer and respective contributors.'));
@@ -13419,17 +13574,21 @@ async function loadStatus(refreshCurrentView = false) {
 }
 
 async function render() {
+  const view = route.get('view') || 'dashboard';
+  if (!closeReadOnlyModal(false)) return;
   const epoch = ++activeRenderEpoch;
   activeRenderController?.abort();
   const renderController = new AbortController();
   activeRenderController = renderController;
-  const view = route.get('view') || 'dashboard';
-  if (!closeReadOnlyModal(false)) return;
+  const renderContext = Object.freeze({ epoch, signal: renderController.signal });
   closePageConnections();
-  content.replaceChildren(node('div', 'loading', 'Loading'));
+  const loading = node('div', 'loading', 'Loading');
+  loading.setAttribute('role', 'status');
+  content.setAttribute('aria-busy', 'true');
+  content.replaceChildren(loading);
 
+  let effectiveView = view;
   try {
-    content.replaceChildren();
     const handlers = {
       dashboard: renderDashboard,
       live: renderLive,
@@ -13445,12 +13604,12 @@ async function render() {
       admin: renderAdmin,
       credits: renderCredits
     };
-    const effectiveView = handlers[view] ? view : 'dashboard';
+    effectiveView = handlers[view] ? view : 'dashboard';
     document.body.dataset.view = effectiveView;
     activateNavigation(effectiveView);
     if (!viewAllowed(effectiveView)) {
       document.body.dataset.view = 'access-denied';
-      renderAccessDenied(effectiveView);
+      renderAccessDenied(effectiveView, renderContext);
       return;
     }
     await handlers[effectiveView]();
@@ -13465,13 +13624,13 @@ async function render() {
     if (epoch !== activeRenderEpoch || renderController.signal.aborted || error?.name === 'AbortError') return;
     if (error?.status === 401 || error?.status === 403) {
       await refreshAccessSession(false);
-      content.replaceChildren();
+      if (!renderIsCurrent(renderContext)) return;
       document.body.dataset.view = 'access-denied';
-      renderAccessDenied(view);
+      renderAccessDenied(effectiveView, renderContext);
       return;
     }
     const notice = databaseLoggingNotice(view);
-    content.replaceChildren(...[notice, node('div', 'error', error.message)].filter(Boolean));
+    beginPage(renderContext, ...[notice, node('div', 'error', error.message)].filter(Boolean));
   }
 }
 

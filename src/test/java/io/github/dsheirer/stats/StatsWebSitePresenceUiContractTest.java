@@ -110,7 +110,7 @@ class StatsWebSitePresenceUiContractTest
     {
         String source = source();
         String radio = function(source, "async function renderRadio()");
-        String site = function(source, "async function renderSiteInfo(site)");
+        String site = function(source, "async function renderSiteInfo(site, renderContext)");
         String metrics = function(source, "function metrics(values, embedded = false)");
 
         assertTrue(radio.contains("systemCapability(radio, 'current_affiliations')"));

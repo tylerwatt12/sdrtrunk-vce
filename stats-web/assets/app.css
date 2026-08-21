@@ -4206,6 +4206,10 @@ th.numeric {
   border: 1px solid #dbaab1;
 }
 
+.async-section-error .async-section-retry {
+  margin-top: 12px;
+}
+
 .key-values {
   display: grid;
   grid-template-columns: minmax(150px, 220px) minmax(0, 1fr);

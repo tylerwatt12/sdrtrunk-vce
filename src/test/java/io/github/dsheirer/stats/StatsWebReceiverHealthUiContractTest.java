@@ -120,10 +120,9 @@ class StatsWebReceiverHealthUiContractTest
     }
 
     @Test
-    void providesLightDarkAndCacheRevisionContracts() throws Exception
+    void providesLightAndDarkPresentationContracts() throws Exception
     {
         String css = readText(APP_CSS);
-        String html = readText(INDEX_HTML);
 
         assertTrue(css.contains(".receiver-health-indicator.receiver-health-healthy"));
         assertTrue(css.contains(".receiver-health-indicator.receiver-health-warning"));
@@ -133,9 +132,6 @@ class StatsWebReceiverHealthUiContractTest
         assertTrue(css.contains(":root[data-theme=\"dark\"] .receiver-health-measurement-row.receiver-health-critical"));
         assertTrue(css.contains("details.receiver-health-incident:not([open])"));
         assertTrue(css.contains(".receiver-health-resolved-sort select"));
-        assertTrue(html.contains("<meta name=\"sdrtrunk-web-revision\" content=\"83\">"));
-        assertTrue(html.contains("/assets/app.css?v=66"));
-        assertTrue(html.contains("/assets/app.js?v=102"));
     }
 
     private static String readText(Path path) throws Exception

@@ -11,20 +11,19 @@
     return error;
   }
 
-  function requiredInteger(value, field, minimum = 0) {
-    const parsed = Number(value);
-    if (!Number.isInteger(parsed) || parsed < minimum) {
-      throw invalidResponse(`The systems directory ${field} is invalid.`);
+  function requiredPreviewLimit(value) {
+    if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) {
+      throw invalidResponse('The systems directory site preview limit is invalid.');
     }
-    return parsed;
+    return value;
   }
 
-  function decode(response) {
-    if (!response || typeof response !== 'object' || Array.isArray(response) || !Array.isArray(response.rows)) {
+  function decode(page) {
+    if (!page || typeof page !== 'object' || Array.isArray(page) || !Array.isArray(page.rows)) {
       throw invalidResponse();
     }
 
-    const parentRows = response.rows.slice();
+    const parentRows = page.rows;
     const tableRows = [];
     let truncatedParentCount = 0;
 
@@ -45,47 +44,23 @@
       if (system.site_preview_truncated) truncatedParentCount += 1;
     });
 
-    const limit = requiredInteger(response.limit, 'page limit', 1);
-    const offset = requiredInteger(response.offset, 'page offset');
-    if (typeof response.has_more !== 'boolean') {
-      throw invalidResponse('The systems directory paging state is invalid.');
-    }
-
-    const nextOffset = response.next_offset === null || response.next_offset === undefined ? null :
-      requiredInteger(response.next_offset, 'next page offset');
-    if (response.has_more && (nextOffset === null || nextOffset <= offset)) {
-      throw invalidResponse('The systems directory next page offset is invalid.');
-    }
-
-    const page = {
-      rows: parentRows,
-      limit,
-      offset,
-      has_more: response.has_more,
-      next_offset: nextOffset
-    };
-    if (response.total_count !== undefined && response.total_count !== null) {
-      page.total_count = requiredInteger(response.total_count, 'total count');
-    }
-
     return {
       parentRows,
       tableRows,
       page,
-      previewLimit: requiredInteger(response.site_preview_limit_per_system,
-        'site preview limit', 1),
+      previewLimit: requiredPreviewLimit(page.site_preview_limit_per_system),
       truncatedParentCount
     };
   }
 
-  async function load(api, parameters = {}) {
-    if (typeof api !== 'function') throw new TypeError('A systems API request function is required.');
-    const response = await api(API_PATH, {
+  async function load(apiPage, parameters = {}) {
+    if (typeof apiPage !== 'function') throw new TypeError('A systems page request function is required.');
+    const page = await apiPage(API_PATH, {
       ...parameters,
       limit: DIRECTORY_LIMIT,
       includeSitePreview: true
     });
-    return decode(response);
+    return decode(page);
   }
 
   window.sdrtrunkSystemsDirectory = Object.freeze({ load, decode });

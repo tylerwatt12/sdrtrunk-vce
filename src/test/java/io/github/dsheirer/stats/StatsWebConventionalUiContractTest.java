@@ -44,8 +44,8 @@ class StatsWebConventionalUiContractTest
     {
         String source = source();
         assertTrue(source.contains("const CONVENTIONAL_IDENTITY_PAGE_LIMIT = 100;"));
-        assertTrue(source.contains("api(conventionalApiPath(contextKey, 'talkgroups'), pageParameters({"));
-        assertTrue(source.contains("api(conventionalApiPath(contextKey, 'radios'), pageParameters({"));
+        assertTrue(source.contains("apiPage(conventionalApiPath(contextKey, 'talkgroups'), pageParameters({"));
+        assertTrue(source.contains("apiPage(conventionalApiPath(contextKey, 'radios'), pageParameters({"));
         assertTrue(source.contains("limit: CONVENTIONAL_IDENTITY_PAGE_LIMIT"));
         assertFalse(source.contains("/api/conventional/"));
     }
@@ -77,9 +77,13 @@ class StatsWebConventionalUiContractTest
     {
         String source = source();
         String list = function(source, "async function renderConventional()");
+        String columns = function(source, "function conventionalColumns()");
         String detail = function(source, "async function renderConventionalDetail()");
         String radios = function(source, "function conventionalRadioColumns()");
-        assertTrue(list.contains("decoderDisplay(row.decoder)"));
+        assertTrue(columns.contains("decoderDisplay(row.decoder)"));
+        assertTrue(list.contains("createAsyncSection('Conventional Channels'"));
+        assertTrue(list.contains("apiPage('/api/v1/conventional-contexts', pageParameters())"));
+        assertTrue(list.indexOf("beginPage(renderContext") < list.indexOf("await directory.load("));
         assertTrue(detail.contains("decoderDisplay(context.decoder)"));
         assertTrue(detail.contains("label: 'Calls'"));
         assertTrue(detail.contains("label: 'Rec'"));

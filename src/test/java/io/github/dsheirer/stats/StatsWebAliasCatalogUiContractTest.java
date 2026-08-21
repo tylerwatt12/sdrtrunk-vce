@@ -27,10 +27,10 @@ class StatsWebAliasCatalogUiContractTest
 
         assertTrue(readText(INDEX_HTML).contains("data-view=\"aliases\" href=\"/?view=aliases\""));
         assertTrue(source.contains("aliases: renderAliases"));
-        assertTrue(renderer.contains("api('/api/v1/alias-lists')"));
+        assertTrue(renderer.contains("apiPage('/api/v1/alias-lists')"));
         assertTrue(renderer.contains("if (!selectedList)"));
         assertTrue(renderer.indexOf("if (!selectedList)") <
-            renderer.indexOf("api('/api/v1/aliases', pageParameters(filters))"));
+            renderer.indexOf("apiPage('/api/v1/aliases', pageParameters(filters))"));
         assertTrue(function(source, "function pageParameters(extra = {})").contains("limit: 100"));
         assertFalse(renderer.contains("All alias lists"));
         assertTrue(function(source, "function aliasListRail(lists, selectedList, admin)")
@@ -141,7 +141,8 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(source.contains("color: aliasEditorColorValue(form.elements.color)"));
         assertTrue(source.contains("color.dataset.originalColor"));
         assertTrue(source.contains("value: 'RESET', label: 'Reset to default'"));
-        assertTrue(source.contains("Discard your unsaved alias changes?"));
+        assertTrue(source.contains("Discard your unsaved changes?"));
+        assertFalse(source.contains("Discard your unsaved alias changes?"));
         assertTrue(function(source, "async function render()").contains("if (!closeReadOnlyModal(false)) return"));
         assertTrue(source.contains("if (!closeReadOnlyModal(false)) return;\n  window.history.pushState"));
     }
@@ -207,7 +208,7 @@ class StatsWebAliasCatalogUiContractTest
         String count = function(source, "function adminScanListMemberCount(scanList)");
         String renderer = function(source, "async function renderAliases()");
         String members = function(source,
-            "async function renderScanListMembers(main, listResponse, scanListCatalog, scanList)");
+            "async function renderScanListMembers(main, listResponse, scanListCatalog, scanList, renderContext)");
         String columns = function(source, "function scanListMemberColumns(rows, onSelectionChange)");
         String bulk = function(source, "function scanListMemberBulkBar(scanList, onClear)");
         String remove = function(source, "function openScanListMemberRemoveModal(scanList)");
@@ -217,7 +218,8 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(count.contains("scanListId: scanList.id"));
         assertTrue(renderer.contains("requestJson('/api/v1/admin/scan-lists'"));
         assertTrue(renderer.contains("await renderScanListMembers"));
-        assertTrue(members.contains("api('/api/v1/aliases'"));
+        assertTrue(members.contains("apiPage('/api/v1/aliases'"));
+        assertTrue(members.contains("!renderIsCurrent(renderContext) || !main.isConnected"));
         assertTrue(members.contains("scan_list_id: scanList.id"));
         assertTrue(members.contains("scanListMemberColumns(rows, updateSelection)"));
         assertTrue(members.contains("'No aliases belong to this scan list'"));
