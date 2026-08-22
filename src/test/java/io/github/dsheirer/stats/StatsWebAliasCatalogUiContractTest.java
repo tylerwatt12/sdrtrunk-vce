@@ -12,7 +12,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 
-/** Protects the bounded, list-focused web Alias Editor and its read-only catalog fallback. */
+/** Protects the bounded, administrator-only, list-focused web Alias Editor. */
 class StatsWebAliasCatalogUiContractTest
 {
     private static final Path APP_JAVASCRIPT = Path.of("stats-web", "assets", "app.js");
@@ -33,7 +33,7 @@ class StatsWebAliasCatalogUiContractTest
             renderer.indexOf("apiPage('/api/v1/aliases', pageParameters(filters))"));
         assertTrue(function(source, "function pageParameters(extra = {})").contains("limit: 100"));
         assertFalse(renderer.contains("All alias lists"));
-        assertTrue(function(source, "function aliasListRail(lists, selectedList, admin)")
+        assertTrue(function(source, "function aliasListRail(lists, selectedList)")
             .contains("href('aliases', { list: id"));
     }
 
@@ -56,10 +56,10 @@ class StatsWebAliasCatalogUiContractTest
     {
         String source = source();
         String tabs = function(source, "function aliasEditorViewTabs(selectedList)");
-        String columns = function(source, "function aliasEditorColumns(view, admin, rows, onSelectionChange, selectedCustom)");
+        String columns = function(source, "function aliasEditorColumns(view, rows, onSelectionChange, selectedCustom)");
         String optional = function(source, "function aliasCatalogEnrichmentColumns()");
         String configuration = function(source, "function aliasCustomConfigurationColumns()");
-        String base = function(source, "function aliasEditorBaseColumns(admin, rows, onSelectionChange)");
+        String base = function(source, "function aliasEditorBaseColumns(rows, onSelectionChange)");
 
         for(String label: new String[]{"Configure", "Call Use", "System Evidence", "Custom"})
         {
@@ -98,8 +98,9 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(source.contains("ADMIN_ALIASES: 'admin-aliases'"));
         assertTrue(function(source, "function aliasAdminAllowed()")
             .contains("ACCESS_CAPABILITIES.ADMIN_ALIASES"));
-        assertTrue(renderer.contains("const admin = aliasAdminAllowed()"));
-        assertTrue(renderer.contains("admin ? requestJson('/api/v1/admin/alias-lists'"));
+        assertTrue(renderer.contains("if (!aliasAdminAllowed())"));
+        assertTrue(renderer.contains("requestJson('/api/v1/admin/alias-lists'"));
+        assertTrue(renderer.contains("admin: true"));
         assertTrue(editor.contains("/api/v1/admin/aliases/options?alias_list_id="));
         assertTrue(editor.contains("method: 'PUT', body: { revision, alias: payload }"));
         assertTrue(editor.contains("method: 'POST', body: { revision, alias: payload }"));
@@ -173,7 +174,7 @@ class StatsWebAliasCatalogUiContractTest
     {
         String source = source();
         String bulk = function(source, "function openAliasBulkModal(kind)");
-        String columns = function(source, "function aliasEditorBaseColumns(admin, rows, onSelectionChange)");
+        String columns = function(source, "function aliasEditorBaseColumns(rows, onSelectionChange)");
 
         assertTrue(bulk.contains("slice(0, 500)"));
         assertTrue(bulk.contains("explicitly selected aliases"));
@@ -256,7 +257,8 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(filters.contains("hidden.value = String(new Date(control.value).getTime())"));
         assertTrue(filters.contains("'lastActivityAfter', 'lastActivityBefore'"));
         assertTrue(source.contains("An em dash means unavailable or not collected"));
-        assertTrue(source.contains("Logout means unit deregistration, not leaving a talkgroup"));
+        assertTrue(source.contains("Logout means unit deregistration, not leaving a "));
+        assertTrue(source.contains("talkgroup. An em dash means unavailable or not collected"));
     }
 
     @Test

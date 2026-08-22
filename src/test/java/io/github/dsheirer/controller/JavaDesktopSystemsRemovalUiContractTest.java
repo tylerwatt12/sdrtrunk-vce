@@ -65,6 +65,9 @@ class JavaDesktopSystemsRemovalUiContractTest
         assertFalse(editor.contains("Systems Activity Settings"));
         assertFalse(editor.contains("JavaInterfaceView.values()"));
         assertFalse(editor.contains("JavaInterfaceView.SPECTRUM"));
+        assertFalse(editor.contains("Live Activity Settings"));
+        assertFalse(editor.contains("Retain Last Call Source/Target"));
+        assertFalse(editor.contains("P25 Grant Idle Age-Out"));
     }
 
     @Test

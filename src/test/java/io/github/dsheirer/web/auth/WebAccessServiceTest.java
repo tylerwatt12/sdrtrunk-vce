@@ -130,14 +130,16 @@ class WebAccessServiceTest
     @Test
     void definesEveryExistingCapabilityAndLocksAdminPolicies()
     {
-        assertEquals(16, WebCapability.registry().size());
+        assertEquals(15, WebCapability.registry().size());
 
-        for(String id: new String[]{"site-access", "dashboard", "live", "tuner-spectrum", "systems", "conventional", "aliases", "credits",
+        for(String id: new String[]{"site-access", "dashboard", "live", "tuner-spectrum", "systems", "conventional", "credits",
             "csv-export", "call-audio", "admin-users", "admin-access", "admin-aliases", "admin-audio", "admin-settings",
             "receiver-health"})
         {
             assertTrue(WebCapability.fromId(id).isPresent(), id);
         }
+
+        assertTrue(WebCapability.fromId("aliases").isEmpty());
 
         assertEquals(AccessTier.PUBLIC, WebCapability.CREDITS_VIEW.defaultTier());
         assertEquals(AccessTier.ADMIN, WebCapability.TUNER_SPECTRUM_VIEW.defaultTier());
@@ -168,6 +170,23 @@ class WebAccessServiceTest
 
         assertEquals(AccessTier.ADMIN,
             new WebAccessService(database).requiredTier(WebCapability.TUNER_SPECTRUM_VIEW));
+    }
+
+    @Test
+    void ignoresRetiredAliasesPolicyOverride() throws Exception
+    {
+        Path database = database();
+        WebAccessService service = new WebAccessService(database);
+        service.provisionOrResetPrimaryAdmin("primary admin password".toCharArray());
+        String current = settingJson(database);
+        String legacy = current.replace("\"policyOverrides\":{}",
+            "\"policyOverrides\":{\"aliases\":\"USER\"}");
+        assertFalse(current.equals(legacy));
+        writeSetting(database, legacy);
+
+        WebAccessService restarted = new WebAccessService(database);
+        assertTrue(WebCapability.fromId("aliases").isEmpty());
+        assertEquals(AccessTier.ADMIN, restarted.requiredTier(WebCapability.ADMIN_ALIASES));
     }
 
     private Path database() throws Exception

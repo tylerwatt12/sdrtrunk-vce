@@ -21,18 +21,16 @@ class StatsWebDisplaySettingsUiContractTest
     void webSettingsExposeOneReceiverWideEncryptionDetailsToggle() throws Exception
     {
         String source = Files.readString(APP_JAVASCRIPT);
-        String settings = function(source, "async function renderAdminWebSettings()");
         String display = function(source, "async function renderAdminWebDisplaySettings()");
         String admin = function(source, "async function renderAdmin()");
 
-        assertTrue(settings.contains("await renderAdminWebDisplaySettings()"));
-        assertTrue(settings.contains("await renderAdminRadioReferenceSettings()"));
-        assertTrue(admin.contains("await renderAdminWebSettings()"));
+        assertTrue(admin.contains("id: 'live-activity', label: 'Live & Activity'"));
+        assertTrue(admin.contains("await renderAdminWebDisplaySettings()"));
         assertTrue(display.contains("'/api/v1/admin/web-display'"));
         assertTrue(display.contains("show_encryption_details"));
         assertTrue(display.contains("method: 'PUT'"));
-        assertTrue(display.contains("toggle.checked = previous"));
-        assertTrue(display.contains("serviceStatus.web_display = configuration"));
+        assertTrue(display.contains("if (configuration) applyConfiguration(configuration)"));
+        assertTrue(display.contains("liveDisplaySettings = configuration"));
         assertTrue(display.contains("'Show encryption algorithm and key'"));
     }
 
@@ -46,7 +44,7 @@ class StatsWebDisplaySettingsUiContractTest
         String liveService = Files.readString(Path.of("src", "main", "java", "io", "github", "dsheirer",
             "stats", "StatsLiveService.java"));
 
-        assertTrue(live.contains("serviceStatus?.web_display?.show_encryption_details !== false"));
+        assertTrue(live.contains("liveDisplaySettings?.show_encryption_details"));
         assertTrue(live.contains("showEncryptionDetails && row.status === 'ENCRYPTED'"));
         assertTrue(service.contains("status.put(\"webDisplay\", mWebDisplaySettingsService.configuration())"));
         assertTrue(service.contains("WebCapability.ADMIN_SETTINGS, webDisplaySettingsController::handle"));

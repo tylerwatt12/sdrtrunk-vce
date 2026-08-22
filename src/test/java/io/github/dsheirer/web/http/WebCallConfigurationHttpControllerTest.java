@@ -6,6 +6,7 @@
 package io.github.dsheirer.web.http;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -64,7 +65,11 @@ class WebCallConfigurationHttpControllerTest
             assertEquals(200, updatedResponse.statusCode(), updatedResponse.body());
             assertEquals(configured, current.get());
             assertEquals(1, updates.get());
-            assertEquals(120, data(updatedResponse).at("/configuration/maximum_browser_queue_calls").intValue());
+            assertEquals(120, data(updatedResponse).at("/configuration/waiting_calls_per_listener").intValue());
+            assertEquals(WebCallConfiguration.MINIMUM_WAITING_CALLS_PER_LISTENER,
+                data(updatedResponse).at("/limits/waiting_calls_per_listener/minimum").intValue());
+            assertEquals(WebCallConfiguration.MAXIMUM_WAITING_CALLS_PER_LISTENER,
+                data(updatedResponse).at("/limits/waiting_calls_per_listener/maximum").intValue());
 
             Map<String,Object> invalid = new LinkedHashMap<>(payload);
             invalid.put("maximum_listeners", 0);
@@ -113,11 +118,40 @@ class WebCallConfigurationHttpControllerTest
         }
     }
 
+    @Test
+    void reportsPreferenceStorageFailuresWithoutExposingInternalDetails() throws Exception
+    {
+        WebCallConfigurationHttpController controller = new WebCallConfigurationHttpController(
+            WebCallConfiguration::defaults,
+            _ -> { throw new IllegalStateException("Simulated preference storage detail"); }, Map::of);
+        HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
+        server.createContext(WebCallConfigurationHttpController.PATH, controller::handle);
+        server.start();
+
+        try
+        {
+            URI origin = URI.create("http://127.0.0.1:" + server.getAddress().getPort());
+            HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
+            HttpResponse<String> response = send(client, jsonRequest(origin)
+                .PUT(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(
+                    payload(WebCallConfiguration.defaults())))));
+
+            assertEquals(503, response.statusCode());
+            assertEquals("storage_unavailable", root(response).at("/error/code").textValue());
+            assertFalse(response.body().contains("Simulated"),
+                "the response must not expose preference storage details");
+        }
+        finally
+        {
+            server.stop(0);
+        }
+    }
+
     private static Map<String,Object> payload(WebCallConfiguration configuration)
     {
         return Map.of("maximum_listeners", configuration.maximumListeners(),
             "maximum_selected_scan_lists", configuration.maximumSelectedScanLists(),
-            "maximum_browser_queue_calls", configuration.maximumBrowserQueueCalls(),
+            "waiting_calls_per_listener", configuration.waitingCallsPerListener(),
             "maximum_cached_calls", configuration.maximumCachedCalls(),
             "maximum_cached_audio_mib", configuration.maximumCachedAudioMiB());
     }

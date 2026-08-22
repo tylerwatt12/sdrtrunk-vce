@@ -45,7 +45,6 @@ import io.github.dsheirer.identifier.IdentifierUpdateProvider;
 import io.github.dsheirer.message.IMessage;
 import io.github.dsheirer.message.IMessageListener;
 import io.github.dsheirer.message.IMessageProvider;
-import io.github.dsheirer.message.MessageHistory;
 import io.github.dsheirer.module.decode.PrimaryDecoder;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
 import io.github.dsheirer.module.decode.event.IDecodeEventListener;
@@ -115,7 +114,6 @@ public class ProcessingChain implements Listener<ChannelEvent>
     private Broadcaster<IMessage> mMessageBroadcaster = new Broadcaster<>();
     private Broadcaster<SquelchStateEvent> mSquelchStateEventBroadcaster = new Broadcaster<>();
     private AtomicBoolean mRunning = new AtomicBoolean();
-    private MessageHistory mMessageHistory = new MessageHistory(200);
     private AbstractChannelState mChannelState;
     private EventBus mEventBus;
     protected Source mSource;
@@ -144,7 +142,6 @@ public class ProcessingChain implements Listener<ChannelEvent>
         }
 
         addModule(mChannelState);
-        addModule(mMessageHistory);
     }
 
     /**
@@ -188,14 +185,6 @@ public class ProcessingChain implements Listener<ChannelEvent>
         }
 
         return null;
-    }
-
-    /**
-     * Message history module
-     */
-    public MessageHistory getMessageHistory()
-    {
-        return mMessageHistory;
     }
 
     /**
@@ -1083,6 +1072,20 @@ public class ProcessingChain implements Listener<ChannelEvent>
     public void removeDecodeEventListener(Listener<IDecodeEvent> listener)
     {
         mDecodeEventBroadcaster.removeListener(listener);
+    }
+
+    /**
+     * Adds a demand-owned observer for decoded messages.  Observer callbacks must remain nonblocking because they run
+     * inline with the decoder's message broadcast.
+     */
+    public void addMessageListener(Listener<IMessage> listener)
+    {
+        mMessageBroadcaster.addListener(listener);
+    }
+
+    public void removeMessageListener(Listener<IMessage> listener)
+    {
+        mMessageBroadcaster.removeListener(listener);
     }
 
     /**

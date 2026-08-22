@@ -323,7 +323,7 @@ final class StatsWebCallService implements AutoCloseable
         status.put("maximum_audio_responses", configuration.maximumListeners());
         status.put("rejected_audio_responses", mRejectedAudioResponses.get());
         status.put("maximum_selected_scan_lists", configuration.maximumSelectedScanLists());
-        status.put("maximum_browser_queue_calls", configuration.maximumBrowserQueueCalls());
+        status.put("waiting_calls_per_listener", configuration.waitingCallsPerListener());
         status.put("maximum_calls", configuration.maximumCachedCalls());
         status.put("maximum_audio_bytes", configuration.maximumCachedAudioBytes());
         status.put("maximum_call_audio_bytes", MAXIMUM_CALL_AUDIO_BYTES);

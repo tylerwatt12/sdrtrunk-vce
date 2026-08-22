@@ -29,7 +29,6 @@ class StatsWebReceiverHealthUiContractTest
         String viewAllowed = block(source, "function viewAllowed(view)");
         String renderAdmin = block(source, "async function renderAdmin()");
         String desktopEnabled = block(source, "desktopEnabled()");
-        String mobileShell = html.substring(html.indexOf("id=\"mobile-listener-shell\""));
 
         assertTrue(source.contains("RECEIVER_HEALTH: 'receiver-health'"));
         assertTrue(viewAllowed.contains("accessSession.tier === 'ADMIN'"));
@@ -38,8 +37,7 @@ class StatsWebReceiverHealthUiContractTest
         assertTrue(html.contains("href=\"/?view=admin&amp;tab=health\" hidden"));
         assertTrue(renderAdmin.contains("id: 'health', label: 'Health', capability: " +
             "ACCESS_CAPABILITIES.RECEIVER_HEALTH"));
-        assertTrue(desktopEnabled.contains("!mobileListenerModeActive()"));
-        assertFalse(mobileShell.contains("receiver-health"));
+        assertTrue(desktopEnabled.contains("!tableOnly && this.authorized()"));
     }
 
     @Test
@@ -47,7 +45,7 @@ class StatsWebReceiverHealthUiContractTest
     {
         String source = readText(APP_JAVASCRIPT);
         String refresh = block(source, "async refresh()");
-        String mode = block(source, "function applyListenerShellMode()");
+        String access = block(source, "function updateAccessControls()");
         int topicsStart = source.indexOf("const LIVE_MULTIPLEX_TOPICS");
         String topics = source.substring(topicsStart, source.indexOf("});", topicsStart));
 
@@ -61,9 +59,10 @@ class StatsWebReceiverHealthUiContractTest
         assertFalse(refresh.contains("this.snapshot = null"));
         assertFalse(refresh.contains("liveConnection("));
         assertFalse(topics.contains("receiver_health"));
-        assertTrue(mode.contains("receiverHealthController.synchronizeMode()"));
-        assertTrue(source.contains("Promise.all([loadStatus(false), receiverHealthController.refresh()])"));
-        assertTrue(source.contains("Promise.all([loadStatus(true), receiverHealthController.refresh()])"));
+        assertTrue(access.contains("receiverHealthController.synchronizeAccess()"));
+        assertTrue(source.contains("loadStatus(false), refreshLiveDisplaySettings(false),"));
+        assertTrue(source.contains("loadStatus(true), refreshLiveDisplaySettings(true),"));
+        assertTrue(source.contains("receiverHealthController.refresh()"));
     }
 
     @Test

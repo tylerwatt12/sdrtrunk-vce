@@ -83,9 +83,9 @@ final class StatsApiV1Controller
                 request.requireOnly("range", "points", "include_history", "limit", "offset");
                 return collection(mDatabase.qualityHistory(request), "sites");
             }));
-        create(server, StatsApiV1.ALIAS_LISTS, WebCapability.ALIASES_VIEW,
+        create(server, StatsApiV1.ALIAS_LISTS, WebCapability.ADMIN_ALIASES,
             exchange -> handleJson(exchange, StatsApiV1.ALIAS_LISTS, this::aliasLists));
-        create(server, StatsApiV1.ALIASES, WebCapability.ALIASES_VIEW,
+        create(server, StatsApiV1.ALIASES, WebCapability.ADMIN_ALIASES,
             exchange -> handleJson(exchange, StatsApiV1.ALIASES, this::aliases));
         create(server, StatsApiV1.SYSTEMS, WebCapability.SYSTEMS_VIEW,
             exchange -> handleJson(exchange, StatsApiV1.SYSTEMS, this::systems));
@@ -116,7 +116,8 @@ final class StatsApiV1Controller
             })));
         create(server, StatsApiV1.CONVENTIONAL_CONTEXTS, WebCapability.CONVENTIONAL_VIEW,
             exchange -> handleJson(exchange, StatsApiV1.CONVENTIONAL_CONTEXTS, this::conventionalContexts));
-        create(server, StatsApiV1.EXPORTS, WebCapability.CSV_EXPORT, this::handleCsvExport);
+        server.createContext(StatsApiV1.EXPORTS, mAccessController.protectAny(
+            Set.of(WebCapability.CSV_EXPORT, WebCapability.ADMIN_ALIASES), this::handleCsvExport));
         create(server, StatsApiV1.RECEIVER_HEALTH, WebCapability.RECEIVER_HEALTH,
             exchange -> handleJson(exchange, StatsApiV1.RECEIVER_HEALTH, (request, segments) -> {
                 requireNoSegments(segments);
@@ -396,6 +397,14 @@ final class StatsApiV1Controller
             }
 
             String dataset = segments.getFirst().substring(0, segments.getFirst().length() - 4);
+
+            if("aliases".equals(dataset) &&
+                !mAccessController.isRequestStillAuthorized(exchange, WebCapability.ADMIN_ALIASES))
+            {
+                ApiHttpResponse.sendError(exchange, 403, "access_denied", "Access is denied");
+                return;
+            }
+
             StatsRequest request = StatsRequest.from(exchange.getRequestURI());
             validateExportQuery(request, dataset);
             request = request.withPathParameter("dataset", dataset);

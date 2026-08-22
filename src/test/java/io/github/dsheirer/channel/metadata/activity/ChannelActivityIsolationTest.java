@@ -19,6 +19,7 @@ import io.github.dsheirer.module.decode.dmr.DMRChannelMode;
 import io.github.dsheirer.module.decode.nbfm.DecodeConfigNBFM;
 import io.github.dsheirer.preference.nowplaying.NowPlayingPreference;
 import io.github.dsheirer.source.config.SourceConfigTuner;
+import java.lang.management.ManagementFactory;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -70,6 +71,8 @@ class ChannelActivityIsolationTest
                 }
             });
             assertTrue(model.getDroppedIngressCount() > 0);
+            assertAllocationFreeWhenSaturated(() ->
+                model.updated(unmapped, ChannelMetadataField.DECODER_STATE));
             assertFalse(producer == projectionThread.get());
             assertTrue(projectionThread.get().getName().startsWith("channel activity"));
             model.channelStopped(channel);
@@ -352,6 +355,40 @@ class ChannelActivityIsolationTest
     private static ChannelActivityModel model(AliasModel aliasModel)
     {
         return new ChannelActivityModel(aliasModel, new NowPlayingPreference(type -> {}));
+    }
+
+    private static void assertAllocationFreeWhenSaturated(Runnable offer)
+    {
+        java.lang.management.ThreadMXBean platformBean = ManagementFactory.getThreadMXBean();
+
+        if(!(platformBean instanceof com.sun.management.ThreadMXBean allocationBean) ||
+            !allocationBean.isThreadAllocatedMemorySupported())
+        {
+            return;
+        }
+
+        if(!allocationBean.isThreadAllocatedMemoryEnabled())
+        {
+            allocationBean.setThreadAllocatedMemoryEnabled(true);
+        }
+
+        //Warm the exact rejected-offer path so class initialization and compilation are outside the measurement.
+        for(int index = 0; index < 20_000; index++)
+        {
+            offer.run();
+        }
+
+        long threadId = Thread.currentThread().threadId();
+        long before = allocationBean.getThreadAllocatedBytes(threadId);
+
+        for(int index = 0; index < 100_000; index++)
+        {
+            offer.run();
+        }
+
+        long allocated = allocationBean.getThreadAllocatedBytes(threadId) - before;
+        assertTrue(allocated < 4_096L,
+            "saturated metadata offers allocated " + allocated + " bytes on the producer thread");
     }
 
     private static Channel channel()

@@ -9,10 +9,13 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.module.decode.p25.identifier.channel.StandardChannel;
 import io.github.dsheirer.protocol.Protocol;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -88,6 +91,18 @@ class DecodeEventViewServiceTest
     }
 
     @Test
+    void liveEdgeStampIsInternalAndNotSerializedToTheBrowser() throws Exception
+    {
+        DecodeEvent event = DecodeEvent.builder(DecodeEventType.CALL, 1_000L).build();
+
+        try(DecodeEventViewService service = new DecodeEventViewService(null, null))
+        {
+            String json = new ObjectMapper().writeValueAsString(service.view(CONFIGURATION_ID, event));
+            assertFalse(json.contains("observationEpoch"));
+        }
+    }
+
+    @Test
     void blockedProjectionNeverBlocksOrProjectsOnTheDecoderCallback() throws Exception
     {
         CountDownLatch projectionEntered = new CountDownLatch(1);
@@ -142,15 +157,17 @@ class DecodeEventViewServiceTest
     }
 
     @Test
-    void zeroConsumersRejectIngressAndClearPublishedState()
+    void zeroConsumersRejectIngressAndEachDemandGenerationStartsEmpty()
     {
         AtomicInteger callbacks = new AtomicInteger();
+        List<Long> timestamps = new CopyOnWriteArrayList<>();
         io.github.dsheirer.sample.Listener<DecodeEventViewService.EventView> listener =
-            event -> callbacks.incrementAndGet();
+            event -> {
+                timestamps.add(event.timeStartMs());
+                callbacks.incrementAndGet();
+            };
         Channel channel = new Channel("inactive", Channel.ChannelType.STANDARD);
         DecodeEvent event = DecodeEvent.builder(DecodeEventType.CALL, 1_000L).build();
-        DecodeEventViewService.Scope scope = new DecodeEventViewService.Scope(channel.getConfigurationId(), null,
-            null);
 
         try(DecodeEventViewService service = new DecodeEventViewService(null, null))
         {
@@ -158,20 +175,19 @@ class DecodeEventViewServiceTest
             assertEquals(0, service.getPendingObservationCount());
             service.addListener(listener);
             service.getDecodeEventListener().accept(channel, event);
-            await(() -> callbacks.get() == 1 && service.snapshot(scope).size() == 1);
+            await(() -> callbacks.get() == 1);
             service.removeListener(listener);
-            assertTrue(service.snapshot(scope).isEmpty());
             service.getDecodeEventListener().accept(channel,
                 DecodeEvent.builder(DecodeEventType.CALL, 2_000L).build());
             assertEquals(0, service.getPendingObservationCount());
             assertEquals(1, callbacks.get());
 
             service.addListener(listener);
-            assertTrue(service.snapshot(scope).isEmpty());
+            assertEquals(List.of(1_000L), timestamps);
             DecodeEvent replacement = DecodeEvent.builder(DecodeEventType.CALL, 3_000L).build();
             service.getDecodeEventListener().accept(channel, replacement);
-            await(() -> callbacks.get() == 2 && service.snapshot(scope).size() == 1);
-            assertEquals(3_000L, service.snapshot(scope).getFirst().timeStartMs());
+            await(() -> callbacks.get() == 2);
+            assertEquals(List.of(1_000L, 3_000L), timestamps);
         }
     }
 
@@ -219,19 +235,17 @@ class DecodeEventViewServiceTest
     }
 
     @Test
-    void liveCallbackAlwaysObservesTheAuthoritativeCacheFirst() throws Exception
+    void liveCallbackReceivesEachProjectedItemWithoutAReplayCache() throws Exception
     {
         Channel channel = new Channel("ordered", Channel.ChannelType.STANDARD);
         DecodeEvent event = DecodeEvent.builder(DecodeEventType.CALL, 4_000L).build();
-        DecodeEventViewService.Scope scope = new DecodeEventViewService.Scope(channel.getConfigurationId(), null,
-            null);
         AtomicInteger callbacks = new AtomicInteger();
         CountDownLatch callback = new CountDownLatch(1);
 
         try(DecodeEventViewService service = new DecodeEventViewService(null, null))
         {
             service.addListener(view -> {
-                if(service.snapshot(scope).stream().anyMatch(cached -> cached.eventId().equals(view.eventId())))
+                if(view.timeStartMs() == 4_000L)
                 {
                     callbacks.incrementAndGet();
                 }

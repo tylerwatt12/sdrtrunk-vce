@@ -167,7 +167,7 @@ class StatsWebInteractionUiContractTest
     {
         String source = source();
         assertTrue(function(source, "function aliasListLink(name, id)")
-            .contains("capabilityAllowed(ACCESS_CAPABILITIES.ALIASES)"));
+            .contains("aliasAdminAllowed()"));
         assertTrue(function(source, "function systemLink(row, label = systemValue(row))")
             .contains("capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS)"));
         assertTrue(function(source, "function siteLink(row, label = siteValue(row))")
@@ -211,7 +211,7 @@ class StatsWebInteractionUiContractTest
         String talkgroup = function(source, "async function renderTalkgroup()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"84\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"85\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -524,19 +524,16 @@ class StatsWebInteractionUiContractTest
         String source = source();
         String html = readText(INDEX_HTML);
         String css = readText(APP_CSS);
-        int themeKey = html.indexOf("const themeKey = compact ? 'sdrtrunk_mobile_theme' : 'sdrtrunk_theme'");
+        int themeKey = html.indexOf("window.localStorage.getItem('sdrtrunk_theme')");
         assertTrue(themeKey >= 0);
         assertTrue(themeKey < html.indexOf("rel=\"stylesheet\""));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("id=\"mobile-theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=67"));
-        assertTrue(source.contains("MOBILE_THEME_STORAGE_KEY = 'sdrtrunk_mobile_theme'"));
-        assertTrue(source.contains("mode === 'mobile' ? MOBILE_THEME_STORAGE_KEY : THEME_STORAGE_KEY"));
+        assertTrue(html.contains("/assets/app.css?v=68"));
+        assertTrue(source.contains("THEME_STORAGE_KEY = 'sdrtrunk_theme'"));
+        assertTrue(function(source, "function updateThemeButton(toggle, theme)")
+            .contains("dark ? '#icon-sun' : '#icon-moon'"));
         assertTrue(source.contains("toggle.setAttribute('aria-pressed'"));
-        assertTrue(function(source, "function applyListenerShellMode()")
-            .contains("applyTheme(mobile ? 'mobile' : 'desktop')"));
         assertTrue(css.contains(":root[data-theme=\"dark\"]"));
-        assertTrue(css.contains(".mobile-listener-shell[data-theme=\"dark\"]"));
         assertTrue(css.contains("color-scheme: light"));
         assertTrue(css.contains("--chart-call:"));
         assertTrue(css.contains(":not(.auth-action):not(.table-sort-control):not(.systems-live-tab)"));
@@ -557,7 +554,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(html.contains("id=\"playback-volume\" type=\"range\""));
         assertTrue(html.contains("aria-label=\"Browser playback volume\""));
         assertTrue(html.contains("id=\"playback-volume-value\""));
-        assertTrue(html.contains("/assets/web-call-player.js?v=10"));
+        assertTrue(html.contains("/assets/web-call-player.js?v=11"));
         assertTrue(source.contains("VOLUME_KEY = 'sdrtrunk-vce.web-player.volume'"));
         assertTrue(source.contains("this.volume = this.readVolume()"));
         assertTrue(changeVolume.contains("this.gainNode.gain.value = this.volume"));
@@ -648,9 +645,9 @@ class StatsWebInteractionUiContractTest
         assertTrue(css.contains("transition: opacity 600ms ease;"));
         assertTrue(css.contains(".playback-progress.ending"));
         assertTrue(css.contains("transition-duration: 800ms;"));
-        assertTrue(css.contains(".mobile-listener-shell .playback-progress.active"));
-        assertTrue(css.contains("height: 12px;"));
-        assertTrue(css.contains("width: calc(var(--playback-progress) * 100%);"));
+        assertTrue(css.contains(".playback-progress.active"));
+        assertTrue(css.contains("height: 6px;"));
+        assertTrue(css.contains("left: calc(var(--playback-progress) * 100%);"));
     }
 
     @Test
@@ -669,7 +666,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(parameters.contains("scan_list_id: [...this.selectedScanListIds]"));
         assertTrue(synchronize.contains("this.events.update(this.subscriptionParameters())"));
         assertTrue(source.contains("maximum_selected_scan_lists"));
-        assertTrue(source.contains("maximum_browser_queue_calls"));
+        assertTrue(source.contains("waiting_calls_per_listener"));
         assertTrue(function(source, "  setScanListSelected(id, selected)")
             .contains("if (selected && this.paused) void this.togglePlayback()"));
         assertTrue(normalize.contains("value.logical_call_id ?? value.call_id"));
@@ -686,37 +683,33 @@ class StatsWebInteractionUiContractTest
     }
 
     @Test
-    void providesDedicatedMobileListenerAndBoundedAdministratorAudioControls() throws Exception
+    void providesOneResponsiveScannerShellAndBoundedAdministratorAudioControls() throws Exception
     {
         String html = Files.readString(INDEX_HTML);
         String source = source();
         String css = Files.readString(APP_CSS);
-        String shell = function(source, "function applyListenerShellMode()");
-        String admin = function(source, "async function renderAdmin()");
+        String scanner = function(source, "function renderScanner()");
+        String configuration = function(source, "async function renderConfiguration()");
         String scanLists = function(source, "async function renderAdminScanLists()");
         String audio = function(source, "async function renderAdminWebAudio()");
 
-        assertTrue(html.contains("id=\"mobile-listener-shell\""));
-        assertFalse(html.contains("id=\"mobile-listener-desktop\""));
-        assertFalse(html.contains("id=\"mobile-listener-open\""));
-        assertTrue(html.contains("id=\"mobile-theme-toggle\""));
-        assertTrue(html.contains("data-listener-view=\"scan-lists\""));
-        assertTrue(html.contains("data-listener-view=\"queue\""));
-        assertTrue(shell.contains("mobileSlot.append(bar)"));
-        assertTrue(shell.contains("app.hidden = true"));
-        assertTrue(shell.contains("const mobile = compactListenerMedia.matches"));
-        assertFalse(source.contains("LISTENER_MODE_STORAGE_KEY"));
-        assertFalse(source.contains("setListenerModePreference"));
+        assertTrue(html.contains("id=\"navigation-toggle\""));
+        assertTrue(html.contains("id=\"navigation-backdrop\""));
+        assertTrue(html.contains("data-nav-group=\"listen\""));
+        assertTrue(html.contains("data-view=\"scanner\""));
+        assertTrue(html.contains("id=\"playback-bar\""));
+        assertTrue(scanner.contains("scanner-player-host"));
+        assertTrue(source.contains("restorePlaybackBarBeforeRender();"));
+        assertTrue(function(source, "function placePlaybackBar()")
+            .contains("(scannerHost || slot).append(bar)"));
         assertTrue(function(source, "function initializePlaybackHeader()")
             .contains("!subscriptions.contains(event.target)"));
-        assertTrue(function(source, "function initializePlaybackHeader()").contains("!mobileTrigger"));
-        assertTrue(source.contains("COMPACT_LISTENER_MEDIA"));
-        assertTrue(css.contains("height: 100dvh"));
-        assertTrue(css.contains("env(safe-area-inset-bottom"));
+        assertTrue(css.contains("@media (max-width: 980px)"));
+        assertTrue(css.contains("body.navigation-open .primary-nav"));
 
-        assertTrue(html.contains("view=admin&amp;tab=scan-lists"));
-        assertTrue(admin.contains("label: 'Scan Lists'"));
-        assertTrue(admin.contains("label: 'Listener Status'"));
+        assertTrue(html.contains("view=configuration&amp;tab=scan-lists"));
+        assertTrue(configuration.contains("id: 'scan-lists', label: 'Scan Lists'"));
+        assertTrue(configuration.contains("await renderAdminScanLists()"));
         assertTrue(scanLists.contains("requestJson('/api/v1/admin/scan-lists'"));
         assertTrue(scanLists.contains("'No scan lists are configured'"));
         assertTrue(scanLists.contains("unmatched_alias_list_count"));
@@ -734,16 +727,51 @@ class StatsWebInteractionUiContractTest
         assertTrue(audio.contains("requestJson('/api/v1/admin/web-audio'"));
         assertTrue(audio.contains("'Refresh Status'"));
         for(String field: new String[]{"maximum_listeners", "maximum_selected_scan_lists",
-            "maximum_browser_queue_calls", "maximum_cached_calls", "maximum_cached_audio_mib"})
+            "waiting_calls_per_listener", "maximum_cached_calls", "maximum_cached_audio_mib"})
         {
             assertTrue(audio.contains(field), () -> "Missing web-audio setting " + field);
         }
+        assertFalse(html.contains("playback-max-queued"));
         for(String counter: new String[]{"dropped_sse_events", "rejected_listeners", "audio_fetch_misses",
             "rejected_audio_responses", "active_audio_responses", "age_evictions", "capacity_evictions",
             "encoder_queue_depth", "event_queue_capacity"})
         {
             assertTrue(audio.contains(counter), () -> "Missing listener status counter " + counter);
         }
+    }
+
+    @Test
+    void batchesLiveOnlyEventAndMessageCaptureBeforeFilteringAndRendering() throws Exception
+    {
+        String source = source();
+        String messages = function(source, "function liveMessagesPane()");
+        String events = function(source, "function liveEventsPanel(onCollapse)");
+        String addMessage = function(source, "  const addMessage = (message) =>");
+        String addEvent = function(source, "  const addEvent = (event) =>");
+
+        assertTrue(source.contains("LIVE_DETAIL_REFRESH_INTERVAL_MILLISECONDS = 125"));
+        assertTrue(messages.contains("window.setTimeout"));
+        assertTrue(events.contains("window.setTimeout"));
+        assertFalse(messages.contains("window.requestAnimationFrame"));
+        assertFalse(events.contains("window.requestAnimationFrame"));
+        assertTrue(addMessage.contains("adjustObservedFilters(message, 1)"));
+        assertTrue(addEvent.contains("adjustObservedFilters(event, 1)"));
+        assertFalse(addMessage.contains("updateObservedFilters()"));
+        assertFalse(addEvent.contains("updateObservedFilters()"));
+        assertTrue(messages.contains(".filter((message) => message && matches(message))"));
+        assertTrue(events.contains(".filter((event) => event && eventMatches(event))"));
+        assertTrue(messages.contains(".slice(0, liveDetailMatchingRowLimit())"));
+        assertTrue(events.contains(".slice(0, liveDetailMatchingRowLimit())"));
+        assertTrue(messages.contains("addEventListener('live_gap'"));
+        assertTrue(events.contains("addEventListener('live_gap'"));
+        assertTrue(messages.contains("addEventListener('source_change'"));
+        assertTrue(messages.contains("stream.onopen = () =>"));
+        assertTrue(events.contains("stream.onopen = () =>"));
+        assertTrue(messages.contains("additional messages may have been missed"));
+        assertTrue(events.contains("additional events may have been missed"));
+        assertFalse(messages.contains("parameters.timeslot"));
+        assertFalse(messages.contains("addEventListener('snapshot'"));
+        assertFalse(events.contains("addEventListener('snapshot'"));
     }
 
     @Test
@@ -818,10 +846,11 @@ class StatsWebInteractionUiContractTest
         assertTrue(events.contains("configuration_id: selection.configurationId"));
         assertTrue(events.contains("parameters.frequency_hz = selection.frequencyHz"));
         assertTrue(events.contains("parameters.timeslot = selection.timeslot"));
-        assertTrue(events.contains("stream.addEventListener('snapshot'"));
+        assertFalse(events.contains("stream.addEventListener('snapshot'"));
         assertTrue(events.contains("stream.addEventListener('decode_event'"));
-        assertTrue(events.contains("if (!events.has(event.event_id)) order.unshift(event.event_id)"));
-        assertTrue(events.contains("while (order.length > 200)"));
+        assertTrue(events.contains("if (!previous) order.unshift(event.event_id)"));
+        assertTrue(events.contains("while (order.length > liveDetailCaptureLimit())"));
+        assertTrue(events.contains("stream.addEventListener('live_gap'"));
         assertTrue(events.contains("['ENCRYPTED_VOICE', 'Encrypted voice']"));
         assertTrue(events.contains("['REGISTRATION', 'Registrations']"));
         assertTrue(events.contains("['Time', 'Duration', 'Event', 'From', 'To', 'Channel', 'Details']"));
@@ -832,7 +861,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(events.contains("node('strong', 'live-event-duration-value', durationText)"));
         assertTrue(messages.contains("liveConnection('decode_messages', parameters)"));
         assertTrue(messages.contains("stream.addEventListener('decode_message'"));
-        assertTrue(messages.contains("active && !collapsed && !paused && !document.hidden"));
+        assertTrue(messages.contains("active && !collapsed && selection?.configurationId"));
         assertTrue(channel.contains("binaryFrameConnection('channel_diagnostics', parameters"));
         assertEquals(channel.indexOf("binaryFrameConnection('channel_diagnostics', parameters"),
             channel.lastIndexOf("binaryFrameConnection('channel_diagnostics', parameters"));
@@ -1203,15 +1232,14 @@ class StatsWebInteractionUiContractTest
         assertTrue(events.contains("live-details-pause', 'Pause'"));
         assertTrue(events.contains("'Pause Events, Messages, and Channel'"));
         assertFalse(events.contains("const connection = badge('Waiting'"));
-        assertTrue(events.contains("eventsActive && !collapsed && !paused && !document.hidden"));
-        assertTrue(events.contains("eventsActive = id === 'events'"));
-        assertTrue(events.contains("document.addEventListener('visibilitychange', onVisibilityChange)"));
-        assertTrue(events.contains("document.removeEventListener('visibilitychange', onVisibilityChange)"));
+        assertTrue(events.contains("eventsActive && !collapsed && selection?.configurationId"));
+        assertTrue(events.contains("eventsActive = nextEventsActive"));
+        assertFalse(events.contains("document.addEventListener('visibilitychange'"));
         assertTrue(events.contains("pause.textContent = paused ? 'Resume' : 'Pause'"));
         assertTrue(events.contains("messagesController.setPaused(paused)"));
         assertTrue(events.contains("channelController.setPaused(paused)"));
-        assertTrue(messages.contains("active && !collapsed && !paused && !document.hidden"));
-        assertTrue(messages.contains("setPaused(value) { paused = value; sync(); }"));
+        assertTrue(messages.contains("active && !collapsed && selection?.configurationId"));
+        assertTrue(messages.contains("setPaused(value) { paused = value; if (!paused) scheduleRender(); }"));
         assertFalse(messages.contains("badge('Waiting'"));
         assertFalse(messages.contains("setStatus("));
         assertTrue(channel.contains("active && !collapsed && !paused && !document.hidden"));

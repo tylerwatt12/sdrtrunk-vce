@@ -175,14 +175,7 @@ class StatsApiV1HttpContractTest
         assertFalse(previewSite.has("protocol_code"), systemPreviewResponse.body());
 
         HttpResponse<String> aliasesResponse = get(StatsApiV1.ALIAS_LISTS + "?limit=1");
-        assertEquals(200, aliasesResponse.statusCode(), aliasesResponse.body());
-        JsonNode aliases = OBJECT_MAPPER.readTree(aliasesResponse.body());
-        assertTrue(aliases.get("data").isArray(), aliasesResponse.body());
-        assertEquals(List.of("p25", "dmr", "nxdn", "nbfm"),
-            OBJECT_MAPPER.convertValue(aliases.at("/meta/families"), List.class));
-        assertEquals(List.of("dcs", "esn", "radio", "radio_range", "talkgroup", "talkgroup_range",
-                "tone_sequence", "unit_status", "user_status"),
-            OBJECT_MAPPER.convertValue(aliases.at("/meta/matcher_types"), List.class));
+        assertStructuredError(aliasesResponse, 401, "authentication_required", null);
     }
 
     @Test
@@ -248,8 +241,8 @@ class StatsApiV1HttpContractTest
         assertEquals(0, emptyPage.get("data").size(), missingCursor.body());
         assertEquals(1, emptyPage.at("/meta/limit").intValue(), missingCursor.body());
 
-        assertEquals(400, get(StatsApiV1.ALIASES + "?family=P25").statusCode());
-        assertEquals(400, get(StatsApiV1.ALIASES + "?matcher=TALKGROUP").statusCode());
+        assertEquals(401, get(StatsApiV1.ALIASES + "?family=P25").statusCode());
+        assertEquals(401, get(StatsApiV1.ALIASES + "?matcher=TALKGROUP").statusCode());
 
         HttpResponse<String> wrongMethod = send(HttpRequest.newBuilder(mOrigin.resolve(StatsApiV1.STATUS))
             .timeout(Duration.ofSeconds(10))

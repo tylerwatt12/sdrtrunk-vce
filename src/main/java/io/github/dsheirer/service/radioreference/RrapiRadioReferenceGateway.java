@@ -17,7 +17,14 @@ import io.github.dsheirer.rrapi.request.GetAgencyInfo;
 import io.github.dsheirer.rrapi.request.GetModes;
 import io.github.dsheirer.rrapi.request.GetSites;
 import io.github.dsheirer.rrapi.request.GetStateInfo;
+import io.github.dsheirer.rrapi.request.GetSubCategoryFrequenciesRequest;
+import io.github.dsheirer.rrapi.request.GetSystemInformation;
+import io.github.dsheirer.rrapi.request.GetTalkgroupCategories;
+import io.github.dsheirer.rrapi.request.GetTalkgroups;
+import io.github.dsheirer.rrapi.request.GetTypes;
 import io.github.dsheirer.rrapi.request.GetUserData;
+import io.github.dsheirer.rrapi.request.GetFlavors;
+import io.github.dsheirer.rrapi.request.GetVoices;
 import io.github.dsheirer.rrapi.response.GetCountryInfoResponse;
 import io.github.dsheirer.rrapi.response.GetCountryListResponse;
 import io.github.dsheirer.rrapi.response.GetCountyInfoResponse;
@@ -25,14 +32,24 @@ import io.github.dsheirer.rrapi.response.GetAgencyInfoResponse;
 import io.github.dsheirer.rrapi.response.GetModesResponse;
 import io.github.dsheirer.rrapi.response.GetSitesResponse;
 import io.github.dsheirer.rrapi.response.GetStateInfoResponse;
+import io.github.dsheirer.rrapi.response.GetSubCategoryFrequenciesResponse;
+import io.github.dsheirer.rrapi.response.GetSystemInformationResponse;
+import io.github.dsheirer.rrapi.response.GetTalkgroupCategoriesResponse;
+import io.github.dsheirer.rrapi.response.GetTalkgroupsResponse;
+import io.github.dsheirer.rrapi.response.GetTypesResponse;
 import io.github.dsheirer.rrapi.response.GetUserDataResponse;
+import io.github.dsheirer.rrapi.response.GetFlavorsResponse;
+import io.github.dsheirer.rrapi.response.GetVoicesResponse;
 import io.github.dsheirer.rrapi.response.SearchFrequencyResponse;
 import io.github.dsheirer.rrapi.type.CountryInfo;
 import io.github.dsheirer.rrapi.type.CountyInfo;
 import io.github.dsheirer.rrapi.type.StateInfo;
 import io.github.dsheirer.rrapi.type.UserInfo;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 
 /**
  * Adapter for the native RadioReference XML models using SDRTrunk's HTTPS-only transport.
@@ -312,6 +329,285 @@ final class RrapiRadioReferenceGateway implements RadioReferenceGateway
         {
             throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.UNAVAILABLE);
         }
+    }
+
+    @Override
+    public TrunkedSystemDetails trunkedSystemDetails(int systemId) throws RadioReferenceGatewayException
+    {
+        try
+        {
+            GetSystemInformationResponse response = client().execute(
+                authorization -> GetSystemInformation.create(authorization, systemId),
+                GetSystemInformationResponse.class, SecureRadioReferenceService.SYSTEM_INFORMATION_REQUEST_TIMEOUT);
+            io.github.dsheirer.rrapi.type.SystemInformation info = response.getSystemInformation();
+
+            if(info == null)
+            {
+                return null;
+            }
+
+            String type = firstName(client().execute(
+                authorization -> GetTypes.create(authorization, info.getTypeId()), GetTypesResponse.class)
+                .getTypes());
+            String flavor = firstName(client().execute(
+                authorization -> GetFlavors.create(authorization, info.getFlavorId()), GetFlavorsResponse.class)
+                .getFlavors());
+            String voice = firstName(client().execute(
+                authorization -> GetVoices.create(authorization, info.getVoiceId()), GetVoicesResponse.class)
+                .getVoices());
+            String wacn = "";
+            String nativeSystemId = "";
+
+            if(info.getRadioNetworks() != null && !info.getRadioNetworks().isEmpty() &&
+                info.getRadioNetworks().getFirst() != null)
+            {
+                io.github.dsheirer.rrapi.type.RadioNetwork network = info.getRadioNetworks().getFirst();
+                wacn = text(network.getWacn());
+                nativeSystemId = text(network.getSystemId());
+            }
+
+            return new TrunkedSystemDetails(systemId, text(info.getName()), text(info.getCity()), type, flavor,
+                voice, wacn, nativeSystemId);
+        }
+        catch(RuntimeException exception)
+        {
+            throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.UNAVAILABLE);
+        }
+    }
+
+    @Override
+    public List<TrunkedSiteDetails> trunkedSiteDetails(int systemId) throws RadioReferenceGatewayException
+    {
+        try
+        {
+            GetSitesResponse response = client().execute(authorization -> GetSites.create(authorization, systemId),
+                GetSitesResponse.class, SecureRadioReferenceService.SITES_REQUEST_TIMEOUT);
+            List<TrunkedSiteDetails> sites = new ArrayList<>();
+
+            if(response.getSites() != null)
+            {
+                for(io.github.dsheirer.rrapi.type.Site site: response.getSites())
+                {
+                    if(site == null)
+                    {
+                        continue;
+                    }
+
+                    List<TrunkedSiteChannel> channels = new ArrayList<>();
+
+                    if(site.getSiteFrequencies() != null)
+                    {
+                        for(io.github.dsheirer.rrapi.type.SiteFrequency frequency: site.getSiteFrequencies())
+                        {
+                            if(frequency != null && Double.isFinite(frequency.getFrequency()) &&
+                                frequency.getFrequency() > 0)
+                            {
+                                channels.add(new TrunkedSiteChannel(
+                                    Math.round(frequency.getFrequency() * 1_000_000.0),
+                                    frequency.getLogicalChannelNumber(), text(frequency.getChannelId()),
+                                    text(frequency.getUse()), text(frequency.getColorCode()),
+                                    frequency.isPrimaryControlChannel(), frequency.isAlternateControlChannel()));
+                            }
+                        }
+                    }
+
+                    sites.add(new TrunkedSiteDetails(site.getSiteId(), site.getSystemId(), site.getSiteNumber(),
+                        text(site.getDescription()), site.getCountyId(), site.getZoneNumber(), site.getRfss(),
+                        text(site.getNac()), site.getRan(), text(site.getModulation()),
+                        site.getTdmaControlChannel() != 0, channels));
+                }
+            }
+
+            return sites;
+        }
+        catch(RuntimeException exception)
+        {
+            throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.UNAVAILABLE);
+        }
+    }
+
+    @Override
+    public List<RemoteTalkgroup> talkgroups(int systemId) throws RadioReferenceGatewayException
+    {
+        try
+        {
+            GetTalkgroupsResponse response = client().execute(
+                authorization -> GetTalkgroups.create(authorization, systemId), GetTalkgroupsResponse.class,
+                SecureRadioReferenceService.TALKGROUPS_REQUEST_TIMEOUT);
+            List<RemoteTalkgroup> talkgroups = new ArrayList<>();
+
+            if(response.getTalkgroups() != null)
+            {
+                for(io.github.dsheirer.rrapi.type.Talkgroup talkgroup: response.getTalkgroups())
+                {
+                    if(talkgroup == null)
+                    {
+                        continue;
+                    }
+
+                    List<String> tags = new ArrayList<>();
+
+                    if(talkgroup.getTags() != null)
+                    {
+                        for(io.github.dsheirer.rrapi.type.Tag tag: talkgroup.getTags())
+                        {
+                            if(tag != null && tag.getDescription() != null)
+                            {
+                                tags.add(tag.getDescription());
+                            }
+                        }
+                    }
+
+                    talkgroups.add(new RemoteTalkgroup(talkgroup.getTalkgroupId(), talkgroup.getDecimalValue(),
+                        text(talkgroup.getAlphaTag()), text(talkgroup.getDescription()), text(talkgroup.getMode()),
+                        talkgroup.getEncryptionState(), talkgroup.getTalkgroupCategoryId(), tags));
+                }
+            }
+
+            return talkgroups;
+        }
+        catch(RuntimeException exception)
+        {
+            throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.UNAVAILABLE);
+        }
+    }
+
+    @Override
+    public List<RemoteTalkgroupCategory> talkgroupCategories(int systemId)
+        throws RadioReferenceGatewayException
+    {
+        try
+        {
+            GetTalkgroupCategoriesResponse response = client().execute(
+                authorization -> GetTalkgroupCategories.create(authorization, systemId),
+                GetTalkgroupCategoriesResponse.class, SecureRadioReferenceService.TALKGROUP_CATEGORIES_REQUEST_TIMEOUT);
+            List<RemoteTalkgroupCategory> categories = new ArrayList<>();
+
+            if(response.getTalkgroupCategories() != null)
+            {
+                for(io.github.dsheirer.rrapi.type.TalkgroupCategory category: response.getTalkgroupCategories())
+                {
+                    if(category != null)
+                    {
+                        categories.add(new RemoteTalkgroupCategory(category.getTalkgroupCategoryId(),
+                            category.getSystemId(), text(category.getName())));
+                    }
+                }
+            }
+
+            return categories;
+        }
+        catch(RuntimeException exception)
+        {
+            throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.UNAVAILABLE);
+        }
+    }
+
+    @Override
+    public List<ConventionalFrequency> subcategoryFrequencies(int subCategoryId)
+        throws RadioReferenceGatewayException
+    {
+        try
+        {
+            GetSubCategoryFrequenciesResponse response = client().execute(
+                authorization -> GetSubCategoryFrequenciesRequest.create(authorization, subCategoryId),
+                GetSubCategoryFrequenciesResponse.class);
+            GetModesResponse modesResponse = client().execute(GetModes::create, GetModesResponse.class);
+            Map<Integer,String> modes = new LinkedHashMap<>();
+
+            if(modesResponse.getModes() != null)
+            {
+                for(io.github.dsheirer.rrapi.type.Mode mode: modesResponse.getModes())
+                {
+                    if(mode != null)
+                    {
+                        modes.put(mode.getModeId(), text(mode.getName()));
+                    }
+                }
+            }
+            List<ConventionalFrequency> frequencies = new ArrayList<>();
+
+            if(response.getFrequencies() != null)
+            {
+                for(io.github.dsheirer.rrapi.type.Frequency frequency: response.getFrequencies())
+                {
+                    if(frequency == null || !Double.isFinite(frequency.getDownlink()) ||
+                        frequency.getDownlink() <= 0)
+                    {
+                        continue;
+                    }
+
+                    List<String> tags = new ArrayList<>();
+
+                    if(frequency.getTags() != null)
+                    {
+                        frequency.getTags().stream().filter(Objects::nonNull)
+                            .map(io.github.dsheirer.rrapi.type.Tag::getDescription).filter(Objects::nonNull)
+                            .forEach(tags::add);
+                    }
+
+                    Long uplink = Double.isFinite(frequency.getUplink()) && frequency.getUplink() > 0 ?
+                        Math.round(frequency.getUplink() * 1_000_000.0) : null;
+                    frequencies.add(new ConventionalFrequency(frequency.getFrequencyId(),
+                        Math.round(frequency.getDownlink() * 1_000_000.0), uplink, text(frequency.getCallsign()),
+                        text(frequency.getDescription()), text(frequency.getAlphaTag()), text(frequency.getTone()),
+                        text(frequency.getColorCode()), text(frequency.getTalkgroup()), text(frequency.getSlot()),
+                        modeName(frequency.getMode(), modes), frequency.getEncryption(),
+                        text(frequency.getClassification()),
+                        tags, frequency.getSubCategoryId()));
+                }
+            }
+
+            return frequencies;
+        }
+        catch(RuntimeException exception)
+        {
+            throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.UNAVAILABLE);
+        }
+    }
+
+    private static String firstName(List<?> values)
+    {
+        if(values == null || values.isEmpty() || values.getFirst() == null)
+        {
+            return "";
+        }
+
+        Object value = values.getFirst();
+
+        if(value instanceof io.github.dsheirer.rrapi.type.Type type)
+        {
+            return text(type.getName());
+        }
+        else if(value instanceof io.github.dsheirer.rrapi.type.Flavor flavor)
+        {
+            return text(flavor.getName());
+        }
+        else if(value instanceof io.github.dsheirer.rrapi.type.Voice voice)
+        {
+            return text(voice.getName());
+        }
+
+        return "";
+    }
+
+    private static String modeName(String raw, Map<Integer,String> modes)
+    {
+        String value = text(raw);
+
+        try
+        {
+            return modes.getOrDefault(Integer.parseInt(value), value);
+        }
+        catch(NumberFormatException exception)
+        {
+            return value;
+        }
+    }
+
+    private static String text(String value)
+    {
+        return value == null ? "" : value.strip();
     }
 
     private SecureRadioReferenceSoapClient client() throws RadioReferenceGatewayException

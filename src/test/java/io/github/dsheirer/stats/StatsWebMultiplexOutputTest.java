@@ -372,12 +372,34 @@ class StatsWebMultiplexOutputTest
         assertTrue(source.contains("writeMultiplexRecoveryJson(output, TOPIC_CHANNEL_ACTIVITY, \"snapshot\""));
         assertTrue(source.contains("metadataGap(output, TOPIC_CHANNEL_ACTIVITY"));
         assertTrue(source.contains("metadataGap(output, TOPIC_CALLS"));
-        assertTrue(source.contains("metadataGap(output, TOPIC_DECODE_EVENTS"));
-        assertTrue(source.contains("metadataGap(output, TOPIC_DECODE_MESSAGES"));
+        assertFalse(source.contains("metadataGap(output, TOPIC_DECODE_EVENTS"));
+        assertFalse(source.contains("metadataGap(output, TOPIC_DECODE_MESSAGES"));
         assertTrue(source.contains("metadataGap(output, TOPIC_ACTIVITY"));
+        assertTrue(source.contains("reportStatelessGaps(output)"));
+        assertTrue(source.contains("TOPIC_DECODE_EVENTS, \"live_gap\""));
+        assertTrue(source.contains("TOPIC_DECODE_MESSAGES, \"live_gap\""));
+        assertTrue(source.contains("TOPIC_DECODE_MESSAGES, \"source_change\""));
+        assertFalse(source.contains("TOPIC_DECODE_EVENTS, \"snapshot\""));
+        assertFalse(source.contains("TOPIC_DECODE_MESSAGES, \"snapshot\""));
         assertTrue(source.contains("output.eventDrops(topic) != mObservedOutputDrops[topic]"));
         assertFalse(source.contains("output.eventDrops() !="));
         assertFalse(source.contains("mLastChannelActivitySnapshot"));
+    }
+
+    @Test
+    void decodeEventSubscriptionInstallsItsLiveEdgeBeforeActivatingProjection() throws Exception
+    {
+        String source = Files.readString(Path.of("src", "main", "java", "io", "github", "dsheirer", "stats",
+            "StatsWebServerService.java"));
+        int subscription = source.indexOf("mDecodeEvents = mDecodeEventHub.subscribe(event ->");
+        int liveEdge = source.indexOf("liveEdge.set(mDecodeEventViewService.advanceLiveEdge())", subscription);
+        int activation = source.indexOf("mDecodeEventViewService.addListener(mDecodeEventViewListener)", liveEdge);
+
+        assertTrue(subscription >= 0);
+        assertTrue(source.contains("new AtomicLong(Long.MAX_VALUE)"));
+        assertTrue(source.contains("view.observationEpoch() >= liveEdge.get()"));
+        assertTrue(liveEdge > subscription);
+        assertTrue(activation > liveEdge);
     }
 
     @Test
@@ -385,14 +407,14 @@ class StatsWebMultiplexOutputTest
     {
         String source = Files.readString(Path.of("src", "main", "java", "io", "github", "dsheirer", "stats",
             "StatsWebServerService.java"));
-        assertEquals(9, countOccurrences(source, "var recovery = captureRecovery("),
-            "Every non-throwing initial open, generation reset, and live-gap recovery must use the ordering helper");
+        assertEquals(4, countOccurrences(source, "var recovery = captureRecovery("),
+            "Only stateful topics should construct recovery snapshots");
         assertEquals(2, countOccurrences(source, "new RecoveryCapture<>(dropBaseline, snapshot)"),
             "Channel activity uses the equivalent explicit ordering because snapshot encoding can throw");
         assertFalse(source.contains("Drops = mChannelActivity.droppedCount();"));
         assertFalse(source.contains("Drops = mCalls.droppedCount();"));
-        assertFalse(source.contains("Drops = mDecodeEvents.droppedCount();"));
-        assertFalse(source.contains("Drops = mDecodeMessages.droppedCount();"));
+        assertTrue(source.contains("mDecodeEventDrops = 0;"));
+        assertTrue(source.contains("mDecodeMessageDrops = 0;"));
         assertFalse(source.contains("Drops = mActivity.droppedCount();"));
     }
 

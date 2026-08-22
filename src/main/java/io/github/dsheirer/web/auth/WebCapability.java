@@ -28,7 +28,6 @@ public enum WebCapability
     TUNER_SPECTRUM_VIEW("tuner-spectrum", "Tuner Spectrum", AccessTier.ADMIN, false),
     SYSTEMS_VIEW("systems", "Systems & Sites", AccessTier.PUBLIC),
     CONVENTIONAL_VIEW("conventional", "Conventional", AccessTier.PUBLIC),
-    ALIASES_VIEW("aliases", "Aliases", AccessTier.PUBLIC),
     CREDITS_VIEW("credits", "Credits", AccessTier.PUBLIC),
     CSV_EXPORT("csv-export", "CSV export", AccessTier.PUBLIC),
     WEB_AUDIO_LISTEN("call-audio", "Call audio", AccessTier.PUBLIC),

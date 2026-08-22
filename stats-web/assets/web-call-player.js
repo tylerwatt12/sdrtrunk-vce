@@ -1,5 +1,4 @@
 class WebCallPlayer {
-  static MAXIMUM_QUEUE_KEY = 'sdrtrunk-vce.web-player.maximum-queued-calls';
   static VOLUME_KEY = 'sdrtrunk-vce.web-player.volume';
   static SELECTED_SCAN_LISTS_KEY = 'sdrtrunk-vce.web-player.selected-scan-lists';
   static MAXIMUM_SEEN_CALL_IDS = 2048;
@@ -26,13 +25,11 @@ class WebCallPlayer {
     this.connectionFactory = null;
     this.loadToken = 0;
     this.loadController = null;
-    this.dropped = 0;
     this.missedCalls = 0;
     this.missedCountExact = true;
     this.paused = true;
     this.volume = this.readVolume();
-    this.maximumQueued = this.readMaximumQueued();
-    this.serverMaximumQueued = 500;
+    this.maximumQueued = 100;
     this.maximumSelectedScanLists = WebCallPlayer.MAXIMUM_SCAN_LISTS;
     this.arrivalSequence = 0;
     this.lastConversationKey = null;
@@ -47,7 +44,6 @@ class WebCallPlayer {
     this.listenerToken = null;
     this.capacity = null;
     this.ui.volume.value = String(this.volume);
-    this.ui.maximumQueued.value = this.maximumQueued;
     this.bindControls();
     this.render();
   }
@@ -218,16 +214,10 @@ class WebCallPlayer {
       this.maximumSelectedScanLists = Math.min(WebCallPlayer.MAXIMUM_SCAN_LISTS, selected);
       this.selectedScanListIds = new Set([...this.selectedScanListIds].slice(0, this.maximumSelectedScanLists));
     }
-    const queued = Math.trunc(Number(value?.maximum_browser_queue_calls ?? value?.maximumBrowserQueueCalls ??
-      value?.maximum_outstanding_calls));
+    const queued = Math.trunc(Number(value?.waiting_calls_per_listener));
     if (Number.isFinite(queued) && queued >= 1) {
-      this.serverMaximumQueued = Math.min(500, queued);
-      this.ui.maximumQueued.max = String(this.serverMaximumQueued);
-      if (this.maximumQueued > this.serverMaximumQueued) {
-        this.maximumQueued = this.serverMaximumQueued;
-        this.ui.maximumQueued.value = String(this.maximumQueued);
-        this.trimQueueToLimit();
-      }
+      this.maximumQueued = Math.min(500, queued);
+      this.trimQueueToLimit();
     }
   }
 
@@ -274,9 +264,6 @@ class WebCallPlayer {
   }
 
   renderScanLists() {
-    if (this.ui.mobileScanCount) {
-      this.ui.mobileScanCount.textContent = String(this.scanListCatalogReady ? this.selectedScanListIds.size : 0);
-    }
     if (this.ui.scanListSummary) {
       if (!this.scanListCatalogReady) {
         this.ui.scanListSummary.textContent = this.scanListCatalogState === 'loading' ? 'Loading' : 'Unavailable';
@@ -400,7 +387,6 @@ class WebCallPlayer {
     while (this.queuedCount >= this.maximumQueued) {
       const dropped = this.dropOldestQueued();
       if (!dropped) break;
-      this.dropped++;
       this.recordMissed(1, true, false);
       this.acknowledge(dropped, 'queue_overflow');
     }
@@ -570,7 +556,6 @@ class WebCallPlayer {
       this.render();
     });
     this.ui.volume.addEventListener('input', () => this.changeVolume());
-    this.ui.maximumQueued.addEventListener('change', () => this.changeMaximumQueued());
     const panels = [this.ui.scanListOptions?.closest('details'), this.ui.queueList?.closest('details')]
       .filter(Boolean);
     panels.forEach((panel) => panel.addEventListener('toggle', () => {
@@ -836,23 +821,10 @@ class WebCallPlayer {
     this.ui.progress.classList.toggle('ending', Boolean(this.source) && duration - position <= fadeWindow);
   }
 
-  changeMaximumQueued() {
-    const requested = Math.trunc(Number(this.ui.maximumQueued.value));
-    this.maximumQueued = Math.min(this.serverMaximumQueued,
-      Math.max(1, Number.isFinite(requested) ? requested : Math.min(100, this.serverMaximumQueued)));
-    this.ui.maximumQueued.value = this.maximumQueued;
-    try {
-      localStorage.setItem(WebCallPlayer.MAXIMUM_QUEUE_KEY, String(this.maximumQueued));
-    } catch (_) { }
-    this.trimQueueToLimit();
-    this.render();
-  }
-
   trimQueueToLimit() {
     while (this.queuedCount > this.maximumQueued) {
       const dropped = this.dropOldestQueued();
       if (!dropped) break;
-      this.dropped++;
       this.recordMissed(1, true, false);
       this.acknowledge(dropped, 'queue_overflow');
     }
@@ -883,15 +855,6 @@ class WebCallPlayer {
       if (Number.isFinite(saved) && saved >= 0 && saved <= 1) return saved;
     } catch (_) { }
     return 1;
-  }
-
-  readMaximumQueued() {
-    try {
-      const saved = Math.trunc(Number(localStorage.getItem(WebCallPlayer.MAXIMUM_QUEUE_KEY)));
-      return Number.isFinite(saved) && saved >= 1 && saved <= 500 ? saved : 100;
-    } catch (_) {
-      return 100;
-    }
   }
 
   ensureAudioContext() {
@@ -1002,13 +965,12 @@ class WebCallPlayer {
       this.ui.current.removeAttribute('title');
     }
     this.ui.queued.textContent = String(this.queuedCount);
-    if (this.ui.mobileQueueCount) this.ui.mobileQueueCount.textContent = String(this.queuedCount);
-    this.ui.dropped.textContent = this.dropped ? ` · Dropped ${this.dropped}` : '';
     if (this.ui.missed) {
       const count = this.missedCountExact ? String(this.missedCalls) :
         (this.missedCalls > 0 ? `${this.missedCalls}+` : 'calls');
-      this.ui.missed.textContent = `Missed ${count}`;
+      this.ui.missed.textContent = `Not played ${count}`;
       this.ui.missed.classList.toggle('active', this.missedCalls > 0 || !this.missedCountExact);
+      this.ui.missed.hidden = this.missedCalls <= 0 && this.missedCountExact;
     }
     this.ui.queueList.replaceChildren();
     this.scheduledQueue(100).forEach((call, index) => {

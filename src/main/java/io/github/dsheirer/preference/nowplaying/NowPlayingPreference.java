@@ -21,6 +21,7 @@ package io.github.dsheirer.preference.nowplaying;
 import io.github.dsheirer.preference.Preference;
 import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.sample.Listener;
+import java.util.prefs.BackingStoreException;
 import java.util.prefs.Preferences;
 
 /**
@@ -36,18 +37,18 @@ public class NowPlayingPreference extends Preference
     private static final String PREFERENCE_KEY_CLEAR_VOICE_DECODE_QUALITY_ON_CALL_END =
         "clear.voice.decode.quality.on.call.end";
     private static final String PREFERENCE_KEY_DECODE_QUALITY_DISPLAY_MODE = "decode.quality.display.mode";
+    private static final String PREFERENCE_KEY_LIVE_DETAIL_MATCHING_ROW_LIMIT =
+        "live.detail.matching.row.limit";
 
     public static final int MIN_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS = 100;
     public static final int MAX_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS = 15000;
     public static final int DEFAULT_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS = 1000;
+    public static final int MIN_LIVE_DETAIL_MATCHING_ROW_LIMIT = 25;
+    public static final int MAX_LIVE_DETAIL_MATCHING_ROW_LIMIT = 500;
+    public static final int DEFAULT_LIVE_DETAIL_MATCHING_ROW_LIMIT = 200;
 
     private final Preferences mPreferences = Preferences.userNodeForPackage(NowPlayingPreference.class);
-    private Boolean mRetainIdleCallDetails;
-    private Integer mTrafficGrantAgeOutMilliseconds;
-    private Boolean mShowControlDecodeQuality;
-    private Boolean mShowVoiceDecodeQuality;
-    private Boolean mClearVoiceDecodeQualityOnCallEnd;
-    private DecodeQualityDisplayMode mDecodeQualityDisplayMode;
+    private volatile LiveActivitySettings mLiveActivitySettings;
 
     /**
      * Optional Java desktop views that can be independently shown or hidden.
@@ -92,6 +93,32 @@ public class NowPlayingPreference extends Preference
         }
     }
 
+    /** One coherent snapshot of the receiver-wide Live activity preferences. */
+    public record LiveActivitySettings(boolean retainIdleCallDetails, int trafficGrantAgeOutMilliseconds,
+                                       boolean showControlDecodeQuality, boolean showVoiceDecodeQuality,
+                                       boolean clearVoiceDecodeQualityOnCallEnd,
+                                       DecodeQualityDisplayMode decodeQualityDisplayMode,
+                                       int liveDetailMatchingRowLimit)
+    {
+        public LiveActivitySettings
+        {
+            if(trafficGrantAgeOutMilliseconds < MIN_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS ||
+                trafficGrantAgeOutMilliseconds > MAX_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS)
+            {
+                throw new IllegalArgumentException("Traffic grant age-out is outside the supported range");
+            }
+
+            decodeQualityDisplayMode = decodeQualityDisplayMode != null ? decodeQualityDisplayMode :
+                DecodeQualityDisplayMode.PERCENTAGE;
+
+            if(liveDetailMatchingRowLimit < MIN_LIVE_DETAIL_MATCHING_ROW_LIMIT ||
+                liveDetailMatchingRowLimit > MAX_LIVE_DETAIL_MATCHING_ROW_LIMIT)
+            {
+                throw new IllegalArgumentException("Live detail matching row limit is outside the supported range");
+            }
+        }
+    }
+
     /**
      * Constructs an instance.
      * @param updateListener to receive notifications that a preference has been updated
@@ -99,6 +126,18 @@ public class NowPlayingPreference extends Preference
     public NowPlayingPreference(Listener<PreferenceType> updateListener)
     {
         super(updateListener);
+        mLiveActivitySettings = new LiveActivitySettings(
+            mPreferences.getBoolean(PREFERENCE_KEY_RETAIN_IDLE_CALL_DETAILS, false),
+            clamp(mPreferences.getInt(PREFERENCE_KEY_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS,
+                DEFAULT_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS), MIN_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS,
+                MAX_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS),
+            mPreferences.getBoolean(PREFERENCE_KEY_SHOW_CONTROL_DECODE_QUALITY, true),
+            mPreferences.getBoolean(PREFERENCE_KEY_SHOW_VOICE_DECODE_QUALITY, true),
+            mPreferences.getBoolean(PREFERENCE_KEY_CLEAR_VOICE_DECODE_QUALITY_ON_CALL_END, false),
+            readDecodeQualityDisplayMode(),
+            clamp(mPreferences.getInt(PREFERENCE_KEY_LIVE_DETAIL_MATCHING_ROW_LIMIT,
+                DEFAULT_LIVE_DETAIL_MATCHING_ROW_LIMIT), MIN_LIVE_DETAIL_MATCHING_ROW_LIMIT,
+                MAX_LIVE_DETAIL_MATCHING_ROW_LIMIT));
     }
 
     @Override
@@ -112,75 +151,74 @@ public class NowPlayingPreference extends Preference
      */
     public boolean isRetainIdleCallDetails()
     {
-        if(mRetainIdleCallDetails == null)
-        {
-            mRetainIdleCallDetails = mPreferences.getBoolean(PREFERENCE_KEY_RETAIN_IDLE_CALL_DETAILS, false);
-        }
-
-        return mRetainIdleCallDetails;
+        return mLiveActivitySettings.retainIdleCallDetails();
     }
 
     /**
      * Sets idle row call detail retention.
      */
-    public void setRetainIdleCallDetails(boolean retain)
+    public synchronized void setRetainIdleCallDetails(boolean retain)
     {
-        mRetainIdleCallDetails = retain;
+        LiveActivitySettings current = mLiveActivitySettings;
+        LiveActivitySettings updated = new LiveActivitySettings(retain,
+            current.trafficGrantAgeOutMilliseconds(), current.showControlDecodeQuality(),
+            current.showVoiceDecodeQuality(), current.clearVoiceDecodeQualityOnCallEnd(),
+            current.decodeQualityDisplayMode(), current.liveDetailMatchingRowLimit());
         mPreferences.putBoolean(PREFERENCE_KEY_RETAIN_IDLE_CALL_DETAILS, retain);
+        mLiveActivitySettings = updated;
         notifyPreferenceUpdated();
     }
 
     public int getTrafficGrantAgeOutMilliseconds()
     {
-        if(mTrafficGrantAgeOutMilliseconds == null)
-        {
-            mTrafficGrantAgeOutMilliseconds = clamp(mPreferences.getInt(
-                PREFERENCE_KEY_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS, DEFAULT_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS),
-                MIN_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS, MAX_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS);
-        }
-
-        return mTrafficGrantAgeOutMilliseconds;
+        return mLiveActivitySettings.trafficGrantAgeOutMilliseconds();
     }
 
-    public void setTrafficGrantAgeOutMilliseconds(int milliseconds)
+    public synchronized void setTrafficGrantAgeOutMilliseconds(int milliseconds)
     {
-        mTrafficGrantAgeOutMilliseconds = clamp(milliseconds, MIN_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS,
+        LiveActivitySettings current = mLiveActivitySettings;
+        int ageOut = clamp(milliseconds, MIN_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS,
             MAX_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS);
-        mPreferences.putInt(PREFERENCE_KEY_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS, mTrafficGrantAgeOutMilliseconds);
+        LiveActivitySettings updated = new LiveActivitySettings(current.retainIdleCallDetails(), ageOut,
+            current.showControlDecodeQuality(), current.showVoiceDecodeQuality(),
+            current.clearVoiceDecodeQualityOnCallEnd(), current.decodeQualityDisplayMode(),
+            current.liveDetailMatchingRowLimit());
+        mPreferences.putInt(PREFERENCE_KEY_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS, ageOut);
+        mLiveActivitySettings = updated;
         notifyPreferenceUpdated();
     }
 
     public boolean isShowControlDecodeQuality()
     {
-        if(mShowControlDecodeQuality == null)
-        {
-            mShowControlDecodeQuality = mPreferences.getBoolean(PREFERENCE_KEY_SHOW_CONTROL_DECODE_QUALITY, true);
-        }
-
-        return mShowControlDecodeQuality;
+        return mLiveActivitySettings.showControlDecodeQuality();
     }
 
-    public void setShowControlDecodeQuality(boolean show)
+    public synchronized void setShowControlDecodeQuality(boolean show)
     {
-        mShowControlDecodeQuality = show;
+        LiveActivitySettings current = mLiveActivitySettings;
+        LiveActivitySettings updated = new LiveActivitySettings(current.retainIdleCallDetails(),
+            current.trafficGrantAgeOutMilliseconds(), show, current.showVoiceDecodeQuality(),
+            current.clearVoiceDecodeQualityOnCallEnd(), current.decodeQualityDisplayMode(),
+            current.liveDetailMatchingRowLimit());
         mPreferences.putBoolean(PREFERENCE_KEY_SHOW_CONTROL_DECODE_QUALITY, show);
+        mLiveActivitySettings = updated;
         notifyPreferenceUpdated();
     }
 
     public boolean isShowVoiceDecodeQuality()
     {
-        if(mShowVoiceDecodeQuality == null)
-        {
-            mShowVoiceDecodeQuality = mPreferences.getBoolean(PREFERENCE_KEY_SHOW_VOICE_DECODE_QUALITY, true);
-        }
-
-        return mShowVoiceDecodeQuality;
+        return mLiveActivitySettings.showVoiceDecodeQuality();
     }
 
-    public void setShowVoiceDecodeQuality(boolean show)
+    public synchronized void setShowVoiceDecodeQuality(boolean show)
     {
-        mShowVoiceDecodeQuality = show;
+        LiveActivitySettings current = mLiveActivitySettings;
+        LiveActivitySettings updated = new LiveActivitySettings(current.retainIdleCallDetails(),
+            current.trafficGrantAgeOutMilliseconds(), current.showControlDecodeQuality(), show,
+            current.clearVoiceDecodeQualityOnCallEnd(), current.decodeQualityDisplayMode(),
+            current.liveDetailMatchingRowLimit());
         mPreferences.putBoolean(PREFERENCE_KEY_SHOW_VOICE_DECODE_QUALITY, show);
+        mLiveActivitySettings = updated;
         notifyPreferenceUpdated();
     }
 
@@ -189,48 +227,114 @@ public class NowPlayingPreference extends Preference
      */
     public boolean isClearVoiceDecodeQualityOnCallEnd()
     {
-        if(mClearVoiceDecodeQualityOnCallEnd == null)
-        {
-            mClearVoiceDecodeQualityOnCallEnd = mPreferences.getBoolean(
-                PREFERENCE_KEY_CLEAR_VOICE_DECODE_QUALITY_ON_CALL_END, false);
-        }
-
-        return mClearVoiceDecodeQualityOnCallEnd;
+        return mLiveActivitySettings.clearVoiceDecodeQualityOnCallEnd();
     }
 
     /**
      * Sets whether voice-channel decode quality is cleared when its call completes.
      */
-    public void setClearVoiceDecodeQualityOnCallEnd(boolean clear)
+    public synchronized void setClearVoiceDecodeQualityOnCallEnd(boolean clear)
     {
-        mClearVoiceDecodeQualityOnCallEnd = clear;
+        LiveActivitySettings current = mLiveActivitySettings;
+        LiveActivitySettings updated = new LiveActivitySettings(current.retainIdleCallDetails(),
+            current.trafficGrantAgeOutMilliseconds(), current.showControlDecodeQuality(),
+            current.showVoiceDecodeQuality(), clear, current.decodeQualityDisplayMode(),
+            current.liveDetailMatchingRowLimit());
         mPreferences.putBoolean(PREFERENCE_KEY_CLEAR_VOICE_DECODE_QUALITY_ON_CALL_END, clear);
+        mLiveActivitySettings = updated;
         notifyPreferenceUpdated();
     }
 
     public DecodeQualityDisplayMode getDecodeQualityDisplayMode()
     {
-        if(mDecodeQualityDisplayMode == null)
-        {
-            try
-            {
-                mDecodeQualityDisplayMode = DecodeQualityDisplayMode.valueOf(mPreferences.get(
-                    PREFERENCE_KEY_DECODE_QUALITY_DISPLAY_MODE, DecodeQualityDisplayMode.PERCENTAGE.name()));
-            }
-            catch(IllegalArgumentException _)
-            {
-                mDecodeQualityDisplayMode = DecodeQualityDisplayMode.PERCENTAGE;
-            }
-        }
-
-        return mDecodeQualityDisplayMode;
+        return mLiveActivitySettings.decodeQualityDisplayMode();
     }
 
-    public void setDecodeQualityDisplayMode(DecodeQualityDisplayMode mode)
+    public synchronized void setDecodeQualityDisplayMode(DecodeQualityDisplayMode mode)
     {
-        mDecodeQualityDisplayMode = mode != null ? mode : DecodeQualityDisplayMode.PERCENTAGE;
-        mPreferences.put(PREFERENCE_KEY_DECODE_QUALITY_DISPLAY_MODE, mDecodeQualityDisplayMode.name());
+        LiveActivitySettings current = mLiveActivitySettings;
+        DecodeQualityDisplayMode displayMode = mode != null ? mode : DecodeQualityDisplayMode.PERCENTAGE;
+        LiveActivitySettings updated = new LiveActivitySettings(current.retainIdleCallDetails(),
+            current.trafficGrantAgeOutMilliseconds(), current.showControlDecodeQuality(),
+            current.showVoiceDecodeQuality(), current.clearVoiceDecodeQualityOnCallEnd(), displayMode,
+            current.liveDetailMatchingRowLimit());
+        mPreferences.put(PREFERENCE_KEY_DECODE_QUALITY_DISPLAY_MODE, displayMode.name());
+        mLiveActivitySettings = updated;
         notifyPreferenceUpdated();
+    }
+
+    public int getLiveDetailMatchingRowLimit()
+    {
+        return mLiveActivitySettings.liveDetailMatchingRowLimit();
+    }
+
+    public LiveActivitySettings getLiveActivitySettings()
+    {
+        return mLiveActivitySettings;
+    }
+
+    /**
+     * Persists one complete Live activity snapshot before publishing it to receiver readers.
+     */
+    public synchronized void setLiveActivitySettings(LiveActivitySettings settings) throws BackingStoreException
+    {
+        if(settings == null)
+        {
+            throw new IllegalArgumentException("Live activity settings cannot be null");
+        }
+
+        LiveActivitySettings previous = mLiveActivitySettings;
+
+        try
+        {
+            writeLiveActivitySettings(settings);
+            mPreferences.flush();
+            mLiveActivitySettings = settings;
+            notifyPreferenceUpdated();
+        }
+        catch(BackingStoreException | RuntimeException exception)
+        {
+            mLiveActivitySettings = previous;
+
+            try
+            {
+                writeLiveActivitySettings(previous);
+                mPreferences.flush();
+            }
+            catch(BackingStoreException | RuntimeException rollbackException)
+            {
+                exception.addSuppressed(rollbackException);
+            }
+
+            throw exception;
+        }
+    }
+
+    private void writeLiveActivitySettings(LiveActivitySettings settings)
+    {
+        mPreferences.putBoolean(PREFERENCE_KEY_RETAIN_IDLE_CALL_DETAILS, settings.retainIdleCallDetails());
+        mPreferences.putInt(PREFERENCE_KEY_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS,
+            settings.trafficGrantAgeOutMilliseconds());
+        mPreferences.putBoolean(PREFERENCE_KEY_SHOW_CONTROL_DECODE_QUALITY, settings.showControlDecodeQuality());
+        mPreferences.putBoolean(PREFERENCE_KEY_SHOW_VOICE_DECODE_QUALITY, settings.showVoiceDecodeQuality());
+        mPreferences.putBoolean(PREFERENCE_KEY_CLEAR_VOICE_DECODE_QUALITY_ON_CALL_END,
+            settings.clearVoiceDecodeQualityOnCallEnd());
+        mPreferences.put(PREFERENCE_KEY_DECODE_QUALITY_DISPLAY_MODE, settings.decodeQualityDisplayMode().name());
+        mPreferences.putInt(PREFERENCE_KEY_LIVE_DETAIL_MATCHING_ROW_LIMIT,
+            settings.liveDetailMatchingRowLimit());
+    }
+
+    private DecodeQualityDisplayMode readDecodeQualityDisplayMode()
+    {
+        try
+        {
+            return DecodeQualityDisplayMode.valueOf(mPreferences.get(PREFERENCE_KEY_DECODE_QUALITY_DISPLAY_MODE,
+                DecodeQualityDisplayMode.PERCENTAGE.name()));
+        }
+        catch(IllegalArgumentException _)
+        {
+            return DecodeQualityDisplayMode.PERCENTAGE;
+        }
     }
 
     /**

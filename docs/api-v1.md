@@ -40,6 +40,7 @@ and double-encoded or separator-smuggling resource names are rejected.
 | Resource | Purpose |
 | --- | --- |
 | `GET /api/v1/status` | Server, database, logging, live-stream, and web-call status. |
+| `GET /api/v1/live/settings` | Non-sensitive receiver-wide Live presentation policy for viewers authorized for Live. |
 | `GET /api/v1/dashboard` | Bounded summary counts, recent receivers, call activity, and top identities. |
 | `GET /api/v1/quality` | Current quality across a bounded site page. Global requests cannot include history. |
 | `GET /api/v1/alias-lists` | Paged alias-list catalog. |
@@ -166,6 +167,10 @@ CSV exports use `GET /api/v1/exports/{dataset}.csv`. Supported datasets are `ali
 `conventional-talkgroups`, and `conventional-radios`. One export can run at a time. Buffered exports stop at 10,000
 rows or 16 MiB instead of attempting an unbounded materialization.
 
+Alias-list and alias resources, including `aliases.csv`, require administrator Alias access. Resolved alias labels in
+Live, Systems, conventional activity, and call playback remain part of those resources; only the configuration
+catalog and export are administrator-only.
+
 `system-radios` CSV exports accept the same `affiliated` and `site_guid` filters as the JSON collection. Nested
 presence is not serialized into CSV; the export retains the scalar affiliation fields.
 
@@ -195,9 +200,18 @@ Initial channel snapshots are capped at 128 tables, 256 rows per table, 2,048 ro
 Unchanged subscribers share the cached encoded snapshot. Strings and tags are bounded before retention. Admission is
 capped at 32 browser documents. Metadata uses one bounded FIFO per topic, so a burst cannot evict another topic.
 Dense diagnostic topics use replaceable latest-value slots, and a persistently slow client is disconnected instead of
-accumulating data or applying receiver backpressure. A detected gap sends an authoritative snapshot for calls,
-channel activity, decoder events, or decoder messages; activity sends `activity_reset`, after which the browser
-reloads the current bounded REST page before applying newer live rows.
+accumulating data or applying receiver backpressure. Calls and channel activity retain authoritative recovery
+snapshots. Activity sends `activity_reset`, after which the browser reloads the current bounded REST page before
+applying newer live rows.
+
+`decode_events` and `decode_messages` are deliberately live-only. Opening either subscription starts empty; the
+server projects each new item on a bounded observer worker, publishes it, and forgets it. It does not preload decoder
+history or retain a replay cache. A bounded queue or connection loss emits `live_gap` with the number of known dropped
+items and then continues with new data. Opening a decoder-message stream emits its initial source status as
+`source_change`, and later source rebinds emit the same event; neither event causes a snapshot. Browser filtering is
+local and does not change the subscription. The browser retains only a bounded
+in-memory capture for the current page and selected channel, renders the newest configured number of matching rows,
+and clears that capture on page, tab, or selection change.
 
 The `calls` logical subscription accepts `scan_list_id` as an array of positive IDs. Duplicate IDs are folded
 together. Omitting the field selects the published default scan list; an unknown or unpublished ID is rejected. Each
@@ -213,7 +227,7 @@ timeline.
 
 Completed call audio is fetched from `/api/v1/calls/{id}/audio`. A call is rejected before encoding if its WAV would
 exceed 16 MiB. Pending WAV work is limited to 16 MiB total. The operator can bound active audio listeners, selected
-scan lists per listener, browser queue calls, cached calls, and cached audio MiB. The call ID must be one strict path
+scan lists per listener, waiting calls per listener, cached calls, and cached audio MiB. The call ID must be one strict path
 segment; encoded separator smuggling is rejected. Audio is retained only for completed calls that match at least one
 published scan list while a listener is connected. The listener limit also bounds concurrent WAV responses; excess
 audio fetches receive `429 too_many_audio_responses` and are counted on Listener Status.
@@ -231,6 +245,20 @@ Scan-list administration uses:
 - `PUT /api/v1/admin/scan-lists/{id}/members`
 - `GET, PUT /api/v1/admin/web-audio`
 
+Receiver-wide Live presentation uses:
+
+- `GET, PUT /api/v1/admin/web-display`
+- `GET /api/v1/live/settings`
+
+The administrator document includes encryption-detail visibility, idle-row call-detail retention, control and voice
+decode-quality visibility, voice-quality clearing, decode-quality format, trunked idle-grant retention, and
+`live_detail_matching_row_limit` (25–500, default 200). The Live endpoint returns the same non-sensitive policy to a
+viewer authorized for Live so presentation policy does not depend on Dashboard access. Updates may contain any
+non-empty subset and are serialized as one receiver-wide settings mutation.
+
+Web-audio configuration uses `waiting_calls_per_listener` as the administrator-owned browser waiting-call policy.
+Listeners receive and obey the effective value but do not receive a control for changing it.
+
 A scan-list definition contains `sort_order`, `name`, optional `description`, `published`, and `default`. Exactly one
 list is the published default. Up to 100 definitions are supported. A membership update uses `operation` (`add`,
 `remove`, or `replace`), `alias_ids`, and `unmatched_alias_list_ids`; each owner collection accepts at most 500 unique
@@ -238,6 +266,28 @@ IDs. The latter assigns a whole Alias List's unmatched talkgroups to the scan li
 totals and explicit truncation when either member set is larger than 500. Scan-list summaries likewise report
 `alias_count` and `unmatched_alias_list_count`. Either owner collection may be omitted to leave that class of owners
 unchanged, including during `replace`; an explicitly empty collection clears that class during `replace`.
+
+RadioReference administration is rooted at `/api/v1/admin/radioreference` and requires a valid Premium session:
+
+- `GET` reports account, stored-credential, and lookup-location state; `PUT`/`DELETE /session` sign in or out, and
+  `PUT /location` updates the receiver's lookup region.
+- `GET /countries`, `/states`, `/counties`, and `/browse` provide bounded directory navigation.
+- `GET /frequencies` searches the configured lookup region for an exact frequency, and
+  `GET /frequencies/details` loads bounded category, site, and channel-use details for one result.
+- `GET /systems/details`, `/systems/sites`, and `/systems/site-preview` return decoder-safe system and site previews.
+  `POST /systems/channels` refetches the authoritative site and creates one control-channel configuration. P25 Phase 1
+  requires an explicit `p25_modulation` of `C4FM` or `CQPSK`; RadioReference modulation labels are not trusted.
+- `GET /systems/talkgroups` compares RadioReference-owned name, description, and category fields with one Alias List.
+  `POST /systems/talkgroups/import` applies a bounded revision-checked add/update selection. If any selected row is
+  `DIFFERENT`, the body must include `confirm_updates: true`; new-only imports do not require confirmation. Updates
+  preserve local identity, appearance, actions, playback, recording, and streaming settings.
+- `GET /conventional/categories` and `/conventional/frequencies` provide bounded conventional browsing.
+  `POST /conventional/channels` refetches selected rows and atomically creates supported channel configurations.
+
+Import bodies contain only stable RadioReference IDs, explicit decoder choices, local destination IDs, and optional
+local labels. Apply operations refetch authoritative remote rows, reject duplicates or unsupported modes before
+publishing any channel, and never accept browser-supplied frequencies or talkgroup metadata as truth. One request is
+limited to 500 selected items, while remote catalogs are rejected above their fixed safety bound.
 
 Session `capabilities` is an object whose values are booleans. The administrator access-policy resource returns one
 `capabilities` array; each entry has `id`, `display_name`, `required_tier`, `default_tier`, and `configurable`.

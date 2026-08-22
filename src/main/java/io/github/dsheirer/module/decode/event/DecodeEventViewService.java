@@ -5,6 +5,7 @@
  */
 package io.github.dsheirer.module.decode.event;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.AliasModel;
@@ -21,10 +22,8 @@ import io.github.dsheirer.source.Source;
 import io.github.dsheirer.util.concurrent.BoundedMpscPairQueue;
 import io.github.dsheirer.util.concurrent.ObserverThreadFactory;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
@@ -36,15 +35,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * UI-neutral, session-only projection of live decoder events. This service owns its bounded session retention and
- * creates immutable views for consumers.
+ * UI-neutral, demand-owned projection of live decoder events. The receiver callback performs only a bounded,
+ * nonblocking reference offer; projection and fan-out run on the observer worker. No event history or replay is kept.
  */
 public class DecodeEventViewService implements AutoCloseable
 {
     private static final Logger mLog = LoggerFactory.getLogger(DecodeEventViewService.class);
-    public static final int HISTORY_SIZE = 200;
     static final int UPDATE_QUEUE_SIZE = 1_024;
-    private static final int SHARED_HISTORY_SIZE = 4_096;
     private static final int MAXIMUM_DRAIN_PER_RUN = 512;
     private static final int DETAILS_MAXIMUM_LENGTH = 512;
     private static final int PARTY_MAXIMUM_IDENTIFIERS = 32;
@@ -58,14 +55,12 @@ public class DecodeEventViewService implements AutoCloseable
     private final ExecutorService mWorker = Executors.newSingleThreadExecutor(
         new ObserverThreadFactory("sdrtrunk decode event views"));
     private final Semaphore mWakeup = new Semaphore(0);
-    private final Map<String,EventView> mHistory = new LinkedHashMap<>();
     private final AtomicLong mDroppedObservations = new AtomicLong();
     private final AtomicLong mDemandGeneration = new AtomicLong();
+    private final AtomicLong mLiveEdgeEpoch = new AtomicLong();
     private final AtomicBoolean mClosed = new AtomicBoolean();
     private final AtomicBoolean mActive = new AtomicBoolean();
     private final BiConsumer<Channel,IDecodeEvent> mDecodeEventListener = this::receive;
-    private volatile List<EventView> mPublishedHistory = List.of();
-    private long mWorkerGeneration;
     private final long mCloseTimeoutMilliseconds;
 
     public DecodeEventViewService(ChannelProcessingManager channelProcessingManager, AliasModel aliasModel)
@@ -93,18 +88,7 @@ public class DecodeEventViewService implements AutoCloseable
                 {
                     long generation = mDemandGeneration.get();
                     BoundedMpscPairQueue<Channel,IDecodeEvent> ingress = mIngress;
-
-                    if(mWorkerGeneration != generation)
-                    {
-                        clearHistoryOnWorker();
-                        mWorkerGeneration = generation;
-                    }
-
                     drainSafely(generation, ingress);
-                }
-                else
-                {
-                    clearInactiveStateOnWorker();
                 }
 
                 try
@@ -138,6 +122,21 @@ public class DecodeEventViewService implements AutoCloseable
         return mDecodeEventListener;
     }
 
+    /**
+     * Establishes a live edge for a new downstream subscription. Observations accepted before this boundary retain an
+     * older primitive stamp, allowing shared worker projection to continue for existing subscribers without replaying
+     * those observations to the new subscriber.
+     */
+    public long advanceLiveEdge()
+    {
+        if(mClosed.get())
+        {
+            throw new IllegalStateException("decode event view service is closed");
+        }
+
+        return mLiveEdgeEpoch.incrementAndGet();
+    }
+
     public void addListener(Listener<EventView> listener)
     {
         if(listener == null || mClosed.get())
@@ -160,7 +159,6 @@ public class DecodeEventViewService implements AutoCloseable
                 //A fresh queue gives each demand generation an exact ingress boundary without making a receiver
                 //callback allocate, lock, or wait for worker cleanup.
                 mIngress = new BoundedMpscPairQueue<>(UPDATE_QUEUE_SIZE);
-                mPublishedHistory = List.of();
                 mDemandGeneration.incrementAndGet();
             }
 
@@ -178,37 +176,10 @@ public class DecodeEventViewService implements AutoCloseable
             if(!mBroadcaster.hasListeners())
             {
                 mActive.set(false);
-                mPublishedHistory = List.of();
                 mDemandGeneration.incrementAndGet();
                 mWakeup.release();
             }
         }
-    }
-
-    /**
-     * Returns the newest events for the selected configured receiver or exact channel frequency.
-     */
-    public List<EventView> snapshot(Scope scope)
-    {
-        if(scope == null || !mActive.get() || mClosed.get())
-        {
-            return List.of();
-        }
-
-        List<EventView> published = mPublishedHistory;
-        List<EventView> events = new ArrayList<>(Math.min(HISTORY_SIZE, published.size()));
-
-        for(int x = published.size() - 1; x >= 0 && events.size() < HISTORY_SIZE; x--)
-        {
-            EventView event = published.get(x);
-
-            if(scope.matches(event))
-            {
-                events.add(event);
-            }
-        }
-
-        return List.copyOf(events);
     }
 
     void receive(Channel channel, IDecodeEvent event)
@@ -225,7 +196,9 @@ public class DecodeEventViewService implements AutoCloseable
             return;
         }
 
-        if(!ingress.offer(channel, event))
+        long liveEdgeEpoch = mLiveEdgeEpoch.get();
+
+        if(!ingress.offer(channel, event, liveEdgeEpoch))
         {
             mDroppedObservations.incrementAndGet();
         }
@@ -245,22 +218,7 @@ public class DecodeEventViewService implements AutoCloseable
 
     private void cleanupOnWorker()
     {
-        clearHistoryOnWorker();
-    }
-
-    private void clearHistoryOnWorker()
-    {
-        mHistory.clear();
-        mPublishedHistory = List.of();
-    }
-
-    private void clearInactiveStateOnWorker()
-    {
-        if(!mClosed.get() && !mActive.get())
-        {
-            clearHistoryOnWorker();
-            mWorkerGeneration = mDemandGeneration.get();
-        }
+        mIngress.clear();
     }
 
     private void drain(long generation, BoundedMpscPairQueue<Channel,IDecodeEvent> ingress)
@@ -288,19 +246,11 @@ public class DecodeEventViewService implements AutoCloseable
                 mChannelProcessingManager.getProcessingChain(channel) : null;
             Source source = chain != null ? chain.getSource() : null;
             Long sourceFrequency = source != null && source.getFrequency() > 0 ? source.getFrequency() : null;
-            EventView projected = view(configurationId, event, sourceFrequency);
+            EventView projected = view(configurationId, event, sourceFrequency, observation.stamp());
 
             if(mClosed.get() || !mActive.get() || mDemandGeneration.get() != generation || mIngress != ingress)
             {
                 break;
-            }
-
-            mHistory.remove(projected.eventId());
-            mHistory.put(projected.eventId(), projected);
-
-            while(mHistory.size() > SHARED_HISTORY_SIZE)
-            {
-                mHistory.remove(mHistory.keySet().iterator().next());
             }
 
             batch.add(projected);
@@ -308,9 +258,6 @@ public class DecodeEventViewService implements AutoCloseable
 
         if(!batch.isEmpty() && mActive.get() && mDemandGeneration.get() == generation && mIngress == ingress)
         {
-            //Publish authoritative cache before any live item can trigger a client's resync read.
-            mPublishedHistory = List.copyOf(mHistory.values());
-
             for(EventView projected: batch)
             {
                 if(mClosed.get() || !mActive.get() || mDemandGeneration.get() != generation || mIngress != ingress)
@@ -323,7 +270,7 @@ public class DecodeEventViewService implements AutoCloseable
         }
     }
 
-    long getDroppedObservationCount()
+    public long getDroppedObservationCount()
     {
         return mDroppedObservations.get();
     }
@@ -345,6 +292,11 @@ public class DecodeEventViewService implements AutoCloseable
 
     EventView view(String configurationId, IDecodeEvent event, Long sourceFrequency)
     {
+        return view(configurationId, event, sourceFrequency, 0);
+    }
+
+    private EventView view(String configurationId, IDecodeEvent event, Long sourceFrequency, long observationEpoch)
+    {
         IdentifierCollection identifiers = event.getIdentifierCollection();
         Parties from = parties(identifiers, Role.FROM);
         Parties to = parties(identifiers, Role.TO);
@@ -363,7 +315,7 @@ public class DecodeEventViewService implements AutoCloseable
             from.identifiers(), from.aliases(), to.identifiers(), to.aliases(),
             descriptor != null ? bounded(descriptor.toString()) : null, frequency,
             event.hasTimeslot() ? event.getTimeslot() : null, bounded(event.getDetails()),
-            event.getProtocol() != null ? event.getProtocol().name() : null);
+            event.getProtocol() != null ? event.getProtocol().name() : null, observationEpoch);
     }
 
     private Parties parties(IdentifierCollection collection, Role role)
@@ -567,8 +519,15 @@ public class DecodeEventViewService implements AutoCloseable
     public record EventView(String eventId, String configurationId, long timeStartMs, long durationMs,
                             String eventType, String eventLabel, String category, String fromIdentifiers,
                             String fromAliases, String toIdentifiers, String toAliases, String channel,
-                            Long frequencyHz, Integer timeslot, String details, String protocol)
+                            Long frequencyHz, Integer timeslot, String details, String protocol,
+                            long observationEpoch)
     {
+        /** Internal transport boundary; it is not part of the browser event payload. */
+        @JsonIgnore
+        public long observationEpoch()
+        {
+            return observationEpoch;
+        }
     }
 
     private record Parties(String identifiers, String aliases)

@@ -21,6 +21,7 @@ record WebAccessConfiguration(int formatVersion, WebAdminCredential primaryAdmin
 {
     static final int CURRENT_FORMAT_VERSION = 1;
     static final int MAXIMUM_USERS = 256;
+    private static final String RETIRED_ALIASES_CAPABILITY = "aliases";
 
     WebAccessConfiguration
     {
@@ -75,6 +76,13 @@ record WebAccessConfiguration(int formatVersion, WebAdminCredential primaryAdmin
 
         for(Map.Entry<String,AccessTier> entry: policyOverrides.entrySet())
         {
+            //Aliases were once a configurable public catalog. The catalog and its API are now administrator-only,
+            //so discard that one retired persisted override while keeping truly unknown capability IDs invalid.
+            if(RETIRED_ALIASES_CAPABILITY.equals(entry.getKey()))
+            {
+                continue;
+            }
+
             WebCapability capability = WebCapability.fromId(entry.getKey())
                 .orElseThrow(() -> new IllegalArgumentException("Unknown web capability in access configuration"));
             AccessTier tier = Objects.requireNonNull(entry.getValue(), "Web policy tier cannot be null");

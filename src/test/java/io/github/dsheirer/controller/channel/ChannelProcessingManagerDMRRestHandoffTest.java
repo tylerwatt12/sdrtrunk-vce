@@ -167,7 +167,6 @@ class ChannelProcessingManagerDMRRestHandoffTest
             assertSame(trafficManager, trafficManager(firstReplacement));
             assertFalse(firstChain.getModules().stream().anyMatch(module -> module == trafficManager));
             assertTrue(firstReplacementEvents.isEmpty());
-            assertTrue(firstReplacement.getMessageHistory().getItems().isEmpty());
             DecodeEvent managerOwned = DMRDecodeEvent.builder(DecodeEventType.CALL_GROUP, 1_500L)
                 .channel(restChannel(3, FIRST_REST_FREQUENCY))
                 .identifiers(identifiers(102, 92))
@@ -234,8 +233,9 @@ class ChannelProcessingManagerDMRRestHandoffTest
         Channel parent = channel(1);
         List<ChannelDecodeObservation> observations = new CopyOnWriteArrayList<>();
         List<ControlChannelQualitySnapshot> qualitySnapshots = new CopyOnWriteArrayList<>();
+        List<DecodeEventViewService.EventView> eventViews = new CopyOnWriteArrayList<>();
         DecodeEventViewService eventViewService = new DecodeEventViewService(manager, aliasModel);
-        Listener<DecodeEventViewService.EventView> eventDemand = event -> {};
+        Listener<DecodeEventViewService.EventView> eventDemand = eventViews::add;
         eventViewService.addListener(eventDemand);
         manager.addChannelDecodeEventListener((channel, event) ->
             observations.add(new ChannelDecodeObservation(channel, event)));
@@ -316,7 +316,7 @@ class ChannelProcessingManagerDMRRestHandoffTest
             assertSame(converted, observations.get(3).channel());
             DecodeEventViewService.Scope oldFrequencyScope = new DecodeEventViewService.Scope(
                 parent.getConfigurationId(), CURRENT_FREQUENCY, 1);
-            assertTrue(awaitCondition(() -> eventViewService.snapshot(oldFrequencyScope).stream()
+            assertTrue(awaitCondition(() -> eventViews.stream().filter(oldFrequencyScope::matches)
                 .anyMatch(event -> "descriptorless converted event".equals(event.details()) &&
                     event.frequencyHz() == CURRENT_FREQUENCY), 5),
                 "descriptorless converted event lost the old chain's source frequency");

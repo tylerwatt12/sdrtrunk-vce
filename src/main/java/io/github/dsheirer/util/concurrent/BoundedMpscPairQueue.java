@@ -47,6 +47,16 @@ public final class BoundedMpscPairQueue<A,B>
      */
     public boolean offer(A first, B second)
     {
+        return offer(first, second, 0);
+    }
+
+    /**
+     * Offers a pair and primitive observation stamp without allocating or waiting.
+     *
+     * @return true when published, or false when the bounded queue is full
+     */
+    public boolean offer(A first, B second, long stamp)
+    {
         Objects.requireNonNull(first, "first cannot be null");
         Objects.requireNonNull(second, "second cannot be null");
         long sequence = mProducerSequence.get();
@@ -63,6 +73,7 @@ public final class BoundedMpscPairQueue<A,B>
                 {
                     cell.mFirst = first;
                     cell.mSecond = second;
+                    cell.mStamp = stamp;
                     cell.mSequence.lazySet(sequence + 1);
                     return true;
                 }
@@ -94,11 +105,13 @@ public final class BoundedMpscPairQueue<A,B>
 
         A first = cell.mFirst;
         B second = cell.mSecond;
+        long stamp = cell.mStamp;
         cell.mFirst = null;
         cell.mSecond = null;
+        cell.mStamp = 0;
         cell.mSequence.lazySet(sequence + mCells.length);
         mConsumerSequence.lazySet(sequence + 1);
-        return new Entry<>(first, second);
+        return new Entry<>(first, second, stamp);
     }
 
     public int size()
@@ -120,8 +133,12 @@ public final class BoundedMpscPairQueue<A,B>
         }
     }
 
-    public record Entry<A,B>(A first, B second)
+    public record Entry<A,B>(A first, B second, long stamp)
     {
+        public Entry(A first, B second)
+        {
+            this(first, second, 0);
+        }
     }
 
     private static final class Cell<A,B>
@@ -129,6 +146,7 @@ public final class BoundedMpscPairQueue<A,B>
         private final AtomicLong mSequence;
         private volatile A mFirst;
         private volatile B mSecond;
+        private volatile long mStamp;
 
         private Cell(long sequence)
         {

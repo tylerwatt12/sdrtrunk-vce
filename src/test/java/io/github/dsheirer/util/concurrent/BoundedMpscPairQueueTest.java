@@ -27,4 +27,15 @@ class BoundedMpscPairQueueTest
         assertEquals(new BoundedMpscPairQueue.Entry<>("two", 2), queue.poll());
         assertNull(queue.poll());
     }
+
+    @Test
+    void carriesAnOptionalPrimitiveStampWithoutChangingTheDefaultOffer()
+    {
+        BoundedMpscPairQueue<String,Integer> queue = new BoundedMpscPairQueue<>(2);
+
+        assertTrue(queue.offer("stamped", 1, 42));
+        assertTrue(queue.offer("default", 2));
+        assertEquals(new BoundedMpscPairQueue.Entry<>("stamped", 1, 42), queue.poll());
+        assertEquals(new BoundedMpscPairQueue.Entry<>("default", 2, 0), queue.poll());
+    }
 }

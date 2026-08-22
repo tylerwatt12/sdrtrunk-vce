@@ -3,15 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="sdrtrunk-web-revision" content="84">
+  <meta name="sdrtrunk-web-revision" content="85">
   <title>sdrtrunk-vce</title>
   <script>
     (() => {
       try {
-        const compact = window.matchMedia?.(
-          '(max-width: 760px), (pointer: coarse) and (max-width: 1024px)')?.matches === true;
-        const themeKey = compact ? 'sdrtrunk_mobile_theme' : 'sdrtrunk_theme';
-        if (window.localStorage.getItem(themeKey) === 'dark') {
+        if (window.localStorage.getItem('sdrtrunk_theme') === 'dark') {
           document.documentElement.dataset.theme = 'dark';
         }
       } catch (error) {
@@ -19,122 +16,83 @@
       }
     })();
   </script>
-  <link rel="stylesheet" href="/assets/app.css?v=67">
+  <link rel="stylesheet" href="/assets/app.css?v=68">
 </head>
 <body>
+  <svg class="icon-sprite" aria-hidden="true">
+    <symbol id="icon-dashboard" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"></rect><rect x="14" y="3" width="7" height="7" rx="1"></rect><rect x="3" y="14" width="7" height="7" rx="1"></rect><rect x="14" y="14" width="7" height="7" rx="1"></rect></symbol>
+    <symbol id="icon-live" viewBox="0 0 24 24"><path d="M2 12h4l2.5-6 4.5 12 2.5-6H22"></path></symbol>
+    <symbol id="icon-scanner" viewBox="0 0 24 24"><path d="M8 4l7-2M9 4h7a3 3 0 0 1 3 3v13H6V7a3 3 0 0 1 3-3Z"></path><rect x="9" y="7" width="7" height="4" rx="1"></rect><circle cx="12.5" cy="15.5" r="2.5"></circle></symbol>
+    <symbol id="icon-trunked" viewBox="0 0 24 24"><circle cx="12" cy="4" r="2"></circle><circle cx="5" cy="19" r="2"></circle><circle cx="12" cy="19" r="2"></circle><circle cx="19" cy="19" r="2"></circle><path d="M12 6v5M5 17v-3h14v3M12 11v6"></path></symbol>
+    <symbol id="icon-conventional" viewBox="0 0 24 24"><circle cx="12" cy="13" r="7"></circle><path d="M12 13l4-4M5 5l2 2M12 3v3M19 5l-2 2"></path></symbol>
+    <symbol id="icon-aliases" viewBox="0 0 24 24"><path d="M3 5h8l10 10-6 6L5 11Z"></path><circle cx="8" cy="8" r="1.5"></circle></symbol>
+    <symbol id="icon-scan-lists" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"></path></symbol>
+    <symbol id="icon-radioreference" viewBox="0 0 24 24"><path d="M12 4v16M7 20h10M8.5 8.5a5 5 0 0 0 0 7M15.5 8.5a5 5 0 0 1 0 7"></path></symbol>
+    <symbol id="icon-spectrum" viewBox="0 0 24 24"><path d="M2 18h20M3 15l3-2 2 3 3-10 3 8 3-5 4 6"></path></symbol>
+    <symbol id="icon-tuner" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"></rect><circle cx="15" cy="12" r="3"></circle><path d="M6 10h4M6 14h3"></path></symbol>
+    <symbol id="icon-admin" viewBox="0 0 24 24"><path d="M12 3l8 3v5c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6Z"></path><path d="M9 12l2 2 4-5"></path></symbol>
+    <symbol id="icon-about" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M12 10v7M12 7h.01"></path></symbol>
+    <symbol id="icon-lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="10" rx="2"></rect><path d="M8 10V7a4 4 0 0 1 8 0v3"></path></symbol>
+    <symbol id="icon-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"></path></symbol>
+    <symbol id="icon-health" viewBox="0 0 24 24"><path d="M3 12h4l2-5 4 10 2-5h6"></path></symbol>
+    <symbol id="icon-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5 19 19M19 5l-1.5 1.5M6.5 17.5 5 19"></path></symbol>
+    <symbol id="icon-moon" viewBox="0 0 24 24"><path d="M20 15.5A8 8 0 0 1 8.5 4 8.5 8.5 0 1 0 20 15.5Z"></path></symbol>
+  </svg>
   <div class="app-shell">
     <div class="app-header">
       <header class="topbar" id="topbar">
+        <button type="button" id="navigation-toggle" class="navigation-toggle icon-button" aria-controls="primary-navigation" aria-expanded="false" aria-label="Open navigation"><svg aria-hidden="true"><use href="#icon-menu"></use></svg></button>
         <a class="brand" href="/?view=dashboard">sdrtrunk-vce</a>
-        <nav class="primary-nav" aria-label="Primary navigation">
-          <a data-view="dashboard" href="/?view=dashboard" hidden>Dashboard</a>
-          <a data-view="live" href="/?view=live" hidden>Live</a>
-          <a data-view="tuner-spectrum" href="/?view=tuner-spectrum" hidden>Tuner Spectrum</a>
-          <a data-view="systems" href="/?view=systems" hidden>Systems &amp; Sites</a>
-          <a data-view="conventional" href="/?view=conventional" hidden>Conventional</a>
-          <a data-view="aliases" href="/?view=aliases" hidden>Aliases</a>
-          <a data-view="admin" href="/?view=admin&amp;tab=scan-lists" hidden>Admin</a>
-          <a data-view="credits" href="/?view=credits" hidden>Credits</a>
+        <nav id="primary-navigation" class="primary-nav" aria-label="Primary navigation">
+          <details class="nav-group" data-nav-group="listen"><summary>Listen</summary><div class="nav-group-links">
+            <a data-view="dashboard" href="/?view=dashboard" hidden><svg class="nav-icon" aria-hidden="true"><use href="#icon-dashboard"></use></svg><span>Dashboard</span></a>
+            <a data-view="live" href="/?view=live" hidden><svg class="nav-icon" aria-hidden="true"><use href="#icon-live"></use></svg><span>Live</span></a>
+            <a data-view="scanner" href="/?view=scanner" hidden><svg class="nav-icon" aria-hidden="true"><use href="#icon-scanner"></use></svg><span>Scanner</span></a>
+          </div></details>
+          <details class="nav-group" data-nav-group="channels"><summary>Channels</summary><div class="nav-group-links">
+            <a data-view="systems" href="/?view=systems" hidden><svg class="nav-icon" aria-hidden="true"><use href="#icon-trunked"></use></svg><span>Trunked</span></a>
+            <a data-view="conventional" href="/?view=conventional" hidden><svg class="nav-icon" aria-hidden="true"><use href="#icon-conventional"></use></svg><span>Conventional</span></a>
+          </div></details>
+          <details class="nav-group nav-group-protected" data-nav-group="configuration"><summary>Configuration <svg class="nav-lock" aria-label="Administrator only"><use href="#icon-lock"></use></svg></summary><div class="nav-group-links">
+            <a data-view="aliases" href="/?view=aliases" hidden><svg class="nav-icon" aria-hidden="true"><use href="#icon-aliases"></use></svg><span>Aliases</span></a>
+            <a data-view="configuration" data-nav-tab="scan-lists" href="/?view=configuration&amp;tab=scan-lists" hidden><svg class="nav-icon" aria-hidden="true"><use href="#icon-scan-lists"></use></svg><span>Scan Lists</span></a>
+            <a data-view="configuration" data-nav-tab="radioreference" href="/?view=configuration&amp;tab=radioreference" hidden><svg class="nav-icon" aria-hidden="true"><use href="#icon-radioreference"></use></svg><span>RadioReference</span></a>
+            <span class="nav-placeholder"><svg class="nav-icon" aria-hidden="true"><use href="#icon-live"></use></svg><span>Recording</span><small>Coming soon</small></span>
+            <span class="nav-placeholder"><svg class="nav-icon" aria-hidden="true"><use href="#icon-live"></use></svg><span>Streaming</span><small>Coming soon</small></span>
+          </div></details>
+          <details class="nav-group nav-group-protected" data-nav-group="hardware"><summary>Hardware <svg class="nav-lock" aria-label="Administrator only"><use href="#icon-lock"></use></svg></summary><div class="nav-group-links">
+            <a data-view="hardware" data-nav-tab="tuners" href="/?view=hardware&amp;tab=tuners" hidden><svg class="nav-icon" aria-hidden="true"><use href="#icon-tuner"></use></svg><span>Tuners</span><small>Coming soon</small></a>
+            <a data-view="tuner-spectrum" href="/?view=tuner-spectrum" hidden><svg class="nav-icon" aria-hidden="true"><use href="#icon-spectrum"></use></svg><span>Spectrum</span></a>
+          </div></details>
+          <a data-view="admin" class="nav-direct nav-group-protected" href="/?view=admin&amp;tab=health" hidden><svg class="nav-icon" aria-hidden="true"><use href="#icon-admin"></use></svg><span>Administration</span><svg class="nav-lock" aria-label="Administrator only"><use href="#icon-lock"></use></svg></a>
+          <a data-view="credits" class="nav-direct" href="/?view=credits" hidden><svg class="nav-icon" aria-hidden="true"><use href="#icon-about"></use></svg><span>About</span></a>
         </nav>
         <div class="header-controls">
-          <a id="receiver-health-indicator" class="receiver-health-indicator receiver-health-loading"
-            href="/?view=admin&amp;tab=health" hidden>
-            <span>Health</span>
-            <strong id="receiver-health-indicator-state">Loading</strong>
-          </a>
-          <div id="server-status" class="server-status">Loading</div>
-          <div id="auth-controls" class="auth-controls" aria-live="polite">
-            <span id="auth-session-label" class="auth-session-label" hidden></span>
-            <button type="button" id="auth-action" class="auth-action" disabled>Checking access</button>
-          </div>
-          <button type="button" id="theme-toggle" class="theme-toggle" aria-pressed="false"
-            aria-label="Use dark theme">Dark</button>
+          <a id="receiver-health-indicator" class="receiver-health-indicator receiver-health-loading icon-button" href="/?view=admin&amp;tab=health" hidden aria-label="Receiver health loading" title="Receiver health loading"><svg aria-hidden="true"><use href="#icon-health"></use></svg><span id="receiver-health-indicator-state" class="visually-hidden">Loading</span></a>
+          <div id="global-status" class="visually-hidden" role="status" aria-live="polite">Loading</div>
+          <div id="auth-controls" class="auth-controls" aria-live="polite"><span id="auth-session-label" class="auth-session-label" hidden></span><button type="button" id="auth-action" class="auth-action" disabled>Checking access</button></div>
+          <button type="button" id="theme-toggle" class="theme-toggle icon-button" aria-pressed="false" aria-label="Use dark theme" title="Use dark theme"><svg aria-hidden="true"><use href="#icon-moon"></use></svg></button>
         </div>
       </header>
+      <button type="button" id="navigation-backdrop" class="navigation-backdrop" aria-label="Close navigation" hidden></button>
       <div id="desktop-playback-slot">
         <section class="playback-bar" id="playback-bar" aria-label="Web call playback">
-        <div class="playback-controls" role="group" aria-label="Playback controls">
-          <button type="button" id="playback-play" class="playback-command" aria-pressed="false">Play</button>
-          <button type="button" id="playback-skip" class="playback-command">Skip</button>
-          <button type="button" id="playback-replay" class="playback-command">Replay</button>
-          <button type="button" id="playback-hold" class="playback-command">Hold</button>
-          <button type="button" id="playback-avoid" class="playback-command">Avoid</button>
-          <button type="button" id="playback-clear" class="playback-command">Clear</button>
-        </div>
-        <label class="playback-volume" title="Browser playback volume">
-          <span class="playback-field">Vol</span>
-          <input id="playback-volume" type="range" min="0" max="1" step="0.05" value="1"
-            aria-label="Browser playback volume" aria-describedby="playback-volume-value">
-          <output id="playback-volume-value" for="playback-volume">100%</output>
-        </label>
-        <div class="playback-now">
-          <span class="playback-field">Now</span>
-          <div id="playback-current" class="playback-current">
-            <strong class="playback-current-primary">Idle</strong>
-          </div>
-        </div>
-        <details class="playback-subscriptions">
-          <summary><span class="playback-field">Scan lists</span>
-            <strong id="playback-scan-list-summary">Loading</strong></summary>
-          <div class="playback-subscription-panel">
-            <div class="playback-panel-heading">Listen to one or more scan lists</div>
-            <div id="playback-scan-list-options" class="playback-scan-list-options"></div>
-            <div id="playback-scan-list-status" class="playback-panel-note" role="status">
-              Loading available scan lists…
-            </div>
-            <div id="playback-capacity" class="playback-capacity">Listener capacity unavailable</div>
-          </div>
-        </details>
-        <details class="playback-queue">
-          <summary><span class="playback-field">Queued</span> <strong id="playback-queued">0</strong>
-            <span class="playback-dropped" id="playback-dropped"></span></summary>
-          <div id="playback-queue-list" class="playback-queue-list">No queued calls</div>
-        </details>
-        <label class="playback-limit"><span class="playback-field"><span class="playback-limit-short">Max</span>
-          <span class="playback-limit-long">Maximum queued calls</span></span>
-          <input id="playback-max-queued" type="number" min="1" max="500" step="1" value="100"
-            aria-label="Maximum queued calls">
-        </label>
-        <output id="playback-missed" class="playback-missed" role="status" aria-live="polite">Missed 0</output>
-        <div id="playback-status" class="playback-status">Checking access</div>
-        <div id="playback-progress" class="playback-progress" aria-hidden="true">
-          <span id="playback-progress-glow" class="playback-progress-glow"></span>
-        </div>
+          <div class="playback-controls" role="group" aria-label="Playback controls"><button type="button" id="playback-play" class="playback-command" aria-pressed="false">Play</button><button type="button" id="playback-skip" class="playback-command">Skip</button><button type="button" id="playback-replay" class="playback-command">Replay</button><button type="button" id="playback-hold" class="playback-command">Hold</button><button type="button" id="playback-avoid" class="playback-command">Avoid</button><button type="button" id="playback-clear" class="playback-command">Clear</button></div>
+          <label class="playback-volume" title="Browser playback volume"><span class="playback-field">Vol</span><input id="playback-volume" type="range" min="0" max="1" step="0.05" value="1" aria-label="Browser playback volume" aria-describedby="playback-volume-value"><output id="playback-volume-value" for="playback-volume">100%</output></label>
+          <div class="playback-now"><span class="playback-field">Now</span><div id="playback-current" class="playback-current"><strong class="playback-current-primary">Idle</strong></div></div>
+          <a class="playback-scanner-link" href="/?view=scanner"><span class="playback-field">Scan lists</span><strong id="playback-scan-list-summary">Loading</strong></a>
+          <details class="playback-subscriptions"><summary><span class="playback-field">Choose scan lists</span></summary><div class="playback-subscription-panel"><div class="playback-panel-heading">Listen to one or more scan lists</div><div id="playback-scan-list-options" class="playback-scan-list-options"></div><div id="playback-scan-list-status" class="playback-panel-note" role="status">Loading available scan lists…</div><div id="playback-capacity" class="playback-capacity">Listener capacity unavailable</div></div></details>
+          <details class="playback-queue"><summary><span class="playback-field">Queued</span> <strong id="playback-queued">0</strong></summary><div id="playback-queue-list" class="playback-queue-list">No queued calls</div></details>
+          <output id="playback-missed" class="playback-missed" role="status" aria-live="polite" hidden></output>
+          <div id="playback-status" class="playback-status">Checking access</div><div id="playback-progress" class="playback-progress" aria-hidden="true"><span id="playback-progress-glow" class="playback-progress-glow"></span></div>
         </section>
       </div>
     </div>
-    <main id="content" class="content" aria-live="polite" aria-busy="true">
-      <div class="loading" role="status">Loading</div>
-    </main>
+    <main id="content" class="content" aria-live="polite" aria-busy="true"><div class="loading" role="status">Loading</div></main>
   </div>
-  <section id="mobile-listener-shell" class="mobile-listener-shell" data-listener-view="listen" hidden
-    aria-label="Mobile call listener">
-    <header class="mobile-listener-header">
-      <div>
-        <div class="mobile-listener-brand">sdrtrunk-vce</div>
-        <h1 id="mobile-listener-title">Listen</h1>
-      </div>
-      <div class="mobile-listener-actions">
-        <button type="button" id="mobile-theme-toggle" class="mobile-listener-theme" aria-pressed="false"
-          aria-label="Use dark mobile theme">Dark</button>
-      </div>
-    </header>
-    <main class="mobile-listener-main">
-      <div id="mobile-playback-slot"></div>
-    </main>
-    <nav class="mobile-listener-nav" aria-label="Listener views">
-      <button type="button" data-listener-view="listen" aria-pressed="true">Listen</button>
-      <button type="button" data-listener-view="scan-lists" aria-pressed="false">
-        Scan Lists <span id="mobile-listener-scan-count">0</span>
-      </button>
-      <button type="button" data-listener-view="queue" aria-pressed="false">
-        Queue <span id="mobile-listener-queue-count">0</span>
-      </button>
-    </nav>
-  </section>
-  <script src="/assets/web-call-player.js?v=10"></script>
+  <script src="/assets/web-call-player.js?v=11"></script>
   <script src="/assets/core/page-lifecycle.js?v=1"></script>
   <script src="/assets/features/systems-directory.js?v=2"></script>
-  <script src="/assets/app.js?v=103"></script>
+  <script src="/assets/app.js?v=104"></script>
 </body>
 </html>

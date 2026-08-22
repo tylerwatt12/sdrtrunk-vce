@@ -135,6 +135,36 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
     {
     }
 
+    /** Worker-side representation of the metadata snapshot copied into a preallocated ingress cell. */
+    private record MetadataObservation(ChannelMetadata metadata, ChannelMetadataField field, long frequency,
+                                       Integer timeslot, State state,
+                                       DecoderTypeConfigurationIdentifier decoder, Identifier<?> source,
+                                       List<Alias> sourceAliases, Identifier<?> talkerAlias, Identifier<?> target,
+                                       List<Alias> targetAliases, Identifier<?> encryption)
+    {
+        private static MetadataObservation captureOnWorker(ChannelMetadata metadata, ChannelMetadataField field)
+        {
+            FrequencyConfigurationIdentifier frequency = metadata.getFrequencyConfigurationIdentifier();
+            ChannelStateIdentifier state = metadata.getChannelStateIdentifier();
+            return new MetadataObservation(metadata, field,
+                frequency != null && frequency.getValue() != null ? frequency.getValue() : 0L,
+                metadata.hasTimeslot() ? metadata.getTimeslot() : null,
+                state != null ? state.getValue() : State.IDLE,
+                metadata.getDecoderTypeConfigurationIdentifier(), metadata.getFromIdentifier(),
+                list(metadata.getFromIdentifierAliases()), metadata.getTalkerAliasIdentifier(),
+                metadata.getToIdentifier(), list(metadata.getToIdentifierAliases()),
+                metadata.getEncryptionIdentifier());
+        }
+
+        private static MetadataObservation from(ChannelActivityIngressQueue.Entry entry)
+        {
+            return new MetadataObservation(entry.metadata(), entry.metadataField(), entry.metadataFrequency(),
+                entry.metadataTimeslot(), entry.metadataState(), entry.metadataDecoder(), entry.metadataSource(),
+                list(entry.metadataSourceAliases()), entry.metadataTalkerAlias(), entry.metadataTarget(),
+                list(entry.metadataTargetAliases()), entry.metadataEncryption());
+        }
+    }
+
     private record SiteIdentity(Integer wacn, Integer system, Integer rfss, Integer site, Integer nac)
     {
         private boolean hasAny()
@@ -214,9 +244,22 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
             return false;
         }
 
-        boolean accepted = mIngress.offer(operation, isLifecycleOperation(operation), first, second,
-            third, fourth, fifth, sixth, value);
+        return recordOffer(operation, mIngress.offer(operation, isLifecycleOperation(operation), first, second,
+            third, fourth, fifth, sixth, value));
+    }
 
+    private boolean offerMetadata(ChannelMetadata metadata, ChannelMetadataField field)
+    {
+        if(mClosed)
+        {
+            return false;
+        }
+
+        return recordOffer(METADATA_UPDATED, mIngress.offerMetadata(METADATA_UPDATED, metadata, field));
+    }
+
+    private boolean recordOffer(int operation, boolean accepted)
+    {
         if(accepted)
         {
             mAcceptedIngressCount.incrementAndGet();
@@ -645,17 +688,17 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
 
         if(channelMetadata != null)
         {
-            offer(METADATA_UPDATED, channelMetadata, channelMetadataField, null, null, null, null, 0);
+            offerMetadata(channelMetadata, channelMetadataField);
         }
     }
 
-    private void processMetadataUpdated(ChannelMetadata channelMetadata)
+    private void processMetadataUpdated(MetadataObservation observation)
     {
-        ChannelActivityRow row = mMetadataRows.get(channelMetadata);
+        ChannelActivityRow row = observation != null ? mMetadataRows.get(observation.metadata()) : null;
 
         if(row != null)
         {
-            updateFromMetadata(row, channelMetadata, row.getChannel());
+            updateFromMetadata(row, observation, row.getChannel());
             mConventionalTable.refresh(row);
         }
     }
@@ -1119,12 +1162,24 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
             return;
         }
 
-        row.setFrequency(getFrequency(metadata, channel));
-        row.setTimeslot(metadata.hasTimeslot() ? metadata.getTimeslot() : null);
+        updateFromMetadata(row, MetadataObservation.captureOnWorker(metadata, null), channel);
+    }
 
-        ChannelStateIdentifier stateIdentifier = metadata.getChannelStateIdentifier();
-        State state = stateIdentifier != null ? stateIdentifier.getValue() : State.IDLE;
-        boolean newCall = row.getState() == State.IDLE && state != State.IDLE;
+    private void updateFromMetadata(ChannelActivityRow row, MetadataObservation observation, Channel channel)
+    {
+        if(observation == null)
+        {
+            return;
+        }
+
+        row.setFrequency(observation.frequency() > 0 ? observation.frequency() : getConfiguredFrequency(channel));
+        row.setTimeslot(observation.timeslot());
+
+        State state = observation.state();
+        Identifier<?> metadataTarget = observation.target();
+        boolean targetChanged = state != State.IDLE && metadataTarget != null && row.getTarget() != null &&
+            !metadataTarget.equals(row.getTarget());
+        boolean newCall = state != State.IDLE && (row.getState() == State.IDLE || targetChanged);
         boolean wasEncrypted = !newCall && row.getState() == State.ENCRYPTED;
 
         if(newCall)
@@ -1133,29 +1188,76 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
             row.clearVoiceQuality();
         }
 
-        DecoderTypeConfigurationIdentifier decoderIdentifier = metadata.getDecoderTypeConfigurationIdentifier();
+        DecoderTypeConfigurationIdentifier decoderIdentifier = observation.decoder();
         row.setDecoder(decoderIdentifier != null ? decoderIdentifier.toString() : getDecoder(channel));
 
-        row.setSource(metadata.getFromIdentifier());
-        row.setSourceAliases(metadata.getFromIdentifierAliases());
-        row.setTalkerAlias(metadata.getTalkerAliasIdentifier());
-        row.setTarget(metadata.getToIdentifier());
-        row.setTargetAliases(metadata.getToIdentifierAliases());
         State displayState = getStickyTrafficState(row, state, wasEncrypted);
-        String encryptionDetails = VoiceEncryptionDisplay.format(metadata.getEncryptionIdentifier());
+        boolean preserveIdleDetails = displayState == State.IDLE && retainIdleCallDetails();
+        ChannelMetadataField field = observation.field();
+        boolean fullObservation = field == null || field == ChannelMetadataField.DECODER_STATE;
+        boolean sourceObserved = fullObservation || field == ChannelMetadataField.USER_FROM;
+        boolean targetObserved = fullObservation || field == ChannelMetadataField.USER_TO;
+        boolean encryptionObserved = fullObservation || field == ChannelMetadataField.USER_ENCRYPTION;
+        Identifier<?> source = observation.source();
+        Identifier<?> target = metadataTarget;
+        Identifier<?> talkerAlias = observation.talkerAlias();
+        boolean sourceMatches = source == null || row.getSource() == null || source.equals(row.getSource());
+        boolean targetMatches = target == null || row.getTarget() == null || target.equals(row.getTarget());
+        boolean sourceChanged = sourceObserved && source != null && row.getSource() != null &&
+            !source.equals(row.getSource());
 
-        if(encryptionDetails != null)
+        //Null identifier updates are normal call teardown.  They clear an idle row only when retention is disabled.
+        //Non-null observations may still complete a retained row after IDLE, but cannot replace a different retained
+        //source or target.
+        if(sourceObserved && source != null && (!preserveIdleDetails || sourceMatches))
+        {
+            row.setSource(source);
+            List<Alias> sourceAliases = resolveAliases(source, observation.sourceAliases(), channel);
+
+            if(!preserveIdleDetails || !sourceAliases.isEmpty() || row.getSourceAliases().isEmpty())
+            {
+                row.setSourceAliases(sourceAliases);
+            }
+
+            if(sourceChanged)
+            {
+                //A talker alias belongs to a source radio.  Do not carry the prior radio's alias onto a new source.
+                row.setTalkerAlias(null);
+            }
+        }
+
+        if(sourceObserved && talkerAlias != null && !sourceChanged &&
+            (!preserveIdleDetails || sourceMatches))
+        {
+            row.setTalkerAlias(talkerAlias);
+        }
+
+        if(targetObserved && target != null && (!preserveIdleDetails || targetMatches))
+        {
+            row.setTarget(target);
+            List<Alias> targetAliases = resolveAliases(target, observation.targetAliases(), channel);
+
+            if(!preserveIdleDetails || !targetAliases.isEmpty() || row.getTargetAliases().isEmpty())
+            {
+                row.setTargetAliases(targetAliases);
+            }
+        }
+
+        String encryptionDetails = VoiceEncryptionDisplay.format(observation.encryption());
+
+        if(encryptionObserved && encryptionDetails != null &&
+            (!preserveIdleDetails || sourceMatches && targetMatches))
         {
             row.setEncryptionDetails(encryptionDetails);
         }
-        else if(displayState == State.ENCRYPTED)
+        else if(encryptionObserved && !preserveIdleDetails && displayState == State.ENCRYPTED)
         {
             if(row.getEncryptionDetails() == null)
             {
                 row.setEncryptionDetails(VoiceEncryptionDisplay.ENCRYPTED);
             }
         }
-        else
+        else if(encryptionObserved && !preserveIdleDetails && newCall)
         {
             row.setEncryptionDetails(null);
         }
@@ -1178,6 +1280,12 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
                 row.clearCallDetails();
             }
         }
+    }
+
+    private List<Alias> resolveAliases(Identifier<?> identifier, List<Alias> observedAliases, Channel channel)
+    {
+        List<Alias> resolved = getAliases(identifier, null, channel);
+        return !resolved.isEmpty() ? resolved : list(observedAliases);
     }
 
     private boolean isTargetChanged(ChannelActivityRow row, IdentifierCollection identifiers)
@@ -2164,7 +2272,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
             case CHANNEL_STOPPED -> processChannelStopped((Channel)entry.first());
             case CONTROL_QUALITY -> processControlChannelQuality((ControlChannelQualitySnapshot)entry.first());
             case AUDIO_CALL -> processAudioCallEvent((Channel)entry.first(), (AudioCallEvent)entry.second());
-            case METADATA_UPDATED -> processMetadataUpdated((ChannelMetadata)entry.first());
+            case METADATA_UPDATED -> processMetadataUpdated(MetadataObservation.from(entry));
             case P25_CURRENT_CONTROL -> processP25CurrentControl((Channel)entry.first(), entry.value());
             case SITE_METADATA -> processSiteMetadata((SiteMetadataEvent)entry.first());
             case PROTOCOL_SITE_METADATA -> processProtocolSiteMetadata((ProtocolSiteMetadataEvent)entry.first());

@@ -16,9 +16,15 @@ const DECODE_DEGRADED_MINIMUM_PERCENT = 75;
 const VOICE_QUALITY_WARMUP_FRAMES = 50;
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
 const THEME_STORAGE_KEY = 'sdrtrunk_theme';
-const MOBILE_THEME_STORAGE_KEY = 'sdrtrunk_mobile_theme';
-const themePreferences = { desktop: null, mobile: null };
-const COMPACT_LISTENER_MEDIA = '(max-width: 760px), (pointer: coarse) and (max-width: 1024px)';
+const LIVE_DETAIL_DEFAULT_MATCHING_ROW_LIMIT = 200;
+const LIVE_DETAIL_CAPTURE_MULTIPLIER = 25;
+const LIVE_DETAIL_MINIMUM_CAPTURE = 2000;
+const LIVE_DETAIL_MAXIMUM_CAPTURE = 10000;
+const LIVE_DETAIL_REFRESH_INTERVAL_MILLISECONDS = 125;
+const RADIO_REFERENCE_DIRECTORY_TIMEOUT_MILLISECONDS = 15_000;
+const RADIO_REFERENCE_DETAIL_TIMEOUT_MILLISECONDS = 195_000;
+const RADIO_REFERENCE_MUTATION_TIMEOUT_MILLISECONDS = 240_000;
+let themePreference = null;
 const ALIAS_LIST_FAMILY_LABELS = Object.freeze({
   P25: 'P25', DMR: 'DMR', NXDN: 'NXDN', NBFM: 'Conventional Analog (AM/NBFM)'
 });
@@ -29,7 +35,6 @@ const ACCESS_CAPABILITIES = Object.freeze({
   TUNER_SPECTRUM: 'tuner-spectrum',
   SYSTEMS: 'systems',
   CONVENTIONAL: 'conventional',
-  ALIASES: 'aliases',
   CREDITS: 'credits',
   CSV_EXPORT: 'csv-export',
   CALL_AUDIO: 'call-audio',
@@ -43,6 +48,7 @@ const ACCESS_CAPABILITIES = Object.freeze({
 const VIEW_ACCESS_CAPABILITY = Object.freeze({
   dashboard: ACCESS_CAPABILITIES.DASHBOARD,
   live: ACCESS_CAPABILITIES.LIVE,
+  scanner: ACCESS_CAPABILITIES.CALL_AUDIO,
   'tuner-spectrum': ACCESS_CAPABILITIES.TUNER_SPECTRUM,
   systems: ACCESS_CAPABILITIES.SYSTEMS,
   system: ACCESS_CAPABILITIES.SYSTEMS,
@@ -51,7 +57,7 @@ const VIEW_ACCESS_CAPABILITY = Object.freeze({
   site: ACCESS_CAPABILITIES.SYSTEMS,
   conventional: ACCESS_CAPABILITIES.CONVENTIONAL,
   'conventional-detail': ACCESS_CAPABILITIES.CONVENTIONAL,
-  aliases: ACCESS_CAPABILITIES.ALIASES,
+  aliases: ACCESS_CAPABILITIES.ADMIN_ALIASES,
   credits: ACCESS_CAPABILITIES.CREDITS
 });
 const SIGNAL_RANGES = Object.freeze([
@@ -235,6 +241,7 @@ const ALIAS_CATALOG_DEFAULT_ENRICHMENT_COLUMNS = Object.freeze([
   'encrypted-evidence', 'grants', 'joins', 'emergency', 'logout', 'relationships', 'last-evidence'
 ]);
 let serviceStatus = null;
+let liveDisplaySettings = null;
 let webClientReloadAttempted = false;
 let tableWidthPreferences = readTableWidthPreferences();
 let activeReadOnlyModal = null;
@@ -246,7 +253,6 @@ let accessSessionAvailable = false;
 let notifyConfirmedAccessRefresh = () => {};
 let playbackScanListRequest = 0;
 let playbackScanListLoading = false;
-let compactListenerMedia = null;
 
 if (tableOnly) {
   document.body.classList.add('table-only');
@@ -373,62 +379,49 @@ function writeTableWidthPreferences() {
   document.cookie = `${TABLE_WIDTH_COOKIE}=${encoded}; Max-Age=31536000; Path=/; SameSite=Lax`;
 }
 
-function themeMode() {
-  return document.body.dataset.listenerShell === 'mobile' ? 'mobile' : 'desktop';
-}
-
-function storedTheme(mode) {
-  if (themePreferences[mode]) return themePreferences[mode];
+function storedTheme() {
+  if (themePreference) return themePreference;
   try {
-    const value = window.localStorage.getItem(mode === 'mobile' ? MOBILE_THEME_STORAGE_KEY : THEME_STORAGE_KEY);
-    themePreferences[mode] = value === 'dark' ? 'dark' : 'light';
+    const value = window.localStorage.getItem(THEME_STORAGE_KEY);
+    themePreference = value === 'dark' ? 'dark' : 'light';
   } catch (_) {
-    themePreferences[mode] = 'light';
+    themePreference = 'light';
   }
-  return themePreferences[mode];
+  return themePreference;
 }
 
-function updateThemeButton(toggle, theme, label) {
+function updateThemeButton(toggle, theme) {
   if (!toggle) return;
   const dark = theme === 'dark';
-  toggle.textContent = dark ? 'Light' : 'Dark';
   toggle.setAttribute('aria-pressed', String(dark));
-  toggle.setAttribute('aria-label', `Use ${dark ? 'light' : 'dark'} ${label} theme`);
-  toggle.title = `Use ${dark ? 'light' : 'dark'} ${label} theme`;
+  toggle.setAttribute('aria-label', `Use ${dark ? 'light' : 'dark'} theme`);
+  toggle.title = `Use ${dark ? 'light' : 'dark'} theme`;
+  const use = toggle.querySelector('use');
+  if (use) use.setAttribute('href', dark ? '#icon-sun' : '#icon-moon');
 }
 
-function updateThemeToggles() {
-  updateThemeButton(document.getElementById('theme-toggle'), storedTheme('desktop'), 'desktop');
-  updateThemeButton(document.getElementById('mobile-theme-toggle'), storedTheme('mobile'), 'mobile');
-}
-
-function applyTheme(mode) {
-  const theme = storedTheme(mode);
+function applyTheme() {
+  const theme = storedTheme();
   if (theme === 'dark') document.documentElement.dataset.theme = 'dark';
   else document.documentElement.removeAttribute('data-theme');
-  const shell = document.getElementById('mobile-listener-shell');
-  if (shell) shell.dataset.theme = mode === 'mobile' ? theme : storedTheme('mobile');
-  updateThemeToggles();
+  updateThemeButton(document.getElementById('theme-toggle'), theme);
 }
 
-function setTheme(theme, mode = themeMode()) {
+function setTheme(theme) {
   const selected = theme === 'dark' ? 'dark' : 'light';
-  themePreferences[mode] = selected;
+  themePreference = selected;
   try {
-    window.localStorage.setItem(mode === 'mobile' ? MOBILE_THEME_STORAGE_KEY : THEME_STORAGE_KEY,
-      selected);
+    window.localStorage.setItem(THEME_STORAGE_KEY, selected);
   } catch (error) {
     // Browser storage can be disabled; the active page theme still changes.
   }
-  applyTheme(mode);
+  applyTheme();
 }
 
 function initializeThemeToggle() {
-  updateThemeToggles();
+  applyTheme();
   document.getElementById('theme-toggle')?.addEventListener('click', () =>
-    setTheme(storedTheme('desktop') === 'dark' ? 'light' : 'dark', 'desktop'));
-  document.getElementById('mobile-theme-toggle')?.addEventListener('click', () =>
-    setTheme(storedTheme('mobile') === 'dark' ? 'light' : 'dark', 'mobile'));
+    setTheme(storedTheme() === 'dark' ? 'light' : 'dark'));
 }
 
 function accessTierFromWire(value) {
@@ -490,6 +483,18 @@ function viewAccessCapability(view) {
 }
 
 function viewAllowed(view) {
+  if (view === 'configuration') {
+    return accessSession.tier === 'ADMIN' && capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_ALIASES);
+  }
+  if (view === 'hardware') {
+    return accessSession.tier === 'ADMIN' && capabilityAllowed(ACCESS_CAPABILITIES.TUNER_SPECTRUM);
+  }
+  if (view === 'aliases') {
+    return accessSession.tier === 'ADMIN' && capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_ALIASES);
+  }
+  if (view === 'tuner-spectrum') {
+    return accessSession.tier === 'ADMIN' && capabilityAllowed(ACCESS_CAPABILITIES.TUNER_SPECTRUM);
+  }
   if (view === 'admin') {
     return accessSession.tier === 'ADMIN' &&
       (capabilityAllowed(ACCESS_CAPABILITIES.RECEIVER_HEALTH) ||
@@ -516,6 +521,11 @@ function updateNavigationAccess() {
     const allowed = viewAllowed(link.dataset.view);
     link.hidden = !allowed;
     link.setAttribute('aria-hidden', String(!allowed));
+  });
+  document.querySelectorAll('.primary-nav .nav-group').forEach((group) => {
+    const visibleLinks = [...group.querySelectorAll('a[data-view]')].some((link) => !link.hidden);
+    group.hidden = !visibleLinks;
+    group.setAttribute('aria-hidden', String(!visibleLinks));
   });
 }
 
@@ -623,6 +633,7 @@ function showLoginModal(returnFocusSelector = '#auth-action') {
       if (!accessSession.authenticated) throw new Error('The receiver did not create a session.');
       modal.close();
       void receiverHealthController.refresh();
+      await refreshLiveDisplaySettings(false);
       await render();
     } catch (error) {
       liveMultiplexer.ensureConnected();
@@ -658,6 +669,7 @@ async function signOut() {
     if (action) action.disabled = false;
     return;
   }
+  await refreshLiveDisplaySettings(false);
   await render();
 }
 
@@ -667,6 +679,40 @@ function initializeAccessControls() {
   action.addEventListener('click', () => {
     if (accessSession.authenticated) signOut();
     else showLoginModal();
+  });
+}
+
+function setNavigationOpen(open, returnFocus = false) {
+  const navigation = document.getElementById('primary-navigation');
+  const toggle = document.getElementById('navigation-toggle');
+  const backdrop = document.getElementById('navigation-backdrop');
+  if (!navigation || !toggle || !backdrop) return;
+  const next = open === true;
+  document.body.classList.toggle('navigation-open', next);
+  toggle.setAttribute('aria-expanded', String(next));
+  toggle.setAttribute('aria-label', next ? 'Close navigation' : 'Open navigation');
+  backdrop.hidden = !next;
+  if (!next && returnFocus) toggle.focus();
+}
+
+function initializeNavigation() {
+  const navigation = document.getElementById('primary-navigation');
+  const toggle = document.getElementById('navigation-toggle');
+  const backdrop = document.getElementById('navigation-backdrop');
+  if (!navigation || !toggle || !backdrop) return;
+  toggle.addEventListener('click', () => setNavigationOpen(!document.body.classList.contains('navigation-open')));
+  backdrop.addEventListener('click', () => setNavigationOpen(false, true));
+  navigation.addEventListener('click', (event) => {
+    if (event.target.closest('a[href]')) setNavigationOpen(false);
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && document.body.classList.contains('navigation-open')) {
+      event.preventDefault();
+      setNavigationOpen(false, true);
+    }
+  });
+  window.matchMedia('(min-width: 981px)').addEventListener('change', (event) => {
+    if (event.matches) setNavigationOpen(false);
   });
 }
 
@@ -1179,7 +1225,7 @@ function aliasListLink(name, id) {
   const label = String(name || '').trim();
   const aliasListId = Number(id);
   if (!label || !Number.isInteger(aliasListId) || aliasListId <= 0 ||
-      !capabilityAllowed(ACCESS_CAPABILITIES.ALIASES)) return label;
+      !aliasAdminAllowed()) return label;
   return anchor(label, href('aliases', { list: aliasListId }));
 }
 
@@ -1469,7 +1515,8 @@ function detailedHistoryAvailable() {
 }
 
 function databaseLoggingNotice(view) {
-  if (tableOnly || ['live', 'admin', 'credits'].includes(view)) return null;
+  if (tableOnly || ['live', 'scanner', 'configuration', 'hardware', 'tuner-spectrum', 'admin', 'credits']
+    .includes(view)) return null;
   if (accessSessionAvailable && !capabilityAllowed(ACCESS_CAPABILITIES.DASHBOARD)) return null;
   const logging = statsLoggingState();
   if (!logging.available) return node('div', 'logging-notice warning',
@@ -2290,50 +2337,6 @@ function aliasDetailMetricBand(row, definitions) {
     [label, row[field] ?? 0, aliasMetricValue(row, field)]), true);
 }
 
-function aliasScopeBreakdownColumns() {
-  const count = (id, label, field, group, fullLabel = label) => ({
-    id, label, group, fullLabel, render: (row) => aliasMetricValue(row, field), className: 'numeric',
-    sortValue: (row) => row[field] === null || row[field] === undefined ? -1 : Number(row[field])
-  });
-  return [
-    { id: 'scope', label: 'Scope', group: 'Scope', render: (row) => availableValue(row.scope_label),
-      className: 'alias-cell' },
-    { id: 'topology', label: 'Topology', group: 'Scope', render: (row) => availableValue(row.topology) },
-    { id: 'protocol', label: 'Protocol', group: 'Scope', render: (row) => availableValue(row.protocol) },
-    { id: 'system', label: 'System', group: 'Scope', render: (row) => availableValue(row.system_name),
-      className: 'alias-cell' },
-    { id: 'site', label: 'Site / Channel', group: 'Scope', render: (row) =>
-      availableValue(row.site_name), className: 'alias-cell' },
-    { id: 'evidence-state', label: 'Evidence', group: 'Scope', render: (row) =>
-      aliasMetricsState(row.metrics_state) },
-    count('calls', 'Calls', 'call_count', 'Call Activity',
-      'Call observations associated with this alias in this scope.'),
-    count('recorded', 'Recorded', 'recorded_count', 'Call Activity'),
-    count('streamed', 'Sent', 'streamed_count', 'Call Activity'),
-    count('encrypted-evidence', 'Enc Obs.', 'encrypted_evidence_count', 'Call Activity',
-      'Encrypted observations, not necessarily unique completed calls.'),
-    count('grants', 'Grants', 'grant_count', 'Signaling / Relationships'),
-    count('joins', 'Join', 'join_count', 'Signaling / Relationships'),
-    count('emergency', 'Emergency', 'emergency_count', 'Signaling / Relationships'),
-    count('register', 'Register', 'register_count', 'Signaling / Relationships'),
-    count('logout', 'Logout', 'logout_count', 'Signaling / Relationships',
-      'Unit deregistration or logout observations, not talkgroup leaves.'),
-    count('denial', 'Denial', 'denial_count', 'Signaling / Relationships'),
-    count('data', 'Data', 'data_count', 'Signaling / Relationships'),
-    count('other-signaling', 'Other', 'other_signaling_count', 'Signaling / Relationships'),
-    count('relationships', 'Relationships', 'relationship_count', 'Signaling / Relationships'),
-    count('join-relationships', 'Join Rel.', 'join_relationship_count', 'Signaling / Relationships'),
-    count('current-affiliations', 'Current Affil.', 'current_affiliation_count',
-      'Signaling / Relationships'),
-    { id: 'first-evidence', label: 'First Evidence', group: 'Signaling / Relationships',
-      render: (row) => aliasMetricTime(row, 'first_evidence_ms'),
-      sortValue: (row) => Number(row.first_evidence_ms || 0) },
-    { id: 'last-evidence', label: 'Last Evidence', group: 'Signaling / Relationships',
-      render: (row) => aliasMetricTime(row, 'last_evidence_ms'),
-      sortValue: (row) => Number(row.last_evidence_ms || 0) }
-  ];
-}
-
 function aliasScopeMetricSummary(row, definitions, emptyText) {
   const values = definitions.filter(([, field]) => Number(row[field] || 0) > 0)
     .map(([label, field]) => badge(`${label} ${aliasMetricValue(row, field)}`));
@@ -2367,89 +2370,6 @@ function aliasEditorScopeBreakdownColumns() {
   ];
 }
 
-function aliasDetailContent(alias, breakdown) {
-  const wrapper = node('div', 'alias-detail');
-  wrapper.append(section('Configuration', keyValues([
-    ['Alias List', aliasListLink(alias.alias_list_name, alias.alias_list_id)],
-    ['Family', aliasListFamilyLabel(alias)],
-    ['Alias', availableValue(alias.name)],
-    ['Description', availableValue(alias.description)],
-    ['Group', availableValue(alias.group)],
-    ['Matcher', availableValue(alias.matcher_label || alias.matcher_type)],
-    ['Identifier', availableValue(alias.identifier_display)],
-    ['Color', aliasColorValue(alias)],
-    ['Icon', availableValue(alias.icon_name)],
-    ['Behavior', aliasBehavior(alias)]
-  ])));
-
-  wrapper.append(section('Raw Matcher Values', keyValues([
-    ['Matcher Type', availableValue(alias.matcher_type)],
-    ['Identity Type', availableValue(alias.identity_type)],
-    ['Protocol', availableValue(alias.protocol)],
-    ['Exact', alias.exact === null || alias.exact === undefined ? '—' : yesNoKnown(alias.exact)],
-    ['Ranged', alias.ranged === null || alias.ranged === undefined ? '—' : yesNoKnown(alias.ranged)],
-    ['Value', aliasRawValue(alias.value)],
-    ['Minimum', aliasRawValue(alias.min_value)],
-    ['Maximum', aliasRawValue(alias.max_value)],
-    ['Text Value', availableValue(alias.text_value)],
-    ['Numeric Value', aliasRawValue(alias.numeric_value)],
-    ['Tone Sequence', availableValue(alias.tone_sequence)],
-    ['Stream as Talkgroup', aliasRawValue(alias.stream_as_talkgroup)]
-  ])));
-
-  const destinations = node('ul', 'alias-destination-list');
-  const channels = Array.isArray(alias.broadcast_channels) ? alias.broadcast_channels : [];
-  channels.forEach((channel) => destinations.append(node('li', '', channel)));
-  wrapper.append(section('Broadcast Destinations', channels.length ? destinations :
-    node('div', 'empty', 'No broadcast destinations configured')));
-
-  wrapper.append(section('Call Activity', aliasDetailMetricBand(alias, [
-    ['Calls', 'call_count'], ['Recorded', 'recorded_count'], ['Sent', 'streamed_count'],
-    ['Enc Obs.', 'encrypted_evidence_count']
-  ])));
-  wrapper.append(section('Signaling / Relationship Evidence', fragment(
-    aliasDetailMetricBand(alias, [
-      ['Grants', 'grant_count'], ['Join', 'join_count'], ['Emergency', 'emergency_count'],
-      ['Register', 'register_count'], ['Logout', 'logout_count'], ['Denial', 'denial_count'],
-      ['Data', 'data_count'], ['Other', 'other_signaling_count'],
-      ['Relationships', 'relationship_count'], ['Join Relationships', 'join_relationship_count'],
-      ['Current Affiliations', 'current_affiliation_count'], ['Covered Scopes', 'coverage_scope_count'],
-      ['Observed Scopes', 'observed_scope_count']
-    ]),
-    keyValues([
-      ['Collection State', aliasMetricsState(alias.metrics_state)],
-      ['First Evidence', aliasMetricTime(alias, 'first_evidence_ms')],
-      ['Last Evidence', aliasMetricTime(alias, 'last_evidence_ms')]
-    ]),
-    node('p', 'metric-meaning-note',
-      'Calls are observations. Logout means unit deregistration, not leaving a talkgroup. ' +
-      'An em dash means unavailable or not collected; 0 means coverage was collected and the count was zero.')
-  )));
-
-  const scopeRows = Array.isArray(breakdown) ? breakdown : [];
-  wrapper.append(section('Scope Breakdown', table(scopeRows, aliasScopeBreakdownColumns(),
-    'No compatible monitored scopes', { type: 'alias-scope-breakdown' })));
-  return wrapper;
-}
-
-async function renderAliasDetailModal(id) {
-  const modal = openReadOnlyModal(`Alias ${identifierNumber(id)}`, node('div', 'loading', 'Loading alias details'), {
-    id: `alias-${id}`,
-    returnFocusSelector: `.alias-detail-link[data-alias-id="${id}"]`
-  });
-  if (!modal) return;
-  try {
-    const response = await api(`/api/v1/aliases/${encodeURIComponent(String(id))}`);
-    if (activeReadOnlyModal !== modal.state || Number(route.get('alias')) !== id) return;
-    const alias = response || {};
-    modal.dialog.querySelector('.modal-header h2').textContent = String(alias.name || '').trim() ||
-      `Alias ${identifierNumber(id)}`;
-    modal.content.replaceChildren(aliasDetailContent(alias, response.breakdown || []));
-  } catch (error) {
-    if (activeReadOnlyModal === modal.state) modal.content.replaceChildren(node('div', 'error', error.message));
-  }
-}
-
 function aliasAdminAllowed() {
   return capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_ALIASES);
 }
@@ -2470,16 +2390,14 @@ function mergedAliasLists(publicRows, adminRows = []) {
       { numeric: true, sensitivity: 'base' }));
 }
 
-function aliasListRail(lists, selectedList, admin) {
+function aliasListRail(lists, selectedList) {
   const rail = node('aside', 'alias-list-rail');
   const header = node('div', 'alias-list-rail-header');
   header.append(node('strong', '', 'Alias Lists'));
-  if (admin) {
-    const create = node('button', 'button alias-list-create', 'New');
-    create.type = 'button';
-    create.addEventListener('click', () => openAliasListCreateModal());
-    header.append(create);
-  }
+  const create = node('button', 'button alias-list-create', 'New');
+  create.type = 'button';
+  create.addEventListener('click', () => openAliasListCreateModal());
+  header.append(create);
   const search = node('input', 'alias-list-search');
   search.type = 'search';
   search.placeholder = 'Find a list';
@@ -2530,12 +2448,10 @@ function aliasListRail(lists, selectedList, admin) {
     if (select.value) window.location.assign(href('aliases', { list: select.value, aliasTab: 'configure' }));
   });
   mobile.append(select);
-  if (admin) {
-    const create = node('button', 'button secondary alias-list-mobile-create', 'New Alias List');
-    create.type = 'button';
-    create.addEventListener('click', () => openAliasListCreateModal());
-    mobile.append(create);
-  }
+  const mobileCreate = node('button', 'button secondary alias-list-mobile-create', 'New Alias List');
+  mobileCreate.type = 'button';
+  mobileCreate.addEventListener('click', () => openAliasListCreateModal());
+  mobile.append(mobileCreate);
   rail.append(header, search, list, mobile);
   return rail;
 }
@@ -2676,35 +2592,32 @@ function aliasEditorFilterToolbar(listResponse, options = null) {
   return form;
 }
 
-function aliasEditorBaseColumns(admin, rows, onSelectionChange) {
-  const columns = [];
-  if (admin) {
-    columns.push({ id: 'select', label: 'Select', group: 'Selection', className: 'alias-select-cell',
-      render: (row) => {
-        const id = Number(row.alias_id);
-        const checkbox = node('input', 'alias-row-select');
-        checkbox.type = 'checkbox';
-        checkbox.checked = aliasEditorSelection.has(id);
-        checkbox.setAttribute('aria-label', `Select ${row.name || `alias ${id}`}`);
-        checkbox.addEventListener('click', (event) => {
-          const index = rows.findIndex((candidate) => Number(candidate.alias_id) === id);
-          if (event.shiftKey && aliasEditorLastSelectionIndex !== null) {
-            const start = Math.min(index, aliasEditorLastSelectionIndex);
-            const end = Math.max(index, aliasEditorLastSelectionIndex);
-            const select = checkbox.checked;
-            rows.slice(start, end + 1).forEach((candidate) => {
-              const candidateId = Number(candidate.alias_id);
-              if (select) aliasEditorSelection.add(candidateId);
-              else aliasEditorSelection.delete(candidateId);
-            });
-          } else if (checkbox.checked) aliasEditorSelection.add(id);
-          else aliasEditorSelection.delete(id);
-          aliasEditorLastSelectionIndex = index;
-          onSelectionChange();
-        });
-        return checkbox;
-      }, sortValue: (row) => aliasEditorSelection.has(Number(row.alias_id)) });
-  }
+function aliasEditorBaseColumns(rows, onSelectionChange) {
+  const columns = [{ id: 'select', label: 'Select', group: 'Selection', className: 'alias-select-cell',
+    render: (row) => {
+      const id = Number(row.alias_id);
+      const checkbox = node('input', 'alias-row-select');
+      checkbox.type = 'checkbox';
+      checkbox.checked = aliasEditorSelection.has(id);
+      checkbox.setAttribute('aria-label', `Select ${row.name || `alias ${id}`}`);
+      checkbox.addEventListener('click', (event) => {
+        const index = rows.findIndex((candidate) => Number(candidate.alias_id) === id);
+        if (event.shiftKey && aliasEditorLastSelectionIndex !== null) {
+          const start = Math.min(index, aliasEditorLastSelectionIndex);
+          const end = Math.max(index, aliasEditorLastSelectionIndex);
+          const select = checkbox.checked;
+          rows.slice(start, end + 1).forEach((candidate) => {
+            const candidateId = Number(candidate.alias_id);
+            if (select) aliasEditorSelection.add(candidateId);
+            else aliasEditorSelection.delete(candidateId);
+          });
+        } else if (checkbox.checked) aliasEditorSelection.add(id);
+        else aliasEditorSelection.delete(id);
+        aliasEditorLastSelectionIndex = index;
+        onSelectionChange();
+      });
+      return checkbox;
+    }, sortValue: (row) => aliasEditorSelection.has(Number(row.alias_id)) }];
   columns.push(
     { id: 'alias', label: 'Alias', group: 'Configuration', render: aliasDetailLink,
       className: 'alias-cell', sort: 'name', sortValue: (row) => row.name || '' },
@@ -2722,8 +2635,8 @@ function aliasEditorBaseColumns(admin, rows, onSelectionChange) {
   return columns;
 }
 
-function aliasEditorColumns(view, admin, rows, onSelectionChange, selectedCustom) {
-  const base = aliasEditorBaseColumns(admin, rows, onSelectionChange);
+function aliasEditorColumns(view, rows, onSelectionChange, selectedCustom) {
+  const base = aliasEditorBaseColumns(rows, onSelectionChange);
   const enrichment = aliasCatalogEnrichmentColumns();
   if (view === 'calls') {
     return [...base, ...enrichment.filter((column) =>
@@ -2735,7 +2648,7 @@ function aliasEditorColumns(view, admin, rows, onSelectionChange, selectedCustom
         'current-affiliations', 'evidence-state', 'last-evidence'].includes(column.id))];
   }
   if (view === 'custom') {
-    const selection = admin ? base.filter((column) => column.id === 'select') : [];
+    const selection = base.filter((column) => column.id === 'select');
     const definitions = [...aliasCustomConfigurationColumns(), ...enrichment];
     return [...selection, ...definitions.filter((column) => selectedCustom.has(column.id))];
   }
@@ -2746,7 +2659,7 @@ function aliasEditorColumns(view, admin, rows, onSelectionChange, selectedCustom
 }
 
 function scanListMemberColumns(rows, onSelectionChange) {
-  const columns = aliasEditorBaseColumns(true, rows, onSelectionChange);
+  const columns = aliasEditorBaseColumns(rows, onSelectionChange);
   const aliasIndex = columns.findIndex((column) => column.id === 'alias');
   columns.splice(aliasIndex + 1, 0,
     { id: 'alias-list', label: 'Alias List', group: 'Configuration', render: aliasListCatalogLink,
@@ -2759,18 +2672,16 @@ function scanListMemberColumns(rows, onSelectionChange) {
   return columns;
 }
 
-function aliasEditorEmptyState(lists, admin) {
+function aliasEditorEmptyState(lists) {
   const wrapper = node('section', 'alias-editor-welcome');
   wrapper.append(node('h2', '', lists.length ? 'Select an alias list' : 'No alias lists are configured'),
     node('p', '', lists.length ?
       'Aliases load only after you select a list. This keeps large radio systems responsive.' :
       'Create an alias list to begin organizing talkgroups, radio IDs, and other identifiers.'));
-  if (admin) {
-    const create = node('button', 'button', 'Create Alias List');
-    create.type = 'button';
-    create.addEventListener('click', () => openAliasListCreateModal());
-    wrapper.append(create);
-  }
+  const create = node('button', 'button', 'Create Alias List');
+  create.type = 'button';
+  create.addEventListener('click', () => openAliasListCreateModal());
+  wrapper.append(create);
   return wrapper;
 }
 
@@ -4185,7 +4096,8 @@ async function renderScanListMembers(main, listResponse, scanListCatalog, scanLi
       `${number(scanList.unmatched_alias_list_count || 0)} unknown-talkgroup routes`)
   ].filter(Boolean));
   const summaryActions = node('div', 'alias-list-summary-actions');
-  summaryActions.append(anchor('Back to Scan Lists', href('admin', { tab: 'scan-lists' }), 'button secondary'));
+  summaryActions.append(anchor('Back to Scan Lists', href('configuration', { tab: 'scan-lists' }),
+    'button secondary'));
   summary.append(summaryCopy, summaryActions);
   main.append(summary, aliasEditorFilterToolbar(listResponse, options));
 
@@ -4265,13 +4177,12 @@ async function renderScanListMembers(main, listResponse, scanListCatalog, scanLi
 
 async function renderAliases() {
   const renderContext = captureRenderContext();
-  const admin = aliasAdminAllowed();
+  if (!aliasAdminAllowed()) throw Object.assign(new Error('Administrator access is required.'), { status: 403 });
   const requestedScanListId = !route.get('list') && /^[1-9][0-9]*$/.test(route.get('scanListId') || '') ?
     Number(route.get('scanListId')) : null;
   const publicListsPromise = apiPage('/api/v1/alias-lists');
-  const adminListsPromise = admin ? requestJson('/api/v1/admin/alias-lists', { csrf: false }) :
-    Promise.resolve({ revision: null, alias_lists: [] });
-  const scanListCatalogPromise = admin && requestedScanListId ?
+  const adminListsPromise = requestJson('/api/v1/admin/alias-lists', { csrf: false });
+  const scanListCatalogPromise = requestedScanListId ?
     requestJson('/api/v1/admin/scan-lists', { csrf: false }) :
     Promise.resolve({ revision: null, scan_lists: [] });
   const [listResponse, adminCatalog, scanListCatalog] = await Promise.all([
@@ -4291,40 +4202,39 @@ async function renderAliases() {
       window.history.replaceState({}, '', currentHref());
     } else selectedList = null;
   }
-  const scanListScope = admin && requestedScanListId ?
+  const scanListScope = requestedScanListId ?
     (scanListCatalog.scan_lists || []).find((row) => Number(row.id ?? row.scan_list_id) === requestedScanListId) :
     null;
   aliasEditorContext = {
-    admin, revision: Number(scanListScope ? scanListCatalog.revision : adminCatalog.revision ?? 0),
+    admin: true, revision: Number(scanListScope ? scanListCatalog.revision : adminCatalog.revision ?? 0),
     lists, selectedList, scanListScope, options: null, page: null
   };
 
   const subtitle = scanListScope ?
     `${number(scanListScope.alias_count || 0)} members across all alias lists · administrator editing enabled` :
-    `${number(lists.length)} alias lists · ${admin ? 'administrator editing enabled' : 'read-only'}`;
+    `${number(lists.length)} alias lists · administrator editing enabled`;
   const workspace = node('div', 'alias-editor-workspace');
-  workspace.append(aliasListRail(lists, selectedList, admin));
+  workspace.append(aliasListRail(lists, selectedList));
   const main = node('div', 'alias-editor-main');
   workspace.append(main);
-  if (!beginPage(renderContext,
-    pageHeader(admin ? 'Alias Editor' : 'Alias Catalog', subtitle), workspace)) return;
+  if (!beginPage(renderContext, pageHeader('Alias Editor', subtitle), workspace)) return;
 
   if (scanListScope) {
     await renderScanListMembers(main, listResponse, scanListCatalog, scanListScope, renderContext);
     return;
   }
 
-  if (admin && requestedScanListId) {
+  if (requestedScanListId) {
     const missing = node('section', 'alias-editor-welcome');
     missing.append(node('h2', '', 'Scan list not found'),
       node('p', '', 'This scan list may have been deleted or changed.'),
-      anchor('Back to Scan Lists', href('admin', { tab: 'scan-lists' }), 'button secondary'));
+      anchor('Back to Scan Lists', href('configuration', { tab: 'scan-lists' }), 'button secondary'));
     main.append(missing);
     return;
   }
 
   if (!selectedList) {
-    main.append(aliasEditorEmptyState(lists, admin));
+    main.append(aliasEditorEmptyState(lists));
     return;
   }
 
@@ -4341,8 +4251,7 @@ async function renderAliases() {
   const pagePromise = view === 'discover' ?
     apiPage(`/api/v1/alias-lists/${aliasListId(selectedList)}/observed-talkgroups`,
       pageParameters({ include_exact: false })) : apiPage('/api/v1/aliases', pageParameters(filters));
-  const optionsPromise = admin ? api('/api/v1/admin/aliases/options', { alias_list_id: aliasListId(selectedList) }) :
-    Promise.resolve(null);
+  const optionsPromise = api('/api/v1/admin/aliases/options', { alias_list_id: aliasListId(selectedList) });
   const [page, options] = await Promise.all([pagePromise, optionsPromise]);
   if (!renderIsCurrent(renderContext) || !main.isConnected) return;
   aliasEditorContext.page = page;
@@ -4369,24 +4278,22 @@ async function renderAliases() {
     node('span', 'muted', `${number(selectedList.alias_count || 0)} aliases · ` +
       `${number(selectedList.assigned_channel_count || 0)} assigned channels`));
   summary.append(summaryCopy);
-  if (admin) {
-    const listActions = node('div', 'alias-list-summary-actions');
-    const add = node('button', 'button alias-add-button', 'Add Alias');
-    add.type = 'button';
-    add.addEventListener('click', () => openAliasEditorModal('create'));
-    const remove = node('button', 'button secondary danger-outline', 'Delete List');
-    remove.type = 'button';
-    remove.addEventListener('click', () => openAliasListDeleteModal(selectedList));
-    listActions.append(add);
-    if (unmatchedTalkgroupsSupported(selectedList)) {
-      const policy = node('button', 'button secondary alias-policy-button', 'Global Settings');
-      policy.type = 'button';
-      policy.addEventListener('click', () => openUnmatchedTalkgroupPolicyModal(selectedList));
-      listActions.append(policy);
-    }
-    listActions.append(remove);
-    summary.append(listActions);
+  const listActions = node('div', 'alias-list-summary-actions');
+  const add = node('button', 'button alias-add-button', 'Add Alias');
+  add.type = 'button';
+  add.addEventListener('click', () => openAliasEditorModal('create'));
+  const remove = node('button', 'button secondary danger-outline', 'Delete List');
+  remove.type = 'button';
+  remove.addEventListener('click', () => openAliasListDeleteModal(selectedList));
+  listActions.append(add);
+  if (unmatchedTalkgroupsSupported(selectedList)) {
+    const policy = node('button', 'button secondary alias-policy-button', 'Global Settings');
+    policy.type = 'button';
+    policy.addEventListener('click', () => openUnmatchedTalkgroupPolicyModal(selectedList));
+    listActions.append(policy);
   }
+  listActions.append(remove);
+  summary.append(listActions);
   main.append(summary, aliasEditorViewTabs(selectedList), view === 'discover' ?
     observedTalkgroupToolbar(selectedList) : aliasEditorFilterToolbar(listResponse, options));
 
@@ -4410,7 +4317,7 @@ async function renderAliases() {
     });
     bulkBar?.update();
   };
-  const columnsForView = () => aliasEditorColumns(view, admin, rows, updateSelection, selectedCustom);
+  const columnsForView = () => aliasEditorColumns(view, rows, updateSelection, selectedCustom);
   const renderTable = () => {
     const aliasTable = table(rows, columnsForView(), 'No aliases match these filters', {
       type: `alias-editor-${view}`, serverSort: true, sortable: false,
@@ -4440,17 +4347,15 @@ async function renderAliases() {
   };
 
   const actions = node('div', 'section-title-actions');
-  if (admin) {
-    const selectPage = node('button', 'button secondary', 'Select This Page');
-    selectPage.type = 'button';
-    selectPage.addEventListener('click', () => {
-      rows.forEach((row) => {
-        if (aliasEditorSelection.size < 500) aliasEditorSelection.add(Number(row.alias_id));
-      });
-      updateSelection();
+  const selectPage = node('button', 'button secondary', 'Select This Page');
+  selectPage.type = 'button';
+  selectPage.addEventListener('click', () => {
+    rows.forEach((row) => {
+      if (aliasEditorSelection.size < 500) aliasEditorSelection.add(Number(row.alias_id));
     });
-    actions.append(selectPage);
-  }
+    updateSelection();
+  });
+  actions.append(selectPage);
   if (view === 'custom') {
     actions.append(aliasColumnChooser(definitions, selectedCustom, () => renderTable()));
   }
@@ -4469,27 +4374,27 @@ async function renderAliases() {
     (view === 'calls' ? 'Call Use' : (view === 'evidence' ? 'System Evidence' : 'Custom View')),
   tableHost, actions);
   block.classList.add('alias-catalog-section', 'alias-editor-table-section');
-  bulkBar = admin ? aliasBulkBar(() => {
+  bulkBar = aliasBulkBar(() => {
     aliasEditorSelection.clear();
     aliasEditorLastSelectionIndex = null;
     updateSelection();
-  }) : null;
-  if (bulkBar) block.append(bulkBar);
+  });
+  block.append(bulkBar);
   renderTable();
   block.append(node('p', 'metric-meaning-note alias-catalog-guide', view === 'configure' ?
     'Configuration controls what the alias matches and what happens to its calls. Open an alias to edit it.' :
-    'Calls and recordings are separate from system signaling. An em dash means unavailable or not collected; ' +
+    'Calls and recordings are separate from system signaling. Logout means unit deregistration, not leaving a ' +
+      'talkgroup. An em dash means unavailable or not collected; ' +
       '0 means coverage was collected and the count was zero.'), pager(page));
   main.append(block);
 
-  if (route.get('createAlias') === '1' && admin) {
+  if (route.get('createAlias') === '1') {
     const prefill = routedAliasPrefill(selectedList, options);
     if (prefill) await openAliasEditorModal('create', null, prefill);
   } else if (route.has('alias')) {
     const id = Number(route.get('alias'));
     if (Number.isInteger(id) && id > 0) {
-      if (admin) await openAliasEditorModal('edit', id);
-      else await renderAliasDetailModal(id);
+      await openAliasEditorModal('edit', id);
     }
   }
 }
@@ -5721,11 +5626,6 @@ async function apiPage(path, parameters = {}, options = {}) {
   return window.sdrtrunkPageLifecycle.decodeOffsetPage(response, path);
 }
 
-function mobileListenerModeActive() {
-  return !tableOnly && (document.body.dataset.listenerShell === 'mobile' ||
-    document.body.classList.contains('mobile-listener-active'));
-}
-
 function receiverHealthSeverity(value) {
   const severity = String(value || '').trim().toLowerCase();
   if (severity === 'critical') return 'critical';
@@ -5791,7 +5691,7 @@ class ReceiverHealthController {
   }
 
   desktopEnabled() {
-    return !tableOnly && this.authorized() && !mobileListenerModeActive();
+    return !tableOnly && this.authorized();
   }
 
   abortRequest() {
@@ -5811,16 +5711,6 @@ class ReceiverHealthController {
       this.abortRequest();
     }
     this.updateIndicator();
-  }
-
-  synchronizeMode() {
-    if (!this.desktopEnabled()) {
-      this.abortRequest();
-      this.updateIndicator();
-      return;
-    }
-    this.updateIndicator();
-    void this.refresh();
   }
 
   async refresh() {
@@ -6712,67 +6602,26 @@ window.addEventListener('beforeunload', (event) => {
   liveConnections.clear();
 });
 
-function setMobileListenerView(view) {
-  const shell = document.getElementById('mobile-listener-shell');
-  if (!shell) return;
-  const selected = ['listen', 'scan-lists', 'queue'].includes(view) ? view : 'listen';
-  shell.dataset.listenerView = selected;
-  const titles = { listen: 'Listen', 'scan-lists': 'Scan Lists', queue: 'Call Queue' };
-  const title = document.getElementById('mobile-listener-title');
-  if (title) title.textContent = titles[selected];
-  shell.querySelectorAll('[data-listener-view]').forEach((button) => {
-    button.setAttribute('aria-pressed', String(button.dataset.listenerView === selected));
-  });
-  const subscriptions = document.querySelector('.playback-subscriptions');
-  const queue = document.querySelector('.playback-queue');
-  if (subscriptions) subscriptions.open = selected === 'scan-lists';
-  if (queue) queue.open = selected === 'queue';
-}
-
-function applyListenerShellMode() {
-  if (tableOnly) return;
-  const shell = document.getElementById('mobile-listener-shell');
-  const app = document.querySelector('.app-shell');
+function restorePlaybackBarBeforeRender() {
   const bar = document.getElementById('playback-bar');
-  const desktopSlot = document.getElementById('desktop-playback-slot');
-  const mobileSlot = document.getElementById('mobile-playback-slot');
-  if (!shell || !app || !bar || !desktopSlot || !mobileSlot || !compactListenerMedia) return;
-  const previousMode = document.body.dataset.listenerShell;
-  const mobile = compactListenerMedia.matches;
-  document.body.classList.toggle('mobile-listener-active', mobile);
-  document.body.dataset.listenerShell = mobile ? 'mobile' : 'desktop';
-  applyTheme(mobile ? 'mobile' : 'desktop');
-  if (mobile) {
-    mobileSlot.append(bar);
-    app.hidden = true;
-    shell.hidden = false;
-    bar.setAttribute('aria-label', 'Mobile web call playback');
-    setMobileListenerView(shell.dataset.listenerView || 'listen');
-  } else {
-    desktopSlot.append(bar);
-    app.hidden = false;
-    shell.hidden = true;
-    bar.setAttribute('aria-label', 'Web call playback');
-    const subscriptions = bar.querySelector('.playback-subscriptions');
-    const queue = bar.querySelector('.playback-queue');
-    if (subscriptions) subscriptions.open = false;
-    if (queue) queue.open = false;
-  }
-  receiverHealthController.synchronizeMode();
-  if (!mobile && previousMode === 'mobile' && accessSessionAvailable &&
-      route.get('view') === 'admin' && route.get('tab') === 'health') {
-    void render();
-  }
+  const slot = document.getElementById('desktop-playback-slot');
+  if (!bar || !slot || !content.contains(bar)) return;
+  bar.classList.remove('scanner-expanded');
+  bar.querySelectorAll('details').forEach((panel) => { panel.open = false; });
+  slot.append(bar);
+  bar.setAttribute('aria-label', 'Web call playback');
 }
 
-function initializeListenerShell() {
+function placePlaybackBar() {
   if (tableOnly) return;
-  compactListenerMedia = window.matchMedia(COMPACT_LISTENER_MEDIA);
-  document.querySelectorAll('#mobile-listener-shell [data-listener-view]').forEach((button) => {
-    button.addEventListener('click', () => setMobileListenerView(button.dataset.listenerView));
-  });
-  compactListenerMedia.addEventListener('change', applyListenerShellMode);
-  applyListenerShellMode();
+  const bar = document.getElementById('playback-bar');
+  const slot = document.getElementById('desktop-playback-slot');
+  if (!bar || !slot) return;
+  const scannerHost = route.get('view') === 'scanner' ? document.querySelector('.scanner-player-host') : null;
+  bar.classList.toggle('scanner-expanded', Boolean(scannerHost));
+  (scannerHost || slot).append(bar);
+  bar.setAttribute('aria-label', scannerHost ? 'Browser scanner and call playback' : 'Web call playback');
+  bar.querySelectorAll('details').forEach((panel) => { panel.open = Boolean(scannerHost); });
 }
 
 function initializePlaybackHeader() {
@@ -6785,8 +6634,8 @@ function initializePlaybackHeader() {
   }
   document.addEventListener('click', (event) => {
     const subscriptions = document.querySelector('.playback-subscriptions');
-    const mobileTrigger = event.target?.closest?.('[data-listener-view="scan-lists"]');
-    if (subscriptions?.open && !subscriptions.contains(event.target) && !mobileTrigger) subscriptions.open = false;
+    const expanded = document.getElementById('playback-bar')?.classList.contains('scanner-expanded');
+    if (!expanded && subscriptions?.open && !subscriptions.contains(event.target)) subscriptions.open = false;
   });
 }
 
@@ -6848,18 +6697,14 @@ function synchronizePlaybackAccess(accessChanged = false) {
       volumeValue: 'playback-volume-value',
       current: 'playback-current',
       queued: 'playback-queued',
-      dropped: 'playback-dropped',
       missed: 'playback-missed',
       queueList: 'playback-queue-list',
-      maximumQueued: 'playback-max-queued',
       status: 'playback-status',
       progress: 'playback-progress',
       scanListSummary: 'playback-scan-list-summary',
       scanListOptions: 'playback-scan-list-options',
       scanListStatus: 'playback-scan-list-status',
-      capacity: 'playback-capacity',
-      mobileScanCount: 'mobile-listener-scan-count',
-      mobileQueueCount: 'mobile-listener-queue-count'
+      capacity: 'playback-capacity'
     });
   }
   bar.querySelectorAll('button, input').forEach((control) => { control.disabled = false; });
@@ -6870,6 +6715,29 @@ function synchronizePlaybackAccess(accessChanged = false) {
     window.sdrtrunkWebPlayer.connect('calls',
       (topic, parameters) => liveConnection(topic, parameters, false));
   }
+}
+
+function scannerStep(numberValue, title, detail) {
+  const step = node('div', 'scanner-step');
+  const copy = node('div');
+  copy.append(node('strong', '', title), node('span', '', detail));
+  step.append(node('span', 'scanner-step-number', numberValue), copy);
+  return step;
+}
+
+function renderScanner() {
+  const renderContext = captureRenderContext();
+  const introduction = node('div', 'scanner-introduction');
+  introduction.append(
+    scannerStep('1', 'Choose scan lists', 'Select the groups of calls you want this browser to receive.'),
+    scannerStep('2', 'Start listening', 'Press Play once. Matching completed calls arrive automatically.'),
+    scannerStep('3', 'Use the controls', 'Skip, replay, hold, or avoid calls without changing the receiver.'));
+  const host = node('div', 'scanner-player-host');
+  const body = node('div', 'scanner-page');
+  body.append(introduction, section('Listen in this browser', host));
+  if (!beginPage(renderContext, pageHeader('Scanner',
+    'Choose scan lists and listen to completed calls from this receiver'), body)) return;
+  placePlaybackBar();
 }
 
 function pageParameters(extra = {}) {
@@ -7711,20 +7579,95 @@ function liveEventParty(event, side) {
   return value;
 }
 
+function liveDetailMatchingRowLimit() {
+  const configured = Math.trunc(Number(liveDisplaySettings?.live_detail_matching_row_limit));
+  return Number.isFinite(configured) ? Math.max(25, Math.min(500, configured)) :
+    LIVE_DETAIL_DEFAULT_MATCHING_ROW_LIMIT;
+}
+
+function liveDetailCaptureLimit() {
+  return Math.max(LIVE_DETAIL_MINIMUM_CAPTURE, Math.min(LIVE_DETAIL_MAXIMUM_CAPTURE,
+    liveDetailMatchingRowLimit() * LIVE_DETAIL_CAPTURE_MULTIPLIER));
+}
+
+function liveDetailText(value) {
+  return String(value ?? '').trim().toLowerCase();
+}
+
+function liveDetailSelect(label, values) {
+  const field = node('label', 'live-detail-filter');
+  field.append(node('span', '', label));
+  const select = node('select');
+  values.forEach(([value, textValue]) => {
+    const option = node('option', '', textValue);
+    option.value = value;
+    select.append(option);
+  });
+  field.append(select);
+  return { field, select };
+}
+
+function liveDetailObservedValue(value) {
+  return String(value || '').trim();
+}
+
+function liveDetailAdjustObserved(counts, value, adjustment) {
+  const observed = liveDetailObservedValue(value);
+  if (!observed) return false;
+  const previous = counts.get(observed) || 0;
+  const next = Math.max(0, previous + adjustment);
+  if (next) counts.set(observed, next);
+  else counts.delete(observed);
+  return (previous === 0) !== (next === 0);
+}
+
+function liveDetailSynchronizeObservedSelect(select, counts, allLabel) {
+  const current = select.value;
+  const values = [...counts.keys()].sort((left, right) => left.localeCompare(right));
+  const all = node('option', '', allLabel);
+  all.value = '';
+  select.replaceChildren(all, ...values.map((value) => {
+    const option = node('option', '', value.replaceAll('_', ' '));
+    option.value = value;
+    return option;
+  }));
+  if (values.includes(current)) select.value = current;
+}
+
 function liveMessagesPane() {
   const messages = new Map();
   const order = [];
+  const observedProtocols = new Map();
+  const observedTypes = new Map();
   let selection = null;
   let active = false;
   let collapsed = false;
   let paused = false;
   let stream = null;
   let streamEpoch = 0;
+  let renderTimer = null;
+  let lastRenderAt = 0;
+  let observedFiltersDirty = true;
+  let missed = 0;
+  let possibleGap = false;
 
   const pane = node('div', 'live-details-pane live-messages-pane');
-  const toolbar = node('div', 'live-messages-toolbar');
+  const toolbar = node('div', 'live-messages-toolbar live-detail-toolbar');
   const selectionLabel = node('strong', 'live-message-selection', 'Select a live row above');
-  toolbar.append(selectionLabel);
+  const protocol = liveDetailSelect('Protocol', [['', 'All protocols']]);
+  const type = liveDetailSelect('Type', [['', 'All message types']]);
+  const timeslot = liveDetailSelect('Timeslot', [['', 'All timeslots'], ['1', 'Timeslot 1'], ['2', 'Timeslot 2']]);
+  const validity = liveDetailSelect('Validity', [['', 'All'], ['valid', 'Valid'], ['invalid', 'Invalid']]);
+  const searchField = node('label', 'live-detail-filter live-detail-search');
+  const search = node('input');
+  search.type = 'search';
+  search.placeholder = 'Filter message text';
+  search.setAttribute('aria-label', 'Filter message text');
+  searchField.append(node('span', '', 'Search'), search);
+  toolbar.append(selectionLabel, protocol.field, type.field, timeslot.field, validity.field, searchField);
+  const gap = node('div', 'live-detail-gap');
+  gap.hidden = true;
+  gap.setAttribute('role', 'status');
   const scroll = node('div', 'live-messages-scroll');
   const table = node('table', 'data-table live-messages-table');
   const head = node('thead');
@@ -7734,21 +7677,50 @@ function liveMessagesPane() {
   const body = node('tbody');
   table.append(head, body);
   scroll.append(table);
-  pane.append(toolbar, scroll);
+  pane.append(toolbar, gap, scroll);
+
+  const updateObservedFilters = () => {
+    liveDetailSynchronizeObservedSelect(protocol.select, observedProtocols, 'All protocols');
+    liveDetailSynchronizeObservedSelect(type.select, observedTypes, 'All message types');
+    observedFiltersDirty = false;
+  };
+
+  const adjustObservedFilters = (message, adjustment) => {
+    const protocolChanged = liveDetailAdjustObserved(observedProtocols,
+      message?.filter_group || message?.protocol, adjustment);
+    const typeChanged = liveDetailAdjustObserved(observedTypes, message?.filter_type, adjustment);
+    observedFiltersDirty = observedFiltersDirty || protocolChanged || typeChanged;
+  };
+
+  const matches = (message) => {
+    const protocolValue = String(message.filter_group || message.protocol || '');
+    if (protocol.select.value && protocolValue !== protocol.select.value) return false;
+    if (type.select.value && String(message.filter_type || '') !== type.select.value) return false;
+    if (timeslot.select.value && String(message.timeslot ?? '') !== timeslot.select.value) return false;
+    if (validity.select.value === 'valid' && message.valid !== true) return false;
+    if (validity.select.value === 'invalid' && message.valid !== false) return false;
+    const query = liveDetailText(search.value);
+    return !query || [message.text, message.protocol, message.filter_group, message.filter_type]
+      .some((value) => liveDetailText(value).includes(query));
+  };
 
   const render = () => {
+    if (paused) return;
     body.replaceChildren();
-    if (!selection || !order.length) {
+    const rows = order.map((id) => messages.get(id)).filter((message) => message && matches(message))
+      .slice(0, liveDetailMatchingRowLimit());
+    if (!selection || !rows.length) {
       const empty = node('tr', 'empty');
       const text = !selection ? 'Select a live row above' :
-        (selection.diagnosticFrequencyHz ? 'No decoded messages observed' : 'Select an active channel');
+        (selection.diagnosticFrequencyHz ? 'No matching messages received since this tab was opened' :
+          'Select an active channel');
       const cell = node('td', '', text);
       cell.colSpan = 4;
       empty.append(cell);
       body.append(empty);
       return;
     }
-    order.map((id) => messages.get(id)).filter(Boolean).forEach((message) => {
+    rows.forEach((message) => {
       const row = node('tr', message.valid ? '' : 'message-invalid');
       const date = new Date(Number(message.timestamp_ms));
       const timeText = Number.isFinite(date.getTime()) ? date.toLocaleTimeString([], {
@@ -7758,12 +7730,42 @@ function liveMessagesPane() {
       if (timeText) time.title = exactDateTime(message.timestamp_ms);
       const detail = node('td', 'live-message-text', message.text || '');
       detail.title = message.text || '';
-      row.append(time, node('td', '', message.protocol || ''),
+      row.append(time, node('td', '', message.protocol || message.filter_group || ''),
         node('td', '', message.timeslot == null ? '' : String(message.timeslot)), detail);
       body.append(row);
     });
   };
 
+  const scheduleRender = () => {
+    if (renderTimer !== null || paused) return;
+    const delay = Math.max(0, LIVE_DETAIL_REFRESH_INTERVAL_MILLISECONDS - (Date.now() - lastRenderAt));
+    renderTimer = window.setTimeout(() => {
+      renderTimer = null;
+      lastRenderAt = Date.now();
+      if (observedFiltersDirty) updateObservedFilters();
+      render();
+    }, delay);
+  };
+  const updateGapNotice = () => {
+    const notices = [];
+    if (missed > 0) {
+      notices.push(`${number(missed)} live message${missed === 1 ? '' : 's'} skipped while the viewer was open.`);
+    }
+    if (possibleGap) notices.push('The live source reconnected or changed; additional messages may have been missed.');
+    gap.textContent = notices.join(' ');
+    gap.hidden = !notices.length;
+  };
+  const clearSession = () => {
+    messages.clear();
+    order.length = 0;
+    observedProtocols.clear();
+    observedTypes.clear();
+    observedFiltersDirty = true;
+    missed = 0;
+    possibleGap = false;
+    updateGapNotice();
+    scheduleRender();
+  };
   const closeStream = () => {
     streamEpoch += 1;
     if (!stream) return;
@@ -7772,18 +7774,27 @@ function liveMessagesPane() {
     pageConnections.delete(stream);
     stream = null;
   };
-
   const addMessage = (message) => {
     if (!message?.message_id) return;
-    if (!messages.has(message.message_id)) order.unshift(message.message_id);
+    const previous = messages.get(message.message_id);
+    if (!previous) order.unshift(message.message_id);
+    else adjustObservedFilters(previous, -1);
     messages.set(message.message_id, message);
-    while (order.length > 200) messages.delete(order.pop());
-    render();
+    adjustObservedFilters(message, 1);
+    while (order.length > liveDetailCaptureLimit()) {
+      const removedId = order.pop();
+      const removed = messages.get(removedId);
+      if (removed) adjustObservedFilters(removed, -1);
+      messages.delete(removedId);
+    }
+    scheduleRender();
   };
-
-  const shouldRun = () => active && !collapsed && !paused && !document.hidden &&
-    selection?.configurationId && selection?.diagnosticFrequencyHz;
-
+  const addGap = (value) => {
+    missed += Math.max(1, Math.trunc(Number(value?.dropped) || 1));
+    updateGapNotice();
+  };
+  const shouldRun = () => active && !collapsed && selection?.configurationId &&
+    selection?.diagnosticFrequencyHz;
   const sync = () => {
     if (!shouldRun()) {
       closeStream();
@@ -7791,60 +7802,78 @@ function liveMessagesPane() {
     }
     if (stream) return;
     const epoch = ++streamEpoch;
-    const parameters = {
-      configuration_id: selection.configurationId,
-      frequency_hz: selection.diagnosticFrequencyHz
-    };
-    if (selection.diagnosticTimeslot) parameters.timeslot = selection.diagnosticTimeslot;
+    const parameters = { configuration_id: selection.configurationId,
+      frequency_hz: selection.diagnosticFrequencyHz };
+    let opened = document.hidden;
+    let sourceStatusSeen = false;
+    let sourceEverBound = false;
     stream = liveConnection('decode_messages', parameters);
-    stream.addEventListener('snapshot', (event) => {
+    stream.onopen = () => {
       if (epoch !== streamEpoch) return;
-      const snapshot = JSON.parse(event.data);
-      messages.clear();
-      order.length = 0;
-      (snapshot.messages || []).slice(0, 200).forEach((message) => {
-        if (message?.message_id && !messages.has(message.message_id)) {
-          messages.set(message.message_id, message);
-          order.push(message.message_id);
-        }
-      });
-      render();
-    });
+      if (opened) {
+        possibleGap = true;
+        updateGapNotice();
+      }
+      opened = true;
+    };
     stream.addEventListener('decode_message', (event) => {
       if (epoch === streamEpoch) addMessage(JSON.parse(event.data));
     });
+    stream.addEventListener('live_gap', (event) => {
+      if (epoch === streamEpoch) addGap(JSON.parse(event.data));
+    });
+    stream.addEventListener('source_change', (event) => {
+      if (epoch !== streamEpoch) return;
+      const change = JSON.parse(event.data);
+      const bound = change?.bound === true;
+      if (!sourceStatusSeen) {
+        sourceStatusSeen = true;
+        sourceEverBound = bound;
+      } else if (sourceEverBound) {
+        possibleGap = true;
+        updateGapNotice();
+      } else if (bound) sourceEverBound = true;
+    });
   };
-
   const select = (nextSelection) => {
-    const nextKey = nextSelection ?
-      `${nextSelection.configurationId}:${nextSelection.diagnosticFrequencyHz || ''}:` +
-        `${nextSelection.diagnosticTimeslot || ''}` : '';
-    const currentKey = selection ?
-      `${selection.configurationId}:${selection.diagnosticFrequencyHz || ''}:` +
-        `${selection.diagnosticTimeslot || ''}` : '';
+    const nextKey = nextSelection ? `${nextSelection.configurationId}:${nextSelection.diagnosticFrequencyHz || ''}:` +
+      `${nextSelection.diagnosticTimeslot || ''}` : '';
+    const currentKey = selection ? `${selection.configurationId}:${selection.diagnosticFrequencyHz || ''}:` +
+      `${selection.diagnosticTimeslot || ''}` : '';
     selection = nextSelection;
     selectionLabel.textContent = selection?.channelLabel || 'Select a live row above';
     if (nextKey !== currentKey) {
       closeStream();
-      messages.clear();
-      order.length = 0;
-      render();
+      clearSession();
     }
     sync();
   };
-
-  const onVisibilityChange = () => sync();
-  document.addEventListener('visibilitychange', onVisibilityChange);
+  [protocol.select, type.select, timeslot.select, validity.select].forEach((control) =>
+    control.addEventListener('change', scheduleRender));
+  search.addEventListener('input', scheduleRender);
   render();
   return {
     element: pane,
     select,
-    setActive(value) { active = value; sync(); },
+    setActive(value) {
+      const next = value === true;
+      if (active && !next) {
+        closeStream();
+        clearSession();
+      }
+      active = next;
+      sync();
+    },
     setCollapsed(value) { collapsed = value; sync(); },
-    setPaused(value) { paused = value; sync(); },
+    setPaused(value) { paused = value; if (!paused) scheduleRender(); },
     close() {
       closeStream();
-      document.removeEventListener('visibilitychange', onVisibilityChange);
+      if (renderTimer !== null) window.clearTimeout(renderTimer);
+      renderTimer = null;
+      messages.clear();
+      order.length = 0;
+      observedProtocols.clear();
+      observedTypes.clear();
     }
   };
 }
@@ -8573,7 +8602,8 @@ function openTunerFrequencyActions(selection) {
         `${number(total)} RadioReference ${total === 1 ? 'match' : 'matches'} found.`;
     } catch (error) {
       message.textContent = error.message;
-      results.append(anchor('Open RadioReference settings', href('admin', { tab: 'settings' }), 'button secondary'));
+      results.append(anchor('Open RadioReference settings', href('configuration', { tab: 'radioreference' }),
+        'button secondary'));
     } finally {
       radioReference.disabled = false;
     }
@@ -8948,6 +8978,8 @@ function tunerSpectrumPanel() {
   let waterfallObservedAtRows = new Float64Array(0);
   const waterfallHistoryRows = [];
   let retainedWaterfallRows = 0;
+  let readoutTimer = null;
+  let lastReadoutAt = 0;
 
   const controller = {
     element: layout,
@@ -8957,6 +8989,7 @@ function tunerSpectrumPanel() {
       cancelDrag();
       closeStreams();
       closeActiveChannels();
+      if (readoutTimer !== null) window.clearTimeout(readoutTimer);
       document.removeEventListener('visibilitychange', onVisibilityChange);
       window.removeEventListener('resize', onResize);
       [spectrum.canvas, waterfall.canvas].forEach(removePlotInteractions);
@@ -8988,7 +9021,50 @@ function tunerSpectrumPanel() {
       Math.max(1, viewport.endHz - viewport.startHz);
   }
 
-  const setReadouts = () => {
+  function median(values) {
+    if (!values.length) return null;
+    const sorted = [...values].sort((left, right) => left - right);
+    const middle = Math.floor(sorted.length / 2);
+    return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+  }
+
+  function estimatedBestVisibleSnr() {
+    if (!frameMetadata || !fftValues.length || !viewport) return null;
+    const values = displayedSpectrumValues();
+    const domain = tunerFrameDomain(frameMetadata, values.length);
+    const carriers = activeCarriers().filter((carrier) => carrier.frequencyHz >= domain.startHz &&
+      carrier.frequencyHz <= domain.endHz);
+    let best = null;
+    carriers.forEach((carrier) => {
+      const signalDb = [];
+      const noiseDb = [];
+      const signalHalfWidthHz = 6250;
+      const noiseGuardHz = 9375;
+      const noiseOuterHz = 31250;
+      values.forEach((value, index) => {
+        if (!Number.isFinite(value)) return;
+        const frequencyHz = tunerFrequencyAtBin(domain, index);
+        const offset = Math.abs(frequencyHz - carrier.frequencyHz);
+        if (offset <= signalHalfWidthHz) signalDb.push(value);
+        else if (offset >= noiseGuardHz && offset <= noiseOuterHz &&
+            !carriers.some((other) => other !== carrier &&
+              Math.abs(frequencyHz - other.frequencyHz) <= noiseGuardHz)) noiseDb.push(value);
+      });
+      if (signalDb.length < 2 || noiseDb.length < 4) return;
+      const noiseFloorDb = median(noiseDb);
+      const noisePower = 10 ** (noiseFloorDb / 10);
+      const signalPower = signalDb.reduce((sum, value) => sum + 10 ** (value / 10), 0) / signalDb.length;
+      const carrierPower = signalPower - noisePower;
+      if (!(carrierPower > 0) || !(noisePower > 0)) return;
+      const snr = 10 * Math.log10(carrierPower / noisePower);
+      if (Number.isFinite(snr) && (!best || snr > best.snr)) {
+        best = { snr, frequencyHz: carrier.frequencyHz };
+      }
+    });
+    return best;
+  }
+
+  const renderReadouts = () => {
     const center = fullViewport ? (fullViewport.startHz + fullViewport.endHz) / 2 : 0;
     const sampleRate = fullViewport ? fullViewport.endHz - fullViewport.startHz : 0;
     const fftSize = Number(frameMetadata?.fftSize || fftValues.length || 0);
@@ -8999,6 +9075,7 @@ function tunerSpectrumPanel() {
     const resolution = frameDomain.sentBinWidthHz || null;
     const fps = frameTimes.length > 1 ? (frameTimes.length - 1) * 1000 /
       Math.max(1, frameTimes[frameTimes.length - 1] - frameTimes[0]) : null;
+    const bestSnr = estimatedBestVisibleSnr();
     const values = [
       ['Center', center ? `${frequency(center)} MHz` : '—'],
       ['Full span', sampleRate ? formatTunerSpan(sampleRate) : '—'],
@@ -9009,6 +9086,8 @@ function tunerSpectrumPanel() {
       ['FFT detail', fftSize ? number(fftSize) : '—'],
       ['Displayed resolution', Number.isFinite(resolution) ? `${number(Math.round(resolution))} Hz` : '—'],
       ['Peak', Number.isFinite(peak) ? `${peak.toFixed(1)} dB` : '—'],
+      ['Estimated best visible SNR', bestSnr ?
+        `${bestSnr.snr.toFixed(1)} dB · ${frequency(bestSnr.frequencyHz)} MHz` : '—'],
       ['Rate', Number.isFinite(fps) ? `${fps.toFixed(1)} fps` : '—'],
       ['Dropped', number(droppedFrames)],
       ['Generation', generation >= 0 ? number(generation) : '—'],
@@ -9020,6 +9099,25 @@ function tunerSpectrumPanel() {
     resetZoom.disabled = !shouldRun() || !fullViewport || !viewport || zoom <= 1.0001;
     profileSelect.disabled = !shouldRun() || refining;
     layout.classList.toggle('zoomed', zoom > 1.0001);
+  };
+
+  const setReadouts = (immediate = false) => {
+    if (disposed) return;
+    const now = performance.now();
+    const remaining = Math.max(0, 200 - (now - lastReadoutAt));
+    if (immediate || remaining === 0) {
+      if (readoutTimer !== null) window.clearTimeout(readoutTimer);
+      readoutTimer = null;
+      lastReadoutAt = now;
+      renderReadouts();
+      return;
+    }
+    if (readoutTimer !== null) return;
+    readoutTimer = window.setTimeout(() => {
+      readoutTimer = null;
+      lastReadoutAt = performance.now();
+      renderReadouts();
+    }, remaining);
   };
 
   const prepareCanvas = (target) => {
@@ -9266,7 +9364,7 @@ function tunerSpectrumPanel() {
     resetWaterfallBuffer(1, 1);
     setRefining(false);
     setOverlay(message);
-    setReadouts();
+    setReadouts(true);
     renderActiveChannels();
     scheduleDraw();
   };
@@ -9380,7 +9478,7 @@ function tunerSpectrumPanel() {
     setOverlay(live ? '' : (tunerState?.reason || tunerState?.message || 'Waiting for tuner samples…'));
     setStatus(live ? (refining ? 'Refining' : 'Live') : (unavailable ? 'Unavailable' : 'Waiting'),
       live && !refining ? 'state-current' : 'state-stale');
-    setReadouts();
+    setReadouts(true);
   }
 
   function clearSpectrumSmoothing() {
@@ -9606,7 +9704,7 @@ function tunerSpectrumPanel() {
     transformPlots(previous, nextViewport);
     viewport = nextViewport;
     setRefining(true);
-    setReadouts();
+    setReadouts(true);
     renderActiveChannels();
     if (hoverRatio !== null) updateCursor(hoverRatio);
     if (requestMode !== 'none') queueViewportUpdate(requestMode === 'immediate');
@@ -10164,7 +10262,7 @@ function tunerSpectrumPanel() {
     pause.textContent = paused ? 'Resume' : 'Pause';
     pause.setAttribute('aria-pressed', String(paused));
     sync();
-    setReadouts();
+    setReadouts(true);
   });
   function updateDisplayRange(changedHandle = '') {
     let floor = Number(floorInput.value);
@@ -10210,7 +10308,7 @@ function tunerSpectrumPanel() {
       updateSpectrumSmoothing(fftValues, frameMetadata, tunerFrameDomain(frameMetadata, fftValues.length));
     }
     updateSpectrumPeak();
-    setReadouts();
+    setReadouts(true);
     if (hoverRatio !== null) updateCursor(hoverRatio);
     if (!refining) scheduleDraw('spectrum');
   });
@@ -10271,13 +10369,19 @@ function tunerSpectrumPanel() {
 function liveEventsPanel(onCollapse) {
   const events = new Map();
   const order = [];
+  const observedEventTypes = new Map();
+  const observedProtocols = new Map();
   let selection = null;
   let paused = false;
   let eventsActive = true;
   let collapsed = false;
   let stream = null;
   let streamEpoch = 0;
-  let renderPending = false;
+  let renderTimer = null;
+  let lastRenderAt = 0;
+  let observedFiltersDirty = true;
+  let missed = 0;
+  let possibleGap = false;
 
   const panel = node('section', 'section live-details');
   const header = node('div', 'live-details-header');
@@ -10297,12 +10401,9 @@ function liveEventsPanel(onCollapse) {
 
   const body = node('div', 'live-details-body');
   const eventPane = node('div', 'live-details-pane live-events-pane');
-  const eventToolbar = node('div', 'live-events-toolbar');
+  const eventToolbar = node('div', 'live-events-toolbar live-detail-toolbar');
   const selectionLabel = node('strong', 'live-event-selection', 'Select a live row above');
-  const filterLabel = node('label', 'live-event-filter');
-  filterLabel.append(node('span', '', 'Show'));
-  const filter = node('select');
-  [
+  const category = liveDetailSelect('Category', [
     ['', 'All events'],
     ['VOICE', 'Voice'],
     ['ENCRYPTED_VOICE', 'Encrypted voice'],
@@ -10310,13 +10411,19 @@ function liveEventsPanel(onCollapse) {
     ['COMMAND', 'Commands'],
     ['REGISTRATION', 'Registrations'],
     ['OTHER', 'Other']
-  ].forEach(([value, label]) => {
-    const option = node('option', '', label);
-    option.value = value;
-    filter.append(option);
-  });
-  filterLabel.append(filter);
-  eventToolbar.append(selectionLabel, filterLabel);
+  ]);
+  const eventTypeFilter = liveDetailSelect('Type', [['', 'All event types']]);
+  const protocolFilter = liveDetailSelect('Protocol', [['', 'All protocols']]);
+  const searchField = node('label', 'live-detail-filter live-detail-search');
+  const search = node('input');
+  search.type = 'search';
+  search.placeholder = 'Search parties or details';
+  search.setAttribute('aria-label', 'Search event parties or details');
+  searchField.append(node('span', '', 'Search'), search);
+  eventToolbar.append(selectionLabel, category.field, eventTypeFilter.field, protocolFilter.field, searchField);
+  const eventGap = node('div', 'live-detail-gap');
+  eventGap.hidden = true;
+  eventGap.setAttribute('role', 'status');
 
   const eventScroll = node('div', 'live-events-scroll');
   const table = node('table', 'data-table live-events-table');
@@ -10328,7 +10435,7 @@ function liveEventsPanel(onCollapse) {
   const eventBody = node('tbody');
   table.append(head, eventBody);
   eventScroll.append(table);
-  eventPane.append(eventToolbar, eventScroll);
+  eventPane.append(eventToolbar, eventGap, eventScroll);
 
   const messagesController = liveMessagesPane();
   const channelController = liveChannelPane();
@@ -10337,14 +10444,37 @@ function liveEventsPanel(onCollapse) {
   body.append(eventPane, messagesPane, channelPane);
   panel.append(header, body);
 
+  const updateObservedFilters = () => {
+    liveDetailSynchronizeObservedSelect(eventTypeFilter.select, observedEventTypes, 'All event types');
+    liveDetailSynchronizeObservedSelect(protocolFilter.select, observedProtocols, 'All protocols');
+    observedFiltersDirty = false;
+  };
+
+  const adjustObservedFilters = (event, adjustment) => {
+    const eventTypeChanged = liveDetailAdjustObserved(observedEventTypes, event?.event_type, adjustment);
+    const protocolChanged = liveDetailAdjustObserved(observedProtocols, event?.protocol, adjustment);
+    observedFiltersDirty = observedFiltersDirty || eventTypeChanged || protocolChanged;
+  };
+
+  const eventMatches = (event) => {
+    if (category.select.value && String(event.category || '') !== category.select.value) return false;
+    if (eventTypeFilter.select.value && String(event.event_type || '') !== eventTypeFilter.select.value) return false;
+    if (protocolFilter.select.value && String(event.protocol || '') !== protocolFilter.select.value) return false;
+    const query = liveDetailText(search.value);
+    return !query || [event.event_label, event.event_type, event.from_aliases, event.from_identifiers,
+      event.to_aliases, event.to_identifiers, event.channel, event.details]
+      .some((value) => liveDetailText(value).includes(query));
+  };
+
   const renderEvents = () => {
-    renderPending = false;
+    if (paused) return;
     eventBody.replaceChildren();
-    const rows = order.map((id) => events.get(id)).filter((event) =>
-      event && (!filter.value || event.category === filter.value));
+    const rows = order.map((id) => events.get(id)).filter((event) => event && eventMatches(event))
+      .slice(0, liveDetailMatchingRowLimit());
     if (!selection || !rows.length) {
       const empty = node('tr', 'empty');
-      const message = node('td', '', selection ? 'No matching events observed' : 'Select a live row above');
+      const message = node('td', '', selection ?
+        'No matching events received since this tab was opened' : 'Select a live row above');
       message.colSpan = 7;
       empty.append(message);
       eventBody.append(empty);
@@ -10388,9 +10518,24 @@ function liveEventsPanel(onCollapse) {
   };
 
   const scheduleRender = () => {
-    if (renderPending) return;
-    renderPending = true;
-    window.requestAnimationFrame(renderEvents);
+    if (renderTimer !== null || paused) return;
+    const delay = Math.max(0, LIVE_DETAIL_REFRESH_INTERVAL_MILLISECONDS - (Date.now() - lastRenderAt));
+    renderTimer = window.setTimeout(() => {
+      renderTimer = null;
+      lastRenderAt = Date.now();
+      if (observedFiltersDirty) updateObservedFilters();
+      renderEvents();
+    }, delay);
+  };
+
+  const updateGapNotice = () => {
+    const notices = [];
+    if (missed > 0) {
+      notices.push(`${number(missed)} live event${missed === 1 ? '' : 's'} skipped while the viewer was open.`);
+    }
+    if (possibleGap) notices.push('The live source reconnected; additional events may have been missed.');
+    eventGap.textContent = notices.join(' ');
+    eventGap.hidden = !notices.length;
   };
 
   const closeStream = () => {
@@ -10404,14 +10549,38 @@ function liveEventsPanel(onCollapse) {
 
   const addEvent = (event) => {
     if (!event?.event_id) return;
-    if (!events.has(event.event_id)) order.unshift(event.event_id);
+    const previous = events.get(event.event_id);
+    if (!previous) order.unshift(event.event_id);
+    else adjustObservedFilters(previous, -1);
     events.set(event.event_id, event);
-    while (order.length > 200) events.delete(order.pop());
+    adjustObservedFilters(event, 1);
+    while (order.length > liveDetailCaptureLimit()) {
+      const removedId = order.pop();
+      const removed = events.get(removedId);
+      if (removed) adjustObservedFilters(removed, -1);
+      events.delete(removedId);
+    }
     scheduleRender();
   };
 
-  const shouldRun = () => eventsActive && !collapsed && !paused && !document.hidden &&
-    selection?.configurationId;
+  const clearSession = () => {
+    events.clear();
+    order.length = 0;
+    observedEventTypes.clear();
+    observedProtocols.clear();
+    observedFiltersDirty = true;
+    missed = 0;
+    possibleGap = false;
+    updateGapNotice();
+    scheduleRender();
+  };
+
+  const addGap = (value) => {
+    missed += Math.max(1, Math.trunc(Number(value?.dropped) || 1));
+    updateGapNotice();
+  };
+
+  const shouldRun = () => eventsActive && !collapsed && selection?.configurationId;
 
   const sync = () => {
     if (!shouldRun()) {
@@ -10423,22 +10592,21 @@ function liveEventsPanel(onCollapse) {
     const parameters = { configuration_id: selection.configurationId };
     if (selection.frequencyHz) parameters.frequency_hz = selection.frequencyHz;
     if (selection.timeslot) parameters.timeslot = selection.timeslot;
+    let opened = document.hidden;
     stream = liveConnection('decode_events', parameters);
-    stream.addEventListener('snapshot', (event) => {
+    stream.onopen = () => {
       if (epoch !== streamEpoch) return;
-      const snapshot = JSON.parse(event.data);
-      events.clear();
-      order.length = 0;
-      (snapshot.events || []).slice(0, 200).forEach((item) => {
-        if (item?.event_id && !events.has(item.event_id)) {
-          events.set(item.event_id, item);
-          order.push(item.event_id);
-        }
-      });
-      scheduleRender();
-    });
+      if (opened) {
+        possibleGap = true;
+        updateGapNotice();
+      }
+      opened = true;
+    };
     stream.addEventListener('decode_event', (event) => {
       if (epoch === streamEpoch) addEvent(JSON.parse(event.data));
+    });
+    stream.addEventListener('live_gap', (event) => {
+      if (epoch === streamEpoch) addGap(JSON.parse(event.data));
     });
   };
 
@@ -10457,8 +10625,7 @@ function liveEventsPanel(onCollapse) {
     }
     closeStream();
     selection = nextSelection;
-    events.clear();
-    order.length = 0;
+    clearSession();
     selectionLabel.textContent = selection?.label || 'Select a live row above';
     scheduleRender();
     sync();
@@ -10477,7 +10644,12 @@ function liveEventsPanel(onCollapse) {
       });
       messagesController.setActive(id === 'messages');
       channelController.setActive(id === 'channel');
-      eventsActive = id === 'events';
+      const nextEventsActive = id === 'events';
+      if (eventsActive && !nextEventsActive) {
+        closeStream();
+        clearSession();
+      }
+      eventsActive = nextEventsActive;
       sync();
     });
     button.dataset.tab = id;
@@ -10503,20 +10675,24 @@ function liveEventsPanel(onCollapse) {
     pause.setAttribute('aria-pressed', String(paused));
     messagesController.setPaused(paused);
     channelController.setPaused(paused);
-    sync();
   });
-  filter.addEventListener('change', scheduleRender);
-  const onVisibilityChange = () => sync();
-  document.addEventListener('visibilitychange', onVisibilityChange);
+  [category.select, eventTypeFilter.select, protocolFilter.select].forEach((control) =>
+    control.addEventListener('change', scheduleRender));
+  search.addEventListener('input', scheduleRender);
   renderEvents();
   return {
     element: panel,
     select,
     close() {
       closeStream();
+      if (renderTimer !== null) window.clearTimeout(renderTimer);
+      renderTimer = null;
+      events.clear();
+      order.length = 0;
+      observedEventTypes.clear();
+      observedProtocols.clear();
       messagesController.close();
       channelController.close();
-      document.removeEventListener('visibilitychange', onVisibilityChange);
     }
   };
 }
@@ -10527,10 +10703,89 @@ function liveAliasReferences(row, kind) {
     Number.isInteger(Number(value?.alias_list_id)) && Number(value.alias_list_id) > 0);
 }
 
+function liveTableIdentifier(value, label) {
+  const expected = String(label || '').trim().toLowerCase();
+  const identifiers = Array.isArray(value?.identifiers) ? value.identifiers : [];
+  const identifier = identifiers.find((candidate) =>
+    String(candidate?.label || '').trim().toLowerCase() === expected);
+  return String(identifier?.value || '').trim();
+}
+
+function liveTableScopeToken(value) {
+  const wacn = liveTableIdentifier(value, 'WACN').replace(/^0x/i, '');
+  const system = liveTableIdentifier(value, 'System ID').replace(/^0x/i, '');
+  if (/^[0-9a-f]{1,5}$/i.test(wacn) && /^[0-9a-f]{1,3}$/i.test(system)) {
+    return `p25:${wacn.padStart(5, '0').toUpperCase()}:${system.padStart(3, '0').toUpperCase()}`;
+  }
+  const protocol = (value?.rows || []).flatMap((row) =>
+    [row?.source_matcher?.protocol, row?.target_matcher?.protocol])
+    .map((candidate) => String(candidate || '').trim().toLowerCase())
+    .find((candidate) => candidate === 'dmr' || candidate === 'nxdn');
+  const guid = String(value?.guid || '').trim();
+  return protocol && guid ? `${protocol}:guid:${guid}` : '';
+}
+
+function liveTableWithNavigation(value) {
+  const scopeToken = liveTableScopeToken(value);
+  if (!scopeToken || !Array.isArray(value?.rows)) return value;
+  return { ...value, rows: value.rows.map((row) => row?.scope_token ? row : { ...row, scope_token: scopeToken }) };
+}
+
 function liveExistingAliasHref(reference) {
-  return reference && capabilityAllowed(ACCESS_CAPABILITIES.ALIASES) ? href('aliases', {
+  return reference && aliasAdminAllowed() ? href('aliases', {
     list: Number(reference.alias_list_id), aliasTab: 'configure', alias: Number(reference.alias_id)
   }) : '';
+}
+
+function liveIdentityType(row, kind) {
+  const matcherType = String(row?.[`${kind}_matcher`]?.type || '').trim().toLowerCase();
+  if (matcherType === 'talkgroup' || matcherType === 'radio') return matcherType;
+  const form = String(row?.[`${kind}_form`] || '').trim().toUpperCase();
+  if (form.includes('RADIO')) return 'radio';
+  if (form.includes('TALKGROUP')) return 'talkgroup';
+  return '';
+}
+
+function liveIdentityInfoHref(row, kind) {
+  if (!capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS) || !row?.scope_token) return '';
+  const id = Number(row?.[`${kind}_id`]);
+  const type = liveIdentityType(row, kind);
+  if (!Number.isSafeInteger(id) || id < 0 || !type || specialIdentifierLabel(row, id, type)) return '';
+  return href(type, { scope: row.scope_token, id, tab: 'info' });
+}
+
+let liveIdentityActionSequence = 0;
+
+function liveIdentityActionLink(row, kind, label, aliasTarget, aliasMode = 'edit') {
+  const infoTarget = liveIdentityInfoHref(row, kind);
+  if (!aliasTarget && !infoTarget) return label;
+  const trigger = anchor(label, infoTarget || aliasTarget, 'live-alias-link');
+  if (!aliasTarget || !infoTarget) return trigger;
+  const id = `live-identity-action-${++liveIdentityActionSequence}`;
+  trigger.id = id;
+  trigger.setAttribute('aria-haspopup', 'dialog');
+  trigger.setAttribute('aria-label', `${String(label)} actions`);
+  trigger.addEventListener('click', (event) => {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    const type = liveIdentityType(row, kind);
+    const identityLabel = type === 'radio' ? 'radio' : 'talkgroup';
+    const modalBody = node('div', 'tuner-frequency-action-body');
+    modalBody.append(node('p', 'tuner-frequency-action-intro', `Choose what to do with ${String(label)}.`));
+    const actions = node('div', 'tuner-frequency-action-list');
+    const manage = anchor('', aliasTarget, 'button secondary tuner-frequency-action');
+    manage.append(node('strong', '', aliasMode === 'create' ? 'Create alias' : 'Edit alias'),
+      node('small', '', `${aliasMode === 'create' ? 'Create' : 'Open'} this ${identityLabel}'s configured alias.`));
+    const info = anchor('', infoTarget, 'button secondary tuner-frequency-action');
+    info.append(node('strong', '', `Open ${identityLabel} info`),
+      node('small', '', `View this ${identityLabel}'s activity and system details.`));
+    actions.append(manage, info);
+    modalBody.append(actions);
+    openReadOnlyModal(`${identityLabel === 'radio' ? 'Radio' : 'Talkgroup'} ${row?.[`${kind}_id`] || ''}`,
+      modalBody, { id: 'live-identity-actions', className: 'frequency-action-modal',
+        returnFocusSelector: `#${id}` });
+  });
+  return trigger;
 }
 
 function liveAliasDraftHref(row, kind) {
@@ -10558,7 +10813,7 @@ function liveIdentifierAliasValue(row, kind) {
   if (!text) return '';
   const reference = liveAliasReferences(row, kind)[0];
   const target = liveExistingAliasHref(reference) || liveAliasDraftHref(row, kind);
-  return target ? anchor(text, target, 'live-alias-link') : text;
+  return liveIdentityActionLink(row, kind, text, target, reference ? 'edit' : 'create');
 }
 
 function liveAliasValue(row, kind) {
@@ -10566,13 +10821,14 @@ function liveAliasValue(row, kind) {
   const fallback = kind === 'source' ?
     (row?.source_alias_display || row?.source_alias || (row?.talker_alias ? `TA: ${row.talker_alias}` : '')) :
     (row?.target_alias || '');
-  if (!references.length) return fallback;
+  if (!references.length) return fallback ?
+    liveIdentityActionLink(row, kind, fallback, liveAliasDraftHref(row, kind), 'create') : fallback;
   const result = node('span', 'live-alias-values');
   references.forEach((reference, index) => {
     if (index) result.append(document.createTextNode(', '));
     const label = String(reference.name || '').trim() || `Alias ${Number(reference.alias_id)}`;
     const target = liveExistingAliasHref(reference);
-    result.append(target ? anchor(label, target, 'live-alias-link') : document.createTextNode(label));
+    result.append(liveIdentityActionLink(row, kind, label, target));
   });
   if (kind === 'source' && row?.talker_alias) {
     const talker = String(row.talker_alias).trim();
@@ -10589,13 +10845,48 @@ function liveConventionalChannelValue(row) {
       'live-channel-link') : label;
 }
 
+function liveSystemTabTitle(value, label, siteTarget, selectTable) {
+  const title = String(label || '');
+  const channelName = String(value?.channel_name || '').trim();
+  const parenthetical = channelName ? `(${channelName})` : '';
+  const parentheticalAt = parenthetical && title.endsWith(parenthetical) ?
+    title.length - parenthetical.length : -1;
+  const siteName = String(value?.site_name || '').trim();
+  const linkText = parentheticalAt >= 0 ? parenthetical : siteName;
+  const linkAt = parentheticalAt >= 0 ? parentheticalAt :
+    (siteName && title.includes(siteName) ? title.indexOf(siteName) : -1);
+  const selectable = (text) => {
+    if (!text) return null;
+    const button = node('button', 'systems-tab-title-button', text);
+    button.type = 'button';
+    button.addEventListener('click', selectTable);
+    return button;
+  };
+  if (linkAt < 0 || !siteTarget) return selectable(title);
+  const site = anchor(linkText, siteTarget, 'systems-tab-label');
+  site.setAttribute('aria-label', `Open ${siteName || channelName} site details`);
+  return fragment(selectable(title.slice(0, linkAt)), site, selectable(title.slice(linkAt + linkText.length)));
+}
+
+function openLocalHref(target) {
+  const url = new URL(target, window.location.href);
+  window.history.pushState({}, '', `${url.pathname}${url.search}${url.hash}`);
+  route = new URLSearchParams(url.search);
+  void render();
+}
+
 function liveSystemsSection(onSelectionChange) {
   const tables = new Map();
   const tabNodes = new Map();
   const rowNodes = new Map();
   const dismissedStoppedTables = new Set();
-  const decodeDisplay = serviceStatus?.decode_display || { show_control: true, show_voice: true, mode: 'percentage' };
-  const showEncryptionDetails = serviceStatus?.web_display?.show_encryption_details !== false;
+  const decodeDisplay = liveDisplaySettings ? {
+    show_control: liveDisplaySettings.show_control_decode_quality !== false,
+    show_voice: liveDisplaySettings.show_voice_decode_quality !== false,
+    mode: liveDisplaySettings.decode_quality_display_mode === 'detailed' ? 'detailed' : 'percentage'
+  } : serviceStatus?.decode_display || { show_control: true, show_voice: true, mode: 'percentage' };
+  const showEncryptionDetails = liveDisplaySettings?.show_encryption_details ??
+    (serviceStatus?.web_display?.show_encryption_details !== false);
   const compactQualityCount = (value) => {
     const count = Number(value || 0);
     if (count >= 1000000) return `${(count / 1000000).toFixed(1)}m`;
@@ -10876,6 +11167,7 @@ function liveSystemsSection(onSelectionChange) {
   };
 
   const upsertTable = (value) => {
+    value = liveTableWithNavigation(value);
     if (!value?.table_id) return;
     if (dismissedStoppedTables.has(value.table_id)) {
       if (value.channel_running !== true) return;
@@ -10890,7 +11182,13 @@ function liveSystemsSection(onSelectionChange) {
       const quality = node('span', 'systems-tab-quality');
       for (let index = 0; index < 4; index += 1) quality.append(node('span'));
       select.append(quality);
-      select.addEventListener('click', () => showTable(value.table_id));
+      select.addEventListener('click', () => {
+        const current = tables.get(value.table_id);
+        const qualityTarget = current?.table_id !== 'conventional' && current?.guid &&
+          capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS) ? href('site', { guid: current.guid, tab: 'quality' }) : '';
+        if (qualityTarget) openLocalHref(qualityTarget);
+        else showTable(value.table_id);
+      });
       const title = node('span', 'systems-tab-title');
       const close = node('button', 'systems-tab-close', '×');
       close.type = 'button';
@@ -10912,16 +11210,9 @@ function liveSystemsSection(onSelectionChange) {
     const titleSignature = `${label}|${value.guid || ''}|${value.table_id}`;
     if (title.dataset.liveValue !== titleSignature) {
       title.dataset.liveValue = titleSignature;
-      if (value.table_id !== 'conventional' && value.guid && capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS)) {
-        const link = anchor(label, href('site', { guid: value.guid, tab: 'info' }), 'systems-tab-label');
-        link.setAttribute('aria-label', `Open ${label} site details`);
-        title.replaceChildren(link);
-      } else {
-        const button = node('button', 'systems-tab-title-button', label);
-        button.type = 'button';
-        button.addEventListener('click', () => showTable(value.table_id));
-        title.replaceChildren(button);
-      }
+      const siteTarget = value.table_id !== 'conventional' && value.guid &&
+        capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS) ? href('site', { guid: value.guid, tab: 'info' }) : '';
+      title.replaceChildren(liveSystemTabTitle(value, label, siteTarget, () => showTable(value.table_id)));
     }
     const quality = tab.querySelector('.systems-tab-quality');
     const currentControl = currentControlRow(value);
@@ -10940,7 +11231,7 @@ function liveSystemsSection(onSelectionChange) {
     } else if (signalStrength === null && decodeQuality === null) {
       quality.className = 'systems-tab-quality quality-unavailable';
       tab.title = `${label} · Signal strength and decode quality unavailable`;
-      select.setAttribute('aria-label', `Show live channels for ${label}, signal strength and decode quality unavailable`);
+      select.setAttribute('aria-label', `Open ${label} channel quality; signal strength and decode quality unavailable`);
     } else {
       const level = signalBarLevel(signalStrength);
       const state = decodeQuality === null ? 'unavailable' :
@@ -10952,7 +11243,7 @@ function liveSystemsSection(onSelectionChange) {
       const qualityLabel = decodeQuality === null ? 'Decode quality unavailable' :
         `${decodeQuality.toFixed(1)}% decode quality`;
       tab.title = `${label} · ${signalLabel} · ${qualityLabel}`;
-      select.setAttribute('aria-label', `Show live channels for ${label}, ${signalLabel}, ${qualityLabel}`);
+      select.setAttribute('aria-label', `Open ${label} channel quality, ${signalLabel}, ${qualityLabel}`);
     }
     const stopped = value.table_id !== 'conventional' && value.channel_running === false;
     tab.classList.toggle('stopped', stopped);
@@ -12768,47 +13059,130 @@ function replaceRadioReferenceOptions(select, options, selectedId, placeholder) 
 
 async function renderAdminWebDisplaySettings() {
   const body = node('div', 'admin-section-body web-display-settings');
-  const toggle = node('input');
-  toggle.type = 'checkbox';
-  toggle.disabled = true;
-  const copy = node('span', 'admin-toggle-copy');
-  copy.append(node('strong', '', 'Show encryption algorithm and key'),
-    node('span', '', 'Replace the generic ENCRYPTED Live status with protocol-aware algorithm and key details ' +
-      'when the receiver has them.'));
-  const control = node('label', 'admin-toggle-control');
-  control.append(toggle, copy);
+  const form = node('form', 'admin-form web-display-settings-form');
+  const controls = {};
+  const toggle = (name, title, detail) => {
+    const input = node('input');
+    input.type = 'checkbox';
+    input.name = name;
+    input.disabled = true;
+    controls[name] = input;
+    const copy = node('span', 'admin-toggle-copy');
+    copy.append(node('strong', '', title), node('span', '', detail));
+    const label = node('label', 'admin-toggle-control');
+    label.append(input, copy);
+    return label;
+  };
+  const qualityMode = node('select');
+  qualityMode.name = 'decode_quality_display_mode';
+  qualityMode.disabled = true;
+  [['percentage', 'Percentage'], ['detailed', 'Detailed counters']].forEach(([value, label]) => {
+    const option = node('option', '', label);
+    option.value = value;
+    qualityMode.append(option);
+  });
+  controls.decode_quality_display_mode = qualityMode;
+  const grantAge = node('input');
+  grantAge.type = 'number';
+  grantAge.name = 'traffic_grant_age_out_milliseconds';
+  grantAge.min = '100';
+  grantAge.max = '15000';
+  grantAge.required = true;
+  grantAge.disabled = true;
+  controls.traffic_grant_age_out_milliseconds = grantAge;
+  const rowLimit = node('input');
+  rowLimit.type = 'number';
+  rowLimit.name = 'live_detail_matching_row_limit';
+  rowLimit.min = '25';
+  rowLimit.max = '500';
+  rowLimit.required = true;
+  rowLimit.disabled = true;
+  controls.live_detail_matching_row_limit = rowLimit;
   const message = node('div', 'admin-form-message');
   message.setAttribute('role', 'status');
-  message.textContent = 'Loading Live display settings…';
+  message.textContent = 'Loading Live and activity settings…';
+  const save = node('button', '', 'Save Live & Activity Settings');
+  save.type = 'submit';
+  save.disabled = true;
+  const actions = node('div', 'admin-form-actions');
+  actions.append(save);
+  const groups = node('div', 'admin-settings-grid');
+  const group = (title, description, ...items) => {
+    const fieldset = node('fieldset', 'admin-settings-group');
+    fieldset.append(node('legend', '', title), node('p', 'admin-settings-group-intro', description), ...items);
+    return fieldset;
+  };
+  groups.append(
+    group('Live activity', 'Choose what remains visible as calls start, stop, and become encrypted.',
+      toggle('retain_idle_call_details', 'Retain the last call on idle rows',
+        'Keep the most recent source and target visible after a Live row becomes idle.'),
+      toggle('show_encryption_details', 'Show encryption algorithm and key',
+        'Use protocol-aware algorithm and key details when the receiver has them.')),
+    group('Decode quality', 'Control the quality information shown in Live system rows.',
+      toggle('show_control_decode_quality', 'Show control-channel decode quality',
+        'Display control-channel quality in Live system rows and signal indicators.'),
+      toggle('show_voice_decode_quality', 'Show voice-channel decode quality',
+        'Display voice quality after enough frames have been received.'),
+      toggle('clear_voice_decode_quality_on_call_end', 'Clear voice quality when a call ends',
+        'Remove the previous call’s voice-quality value when its row becomes idle.'),
+      formField('Decode quality format', qualityMode)),
+    group('Live detail viewers', 'Events and Messages are temporary browser sessions; filtering happens locally.',
+      formField('Matching rows shown', rowLimit,
+        'The newest matching rows are shown after frontend filters are applied. Allowed range: 25–500.')),
+    group('Trunked activity', 'Control when inactive traffic activity leaves Live.',
+      formField('Idle grant retention (milliseconds)', grantAge)));
+  form.append(groups, message, actions);
   body.append(node('p', 'admin-section-intro',
-    'Receiver-wide defaults for the browser Live view. Changes apply without restarting the receiver.'),
-    control, message);
-  content.append(section('Live display', body));
+    'Receiver-wide presentation settings. Changes apply without restarting the receiver.'), form);
+  content.append(section('Live and activity', body));
 
+  let configuration = null;
+  const setDisabled = (disabled) => {
+    Object.values(controls).forEach((control) => { control.disabled = disabled; });
+    save.disabled = disabled;
+  };
+  const applyConfiguration = (next) => {
+    configuration = next || {};
+    controls.retain_idle_call_details.checked = configuration.retain_idle_call_details === true;
+    controls.show_encryption_details.checked = configuration.show_encryption_details !== false;
+    controls.show_control_decode_quality.checked = configuration.show_control_decode_quality !== false;
+    controls.show_voice_decode_quality.checked = configuration.show_voice_decode_quality !== false;
+    controls.clear_voice_decode_quality_on_call_end.checked =
+      configuration.clear_voice_decode_quality_on_call_end === true;
+    qualityMode.value = configuration.decode_quality_display_mode === 'detailed' ? 'detailed' : 'percentage';
+    grantAge.value = String(configuration.traffic_grant_age_out_milliseconds ?? 1000);
+    rowLimit.value = String(configuration.live_detail_matching_row_limit ?? LIVE_DETAIL_DEFAULT_MATCHING_ROW_LIMIT);
+    liveDisplaySettings = configuration;
+  };
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!form.reportValidity() || save.disabled) return;
+    setDisabled(true);
+    message.textContent = 'Saving Live and activity settings…';
+    try {
+      const next = await requestJson('/api/v1/admin/web-display', { method: 'PUT', body: {
+        retain_idle_call_details: controls.retain_idle_call_details.checked,
+        show_encryption_details: controls.show_encryption_details.checked,
+        show_control_decode_quality: controls.show_control_decode_quality.checked,
+        show_voice_decode_quality: controls.show_voice_decode_quality.checked,
+        clear_voice_decode_quality_on_call_end: controls.clear_voice_decode_quality_on_call_end.checked,
+        decode_quality_display_mode: qualityMode.value,
+        traffic_grant_age_out_milliseconds: Number(grantAge.value),
+        live_detail_matching_row_limit: Number(rowLimit.value)
+      } });
+      applyConfiguration(next);
+      message.textContent = 'Live and activity settings saved.';
+    } catch (error) {
+      if (configuration) applyConfiguration(configuration);
+      message.textContent = error.message;
+    } finally {
+      setDisabled(false);
+    }
+  });
   try {
-    let configuration = await requestJson('/api/v1/admin/web-display', { csrf: false });
-    toggle.checked = configuration?.show_encryption_details !== false;
-    toggle.disabled = false;
+    applyConfiguration(await requestJson('/api/v1/admin/web-display', { csrf: false }));
     message.textContent = '';
-    toggle.addEventListener('change', async () => {
-      const previous = !toggle.checked;
-      const requested = toggle.checked;
-      toggle.disabled = true;
-      message.textContent = 'Saving Live display settings…';
-      try {
-        configuration = await requestJson('/api/v1/admin/web-display', {
-          method: 'PUT', body: { show_encryption_details: requested }
-        });
-        toggle.checked = configuration?.show_encryption_details !== false;
-        if (serviceStatus) serviceStatus.web_display = configuration;
-        message.textContent = 'Live display settings saved.';
-      } catch (error) {
-        toggle.checked = previous;
-        message.textContent = error.message;
-      } finally {
-        toggle.disabled = false;
-      }
-    });
+    setDisabled(false);
   } catch (error) {
     message.textContent = error.message;
   }
@@ -12895,14 +13269,16 @@ async function renderAdminRadioReferenceSettings() {
     saveRegion.disabled = true;
     replaceRadioReferenceOptions(state, [], null, 'Loading states…');
     const response = await requestJson(`/api/v1/admin/radioreference/states?country_id=${
-      encodeURIComponent(countryId)}`, { csrf: false });
+      encodeURIComponent(countryId)}`, { csrf: false,
+      timeoutMs: RADIO_REFERENCE_DIRECTORY_TIMEOUT_MILLISECONDS });
     const available = replaceRadioReferenceOptions(state, response?.items, selectedStateId, 'No states available');
     state.disabled = !available;
     saveRegion.disabled = !available;
   };
 
   const loadRegions = async () => {
-    const response = await requestJson('/api/v1/admin/radioreference/countries', { csrf: false });
+    const response = await requestJson('/api/v1/admin/radioreference/countries', { csrf: false,
+      timeoutMs: RADIO_REFERENCE_DIRECTORY_TIMEOUT_MILLISECONDS });
     const available = replaceRadioReferenceOptions(country, response?.items, configuration?.country_id,
       'No countries available');
     country.disabled = !available;
@@ -12987,11 +13363,564 @@ async function renderAdminRadioReferenceSettings() {
     accountMessage.textContent = error.message;
     connect.disabled = false;
   }
+
+  await renderRadioReferenceImportWorkspace();
 }
 
-async function renderAdminWebSettings() {
-  await renderAdminWebDisplaySettings();
-  await renderAdminRadioReferenceSettings();
+function radioReferenceItems(value) {
+  if (Array.isArray(value)) return value;
+  if (Array.isArray(value?.items)) return value.items;
+  if (Array.isArray(value?.rows)) return value.rows;
+  return [];
+}
+
+function radioReferenceAliasSelect(catalog) {
+  const select = node('select');
+  select.required = true;
+  const placeholder = node('option', '', 'Choose an Alias List');
+  placeholder.value = '';
+  select.append(placeholder);
+  const lists = Array.isArray(catalog?.alias_lists) ? catalog.alias_lists : radioReferenceItems(catalog);
+  lists.forEach((item) => {
+    const id = Number(item.id ?? item.alias_list_id);
+    if (!Number.isInteger(id) || id <= 0) return;
+    const option = node('option', '', item.name || `Alias List ${id}`);
+    option.value = String(id);
+    select.append(option);
+  });
+  return select;
+}
+
+function radioReferenceTalkgroupImportCounts(previews) {
+  const counts = { added: 0, updated: 0, unchanged: 0 };
+  (Array.isArray(previews) ? previews : []).forEach((preview) => {
+    const status = String(preview?.status || '').toUpperCase();
+    if (status === 'NOT_PRESENT') counts.added++;
+    else if (status === 'DIFFERENT') counts.updated++;
+    else counts.unchanged++;
+  });
+  return counts;
+}
+
+function radioReferenceTalkgroupFieldLabel(value) {
+  return ({ name: 'Name', description: 'Description', group: 'Category / group' })[
+    String(value || '').toLowerCase()] || String(value || 'Field');
+}
+
+function openRadioReferenceTalkgroupImportConfirmation(options) {
+  const selected = (Array.isArray(options?.previews) ? options.previews : []).filter(Boolean);
+  const selectedIds = selected.map((preview) => Number(preview?.talkgroup?.id))
+    .filter((id) => Number.isInteger(id) && id > 0);
+  if (!selected.length || selectedIds.length !== selected.length) return null;
+
+  const counts = radioReferenceTalkgroupImportCounts(selected);
+  const single = selected.length === 1 ? selected[0] : null;
+  const talkgroup = single?.talkgroup || {};
+  const talkgroupLabel = String(talkgroup.alpha_tag || '').trim() ||
+    `Talkgroup ${identifierNumber(talkgroup.value)}`;
+  const body = node('div', 'admin-confirmation radioreference-talkgroup-confirmation');
+
+  if (selected.length === 1 && counts.updated === 1) {
+    body.append(node('p', '', `Update ${talkgroupLabel} from the current RadioReference values?`));
+    const changes = Array.isArray(single.changes) ? single.changes : [];
+    const values = node('dl', 'key-values radioreference-talkgroup-changes');
+    changes.forEach((change) => {
+      const previous = String(change?.previous_value ?? '').trim() || 'Blank';
+      const updated = String(change?.updated_value ?? '').trim() || 'Blank';
+      values.append(node('dt', '', radioReferenceTalkgroupFieldLabel(change?.field)),
+        node('dd', '', `${previous} → ${updated}`));
+    });
+    body.append(node('h3', '', 'RadioReference-owned fields'), changes.length ? values :
+      node('p', 'muted', 'The RadioReference-owned name, description, or category has changed.'));
+  } else if (selected.length === 1) {
+    body.append(node('p', '', `Add ${talkgroupLabel} to the selected Alias List?`));
+  } else {
+    body.append(node('p', '', `Review ${number(selected.length)} selected RadioReference talkgroups before import.`));
+    const summary = node('dl', 'key-values radioreference-talkgroup-import-summary');
+    [['Add', counts.added], ['Update', counts.updated], ['Unchanged', counts.unchanged]]
+      .forEach(([label, value]) => summary.append(node('dt', '', label), node('dd', '', number(value))));
+    body.append(summary);
+  }
+
+  if (counts.updated > 0) {
+    body.append(node('p', 'muted',
+      'Updates replace only the Alias name, description, and category/group. Local appearance, actions, recording, ' +
+      'playback, and streaming settings are preserved.'));
+  }
+
+  const message = node('div', 'admin-form-message');
+  message.setAttribute('role', 'alert');
+  const cancel = node('button', 'button secondary', 'Cancel');
+  cancel.type = 'button';
+  const confirmLabel = counts.updated > 0 ?
+    (selected.length === 1 ? 'Confirm RadioReference Update' : `Apply ${number(selected.length)} Changes`) :
+    (selected.length === 1 ? 'Add Alias' : `Add ${number(counts.added)} Aliases`);
+  const confirm = node('button', 'button', confirmLabel);
+  confirm.type = 'button';
+  body.append(message, aliasModalFooter(cancel, confirm));
+  const modal = openReadOnlyModal(counts.updated > 0 ? 'Confirm RadioReference Update' :
+    'Confirm RadioReference Import', body, {
+      id: 'radioreference-talkgroup-import', className: 'alias-editor-modal alias-confirm-modal',
+      returnFocusSelector: options.returnFocusSelector || '.radioreference-talkgroup-apply'
+    });
+  if (!modal) return null;
+
+  cancel.addEventListener('click', modal.close);
+  confirm.addEventListener('click', async () => {
+    if (confirm.disabled) return;
+    confirm.disabled = true;
+    cancel.disabled = true;
+    message.textContent = counts.updated > 0 ? 'Applying confirmed RadioReference changes…' :
+      'Adding RadioReference aliases…';
+    try {
+      const updateConfirmation = counts.updated > 0 ? { confirm_updates: true } : {};
+      const response = await requestJson('/api/v1/admin/radioreference/systems/talkgroups/import', {
+        method: 'POST', body: {
+          system_id: Number(options.systemId), alias_list_id: Number(options.aliasListId),
+          revision: Number(options.revision), talkgroup_ids: selectedIds, ...updateConfirmation
+        }, timeoutMs: RADIO_REFERENCE_MUTATION_TIMEOUT_MILLISECONDS
+      });
+      modal.setDirty(false);
+      closeReadOnlyModal(false, true);
+      if (typeof options.onImported === 'function') options.onImported(response);
+    } catch (error) {
+      message.textContent = error.message;
+      confirm.disabled = false;
+      cancel.disabled = false;
+    }
+  });
+  confirm.focus();
+  return modal;
+}
+
+async function renderRadioReferenceImportWorkspace() {
+  const host = node('div', 'radioreference-import-workspace');
+  const status = node('div', 'admin-form-message', 'Loading RadioReference browser…');
+  status.setAttribute('role', 'status');
+  host.append(status);
+  content.append(section('Import from RadioReference', host));
+
+  let configuration;
+  let aliases;
+  let countries;
+  try {
+    [configuration, aliases, countries] = await Promise.all([
+      requestJson('/api/v1/admin/radioreference', { csrf: false }),
+      requestJson('/api/v1/admin/alias-lists', { csrf: false }),
+      requestJson('/api/v1/admin/radioreference/countries', { csrf: false,
+        timeoutMs: RADIO_REFERENCE_DIRECTORY_TIMEOUT_MILLISECONDS })
+    ]);
+  } catch (error) {
+    status.textContent = error.message;
+    return;
+  }
+  if (configuration?.account?.state !== 'VALID_PREMIUM') {
+    status.textContent = 'Connect a current RadioReference Premium account above to browse and import data.';
+    return;
+  }
+
+  status.remove();
+  const browseForm = node('form', 'admin-form radioreference-browse-form');
+  const country = node('select');
+  const state = node('select');
+  const county = node('select');
+  const group = node('select');
+  [['ALL', 'Systems and conventional'], ['TRUNKED_SYSTEMS', 'Trunked systems'],
+    ['CONVENTIONAL_AGENCIES', 'Conventional agencies']].forEach(([value, label]) => {
+    const option = node('option', '', label);
+    option.value = value;
+    group.append(option);
+  });
+  const search = node('input');
+  search.type = 'search';
+  search.placeholder = 'System, agency, city, or county';
+  const browse = node('button', '', 'Search RadioReference');
+  browse.type = 'submit';
+  const browseMessage = node('div', 'admin-form-message');
+  browseMessage.setAttribute('role', 'status');
+  const fields = node('div', 'radioreference-browse-fields');
+  fields.append(formField('Country', country), formField('State', state), formField('County', county),
+    formField('Show', group), formField('Search', search));
+  browseForm.append(fields, browseMessage, browse);
+  const resultHost = node('div', 'radioreference-browser-results');
+  const detailHost = node('div', 'radioreference-import-detail');
+  host.append(browseForm, resultHost, detailHost);
+
+  const replaceOptions = (select, items, requested, placeholder, optional = false) => {
+    select.replaceChildren();
+    if (optional) {
+      const all = node('option', '', placeholder);
+      all.value = '';
+      select.append(all);
+    }
+    radioReferenceItems(items).forEach((item) => {
+      const option = node('option', '', `${item.name}${item.abbreviation ? ` (${item.abbreviation})` : ''}`);
+      option.value = String(item.id);
+      select.append(option);
+    });
+    const value = String(requested ?? '');
+    if ([...select.options].some((option) => option.value === value)) select.value = value;
+  };
+
+  replaceOptions(country, countries, configuration.country_id, 'Choose country');
+  const loadCounties = async () => {
+    if (!state.value) {
+      replaceOptions(county, [], '', 'All counties', true);
+      return;
+    }
+    const response = await requestJson(`/api/v1/admin/radioreference/counties?state_id=${
+      encodeURIComponent(state.value)}&limit=500&offset=0`, { csrf: false,
+      timeoutMs: RADIO_REFERENCE_DIRECTORY_TIMEOUT_MILLISECONDS });
+    replaceOptions(county, response, configuration.county_id, 'All counties', true);
+  };
+  const loadStates = async () => {
+    const response = await requestJson(`/api/v1/admin/radioreference/states?country_id=${
+      encodeURIComponent(country.value)}`, { csrf: false,
+      timeoutMs: RADIO_REFERENCE_DIRECTORY_TIMEOUT_MILLISECONDS });
+    replaceOptions(state, response, configuration.state_id, 'Choose state', true);
+    await loadCounties();
+  };
+  country.addEventListener('change', () => void loadStates());
+  state.addEventListener('change', () => void loadCounties());
+  await loadStates();
+
+  const selectedCheckboxIds = (container) => [...container.querySelectorAll('input[type="checkbox"]:checked')]
+    .map((input) => Number(input.value)).filter((value) => Number.isInteger(value) && value > 0);
+
+  const renderTalkgroups = async (system) => {
+    const systemId = Number(system.id);
+    const panel = node('section', 'radioreference-import-panel');
+    panel.append(node('h3', '', 'Talkgroups'));
+    const aliasList = radioReferenceAliasSelect(aliases);
+    const category = node('select');
+    category.append(Object.assign(node('option', '', 'All categories'), { value: '' }));
+    const query = node('input');
+    query.type = 'search';
+    query.placeholder = 'Search talkgroups';
+    const load = node('button', 'secondary', 'Load Talkgroups');
+    load.type = 'button';
+    const apply = node('button', 'radioreference-talkgroup-apply', 'Import Selected Talkgroups');
+    apply.type = 'button';
+    apply.disabled = true;
+    const message = node('div', 'admin-form-message', 'Choose an Alias List, then load talkgroups.');
+    const list = node('div', 'radioreference-selection-list');
+    const toolbar = node('div', 'radioreference-inline-controls');
+    toolbar.append(formField('Alias List', aliasList), formField('Category', category),
+      formField('Search', query), load, apply);
+    panel.append(toolbar, message, list);
+    let revision = null;
+    let talkgroupPreviews = new Map();
+    load.addEventListener('click', async () => {
+      if (!aliasList.value) {
+        message.textContent = 'Choose an Alias List first.';
+        return;
+      }
+      load.disabled = true;
+      message.textContent = 'Loading talkgroups…';
+      try {
+        const parameters = new URLSearchParams({ system_id: String(systemId), alias_list_id: aliasList.value,
+          search: query.value, offset: '0', limit: '500' });
+        if (category.value) parameters.set('category_id', category.value);
+        const response = await requestJson(`/api/v1/admin/radioreference/systems/talkgroups?${parameters}`,
+          { csrf: false, timeoutMs: RADIO_REFERENCE_DETAIL_TIMEOUT_MILLISECONDS });
+        revision = Number(response.revision);
+        const categoryValue = category.value;
+        category.replaceChildren(Object.assign(node('option', '', 'All categories'), { value: '' }));
+        (response.categories || []).forEach((item) => {
+          const option = node('option', '', item.name);
+          option.value = String(item.id);
+          category.append(option);
+        });
+        category.value = categoryValue;
+        const previews = radioReferenceItems(response);
+        talkgroupPreviews = new Map(previews.map((preview) => [Number(preview?.talkgroup?.id), preview])
+          .filter(([id]) => Number.isInteger(id) && id > 0));
+        list.replaceChildren(...previews.map((preview) => {
+          const talkgroup = preview.talkgroup || {};
+          const status = String(preview.status || '').toUpperCase();
+          const title = talkgroup.alpha_tag || `Talkgroup ${talkgroup.value}`;
+          const row = node(status === 'IDENTICAL' ? 'div' : 'label', 'radioreference-selection-row');
+          if (status === 'IDENTICAL') {
+            const existingAliasId = Number(preview.existing_alias_id);
+            const marker = node('span', 'radioreference-selection-marker');
+            marker.setAttribute('aria-hidden', 'true');
+            const name = node('strong');
+            if (Number.isInteger(existingAliasId) && existingAliasId > 0) {
+              name.append(anchor(title, href('aliases', { list: Number(aliasList.value), aliasTab: 'configure',
+                alias: existingAliasId }), 'radioreference-existing-alias'));
+            } else {
+              name.append(title);
+            }
+            row.append(marker, name);
+          } else {
+            const checkbox = node('input');
+            checkbox.type = 'checkbox';
+            checkbox.value = String(talkgroup.id);
+            checkbox.addEventListener('change', () => {
+              apply.disabled = !selectedCheckboxIds(list).length;
+            });
+            row.append(checkbox, node('strong', '', title));
+          }
+          row.append(node('span', '', `${talkgroup.value} · ${preview.category || 'Uncategorized'}`),
+            badge(status.replaceAll('_', ' '), status === 'DIFFERENT' ? 'state-stale' : 'state-current'));
+          return row;
+        }));
+        apply.disabled = true;
+        message.textContent = `${number(response.total_items)} talkgroups available. Identical aliases are not selected.`;
+      } catch (error) {
+        message.textContent = error.message;
+      } finally {
+        load.disabled = false;
+      }
+    });
+    apply.addEventListener('click', () => {
+      const ids = selectedCheckboxIds(list);
+      if (!ids.length || !aliasList.value || !Number.isFinite(revision)) return;
+      const previews = ids.map((id) => talkgroupPreviews.get(id)).filter(Boolean);
+      if (previews.length !== ids.length) {
+        message.textContent = 'The talkgroup preview changed. Load talkgroups again before importing.';
+        return;
+      }
+      openRadioReferenceTalkgroupImportConfirmation({
+        previews, systemId, aliasListId: Number(aliasList.value), revision,
+        returnFocusSelector: '.radioreference-talkgroup-apply',
+        onImported: (response) => {
+          revision = Number(response.revision);
+          list.querySelectorAll('input[type="checkbox"]:checked').forEach((checkbox) => {
+            checkbox.checked = false;
+          });
+          apply.disabled = true;
+          message.textContent = `Imported ${number(response.added)} new and ${number(response.updated)} updated ` +
+            `talkgroups; ${number(response.identical)} were unchanged.`;
+        }
+      });
+    });
+    return panel;
+  };
+
+  const renderSystem = async (systemId) => {
+    detailHost.replaceChildren(node('div', 'loading', 'Loading system and sites…'));
+    try {
+      const [preview, sites] = await Promise.all([
+        requestJson(`/api/v1/admin/radioreference/systems/details?system_id=${systemId}`, { csrf: false,
+          timeoutMs: RADIO_REFERENCE_DETAIL_TIMEOUT_MILLISECONDS }),
+        requestJson(`/api/v1/admin/radioreference/systems/sites?system_id=${systemId}&offset=0&limit=500`,
+          { csrf: false, timeoutMs: RADIO_REFERENCE_DETAIL_TIMEOUT_MILLISECONDS })
+      ]);
+      const system = preview.system || { id: systemId, name: `System ${systemId}` };
+      const sitePanel = node('section', 'radioreference-import-panel');
+      sitePanel.append(node('h3', '', `${system.name} · Sites`),
+        node('p', 'muted', preview.supported === false ? preview.unsupported_reason :
+          `Recommended decoder: ${preview.recommended_decoder || 'Unknown'}`));
+      const siteList = node('div', 'radioreference-card-list');
+      radioReferenceItems(sites).forEach((site) => {
+        const card = node('article', 'radioreference-import-card');
+        const inspect = node('button', 'secondary', 'Preview & Create Channel');
+        inspect.type = 'button';
+        const body = node('div');
+        card.append(node('strong', '', site.name || `Site ${site.number}`),
+          node('span', 'muted', `Site ${site.number}`), inspect, body);
+        inspect.addEventListener('click', async () => {
+          inspect.disabled = true;
+          body.replaceChildren(node('div', 'loading', 'Loading site preview…'));
+          try {
+            const sitePreview = await requestJson(`/api/v1/admin/radioreference/systems/site-preview?system_id=${
+              systemId}&site_id=${site.id}`, { csrf: false,
+              timeoutMs: RADIO_REFERENCE_DETAIL_TIMEOUT_MILLISECONDS });
+            if (sitePreview.supported === false) {
+              body.replaceChildren(node('div', 'error', sitePreview.unsupported_reason ||
+                'This RadioReference site is not supported for channel creation.'));
+              return;
+            }
+            const form = node('form', 'admin-form radioreference-site-import-form');
+            const aliasList = radioReferenceAliasSelect(aliases);
+            const modulation = node('select');
+            const choose = node('option', '', 'Choose modulation');
+            choose.value = '';
+            modulation.append(choose);
+            [{ value: 'C4FM', label: 'C4FM' },
+              { value: 'CQPSK', label: 'LSM / CQPSK' }].forEach(({ value, label }) => {
+              const option = node('option', '', label);
+              option.value = value;
+              modulation.append(option);
+            });
+            modulation.required = sitePreview.p25_modulation_required === true;
+            const frequencies = node('div', 'radioreference-frequency-selection');
+            const defaults = new Set((sitePreview.default_control_frequencies || []).map(Number));
+            (sitePreview.site?.channels || []).filter((channel) =>
+              channel.primary_control || channel.alternate_control || defaults.has(Number(channel.frequency_hz)))
+              .forEach((channel) => {
+                const label = node('label');
+                const checkbox = node('input');
+                checkbox.type = 'checkbox';
+                checkbox.value = String(channel.frequency_hz);
+                checkbox.checked = defaults.has(Number(channel.frequency_hz));
+                label.append(checkbox, node('span', '', `${frequency(channel.frequency_hz)} MHz · ${
+                  channel.use || 'Control'}`));
+                frequencies.append(label);
+              });
+            const result = node('div', 'admin-form-message');
+            const create = node('button', '', 'Create Channel');
+            create.type = 'submit';
+            form.append(formField('Alias List', aliasList),
+              ...(sitePreview.p25_modulation_required ? [formField('P25 modulation', modulation,
+                'Choose the known modulation explicitly; RadioReference is not treated as authoritative.')] : []),
+              formField('Control frequencies', frequencies), result, create);
+            form.addEventListener('submit', async (event) => {
+              event.preventDefault();
+              const selected = selectedCheckboxIds(frequencies);
+              if (!form.reportValidity() || !selected.length) {
+                result.textContent = 'Choose an Alias List, modulation when required, and at least one frequency.';
+                return;
+              }
+              create.disabled = true;
+              result.textContent = 'Creating channel…';
+              try {
+                const response = await requestJson('/api/v1/admin/radioreference/systems/channels', {
+                  method: 'POST', body: { system_id: Number(systemId), site_id: Number(site.id),
+                    alias_list_id: Number(aliasList.value), decoder_type: sitePreview.recommended_decoder,
+                    p25_modulation: modulation.value || null, frequency_hz: selected },
+                  timeoutMs: RADIO_REFERENCE_MUTATION_TIMEOUT_MILLISECONDS
+                });
+                result.textContent = `${number(response.created)} channel created.`;
+              } catch (error) {
+                result.textContent = error.message;
+              } finally {
+                create.disabled = false;
+              }
+            });
+            body.replaceChildren(form);
+          } catch (error) {
+            body.replaceChildren(node('div', 'error', error.message));
+          } finally {
+            inspect.disabled = false;
+          }
+        });
+        siteList.append(card);
+      });
+      sitePanel.append(siteList);
+      detailHost.replaceChildren(sitePanel, await renderTalkgroups(system));
+    } catch (error) {
+      detailHost.replaceChildren(node('div', 'error', error.message));
+    }
+  };
+
+  const renderConventional = async (entry) => {
+    detailHost.replaceChildren(node('div', 'loading', 'Loading conventional categories…'));
+    const ownerKind = String(entry.detail?.kind || 'AGENCY');
+    const ownerId = Number(entry.detail?.id);
+    try {
+      const categories = await requestJson(`/api/v1/admin/radioreference/conventional/categories?owner_kind=${
+        encodeURIComponent(ownerKind)}&owner_id=${ownerId}&offset=0&limit=500`, { csrf: false,
+        timeoutMs: RADIO_REFERENCE_DIRECTORY_TIMEOUT_MILLISECONDS });
+      const panel = node('section', 'radioreference-import-panel');
+      panel.append(node('h3', '', `${entry.name} · Conventional`));
+      const category = node('select');
+      radioReferenceItems(categories).forEach((item) => {
+        const option = node('option', '', `${item.category_name} · ${item.sub_category_name}`);
+        option.value = String(item.sub_category_id);
+        category.append(option);
+      });
+      const aliasList = radioReferenceAliasSelect(aliases);
+      const systemName = node('input');
+      systemName.value = entry.name || '';
+      const siteName = node('input');
+      siteName.value = entry.secondary || '';
+      const load = node('button', 'secondary', 'Load Frequencies');
+      load.type = 'button';
+      const apply = node('button', '', 'Create Selected Channels');
+      apply.type = 'button';
+      apply.disabled = true;
+      const list = node('div', 'radioreference-selection-list');
+      const message = node('div', 'admin-form-message');
+      const controls = node('div', 'radioreference-inline-controls');
+      controls.append(formField('Category', category), formField('Alias List', aliasList),
+        formField('System name', systemName), formField('Site name', siteName), load, apply);
+      panel.append(controls, message, list);
+      load.addEventListener('click', async () => {
+        if (!category.value) return;
+        load.disabled = true;
+        message.textContent = 'Loading frequencies…';
+        try {
+          const response = await requestJson(`/api/v1/admin/radioreference/conventional/frequencies?sub_category_id=${
+            category.value}&offset=0&limit=500`, { csrf: false,
+            timeoutMs: RADIO_REFERENCE_DIRECTORY_TIMEOUT_MILLISECONDS });
+          list.replaceChildren(...radioReferenceItems(response).map((item) => {
+            const label = node('label', 'radioreference-selection-row');
+            const checkbox = node('input');
+            checkbox.type = 'checkbox';
+            checkbox.value = String(item.id);
+            label.append(checkbox, node('strong', '', item.alpha_tag || item.description ||
+              `${frequency(item.downlink_hz)} MHz`), node('span', '', `${frequency(item.downlink_hz)} MHz · ${
+              item.mode || 'Unknown mode'}`));
+            checkbox.addEventListener('change', () => { apply.disabled = !selectedCheckboxIds(list).length; });
+            return label;
+          }));
+          message.textContent = `${number(response.total_items)} frequencies available.`;
+        } catch (error) {
+          message.textContent = error.message;
+        } finally {
+          load.disabled = false;
+        }
+      });
+      apply.addEventListener('click', async () => {
+        const ids = selectedCheckboxIds(list);
+        if (!ids.length || !aliasList.value) {
+          message.textContent = 'Choose an Alias List and at least one frequency.';
+          return;
+        }
+        apply.disabled = true;
+        message.textContent = 'Creating conventional channels…';
+        try {
+          const response = await requestJson('/api/v1/admin/radioreference/conventional/channels', {
+            method: 'POST', body: { sub_category_id: Number(category.value), frequency_ids: ids,
+              alias_list_id: Number(aliasList.value), system_name: systemName.value, site_name: siteName.value },
+            timeoutMs: RADIO_REFERENCE_MUTATION_TIMEOUT_MILLISECONDS
+          });
+          message.textContent = `${number(response.created)} channel${response.created === 1 ? '' : 's'} created.`;
+        } catch (error) {
+          message.textContent = error.message;
+        } finally {
+          apply.disabled = false;
+        }
+      });
+      detailHost.replaceChildren(panel);
+    } catch (error) {
+      detailHost.replaceChildren(node('div', 'error', error.message));
+    }
+  };
+
+  browseForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!country.value) return;
+    browse.disabled = true;
+    browseMessage.textContent = 'Searching RadioReference…';
+    detailHost.replaceChildren();
+    try {
+      const parameters = new URLSearchParams({ country_id: country.value, group: group.value, scope: 'ALL',
+        search: search.value, offset: '0', limit: '500' });
+      if (state.value) parameters.set('state_id', state.value);
+      if (county.value) parameters.set('county_id', county.value);
+      const response = await requestJson(`/api/v1/admin/radioreference/browse?${parameters}`, { csrf: false,
+        timeoutMs: RADIO_REFERENCE_DIRECTORY_TIMEOUT_MILLISECONDS });
+      const items = radioReferenceItems(response);
+      resultHost.replaceChildren(...items.map((item) => {
+        const button = node('button', 'radioreference-directory-row');
+        button.type = 'button';
+        button.append(node('strong', '', item.name), node('span', '', item.secondary || ''),
+          badge(item.type === 'TRUNKED_SYSTEM' ? 'Trunked' : 'Conventional', 'state-current'));
+        button.addEventListener('click', () => item.type === 'TRUNKED_SYSTEM' ?
+          void renderSystem(Number(item.detail?.id)) : void renderConventional(item));
+        return button;
+      }));
+      browseMessage.textContent = items.length ?
+        `${number(response.total_items)} results. Select one to preview imports.` : 'No matching entries found.';
+    } catch (error) {
+      browseMessage.textContent = error.message;
+    } finally {
+      browse.disabled = false;
+    }
+  });
 }
 
 function adminAudioNumberField(configuration, limits, key, label, help) {
@@ -13046,7 +13975,8 @@ async function renderAdminWebAudio() {
   const fields = [
     ['maximum_listeners', 'Simultaneous listeners', 'Admission limit for browser-audio connections.'],
     ['maximum_selected_scan_lists', 'Scan lists per listener', 'Maximum lists one listener may subscribe to.'],
-    ['maximum_browser_queue_calls', 'Browser queue calls', 'Maximum queue size offered to each browser.'],
+    ['waiting_calls_per_listener', 'Waiting calls per listener',
+      'Exact bounded waiting-call policy silently enforced for each browser listener.'],
     ['maximum_cached_calls', 'Cached calls', 'Maximum completed calls retained for browser retrieval.'],
     ['maximum_cached_audio_mib', 'Cached audio (MiB)', 'Maximum memory used by completed-call audio.']
   ];
@@ -13315,7 +14245,6 @@ function receiverHealthRefreshButton() {
 }
 
 function renderReceiverHealthPage(host, snapshot, stale, lastError) {
-  if (mobileListenerModeActive()) return;
   host.replaceChildren();
   if (!snapshot) {
     const message = stale ? (lastError || 'Receiver health status is unavailable.') :
@@ -13364,46 +14293,96 @@ function renderReceiverHealthPage(host, snapshot, stale, lastError) {
 }
 
 async function renderAdminHealth() {
-  if (mobileListenerModeActive()) return;
   const host = node('div', 'receiver-health-page');
   content.append(host);
   receiverHealthController.bindPage(host);
   void receiverHealthController.refresh();
 }
 
+function comingSoonPanel(title, detail) {
+  const panel = node('section', 'section placeholder-page');
+  panel.append(node('h2', '', title), badge('Coming soon', 'state-stale'), node('p', '', detail));
+  return panel;
+}
+
+async function renderConfiguration() {
+  const renderContext = captureRenderContext();
+  const availableTabs = [
+    { id: 'scan-lists', label: 'Scan Lists' },
+    { id: 'radioreference', label: 'RadioReference' },
+    { id: 'recording', label: 'Recording' },
+    { id: 'streaming', label: 'Streaming' }
+  ];
+  const requested = route.get('tab') || 'scan-lists';
+  const active = availableTabs.some((item) => item.id === requested) ? requested : 'scan-lists';
+  if (!beginPage(renderContext, pageHeader('Configuration',
+    'Manage receiver configuration and external data sources'),
+    tabs(availableTabs.map((item) => ({ ...item, href: href('configuration', { tab: item.id }) })), active))) return;
+  if (active === 'scan-lists') await renderAdminScanLists();
+  else if (active === 'radioreference') await renderAdminRadioReferenceSettings();
+  else if (active === 'recording') content.append(comingSoonPanel('Recording',
+    'Web recording configuration will be added here. Existing receiver recording behavior is unchanged.'));
+  else content.append(comingSoonPanel('Streaming',
+    'Web streaming configuration will be added here. Existing receiver streaming behavior is unchanged.'));
+}
+
+function renderHardware() {
+  const renderContext = captureRenderContext();
+  beginPage(renderContext, pageHeader('Hardware', 'Inspect and configure receiver hardware'),
+    comingSoonPanel('Tuners', 'Web tuner configuration will be added here. Use Spectrum for live tuner diagnostics.'));
+}
+
+function renderAdminSystem() {
+  const database = serviceStatus?.database || {};
+  const logging = statsLoggingState();
+  const summaryState = logging.summaryActive ? 'On' :
+    (logging.summaryConfigured ? 'Unavailable' : 'Off');
+  const databaseBytes = Number(database.database_bytes || 0);
+  const body = node('div', 'admin-section-body');
+  body.append(metrics([
+    ['Summary collection', summaryState],
+    ['Database size', Number.isFinite(databaseBytes) ? adminStatusBytes(databaseBytes) : '—'],
+    ['Detailed history', logging.historyActive ? 'On' : (logging.historyRetained ? 'Retained' : 'Off')]
+  ], true));
+  const state = node('dl', 'admin-listener-status-values');
+  state.append(node('dt', '', 'Logging state'), node('dd', '', String(logging.state || 'Unknown')),
+    node('dt', '', 'Database status'), node('dd', '', serviceStatus ? 'Available' : 'Unavailable'));
+  body.append(state);
+  content.append(section('System status', body));
+}
+
 async function renderAdmin() {
   const renderContext = captureRenderContext();
-  const mobileListener = mobileListenerModeActive();
   const availableTabs = [
     { id: 'health', label: 'Health', capability: ACCESS_CAPABILITIES.RECEIVER_HEALTH },
-    { id: 'settings', label: 'Web Settings', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS },
-    { id: 'scan-lists', label: 'Scan Lists', capability: ACCESS_CAPABILITIES.ADMIN_ALIASES },
+    { id: 'live-activity', label: 'Live & Activity', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS },
     { id: 'web-audio', label: 'Listener Status', capability: ACCESS_CAPABILITIES.ADMIN_AUDIO },
     { id: 'users', label: 'Users', capability: ACCESS_CAPABILITIES.ADMIN_USERS },
-    { id: 'access', label: 'Access', capability: ACCESS_CAPABILITIES.ADMIN_ACCESS }
-  ].filter((item) => capabilityAllowed(item.capability) && !(mobileListener && item.id === 'health'));
+    { id: 'access', label: 'Access', capability: ACCESS_CAPABILITIES.ADMIN_ACCESS },
+    { id: 'system', label: 'System', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS }
+  ].filter((item) => capabilityAllowed(item.capability));
   if (!availableTabs.length) throw Object.assign(new Error('Administrator access is unavailable.'), { status: 403 });
-  const requested = route.get('tab') || 'scan-lists';
+  const requested = route.get('tab') || 'health';
   const active = availableTabs.some((item) => item.id === requested) ? requested : availableTabs[0].id;
   if (active !== requested) {
     route.set('tab', active);
     window.history.replaceState({}, '', currentHref());
   }
   if (!beginPage(renderContext, pageHeader('Administration',
-    'Monitor receiver health and manage receiver, scan-list, browser-audio, user, and access settings'),
+    'Monitor receiver health and manage receiver-wide web settings'),
     tabs(availableTabs.map((item) => ({ ...item, href: href('admin', { tab: item.id }) })), active))) return;
   if (active === 'health') await renderAdminHealth();
-  else if (active === 'settings') await renderAdminWebSettings();
-  else if (active === 'scan-lists') await renderAdminScanLists();
+  else if (active === 'live-activity') await renderAdminWebDisplaySettings();
   else if (active === 'web-audio') await renderAdminWebAudio();
   else if (active === 'access') await renderAdminAccess();
+  else if (active === 'system') renderAdminSystem();
   else await renderAdminUsers();
 }
 
 function routeViewLabel(view) {
   return ({
-    dashboard: 'Dashboard', live: 'Live', 'tuner-spectrum': 'Tuner Spectrum',
-    systems: 'Systems & Sites', system: 'System details',
+    dashboard: 'Dashboard', live: 'Live', scanner: 'Scanner', 'tuner-spectrum': 'Tuner Spectrum',
+    systems: 'Trunked', system: 'System details', configuration: 'Configuration', hardware: 'Hardware',
     site: 'Site details', talkgroup: 'Talkgroup details', radio: 'Radio details',
     conventional: 'Conventional', 'conventional-detail': 'Conventional details', aliases: 'Aliases',
     admin: 'Administration'
@@ -13502,8 +14481,16 @@ function renderCredits() {
 function activateNavigation(view) {
   const parent = ['system', 'talkgroup', 'radio', 'site'].includes(view) ? 'systems' :
     (view === 'conventional-detail' ? 'conventional' : view);
-  document.querySelectorAll('.primary-nav a').forEach((link) =>
-    link.classList.toggle('active', link.dataset.view === parent));
+  const activeTab = route.get('tab');
+  document.querySelectorAll('.primary-nav a').forEach((link) => {
+    const active = link.dataset.view === parent && (!link.dataset.navTab || link.dataset.navTab === activeTab);
+    link.classList.toggle('active', active);
+  });
+  document.querySelectorAll('.primary-nav .nav-group').forEach((group) => {
+    const active = Boolean(group.querySelector('a.active'));
+    group.classList.toggle('active', active);
+    if (active) group.open = true;
+  });
 }
 
 function loggingAvailabilitySignature() {
@@ -13532,10 +14519,10 @@ async function reloadForWebClientRevision() {
       webClientReloadAttempted) return false;
 
   webClientReloadAttempted = true;
-  const label = document.getElementById('server-status');
-  label.textContent = 'Web update available · reloading';
+  const label = document.getElementById('global-status');
+  if (label) label.textContent = 'Web update available · reloading';
   window.setTimeout(() => {
-    label.textContent = 'Web update available · reload required';
+    if (label) label.textContent = 'Web update available · reload required';
   }, 1_000);
   window.location.reload();
   return true;
@@ -13547,35 +14534,58 @@ async function loadStatus(refreshCurrentView = false) {
   if (accessSessionAvailable && !capabilityAllowed(ACCESS_CAPABILITIES.DASHBOARD)) {
     serviceStatus = null;
     window.sdrtrunkWebPlayer?.updateCapacity(null);
-    document.getElementById('server-status').textContent = 'Status restricted';
+    const status = document.getElementById('global-status');
+    if (status) status.textContent = 'Status restricted';
     return;
   }
   try {
     serviceStatus = await api('/api/v1/status', {}, { page: false });
     window.sdrtrunkWebPlayer?.updateCapacity(serviceStatus.webPlayer || serviceStatus.web_player || null);
-    const database = serviceStatus.database || {};
-    const logging = statsLoggingState();
-    const size = (Number(database.database_bytes || 0) / 1048576).toFixed(1);
-    const summaryLabel = logging.summaryActive ? 'Summaries on' :
-      (logging.summaryConfigured ? 'Summaries unavailable' : 'Summaries off');
-    document.getElementById('server-status').textContent =
-      `${summaryLabel} · ${size} MB`;
+    const status = document.getElementById('global-status');
+    if (status) status.textContent = 'Receiver status available';
   } catch (error) {
     serviceStatus = null;
     window.sdrtrunkWebPlayer?.updateCapacity(null);
-    document.getElementById('server-status').textContent = 'Database unavailable';
+    const status = document.getElementById('global-status');
+    if (status) status.textContent = 'Receiver status unavailable';
   }
 
   const currentView = route.get('view') || 'dashboard';
   if (refreshCurrentView && previousSignature !== loggingAvailabilitySignature() &&
-      !['live', 'tuner-spectrum', 'admin', 'credits'].includes(currentView)) {
+      !['live', 'scanner', 'configuration', 'hardware', 'tuner-spectrum', 'admin', 'credits']
+        .includes(currentView)) {
     render();
   }
 }
 
+function liveDisplaySettingsSignature(value) {
+  if (!value) return '';
+  return JSON.stringify([value.format_version, value.show_encryption_details, value.retain_idle_call_details,
+    value.show_control_decode_quality, value.show_voice_decode_quality,
+    value.clear_voice_decode_quality_on_call_end, value.decode_quality_display_mode,
+    value.traffic_grant_age_out_milliseconds, value.live_detail_matching_row_limit]);
+}
+
+async function refreshLiveDisplaySettings(refreshCurrentView = false) {
+  const previous = liveDisplaySettingsSignature(liveDisplaySettings);
+  if (!capabilityAllowed(ACCESS_CAPABILITIES.LIVE)) liveDisplaySettings = null;
+  else {
+    try {
+      liveDisplaySettings = await requestJson('/api/v1/live/settings', { csrf: false, page: false });
+    } catch (error) {
+      // Preserve the last confirmed receiver policy across a transient read failure.
+    }
+  }
+  const changed = previous !== liveDisplaySettingsSignature(liveDisplaySettings);
+  if (refreshCurrentView && changed && (route.get('view') || 'dashboard') === 'live') await render();
+  return liveDisplaySettings;
+}
+
 async function render() {
+  setNavigationOpen(false);
   const view = route.get('view') || 'dashboard';
   if (!closeReadOnlyModal(false)) return;
+  restorePlaybackBarBeforeRender();
   const epoch = ++activeRenderEpoch;
   activeRenderController?.abort();
   const renderController = new AbortController();
@@ -13592,6 +14602,7 @@ async function render() {
     const handlers = {
       dashboard: renderDashboard,
       live: renderLive,
+      scanner: renderScanner,
       'tuner-spectrum': renderTunerSpectrum,
       systems: renderSystems,
       system: renderSystem,
@@ -13601,6 +14612,8 @@ async function render() {
       conventional: renderConventional,
       'conventional-detail': renderConventionalDetail,
       aliases: renderAliases,
+      configuration: renderConfiguration,
+      hardware: renderHardware,
       admin: renderAdmin,
       credits: renderCredits
     };
@@ -13647,6 +14660,7 @@ document.addEventListener('click', (event) => {
   render();
 });
 window.addEventListener('popstate', () => {
+  setNavigationOpen(false);
   const previous = `/?${route.toString()}`;
   if (!closeReadOnlyModal(false)) {
     window.history.pushState({}, '', previous);
@@ -13657,15 +14671,17 @@ window.addEventListener('popstate', () => {
 });
 initializeThemeToggle();
 initializeAccessControls();
-initializeListenerShell();
+initializeNavigation();
 initializePlaybackHeader();
 refreshAccessSession(false)
-  .then(() => Promise.all([loadStatus(false), receiverHealthController.refresh()]))
+  .then(() => Promise.all([loadStatus(false), refreshLiveDisplaySettings(false),
+    receiverHealthController.refresh()]))
   .finally(render);
 let refreshCycle = null;
 window.setInterval(() => {
   if (document.hidden || refreshCycle) return;
   refreshCycle = refreshAccessSession(true)
-    .then(() => Promise.all([loadStatus(true), receiverHealthController.refresh()]))
+    .then(() => Promise.all([loadStatus(true), refreshLiveDisplaySettings(true),
+      receiverHealthController.refresh()]))
     .finally(() => { refreshCycle = null; });
 }, 10_000);

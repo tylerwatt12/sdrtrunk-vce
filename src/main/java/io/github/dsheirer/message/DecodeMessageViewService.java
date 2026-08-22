@@ -5,15 +5,15 @@
  */
 package io.github.dsheirer.message;
 
+import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
 import io.github.dsheirer.module.ProcessingChain;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.sample.Listener;
+import io.github.dsheirer.source.Source;
 import io.github.dsheirer.util.concurrent.BoundedMpscPairQueue;
 import io.github.dsheirer.util.concurrent.ObserverThreadFactory;
-import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -30,25 +30,26 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Shared, demand-driven decoder-message observation service.
+ * Demand-owned, live-only decoder-message relay for the web interface.
  *
- * <p>Each active processing-chain history has one listener regardless of browser count.  The decoder callback only
- * performs a bounded, nonblocking reference offer.  Chain resolution, history snapshots, message projection and
- * per-client fan-out all run on the service worker.</p>
+ * <p>All browser sessions for one exact configured-frequency scope share one processing-chain listener. A decoder
+ * callback performs only a bounded, nonblocking reference offer. Chain validation, message classification,
+ * {@code toString()} projection, and per-session fan-out run on the observer worker. The service retains no message
+ * history and provides no replay.</p>
  */
 public class DecodeMessageViewService implements AutoCloseable
 {
     private static final Logger mLog = LoggerFactory.getLogger(DecodeMessageViewService.class);
     static final int LIVE_QUEUE_SIZE = 256;
     static final int INGRESS_QUEUE_SIZE = 1_024;
-    private static final int SHARED_HISTORY_SIZE = 200;
     private static final int MAXIMUM_DRAIN_PER_PRODUCER = 512;
     private static final int TEXT_MAXIMUM_LENGTH = 2_048;
     private static final int PROTOCOL_MAXIMUM_LENGTH = 64;
+    private static final int FILTER_MAXIMUM_LENGTH = 128;
     private static final long REBIND_INTERVAL_NANOS = TimeUnit.MILLISECONDS.toNanos(500);
     private static final long MAINTENANCE_INTERVAL_MILLISECONDS = 10;
     private static final long DEFAULT_CLOSE_TIMEOUT_MILLISECONDS = 2_000;
-    private final HistoryResolver mHistoryResolver;
+    private final SourceResolver mSourceResolver;
     private final Map<Scope,Producer> mProducers = new HashMap<>();
     private final ExecutorService mWorker = Executors.newSingleThreadExecutor(
         new ObserverThreadFactory("sdrtrunk decode message views"));
@@ -56,9 +57,7 @@ public class DecodeMessageViewService implements AutoCloseable
     private final AtomicBoolean mClosed = new AtomicBoolean();
     private final long mCloseTimeoutMilliseconds;
 
-    /**
-     * Constructs an instance that resolves the processing chain by exact configuration and source frequency.
-     */
+    /** Constructs a service that binds directly to the exact active processing chain selected by each scope. */
     public DecodeMessageViewService(ChannelProcessingManager channelProcessingManager)
     {
         this(channelProcessingManager, DEFAULT_CLOSE_TIMEOUT_MILLISECONDS);
@@ -68,7 +67,7 @@ public class DecodeMessageViewService implements AutoCloseable
                                      long closeTimeoutMilliseconds)
     {
         Objects.requireNonNull(channelProcessingManager, "channelProcessingManager cannot be null");
-        mHistoryResolver = scope -> {
+        mSourceResolver = scope -> {
             List<ProcessingChain> chains = channelProcessingManager.getProcessingChainsByConfiguration(
                 scope.configurationId(), scope.frequencyHz());
 
@@ -76,9 +75,11 @@ public class DecodeMessageViewService implements AutoCloseable
             {
                 for(ProcessingChain chain: chains)
                 {
-                    if(chain != null)
+                    ChainMessageSource source = chain != null ? new ChainMessageSource(chain) : null;
+
+                    if(source != null && source.matches(scope))
                     {
-                        return chain.getMessageHistory();
+                        return source;
                     }
                 }
             }
@@ -89,14 +90,14 @@ public class DecodeMessageViewService implements AutoCloseable
         startWorker();
     }
 
-    DecodeMessageViewService(HistoryResolver historyResolver)
+    DecodeMessageViewService(SourceResolver sourceResolver)
     {
-        this(historyResolver, DEFAULT_CLOSE_TIMEOUT_MILLISECONDS, TimeUnit.MILLISECONDS);
+        this(sourceResolver, DEFAULT_CLOSE_TIMEOUT_MILLISECONDS, TimeUnit.MILLISECONDS);
     }
 
-    DecodeMessageViewService(HistoryResolver historyResolver, long closeTimeout, TimeUnit unit)
+    DecodeMessageViewService(SourceResolver sourceResolver, long closeTimeout, TimeUnit unit)
     {
-        mHistoryResolver = Objects.requireNonNull(historyResolver, "historyResolver cannot be null");
+        mSourceResolver = Objects.requireNonNull(sourceResolver, "sourceResolver cannot be null");
         Objects.requireNonNull(unit, "unit cannot be null");
         mCloseTimeoutMilliseconds = Math.max(0, unit.toMillis(closeTimeout));
         startWorker();
@@ -123,7 +124,7 @@ public class DecodeMessageViewService implements AutoCloseable
                     }
                     else
                     {
-                        //No sessions means no periodic observer wakeups.
+                        //No open viewer means no periodic observer work.
                         mWakeup.acquire();
                     }
 
@@ -142,10 +143,7 @@ public class DecodeMessageViewService implements AutoCloseable
         }
     }
 
-    /**
-     * Opens a lightweight view session.  Multiple sessions for the same scope share one history listener and one
-     * projection cache.
-     */
+    /** Opens an empty live session. Multiple sessions for the same scope share one source listener and projection. */
     public Session openSession(Scope scope)
     {
         Objects.requireNonNull(scope, "scope cannot be null");
@@ -158,9 +156,7 @@ public class DecodeMessageViewService implements AutoCloseable
             }
 
             Producer producer = mProducers.computeIfAbsent(scope, Producer::new);
-            producer.cancelRetirement();
-            Session session = new Session(this, producer);
-            producer.add(session);
+            Session session = producer.openSession();
             mWakeup.release();
             return session;
         }
@@ -172,12 +168,6 @@ public class DecodeMessageViewService implements AutoCloseable
         {
             Producer producer = session.mProducer;
             producer.remove(session);
-
-            if(!producer.hasSessions())
-            {
-                producer.requestRetirement();
-            }
-
             mWakeup.release();
         }
     }
@@ -257,14 +247,11 @@ public class DecodeMessageViewService implements AutoCloseable
 
     long getDroppedObservationCount(Scope scope)
     {
-        Producer producer;
-
         synchronized(mProducers)
         {
-            producer = mProducers.get(scope);
+            Producer producer = mProducers.get(scope);
+            return producer != null ? producer.mDroppedObservations.get() : 0;
         }
-
-        return producer != null ? producer.mDroppedObservations.get() : 0;
     }
 
     int getProducerCount()
@@ -300,7 +287,7 @@ public class DecodeMessageViewService implements AutoCloseable
             }
         }
 
-        //The worker owns listener detach and ingress cleanup even when it is currently blocked in a resolver.
+        //The worker owns listener detach and ingress cleanup even when it is currently blocked in projection.
         mWakeup.release();
         mWorker.shutdown();
 
@@ -318,14 +305,19 @@ public class DecodeMessageViewService implements AutoCloseable
     }
 
     @FunctionalInterface
-    interface HistoryResolver
+    interface SourceResolver
     {
-        MessageHistory resolve(Scope scope);
+        MessageSource resolve(Scope scope);
     }
 
-    /**
-     * Exact active-channel selection. Configuration identifiers are normalized UUID strings.
-     */
+    interface MessageSource
+    {
+        void addListener(Listener<IMessage> listener);
+        void removeListener(Listener<IMessage> listener);
+        boolean matches(Scope scope);
+    }
+
+    /** Exact active-channel selection. Configuration identifiers are normalized UUID strings. */
     public record Scope(String configurationId, long frequencyHz)
     {
         public Scope
@@ -351,17 +343,13 @@ public class DecodeMessageViewService implements AutoCloseable
         }
     }
 
-    /**
-     * Safe, bounded fields needed by the web message table.
-     */
+    /** Safe, bounded fields needed by the web message table and its browser-owned filters. */
     public record MessageView(String messageId, long timestampMs, String protocol, int timeslot, boolean valid,
-                              String text)
+                              String filterGroup, String filterType, String text)
     {
     }
 
-    /**
-     * Per-client view over a shared producer.  Only the service worker writes the bounded live queue.
-     */
+    /** Per-client empty live queue over one shared per-scope producer. */
     public static class Session implements AutoCloseable
     {
         private final DecodeMessageViewService mService;
@@ -369,11 +357,15 @@ public class DecodeMessageViewService implements AutoCloseable
         private final ArrayBlockingQueue<MessageView> mQueue = new ArrayBlockingQueue<>(LIVE_QUEUE_SIZE);
         private final AtomicBoolean mClosed = new AtomicBoolean();
         private final AtomicLong mDroppedMessages = new AtomicLong();
+        private final long mStartingAudienceEpoch;
+        private final long mStartingProducerDrops;
 
-        private Session(DecodeMessageViewService service, Producer producer)
+        private Session(DecodeMessageViewService service, Producer producer, long startingAudienceEpoch)
         {
             mService = service;
             mProducer = producer;
+            mStartingAudienceEpoch = startingAudienceEpoch;
+            mStartingProducerDrops = producer.mDroppedObservations.get();
         }
 
         public Scope getScope()
@@ -381,16 +373,11 @@ public class DecodeMessageViewService implements AutoCloseable
             return mProducer.mScope;
         }
 
-        /**
-         * Requests an immediate worker-side rebind check.
-         *
-         * @return true when the producer generation has changed since this session was opened
-         */
-        public boolean refresh()
+        /** Requests an immediate worker-side source check. */
+        public void refresh()
         {
             mProducer.requestRefresh();
             mService.mWakeup.release();
-            return mProducer.mGeneration > 0;
         }
 
         public boolean isBound()
@@ -403,20 +390,11 @@ public class DecodeMessageViewService implements AutoCloseable
             return mProducer.mGeneration;
         }
 
-        /**
-         * Returns the worker-owned, newest-first immutable cache.  It never locks decoder history.
-         */
-        public List<MessageView> snapshot()
-        {
-            return !mClosed.get() && !mService.mClosed.get() ? mProducer.mPublishedHistory : List.of();
-        }
-
-        /**
-         * Monotonic count of raw ingress and this session's bounded output drops.
-         */
+        /** Monotonic count of shared ingress and this session's bounded output drops. */
         public long droppedCount()
         {
-            return mProducer.mDroppedObservations.get() + mDroppedMessages.get();
+            long producerDrops = mProducer.mDroppedObservations.get();
+            return Math.max(0, producerDrops - mStartingProducerDrops) + mDroppedMessages.get();
         }
 
         public MessageView poll(long timeout, TimeUnit unit) throws InterruptedException
@@ -454,6 +432,11 @@ public class DecodeMessageViewService implements AutoCloseable
             }
         }
 
+        private boolean accepts(long audienceEpoch)
+        {
+            return !mClosed.get() && audienceEpoch >= mStartingAudienceEpoch;
+        }
+
         private void reset()
         {
             mQueue.clear();
@@ -479,47 +462,51 @@ public class DecodeMessageViewService implements AutoCloseable
     private final class Producer
     {
         private final Scope mScope;
-        private final BoundedMpscPairQueue<Object,IMessage> mIngress =
+        private final BoundedMpscPairQueue<IngressStamp,IMessage> mIngress =
             new BoundedMpscPairQueue<>(INGRESS_QUEUE_SIZE);
         private final CopyOnWriteArrayList<Session> mSessions = new CopyOnWriteArrayList<>();
-        private final LinkedHashMap<String,MessageView> mHistory = new LinkedHashMap<>();
         private final AtomicLong mDroppedObservations = new AtomicLong();
         private volatile Binding mBinding;
-        private volatile List<MessageView> mPublishedHistory = List.of();
+        private volatile IngressStamp mIngressStamp;
         private volatile long mGeneration;
         private volatile long mNextRefreshNanos;
         private volatile boolean mRetirementRequested;
+        private long mAudienceEpoch;
 
         private Producer(Scope scope)
         {
             mScope = scope;
         }
 
-        private void add(Session session)
+        /**
+         * Opens a session at a new live edge. Lifecycle updates are serialized with source binding changes, while the
+         * decoder callback only reads the resulting immutable stamp.
+         */
+        private synchronized Session openSession()
         {
+            long audienceEpoch = ++mAudienceEpoch;
+            Session session = new Session(DecodeMessageViewService.this, this, audienceEpoch);
             mSessions.addIfAbsent(session);
             mRetirementRequested = false;
+            Binding binding = mBinding;
+            mIngressStamp = binding != null ? new IngressStamp(binding.mToken, audienceEpoch) : null;
             requestRefresh();
+            return session;
         }
 
-        private void remove(Session session)
+        private synchronized void remove(Session session)
         {
             mSessions.remove(session);
+
+            if(mSessions.isEmpty())
+            {
+                mRetirementRequested = true;
+            }
         }
 
         private boolean hasSessions()
         {
             return !mSessions.isEmpty();
-        }
-
-        private void requestRetirement()
-        {
-            mRetirementRequested = true;
-        }
-
-        private void cancelRetirement()
-        {
-            mRetirementRequested = false;
         }
 
         private boolean shouldRetire()
@@ -542,170 +529,177 @@ public class DecodeMessageViewService implements AutoCloseable
             }
 
             mNextRefreshNanos = now + REBIND_INTERVAL_NANOS;
-            MessageHistory nextHistory = mHistoryResolver.resolve(mScope);
+            MessageSource nextSource = mSourceResolver.resolve(mScope);
+
+            if(nextSource != null && !nextSource.matches(mScope))
+            {
+                nextSource = null;
+            }
 
             if(mClosed.get())
             {
                 return;
             }
 
-            Binding current = mBinding;
-
-            if((current == null && nextHistory == null) ||
-                (current != null && current.mHistory == nextHistory))
+            synchronized(this)
             {
-                return;
-            }
+                if(mClosed.get() || shouldRetire())
+                {
+                    return;
+                }
 
-            if(current != null)
-            {
-                current.mHistory.removeListener(current.mListener);
-            }
+                Binding current = mBinding;
+                boolean currentMatches = current != null && current.mSource.matches(mScope);
 
-            mBinding = null;
-            mIngress.clear();
-            mHistory.clear();
-            mPublishedHistory = List.of();
-            mGeneration++;
+                if((current == null && nextSource == null) ||
+                    (currentMatches && current.mSource.equals(nextSource)))
+                {
+                    return;
+                }
 
-            for(Session session: mSessions)
-            {
-                session.reset();
-            }
+                if(current != null)
+                {
+                    current.mSource.removeListener(current.mListener);
+                }
 
-            if(nextHistory != null)
-            {
-                Object token = new Object();
-                Listener<IMessage> listener = message -> receive(token, message);
-                Binding next = new Binding(nextHistory, listener, token);
-                mBinding = next;
-                nextHistory.addListener(listener);
-                seed(nextHistory.getItems());
+                mBinding = null;
+                mIngressStamp = null;
+                mIngress.clear();
+                mGeneration++;
+
+                for(Session session: mSessions)
+                {
+                    session.reset();
+                }
+
+                if(nextSource != null)
+                {
+                    Object token = new Object();
+                    Listener<IMessage> listener = message -> receive(token, message);
+                    Binding next = new Binding(nextSource, listener, token);
+                    mBinding = next;
+                    mIngressStamp = new IngressStamp(token, mAudienceEpoch);
+
+                    try
+                    {
+                        nextSource.addListener(listener);
+
+                        if(!nextSource.matches(mScope))
+                        {
+                            nextSource.removeListener(listener);
+                            mBinding = null;
+                            mIngressStamp = null;
+                            mGeneration++;
+                        }
+                    }
+                    catch(RuntimeException exception)
+                    {
+                        mBinding = null;
+                        mIngressStamp = null;
+                        throw exception;
+                    }
+                }
             }
         }
 
         private void receive(Object token, IMessage message)
         {
             Binding binding = mBinding;
+            IngressStamp stamp = mIngressStamp;
 
             if(message == null || message instanceof StuffBitsMessage || binding == null ||
-                binding.mToken != token || mRetirementRequested || mClosed.get())
+                binding.mToken != token || stamp == null || stamp.mBindingToken != token ||
+                mRetirementRequested || mClosed.get())
             {
                 return;
             }
 
-            if(!mIngress.offer(token, message))
+            if(!mIngress.offer(stamp, message))
             {
                 mDroppedObservations.incrementAndGet();
             }
         }
 
-        private void seed(List<IMessage> messages)
-        {
-            if(messages == null)
-            {
-                return;
-            }
-
-            for(IMessage message: messages)
-            {
-                MessageView projected = view(message);
-
-                if(projected != null)
-                {
-                    remember(projected);
-                }
-            }
-
-            publishHistory();
-        }
-
         private void drain()
         {
-            List<MessageView> batch = new ArrayList<>();
-
             for(int count = 0; count < MAXIMUM_DRAIN_PER_PRODUCER; count++)
             {
-                BoundedMpscPairQueue.Entry<Object,IMessage> observation = mIngress.poll();
+                if(shouldAbandonIngress())
+                {
+                    mIngress.clear();
+                    return;
+                }
+
+                BoundedMpscPairQueue.Entry<IngressStamp,IMessage> observation = mIngress.poll();
 
                 if(observation == null)
                 {
                     break;
                 }
 
+                if(shouldAbandonIngress())
+                {
+                    mIngress.clear();
+                    return;
+                }
+
+                IngressStamp stamp = observation.first();
                 Binding binding = mBinding;
 
-                if(binding == null || binding.mToken != observation.first())
+                if(binding == null || binding.mToken != stamp.mBindingToken ||
+                    !binding.mSource.matches(mScope) || !hasAudience(stamp.mAudienceEpoch))
                 {
                     continue;
                 }
 
-                IMessage message = observation.second();
+                MessageView projected = view(observation.second());
 
-                MessageView projected = view(message);
-
-                if(projected == null)
-                {
-                    continue;
-                }
-
-                remember(projected);
-                batch.add(projected);
-            }
-
-            if(!batch.isEmpty())
-            {
-                //Publish authoritative cache before any live item can trigger a client's resync read.
-                publishHistory();
-
-                for(MessageView projected: batch)
+                //A DMR REST handoff can change the chain's functional channel while projection is in progress.
+                if(projected != null && !mClosed.get() && mBinding == binding &&
+                    binding.mSource.matches(mScope))
                 {
                     for(Session session: mSessions)
                     {
-                        session.publish(projected);
+                        if(session.accepts(stamp.mAudienceEpoch))
+                        {
+                            session.publish(projected);
+                        }
                     }
                 }
             }
         }
 
-        private void remember(MessageView view)
+        private boolean shouldAbandonIngress()
         {
-            mHistory.remove(view.messageId());
-            mHistory.put(view.messageId(), view);
-
-            while(mHistory.size() > SHARED_HISTORY_SIZE)
-            {
-                mHistory.remove(mHistory.keySet().iterator().next());
-            }
+            return mClosed.get() || (mRetirementRequested && !hasSessions());
         }
 
-        private void publishHistory()
+        private boolean hasAudience(long audienceEpoch)
         {
-            List<MessageView> newestFirst = new ArrayList<>(mHistory.size());
-            List<MessageView> oldestFirst = new ArrayList<>(mHistory.values());
-
-            for(int x = oldestFirst.size() - 1; x >= 0; x--)
+            for(Session session: mSessions)
             {
-                newestFirst.add(oldestFirst.get(x));
+                if(session.accepts(audienceEpoch))
+                {
+                    return true;
+                }
             }
 
-            mPublishedHistory = List.copyOf(newestFirst);
+            return false;
         }
 
-        private void detach()
+        private synchronized void detach()
         {
             Binding binding = mBinding;
             mBinding = null;
+            mIngressStamp = null;
             mGeneration++;
 
             if(binding != null)
             {
-                binding.mHistory.removeListener(binding.mListener);
+                binding.mSource.removeListener(binding.mListener);
             }
 
             mIngress.clear();
-            mHistory.clear();
-            mPublishedHistory = List.of();
 
             for(Session session: mSessions)
             {
@@ -724,8 +718,9 @@ public class DecodeMessageViewService implements AutoCloseable
         }
 
         long timestamp = timestamp(message);
-        return new MessageView(messageId(message, timestamp), timestamp, protocol(message), timeslot(message),
-            valid(message), text(message));
+        ProtocolInfo protocol = protocol(message);
+        return new MessageView(messageId(message, timestamp), timestamp, protocol.display(), timeslot(message),
+            valid(message), protocol.filterGroup(), filterType(message), text(message));
     }
 
     private static String messageId(IMessage message, long timestamp)
@@ -746,16 +741,17 @@ public class DecodeMessageViewService implements AutoCloseable
         }
     }
 
-    private static String protocol(IMessage message)
+    private static ProtocolInfo protocol(IMessage message)
     {
         try
         {
             Protocol protocol = message.getProtocol();
-            return protocol != null ? bounded(protocol.toString(), PROTOCOL_MAXIMUM_LENGTH) : "Unknown";
+            return protocol != null ? new ProtocolInfo(bounded(protocol.toString(), PROTOCOL_MAXIMUM_LENGTH),
+                bounded(protocol.name(), FILTER_MAXIMUM_LENGTH)) : ProtocolInfo.UNKNOWN;
         }
         catch(RuntimeException _)
         {
-            return "Unknown";
+            return ProtocolInfo.UNKNOWN;
         }
     }
 
@@ -783,6 +779,19 @@ public class DecodeMessageViewService implements AutoCloseable
         }
     }
 
+    private static String filterType(IMessage message)
+    {
+        try
+        {
+            String type = bounded(message.getClass().getSimpleName(), FILTER_MAXIMUM_LENGTH);
+            return !type.isBlank() ? type : "UnknownMessage";
+        }
+        catch(RuntimeException _)
+        {
+            return "UnknownMessage";
+        }
+    }
+
     private static String text(IMessage message)
     {
         try
@@ -807,7 +816,41 @@ public class DecodeMessageViewService implements AutoCloseable
             stripped.substring(0, maximumLength - 1) + "…";
     }
 
-    private record Binding(MessageHistory mHistory, Listener<IMessage> mListener, Object mToken)
+    private record ChainMessageSource(ProcessingChain mChain) implements MessageSource
     {
+        @Override
+        public void addListener(Listener<IMessage> listener)
+        {
+            mChain.addMessageListener(listener);
+        }
+
+        @Override
+        public void removeListener(Listener<IMessage> listener)
+        {
+            mChain.removeMessageListener(listener);
+        }
+
+        @Override
+        public boolean matches(Scope scope)
+        {
+            Channel channel = mChain.getCurrentChannel();
+            Source source = mChain.getSource();
+            return channel != null && source != null &&
+                scope.configurationId().equals(channel.getConfigurationId()) &&
+                source.getFrequency() == scope.frequencyHz();
+        }
+    }
+
+    private record Binding(MessageSource mSource, Listener<IMessage> mListener, Object mToken)
+    {
+    }
+
+    private record IngressStamp(Object mBindingToken, long mAudienceEpoch)
+    {
+    }
+
+    private record ProtocolInfo(String display, String filterGroup)
+    {
+        private static final ProtocolInfo UNKNOWN = new ProtocolInfo("Unknown", "UNKNOWN");
     }
 }

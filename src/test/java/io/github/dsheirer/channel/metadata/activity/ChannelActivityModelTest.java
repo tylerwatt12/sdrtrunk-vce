@@ -13,7 +13,13 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.github.dsheirer.alias.Alias;
+import io.github.dsheirer.alias.AliasListDefinition;
+import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.alias.AliasModel;
+import io.github.dsheirer.alias.id.AliasID;
+import io.github.dsheirer.alias.id.radio.Radio;
+import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.audio.call.AudioCallEvent;
 import io.github.dsheirer.audio.call.AudioCallEventType;
 import io.github.dsheirer.audio.call.AudioCallId;
@@ -27,8 +33,10 @@ import io.github.dsheirer.controller.channel.Channel.ChannelType;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.IdentifierUpdateNotification;
 import io.github.dsheirer.identifier.IdentifierUpdateNotification.Operation;
+import io.github.dsheirer.identifier.configuration.AliasListConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.FrequencyConfigurationIdentifier;
 import io.github.dsheirer.identifier.decoder.ChannelStateIdentifier;
+import io.github.dsheirer.identifier.alias.P25TalkerAliasIdentifier;
 import io.github.dsheirer.metadata.site.ProtocolSiteMetadataEvent;
 import io.github.dsheirer.metadata.site.SiteMetadataEvent;
 import io.github.dsheirer.metadata.site.SiteMetadataSnapshot;
@@ -44,22 +52,293 @@ import io.github.dsheirer.module.decode.nxdn.channel.ChannelFrequency;
 import io.github.dsheirer.module.decode.nxdn.channel.NXDNChannelLookup;
 import io.github.dsheirer.module.decode.nxdn.telemetry.NXDNNetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
+import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
+import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
+import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.module.decode.p25.phase1.message.P25FrequencyBand;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.preference.nowplaying.NowPlayingPreference;
+import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 import javax.swing.SwingUtilities;
 import org.junit.jupiter.api.Test;
 
 class ChannelActivityModelTest
 {
+    @Test
+    void capturesCallDetailsBeforeMutableMetadataAdvancesToIdle() throws Exception
+    {
+        AliasListDefinition definition = p25AliasList("County", 1);
+        var source = APCO25RadioIdentifier.createFrom(1_201);
+        var target = APCO25Talkgroup.create(4_400);
+        var talker = P25TalkerAliasIdentifier.create("Portable 12");
+        Alias sourceAlias = alias("Car 12", 11, definition, new Radio(Protocol.APCO25, 1_201));
+        Alias targetAlias = alias("Dispatch", 12, definition, new Talkgroup(Protocol.APCO25, 4_400));
+        AliasModel aliasModel = new AliasModel();
+        aliasModel.replaceCommittedConfiguration(List.of(definition), List.of(sourceAlias, targetAlias));
+        ChannelActivityModel model = new ChannelActivityModel(aliasModel, retainingPreference());
+        Channel channel = trunkedChannel("Dispatch", "County", "North", new DecodeConfigP25Conventional(),
+            155_730_000L);
+        channel.setAliasListName(definition.getName());
+        ChannelMetadata metadata = new ChannelMetadata(aliasModel, 1);
+        metadata.receive(new IdentifierUpdateNotification(AliasListConfigurationIdentifier.create(definition.getName()),
+            Operation.ADD, 1));
+        run(model, () -> model.channelStarted(channel, List.of(metadata)));
+
+        //Inject the complete call lifecycle from the activity worker's own listener callback.  The worker cannot
+        //drain these observations until metadata has already advanced to IDLE/null, which makes this a deterministic
+        //regression test for queueing the mutable ChannelMetadata object instead of an observation snapshot.
+        AtomicBoolean injectLifecycle = new AtomicBoolean();
+        model.addActivityListener(event -> {
+            if(injectLifecycle.compareAndSet(true, false))
+            {
+                metadata.receive(new IdentifierUpdateNotification(source, Operation.ADD, 1));
+                model.updated(metadata, io.github.dsheirer.channel.metadata.ChannelMetadataField.USER_FROM);
+                metadata.receive(new IdentifierUpdateNotification(target, Operation.ADD, 1));
+                model.updated(metadata, io.github.dsheirer.channel.metadata.ChannelMetadataField.USER_TO);
+                metadata.receive(new IdentifierUpdateNotification(talker, Operation.ADD, 1));
+                model.updated(metadata, io.github.dsheirer.channel.metadata.ChannelMetadataField.USER_FROM);
+                metadata.receive(new IdentifierUpdateNotification(source, Operation.REMOVE, 1));
+                model.updated(metadata, io.github.dsheirer.channel.metadata.ChannelMetadataField.USER_FROM);
+                metadata.receive(new IdentifierUpdateNotification(talker, Operation.REMOVE, 1));
+                model.updated(metadata, io.github.dsheirer.channel.metadata.ChannelMetadataField.USER_FROM);
+                metadata.receive(new IdentifierUpdateNotification(target, Operation.REMOVE, 1));
+                model.updated(metadata, io.github.dsheirer.channel.metadata.ChannelMetadataField.USER_TO);
+                metadata.receive(new IdentifierUpdateNotification(ChannelStateIdentifier.IDLE, Operation.ADD, 1));
+                model.updated(metadata, io.github.dsheirer.channel.metadata.ChannelMetadataField.DECODER_STATE);
+            }
+        });
+
+        injectLifecycle.set(true);
+        metadata.receive(new IdentifierUpdateNotification(ChannelStateIdentifier.CALL, Operation.ADD, 1));
+        model.updated(metadata, io.github.dsheirer.channel.metadata.ChannelMetadataField.DECODER_STATE);
+        assertTrue(model.awaitIdle(5, TimeUnit.SECONDS), "channel activity worker did not become idle");
+
+        ChannelActivityRow row = model.getConventionalTable().getRows().getFirst();
+        assertEquals(State.IDLE, row.getState());
+        assertSame(source, row.getSource());
+        assertEquals(List.of(sourceAlias), row.getSourceAliases());
+        assertSame(talker, row.getTalkerAlias());
+        assertSame(target, row.getTarget());
+        assertEquals(List.of(targetAlias), row.getTargetAliases());
+        model.close();
+    }
+
+    @Test
+    void enrichesMatchingRetainedIdleCallWithoutReplacingItsIdentity() throws Exception
+    {
+        AliasListDefinition definition = p25AliasList("County", 1);
+        AliasModel aliasModel = new AliasModel();
+        aliasModel.replaceCommittedConfiguration(List.of(definition), List.of());
+        ChannelActivityModel model = new ChannelActivityModel(aliasModel, retainingPreference());
+        Channel channel = trunkedChannel("Dispatch", "County", "North", new DecodeConfigP25Conventional(),
+            155_730_000L);
+        channel.setAliasListName(definition.getName());
+        ChannelMetadata metadata = new ChannelMetadata(aliasModel, 1);
+        metadata.receive(new IdentifierUpdateNotification(AliasListConfigurationIdentifier.create(definition.getName()),
+            Operation.ADD, 1));
+        var source = APCO25RadioIdentifier.createFrom(1_201);
+        var target = APCO25Talkgroup.create(4_400);
+
+        run(model, () -> {
+            model.channelStarted(channel, List.of(metadata));
+            metadata.receive(new IdentifierUpdateNotification(source, Operation.ADD, 1));
+            model.updated(metadata, io.github.dsheirer.channel.metadata.ChannelMetadataField.USER_FROM);
+            metadata.receive(new IdentifierUpdateNotification(target, Operation.ADD, 1));
+            model.updated(metadata, io.github.dsheirer.channel.metadata.ChannelMetadataField.USER_TO);
+            metadata.receive(new IdentifierUpdateNotification(ChannelStateIdentifier.CALL, Operation.ADD, 1));
+            model.updated(metadata, io.github.dsheirer.channel.metadata.ChannelMetadataField.DECODER_STATE);
+        });
+        run(model, () -> {
+            metadata.receive(new IdentifierUpdateNotification(ChannelStateIdentifier.IDLE, Operation.ADD, 1));
+            model.updated(metadata, io.github.dsheirer.channel.metadata.ChannelMetadataField.DECODER_STATE);
+        });
+
+        ChannelActivityRow row = model.getConventionalTable().getRows().getFirst();
+        assertTrue(row.getSourceAliases().isEmpty());
+        Alias sourceAlias = alias("Car 12", 11, definition, new Radio(Protocol.APCO25, 1_201));
+        aliasModel.replaceCommittedConfiguration(List.of(definition), List.of(sourceAlias));
+        var talker = P25TalkerAliasIdentifier.create("Portable 12");
+        run(model, () -> {
+            metadata.receive(new IdentifierUpdateNotification(talker, Operation.ADD, 1));
+            model.updated(metadata, io.github.dsheirer.channel.metadata.ChannelMetadataField.USER_FROM);
+        });
+
+        assertEquals(State.IDLE, row.getState());
+        assertSame(source, row.getSource());
+        assertEquals(List.of(sourceAlias), row.getSourceAliases());
+        assertSame(talker, row.getTalkerAlias());
+        assertEquals("Car 12 · TA: Portable 12", row.getSourceAliasDisplay());
+        assertSame(target, row.getTarget());
+
+        var unrelatedSource = APCO25RadioIdentifier.createFrom(9_999);
+        run(model, () -> {
+            metadata.receive(new IdentifierUpdateNotification(unrelatedSource, Operation.ADD, 1));
+            model.updated(metadata, io.github.dsheirer.channel.metadata.ChannelMetadataField.USER_FROM);
+        });
+        assertSame(source, row.getSource());
+        assertEquals(List.of(sourceAlias), row.getSourceAliases());
+        assertSame(talker, row.getTalkerAlias());
+        model.close();
+    }
+
+    @Test
+    void retainsCoherentTrunkedCallDetailsWhenSiteStops() throws Exception
+    {
+        AliasListDefinition definition = p25AliasList("County", 1);
+        var source = APCO25RadioIdentifier.createFrom(1_201);
+        var target = APCO25Talkgroup.create(4_400);
+        var talker = P25TalkerAliasIdentifier.create("Portable 12");
+        Alias sourceAlias = alias("Car 12", 11, definition, new Radio(Protocol.APCO25, 1_201));
+        Alias targetAlias = alias("Dispatch", 12, definition, new Talkgroup(Protocol.APCO25, 4_400));
+        AliasModel aliasModel = new AliasModel();
+        aliasModel.replaceCommittedConfiguration(List.of(definition), List.of(sourceAlias, targetAlias));
+        ChannelActivityModel model = new ChannelActivityModel(aliasModel, retainingPreference());
+        Channel parent = trunkedChannel("Primary", "County", "North", new DecodeConfigP25Phase1(),
+            851_012_500L);
+        parent.setAliasListName(definition.getName());
+        APCO25Channel traffic = APCO25Channel.create(0, 459);
+        traffic.setFrequencyBand(new P25FrequencyBand(0, 851_006_250L, -45_000_000L, 6_250L, 12_500, 1));
+        IdentifierCollection identifiers = new IdentifierCollection(List.of(source, target, talker));
+
+        run(model, () -> {
+            model.channelStarted(parent, List.of());
+            model.p25TrafficGrant(parent, null, traffic, identifiers, DecodeEventType.CALL_GROUP);
+        });
+        ChannelActivityRow row = model.getTables().get(1).getRows().stream()
+            .filter(candidate -> candidate.getRole() == ChannelActivityRow.Role.TRAFFIC)
+            .findFirst().orElseThrow();
+        assertEquals(State.CALL, row.getState());
+
+        run(model, () -> model.channelStopped(parent));
+        assertEquals(State.IDLE, row.getState());
+        assertSame(source, row.getSource());
+        assertEquals(List.of(sourceAlias), row.getSourceAliases());
+        assertSame(talker, row.getTalkerAlias());
+        assertSame(target, row.getTarget());
+        assertEquals(List.of(targetAlias), row.getTargetAliases());
+        model.close();
+    }
+
+    @Test
+    void retainsOneCoherentCompletedCallAndClearsItForTheNextCall() throws Exception
+    {
+        AliasModel aliasModel = new AliasModel();
+        NowPlayingPreference preference = new NowPlayingPreference(type -> {})
+        {
+            @Override
+            public boolean isRetainIdleCallDetails()
+            {
+                return true;
+            }
+        };
+        ChannelActivityModel model = new ChannelActivityModel(aliasModel, preference);
+        Channel channel = trunkedChannel("Dispatch", "County", "North", new DecodeConfigAM(),
+            155_730_000L);
+        ChannelMetadata metadata = new ChannelMetadata(aliasModel, 1);
+        var firstSource = APCO25RadioIdentifier.createFrom(1_201);
+        var firstTarget = APCO25Talkgroup.create(4_400);
+        var firstTalker = P25TalkerAliasIdentifier.create("Portable 12");
+        Alias firstSourceAlias = new Alias("Car 12");
+        Alias firstTargetAlias = new Alias("Dispatch");
+
+        run(model, () -> {
+            model.channelStarted(channel, List.of(metadata));
+            metadata.receive(new IdentifierUpdateNotification(firstSource, Operation.ADD, 1));
+            metadata.receive(new IdentifierUpdateNotification(firstTarget, Operation.ADD, 1));
+            metadata.receive(new IdentifierUpdateNotification(firstTalker, Operation.ADD, 1));
+            metadata.receive(new IdentifierUpdateNotification(ChannelStateIdentifier.CALL, Operation.ADD, 1));
+            model.updated(metadata, io.github.dsheirer.channel.metadata.ChannelMetadataField.DECODER_STATE);
+        });
+
+        ChannelActivityRow row = model.getConventionalTable().getRows().getFirst();
+        row.setSourceAliases(List.of(firstSourceAlias));
+        row.setTargetAliases(List.of(firstTargetAlias));
+
+        //Call teardown can remove identifiers before it publishes the IDLE state.  Those partial removals must not
+        //erase individual columns from the retained completed-call snapshot.
+        run(model, () -> {
+            metadata.receive(new IdentifierUpdateNotification(firstSource, Operation.REMOVE, 1));
+            model.updated(metadata, io.github.dsheirer.channel.metadata.ChannelMetadataField.USER_FROM);
+            metadata.receive(new IdentifierUpdateNotification(firstTalker, Operation.REMOVE, 1));
+            model.updated(metadata, io.github.dsheirer.channel.metadata.ChannelMetadataField.USER_FROM);
+            metadata.receive(new IdentifierUpdateNotification(firstTarget, Operation.REMOVE, 1));
+            model.updated(metadata, io.github.dsheirer.channel.metadata.ChannelMetadataField.USER_TO);
+            metadata.receive(new IdentifierUpdateNotification(ChannelStateIdentifier.IDLE, Operation.ADD, 1));
+            model.updated(metadata, io.github.dsheirer.channel.metadata.ChannelMetadataField.DECODER_STATE);
+        });
+
+        assertEquals(State.IDLE, row.getState());
+        assertSame(firstSource, row.getSource());
+        assertEquals(List.of(firstSourceAlias), row.getSourceAliases());
+        assertSame(firstTalker, row.getTalkerAlias());
+        assertSame(firstTarget, row.getTarget());
+        assertEquals(List.of(firstTargetAlias), row.getTargetAliases());
+
+        var secondSource = APCO25RadioIdentifier.createFrom(1_202);
+        var secondTarget = APCO25Talkgroup.create(4_401);
+        var secondTalker = P25TalkerAliasIdentifier.create("Portable 13");
+        run(model, () -> {
+            metadata.receive(new IdentifierUpdateNotification(secondSource, Operation.ADD, 1));
+            metadata.receive(new IdentifierUpdateNotification(secondTarget, Operation.ADD, 1));
+            metadata.receive(new IdentifierUpdateNotification(secondTalker, Operation.ADD, 1));
+            metadata.receive(new IdentifierUpdateNotification(ChannelStateIdentifier.CALL, Operation.ADD, 1));
+            model.updated(metadata, io.github.dsheirer.channel.metadata.ChannelMetadataField.DECODER_STATE);
+        });
+
+        assertEquals(State.CALL, row.getState());
+        assertSame(secondSource, row.getSource());
+        assertTrue(row.getSourceAliases().isEmpty());
+        assertSame(secondTalker, row.getTalkerAlias());
+        assertSame(secondTarget, row.getTarget());
+        assertTrue(row.getTargetAliases().isEmpty());
+        model.close();
+    }
+
+    @Test
+    void clearsCompletedCallDetailsWhenIdleRetentionIsDisabled() throws Exception
+    {
+        AliasModel aliasModel = new AliasModel();
+        ChannelActivityModel model = new ChannelActivityModel(aliasModel, new NowPlayingPreference(type -> {})
+        {
+            @Override
+            public boolean isRetainIdleCallDetails()
+            {
+                return false;
+            }
+        });
+        Channel channel = trunkedChannel("Dispatch", "County", "North", new DecodeConfigAM(),
+            155_730_000L);
+        ChannelMetadata metadata = new ChannelMetadata(aliasModel, 1);
+        run(model, () -> model.channelStarted(channel, List.of(metadata)));
+        ChannelActivityRow row = model.getConventionalTable().getRows().getFirst();
+        row.setState(State.CALL);
+        row.setSource(APCO25RadioIdentifier.createFrom(1_201));
+        row.setSourceAliases(List.of(new Alias("Car 12")));
+        row.setTalkerAlias(P25TalkerAliasIdentifier.create("Portable 12"));
+        row.setTarget(APCO25Talkgroup.create(4_400));
+        row.setTargetAliases(List.of(new Alias("Dispatch")));
+
+        run(model, () -> model.updated(metadata,
+            io.github.dsheirer.channel.metadata.ChannelMetadataField.DECODER_STATE));
+
+        assertEquals(State.IDLE, row.getState());
+        assertNull(row.getSource());
+        assertTrue(row.getSourceAliases().isEmpty());
+        assertNull(row.getTalkerAlias());
+        assertNull(row.getTarget());
+        assertTrue(row.getTargetAliases().isEmpty());
+        model.close();
+    }
+
     @Test
     void amSnapshotsRemainUnderConventionalAcrossIdleCallIdleTransitions() throws Exception
     {
@@ -755,6 +1034,34 @@ class ChannelActivityModelTest
     {
         SwingUtilities.invokeAndWait(runnable);
         assertTrue(model.awaitIdle(5, TimeUnit.SECONDS), "channel activity worker did not become idle");
+    }
+
+    private static NowPlayingPreference retainingPreference()
+    {
+        return new NowPlayingPreference(type -> {})
+        {
+            @Override
+            public boolean isRetainIdleCallDetails()
+            {
+                return true;
+            }
+        };
+    }
+
+    private static AliasListDefinition p25AliasList(String name, long id)
+    {
+        AliasListDefinition definition = new AliasListDefinition(name, AliasListFamily.P25);
+        definition.setId(id);
+        return definition;
+    }
+
+    private static Alias alias(String name, long id, AliasListDefinition definition, AliasID matcher)
+    {
+        Alias alias = new Alias(name);
+        alias.setId(id);
+        alias.setAliasListDefinition(definition);
+        alias.setMatchIdentifier(matcher);
+        return alias;
     }
 
     private static Channel trunkedChannel(String name, String system, String site,

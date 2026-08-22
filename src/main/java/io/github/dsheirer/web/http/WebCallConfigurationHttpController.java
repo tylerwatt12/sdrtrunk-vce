@@ -25,10 +25,13 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** Administrator-only adapter for the small set of useful browser-audio capacity controls. */
 public final class WebCallConfigurationHttpController
 {
+    private static final Logger mLog = LoggerFactory.getLogger(WebCallConfigurationHttpController.class);
     public static final String PATH = "/api/v1/admin/web-audio";
     private static final int MAXIMUM_BODY_BYTES = 4096;
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper(JsonFactory.builder()
@@ -89,6 +92,12 @@ public final class WebCallConfigurationHttpController
         {
             ApiHttpResponse.sendError(exchange, 400, "invalid_request", exception.getMessage());
         }
+        catch(RuntimeException exception)
+        {
+            mLog.warn("Unable to load or persist web-audio settings", exception);
+            ApiHttpResponse.sendError(exchange, 503, "storage_unavailable",
+                "Web-audio settings are temporarily unavailable");
+        }
     }
 
     private Map<String,Object> response()
@@ -98,8 +107,8 @@ public final class WebCallConfigurationHttpController
                 WebCallConfiguration.MAXIMUM_LISTENERS),
             "maximumSelectedScanLists", range(WebCallConfiguration.MINIMUM_SELECTED_SCAN_LISTS,
                 WebCallConfiguration.MAXIMUM_SELECTED_SCAN_LISTS),
-            "maximumBrowserQueueCalls", range(WebCallConfiguration.MINIMUM_BROWSER_QUEUE_CALLS,
-                WebCallConfiguration.MAXIMUM_BROWSER_QUEUE_CALLS),
+            "waitingCallsPerListener", range(WebCallConfiguration.MINIMUM_WAITING_CALLS_PER_LISTENER,
+                WebCallConfiguration.MAXIMUM_WAITING_CALLS_PER_LISTENER),
             "maximumCachedCalls", range(WebCallConfiguration.MINIMUM_CACHED_CALLS,
                 WebCallConfiguration.MAXIMUM_CACHED_CALLS),
             "maximum_cached_audio_mib", range(WebCallConfiguration.MINIMUM_CACHED_AUDIO_MIB,
@@ -123,9 +132,9 @@ public final class WebCallConfigurationHttpController
         int selected = bounded(request.maximumSelectedScanLists(), "maximum_selected_scan_lists",
             WebCallConfiguration.MINIMUM_SELECTED_SCAN_LISTS,
             WebCallConfiguration.MAXIMUM_SELECTED_SCAN_LISTS);
-        int queue = bounded(request.maximumBrowserQueueCalls(), "maximum_browser_queue_calls",
-            WebCallConfiguration.MINIMUM_BROWSER_QUEUE_CALLS,
-            WebCallConfiguration.MAXIMUM_BROWSER_QUEUE_CALLS);
+        int queue = bounded(request.waitingCallsPerListener(), "waiting_calls_per_listener",
+            WebCallConfiguration.MINIMUM_WAITING_CALLS_PER_LISTENER,
+            WebCallConfiguration.MAXIMUM_WAITING_CALLS_PER_LISTENER);
         int cached = bounded(request.maximumCachedCalls(), "maximum_cached_calls",
             WebCallConfiguration.MINIMUM_CACHED_CALLS, WebCallConfiguration.MAXIMUM_CACHED_CALLS);
         int audio = bounded(request.maximumCachedAudioMiB(), "maximum_cached_audio_mib",
@@ -242,7 +251,7 @@ public final class WebCallConfigurationHttpController
     }
 
     private record Request(Integer maximumListeners, Integer maximumSelectedScanLists,
-                           Integer maximumBrowserQueueCalls, Integer maximumCachedCalls,
+                           Integer waitingCallsPerListener, Integer maximumCachedCalls,
                            @JsonProperty("maximum_cached_audio_mib") Integer maximumCachedAudioMiB)
     {
     }

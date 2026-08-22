@@ -23,6 +23,7 @@ import com.sun.net.httpserver.HttpServer;
 import com.sun.net.httpserver.HttpsConfigurator;
 import com.sun.net.httpserver.HttpsServer;
 import io.github.dsheirer.alias.AliasAdministrationService;
+import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.audio.broadcast.AudioStreamingManager;
 import io.github.dsheirer.audio.call.AudioCallCoordinator;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
@@ -42,6 +43,7 @@ import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.scanlist.ScanList;
 import io.github.dsheirer.scanlist.ScanListModel;
 import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryService;
+import io.github.dsheirer.service.radioreference.RadioReferenceImportService;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.stats.activity.P25ActivityCommitListener;
 import io.github.dsheirer.stats.activity.P25ActivityLogPath;
@@ -171,6 +173,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
     private final AliasAdministrationService mAliasAdministrationService;
     private final ScanListModel mScanListModel;
     private final RadioReferenceDirectoryService mRadioReferenceDirectoryService;
+    private final RadioReferenceImportService mRadioReferenceImportService;
     private final Path mWebAccessDatabasePath;
     private final WebDisplaySettingsService mWebDisplaySettingsService;
     private final WebTlsMaterialService mTlsMaterialService;
@@ -230,10 +233,22 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
                                  DecodeEventViewService decodeEventViewService, TunerManager tunerManager,
                                  ScanListModel scanListModel)
     {
+        this(userPreferences, channelProcessingManager, activityLogService, aliasAdministrationService,
+            decodeEventViewService, tunerManager, scanListModel, null);
+    }
+
+    public StatsWebServerService(UserPreferences userPreferences, ChannelProcessingManager channelProcessingManager,
+                                 P25ActivityLogService activityLogService,
+                                 AliasAdministrationService aliasAdministrationService,
+                                 DecodeEventViewService decodeEventViewService, TunerManager tunerManager,
+                                 ScanListModel scanListModel, ConfigurationManager configurationManager)
+    {
         EmbeddedHttpServerPolicy.configureBeforeServerInitialization();
         mUserPreferences = userPreferences;
         mScanListModel = scanListModel;
         mRadioReferenceDirectoryService = new RadioReferenceDirectoryService();
+        mRadioReferenceImportService = configurationManager != null ?
+            new RadioReferenceImportService(mRadioReferenceDirectoryService, configurationManager) : null;
         mWebCallService = new StatsWebCallService(mScanListModel,
             mUserPreferences.getApplicationPreference().getWebCallConfiguration());
         mChannelProcessingManager = channelProcessingManager;
@@ -250,7 +265,8 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         mDatabase = new StatsWebDatabase(userPreferences);
         mLiveService = new StatsLiveService(mDatabase, channelProcessingManager);
         mWebAccessDatabasePath = SdrTrunkDatabasePath.getDatabasePath(mUserPreferences);
-        mWebDisplaySettingsService = new WebDisplaySettingsService(mWebAccessDatabasePath);
+        mWebDisplaySettingsService = new WebDisplaySettingsService(mWebAccessDatabasePath,
+            mUserPreferences.getNowPlayingPreference());
         mTlsMaterialService = new WebTlsMaterialService(
             mUserPreferences.getDirectoryPreference().getDirectoryApplicationRoot());
         mTlsMaintenanceExecutor = Executors.newSingleThreadScheduledExecutor(runnable -> {
@@ -681,7 +697,8 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             WebCapability.ADMIN_AUDIO, webCallConfigurationController::handle));
 
         RadioReferenceHttpController radioReferenceController = new RadioReferenceHttpController(
-            mRadioReferenceDirectoryService, mUserPreferences.getRadioReferencePreference());
+            mRadioReferenceDirectoryService, mUserPreferences.getRadioReferencePreference(),
+            mRadioReferenceImportService);
         server.createContext(RadioReferenceHttpController.PATH, mWebAccessHttpController.protectApi(
             WebCapability.ADMIN_SETTINGS, radioReferenceController::handle));
 
@@ -689,6 +706,8 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             new WebDisplaySettingsHttpController(mWebDisplaySettingsService);
         server.createContext(WebDisplaySettingsHttpController.PATH, mWebAccessHttpController.protectApi(
             WebCapability.ADMIN_SETTINGS, webDisplaySettingsController::handle));
+        server.createContext(WebDisplaySettingsHttpController.LIVE_PATH, mWebAccessHttpController.protectApi(
+            WebCapability.LIVE_VIEW, webDisplaySettingsController::handleLive));
 
         new StatsApiV1Controller(mDatabase, this::status, mWebAccessHttpController, mTunerDiagnosticService,
             mReceiverHealthService::snapshot)
@@ -1530,7 +1549,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             mUserPreferences.getApplicationPreference().getWebCallConfiguration();
         ApiHttpResponse.sendData(exchange, 200, Map.of("scan_lists", rows,
             "maximum_selected_scan_lists", configuration.maximumSelectedScanLists(),
-            "maximum_browser_queue_calls", configuration.maximumBrowserQueueCalls(),
+            "waiting_calls_per_listener", configuration.waitingCallsPerListener(),
             "maximum_grouped_calls", 4));
     }
 
@@ -2571,7 +2590,6 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         private StatsLiveEventHub.Subscription mCalls;
         private Set<Long> mCallScanListIds = Set.of();
         private StatsLiveEventHub.Subscription mDecodeEvents;
-        private DecodeEventViewService.Scope mDecodeEventScope;
         private StatsLiveEventHub.Subscription mActivity;
         private StatsRequest mActivityRequest;
         private DecodeMessageViewService.Session mDecodeMessages;
@@ -2584,6 +2602,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
         private long mChannelActivityDrops;
         private long mCallDrops;
         private long mDecodeEventDrops;
+        private long mDecodeEventIngressDrops;
         private long mDecodeMessageDrops;
         private long mActivityDrops;
         private boolean mMessagePermit;
@@ -2648,14 +2667,11 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
 
                 if(generation != mDecodeMessageGeneration)
                 {
-                    discardDecodeMessages();
-                    var recovery = captureRecovery(mDecodeMessages::droppedCount,
-                        () -> Map.of("messages", mDecodeMessages.snapshot(), "bound", mDecodeMessages.isBound()));
-                    mDecodeMessageDrops = recovery.dropBaseline();
-                    writeMultiplexRecoveryJson(output, TOPIC_DECODE_MESSAGES, "snapshot",
-                        recovery.snapshot());
-                    observeOutputDrops(output, TOPIC_DECODE_MESSAGES);
                     mDecodeMessageGeneration = generation;
+                    writeMultiplexJson(output, TOPIC_DECODE_MESSAGES, "source_change", Map.of(
+                        "generation", generation,
+                        "bound", mDecodeMessages.isBound(),
+                        "frequency_hz", mDecodeMessages.getScope().frequencyHz()));
                     wrote = true;
                 }
 
@@ -2673,6 +2689,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
                 }
             }
 
+            wrote |= reportStatelessGaps(output);
             wrote |= recoverMetadataGaps(output);
 
             if(mChannelDiagnostics != null)
@@ -2749,32 +2766,6 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
                 wrote = true;
             }
 
-            if(mDecodeEvents != null && mDecodeEventScope != null && metadataGap(output, TOPIC_DECODE_EVENTS,
-                mDecodeEvents.droppedCount(), mDecodeEventDrops))
-            {
-                discardSubscription(mDecodeEvents);
-                var recovery = captureRecovery(mDecodeEvents::droppedCount,
-                    () -> mDecodeEventViewService.snapshot(mDecodeEventScope));
-                mDecodeEventDrops = recovery.dropBaseline();
-                writeMultiplexRecoveryJson(output, TOPIC_DECODE_EVENTS, "snapshot",
-                    Map.of("events", recovery.snapshot()));
-                observeOutputDrops(output, TOPIC_DECODE_EVENTS);
-                wrote = true;
-            }
-
-            if(mDecodeMessages != null && metadataGap(output, TOPIC_DECODE_MESSAGES,
-                mDecodeMessages.droppedCount(), mDecodeMessageDrops))
-            {
-                discardDecodeMessages();
-                var recovery = captureRecovery(mDecodeMessages::droppedCount,
-                    () -> Map.of("messages", mDecodeMessages.snapshot(), "bound", mDecodeMessages.isBound()));
-                mDecodeMessageDrops = recovery.dropBaseline();
-                writeMultiplexRecoveryJson(output, TOPIC_DECODE_MESSAGES, "snapshot",
-                    recovery.snapshot());
-                observeOutputDrops(output, TOPIC_DECODE_MESSAGES);
-                wrote = true;
-            }
-
             if(mActivity != null && metadataGap(output, TOPIC_ACTIVITY,
                 mActivity.droppedCount(), mActivityDrops))
             {
@@ -2788,6 +2779,55 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             }
 
             return wrote;
+        }
+
+        /** Reports loss for disposable live viewers without replaying or clearing any successfully delivered items. */
+        private boolean reportStatelessGaps(MultiplexOutput output) throws IOException
+        {
+            boolean wrote = false;
+
+            if(mDecodeEvents != null)
+            {
+                long eventDrops = mDecodeEvents.droppedCount();
+                long ingressDrops = mDecodeEventViewService != null ?
+                    mDecodeEventViewService.getDroppedObservationCount() : mDecodeEventIngressDrops;
+                long outputDrops = output.eventDrops(TOPIC_DECODE_EVENTS);
+                long dropped = positiveDelta(eventDrops, mDecodeEventDrops) +
+                    positiveDelta(ingressDrops, mDecodeEventIngressDrops) +
+                    positiveDelta(outputDrops, mObservedOutputDrops[TOPIC_DECODE_EVENTS]);
+                mDecodeEventDrops = eventDrops;
+                mDecodeEventIngressDrops = ingressDrops;
+                mObservedOutputDrops[TOPIC_DECODE_EVENTS] = outputDrops;
+
+                if(dropped > 0)
+                {
+                    writeMultiplexJson(output, TOPIC_DECODE_EVENTS, "live_gap", Map.of("dropped", dropped));
+                    wrote = true;
+                }
+            }
+
+            if(mDecodeMessages != null)
+            {
+                long messageDrops = mDecodeMessages.droppedCount();
+                long outputDrops = output.eventDrops(TOPIC_DECODE_MESSAGES);
+                long dropped = positiveDelta(messageDrops, mDecodeMessageDrops) +
+                    positiveDelta(outputDrops, mObservedOutputDrops[TOPIC_DECODE_MESSAGES]);
+                mDecodeMessageDrops = messageDrops;
+                mObservedOutputDrops[TOPIC_DECODE_MESSAGES] = outputDrops;
+
+                if(dropped > 0)
+                {
+                    writeMultiplexJson(output, TOPIC_DECODE_MESSAGES, "live_gap", Map.of("dropped", dropped));
+                    wrote = true;
+                }
+            }
+
+            return wrote;
+        }
+
+        private long positiveDelta(long current, long previous)
+        {
+            return current > previous ? current - previous : 0;
         }
 
         private boolean metadataGap(MultiplexOutput output, int topic, long sourceDrops, long observedSourceDrops)
@@ -2805,17 +2845,6 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             for(int count = 0; count < MAXIMUM_RECOVERY_DISCARD; count++)
             {
                 if(subscription.poll(0, TimeUnit.NANOSECONDS) == null)
-                {
-                    return;
-                }
-            }
-        }
-
-        private void discardDecodeMessages() throws InterruptedException
-        {
-            for(int count = 0; count < MAXIMUM_RECOVERY_DISCARD; count++)
-            {
-                if(mDecodeMessages.poll(0, TimeUnit.NANOSECONDS) == null)
                 {
                     return;
                 }
@@ -2931,26 +2960,31 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
                     observeOutputDrops(output, TOPIC_CALLS);
                 }
                 case "decode_events" -> {
+                    if(mDecodeEventViewService == null)
+                    {
+                        throw new IllegalStateException("Decode event viewer is unavailable");
+                    }
+
                     DecodeEventViewService.Scope scope = decodeEventScope(uri);
+                    long ingressDropBaseline = mDecodeEventViewService.getDroppedObservationCount();
+                    AtomicLong liveEdge = new AtomicLong(Long.MAX_VALUE);
 
                     synchronized(mDecodeEventSubscriptionLock)
                     {
                         mDecodeEvents = mDecodeEventHub.subscribe(event ->
-                            event.data() instanceof DecodeEventViewService.EventView view && scope.matches(view));
+                            event.data() instanceof DecodeEventViewService.EventView view &&
+                                view.observationEpoch() >= liveEdge.get() && scope.matches(view));
 
                         if(mDecodeEvents != null)
                         {
+                            liveEdge.set(mDecodeEventViewService.advanceLiveEdge());
                             mDecodeEventViewService.addListener(mDecodeEventViewListener);
                         }
                     }
 
                     requiredSubscription(mDecodeEvents, topic);
-                    mDecodeEventScope = scope;
-                    var recovery = captureRecovery(mDecodeEvents::droppedCount,
-                        () -> mDecodeEventViewService.snapshot(scope));
-                    mDecodeEventDrops = recovery.dropBaseline();
-                    writeMultiplexRecoveryJson(output, TOPIC_DECODE_EVENTS, "snapshot",
-                        Map.of("events", recovery.snapshot()));
+                    mDecodeEventDrops = 0;
+                    mDecodeEventIngressDrops = ingressDropBaseline;
                     observeOutputDrops(output, TOPIC_DECODE_EVENTS);
                 }
                 case "decode_messages" -> {
@@ -2961,13 +2995,13 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
 
                     mMessagePermit = true;
                     mDecodeMessages = mDecodeMessageViewService.openSession(decodeMessageScope(uri));
-                    var recovery = captureRecovery(mDecodeMessages::droppedCount,
-                        () -> Map.of("messages", mDecodeMessages.snapshot(), "bound", mDecodeMessages.isBound()));
-                    mDecodeMessageDrops = recovery.dropBaseline();
-                    writeMultiplexRecoveryJson(output, TOPIC_DECODE_MESSAGES, "snapshot",
-                        recovery.snapshot());
+                    mDecodeMessageDrops = 0;
                     observeOutputDrops(output, TOPIC_DECODE_MESSAGES);
                     mDecodeMessageGeneration = mDecodeMessages.generation();
+                    writeMultiplexJson(output, TOPIC_DECODE_MESSAGES, "source_change", Map.of(
+                        "generation", mDecodeMessageGeneration,
+                        "bound", mDecodeMessages.isBound(),
+                        "frequency_hz", mDecodeMessages.getScope().frequencyHz()));
                 }
                 case "channel_diagnostics" -> openChannelDiagnostics(uri, output);
                 case "tuner_diagnostics" -> openTunerDiagnostics(uri, output);
@@ -3135,7 +3169,7 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
             snapshot.put("calls", calls);
             snapshot.put("listener_token", mClientId);
             snapshot.put("scan_list_ids", mCallScanListIds);
-            snapshot.put("maximum_browser_queue_calls", configuration.maximumBrowserQueueCalls());
+            snapshot.put("waiting_calls_per_listener", configuration.waitingCallsPerListener());
             snapshot.put("maximum_grouped_calls", 4);
             return Map.copyOf(snapshot);
         }
@@ -3161,8 +3195,8 @@ public class StatsWebServerService implements AutoCloseable, P25ActivityCommitLi
                     mDecodeEventViewService.removeListener(mDecodeEventViewListener);
                 }
 
-                mDecodeEventScope = null;
                 mDecodeEventDrops = 0;
+                mDecodeEventIngressDrops = 0;
             }
         }
 

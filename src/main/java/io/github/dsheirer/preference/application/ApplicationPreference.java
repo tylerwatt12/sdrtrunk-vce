@@ -50,7 +50,7 @@ public class ApplicationPreference extends Preference
         "stats.web.call.maximum.listeners";
     private static final String PREFERENCE_KEY_WEB_CALL_MAXIMUM_SELECTED_SCAN_LISTS =
         "stats.web.call.maximum.selected.scan.lists";
-    private static final String PREFERENCE_KEY_WEB_CALL_MAXIMUM_BROWSER_QUEUE_CALLS =
+    private static final String PREFERENCE_KEY_WEB_CALL_WAITING_CALLS_PER_LISTENER =
         "stats.web.call.maximum.browser.queue.calls";
     private static final String PREFERENCE_KEY_WEB_CALL_MAXIMUM_CACHED_CALLS =
         "stats.web.call.maximum.cached.calls";
@@ -80,11 +80,8 @@ public class ApplicationPreference extends Preference
     private Boolean mStatsWebServerAnyIpEnabled;
     private Boolean mStatsWebServerHttpsEnabled;
     private WebCertificateMode mStatsWebServerCertificateMode;
-    private Integer mWebCallMaximumListeners;
-    private Integer mWebCallMaximumSelectedScanLists;
-    private Integer mWebCallMaximumBrowserQueueCalls;
-    private Integer mWebCallMaximumCachedCalls;
-    private Integer mWebCallMaximumCachedAudioMiB;
+    private final Object mWebCallConfigurationLock = new Object();
+    private volatile WebCallConfiguration mWebCallConfiguration;
     private Theme mTheme;
     private Double mGuiScale;
 
@@ -372,25 +369,33 @@ public class ApplicationPreference extends Preference
      */
     public WebCallConfiguration getWebCallConfiguration()
     {
-        if(mWebCallMaximumListeners == null)
+        WebCallConfiguration configuration = mWebCallConfiguration;
+
+        if(configuration == null)
         {
-            mWebCallMaximumListeners = mPreferences.getInt(PREFERENCE_KEY_WEB_CALL_MAXIMUM_LISTENERS,
-                WebCallConfiguration.DEFAULT_MAXIMUM_LISTENERS);
-            mWebCallMaximumSelectedScanLists = mPreferences.getInt(
-                PREFERENCE_KEY_WEB_CALL_MAXIMUM_SELECTED_SCAN_LISTS,
-                WebCallConfiguration.DEFAULT_MAXIMUM_SELECTED_SCAN_LISTS);
-            mWebCallMaximumBrowserQueueCalls = mPreferences.getInt(
-                PREFERENCE_KEY_WEB_CALL_MAXIMUM_BROWSER_QUEUE_CALLS,
-                WebCallConfiguration.DEFAULT_MAXIMUM_BROWSER_QUEUE_CALLS);
-            mWebCallMaximumCachedCalls = mPreferences.getInt(PREFERENCE_KEY_WEB_CALL_MAXIMUM_CACHED_CALLS,
-                WebCallConfiguration.DEFAULT_MAXIMUM_CACHED_CALLS);
-            mWebCallMaximumCachedAudioMiB = mPreferences.getInt(
-                PREFERENCE_KEY_WEB_CALL_MAXIMUM_CACHED_AUDIO_MIB,
-                WebCallConfiguration.DEFAULT_MAXIMUM_CACHED_AUDIO_MIB);
+            synchronized(mWebCallConfigurationLock)
+            {
+                configuration = mWebCallConfiguration;
+
+                if(configuration == null)
+                {
+                    configuration = new WebCallConfiguration(
+                        mPreferences.getInt(PREFERENCE_KEY_WEB_CALL_MAXIMUM_LISTENERS,
+                            WebCallConfiguration.DEFAULT_MAXIMUM_LISTENERS),
+                        mPreferences.getInt(PREFERENCE_KEY_WEB_CALL_MAXIMUM_SELECTED_SCAN_LISTS,
+                            WebCallConfiguration.DEFAULT_MAXIMUM_SELECTED_SCAN_LISTS),
+                        mPreferences.getInt(PREFERENCE_KEY_WEB_CALL_WAITING_CALLS_PER_LISTENER,
+                            WebCallConfiguration.DEFAULT_WAITING_CALLS_PER_LISTENER),
+                        mPreferences.getInt(PREFERENCE_KEY_WEB_CALL_MAXIMUM_CACHED_CALLS,
+                            WebCallConfiguration.DEFAULT_MAXIMUM_CACHED_CALLS),
+                        mPreferences.getInt(PREFERENCE_KEY_WEB_CALL_MAXIMUM_CACHED_AUDIO_MIB,
+                            WebCallConfiguration.DEFAULT_MAXIMUM_CACHED_AUDIO_MIB));
+                    mWebCallConfiguration = configuration;
+                }
+            }
         }
 
-        return new WebCallConfiguration(mWebCallMaximumListeners, mWebCallMaximumSelectedScanLists,
-            mWebCallMaximumBrowserQueueCalls, mWebCallMaximumCachedCalls, mWebCallMaximumCachedAudioMiB);
+        return configuration;
     }
 
     /**
@@ -399,20 +404,21 @@ public class ApplicationPreference extends Preference
     public void setWebCallConfiguration(WebCallConfiguration configuration)
     {
         WebCallConfiguration prepared = configuration != null ? configuration : WebCallConfiguration.defaults();
-        mWebCallMaximumListeners = prepared.maximumListeners();
-        mWebCallMaximumSelectedScanLists = prepared.maximumSelectedScanLists();
-        mWebCallMaximumBrowserQueueCalls = prepared.maximumBrowserQueueCalls();
-        mWebCallMaximumCachedCalls = prepared.maximumCachedCalls();
-        mWebCallMaximumCachedAudioMiB = prepared.maximumCachedAudioMiB();
-        mPreferences.putInt(PREFERENCE_KEY_WEB_CALL_MAXIMUM_LISTENERS, mWebCallMaximumListeners);
-        mPreferences.putInt(PREFERENCE_KEY_WEB_CALL_MAXIMUM_SELECTED_SCAN_LISTS,
-            mWebCallMaximumSelectedScanLists);
-        mPreferences.putInt(PREFERENCE_KEY_WEB_CALL_MAXIMUM_BROWSER_QUEUE_CALLS,
-            mWebCallMaximumBrowserQueueCalls);
-        mPreferences.putInt(PREFERENCE_KEY_WEB_CALL_MAXIMUM_CACHED_CALLS, mWebCallMaximumCachedCalls);
-        mPreferences.putInt(PREFERENCE_KEY_WEB_CALL_MAXIMUM_CACHED_AUDIO_MIB,
-            mWebCallMaximumCachedAudioMiB);
-        notifyPreferenceUpdated();
+
+        synchronized(mWebCallConfigurationLock)
+        {
+            mPreferences.putInt(PREFERENCE_KEY_WEB_CALL_MAXIMUM_LISTENERS, prepared.maximumListeners());
+            mPreferences.putInt(PREFERENCE_KEY_WEB_CALL_MAXIMUM_SELECTED_SCAN_LISTS,
+                prepared.maximumSelectedScanLists());
+            mPreferences.putInt(PREFERENCE_KEY_WEB_CALL_WAITING_CALLS_PER_LISTENER,
+                prepared.waitingCallsPerListener());
+            mPreferences.putInt(PREFERENCE_KEY_WEB_CALL_MAXIMUM_CACHED_CALLS,
+                prepared.maximumCachedCalls());
+            mPreferences.putInt(PREFERENCE_KEY_WEB_CALL_MAXIMUM_CACHED_AUDIO_MIB,
+                prepared.maximumCachedAudioMiB());
+            mWebCallConfiguration = prepared;
+            notifyPreferenceUpdated();
+        }
     }
 
     /**

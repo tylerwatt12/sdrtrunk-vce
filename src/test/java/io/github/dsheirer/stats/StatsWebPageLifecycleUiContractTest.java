@@ -24,7 +24,7 @@ class StatsWebPageLifecycleUiContractTest
         String html = readText(INDEX_HTML);
         int lifecycle = html.indexOf("/assets/core/page-lifecycle.js?v=1");
         int systems = html.indexOf("/assets/features/systems-directory.js?v=2");
-        int application = html.indexOf("/assets/app.js?v=103");
+        int application = html.indexOf("/assets/app.js?v=104");
 
         assertTrue(lifecycle >= 0);
         assertTrue(lifecycle < systems);
@@ -51,6 +51,17 @@ class StatsWebPageLifecycleUiContractTest
         assertOrdered(system, "const response = await api(systemApiPath(systemScope.scope));",
             "if (!renderIsCurrent(renderContext)) return;");
         assertOrdered(system, "if (!renderIsCurrent(renderContext)) return;", "window.history.replaceState");
+    }
+
+    @Test
+    void closesResponsiveNavigationBeforeEverySpaRouteCommit() throws Exception
+    {
+        String source = readText(APP_JAVASCRIPT);
+        String render = function(source, "async function render()");
+        String popState = function(source, "window.addEventListener('popstate', () =>");
+
+        assertOrdered(render, "setNavigationOpen(false);", "const view = route.get('view') || 'dashboard';");
+        assertOrdered(popState, "setNavigationOpen(false);", "const previous = `/?${route.toString()}`;");
     }
 
     @Test
