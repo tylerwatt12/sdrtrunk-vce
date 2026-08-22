@@ -122,6 +122,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     private final Map<Channel,DMRRestChannelAttempt> mDmrRestChannelAttempts = new HashMap<>();
     private final DMRRestChannelHandoffCoordinator mDmrRestChannelHandoffCoordinator;
     private final long mDmrRestChannelRetryDelayMilliseconds;
+    private final Object mShutdownLock = new Object();
     private volatile boolean mShuttingDown;
     private volatile boolean mClosed;
 
@@ -1525,10 +1526,43 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
      *
      * @param channel to stop
      */
-    private synchronized void stopProcessing(Channel channel) throws ChannelException
+    private void stopProcessing(Channel channel) throws ChannelException
     {
-        DMRRestChannelAttempt detachedTrafficAttempt = findDmrRestChannelAttemptByTrafficChannel(channel);
-        cancelDmrRestChannelHandoff(channel);
+        if(requiresDmrRestChannelLifecycleSerialization(channel))
+        {
+            //Capacity Plus rest-channel conversion already owns this lifecycle monitor and can call this method
+            //reentrantly. Do not acquire the shutdown lock here or that path can invert shutdown's lock order.
+            synchronized(this)
+            {
+                stopProcessingInternal(channel, true);
+            }
+        }
+        else
+        {
+            //P25 and NXDN traffic managers synchronously request lifecycle changes while holding protocol-owned
+            //locks. Do not hold a manager-wide lock across their stop notifications or those callbacks can invert
+            //the lock order with a concurrent traffic-channel start or teardown.
+            stopProcessingInternal(channel, false);
+        }
+    }
+
+    /**
+     * Stops a claimed processing-chain incarnation. DMR stops share the lifecycle monitor with Capacity Plus
+     * rest-channel conversion; other protocols must not hold that monitor while notifying their traffic managers.
+     */
+    private void stopProcessingInternal(Channel channel, boolean handleDmrRestChannelLifecycle)
+        throws ChannelException
+    {
+        //mDmrRestChannelAttempts is owned by the DMR lifecycle monitor. Non-DMR stops deliberately avoid both that
+        //monitor and this mutable map so their synchronous stop notifications cannot invert a traffic-manager lock.
+        DMRRestChannelAttempt detachedTrafficAttempt = handleDmrRestChannelLifecycle ?
+            findDmrRestChannelAttemptByTrafficChannel(channel) : null;
+
+        if(handleDmrRestChannelLifecycle)
+        {
+            cancelDmrRestChannelHandoff(channel);
+        }
+
         ProcessingChain processingChain = removeProcessingChain(channel);
 
         if(processingChain != null)
@@ -1590,6 +1624,12 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
                 detachedTrafficAttempt.getPrepared().handoff().owner());
             processDetachedTrafficTeardown(detachedTrafficAttempt);
         }
+    }
+
+    static boolean requiresDmrRestChannelLifecycleSerialization(Channel channel)
+    {
+        return channel != null && channel.getDecodeConfiguration() != null &&
+            channel.getDecodeConfiguration().getDecoderType() == DecoderType.DMR;
     }
 
     private void cancelDmrRestChannelHandoff(Channel channel)
@@ -1665,32 +1705,52 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     /**
      * Stops all currently processing channels.
      */
-    public synchronized void shutdown()
+    public void shutdown()
     {
-        mShuttingDown = true;
-
-        for(Channel channel: new ArrayList<>(mDmrRestChannelAttempts.keySet()))
+        synchronized(mShutdownLock)
         {
-            cancelDmrRestChannelHandoff(channel);
-        }
+            if(mShuttingDown)
+            {
+                return;
+            }
 
-        List<Channel> channelsToStop = new ArrayList<>(mProcessingChainsMap.keySet());
+            mShuttingDown = true;
 
-        for(Channel channel : channelsToStop)
-        {
             try
             {
-                stopProcessing(channel);
-            }
-            catch(ChannelException ce)
-            {
-                mLog.error("Error stopping channel [{}] - {}", channel.getName(), ce.getMessage());
-            }
-        }
+                List<Channel> channelsToStop;
 
-        if(!mClosed)
-        {
-            mShuttingDown = false;
+                //Fence any start or DMR conversion that entered before the shutdown flag was published. Keep P25,
+                //NXDN, and conventional stop callbacks outside of the shared lifecycle monitor.
+                synchronized(this)
+                {
+                    for(Channel channel: new ArrayList<>(mDmrRestChannelAttempts.keySet()))
+                    {
+                        cancelDmrRestChannelHandoff(channel);
+                    }
+
+                    channelsToStop = new ArrayList<>(mProcessingChainsMap.keySet());
+                }
+
+                for(Channel channel : channelsToStop)
+                {
+                    try
+                    {
+                        stopProcessing(channel);
+                    }
+                    catch(ChannelException ce)
+                    {
+                        mLog.error("Error stopping channel [{}] - {}", channel.getName(), ce.getMessage());
+                    }
+                }
+            }
+            finally
+            {
+                if(!mClosed)
+                {
+                    mShuttingDown = false;
+                }
+            }
         }
     }
 
