@@ -19,6 +19,7 @@
 
 package io.github.dsheirer.module.decode.event;
 
+import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.module.HistoryModule;
 import io.github.dsheirer.sample.Listener;
 
@@ -44,4 +45,30 @@ public class DecodeEventHistory extends HistoryModule<IDecodeEvent> implements I
         return this;
     }
 
+    /**
+     * Process preload data
+     */
+    @Subscribe
+    public void process(DecodeEventHistoryPreloadData preloadData)
+    {
+        for(IDecodeEvent decodeEvent: preloadData.getData())
+        {
+            receive(decodeEvent);
+        }
+    }
+
+    /**
+     * Processes a request for decode event history and posts the response back
+     * to the processing chain event bus so that any of the modules can receive that history.
+     *
+     * Note: this is principally used by the DMR decoder for Capacity+ REST channel rotation to transfer the decode
+     * event history from a traffic channel conversion to the new rest channel.
+     *
+     * @param request for decode event history
+     */
+    @Subscribe
+    public void process(DecodeEventHistoryRequest request)
+    {
+        getInterModuleEventBus().post(new DecodeEventHistoryResponse(this));
+    }
 }

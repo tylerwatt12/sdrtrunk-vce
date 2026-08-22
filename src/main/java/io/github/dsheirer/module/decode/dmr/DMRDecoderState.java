@@ -26,6 +26,7 @@ import io.github.dsheirer.channel.state.State;
 import io.github.dsheirer.channel.state.TimeslotDecoderState;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.Channel.ChannelType;
+import io.github.dsheirer.controller.channel.ChannelConfigurationChangeNotification;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
@@ -109,11 +110,8 @@ import io.github.dsheirer.module.decode.ip.mototrbo.tms.TMSPacket;
 import io.github.dsheirer.module.decode.ip.mototrbo.xcmp.XCMPPacket;
 import io.github.dsheirer.preference.encryption.VoiceEncryptionDisplay;
 import io.github.dsheirer.protocol.Protocol;
-import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import io.github.dsheirer.source.tuner.channel.rotation.AddChannelRotationActiveStateRequest;
-import io.github.dsheirer.source.tuner.channel.rotation.ChannelRotationFrequencySelectionRequest;
 import io.github.dsheirer.util.PacketUtil;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import org.jdesktop.swingx.mapviewer.GeoPosition;
@@ -132,15 +130,15 @@ public class DMRDecoderState extends TimeslotDecoderState
             "No DMR Traffic Channel Manager available for channel grant-";
     private static final AddChannelRotationActiveStateRequest CAPACITY_PLUS_ACTIVE_STATE_REQUEST =
             new AddChannelRotationActiveStateRequest(State.ACTIVE);
-    private final Channel mChannel;
-    private final DMRNetworkConfigurationMonitor mNetworkConfigurationMonitor;
-    private final ProtocolSiteMetadataPublisher mSiteMetadataPublisher;
-    private final DMRTrafficChannelManager mTrafficChannelManager;
-    private final long[] mConfiguredSourceFrequencies;
+    private Channel mChannel;
+    private DMRNetworkConfigurationMonitor mNetworkConfigurationMonitor;
+    private ProtocolSiteMetadataPublisher mSiteMetadataPublisher;
+    private DMRTrafficChannelManager mTrafficChannelManager;
+    private final DMRTrafficChannelManager mTrafficChannelEventManager;
     private DecodeEvent mCurrentCallEvent;
     private boolean mCurrentCallEncrypted;
     private boolean mIgnoreCRCChecksums;
-    private final boolean mTrunkingEnabled;
+    private boolean mTrunkingEnabled;
     private DMRDecoderState mSisterDecoderState;
 
     /**
@@ -154,33 +152,25 @@ public class DMRDecoderState extends TimeslotDecoderState
         super(timeslot);
         mChannel = channel;
         mTrafficChannelManager = trafficChannelManager;
-        mConfiguredSourceFrequencies = channel.getSourceConfiguration() instanceof SourceConfigTunerMultipleFrequency source ?
-            source.getFrequencies().stream().mapToLong(Long::longValue).sorted().toArray() : new long[0];
+        mTrafficChannelEventManager = trafficChannelManager;
         DecodeConfigDMR config = channel.getDecodeConfiguration() instanceof DecodeConfigDMR dmrConfig ?
             dmrConfig : null;
         mTrunkingEnabled = config != null && config.isTrunked();
 
         //The decoder state passes all messages to the network configuration monitor, so we only construct
         //the monitor for timeslot 1.
-        DMRNetworkConfigurationMonitor networkConfigurationMonitor = null;
-        ProtocolSiteMetadataPublisher siteMetadataPublisher = null;
-
         if(timeslot == 1)
         {
-            networkConfigurationMonitor = new DMRNetworkConfigurationMonitor(
+            mNetworkConfigurationMonitor = new DMRNetworkConfigurationMonitor(
                 config != null ? config.getTimeslotMap() : List.of());
 
             if(mTrunkingEnabled)
             {
-                DMRNetworkConfigurationMonitor monitor = networkConfigurationMonitor;
-                siteMetadataPublisher = new ProtocolSiteMetadataPublisher(mChannel,
-                    monitor::getSnapshot,
+                mSiteMetadataPublisher = new ProtocolSiteMetadataPublisher(mChannel,
+                    () -> mNetworkConfigurationMonitor != null ? mNetworkConfigurationMonitor.getSnapshot() : null,
                     this::hasInterModuleEventBus, event -> getInterModuleEventBus().post(event));
             }
         }
-
-        mNetworkConfigurationMonitor = networkConfigurationMonitor;
-        mSiteMetadataPublisher = siteMetadataPublisher;
 
         //For RAS protected systems, allows user to ignore CRC checksums and still decode the system
         if(config != null)
@@ -242,9 +232,9 @@ public class DMRDecoderState extends TimeslotDecoderState
     {
         super.broadcast(event);
 
-        if(mChannel.isTrafficChannel() && mTrafficChannelManager != null)
+        if(mChannel.isTrafficChannel() && mTrafficChannelEventManager != null)
         {
-            mTrafficChannelManager.receiveTrafficChannelEvent(event);
+            mTrafficChannelEventManager.receiveTrafficChannelEvent(event);
         }
     }
 
@@ -274,6 +264,24 @@ public class DMRDecoderState extends TimeslotDecoderState
     {
         mCurrentCallEvent = decodeEvent;
         setCurrentChannel(decodeEvent.getChannelDescriptor());
+    }
+
+    /**
+     * Processes channel configuration change notifications received over the processing chain event bus.  This is
+     * primarily used for Capacity+ systems when the standard channel is converted to a traffic channel.  In response,
+     * we nullify the manager reference used for channel conversions and allocations.  The reporting-only reference is
+     * retained so that completed traffic events and talker aliases can still reach the owning control channel.
+     *
+     * @param notification of channel configuration change
+     */
+    @Subscribe
+    public void channelChanged(ChannelConfigurationChangeNotification notification)
+    {
+        if(notification.getChannel().isTrafficChannel())
+        {
+            mChannel = notification.getChannel();
+            mTrafficChannelManager = null;
+        }
     }
 
     /**
@@ -362,20 +370,45 @@ public class DMRDecoderState extends TimeslotDecoderState
     }
 
     /**
-     * Follows a Capacity Plus rest-channel change by asking the existing multi-frequency source to retune.  Posting
-     * this request only updates the rotation monitor's atomic latest-target slot; tuner acquisition runs later on its
-     * lifecycle worker.  The current call on the old rest frequency is intentionally not preserved.
+     * Processes Capacity Plus rest channel notifications to detect when the rest channel has changed.  When a new
+     * rest channel is specified that is different from the current channel, notify the traffic channel manager so that
+     * it can convert the current channel to a traffic channel and start a new channel for the rest channel, using the
+     * current channel's configuration details and the specified rest channel frequency.  This approach ensures that
+     * there is no disruption to the currently processing channel and that the original channel configuration can be
+     * recreated to follow the rest channel.
+     *
+     * @param restChannel currently indicated
      */
     private void updateRestChannel(DMRChannel restChannel)
     {
-        long frequency = restChannel != null ? restChannel.getDownlinkFrequency() : 0;
-
-        //Both decoder states see timeslot-zero short link control.  Timeslot one owns the single retune request.
-        if(getTimeslot() == 1 && mTrunkingEnabled && mChannel.isStandardChannel() && getCurrentFrequency() > 0 &&
-            frequency > 0 && frequency != getCurrentFrequency() && hasInterModuleEventBus() &&
-            Arrays.binarySearch(mConfiguredSourceFrequencies, frequency) >= 0)
+        //Only respond if this is a standard/control channel (not a traffic channel).
+        if(mChannel.isStandardChannel() && getCurrentFrequency() > 0 &&
+            restChannel.getDownlinkFrequency() > 0 &&
+            restChannel.getDownlinkFrequency() != getCurrentFrequency() && hasTrafficChannelManager())
         {
-            getInterModuleEventBus().post(new ChannelRotationFrequencySelectionRequest(frequency));
+            mTrafficChannelManager.convertToTrafficChannel(mChannel, getCurrentFrequency(), restChannel,
+                mNetworkConfigurationMonitor);
+        }
+    }
+
+    /**
+     * Preloads the DMR network configuration monitor that is optionally delivered as preload data.  This is primarily
+     * used during a Capacity plus REST channel rotation to pass the monitor from the previous REST channel to the
+     * current REST channel to ensure data continuity.
+     *
+     * Note: the monitor is only assigned to the timeslot 1 decoder state since the decoder state passes all received
+     * messages (Timeslots 0, 1, and 2) to the monitor.
+     *
+     * Note: this method is invoked over the Guava event but by the ChannelProcessingManager.
+     *
+     * @param preloadData containing a DMR network configuration monitor.
+     */
+    @Subscribe
+    public void preload(DMRNetworkConfigurationPreloadData preloadData)
+    {
+        if(getTimeslot() == 1 && preloadData.hasData())
+        {
+            mNetworkConfigurationMonitor = preloadData.getData();
         }
     }
 
@@ -1383,9 +1416,9 @@ public class DMRDecoderState extends TimeslotDecoderState
     {
         Identifier from = getIdentifierCollection().getFromIdentifier();
 
-        if(mTrafficChannelManager != null && from instanceof RadioIdentifier radio)
+        if(mTrafficChannelEventManager != null && from instanceof RadioIdentifier radio)
         {
-            mTrafficChannelManager.processTalkerAlias(alias, radio, getIdentifierCollection().copyOf(), timestamp);
+            mTrafficChannelEventManager.processTalkerAlias(alias, radio, getIdentifierCollection().copyOf(), timestamp);
         }
     }
 
@@ -1658,7 +1691,8 @@ public class DMRDecoderState extends TimeslotDecoderState
                 resetState();
                 break;
             case NOTIFICATION_SOURCE_FREQUENCY:
-                if(mChannel.isStandardChannel() && getCurrentFrequency() != event.getFrequency())
+                if(!mTrunkingEnabled && mChannel.isStandardChannel() &&
+                    getCurrentFrequency() != event.getFrequency())
                 {
                     closeCurrentCallEvent(System.currentTimeMillis());
                     setCurrentChannel(null);

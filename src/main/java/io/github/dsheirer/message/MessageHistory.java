@@ -19,6 +19,7 @@
 
 package io.github.dsheirer.message;
 
+import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.module.HistoryModule;
 import io.github.dsheirer.sample.Listener;
 
@@ -45,4 +46,24 @@ public class MessageHistory extends HistoryModule<IMessage> implements IMessageL
         return this;
     }
 
+    /**
+     * Process a request for message history and post the response to the module event bus
+     */
+    @Subscribe
+    public void process(MessageHistoryRequest request)
+    {
+        getInterModuleEventBus().post(new MessageHistoryResponse(getItems()));
+    }
+
+    /**
+     * Processes a request to preload message history
+     */
+    @Subscribe
+    public void process(MessageHistoryPreloadData preloadData)
+    {
+        for(IMessage message: preloadData.getData())
+        {
+            receive(message);
+        }
+    }
 }

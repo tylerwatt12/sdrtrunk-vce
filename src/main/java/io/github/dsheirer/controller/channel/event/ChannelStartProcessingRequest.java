@@ -23,6 +23,7 @@ import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.module.ModuleEventBusMessage;
+import io.github.dsheirer.module.decode.event.DecodeEventHistory;
 import io.github.dsheirer.module.decode.traffic.TrafficChannelManager;
 
 import java.util.ArrayList;
@@ -38,6 +39,9 @@ public class ChannelStartProcessingRequest implements ModuleEventBusMessage
     private final IdentifierCollection mIdentifierCollection;
     private final TrafficChannelManager mTrafficChannelManager;
     private final List<PreloadDataContent<?>> mPreloadDataContents = new ArrayList<>();
+    private DecodeEventHistory mParentDecodeEventHistory;
+    private DecodeEventHistory mChildDecodeEventHistory;
+    private boolean mPersistentAttempt;
 
     /**
      * Constructs an instance
@@ -88,6 +92,24 @@ public class ChannelStartProcessingRequest implements ModuleEventBusMessage
     }
 
     /**
+     * Sets a flag to persistently attempt to start this channel.  When set to true, the channel processing manager
+     * will repeatedly try to (re)start this channel while the application continues to run.
+     * @param persistentAttempt if this start request should be continuously attempted until successful.
+     */
+    public void setPersistentAttempt(boolean persistentAttempt)
+    {
+        mPersistentAttempt = persistentAttempt;
+    }
+
+    /**
+     * Indicates if this request should be persistently attempted until the channel processing is started.
+     */
+    public boolean isPersistentAttempt()
+    {
+        return mPersistentAttempt;
+    }
+
+    /**
      * Channel to start processing
      * @return channel to start
      */
@@ -103,6 +125,56 @@ public class ChannelStartProcessingRequest implements ModuleEventBusMessage
     public TrafficChannelManager getTrafficChannelManager()
     {
         return mTrafficChannelManager;
+    }
+
+    /**
+     * Optional parent decode event history module to be added as a decode event listener
+     */
+    public DecodeEventHistory getParentDecodeEventHistory()
+    {
+        return mParentDecodeEventHistory;
+    }
+
+    /**
+     * Indicates if this request has a parent decode event history
+     */
+    public boolean hasParentDecodeEventHistory()
+    {
+        return mParentDecodeEventHistory != null;
+    }
+
+    /**
+     * Sets the parent decode event history
+     * @param parentHistory
+     */
+    public void setParentDecodeEventHistory(DecodeEventHistory parentHistory)
+    {
+        mParentDecodeEventHistory = parentHistory;
+    }
+
+    /**
+     * Optional child decode event history module
+     */
+    public DecodeEventHistory getChildDecodeEventHistory()
+    {
+        return mChildDecodeEventHistory;
+    }
+
+    /**
+     * Indicates if this request has a child decode event history
+     */
+    public boolean hasChildDecodeEventHistory()
+    {
+        return mChildDecodeEventHistory != null;
+    }
+
+    /**
+     * Sets the child decode event history
+     * @param childHistory
+     */
+    public void setChildDecodeEventHistory(DecodeEventHistory childHistory)
+    {
+        mChildDecodeEventHistory = childHistory;
     }
 
     /**

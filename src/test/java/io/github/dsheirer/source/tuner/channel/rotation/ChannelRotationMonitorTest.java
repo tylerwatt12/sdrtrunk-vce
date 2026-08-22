@@ -19,7 +19,6 @@ import io.github.dsheirer.source.SourceEvent;
 import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 class ChannelRotationMonitorTest
@@ -37,32 +36,15 @@ class ChannelRotationMonitorTest
     }
 
     @Test
-    void preservesInitialSearchDwellBeforeSequentialRotation()
+    void searchesUsingConfiguredRotationDelay()
     {
         AtomicInteger rotations = new AtomicInteger();
         ChannelRotationMonitor monitor = monitor(rotations);
         long now = System.currentTimeMillis();
 
-        monitor.checkState(now + 900);
-        assertEquals(0, rotations.get());
-
-        monitor.checkState(now + 1_100);
+        monitor.checkState(now + 600);
 
         assertEquals(1, rotations.get());
-    }
-
-    @Test
-    void acceptsAdditionalActiveStateFromImmutableInput()
-    {
-        ChannelRotationMonitor monitor = new ChannelRotationMonitor(List.of(State.CONTROL), 500, 2_000);
-
-        monitor.addActiveState(new AddChannelRotationActiveStateRequest(State.ACTIVE));
-        monitor.receive(DecoderStateEvent.stateNotification(State.ACTIVE, 0));
-
-        AtomicInteger rotations = new AtomicInteger();
-        monitor.setSourceEventListener(event -> rotations.incrementAndGet());
-        monitor.checkState(System.currentTimeMillis() + 1_100);
-        assertEquals(0, rotations.get());
     }
 
     @Test
@@ -105,48 +87,6 @@ class ChannelRotationMonitorTest
 
         monitor.checkState(activeAt + 4_800);
         assertEquals(2, rotations.get());
-    }
-
-    @Test
-    void targetedSelectionCoalescesOnCallbackAndRunsFromMonitorWorker() throws Exception
-    {
-        ChannelRotationMonitor monitor = new ChannelRotationMonitor(List.of(State.CONTROL), 500);
-        AtomicReference<SourceEvent> selected = new AtomicReference<>();
-        AtomicReference<Thread> listenerThread = new AtomicReference<>();
-        monitor.setSourceEventListener(event -> {
-            selected.set(event);
-            listenerThread.set(Thread.currentThread());
-        });
-
-        monitor.selectFrequency(new ChannelRotationFrequencySelectionRequest(851_012_500L));
-        monitor.selectFrequency(new ChannelRotationFrequencySelectionRequest(852_012_500L));
-        assertEquals(null, selected.get(), "decoder callback performed source selection");
-
-        Thread worker = new Thread(() -> monitor.checkState(System.currentTimeMillis()), "rotation-worker-test");
-        worker.start();
-        worker.join(2_000);
-
-        assertEquals(SourceEvent.Event.REQUEST_FREQUENCY_SELECTION, selected.get().getEvent());
-        assertEquals(852_012_500L, selected.get().getValue().longValue());
-        assertEquals(worker, listenerThread.get());
-    }
-
-    @Test
-    void targetedSelectionTakesPriorityOverTimedSequentialRotation()
-    {
-        ChannelRotationMonitor monitor = new ChannelRotationMonitor(List.of(State.CONTROL), 500);
-        AtomicReference<SourceEvent> event = new AtomicReference<>();
-        AtomicInteger eventCount = new AtomicInteger();
-        monitor.setSourceEventListener(sourceEvent -> {
-            event.set(sourceEvent);
-            eventCount.incrementAndGet();
-        });
-        monitor.selectFrequency(new ChannelRotationFrequencySelectionRequest(852_012_500L));
-
-        monitor.checkState(System.currentTimeMillis() + 10_000);
-
-        assertEquals(1, eventCount.get());
-        assertEquals(SourceEvent.Event.REQUEST_FREQUENCY_SELECTION, event.get().getEvent());
     }
 
     private static ChannelRotationMonitor monitor(AtomicInteger rotations)

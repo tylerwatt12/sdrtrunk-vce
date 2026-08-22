@@ -34,6 +34,7 @@ import io.github.dsheirer.channel.state.IDecoderStateEventProvider;
 import io.github.dsheirer.channel.state.MultiChannelState;
 import io.github.dsheirer.channel.state.SingleChannelState;
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.controller.channel.ChannelConfigurationChangeNotification;
 import io.github.dsheirer.controller.channel.ChannelEvent;
 import io.github.dsheirer.controller.channel.IChannelEventListener;
 import io.github.dsheirer.controller.channel.IChannelEventProvider;
@@ -49,6 +50,7 @@ import io.github.dsheirer.module.decode.event.DecodeEventHistory;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
 import io.github.dsheirer.module.decode.event.IDecodeEventListener;
 import io.github.dsheirer.module.decode.event.IDecodeEventProvider;
+import io.github.dsheirer.module.decode.traffic.TrafficChannelManager;
 import io.github.dsheirer.module.log.EventLogger;
 import io.github.dsheirer.record.binary.BinaryRecorder;
 import io.github.dsheirer.record.wave.ComplexSamplesWaveRecorder;
@@ -71,6 +73,7 @@ import io.github.dsheirer.source.heartbeat.IHeartbeatListener;
 import io.github.dsheirer.source.heartbeat.IHeartbeatProvider;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
@@ -194,6 +197,42 @@ public class ProcessingChain implements Listener<ChannelEvent>
     public MessageHistory getMessageHistory()
     {
         return mMessageHistory;
+    }
+
+    /**
+     * Process a channel configuration change notification.
+     *
+     * Note: this will normally occur when a standard channel is converted to a traffic channel.
+     * @param notification of the change
+     */
+    public void channelConfigurationChanged(ChannelConfigurationChangeNotification notification)
+    {
+        getEventBus().post(notification);
+    }
+
+    /**
+     * Removes any module that is an instance of a TrafficChannelManager
+     */
+    public void removeTrafficChannelManager()
+    {
+        mModuleLock.lock();
+
+        try
+        {
+            Iterator<Module> it = mModules.iterator();
+
+            while(it.hasNext())
+            {
+                if(it.next() instanceof TrafficChannelManager)
+                {
+                    it.remove();
+                }
+            }
+        }
+        finally
+        {
+            mModuleLock.unlock();
+        }
     }
 
     public void dispose()

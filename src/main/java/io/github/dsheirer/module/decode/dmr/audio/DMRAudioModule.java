@@ -53,8 +53,6 @@ import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.encryption.VoiceEncryptionProtocol;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.sample.Listener;
-import io.github.dsheirer.source.ISourceEventListener;
-import io.github.dsheirer.source.SourceEvent;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -65,8 +63,7 @@ import org.slf4j.LoggerFactory;
 /**
  * DMR Audio Module for converting transmitted AMBE audio frames to 8 kHz PCM audio
  */
-public class DMRAudioModule extends AmbeAudioModule implements IdentifierUpdateProvider, IMessageProvider,
-    ISourceEventListener
+public class DMRAudioModule extends AmbeAudioModule implements IdentifierUpdateProvider, IMessageProvider
 {
     private static final Logger mLog = LoggerFactory.getLogger(DMRAudioModule.class);
     private SquelchStateListener mSquelchStateListener = new SquelchStateListener();
@@ -80,13 +77,6 @@ public class DMRAudioModule extends AmbeAudioModule implements IdentifierUpdateP
     private VoiceFrameDecryptorFactory mVoiceFrameDecryptorFactory;
     private VoiceFrameDecryptor mVoiceFrameDecryptor;
     private VoiceEncryptionContext mPendingEncryptionContext;
-    private final Listener<SourceEvent> mSourceEventListener = sourceEvent ->
-    {
-        if(sourceEvent.getEvent() == SourceEvent.Event.NOTIFICATION_STOP_SAMPLE_STREAM)
-        {
-            reset();
-        }
-    };
 
     /**
      * Constructs an instance
@@ -109,16 +99,8 @@ public class DMRAudioModule extends AmbeAudioModule implements IdentifierUpdateP
     }
 
     @Override
-    public Listener<SourceEvent> getSourceEventListener()
-    {
-        return mSourceEventListener;
-    }
-
-    @Override
     public void reset()
     {
-        closeAudioSegment();
-
         //Explicitly clear FROM identifiers to ensure previous call TONE identifiers are cleared.
         mIdentifierCollection.remove(Role.FROM);
 
@@ -458,7 +440,7 @@ public class DMRAudioModule extends AmbeAudioModule implements IdentifierUpdateP
         {
             if(event.getTimeslot() == getTimeslot() && event.getSquelchState() == SquelchState.SQUELCH)
             {
-                reset();
+                closeAudioSegment();
             }
         }
     }

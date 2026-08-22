@@ -6,10 +6,11 @@
 package io.github.dsheirer.module.decode.dmr;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.controller.channel.ChannelConfigurationChangeNotification;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.alias.TalkerAliasIdentifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
@@ -27,21 +28,22 @@ import org.junit.jupiter.api.Test;
 class DMRDecoderStateCapacityMaxTalkerAliasTest
 {
     @Test
-    void trafficChannelKeepsGrantTrafficAndAliasManager() throws Exception
+    void convertedCapacityPlusChannelKeepsTrafficAndAliasReportingWithoutGrantManager() throws Exception
     {
         Channel standardChannel = channel("Capacity Plus Rest", Channel.ChannelType.STANDARD);
         RecordingTrafficChannelManager manager = new RecordingTrafficChannelManager(standardChannel);
-        TestDecoderState state = new TestDecoderState(
-            channel("Capacity Plus Traffic", Channel.ChannelType.TRAFFIC), manager);
+        TestDecoderState state = new TestDecoderState(standardChannel, manager);
         state.getIdentifierCollection().update(DMRRadio.createFrom(101));
 
+        state.channelChanged(new ChannelConfigurationChangeNotification(
+            channel("Capacity Plus Traffic", Channel.ChannelType.TRAFFIC)));
         state.emit(DMRDecodeEvent.builder(DecodeEventType.CALL_GROUP, 1_000L)
             .identifiers(new IdentifierCollection())
             .timeslot(1)
             .build());
         state.receive(capacityMaxAlias("CAR 1", 1_100L));
 
-        assertSame(manager, activeTrafficChannelManager(state));
+        assertNull(activeTrafficChannelManager(state));
         assertEquals(1, manager.mTrafficEvents);
         assertEquals(List.of("CAR 1"), manager.mAliases);
     }

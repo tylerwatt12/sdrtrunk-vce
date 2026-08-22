@@ -70,6 +70,8 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executor;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.BiConsumer;
@@ -108,6 +110,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     private AliasModel mAliasModel;
     private UserPreferences mUserPreferences;
     private List<Long> mLoggedFrequencies = new ArrayList<>();
+    private List<ScheduledFuture<?>> mDelayedChannelStartTasks = new ArrayList<>();
     private final Executor mSiteMetadataExecutor = MoreExecutors.newSequentialExecutor(ThreadPool.CACHED);
 
     /**
@@ -411,7 +414,14 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
             }
             catch(ChannelException _)
             {
-                //Start rejection is broadcast by startProcessing().
+                if(request.isPersistentAttempt() && isRunnable(request.getChannel()))
+                {
+                    DelayedChannelStartTask delayedChannelStartTask = new DelayedChannelStartTask(request);
+                    ScheduledFuture<?> future = ThreadPool.SCHEDULED
+                        .schedule(delayedChannelStartTask, 500, TimeUnit.MILLISECONDS);
+                    delayedChannelStartTask.setScheduledFuture(future);
+                    mDelayedChannelStartTasks.add(future);
+                }
             }
         }
     }
@@ -498,6 +508,19 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         }
 
         ProcessingChain processingChain = new ProcessingChain(channel, mAliasModel);
+
+        //Certain decoders aggregate the decode events in the parent channel that also includes any events produced
+        //by the traffic channels.  Establish listener registration depending on if this channel is a traffic channel
+        //and the request contains the parent event history, or if this is a parent channel and the request contains
+        //the traffic channel event history.
+        if(request.hasParentDecodeEventHistory())
+        {
+            processingChain.getDecodeEventHistory().addListener(request.getParentDecodeEventHistory());
+        }
+        else if(request.hasChildDecodeEventHistory())
+        {
+            request.getChildDecodeEventHistory().addListener(processingChain.getDecodeEventHistory());
+        }
 
         //Register to receive event bus requests/notifications
         processingChain.getEventBus().register(ChannelProcessingManager.this);
@@ -807,6 +830,14 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
      */
     public void shutdown()
     {
+        List<ScheduledFuture<?>> delayedTasks = new ArrayList<>(mDelayedChannelStartTasks);
+
+        for(ScheduledFuture<?> delayedTask: delayedTasks)
+        {
+            delayedTask.cancel(true);
+            mDelayedChannelStartTasks.remove(delayedTask);
+        }
+
         List<Channel> channelsToStop = new ArrayList<>(mProcessingChainsMap.keySet());
 
         for(Channel channel : channelsToStop)
@@ -829,6 +860,49 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     {
         shutdown();
         mChannelActivityModel.close();
+    }
+
+    /**
+     * Process a request to convert a currently processing standard channel type to a traffic channel type.
+     * @param request from the currently processing channel's processing chain event bus
+     */
+    @Subscribe
+    public void convertToTrafficChannel(ChannelConversionRequest request)
+    {
+        //Update the channel to processing chain map.
+        ProcessingChain processingChain = mProcessingChainsMap.remove(request.getCurrentChannel());
+
+        if(processingChain != null)
+        {
+            //Remove the traffic channel manager from this processing chain.  Reuse or reinsertion of the traffic
+            //channel manager to another processing chain is handled separately.
+            processingChain.removeTrafficChannelManager();
+
+            //Update processing flag for each configuration.
+            Platform.runLater(() -> {
+                request.getCurrentChannel().setProcessing(false);
+                request.getTrafficChannel().setProcessing(true);
+            });
+
+            mProcessingChainsMap.put(request.getTrafficChannel(), processingChain);
+            mChannelActivityModel.channelStopped(request.getCurrentChannel());
+            mChannelActivityModel.channelStarted(request.getTrafficChannel(),
+                processingChain.getChannelState().getChannelMetadata(), processingChain);
+
+            //Post a change notification so that processing chain modules can reconfigure
+            processingChain.channelConfigurationChanged(new ChannelConfigurationChangeNotification(request.getTrafficChannel()));
+
+            for(int timeslot: getTrafficIdentifierTimeslots(request.getTrafficChannel()))
+            {
+                IdentifierUpdateNotification notification = new IdentifierUpdateNotification(
+                    TrafficChannelIdentifier.create(), IdentifierUpdateNotification.Operation.ADD, timeslot);
+                processingChain.getChannelState().updateChannelStateIdentifiers(notification);
+            }
+        }
+        else
+        {
+            mLog.warn("Request to convert to traffic channel ignored - no processing chain was found");
+        }
     }
 
     @Subscribe
@@ -1014,6 +1088,39 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     public void removeChannelEventListener(Listener<ChannelEvent> listener)
     {
         mChannelEventBroadcaster.removeListener(listener);
+    }
+
+    /**
+     * Task to scheduling attempt to start a channel after previous attempts failed for lack of tuner channel
+     */
+    public class DelayedChannelStartTask implements Runnable
+    {
+        private ChannelStartProcessingRequest mRequest;
+        private ScheduledFuture<?> mScheduledFuture;
+
+        public DelayedChannelStartTask(ChannelStartProcessingRequest request)
+        {
+            mRequest = request;
+        }
+
+        public void setScheduledFuture(ScheduledFuture<?> scheduledFuture)
+        {
+            mScheduledFuture = scheduledFuture;
+        }
+
+        @Override
+        public void run()
+        {
+            try
+            {
+                mDelayedChannelStartTasks.remove(mScheduledFuture);
+                startChannelRequest(mRequest);
+            }
+            catch(Exception _)
+            {
+                mLog.error("Error executing persistent channel start task");
+            }
+        }
     }
 
     /**
