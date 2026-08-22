@@ -57,7 +57,6 @@ public class ChannelRotationMonitor extends Module implements ISourceEventProvid
     private final long mActiveStateLossDelay;
     private volatile long mLastActiveTimestamp = System.currentTimeMillis();
     private volatile boolean mActiveStateObserved;
-    private boolean mEnabled = true;
     private boolean mPaused;
 
     /**
@@ -128,27 +127,6 @@ public class ChannelRotationMonitor extends Module implements ISourceEventProvid
     }
 
     /**
-     * Processes a request to disable this monitor instance.
-     * @param request to disable
-     */
-    @Subscribe
-    public void disable(DisableChannelRotationMonitorRequest request)
-    {
-        mRotationLock.lock();
-
-        try
-        {
-            mEnabled = false;
-            mPaused = true;
-            cancelScheduledMonitor();
-        }
-        finally
-        {
-            mRotationLock.unlock();
-        }
-    }
-
-    /**
      * Synchronously fences any in-flight rotation request before acknowledging the pause.
      */
     @Subscribe
@@ -177,11 +155,8 @@ public class ChannelRotationMonitor extends Module implements ISourceEventProvid
 
         try
         {
-            if(mEnabled)
-            {
-                mLastActiveTimestamp = System.currentTimeMillis();
-                mPaused = false;
-            }
+            mLastActiveTimestamp = System.currentTimeMillis();
+            mPaused = false;
         }
         finally
         {
@@ -223,7 +198,7 @@ public class ChannelRotationMonitor extends Module implements ISourceEventProvid
             long delay = mActiveStateObserved && mActiveStateLossDelay > 0 ?
                 Math.max(mRotationDelay, mActiveStateLossDelay) : mRotationDelay;
 
-            if(mEnabled && !mPaused && mSourceEventListener != null &&
+            if(!mPaused && mSourceEventListener != null &&
                 ((mLastActiveTimestamp + delay) < currentTimeMillis))
             {
                 mSourceEventListener.receive(SourceEvent.frequencyRotationRequest());
@@ -250,7 +225,7 @@ public class ChannelRotationMonitor extends Module implements ISourceEventProvid
 
         try
         {
-            if(mEnabled && mScheduledFuture == null)
+            if(mScheduledFuture == null)
             {
                 Runnable runnable = () -> {
                     try

@@ -559,8 +559,9 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
             {
                 tracker.updateDurationTraffic(timestamp);
                 mCallStartTracker.touch(channel, null, timestamp);
-                //Duration-only audio frame updates still belong in decode-event history.  Rate-limit Systems updates
-                //so active calls keep their grant age-out alive without queuing a full snapshot for every audio frame.
+                //Broadcast duration-only audio-frame updates to live decode-event listeners. Rate-limit Systems
+                //updates so active calls keep their grant age-out alive without queuing a full snapshot for every
+                //audio frame.
                 broadcast(tracker.getEvent(), shouldPublishActivityProgress(frequency, timestamp));
             }
         }

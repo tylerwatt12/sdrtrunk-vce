@@ -26,6 +26,7 @@ import io.github.dsheirer.audio.codec.mbe.MBECallSequenceRecorder;
 import io.github.dsheirer.audio.squelch.ISquelchStateListener;
 import io.github.dsheirer.audio.squelch.ISquelchStateProvider;
 import io.github.dsheirer.audio.squelch.SquelchStateEvent;
+import io.github.dsheirer.channel.quality.ControlChannelQualityMonitor;
 import io.github.dsheirer.channel.state.AbstractChannelState;
 import io.github.dsheirer.channel.state.DecoderState;
 import io.github.dsheirer.channel.state.DecoderStateEvent;
@@ -46,7 +47,6 @@ import io.github.dsheirer.message.IMessageListener;
 import io.github.dsheirer.message.IMessageProvider;
 import io.github.dsheirer.message.MessageHistory;
 import io.github.dsheirer.module.decode.PrimaryDecoder;
-import io.github.dsheirer.module.decode.event.DecodeEventHistory;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
 import io.github.dsheirer.module.decode.event.IDecodeEventListener;
 import io.github.dsheirer.module.decode.event.IDecodeEventProvider;
@@ -71,6 +71,7 @@ import io.github.dsheirer.source.SourceEvent;
 import io.github.dsheirer.source.heartbeat.Heartbeat;
 import io.github.dsheirer.source.heartbeat.IHeartbeatListener;
 import io.github.dsheirer.source.heartbeat.IHeartbeatProvider;
+import io.github.dsheirer.source.tuner.channel.rotation.ChannelRotationMonitor;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
@@ -114,7 +115,6 @@ public class ProcessingChain implements Listener<ChannelEvent>
     private Broadcaster<IMessage> mMessageBroadcaster = new Broadcaster<>();
     private Broadcaster<SquelchStateEvent> mSquelchStateEventBroadcaster = new Broadcaster<>();
     private AtomicBoolean mRunning = new AtomicBoolean();
-    private DecodeEventHistory mDecodeEventHistory = new DecodeEventHistory(200);
     private MessageHistory mMessageHistory = new MessageHistory(200);
     private AbstractChannelState mChannelState;
     private EventBus mEventBus;
@@ -144,7 +144,6 @@ public class ProcessingChain implements Listener<ChannelEvent>
         }
 
         addModule(mChannelState);
-        addModule(mDecodeEventHistory);
         addModule(mMessageHistory);
     }
 
@@ -166,6 +165,15 @@ public class ProcessingChain implements Listener<ChannelEvent>
     }
 
     /**
+     * Current functional channel identity.  This is a single volatile read and is safe for audio and decoder observer
+     * callbacks that must not acquire the channel lifecycle lock.
+     */
+    public Channel getCurrentChannel()
+    {
+        return mChannelState.getCurrentChannel();
+    }
+
+    /**
      * Retrieves the primary decoder module
      * @return primary decoder or null.
      */
@@ -180,14 +188,6 @@ public class ProcessingChain implements Listener<ChannelEvent>
         }
 
         return null;
-    }
-
-    /**
-     * Decode event history module.
-     */
-    public DecodeEventHistory getDecodeEventHistory()
-    {
-        return mDecodeEventHistory;
     }
 
     /**
@@ -276,6 +276,54 @@ public class ProcessingChain implements Listener<ChannelEvent>
             {
                 routeDecodeEventsFrom(provider);
             }
+        }
+    }
+
+    /**
+     * Stops and permanently removes modules that are valid only while this chain owns a control channel.  A DMR REST
+     * conversion retains the source, decoder, audio, logging, and recording modules for the active call, but the
+     * converted traffic chain must not continue control-channel rotation or quality publication.
+     */
+    public void removeControlChannelModules()
+    {
+        for(Module module: getModules())
+        {
+            if(module instanceof ControlChannelQualityMonitor || module instanceof ChannelRotationMonitor)
+            {
+                removeStopAndDispose(module);
+            }
+        }
+    }
+
+    private void removeStopAndDispose(Module module)
+    {
+        try
+        {
+            //Detach real-time producers before lifecycle stop/observer publication. An already in-flight quality
+            //callback uses a nonblocking state offer and either completes first or drops its sample.
+            removeModule(module);
+        }
+        catch(RuntimeException exception)
+        {
+            mLog.error("Error removing processing-chain module before stop", exception);
+        }
+
+        try
+        {
+            module.stop();
+        }
+        catch(RuntimeException exception)
+        {
+            mLog.error("Error stopping removed processing-chain module", exception);
+        }
+
+        try
+        {
+            module.dispose();
+        }
+        catch(RuntimeException exception)
+        {
+            mLog.error("Error disposing processing-chain module", exception);
         }
     }
 

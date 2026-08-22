@@ -64,7 +64,6 @@ import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import io.github.dsheirer.source.tuner.channel.TunerChannelSource;
 import io.github.dsheirer.source.tuner.channel.rotation.ChannelRotationMonitorPauseRequest;
 import io.github.dsheirer.source.tuner.channel.rotation.ChannelRotationMonitorResumeRequest;
-import io.github.dsheirer.source.tuner.channel.rotation.DisableChannelRotationMonitorRequest;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.util.ThreadPool;
 import java.awt.GraphicsEnvironment;
@@ -673,7 +672,9 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
             processingChain.channelConfigurationChanged(new ChannelConfigurationChangeNotification(trafficChannel));
             dmrConversionNotificationPosted = true;
 
-            processingChain.getEventBus().post(new DisableChannelRotationMonitorRequest());
+            //The old chain now owns traffic only. Stop and detach control-only observers after the functional
+            //identity is committed so they cannot rotate its source or publish quality for the former parent.
+            processingChain.removeControlChannelModules();
             mChannelActivityModel.channelStopped(parentChannel);
             mChannelActivityModel.channelStarted(trafficChannel,
                 processingChain.getChannelState().getChannelMetadata(), processingChain);
@@ -1154,6 +1155,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         try
         {
             processingChain = new ProcessingChain(channel, mAliasModel);
+            ProcessingChain observerChain = processingChain;
 
             //Register to receive event bus requests/notifications
             processingChain.getEventBus().register(ChannelProcessingManager.this);
@@ -1161,7 +1163,8 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
             mChannelEventBroadcaster.addListener(processingChain);
 
             /* Register global listeners */
-            processingChain.addAudioCallListener(event -> mChannelActivityModel.receiveAudioCallEvent(channel, event));
+            processingChain.addAudioCallListener(event ->
+                mChannelActivityModel.receiveAudioCallEvent(observerChain.getCurrentChannel(), event));
 
             for(Listener<AudioCallEvent> listener : mAudioCallListeners)
             {
@@ -1175,7 +1178,8 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
 
             for(BiConsumer<Channel,IDecodeEvent> listener : mChannelDecodeEventListeners)
             {
-                processingChain.addDecodeEventListener(event -> listener.accept(channel, event));
+                processingChain.addDecodeEventListener(event ->
+                    listener.accept(observerChain.getCurrentChannel(), event));
             }
 
             //Add a listener to detect source error state that indicates the channel should be shutdown.

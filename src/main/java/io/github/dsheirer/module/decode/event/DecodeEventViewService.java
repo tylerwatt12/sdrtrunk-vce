@@ -36,8 +36,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * UI-neutral, session-only projection of decoder events. Existing processing-chain histories own retention; this
- * service only creates immutable views for live consumers.
+ * UI-neutral, session-only projection of live decoder events. This service owns its bounded session retention and
+ * creates immutable views for consumers.
  */
 public class DecodeEventViewService implements AutoCloseable
 {

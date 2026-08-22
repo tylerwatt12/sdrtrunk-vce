@@ -31,6 +31,14 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * Creates the optional file-log modules when a processing chain is assembled.  STANDARD and TRAFFIC logger settings
+ * are creation-time selectors; they are not a request to replace loggers if a running chain later changes roles.
+ *
+ * A DMR Capacity Plus REST channel can be converted into a traffic channel while a call is active.  That live chain
+ * deliberately keeps its already-started loggers until teardown so the call is not split across files or interrupted.
+ * The replacement REST chain is assembled normally and receives newly selected STANDARD loggers.
+ */
 public class EventLogManager
 {
 

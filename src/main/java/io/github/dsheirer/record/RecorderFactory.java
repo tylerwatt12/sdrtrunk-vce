@@ -40,7 +40,14 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Factory for creating recorder modules.
+ * Factory for creating configured baseband, demodulated-bitstream, and MBE call-sequence recorder modules when a
+ * processing chain is assembled.  STANDARD and TRAFFIC recorder settings are creation-time selectors; they do not
+ * require recorder replacement if a running chain later changes roles.
+ *
+ * A DMR Capacity Plus REST channel can be converted into a traffic channel while a call is active.  That live chain
+ * deliberately keeps its already-started recorder modules until teardown so the call is not split across files or
+ * interrupted.  The replacement REST chain is assembled normally and receives newly selected STANDARD recorders.
+ * Alias-driven audio-call recording, audio streaming, and JMBE voice decoding are separate from this factory.
  */
 public class RecorderFactory
 {

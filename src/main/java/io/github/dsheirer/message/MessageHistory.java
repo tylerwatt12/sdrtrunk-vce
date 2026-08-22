@@ -23,7 +23,7 @@ import io.github.dsheirer.module.HistoryModule;
 import io.github.dsheirer.sample.Listener;
 
 /**
- * Decode event history module.  Maintains a history of decode events and constrains the total history size.
+ * Message history module. Maintains a bounded history of decoded messages.
  */
 public class MessageHistory extends HistoryModule<IMessage> implements IMessageListener
 {
@@ -37,7 +37,7 @@ public class MessageHistory extends HistoryModule<IMessage> implements IMessageL
     }
 
     /**
-     * Implements the IDecodeEventListener interface - delegates to receive(event) method.
+     * Implements the message-listener interface and delegates to the inherited receive method.
      */
     @Override
     public Listener<IMessage> getMessageListener()

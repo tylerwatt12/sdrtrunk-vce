@@ -104,6 +104,16 @@ public abstract class AbstractChannelState extends Module implements IChannelEve
     }
 
     /**
+     * Current functional channel identity for this running state machine.  The lifecycle owner publishes a converted
+     * traffic-channel identity through the same volatile field before observer callbacks can rely on it, so callers
+     * can read this value without consulting the channel-processing map or acquiring its lifecycle lock.
+     */
+    public final Channel getCurrentChannel()
+    {
+        return mChannel;
+    }
+
+    /**
      * Publishes the intent to replace this running channel before the lifecycle owner changes its channel-map key.
      * Decoder callbacks only inspect this preallocated marker; they never wait for lifecycle work.
      */

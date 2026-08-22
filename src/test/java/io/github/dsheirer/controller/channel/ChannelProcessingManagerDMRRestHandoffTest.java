@@ -18,14 +18,32 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.google.common.eventbus.EventBus;
 import com.google.common.eventbus.Subscribe;
+import io.github.dsheirer.alias.Alias;
+import io.github.dsheirer.alias.AliasListDefinition;
+import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.alias.AliasModel;
+import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
+import io.github.dsheirer.audio.codec.mbe.JmbeAudioModule;
+import io.github.dsheirer.audio.call.AudioCallEvent;
+import io.github.dsheirer.audio.call.AudioCallEventType;
+import io.github.dsheirer.audio.call.AudioCallId;
+import io.github.dsheirer.audio.call.AudioCallSnapshot;
+import io.github.dsheirer.audio.call.IAudioCallProvider;
+import io.github.dsheirer.audio.call.VoiceCallQuality;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
+import io.github.dsheirer.channel.metadata.activity.ChannelActivitySnapshot;
+import io.github.dsheirer.channel.quality.ControlChannelQualityMonitor;
+import io.github.dsheirer.channel.quality.ControlChannelQualitySnapshot;
 import io.github.dsheirer.channel.state.DecoderStateEvent;
 import io.github.dsheirer.channel.state.MultiChannelState;
 import io.github.dsheirer.channel.state.State;
 import io.github.dsheirer.controller.channel.ChannelEvent.Event;
 import io.github.dsheirer.controller.channel.event.ChannelStartProcessingRequest;
+import io.github.dsheirer.identifier.IdentifierCollection;
+import io.github.dsheirer.identifier.IdentifierUpdateNotification;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
+import io.github.dsheirer.identifier.configuration.FrequencyConfigurationIdentifier;
+import io.github.dsheirer.message.MessageProviderModule;
 import io.github.dsheirer.module.Module;
 import io.github.dsheirer.module.ProcessingChain;
 import io.github.dsheirer.module.decode.dmr.DMRChannelConfigurationTransitionNotification;
@@ -45,14 +63,19 @@ import io.github.dsheirer.module.decode.dmr.message.data.SlotType;
 import io.github.dsheirer.module.decode.dmr.message.data.csbk.Opcode;
 import io.github.dsheirer.module.decode.dmr.message.data.csbk.standard.grant.TalkgroupVoiceChannelGrant;
 import io.github.dsheirer.module.decode.dmr.message.data.terminator.Terminator;
+import io.github.dsheirer.module.decode.dmr.message.type.DataType;
+import io.github.dsheirer.module.decode.dmr.message.voice.VoiceAMessage;
 import io.github.dsheirer.module.decode.dmr.sync.DMRSyncPattern;
 import io.github.dsheirer.module.decode.event.DecodeEvent;
+import io.github.dsheirer.module.decode.event.DecodeEventViewService;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.event.IDecodeEvent;
 import io.github.dsheirer.module.decode.event.IDecodeEventProvider;
 import io.github.dsheirer.module.log.EventLogManager;
 import io.github.dsheirer.module.log.EventLogger;
 import io.github.dsheirer.preference.UserPreferences;
+import io.github.dsheirer.preference.nowplaying.NowPlayingPreference;
+import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.sample.complex.ComplexSamples;
 import io.github.dsheirer.source.ComplexSource;
@@ -62,6 +85,7 @@ import io.github.dsheirer.source.SourceException;
 import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import io.github.dsheirer.source.config.SourceConfiguration;
 import io.github.dsheirer.source.tuner.channel.ChannelSpecification;
+import io.github.dsheirer.source.tuner.channel.rotation.ChannelRotationMonitor;
 import io.github.dsheirer.source.tuner.channel.rotation.ChannelRotationMonitorPauseRequest;
 import io.github.dsheirer.source.tuner.channel.rotation.ChannelRotationMonitorResumeRequest;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
@@ -69,12 +93,16 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
+import jmbe.iface.IAudioCodec;
+import jmbe.iface.IAudioWithMetadata;
 import org.junit.jupiter.api.Test;
 
 class ChannelProcessingManagerDMRRestHandoffTest
@@ -82,6 +110,8 @@ class ChannelProcessingManagerDMRRestHandoffTest
     private static final long CURRENT_FREQUENCY = 451_000_000L;
     private static final long FIRST_REST_FREQUENCY = 452_000_000L;
     private static final long SECOND_REST_FREQUENCY = 453_000_000L;
+    private static final String AUDIO_ALIAS_LIST_NAME = "DMR Audio Policy";
+    private static final String AUDIO_STREAM_NAME = "Test Stream";
 
     @Test
     void retriesReplacementStartAndKeepsConvertedTrafficEventsOnOneRoute() throws Exception
@@ -110,6 +140,7 @@ class ChannelProcessingManagerDMRRestHandoffTest
             manager.start(parent);
             ProcessingChain firstChain = manager.getProcessingChain(parent);
             assertNotNull(firstChain);
+            List<IDecodeEvent> firstChainEvents = captureDecodeEvents(firstChain);
             DMRTrafficChannelManager trafficManager = trafficManager(firstChain);
             TestDecodeEventProvider trafficEventProvider = new TestDecodeEventProvider();
             firstChain.addModule(trafficEventProvider);
@@ -131,10 +162,11 @@ class ChannelProcessingManagerDMRRestHandoffTest
 
             ProcessingChain firstReplacement = manager.getProcessingChain(parent);
             assertNotNull(firstReplacement);
+            List<IDecodeEvent> firstReplacementEvents = captureDecodeEvents(firstReplacement);
             assertNotSame(firstChain, firstReplacement);
             assertSame(trafficManager, trafficManager(firstReplacement));
             assertFalse(firstChain.getModules().stream().anyMatch(module -> module == trafficManager));
-            assertTrue(firstReplacement.getDecodeEventHistory().getItems().isEmpty());
+            assertTrue(firstReplacementEvents.isEmpty());
             assertTrue(firstReplacement.getMessageHistory().getItems().isEmpty());
             DecodeEvent managerOwned = DMRDecodeEvent.builder(DecodeEventType.CALL_GROUP, 1_500L)
                 .channel(restChannel(3, FIRST_REST_FREQUENCY))
@@ -143,16 +175,16 @@ class ChannelProcessingManagerDMRRestHandoffTest
                 .details("manager-owned parent event")
                 .build();
             trafficManager.broadcast(managerOwned);
-            assertEquals(List.of(managerOwned), firstReplacement.getDecodeEventHistory().getItems());
-            assertEquals(List.of(activeUpdate), firstChain.getDecodeEventHistory().getItems());
+            assertEquals(List.of(managerOwned), firstReplacementEvents);
+            assertEquals(List.of(activeUpdate), firstChainEvents);
 
             activeUpdate.update(2_000L);
             trafficEventProvider.receive(activeUpdate);
             trafficManager.receiveTrafficChannelEvent(activeUpdate);
 
             assertEquals(List.of(activeUpdate, managerOwned, activeUpdate), deliveredEvents);
-            assertEquals(List.of(activeUpdate), firstChain.getDecodeEventHistory().getItems());
-            assertEquals(List.of(managerOwned), firstReplacement.getDecodeEventHistory().getItems());
+            assertEquals(List.of(activeUpdate, activeUpdate), firstChainEvents);
+            assertEquals(List.of(managerOwned), firstReplacementEvents);
 
             trafficManager.requestRestChannelHandoff(parent, FIRST_REST_FREQUENCY,
                 restChannel(5, SECOND_REST_FREQUENCY));
@@ -170,10 +202,158 @@ class ChannelProcessingManagerDMRRestHandoffTest
     }
 
     @Test
-    void convertedCallCanFinishDuringRetryBeforeTheRestFollowerStarts() throws Exception
+    void convertedChainPublishesFunctionalObserverIdentityAndDropsControlOnlyModules() throws Exception
+    {
+        NowPlayingPreference nowPlayingPreference = new NowPlayingPreference(type -> {})
+        {
+            @Override
+            public int getTrafficGrantAgeOutMilliseconds()
+            {
+                return MAX_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS;
+            }
+
+            @Override
+            public boolean isClearVoiceDecodeQualityOnCallEnd()
+            {
+                return true;
+            }
+        };
+        UserPreferences preferences = new UserPreferences()
+        {
+            @Override
+            public NowPlayingPreference getNowPlayingPreference()
+            {
+                return nowPlayingPreference;
+            }
+        };
+        AliasModel aliasModel = new AliasModel();
+        SequencedTunerManager tunerManager = new SequencedTunerManager(preferences,
+            new TestComplexSource(CURRENT_FREQUENCY), new TestComplexSource(FIRST_REST_FREQUENCY));
+        ChannelProcessingManager manager = new ChannelProcessingManager(
+            new EventLogManager(aliasModel, preferences), tunerManager, aliasModel, preferences, 10);
+        Channel parent = channel(1);
+        List<ChannelDecodeObservation> observations = new CopyOnWriteArrayList<>();
+        List<ControlChannelQualitySnapshot> qualitySnapshots = new CopyOnWriteArrayList<>();
+        DecodeEventViewService eventViewService = new DecodeEventViewService(manager, aliasModel);
+        Listener<DecodeEventViewService.EventView> eventDemand = event -> {};
+        eventViewService.addListener(eventDemand);
+        manager.addChannelDecodeEventListener((channel, event) ->
+            observations.add(new ChannelDecodeObservation(channel, event)));
+        manager.addChannelDecodeEventListener(eventViewService.getDecodeEventListener());
+        manager.addControlChannelQualityListener(qualitySnapshots::add);
+
+        try
+        {
+            manager.start(parent);
+            ProcessingChain original = manager.getProcessingChain(parent);
+            assertNotNull(original);
+            DMRTrafficChannelManager trafficManager = trafficManager(original);
+            ControlChannelQualityMonitor oldQualityMonitor = modules(original,
+                ControlChannelQualityMonitor.class).getFirst();
+            ChannelRotationMonitor oldRotationMonitor = modules(original, ChannelRotationMonitor.class).getFirst();
+            assertSame(oldQualityMonitor.getMessageListener(), oldQualityMonitor.getMessageListener());
+            assertSame(oldQualityMonitor.getSourceEventListener(), oldQualityMonitor.getSourceEventListener());
+            assertSame(oldQualityMonitor.getHeartbeatListener(), oldQualityMonitor.getHeartbeatListener());
+            TestDecodeEventProvider decodeProvider = new TestDecodeEventProvider();
+            TestAudioCallProvider audioProvider = new TestAudioCallProvider();
+            original.addModule(decodeProvider);
+            original.addModule(audioProvider);
+            DecodeEvent activeCall = DMRDecodeEvent.builder(DecodeEventType.CALL_GROUP, 1_000L)
+                .channel(restChannel(1, CURRENT_FREQUENCY))
+                .identifiers(identifiers(101, 91))
+                .timeslot(1)
+                .build();
+            decodeProvider.receive(activeCall);
+            trafficManager.receiveTrafficChannelEvent(activeCall);
+
+            trafficManager.requestRestChannelHandoff(parent, CURRENT_FREQUENCY,
+                restChannel(3, FIRST_REST_FREQUENCY));
+            assertTrue(awaitCondition(() -> manager.getPendingDmrRestChannelAttemptCount() == 0 &&
+                manager.getProcessingChain(parent) != null && manager.getProcessingChain(parent) != original, 5));
+
+            Channel converted = manager.getChannel(original);
+            ProcessingChain replacement = manager.getProcessingChain(parent);
+            assertNotNull(converted);
+            assertNotNull(replacement);
+            assertTrue(converted.isTrafficChannel());
+            assertFalse(original.getModules().contains(oldQualityMonitor));
+            assertFalse(original.getModules().contains(oldRotationMonitor));
+            assertTrue(modules(replacement, ControlChannelQualityMonitor.class).size() == 1);
+            assertTrue(modules(replacement, ChannelRotationMonitor.class).size() == 1);
+            assertTrue(qualitySnapshots.stream().anyMatch(snapshot -> !snapshot.active() &&
+                snapshot.channel() == parent && snapshot.frequencyHz() == CURRENT_FREQUENCY),
+                "converted chain did not close its former control-channel quality publication");
+            long oldMonitorClosureCount = qualitySnapshots.stream()
+                .filter(snapshot -> !snapshot.active() && snapshot.channel() == parent &&
+                    snapshot.frequencyHz() == CURRENT_FREQUENCY)
+                .count();
+            original.broadcast(SourceEvent.frequencyChange(original.getSource(), SECOND_REST_FREQUENCY));
+            assertEquals(oldMonitorClosureCount, qualitySnapshots.stream()
+                    .filter(snapshot -> !snapshot.active() && snapshot.channel() == parent &&
+                        snapshot.frequencyHz() == CURRENT_FREQUENCY)
+                    .count(),
+                "removed quality monitor still received source events from the converted traffic chain");
+
+            DecodeEvent replacementEvent = DMRDecodeEvent.builder(DecodeEventType.CALL_GROUP, 1_500L)
+                .channel(restChannel(3, FIRST_REST_FREQUENCY))
+                .identifiers(identifiers(102, 92))
+                .timeslot(1)
+                .build();
+            trafficManager.broadcast(replacementEvent);
+            activeCall.update(2_000L);
+            decodeProvider.receive(activeCall);
+            trafficManager.receiveTrafficChannelEvent(activeCall);
+            DecodeEvent descriptorless = DecodeEvent.builder(DecodeEventType.STATUS, 2_100L)
+                .details("descriptorless converted event")
+                .timeslot(1)
+                .build();
+            decodeProvider.receive(descriptorless);
+
+            assertEquals(4, observations.size());
+            assertSame(parent, observations.get(0).channel());
+            assertSame(parent, observations.get(1).channel());
+            assertSame(converted, observations.get(2).channel());
+            assertSame(converted, observations.get(3).channel());
+            DecodeEventViewService.Scope oldFrequencyScope = new DecodeEventViewService.Scope(
+                parent.getConfigurationId(), CURRENT_FREQUENCY, 1);
+            assertTrue(awaitCondition(() -> eventViewService.snapshot(oldFrequencyScope).stream()
+                .anyMatch(event -> "descriptorless converted event".equals(event.details()) &&
+                    event.frequencyHz() == CURRENT_FREQUENCY), 5),
+                "descriptorless converted event lost the old chain's source frequency");
+
+            IdentifierCollection audioIdentifiers = new IdentifierCollection(
+                List.of(FrequencyConfigurationIdentifier.create(CURRENT_FREQUENCY)));
+            audioIdentifiers.setTimeslot(1);
+            VoiceCallQuality voiceQuality = new VoiceCallQuality(50, 0, 0, 0, 2, 47);
+            AudioCallSnapshot audioSnapshot = new AudioCallSnapshot(new AudioCallId(1, 1, 1), null, null,
+                audioIdentifiers, Set.of(), 1_000L, 2_200L, 1, 1, 1_000L, 2_200L,
+                true, false, false, false, false, null, voiceQuality);
+            audioProvider.receive(new AudioCallEvent(AudioCallEventType.AUDIO_FRAME, audioSnapshot,
+                new float[160]));
+            assertTrue(awaitCondition(() -> {
+                ChannelActivitySnapshot.Row row = activityRow(manager, CURRENT_FREQUENCY, 1);
+                return row != null && voiceQuality.equals(row.voiceQuality());
+            }, 5), "converted traffic activity row did not receive voice quality");
+
+            audioProvider.receive(new AudioCallEvent(AudioCallEventType.CALL_COMPLETED, audioSnapshot, null));
+            assertTrue(awaitCondition(() -> {
+                ChannelActivitySnapshot.Row row = activityRow(manager, CURRENT_FREQUENCY, 1);
+                return row != null && row.voiceQuality() == null;
+            }, 5), "converted traffic activity row did not clear terminal voice quality");
+        }
+        finally
+        {
+            eventViewService.removeListener(eventDemand);
+            eventViewService.close();
+            manager.close();
+        }
+    }
+
+    @Test
+    void convertedCallPreservesAudioPolicyAndCanFinishDuringRetryBeforeTheRestFollowerStarts() throws Exception
     {
         UserPreferences preferences = new UserPreferences();
-        AliasModel aliasModel = new AliasModel();
+        AliasModel aliasModel = aliasModelWithAudioPolicy();
         TestComplexSource failedReplacementSource = new TestComplexSource(FIRST_REST_FREQUENCY, true);
         SequencedTunerManager tunerManager = new SequencedTunerManager(preferences,
             new TestComplexSource(CURRENT_FREQUENCY), null, failedReplacementSource,
@@ -181,20 +361,37 @@ class ChannelProcessingManagerDMRRestHandoffTest
         ChannelProcessingManager manager = new ChannelProcessingManager(
             new EventLogManager(aliasModel, preferences), tunerManager, aliasModel, preferences, 10_000);
         Channel parent = channel(1);
+        parent.setAliasListName(AUDIO_ALIAS_LIST_NAME);
+        List<AudioCallEvent> audioEvents = new CopyOnWriteArrayList<>();
+        manager.addAudioCallListener(audioEvents::add);
 
         try
         {
             manager.start(parent);
             ProcessingChain original = manager.getProcessingChain(parent);
             assertNotNull(original);
+            List<IDecodeEvent> originalDecodeEvents = captureDecodeEvents(original);
+            MultiChannelState originalChannelState =
+                assertInstanceOf(MultiChannelState.class, original.getChannelState());
             Source originalSource = original.getSource();
             DMRTrafficChannelManager trafficManager = trafficManager(original);
             List<Module> originalFunctionalModules = original.getModules().stream()
                 .filter(module -> module != trafficManager)
+                .filter(module -> !(module instanceof ControlChannelQualityMonitor))
+                .filter(module -> !(module instanceof ChannelRotationMonitor))
                 .toList();
             DMRDecoder originalDecoder = modules(original, DMRDecoder.class).getFirst();
             List<DMRDecoderState> originalDecoderStates = modules(original, DMRDecoderState.class);
             List<DMRAudioModule> originalAudioModules = modules(original, DMRAudioModule.class);
+            DMRAudioModule originalAudioModule = originalAudioModules.getFirst();
+            TestAudioCodec originalAudioCodec = new TestAudioCodec();
+            setAudioCodec(originalAudioModule, originalAudioCodec);
+            MessageProviderModule messageProvider = new MessageProviderModule();
+            original.addModule(messageProvider);
+            original.getChannelState().updateChannelStateIdentifiers(new IdentifierUpdateNotification(
+                DMRRadio.createFrom(101), IdentifierUpdateNotification.Operation.ADD, 1));
+            original.getChannelState().updateChannelStateIdentifiers(new IdentifierUpdateNotification(
+                DMRTalkgroup.create(91), IdentifierUpdateNotification.Operation.ADD, 1));
             DMRDecoderState callState = originalDecoderStates.getFirst();
             DecodeEvent activeCall = DMRDecodeEvent.builder(DecodeEventType.CALL_GROUP, 1_000L)
                 .channel(restChannel(1, CURRENT_FREQUENCY))
@@ -204,6 +401,14 @@ class ChannelProcessingManagerDMRRestHandoffTest
             callState.setCurrentCallEvent((DecodeEvent)activeCall);
             HandoffSubscriber handoffSubscriber = new HandoffSubscriber();
             original.getEventBus().register(handoffSubscriber);
+            originalChannelState.getDecoderStateListener().receive(new DecoderStateEvent(callState,
+                DecoderStateEvent.Event.CONTINUATION, State.CALL, 1));
+            originalAudioModule.receive(voiceMessage(1_000L));
+            List<AudioCallEvent> firstAudioFrames = audioFrames(audioEvents);
+            assertEquals(3, firstAudioFrames.size());
+            AudioCallId preservedCallId = firstAudioFrames.getFirst().callId();
+            assertNotNull(preservedCallId);
+            assertAudioPolicy(firstAudioFrames.getFirst().snapshot());
 
             trafficManager.requestRestChannelHandoff(parent, CURRENT_FREQUENCY,
                 restChannel(3, FIRST_REST_FREQUENCY));
@@ -223,17 +428,31 @@ class ChannelProcessingManagerDMRRestHandoffTest
             assertSame(originalDecoder, modules(original, DMRDecoder.class).getFirst());
             assertSameInstances(originalDecoderStates, modules(original, DMRDecoderState.class));
             assertSameInstances(originalAudioModules, modules(original, DMRAudioModule.class));
+            assertSame(originalAudioModule, modules(original, DMRAudioModule.class).getFirst());
+            assertSame(originalAudioCodec, originalAudioModule.getAudioCodec());
 
-            Terminator terminator = new Terminator(DMRSyncPattern.BASE_STATION_DATA,
-                new CorrectedBinaryMessage(288), null, null, 2_000L, 1, null);
-            processTerminator(callState, terminator);
-            assertEquals(List.of(activeCall), original.getDecodeEventHistory().getItems(),
+            originalAudioModule.receive(voiceMessage(1_500L));
+            List<AudioCallEvent> allAudioFrames = audioFrames(audioEvents);
+            assertEquals(6, allAudioFrames.size());
+            assertTrue(allAudioFrames.stream().allMatch(event -> preservedCallId.equals(event.callId())),
+                "the preserved audio call restarted after REST conversion");
+            assertAudioPolicy(allAudioFrames.getLast().snapshot());
+
+            messageProvider.receive(terminator(2_000L));
+            assertEquals(List.of(activeCall), originalDecodeEvents,
                 "the preserved former-REST call did not complete on its original chain");
+            List<AudioCallEvent> completions = audioCompletions(audioEvents, preservedCallId);
+            assertEquals(1, completions.size(), "the preserved audio call did not complete exactly once");
+            assertTrue(completions.getFirst().snapshot().complete());
+            assertFalse(completions.getFirst().continuationExpected());
+            assertAudioPolicy(completions.getFirst().snapshot());
 
             //This represents the preserved former-REST call finishing naturally.  Its source is now free, but the
             //pending REST move must remain live so the replacement can use that newly available capacity.
             manager.stop(converted);
             assertFalse(original.isProcessing());
+            assertEquals(1, audioCompletions(audioEvents, preservedCallId).size(),
+                "stopping the converted chain duplicated the completed audio call");
             assertNull(decodeEventListener(trafficManager),
                 "stopped former-REST chain retained the manager event route");
             assertEquals(1, manager.getPendingDmrRestChannelAttemptCount(),
@@ -351,6 +570,7 @@ class ChannelProcessingManagerDMRRestHandoffTest
         {
             manager.start(parent);
             ProcessingChain original = manager.getProcessingChain(parent);
+            List<IDecodeEvent> originalEvents = captureDecodeEvents(original);
             DMRTrafficChannelManager trafficManager = trafficManager(original);
             HandoffSubscriber handoffSubscriber = new HandoffSubscriber();
             original.getEventBus().register(handoffSubscriber);
@@ -367,7 +587,7 @@ class ChannelProcessingManagerDMRRestHandoffTest
                 .build();
             trafficManager.broadcast(rejection);
             assertEquals(List.of(rejection), managerEvents);
-            assertEquals(List.of(rejection), original.getDecodeEventHistory().getItems());
+            assertEquals(List.of(rejection), originalEvents);
 
             manager.stop(parent);
 
@@ -1247,6 +1467,7 @@ class ChannelProcessingManagerDMRRestHandoffTest
         {
             manager.start(parent);
             ProcessingChain original = manager.getProcessingChain(parent);
+            List<IDecodeEvent> originalEvents = captureDecodeEvents(original);
             DMRTrafficChannelManager trafficManager = trafficManager(original);
             HandoffSubscriber subscriber = new HandoffSubscriber();
             original.getEventBus().register(subscriber);
@@ -1259,6 +1480,7 @@ class ChannelProcessingManagerDMRRestHandoffTest
             ProcessingChain failedCandidate = manager.getProcessingChain(parent);
             assertNotNull(failedCandidate);
             assertNotSame(original, failedCandidate);
+            List<IDecodeEvent> failedCandidateEvents = captureDecodeEvents(failedCandidate);
             DecodeEvent inFlightEvent = DMRDecodeEvent.builder(DecodeEventType.CALL_GROUP, 1_500L)
                 .channel(restChannel(5, SECOND_REST_FREQUENCY))
                 .identifiers(identifiers(103, 93))
@@ -1266,8 +1488,8 @@ class ChannelProcessingManagerDMRRestHandoffTest
                 .details("manager event during tentative replacement startup")
                 .build();
             trafficManager.broadcast(inFlightEvent);
-            assertEquals(List.of(inFlightEvent), original.getDecodeEventHistory().getItems());
-            assertTrue(failedCandidate.getDecodeEventHistory().getItems().isEmpty(),
+            assertEquals(List.of(inFlightEvent), originalEvents);
+            assertTrue(failedCandidateEvents.isEmpty(),
                 "tentative replacement stole the committed manager event route");
             failedReplacementSource.releaseStart.countDown();
             assertTrue(awaitCondition(() -> failedReplacementSource.getStopCount() == 1, 5));
@@ -1277,7 +1499,7 @@ class ChannelProcessingManagerDMRRestHandoffTest
             assertTrue(trafficManager.isPendingRestHandoff(request));
             assertEquals(1, failedReplacementSource.getStartCount());
             assertEquals(1, failedReplacementSource.getStopCount());
-            assertEquals(List.of(inFlightEvent), original.getDecodeEventHistory().getItems(),
+            assertEquals(List.of(inFlightEvent), originalEvents,
                 "failed replacement discarded the manager event delivered during startup");
 
             assertTrue(manager.retryDmrRestChannelHandoff(request));
@@ -1286,6 +1508,7 @@ class ChannelProcessingManagerDMRRestHandoffTest
                 manager.getPendingDmrRestChannelAttemptCount() == 0, 5));
 
             ProcessingChain successfulReplacement = manager.getProcessingChain(parent);
+            List<IDecodeEvent> successfulReplacementEvents = captureDecodeEvents(successfulReplacement);
             DecodeEvent replacementEvent = DMRDecodeEvent.builder(DecodeEventType.CALL_GROUP, 2_000L)
                 .channel(restChannel(5, SECOND_REST_FREQUENCY))
                 .identifiers(identifiers(104, 94))
@@ -1293,8 +1516,8 @@ class ChannelProcessingManagerDMRRestHandoffTest
                 .details("manager event after replacement commit")
                 .build();
             trafficManager.broadcast(replacementEvent);
-            assertEquals(List.of(inFlightEvent), original.getDecodeEventHistory().getItems());
-            assertEquals(List.of(replacementEvent), successfulReplacement.getDecodeEventHistory().getItems(),
+            assertEquals(List.of(inFlightEvent), originalEvents);
+            assertEquals(List.of(replacementEvent), successfulReplacementEvents,
                 "successful replacement did not become the committed manager event route");
 
             assertEquals(3, tunerManager.getSourceRequests());
@@ -1406,6 +1629,75 @@ class ChannelProcessingManagerDMRRestHandoffTest
             source.releaseStop.countDown();
             shutdownThread.join(5_000);
             manager.close();
+        }
+    }
+
+    private static AliasModel aliasModelWithAudioPolicy()
+    {
+        AliasListDefinition definition = new AliasListDefinition(AUDIO_ALIAS_LIST_NAME, AliasListFamily.DMR);
+        definition.setId(1L);
+        Alias alias = new Alias("Dispatch");
+        alias.setId(1L);
+        alias.setAliasListDefinition(definition);
+        alias.setMatchIdentifier(new Talkgroup(Protocol.DMR, 91));
+        alias.setRecordable(true);
+        alias.addBroadcastChannel(AUDIO_STREAM_NAME);
+        AliasModel aliasModel = new AliasModel();
+        aliasModel.replaceCommittedConfiguration(List.of(definition), List.of(alias));
+        return aliasModel;
+    }
+
+    private static List<IDecodeEvent> captureDecodeEvents(ProcessingChain chain)
+    {
+        List<IDecodeEvent> events = new CopyOnWriteArrayList<>();
+        chain.addDecodeEventListener(events::add);
+        return events;
+    }
+
+    private static VoiceAMessage voiceMessage(long timestamp)
+    {
+        return new VoiceAMessage(DMRSyncPattern.DIRECT_VOICE_TIMESLOT_1, new CorrectedBinaryMessage(288), null,
+            timestamp, 1);
+    }
+
+    private static Terminator terminator(long timestamp)
+    {
+        CorrectedBinaryMessage slotBits = new CorrectedBinaryMessage(24);
+        slotBits.load(8, 4, DataType.TLC.getValue());
+        return new Terminator(DMRSyncPattern.BASE_STATION_DATA, new CorrectedBinaryMessage(288), null,
+            new SlotType(slotBits), timestamp, 1, null);
+    }
+
+    private static List<AudioCallEvent> audioFrames(List<AudioCallEvent> events)
+    {
+        return events.stream().filter(event -> event.eventType() == AudioCallEventType.AUDIO_FRAME).toList();
+    }
+
+    private static List<AudioCallEvent> audioCompletions(List<AudioCallEvent> events, AudioCallId callId)
+    {
+        return events.stream().filter(event -> event.eventType() == AudioCallEventType.CALL_COMPLETED &&
+            callId.equals(event.callId())).toList();
+    }
+
+    private static void assertAudioPolicy(AudioCallSnapshot snapshot)
+    {
+        assertTrue(snapshot.recordAudio());
+        assertEquals(1, snapshot.broadcastChannels().size());
+        assertTrue(snapshot.broadcastChannels().stream()
+            .anyMatch(channel -> AUDIO_STREAM_NAME.equals(channel.getChannelName())));
+    }
+
+    private static void setAudioCodec(DMRAudioModule audioModule, IAudioCodec codec)
+    {
+        try
+        {
+            Field field = JmbeAudioModule.class.getDeclaredField("mAudioCodec");
+            field.setAccessible(true);
+            field.set(audioModule, codec);
+        }
+        catch(ReflectiveOperationException exception)
+        {
+            throw new AssertionError("Unable to install deterministic JMBE codec", exception);
         }
     }
 
@@ -1537,6 +1829,16 @@ class ChannelProcessingManagerDMRRestHandoffTest
             .toList();
     }
 
+    private static ChannelActivitySnapshot.Row activityRow(ChannelProcessingManager manager, long frequency,
+                                                            int timeslot)
+    {
+        return manager.getChannelActivityModel().getSnapshotSet().tables().stream()
+            .flatMap(table -> table.rows().stream())
+            .filter(row -> row.frequencyHz() == frequency && Integer.valueOf(timeslot).equals(row.timeslot()))
+            .findFirst()
+            .orElse(null);
+    }
+
     private static void assertSameInstances(List<?> expected, List<?> actual)
     {
         assertEquals(expected.size(), actual.size());
@@ -1545,11 +1847,6 @@ class ChannelProcessingManagerDMRRestHandoffTest
         {
             assertSame(expected.get(index), actual.get(index));
         }
-    }
-
-    private static void processTerminator(DMRDecoderState decoderState, Terminator terminator)
-    {
-        invokeDmrTestMethod(decoderState, "processTerminator", Terminator.class, terminator);
     }
 
     private static void setBeforeChannelGrantAuthorityCheck(DMRDecoderState decoderState, Runnable interleave)
@@ -1630,6 +1927,10 @@ class ChannelProcessingManagerDMRRestHandoffTest
         }
 
         return condition.getAsBoolean();
+    }
+
+    private record ChannelDecodeObservation(Channel channel, IDecodeEvent event)
+    {
     }
 
     private static final class AccountingTransitionObserver
@@ -2132,6 +2433,51 @@ class ChannelProcessingManagerDMRRestHandoffTest
         }
     }
 
+    private static final class TestAudioCodec implements IAudioCodec
+    {
+        @Override
+        public String getCodecName()
+        {
+            return "TEST AMBE";
+        }
+
+        @Override
+        public float[] getAudio(byte[] frame)
+        {
+            return new float[160];
+        }
+
+        @Override
+        public IAudioWithMetadata getAudioWithMetadata(byte[] frame)
+        {
+            return new IAudioWithMetadata()
+            {
+                @Override
+                public float[] getAudio()
+                {
+                    return new float[160];
+                }
+
+                @Override
+                public boolean hasMetadata()
+                {
+                    return false;
+                }
+
+                @Override
+                public Map<String,String> getMetadata()
+                {
+                    return Map.of();
+                }
+            };
+        }
+
+        @Override
+        public void reset()
+        {
+        }
+    }
+
     private static final class TestDecodeEventProvider extends Module implements IDecodeEventProvider
     {
         private Listener<IDecodeEvent> mListener;
@@ -2157,6 +2503,46 @@ class ChannelProcessingManagerDMRRestHandoffTest
             {
                 mListener = null;
             }
+        }
+
+        @Override
+        public void reset()
+        {
+        }
+
+        @Override
+        public void start()
+        {
+        }
+
+        @Override
+        public void stop()
+        {
+        }
+    }
+
+    private static final class TestAudioCallProvider extends Module implements IAudioCallProvider
+    {
+        private Listener<AudioCallEvent> mListener;
+
+        private void receive(AudioCallEvent event)
+        {
+            if(mListener != null)
+            {
+                mListener.receive(event);
+            }
+        }
+
+        @Override
+        public void setAudioCallEventListener(Listener<AudioCallEvent> listener)
+        {
+            mListener = listener;
+        }
+
+        @Override
+        public void removeAudioCallEventListener()
+        {
+            mListener = null;
         }
 
         @Override
