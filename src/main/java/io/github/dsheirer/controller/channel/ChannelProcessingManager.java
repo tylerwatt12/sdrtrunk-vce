@@ -876,8 +876,17 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         }
         catch(ChannelException exception)
         {
-            mLog.error("Terminal error starting replacement DMR rest channel", exception);
-            abortDmrRestChannelAttempt(attempt);
+            if(isRunnable(handoff.parentChannel()) && !mClosed && !mShuttingDown)
+            {
+                mLog.error("Error starting replacement DMR rest channel; preserving the former REST call and " +
+                    "retrying", exception);
+                attempt.getExpectedChain().routeDecodeEventsFrom(handoff.owner());
+                scheduleDmrRestChannelRetry(attempt);
+            }
+            else
+            {
+                abortDmrRestChannelAttempt(attempt);
+            }
         }
         catch(RuntimeException exception)
         {
@@ -1257,6 +1266,17 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         }
         catch(RuntimeException exception)
         {
+            //A replacement REST chain temporarily hosts the existing site traffic manager.  If functional startup
+            //fails, detach that shared manager before disposing the candidate so its stop() method cannot tear down
+            //the preserved former-REST call and sibling traffic channels.  The handoff attempt keeps the manager's
+            //temporary event routes alive until a later retry succeeds or the configured channel is stopped.
+            if(strictFunctionalStartup && channel.isStandardChannel() && processingChain != null &&
+                request.getTrafficChannelManager() instanceof DMRTrafficChannelManager dmrTrafficChannelManager &&
+                processingChain.getModules().stream().anyMatch(module -> module == dmrTrafficChannelManager))
+            {
+                processingChain.removeModule(dmrTrafficChannelManager);
+            }
+
             boolean chainOwnedSource = sourceAssignedToChain ||
                 (processingChain != null && processingChain.getSource() == source);
             cleanupFailedChannelStart(channel, processingChain, source, chainOwnedSource);

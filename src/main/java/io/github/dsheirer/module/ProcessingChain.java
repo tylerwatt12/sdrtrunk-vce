@@ -274,9 +274,18 @@ public class ProcessingChain implements Listener<ChannelEvent>
             //originating chain directly and are not forwarded through the manager.
             if(trafficChannelManager instanceof IDecodeEventProvider provider)
             {
-                provider.addDecodeEventListener(mDecodeEventBroadcaster);
+                routeDecodeEventsFrom(provider);
             }
         }
+    }
+
+    /**
+     * Routes one provider into this chain's decode-event broadcaster without making the provider a lifecycle-owned
+     * module.  DMR rest-channel handoff uses this while the shared site manager is between parent chains.
+     */
+    public void routeDecodeEventsFrom(IDecodeEventProvider provider)
+    {
+        provider.addDecodeEventListener(mDecodeEventBroadcaster);
     }
 
     public void dispose()

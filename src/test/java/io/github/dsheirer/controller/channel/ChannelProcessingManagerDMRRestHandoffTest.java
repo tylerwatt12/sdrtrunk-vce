@@ -30,10 +30,12 @@ import io.github.dsheirer.module.Module;
 import io.github.dsheirer.module.ProcessingChain;
 import io.github.dsheirer.module.decode.dmr.DMRChannelConfigurationTransitionNotification;
 import io.github.dsheirer.module.decode.dmr.DMRChannelMode;
+import io.github.dsheirer.module.decode.dmr.DMRDecoder;
 import io.github.dsheirer.module.decode.dmr.DMRDecoderState;
 import io.github.dsheirer.module.decode.dmr.DMRRestChannelHandoffRequest;
 import io.github.dsheirer.module.decode.dmr.DMRTrafficChannelManager;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
+import io.github.dsheirer.module.decode.dmr.audio.DMRAudioModule;
 import io.github.dsheirer.module.decode.dmr.channel.DmrRestLsn;
 import io.github.dsheirer.module.decode.dmr.channel.TimeslotFrequency;
 import io.github.dsheirer.module.decode.dmr.event.DMRDecodeEvent;
@@ -42,6 +44,7 @@ import io.github.dsheirer.module.decode.dmr.identifier.DMRTalkgroup;
 import io.github.dsheirer.module.decode.dmr.message.data.SlotType;
 import io.github.dsheirer.module.decode.dmr.message.data.csbk.Opcode;
 import io.github.dsheirer.module.decode.dmr.message.data.csbk.standard.grant.TalkgroupVoiceChannelGrant;
+import io.github.dsheirer.module.decode.dmr.message.data.terminator.Terminator;
 import io.github.dsheirer.module.decode.dmr.sync.DMRSyncPattern;
 import io.github.dsheirer.module.decode.event.DecodeEvent;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
@@ -158,6 +161,95 @@ class ChannelProcessingManagerDMRRestHandoffTest
             assertEquals(3, manager.getProcessingChainsByConfiguration(parent.getConfigurationId(), null).size());
             assertSame(trafficManager, trafficManager(manager.getProcessingChain(parent)));
             assertEquals(4, tunerManager.getSourceRequests());
+        }
+        finally
+        {
+            manager.close();
+        }
+    }
+
+    @Test
+    void convertedCallCanFinishDuringRetryBeforeTheRestFollowerStarts() throws Exception
+    {
+        UserPreferences preferences = new UserPreferences();
+        AliasModel aliasModel = new AliasModel();
+        SequencedTunerManager tunerManager = new SequencedTunerManager(preferences,
+            new TestComplexSource(CURRENT_FREQUENCY), null, new TestComplexSource(FIRST_REST_FREQUENCY));
+        ChannelProcessingManager manager = new ChannelProcessingManager(
+            new EventLogManager(aliasModel, preferences), tunerManager, aliasModel, preferences, 10_000);
+        Channel parent = channel(1);
+
+        try
+        {
+            manager.start(parent);
+            ProcessingChain original = manager.getProcessingChain(parent);
+            assertNotNull(original);
+            Source originalSource = original.getSource();
+            DMRTrafficChannelManager trafficManager = trafficManager(original);
+            List<Module> originalFunctionalModules = original.getModules().stream()
+                .filter(module -> module != trafficManager)
+                .toList();
+            DMRDecoder originalDecoder = modules(original, DMRDecoder.class).getFirst();
+            List<DMRDecoderState> originalDecoderStates = modules(original, DMRDecoderState.class);
+            List<DMRAudioModule> originalAudioModules = modules(original, DMRAudioModule.class);
+            DMRDecoderState callState = originalDecoderStates.getFirst();
+            DecodeEvent activeCall = DMRDecodeEvent.builder(DecodeEventType.CALL_GROUP, 1_000L)
+                .channel(restChannel(1, CURRENT_FREQUENCY))
+                .identifiers(identifiers(101, 91))
+                .timeslot(1)
+                .build();
+            callState.setCurrentCallEvent((DecodeEvent)activeCall);
+            HandoffSubscriber handoffSubscriber = new HandoffSubscriber();
+            original.getEventBus().register(handoffSubscriber);
+
+            trafficManager.requestRestChannelHandoff(parent, CURRENT_FREQUENCY,
+                restChannel(3, FIRST_REST_FREQUENCY));
+            assertTrue(tunerManager.firstUnavailable.await(5, TimeUnit.SECONDS),
+                "replacement source failure was not observed");
+            assertEquals(1, manager.getPendingDmrRestChannelAttemptCount());
+
+            DMRRestChannelHandoffRequest request = handoffSubscriber.requests.getFirst();
+            Channel converted = manager.getChannel(original);
+            assertNotNull(converted);
+            assertTrue(converted.isTrafficChannel());
+            assertNotSame(parent, converted);
+            assertTrue(original.isProcessing(), "former REST call stopped when the replacement tuner was unavailable");
+            assertSame(originalSource, original.getSource(), "former REST source was replaced during conversion");
+            assertTrue(original.getModules().containsAll(originalFunctionalModules),
+                "former REST decoder/audio/recorder modules were replaced during conversion");
+            assertSame(originalDecoder, modules(original, DMRDecoder.class).getFirst());
+            assertSameInstances(originalDecoderStates, modules(original, DMRDecoderState.class));
+            assertSameInstances(originalAudioModules, modules(original, DMRAudioModule.class));
+
+            Terminator terminator = new Terminator(DMRSyncPattern.BASE_STATION_DATA,
+                new CorrectedBinaryMessage(288), null, null, 2_000L, 1, null);
+            processTerminator(callState, terminator);
+            assertEquals(List.of(activeCall), original.getDecodeEventHistory().getItems(),
+                "the preserved former-REST call did not complete on its original chain");
+
+            //This represents the preserved former-REST call finishing naturally.  Its source is now free, but the
+            //pending REST move must remain live so the replacement can use that newly available capacity.
+            manager.stop(converted);
+            assertFalse(original.isProcessing());
+            assertEquals(1, manager.getPendingDmrRestChannelAttemptCount(),
+                "finishing the converted call cancelled the REST follower");
+
+            //Deterministically re-offer the pending generation instead of waiting for the 10-second test retry delay.
+            manager.requestDmrRestChannelHandoff(request);
+            assertTrue(awaitCondition(() -> manager.getProcessingChain(parent) != null &&
+                    manager.getProcessingChain(parent) != original &&
+                    manager.getPendingDmrRestChannelAttemptCount() == 0, 5),
+                "REST follower did not start after the former call released its source");
+
+            ProcessingChain replacement = manager.getProcessingChain(parent);
+            assertNotNull(replacement);
+            assertNotSame(original, replacement);
+            assertSame(trafficManager, trafficManager(replacement));
+            assertEquals(0, manager.getPendingDmrRestChannelAttemptCount());
+            assertFalse(trafficManager.isPendingRestHandoff(request));
+            assertEquals(3, tunerManager.getSourceRequests());
+            assertEquals(1, manager.getChannelEventListenerCount(),
+                "the temporary detached-manager route remained after replacement startup");
         }
         finally
         {
@@ -911,15 +1003,17 @@ class ChannelProcessingManagerDMRRestHandoffTest
     }
 
     @Test
-    void constructionFailureIsTerminalAndReleasesUnassignedSourceExactlyOnce() throws Exception
+    void constructionFailurePreservesTheFormerRestCallAndRetries() throws Exception
     {
         UserPreferences preferences = new UserPreferences();
         AliasModel aliasModel = new AliasModel();
-        TestComplexSource replacementSource = new TestComplexSource(FIRST_REST_FREQUENCY);
+        TestComplexSource failedReplacementSource = new TestComplexSource(FIRST_REST_FREQUENCY);
+        TestComplexSource successfulReplacementSource = new TestComplexSource(FIRST_REST_FREQUENCY);
         SequencedTunerManager tunerManager = new SequencedTunerManager(preferences,
-            new TestComplexSource(CURRENT_FREQUENCY), replacementSource);
+            new TestComplexSource(CURRENT_FREQUENCY), failedReplacementSource, successfulReplacementSource);
         ChannelProcessingManager manager = new ChannelProcessingManager(
-            new FailOnSecondLogLookupEventLogManager(aliasModel, preferences), tunerManager, aliasModel, preferences, 10);
+            new FailOnSecondLogLookupEventLogManager(aliasModel, preferences), tunerManager, aliasModel, preferences,
+            10_000);
         Channel parent = channel(1);
 
         try
@@ -934,14 +1028,28 @@ class ChannelProcessingManagerDMRRestHandoffTest
                 restChannel(3, FIRST_REST_FREQUENCY));
             assertTrue(tunerManager.secondSourceRequest.await(5, TimeUnit.SECONDS));
             DMRRestChannelHandoffRequest request = subscriber.requests.getFirst();
-            assertTrue(awaitCondition(() -> manager.getPendingDmrRestChannelAttemptCount() == 0 &&
-                !trafficManager.isPendingRestHandoff(request), 5));
+            assertTrue(awaitCondition(() -> failedReplacementSource.getDisposeCount() == 1, 5));
 
-            assertEquals(2, tunerManager.getSourceRequests());
-            assertEquals(0, replacementSource.getStartCount());
-            assertEquals(1, replacementSource.getStopCount());
-            assertEquals(1, replacementSource.getDisposeCount());
-            assertFalse(manager.isProcessing());
+            Channel converted = manager.getChannel(original);
+            assertNotNull(converted);
+            assertTrue(converted.isTrafficChannel());
+            assertTrue(original.isProcessing(), "replacement construction failure stopped the former REST call");
+            assertEquals(1, manager.getPendingDmrRestChannelAttemptCount());
+            assertTrue(trafficManager.isPendingRestHandoff(request));
+            assertEquals(0, failedReplacementSource.getStartCount());
+            assertEquals(1, failedReplacementSource.getStopCount());
+            assertEquals(1, failedReplacementSource.getDisposeCount());
+
+            manager.requestDmrRestChannelHandoff(request);
+            assertTrue(awaitCondition(() -> manager.getProcessingChain(parent) != null &&
+                manager.getProcessingChain(parent) != original &&
+                manager.getPendingDmrRestChannelAttemptCount() == 0, 5));
+
+            assertEquals(3, tunerManager.getSourceRequests());
+            assertEquals(1, successfulReplacementSource.getStartCount());
+            assertTrue(original.isProcessing());
+            assertTrue(manager.isProcessing());
+            assertFalse(trafficManager.isPendingRestHandoff(request));
         }
         finally
         {
@@ -1046,15 +1154,16 @@ class ChannelProcessingManagerDMRRestHandoffTest
     }
 
     @Test
-    void requiredSourceStartFailureIsTerminalAndReleasesAssignedSourceExactlyOnce() throws Exception
+    void requiredSourceStartFailurePreservesTheFormerRestCallAndRetries() throws Exception
     {
         UserPreferences preferences = new UserPreferences();
         AliasModel aliasModel = new AliasModel();
-        TestComplexSource replacementSource = new TestComplexSource(FIRST_REST_FREQUENCY, true);
+        TestComplexSource failedReplacementSource = new TestComplexSource(FIRST_REST_FREQUENCY, true);
+        TestComplexSource successfulReplacementSource = new TestComplexSource(FIRST_REST_FREQUENCY);
         SequencedTunerManager tunerManager = new SequencedTunerManager(preferences,
-            new TestComplexSource(CURRENT_FREQUENCY), replacementSource);
+            new TestComplexSource(CURRENT_FREQUENCY), failedReplacementSource, successfulReplacementSource);
         ChannelProcessingManager manager = new ChannelProcessingManager(
-            new EventLogManager(aliasModel, preferences), tunerManager, aliasModel, preferences, 10);
+            new EventLogManager(aliasModel, preferences), tunerManager, aliasModel, preferences, 10_000);
         Channel parent = channel(1);
 
         try
@@ -1069,13 +1178,33 @@ class ChannelProcessingManagerDMRRestHandoffTest
                 restChannel(3, FIRST_REST_FREQUENCY));
             assertTrue(tunerManager.secondSourceRequest.await(5, TimeUnit.SECONDS));
             DMRRestChannelHandoffRequest request = subscriber.requests.getFirst();
-            assertTrue(awaitCondition(() -> manager.getPendingDmrRestChannelAttemptCount() == 0 &&
-                !trafficManager.isPendingRestHandoff(request), 5));
+            assertTrue(awaitCondition(() -> failedReplacementSource.getStopCount() == 1, 5));
 
-            assertEquals(2, tunerManager.getSourceRequests());
-            assertEquals(1, replacementSource.getStartCount());
-            assertEquals(1, replacementSource.getStopCount());
-            assertFalse(manager.isProcessing());
+            assertTrue(original.isProcessing(), "replacement source-start failure stopped the former REST call");
+            assertEquals(1, manager.getPendingDmrRestChannelAttemptCount());
+            assertTrue(trafficManager.isPendingRestHandoff(request));
+            assertEquals(1, failedReplacementSource.getStartCount());
+            assertEquals(1, failedReplacementSource.getStopCount());
+            DecodeEvent retryEvent = DMRDecodeEvent.builder(DecodeEventType.CALL_GROUP, 2_000L)
+                .channel(restChannel(5, SECOND_REST_FREQUENCY))
+                .identifiers(identifiers(103, 93))
+                .timeslot(1)
+                .details("manager event during replacement retry")
+                .build();
+            trafficManager.broadcast(retryEvent);
+            assertEquals(List.of(retryEvent), original.getDecodeEventHistory().getItems(),
+                "failed replacement detached the manager's temporary event route");
+
+            manager.requestDmrRestChannelHandoff(request);
+            assertTrue(awaitCondition(() -> manager.getProcessingChain(parent) != null &&
+                manager.getProcessingChain(parent) != original &&
+                manager.getPendingDmrRestChannelAttemptCount() == 0, 5));
+
+            assertEquals(3, tunerManager.getSourceRequests());
+            assertEquals(1, successfulReplacementSource.getStartCount());
+            assertTrue(original.isProcessing());
+            assertTrue(manager.isProcessing());
+            assertFalse(trafficManager.isPendingRestHandoff(request));
         }
         finally
         {
@@ -1285,6 +1414,29 @@ class ChannelProcessingManagerDMRRestHandoffTest
             .map(DMRDecoderState.class::cast)
             .findFirst()
             .orElseThrow();
+    }
+
+    private static <T> List<T> modules(ProcessingChain chain, Class<T> moduleType)
+    {
+        return chain.getModules().stream()
+            .filter(moduleType::isInstance)
+            .map(moduleType::cast)
+            .toList();
+    }
+
+    private static void assertSameInstances(List<?> expected, List<?> actual)
+    {
+        assertEquals(expected.size(), actual.size());
+
+        for(int index = 0; index < expected.size(); index++)
+        {
+            assertSame(expected.get(index), actual.get(index));
+        }
+    }
+
+    private static void processTerminator(DMRDecoderState decoderState, Terminator terminator)
+    {
+        invokeDmrTestMethod(decoderState, "processTerminator", Terminator.class, terminator);
     }
 
     private static void setBeforeChannelGrantAuthorityCheck(DMRDecoderState decoderState, Runnable interleave)
