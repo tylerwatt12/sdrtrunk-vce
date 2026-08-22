@@ -129,6 +129,28 @@ class StatsApiV1HttpContractTest
         assertEquals(StatsApiV1.LIVE_MULTIPLEX_CONTROL,
             server.at("/live_transport/control").textValue());
 
+        JsonNode database = status.at("/data/database");
+        assertTrue(database.isObject(), statusResponse.body());
+        assertTrue(database.path("database_exists").isBoolean(), statusResponse.body());
+        assertTrue(database.path("database_bytes").isIntegralNumber(), statusResponse.body());
+        assertTrue(database.path("wal_bytes").isIntegralNumber(), statusResponse.body());
+        assertTrue(database.path("shm_bytes").isIntegralNumber(), statusResponse.body());
+        assertTrue(database.path("stats_logging_enabled").isBoolean(), statusResponse.body());
+        assertTrue(database.path("detailed_history_enabled").isBoolean(), statusResponse.body());
+        assertTrue(database.path("detailed_history_available").isBoolean(), statusResponse.body());
+        assertTrue(database.path("last_detailed_history_ms").isIntegralNumber(), statusResponse.body());
+        assertFalse(database.has("databaseBytes"), statusResponse.body());
+
+        JsonNode statsLogging = status.at("/data/stats_logging");
+        assertTrue(statsLogging.isObject(), statusResponse.body());
+        assertTrue(statsLogging.path("summary_configured").isBoolean(), statusResponse.body());
+        assertTrue(statsLogging.path("detailed_history_configured").isBoolean(), statusResponse.body());
+        assertTrue(statsLogging.path("summary_active").isBoolean(), statusResponse.body());
+        assertTrue(statsLogging.path("detailed_history_active").isBoolean(), statusResponse.body());
+        assertTrue(statsLogging.path("retention_days").isIntegralNumber(), statusResponse.body());
+        assertTrue(statsLogging.path("state").isTextual(), statusResponse.body());
+        assertFalse(status.at("/data").has("statsLogging"), statusResponse.body());
+
         HttpResponse<String> dashboardResponse = get(StatsApiV1.DASHBOARD);
         assertEquals(200, dashboardResponse.statusCode(), dashboardResponse.body());
         JsonNode dashboard = OBJECT_MAPPER.readTree(dashboardResponse.body()).get("data");

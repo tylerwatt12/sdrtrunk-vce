@@ -16,6 +16,8 @@ const DECODE_DEGRADED_MINIMUM_PERCENT = 75;
 const VOICE_QUALITY_WARMUP_FRAMES = 50;
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
 const THEME_STORAGE_KEY = 'sdrtrunk_theme';
+const NAVIGATION_DRAWER_MEDIA = '(max-width: 1180px)';
+const NAVIGATION_HOVER_MEDIA = '(min-width: 1181px) and (hover: hover)';
 const LIVE_DETAIL_DEFAULT_MATCHING_ROW_LIMIT = 200;
 const LIVE_DETAIL_CAPTURE_MULTIPLIER = 25;
 const LIVE_DETAIL_MINIMUM_CAPTURE = 2000;
@@ -682,17 +684,56 @@ function initializeAccessControls() {
   });
 }
 
+function navigationUsesDrawer() {
+  return window.matchMedia(NAVIGATION_DRAWER_MEDIA).matches;
+}
+
+function closeNavigationGroups(except = null) {
+  document.querySelectorAll('#primary-navigation .nav-group[open]').forEach((group) => {
+    if (group !== except) group.open = false;
+  });
+}
+
+function openNavigationGroup(group) {
+  if (!group) return;
+  closeNavigationGroups(group);
+  group.open = true;
+}
+
+function firstUsableNavigationControl(navigation) {
+  return [...navigation.querySelectorAll('.nav-group > summary, a[href]')]
+    .find((control) => !control.hidden && !control.closest('[hidden]')) || null;
+}
+
+function drawerNavigationFocusTargets(navigation, toggle) {
+  return [toggle, ...navigation.querySelectorAll('.nav-group > summary, a[href]')]
+    .filter((control) => !control.hidden && !control.closest('[hidden]') && control.getClientRects().length > 0);
+}
+
+function synchronizeNavigationAccessibility(navigation = document.getElementById('primary-navigation')) {
+  if (!navigation) return;
+  const hiddenDrawer = navigationUsesDrawer() && !document.body.classList.contains('navigation-open');
+  navigation.toggleAttribute('inert', hiddenDrawer);
+  navigation.setAttribute('aria-hidden', String(hiddenDrawer));
+}
+
 function setNavigationOpen(open, returnFocus = false) {
   const navigation = document.getElementById('primary-navigation');
   const toggle = document.getElementById('navigation-toggle');
   const backdrop = document.getElementById('navigation-backdrop');
   if (!navigation || !toggle || !backdrop) return;
-  const next = open === true;
+  const next = navigationUsesDrawer() && open === true;
+  if (next) openNavigationGroup(navigation.querySelector('.nav-group.active'));
   document.body.classList.toggle('navigation-open', next);
   toggle.setAttribute('aria-expanded', String(next));
   toggle.setAttribute('aria-label', next ? 'Close navigation' : 'Open navigation');
   backdrop.hidden = !next;
-  if (!next && returnFocus) toggle.focus();
+  synchronizeNavigationAccessibility(navigation);
+  if (next) {
+    window.requestAnimationFrame(() => firstUsableNavigationControl(navigation)?.focus());
+  } else if (returnFocus && navigationUsesDrawer()) {
+    toggle.focus();
+  }
 }
 
 function initializeNavigation() {
@@ -700,20 +741,80 @@ function initializeNavigation() {
   const toggle = document.getElementById('navigation-toggle');
   const backdrop = document.getElementById('navigation-backdrop');
   if (!navigation || !toggle || !backdrop) return;
-  toggle.addEventListener('click', () => setNavigationOpen(!document.body.classList.contains('navigation-open')));
+  const groups = [...navigation.querySelectorAll('.nav-group')];
+  const drawerMedia = window.matchMedia(NAVIGATION_DRAWER_MEDIA);
+  const hoverMedia = window.matchMedia(NAVIGATION_HOVER_MEDIA);
+  toggle.addEventListener('click', () => {
+    const open = document.body.classList.contains('navigation-open');
+    setNavigationOpen(!open, open);
+  });
   backdrop.addEventListener('click', () => setNavigationOpen(false, true));
   navigation.addEventListener('click', (event) => {
-    if (event.target.closest('a[href]')) setNavigationOpen(false);
+    if (event.target.closest('a[href]')) setNavigationOpen(false, navigationUsesDrawer());
+  });
+  groups.forEach((group) => {
+    const summary = group.querySelector(':scope > summary');
+    group.addEventListener('toggle', () => {
+      if (group.open) closeNavigationGroups(group);
+    });
+    group.addEventListener('pointerenter', () => {
+      if (hoverMedia.matches) openNavigationGroup(group);
+    });
+    group.addEventListener('pointerleave', () => {
+      if (hoverMedia.matches && !group.querySelector(':focus-visible')) group.open = false;
+    });
+    group.addEventListener('focusin', () => {
+      if (!drawerMedia.matches) openNavigationGroup(group);
+    });
+    group.addEventListener('focusout', () => {
+      window.requestAnimationFrame(() => {
+        if (!drawerMedia.matches && !group.contains(document.activeElement) && !group.matches(':hover')) {
+          group.open = false;
+        }
+      });
+    });
+    summary?.addEventListener('click', (event) => {
+      if (!hoverMedia.matches) return;
+      event.preventDefault();
+      openNavigationGroup(group);
+    });
+  });
+  document.addEventListener('pointerdown', (event) => {
+    if (hoverMedia.matches && !navigation.contains(event.target)) closeNavigationGroups();
   });
   document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' && document.body.classList.contains('navigation-open')) {
+    if (event.key === 'Tab' && drawerMedia.matches && document.body.classList.contains('navigation-open')) {
+      const targets = drawerNavigationFocusTargets(navigation, toggle);
+      if (!targets.length) return;
+      const current = targets.indexOf(document.activeElement);
+      const next = event.shiftKey ? (current <= 0 ? targets.length - 1 : current - 1) :
+        (current < 0 || current === targets.length - 1 ? 0 : current + 1);
+      event.preventDefault();
+      targets[next].focus();
+      return;
+    }
+    if (event.key !== 'Escape') return;
+    if (document.body.classList.contains('navigation-open')) {
       event.preventDefault();
       setNavigationOpen(false, true);
+      return;
+    }
+    if (!drawerMedia.matches) {
+      const openGroup = navigation.querySelector('.nav-group[open]');
+      if (openGroup) {
+        event.preventDefault();
+        const summary = openGroup.querySelector(':scope > summary');
+        summary?.focus();
+        openGroup.open = false;
+      }
     }
   });
-  window.matchMedia('(min-width: 981px)').addEventListener('change', (event) => {
-    if (event.matches) setNavigationOpen(false);
+  drawerMedia.addEventListener('change', () => {
+    setNavigationOpen(false);
+    closeNavigationGroups();
   });
+  hoverMedia.addEventListener('change', () => closeNavigationGroups());
+  synchronizeNavigationAccessibility(navigation);
 }
 
 async function refreshAccessSession(refreshCurrentView = false) {
@@ -747,7 +848,8 @@ function fragment(...children) {
 }
 
 function number(value) {
-  return new Intl.NumberFormat().format(Number(value || 0));
+  const numeric = value === null || value === undefined || value === '' || value === false ? 0 : Number(value);
+  return Number.isFinite(numeric) ? new Intl.NumberFormat().format(numeric) : '—';
 }
 
 function hex(value, width = 0) {
@@ -5798,7 +5900,10 @@ class ReceiverHealthController {
       detail += ` Last update: ${exactDateTime(this.snapshot.generated_at_ms)}.`;
     }
     state.textContent = label;
-    indicator.className = `receiver-health-indicator receiver-health-${className}`;
+    ['healthy', 'warning', 'critical', 'stale', 'loading'].forEach((status) => {
+      indicator.classList.remove(`receiver-health-${status}`);
+    });
+    indicator.classList.add(`receiver-health-${className}`);
     indicator.title = detail;
     indicator.setAttribute('aria-label', `Health: ${label}. ${detail}`);
   }
@@ -6632,10 +6737,16 @@ function initializePlaybackHeader() {
     bar.setAttribute('aria-disabled', 'true');
     bar.querySelectorAll('button, input').forEach((control) => { control.disabled = true; });
   }
+  const panels = [...(bar?.querySelectorAll('details') || [])];
+  panels.forEach((panel) => panel.addEventListener('toggle', () => {
+    if (!panel.open || bar.classList.contains('scanner-expanded')) return;
+    panels.forEach((other) => { if (other !== panel) other.open = false; });
+  }));
   document.addEventListener('click', (event) => {
-    const subscriptions = document.querySelector('.playback-subscriptions');
-    const expanded = document.getElementById('playback-bar')?.classList.contains('scanner-expanded');
-    if (!expanded && subscriptions?.open && !subscriptions.contains(event.target)) subscriptions.open = false;
+    if (bar?.classList.contains('scanner-expanded')) return;
+    panels.forEach((panel) => {
+      if (panel.open && !panel.contains(event.target)) panel.open = false;
+    });
   });
 }
 
@@ -13937,12 +14048,12 @@ function adminAudioNumberField(configuration, limits, key, label, help) {
 }
 
 function adminStatusNumber(value) {
-  const numeric = Number(value);
+  const numeric = typeof value === 'number' ? value : Number.NaN;
   return Number.isFinite(numeric) && numeric >= 0 ? number(numeric) : '—';
 }
 
 function adminStatusBytes(value) {
-  const numeric = Number(value);
+  const numeric = typeof value === 'number' ? value : Number.NaN;
   if (!Number.isFinite(numeric) || numeric < 0) return '—';
   if (numeric >= 1073741824) return `${(numeric / 1073741824).toFixed(1)} GB`;
   if (numeric >= 1048576) return `${(numeric / 1048576).toFixed(numeric >= 10485760 ? 0 : 1)} MB`;
@@ -14332,23 +14443,42 @@ function renderHardware() {
     comingSoonPanel('Tuners', 'Web tuner configuration will be added here. Use Spectrum for live tuner diagnostics.'));
 }
 
-function renderAdminSystem() {
-  const database = serviceStatus?.database || {};
+function adminSystemStatusSection() {
+  const database = serviceStatus?.database;
   const logging = statsLoggingState();
-  const summaryState = logging.summaryActive ? 'On' :
-    (logging.summaryConfigured ? 'Unavailable' : 'Off');
-  const databaseBytes = Number(database.database_bytes || 0);
+  const loggingState = logging.available && logging.state ? semanticLabel(logging.state) : 'Unknown';
+  const configuredState = loggingState === 'Unknown' ? 'Not running' : loggingState;
+  const summaryState = !logging.available ? 'Unknown' : logging.summaryActive ? 'On' :
+    (logging.summaryConfigured ? `Configured · ${configuredState}` : 'Off');
+  const historyState = !logging.available ? 'Unknown' : logging.historyActive ? 'On' :
+    (logging.historyConfigured ? 'Configured · Inactive' :
+      (logging.historyRetained ? 'Retained only' : 'Off'));
+  const databaseState = typeof database?.database_exists === 'boolean' ?
+    (database.database_exists ? 'Present' : 'Missing') : 'Unknown';
+  const databaseBytes = database?.database_exists === true ?
+    adminStatusBytes(database.database_bytes) : '—';
   const body = node('div', 'admin-section-body');
   body.append(metrics([
-    ['Summary collection', summaryState],
-    ['Database size', Number.isFinite(databaseBytes) ? adminStatusBytes(databaseBytes) : '—'],
-    ['Detailed history', logging.historyActive ? 'On' : (logging.historyRetained ? 'Retained' : 'Off')]
+    ['Summary logging', logging.summaryActive, summaryState],
+    ['Database file size', database?.database_bytes, databaseBytes],
+    ['Detailed history logging', logging.historyActive, historyState]
   ], true));
   const state = node('dl', 'admin-listener-status-values');
-  state.append(node('dt', '', 'Logging state'), node('dd', '', String(logging.state || 'Unknown')),
-    node('dt', '', 'Database status'), node('dd', '', serviceStatus ? 'Available' : 'Unavailable'));
+  state.append(node('dt', '', 'Logging service state'), node('dd', '', loggingState),
+    node('dt', '', 'Database file'), node('dd', '', databaseState));
   body.append(state);
-  content.append(section('System status', body));
+  const result = section('System status', body);
+  result.id = 'admin-system-status';
+  return result;
+}
+
+function renderAdminSystem() {
+  content.append(adminSystemStatusSection());
+}
+
+function refreshAdminSystemStatus() {
+  const current = document.getElementById('admin-system-status');
+  if (current) current.replaceWith(adminSystemStatusSection());
 }
 
 async function renderAdmin() {
@@ -14486,11 +14616,14 @@ function activateNavigation(view) {
     const active = link.dataset.view === parent && (!link.dataset.navTab || link.dataset.navTab === activeTab);
     link.classList.toggle('active', active);
   });
+  let activeGroup = null;
   document.querySelectorAll('.primary-nav .nav-group').forEach((group) => {
     const active = Boolean(group.querySelector('a.active'));
     group.classList.toggle('active', active);
-    if (active) group.open = true;
+    if (active) activeGroup = group;
   });
+  closeNavigationGroups(navigationUsesDrawer() ? activeGroup : null);
+  if (navigationUsesDrawer() && activeGroup) activeGroup.open = true;
 }
 
 function loggingAvailabilitySignature() {
@@ -14551,6 +14684,10 @@ async function loadStatus(refreshCurrentView = false) {
   }
 
   const currentView = route.get('view') || 'dashboard';
+  if (refreshCurrentView && currentView === 'admin' && route.get('tab') === 'system') {
+    refreshAdminSystemStatus();
+    return;
+  }
   if (refreshCurrentView && previousSignature !== loggingAvailabilitySignature() &&
       !['live', 'scanner', 'configuration', 'hardware', 'tuner-spectrum', 'admin', 'credits']
         .includes(currentView)) {

@@ -13,7 +13,7 @@ import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 
 /**
- * Protects the desktop-only receiver-health navigation, refresh, and troubleshooting presentation contract.
+ * Protects the receiver-health navigation, refresh, and troubleshooting presentation contract.
  */
 class StatsWebReceiverHealthUiContractTest
 {
@@ -22,7 +22,7 @@ class StatsWebReceiverHealthUiContractTest
     private static final Path INDEX_HTML = Path.of("stats-web", "index.html");
 
     @Test
-    void exposesReceiverHealthOnlyToAuthorizedDesktopAdministrators() throws Exception
+    void exposesReceiverHealthOnlyToAuthorizedAdministrators() throws Exception
     {
         String source = readText(APP_JAVASCRIPT);
         String html = readText(INDEX_HTML);

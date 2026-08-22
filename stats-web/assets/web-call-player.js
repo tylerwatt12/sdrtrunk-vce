@@ -559,7 +559,10 @@ class WebCallPlayer {
     const panels = [this.ui.scanListOptions?.closest('details'), this.ui.queueList?.closest('details')]
       .filter(Boolean);
     panels.forEach((panel) => panel.addEventListener('toggle', () => {
-      if (panel.open) panels.forEach((other) => { if (other !== panel) other.open = false; });
+      const expanded = panel.closest('.playback-bar')?.classList.contains('scanner-expanded');
+      if (panel.open && !expanded) {
+        panels.forEach((other) => { if (other !== panel) other.open = false; });
+      }
     }));
   }
 

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="sdrtrunk-web-revision" content="85">
+  <meta name="sdrtrunk-web-revision" content="86">
   <title>sdrtrunk-vce</title>
   <script>
     (() => {
@@ -16,7 +16,7 @@
       }
     })();
   </script>
-  <link rel="stylesheet" href="/assets/app.css?v=68">
+  <link rel="stylesheet" href="/assets/app.css?v=69">
 </head>
 <body>
   <svg class="icon-sprite" aria-hidden="true">
@@ -24,12 +24,14 @@
     <symbol id="icon-live" viewBox="0 0 24 24"><path d="M2 12h4l2.5-6 4.5 12 2.5-6H22"></path></symbol>
     <symbol id="icon-scanner" viewBox="0 0 24 24"><path d="M8 4l7-2M9 4h7a3 3 0 0 1 3 3v13H6V7a3 3 0 0 1 3-3Z"></path><rect x="9" y="7" width="7" height="4" rx="1"></rect><circle cx="12.5" cy="15.5" r="2.5"></circle></symbol>
     <symbol id="icon-trunked" viewBox="0 0 24 24"><circle cx="12" cy="4" r="2"></circle><circle cx="5" cy="19" r="2"></circle><circle cx="12" cy="19" r="2"></circle><circle cx="19" cy="19" r="2"></circle><path d="M12 6v5M5 17v-3h14v3M12 11v6"></path></symbol>
-    <symbol id="icon-conventional" viewBox="0 0 24 24"><circle cx="12" cy="13" r="7"></circle><path d="M12 13l4-4M5 5l2 2M12 3v3M19 5l-2 2"></path></symbol>
+    <symbol id="icon-conventional" viewBox="0 0 24 24"><path d="M4 18a8 8 0 0 1 16 0M6.5 15.5 5 14M9 11 8 9.5M12 10V7M15 11l1-1.5M17.5 15.5 19 14M12 18l4-5"></path><circle cx="12" cy="18" r="1"></circle></symbol>
     <symbol id="icon-aliases" viewBox="0 0 24 24"><path d="M3 5h8l10 10-6 6L5 11Z"></path><circle cx="8" cy="8" r="1.5"></circle></symbol>
     <symbol id="icon-scan-lists" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"></path></symbol>
     <symbol id="icon-radioreference" viewBox="0 0 24 24"><path d="M12 4v16M7 20h10M8.5 8.5a5 5 0 0 0 0 7M15.5 8.5a5 5 0 0 1 0 7"></path></symbol>
     <symbol id="icon-spectrum" viewBox="0 0 24 24"><path d="M2 18h20M3 15l3-2 2 3 3-10 3 8 3-5 4 6"></path></symbol>
     <symbol id="icon-tuner" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"></rect><circle cx="15" cy="12" r="3"></circle><path d="M6 10h4M6 14h3"></path></symbol>
+    <symbol id="icon-recording" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"></rect><circle cx="12" cy="12" r="3"></circle><path d="M6 8h2"></path></symbol>
+    <symbol id="icon-streaming" viewBox="0 0 24 24"><path d="M12 19v-8M9 19h6M8.5 8.5a5 5 0 0 1 7 0M5.5 5.5a9 9 0 0 1 13 0"></path><circle cx="12" cy="8" r="1.5"></circle></symbol>
     <symbol id="icon-admin" viewBox="0 0 24 24"><path d="M12 3l8 3v5c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6Z"></path><path d="M9 12l2 2 4-5"></path></symbol>
     <symbol id="icon-about" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M12 10v7M12 7h.01"></path></symbol>
     <symbol id="icon-lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="10" rx="2"></rect><path d="M8 10V7a4 4 0 0 1 8 0v3"></path></symbol>
@@ -57,8 +59,8 @@
             <a data-view="aliases" href="/?view=aliases" hidden><svg class="nav-icon" aria-hidden="true"><use href="#icon-aliases"></use></svg><span>Aliases</span></a>
             <a data-view="configuration" data-nav-tab="scan-lists" href="/?view=configuration&amp;tab=scan-lists" hidden><svg class="nav-icon" aria-hidden="true"><use href="#icon-scan-lists"></use></svg><span>Scan Lists</span></a>
             <a data-view="configuration" data-nav-tab="radioreference" href="/?view=configuration&amp;tab=radioreference" hidden><svg class="nav-icon" aria-hidden="true"><use href="#icon-radioreference"></use></svg><span>RadioReference</span></a>
-            <span class="nav-placeholder"><svg class="nav-icon" aria-hidden="true"><use href="#icon-live"></use></svg><span>Recording</span><small>Coming soon</small></span>
-            <span class="nav-placeholder"><svg class="nav-icon" aria-hidden="true"><use href="#icon-live"></use></svg><span>Streaming</span><small>Coming soon</small></span>
+            <a data-view="configuration" data-nav-tab="recording" href="/?view=configuration&amp;tab=recording" hidden><svg class="nav-icon" aria-hidden="true"><use href="#icon-recording"></use></svg><span>Recording</span><small>Coming soon</small></a>
+            <a data-view="configuration" data-nav-tab="streaming" href="/?view=configuration&amp;tab=streaming" hidden><svg class="nav-icon" aria-hidden="true"><use href="#icon-streaming"></use></svg><span>Streaming</span><small>Coming soon</small></a>
           </div></details>
           <details class="nav-group nav-group-protected" data-nav-group="hardware"><summary>Hardware <svg class="nav-lock" aria-label="Administrator only"><use href="#icon-lock"></use></svg></summary><div class="nav-group-links">
             <a data-view="hardware" data-nav-tab="tuners" href="/?view=hardware&amp;tab=tuners" hidden><svg class="nav-icon" aria-hidden="true"><use href="#icon-tuner"></use></svg><span>Tuners</span><small>Coming soon</small></a>
@@ -90,9 +92,9 @@
     </div>
     <main id="content" class="content" aria-live="polite" aria-busy="true"><div class="loading" role="status">Loading</div></main>
   </div>
-  <script src="/assets/web-call-player.js?v=11"></script>
+  <script src="/assets/web-call-player.js?v=12"></script>
   <script src="/assets/core/page-lifecycle.js?v=1"></script>
   <script src="/assets/features/systems-directory.js?v=2"></script>
-  <script src="/assets/app.js?v=104"></script>
+  <script src="/assets/app.js?v=105"></script>
 </body>
 </html>

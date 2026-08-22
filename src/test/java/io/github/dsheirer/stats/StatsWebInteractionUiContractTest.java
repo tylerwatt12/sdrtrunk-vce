@@ -119,6 +119,34 @@ class StatsWebInteractionUiContractTest
     }
 
     @Test
+    void rendersSystemStatusWithoutCoercingLabelsOrMissingValuesToNumbers() throws Exception
+    {
+        String javascript = source();
+        String statusNumber = function(javascript, "function adminStatusNumber(value)");
+        String statusBytes = function(javascript, "function adminStatusBytes(value)");
+        String system = function(javascript, "function adminSystemStatusSection()");
+        String refresh = function(javascript, "function refreshAdminSystemStatus()");
+        String loadStatus = function(javascript, "async function loadStatus(refreshCurrentView = false)");
+
+        assertTrue(statusNumber.contains("typeof value === 'number' ? value : Number.NaN"));
+        assertTrue(statusBytes.contains("typeof value === 'number' ? value : Number.NaN"));
+        assertTrue(system.contains("const database = serviceStatus?.database"));
+        assertTrue(system.contains("typeof database?.database_exists === 'boolean'"));
+        assertTrue(system.contains("database?.database_exists === true"));
+        assertTrue(system.contains("adminStatusBytes(database.database_bytes)"));
+        assertTrue(system.contains("['Summary logging', logging.summaryActive, summaryState]"));
+        assertTrue(system.contains("['Database file size', database?.database_bytes, databaseBytes]"));
+        assertTrue(system.contains("['Detailed history logging', logging.historyActive, historyState]"));
+        assertTrue(system.contains("logging.historyConfigured ? 'Configured · Inactive'"));
+        assertFalse(system.contains("logging.historyConfigured ? `Configured · ${configuredState}`"));
+        assertFalse(system.contains("Number(database.database_bytes || 0)"));
+        assertFalse(system.contains("['Summary collection', summaryState]"));
+        assertTrue(refresh.contains("current.replaceWith(adminSystemStatusSection())"));
+        assertTrue(loadStatus.contains("currentView === 'admin' && route.get('tab') === 'system'"));
+        assertTrue(loadStatus.contains("refreshAdminSystemStatus();"));
+    }
+
+    @Test
     void keepsSignalAndTunerSpectrumVisibleWithoutDesktopViewGates() throws Exception
     {
         String source = source();
@@ -211,7 +239,7 @@ class StatsWebInteractionUiContractTest
         String talkgroup = function(source, "async function renderTalkgroup()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"85\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"86\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
@@ -528,7 +556,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(themeKey >= 0);
         assertTrue(themeKey < html.indexOf("rel=\"stylesheet\""));
         assertTrue(html.contains("id=\"theme-toggle\""));
-        assertTrue(html.contains("/assets/app.css?v=68"));
+        assertTrue(html.contains("/assets/app.css?v=69"));
         assertTrue(source.contains("THEME_STORAGE_KEY = 'sdrtrunk_theme'"));
         assertTrue(function(source, "function updateThemeButton(toggle, theme)")
             .contains("dark ? '#icon-sun' : '#icon-moon'"));
@@ -554,7 +582,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(html.contains("id=\"playback-volume\" type=\"range\""));
         assertTrue(html.contains("aria-label=\"Browser playback volume\""));
         assertTrue(html.contains("id=\"playback-volume-value\""));
-        assertTrue(html.contains("/assets/web-call-player.js?v=11"));
+        assertTrue(html.contains("/assets/web-call-player.js?v=12"));
         assertTrue(source.contains("VOLUME_KEY = 'sdrtrunk-vce.web-player.volume'"));
         assertTrue(source.contains("this.volume = this.readVolume()"));
         assertTrue(changeVolume.contains("this.gainNode.gain.value = this.volume"));
@@ -703,8 +731,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(function(source, "function placePlaybackBar()")
             .contains("(scannerHost || slot).append(bar)"));
         assertTrue(function(source, "function initializePlaybackHeader()")
-            .contains("!subscriptions.contains(event.target)"));
-        assertTrue(css.contains("@media (max-width: 980px)"));
+            .contains("!panel.contains(event.target)"));
+        assertTrue(css.contains("@media (max-width: 1180px)"));
         assertTrue(css.contains("body.navigation-open .primary-nav"));
 
         assertTrue(html.contains("view=configuration&amp;tab=scan-lists"));

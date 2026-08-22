@@ -5308,7 +5308,7 @@ th.numeric {
   }
 }
 
-@media (min-width: 981px) and (max-width: 1250px) {
+@media (min-width: 1181px) and (max-width: 1250px) {
   .playback-bar {
     grid-template-columns: max-content max-content minmax(160px, 1fr) max-content max-content max-content max-content max-content;
   }
@@ -5801,10 +5801,12 @@ th.numeric {
 }
 
 .receiver-health-indicator {
+  width: 34px;
+  height: 34px;
   min-width: 34px;
   min-height: 34px;
   padding: 6px;
-  border-radius: 50%;
+  border-radius: 4px;
 }
 
 .receiver-health-indicator svg {
@@ -5813,9 +5815,17 @@ th.numeric {
 }
 
 .theme-toggle {
+  width: 34px;
+  height: 34px;
   min-width: 34px;
   min-height: 34px;
   padding: 6px;
+}
+
+.auth-action {
+  height: 34px;
+  min-height: 34px;
+  padding: 4px 9px;
 }
 
 .playback-bar {
@@ -6127,7 +6137,7 @@ th.numeric {
   border-top: 1px solid var(--line);
 }
 
-@media (max-width: 980px) {
+@media (max-width: 1180px) {
   .topbar {
     min-height: 54px;
     grid-template-columns: max-content max-content minmax(0, 1fr);
@@ -6137,6 +6147,11 @@ th.numeric {
 
   .navigation-toggle {
     display: inline-grid;
+  }
+
+  body.navigation-open .navigation-toggle {
+    position: relative;
+    z-index: 115;
   }
 
   .header-controls {
@@ -6282,12 +6297,27 @@ th.numeric {
 }
 
 @media (max-width: 560px) {
-  .brand {
-    font-size: 15px;
+  .topbar {
+    grid-template-columns: 34px minmax(72px, 1fr) max-content;
+    gap: 5px;
+    padding: 5px 6px;
   }
 
-  .receiver-health-indicator {
-    display: none;
+  .brand {
+    min-width: 0;
+    overflow: hidden;
+    font-size: 15px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .header-controls {
+    gap: 5px;
+  }
+
+  .auth-action {
+    max-width: 72px;
+    padding-inline: 6px;
   }
 
   .live-detail-filter,
