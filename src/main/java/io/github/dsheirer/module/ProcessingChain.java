@@ -288,6 +288,12 @@ public class ProcessingChain implements Listener<ChannelEvent>
         provider.addDecodeEventListener(mDecodeEventBroadcaster);
     }
 
+    /** Removes this chain's exact decode-event route without disturbing a route committed to another chain. */
+    public void unrouteDecodeEventsFrom(IDecodeEventProvider provider)
+    {
+        provider.removeDecodeEventListener(mDecodeEventBroadcaster);
+    }
+
     public void dispose()
     {
         stop();
@@ -437,6 +443,20 @@ public class ProcessingChain implements Listener<ChannelEvent>
      */
     public void addModule(Module module)
     {
+        addModule(module, true);
+    }
+
+    /**
+     * Adds a module while leaving its decode-event provider route unchanged.  This lets a tentative DMR REST follower
+     * initialize the shared site manager without stealing its committed route from the live former-REST chain.
+     */
+    public void addModuleWithDeferredDecodeEventRouting(Module module)
+    {
+        addModule(module, false);
+    }
+
+    private void addModule(Module module, boolean registerDecodeEventProvider)
+    {
         mModuleLock.lock();
 
         try
@@ -450,7 +470,7 @@ public class ProcessingChain implements Listener<ChannelEvent>
 
         module.setInterModuleEventBus(getEventBus());
         registerListeners(module);
-        registerProviders(module);
+        registerProviders(module, registerDecodeEventProvider);
     }
 
     /**
@@ -616,7 +636,7 @@ public class ProcessingChain implements Listener<ChannelEvent>
      * Registers the broadcaster(s) as listeners to the module for each
      * provider interface that is supported by the module.
      */
-    private void registerProviders(Module module)
+    private void registerProviders(Module module, boolean registerDecodeEventProvider)
     {
         if(module instanceof IdentifierUpdateProvider)
         {
@@ -628,7 +648,7 @@ public class ProcessingChain implements Listener<ChannelEvent>
             ((IAudioCallProvider)module).setAudioCallEventListener(mAudioCallBroadcaster);
         }
 
-        if(module instanceof IDecodeEventProvider)
+        if(registerDecodeEventProvider && module instanceof IDecodeEventProvider)
         {
             ((IDecodeEventProvider)module).addDecodeEventListener(mDecodeEventBroadcaster);
         }

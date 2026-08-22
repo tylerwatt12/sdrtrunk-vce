@@ -107,7 +107,7 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
     private final TrunkedCallStartTracker mCallStartTracker =
         new TrunkedCallStartTracker(EVENT_TIME_STALE_THRESHOLD);
     private volatile Listener<ChannelEvent> mChannelEventListener;
-    private volatile Listener<IDecodeEvent> mDecodeEventListener;
+    private final AtomicReference<Listener<IDecodeEvent>> mDecodeEventListener = new AtomicReference<>();
     private TrafficChannelTeardownMonitor mTrafficChannelTeardownMonitor = new TrafficChannelTeardownMonitor();
     private TalkerAliasManager mTalkerAliasManager = new TalkerAliasManager();
     private Channel mParentChannel;
@@ -118,6 +118,10 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
     private volatile DMRNetworkConfigurationSnapshot mLatestNetworkConfigurationSnapshot;
     private final AtomicLong mRestHandoffGeneration = new AtomicLong();
     private final AtomicReference<RestHandoffSlot> mPendingRestHandoff = new AtomicReference<>();
+    private final AtomicBoolean mRestHandoffIngressDirty = new AtomicBoolean();
+    private final AtomicLong mRestHandoffRetryIngressGeneration = new AtomicLong();
+    private volatile long mLastDrainedRestHandoffGeneration;
+    private final AtomicReference<Runnable> mRestHandoffRetryIngressInterleaveForTest = new AtomicReference<>();
     private final AtomicReference<Runnable> mControlFrequencyUpdateInterleaveForTest = new AtomicReference<>();
     private final Channel mRestChannelReservationToken =
         new Channel("DMR Capacity Plus rest-channel reservation", ChannelType.STANDARD);
@@ -478,6 +482,96 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
     }
 
     /**
+     * Marks this manager's current latest-value handoff slot for lifecycle-worker processing.  Decoder callbacks use
+     * this fixed-cost signal instead of copying requests into a shared queue.  A stale request can safely signal a
+     * newer current generation; the single lifecycle consumer always polls the manager's authoritative slot.
+     *
+     * @param request that caused the signal
+     * @return true when this manager still has a handoff to process
+     */
+    public boolean signalRestHandoffIngress(DMRRestChannelHandoffRequest request)
+    {
+        Objects.requireNonNull(request, "DMR rest-channel handoff request cannot be null");
+        RestHandoffSlot slot = mPendingRestHandoff.get();
+
+        if(slot == null)
+        {
+            return false;
+        }
+
+        mRestHandoffIngressDirty.set(true);
+        return true;
+    }
+
+    /**
+     * Rearms an already-delivered generation for the coordinator's scheduled retry path.  Ordinary duplicate or
+     * out-of-order EventBus delivery is suppressed, while an intentional tuner-source retry can process the same
+     * immutable request again.
+     *
+     * @param request still owned by this manager
+     * @return true when the exact request is still current and was rearmed
+     */
+    public boolean signalRestHandoffRetryIngress(DMRRestChannelHandoffRequest request)
+    {
+        Objects.requireNonNull(request, "DMR rest-channel handoff request cannot be null");
+        RestHandoffSlot slot = mPendingRestHandoff.get();
+
+        if(slot == null || slot.mRequest != request)
+        {
+            return false;
+        }
+
+        Runnable interleave = mRestHandoffRetryIngressInterleaveForTest.getAndSet(null);
+
+        if(interleave != null)
+        {
+            interleave.run();
+        }
+
+        //Generations only increase. A stale retry that passed the identity check before completion cannot overwrite a
+        //newer retry authorization or make a newer, already-delivered handoff eligible for duplicate delivery.
+        mRestHandoffRetryIngressGeneration.accumulateAndGet(request.generation(), Math::max);
+        mRestHandoffIngressDirty.set(true);
+        return true;
+    }
+
+    /**
+     * Polls the latest handoff nominated through the coordinator ingress.  There is one lifecycle consumer.  Newer
+     * generations supersede older queued notifications, ordinary duplicate delivery is ignored, and an explicit retry
+     * signal can redeliver the current generation.
+     */
+    public DMRRestChannelHandoffRequest pollRestHandoffIngress()
+    {
+        if(!mRestHandoffIngressDirty.getAndSet(false))
+        {
+            return null;
+        }
+
+        long retryGeneration = mRestHandoffRetryIngressGeneration.getAndSet(0);
+        RestHandoffSlot slot = mPendingRestHandoff.get();
+
+        if(slot == null)
+        {
+            return null;
+        }
+
+        DMRRestChannelHandoffRequest request = slot.mRequest;
+
+        if(retryGeneration != request.generation() && request.generation() <= mLastDrainedRestHandoffGeneration)
+        {
+            return null;
+        }
+
+        mLastDrainedRestHandoffGeneration = Math.max(mLastDrainedRestHandoffGeneration, request.generation());
+        return request;
+    }
+
+    void setRestHandoffRetryIngressInterleaveForTest(Runnable interleave)
+    {
+        mRestHandoffRetryIngressInterleaveForTest.set(interleave);
+    }
+
+    /**
      * Current allocation for deterministic package-level accounting tests.
      */
     Channel getAllocatedChannel(long frequency)
@@ -806,7 +900,7 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
     public void broadcast(IDecodeEvent decodeEvent)
     {
         publishChannelActivity(decodeEvent);
-        Listener<IDecodeEvent> listener = mDecodeEventListener;
+        Listener<IDecodeEvent> listener = mDecodeEventListener.get();
 
         if(listener != null)
         {
@@ -1293,7 +1387,7 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
     @Override
     public void addDecodeEventListener(Listener<IDecodeEvent> listener)
     {
-        mDecodeEventListener = listener;
+        mDecodeEventListener.set(listener);
     }
 
     /**
@@ -1302,7 +1396,7 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
     @Override
     public void removeDecodeEventListener(Listener<IDecodeEvent> listener)
     {
-        mDecodeEventListener = null;
+        mDecodeEventListener.compareAndSet(listener, null);
     }
 
     @Override

@@ -44,6 +44,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import javax.swing.SwingUtilities;
 import org.junit.jupiter.api.Test;
 
@@ -118,6 +119,85 @@ class DMRTrafficChannelManagerTest
         manager.requestRestChannelHandoff(parent, currentFrequency, firstRest);
         assertEquals(3, subscriber.requests.size());
         assertEquals(firstRestFrequency, subscriber.requests.getLast().restDownlinkFrequency());
+    }
+
+    @Test
+    void restHandoffIngressDrainsLatestGenerationAndOnlyExplicitlyRetriesDeliveredGeneration()
+    {
+        long currentFrequency = 451_000_000L;
+        long firstRestFrequency = 452_000_000L;
+        long secondRestFrequency = 453_000_000L;
+        Channel parent = new Channel("Capacity Plus", Channel.ChannelType.STANDARD);
+        DecodeConfigDMR config = new DecodeConfigDMR();
+        config.setChannelMode(DMRChannelMode.TRUNKED);
+        config.setTrafficChannelPoolSize(1);
+        parent.setDecodeConfiguration(config);
+        DMRTrafficChannelManager manager = new DMRTrafficChannelManager(parent);
+        RestHandoffSubscriber subscriber = new RestHandoffSubscriber();
+        EventBus eventBus = new EventBus();
+        eventBus.register(subscriber);
+        manager.setInterModuleEventBus(eventBus);
+        manager.setCurrentControlFrequency(currentFrequency, parent);
+
+        manager.requestRestChannelHandoff(parent, currentFrequency, restChannel(3, firstRestFrequency));
+        DMRRestChannelHandoffRequest olderRequest = subscriber.requests.getLast();
+        manager.requestRestChannelHandoff(parent, currentFrequency, restChannel(5, secondRestFrequency));
+        DMRRestChannelHandoffRequest latestRequest = subscriber.requests.getLast();
+
+        //Model an older EventBus post arriving after the newer manager CAS. The worker must drain the authoritative
+        //latest slot, not the request that happened to signal it.
+        assertTrue(manager.signalRestHandoffIngress(olderRequest));
+        assertSame(latestRequest, manager.pollRestHandoffIngress());
+
+        //A delayed duplicate post for the delivered generation is coalesced, while the lifecycle retry path can
+        //intentionally redeliver that exact immutable generation after a tuner-source failure.
+        assertTrue(manager.signalRestHandoffIngress(latestRequest));
+        assertNull(manager.pollRestHandoffIngress());
+        assertTrue(manager.signalRestHandoffRetryIngress(latestRequest));
+        assertSame(latestRequest, manager.pollRestHandoffIngress());
+        assertNull(manager.pollRestHandoffIngress());
+
+        manager.completeRestHandoff(latestRequest);
+        assertFalse(manager.signalRestHandoffIngress(latestRequest));
+    }
+
+    @Test
+    void staleRetryCannotRedeliverANewerAlreadyDrainedGeneration()
+    {
+        long currentFrequency = 451_000_000L;
+        long firstRestFrequency = 452_000_000L;
+        long secondRestFrequency = 453_000_000L;
+        Channel parent = new Channel("Capacity Plus", Channel.ChannelType.STANDARD);
+        DecodeConfigDMR config = new DecodeConfigDMR();
+        config.setChannelMode(DMRChannelMode.TRUNKED);
+        config.setTrafficChannelPoolSize(1);
+        parent.setDecodeConfiguration(config);
+        DMRTrafficChannelManager manager = new DMRTrafficChannelManager(parent);
+        RestHandoffSubscriber subscriber = new RestHandoffSubscriber();
+        EventBus eventBus = new EventBus();
+        eventBus.register(subscriber);
+        manager.setInterModuleEventBus(eventBus);
+        manager.setCurrentControlFrequency(currentFrequency, parent);
+
+        manager.requestRestChannelHandoff(parent, currentFrequency, restChannel(3, firstRestFrequency));
+        DMRRestChannelHandoffRequest olderRequest = subscriber.requests.getLast();
+        assertTrue(manager.signalRestHandoffIngress(olderRequest));
+        assertSame(olderRequest, manager.pollRestHandoffIngress());
+
+        AtomicReference<DMRRestChannelHandoffRequest> newerRequest = new AtomicReference<>();
+        manager.setRestHandoffRetryIngressInterleaveForTest(() ->
+        {
+            manager.completeRestHandoff(olderRequest);
+            manager.requestRestChannelHandoff(parent, currentFrequency, restChannel(5, secondRestFrequency));
+            newerRequest.set(subscriber.requests.getLast());
+            assertTrue(manager.signalRestHandoffIngress(newerRequest.get()));
+            assertSame(newerRequest.get(), manager.pollRestHandoffIngress());
+        });
+
+        assertTrue(manager.signalRestHandoffRetryIngress(olderRequest));
+        assertNotNull(newerRequest.get());
+        assertNull(manager.pollRestHandoffIngress(),
+            "a stale retry redelivered the newer generation after its ordinary delivery");
     }
 
     @Test

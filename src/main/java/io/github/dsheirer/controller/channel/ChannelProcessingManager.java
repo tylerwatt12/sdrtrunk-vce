@@ -70,6 +70,7 @@ import io.github.dsheirer.util.ThreadPool;
 import java.awt.GraphicsEnvironment;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -158,7 +159,8 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         mChannelActivityModel = new ChannelActivityModel(aliasModel, userPreferences.getNowPlayingPreference());
         mChannelActivityModel.setActiveChannelSupplier(this::getActiveChannelActivitySnapshot);
         mDmrRestChannelRetryDelayMilliseconds = dmrRestChannelRetryDelayMilliseconds;
-        mDmrRestChannelHandoffCoordinator = new DMRRestChannelHandoffCoordinator(this::processDmrRestChannelHandoff);
+        mDmrRestChannelHandoffCoordinator = new DMRRestChannelHandoffCoordinator(
+            this::snapshotDmrRestChannelHandoffOwners, this::processDmrRestChannelHandoff);
     }
 
     public ChannelActivityModel getChannelActivityModel()
@@ -444,6 +446,33 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         {
             request.owner().completeRestHandoff(request);
         }
+    }
+
+    /**
+     * Discovers each DMR site's authoritative latest-value mailbox on the lifecycle worker.  Live parent chains cover
+     * newly nominated moves; active attempts keep detached managers discoverable through replacement retries.
+     */
+    private synchronized Iterable<DMRTrafficChannelManager> snapshotDmrRestChannelHandoffOwners()
+    {
+        Set<DMRTrafficChannelManager> owners = new LinkedHashSet<>();
+
+        for(ProcessingChain processingChain: mProcessingChainsMap.values())
+        {
+            for(Module module: processingChain.getModules())
+            {
+                if(module instanceof DMRTrafficChannelManager owner)
+                {
+                    owners.add(owner);
+                }
+            }
+        }
+
+        for(DMRRestChannelAttempt attempt: mDmrRestChannelAttempts.values())
+        {
+            owners.add(attempt.getPrepared().handoff().owner());
+        }
+
+        return List.copyOf(owners);
     }
 
     private synchronized void processDmrRestChannelHandoff(DMRRestChannelHandoffRequest request)
@@ -880,7 +909,6 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
             {
                 mLog.error("Error starting replacement DMR rest channel; preserving the former REST call and " +
                     "retrying", exception);
-                attempt.getExpectedChain().routeDecodeEventsFrom(handoff.owner());
                 scheduleDmrRestChannelRetry(attempt);
             }
             else
@@ -900,7 +928,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         attempt.schedule(() ->
         {
             if(attempt.isActive() && !mClosed && !mShuttingDown &&
-                !mDmrRestChannelHandoffCoordinator.offer(attempt.getPrepared().handoff()))
+                !mDmrRestChannelHandoffCoordinator.offerRetry(attempt.getPrepared().handoff()))
             {
                 scheduleDmrRestChannelRetry(attempt);
             }
@@ -949,7 +977,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
 
                 try
                 {
-                    handoff.owner().removeDecodeEventListener(null);
+                    attempt.getExpectedChain().unrouteDecodeEventsFrom(handoff.owner());
                     processDetachedTrafficTeardown(attempt);
                 }
                 catch(RuntimeException exception)
@@ -1119,6 +1147,9 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
 
         ProcessingChain processingChain = null;
         boolean sourceAssignedToChain = false;
+        DMRTrafficChannelManager deferredDmrDecodeEventProvider = strictFunctionalStartup &&
+            channel.isStandardChannel() && request.getTrafficChannelManager() instanceof DMRTrafficChannelManager owner ?
+            owner : null;
 
         try
         {
@@ -1166,7 +1197,17 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
                     this::receiveControlChannelQuality));
             }
 
-            processingChain.addModules(modules);
+            for(Module module: modules)
+            {
+                if(module == deferredDmrDecodeEventProvider)
+                {
+                    processingChain.addModuleWithDeferredDecodeEventRouting(module);
+                }
+                else
+                {
+                    processingChain.addModule(module);
+                }
+            }
 
             //Post preload data from the request to the event bus.  Modules that can handle preload data will annotate
             //their processor method with @Subscribe to receive each specific preload data content class.
@@ -1247,6 +1288,11 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
                 else
                 {
                     processingChain.start();
+                }
+
+                if(deferredDmrDecodeEventProvider != null)
+                {
+                    processingChain.routeDecodeEventsFrom(deferredDmrDecodeEventProvider);
                 }
 
                 setChannelProcessingFlag(channel, true);
@@ -1536,7 +1582,8 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
 
         if(detachedTrafficAttempt != null)
         {
-            detachedTrafficAttempt.getPrepared().handoff().owner().removeDecodeEventListener(null);
+            detachedTrafficAttempt.getExpectedChain().unrouteDecodeEventsFrom(
+                detachedTrafficAttempt.getPrepared().handoff().owner());
             processDetachedTrafficTeardown(detachedTrafficAttempt);
         }
     }
@@ -1603,6 +1650,12 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     boolean isDmrRestChannelHandoffCoordinatorClosed()
     {
         return mDmrRestChannelHandoffCoordinator.isClosed();
+    }
+
+    /** Test seam for deterministically firing an already-scheduled REST follower retry. */
+    boolean retryDmrRestChannelHandoff(DMRRestChannelHandoffRequest request)
+    {
+        return mDmrRestChannelHandoffCoordinator.offerRetry(request);
     }
 
     /**

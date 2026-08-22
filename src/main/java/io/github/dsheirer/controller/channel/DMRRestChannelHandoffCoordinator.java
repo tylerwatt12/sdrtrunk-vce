@@ -7,11 +7,12 @@
 package io.github.dsheirer.controller.channel;
 
 import io.github.dsheirer.module.decode.dmr.DMRRestChannelHandoffRequest;
-import io.github.dsheirer.util.concurrent.BoundedMpscReferenceQueue;
+import io.github.dsheirer.module.decode.dmr.DMRTrafficChannelManager;
 import io.github.dsheirer.util.concurrent.ObserverThreadFactory;
 import java.util.Objects;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.LockSupport;
@@ -19,37 +20,40 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Bounded, nonblocking ingress for DMR Capacity Plus rest-channel handoffs.
+ * Nonblocking, latest-value ingress for DMR Capacity Plus rest-channel handoffs.
  *
- * <p>Decoder callbacks only offer immutable handoff requests.  One prestarted worker owns the potentially expensive
- * lifecycle work so a full or contended ingress never falls back to running that work on the producer thread.</p>
+ * <p>Each DMR traffic manager owns one authoritative pending handoff and one ingress-dirty bit. Decoder callbacks only
+ * mark that fixed-size mailbox and unpark this prestarted worker. The worker obtains a lifecycle-owned snapshot of live
+ * managers and drains their current values. Thus, saturation coalesces repeated or superseded targets per site without
+ * allowing one site's one-shot target to overwrite another site's target.</p>
  */
 final class DMRRestChannelHandoffCoordinator implements AutoCloseable
 {
     private static final Logger mLog = LoggerFactory.getLogger(DMRRestChannelHandoffCoordinator.class);
-    private static final int DEFAULT_CAPACITY = 64;
     private static final long IDLE_PARK_NANOSECONDS = TimeUnit.MILLISECONDS.toNanos(50);
     private static final long CLOSE_JOIN_MILLISECONDS = TimeUnit.SECONDS.toMillis(2);
-    private final BoundedMpscReferenceQueue<DMRRestChannelHandoffRequest> mIngress;
+    private final OwnerSupplier mOwnerSupplier;
     private final Handler mHandler;
     private final Thread mWorker;
+    private final AtomicBoolean mWorkPending = new AtomicBoolean();
     private final AtomicInteger mActiveOffers = new AtomicInteger();
+    private final AtomicLong mCoalescedCount = new AtomicLong();
     private final AtomicLong mDroppedCount = new AtomicLong();
     private volatile boolean mAccepting = true;
     private volatile boolean mStopImmediately;
     private volatile boolean mClosed;
 
-    DMRRestChannelHandoffCoordinator(Handler handler)
+    DMRRestChannelHandoffCoordinator(OwnerSupplier ownerSupplier, Handler handler)
     {
-        this(DEFAULT_CAPACITY, new ObserverThreadFactory("sdrtrunk DMR rest-channel handoff"), handler);
+        this(new ObserverThreadFactory("sdrtrunk DMR rest-channel handoff"), ownerSupplier, handler);
     }
 
     /**
-     * Test seam for a smaller ingress and an observable worker thread.
+     * Test seam for an observable worker thread.
      */
-    DMRRestChannelHandoffCoordinator(int capacity, ThreadFactory threadFactory, Handler handler)
+    DMRRestChannelHandoffCoordinator(ThreadFactory threadFactory, OwnerSupplier ownerSupplier, Handler handler)
     {
-        mIngress = new BoundedMpscReferenceQueue<>(capacity);
+        mOwnerSupplier = Objects.requireNonNull(ownerSupplier, "owner supplier cannot be null");
         mHandler = Objects.requireNonNull(handler, "handler cannot be null");
         Thread worker = Objects.requireNonNull(threadFactory, "thread factory cannot be null")
             .newThread(this::runWorker);
@@ -67,9 +71,23 @@ final class DMRRestChannelHandoffCoordinator implements AutoCloseable
     }
 
     /**
-     * Offers a handoff without waiting.  A full, contended, or closed coordinator rejects and counts the request.
+     * Signals a decoder/EventBus handoff without waiting. Repeated signals coalesce against the owner's latest
+     * generation. A false result means only that the coordinator is closing or closed.
      */
     boolean offer(DMRRestChannelHandoffRequest request)
+    {
+        return signal(request, false);
+    }
+
+    /**
+     * Signals an intentional lifecycle retry of a generation that the worker has already delivered once.
+     */
+    boolean offerRetry(DMRRestChannelHandoffRequest request)
+    {
+        return signal(request, true);
+    }
+
+    private boolean signal(DMRRestChannelHandoffRequest request, boolean retry)
     {
         Objects.requireNonNull(request, "request cannot be null");
 
@@ -90,14 +108,21 @@ final class DMRRestChannelHandoffCoordinator implements AutoCloseable
                 return false;
             }
 
-            if(mIngress.offer(request))
+            boolean ownerSignaled = retry ? request.owner().signalRestHandoffRetryIngress(request) :
+                request.owner().signalRestHandoffIngress(request);
+
+            if(ownerSignaled)
             {
+                if(mWorkPending.getAndSet(true))
+                {
+                    mCoalescedCount.incrementAndGet();
+                }
+
                 signalWorker();
-                return true;
             }
 
-            mDroppedCount.incrementAndGet();
-            return false;
+            //A stale request with no current owner slot is already complete. It is not an ingress rejection.
+            return true;
         }
         finally
         {
@@ -108,6 +133,11 @@ final class DMRRestChannelHandoffCoordinator implements AutoCloseable
                 signalWorker();
             }
         }
+    }
+
+    long getCoalescedCount()
+    {
+        return mCoalescedCount.get();
     }
 
     long getDroppedCount()
@@ -178,12 +208,48 @@ final class DMRRestChannelHandoffCoordinator implements AutoCloseable
     {
         try
         {
-            while(!mStopImmediately && (mAccepting || mActiveOffers.get() > 0 || mIngress.size() > 0))
+            while(!mStopImmediately && (mAccepting || mActiveOffers.get() > 0 || mWorkPending.get()))
             {
-                int drained = 0;
-                DMRRestChannelHandoffRequest request;
+                if(mWorkPending.getAndSet(false))
+                {
+                    drainLatestRequests();
+                }
+                else if(!mStopImmediately)
+                {
+                    LockSupport.parkNanos(this, IDLE_PARK_NANOSECONDS);
+                }
+            }
+        }
+        finally
+        {
+            mAccepting = false;
+            mWorkPending.set(false);
+            mClosed = true;
+        }
+    }
 
-                while(!mStopImmediately && (request = mIngress.poll()) != null)
+    private void drainLatestRequests()
+    {
+        try
+        {
+            Iterable<DMRTrafficChannelManager> owners = Objects.requireNonNull(mOwnerSupplier.getOwners(),
+                "owner supplier returned null");
+
+            for(DMRTrafficChannelManager owner: owners)
+            {
+                if(mStopImmediately)
+                {
+                    return;
+                }
+
+                if(owner == null)
+                {
+                    continue;
+                }
+
+                DMRRestChannelHandoffRequest request = owner.pollRestHandoffIngress();
+
+                if(request != null)
                 {
                     try
                     {
@@ -193,22 +259,22 @@ final class DMRRestChannelHandoffCoordinator implements AutoCloseable
                     {
                         mLog.error("Error processing DMR rest-channel handoff", exception);
                     }
-
-                    drained++;
-                }
-
-                if(drained == 0 && !mStopImmediately)
-                {
-                    LockSupport.parkNanos(this, IDLE_PARK_NANOSECONDS);
                 }
             }
         }
-        finally
+        catch(Exception exception)
         {
-            mAccepting = false;
-            mIngress.clear();
-            mClosed = true;
+            //The manager mailboxes remain dirty. Retry the worker-side snapshot; decoder callbacks never wait.
+            mLog.error("Error discovering pending DMR rest-channel handoffs", exception);
+            mWorkPending.set(true);
+            LockSupport.parkNanos(this, IDLE_PARK_NANOSECONDS);
         }
+    }
+
+    @FunctionalInterface
+    interface OwnerSupplier
+    {
+        Iterable<DMRTrafficChannelManager> getOwners() throws Exception;
     }
 
     @FunctionalInterface
