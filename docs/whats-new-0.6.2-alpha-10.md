@@ -2,13 +2,15 @@
 
 ## What
 
-Alpha 10 is a focused compatibility and receiver-stability release. It restores Scanner-Map uploads through the Rdio
-Scanner integration, keeps late encryption details attached to the correct call, corrects P25 implicit uplinks, bounds
-stale receiver work during overload, and prevents tuner disable/allocation races.
+Alpha 10 is a focused compatibility, configuration-integrity, and receiver-stability release. It restores Scanner-Map
+uploads through the Rdio Scanner integration, keeps late encryption details attached to the correct call, prevents
+Alias editor operations from publishing or targeting the wrong row, keeps dark-themed JavaFX editors covered while
+they load, corrects P25 channel handling, bounds stale receiver work during overload, and prevents tuner
+disable/allocation races.
 
-This release does not change the database schema, Alias model, recording format or ownership, RadioReference behavior,
-streaming-provider configuration, or multipart call-upload fields. It retains Alpha 9's portable-storage layout and
-existing migration behavior.
+This release does not change the database schema, recording format or ownership, RadioReference behavior,
+streaming-provider configuration, or multipart call-upload fields. Alias storage remains schema v4, and the release
+retains Alpha 9's portable-storage layout and existing migration behavior.
 
 ## Added
 
@@ -17,6 +19,8 @@ existing migration behavior.
   instead of waiting behind hardware teardown.
 - **Bounded channel-output recovery.** Channelizer output queues and reusable result pools have explicit limits and
   cleanup behavior for overflow, stopped consumers, and blocked downstream processing.
+- **Theme-aware JavaFX loading shells.** Playlist and Settings first render a lightweight shell whose background and
+  text follow the active theme, then replace it with the fully constructed editor.
 
 ## Changed
 
@@ -49,6 +53,19 @@ existing migration behavior.
   channel-source manager while disable teardown removes it. This addresses the Airspy/null-manager NPE portion of
   issue [#43](https://github.com/tylerwatt12/sdrtrunk-vce/issues/43); it does not claim to fix that report's separate
   API-latency or retry-storm symptoms.
+- **Alias editor mutations keep their intended row.** New and cloned aliases remain detached drafts until Save commits
+  them. Create, edit, multi-delete, and move operations persist before replacing live rows by durable schema-v4 ID;
+  newly imported RadioReference rows retain their identity while delayed ID assignment completes; selection
+  restoration no longer targets stale sorted-table instances; and talkgroup identifiers sort numerically. This
+  prevents wrong-row edits, no-op deletes, and duplicate or unexpectedly reordered rows.
+- **Dark-themed Playlist and Settings windows no longer flash white while loading.** The lightweight themed shell
+  completes a render before expensive editor construction begins, remains theme-aware afterward, and recovers for a
+  retry if setup fails. This covers editor content; native Windows title-bar contrast remains outside the application.
+- **Non-autonomous P25 SNDCP announcements no longer create ghost data channels.** Channel fields are published only
+  when autonomous access is active, preventing inactive announcements from appearing as a `DAT-A` channel with LCN
+  `0-0`.
+- **Short P25 TDULC candidates are rejected.** Golay correction no longer reads a partial codeword, and link-control
+  data assembled without all 12 protected codewords cannot be accepted as valid after zero filling.
 
 ## Removed
 

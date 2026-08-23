@@ -31,14 +31,19 @@ This project is currently an **alpha release**. Back up your receiver data befor
 
 ## What’s New in Alpha 10
 
-Alpha 10 is a focused compatibility and receiver-stability release.
+Alpha 10 is a focused compatibility, configuration-integrity, and receiver-stability release.
 
 - **Scanner-Map uploads work again.** The Rdio Scanner integration uses the protocol-compatible SDRTrunk identity for
   both connection tests and call uploads.
 - **Encryption details stay with the correct call.** Late algorithm and key information updates the existing P25,
   DMR, or NXDN activity row, and event key IDs display in hexadecimal.
-- **P25 channel handling is safer.** Implicit uplinks resolve from the downlink band, traffic-channel shutdown avoids
-  a manager lock hazard, and stale channelizer work is bounded during overload.
+- **Alias editing preserves the intended row.** New and cloned aliases stay detached until Save, and edits, deletes,
+  moves, sorted-table selection, and numeric talkgroup sorting use stable schema-v4 identities.
+- **Dark-themed editors stay covered while loading.** Playlist and Settings render a theme-aware shell before
+  constructing their full JavaFX content.
+- **P25 channel handling is safer.** Implicit uplinks resolve from the downlink band, non-autonomous SNDCP messages no
+  longer create ghost `DAT-A` channels, shortened TDULC candidates are rejected, traffic-channel shutdown avoids a
+  manager lock hazard, and stale channelizer work is bounded during overload.
 - **Tuner disable and allocation no longer race.** Decoder-side allocation fails fast while tuner hardware is being
   stopped instead of observing a removed channel manager.
 - **Alpha 9 data carries forward unchanged.** Alpha 10 uses the same database schema and storage formats.
