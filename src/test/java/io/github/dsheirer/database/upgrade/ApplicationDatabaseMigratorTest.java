@@ -114,13 +114,23 @@ class ApplicationDatabaseMigratorTest
                     ORDER BY id
                 )
                 """));
+            assertEquals("Default P25:P25|Default DMR:DMR|Default NXDN:NXDN|Default NBFM:NBFM",
+                scalar(connection, """
+                    SELECT group_concat(value, '|')
+                    FROM (
+                        SELECT name || ':' || family AS value
+                        FROM alias_list
+                        WHERE name IN ('Default P25', 'Default DMR', 'Default NXDN', 'Default NBFM')
+                        ORDER BY id
+                    )
+                    """));
             assertEquals("103|104|105|106|107|111|112|113", scalar(connection, """
                 SELECT group_concat(alias_id, '|')
                 FROM (
                     SELECT alias_id FROM alias_scan_list_membership ORDER BY alias_id
                 )
                 """));
-            assertEquals("5|6|7", scalar(connection, """
+            assertEquals("5|6|7|11|12|13|14", scalar(connection, """
                 SELECT group_concat(alias_list_id, '|')
                 FROM (
                     SELECT alias_list_id
@@ -224,6 +234,26 @@ class ApplicationDatabaseMigratorTest
                 P25ActivityLogSchema.TRUNKED_IDENTITY_METRICS_STARTED_AT_KEY)));
             assertEquals("Preserved Channel", scalar(connection,
                 "SELECT name FROM configuration_channel WHERE id=77"));
+            assertEquals("78:Default P25|79:Default P25|80:Default P25|81:Default DMR|" +
+                "82:Default NXDN|83:Default NBFM|84:Default NBFM|85:NULL", scalar(connection, """
+                SELECT group_concat(value, '|')
+                FROM (
+                    SELECT id || ':' || COALESCE(alias_list_name, 'NULL') AS value
+                    FROM configuration_channel
+                    WHERE id BETWEEN 78 AND 85
+                    ORDER BY id
+                )
+                """));
+            assertEquals("78:Default P25|79:Default P25|80:Default P25|81:Default DMR|" +
+                "82:Default NXDN|83:Default NBFM|84:Default NBFM|85:NULL", scalar(connection, """
+                SELECT group_concat(value, '|')
+                FROM (
+                    SELECT id || ':' || COALESCE(json_extract(config_json, '$.aliasListName'), 'NULL') AS value
+                    FROM configuration_channel
+                    WHERE id BETWEEN 78 AND 85
+                    ORDER BY id
+                )
+                """));
             assertEquals("preserved-context", scalar(connection,
                 "SELECT context_key FROM receiver_context WHERE id=50"));
             assertEquals("92.5", scalar(connection, """
@@ -294,6 +324,67 @@ class ApplicationDatabaseMigratorTest
             assertEquals("4", metadata(connection, "alias_schema_version"));
             assertEquals("24", metadata(connection, "p25_activity_schema_version"));
         }
+    }
+
+    @Test
+    void alpha9MigrationRejectsWrongFamilyFactoryNameCollisionWithoutChangingTheSource() throws Exception
+    {
+        Path database = Alpha9TestDatabase.create(newStagedDatabase());
+
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO alias_list(id, name, family)
+                VALUES (1, 'Default P25', 'DMR')
+                """);
+        }
+
+        CommandResult result = run(database);
+
+        assertEquals(ApplicationDatabaseMigrator.EXIT_MIGRATION_FAILED, result.exitCode());
+        assertTrue(result.error().contains("Default P25"));
+        assertTrue(result.error().contains("expected [P25]"));
+        assertEquals("4", metadata(database, "alias_schema_version"));
+        assertEquals("DMR", scalar(database, "SELECT family FROM alias_list WHERE name='Default P25'"));
+        try(Connection connection = open(database))
+        {
+            Alpha9DatabaseMigration.validateSource(connection);
+        }
+    }
+
+    @Test
+    void alpha9MigrationAssignsDefaultsToBlankAliasListNames() throws Exception
+    {
+        Path database = Alpha9TestDatabase.create(newStagedDatabase());
+        insertAlpha9MigrationCases(database);
+
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                UPDATE configuration_channel
+                SET alias_list_name = '', config_json = '{"aliasListName":""}'
+                WHERE id = 78
+                """);
+            statement.executeUpdate("""
+                UPDATE configuration_channel
+                SET alias_list_name = '   ', config_json = '{"aliasListName":"   "}'
+                WHERE id = 81
+                """);
+        }
+
+        CommandResult result = run(database);
+
+        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
+        assertEquals("78:Default P25:Default P25|81:Default DMR:Default DMR", scalar(database, """
+            SELECT group_concat(value, '|')
+            FROM (
+                SELECT id || ':' || alias_list_name || ':' ||
+                    json_extract(config_json, '$.aliasListName') AS value
+                FROM configuration_channel
+                WHERE id IN (78, 81)
+                ORDER BY id
+            )
+            """));
     }
 
     @Test
@@ -855,7 +946,8 @@ class ApplicationDatabaseMigratorTest
                     (7, 'NXDN', 'NXDN'),
                     (8, 'Group Styled', 'P25'),
                     (9, 'Color Styled', 'P25'),
-                    (10, 'Icon Styled', 'P25')
+                    (10, 'Icon Styled', 'P25'),
+                    (11, 'Default P25', 'P25')
                 """);
             statement.executeUpdate("""
                 INSERT INTO alias(
@@ -910,10 +1002,25 @@ class ApplicationDatabaseMigratorTest
                 INSERT INTO configuration_channel(
                     id, sort_order, system_name, site_name, name, alias_list_name,
                     decoder_type, source_type, primary_frequency_hz, frequency_count, config_json
-                ) VALUES (
-                    77, 1, 'Preserved System', 'Preserved Site', 'Preserved Channel', 'Safe',
-                    'P25_PHASE1', 'TUNER', 851012500, 1, '{"preserved":true}'
-                )
+                ) VALUES
+                    (77, 1, 'Preserved System', 'Preserved Site', 'Preserved Channel', 'Safe',
+                        'P25_PHASE1', 'TUNER', 851012500, 1, '{"preserved":true}'),
+                    (78, 2, 'P25', 'Phase 1', 'P25 Phase 1', NULL,
+                        'P25_PHASE1', 'TUNER', 851012500, 1, '{}'),
+                    (79, 3, 'P25', 'Phase 2', 'P25 Phase 2', NULL,
+                        'P25_PHASE2', 'TUNER', 851012500, 1, '{}'),
+                    (80, 4, 'P25', 'Conventional', 'P25 Conventional', NULL,
+                        'P25_CONVENTIONAL', 'TUNER', 155000000, 1, '{}'),
+                    (81, 5, 'DMR', 'Trunked', 'DMR', NULL,
+                        'DMR', 'TUNER', 451000000, 1, '{}'),
+                    (82, 6, 'NXDN', 'Trunked', 'NXDN', NULL,
+                        'NXDN', 'TUNER', 452000000, 1, '{}'),
+                    (83, 7, 'Analog', 'NBFM', 'NBFM', NULL,
+                        'NBFM', 'TUNER', 453000000, 1, '{}'),
+                    (84, 8, 'Analog', 'AM', 'AM', NULL,
+                        'AM', 'TUNER', 118500000, 1, '{}'),
+                    (85, 9, 'Retired', 'MPT', 'MPT', NULL,
+                        'MPT1327', 'TUNER', 454000000, 1, '{}')
                 """);
             statement.executeUpdate("""
                 INSERT INTO application_settings(key, settings_json, updated_at_ms)

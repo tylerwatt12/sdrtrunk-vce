@@ -102,10 +102,11 @@ class AliasAdminHttpControllerTest
             revision = policyChanged.get("revision").longValue();
             JsonNode policyCatalog = json(send(client,
                 request(origin, AliasAdminHttpController.ALIAS_LISTS_PATH).GET()));
-            assertEquals(aliasListId, policyCatalog.at("/alias_lists/0/alias_list_id").longValue());
-            assertEquals("p25", policyCatalog.at("/alias_lists/0/family").textValue());
-            assertFalse(policyCatalog.at("/alias_lists/0").has("id"));
-            JsonNode policy = policyCatalog.at("/alias_lists/0/unmatched_talkgroup_policy");
+            JsonNode countyAliasList = aliasList(policyCatalog, aliasListId);
+            assertEquals(aliasListId, countyAliasList.get("alias_list_id").longValue());
+            assertEquals("p25", countyAliasList.get("family").textValue());
+            assertFalse(countyAliasList.has("id"));
+            JsonNode policy = countyAliasList.get("unmatched_talkgroup_policy");
             assertTrue(policy.get("recordable").booleanValue());
             assertEquals("Primary", policy.at("/broadcast_channels/0").textValue());
             assertEquals(2, policy.get("scan_list_ids").size());
@@ -122,7 +123,7 @@ class AliasAdminHttpControllerTest
             policyCatalog = json(send(client,
                 request(origin, AliasAdminHttpController.ALIAS_LISTS_PATH).GET()));
             assertEquals(defaultScanListId,
-                policyCatalog.at("/alias_lists/0/unmatched_talkgroup_policy/scan_list_ids/0").longValue());
+                aliasList(policyCatalog, aliasListId).at("/unmatched_talkgroup_policy/scan_list_ids/0").longValue());
 
             JsonNode addedUnmatchedMembership = json(send(client, jsonRequest(origin,
                 AliasAdminHttpController.SCAN_LISTS_PATH + "/" + clevelandScanListId + "/members")
@@ -477,6 +478,13 @@ class AliasAdminHttpControllerTest
         return java.util.stream.StreamSupport.stream(options.get("matchers").spliterator(), false)
             .filter(node -> type.equals(node.get("type").textValue())).findFirst()
             .orElseThrow(() -> new AssertionError("Missing matcher option " + type));
+    }
+
+    private static JsonNode aliasList(JsonNode catalog, long aliasListId)
+    {
+        return java.util.stream.StreamSupport.stream(catalog.get("alias_lists").spliterator(), false)
+            .filter(node -> node.get("alias_list_id").longValue() == aliasListId).findFirst()
+            .orElseThrow(() -> new AssertionError("Missing Alias List " + aliasListId));
     }
 
     private static String encodedDecimal(long value)

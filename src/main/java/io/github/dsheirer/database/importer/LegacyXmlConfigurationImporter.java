@@ -25,6 +25,7 @@ import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlRootElement;
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasFactory;
+import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.alias.id.AliasID;
 import io.github.dsheirer.alias.id.AliasIDType;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
@@ -56,6 +57,7 @@ import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.database.alias.AliasDatabaseStore;
 import io.github.dsheirer.database.configuration.ConfigurationDatabaseStore;
 import io.github.dsheirer.database.configuration.ConfigurationSnapshotDatabaseStore;
+import io.github.dsheirer.database.scanlist.ScanListDatabaseStore;
 import io.github.dsheirer.identifier.tone.AmbeTone;
 import io.github.dsheirer.identifier.tone.Tone;
 import io.github.dsheirer.identifier.tone.ToneSequence;
@@ -162,10 +164,56 @@ public class LegacyXmlConfigurationImporter
         convertLikelyConventionalP25Channels(state);
         DatabaseFileInstaller.install(normalizedDatabase, temporaryDatabase -> {
             SdrTrunkDatabaseStartup.createGlobalDatabase(temporaryDatabase);
-            new ConfigurationSnapshotDatabaseStore(temporaryDatabase).replace(state);
-            validateMigration(temporaryDatabase, state);
+            ConfigurationState merged = mergeWithFactoryDefaults(temporaryDatabase, state);
+            new ConfigurationSnapshotDatabaseStore(temporaryDatabase).replace(merged);
+            validateMigration(temporaryDatabase, merged);
         });
 
+    }
+
+    /**
+     * Retains fresh-install Alias Lists and their unmatched-talkgroup scan-list routes while adding legacy user
+     * configuration. Name conflicts use the same deterministic imported-name handling as an import into an existing
+     * profile.
+     */
+    private static ConfigurationState mergeWithFactoryDefaults(Path databasePath, ConfigurationState imported)
+        throws IOException, SQLException
+    {
+        AliasDatabaseStore aliasStore = new AliasDatabaseStore(databasePath);
+        ConfigurationState factory = new ConfigurationDatabaseStore(databasePath).loadConfigurationState();
+        var definitions = aliasStore.loadAliasListDefinitions();
+        factory.setAliasListDefinitions(definitions);
+        factory.setAliases(aliasStore.loadAliases(definitions));
+        factory.setScanListConfiguration(new ScanListDatabaseStore(databasePath).loadConfiguration());
+
+        ConfigurationState merged = LegacyXmlConfigurationMerger.merge(factory, imported).configurationState();
+        merged.setScanListConfiguration(factory.getScanListConfiguration());
+        assignDefaultAliasListsToUnassignedChannels(merged);
+        return merged;
+    }
+
+    /**
+     * Legacy playback allowed otherwise eligible calls from channels without an Alias List. Route those channels
+     * through the compatible factory list so the Default scan list preserves that behavior.
+     */
+    private static void assignDefaultAliasListsToUnassignedChannels(ConfigurationState state)
+    {
+        for(Channel channel: state.getChannels())
+        {
+            if(channel == null || channel.getAliasListName() != null && !channel.getAliasListName().isBlank() ||
+                channel.getDecodeConfiguration() == null)
+            {
+                continue;
+            }
+
+            AliasListFamily family =
+                AliasListFamily.from(channel.getDecodeConfiguration().getDecoderType());
+
+            if(family != null)
+            {
+                channel.setAliasListName(family.getDefaultAliasListName());
+            }
+        }
     }
 
     public static ConfigurationState readConfigurationState(Path sourceXml) throws IOException

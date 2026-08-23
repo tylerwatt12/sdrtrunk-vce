@@ -90,6 +90,69 @@ class SdrTrunkDatabaseStartupTest
     }
 
     @Test
+    void defaultAliasListSeedReusesMatchingFamilyAndRoutesEveryFamily() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("default-alias-lists.sqlite");
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            SdrTrunkDatabaseSchema.create(connection);
+            statement.executeUpdate("""
+                INSERT INTO alias_list(id, name, family)
+                VALUES (25, 'Default P25', 'P25')
+                """);
+            SdrTrunkDatabaseSchema.seedDefaultAliasLists(connection);
+
+            assertEquals("25:P25|26:DMR|27:NXDN|28:NBFM", scalar(statement, """
+                SELECT group_concat(value, '|')
+                FROM (
+                    SELECT id || ':' || family AS value
+                    FROM alias_list
+                    WHERE name IN ('Default P25', 'Default DMR', 'Default NXDN', 'Default NBFM')
+                    ORDER BY id
+                )
+                """));
+            assertEquals("Default DMR|Default NBFM|Default NXDN|Default P25", scalar(statement, """
+                SELECT group_concat(name, '|')
+                FROM (
+                    SELECT alias_list.name
+                    FROM alias_list
+                    JOIN alias_list_unmatched_talkgroup_scan_list_membership AS membership
+                      ON membership.alias_list_id = alias_list.id
+                    JOIN scan_list ON scan_list.id = membership.scan_list_id
+                    WHERE scan_list.is_default = 1
+                    ORDER BY alias_list.name
+                )
+                """));
+        }
+    }
+
+    @Test
+    void defaultAliasListSeedRejectsWrongFamilyNameCollisionBeforeChangingRows() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("wrong-family-default.sqlite");
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            SdrTrunkDatabaseSchema.create(connection);
+            statement.executeUpdate("""
+                INSERT INTO alias_list(name, family)
+                VALUES ('Default P25', 'DMR')
+                """);
+
+            java.sql.SQLException failure = assertThrows(java.sql.SQLException.class,
+                () -> SdrTrunkDatabaseSchema.seedDefaultAliasLists(connection));
+            assertTrue(failure.getMessage().contains("Default P25"));
+            assertTrue(failure.getMessage().contains("expected [P25]"));
+            assertEquals("1", scalar(statement, "SELECT COUNT(*) FROM alias_list"));
+            assertEquals("0", scalar(statement,
+                "SELECT COUNT(*) FROM alias_list_unmatched_talkgroup_scan_list_membership"));
+        }
+    }
+
+    @Test
     void rejectsIncompleteExistingSchemaWithoutRepairingIt() throws Exception
     {
         Path database = mTemporaryFolder.resolve("sdrtrunk.sqlite");
@@ -316,6 +379,15 @@ class SdrTrunkDatabaseStartupTest
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database,
             config.toProperties()); Statement statement = connection.createStatement();
             ResultSet resultSet = statement.executeQuery("PRAGMA journal_mode"))
+        {
+            assertTrue(resultSet.next());
+            return resultSet.getString(1);
+        }
+    }
+
+    private static String scalar(Statement statement, String sql) throws Exception
+    {
+        try(ResultSet resultSet = statement.executeQuery(sql))
         {
             assertTrue(resultSet.next());
             return resultSet.getString(1);

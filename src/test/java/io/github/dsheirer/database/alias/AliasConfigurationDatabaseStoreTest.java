@@ -266,7 +266,8 @@ class AliasConfigurationDatabaseStoreTest
     {
         AliasListDefinition definition = new AliasListDefinition(listName, AliasListFamily.P25);
         Alias alias = alias("Dispatch", definition, talkgroup);
-        ScanListConfiguration scanLists = new ScanListDatabaseStore(database).loadConfiguration();
+        ScanListConfiguration currentScanLists = new ScanListDatabaseStore(database).loadConfiguration();
+        ScanListConfiguration scanLists = new ScanListConfiguration(currentScanLists.scanLists(), Map.of(), Map.of());
         return store.commit(new AliasConfigurationSnapshot(List.of(definition), List.of(alias), scanLists),
             Set.of());
     }

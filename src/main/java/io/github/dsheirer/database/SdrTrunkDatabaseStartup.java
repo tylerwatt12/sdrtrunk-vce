@@ -54,6 +54,7 @@ public final class SdrTrunkDatabaseStartup
         {
             configure(connection);
             SdrTrunkDatabaseSchema.create(connection);
+            SdrTrunkDatabaseSchema.seedDefaultAliasLists(connection);
             P25ActivityLogSchema.create(connection);
             DmrActivitySchema.create(connection);
             TrunkedSiteSchema.create(connection);

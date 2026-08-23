@@ -20,6 +20,7 @@ import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasListFamily;
+import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.am.DecodeConfigAM;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
@@ -83,6 +84,23 @@ class RadioReferenceDecoderSelectionTest
     {
         assertEquals(DecoderType.P25_PHASE1, trunkedDecoderType("Phase I"));
         assertEquals(DecoderType.P25_PHASE2, trunkedDecoderType("Phase II"));
+    }
+
+    @Test
+    void siteImportPrefersTheCompatibleFactoryAliasListRegardlessOfListOrder()
+    {
+        AliasListDefinition custom = definition(1, "County P25", AliasListFamily.P25);
+        AliasListDefinition p25 = definition(2, "Default P25", AliasListFamily.P25);
+        AliasListDefinition dmr = definition(3, "Default DMR", AliasListFamily.DMR);
+        AliasModel model = new AliasModel();
+        model.replaceCommittedConfiguration(List.of(custom, dmr, p25), List.of());
+
+        assertEquals("Default P25", SiteEditor.compatibleDefaultAliasListName(model, DecoderType.P25_PHASE1,
+            List.of("County P25", "Default P25")));
+        assertNull(SiteEditor.compatibleDefaultAliasListName(model, DecoderType.P25_PHASE1,
+            List.of("County P25")));
+        assertEquals("Default DMR", SiteEditor.compatibleDefaultAliasListName(model, DecoderType.DMR,
+            List.of("Default DMR")));
     }
 
     @Test
@@ -257,6 +275,13 @@ class RadioReferenceDecoderSelectionTest
         RadioReferenceDecoder decoder = new RadioReferenceDecoder(null, Map.of(type.getTypeId(), type),
             Map.of(flavor.getFlavorId(), flavor), Map.of(voice.getVoiceId(), voice), Map.of());
         return decoder.getDecoderType(system);
+    }
+
+    private static AliasListDefinition definition(long id, String name, AliasListFamily family)
+    {
+        AliasListDefinition definition = new AliasListDefinition(name, family);
+        definition.setId(id);
+        return definition;
     }
 
     private static void assertConventionalNxdn(String modeName, ModeDecoderType expectedDecoderType,

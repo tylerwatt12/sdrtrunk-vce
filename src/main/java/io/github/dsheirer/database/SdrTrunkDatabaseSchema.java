@@ -11,10 +11,15 @@
 
 package io.github.dsheirer.database;
 
+import io.github.dsheirer.alias.AliasListFamily;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.EnumMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Expected global SDRTrunk SQLite schema.
@@ -354,6 +359,126 @@ public final class SdrTrunkDatabaseSchema
         SdrTrunkDatabaseStartup.setMetadata(connection, "settings_schema_version",
             Integer.toString(SETTINGS_SCHEMA_VERSION));
         SdrTrunkDatabaseStartup.setMetadata(connection, "icon_schema_version", Integer.toString(ICON_SCHEMA_VERSION));
+    }
+
+    /**
+     * Seeds the visible factory Alias List for each supported protocol family and routes each list's unmatched
+     * talkgroups to the current Default scan list. This is invoked only for a new database and by the staged
+     * release migrator; normal startup remains validation-only.
+     *
+     * <p>An existing canonical name is reused only when it belongs to the expected family. A wrong-family collision
+     * is rejected instead of silently assigning channels to an incompatible list.</p>
+     */
+    public static void seedDefaultAliasLists(Connection connection) throws SQLException
+    {
+        long defaultScanListId = requireDefaultScanListId(connection);
+        Map<AliasListFamily,Long> existingIds = new EnumMap<>(AliasListFamily.class);
+
+        try(PreparedStatement statement = connection.prepareStatement("""
+            SELECT id, family
+            FROM alias_list
+            WHERE name = ? COLLATE NOCASE
+            """))
+        {
+            for(AliasListFamily family: AliasListFamily.values())
+            {
+                statement.setString(1, family.getDefaultAliasListName());
+
+                try(ResultSet resultSet = statement.executeQuery())
+                {
+                    if(resultSet.next())
+                    {
+                        String persistedFamily = resultSet.getString("family");
+                        if(!family.name().equals(persistedFamily))
+                        {
+                            throw new SQLException("Default Alias List name [" +
+                                family.getDefaultAliasListName() + "] belongs to family [" + persistedFamily +
+                                "]; expected [" + family.name() + "]");
+                        }
+                        existingIds.put(family, resultSet.getLong("id"));
+                    }
+                }
+            }
+        }
+
+        try(PreparedStatement statement = connection.prepareStatement("""
+            INSERT INTO alias_list (name, family, unmatched_talkgroup_record_enabled)
+            VALUES (?, ?, 0)
+            """))
+        {
+            for(AliasListFamily family: AliasListFamily.values())
+            {
+                if(!existingIds.containsKey(family))
+                {
+                    statement.setString(1, family.getDefaultAliasListName());
+                    statement.setString(2, family.name());
+                    statement.addBatch();
+                }
+            }
+            statement.executeBatch();
+        }
+
+        try(PreparedStatement lookup = connection.prepareStatement("""
+                SELECT id
+                FROM alias_list
+                WHERE name = ? COLLATE NOCASE AND family = ?
+                """);
+            PreparedStatement membership = connection.prepareStatement("""
+                INSERT OR IGNORE INTO alias_list_unmatched_talkgroup_scan_list_membership (
+                    alias_list_id, scan_list_id
+                ) VALUES (?, ?)
+                """))
+        {
+            for(AliasListFamily family: AliasListFamily.values())
+            {
+                long aliasListId;
+                Long existingId = existingIds.get(family);
+
+                if(existingId != null)
+                {
+                    aliasListId = existingId;
+                }
+                else
+                {
+                    lookup.setString(1, family.getDefaultAliasListName());
+                    lookup.setString(2, family.name());
+                    try(ResultSet resultSet = lookup.executeQuery())
+                    {
+                        if(!resultSet.next())
+                        {
+                            throw new SQLException("Unable to resolve seeded Alias List [" +
+                                family.getDefaultAliasListName() + "]");
+                        }
+                        aliasListId = resultSet.getLong("id");
+                    }
+                }
+
+                membership.setLong(1, aliasListId);
+                membership.setLong(2, defaultScanListId);
+                membership.addBatch();
+            }
+            membership.executeBatch();
+        }
+    }
+
+    private static long requireDefaultScanListId(Connection connection) throws SQLException
+    {
+        try(PreparedStatement statement = connection.prepareStatement(
+            "SELECT id FROM scan_list WHERE is_default = 1");
+            ResultSet resultSet = statement.executeQuery())
+        {
+            if(!resultSet.next())
+            {
+                throw new SQLException("Default Alias Lists require one Default scan list");
+            }
+
+            long id = resultSet.getLong("id");
+            if(resultSet.next())
+            {
+                throw new SQLException("Default Alias Lists require exactly one Default scan list");
+            }
+            return id;
+        }
     }
 
     public static void validate(Connection connection) throws SQLException

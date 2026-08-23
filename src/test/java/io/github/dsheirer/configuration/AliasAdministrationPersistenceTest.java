@@ -290,13 +290,15 @@ class AliasAdministrationPersistenceTest
                 ConfigurationManager.ConfigurationPublicationException.class,
                 () -> service.createAliasList("County P25", AliasListFamily.P25, service.currentRevision()));
             assertTrue(initial.getMessage().contains("restart"));
-            assertEquals(1, new AliasDatabaseStore(database).loadAliasListDefinitions().size());
+            assertEquals(AliasListFamily.values().length + 1,
+                new AliasDatabaseStore(database).loadAliasListDefinitions().size());
 
             ConfigurationManager.ConfigurationPublicationException later = assertThrows(
                 ConfigurationManager.ConfigurationPublicationException.class,
                 () -> service.createAliasList("Other P25", AliasListFamily.P25, service.currentRevision()));
             assertTrue(later.getMessage().contains("restart"));
-            assertEquals(1, new AliasDatabaseStore(database).loadAliasListDefinitions().size());
+            assertEquals(AliasListFamily.values().length + 1,
+                new AliasDatabaseStore(database).loadAliasListDefinitions().size());
         }
         finally
         {
@@ -419,7 +421,8 @@ class AliasAdministrationPersistenceTest
             Alias stored = store.loadAliases(definitions).getFirst();
             assertEquals(List.of("Old Stream"), stored.getBroadcastChannels().stream()
                 .map(BroadcastChannel::getChannelName).toList());
-            assertEquals(List.of("Old Stream"), definitions.getFirst().getUnmatchedTalkgroupPolicy()
+            assertEquals(List.of("Old Stream"), aliasListDefinition(definitions, aliasListId)
+                .getUnmatchedTalkgroupPolicy()
                 .getStreamDestinationNames());
 
             service.renameBroadcastChannelReferences("Old Stream", "New Stream");
@@ -434,7 +437,8 @@ class AliasAdministrationPersistenceTest
             stored = store.loadAliases(definitions).getFirst();
             assertEquals(List.of("New Stream"), stored.getBroadcastChannels().stream()
                 .map(BroadcastChannel::getChannelName).toList());
-            assertEquals(List.of("New Stream"), definitions.getFirst().getUnmatchedTalkgroupPolicy()
+            assertEquals(List.of("New Stream"), aliasListDefinition(definitions, aliasListId)
+                .getUnmatchedTalkgroupPolicy()
                 .getStreamDestinationNames());
         }
         finally
@@ -480,7 +484,8 @@ class AliasAdministrationPersistenceTest
                 .filter(alias -> alias.getId() == aliasId).findFirst().orElseThrow();
             assertEquals(List.of("New Stream"), stored.getBroadcastChannels().stream()
                 .map(BroadcastChannel::getChannelName).toList());
-            assertEquals(List.of("New Stream"), definitions.getFirst().getUnmatchedTalkgroupPolicy()
+            assertEquals(List.of("New Stream"), aliasListDefinition(definitions, aliasListId)
+                .getUnmatchedTalkgroupPolicy()
                 .getStreamDestinationNames());
         }
         finally
@@ -568,6 +573,12 @@ class AliasAdministrationPersistenceTest
         assertEquals(aliasIds.size(), aliases.size());
         assertEquals(List.of(0, 0), aliases.stream().map(Alias::getColor).toList());
         assertEquals(List.of(false, false), aliases.stream().map(Alias::isRecordable).toList());
+    }
+
+    private static AliasListDefinition aliasListDefinition(List<AliasListDefinition> definitions, long aliasListId)
+    {
+        return definitions.stream().filter(definition -> definition.getId() == aliasListId)
+            .findFirst().orElseThrow();
     }
 
     private static void assertScanListStateEquals(ScanListConfiguration expected, ScanListConfiguration actual)

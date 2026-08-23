@@ -249,6 +249,7 @@ public class ChannelEditor extends SplitPane implements IFilterProcessor, IAlias
     {
         Channel channel = new Channel();
         channel.setDecodeConfiguration(DecoderFactory.getDecodeConfiguration(decoderType));
+        mConfigurationManager.getAliasModel().assignDefaultAliasList(channel);
         mConfigurationManager.getChannelModel().addChannel(channel);
         selectChannel(channel);
     }

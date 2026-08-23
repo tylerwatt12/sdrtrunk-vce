@@ -48,6 +48,14 @@ public enum AliasListFamily
         };
     }
 
+    /**
+     * Canonical visible factory Alias List name for this protocol family.
+     */
+    public String getDefaultAliasListName()
+    {
+        return "Default " + name();
+    }
+
     @Override
     public String toString()
     {

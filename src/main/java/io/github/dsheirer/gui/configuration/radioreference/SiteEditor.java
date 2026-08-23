@@ -21,6 +21,7 @@ package io.github.dsheirer.gui.configuration.radioreference;
 
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasMatchRegistry;
+import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.gui.configuration.channel.ViewChannelRequest;
@@ -48,6 +49,7 @@ import io.github.dsheirer.source.config.SourceConfigTuner;
 import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import java.text.DecimalFormat;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.Iterator;
 import java.util.List;
@@ -454,6 +456,7 @@ public class SiteEditor extends GridPane
         }
 
         refreshCompatibleAliasLists();
+        selectDefaultAliasList();
         updateAliasListControlAvailability();
     }
 
@@ -918,15 +921,7 @@ public class SiteEditor extends GridPane
             mAliasListNameComboBox = new ComboBox<>(mCompatibleAliasLists);
             mAliasListNameComboBox.setDisable(true);
             mAliasListNameComboBox.setMaxWidth(Double.MAX_VALUE);
-
-            if(mAliasListNameComboBox.getItems().size() > 0)
-            {
-                mAliasListNameComboBox.getSelectionModel().select(0);
-            }
-            else
-            {
-                mAliasListNameComboBox.getSelectionModel().select(null);
-            }
+            mAliasListNameComboBox.getSelectionModel().clearSelection();
         }
 
         return mAliasListNameComboBox;
@@ -951,6 +946,39 @@ public class SiteEditor extends GridPane
         {
             getAliasListNameComboBox().getSelectionModel().clearSelection();
         }
+    }
+
+    /**
+     * Selects the compatible visible factory Alias List once for each newly loaded site. Later user selection is
+     * preserved by ordinary compatibility refreshes until another site is loaded.
+     */
+    private void selectDefaultAliasList()
+    {
+        DecoderType decoderType = mRadioReferenceDecoder != null ?
+            mRadioReferenceDecoder.getDecoderType(mCurrentSystem) : null;
+        String defaultName = compatibleDefaultAliasListName(mConfigurationManager.getAliasModel(), decoderType,
+            mCompatibleAliasLists);
+
+        if(defaultName != null)
+        {
+            getAliasListNameComboBox().getSelectionModel().select(defaultName);
+        }
+        else
+        {
+            getAliasListNameComboBox().getSelectionModel().clearSelection();
+        }
+    }
+
+    /**
+     * Resolves the canonical factory list only when it is present in the current protocol-compatible choices.
+     */
+    static String compatibleDefaultAliasListName(AliasModel aliasModel, DecoderType decoderType,
+                                                 Collection<String> compatibleNames)
+    {
+        AliasListDefinition definition = aliasModel != null ?
+            aliasModel.getDefaultAliasListDefinition(decoderType) : null;
+        return definition != null && compatibleNames != null && compatibleNames.contains(definition.getName()) ?
+            definition.getName() : null;
     }
 
     private String currentSystemName()

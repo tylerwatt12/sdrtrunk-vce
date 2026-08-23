@@ -11,9 +11,11 @@
 
 package io.github.dsheirer.database.upgrade;
 
+import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.database.SqliteSchemaValidator;
+import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.stats.activity.P25ActivityLogSchema;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -283,7 +285,41 @@ final class Alpha9DatabaseMigration
             restoreAliasSequences(statement);
         }
 
+        SdrTrunkDatabaseSchema.seedDefaultAliasLists(connection);
+        assignDefaultAliasListsToUnassignedChannels(connection);
+
         return convertedCatchalls;
+    }
+
+    /**
+     * Alpha 9 played otherwise eligible calls even when a channel had no Alias List. Assigning the compatible
+     * factory list preserves that behavior through the new explicit scan-list delivery model.
+     */
+    private static void assignDefaultAliasListsToUnassignedChannels(Connection connection) throws SQLException
+    {
+        try(PreparedStatement statement = connection.prepareStatement("""
+            UPDATE configuration_channel
+            SET alias_list_name = ?,
+                config_json = json_set(config_json, '$.aliasListName', ?)
+            WHERE (alias_list_name IS NULL OR trim(alias_list_name) = '')
+              AND decoder_type = ?
+            """))
+        {
+            for(DecoderType decoderType: DecoderType.values())
+            {
+                AliasListFamily family = AliasListFamily.from(decoderType);
+
+                if(family != null)
+                {
+                    String name = family.getDefaultAliasListName();
+                    statement.setString(1, name);
+                    statement.setString(2, name);
+                    statement.setString(3, decoderType.name());
+                    statement.addBatch();
+                }
+            }
+            statement.executeBatch();
+        }
     }
 
     private static void restoreAliasSequences(Statement statement) throws SQLException

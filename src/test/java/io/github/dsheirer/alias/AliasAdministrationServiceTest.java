@@ -403,7 +403,9 @@ class AliasAdministrationServiceTest
                 .getAliasListDefinition(aliasListId).getUnmatchedTalkgroupPolicy();
             assertTrue(livePolicy.isRecordEnabled());
             assertEquals(List.of("Primary"), livePolicy.getStreamDestinationNames());
-            assertEquals(livePolicy, service.catalog().aliasLists().getFirst().getUnmatchedTalkgroupPolicy());
+            assertEquals(livePolicy, service.catalog().aliasLists().stream()
+                .filter(definition -> definition.getId() == aliasListId)
+                .findFirst().orElseThrow().getUnmatchedTalkgroupPolicy());
             assertThrows(IllegalArgumentException.class, () -> service.updateUnmatchedTalkgroupPolicy(aliasListId,
                 new UnmatchedTalkgroupPolicy(false, List.of("Missing")), policyChanged.revision()));
 
@@ -467,9 +469,12 @@ class AliasAdministrationServiceTest
             AliasDatabaseStore aliasStore = new AliasDatabaseStore(database);
             List<AliasListDefinition> storedDefinitions = aliasStore.loadAliasListDefinitions();
             List<Alias> storedAliases = aliasStore.loadAliases(storedDefinitions);
-            assertEquals(1, storedDefinitions.size());
-            assertEquals(aliasListId, storedDefinitions.getFirst().getId());
-            assertEquals(livePolicy, storedDefinitions.getFirst().getUnmatchedTalkgroupPolicy());
+            assertEquals(AliasListFamily.values().length + 1, storedDefinitions.size());
+            AliasListDefinition storedDefinition = storedDefinitions.stream()
+                .filter(definition -> definition.getId() == aliasListId)
+                .findFirst().orElseThrow();
+            assertEquals(aliasListId, storedDefinition.getId());
+            assertEquals(livePolicy, storedDefinition.getUnmatchedTalkgroupPolicy());
             assertEquals(2, storedAliases.size());
             assertTrue(storedAliases.stream().anyMatch(alias -> alias.getId() == firstAliasId));
             assertTrue(storedAliases.stream().anyMatch(alias -> alias.getId() == secondAliasId));
@@ -520,8 +525,10 @@ class AliasAdministrationServiceTest
             assertNull(channel.getAliasListName());
             assertTrue(liveList.getAliases(APCO25Talkgroup.createAny(101)).isEmpty());
 
-            assertTrue(aliasStore.loadAliasListDefinitions().isEmpty());
-            assertTrue(aliasStore.loadAliases(List.of()).isEmpty());
+            List<AliasListDefinition> remainingDefinitions = aliasStore.loadAliasListDefinitions();
+            assertEquals(AliasListFamily.values().length, remainingDefinitions.size());
+            assertTrue(remainingDefinitions.stream().noneMatch(definition -> definition.getId() == aliasListId));
+            assertTrue(aliasStore.loadAliases(remainingDefinitions).isEmpty());
             List<Channel> storedChannels = new ConfigurationDatabaseStore(database)
                 .loadConfigurationState().getChannels();
             assertEquals(1, storedChannels.size());

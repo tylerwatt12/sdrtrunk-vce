@@ -23,6 +23,7 @@ import io.github.dsheirer.alias.id.AliasIDType;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.configuration.AliasListConfigurationIdentifier;
+import io.github.dsheirer.module.decode.DecoderType;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -338,6 +339,42 @@ public class AliasModel
 
         return mAliasListDefinitions.stream().filter(definition ->
             name.equalsIgnoreCase(definition.getName())).findFirst().orElse(null);
+    }
+
+    /**
+     * Finds the visible factory Alias List for a decoder's protocol family. A same-named list from another family is
+     * never returned, so a malformed or manually replaced definition cannot be assigned to an incompatible channel.
+     */
+    public AliasListDefinition getDefaultAliasListDefinition(DecoderType decoderType)
+    {
+        AliasListFamily family = AliasListFamily.from(decoderType);
+
+        if(family == null)
+        {
+            return null;
+        }
+
+        AliasListDefinition definition = getAliasListDefinition(family.getDefaultAliasListName());
+        return definition != null && definition.getFamily() == family ? definition : null;
+    }
+
+    /**
+     * Assigns the compatible visible factory Alias List to a newly constructed channel when one is available.
+     * Existing channel assignments are not changed by this helper.
+     */
+    public boolean assignDefaultAliasList(Channel channel)
+    {
+        DecoderType decoderType = channel != null && channel.getDecodeConfiguration() != null ?
+            channel.getDecodeConfiguration().getDecoderType() : null;
+        AliasListDefinition definition = getDefaultAliasListDefinition(decoderType);
+
+        if(definition != null)
+        {
+            channel.setAliasListName(definition.getName());
+            return true;
+        }
+
+        return false;
     }
 
     public AliasListDefinition getAliasListDefinition(Alias alias)

@@ -5390,6 +5390,8 @@ class StatsWebDatabaseTest
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
             Statement statement = connection.createStatement())
         {
+            statement.executeUpdate("DELETE FROM alias_list_unmatched_talkgroup_scan_list_membership");
+            statement.executeUpdate("DELETE FROM alias_list");
             statement.executeUpdate("INSERT INTO p25_system VALUES (1, " + WACN + ", " + SYSTEM + ", " +
                 (now - 10_000) + ", " + now + ")");
             statement.executeUpdate("""

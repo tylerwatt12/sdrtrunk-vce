@@ -36,6 +36,7 @@ class StatsAliasResolverTest
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
             Statement statement = connection.createStatement())
         {
+            clearFactoryAliasLists(statement);
             statement.executeUpdate("""
                 INSERT INTO alias_list (id, name, family)
                 VALUES (1, 'Selected', 'P25'), (2, 'Other', 'P25')
@@ -118,6 +119,7 @@ class StatsAliasResolverTest
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
             Statement statement = connection.createStatement())
         {
+            clearFactoryAliasLists(statement);
             statement.executeUpdate("""
                 INSERT INTO alias_list (id, name, family)
                 VALUES (1, 'NXDN County', 'NXDN'),
@@ -212,6 +214,7 @@ class StatsAliasResolverTest
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
             Statement statement = connection.createStatement())
         {
+            clearFactoryAliasLists(statement);
             statement.executeUpdate("""
                 INSERT INTO alias_list (id, name, family)
                 VALUES (1, 'P25 Trunked', 'P25')
@@ -295,6 +298,7 @@ class StatsAliasResolverTest
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
             Statement statement = connection.createStatement())
         {
+            clearFactoryAliasLists(statement);
             statement.executeUpdate("""
                 INSERT INTO alias_list (id, name, family)
                 VALUES (1, 'Selected', 'P25'), (2, 'Irrelevant', 'P25')
@@ -365,6 +369,7 @@ class StatsAliasResolverTest
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
             Statement statement = connection.createStatement())
         {
+            clearFactoryAliasLists(statement);
             statement.executeUpdate("""
                 INSERT INTO alias_list (id, name, family) VALUES (1, 'Mixed Case', 'DMR')
                 """);
@@ -407,6 +412,16 @@ class StatsAliasResolverTest
     private static List<Map<String,Object>> rows(Map<String,Object>... rows)
     {
         return new ArrayList<>(List.of(rows));
+    }
+
+    /**
+     * These resolver tests deliberately install compact, fixed-ID Alias fixtures. Remove fresh-install factory rows
+     * first so those IDs remain meaningful without changing production seeding.
+     */
+    private static void clearFactoryAliasLists(Statement statement) throws Exception
+    {
+        statement.executeUpdate("DELETE FROM alias_list_unmatched_talkgroup_scan_list_membership");
+        statement.executeUpdate("DELETE FROM alias_list");
     }
 
     private static Map<String,Object> row(String aliasList, int identityId)

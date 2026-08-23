@@ -24,6 +24,7 @@ import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.configuration.ConfigurationState;
 import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.database.scanlist.ScanListDatabaseStore;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.am.DecodeConfigAM;
 import io.github.dsheirer.module.decode.analog.DecodeConfigAnalog.Bandwidth;
@@ -33,6 +34,7 @@ import io.github.dsheirer.module.decode.p25.phase1.Modulation;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
+import io.github.dsheirer.scanlist.ScanListConfiguration;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -40,6 +42,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -435,6 +438,12 @@ class ConfigurationDatabaseStoreTest
 
     private static void replace(Path database, ConfigurationState state) throws Exception
     {
+        if(state.getScanListConfiguration() == null)
+        {
+            ScanListConfiguration current = new ScanListDatabaseStore(database).loadConfiguration();
+            state.setScanListConfiguration(new ScanListConfiguration(current.scanLists(), Map.of(), Map.of()));
+        }
+
         new ConfigurationSnapshotDatabaseStore(database).replace(state);
     }
 

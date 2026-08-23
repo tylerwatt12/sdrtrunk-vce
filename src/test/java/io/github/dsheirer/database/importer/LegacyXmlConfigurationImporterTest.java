@@ -36,6 +36,7 @@ import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.database.alias.AliasDatabaseStore;
 import io.github.dsheirer.database.configuration.ConfigurationDatabaseStore;
+import io.github.dsheirer.database.scanlist.ScanListDatabaseStore;
 import io.github.dsheirer.identifier.tone.AmbeTone;
 import io.github.dsheirer.identifier.tone.Tone;
 import io.github.dsheirer.module.decode.DecoderType;
@@ -60,6 +61,7 @@ import java.nio.file.attribute.PosixFileAttributeView;
 import java.nio.file.attribute.PosixFileAttributes;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -80,9 +82,21 @@ class LegacyXmlConfigurationImporterTest
         AliasDatabaseStore aliasStore = new AliasDatabaseStore(database);
         var definitions = aliasStore.loadAliasListDefinitions();
         List<Alias> aliases = aliasStore.loadAliases(definitions);
-        assertEquals(1, definitions.size());
-        assertEquals("County", definitions.get(0).getName());
-        assertEquals(AliasListFamily.P25, definitions.get(0).getFamily());
+        assertEquals(5, definitions.size());
+        var county = definitions.stream().filter(definition -> definition.getName().equals("County"))
+            .findFirst().orElseThrow();
+        assertEquals(AliasListFamily.P25, county.getFamily());
+        var scanLists = new ScanListDatabaseStore(database).loadConfiguration();
+        long defaultScanListId = scanLists.defaultScanList().getId();
+        for(AliasListFamily family: AliasListFamily.values())
+        {
+            var factory = definitions.stream()
+                .filter(definition -> definition.getName().equals(family.getDefaultAliasListName()))
+                .findFirst().orElseThrow();
+            assertEquals(family, factory.getFamily());
+            assertEquals(Set.of(defaultScanListId),
+                scanLists.scanListIdsForUnmatchedTalkgroups(factory.getId()));
+        }
         assertEquals(2, aliases.size());
         assertTrue(aliases.stream().allMatch(alias -> alias.getId() > 0 && alias.getAliasListId() > 0));
         assertTrue(aliases.stream().allMatch(alias -> "Dispatch".equals(alias.getName())));
@@ -121,6 +135,43 @@ class LegacyXmlConfigurationImporterTest
         assertEquals(List.of(856137500L, 856162500L), trunkedSource.getFrequencies());
         DecodeConfigP25 p25 = (DecodeConfigP25)state.getChannels().get(1).getDecodeConfiguration();
         assertTrue(p25.getLearnAnnouncedControlChannels());
+    }
+
+    @Test
+    void assignsCompatibleFactoryListsToLegacyChannelsWithoutAnAliasList() throws Exception
+    {
+        Path xml = mTemporaryFolder.resolve("unassigned-channel-lists.xml");
+        Files.writeString(xml, """
+            <playlist version="4">
+              <channel system="P25 System" site="Site" name="P25 Control">
+                <source_configuration type="sourceConfigTuner" source_type="TUNER" frequency="851000000"/>
+                <aux_decode_configuration/>
+                <decode_configuration type="decodeConfigP25Phase1" modulation="CQPSK"
+                    ignore_data_calls="false"/>
+                <event_log_configuration/>
+                <record_configuration/>
+              </channel>
+              <channel system="DMR System" site="Site" name="DMR Control">
+                <alias_list_name>   </alias_list_name>
+                <source_configuration type="sourceConfigTuner" source_type="TUNER" frequency="452000000"/>
+                <aux_decode_configuration/>
+                <decode_configuration type="decodeConfigDMR" ignore_data_calls="false"/>
+                <event_log_configuration/>
+                <record_configuration/>
+              </channel>
+            </playlist>
+            """);
+        Path database = mTemporaryFolder.resolve("unassigned-channel-lists.sqlite");
+
+        LegacyXmlConfigurationImporter.importPlaylist(xml, database);
+
+        ConfigurationState state = new ConfigurationDatabaseStore(database).loadConfigurationState();
+        Channel p25 = state.getChannels().stream().filter(channel -> channel.getName().equals("P25 Control"))
+            .findFirst().orElseThrow();
+        Channel dmr = state.getChannels().stream().filter(channel -> channel.getName().equals("DMR Control"))
+            .findFirst().orElseThrow();
+        assertEquals(AliasListFamily.P25.getDefaultAliasListName(), p25.getAliasListName());
+        assertEquals(AliasListFamily.DMR.getDefaultAliasListName(), dmr.getAliasListName());
     }
 
     @Test
@@ -812,7 +863,7 @@ class LegacyXmlConfigurationImporterTest
         LegacyXmlConfigurationImporter.importPlaylist(xml, database);
         AliasDatabaseStore aliasStore = new AliasDatabaseStore(database);
         var definitions = aliasStore.loadAliasListDefinitions();
-        assertEquals(3, definitions.size());
+        assertEquals(7, definitions.size());
         var aliases = aliasStore.loadAliases(definitions);
         assertEquals(2, aliases.size());
         assertEquals(List.of("Orphan", "Wrong Family"),

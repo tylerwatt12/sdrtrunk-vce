@@ -3153,12 +3153,14 @@ class P25ActivityLogWriterTest
         try(Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
-                INSERT INTO alias_list(id, name, family)
-                VALUES (1, 'Administrator', 'P25')
+                INSERT INTO alias_list(name, family)
+                VALUES ('Administrator', 'P25')
                 """);
             statement.executeUpdate("""
                 INSERT INTO alias(alias_list_id, name, matcher_type, protocol, value)
-                VALUES (1, 'Administrator Alias', 'TALKGROUP', 'APCO25', 1)
+                SELECT id, 'Administrator Alias', 'TALKGROUP', 'APCO25', 1
+                FROM alias_list
+                WHERE name = 'Administrator'
                 """);
             statement.executeUpdate("""
                 INSERT INTO configuration_channel (

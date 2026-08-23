@@ -24,6 +24,7 @@ import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.database.alias.AliasConfigurationDatabaseStore;
+import io.github.dsheirer.database.alias.AliasDatabaseStore;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.scanlist.ScanList;
 import io.github.dsheirer.scanlist.ScanListConfiguration;
@@ -54,7 +55,16 @@ class ScanListDatabaseStoreTest
         assertEquals("Default", defaultList.getName());
         assertTrue(defaultList.isPublished());
         assertTrue(configuration.aliasMemberships().isEmpty());
-        assertTrue(configuration.unmatchedAliasListMemberships().isEmpty());
+        List<AliasListDefinition> definitions = new AliasDatabaseStore(database).loadAliasListDefinitions();
+        assertEquals(List.of("Default P25:P25", "Default DMR:DMR", "Default NXDN:NXDN", "Default NBFM:NBFM"),
+            definitions.stream().map(definition -> definition.getName() + ":" + definition.getFamily().name())
+                .toList());
+        assertEquals(4, configuration.unmatchedAliasListMemberships().size());
+        for(AliasListDefinition definition: definitions)
+        {
+            assertEquals(Set.of(defaultList.getId()),
+                configuration.scanListIdsForUnmatchedTalkgroups(definition.getId()));
+        }
     }
 
     @Test
@@ -66,7 +76,9 @@ class ScanListDatabaseStoreTest
         Alias alias = new Alias("Dispatch");
         alias.setAliasListDefinition(definition);
         alias.setMatchIdentifier(new Talkgroup(Protocol.APCO25, 1001));
-        AliasConfigurationSnapshot initial = aliasState(definition, alias, snapshotStore.load().scanLists());
+        ScanListConfiguration factoryScanLists = snapshotStore.load().scanLists();
+        AliasConfigurationSnapshot initial = aliasState(definition, alias, new ScanListConfiguration(
+            factoryScanLists.scanLists(), Map.of(), Map.of()));
         AliasConfigurationSnapshot committedInitial = snapshotStore.commit(initial, List.of());
         definition = committedInitial.definitions().getFirst();
         alias = committedInitial.aliases().getFirst();

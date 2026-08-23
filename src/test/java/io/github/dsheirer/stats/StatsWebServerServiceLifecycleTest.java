@@ -338,8 +338,13 @@ class StatsWebServerServiceLifecycleTest
             .GET()
             .build(), HttpResponse.BodyHandlers.ofString());
         assertEquals(200, catalog.statusCode(), catalog.body());
-        assertEquals(aliasListId,
-            OBJECT_MAPPER.readTree(catalog.body()).at("/data/alias_lists/0/alias_list_id").longValue());
+        JsonNode aliasLists = OBJECT_MAPPER.readTree(catalog.body()).at("/data/alias_lists");
+        boolean found = false;
+        for(JsonNode aliasList: aliasLists)
+        {
+            found |= aliasList.path("alias_list_id").longValue() == aliasListId;
+        }
+        assertTrue(found, "Alias-list catalog did not contain ID [" + aliasListId + "]: " + catalog.body());
 
         HttpResponse<String> observed = client.send(HttpRequest.newBuilder(origin.resolve(
                 "/api/v1/alias-lists/" + aliasListId + "/observed-talkgroups"))

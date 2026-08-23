@@ -29,6 +29,7 @@ import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.protocol.Protocol;
+import io.github.dsheirer.scanlist.ScanListConfiguration;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -37,6 +38,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -338,8 +340,9 @@ class AliasDatabaseStoreTest
         AliasConfigurationDatabaseStore configurationStore =
             new AliasConfigurationDatabaseStore(store.getDatabasePath());
         AliasConfigurationSnapshot current = configurationStore.load();
-        return configurationStore.commit(new AliasConfigurationSnapshot(definitions, aliases, current.scanLists()),
-            List.of());
+        ScanListConfiguration scanLists = new ScanListConfiguration(current.scanLists().scanLists(), Map.of(),
+            Map.of());
+        return configurationStore.commit(new AliasConfigurationSnapshot(definitions, aliases, scanLists), List.of());
     }
 
     private static List<Alias> loadAliases(AliasDatabaseStore store) throws Exception

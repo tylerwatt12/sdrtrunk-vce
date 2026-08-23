@@ -496,19 +496,26 @@ class ApplicationMigrationServiceTest
 
     private static void insertAlias(Path database, String name) throws Exception
     {
-        try(Connection connection = open(database);
-            Statement listStatement = connection.createStatement();
-            var statement = connection.prepareStatement("""
-                INSERT INTO alias(alias_list_id, name, matcher_type, protocol, value)
-                VALUES (1, ?, 'TALKGROUP', 'APCO25', 1)
-                """))
+        try(Connection connection = open(database); Statement listStatement = connection.createStatement())
         {
             listStatement.executeUpdate("""
-                INSERT INTO alias_list(id, name, family)
-                VALUES (1, 'Test', 'P25')
+                INSERT INTO alias_list(name, family)
+                SELECT 'Test', 'P25'
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM alias_list WHERE name = 'Test' COLLATE NOCASE
+                )
                 """);
-            statement.setString(1, name);
-            statement.executeUpdate();
+
+            try(var statement = connection.prepareStatement("""
+                INSERT INTO alias(alias_list_id, name, matcher_type, protocol, value)
+                SELECT id, ?, 'TALKGROUP', 'APCO25', 1
+                FROM alias_list
+                WHERE name = 'Test' COLLATE NOCASE
+                """))
+            {
+                statement.setString(1, name);
+                statement.executeUpdate();
+            }
         }
     }
 

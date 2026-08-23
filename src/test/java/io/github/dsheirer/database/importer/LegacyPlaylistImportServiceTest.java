@@ -31,6 +31,7 @@ import io.github.dsheirer.database.importer.LegacyPlaylistImportService.ImportRe
 import io.github.dsheirer.database.importer.LegacyPlaylistImportService.PreparedImport;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
 import io.github.dsheirer.protocol.Protocol;
+import io.github.dsheirer.scanlist.ScanListConfiguration;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -188,6 +189,7 @@ class LegacyPlaylistImportServiceTest
         alias.setMatchIdentifier(new Talkgroup(Protocol.DMR, 100));
         state.setAliasListDefinitions(List.of(definition));
         state.setAliases(List.of(alias));
+        state.setScanListConfiguration(ScanListConfiguration.defaultConfiguration());
 
         Channel channel = new Channel("Control");
         channel.setSystem("County");
