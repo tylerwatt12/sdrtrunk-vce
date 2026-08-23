@@ -79,9 +79,9 @@ assert.strictEqual(context.adminDatabaseDisplay({ database_exists: true, databas
 assert.strictEqual(context.adminDatabaseDisplay({ database_exists: true, database_bytes: 1048576 }), '1.0 MB');
 
 const status = context.metrics([
-  ['Summary logging', false, 'Off'],
-  ['Database file size', undefined, '—'],
-  ['Detailed history logging', false, 'Configured · Inactive']
+  ['Summary logging', true, 'Running'],
+  ['Detailed history', false, 'Configured · Inactive'],
+  ['Activity database', 1048576, '1.0 MB']
 ], true);
 assert.deepStrictEqual(status.children.map((metric) => metric.children[1].textContent),
-  ['Off', '—', 'Configured · Inactive']);
+  ['Running', 'Configured · Inactive', '1.0 MB']);

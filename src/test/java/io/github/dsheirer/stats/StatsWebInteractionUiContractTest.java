@@ -147,6 +147,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(system.contains("logging.historyRetained ? 'Off · Data retained'"));
         assertFalse(system.contains("admin-listener-status-values"));
         assertFalse(system.contains("Logging service state"));
+        assertFalse(system.contains("Database file"));
+        assertFalse(system.contains("logging.historyConfigured ? `Configured · ${inactiveState}`"));
         assertFalse(system.contains("Number(database.database_bytes || 0)"));
         assertFalse(system.contains("['Summary collection', summaryState]"));
         assertTrue(refresh.contains("current.replaceWith(adminSystemStatusSection())"));
