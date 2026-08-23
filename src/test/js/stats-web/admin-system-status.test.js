@@ -54,7 +54,8 @@ vm.runInContext([
   functionSource('function valueNode(value)'),
   functionSource('function metrics(values, embedded = false)'),
   functionSource('function adminStatusNumber(value)'),
-  functionSource('function adminStatusBytes(value)')
+  functionSource('function adminStatusBytes(value)'),
+  functionSource('function adminDatabaseDisplay(database)')
 ].join('\n'), context);
 
 assert.strictEqual(context.number('On'), '—');
@@ -70,6 +71,12 @@ assert.strictEqual(context.adminStatusNumber(0), '0');
 assert.strictEqual(context.adminStatusBytes(0), '0 B');
 assert.strictEqual(context.adminStatusBytes(1024), '1 KB');
 assert.strictEqual(context.adminStatusBytes(1048576), '1.0 MB');
+assert.strictEqual(context.adminDatabaseDisplay(undefined), 'Unknown');
+assert.strictEqual(context.adminDatabaseDisplay({}), 'Unknown');
+assert.strictEqual(context.adminDatabaseDisplay({ database_exists: false, database_bytes: 1024 }), 'Missing');
+assert.strictEqual(context.adminDatabaseDisplay({ database_exists: true }), 'Present');
+assert.strictEqual(context.adminDatabaseDisplay({ database_exists: true, database_bytes: '1024' }), 'Present');
+assert.strictEqual(context.adminDatabaseDisplay({ database_exists: true, database_bytes: 1048576 }), '1.0 MB');
 
 const status = context.metrics([
   ['Summary logging', false, 'Off'],

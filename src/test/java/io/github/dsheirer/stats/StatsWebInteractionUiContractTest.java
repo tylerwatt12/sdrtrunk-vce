@@ -124,21 +124,29 @@ class StatsWebInteractionUiContractTest
         String javascript = source();
         String statusNumber = function(javascript, "function adminStatusNumber(value)");
         String statusBytes = function(javascript, "function adminStatusBytes(value)");
+        String databaseDisplay = function(javascript, "function adminDatabaseDisplay(database)");
         String system = function(javascript, "function adminSystemStatusSection()");
         String refresh = function(javascript, "function refreshAdminSystemStatus()");
         String loadStatus = function(javascript, "async function loadStatus(refreshCurrentView = false)");
 
         assertTrue(statusNumber.contains("typeof value === 'number' ? value : Number.NaN"));
         assertTrue(statusBytes.contains("typeof value === 'number' ? value : Number.NaN"));
+        assertTrue(databaseDisplay.contains("typeof database?.database_exists !== 'boolean'"));
+        assertTrue(databaseDisplay.contains("if (!database.database_exists) return 'Missing'"));
+        assertTrue(databaseDisplay.contains("return size === '—' ? 'Present' : size"));
         assertTrue(system.contains("const database = serviceStatus?.database"));
-        assertTrue(system.contains("typeof database?.database_exists === 'boolean'"));
-        assertTrue(system.contains("database?.database_exists === true"));
-        assertTrue(system.contains("adminStatusBytes(database.database_bytes)"));
+        assertTrue(system.contains("adminDatabaseDisplay(database)"));
         assertTrue(system.contains("['Summary logging', logging.summaryActive, summaryState]"));
-        assertTrue(system.contains("['Database file size', database?.database_bytes, databaseBytes]"));
-        assertTrue(system.contains("['Detailed history logging', logging.historyActive, historyState]"));
+        assertTrue(system.contains("['Detailed history', logging.historyActive, historyState]"));
+        assertTrue(system.contains("['Activity database', database?.database_bytes, databaseDisplay]"));
+        assertTrue(system.contains("logging.summaryActive ? 'Running'"));
+        assertTrue(system.contains("logging.historyActive ? 'Running'"));
+        assertTrue(system.contains("loggingState !== 'Unknown' && loggingState !== 'Running'"));
+        assertTrue(system.contains("loggingState === 'Failed' ? 'Off · Failed'"));
         assertTrue(system.contains("logging.historyConfigured ? 'Configured · Inactive'"));
-        assertFalse(system.contains("logging.historyConfigured ? `Configured · ${configuredState}`"));
+        assertTrue(system.contains("logging.historyRetained ? 'Off · Data retained'"));
+        assertFalse(system.contains("admin-listener-status-values"));
+        assertFalse(system.contains("Logging service state"));
         assertFalse(system.contains("Number(database.database_bytes || 0)"));
         assertFalse(system.contains("['Summary collection', summaryState]"));
         assertTrue(refresh.contains("current.replaceWith(adminSystemStatusSection())"));
@@ -239,7 +247,7 @@ class StatsWebInteractionUiContractTest
         String talkgroup = function(source, "async function renderTalkgroup()");
         String index = readText(INDEX_HTML);
 
-        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"86\">"));
+        assertTrue(index.contains("<meta name=\"sdrtrunk-web-revision\" content=\"87\">"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
         assertTrue(reload.contains("const response = await fetch('/', {"));
         assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));

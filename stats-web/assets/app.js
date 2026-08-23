@@ -14061,6 +14061,13 @@ function adminStatusBytes(value) {
   return `${number(numeric)} B`;
 }
 
+function adminDatabaseDisplay(database) {
+  if (typeof database?.database_exists !== 'boolean') return 'Unknown';
+  if (!database.database_exists) return 'Missing';
+  const size = adminStatusBytes(database.database_bytes);
+  return size === '—' ? 'Present' : size;
+}
+
 function adminStatusRatio(status, currentKey, maximumKey, formatter = adminStatusNumber) {
   return `${formatter(status?.[currentKey])} / ${formatter(status?.[maximumKey])}`;
 }
@@ -14447,26 +14454,20 @@ function adminSystemStatusSection() {
   const database = serviceStatus?.database;
   const logging = statsLoggingState();
   const loggingState = logging.available && logging.state ? semanticLabel(logging.state) : 'Unknown';
-  const configuredState = loggingState === 'Unknown' ? 'Not running' : loggingState;
-  const summaryState = !logging.available ? 'Unknown' : logging.summaryActive ? 'On' :
-    (logging.summaryConfigured ? `Configured · ${configuredState}` : 'Off');
-  const historyState = !logging.available ? 'Unknown' : logging.historyActive ? 'On' :
+  const inactiveState = loggingState !== 'Unknown' && loggingState !== 'Running' ? loggingState : 'Inactive';
+  const summaryState = !logging.available ? 'Unknown' : logging.summaryActive ? 'Running' :
+    (logging.summaryConfigured ? `Configured · ${inactiveState}` :
+      (loggingState === 'Failed' ? 'Off · Failed' : 'Off'));
+  const historyState = !logging.available ? 'Unknown' : logging.historyActive ? 'Running' :
     (logging.historyConfigured ? 'Configured · Inactive' :
-      (logging.historyRetained ? 'Retained only' : 'Off'));
-  const databaseState = typeof database?.database_exists === 'boolean' ?
-    (database.database_exists ? 'Present' : 'Missing') : 'Unknown';
-  const databaseBytes = database?.database_exists === true ?
-    adminStatusBytes(database.database_bytes) : '—';
+      (logging.historyRetained ? 'Off · Data retained' : 'Off'));
+  const databaseDisplay = adminDatabaseDisplay(database);
   const body = node('div', 'admin-section-body');
   body.append(metrics([
     ['Summary logging', logging.summaryActive, summaryState],
-    ['Database file size', database?.database_bytes, databaseBytes],
-    ['Detailed history logging', logging.historyActive, historyState]
+    ['Detailed history', logging.historyActive, historyState],
+    ['Activity database', database?.database_bytes, databaseDisplay]
   ], true));
-  const state = node('dl', 'admin-listener-status-values');
-  state.append(node('dt', '', 'Logging service state'), node('dd', '', loggingState),
-    node('dt', '', 'Database file'), node('dd', '', databaseState));
-  body.append(state);
   const result = section('System status', body);
   result.id = 'admin-system-status';
   return result;
