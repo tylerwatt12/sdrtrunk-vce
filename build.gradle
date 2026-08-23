@@ -183,7 +183,9 @@ processResources {
 }
 
 test {
-    useJUnitPlatform()
+    useJUnitPlatform {
+        excludeTags 'display-backed-javafx'
+    }
 }
 
 dependencies {
@@ -395,6 +397,22 @@ application {
     mainClass = "io.github.dsheirer.gui.SDRTrunk"
     applicationDefaultJvmArgs = applicationJvmArgs
 }
+
+// Display-backed JavaFX tests initialize a process-wide toolkit.  Run them in a dedicated
+// worker so that non-UI tests retain their normal synchronous, toolkit-free behavior.
+tasks.register('javafxTest', Test) {
+    description = 'Runs display-backed JavaFX control lifecycle tests.'
+    group = 'verification'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    jvmArgs applicationJvmArgs
+    useJUnitPlatform {
+        includeTags 'display-backed-javafx'
+    }
+    shouldRunAfter test
+}
+
+check.dependsOn tasks.named('javafxTest')
 
 distributions {
     main {

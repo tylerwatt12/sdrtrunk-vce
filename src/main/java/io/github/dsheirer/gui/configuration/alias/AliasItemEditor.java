@@ -57,6 +57,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Consumer;
 import javafx.application.Platform;
 import javafx.beans.binding.Bindings;
 import javafx.beans.property.BooleanProperty;
@@ -141,6 +142,7 @@ public class AliasItemEditor extends Editor<Alias>
     private VBox mIdentifierEditorBox;
     private TextField mStreamAsTalkgroupField;
     private TextFormatter<Integer> mStreamAsIntegerTextFormatter = new IntegerFormatter(1,0xFFFF);
+    private final Consumer<Alias> mAliasSavedListener;
 
     private Map<AliasIDType,IdentifierEditor<?>> mIdentifierEditorMap = new EnumMap<>(AliasIDType.class);
     private EmptyIdentifierEditor mEmptyIdentifierEditor = new EmptyIdentifierEditor();
@@ -148,8 +150,15 @@ public class AliasItemEditor extends Editor<Alias>
 
     public AliasItemEditor(ConfigurationManager configurationManager, UserPreferences userPreferences)
     {
+        this(configurationManager, userPreferences, alias -> {});
+    }
+
+    public AliasItemEditor(ConfigurationManager configurationManager, UserPreferences userPreferences,
+                           Consumer<Alias> aliasSavedListener)
+    {
         mConfigurationManager = configurationManager;
         mUserPreferences = userPreferences;
+        mAliasSavedListener = aliasSavedListener != null ? aliasSavedListener : alias -> {};
 
         //Listen for changes to the stream configurations and refresh the stream lists
         mConfigurationManager.getBroadcastModel().getConfiguredBroadcasts()
@@ -278,7 +287,8 @@ public class AliasItemEditor extends Editor<Alias>
         }
 
         refreshMatcherChoices(alias);
-        modifiedProperty().set(false);
+        //New and cloned aliases are detached drafts. They become live and durable only when Save succeeds.
+        modifiedProperty().set(alias != null && alias.getId() == Alias.UNASSIGNED_ID);
     }
 
     /**
@@ -361,94 +371,93 @@ public class AliasItemEditor extends Editor<Alias>
     @Override
     public void save()
     {
+        save(true);
+    }
+
+    /**
+     * Saves a detached replacement so the live SortedList never observes a partially mutated alias.
+     */
+    boolean save(boolean reselectSavedAlias)
+    {
         if(mMatcherMissing.get())
         {
-            return;
+            return false;
         }
 
-        if(modifiedProperty().get())
+        if(!modifiedProperty().get())
         {
-            Alias alias = getItem();
+            return true;
+        }
 
-            if(alias != null)
+        Alias alias = getItem();
+
+        if(alias == null)
+        {
+            return false;
+        }
+
+        Alias replacement = AliasFactory.copyOf(alias);
+        replacement.setId(alias.getId());
+        replacement.setRecordable(getRecordAudioToggleSwitch().isSelected());
+        replacement.setColor(ColorUtil.toInteger(getColorPicker().getValue()));
+
+        Icon icon = getIconNodeComboBox().getSelectionModel().getSelectedItem();
+        replacement.setIconName(icon != null ? icon.getName() : null);
+
+        boolean canMonitor = getMonitorAudioToggleSwitch().isSelected();
+        Integer priority = getMonitorPriorityComboBox().getSelectionModel().getSelectedItem();
+        if(canMonitor)
+        {
+            if(priority == null)
             {
-                alias.setRecordable(getRecordAudioToggleSwitch().isSelected());
-                alias.setColor(ColorUtil.toInteger(getColorPicker().getValue()));
-
-                Icon icon = getIconNodeComboBox().getSelectionModel().getSelectedItem();
-                alias.setIconName(icon != null ? icon.getName() : null);
-
-                boolean canMonitor = getMonitorAudioToggleSwitch().isSelected();
-                Integer priority = getMonitorPriorityComboBox().getSelectionModel().getSelectedItem();
-                if(canMonitor)
-                {
-                    if(priority == null)
-                    {
-                        priority = io.github.dsheirer.alias.id.priority.Priority.DEFAULT_PRIORITY;
-                    }
-
-                    alias.setCallPriority(priority);
-                }
-                else
-                {
-                    alias.setCallPriority(io.github.dsheirer.alias.id.priority.Priority.DO_NOT_MONITOR);
-                }
-
-                //Store broadcast streaming audio channels
-                alias.setBroadcastChannels(getSelectedStreamsView().getItems());
-
-                //Set or clear the 'Stream As Talkgroup' value.
-                Integer streamAsTalkgroup = mStreamAsIntegerTextFormatter.getValue();
-                alias.setStreamTalkgroupAlias(streamAsTalkgroup != null ? new StreamAsTalkgroup(streamAsTalkgroup) : null);
-
-                AliasID editedMatcher = getIdentifiersList().getItems().isEmpty() ? null :
-                    getIdentifiersList().getItems().getFirst();
-                AliasID matcherCopy = AliasFactory.copyOf(editedMatcher);
-
-                if(editedMatcher != null)
-                {
-                    //Reset overlap so the owning alias list reevaluates the replacement matcher.
-                    AliasID replacement = matcherCopy != null ? matcherCopy : editedMatcher;
-                    replacement.setOverlap(false);
-                    alias.setMatchIdentifier(replacement);
-                }
-
-                //Hack: because we're using a sorted list for the alias editor, sometimes setting
-                //name and or group can cause list errors.  So, we wrap each of these in a try/catch
-                //block to mitigate the error and effect the changes.
-                try
-                {
-                    alias.setName(getNameField().getText());
-                }
-                catch(Exception e)
-                {
-                    mLog.error("Error while updating alias name.", e);
-                }
-
-                try
-                {
-                    alias.setDescription(getDescriptionField().getText());
-                }
-                catch(Exception e)
-                {
-                    mLog.error("Error while updating alias description.", e);
-                }
-
-                try
-                {
-                    alias.setGroup(getGroupField().getText());
-                }
-                catch(Exception e)
-                {
-                    mLog.error("Error while updating alias group value", e);
-                }
+                priority = io.github.dsheirer.alias.id.priority.Priority.DEFAULT_PRIORITY;
             }
 
-            //Reset the alias to refresh the editor.
-            setItem(alias);
-
-            modifiedProperty().set(false);
+            replacement.setCallPriority(priority);
         }
+        else
+        {
+            replacement.setCallPriority(io.github.dsheirer.alias.id.priority.Priority.DO_NOT_MONITOR);
+        }
+
+        //Store broadcast streaming audio channels
+        replacement.setBroadcastChannels(getSelectedStreamsView().getItems());
+
+        //Set or clear the 'Stream As Talkgroup' value.
+        Integer streamAsTalkgroup = mStreamAsIntegerTextFormatter.getValue();
+        replacement.setStreamTalkgroupAlias(streamAsTalkgroup != null ?
+            new StreamAsTalkgroup(streamAsTalkgroup) : null);
+
+        AliasID editedMatcher = getIdentifiersList().getItems().isEmpty() ? null :
+            getIdentifiersList().getItems().getFirst();
+        AliasID matcherCopy = AliasFactory.copyOf(editedMatcher);
+
+        if(editedMatcher != null)
+        {
+            //Reset overlap so the owning alias list reevaluates the replacement matcher.
+            AliasID matcherReplacement = matcherCopy != null ? matcherCopy : editedMatcher;
+            matcherReplacement.setOverlap(false);
+            replacement.setMatchIdentifier(matcherReplacement);
+        }
+
+        replacement.setName(getNameField().getText());
+        replacement.setDescription(getDescriptionField().getText());
+        replacement.setGroup(getGroupField().getText());
+
+        if(!mConfigurationManager.commitAliasChanges(List.of(replacement), List.of()))
+        {
+            mLog.error("Unable to save alias [{}] to SQLite", replacement.getName());
+            return false;
+        }
+
+        setItem(replacement);
+
+        if(reselectSavedAlias)
+        {
+            mAliasSavedListener.accept(replacement);
+        }
+
+        return true;
     }
 
     @Override

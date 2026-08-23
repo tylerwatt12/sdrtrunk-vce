@@ -19,6 +19,7 @@
 package io.github.dsheirer.configuration;
 
 import io.github.dsheirer.alias.Alias;
+import io.github.dsheirer.alias.AliasFactory;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasMatchRegistry;
 import io.github.dsheirer.alias.AliasModel;
@@ -43,8 +44,10 @@ import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.util.ThreadPool;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -220,6 +223,209 @@ public class ConfigurationManager implements Listener<ChannelEvent>
     public AliasModel getAliasModel()
     {
         return mAliasModel;
+    }
+
+    /**
+     * Commits detached alias replacements and removals to SQLite before publishing them to the live JavaFX/runtime
+     * model. This keeps an unsaved clone or edit out of decoder lookups and prevents a sorted table from observing a
+     * partially mutated row.
+     *
+     * <p>Persisted replacements are matched by durable schema-v4 alias ID. A replacement with ID zero is a new row.
+     * Removals use the same durable identity, with instance identity retained only for an unsaved legacy row.</p>
+     *
+     * @return true when the complete configuration snapshot committed and the live model was updated
+     */
+    public synchronized boolean commitAliasChanges(List<Alias> replacements, List<Alias> removals)
+    {
+        if(mExternalConfigurationOperation)
+        {
+            return false;
+        }
+
+        List<Alias> safeReplacements = replacements != null ? List.copyOf(replacements) : List.of();
+        List<Alias> safeRemovals = removals != null ? List.copyOf(removals) : List.of();
+        validateDistinctAliasChanges(safeReplacements);
+        List<Alias> desired = new ArrayList<>(mAliasModel.getAliases());
+
+        for(Alias removal: safeRemovals)
+        {
+            desired.removeIf(existing -> sameAliasIdentity(existing, removal));
+        }
+
+        for(Alias replacement: safeReplacements)
+        {
+            if(replacement == null)
+            {
+                throw new IllegalArgumentException("Alias replacement cannot be null");
+            }
+
+            int existingIndex = indexOfAliasIdentity(desired, replacement);
+
+            if(replacement.getId() > Alias.UNASSIGNED_ID && existingIndex < 0)
+            {
+                throw new IllegalArgumentException("Alias replacement ID [" + replacement.getId() +
+                    "] is not present in the live configuration");
+            }
+
+            if(existingIndex >= 0)
+            {
+                desired.set(existingIndex, replacement);
+            }
+            else
+            {
+                desired.add(replacement);
+            }
+        }
+
+        List<AliasListDefinition> persistedDefinitions = copyAliasListDefinitions();
+        List<Alias> persistedAliases = copyAliasesForPersistence(desired, persistedDefinitions);
+
+        if(!saveConfigurationSnapshotToDatabase(persistedAliases, persistedDefinitions))
+        {
+            return false;
+        }
+
+        publishAssignedAliasIdentities(desired, persistedAliases, persistedDefinitions);
+
+        mConfigurationLoading = true;
+
+        try
+        {
+            mAliasModel.removeAliases(safeRemovals);
+            mAliasModel.addAliases(safeReplacements);
+        }
+        finally
+        {
+            mConfigurationLoading = false;
+        }
+
+        return true;
+    }
+
+    private List<AliasListDefinition> copyAliasListDefinitions()
+    {
+        List<AliasListDefinition> copies = new ArrayList<>(mAliasModel.aliasListDefinitions().size());
+
+        for(AliasListDefinition definition: mAliasModel.aliasListDefinitions())
+        {
+            AliasListDefinition copy = new AliasListDefinition(definition.getName(), definition.getFamily());
+            copy.setId(definition.getId());
+            copies.add(copy);
+        }
+
+        return copies;
+    }
+
+    private static List<Alias> copyAliasesForPersistence(List<Alias> aliases,
+                                                          List<AliasListDefinition> definitions)
+    {
+        List<Alias> copies = new ArrayList<>(aliases.size());
+
+        for(Alias alias: aliases)
+        {
+            Alias copy = AliasFactory.copyOf(alias);
+            copy.setId(alias.getId());
+            AliasListDefinition definition = findDefinition(definitions, alias.getAliasListId(),
+                alias.getAliasListName());
+
+            if(definition == null)
+            {
+                throw new IllegalArgumentException("Alias [" + alias.getName() +
+                    "] references an unknown Alias List");
+            }
+
+            copy.setAliasListDefinition(definition);
+            copies.add(copy);
+        }
+
+        return copies;
+    }
+
+    private void publishAssignedAliasIdentities(List<Alias> desired, List<Alias> persistedAliases,
+                                                 List<AliasListDefinition> persistedDefinitions)
+    {
+        for(AliasListDefinition persisted: persistedDefinitions)
+        {
+            AliasListDefinition live = mAliasModel.getAliasListDefinition(persisted.getName());
+
+            if(live != null && live.getId() == AliasListDefinition.UNASSIGNED_ID)
+            {
+                live.setId(persisted.getId());
+            }
+        }
+
+        for(int index = 0; index < desired.size(); index++)
+        {
+            Alias live = desired.get(index);
+            Alias persisted = persistedAliases.get(index);
+
+            if(live.getId() == Alias.UNASSIGNED_ID)
+            {
+                live.setId(persisted.getId());
+            }
+
+            AliasListDefinition definition = mAliasModel.getAliasListDefinition(persisted.getAliasListId());
+
+            if(definition == null)
+            {
+                definition = mAliasModel.getAliasListDefinition(persisted.getAliasListName());
+            }
+
+            live.setAliasListDefinition(definition);
+        }
+    }
+
+    private static AliasListDefinition findDefinition(List<AliasListDefinition> definitions, long definitionId,
+                                                      String definitionName)
+    {
+        for(AliasListDefinition definition: definitions)
+        {
+            boolean idMatch = definitionId > AliasListDefinition.UNASSIGNED_ID &&
+                definition.getId() == definitionId;
+            boolean nameMatch = definitionId == AliasListDefinition.UNASSIGNED_ID && definitionName != null &&
+                definitionName.equalsIgnoreCase(definition.getName());
+
+            if(idMatch || nameMatch)
+            {
+                return definition;
+            }
+        }
+
+        return null;
+    }
+
+    private static boolean sameAliasIdentity(Alias first, Alias second)
+    {
+        return first == second || first != null && second != null &&
+            first.getId() > Alias.UNASSIGNED_ID && first.getId() == second.getId();
+    }
+
+    private static int indexOfAliasIdentity(List<Alias> aliases, Alias candidate)
+    {
+        for(int index = 0; index < aliases.size(); index++)
+        {
+            if(sameAliasIdentity(aliases.get(index), candidate))
+            {
+                return index;
+            }
+        }
+
+        return -1;
+    }
+
+    private static void validateDistinctAliasChanges(List<Alias> replacements)
+    {
+        Set<Alias> instances = Collections.newSetFromMap(new IdentityHashMap<>());
+        Set<Long> persistedIds = new HashSet<>();
+
+        for(Alias replacement: replacements)
+        {
+            if(!instances.add(replacement) || replacement.getId() > Alias.UNASSIGNED_ID &&
+                !persistedIds.add(replacement.getId()))
+            {
+                throw new IllegalArgumentException("Alias replacements contain a duplicate durable identity");
+            }
+        }
     }
 
     /**
@@ -630,11 +836,23 @@ public class ConfigurationManager implements Listener<ChannelEvent>
 
     private boolean saveConfigurationSnapshotToDatabase()
     {
+        return saveConfigurationSnapshotToDatabase(new ArrayList<>(mAliasModel.getAliases()));
+    }
+
+    private boolean saveConfigurationSnapshotToDatabase(List<Alias> aliases)
+    {
+        return saveConfigurationSnapshotToDatabase(aliases,
+            new ArrayList<>(mAliasModel.aliasListDefinitions()));
+    }
+
+    private boolean saveConfigurationSnapshotToDatabase(List<Alias> aliases,
+                                                        List<AliasListDefinition> definitions)
+    {
         try
         {
             ConfigurationState databaseState = new ConfigurationState();
-            databaseState.setAliases(new ArrayList<>(mAliasModel.getAliases()));
-            databaseState.setAliasListDefinitions(new ArrayList<>(mAliasModel.aliasListDefinitions()));
+            databaseState.setAliases(new ArrayList<>(aliases));
+            databaseState.setAliasListDefinitions(new ArrayList<>(definitions));
             databaseState.setBroadcastConfigurations(new ArrayList<>(mBroadcastModel.getBroadcastConfigurations()));
             databaseState.setChannels(new ArrayList<>(mChannelModel.getChannels()));
             validateAliasListAssignments(databaseState, databaseState.getAliasListDefinitions());

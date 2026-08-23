@@ -28,6 +28,8 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -178,6 +180,19 @@ public class AliasModel
     public List<Alias> getAliases()
     {
         return Collections.unmodifiableList(mAliases);
+    }
+
+    /**
+     * Finds the live alias with the specified durable SQLite identity.
+     */
+    public Alias getAlias(long aliasId)
+    {
+        if(aliasId <= Alias.UNASSIGNED_ID)
+        {
+            return null;
+        }
+
+        return mAliases.stream().filter(alias -> alias.getId() == aliasId).findFirst().orElse(null);
     }
 
     /**
@@ -356,8 +371,65 @@ public class AliasModel
 
         List<Alias> validated = new ArrayList<>(aliases.size());
         aliases.forEach(alias -> validated.add(validateAndBind(alias)));
-        removeAliases(validated);
-        mAliases.addAll(validated);
+        validateDistinctAliases(validated);
+
+        boolean requiresDuplicateRepair = validated.stream().anyMatch(alias -> countSameIdentities(alias) > 1);
+
+        if(!requiresDuplicateRepair)
+        {
+            for(Alias alias: validated)
+            {
+                int existingIndex = indexOfSameIdentity(mAliases, alias);
+
+                if(existingIndex >= 0)
+                {
+                    mAliases.set(existingIndex, alias);
+                }
+                else
+                {
+                    mAliases.add(alias);
+                }
+            }
+
+            return;
+        }
+
+        mAliases.setAll(replacementSnapshot(validated));
+    }
+
+    private List<Alias> replacementSnapshot(List<Alias> replacements)
+    {
+        Set<Long> replacementIds = new HashSet<>();
+        replacements.stream().map(Alias::getId).filter(id -> id > Alias.UNASSIGNED_ID)
+            .forEach(replacementIds::add);
+        Set<Long> retainedIds = new HashSet<>();
+        List<Alias> rebuilt = new ArrayList<>(mAliases.size() + replacements.size());
+
+        for(Alias existing: mAliases)
+        {
+            long id = existing.getId();
+
+            if(id <= Alias.UNASSIGNED_ID || !replacementIds.contains(id) || retainedIds.add(id))
+            {
+                rebuilt.add(existing);
+            }
+        }
+
+        for(Alias alias: replacements)
+        {
+            int existingIndex = indexOfSameIdentity(rebuilt, alias);
+
+            if(existingIndex >= 0)
+            {
+                rebuilt.set(existingIndex, alias);
+            }
+            else
+            {
+                rebuilt.add(alias);
+            }
+        }
+
+        return rebuilt;
     }
 
     /**
@@ -370,14 +442,7 @@ public class AliasModel
             return;
         }
 
-        Alias validated = validateAndBind(alias);
-
-        if(mAliases.contains(alias))
-        {
-            removeAlias(alias);
-        }
-
-        mAliases.add(validated);
+        addAliases(List.of(alias));
     }
 
     /**
@@ -387,7 +452,7 @@ public class AliasModel
     {
         if(alias != null)
         {
-            mAliases.remove(alias);
+            mAliases.removeIf(existing -> sameIdentity(existing, alias));
         }
     }
 
@@ -399,7 +464,76 @@ public class AliasModel
     {
         if(aliases != null && !aliases.isEmpty())
         {
-            mAliases.removeAll(aliases);
+            Set<Alias> instances = Collections.newSetFromMap(new IdentityHashMap<>());
+            Set<Long> persistedIds = new HashSet<>();
+
+            for(Alias alias: aliases)
+            {
+                if(alias != null)
+                {
+                    instances.add(alias);
+
+                    if(alias.getId() > Alias.UNASSIGNED_ID)
+                    {
+                        persistedIds.add(alias.getId());
+                    }
+                }
+            }
+
+            mAliases.removeIf(existing -> instances.contains(existing) ||
+                existing.getId() > Alias.UNASSIGNED_ID && persistedIds.contains(existing.getId()));
+        }
+    }
+
+    /**
+     * Persisted aliases are the same row when their durable IDs match. Independent unsaved drafts remain
+     * instance-identified until SQLite assigns them an ID.
+     */
+    private static boolean sameIdentity(Alias first, Alias second)
+    {
+        return first == second || first != null && second != null &&
+            first.getId() > Alias.UNASSIGNED_ID && first.getId() == second.getId();
+    }
+
+    private static int indexOfSameIdentity(List<Alias> aliases, Alias alias)
+    {
+        for(int index = 0; index < aliases.size(); index++)
+        {
+            if(sameIdentity(aliases.get(index), alias))
+            {
+                return index;
+            }
+        }
+
+        return -1;
+    }
+
+    private int countSameIdentities(Alias alias)
+    {
+        int count = 0;
+
+        for(Alias existing: mAliases)
+        {
+            if(sameIdentity(existing, alias))
+            {
+                count++;
+            }
+        }
+
+        return count;
+    }
+
+    private static void validateDistinctAliases(List<Alias> aliases)
+    {
+        Set<Alias> instances = Collections.newSetFromMap(new IdentityHashMap<>());
+        Set<Long> persistedIds = new HashSet<>();
+
+        for(Alias alias: aliases)
+        {
+            if(!instances.add(alias) || alias.getId() > Alias.UNASSIGNED_ID && !persistedIds.add(alias.getId()))
+            {
+                throw new IllegalArgumentException("Alias collection contains a duplicate durable identity");
+            }
         }
     }
 
