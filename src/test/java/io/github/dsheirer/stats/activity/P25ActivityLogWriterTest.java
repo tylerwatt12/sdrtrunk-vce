@@ -17,6 +17,9 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.channel.metadata.activity.ChannelTag;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
@@ -32,6 +35,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.slf4j.LoggerFactory;
 
 class P25ActivityLogWriterTest
 {
@@ -1688,7 +1692,7 @@ class P25ActivityLogWriterTest
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
             Statement statement = connection.createStatement();
             ResultSet resultSet = statement.executeQuery("""
-                SELECT downlink_hz, uplink_hz, timeslots
+                SELECT downlink_hz, uplink_hz, timeslots, callsign
                 FROM p25_site_channel
                 """))
         {
@@ -1696,6 +1700,7 @@ class P25ActivityLogWriterTest
             assertEquals(856137500L, resultSet.getLong("downlink_hz"));
             assertEquals(811137500L, resultSet.getLong("uplink_hz"));
             assertEquals(1, resultSet.getInt("timeslots"));
+            assertEquals("WPFF205", resultSet.getString("callsign"));
             assertFalse(resultSet.next());
         }
 
@@ -1707,6 +1712,8 @@ class P25ActivityLogWriterTest
             assertEquals("ALTERNATE_CONTROL", resultSet.getString("tag"));
             assertTrue(resultSet.next());
             assertEquals("CURRENT_CONTROL", resultSet.getString("tag"));
+            assertTrue(resultSet.next());
+            assertEquals("CWID", resultSet.getString("tag"));
             assertTrue(resultSet.next());
             assertEquals("DATA_ANNOUNCED", resultSet.getString("tag"));
             assertFalse(resultSet.next());
@@ -1738,12 +1745,46 @@ class P25ActivityLogWriterTest
                 assertTrue(resultSet.next());
                 assertEquals("CONTROL", resultSet.getString("tag"));
                 assertTrue(resultSet.next());
+                assertEquals("CWID", resultSet.getString("tag"));
+                assertTrue(resultSet.next());
                 assertEquals("DATA_ANNOUNCED", resultSet.getString("tag"));
                 assertTrue(resultSet.next());
                 assertEquals("VOICE", resultSet.getString("tag"));
                 assertFalse(resultSet.next());
             }
         }
+    }
+
+    @Test
+    void warnsOnlyWhenDuplicateLogicalSiteChannelFactsConflict() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("site-channel-conflicts.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        Logger logger = (Logger)LoggerFactory.getLogger(P25ActivityLogSchema.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            P25ActivityLogSchema.insertSite(connection, siteSnapshotWithDuplicateChannels(1_000L));
+            P25ActivityLogSchema.insertSite(connection, siteSnapshotWithConflictingChannels(2_000L));
+        }
+        finally
+        {
+            logger.detachAppender(appender);
+            appender.stop();
+        }
+
+        assertEquals(1, appender.list.size());
+        String warning = appender.list.getFirst().getFormattedMessage();
+        assertTrue(warning.contains("channel [0-821]"));
+        assertTrue(warning.contains("site [423e4567-e89b-12d3-a456-426614174000]"));
+        assertTrue(warning.contains("downlink_hz [856137500] vs [857137500]"));
+        assertTrue(warning.contains("uplink_hz [811137500] vs [812137500]"));
+        assertTrue(warning.contains("tdma [false] vs [true]"));
+        assertTrue(warning.contains("timeslots [1] vs [2]"));
+        assertTrue(warning.contains("callsign [WPFF205] vs [WXYZ999]"));
     }
 
     @Test
@@ -3374,10 +3415,29 @@ class P25ActivityLogWriterTest
             new P25NetworkConfigurationSnapshot.Channel("fdma_data", "00-0821", 856137500L,
                 null, false, 1),
             new P25NetworkConfigurationSnapshot.Channel("primary_control", "00-0821", 856137500L,
-                null, false, null));
+                null, false, null),
+            new P25NetworkConfigurationSnapshot.Channel("base_station", "0-821", 856137500L,
+                null, false, 1, "WPFF205"));
 
         return new P25ActivityLogRecords.SiteSnapshot(snapshot.observedAtEpochMilliseconds(), snapshot.guid(),
             snapshot.contextKind(), "duplicate-channel-hash", snapshot.protocol(), snapshot.channelName(),
+            snapshot.aliasListName(), snapshot.decoder(), snapshot.wacn(), snapshot.systemId(), snapshot.nac(),
+            snapshot.rfss(), snapshot.site(), snapshot.primaryFrequencyHertz(), snapshot.currentControlHertz(),
+            channels, snapshot.neighborSites(), snapshot.frequencyBands(), snapshot.patchGroups());
+    }
+
+    private static P25ActivityLogRecords.SiteSnapshot siteSnapshotWithConflictingChannels(long timestamp)
+    {
+        P25ActivityLogRecords.SiteSnapshot snapshot =
+            siteSnapshot(timestamp, "423e4567-e89b-12d3-a456-426614174000");
+        List<P25NetworkConfigurationSnapshot.Channel> channels = List.of(
+            new P25NetworkConfigurationSnapshot.Channel("base_station", "0-821", 856137500L,
+                811137500L, false, 1, "WPFF205"),
+            new P25NetworkConfigurationSnapshot.Channel("base_station", "00-0821", 857137500L,
+                812137500L, true, 2, "WXYZ999"));
+
+        return new P25ActivityLogRecords.SiteSnapshot(snapshot.observedAtEpochMilliseconds(), snapshot.guid(),
+            snapshot.contextKind(), "conflicting-channel-hash", snapshot.protocol(), snapshot.channelName(),
             snapshot.aliasListName(), snapshot.decoder(), snapshot.wacn(), snapshot.systemId(), snapshot.nac(),
             snapshot.rfss(), snapshot.site(), snapshot.primaryFrequencyHertz(), snapshot.currentControlHertz(),
             channels, snapshot.neighborSites(), snapshot.frequencyBands(), snapshot.patchGroups());
