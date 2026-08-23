@@ -29,6 +29,7 @@ import io.github.dsheirer.controller.channel.Channel.ChannelType;
 import io.github.dsheirer.controller.channel.ChannelEvent;
 import io.github.dsheirer.controller.channel.ChannelModel;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
+import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.alias.AliasDatabaseStore;
 import io.github.dsheirer.database.configuration.ConfigurationDatabaseStore;
@@ -43,6 +44,7 @@ import io.github.dsheirer.service.radioreference.RadioReference;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.util.ThreadPool;
 import java.nio.file.Path;
+import java.sql.Connection;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -233,18 +235,64 @@ public class ConfigurationManager implements Listener<ChannelEvent>
      * <p>Persisted replacements are matched by durable schema-v4 alias ID. A replacement with ID zero is a new row.
      * Removals use the same durable identity, with instance identity retained only for an unsaved legacy row.</p>
      *
-     * @return true when the complete configuration snapshot committed and the live model was updated
+     * @return true when the Alias snapshot committed and the live model was updated
      */
-    public synchronized boolean commitAliasChanges(List<Alias> replacements, List<Alias> removals)
+    public boolean commitAliasChanges(List<Alias> replacements, List<Alias> removals)
+    {
+        List<Alias> safeReplacements = replacements != null ? List.copyOf(replacements) : List.of();
+        List<AliasReplacement> changes = safeReplacements.stream()
+            .map(replacement -> new AliasReplacement(replacement, replacement, false))
+            .toList();
+        return commitAliasChangeSet(changes, removals);
+    }
+
+    /**
+     * Commits one editor replacement while retaining the original live instance as its identity. This is required for
+     * a RadioReference import that is already live but still has an unassigned ID while the delayed saver is pending.
+     * Detached New/Clone drafts are absent from the live model and continue to be inserted as new rows.
+     */
+    public boolean commitAliasReplacement(Alias original, Alias replacement)
+    {
+        return commitAliasChangeSet(List.of(new AliasReplacement(original, replacement, true)), List.of());
+    }
+
+    /**
+     * Commits a positionally matched batch of live originals and detached replacements. The explicit source instances
+     * preserve identity for any live RadioReference imports whose delayed ID assignment has not completed.
+     */
+    public boolean commitAliasReplacements(List<Alias> originals, List<Alias> replacements)
+    {
+        List<Alias> safeOriginals = originals != null ? List.copyOf(originals) : List.of();
+        List<Alias> safeReplacements = replacements != null ? List.copyOf(replacements) : List.of();
+
+        if(safeOriginals.size() != safeReplacements.size())
+        {
+            throw new IllegalArgumentException("Alias originals and replacements must have the same size");
+        }
+
+        List<AliasReplacement> changes = new ArrayList<>(safeOriginals.size());
+
+        for(int index = 0; index < safeOriginals.size(); index++)
+        {
+            changes.add(new AliasReplacement(safeOriginals.get(index), safeReplacements.get(index), true));
+        }
+
+        return commitAliasChangeSet(changes, List.of());
+    }
+
+    private synchronized boolean commitAliasChangeSet(List<AliasReplacement> changes, List<Alias> removals)
     {
         if(mExternalConfigurationOperation)
         {
             return false;
         }
 
-        List<Alias> safeReplacements = replacements != null ? List.copyOf(replacements) : List.of();
+        List<AliasReplacement> safeChanges = changes != null ? List.copyOf(changes) : List.of();
         List<Alias> safeRemovals = removals != null ? List.copyOf(removals) : List.of();
-        validateDistinctAliasChanges(safeReplacements);
+        promoteExplicitReplacementIdentities(safeChanges);
+        validateDistinctAliasChanges(safeChanges, safeRemovals);
+        List<Alias> safeReplacements = safeChanges.stream().map(AliasReplacement::replacement).toList();
+        List<Alias> unassignedOriginals = new ArrayList<>();
         List<Alias> desired = new ArrayList<>(mAliasModel.getAliases());
 
         for(Alias removal: safeRemovals)
@@ -252,23 +300,27 @@ public class ConfigurationManager implements Listener<ChannelEvent>
             desired.removeIf(existing -> sameAliasIdentity(existing, removal));
         }
 
-        for(Alias replacement: safeReplacements)
+        for(AliasReplacement change: safeChanges)
         {
-            if(replacement == null)
-            {
-                throw new IllegalArgumentException("Alias replacement cannot be null");
-            }
+            Alias original = change.original();
+            Alias replacement = change.replacement();
+            int existingIndex = indexOfAliasIdentity(desired, original);
 
-            int existingIndex = indexOfAliasIdentity(desired, replacement);
-
-            if(replacement.getId() > Alias.UNASSIGNED_ID && existingIndex < 0)
+            if(original.getId() > Alias.UNASSIGNED_ID && existingIndex < 0)
             {
-                throw new IllegalArgumentException("Alias replacement ID [" + replacement.getId() +
+                throw new IllegalArgumentException("Alias replacement ID [" + original.getId() +
                     "] is not present in the live configuration");
             }
 
             if(existingIndex >= 0)
             {
+                Alias existing = desired.get(existingIndex);
+
+                if(existing != replacement && existing.getId() == Alias.UNASSIGNED_ID)
+                {
+                    unassignedOriginals.add(existing);
+                }
+
                 desired.set(existingIndex, replacement);
             }
             else
@@ -280,7 +332,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         List<AliasListDefinition> persistedDefinitions = copyAliasListDefinitions();
         List<Alias> persistedAliases = copyAliasesForPersistence(desired, persistedDefinitions);
 
-        if(!saveConfigurationSnapshotToDatabase(persistedAliases, persistedDefinitions))
+        if(!saveAliasSnapshotToDatabase(persistedAliases, persistedDefinitions))
         {
             return false;
         }
@@ -292,6 +344,7 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         try
         {
             mAliasModel.removeAliases(safeRemovals);
+            mAliasModel.removeAliases(unassignedOriginals);
             mAliasModel.addAliases(safeReplacements);
         }
         finally
@@ -300,6 +353,44 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         }
 
         return true;
+    }
+
+    /**
+     * Atomically replaces only schema-v4 Alias storage. The synchronized caller serializes this transaction against
+     * the delayed complete-configuration saver, while unrelated channel and stream rows remain untouched.
+     */
+    private boolean saveAliasSnapshotToDatabase(List<Alias> aliases, List<AliasListDefinition> definitions)
+    {
+        try(Connection connection = SdrTrunkDatabase.open(mAliasDatabaseStore.getDatabasePath()))
+        {
+            connection.setAutoCommit(false);
+
+            try
+            {
+                mAliasDatabaseStore.replaceAliases(connection, aliases, definitions);
+                connection.commit();
+                return true;
+            }
+            catch(Exception e)
+            {
+                try
+                {
+                    connection.rollback();
+                }
+                catch(Exception rollbackException)
+                {
+                    e.addSuppressed(rollbackException);
+                }
+
+                throw e;
+            }
+        }
+        catch(Exception e)
+        {
+            mLog.error("Error saving Alias snapshot to SQLite database [" +
+                mAliasDatabaseStore.getDatabasePath() + "]", e);
+            return false;
+        }
     }
 
     private List<AliasListDefinition> copyAliasListDefinitions()
@@ -413,19 +504,63 @@ public class ConfigurationManager implements Listener<ChannelEvent>
         return -1;
     }
 
-    private static void validateDistinctAliasChanges(List<Alias> replacements)
+    private static void validateDistinctAliasChanges(List<AliasReplacement> changes, List<Alias> removals)
     {
-        Set<Alias> instances = Collections.newSetFromMap(new IdentityHashMap<>());
-        Set<Long> persistedIds = new HashSet<>();
+        Set<Alias> originalInstances = Collections.newSetFromMap(new IdentityHashMap<>());
+        Set<Long> originalIds = new HashSet<>();
+        Set<Alias> replacementInstances = Collections.newSetFromMap(new IdentityHashMap<>());
+        Set<Long> replacementIds = new HashSet<>();
 
-        for(Alias replacement: replacements)
+        for(AliasReplacement change: changes)
         {
-            if(!instances.add(replacement) || replacement.getId() > Alias.UNASSIGNED_ID &&
-                !persistedIds.add(replacement.getId()))
+            if(change == null || change.original() == null || change.replacement() == null)
+            {
+                throw new IllegalArgumentException("Alias replacement and original cannot be null");
+            }
+
+            Alias original = change.original();
+            Alias replacement = change.replacement();
+
+            if(!originalInstances.add(original) || original.getId() > Alias.UNASSIGNED_ID &&
+                !originalIds.add(original.getId()) || !replacementInstances.add(replacement) ||
+                replacement.getId() > Alias.UNASSIGNED_ID && !replacementIds.add(replacement.getId()))
             {
                 throw new IllegalArgumentException("Alias replacements contain a duplicate durable identity");
             }
+
+            if(original.getId() != replacement.getId())
+            {
+                throw new IllegalArgumentException("Alias replacement cannot change its durable identity");
+            }
+
+            if(removals.stream().anyMatch(removal -> sameAliasIdentity(original, removal)))
+            {
+                throw new IllegalArgumentException("Alias cannot be replaced and removed in the same commit");
+            }
         }
+    }
+
+    /**
+     * A delayed saver can assign an ID to a live import after the editor copied it but before this synchronized commit
+     * acquired the manager lock. Promote only that explicit, still-live source handoff; detached drafts and generic
+     * bulk replacements cannot acquire an identity this way.
+     */
+    private void promoteExplicitReplacementIdentities(List<AliasReplacement> changes)
+    {
+        for(AliasReplacement change: changes)
+        {
+            if(change != null && change.explicitOriginal() && change.original() != null &&
+                change.replacement() != null && change.original().getId() > Alias.UNASSIGNED_ID &&
+                change.replacement().getId() == Alias.UNASSIGNED_ID &&
+                mAliasModel.getAlias(change.original().getId()) == change.original())
+            {
+                change.replacement().setId(change.original().getId());
+            }
+        }
+    }
+
+    private record AliasReplacement(Alias original, Alias replacement, boolean explicitOriginal)
+    {
     }
 
     /**

@@ -143,6 +143,7 @@ public class AliasItemEditor extends Editor<Alias>
     private TextField mStreamAsTalkgroupField;
     private TextFormatter<Integer> mStreamAsIntegerTextFormatter = new IntegerFormatter(1,0xFFFF);
     private final Consumer<Alias> mAliasSavedListener;
+    private final Runnable mAliasSaveFailedListener;
 
     private Map<AliasIDType,IdentifierEditor<?>> mIdentifierEditorMap = new EnumMap<>(AliasIDType.class);
     private EmptyIdentifierEditor mEmptyIdentifierEditor = new EmptyIdentifierEditor();
@@ -150,15 +151,22 @@ public class AliasItemEditor extends Editor<Alias>
 
     public AliasItemEditor(ConfigurationManager configurationManager, UserPreferences userPreferences)
     {
-        this(configurationManager, userPreferences, alias -> {});
+        this(configurationManager, userPreferences, alias -> {}, () -> {});
     }
 
     public AliasItemEditor(ConfigurationManager configurationManager, UserPreferences userPreferences,
                            Consumer<Alias> aliasSavedListener)
     {
+        this(configurationManager, userPreferences, aliasSavedListener, () -> {});
+    }
+
+    public AliasItemEditor(ConfigurationManager configurationManager, UserPreferences userPreferences,
+                           Consumer<Alias> aliasSavedListener, Runnable aliasSaveFailedListener)
+    {
         mConfigurationManager = configurationManager;
         mUserPreferences = userPreferences;
         mAliasSavedListener = aliasSavedListener != null ? aliasSavedListener : alias -> {};
+        mAliasSaveFailedListener = aliasSaveFailedListener != null ? aliasSaveFailedListener : () -> {};
 
         //Listen for changes to the stream configurations and refresh the stream lists
         mConfigurationManager.getBroadcastModel().getConfiguredBroadcasts()
@@ -381,6 +389,7 @@ public class AliasItemEditor extends Editor<Alias>
     {
         if(mMatcherMissing.get())
         {
+            mAliasSaveFailedListener.run();
             return false;
         }
 
@@ -393,6 +402,7 @@ public class AliasItemEditor extends Editor<Alias>
 
         if(alias == null)
         {
+            mAliasSaveFailedListener.run();
             return false;
         }
 
@@ -444,9 +454,10 @@ public class AliasItemEditor extends Editor<Alias>
         replacement.setDescription(getDescriptionField().getText());
         replacement.setGroup(getGroupField().getText());
 
-        if(!mConfigurationManager.commitAliasChanges(List.of(replacement), List.of()))
+        if(!mConfigurationManager.commitAliasReplacement(alias, replacement))
         {
             mLog.error("Unable to save alias [{}] to SQLite", replacement.getName());
+            mAliasSaveFailedListener.run();
             return false;
         }
 

@@ -33,6 +33,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashSet;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import javafx.application.Platform;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
@@ -259,6 +260,45 @@ class AliasConfigurationEditorLifecycleTest
     }
 
     @Test
+    void directSaveFailureShowsOnePersistenceErrorAndKeepsTheDraft() throws Exception
+    {
+        createFixture(List.of(alias("Alpha", 100)));
+        Alias alpha = liveAlias("Alpha");
+
+        JavaFxTestSupport.onFxThread(() ->
+        {
+            table(mEditor).getSelectionModel().select(alpha);
+            return null;
+        });
+        JavaFxTestSupport.drainEvents();
+        setBooleanField(mManager, "mExternalConfigurationOperation", true);
+        AtomicBoolean errorShown = new AtomicBoolean();
+
+        try
+        {
+            JavaFxTestSupport.onFxThread(() ->
+            {
+                itemEditor(mEditor).getNameField().setText("Unsaved Alpha");
+                Platform.runLater(() -> errorShown.set(fireOpenDialogButton(ButtonType.OK)));
+                itemEditor(mEditor).save();
+                return null;
+            });
+            JavaFxTestSupport.drainEvents();
+
+            assertTrue(errorShown.get());
+            assertSame(alpha, JavaFxTestSupport.onFxThread(() -> itemEditor(mEditor).getItem()));
+            assertEquals("Unsaved Alpha", JavaFxTestSupport.onFxThread(() ->
+                itemEditor(mEditor).getNameField().getText()));
+            assertTrue(JavaFxTestSupport.onFxThread(() -> itemEditor(mEditor).modifiedProperty().get()));
+            assertEquals("Alpha", mManager.getAliasModel().getAlias(alpha.getId()).getName());
+        }
+        finally
+        {
+            setBooleanField(mManager, "mExternalConfigurationOperation", false);
+        }
+    }
+
+    @Test
     void failedCloneSaveClearsTheDestinationSelectionAndKeepsTheDraft() throws Exception
     {
         Fixture fixture = createFixture(List.of(alias("Alpha", 100), alias("Bravo", 200)));
@@ -281,6 +321,7 @@ class AliasConfigurationEditorLifecycleTest
         assertEquals(Alias.UNASSIGNED_ID, draft.getId());
 
         setBooleanField(mManager, "mExternalConfigurationOperation", true);
+        AtomicBoolean errorShown = new AtomicBoolean();
 
         try
         {
@@ -292,12 +333,13 @@ class AliasConfigurationEditorLifecycleTest
                 Platform.runLater(() ->
                 {
                     fireOpenDialogButton(ButtonType.YES);
-                    Platform.runLater(() -> fireOpenDialogButton(ButtonType.OK));
+                    Platform.runLater(() -> errorShown.set(fireOpenDialogButton(ButtonType.OK)));
                 });
                 return null;
             });
             JavaFxTestSupport.drainEvents();
 
+            assertTrue(errorShown.get());
             assertNull(JavaFxTestSupport.onFxThread(() -> table(mEditor).getSelectionModel().getSelectedItem()));
             assertSame(draft, JavaFxTestSupport.onFxThread(() -> itemEditor(mEditor).getItem()));
             assertEquals("Unsaved Clone", JavaFxTestSupport.onFxThread(() ->
@@ -310,6 +352,181 @@ class AliasConfigurationEditorLifecycleTest
         {
             setBooleanField(mManager, "mExternalConfigurationOperation", false);
         }
+    }
+
+    @Test
+    void liveUnassignedImportEditPublishesOneDurableRow() throws Exception
+    {
+        Fixture fixture = createFixture(List.of(alias("Existing", 100), alias("Neighbor", 200)));
+        AliasListDefinition definition = mManager.getAliasModel().getAliasListDefinition("County");
+        Alias imported = alias("RadioReference Import", 401);
+        imported.setAliasListDefinition(definition);
+        setBooleanField(mManager, "mConfigurationLoading", true);
+
+        try
+        {
+            JavaFxTestSupport.onFxThread(() ->
+            {
+                mManager.getAliasModel().addAlias(imported);
+                return null;
+            });
+        }
+        finally
+        {
+            setBooleanField(mManager, "mConfigurationLoading", false);
+        }
+
+        assertEquals(Alias.UNASSIGNED_ID, imported.getId());
+        assertEquals(3, mManager.getAliasModel().getAliases().size());
+        assertEquals(2, loadAliases(fixture.database()).size());
+
+        JavaFxTestSupport.onFxThread(() ->
+        {
+            table(mEditor).getSelectionModel().select(imported);
+            return null;
+        });
+        JavaFxTestSupport.drainEvents();
+        assertSame(imported, JavaFxTestSupport.onFxThread(() -> itemEditor(mEditor).getItem()));
+
+        JavaFxTestSupport.onFxThread(() ->
+        {
+            itemEditor(mEditor).getNameField().setText("RadioReference Import Edited");
+            itemEditor(mEditor).save();
+            return null;
+        });
+        JavaFxTestSupport.drainEvents();
+
+        List<Alias> live = mManager.getAliasModel().getAliases();
+        List<Alias> stored = loadAliases(fixture.database());
+        assertEquals(3, live.size());
+        assertEquals(3, stored.size());
+        assertEquals(3, new HashSet<>(live.stream().map(Alias::getId).toList()).size());
+        assertEquals(3, new HashSet<>(stored.stream().map(Alias::getId).toList()).size());
+        assertTrue(live.stream().allMatch(alias -> alias.getId() > Alias.UNASSIGNED_ID));
+        assertTrue(stored.stream().allMatch(alias -> alias.getId() > Alias.UNASSIGNED_ID));
+        assertTrue(live.stream().noneMatch(alias -> alias == imported));
+        assertEquals(1, live.stream()
+            .filter(alias -> "RadioReference Import Edited".equals(alias.getName())).count());
+        assertEquals(1, stored.stream()
+            .filter(alias -> "RadioReference Import Edited".equals(alias.getName())).count());
+    }
+
+    @Test
+    void liveUnassignedImportCanSaveThenClone() throws Exception
+    {
+        Fixture fixture = createFixture(List.of(alias("Existing", 100)));
+        Alias imported = alias("RadioReference Import", 401);
+        imported.setAliasListDefinition(mManager.getAliasModel().getAliasListDefinition("County"));
+        setBooleanField(mManager, "mConfigurationLoading", true);
+
+        try
+        {
+            JavaFxTestSupport.onFxThread(() ->
+            {
+                mManager.getAliasModel().addAlias(imported);
+                return null;
+            });
+        }
+        finally
+        {
+            setBooleanField(mManager, "mConfigurationLoading", false);
+        }
+
+        JavaFxTestSupport.onFxThread(() ->
+        {
+            table(mEditor).getSelectionModel().select(imported);
+            return null;
+        });
+        JavaFxTestSupport.drainEvents();
+
+        JavaFxTestSupport.onFxThread(() ->
+        {
+            itemEditor(mEditor).getNameField().setText("Saved Before Clone");
+            Platform.runLater(() -> fireOpenDialogButton(ButtonType.YES));
+            cloneButton(mEditor).fire();
+            return null;
+        });
+        JavaFxTestSupport.drainEvents();
+
+        Alias draft = JavaFxTestSupport.onFxThread(() -> itemEditor(mEditor).getItem());
+        List<Alias> live = mManager.getAliasModel().getAliases();
+        List<Alias> stored = loadAliases(fixture.database());
+        assertEquals(Alias.UNASSIGNED_ID, draft.getId());
+        assertEquals("Saved Before Clone", draft.getName());
+        assertEquals(2, live.size());
+        assertEquals(2, stored.size());
+        assertTrue(live.stream().noneMatch(alias -> alias == imported || alias == draft));
+        assertEquals(1, live.stream().filter(alias -> "Saved Before Clone".equals(alias.getName())).count());
+        assertEquals(1, stored.stream().filter(alias -> "Saved Before Clone".equals(alias.getName())).count());
+        assertTrue(JavaFxTestSupport.onFxThread(() -> itemEditor(mEditor).modifiedProperty().get()));
+        assertNull(JavaFxTestSupport.onFxThread(() -> table(mEditor).getSelectionModel().getSelectedItem()));
+    }
+
+    @Test
+    void multiSelectionMoveReplacesLiveUnassignedImportsWithoutDuplicates() throws Exception
+    {
+        AliasListDefinition source = new AliasListDefinition("Source", AliasListFamily.P25);
+        AliasListDefinition target = new AliasListDefinition("Target", AliasListFamily.P25);
+        Alias persisted = alias("Persisted", 100);
+        persisted.setAliasListDefinition(source);
+        Fixture fixture = createFixture(List.of(persisted), List.of(source, target));
+        Alias livePersisted = liveAlias("Persisted");
+        AliasListDefinition liveSource = mManager.getAliasModel().getAliasListDefinition("Source");
+        Alias importedOne = alias("Imported One", 200);
+        Alias importedTwo = alias("Imported Two", 300);
+        importedOne.setAliasListDefinition(liveSource);
+        importedTwo.setAliasListDefinition(liveSource);
+        setBooleanField(mManager, "mConfigurationLoading", true);
+
+        try
+        {
+            JavaFxTestSupport.onFxThread(() ->
+            {
+                mManager.getAliasModel().addAliases(List.of(importedOne, importedTwo));
+                return null;
+            });
+        }
+        finally
+        {
+            setBooleanField(mManager, "mConfigurationLoading", false);
+        }
+
+        assertEquals(3, mManager.getAliasModel().getAliases().size());
+        assertEquals(1, loadAliases(fixture.database()).size());
+
+        JavaFxTestSupport.onFxThread(() ->
+        {
+            TableView<Alias> table = table(mEditor);
+            table.getSelectionModel().clearSelection();
+            table.getSelectionModel().select(livePersisted);
+            table.getSelectionModel().select(importedOne);
+            table.getSelectionModel().select(importedTwo);
+            return null;
+        });
+        JavaFxTestSupport.drainEvents();
+        assertEquals(3, JavaFxTestSupport.onFxThread(() ->
+            table(mEditor).getSelectionModel().getSelectedItems().size()));
+
+        JavaFxTestSupport.onFxThread(() ->
+        {
+            AliasListDefinition liveTarget = mManager.getAliasModel().getAliasListDefinition("Target");
+            AliasConfigurationEditor.MoveToAliasListItem move = mEditor.new MoveToAliasListItem(liveTarget);
+            move.fire();
+            return null;
+        });
+        JavaFxTestSupport.drainEvents();
+
+        List<Alias> live = mManager.getAliasModel().getAliases();
+        List<Alias> stored = loadAliases(fixture.database());
+        assertEquals(3, live.size());
+        assertEquals(3, stored.size());
+        assertEquals(3, new HashSet<>(live.stream().map(Alias::getId).toList()).size());
+        assertEquals(3, new HashSet<>(stored.stream().map(Alias::getId).toList()).size());
+        assertTrue(live.stream().allMatch(alias -> alias.getId() > Alias.UNASSIGNED_ID));
+        assertTrue(stored.stream().allMatch(alias -> alias.getId() > Alias.UNASSIGNED_ID));
+        assertTrue(live.stream().allMatch(alias -> "Target".equals(alias.getAliasListName())));
+        assertTrue(stored.stream().allMatch(alias -> "Target".equals(alias.getAliasListName())));
+        assertTrue(live.stream().noneMatch(alias -> alias == importedOne || alias == importedTwo));
     }
 
     @Test
@@ -373,7 +590,7 @@ class AliasConfigurationEditorLifecycleTest
             .filter(alias -> name.equals(alias.getName())).findFirst().orElseThrow();
     }
 
-    private static void fireOpenDialogButton(ButtonType buttonType)
+    private static boolean fireOpenDialogButton(ButtonType buttonType)
     {
         for(Window window: Window.getWindows())
         {
@@ -385,10 +602,12 @@ class AliasConfigurationEditorLifecycleTest
                 if(dialogPane != null && dialogPane.lookupButton(buttonType) instanceof Button button)
                 {
                     button.fire();
-                    return;
+                    return true;
                 }
             }
         }
+
+        return false;
     }
 
     private static Alias alias(String name, int talkgroup)
