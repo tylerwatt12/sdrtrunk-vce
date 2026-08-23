@@ -22,6 +22,7 @@
   --chart-grid: #d7dde2;
   --chart-decode: #3d64b1;
   --chart-call: #0b7168;
+  --chart-grant: #2d6f9f;
   --chart-recorded: #2f6da5;
   --chart-streamed: #cc7a00;
   --chart-encrypted: #9d174d;
@@ -74,6 +75,7 @@
   --chart-grid: #394652;
   --chart-decode: #83a9ff;
   --chart-call: #52c8bb;
+  --chart-grant: #78b7e5;
   --chart-recorded: #72b7f2;
   --chart-streamed: #f0b45d;
   --chart-encrypted: #ff82b5;
@@ -859,6 +861,9 @@ body[data-view="live"] .channel-diagnostic-readouts {
 .dashboard-identity-context {
   color: var(--muted);
   font-size: 10px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -1075,10 +1080,6 @@ body[data-view="live"] .channel-diagnostic-readouts {
   border: 1px solid var(--line);
 }
 
-.dashboard-activity-summary .summary-band {
-  grid-template-columns: repeat(4, minmax(105px, 1fr));
-}
-
 .dashboard-activity-layout {
   display: grid;
   grid-template-columns: minmax(220px, 320px) minmax(0, 1fr);
@@ -1170,39 +1171,15 @@ body[data-view="live"] .channel-diagnostic-readouts {
   margin: 0 14px 10px;
 }
 
-.dashboard-activity-mix-body > .metric-guide {
-  margin: 0 14px 12px;
-}
-
-.dashboard-activity-breakdown-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px;
+.dashboard-activity-radio-status {
+  margin: 0;
+  padding: 8px 10px;
+  color: var(--muted);
   border-bottom: 1px solid var(--line);
 }
 
-.dashboard-activity-group-select {
-  min-height: 32px;
-  padding: 5px 8px;
-  color: var(--ink);
-  background: var(--surface);
-  border: 1px solid var(--line-dark);
-  border-radius: 3px;
-  font: inherit;
-}
-
-.dashboard-activity-breakdown-status {
-  min-width: 0;
-  margin-left: auto;
-  color: var(--muted);
-  font-size: 11px;
-  text-align: right;
-}
-
-.dashboard-activity-breakdown-result > .logging-notice,
-.dashboard-activity-breakdown-result > .metric-meaning-note {
-  margin: 10px;
+.dashboard-activity-radio-result > .metric-meaning-note {
+  border-top: 0;
 }
 
 .entity-info-layout {
@@ -5190,10 +5167,6 @@ th.numeric {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .dashboard-activity-summary .summary-band {
-    grid-template-columns: repeat(2, minmax(105px, 1fr));
-  }
-
   .channel-diagnostic-grid {
     grid-template-columns: minmax(0, 1fr);
     grid-auto-rows: minmax(190px, 1fr);
@@ -5397,25 +5370,13 @@ th.numeric {
     justify-content: flex-start;
   }
 
-  .dashboard-activity-page-controls,
-  .dashboard-activity-breakdown-toolbar {
+  .dashboard-activity-page-controls {
     align-items: stretch;
     flex-direction: column;
   }
 
-  .dashboard-activity-summary .summary-band,
   .dashboard-activity-legend {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .dashboard-activity-group-select {
-    width: 100%;
-  }
-
-  .dashboard-activity-breakdown-status {
-    width: 100%;
-    margin-left: 0;
-    text-align: left;
   }
 
   .channel-diagnostic-readouts {

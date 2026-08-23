@@ -66,7 +66,8 @@ and double-encoded or separator-smuggling resource names are rejected.
 | `GET /api/v1/sites/{guid}/neighbors` | Paged neighbors. |
 | `GET /api/v1/sites/{guid}/patch-groups` | Paged P25 patch groups with bounded members. |
 | `GET /api/v1/activity` | Cursor-paged detailed activity. |
-| `GET /api/v1/activity-analytics` | Hourly action totals and bounded, action-selected radio, destination, site, or retained-event breakdowns. |
+| `GET /api/v1/activity/actions` | Activity action totals for a selected time range. Dashboard access is required. |
+| `GET /api/v1/activity/radios` | Paged exact SOURCE-radio aggregation across retained matching activity events. Systems & Sites access is required. |
 | `GET /api/v1/conventional-contexts` | Paged conventional receiver contexts. |
 | `GET /api/v1/conventional-contexts/{context}` | One context and a paged RF summary. |
 | `GET /api/v1/conventional-contexts/{context}/talkgroups` | Paged DMR conventional talkgroups. |
@@ -75,7 +76,9 @@ and double-encoded or separator-smuggling resource names are rejected.
 
 Common collection parameters are `limit`, `offset`, `q`, `sort`, and `direction`. `limit` defaults to 100 and must be
 between 1 and 500; `offset` must be between 0 and 100,000. Detailed activity uses the positive `before_id` cursor.
-Endpoint-specific filters are documented by the returned resource and reject unknown names.
+The exact activity-radio aggregation is the one exception to the shared offset ceiling: its non-negative offset has
+no fixed first-N window, while every response remains limited to at most 500 rows. Endpoint-specific filters are
+documented by the returned resource and reject unknown names.
 
 The systems directory accepts `include_site_preview=true`. Preview requests are limited to 25 parent systems and add
 `site_preview` and `site_preview_truncated` to each system row. The page metadata reports the
@@ -83,12 +86,32 @@ fixed `site_preview_limit_per_system`. The preview is normally ordered by most r
 When `q` matches a site, matching sites are placed first so that the bounded preview includes the result. Use the
 independently paged `/api/v1/systems/{scope}/sites` resource for the complete collection.
 
-Activity analytics accepts `range=1h|6h|24h|7d|30d` and an allowlisted `group_by`. The `action` grouping reads only
-compact hourly summaries. The `radio`, `destination`, `site`, and `event` groupings require an `action` and inspect at
-most 5,000 context-hour slices whose compact summaries contain that action, hydrating no more than 5,000 matching
-retained events. Responses report when either bound or the requested row limit truncates the result. Detailed history
-is optional, retained-detail coverage is not assumed complete, and `CONTINUE` is summary-only by design. The action
-summary follows Dashboard access; retained-detail groupings require Systems & Sites access.
+The two activity-analysis resources use `range=1h|6h|24h|7d|30d` without the former `group_by` compatibility mode.
+`GET /api/v1/activity/actions` accepts only `range`. Its collection metadata is `range`, `from_ms`, `to_ms`, and
+`total`; its `data` array contains the available action totals and omits `CONTINUE`. `total` is the sum of those
+returned action counts across trunked and conventional hourly summaries.
+
+`GET /api/v1/activity/radios` accepts `range`, the required `action`, and standard `limit` and `offset` paging.
+`CONTINUE` is rejected because continuation events are intentionally not retained as detailed SOURCE-radio events.
+SQLite aggregates every retained detailed event matching the requested range and action before applying the output
+page, so there is no event cap, context-hour slice cap, sample, coverage mode, or hidden first-N result window. The
+aggregation is exact for the retained detailed history; configured retention can still make the compact summary total
+larger than the retained detailed-event count.
+
+Each trunked result row represents one `(scope_token, radio_id)` pair, so the same numeric radio ID remains separate
+when it appears on different systems. Activity without a trunked identity scope is grouped by
+`(context_key, radio_id)`, which keeps conventional channels separate. Rows provide the applicable `scope_token` or
+`context_key`, protocol and display context, `radio_id`, available `alias_name` and `alias_description`, `event_count`,
+and `last_seen_ms`. They are ordered by `event_count` descending, then `last_seen_ms` descending, with scope/context
+and radio ID as deterministic tie breakers before `limit` and `offset` are applied.
+
+Radio-page metadata is `range`, `action`, `from_ms`, `to_ms`, `action_total`, `retained_event_count`,
+`identified_event_count`, `unknown_source_event_count`, `total_count`, `limit`, `offset`, `has_more`, and
+`next_offset`. `action_total` is the compact summary total for the selected action. `retained_event_count` counts its
+retained detailed events, `identified_event_count` counts those with a SOURCE radio, and
+`unknown_source_event_count` counts those without one. `total_count` is the number of aggregated SOURCE-radio rows
+before paging. Removed parameters, including `group_by`, are rejected, and `/api/v1/activity-analytics` is not
+registered.
 
 Every database row materializer also has a 20,000-row emergency ceiling. This is a final guard against a future SQL
 regression; normal endpoint, enrichment, member, history, and export limits are substantially smaller.

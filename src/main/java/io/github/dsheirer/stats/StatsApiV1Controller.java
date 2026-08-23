@@ -45,6 +45,7 @@ final class StatsApiV1Controller
     private final TunerDiagnosticService mTunerDiagnosticService;
     private final Supplier<Map<String,Object>> mReceiverHealthSupplier;
     private final Semaphore mCsvExportPermit = new Semaphore(1);
+    private final Semaphore mActivityRadioPermit = new Semaphore(1, true);
 
     StatsApiV1Controller(StatsWebDatabase database, Supplier<Map<String,Object>> statusSupplier,
                          WebAccessHttpController accessController, TunerDiagnosticService tunerDiagnosticService)
@@ -98,22 +99,14 @@ final class StatsApiV1Controller
                     "hide_grants", "kind", "limit");
                 return page(mDatabase.activity(request));
             }));
-        server.createContext(StatsApiV1.ACTIVITY_ANALYTICS, mAccessController.protectAny(
-            Set.of(WebCapability.DASHBOARD_VIEW, WebCapability.SYSTEMS_VIEW),
-            exchange -> handleJson(exchange, StatsApiV1.ACTIVITY_ANALYTICS, (request, segments) -> {
+        create(server, StatsApiV1.ACTIVITY_ACTIONS, WebCapability.DASHBOARD_VIEW,
+            exchange -> handleJson(exchange, StatsApiV1.ACTIVITY_ACTIONS, (request, segments) -> {
                 requireNoSegments(segments);
-                request.requireOnly("range", "group_by", "action", "limit");
-                String groupBy = request.text("group_by");
-                WebCapability required = groupBy == null || "action".equalsIgnoreCase(groupBy) ?
-                    WebCapability.DASHBOARD_VIEW : WebCapability.SYSTEMS_VIEW;
-
-                if(!mAccessController.isRequestStillAuthorized(exchange, required))
-                {
-                    throw new StatsApiException(403, "access_denied", "Access is denied");
-                }
-
-                return mDatabase.activityAnalytics(request);
-            })));
+                request.requireOnly("range");
+                return collection(mDatabase.dashboardActivityActions(request), "rows");
+            }));
+        create(server, StatsApiV1.ACTIVITY_RADIOS, WebCapability.SYSTEMS_VIEW,
+            exchange -> handleJson(exchange, StatsApiV1.ACTIVITY_RADIOS, this::dashboardActivityRadios));
         create(server, StatsApiV1.CONVENTIONAL_CONTEXTS, WebCapability.CONVENTIONAL_VIEW,
             exchange -> handleJson(exchange, StatsApiV1.CONVENTIONAL_CONTEXTS, this::conventionalContexts));
         server.createContext(StatsApiV1.EXPORTS, mAccessController.protectAny(
@@ -150,6 +143,27 @@ final class StatsApiV1Controller
         }
 
         throw notFound();
+    }
+
+    private JsonBody dashboardActivityRadios(StatsRequest request, List<String> segments)
+    {
+        requireNoSegments(segments);
+        request.requireOnly("range", "action", "limit", "offset");
+
+        if(!mActivityRadioPermit.tryAcquire())
+        {
+            throw new StatsApiException(429, "activity_query_busy",
+                "Another exact activity query is already running");
+        }
+
+        try
+        {
+            return page(mDatabase.dashboardActivityRadios(request));
+        }
+        finally
+        {
+            mActivityRadioPermit.release();
+        }
     }
 
     private Object aliases(StatsRequest request, List<String> segments)

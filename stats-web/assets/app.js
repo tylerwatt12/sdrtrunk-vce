@@ -127,19 +127,16 @@ const TALKGROUP_SIGNALING_SERIES = Object.freeze([
 ]);
 const DASHBOARD_ACTIVITY_SERIES = Object.freeze([
   { action: 'CALL', label: 'Call', color: 'var(--chart-call)' },
-  { action: 'GRANT', label: 'Grant', color: 'var(--chart-active)' },
-  ...TALKGROUP_SIGNALING_SERIES.map((series) => ({
-    action: series.field.replace(/_count$/, '').toUpperCase(),
-    label: series.label,
-    color: series.color
-  }))
+  { action: 'GRANT', label: 'Grant', color: 'var(--chart-grant)' },
+  ...TALKGROUP_SIGNALING_SERIES.filter((series) => series.field !== 'continue_count')
+    .map((series) => ({
+      action: series.field.replace(/_count$/, '').toUpperCase(),
+      label: series.label,
+      color: series.color
+    }))
 ]);
 const DASHBOARD_ACTIVITY_RANGES = Object.freeze([
   ['6h', '6 hours'], ['24h', '24 hours'], ['7d', '7 days']
-]);
-const DASHBOARD_ACTIVITY_GROUPS = Object.freeze([
-  ['radio', 'Radios'], ['destination', 'Destinations'], ['site', 'Sites / channels'],
-  ['event', 'Recent events']
 ]);
 const CALL_METRIC_GUIDE = Object.freeze([
   ['Tracked Calls', 'Traffic calls accepted by the channel manager. A tracked call can have no usable audio.'],
@@ -7166,23 +7163,17 @@ function dashboardActivityActionRows(response) {
     return {
       ...row,
       ...configuration,
-      count: Math.max(0, Number(row.count || 0)),
-      detail_supported: row.detail_supported !== false && Number(row.detail_supported) !== 0
+      count: Math.max(0, Number(row.count || 0))
     };
-  }).filter((row) => row.action && row.count > 0)
+  }).filter((row) => row.action && row.action !== 'CONTINUE' && row.count > 0)
     .sort((left, right) => right.count - left.count || left.label.localeCompare(right.label));
-}
-
-function dashboardActivityActionCount(response, action) {
-  const row = dashboardActivityActionRows(response).find((candidate) => candidate.action === action);
-  return Number(row?.count || 0);
 }
 
 function dashboardActivityMix(response, selectedAction, onSelect) {
   const actions = dashboardActivityActionRows(response);
   if (!actions.length) return node('div', 'empty', 'No activity was recorded for this range.');
   const summedTotal = actions.reduce((sum, row) => sum + row.count, 0);
-  const total = Math.max(summedTotal, Number(response?.total || 0));
+  const total = summedTotal;
   const circumference = 2 * Math.PI * 78;
   const wrapper = node('div', 'dashboard-activity-layout');
   const chart = node('div', 'dashboard-activity-chart');
@@ -7205,15 +7196,15 @@ function dashboardActivityMix(response, selectedAction, onSelect) {
   let offset = 0;
 
   const updateSelection = (action, notify = true) => {
-    const selected = actions.find((row) => row.action === action) || actions[0];
+    const selected = actions.find((row) => row.action === action) || null;
     wrapper.querySelectorAll('[data-action]').forEach((element) => {
-      const active = element.dataset.action === selected.action;
+      const active = element.dataset.action === selected?.action;
       element.classList.toggle('active', active);
       element.setAttribute('aria-pressed', String(active));
     });
-    centerCount.textContent = number(selected.count);
-    centerLabel.textContent = selected.label;
-    if (notify) onSelect(selected);
+    centerCount.textContent = number(selected?.count ?? total);
+    centerLabel.textContent = selected?.label || 'Visible events';
+    if (notify && selected) onSelect(selected);
   };
 
   actions.forEach((row) => {
@@ -7246,7 +7237,6 @@ function dashboardActivityMix(response, selectedAction, onSelect) {
     swatch.style.backgroundColor = row.color;
     button.append(swatch, node('span', '', row.label),
       node('span', 'activity-series-total', `${number(row.count)} · ${percentage.toFixed(1)}%`));
-    if (!row.detail_supported) button.append(node('span', 'activity-series-status', 'Summary only'));
     button.addEventListener('click', () => updateSelection(row.action));
     legend.append(button);
   });
@@ -7254,283 +7244,258 @@ function dashboardActivityMix(response, selectedAction, onSelect) {
   svg.append(centerCount, centerLabel);
   chart.append(svg);
   wrapper.append(chart, legend);
-  const initial = actions.some((row) => row.action === selectedAction) ? selectedAction :
-    (actions.some((row) => row.action === 'CALL') ? 'CALL' : actions[0].action);
-  updateSelection(initial, false);
+  updateSelection(actions.some((row) => row.action === selectedAction) ? selectedAction : '', false);
   return wrapper;
 }
 
-function dashboardActivityContextLabel(row) {
-  const system = row.resolved_system_name || row.configured_system || systemLabel(row);
-  const channel = row.resolved_channel_name || row.channel_name || row.context_key;
-  return [...new Set([system, channel].filter(Boolean))].join(' · ') || row.scope_token || '—';
+function dashboardActivitySystem(row) {
+  const scopedSystem = row.scope_token ? systemLabel(row) : '';
+  const label = row.system_name || row.resolved_system_name || row.configured_system ||
+    row.configured_name || scopedSystem || row.resolved_channel_name || row.channel_name ||
+    row.context_key || row.scope_label || row.scope_token || '—';
+  const discriminator = String(row.scope_token || row.context_key || row.guid || '').trim();
+  const primary = row.scope_token ? systemLink(row, label) : node('span', '', label);
+  if (!discriminator || discriminator === label) return primary;
+  const summary = node('span', 'dashboard-identity');
+  const primaryLine = node('span', 'dashboard-identity-primary');
+  primaryLine.append(primary);
+  const context = node('small', 'dashboard-identity-context', discriminator);
+  context.title = discriminator;
+  summary.append(primaryLine, context);
+  return summary;
 }
 
 function dashboardActivityRadio(row) {
   const identifier = identityNumber(row, row.radio_id) || '—';
+  return row.scope_token ? radioLink(row, row.radio_id, identifier) : identifier;
+}
+
+function dashboardActivityAlias(row) {
   const alias = String(row.alias_name || '').trim();
+  const description = String(row.alias_description || '').trim();
+  if (!alias && !description) return '—';
   const summary = node('span', 'dashboard-identity');
   const primary = node('span', 'dashboard-identity-primary');
-  primary.append(radioLink(row, row.radio_id, alias || `Radio ${identifier}`));
+  primary.textContent = alias || description;
   summary.append(primary);
-  if (alias) summary.append(node('small', 'dashboard-identity-context', `Radio ${identifier}`));
+  if (alias && description) summary.append(node('small', 'dashboard-identity-context', description));
   return summary;
 }
 
-function dashboardActivityDestination(row) {
-  const alias = String(row.target_alias_name || '').trim();
-  const identifier = activityTargetIdentifier(row);
-  const summary = node('span', 'dashboard-identity');
-  const primary = node('span', 'dashboard-identity-primary');
-  primary.append(valueNode(alias ? activityTargetAlias(row) : identifier));
-  summary.append(primary);
-  if (alias) {
-    const text = identifier instanceof Node ? identifier.textContent : String(identifier || '');
-    if (text) summary.append(node('small', 'dashboard-identity-context', text));
-  }
-  return summary;
-}
-
-function dashboardActivitySite(row) {
-  const label = row.resolved_channel_name || row.channel_name || row.context_key || 'Unknown site / channel';
-  const identifiers = [];
-  if (row.resolved_rfss !== null && row.resolved_rfss !== undefined) {
-    identifiers.push(isP25(row) ? `RFSS ${hex(row.resolved_rfss, 2)}` : `RFSS ${row.resolved_rfss}`);
-  }
-  if (row.resolved_site !== null && row.resolved_site !== undefined) {
-    identifiers.push(isP25(row) ? `Site ${hex(row.resolved_site, 2)}` : `Site ${row.resolved_site}`);
-  }
-  const target = row.guid && capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS) ?
-    href('site', { guid: row.guid, tab: 'info' }) : '';
-  return siteNameSummaryValue(label, identifiers.join(' · '), target);
-}
-
-function dashboardActivityBreakdownColumns(groupBy) {
-  if (groupBy === 'event') return activityColumns();
-  const common = [
-    { id: 'context', label: 'Context', render: dashboardActivityContextLabel, className: 'alias-cell',
-      sortValue: dashboardActivityContextLabel },
-    { id: 'events', label: 'Events', render: (row) => number(row.event_count), className: 'numeric',
-      sortValue: (row) => Number(row.event_count || 0) },
-    { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms),
-      sortValue: (row) => Number(row.last_seen_ms || 0) }
-  ];
-  if (groupBy === 'radio') {
-    return [
-      { id: 'radio', label: 'Radio', render: dashboardActivityRadio, className: 'alias-cell',
-        sortValue: (row) => row.alias_name || Number(row.radio_id || 0) },
-      { id: 'description', label: 'Description', key: 'alias_description', className: 'alias-cell' },
-      ...common,
-      { id: 'source-count', label: 'Source', render: (row) => number(row.source_count), className: 'numeric',
-        sortValue: (row) => Number(row.source_count || 0) },
-      { id: 'target-count', label: 'Target', render: (row) => number(row.target_count), className: 'numeric',
-        sortValue: (row) => Number(row.target_count || 0) }
-    ];
-  }
-  if (groupBy === 'destination') {
-    return [
-      { id: 'destination', label: 'Destination', render: dashboardActivityDestination,
-        className: 'alias-cell', sortValue: (row) => row.target_alias_name || Number(row.target_id || 0) },
-      { id: 'kind', label: 'Kind', render: (row) => semanticLabel(row.target_kind),
-        sortValue: (row) => row.target_kind || '' },
-      ...common
-    ];
-  }
-  return [
-    { id: 'site-channel', label: 'Site / Channel', render: dashboardActivitySite, className: 'alias-cell',
-      sortValue: (row) => row.resolved_channel_name || row.context_key || '' },
-    { id: 'mode', label: 'Mode', fullLabel: 'Protocol and Topology', render: dashboardMode,
-      sortValue: dashboardModeLabel },
-    { id: 'system', label: 'System', render: (row) => systemLabel(row) || row.scope_token || '—',
-      sortValue: (row) => systemLabel(row) || row.scope_token || '' },
-    ...common.slice(1)
-  ];
-}
-
-function dashboardActivityGroupLabel(groupBy) {
-  return DASHBOARD_ACTIVITY_GROUPS.find(([value]) => value === groupBy)?.[1] || 'Activity';
-}
+const dashboardActivityRadioColumns = [
+  { id: 'system', label: 'System / Channel', render: dashboardActivitySystem, className: 'alias-cell' },
+  { id: 'radio', label: 'Radio', render: dashboardActivityRadio, className: 'numeric' },
+  { id: 'alias', label: 'Alias', render: dashboardActivityAlias, className: 'alias-cell' },
+  { id: 'events', label: 'Events', render: (row) => number(row.event_count), className: 'numeric' },
+  { id: 'last-seen', label: 'Last Seen', render: (row) => dateTime(row.last_seen_ms) }
+];
 
 function dashboardActivityRangeLabel(range) {
   return DASHBOARD_ACTIVITY_RANGES.find(([value]) => value === range)?.[1] || range;
 }
 
-function dashboardActivityDetailNotice(response, actionLabel, groupLabel, rowCount) {
-  const summaryCount = Math.max(0, Number(response.summary_count || 0));
-  const matchedCount = Math.max(0, Number(response.scanned_events || 0));
-  const coverage = String(response.detail_coverage || 'unknown').trim().toLowerCase();
-  const mismatch = matchedCount !== summaryCount;
-  const incompleteCoverage = coverage !== 'complete';
-  const slicesExamined = Math.max(0, Number(response.slices_examined || 0));
-  const warnings = mismatch || incompleteCoverage || response.detail_truncated || response.rows_truncated ||
-    response.detailed_history_configured === false;
-  const messages = [`Retained-detail sample: ${number(matchedCount)} matching ${actionLabel.toLowerCase()} events ` +
-    `from ${number(slicesExamined)} relevant receiver-hours.`];
-  if (mismatch) messages.push(`The hourly summary contains ${number(summaryCount)}.`);
-  if (coverage === 'partial') messages.push('Detail coverage is partial.');
-  else if (coverage !== 'complete') messages.push('Detail coverage is unknown.');
-  if (response.detailed_history_configured === false) {
-    messages.push('Detailed History is off, so this sample is not updating.');
-  }
-  if (response.slices_truncated) messages.push('The relevant receiver-hour limit was reached.');
-  else if (response.detail_truncated) messages.push('The retained matching-event limit was reached.');
-  if (response.rows_truncated) {
-    messages.push(`Only the first ${number(rowCount)} ${groupLabel.toLowerCase()} are shown.`);
-  }
-  return node('div', warnings ? 'logging-notice warning' : 'metric-meaning-note', messages.join(' '));
+function dashboardActivityRadioPager(page, onOffset) {
+  const navigation = node('nav', 'pager dashboard-activity-radio-pager');
+  navigation.setAttribute('aria-label', 'Source radio pagination');
+  navigation.tabIndex = -1;
+  const first = page.offset + (page.rows.length ? 1 : 0);
+  const last = page.offset + page.rows.length;
+  navigation.append(node('span', 'muted', page.rows.length ?
+    `Source radios ${number(first)}-${number(last)} of ${number(page.total_count)}` :
+    `Source radios 0 of ${number(page.total_count)}`));
+  const previous = node('button', 'secondary', 'Previous');
+  previous.type = 'button';
+  previous.disabled = page.offset <= 0;
+  previous.addEventListener('click', () => onOffset(Math.max(0, page.offset - page.limit)));
+  const next = node('button', 'secondary', 'Next');
+  next.type = 'button';
+  next.disabled = !page.has_more;
+  next.addEventListener('click', () => onOffset(page.next_offset));
+  navigation.append(previous, next);
+  return navigation;
 }
 
-async function renderDashboardActivity() {
+function dashboardActivityRadioNote(page, actionLabel) {
+  return node('p', 'metric-meaning-note',
+    `Hourly ${actionLabel.toLowerCase()} total: ${number(page.action_total)}. ` +
+    `Exact currently retained detail: ${number(page.retained_event_count)} events; ` +
+    `${number(page.identified_event_count)} identify a source radio and ` +
+    `${number(page.unknown_source_event_count)} have no source radio ID.`);
+}
+
+async function renderDashboardActivity(renderContext) {
   let selectedRange = '24h';
-  let selectedGroup = 'radio';
   let selectedAction = '';
-  let summaryResponse = null;
+  let selectedActionLabel = '';
+  let selectedOffset = 0;
   let summarySequence = 0;
-  let detailSequence = 0;
-  let detailHost = null;
-  let detailStatus = null;
-  let detailTitle = null;
+  let radioSequence = 0;
+  let summaryRequest = null;
+  let radioRequest = null;
+  let radioHost = null;
+  let radioStatus = null;
+  let radioTitle = null;
   const toolbar = node('div', 'dashboard-activity-page-controls');
   toolbar.setAttribute('aria-label', 'Activity analytics controls');
   toolbar.append(node('span', 'dashboard-control-label', 'Time range'));
   const host = node('div', 'dashboard-activity-view');
   const rangeControl = rangeControls(DASHBOARD_ACTIVITY_RANGES, selectedRange, async (value, buttons) => {
     selectedRange = value;
+    selectedAction = '';
+    selectedActionLabel = '';
+    selectedOffset = 0;
     await loadSummary(buttons);
   });
   toolbar.append(rangeControl.controls);
   content.append(toolbar, host);
 
-  const loadDetail = async () => {
-    const sequence = ++detailSequence;
-    if (!detailHost || !detailStatus || !detailTitle || !summaryResponse || !selectedAction) return;
-    const actionRow = dashboardActivityActionRows(summaryResponse)
-      .find((row) => row.action === selectedAction);
-    const actionLabel = actionRow?.label || semanticLabel(selectedAction);
-    const groupLabel = dashboardActivityGroupLabel(selectedGroup);
-    detailTitle.textContent = `${actionLabel} · ${groupLabel} · Retained detail`;
-
-    if (!capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS)) {
-      detailStatus.textContent = 'Systems & Sites access is required for retained-detail samples.';
-      detailHost.replaceChildren(node('div', 'empty',
-        'The activity summary is available, but retained details require Systems & Sites access.'));
-      return;
+  const nextRequest = (previous) => {
+    previous?.controller.abort();
+    previous?.unlink();
+    const controller = new AbortController();
+    let linked = false;
+    const abortFromPage = () => controller.abort(renderContext.signal?.reason);
+    if (renderContext.signal?.aborted) controller.abort(renderContext.signal.reason);
+    else if (renderContext.signal) {
+      renderContext.signal.addEventListener('abort', abortFromPage, { once: true });
+      linked = true;
     }
-
-    detailStatus.textContent = `${actionLabel} selected. Loading retained-detail sample.`;
-    detailHost.replaceChildren(node('div', 'loading', 'Loading retained-detail sample'));
-
-    if (!actionRow?.detail_supported) {
-      detailStatus.textContent = `${actionLabel} totals are available, but individual records are not retained.`;
-      detailHost.replaceChildren(node('div', 'empty',
-        `A ${actionLabel.toLowerCase()} breakdown is unavailable because these individual events are not retained.`));
-      return;
-    }
-    if (!detailedHistoryAvailable()) {
-      detailStatus.textContent = `${actionLabel} totals are available without a detailed breakdown.`;
-      detailHost.replaceChildren(node('div', 'empty',
-        'Detailed History is unavailable. Activity totals remain available, but breakdowns require retained events.'));
-      return;
-    }
-
-    try {
-      const response = await api('/api/v1/activity-analytics', {
-        range: selectedRange, group_by: selectedGroup, action: selectedAction, limit: 100
-      });
-      if (sequence !== detailSequence) return;
-      const rows = response.rows || [];
-      detailStatus.textContent = `Retained-detail sample: ${number(rows.length)} ` +
-        `${groupLabel.toLowerCase()} shown for ${actionLabel}.`;
-      const result = node('div', 'dashboard-activity-breakdown-result');
-      result.append(dashboardActivityDetailNotice(response, actionLabel, groupLabel, rows.length));
-      if (selectedGroup === 'radio' && Number(response.unidentified_radio_events) > 0) {
-        result.append(node('div', 'metric-meaning-note',
-          `${number(response.unidentified_radio_events)} retained matching events did not contain a radio ID.`));
+    return {
+      controller,
+      unlink: () => {
+        if (!linked) return;
+        renderContext.signal.removeEventListener('abort', abortFromPage);
+        linked = false;
       }
-      const empty = selectedGroup === 'radio' ? 'No involved radios were identified in this retained-detail sample' :
-        selectedGroup === 'destination' ? 'No destinations were identified in this retained-detail sample' :
-          selectedGroup === 'site' ? 'No sites or channels were identified in this retained-detail sample' :
-            'No events were found in this retained-detail sample';
-      result.append(table(rows, dashboardActivityBreakdownColumns(selectedGroup), empty,
-        { type: `dashboard-activity-${selectedGroup}` }));
-      detailHost.replaceChildren(result);
+    };
+  };
+
+  const showRadioPrompt = () => {
+    if (!radioHost || !radioStatus || !radioTitle) return;
+    radioTitle.textContent = 'Source radios';
+    radioStatus.textContent = 'Select an activity type to list source radios.';
+    radioHost.setAttribute('aria-busy', 'false');
+    radioHost.replaceChildren(node('div', 'empty', 'Select an activity type to list source radios.'));
+  };
+
+  const loadRadios = async (offset = 0, restorePagingFocus = false) => {
+    if (!selectedAction || !radioHost || !radioStatus || !radioTitle) return;
+    selectedOffset = Math.max(0, Number(offset) || 0);
+    const sequence = ++radioSequence;
+    const action = selectedAction;
+    const actionLabel = selectedActionLabel || semanticLabel(action);
+    radioTitle.textContent = `${actionLabel} · Source radios`;
+    if (!capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS)) {
+      radioRequest?.controller.abort();
+      radioRequest?.unlink();
+      radioRequest = null;
+      radioStatus.textContent = 'Systems & Sites access is required to list source radios.';
+      radioHost.setAttribute('aria-busy', 'false');
+      radioHost.replaceChildren(node('div', 'empty',
+        'Systems & Sites access is required to list source radios.'));
+      return;
+    }
+    const request = nextRequest(radioRequest);
+    radioRequest = request;
+    radioStatus.textContent = `Loading ${actionLabel.toLowerCase()} source radios.`;
+    radioHost.setAttribute('aria-busy', 'true');
+    radioHost.replaceChildren(node('div', 'loading', 'Loading source radios'));
+    try {
+      const page = await apiPage('/api/v1/activity/radios', {
+        range: selectedRange, action, limit: 100, offset: selectedOffset
+      }, { signal: request.controller.signal });
+      if (sequence !== radioSequence || action !== selectedAction ||
+          !renderIsCurrent(renderContext) || !host.isConnected) return;
+      selectedOffset = page.offset;
+      radioStatus.textContent = `${number(page.total_count)} source radio` +
+        `${Number(page.total_count) === 1 ? '' : 's'} found for ${actionLabel}.`;
+      const result = node('div', 'dashboard-activity-radio-result');
+      const pager = dashboardActivityRadioPager(page,
+        (nextOffset) => void loadRadios(nextOffset, true));
+      result.append(dashboardActivityRadioNote(page, actionLabel),
+        table(page.rows, dashboardActivityRadioColumns,
+          `No source radios were identified in currently retained ${actionLabel.toLowerCase()} detail.`,
+          { type: 'dashboard-activity-radios', sortable: false }),
+        pager);
+      radioHost.replaceChildren(result);
+      if (restorePagingFocus) pager.focus();
     } catch (error) {
-      if (sequence !== detailSequence) return;
-      detailStatus.textContent = `${actionLabel} details could not be loaded.`;
-      detailHost.replaceChildren(node('div', 'error', error.message));
+      if (error?.name === 'AbortError' || sequence !== radioSequence ||
+          !renderIsCurrent(renderContext) || !host.isConnected) return;
+      if (error?.status === 401 || error?.status === 403) {
+        await refreshAccessSession(false);
+        if (sequence === radioSequence && renderIsCurrent(renderContext) && host.isConnected) await render();
+        return;
+      }
+      radioStatus.textContent = `${actionLabel} source radios could not be loaded.`;
+      const failure = asyncSectionFailure(error, 'Source radios could not be loaded.',
+        () => loadRadios(selectedOffset, restorePagingFocus));
+      radioHost.replaceChildren(failure);
+      if (restorePagingFocus) failure.querySelector('.async-section-retry')?.focus();
+    } finally {
+      request.unlink();
+      if (radioRequest === request) radioRequest = null;
+      if (sequence === radioSequence && renderIsCurrent(renderContext) && host.isConnected) {
+        radioHost.setAttribute('aria-busy', 'false');
+      }
     }
   };
 
   const renderSummary = (response) => {
-    const actions = dashboardActivityActionRows(response);
-    if (!actions.some((row) => row.action === selectedAction)) {
-      selectedAction = actions.some((row) => row.action === 'CALL') ? 'CALL' : (actions[0]?.action || '');
-    }
-    const overview = dashboardSummarySection(`Activity Totals · ${dashboardActivityRangeLabel(selectedRange)}`, [
-      ['Events', response.total],
-      ['Calls', dashboardActivityActionCount(response, 'CALL')],
-      ['Emergencies', dashboardActivityActionCount(response, 'EMERGENCY')],
-      ['Denials', dashboardActivityActionCount(response, 'DENIAL')]
-    ]);
-    overview.classList.add('dashboard-activity-summary');
     const mixBody = node('div', 'dashboard-activity-mix-body');
     mixBody.append(dashboardActivityMix(response, selectedAction, (row) => {
       selectedAction = row.action;
-      void loadDetail();
+      selectedActionLabel = row.label;
+      selectedOffset = 0;
+      void loadRadios(0);
     }), node('p', 'metric-meaning-note',
-      'Percentages are shares of observed activity events, not call success rates. Repeated signaling can produce ' +
-      'more than one event for the same call or radio.'), activityMetricGuide(false));
-    const mix = section('Activity Mix', mixBody);
-
-    const breakdownBody = node('div', 'dashboard-activity-breakdown');
-    const breakdownToolbar = node('div', 'dashboard-activity-breakdown-toolbar');
-    const groupLabel = node('label', 'dashboard-control-label', 'Break down retained detail by');
-    const groupSelect = node('select', 'dashboard-activity-group-select');
-    groupSelect.id = 'dashboard-activity-group';
-    groupSelect.setAttribute('aria-label', 'Break retained activity detail down by');
-    groupSelect.disabled = !capabilityAllowed(ACCESS_CAPABILITIES.SYSTEMS);
-    DASHBOARD_ACTIVITY_GROUPS.forEach(([value, label]) => {
-      const option = node('option', '', label);
-      option.value = value;
-      option.selected = value === selectedGroup;
-      groupSelect.append(option);
-    });
-    groupLabel.htmlFor = groupSelect.id;
-    groupSelect.addEventListener('change', () => {
-      selectedGroup = groupSelect.value;
-      void loadDetail();
-    });
-    detailStatus = node('div', 'dashboard-activity-breakdown-status');
-    detailStatus.setAttribute('aria-live', 'polite');
-    breakdownToolbar.append(groupLabel, groupSelect, detailStatus);
-    detailHost = node('div', 'dashboard-activity-breakdown-host');
-    breakdownBody.append(breakdownToolbar, detailHost);
-    const breakdown = section('Selected Activity', breakdownBody);
-    detailTitle = breakdown.querySelector('.section-title');
-    host.replaceChildren(overview, mix, breakdown);
-    if (selectedAction) void loadDetail();
-    else {
-      detailStatus.textContent = 'No activity type is available for this range.';
-      detailHost.append(node('div', 'empty', 'No activity was recorded for this range.'));
-    }
+      'Percentages use the visible activity total. Repeated signaling can produce more than one event for the same ' +
+      'call or radio.'));
+    const mix = section(`Activity Mix · ${dashboardActivityRangeLabel(selectedRange)}`, mixBody);
+    const radioBody = node('div', 'dashboard-activity-radio-body');
+    radioStatus = node('p', 'dashboard-activity-radio-status');
+    radioStatus.setAttribute('aria-live', 'polite');
+    radioHost = node('div', 'dashboard-activity-radio-host');
+    radioBody.append(radioStatus, radioHost);
+    const radios = section('Source radios', radioBody);
+    radioTitle = radios.querySelector('.section-title');
+    host.replaceChildren(mix, radios);
+    showRadioPrompt();
   };
 
   const loadSummary = async (buttons = rangeControl.buttons) => {
     const sequence = ++summarySequence;
-    detailSequence += 1;
+    radioSequence += 1;
+    radioRequest?.controller.abort();
+    radioRequest?.unlink();
+    radioRequest = null;
+    const request = nextRequest(summaryRequest);
+    summaryRequest = request;
     buttons.forEach((button) => { button.disabled = true; });
+    host.setAttribute('aria-busy', 'true');
     host.replaceChildren(node('div', 'loading', 'Loading activity analytics'));
     try {
-      const response = await api('/api/v1/activity-analytics', {
-        range: selectedRange, group_by: 'action', limit: 100
-      });
-      if (sequence !== summarySequence) return;
-      summaryResponse = response;
+      const response = await api('/api/v1/activity/actions', { range: selectedRange },
+        { signal: request.controller.signal });
+      if (sequence !== summarySequence || !renderIsCurrent(renderContext) || !host.isConnected) return;
       renderSummary(response);
     } catch (error) {
-      if (sequence === summarySequence) host.replaceChildren(node('div', 'error', error.message));
+      if (error?.name === 'AbortError' || sequence !== summarySequence ||
+          !renderIsCurrent(renderContext) || !host.isConnected) return;
+      if (error?.status === 401 || error?.status === 403) {
+        await refreshAccessSession(false);
+        if (sequence === summarySequence && renderIsCurrent(renderContext) && host.isConnected) await render();
+        return;
+      }
+      host.replaceChildren(asyncSectionFailure(error, 'Activity totals could not be loaded.',
+        () => loadSummary(buttons)));
     } finally {
-      if (sequence === summarySequence) buttons.forEach((button) => { button.disabled = false; });
+      request.unlink();
+      if (summaryRequest === request) summaryRequest = null;
+      if (sequence === summarySequence && renderIsCurrent(renderContext) && host.isConnected) {
+        host.setAttribute('aria-busy', 'false');
+        buttons.forEach((button) => { button.disabled = false; });
+      }
     }
   };
 
@@ -7616,7 +7581,7 @@ async function renderDashboard() {
   }
 
   if (tab === 'activity') {
-    await renderDashboardActivity();
+    await renderDashboardActivity(renderContext);
     return;
   }
 

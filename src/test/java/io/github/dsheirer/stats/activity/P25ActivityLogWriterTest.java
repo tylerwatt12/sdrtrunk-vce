@@ -1502,6 +1502,26 @@ class P25ActivityLogWriterTest
     }
 
     @Test
+    void frequencylessConventionalActivityStillUpdatesTheCompactHourlyTotal() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("conventional-frequencyless.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            P25ActivityLogSchema.recordActivity(connection,
+                frequencylessConventionalActivity(1_000L), true);
+
+            assertCount(connection, "p25_activity_event", 1);
+            assertCount(connection, "conventional_activity_summary", 0);
+            assertCount(connection, "conventional_activity_bucket", 1);
+            assertEquals(0L, scalarLong(connection,
+                "SELECT frequency_hz FROM conventional_activity_bucket"));
+            assertActionCount(connection, "conventional_activity_bucket", "emergency_count", 1);
+        }
+    }
+
+    @Test
     void trunkedActivityDoesNotStoreLogicalChannelAsContextName() throws Exception
     {
         Path database = mTemporaryFolder.resolve("context-name.sqlite");
@@ -3266,6 +3286,14 @@ class P25ActivityLogWriterTest
             P25ActivityLogRecords.ContextKind.CONVENTIONAL_ANALOG, "NBFM", action, "CALL", null, null, null,
             154310000L, null, null, false, null, null, null, null, null, null, null, "County Fire", "NBFM",
             null, action == P25ActivityLogRecords.Action.CALL, null, null);
+    }
+
+    private static P25ActivityLogRecords.ActivityEvent frequencylessConventionalActivity(long timestamp)
+    {
+        return new P25ActivityLogRecords.ActivityEvent(timestamp, "CONVENTIONAL_ANALOG:NBFM:County Fire", null,
+            P25ActivityLogRecords.ContextKind.CONVENTIONAL_ANALOG, "NBFM",
+            P25ActivityLogRecords.Action.EMERGENCY, "EMERGENCY", "1888000", null, null, (Long)null, null, null,
+            false, null, null, null, null, null, null, null, "County Fire", "NBFM", null, false, null, null);
     }
 
     private static P25ActivityLogRecords.ActivityEvent configuredConventionalActivity(long timestamp, String guid,

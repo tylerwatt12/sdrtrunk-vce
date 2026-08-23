@@ -157,15 +157,47 @@ class StatsApiV1HttpContractTest
         assertTrue(dashboard.has("source_activity_24h"), dashboardResponse.body());
         assertFalse(dashboard.has("source_activity24h"), dashboardResponse.body());
 
-        HttpResponse<String> analyticsResponse = get(StatsApiV1.ACTIVITY_ANALYTICS +
-            "?range=24h&group_by=action");
-        assertEquals(200, analyticsResponse.statusCode(), analyticsResponse.body());
-        JsonNode analytics = OBJECT_MAPPER.readTree(analyticsResponse.body()).get("data");
-        assertEquals("24h", analytics.path("range").textValue(), analyticsResponse.body());
-        assertEquals("action", analytics.path("group_by").textValue(), analyticsResponse.body());
-        assertTrue(analytics.path("rows").isArray(), analyticsResponse.body());
-        assertTrue(analytics.path("rows").get(0).path("detail_supported").isBoolean(),
-            analyticsResponse.body());
+        HttpResponse<String> actionsResponse = get(StatsApiV1.ACTIVITY_ACTIONS + "?range=24h");
+        assertEquals(200, actionsResponse.statusCode(), actionsResponse.body());
+        JsonNode actions = OBJECT_MAPPER.readTree(actionsResponse.body());
+        assertEquals(2, actions.size(), actionsResponse.body());
+        assertTrue(actions.path("data").isArray(), actionsResponse.body());
+        assertEquals(4, actions.path("meta").size(), actionsResponse.body());
+        assertEquals("24h", actions.at("/meta/range").textValue(), actionsResponse.body());
+        assertTrue(actions.at("/meta/from_ms").isIntegralNumber(), actionsResponse.body());
+        assertTrue(actions.at("/meta/to_ms").isIntegralNumber(), actionsResponse.body());
+        assertTrue(actions.at("/meta/total").isIntegralNumber(), actionsResponse.body());
+        assertFalse(actions.path("meta").has("group_by"), actionsResponse.body());
+
+        for(JsonNode row: actions.path("data"))
+        {
+            assertEquals(2, row.size(), actionsResponse.body());
+            assertTrue(row.path("action").isTextual(), actionsResponse.body());
+            assertTrue(row.path("count").isIntegralNumber(), actionsResponse.body());
+            assertFalse("continue".equals(row.path("action").textValue()), actionsResponse.body());
+            assertFalse(row.has("detail_supported"), actionsResponse.body());
+        }
+
+        HttpResponse<String> radiosResponse = get(StatsApiV1.ACTIVITY_RADIOS +
+            "?range=24h&action=GRANT&limit=1&offset=0");
+        assertEquals(200, radiosResponse.statusCode(), radiosResponse.body());
+        JsonNode radios = OBJECT_MAPPER.readTree(radiosResponse.body());
+        assertEquals(2, radios.size(), radiosResponse.body());
+        assertTrue(radios.path("data").isArray(), radiosResponse.body());
+        assertEquals(13, radios.path("meta").size(), radiosResponse.body());
+        assertEquals("24h", radios.at("/meta/range").textValue(), radiosResponse.body());
+        assertEquals("grant", radios.at("/meta/action").textValue(), radiosResponse.body());
+        assertTrue(radios.at("/meta/from_ms").isIntegralNumber(), radiosResponse.body());
+        assertTrue(radios.at("/meta/to_ms").isIntegralNumber(), radiosResponse.body());
+        assertTrue(radios.at("/meta/action_total").isIntegralNumber(), radiosResponse.body());
+        assertTrue(radios.at("/meta/retained_event_count").isIntegralNumber(), radiosResponse.body());
+        assertTrue(radios.at("/meta/identified_event_count").isIntegralNumber(), radiosResponse.body());
+        assertTrue(radios.at("/meta/unknown_source_event_count").isIntegralNumber(), radiosResponse.body());
+        assertTrue(radios.at("/meta/total_count").isIntegralNumber(), radiosResponse.body());
+        assertEquals(1, radios.at("/meta/limit").intValue(), radiosResponse.body());
+        assertEquals(0, radios.at("/meta/offset").intValue(), radiosResponse.body());
+        assertTrue(radios.at("/meta/has_more").isBoolean(), radiosResponse.body());
+        assertTrue(radios.path("meta").has("next_offset"), radiosResponse.body());
 
         HttpResponse<String> systemsResponse = get(StatsApiV1.SYSTEMS + "?limit=1");
         assertEquals(200, systemsResponse.statusCode(), systemsResponse.body());
@@ -240,17 +272,28 @@ class StatsApiV1HttpContractTest
             "?talkgroup_id=1&kind=patch");
         assertStructuredError(removedPatchSpelling, 400, "invalid_parameter", "kind");
 
-        HttpResponse<String> missingAnalyticsAction = get(StatsApiV1.ACTIVITY_ANALYTICS +
-            "?group_by=radio");
-        assertStructuredError(missingAnalyticsAction, 400, "invalid_parameter", "action");
+        HttpResponse<String> missingRadioAction = get(StatsApiV1.ACTIVITY_RADIOS + "?range=24h");
+        assertStructuredError(missingRadioAction, 400, "invalid_parameter", "action");
 
-        HttpResponse<String> invalidAnalyticsAction = get(StatsApiV1.ACTIVITY_ANALYTICS +
-            "?group_by=event&action=not-real");
-        assertStructuredError(invalidAnalyticsAction, 400, "invalid_parameter", "action");
+        HttpResponse<String> invalidRadioAction = get(StatsApiV1.ACTIVITY_RADIOS +
+            "?range=24h&action=not-real");
+        assertStructuredError(invalidRadioAction, 400, "invalid_parameter", "action");
 
-        HttpResponse<String> unknownAnalyticsParameter = get(StatsApiV1.ACTIVITY_ANALYTICS +
-            "?group_by=action&surprise=true");
-        assertStructuredError(unknownAnalyticsParameter, 400, "unknown_parameter", "surprise");
+        HttpResponse<String> continueRadioAction = get(StatsApiV1.ACTIVITY_RADIOS +
+            "?range=24h&action=CONTINUE");
+        assertStructuredError(continueRadioAction, 400, "invalid_parameter", "action");
+
+        HttpResponse<String> legacyActionsGroupBy = get(StatsApiV1.ACTIVITY_ACTIONS +
+            "?range=24h&group_by=action");
+        assertStructuredError(legacyActionsGroupBy, 400, "unknown_parameter", "group_by");
+
+        HttpResponse<String> legacyActionsLimit = get(StatsApiV1.ACTIVITY_ACTIONS +
+            "?range=24h&limit=1");
+        assertStructuredError(legacyActionsLimit, 400, "unknown_parameter", "limit");
+
+        HttpResponse<String> legacyRadiosGroupBy = get(StatsApiV1.ACTIVITY_RADIOS +
+            "?range=24h&action=GRANT&group_by=radio");
+        assertStructuredError(legacyRadiosGroupBy, 400, "unknown_parameter", "group_by");
 
         HttpResponse<String> doubleEncodedPath = get(StatsApiV1.SYSTEMS + "/p25%253Atest");
         assertStructuredError(doubleEncodedPath, 400, "invalid_path", null);
@@ -306,6 +349,7 @@ class StatsApiV1HttpContractTest
             "/api/v1/live/sites",
             "/api/v1/live/calls",
             "/api/v1/live/activity",
+            "/api/v1/activity-analytics?range=24h&group_by=action",
             "/api/web-player/calls/1/audio",
             "/api/v1/systems/p25%3Atest/affiliations",
             "/api/v1/not-a-resource"))
@@ -329,7 +373,8 @@ class StatsApiV1HttpContractTest
             Map.entry("SYSTEMS", "/api/v1/systems"),
             Map.entry("SITES", "/api/v1/sites"),
             Map.entry("ACTIVITY", "/api/v1/activity"),
-            Map.entry("ACTIVITY_ANALYTICS", "/api/v1/activity-analytics"),
+            Map.entry("ACTIVITY_ACTIONS", "/api/v1/activity/actions"),
+            Map.entry("ACTIVITY_RADIOS", "/api/v1/activity/radios"),
             Map.entry("CONVENTIONAL_CONTEXTS", "/api/v1/conventional-contexts"),
             Map.entry("EXPORTS", "/api/v1/exports"),
             Map.entry("TUNER_DIAGNOSTICS", "/api/v1/diagnostics/tuners"),

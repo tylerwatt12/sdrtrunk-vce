@@ -2325,36 +2325,39 @@ public class P25ActivityLogSchema
     private static void upsertConventionalSummary(Connection connection, P25ActivityLogRecords.ActivityEvent activity,
                                                   int contextId) throws SQLException
     {
-        if(activity.frequencyHertz() == null || activity.frequencyHertz() <= 0)
-        {
-            return;
-        }
-
+        long frequencyHertz = activity.frequencyHertz() != null && activity.frequencyHertz() > 0 ?
+            activity.frequencyHertz() : 0;
         int timeslot = summaryTimeslot(activity.timeslot());
 
-        try(PreparedStatement statement = connection.prepareStatement("""
-            INSERT INTO conventional_activity_summary (
-                context_id, frequency_hz, timeslot, first_seen_ms, last_seen_ms, %s, encrypted_count,
-                last_event_type_code
-            ) VALUES (?, ?, ?, ?, ?, %s, ?, ?)
-            ON CONFLICT(context_id, frequency_hz, timeslot) DO UPDATE SET
-                last_seen_ms = max(conventional_activity_summary.last_seen_ms, excluded.last_seen_ms),
-                %s,
-                encrypted_count = conventional_activity_summary.encrypted_count + excluded.encrypted_count,
-                last_event_type_code = coalesce(excluded.last_event_type_code, conventional_activity_summary.last_event_type_code)
-            """.formatted(ACTION_INSERT_COLUMNS, ACTION_INSERT_PLACEHOLDERS,
-            actionUpdateSql("conventional_activity_summary"))))
+        // A decoder event can identify its configured conventional context before it can project a frequency.
+        // Keep that event out of the lifetime per-frequency directory, but count it in the compact hourly bucket so
+        // dashboard action totals stay complete. Frequency zero is reserved for this aggregate-only fallback.
+        if(frequencyHertz > 0)
         {
-            int index = 1;
-            statement.setInt(index++, contextId);
-            statement.setLong(index++, activity.frequencyHertz());
-            statement.setInt(index++, timeslot);
-            statement.setLong(index++, activity.observedAtEpochMilliseconds());
-            statement.setLong(index++, activity.observedAtEpochMilliseconds());
-            index = setActionCounts(statement, index, activity);
-            statement.setInt(index++, activity.encrypted() ? 1 : 0);
-            setInteger(statement, index, eventTypeCode(activity.eventType()));
-            statement.executeUpdate();
+            try(PreparedStatement statement = connection.prepareStatement("""
+                INSERT INTO conventional_activity_summary (
+                    context_id, frequency_hz, timeslot, first_seen_ms, last_seen_ms, %s, encrypted_count,
+                    last_event_type_code
+                ) VALUES (?, ?, ?, ?, ?, %s, ?, ?)
+                ON CONFLICT(context_id, frequency_hz, timeslot) DO UPDATE SET
+                    last_seen_ms = max(conventional_activity_summary.last_seen_ms, excluded.last_seen_ms),
+                    %s,
+                    encrypted_count = conventional_activity_summary.encrypted_count + excluded.encrypted_count,
+                    last_event_type_code = coalesce(excluded.last_event_type_code, conventional_activity_summary.last_event_type_code)
+                """.formatted(ACTION_INSERT_COLUMNS, ACTION_INSERT_PLACEHOLDERS,
+                actionUpdateSql("conventional_activity_summary"))))
+            {
+                int index = 1;
+                statement.setInt(index++, contextId);
+                statement.setLong(index++, frequencyHertz);
+                statement.setInt(index++, timeslot);
+                statement.setLong(index++, activity.observedAtEpochMilliseconds());
+                statement.setLong(index++, activity.observedAtEpochMilliseconds());
+                index = setActionCounts(statement, index, activity);
+                statement.setInt(index++, activity.encrypted() ? 1 : 0);
+                setInteger(statement, index, eventTypeCode(activity.eventType()));
+                statement.executeUpdate();
+            }
         }
 
         try(PreparedStatement statement = connection.prepareStatement("""
@@ -2369,7 +2372,7 @@ public class P25ActivityLogSchema
         {
             int index = 1;
             statement.setInt(index++, contextId);
-            statement.setLong(index++, activity.frequencyHertz());
+            statement.setLong(index++, frequencyHertz);
             statement.setInt(index++, timeslot);
             statement.setLong(index++, bucketStart(activity.observedAtEpochMilliseconds()));
             index = setActionCounts(statement, index, activity);

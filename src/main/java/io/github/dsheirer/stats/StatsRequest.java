@@ -280,6 +280,23 @@ final class StatsRequest
         return value;
     }
 
+    /**
+     * Reads an offset without the shared directory-page ceiling. Exact aggregate pages can contain more than
+     * {@link #MAX_OFFSET} distinct groups even though each response remains bounded by {@link #MAX_LIMIT}.
+     */
+    long longOffset()
+    {
+        Long requested = optionalLong("offset");
+        long value = requested != null ? requested : 0;
+
+        if(value < 0)
+        {
+            throw invalid("offset", "offset must be a non-negative integer");
+        }
+
+        return value;
+    }
+
     long beforeId()
     {
         Long value = optionalLong("before_id");
