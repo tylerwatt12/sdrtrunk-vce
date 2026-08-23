@@ -1,0 +1,80 @@
+<h1>What’s New in sdrtrunk-vce 0.6.2 Alpha 10</h1>
+<h2>What</h2>
+<p>Alpha 10 is a focused compatibility and receiver-stability release. It restores Scanner-Map uploads through the Rdio
+Scanner integration, keeps late encryption details attached to the correct call, corrects P25 implicit uplinks, bounds
+stale receiver work during overload, and prevents tuner disable/allocation races.</p>
+<p>This release does not change the database schema, Alias model, recording format or ownership, RadioReference behavior,
+streaming-provider configuration, or multipart call-upload fields. It retains Alpha 9's portable-storage layout and
+existing migration behavior.</p>
+<h2>Added</h2>
+<ul>
+<li><strong>Fail-fast tuner lifecycle coordination.</strong> Channel allocation reserves a tuner's lifecycle without waiting. If
+hardware is being enabled or disabled, decoder-side allocation immediately tries another tuner or returns no source
+instead of waiting behind hardware teardown.</li>
+<li><strong>Bounded channel-output recovery.</strong> Channelizer output queues and reusable result pools have explicit limits and
+cleanup behavior for overflow, stopped consumers, and blocked downstream processing.</li>
+</ul>
+<h2>Changed</h2>
+<ul>
+<li><strong>Encryption key IDs display in hexadecimal.</strong> P25, DMR, and NXDN decoded-event details use uppercase, unpadded
+hexadecimal key identifiers. Raw decoder diagnostic strings remain unchanged.</li>
+<li><strong>Receiver overload favors live samples.</strong> When a channel-output consumer falls behind, the oldest stale work is
+released instead of allowing an unbounded backlog or retaining its high-water memory usage.</li>
+<li><strong>Disabled tuners leave allocation before teardown.</strong> The available-tuner snapshot now requires both an enabled state
+and a fully instantiated tuner. Allocation safely rejects a missing channel-source manager.</li>
+</ul>
+<h2>Fixed</h2>
+<ul>
+<li><strong>Scanner-Map Rdio Scanner uploads connect and send calls again.</strong> Connection probes and completed-call uploads use
+the exact protocol-compatible <code>User-Agent: sdrtrunk</code> value expected by Scanner-Map's SDRTrunk handler. Product
+branding elsewhere remains <code>sdrtrunk-vce</code>. This fixes issue
+<a href="https://github.com/tylerwatt12/sdrtrunk-vce/issues/46">#46</a>.</li>
+<li><strong>Late encryption details update the original call.</strong> Algorithm, key, and encrypted status learned after a P25, DMR,
+or NXDN call begins enrich that same Activity row and live update without creating a duplicate call or incrementing
+call/encryption counters twice. This fixes issue
+<a href="https://github.com/tylerwatt12/sdrtrunk-vce/issues/35">#35</a>.</li>
+<li><strong>Event key IDs use the expected number format.</strong> Event details no longer mix decimal key IDs with hexadecimal status
+displays. This fixes issue <a href="https://github.com/tylerwatt12/sdrtrunk-vce/issues/38">#38</a>.</li>
+<li><strong>P25 implicit uplinks resolve from the downlink band plan.</strong> An explicit uplink field containing the reserved
+<code>0xFFFF</code> value is no longer interpreted as band 15/channel 4095, which produced incorrect frequencies such as
+216.375 MHz. This addresses issue <a href="https://github.com/tylerwatt12/sdrtrunk-vce/issues/24">#24</a>.</li>
+<li><strong>P25 traffic-channel shutdown avoids a manager-lock deadlock.</strong> Synchronous channel-disable requests are issued
+after releasing the traffic manager lock, and queued channelizer results are released correctly when work is stale
+or a consumer stops.</li>
+<li><strong>Concurrent tuner disable no longer exposes a tuner during teardown.</strong> Allocation cannot dereference a tuner or
+channel-source manager while disable teardown removes it. This addresses the Airspy/null-manager NPE portion of issue
+<a href="https://github.com/tylerwatt12/sdrtrunk-vce/issues/43">#43</a>; it does not claim to fix that report's separate
+API-latency or retry-storm symptoms.</li>
+</ul>
+<h2>Removed</h2>
+<ul>
+<li>No decoder, channel type, Alias feature, recording feature, streaming provider, RadioReference feature, or database
+storage is removed.</li>
+<li>No supported migration path is removed. The exact Alpha 7 conversion available in Alpha 9 remains available in
+Alpha 10.</li>
+</ul>
+<h2>Before You Upgrade</h2>
+<ul>
+<li><strong>Alpha 9 and Alpha 10 use the same database schema.</strong> An exact Alpha 9 profile opens without a database conversion
+or history reset. Channels, aliases, streams, tuners, preferences, calls, counts, Activity, affiliations, site
+observations, identity evidence, and quality history remain intact.</li>
+<li><strong>Migrate Previous Data can copy an Alpha 9 portable profile into a new Alpha 10 installation.</strong> The source
+installation remains unchanged, recognized portable paths are adjusted for the new location, and classic recording
+files remain in their administrator-configured location.</li>
+<li><strong>The exact Alpha 7 conversion remains available.</strong> It preserves or converts supported configuration and starts the
+current activity/statistics storage empty, matching Alpha 9 behavior. Alpha 10 retains this compatibility path for the
+focused hotfix release; Alpha 1 through Alpha 6 and mixed or development schemas remain unsupported.</li>
+<li><strong>This release does not close issues #41 or #43.</strong> The included fixes are limited to the P25
+manager-lock/channelizer-backlog path and the Airspy/null-manager NPE. The slow <code>/api/activity</code> request,
+preferred-tuner retry storm, physical unplug/error teardown, and other reported symptoms remain outside this
+release.</li>
+<li>Test multi-tuner operation with an Airspy, concurrent traffic grants, tuner disable, and unplug/error handling before
+relying on this build unattended. Also inspect buffer-drop logs and control-channel decode quality at wide sample
+rates or under sustained load.</li>
+<li>Stop sdrtrunk-vce and back up the complete portable <code>data</code> folder before upgrading. Keep the Alpha 9 installation
+until Alpha 10 has been verified with the receiver's normal configuration.</li>
+</ul>
+<h2>Downloads</h2>
+<p>Use the package that matches your operating system and processor. Java 25 is included. JMBE remains a separate setup
+under <strong>Preferences &gt; Decoder &gt; JMBE Audio Library</strong>. Verify the downloaded ZIP with
+<code>SHA256SUMS.txt</code> before installing.</p>

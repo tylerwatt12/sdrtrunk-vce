@@ -29,22 +29,22 @@ This project is currently an **alpha release**. Back up your receiver data befor
 - **Clear channel types:** Conventional P25, DMR, and NXDN are kept separate from trunked systems.
 - **Improved listening:** Desktop audio adds Hold, Avoid, Clear, saved mute state, a queue counter, and a queue limit.
 
-## What’s New in Alpha 9
+## What’s New in Alpha 10
 
-Alpha 9 is a focused bugfix release for playback and tuner stability.
+Alpha 10 is a focused compatibility and receiver-stability release.
 
-- **Suppressed calls stay silent.** Calls marked Do Not Monitor, suppressed duplicates, and unidentified trunked
-  fragments no longer leak a tone or brief piece of voice audio.
-- **Playback status is more accurate.** The desktop queue represents calls that can actually play, and browser Hold
-  and Avoid remain unavailable until audio is playing.
-- **Browser listening has its own saved volume control** that is separate from Mute.
-- **Mixed-band tuner allocation is safer.** An out-of-range channel is rejected before it can move the wrong tuner,
-  while valid in-range site centering still works.
-- **Alpha 8 data carries forward unchanged.** Alpha 9 uses the same database schema, so configuration, calls, counts,
-  Activity, site observations, identity evidence, and quality history are preserved.
+- **Scanner-Map uploads work again.** The Rdio Scanner integration uses the protocol-compatible SDRTrunk identity for
+  both connection tests and call uploads.
+- **Encryption details stay with the correct call.** Late algorithm and key information updates the existing P25,
+  DMR, or NXDN activity row, and event key IDs display in hexadecimal.
+- **P25 channel handling is safer.** Implicit uplinks resolve from the downlink band, traffic-channel shutdown avoids
+  a manager lock hazard, and stale channelizer work is bounded during overload.
+- **Tuner disable and allocation no longer race.** Decoder-side allocation fails fast while tuner hardware is being
+  stopped instead of observing a removed channel manager.
+- **Alpha 9 data carries forward unchanged.** Alpha 10 uses the same database schema and storage formats.
 
-Read the complete [Alpha 9 What’s New](docs/whats-new-0.6.2-alpha-9.md), including the different Alpha 7 and Alpha 8
-upgrade behavior.
+Read the complete [Alpha 10 What’s New](docs/whats-new-0.6.2-alpha-10.md), including the retained Alpha 7 migration
+compatibility and the scope limits of the receiver-stability fixes.
 
 ## Screenshots
 

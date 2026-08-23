@@ -311,10 +311,10 @@ Schema v24 removes the obsolete `p25_talkgroup_summary`, `p25_radio_summary`, an
 projected into the shared tables; `p25_system`, P25 site/band/patch facts, and `p25_radio_affiliation` remain as
 protocol capabilities.
 
-Alpha 8 made these DMR changes part of the numbered `main` release boundary. Alpha 9 accepts the exact Alpha 8/current
-tuple and preserves its configuration and collected history on a backed-up staged copy. It also retains the exact
-Alpha 7 conversion path, which converts supported configuration and starts the current P25 v24, DMR v1, and
-trunked-site v2 activity schemas empty. Intermediate development schemas are not accepted.
+Alpha 8 made these DMR changes part of the numbered `main` release boundary. Alpha 10 accepts the exact current tuple
+already used by Alpha 8 and Alpha 9 and preserves its configuration and collected history on a backed-up staged copy.
+It also retains the exact Alpha 7 conversion path, which converts supported configuration and starts the current P25
+v24, DMR v1, and trunked-site v2 activity schemas empty. Intermediate development schemas are not accepted.
 
 ## Retention
 
@@ -408,7 +408,7 @@ known trunking variant on that exact running channel and decoder configuration. 
 sustained decode loss and is cleared by the quality monitor's inactive shutdown snapshot, channel/configuration
 replacement, statistics disablement, or writer shutdown. Samples use the existing bounded statistics queue and single
 database writer. Existing retention, site-specific clear, and full reset paths already operate on this shared
-GUID-keyed table. New databases create the index in the single startup schema routine. Alpha 9 retains an Alpha 8
-schema and its collected rows without conversion. Its exact Alpha 7 P25 v21 migration path resets activity storage
-and creates the current empty schema and index; P25 v19 and v20 databases are not accepted directly. Ordinary
+GUID-keyed table. New databases create the index in the single startup schema routine. Alpha 10 retains an Alpha 8 or
+Alpha 9 schema and its collected rows without conversion. Its exact Alpha 7 P25 v21 migration path resets activity
+storage and creates the current empty schema and index; P25 v19 and v20 databases are not accepted directly. Ordinary
 application services never create or repair the index.
