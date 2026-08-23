@@ -6,7 +6,7 @@ Alpha 10 is a focused compatibility, configuration-integrity, and receiver-stabi
 uploads through the Rdio Scanner integration, keeps late encryption details attached to the correct call, prevents
 Alias editor operations from publishing or targeting the wrong row, keeps dark-themed JavaFX editors covered while
 they load, corrects P25 channel handling, bounds stale receiver work during overload, and prevents tuner
-disable/allocation races.
+disable/allocation races. Windows packages also preserve the Java runtime's vendor signatures.
 
 This release does not change the database schema, recording format or ownership, RadioReference import fields or
 update semantics, streaming-provider configuration, or multipart call-upload fields. Alias storage remains schema
@@ -67,6 +67,9 @@ v4, and the release retains Alpha 9's portable-storage layout and existing migra
   `0-0`.
 - **Short P25 TDULC candidates are rejected.** Golay correction no longer reads a partial codeword, and link-control
   data assembled without all 12 protected codewords cannot be accepted as valid after zero filling.
+- **Windows Application Control can load the bundled Java runtime.** Windows packaging preserves the BellSoft and
+  Microsoft Authenticode signatures on the Java launcher and native libraries after runtime-image creation. The build
+  verifies every packaged `.exe` and `.dll` against the pinned signed JDK instead of weakening host security policy.
 
 ## Removed
 

@@ -46,6 +46,8 @@ Alpha 10 is a focused compatibility, configuration-integrity, and receiver-stabi
   manager lock hazard, and stale channelizer work is bounded during overload.
 - **Tuner disable and allocation no longer race.** Decoder-side allocation fails fast while tuner hardware is being
   stopped instead of observing a removed channel manager.
+- **Windows packages retain signed Java runtime files.** Packaging preserves the BellSoft and Microsoft Authenticode
+  signatures used by Windows Application Control.
 - **Alpha 8 and Alpha 9 data carry forward unchanged.** Alpha 10 uses the same database schema and storage formats.
 
 Read the complete [Alpha 10 What’s New](docs/whats-new-0.6.2-alpha-10.md), including the retained Alpha 7 migration

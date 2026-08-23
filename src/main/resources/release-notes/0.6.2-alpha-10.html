@@ -4,7 +4,7 @@
 uploads through the Rdio Scanner integration, keeps late encryption details attached to the correct call, prevents
 Alias editor operations from publishing or targeting the wrong row, keeps dark-themed JavaFX editors covered while
 they load, corrects P25 channel handling, bounds stale receiver work during overload, and prevents tuner
-disable/allocation races.</p>
+disable/allocation races. Windows packages also preserve the Java runtime's vendor signatures.</p>
 <p>This release does not change the database schema, recording format or ownership, RadioReference import fields or
 update semantics, streaming-provider configuration, or multipart call-upload fields. Alias storage remains schema
 v4, and the release retains Alpha 9's portable-storage layout and existing migration behavior.</p>
@@ -63,6 +63,9 @@ when autonomous access is active, preventing inactive announcements from appeari
 <code>0-0</code>.</li>
 <li><strong>Short P25 TDULC candidates are rejected.</strong> Golay correction no longer reads a partial codeword, and link-control
 data assembled without all 12 protected codewords cannot be accepted as valid after zero filling.</li>
+<li><strong>Windows Application Control can load the bundled Java runtime.</strong> Windows packaging preserves the BellSoft and
+Microsoft Authenticode signatures on the Java launcher and native libraries after runtime-image creation. The build
+verifies every packaged <code>.exe</code> and <code>.dll</code> against the pinned signed JDK instead of weakening host security policy.</li>
 </ul>
 <h2>Removed</h2>
 <ul>
