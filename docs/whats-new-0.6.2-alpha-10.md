@@ -93,7 +93,7 @@ v4, and the release retains Alpha 9's portable-storage layout and existing migra
 - Test multi-tuner operation with an Airspy, concurrent traffic grants, tuner disable, and unplug/error handling before
   relying on this build unattended. Also inspect buffer-drop logs and control-channel decode quality at wide sample
   rates or under sustained load.
-- Stop sdrtrunk-vce and back up the complete portable `data` folder before upgrading. Keep the Alpha 9 installation
+- Stop sdrtrunk-vce and back up the complete portable `data` folder before upgrading. Keep the previous installation
   until Alpha 10 has been verified with the receiver's normal configuration.
 
 ## Downloads
