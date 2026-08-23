@@ -69,6 +69,8 @@ public class RdioScannerBroadcaster extends AbstractAudioBroadcaster<RdioScanner
     private static final String MULTIPART_TYPE = "multipart";
     private static final String DEFAULT_SUBTYPE = "form-data";
     private static final String MULTIPART_FORM_DATA = MULTIPART_TYPE + "/" + DEFAULT_SUBTYPE;
+    //Some Rdio Scanner-compatible servers use this exact value to select their SDRTrunk request handler.
+    private static final String USER_AGENT = "sdrtrunk";
     private static final String FILE_UPLOAD_FAIL_LABEL = "Rdio Scanner API file upload fail [";
     private static final String RESPONSE_LABEL = "] response [";
     private Queue<AudioRecording> mAudioRecordingQueue = new LinkedTransferQueue<>();
@@ -221,7 +223,7 @@ public class RdioScannerBroadcaster extends AbstractAudioBroadcaster<RdioScanner
         HttpRequest request = HttpRequest.newBuilder()
             .uri(URI.create(configuration.getHost()))
             .header(HttpHeaders.CONTENT_TYPE, MULTIPART_FORM_DATA + "; boundary=" + bodyBuilder.getBoundary())
-            .header(HttpHeaders.USER_AGENT, "sdrtrunk-vce")
+            .header(HttpHeaders.USER_AGENT, USER_AGENT)
             .header(HttpHeaders.ACCEPT, "*/*")
             .POST(bodyBuilder.build())
             .build();
@@ -514,7 +516,7 @@ public class RdioScannerBroadcaster extends AbstractAudioBroadcaster<RdioScanner
                             HttpRequest fileRequest = HttpRequest.newBuilder()
                                 .uri(URI.create(getBroadcastConfiguration().getHost()))
                                 .header(HttpHeaders.CONTENT_TYPE, MULTIPART_FORM_DATA + "; boundary=" + bodyBuilder.getBoundary())
-                                .header(HttpHeaders.USER_AGENT, "sdrtrunk-vce")
+                                .header(HttpHeaders.USER_AGENT, USER_AGENT)
                                 .POST(bodyBuilder.build())
                                 .build();
 
