@@ -3860,8 +3860,13 @@ public class P25ActivityLogSchema
 
                 if(existing != null)
                 {
+                    List<String> conflicts = existing.conflictsWith(incoming);
                     merged.put(key, existing.merge(incoming));
-                    warnSiteChannelCollision(snapshot.guid(), key, existing, incoming);
+
+                    if(!conflicts.isEmpty())
+                    {
+                        warnSiteChannelConflict(snapshot.guid(), key, conflicts);
+                    }
                 }
             }
         }
@@ -3922,6 +3927,32 @@ public class P25ActivityLogSchema
                 mergedTimeslots, firstNonBlank(callsign, other.callsign), mergedTags);
         }
 
+        private List<String> conflictsWith(SiteChannelEvidence other)
+        {
+            List<String> conflicts = new ArrayList<>();
+
+            if(downlink != null && downlink > 0 && other.downlink != null && other.downlink > 0)
+            {
+                addConflict(conflicts, "downlink_hz", downlink, other.downlink);
+            }
+
+            if(uplink != null && uplink > 0 && other.uplink != null && other.uplink > 0)
+            {
+                addConflict(conflicts, "uplink_hz", uplink, other.uplink);
+            }
+
+            addConflict(conflicts, "tdma", tdma, other.tdma);
+            addConflict(conflicts, "timeslots", timeslots, other.timeslots);
+
+            if(callsign != null && !callsign.isBlank() && other.callsign != null && !other.callsign.isBlank() &&
+                !callsign.strip().equals(other.callsign.strip()))
+            {
+                conflicts.add("callsign [" + callsign + "] vs [" + other.callsign + "]");
+            }
+
+            return conflicts;
+        }
+
         private Set<ChannelTag> currentTags()
         {
             return tags;
@@ -3950,23 +3981,30 @@ public class P25ActivityLogSchema
         return preferred != null && !preferred.isBlank() ? preferred : fallback;
     }
 
+    private static void addConflict(List<String> conflicts, String field, Object existing, Object incoming)
+    {
+        if(existing != null && incoming != null && !existing.equals(incoming))
+        {
+            conflicts.add(field + " [" + existing + "] vs [" + incoming + "]");
+        }
+    }
+
     private static final org.slf4j.Logger mLog =
         org.slf4j.LoggerFactory.getLogger(P25ActivityLogSchema.class);
-    private static final java.util.concurrent.ConcurrentMap<String,Long> mSiteChannelCollisionWarnings =
+    private static final java.util.concurrent.ConcurrentMap<String,Long> mSiteChannelConflictWarnings =
         new java.util.concurrent.ConcurrentHashMap<>();
 
-    private static void warnSiteChannelCollision(String guid, String key,
-                                                 SiteChannelEvidence existing, SiteChannelEvidence incoming)
+    private static void warnSiteChannelConflict(String guid, String key, List<String> conflicts)
     {
         String warningKey = guid + ':' + key;
         long now = System.currentTimeMillis();
-        Long previous = mSiteChannelCollisionWarnings.get(warningKey);
+        Long previous = mSiteChannelConflictWarnings.get(warningKey);
 
         if(previous == null || now - previous >= 300_000L)
         {
-            mSiteChannelCollisionWarnings.put(warningKey, now);
-            mLog.warn("Merging duplicate P25 site channel [{}] for site [{}]: tags [{}] and [{}]",
-                key, guid, existing.tags(), incoming.tags());
+            mSiteChannelConflictWarnings.put(warningKey, now);
+            mLog.warn("Merging conflicting P25 site channel [{}] for site [{}]: {}",
+                key, guid, String.join(", ", conflicts));
         }
     }
 
