@@ -18,6 +18,12 @@
  */
 
 import java.text.SimpleDateFormat
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+import java.security.MessageDigest
+import java.util.zip.ZipFile
 
 
 
@@ -537,6 +543,380 @@ runtime {
     additive.set(true)
     addOptions('--strip-debug', '--compress', 'zip-6', '--no-header-files', '--no-man-pages')
 
+}
+
+/**
+ * Reads the Portable Executable fields that participate in an Authenticode signature.  Windows JDK vendors sign the
+ * loose native files in the JDK, but those signatures may not be present on the corresponding native payloads stored
+ * in the JMOD files consumed by jlink.
+ */
+def readPortableExecutable = { File executable ->
+    byte[] bytes = Files.readAllBytes(executable.toPath())
+
+    if(bytes.length < 64 || Byte.toUnsignedInt(bytes[0]) != 0x4D || Byte.toUnsignedInt(bytes[1]) != 0x5A) {
+        throw new GradleException("Not a Portable Executable: ${executable}")
+    }
+
+    ByteBuffer buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+    long peOffsetValue = Integer.toUnsignedLong(buffer.getInt(0x3C))
+
+    if(peOffsetValue > bytes.length - 24) {
+        throw new GradleException("Invalid Portable Executable header offset in ${executable}")
+    }
+
+    int peOffset = (int)peOffsetValue
+
+    if(buffer.getInt(peOffset) != 0x00004550) {
+        throw new GradleException("Invalid Portable Executable signature in ${executable}")
+    }
+
+    int optionalHeaderSize = Short.toUnsignedInt(buffer.getShort(peOffset + 20))
+    int optionalHeaderOffset = peOffset + 24
+    int optionalHeaderEnd = optionalHeaderOffset + optionalHeaderSize
+
+    if(optionalHeaderEnd > bytes.length || optionalHeaderSize < 2) {
+        throw new GradleException("Invalid Portable Executable optional header in ${executable}")
+    }
+
+    int optionalHeaderMagic = Short.toUnsignedInt(buffer.getShort(optionalHeaderOffset))
+    int dataDirectoryOffset
+    int dataDirectoryCountOffset
+
+    if(optionalHeaderMagic == 0x20B) {
+        dataDirectoryOffset = optionalHeaderOffset + 112
+        dataDirectoryCountOffset = optionalHeaderOffset + 108
+    }
+    else if(optionalHeaderMagic == 0x10B) {
+        dataDirectoryOffset = optionalHeaderOffset + 96
+        dataDirectoryCountOffset = optionalHeaderOffset + 92
+    }
+    else {
+        throw new GradleException("Unsupported Portable Executable optional header in ${executable}")
+    }
+
+    if(dataDirectoryCountOffset + 4 > optionalHeaderEnd ||
+        Integer.toUnsignedLong(buffer.getInt(dataDirectoryCountOffset)) < 5) {
+        throw new GradleException("Portable Executable has no certificate table directory: ${executable}")
+    }
+
+    int checksumOffset = optionalHeaderOffset + 64
+    int certificateDirectoryOffset = dataDirectoryOffset + (4 * 8)
+
+    if(checksumOffset + 4 > optionalHeaderEnd || certificateDirectoryOffset + 8 > optionalHeaderEnd) {
+        throw new GradleException("Truncated Portable Executable optional header in ${executable}")
+    }
+
+    long certificateOffsetValue = Integer.toUnsignedLong(buffer.getInt(certificateDirectoryOffset))
+    long certificateSizeValue = Integer.toUnsignedLong(buffer.getInt(certificateDirectoryOffset + 4))
+
+    if((certificateOffsetValue == 0) != (certificateSizeValue == 0)) {
+        throw new GradleException("Invalid Portable Executable certificate table in ${executable}")
+    }
+
+    if(certificateSizeValue > 0) {
+        if(certificateOffsetValue % 8 != 0 || certificateSizeValue < 8 ||
+            certificateOffsetValue > bytes.length - certificateSizeValue) {
+            throw new GradleException("Out-of-bounds Portable Executable certificate table in ${executable}")
+        }
+
+        int certificateOffset = (int)certificateOffsetValue
+        long certificateLength = Integer.toUnsignedLong(buffer.getInt(certificateOffset))
+        int certificateType = Short.toUnsignedInt(buffer.getShort(certificateOffset + 6))
+
+        if(certificateLength < 8 || certificateLength > certificateSizeValue || certificateType != 0x0002) {
+            throw new GradleException("Invalid Authenticode certificate record in ${executable}")
+        }
+    }
+
+    [
+        bytes: bytes,
+        machine: Short.toUnsignedInt(buffer.getShort(peOffset + 4)),
+        checksumOffset: checksumOffset,
+        certificateDirectoryOffset: certificateDirectoryOffset,
+        certificateOffset: (int)certificateOffsetValue,
+        certificateSize: (int)certificateSizeValue
+    ]
+}
+
+/**
+ * Computes a PE digest after removing only the fields Authenticode is permitted to change.  This is not a signature
+ * validation routine; it proves that a signed loose-JDK native file and the jlink output contain identical code and
+ * data before the signed source replaces the unsigned output.
+ */
+def normalizedPortableExecutableDigest = { File executable ->
+    def pe = readPortableExecutable(executable)
+    byte[] normalized = pe.bytes.clone()
+    Arrays.fill(normalized, pe.checksumOffset, pe.checksumOffset + 4, (byte)0)
+    Arrays.fill(normalized, pe.certificateDirectoryOffset, pe.certificateDirectoryOffset + 8, (byte)0)
+
+    MessageDigest digest = MessageDigest.getInstance('SHA-256')
+
+    if(pe.certificateSize > 0) {
+        digest.update(normalized, 0, pe.certificateOffset)
+        int bytesAfterCertificate = normalized.length - pe.certificateOffset - pe.certificateSize
+
+        if(bytesAfterCertificate > 0) {
+            digest.update(normalized, pe.certificateOffset + pe.certificateSize, bytesAfterCertificate)
+        }
+    }
+    else {
+        digest.update(normalized)
+    }
+
+    digest.digest()
+}
+
+def sha256 = { InputStream input ->
+    MessageDigest digest = MessageDigest.getInstance('SHA-256')
+    byte[] buffer = new byte[64 * 1024]
+    int count
+
+    while((count = input.read(buffer)) >= 0) {
+        if(count > 0) {
+            digest.update(buffer, 0, count)
+        }
+    }
+
+    digest.digest()
+}
+
+def windowsRuntimeMachineByTarget = [
+    (targetWindowsX86_64): 0x8664,
+    (targetWindowsAarch64): 0xAA64
+]
+
+def currentWindowsRuntimeMachine = {
+    String architecture = System.getProperty('os.arch', '').toLowerCase(Locale.ROOT)
+
+    if(architecture in ['amd64', 'x86_64']) {
+        return 0x8664
+    }
+
+    if(architecture in ['aarch64', 'arm64']) {
+        return 0xAA64
+    }
+
+    throw new GradleException("Unsupported Windows runtime architecture: ${architecture}")
+}
+
+def windowsJreDescriptors = { org.beryx.runtime.JreTask jreTask ->
+    Map<String, org.beryx.runtime.data.TargetPlatform> targetPlatforms = jreTask.targetPlatforms.get()
+    List<Map<String, Object>> descriptors = targetPlatforms.findAll { platformName, platform ->
+        windowsRuntimeMachineByTarget.containsKey(platformName)
+    }.collect { platformName, platform ->
+        [
+            label: platformName,
+            sourceJdkHome: new File(platform.jdkHome.get()),
+            runtimeRoot: new File(jreTask.jreDirAsFile, "${project.name}-${platformName}"),
+            expectedMachine: windowsRuntimeMachineByTarget.get(platformName)
+        ]
+    }
+
+    if(descriptors.isEmpty() && targetPlatforms.isEmpty() && os.isWindows()) {
+        descriptors.add([
+            label: 'windows-current',
+            sourceJdkHome: new File(jreTask.javaHome),
+            runtimeRoot: jreTask.jreDirAsFile,
+            expectedMachine: currentWindowsRuntimeMachine()
+        ])
+    }
+
+    descriptors
+}
+
+def windowsRuntimeSourceNatives = { List<Map<String, Object>> descriptors ->
+    descriptors.collectMany { descriptor ->
+        fileTree(new File(descriptor.sourceJdkHome as File, 'bin')) {
+            include '**/*.exe'
+            include '**/*.dll'
+        }.files
+    }
+}
+
+/*
+ * jre -> runtime -> runtimeZip is the runtime plugin's dependency chain.  Appending this action to jre replaces only
+ * native files already selected by jlink, before runtime copies the JRE and before any RuntimeZipTask creates a ZIP.
+ */
+tasks.named('jre', org.beryx.runtime.JreTask) { jreTask ->
+    inputs.property('windowsAuthenticodeOverlayFormat', 1)
+    inputs.files(providers.provider {
+        windowsRuntimeSourceNatives(windowsJreDescriptors(jreTask))
+    }).withPropertyName('signedWindowsRuntimeNatives')
+        .withPathSensitivity(org.gradle.api.tasks.PathSensitivity.RELATIVE)
+
+    doLast {
+        windowsJreDescriptors(jreTask).each { descriptor ->
+            File sourceBin = new File(descriptor.sourceJdkHome as File, 'bin')
+            File runtimeBin = new File(descriptor.runtimeRoot as File, 'bin')
+
+            if(!sourceBin.isDirectory()) {
+                throw new GradleException("Windows source JDK bin directory is missing: ${sourceBin}")
+            }
+
+            if(!runtimeBin.isDirectory()) {
+                throw new GradleException("Windows jlink runtime bin directory is missing: ${runtimeBin}")
+            }
+
+            List<File> runtimeNatives = fileTree(runtimeBin) {
+                include '**/*.exe'
+                include '**/*.dll'
+            }.files.sort { left, right -> left.absolutePath <=> right.absolutePath }
+
+            if(runtimeNatives.isEmpty()) {
+                throw new GradleException("Windows jlink runtime contains no native files: ${runtimeBin}")
+            }
+
+            File sourceLauncher = new File(sourceBin, 'java.exe')
+            File runtimeLauncher = new File(runtimeBin, 'java.exe')
+
+            if(!sourceLauncher.isFile() || !runtimeLauncher.isFile()) {
+                throw new GradleException("Windows Java launcher is missing for ${descriptor.label}")
+            }
+
+            int expectedMachine = descriptor.expectedMachine as int
+
+            if(readPortableExecutable(sourceLauncher).machine != expectedMachine ||
+                readPortableExecutable(runtimeLauncher).machine != expectedMachine) {
+                throw new GradleException("Windows Java launcher architecture does not match ${descriptor.label}")
+            }
+
+            int overlaid = 0
+            int alreadyIdentical = 0
+
+            runtimeNatives.each { runtimeNative ->
+                def relativePath = runtimeBin.toPath().relativize(runtimeNative.toPath())
+                File sourceNative = sourceBin.toPath().resolve(relativePath).toFile()
+
+                if(!sourceNative.isFile()) {
+                    throw new GradleException("Signed source JDK native file is missing for ${runtimeNative}: ${sourceNative}")
+                }
+
+                def sourcePe = readPortableExecutable(sourceNative)
+                def runtimePe = readPortableExecutable(runtimeNative)
+
+                if(sourcePe.certificateSize == 0) {
+                    throw new GradleException("Source JDK native file is not Authenticode signed: ${sourceNative}")
+                }
+
+                if(sourcePe.machine != runtimePe.machine) {
+                    throw new GradleException("Portable Executable machine mismatch for ${runtimeNative}")
+                }
+
+                if(Files.mismatch(sourceNative.toPath(), runtimeNative.toPath()) == -1) {
+                    alreadyIdentical++
+                }
+                else {
+                    byte[] sourceDigest = normalizedPortableExecutableDigest(sourceNative)
+                    byte[] runtimeDigest = normalizedPortableExecutableDigest(runtimeNative)
+
+                    if(!MessageDigest.isEqual(sourceDigest, runtimeDigest)) {
+                        throw new GradleException("Signed source and jlink native content differ beyond Authenticode metadata: ${runtimeNative}")
+                    }
+
+                    Files.copy(sourceNative.toPath(), runtimeNative.toPath(), StandardCopyOption.REPLACE_EXISTING,
+                        StandardCopyOption.COPY_ATTRIBUTES)
+
+                    if(Files.mismatch(sourceNative.toPath(), runtimeNative.toPath()) != -1) {
+                        throw new GradleException("Failed to overlay signed source JDK native file: ${runtimeNative}")
+                    }
+
+                    overlaid++
+                }
+            }
+
+            logger.lifecycle("Windows Authenticode overlay ${descriptor.label}: ${overlaid} replaced, " +
+                "${alreadyIdentical} already identical")
+        }
+    }
+}
+
+def windowsArchiveDescriptors = { org.beryx.runtime.RuntimeZipTask runtimeZipTask ->
+    Map<String, org.beryx.runtime.data.TargetPlatform> targetPlatforms = runtimeZipTask.targetPlatforms.get()
+    File configuredArchive = runtimeZipTask.extension.imageZip.get().asFile
+    int extensionSeparator = configuredArchive.name.lastIndexOf('.')
+    String archiveExtension = extensionSeparator > 0 ?
+        configuredArchive.name.substring(extensionSeparator + 1) : 'zip'
+    String archiveBaseName = extensionSeparator > 0 ?
+        configuredArchive.name.substring(0, extensionSeparator) : configuredArchive.name
+    List<Map<String, Object>> descriptors = targetPlatforms.findAll { platformName, platform ->
+        windowsRuntimeMachineByTarget.containsKey(platformName)
+    }.collect { platformName, platform ->
+        [
+            label: platformName,
+            sourceJdkHome: new File(platform.jdkHome.get()),
+            archive: new File(configuredArchive.parentFile, "${archiveBaseName}-${platformName}.${archiveExtension}"),
+            archiveRuntimeRoot: "${project.name}-${platformName}/bin/"
+        ]
+    }
+
+    if(descriptors.isEmpty() && targetPlatforms.isEmpty() && os.isWindows()) {
+        descriptors.add([
+            label: 'windows-current',
+            sourceJdkHome: new File(runtimeZipTask.javaHomeOrDefault),
+            archive: configuredArchive,
+            archiveRuntimeRoot: "${runtimeZipTask.imageDir.asFile.name}/bin/"
+        ])
+    }
+
+    descriptors
+}
+
+/* Verify the bytes that were actually written to each Windows archive, not only the intermediate runtime image. */
+tasks.withType(org.beryx.runtime.RuntimeZipTask).configureEach { runtimeZipTask ->
+    inputs.files(providers.provider {
+        windowsRuntimeSourceNatives(windowsArchiveDescriptors(runtimeZipTask))
+    }).withPropertyName('signedWindowsRuntimeNatives')
+        .withPathSensitivity(org.gradle.api.tasks.PathSensitivity.RELATIVE)
+
+    doLast {
+        windowsArchiveDescriptors(runtimeZipTask).each { descriptor ->
+            File archive = descriptor.archive as File
+            File sourceBin = new File(descriptor.sourceJdkHome as File, 'bin')
+            String archiveRuntimeRoot = descriptor.archiveRuntimeRoot as String
+            int verified = 0
+
+            if(!archive.isFile()) {
+                throw new GradleException("Windows runtime archive is missing: ${archive}")
+            }
+
+            ZipFile zip = new ZipFile(archive)
+
+            try {
+                zip.entries().toList().findAll { entry ->
+                    !entry.directory && entry.name.startsWith(archiveRuntimeRoot) &&
+                        (entry.name.toLowerCase(Locale.ROOT).endsWith('.exe') ||
+                            entry.name.toLowerCase(Locale.ROOT).endsWith('.dll'))
+                }.each { entry ->
+                    String relativePath = entry.name.substring(archiveRuntimeRoot.length())
+                    File sourceNative = new File(sourceBin, relativePath.replace('/', File.separator))
+
+                    if(!sourceNative.isFile()) {
+                        throw new GradleException("Signed source JDK native file is missing for ZIP entry ${entry.name}")
+                    }
+
+                    byte[] archiveDigest
+                    zip.getInputStream(entry).withCloseable { input -> archiveDigest = sha256(input) }
+                    byte[] sourceDigest
+                    sourceNative.withInputStream { input -> sourceDigest = sha256(input) }
+
+                    if(!MessageDigest.isEqual(sourceDigest, archiveDigest)) {
+                        throw new GradleException("Windows runtime ZIP native file differs from signed source: ${entry.name}")
+                    }
+
+                    verified++
+                }
+            }
+            finally {
+                zip.close()
+            }
+
+            if(verified == 0) {
+                throw new GradleException("Windows runtime archive contains no native files: ${archive}")
+            }
+
+            logger.lifecycle("Windows Authenticode archive verification ${descriptor.label}: ${verified} native files")
+        }
+    }
 }
 
 /**
