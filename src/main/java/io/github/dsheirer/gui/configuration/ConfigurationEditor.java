@@ -34,7 +34,6 @@ import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.util.ThreadPool;
 import io.github.dsheirer.util.TimeStamp;
-import javafx.application.Platform;
 import javafx.embed.swing.SwingFXUtils;
 import javafx.scene.control.Menu;
 import javafx.scene.control.MenuBar;
@@ -88,12 +87,10 @@ public class ConfigurationEditor extends BorderPane
         mTunerManager = tunerManager;
         mUserPreferences = userPreferences;
 
-        //Throw a new runnable back onto the FX thread to lazy load the editor content after the editor has been
-        //constructed and shown.
-        Platform.runLater(() -> {
-            setTop(getMenuBar());
-            setCenter(getTabPane());
-        });
+        //The window manager constructs this editor only after its lightweight loading shell is visible.  Finish the
+        //entire initial node tree before replacing that shell so an empty editor root is never presented.
+        setTop(getMenuBar());
+        setCenter(getTabPane());
     }
 
     /**

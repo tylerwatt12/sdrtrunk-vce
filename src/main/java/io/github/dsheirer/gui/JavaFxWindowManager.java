@@ -49,17 +49,26 @@ import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.stats.StatsWebNavigationState;
 import java.net.URI;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
+import javafx.animation.AnimationTimer;
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.embed.swing.JFXPanel;
+import javafx.geometry.Insets;
+import javafx.geometry.Pos;
+import javafx.scene.Parent;
 import javafx.scene.Scene;
+import javafx.scene.control.Label;
+import javafx.scene.layout.StackPane;
+import javafx.scene.layout.VBox;
+import javafx.scene.text.Font;
+import javafx.scene.text.FontWeight;
 import javafx.stage.Stage;
 import jiconfont.javafx.IconFontFX;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Java FX window manager.  Handles all secondary Java FX windows that are used within this primarily
@@ -68,6 +77,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class JavaFxWindowManager extends Application
 {
     private static final Logger mLog = LoggerFactory.getLogger(JavaFxWindowManager.class);
+    private static final String LOADING_TEXT_STYLE = "-fx-text-fill: -fx-text-base-color;";
+    private static final String LOADING_FAILURE_STYLE = "-fx-text-fill: #ef5350;";
 
     public static final String ICON_MANAGER = "iconmanager";
     public static final String CONFIGURATION_EDITOR = "configuration";
@@ -99,6 +110,12 @@ public class JavaFxWindowManager extends Application
     private Stage mUserPreferencesStage;
     private Stage mRecordingViewerStage;
     private JFXPanel mStatusPanel;
+    private LoadingShell mConfigurationLoadingShell;
+    private LoadingShell mUserPreferencesLoadingShell;
+    private final LoadingRequestGate<ConfigurationEditorRequest> mConfigurationEditorLoad =
+        new LoadingRequestGate<>();
+    private final LoadingRequestGate<ViewUserPreferenceEditorRequest> mUserPreferencesEditorLoad =
+        new LoadingRequestGate<>();
 
     /**
      * Constructs an instance.  Note: this constructor is used for Swing applications.
@@ -328,7 +345,8 @@ public class JavaFxWindowManager extends Application
     {
         if(mConfigurationStage == null)
         {
-            Scene scene = new Scene(getConfigurationEditor(), 1000, 750);
+            mConfigurationLoadingShell = createLoadingShell("Playlist", "Loading configuration editor…");
+            Scene scene = new Scene(mConfigurationLoadingShell.root(), 1000, 750);
             ThemeManager.getInstance().register(scene);
             mConfigurationStage = new Stage();
             mConfigurationStage.setTitle("sdrtrunk-vce - Configuration Editor");
@@ -349,8 +367,20 @@ public class JavaFxWindowManager extends Application
         execute(() -> {
             try
             {
-                restoreStage(getConfigurationStage());
-                getConfigurationEditor().process(request);
+                Stage stage = getConfigurationStage();
+
+                if(mConfigurationEditor != null)
+                {
+                    installLoadedContent(mConfigurationLoadingShell, mConfigurationEditor);
+                    restoreStage(stage);
+                    mConfigurationEditor.process(request);
+                }
+                else if(mConfigurationEditorLoad.offer(request))
+                {
+                    showLoadingStage(stage, mConfigurationLoadingShell, mConfigurationEditorLoad,
+                        () -> loadConfigurationEditor(stage),
+                        "Unable to show Playlist. Click Playlist to retry.");
+                }
             }
             catch(Throwable t)
             {
@@ -379,7 +409,8 @@ public class JavaFxWindowManager extends Application
     {
         if(mUserPreferencesStage == null)
         {
-            Scene scene = new Scene(getUserPreferencesEditor(), 900, 500);
+            mUserPreferencesLoadingShell = createLoadingShell("Settings", "Loading user preferences…");
+            Scene scene = new Scene(mUserPreferencesLoadingShell.root(), 900, 500);
             ThemeManager.getInstance().register(scene);
             mUserPreferencesStage = new Stage();
             mUserPreferencesStage.setTitle("sdrtrunk-vce - User Preferences");
@@ -398,9 +429,295 @@ public class JavaFxWindowManager extends Application
     public void process(final ViewUserPreferenceEditorRequest request)
     {
         execute(() -> {
-            restoreStage(getUserPreferencesStage());
-            getUserPreferencesEditor().process(request);
+            try
+            {
+                Stage stage = getUserPreferencesStage();
+
+                if(mUserPreferencesEditor != null)
+                {
+                    installLoadedContent(mUserPreferencesLoadingShell, mUserPreferencesEditor);
+                    restoreStage(stage);
+                    mUserPreferencesEditor.process(request);
+                }
+                else if(mUserPreferencesEditorLoad.offer(request))
+                {
+                    showLoadingStage(stage, mUserPreferencesLoadingShell, mUserPreferencesEditorLoad,
+                        () -> loadUserPreferencesEditor(stage),
+                        "Unable to show Settings. Click Settings to retry.");
+                }
+            }
+            catch(Throwable throwable)
+            {
+                mLog.error("Error processing show user preferences editor request", throwable);
+            }
         });
+    }
+
+    private void loadConfigurationEditor(Stage stage)
+    {
+        ConfigurationEditor editor;
+
+        try
+        {
+            editor = getConfigurationEditor();
+            installLoadedContent(mConfigurationLoadingShell, editor);
+        }
+        catch(Throwable throwable)
+        {
+            mLog.error("Unable to load the configuration editor", throwable);
+            showLoadingFailure(mConfigurationLoadingShell,
+                "Unable to load the configuration editor. Click Playlist to retry.");
+            mConfigurationEditorLoad.fail();
+            finishLoading(stage);
+            return;
+        }
+
+        try
+        {
+            ConfigurationEditorRequest request = mConfigurationEditorLoad.complete();
+
+            if(request != null)
+            {
+                editor.process(request);
+            }
+        }
+        catch(Throwable throwable)
+        {
+            mLog.error("Unable to process the configuration editor request", throwable);
+        }
+
+        finishLoading(stage);
+    }
+
+    private void loadUserPreferencesEditor(Stage stage)
+    {
+        UserPreferencesEditor editor;
+
+        try
+        {
+            editor = getUserPreferencesEditor();
+            installLoadedContent(mUserPreferencesLoadingShell, editor);
+        }
+        catch(Throwable throwable)
+        {
+            mLog.error("Unable to load the user preferences editor", throwable);
+            showLoadingFailure(mUserPreferencesLoadingShell, "Unable to load Settings. Click Settings to retry.");
+            mUserPreferencesEditorLoad.fail();
+            finishLoading(stage);
+            return;
+        }
+
+        try
+        {
+            ViewUserPreferenceEditorRequest request = mUserPreferencesEditorLoad.complete();
+
+            if(request != null)
+            {
+                editor.process(request);
+            }
+        }
+        catch(Throwable throwable)
+        {
+            mLog.error("Unable to process the user preferences editor request", throwable);
+        }
+
+        finishLoading(stage);
+    }
+
+    private static void finishLoading(Stage stage)
+    {
+        stage.requestFocus();
+        stage.toFront();
+    }
+
+    private static LoadingShell createLoadingShell(String title, String message)
+    {
+        Label titleLabel = new Label(title);
+        titleLabel.setFont(Font.font("System", FontWeight.SEMI_BOLD, 20));
+        titleLabel.setStyle(LOADING_TEXT_STYLE);
+        Label statusLabel = new Label(message);
+        statusLabel.setFont(Font.font("System", 13));
+        statusLabel.setStyle(LOADING_TEXT_STYLE);
+        statusLabel.setOpacity(0.72d);
+        VBox content = new VBox(8, titleLabel, statusLabel);
+        content.setAlignment(Pos.CENTER);
+        StackPane root = new StackPane(content);
+        root.setId("javafx-loading-shell");
+        root.setPadding(new Insets(24));
+        //This wrapper remains the Scene root after the editor replaces the loading content.  Resolve its background
+        //through the theme lookup so transparent editor regions follow later light/dark theme changes.
+        root.setStyle("-fx-background-color: -fx-background;");
+        return new LoadingShell(root, content, titleLabel, statusLabel, message);
+    }
+
+    private static void showLoadingStage(Stage stage, LoadingShell loadingShell, LoadingRequestGate<?> loadingGate,
+                                         Runnable loader, String failureMessage)
+    {
+        Consumer<Throwable> failureHandler = throwable ->
+            restoreLoadingStageAfterFailure(stage, loadingShell, failureMessage, throwable);
+
+        guardLoadingSetup(loadingGate, () -> {
+            showLoadingMessage(loadingShell);
+            stage.setOpacity(0.0d);
+            stage.setIconified(false);
+            stage.show();
+            stage.toFront();
+            Scene scene = stage.getScene();
+            scene.getRoot().applyCss();
+            scene.getRoot().layout();
+
+            //Snapshot completion proves the loading shell has completed a CSS/layout/render pass.  Reveal it, then
+            //wait one additional rendered frame before starting expensive editor construction on the JavaFX thread.
+            scene.snapshot(snapshotResult -> {
+                guardLoadingSetup(loadingGate, () -> {
+                    stage.setOpacity(1.0d);
+                    stage.requestFocus();
+                    AnimationTimer firstVisibleFrame = new AnimationTimer()
+                    {
+                        private int mFrames;
+
+                        @Override
+                        public void handle(long now)
+                        {
+                            if(++mFrames >= 2)
+                            {
+                                stop();
+                                guardLoadingSetup(loadingGate, loader, failureHandler);
+                            }
+                        }
+                    };
+                    firstVisibleFrame.start();
+                }, failureHandler);
+                return null;
+            }, null);
+        }, failureHandler);
+    }
+
+    /**
+     * Runs one loading-stage lifecycle action and releases the request gate before reporting a failure.  Keeping this
+     * boundary independent from JavaFX lets CI inject failures at the same point as show/CSS/layout/snapshot setup.
+     */
+    static void guardLoadingSetup(LoadingRequestGate<?> loadingGate, Runnable setup,
+                                  Consumer<Throwable> failureHandler)
+    {
+        try
+        {
+            setup.run();
+        }
+        catch(Throwable throwable)
+        {
+            loadingGate.fail();
+            failureHandler.accept(throwable);
+        }
+    }
+
+    private static void restoreLoadingStageAfterFailure(Stage stage, LoadingShell loadingShell, String failureMessage,
+                                                        Throwable throwable)
+    {
+        mLog.error(failureMessage, throwable);
+
+        //Each recovery action is isolated so a Stage implementation failure cannot leave the window permanently
+        //transparent or prevent a later action from making the failure shell visible.
+        recoverLoadingStage("restore opacity", () -> stage.setOpacity(1.0d));
+        recoverLoadingStage("restore loading content", () -> showLoadingFailure(loadingShell, failureMessage));
+        recoverLoadingStage("restore from iconified state", () -> stage.setIconified(false));
+        recoverLoadingStage("show failure shell", stage::show);
+        recoverLoadingStage("raise failure shell", stage::toFront);
+        recoverLoadingStage("focus failure shell", stage::requestFocus);
+    }
+
+    private static void recoverLoadingStage(String action, Runnable recovery)
+    {
+        try
+        {
+            recovery.run();
+        }
+        catch(Throwable throwable)
+        {
+            mLog.warn("Unable to {} after JavaFX editor loading failure", action, throwable);
+        }
+    }
+
+    private static void showLoadingMessage(LoadingShell loadingShell)
+    {
+        loadingShell.root().setPadding(new Insets(24));
+        loadingShell.root().getChildren().setAll(loadingShell.loadingContent());
+        loadingShell.titleLabel().setStyle(LOADING_TEXT_STYLE);
+        loadingShell.statusLabel().setStyle(LOADING_TEXT_STYLE);
+        loadingShell.statusLabel().setOpacity(0.72d);
+        loadingShell.statusLabel().setText(loadingShell.loadingMessage());
+    }
+
+    private static void installLoadedContent(LoadingShell loadingShell, Parent content)
+    {
+        if(loadingShell.root().getChildren().size() == 1 &&
+            loadingShell.root().getChildren().getFirst() == content)
+        {
+            return;
+        }
+
+        //Padding belongs to the centered loading message, not to the full-size editor that replaces it.
+        loadingShell.root().setPadding(Insets.EMPTY);
+        loadingShell.root().getChildren().setAll(content);
+        content.applyCss();
+        content.layout();
+    }
+
+    private static void showLoadingFailure(LoadingShell loadingShell, String message)
+    {
+        loadingShell.root().setPadding(new Insets(24));
+        loadingShell.root().getChildren().setAll(loadingShell.loadingContent());
+        loadingShell.titleLabel().setStyle(LOADING_TEXT_STYLE);
+        loadingShell.statusLabel().setStyle(LOADING_FAILURE_STYLE);
+        loadingShell.statusLabel().setOpacity(1.0d);
+        loadingShell.statusLabel().setText(message);
+    }
+
+    private record LoadingShell(StackPane root, VBox loadingContent, Label titleLabel, Label statusLabel,
+                                String loadingMessage)
+    {
+    }
+
+    static final class LoadingRequestGate<T>
+    {
+        private boolean mLoading;
+        private T mPendingRequest;
+
+        /**
+         * Stores the newest request and reports whether its caller owns the one active load attempt.
+         */
+        boolean offer(T request)
+        {
+            mPendingRequest = request;
+
+            if(!mLoading)
+            {
+                mLoading = true;
+                return true;
+            }
+
+            return false;
+        }
+
+        /**
+         * Finishes a successful load and returns only the newest request received while loading.
+         */
+        T complete()
+        {
+            mLoading = false;
+            T request = mPendingRequest;
+            mPendingRequest = null;
+            return request;
+        }
+
+        /**
+         * Releases a failed load so the next request can retry.  Its request is superseded by that retry.
+         */
+        void fail()
+        {
+            mLoading = false;
+            mPendingRequest = null;
+        }
     }
 
     /**
