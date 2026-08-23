@@ -16,67 +16,59 @@ class StatsWebFrequencyActionsUiContractTest
 {
     private static final Path APP_JAVASCRIPT = Path.of("stats-web", "assets", "app.js");
     private static final Path APP_CSS = Path.of("stats-web", "assets", "app.css");
+    private static final Path INDEX_HTML = Path.of("stats-web", "index.html");
 
     @Test
-    void webSettingsRenderTheRadioReferenceLookupRegionDirectly() throws Exception
+    void administrationOwnsLookupSettingsWhileConfigurationKeepsThePlaceholder() throws Exception
     {
         String source = Files.readString(APP_JAVASCRIPT);
         String configuration = block(source, "async function renderConfiguration()");
+        String administration = block(source, "async function renderAdmin()");
+        String liveActivity = block(source, "async function renderAdminLiveActivitySettings()");
         String settings = block(source, "async function renderAdminRadioReferenceSettings()");
+        String html = Files.readString(INDEX_HTML);
 
         assertTrue(configuration.contains("id: 'radioreference', label: 'RadioReference'"));
-        assertTrue(configuration.contains("await renderAdminRadioReferenceSettings()"));
+        assertTrue(configuration.contains("comingSoonPanel('RadioReference'"));
+        assertTrue(configuration.contains("focused migration"));
+        assertFalse(configuration.contains("renderAdminRadioReferenceSettings"));
+        assertTrue(administration.contains("id: 'live-activity', label: 'Live & Activity'"));
+        assertTrue(administration.contains("await renderAdminLiveActivitySettings()"));
+        assertTrue(liveActivity.contains("const renderContext = captureRenderContext()"));
+        assertTrue(liveActivity.contains("await renderAdminWebDisplaySettings()"));
+        assertTrue(liveActivity.contains("if (!renderIsCurrent(renderContext)) return"));
+        assertTrue(liveActivity.contains("await renderAdminRadioReferenceSettings()"));
         assertTrue(settings.contains("Choose the state used for exact-frequency searches."));
+        assertTrue(html.contains("data-nav-tab=\"radioreference\" " +
+            "href=\"/?view=configuration&amp;tab=radioreference\""));
     }
 
     @Test
-    void configurationProvidesPreviewFirstRadioReferenceImports() throws Exception
+    void doesNotShipTheDeferredRadioReferenceImporter() throws Exception
     {
         String source = Files.readString(APP_JAVASCRIPT);
-        String workspace = block(source, "async function renderRadioReferenceImportWorkspace()");
-        String confirmation = block(source, "function openRadioReferenceTalkgroupImportConfirmation(options)");
 
         for(String endpoint: new String[]{"/browse?", "/counties?", "/systems/details?",
             "/systems/sites?", "/systems/site-preview?", "/systems/talkgroups?",
-            "/systems/channels", "/conventional/categories?", "/conventional/frequencies?",
-            "/conventional/channels"})
+            "/systems/channels", "/systems/talkgroups/import", "/conventional/categories?",
+            "/conventional/frequencies?", "/conventional/channels"})
         {
-            assertTrue(workspace.contains("/api/v1/admin/radioreference" + endpoint),
-                () -> "Missing RadioReference import endpoint " + endpoint);
+            assertFalse(source.contains("/api/v1/admin/radioreference" + endpoint),
+                () -> "Deferred RadioReference import endpoint remains in the browser: " + endpoint);
         }
-        assertTrue(workspace.contains("p25_modulation_required"));
-        assertTrue(workspace.contains("RadioReference is not treated as authoritative"));
-        assertTrue(workspace.contains("frequency_ids: ids"));
-        assertTrue(workspace.contains("alias_list_id: Number(aliasList.value)"));
-        assertTrue(workspace.contains("preview.existing_alias_id"));
-        assertTrue(workspace.contains("href('aliases'"));
-        assertTrue(workspace.contains("alias: existingAliasId"));
-        assertTrue(workspace.contains("openRadioReferenceTalkgroupImportConfirmation({"));
-        assertFalse(workspace.contains("'/api/v1/admin/radioreference/systems/talkgroups/import'"));
 
-        assertTrue(confirmation.contains("single.changes"));
-        assertTrue(confirmation.contains("change?.previous_value"));
-        assertTrue(confirmation.contains("change?.updated_value"));
-        assertTrue(confirmation.contains("['Add', counts.added]"));
-        assertTrue(confirmation.contains("['Update', counts.updated]"));
-        assertTrue(confirmation.contains("['Unchanged', counts.unchanged]"));
-        assertTrue(confirmation.contains("openReadOnlyModal("));
-        assertTrue(confirmation.contains("'/api/v1/admin/radioreference/systems/talkgroups/import'"));
-        assertTrue(confirmation.contains("talkgroup_ids: selectedIds"));
-        assertTrue(confirmation.contains("{ confirm_updates: true }"));
-        assertTrue(confirmation.indexOf("confirm.addEventListener('click'") <
-            confirmation.indexOf("{ confirm_updates: true }"));
+        for(String helper: new String[]{"renderRadioReferenceImportWorkspace",
+            "openRadioReferenceTalkgroupImportConfirmation", "radioReferenceAliasSelect",
+            "radioReferenceTalkgroupImportCounts", "radioReferenceItems"})
+        {
+            assertFalse(source.contains(helper), () -> "Deferred RadioReference import helper remains: " + helper);
+        }
+
+        assertFalse(source.contains("Import from RadioReference"));
+        assertFalse(source.contains("RadioReference is not treated as authoritative"));
         assertTrue(source.contains("RADIO_REFERENCE_DIRECTORY_TIMEOUT_MILLISECONDS = 15_000"));
-        assertTrue(source.contains("RADIO_REFERENCE_DETAIL_TIMEOUT_MILLISECONDS = 195_000"));
-        assertTrue(source.contains("RADIO_REFERENCE_MUTATION_TIMEOUT_MILLISECONDS = 240_000"));
-        assertTrue(workspace.contains("timeoutMs: RADIO_REFERENCE_DETAIL_TIMEOUT_MILLISECONDS"));
-        assertTrue(workspace.contains("timeoutMs: RADIO_REFERENCE_MUTATION_TIMEOUT_MILLISECONDS"));
-
-        String unsupportedSite = block(workspace, "if (sitePreview.supported === false)");
-        assertTrue(unsupportedSite.contains("sitePreview.unsupported_reason"));
-        assertTrue(unsupportedSite.contains("return;"));
-        assertTrue(workspace.indexOf("if (sitePreview.supported === false)") <
-            workspace.indexOf("const form = node('form', 'admin-form radioreference-site-import-form')"));
+        assertFalse(source.contains("RADIO_REFERENCE_DETAIL_TIMEOUT_MILLISECONDS"));
+        assertFalse(source.contains("RADIO_REFERENCE_MUTATION_TIMEOUT_MILLISECONDS"));
     }
 
     @Test
@@ -98,6 +90,7 @@ class StatsWebFrequencyActionsUiContractTest
         assertTrue(actions.contains("requestJson('/api/v1/admin/radioreference'"));
         assertTrue(actions.contains("/api/v1/admin/radioreference/frequencies?"));
         assertTrue(actions.contains("configuration?.account?.state !== 'VALID_PREMIUM'"));
+        assertTrue(actions.contains("href('admin', { tab: 'live-activity' })"));
         assertFalse(results.contains("'Freq Out'"));
         assertFalse(results.contains("'Freq In'"));
         assertTrue(results.contains("row.description"));
@@ -157,6 +150,10 @@ class StatsWebFrequencyActionsUiContractTest
         assertTrue(css.contains(".radioreference-result-grid"));
         assertTrue(css.contains("minmax(min(100%, 360px), 1fr)"));
         assertTrue(css.contains(".radioreference-result-actions"));
+        assertFalse(css.contains(".radioreference-import-workspace"));
+        assertFalse(css.contains(".radioreference-browse-form"));
+        assertFalse(css.contains(".radioreference-selection-row"));
+        assertFalse(css.contains(".radioreference-site-import-form"));
     }
 
     private static String block(String source, String marker)

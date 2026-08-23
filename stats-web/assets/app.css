@@ -6261,115 +6261,6 @@ th.numeric {
   color: var(--muted);
 }
 
-.radioreference-import-workspace,
-.radioreference-import-detail,
-.radioreference-import-panel {
-  display: grid;
-  gap: 12px;
-}
-
-.radioreference-browse-form {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) max-content;
-  gap: 8px;
-  align-items: end;
-}
-
-.radioreference-browse-fields,
-.radioreference-inline-controls {
-  display: flex;
-  align-items: end;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.radioreference-browse-fields .admin-form-field,
-.radioreference-inline-controls .admin-form-field {
-  min-width: 150px;
-  flex: 1 1 170px;
-}
-
-.radioreference-browser-results,
-.radioreference-card-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 8px;
-}
-
-.radioreference-directory-row,
-.radioreference-import-card {
-  min-width: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) max-content;
-  align-items: center;
-  gap: 5px 10px;
-  padding: 10px;
-  color: var(--ink);
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  text-align: left;
-}
-
-.radioreference-directory-row:hover {
-  background: var(--surface-2);
-  border-color: var(--accent);
-}
-
-.radioreference-directory-row > span:not(.badge),
-.radioreference-import-card > span {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--muted);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.radioreference-directory-row .badge,
-.radioreference-import-card button {
-  grid-column: 2;
-  grid-row: 1 / span 2;
-}
-
-.radioreference-import-card > div {
-  grid-column: 1 / -1;
-}
-
-.radioreference-selection-list,
-.radioreference-frequency-selection {
-  max-height: 420px;
-  display: grid;
-  overflow-y: auto;
-  border: 1px solid var(--line);
-  border-radius: 4px;
-}
-
-.radioreference-selection-row,
-.radioreference-frequency-selection label {
-  display: grid;
-  grid-template-columns: max-content minmax(0, 1fr) minmax(120px, .7fr) max-content;
-  align-items: center;
-  gap: 8px;
-  padding: 8px;
-  border-bottom: 1px solid var(--line);
-}
-
-.radioreference-selection-row:last-child,
-.radioreference-frequency-selection label:last-child {
-  border-bottom: 0;
-}
-
-.radioreference-selection-row > span:not(.badge) {
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.radioreference-site-import-form {
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid var(--line);
-}
-
 @media (max-width: 1180px) {
   .topbar {
     min-height: 54px;
@@ -6524,9 +6415,6 @@ th.numeric {
     flex-basis: 100%;
   }
 
-  .radioreference-browse-form {
-    grid-template-columns: minmax(0, 1fr);
-  }
 }
 
 @media (max-width: 560px) {
@@ -6580,28 +6468,6 @@ th.numeric {
     flex: 1 1 140px;
   }
 
-
-  .radioreference-browse-fields,
-  .radioreference-inline-controls {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .radioreference-browse-fields .admin-form-field,
-  .radioreference-inline-controls .admin-form-field {
-    width: 100%;
-    min-width: 0;
-  }
-
-  .radioreference-selection-row,
-  .radioreference-frequency-selection label {
-    grid-template-columns: max-content minmax(0, 1fr);
-  }
-
-  .radioreference-selection-row .badge,
-  .radioreference-selection-row > span:not(.badge) {
-    grid-column: 2;
-  }
 }
 
 @media (max-height: 600px) {

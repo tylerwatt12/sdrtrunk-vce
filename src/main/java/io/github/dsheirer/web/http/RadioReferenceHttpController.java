@@ -12,18 +12,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.sun.net.httpserver.HttpExchange;
 import io.github.dsheirer.preference.radioreference.RadioReferencePreference;
-import io.github.dsheirer.alias.AliasAdministrationService;
 import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryException;
 import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryService;
 import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryService.AccountState;
 import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryService.AccountStatus;
 import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryService.BoundedPage;
 import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryService.DirectoryOption;
-import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryService.EntryGroup;
-import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryService.LocationSelection;
-import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryService.ScopeFilter;
-import io.github.dsheirer.service.radioreference.RadioReferenceGateway.DetailKind;
-import io.github.dsheirer.service.radioreference.RadioReferenceImportService;
 import io.github.dsheirer.stats.StatsApiV1;
 import java.io.IOException;
 import java.net.URLDecoder;
@@ -33,15 +27,12 @@ import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /** Administrator-only RadioReference account, lookup-region and exact-frequency adapter. */
 public final class RadioReferenceHttpController
 {
-    private static final Logger mLog = LoggerFactory.getLogger(RadioReferenceHttpController.class);
     public static final String PATH = StatsApiV1.RADIO_REFERENCE;
-    private static final int MAXIMUM_BODY_BYTES = 65_536;
+    private static final int MAXIMUM_BODY_BYTES = 4096;
     private static final int MAXIMUM_OPTIONS = 500;
     private static final int DEFAULT_RESULT_LIMIT = 100;
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper(JsonFactory.builder()
@@ -52,7 +43,6 @@ public final class RadioReferenceHttpController
         .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
 
     private final RadioReferenceDirectoryService mService;
-    private final RadioReferenceImportService mImportService;
     private final Settings mSettings;
     private final Object mStoredLoginLock = new Object();
     private boolean mStoredLoginAttempted;
@@ -60,27 +50,13 @@ public final class RadioReferenceHttpController
     public RadioReferenceHttpController(RadioReferenceDirectoryService service,
                                         RadioReferencePreference preference)
     {
-        this(service, new PreferenceSettings(preference), null);
-    }
-
-    public RadioReferenceHttpController(RadioReferenceDirectoryService service,
-                                        RadioReferencePreference preference,
-                                        RadioReferenceImportService importService)
-    {
-        this(service, new PreferenceSettings(preference), importService);
+        this(service, new PreferenceSettings(preference));
     }
 
     RadioReferenceHttpController(RadioReferenceDirectoryService service, Settings settings)
     {
-        this(service, settings, null);
-    }
-
-    RadioReferenceHttpController(RadioReferenceDirectoryService service, Settings settings,
-                                 RadioReferenceImportService importService)
-    {
         mService = Objects.requireNonNull(service);
         mSettings = Objects.requireNonNull(settings);
-        mImportService = importService;
     }
 
     public void handle(HttpExchange exchange) throws IOException
@@ -153,122 +129,6 @@ public final class RadioReferenceHttpController
                 ApiHttpResponse.sendData(exchange, 200, mService.frequencyDetails(frequencyHz,
                     systemId > 0 ? systemId : null, siteNumber, subCategoryId, agencyId, countyId, mode));
             }
-            else if((PATH + "/counties").equals(path))
-            {
-                requireMethod(exchange, "GET");
-                requireEmptyBody(exchange, "GET");
-                Map<String,String> query = query(exchange, "state_id", "search", "limit", "offset");
-                ensureStoredSession();
-                ApiHttpResponse.sendData(exchange, 200, mService.counties(
-                    positiveInt(query.get("state_id"), "state_id"), query.getOrDefault("search", ""),
-                    optionalInt(query.get("offset"), 0), optionalInt(query.get("limit"), DEFAULT_RESULT_LIMIT)));
-            }
-            else if((PATH + "/browse").equals(path))
-            {
-                requireMethod(exchange, "GET");
-                requireEmptyBody(exchange, "GET");
-                Map<String,String> query = query(exchange, "country_id", "state_id", "county_id", "search",
-                    "group", "scope", "limit", "offset");
-                ensureStoredSession();
-                int countryId = positiveInt(query.get("country_id"), "country_id");
-                Integer stateId = optionalPositive(query.get("state_id"), "state_id");
-                Integer countyId = optionalPositive(query.get("county_id"), "county_id");
-                ApiHttpResponse.sendData(exchange, 200, mService.browse(
-                    new LocationSelection(countryId, stateId, countyId), query.getOrDefault("search", ""),
-                    enumValue(EntryGroup.class, query.getOrDefault("group", "ALL"), "group"),
-                    enumValue(ScopeFilter.class, query.getOrDefault("scope", "ALL"), "scope"),
-                    optionalInt(query.get("offset"), 0), optionalInt(query.get("limit"), DEFAULT_RESULT_LIMIT)));
-            }
-            else if((PATH + "/systems/details").equals(path))
-            {
-                requireMethod(exchange, "GET");
-                requireEmptyBody(exchange, "GET");
-                Map<String,String> query = query(exchange, "system_id");
-                ensureStoredSession();
-                int systemId = positiveInt(query.get("system_id"), "system_id");
-                ApiHttpResponse.sendData(exchange, 200, requireImport().systemPreview(systemId));
-            }
-            else if((PATH + "/systems/sites").equals(path))
-            {
-                requireMethod(exchange, "GET");
-                requireEmptyBody(exchange, "GET");
-                Map<String,String> query = query(exchange, "system_id", "offset", "limit");
-                ensureStoredSession();
-                ApiHttpResponse.sendData(exchange, 200, mService.trunkedSites(
-                    positiveInt(query.get("system_id"), "system_id"), optionalInt(query.get("offset"), 0),
-                    optionalInt(query.get("limit"), DEFAULT_RESULT_LIMIT)));
-            }
-            else if((PATH + "/systems/site-preview").equals(path))
-            {
-                requireMethod(exchange, "GET");
-                requireEmptyBody(exchange, "GET");
-                Map<String,String> query = query(exchange, "system_id", "site_id");
-                ensureStoredSession();
-                ApiHttpResponse.sendData(exchange, 200, requireImport().sitePreview(
-                    positiveInt(query.get("system_id"), "system_id"),
-                    positiveInt(query.get("site_id"), "site_id")));
-            }
-            else if((PATH + "/systems/channels").equals(path))
-            {
-                requireMethod(exchange, "POST");
-                requireNoQuery(exchange);
-                ensureStoredSession();
-                ApiHttpResponse.sendData(exchange, 201,
-                    requireImport().importSiteChannel(read(exchange,
-                        RadioReferenceImportService.SiteChannelImport.class)));
-            }
-            else if((PATH + "/systems/talkgroups").equals(path))
-            {
-                requireMethod(exchange, "GET");
-                requireEmptyBody(exchange, "GET");
-                Map<String,String> query = query(exchange, "system_id", "alias_list_id", "category_id", "search",
-                    "offset", "limit");
-                ensureStoredSession();
-                ApiHttpResponse.sendData(exchange, 200, requireImport().talkgroupPreview(
-                    positiveInt(query.get("system_id"), "system_id"),
-                    positiveLong(query.get("alias_list_id"), "alias_list_id"),
-                    optionalPositive(query.get("category_id"), "category_id"),
-                    query.getOrDefault("search", ""), optionalInt(query.get("offset"), 0),
-                    optionalInt(query.get("limit"), DEFAULT_RESULT_LIMIT)));
-            }
-            else if((PATH + "/systems/talkgroups/import").equals(path))
-            {
-                requireMethod(exchange, "POST");
-                requireNoQuery(exchange);
-                ensureStoredSession();
-                ApiHttpResponse.sendData(exchange, 200, requireImport().importTalkgroups(read(exchange,
-                    RadioReferenceImportService.TalkgroupImport.class)));
-            }
-            else if((PATH + "/conventional/categories").equals(path))
-            {
-                requireMethod(exchange, "GET");
-                requireEmptyBody(exchange, "GET");
-                Map<String,String> query = query(exchange, "owner_kind", "owner_id", "offset", "limit");
-                ensureStoredSession();
-                ApiHttpResponse.sendData(exchange, 200, mService.conventionalCategories(
-                    enumValue(DetailKind.class, query.get("owner_kind"), "owner_kind"),
-                    positiveInt(query.get("owner_id"), "owner_id"), optionalInt(query.get("offset"), 0),
-                    optionalInt(query.get("limit"), DEFAULT_RESULT_LIMIT)));
-            }
-            else if((PATH + "/conventional/frequencies").equals(path))
-            {
-                requireMethod(exchange, "GET");
-                requireEmptyBody(exchange, "GET");
-                Map<String,String> query = query(exchange, "sub_category_id", "search", "offset", "limit");
-                ensureStoredSession();
-                ApiHttpResponse.sendData(exchange, 200, mService.conventionalFrequencies(
-                    positiveInt(query.get("sub_category_id"), "sub_category_id"),
-                    query.getOrDefault("search", ""), optionalInt(query.get("offset"), 0),
-                    optionalInt(query.get("limit"), DEFAULT_RESULT_LIMIT)));
-            }
-            else if((PATH + "/conventional/channels").equals(path))
-            {
-                requireMethod(exchange, "POST");
-                requireNoQuery(exchange);
-                ensureStoredSession();
-                ApiHttpResponse.sendData(exchange, 201, requireImport().importConventional(read(exchange,
-                    RadioReferenceImportService.ConventionalImport.class)));
-            }
             else
             {
                 ApiHttpResponse.sendError(exchange, 404, "not_found", "Not found");
@@ -286,53 +146,6 @@ public final class RadioReferenceHttpController
         {
             sendDirectoryError(exchange, exception);
         }
-        catch(AliasAdministrationService.StaleRevisionException exception)
-        {
-            ApiHttpResponse.sendError(exchange, 409, "stale_revision",
-                "Alias configuration changed; reload and try again");
-        }
-        catch(RadioReferenceImportService.ConfirmationRequiredException exception)
-        {
-            ApiHttpResponse.sendError(exchange, 409, "confirmation_required", exception.getMessage());
-        }
-        catch(AliasAdministrationService.PersistenceException |
-              RadioReferenceImportService.ConfigurationPersistenceException exception)
-        {
-            mLog.warn("Unable to persist RadioReference import", exception);
-            ApiHttpResponse.sendError(exchange, 503, "storage_unavailable",
-                "RadioReference configuration could not be saved");
-        }
-        catch(IllegalArgumentException exception)
-        {
-            ApiHttpResponse.sendError(exchange, 400, "invalid_request", safeMessage(exception,
-                "The RadioReference request is invalid"));
-        }
-        catch(IllegalStateException exception)
-        {
-            ApiHttpResponse.sendError(exchange, 409, "configuration_conflict", safeMessage(exception,
-                "The RadioReference request conflicts with current configuration"));
-        }
-        catch(RuntimeException exception)
-        {
-            mLog.warn("Unable to complete RadioReference request", exception);
-            ApiHttpResponse.sendError(exchange, 503, "service_unavailable",
-                "The RadioReference request could not be completed");
-        }
-    }
-
-    private RadioReferenceImportService requireImport()
-    {
-        if(mImportService == null)
-        {
-            throw new IllegalStateException("RadioReference configuration import is unavailable");
-        }
-        return mImportService;
-    }
-
-    private static String safeMessage(Exception exception, String fallback)
-    {
-        return exception.getMessage() == null || exception.getMessage().isBlank() ? fallback :
-            exception.getMessage();
     }
 
     private void session(HttpExchange exchange) throws IOException, RequestException,
@@ -639,32 +452,6 @@ public final class RadioReferenceHttpController
         catch(NumberFormatException exception)
         {
             throw new RequestException(400, "invalid_request", field + " must be a non-negative integer");
-        }
-    }
-
-    private static Integer optionalPositive(String value, String field) throws RequestException
-    {
-        if(value == null || value.isBlank())
-        {
-            return null;
-        }
-        return positiveInt(value, field);
-    }
-
-    private static <T extends Enum<T>> T enumValue(Class<T> type, String value, String field)
-        throws RequestException
-    {
-        if(value == null || value.isBlank())
-        {
-            throw new RequestException(400, "invalid_request", field + " is required");
-        }
-        try
-        {
-            return Enum.valueOf(type, value.strip().toUpperCase(Locale.ROOT));
-        }
-        catch(IllegalArgumentException exception)
-        {
-            throw new RequestException(400, "invalid_request", field + " is invalid");
         }
     }
 

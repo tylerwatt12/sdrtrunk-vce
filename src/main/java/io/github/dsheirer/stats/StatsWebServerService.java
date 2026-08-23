@@ -23,7 +23,6 @@ import com.sun.net.httpserver.HttpServer;
 import com.sun.net.httpserver.HttpsConfigurator;
 import com.sun.net.httpserver.HttpsServer;
 import io.github.dsheirer.alias.AliasAdministrationService;
-import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.audio.broadcast.AudioStreamingManager;
 import io.github.dsheirer.audio.call.AudioCallCoordinator;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
@@ -43,7 +42,6 @@ import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.scanlist.ScanList;
 import io.github.dsheirer.scanlist.ScanListModel;
 import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryService;
-import io.github.dsheirer.service.radioreference.RadioReferenceImportService;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.stats.activity.P25ActivityLogPath;
 import io.github.dsheirer.stats.activity.P25ActivityLogService;
@@ -172,7 +170,6 @@ public class StatsWebServerService implements AutoCloseable
     private final AliasAdministrationService mAliasAdministrationService;
     private final ScanListModel mScanListModel;
     private final RadioReferenceDirectoryService mRadioReferenceDirectoryService;
-    private final RadioReferenceImportService mRadioReferenceImportService;
     private final Path mWebAccessDatabasePath;
     private final WebDisplaySettingsService mWebDisplaySettingsService;
     private final WebTlsMaterialService mTlsMaterialService;
@@ -232,22 +229,10 @@ public class StatsWebServerService implements AutoCloseable
                                  DecodeEventViewService decodeEventViewService, TunerManager tunerManager,
                                  ScanListModel scanListModel)
     {
-        this(userPreferences, channelProcessingManager, activityLogService, aliasAdministrationService,
-            decodeEventViewService, tunerManager, scanListModel, null);
-    }
-
-    public StatsWebServerService(UserPreferences userPreferences, ChannelProcessingManager channelProcessingManager,
-                                 P25ActivityLogService activityLogService,
-                                 AliasAdministrationService aliasAdministrationService,
-                                 DecodeEventViewService decodeEventViewService, TunerManager tunerManager,
-                                 ScanListModel scanListModel, ConfigurationManager configurationManager)
-    {
         EmbeddedHttpServerPolicy.configureBeforeServerInitialization();
         mUserPreferences = userPreferences;
         mScanListModel = scanListModel;
         mRadioReferenceDirectoryService = new RadioReferenceDirectoryService();
-        mRadioReferenceImportService = configurationManager != null ?
-            new RadioReferenceImportService(mRadioReferenceDirectoryService, configurationManager) : null;
         mWebCallService = new StatsWebCallService(mScanListModel,
             mUserPreferences.getApplicationPreference().getWebCallConfiguration());
         mChannelProcessingManager = channelProcessingManager;
@@ -696,8 +681,7 @@ public class StatsWebServerService implements AutoCloseable
             WebCapability.ADMIN_AUDIO, webCallConfigurationController::handle));
 
         RadioReferenceHttpController radioReferenceController = new RadioReferenceHttpController(
-            mRadioReferenceDirectoryService, mUserPreferences.getRadioReferencePreference(),
-            mRadioReferenceImportService);
+            mRadioReferenceDirectoryService, mUserPreferences.getRadioReferencePreference());
         server.createContext(RadioReferenceHttpController.PATH, mWebAccessHttpController.protectApi(
             WebCapability.ADMIN_SETTINGS, radioReferenceController::handle));
 

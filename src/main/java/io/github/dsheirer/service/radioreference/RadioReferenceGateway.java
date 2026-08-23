@@ -16,8 +16,8 @@ import java.util.List;
  * JavaFX-independent boundary around the RadioReference client library.
  *
  * <p>The snapshots are compact, immutable projections of directory and exact-frequency search data.
- * {@link DetailReference} carries the native object identity that a later importer slice can use to load system sites,
- * frequencies and talkgroups without changing the directory contract.</p>
+ * {@link DetailReference} carries the native object identity used to load bounded details for one frequency result
+ * without changing the lookup contract.</p>
  */
 public interface RadioReferenceGateway extends AutoCloseable
 {
@@ -50,40 +50,6 @@ public interface RadioReferenceGateway extends AutoCloseable
     }
 
     default List<FrequencyCategory> countyFrequencyCategories(int countyId) throws RadioReferenceGatewayException
-    {
-        return List.of();
-    }
-
-    /**
-     * Loads the decoder-relevant description of one trunked system.  The default keeps lightweight test and
-     * alternate gateway implementations source-compatible until they opt into import support.
-     */
-    default TrunkedSystemDetails trunkedSystemDetails(int systemId) throws RadioReferenceGatewayException
-    {
-        return null;
-    }
-
-    /** Loads complete site/channel details used by the configuration importer. */
-    default List<TrunkedSiteDetails> trunkedSiteDetails(int systemId) throws RadioReferenceGatewayException
-    {
-        return List.of();
-    }
-
-    /** Loads the complete talkgroup catalog for one trunked system. */
-    default List<RemoteTalkgroup> talkgroups(int systemId) throws RadioReferenceGatewayException
-    {
-        return List.of();
-    }
-
-    /** Loads talkgroup category labels for one trunked system. */
-    default List<RemoteTalkgroupCategory> talkgroupCategories(int systemId) throws RadioReferenceGatewayException
-    {
-        return List.of();
-    }
-
-    /** Loads conventional frequency rows for one explicitly selected subcategory. */
-    default List<ConventionalFrequency> subcategoryFrequencies(int subCategoryId)
-        throws RadioReferenceGatewayException
     {
         return List.of();
     }
@@ -144,50 +110,6 @@ public interface RadioReferenceGateway extends AutoCloseable
 
     record FrequencyCategory(int subCategoryId, String categoryName, String subCategoryName)
     {
-    }
-
-    record TrunkedSystemDetails(int id, String name, String city, String type, String flavor, String voice,
-                                String wacn, String systemId)
-    {
-    }
-
-    record TrunkedSiteDetails(int id, int systemId, int number, String name, int countyId, int zoneNumber,
-                              int rfss, String nac, int ran, String modulation, boolean tdmaControlChannel,
-                              List<TrunkedSiteChannel> channels)
-    {
-        public TrunkedSiteDetails
-        {
-            channels = immutable(channels);
-        }
-    }
-
-    record TrunkedSiteChannel(long frequencyHz, int logicalChannelNumber, String channelId, String use,
-                              String colorCode, boolean primaryControl, boolean alternateControl)
-    {
-    }
-
-    record RemoteTalkgroup(int id, int value, String alphaTag, String description, String mode,
-                           int encryptionState, int categoryId, List<String> tags)
-    {
-        public RemoteTalkgroup
-        {
-            tags = immutable(tags);
-        }
-    }
-
-    record RemoteTalkgroupCategory(int id, int systemId, String name)
-    {
-    }
-
-    record ConventionalFrequency(int id, long downlinkHz, Long uplinkHz, String callsign, String description,
-                                 String alphaTag, String tone, String colorCode, String talkgroup, String slot,
-                                 String mode, int encryption, String classification, List<String> tags,
-                                 int subCategoryId)
-    {
-        public ConventionalFrequency
-        {
-            tags = immutable(tags);
-        }
     }
 
     record CountryDirectory(Country country, List<State> states, List<Agency> agencies)

@@ -240,7 +240,7 @@ public class SDRTrunk
         mStatsWebServerService = new StatsWebServerService(mUserPreferences,
             mConfigurationManager.getChannelProcessingManager(), mP25ActivityLogService,
             mConfigurationManager.getAliasAdministrationService(), mDecodeEventViewService, mTunerManager,
-            mConfigurationManager.getScanListModel(), mConfigurationManager);
+            mConfigurationManager.getScanListModel());
 
         if(mJavaFxWindowManager != null)
         {

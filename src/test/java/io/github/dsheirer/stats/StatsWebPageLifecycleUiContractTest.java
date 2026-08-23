@@ -24,7 +24,7 @@ class StatsWebPageLifecycleUiContractTest
         String html = readText(INDEX_HTML);
         int lifecycle = html.indexOf("/assets/core/page-lifecycle.js?v=1");
         int systems = html.indexOf("/assets/features/systems-directory.js?v=2");
-        int application = html.indexOf("/assets/app.js?v=109");
+        int application = html.indexOf("/assets/app.js?v=110");
 
         assertTrue(lifecycle >= 0);
         assertTrue(lifecycle < systems);
@@ -51,6 +51,12 @@ class StatsWebPageLifecycleUiContractTest
         assertOrdered(system, "const response = await api(systemApiPath(systemScope.scope));",
             "if (!renderIsCurrent(renderContext)) return;");
         assertOrdered(system, "if (!renderIsCurrent(renderContext)) return;", "window.history.replaceState");
+
+        String liveActivity = function(source, "async function renderAdminLiveActivitySettings()");
+        assertOrdered(liveActivity, "await renderAdminWebDisplaySettings();",
+            "if (!renderIsCurrent(renderContext)) return;");
+        assertOrdered(liveActivity, "if (!renderIsCurrent(renderContext)) return;",
+            "await renderAdminRadioReferenceSettings();");
     }
 
     @Test

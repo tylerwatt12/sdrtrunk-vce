@@ -22,10 +22,15 @@ class StatsWebDisplaySettingsUiContractTest
     {
         String source = Files.readString(APP_JAVASCRIPT);
         String display = function(source, "async function renderAdminWebDisplaySettings()");
+        String liveActivity = function(source, "async function renderAdminLiveActivitySettings()");
         String admin = function(source, "async function renderAdmin()");
 
         assertTrue(admin.contains("id: 'live-activity', label: 'Live & Activity'"));
-        assertTrue(admin.contains("await renderAdminWebDisplaySettings()"));
+        assertTrue(admin.contains("await renderAdminLiveActivitySettings()"));
+        assertTrue(liveActivity.contains("const renderContext = captureRenderContext()"));
+        assertTrue(liveActivity.contains("await renderAdminWebDisplaySettings()"));
+        assertTrue(liveActivity.contains("if (!renderIsCurrent(renderContext)) return"));
+        assertTrue(liveActivity.contains("await renderAdminRadioReferenceSettings()"));
         assertTrue(display.contains("'/api/v1/admin/web-display'"));
         assertTrue(display.contains("show_encryption_details"));
         assertTrue(display.contains("method: 'PUT'"));

@@ -298,27 +298,17 @@ totals and explicit truncation when either member set is larger than 500. Scan-l
 `alias_count` and `unmatched_alias_list_count`. Either owner collection may be omitted to leave that class of owners
 unchanged, including during `replace`; an explicitly empty collection clears that class during `replace`.
 
-RadioReference administration is rooted at `/api/v1/admin/radioreference` and requires a valid Premium session:
+RadioReference lookup administration is rooted at `/api/v1/admin/radioreference` and requires a valid Premium
+session:
 
 - `GET` reports account, stored-credential, and lookup-location state; `PUT`/`DELETE /session` sign in or out, and
   `PUT /location` updates the receiver's lookup region.
-- `GET /countries`, `/states`, `/counties`, and `/browse` provide bounded directory navigation.
+- `GET /countries` and `/states` provide the bounded lookup-region choices.
 - `GET /frequencies` searches the configured lookup region for an exact frequency, and
   `GET /frequencies/details` loads bounded category, site, and channel-use details for one result.
-- `GET /systems/details`, `/systems/sites`, and `/systems/site-preview` return decoder-safe system and site previews.
-  `POST /systems/channels` refetches the authoritative site and creates one control-channel configuration. P25 Phase 1
-  requires an explicit `p25_modulation` of `C4FM` or `CQPSK`; RadioReference modulation labels are not trusted.
-- `GET /systems/talkgroups` compares RadioReference-owned name, description, and category fields with one Alias List.
-  `POST /systems/talkgroups/import` applies a bounded revision-checked add/update selection. If any selected row is
-  `DIFFERENT`, the body must include `confirm_updates: true`; new-only imports do not require confirmation. Updates
-  preserve local identity, appearance, actions, playback, recording, and streaming settings.
-- `GET /conventional/categories` and `/conventional/frequencies` provide bounded conventional browsing.
-  `POST /conventional/channels` refetches selected rows and atomically creates supported channel configurations.
 
-Import bodies contain only stable RadioReference IDs, explicit decoder choices, local destination IDs, and optional
-local labels. Apply operations refetch authoritative remote rows, reject duplicates or unsupported modes before
-publishing any channel, and never accept browser-supplied frequencies or talkgroup metadata as truth. One request is
-limited to 500 selected items, while remote catalogs are rejected above their fixed safety bound.
+The browser API does not import RadioReference systems, sites, talkgroups, or conventional channels. Those workflows
+remain in the desktop configuration editor until a focused web migration is completed.
 
 Session `capabilities` is an object whose values are booleans. The administrator access-policy resource returns one
 `capabilities` array; each entry has `id`, `display_name`, `required_tier`, `default_tier`, and `configurable`.
